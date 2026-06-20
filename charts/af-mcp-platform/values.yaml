@@ -1,0 +1,185 @@
+# Default values for af-mcp-platform.
+# This is a YAML-formatted file. Declare variables to be passed into your templates.
+
+image:
+  registry: ghcr.io/kratsg
+  broker:
+    repository: af-mcp-platform-broker
+    # Defaults to .Chart.AppVersion when empty
+    tag: ""
+    pullPolicy: IfNotPresent
+  portal:
+    repository: af-mcp-platform-portal
+    # Defaults to .Chart.AppVersion when empty
+    tag: ""
+    pullPolicy: IfNotPresent
+
+# List of imagePullSecrets to add to all pods (name references only)
+imagePullSecrets: []
+# - name: my-registry-secret
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+  annotations: {}
+
+# ---------------------------------------------------------------------------
+# Broker: FastAPI (/v1 REST) + FastMCP aggregator (/mcp) — same pod
+# ---------------------------------------------------------------------------
+broker:
+  replicaCount: 2
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+
+  # Extra environment variables merged into the broker container.
+  # These supplement the env vars derived from broker.keycloak.* below.
+  # Format: key: value (rendered as EnvVars with name/value pairs)
+  env: {}
+  # MY_EXTRA_VAR: "some-value"
+
+  # OIDC / Keycloak configuration — rendered as env vars in the broker container.
+  keycloak:
+    issuer: "https://keycloak-prod.tempest.uchicago.edu/realms/connect"
+    audience: "mcp-gateway"
+    # Broker alias used to resolve the ATLAS IAM identity link
+    atlasIamBrokerAlias: "atlas-iam"
+
+  # Name of a pre-existing Secret providing the AF service token.
+  # The Secret must contain a key named `af-service-token`.
+  # Create this via SealedSecret externally; the chart does NOT create it.
+  existingServiceTokenSecret: ""
+
+  # NFS home directory access — required by the x509 legacy credential provider.
+  homeDir:
+    enabled: true
+    # How the home directory volume is provided:
+    #   pvc      — use an existing PersistentVolumeClaim (recommended for prod)
+    #   csi      — inline CSI volume (e.g. NFS CSI driver)
+    #   hostPath — host path directly (dev/testing only; not safe for prod)
+    mode: pvc
+    # Name of the PVC when mode=pvc
+    claimName: "af-user-homes"
+    mountPath: "/data/homes"
+    readOnly: true
+    # The root path inside the container where user homes are expected.
+    # The broker uses this to construct per-user paths: {homeRoot}/{username}
+    homeRoot: "/data/homes"
+    # CSI-specific fields (only used when mode=csi)
+    csi:
+      driver: ""
+      volumeAttributes: {}
+
+  # Per-uid proxy tmpfs — scratch space for x509 proxy files.
+  # Avoids writing grid proxies to the container overlay filesystem.
+  tmpfsProxy:
+    enabled: true
+    mountPath: "/run/broker/proxies"
+    sizeLimit: "64Mi"
+
+# ---------------------------------------------------------------------------
+# Aggregator: FastMCP backend registry
+# ---------------------------------------------------------------------------
+aggregator:
+  # If true, deploys the aggregator as a separate Deployment (advanced).
+  # Default (false) runs the aggregator inside the broker pod.
+  separate: false
+  # List of BackendSpec objects passed verbatim into backends.yaml.
+  # Each entry should follow the FastMCP BackendSpec schema, e.g.:
+  #   - name: my-tool
+  #     transport: sse
+  #     url: http://my-tool-svc:8000/mcp
+  backends: []
+
+# ---------------------------------------------------------------------------
+# Entitlements / policy
+# ---------------------------------------------------------------------------
+entitlements:
+  # The rendered policy.yaml is mounted at /etc/af-mcp/policy.yaml.
+  # Values here override the chart's built-in ATLAS defaults.
+  # Keys map to ATLAS IAM groups -> allowed capabilities/action types.
+  groups: {}
+  targetCapabilities: {}
+  targetActionTypes: {}
+
+# ---------------------------------------------------------------------------
+# Portal: static Astro site
+# ---------------------------------------------------------------------------
+portal:
+  replicaCount: 2
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# ---------------------------------------------------------------------------
+# OAuth2 Proxy — forward-auth integration
+# ---------------------------------------------------------------------------
+oauth2Proxy:
+  # URL of the EXISTING shared oauth2-proxy (traefik-triton namespace).
+  # All ingress routes use this as the nginx auth-url.
+  forwardAuthUrl: "http://oauth2-proxy.traefik-triton.svc.cluster.local:4180/oauth2/auth"
+  signInUrl: "https://oauth2-proxy.af.uchicago.edu/oauth2/sign_in"
+  # Set to true to deploy a dedicated oauth2-proxy for this release (advanced use).
+  dedicated: false
+
+# ---------------------------------------------------------------------------
+# Ingress
+# ---------------------------------------------------------------------------
+ingress:
+  enabled: true
+  className: nginx
+  # FQDN for the broker (REST + MCP) endpoints
+  mcpHost: mcp.af.uchicago.edu
+  # FQDN for the portal (static site)
+  portalHost: mcp-portal.af.uchicago.edu
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/auth-url: "http://oauth2-proxy.traefik-triton.svc.cluster.local:4180/oauth2/auth"
+    nginx.ingress.kubernetes.io/auth-signin: "https://oauth2-proxy.af.uchicago.edu/oauth2/sign_in?rd=$escaped_request_uri"
+    nginx.ingress.kubernetes.io/auth-response-headers: "Authorization,X-Auth-Request-User,X-Auth-Request-Email,X-Auth-Request-Groups"
+  tls:
+    enabled: true
+    # Secret name for the broker TLS certificate (managed by cert-manager)
+    mcpSecretName: letsencrypt-generated-af-mcp
+    # Secret name for the portal TLS certificate (managed by cert-manager)
+    portalSecretName: letsencrypt-generated-af-mcp-portal
+
+# ---------------------------------------------------------------------------
+# Network Policy
+# ---------------------------------------------------------------------------
+networkPolicy:
+  # When enabled, deny-all ingress to broker except from ingress controller;
+  # restrict broker egress to DNS, Keycloak, ATLAS IAM, backends, and Prometheus.
+  enabled: true
+
+# ---------------------------------------------------------------------------
+# Prometheus ServiceMonitor
+# ---------------------------------------------------------------------------
+serviceMonitor:
+  enabled: true
+  interval: 30s
+  # Namespace for the ServiceMonitor resource; defaults to the release namespace.
+  namespace: ""
+
+# ---------------------------------------------------------------------------
+# Grafana Dashboard ConfigMap
+# ---------------------------------------------------------------------------
+grafanaDashboard:
+  enabled: true
+  # Namespace where the ConfigMap is deployed.
+  # The Grafana sidecar (label grafana_dashboard: "1") watches this namespace.
+  namespace: prom

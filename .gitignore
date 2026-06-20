@@ -1,0 +1,51 @@
+# Pixi / Python
+.pixi/
+__pycache__/
+*.py[cod]
+*.pyo
+.mypy_cache/
+.ruff_cache/
+dist/
+*.egg-info/
+*.egg
+.eggs/
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+*.so
+build/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Node / Portal
+node_modules/
+portal/dist/
+portal/.astro/
+portal/node_modules/
+.npm/
+
+# Environment / secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# Helm — packed charts and downloaded dependencies
+charts/*/charts/
+*.tgz
+# Note: *-sealed.yaml files are Sealed Secrets and ARE safe to commit.
+# Do NOT add them here.
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db

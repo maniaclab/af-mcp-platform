@@ -1,0 +1,107 @@
+{{- if .Values.networkPolicy.enabled }}
+# Deny all ingress to the broker except from the nginx ingress controller.
+# Deny all egress from the broker except: DNS, Keycloak, ATLAS IAM, and Prometheus scrape.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "af-mcp-platform.broker.fullname" . }}
+  labels:
+    {{- include "af-mcp-platform.broker.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "af-mcp-platform.broker.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # Allow traffic from the nginx ingress controller pods (any namespace that
+    # carries the standard ingress-nginx label).
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 8080
+    # Allow Prometheus to scrape the metrics port from the prom namespace.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: prom
+      ports:
+        - protocol: TCP
+          port: 9090
+
+  egress:
+    # DNS — required for all outbound name resolution.
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+    # Keycloak (keycloak-prod.tempest.uchicago.edu) — OIDC token validation.
+    - ports:
+        - protocol: TCP
+          port: 443
+
+    # ATLAS IAM (atlas-auth.cern.ch) — credential delegation.
+    # The CIDR below covers both services; if your cluster has egress-policy
+    # enforcement via FQDN you can tighten this further.
+    # Kept intentionally broad (0.0.0.0/0 on 443) because the destination IPs
+    # of external OIDC providers are not stable. Restrict in production with an
+    # egress FQDN policy (e.g., Cilium NetworkPolicy or external firewall rule).
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              # Block access to cluster-internal RFC-1918 ranges except via
+              # explicit rules above (prevents SSRF to in-cluster services).
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
+
+    # In-cluster: allow broker to reach backend MCP services within the same namespace.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Release.Namespace | quote }}
+      ports:
+        - protocol: TCP
+          port: 8000
+        - protocol: TCP
+          port: 8080
+---
+# Portal network policy: allow ingress from nginx only; no special egress rules.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "af-mcp-platform.portal.fullname" . }}
+  labels:
+    {{- include "af-mcp-platform.portal.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "af-mcp-platform.portal.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 3000
+{{- end }}

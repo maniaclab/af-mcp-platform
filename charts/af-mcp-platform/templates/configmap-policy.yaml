@@ -1,0 +1,57 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "af-mcp-platform.fullname" . }}-policy
+  labels:
+    {{- include "af-mcp-platform.labels" . | nindent 4 }}
+data:
+  policy.yaml: |
+    # AF MCP Platform entitlements policy.
+    # Mounted at /etc/af-mcp/policy.yaml in the broker container.
+    # Override any section via values.entitlements.* in your overlay.
+
+    # ATLAS IAM group -> allowed broker capabilities.
+    # Built-in defaults cover standard ATLAS analysis groups.
+    groups:
+    {{- if .Values.entitlements.groups }}
+      {{- toYaml .Values.entitlements.groups | nindent 6 }}
+    {{- else }}
+      # Members of the main ATLAS group get full read/write credential access.
+      atlas:
+        - credential:read
+        - credential:write
+        - proxy:mint
+        - rucio:query
+      # Tier-3 users at UChicago AF get the same base set.
+      "atlas/Role=lcg":
+        - credential:read
+        - credential:write
+        - proxy:mint
+        - rucio:query
+      # Collaborators (non-ATLAS) get read-only credential access.
+      "atlas/Role=collaborator":
+        - credential:read
+    {{- end }}
+
+    # Allowed target capability types for MCP tool dispatch.
+    targetCapabilities:
+    {{- if .Values.entitlements.targetCapabilities }}
+      {{- toYaml .Values.entitlements.targetCapabilities | nindent 6 }}
+    {{- else }}
+      # Standard set: rucio queries, file staging, job submission.
+      - rucio:query
+      - rucio:stage
+      - panda:submit
+      - panda:query
+      - storage:read
+    {{- end }}
+
+    # Allowed MCP action types for audit logging / policy enforcement.
+    targetActionTypes:
+    {{- if .Values.entitlements.targetActionTypes }}
+      {{- toYaml .Values.entitlements.targetActionTypes | nindent 6 }}
+    {{- else }}
+      - tool_call
+      - resource_read
+      - state_change
+    {{- end }}

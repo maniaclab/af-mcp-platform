@@ -1,0 +1,55 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "af-mcp-platform.fullname" . }}
+  labels:
+    {{- include "af-mcp-platform.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className | quote }}
+  {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.mcpHost | quote }}
+      secretName: {{ .Values.ingress.tls.mcpSecretName | quote }}
+    - hosts:
+        - {{ .Values.ingress.portalHost | quote }}
+      secretName: {{ .Values.ingress.tls.portalSecretName | quote }}
+  {{- end }}
+  rules:
+    # Broker host — routes /v1 (REST API) and /mcp (FastMCP aggregator)
+    - host: {{ .Values.ingress.mcpHost | quote }}
+      http:
+        paths:
+          - path: /v1
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "af-mcp-platform.broker.fullname" . }}
+                port:
+                  name: http
+          - path: /mcp
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "af-mcp-platform.broker.fullname" . }}
+                port:
+                  name: http
+    # Portal host — routes everything to the static Astro site
+    - host: {{ .Values.ingress.portalHost | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "af-mcp-platform.portal.fullname" . }}
+                port:
+                  name: http
+{{- end }}

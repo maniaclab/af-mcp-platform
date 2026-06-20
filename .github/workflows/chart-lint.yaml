@@ -1,0 +1,34 @@
+name: Chart lint
+
+on:
+  pull_request:
+    paths:
+      - "charts/**"
+
+jobs:
+  chart-lint:
+    name: Helm lint + template + ct lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # chart-testing needs full history to detect changed charts
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: "3.15.0"
+
+      - uses: helm/chart-testing-action@v2.6.1
+
+      - name: helm lint
+        run: helm lint charts/af-mcp-platform
+
+      - name: helm template (dry-run)
+        run: |
+          helm template af-mcp-platform charts/af-mcp-platform \
+            --debug \
+            --set broker.image.tag=sha-test \
+            --set portal.image.tag=sha-test
+
+      - name: ct lint
+        run: ct lint --target-branch ${{ github.event.repository.default_branch }}

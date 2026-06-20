@@ -1,0 +1,418 @@
+---
+import Base from '../layouts/Base.astro';
+import DashboardCards from '../components/DashboardCards.vue';
+
+const headers = Astro.request.headers;
+const userEmail = headers.get('x-auth-request-email') ?? '';
+
+const mcpEndpoint = 'https://mcp.af.uchicago.edu/mcp';
+---
+
+<Base title="Overview">
+  <!-- ── Hero: particle track canvas + identity ────────────────────────── -->
+  <section class="hero" aria-label="Platform overview">
+    <canvas id="track-canvas" class="hero__canvas" aria-hidden="true"></canvas>
+
+    <div class="hero__content">
+      <div class="hero__eyebrow">ATLAS Analysis Facility</div>
+      <h1 class="hero__title">MCP Platform</h1>
+      <p class="hero__sub">
+        Model Context Protocol broker for ATLAS computing — connecting your
+        AI assistant to Rucio, AMI, and the analysis grid.
+      </p>
+
+      {userEmail && (
+        <div class="hero__user">
+          <span class="hero__user-label">Signed in as</span>
+          <span class="hero__user-email">{userEmail}</span>
+        </div>
+      )}
+    </div>
+  </section>
+
+  <!-- ── Status cards (Vue island — fetches live data) ─────────────────── -->
+  <DashboardCards client:load />
+
+  <!-- ── MCP endpoint ──────────────────────────────────────────────────── -->
+  <section class="endpoint-section" aria-label="MCP endpoint">
+    <h2 class="section-heading">Connect to this endpoint</h2>
+    <p class="section-body">
+      Add this server URL to Claude Desktop, Gemini Advanced, or any MCP-compatible
+      client. The broker authenticates with your AF Keycloak token automatically.
+    </p>
+
+    <div class="endpoint-block">
+      <div class="endpoint-block__header">
+        <span class="endpoint-block__label">MCP server URL</span>
+        <button
+          id="copy-btn"
+          class="endpoint-block__copy"
+          aria-label="Copy endpoint URL to clipboard"
+          data-url={mcpEndpoint}
+        >
+          Copy
+        </button>
+      </div>
+      <code class="endpoint-block__url">{mcpEndpoint}</code>
+    </div>
+
+    <div class="snippet-group">
+      <h3 class="snippet-heading">Claude Desktop (<code>claude_desktop_config.json</code>)</h3>
+      <pre class="code-block"><code>{`{
+  "mcpServers": {
+    "atlas-af": {
+      "url": "${mcpEndpoint}",
+      "type": "sse"
+    }
+  }
+}`}</code></pre>
+    </div>
+
+    <div class="snippet-group">
+      <h3 class="snippet-heading">curl / httpx</h3>
+      <pre class="code-block"><code>{`# Authenticate via your AF Keycloak token
+export AF_TOKEN="$(cat ~/.af_token)"
+curl -H "Authorization: Bearer $AF_TOKEN" \\
+     ${mcpEndpoint}`}</code></pre>
+    </div>
+  </section>
+</Base>
+
+<!-- ── Canvas particle track (the aesthetic risk) ─────────────────────── -->
+<!--
+  A sparse radial event display: a handful of curved tracks originating from
+  a central vertex, using quadratic Bezier curves to simulate magnetic
+  curvature — the same visualization ATLAS physicists read every day.
+  One orchestrated moment; the rest of the page is quiet.
+-->
+<script>
+  (function() {
+    const canvas = document.getElementById('track-canvas');
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    let W, H, tracks, animId;
+
+    const TRACK_COUNT = 18;
+    const TEAL  = 'rgba(0, 212, 200,';
+    const AMBER = 'rgba(245, 158, 11,';
+    const WHITE = 'rgba(232, 236, 240,';
+
+    function resize() {
+      W = canvas.offsetWidth;
+      H = canvas.offsetHeight;
+      canvas.width  = W * devicePixelRatio;
+      canvas.height = H * devicePixelRatio;
+      ctx.scale(devicePixelRatio, devicePixelRatio);
+    }
+
+    function buildTracks() {
+      tracks = [];
+      // Golden angle spacing: produces a naturally spread radial distribution
+      // that resembles a real ATLAS event display cross-section.
+      const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+      for (let i = 0; i < TRACK_COUNT; i++) {
+        const angle     = i * goldenAngle;
+        const curvature = (Math.random() - 0.5) * 0.6;
+        const length    = 0.2 + Math.random() * 0.45;
+        // Mostly teal (Cherenkov) with occasional amber (EM calorimeter)
+        const palette   = i % 7 === 0 ? AMBER : (i % 11 === 0 ? WHITE : TEAL);
+        const alpha     = 0.15 + Math.random() * 0.45;
+        const lineWidth = 0.5 + Math.random() * 0.8;
+        const phase     = Math.random() * Math.PI * 2;
+        tracks.push({ angle, curvature, length, palette, alpha, lineWidth, phase });
+      }
+    }
+
+    let t = 0;
+    function draw() {
+      ctx.clearRect(0, 0, W, H);
+
+      const cx = W * 0.5;
+      const cy = H * 0.5;
+      const R  = Math.min(W, H) * 0.44;
+
+      // Faint vertex point
+      ctx.beginPath();
+      ctx.arc(cx, cy, 3, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(0, 212, 200, 0.35)';
+      ctx.fill();
+
+      // Concentric barrel rings — pixel-thin, structural not decorative
+      [0.28, 0.55, 0.82, 1.0].forEach(f => {
+        ctx.beginPath();
+        ctx.arc(cx, cy, R * f, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(31, 41, 55, 0.7)';
+        ctx.lineWidth = 0.5;
+        ctx.stroke();
+      });
+
+      tracks.forEach(tr => {
+        // Gentle oscillation — drifting, not bouncing
+        const drift = Math.sin(t * 0.4 + tr.phase) * 0.015;
+        const a = tr.angle + drift;
+        const maxR = R * tr.length;
+
+        const x1 = cx;
+        const y1 = cy;
+        const x2 = cx + Math.cos(a) * maxR;
+        const y2 = cy + Math.sin(a) * maxR;
+
+        // Perpendicular offset for curvature control point
+        const mx = (x1 + x2) / 2;
+        const my = (y1 + y2) / 2;
+        const perp = { x: -(y2 - y1), y: (x2 - x1) };
+        const plen = Math.sqrt(perp.x ** 2 + perp.y ** 2);
+        const cpx = mx + (perp.x / plen) * maxR * tr.curvature;
+        const cpy = my + (perp.y / plen) * maxR * tr.curvature;
+
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.quadraticCurveTo(cpx, cpy, x2, y2);
+        ctx.strokeStyle = `${tr.palette} ${tr.alpha})`;
+        ctx.lineWidth = tr.lineWidth;
+        ctx.stroke();
+      });
+
+      t += 1;
+      animId = requestAnimationFrame(draw);
+    }
+
+    // Respect prefers-reduced-motion: render one static frame, no animation
+    const motionOK = window.matchMedia('(prefers-reduced-motion: no-preference)').matches;
+
+    resize();
+    buildTracks();
+
+    if (motionOK) {
+      draw();
+    } else {
+      t = 60;
+      draw();
+      cancelAnimationFrame(animId);
+    }
+
+    window.addEventListener('resize', () => {
+      resize();
+      if (!motionOK) {
+        draw();
+        cancelAnimationFrame(animId);
+      }
+    });
+  })();
+</script>
+
+<!-- ── Copy button ───────────────────────────────────────────────────── -->
+<script>
+  const btn = document.getElementById('copy-btn');
+  if (btn) {
+    btn.addEventListener('click', async () => {
+      const url = btn.dataset.url;
+      try {
+        await navigator.clipboard.writeText(url);
+        btn.textContent = 'Copied';
+        setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
+      } catch {
+        btn.textContent = 'Copy';
+      }
+    });
+  }
+</script>
+
+<style>
+/* ── Hero ──────────────────────────────────────────────────────────── */
+.hero {
+  position: relative;
+  height: 220px;
+  overflow: hidden;
+  border-radius: 4px;
+  border: 1px solid #1F2937;
+  background: #0A0E1A;
+  margin-bottom: 2rem;
+  display: flex;
+  align-items: center;
+}
+
+.hero__canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.hero__content {
+  position: relative;
+  z-index: 1;
+  padding: 2rem 2.5rem;
+}
+
+.hero__eyebrow {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #00D4C8;
+  margin-bottom: 0.5rem;
+}
+
+.hero__title {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 2.25rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: #E8ECF0;
+  line-height: 1.1;
+  margin: 0 0 0.625rem;
+}
+
+.hero__sub {
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  font-size: 0.9375rem;
+  color: #6B7280;
+  max-width: 38rem;
+  line-height: 1.6;
+  margin: 0 0 1rem;
+}
+
+.hero__user {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.hero__user-label {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #4B5563;
+}
+
+.hero__user-email {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.75rem;
+  color: #9CA3AF;
+}
+
+/* ── Endpoint section ─────────────────────────────────────────────── */
+.endpoint-section {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  max-width: 52rem;
+}
+
+.section-heading {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #4B5563;
+  margin: 0;
+}
+
+.section-body {
+  font-size: 0.9375rem;
+  color: #6B7280;
+  line-height: 1.6;
+  margin: 0;
+}
+
+.endpoint-block {
+  border: 1px solid #1F2937;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.endpoint-block__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0.875rem;
+  background: #111827;
+  border-bottom: 1px solid #1F2937;
+}
+
+.endpoint-block__label {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.5625rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #4B5563;
+}
+
+.endpoint-block__copy {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #00D4C8;
+  background: transparent;
+  border: 1px solid rgba(0, 212, 200, 0.2);
+  border-radius: 2px;
+  padding: 0.25rem 0.625rem;
+  cursor: pointer;
+  transition: background 150ms;
+}
+.endpoint-block__copy:hover { background: rgba(0, 212, 200, 0.08); }
+.endpoint-block__copy:focus-visible { outline: 2px solid #00D4C8; outline-offset: 2px; }
+
+.endpoint-block__url {
+  display: block;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.875rem;
+  color: #E8ECF0;
+  padding: 0.875rem;
+  background: #0A0E1A;
+  word-break: break-all;
+}
+
+/* Snippets */
+.snippet-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.snippet-heading {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: #6B7280;
+  margin: 0;
+}
+
+.snippet-heading code {
+  color: #9CA3AF;
+  font-size: 0.6875rem;
+}
+
+.code-block {
+  background: #0A0E1A;
+  border: 1px solid #1F2937;
+  border-radius: 4px;
+  padding: 0.875rem 1rem;
+  overflow-x: auto;
+  margin: 0;
+}
+
+.code-block code {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.8125rem;
+  color: #9CA3AF;
+  line-height: 1.7;
+}
+
+/* ── Responsive ────────────────────────────────────────────────────── */
+@media (max-width: 640px) {
+  .hero { height: 180px; }
+  .hero__title { font-size: 1.5rem; }
+  .hero__content { padding: 1.5rem; }
+}
+</style>

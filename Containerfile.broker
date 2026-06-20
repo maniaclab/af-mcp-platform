@@ -1,0 +1,25 @@
+FROM ghcr.io/prefix-dev/pixi:0.41.0 AS builder
+
+WORKDIR /app
+COPY pixi.toml pixi.lock* ./
+# Install only the broker feature, not dev
+RUN pixi install --frozen --environment broker
+
+COPY broker/ ./broker/
+
+# Final stage
+FROM debian:bookworm-slim
+WORKDIR /app
+COPY --from=builder /app/.pixi/envs/broker /opt/pixi-env
+COPY --from=builder /app /app
+
+ENV PATH="/opt/pixi-env/bin:${PATH}" \
+    PYTHONPATH="/app/broker/src" \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+RUN groupadd -r af-mcp && useradd -r -g af-mcp af-mcp
+USER af-mcp
+
+EXPOSE 8080
+CMD ["uvicorn", "af_mcp_broker.app:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "2"]

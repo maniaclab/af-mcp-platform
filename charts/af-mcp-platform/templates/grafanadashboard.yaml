@@ -1,0 +1,164 @@
+{{- if .Values.grafanaDashboard.enabled }}
+# Deployed to {{ .Values.grafanaDashboard.namespace }} so the Grafana sidecar
+# (label grafana_dashboard: "1") picks it up automatically.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "af-mcp-platform.fullname" . }}-dashboard
+  namespace: {{ .Values.grafanaDashboard.namespace | quote }}
+  labels:
+    {{- include "af-mcp-platform.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  dashboard.json: |-
+    {
+      "__inputs": [],
+      "__requires": [],
+      "annotations": { "list": [] },
+      "description": "AF MCP Platform — broker request rates, latencies, errors, credential cache, x509 proxy mints, and audit events.",
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 1,
+      "id": null,
+      "links": [],
+      "panels": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "fieldConfig": {
+            "defaults": { "color": { "mode": "palette-classic" }, "unit": "reqps" },
+            "overrides": []
+          },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+          "id": 1,
+          "options": { "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+          "targets": [
+            {
+              "expr": "sum(rate(af_mcp_http_requests_total{job=~\".*af-mcp.*\"}[5m])) by (endpoint, method)",
+              "legendFormat": "{{`{{method}}`}} {{`{{endpoint}}`}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Request Rate by Endpoint",
+          "type": "timeseries"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "fieldConfig": {
+            "defaults": { "color": { "mode": "palette-classic" }, "unit": "s" },
+            "overrides": []
+          },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+          "id": 2,
+          "options": { "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(af_mcp_http_request_duration_seconds_bucket{job=~\".*af-mcp.*\"}[5m])) by (le, endpoint))",
+              "legendFormat": "p95 {{`{{endpoint}}`}}",
+              "refId": "A"
+            }
+          ],
+          "title": "95th Percentile Latency by Endpoint",
+          "type": "timeseries"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "fieldConfig": {
+            "defaults": { "color": { "mode": "palette-classic" }, "unit": "percentunit" },
+            "overrides": []
+          },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+          "id": 3,
+          "options": { "legend": { "calcs": ["mean"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+          "targets": [
+            {
+              "expr": "sum(rate(af_mcp_http_requests_total{job=~\".*af-mcp.*\", status=~\"5..\"}[5m])) by (endpoint) / sum(rate(af_mcp_http_requests_total{job=~\".*af-mcp.*\"}[5m])) by (endpoint)",
+              "legendFormat": "5xx rate {{`{{endpoint}}`}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Error Rate (5xx) by Endpoint",
+          "type": "timeseries"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "fieldConfig": {
+            "defaults": { "color": { "mode": "palette-classic" }, "unit": "percentunit" },
+            "overrides": []
+          },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+          "id": 4,
+          "options": { "legend": { "calcs": ["mean"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+          "targets": [
+            {
+              "expr": "sum(rate(af_mcp_credential_cache_hits_total{job=~\".*af-mcp.*\"}[5m])) / (sum(rate(af_mcp_credential_cache_hits_total{job=~\".*af-mcp.*\"}[5m])) + sum(rate(af_mcp_credential_cache_misses_total{job=~\".*af-mcp.*\"}[5m])))",
+              "legendFormat": "Cache hit rate",
+              "refId": "A"
+            }
+          ],
+          "title": "Credential Cache Hit Rate",
+          "type": "timeseries"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "fieldConfig": {
+            "defaults": { "color": { "mode": "palette-classic" }, "unit": "short" },
+            "overrides": []
+          },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+          "id": 5,
+          "options": { "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+          "targets": [
+            {
+              "expr": "sum(increase(af_mcp_x509_proxy_mints_total{job=~\".*af-mcp.*\"}[1h])) by (username)",
+              "legendFormat": "Mints {{`{{username}}`}}",
+              "refId": "A"
+            }
+          ],
+          "title": "x509 Proxy Mints per Hour",
+          "type": "timeseries"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "fieldConfig": {
+            "defaults": { "color": { "mode": "palette-classic" }, "unit": "short" },
+            "overrides": []
+          },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+          "id": 6,
+          "options": { "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+          "targets": [
+            {
+              "expr": "sum(increase(af_mcp_audit_events_total{job=~\".*af-mcp.*\", action_type=\"state_change\"}[1h])) by (endpoint)",
+              "legendFormat": "state_change {{`{{endpoint}}`}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Audit Events (state_change) per Hour",
+          "type": "timeseries"
+        }
+      ],
+      "refresh": "30s",
+      "schemaVersion": 38,
+      "tags": ["mcp", "atlas", "af"],
+      "templating": {
+        "list": [
+          {
+            "current": {},
+            "hide": 0,
+            "includeAll": false,
+            "name": "datasource",
+            "options": [],
+            "query": "prometheus",
+            "refresh": 1,
+            "type": "datasource"
+          }
+        ]
+      },
+      "time": { "from": "now-3h", "to": "now" },
+      "timepicker": {},
+      "timezone": "browser",
+      "title": "AF MCP Platform",
+      "uid": "af-mcp-platform",
+      "version": 1
+    }
+{{- end }}

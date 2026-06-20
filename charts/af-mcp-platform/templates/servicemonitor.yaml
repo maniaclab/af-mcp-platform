@@ -1,0 +1,21 @@
+{{- if .Values.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "af-mcp-platform.broker.fullname" . }}
+  labels:
+    {{- include "af-mcp-platform.broker.labels" . | nindent 4 }}
+  namespace: {{ .Values.serviceMonitor.namespace | default .Release.Namespace | quote }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "af-mcp-platform.broker.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: metrics
+      interval: {{ .Values.serviceMonitor.interval | quote }}
+      path: /metrics
+      scheme: http
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace | quote }}
+{{- end }}

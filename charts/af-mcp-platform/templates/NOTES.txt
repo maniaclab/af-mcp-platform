@@ -1,0 +1,44 @@
+AF MCP Platform has been deployed.
+
+MCP Broker endpoint:
+{{- if .Values.ingress.enabled }}
+  https://{{ .Values.ingress.mcpHost }}/v1    (REST API)
+  https://{{ .Values.ingress.mcpHost }}/mcp   (FastMCP aggregator)
+{{- else }}
+  kubectl port-forward svc/{{ include "af-mcp-platform.broker.fullname" . }} 8080:8080
+  http://127.0.0.1:8080/v1
+  http://127.0.0.1:8080/mcp
+{{- end }}
+
+Portal:
+{{- if .Values.ingress.enabled }}
+  https://{{ .Values.ingress.portalHost }}
+{{- else }}
+  kubectl port-forward svc/{{ include "af-mcp-platform.portal.fullname" . }} 3000:3000
+  http://127.0.0.1:3000
+{{- end }}
+
+Next steps:
+
+1. Link identities (ATLAS IAM <-> Keycloak):
+   Users must complete the identity-linking flow before the broker can mint
+   ATLAS credentials. Direct them to:
+   https://{{ .Values.ingress.mcpHost }}/v1/link-identity
+
+2. Verify the service token secret is in place:
+{{- if .Values.broker.existingServiceTokenSecret }}
+   Secret {{ .Values.broker.existingServiceTokenSecret | quote }} expected in namespace {{ .Release.Namespace }}.
+{{- else }}
+   WARNING: broker.existingServiceTokenSecret is not set.
+   Create a SealedSecret providing key `af-service-token` and set
+   broker.existingServiceTokenSecret in your values overlay.
+{{- end }}
+
+3. Check broker health:
+   kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/component=broker
+
+4. View logs:
+   kubectl -n {{ .Release.Namespace }} logs -l app.kubernetes.io/component=broker -f
+
+5. Run Helm tests:
+   helm test {{ .Release.Name }} -n {{ .Release.Namespace }}

@@ -1,0 +1,55 @@
+# Default backend registry. Deployed as a ConfigMap and mounted at /etc/af-mcp/backends.yaml.
+# Adding a backend requires only a new entry here (via Helm values) — no code changes.
+backends:
+  - name: rucio
+    prefix: rucio
+    url: "http://rucio-mcp.mcp.svc.cluster.local:80/mcp"
+    transport: http
+    required_capability: read_data
+    entitlement_groups: [atlas, cms, dune, escape]
+    # OIDCProvider returns the stored IAM-brokered token.
+    # rucio-mcp handles the aud=rucio RFC 8693 exchange itself.
+    auth_type: bearer
+
+  - name: ami
+    prefix: ami
+    url: "https://ami.cern.ch/mcp"
+    transport: http
+    required_capability: read_metadata
+    entitlement_groups: [atlas]
+    # X509Provider mints a voms-proxy via the user's home-dir cert.
+    auth_type: x509
+
+  - name: atlasopenmagic
+    prefix: openmagic
+    url: "http://atlasopenmagic-mcp.mcp.svc.cluster.local/mcp"
+    transport: http
+    required_capability: read_metadata
+    entitlement_groups: []  # open to any authenticated user
+    # ServiceProvider: on_behalf with AF service credential.
+    auth_type: none
+
+  - name: jupyter-control
+    prefix: jupyter
+    url: "http://jupyterhub.jupyterhub.svc.cluster.local:8081/mcp"
+    transport: http
+    required_capability: manage_jupyter
+    entitlement_groups: [atlas, cms, dune]
+    # Authorization via platform k8s SA; no user credential forwarded.
+    auth_type: none
+
+  - name: monitoring
+    prefix: monitoring
+    url: "http://grafana.prom.svc.cluster.local:3000/mcp"
+    transport: http
+    required_capability: read_monitoring
+    entitlement_groups: []
+    auth_type: none
+
+  - name: docs
+    prefix: docs
+    url: "http://docs-mcp.af.svc.cluster.local/mcp"
+    transport: http
+    required_capability: __none__
+    entitlement_groups: []
+    auth_type: none

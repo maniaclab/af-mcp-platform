@@ -1,0 +1,39 @@
+---
+import Base from '../layouts/Base.astro';
+import IdentitiesPage from '../components/IdentitiesPage.vue';
+---
+
+<Base title="Identities">
+  <div class="page-header">
+    <h1 class="page-title">External identities</h1>
+    <p class="page-subtitle">
+      Link your CERN, ATLAS IAM, and GitLab accounts. Each linked identity
+      unlocks additional MCP tools and compute capabilities.
+    </p>
+  </div>
+
+  <IdentitiesPage client:load />
+</Base>
+
+<style>
+.page-header {
+  margin-bottom: 1.75rem;
+}
+
+.page-title {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #E8ECF0;
+  margin: 0 0 0.5rem;
+}
+
+.page-subtitle {
+  font-size: 0.9375rem;
+  color: #6B7280;
+  line-height: 1.6;
+  margin: 0;
+  max-width: 52rem;
+}
+</style>

@@ -1,0 +1,161 @@
+# Spike: NFS subPath isolation for proxy-mint Job
+#
+# Replace ALL angle-bracket placeholders before applying:
+#   <UID>           numeric UID of the user under test (e.g. 50001)
+#   <GID>           numeric GID of the user under test (e.g. 5000)
+#   <USERNAME>      POSIX username string (e.g. "jdoe")
+#   <NFS_SERVER>    IP or hostname of the NFS server
+#   <NFS_PATH>      exported NFS path (e.g. /export/home)
+#   <OTHER_USERNAME> a different user's username for the isolation test
+#
+# Apply with:
+#   kubectl apply -f spikes/nfs-subpath/mint-job-test.yaml
+---
+# Job 1 — positive test: the correct user CAN read their own cert files.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: nfs-subpath-positive
+  labels:
+    app.kubernetes.io/part-of: af-mcp-platform
+    af-mcp/spike: nfs-subpath
+spec:
+  ttlSecondsAfterFinished: 300
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsUser: <UID>
+        runAsGroup: <GID>
+        runAsNonRoot: true
+        fsGroup: <GID>
+      containers:
+        - name: probe
+          image: busybox:1.36
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          # Pass: usercert.pem must exist and be readable.
+          command:
+            - sh
+            - -c
+            - |
+              echo "=== directory listing ==="
+              ls -la /mnt/test-home/ && \
+              test -f /mnt/test-home/usercert.pem && \
+              echo "PASS" || echo "FAIL"
+          volumeMounts:
+            - name: user-globus
+              mountPath: /mnt/test-home
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: "10m"
+              memory: "16Mi"
+            limits:
+              cpu: "100m"
+              memory: "32Mi"
+      volumes:
+        - name: user-globus
+          nfs:
+            server: <NFS_SERVER>
+            path: <NFS_PATH>
+          # subPath scopes the mount to <USERNAME>/.globus only.
+          # Kubernetes does not support subPath directly on nfs volumes in all
+          # versions; use a subPathExpr + downwardAPI if the cluster requires it.
+          # For clusters where subPath on NFS works, use the volumeMount subPath below
+          # instead of the volume-level path restriction and adjust accordingly.
+          #
+          # Preferred pattern (works on most clusters):
+          # volume path = <NFS_PATH>/<USERNAME>/.globus  (set path above)
+          # mountPath in container = /mnt/test-home
+          #
+          # If the NFS export is a parent path, set nfs.path = <NFS_PATH>
+          # and add subPath on the volumeMount:
+          #   volumeMounts:
+          #     - name: user-globus
+          #       mountPath: /mnt/test-home
+          #       subPath: <USERNAME>/.globus
+          #       readOnly: true
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi
+---
+# Job 2 — isolation test: the correct user CANNOT read a different user's cert.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: nfs-subpath-isolation
+  labels:
+    app.kubernetes.io/part-of: af-mcp-platform
+    af-mcp/spike: nfs-subpath
+spec:
+  ttlSecondsAfterFinished: 300
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsUser: <UID>
+        runAsGroup: <GID>
+        runAsNonRoot: true
+        fsGroup: <GID>
+      containers:
+        - name: probe
+          image: busybox:1.36
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          # Isolation pass: the ls must fail OR show no cert files.
+          # If ls succeeds and usercert.pem is readable, this is a security gap.
+          command:
+            - sh
+            - -c
+            - |
+              echo "=== attempting to list OTHER user's .globus ==="
+              if ls /mnt/other-home/ 2>/dev/null | grep -q "usercert.pem"; then
+                echo "ISOLATION_FAIL: other user cert is readable"
+                exit 1
+              else
+                echo "ISOLATION_PASS: other user home not accessible"
+                exit 0
+              fi
+          volumeMounts:
+            - name: other-user-globus
+              mountPath: /mnt/other-home
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: "10m"
+              memory: "16Mi"
+            limits:
+              cpu: "100m"
+              memory: "32Mi"
+      volumes:
+        # Mount a DIFFERENT user's .globus directory to verify it's not readable
+        # by our UID.  Replace <OTHER_USERNAME> with an actual username.
+        - name: other-user-globus
+          nfs:
+            server: <NFS_SERVER>
+            # Adjust path to point at the OTHER user's .globus directory.
+            path: <NFS_PATH>/<OTHER_USERNAME>/.globus
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi

@@ -1,0 +1,36 @@
+---
+# Example SealedSecret structure for af-mcp-service-token
+# This shows the format after sealing. Real encrypted value would be much longer.
+#
+# To create the actual sealed secret:
+#
+# 1. Create the base secret:
+#    cat > af-mcp-service-token.yaml <<EOF
+#    apiVersion: v1
+#    kind: Secret
+#    metadata:
+#      name: af-mcp-service-token
+#      namespace: af-mcp
+#    type: Opaque
+#    stringData:
+#      af-service-token: <your-actual-service-token>
+#    EOF
+#
+# 2. Seal it:
+#    kubeseal -f af-mcp-service-token.yaml -w af-mcp-service-token-sealed.yaml
+#
+# 3. Replace this file with the actual sealed secret output and commit to the repo.
+
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: af-mcp-service-token
+  namespace: af-mcp
+spec:
+  encryptedData:
+    af-service-token: <BASE64-ENCRYPTED-VALUE>
+  template:
+    metadata:
+      name: af-mcp-service-token
+      namespace: af-mcp
+    type: Opaque

@@ -1,0 +1,97 @@
+<script setup lang="ts">
+import { ref, onMounted } from 'vue';
+import { fetchProxyStatus } from '../lib/api';
+import type { ProxyStatus } from '../lib/api';
+import ProxyStatusWidget from './ProxyStatus.vue';
+
+const status = ref<ProxyStatus | null>(null);
+const loading = ref(true);
+const error = ref<string | null>(null);
+
+onMounted(async () => {
+  try {
+    status.value = await fetchProxyStatus();
+  } catch (err) {
+    error.value = err instanceof Error
+      ? err.message
+      : 'Could not load proxy status.';
+  } finally {
+    loading.value = false;
+  }
+});
+
+function handleUnlocked(newStatus: ProxyStatus) {
+  status.value = newStatus;
+}
+
+function handleRevoked() {
+  status.value = { has_proxy: false };
+}
+</script>
+
+<template>
+  <div class="psp">
+    <div v-if="loading" class="psp__loading" aria-live="polite">
+      <span class="psp__spinner" aria-hidden="true"></span>
+      Checking proxy status…
+    </div>
+
+    <div v-else-if="error" class="psp__error" role="alert">
+      <span class="psp__error-title">Status unavailable</span>
+      <span class="psp__error-body">{{ error }}</span>
+    </div>
+
+    <ProxyStatusWidget
+      v-else-if="status !== null"
+      :status="status"
+      @unlocked="handleUnlocked"
+      @revoked="handleRevoked"
+    />
+  </div>
+</template>
+
+<style scoped>
+.psp {
+  max-width: 42rem;
+}
+
+.psp__loading {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 2rem 0;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.8125rem;
+  color: #6B7280;
+}
+
+.psp__spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid #1F2937;
+  border-top-color: #00D4C8;
+  border-radius: 50%;
+  animation: spin 600ms linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .psp__spinner { animation: none; border-top-color: #6B7280; }
+}
+
+.psp__error {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  padding: 1rem;
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  border-radius: 4px;
+  background: rgba(239, 68, 68, 0.05);
+}
+.psp__error-title {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #EF4444;
+}
+.psp__error-body { font-size: 0.875rem; color: #9CA3AF; }
+</style>

@@ -1,0 +1,41 @@
+---
+import Base from '../layouts/Base.astro';
+import CatalogPage from '../components/CatalogPage.vue';
+---
+
+<Base title="Tool Catalog">
+  <div class="page-header">
+    <div class="page-header__text">
+      <h1 class="page-title">Tool catalog</h1>
+      <p class="page-subtitle">
+        MCP tools your account can call, grouped by backend. Access is determined
+        by your linked identities and granted capabilities.
+      </p>
+    </div>
+  </div>
+
+  <CatalogPage client:load />
+</Base>
+
+<style>
+.page-header {
+  margin-bottom: 1.75rem;
+}
+
+.page-title {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #E8ECF0;
+  margin: 0 0 0.5rem;
+}
+
+.page-subtitle {
+  font-size: 0.9375rem;
+  color: #6B7280;
+  line-height: 1.6;
+  margin: 0;
+  max-width: 52rem;
+}
+</style>

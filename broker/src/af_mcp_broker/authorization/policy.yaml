@@ -1,0 +1,46 @@
+# Default group→capability mappings for ATLAS AF
+# Groups come from the Keycloak connect realm token claims.
+group_capabilities:
+  atlas: [read_data, read_metadata, read_monitoring, read_gitlab, submit_jobs, manage_jobs, launch_compute, manage_jupyter, manage_gitlab]
+  cms: [read_data, read_metadata, read_monitoring, submit_jobs, manage_jobs, launch_compute]
+  dune: [read_data, read_metadata, submit_jobs, manage_jobs, launch_compute]
+  escape: [read_data, read_metadata]
+  af-admins: [read_data, read_metadata, read_monitoring, read_gitlab, submit_jobs, manage_jobs, launch_compute, manage_jupyter, manage_gitlab, manage_data, admin]
+  # Any authenticated user (no group membership required)
+  __authenticated__: [read_metadata, read_monitoring]
+
+# Which capability is required to use each backend target.
+# "__none__" means open to any authenticated user.
+target_capabilities:
+  rucio: read_data
+  ami: read_metadata
+  atlasopenmagic: read_metadata
+  panda: submit_jobs
+  condor: submit_jobs
+  gitlab: read_gitlab
+  jupyter-control: manage_jupyter
+  monitoring: read_monitoring
+  docs: __none__
+
+# Action type overrides per backend (tool glob pattern -> action type).
+# Anything not listed defaults to "read".
+target_action_types:
+  panda:
+    "submit_*": state_change
+    "cancel_*": state_change
+    "delete_*": state_change
+    "kill_*": state_change
+  condor:
+    "submit_*": state_change
+    "rm_*": state_change
+    "hold_*": state_change
+    "release_*": state_change
+  gitlab:
+    "create_*": state_change
+    "update_*": state_change
+    "merge_*": state_change
+    "retry_*": state_change
+    "close_*": state_change
+    "delete_*": state_change
+  jupyter-control:
+    "*": state_change
