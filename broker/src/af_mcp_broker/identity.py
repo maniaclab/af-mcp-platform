@@ -11,7 +11,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import SecretStr
 
-from af_mcp_broker.config import Settings
+from af_mcp_broker.config import Settings, get_settings
 
 logger = structlog.get_logger(__name__)
 
@@ -105,6 +105,13 @@ def _extract_principal(claims: dict[str, Any], raw_token: str) -> Principal:
     if not posix:
         raise ValueError("JWT is missing required 'posix' claim")
 
+    # A malformed 'posix' claim (missing uid/gid/unixname) is a client-side
+    # invalid-token condition, not a server error — raise ValueError so the
+    # caller returns 401 rather than letting a KeyError escape as a 500.
+    missing = [k for k in ("uid", "gid", "unixname") if k not in posix]
+    if missing:
+        raise ValueError(f"JWT 'posix' claim is missing keys: {', '.join(missing)}")
+
     subject = claims.get("sub", "")
     email = claims.get("email", "")
     groups: list[str] = claims.get("groups", [])
@@ -135,9 +142,18 @@ async def get_principal(token: str, settings: Settings) -> Principal:
     """
     keys = await get_jwks(settings)
 
-    last_error: Exception | None = None
-    for key_data in keys:
-        try:
+    error: Exception | str | None = None
+    try:
+        # Select the signing key by the token's `kid`. A JWKS commonly carries
+        # more than one key (e.g. Keycloak publishes both a signature and an
+        # encryption key); trying keys in list order and treating a signature
+        # mismatch as fatal fails whenever the wrong key sorts first.
+        header = jwt.get_unverified_header(token)
+        kid = header.get("kid")
+        key_data = _select_jwk(keys, kid)
+        if key_data is None:
+            error = f"no JWKS key matches token kid={kid!r}"
+        else:
             public_key = jwt.algorithms.RSAAlgorithm.from_jwk(key_data)
             claims = jwt.decode(
                 token,
@@ -148,29 +164,39 @@ async def get_principal(token: str, settings: Settings) -> Principal:
                 options={"verify_exp": True},
             )
             return _extract_principal(claims, token)
-        except jwt.exceptions.InvalidKeyError:
-            # This key is not the right one; try the next.
-            continue
-        except jwt.ExpiredSignatureError as exc:
-            last_error = exc
-            logger.info("jwt_expired", subject=_peek_sub(token))
-            break
-        except jwt.InvalidTokenError as exc:
-            last_error = exc
-            break
-        except ValueError as exc:
-            last_error = exc
-            break
+    except jwt.ExpiredSignatureError as exc:
+        error = exc
+        logger.info("jwt_expired", subject=_peek_sub(token))
+    except jwt.InvalidTokenError as exc:
+        error = exc
+    except (ValueError, KeyError) as exc:
+        error = exc
 
     logger.warning(
         "jwt_validation_failed",
-        error=str(last_error) if last_error else "no matching key",
+        error=str(error) if error else "no matching key",
     )
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid or expired token",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
+
+def _select_jwk(
+    keys: list[dict[str, Any]], kid: str | None
+) -> dict[str, Any] | None:
+    """Return the JWK matching ``kid``.
+
+    When the token carries no ``kid`` and the JWKS publishes exactly one key,
+    fall back to that key so single-key realms keep working.
+    """
+    if kid is not None:
+        for key_data in keys:
+            if key_data.get("kid") == kid:
+                return key_data
+        return None
+    return keys[0] if len(keys) == 1 else None
 
 
 def _peek_sub(token: str) -> str:
@@ -189,7 +215,7 @@ def _peek_sub(token: str) -> str:
 
 async def keycloak_dependency(
     credentials: HTTPAuthorizationCredentials = Depends(_bearer_scheme),
-    settings: Settings = Depends(Settings),
+    settings: Settings = Depends(get_settings),
 ) -> Principal:
     """FastAPI dependency that resolves to the authenticated Principal.
 

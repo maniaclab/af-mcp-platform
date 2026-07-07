@@ -147,7 +147,11 @@ class OIDCProvider(CredentialProvider):
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(
                 broker_token_url,
-                headers={"Authorization": f"Bearer {principal.raw_token}"},
+                headers={
+                    "Authorization": (
+                        f"Bearer {principal.raw_token.get_secret_value()}"
+                    )
+                },
             )
 
         if resp.status_code == 401:

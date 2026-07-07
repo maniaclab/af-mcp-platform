@@ -4,7 +4,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict
 
-from af_mcp_broker.config import Settings
+from af_mcp_broker.config import Settings, get_settings
 from af_mcp_broker.identity import Principal, keycloak_dependency
 
 logger = structlog.get_logger(__name__)
@@ -119,7 +119,7 @@ async def get_identities(
 async def link_identity(
     body: LinkIdentityRequest,
     principal: Principal = Depends(keycloak_dependency),
-    settings: Settings = Depends(Settings),
+    settings: Settings = Depends(get_settings),
 ) -> LinkIdentityResponse:
     if body.provider not in _PROVIDERS:
         raise HTTPException(
