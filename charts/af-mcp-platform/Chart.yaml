@@ -8,5 +8,7 @@ keywords: [mcp, atlas, hep, analysis-facility]
 home: https://github.com/maniaclab/af-mcp-platform
 sources: [https://github.com/maniaclab/af-mcp-platform]
 maintainers:
-  - name: Giordon Stark
+  # Giordon Stark
+  - name: kratsg
     email: kratsg@gmail.com
+    url: https://github.com/kratsg

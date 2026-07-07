@@ -28,14 +28,22 @@ spec:
       ports:
         - protocol: TCP
           port: 8080
-    # Allow Prometheus to scrape the metrics port from the prom namespace.
+    # Allow Prometheus to scrape /metrics (served on the http port) from the prom namespace.
     - from:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: prom
       ports:
         - protocol: TCP
-          port: 9090
+          port: 8080
+    # Allow the chart's own helm-test pod (same namespace) to hit the broker.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: test
+      ports:
+        - protocol: TCP
+          port: 8080
 
   egress:
     # DNS — required for all outbound name resolution.
@@ -45,12 +53,8 @@ spec:
         - protocol: TCP
           port: 53
 
-    # Keycloak (keycloak-prod.tempest.uchicago.edu) — OIDC token validation.
-    - ports:
-        - protocol: TCP
-          port: 443
-
-    # ATLAS IAM (atlas-auth.cern.ch) — credential delegation.
+    # Keycloak (keycloak-prod.tempest.uchicago.edu) and ATLAS IAM
+    # (atlas-auth.cern.ch) — OIDC token validation and credential delegation.
     # The CIDR below covers both services; if your cluster has egress-policy
     # enforcement via FQDN you can tighten this further.
     # Kept intentionally broad (0.0.0.0/0 on 443) because the destination IPs
@@ -103,5 +107,5 @@ spec:
               app.kubernetes.io/name: ingress-nginx
       ports:
         - protocol: TCP
-          port: 3000
+          port: 8081
 {{- end }}

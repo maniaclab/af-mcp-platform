@@ -9,11 +9,8 @@ spec:
   selector:
     {{- include "af-mcp-platform.broker.selectorLabels" . | nindent 4 }}
   ports:
+    # /metrics is served on the same port as the REST/MCP API.
     - name: http
       port: 8080
       targetPort: http
-      protocol: TCP
-    - name: metrics
-      port: 9090
-      targetPort: metrics
       protocol: TCP

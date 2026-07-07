@@ -5,10 +5,13 @@ metadata:
   name: {{ include "af-mcp-platform.fullname" . }}
   labels:
     {{- include "af-mcp-platform.labels" . | nindent 4 }}
-  {{- with .Values.ingress.annotations }}
   annotations:
+    nginx.ingress.kubernetes.io/auth-url: {{ .Values.oauth2Proxy.forwardAuthUrl | quote }}
+    nginx.ingress.kubernetes.io/auth-signin: {{ printf "%s?rd=$escaped_request_uri" .Values.oauth2Proxy.signInUrl | quote }}
+    nginx.ingress.kubernetes.io/auth-response-headers: "Authorization,X-Auth-Request-User,X-Auth-Request-Email,X-Auth-Request-Groups"
+    {{- with .Values.ingress.annotations }}
     {{- toYaml . | nindent 4 }}
-  {{- end }}
+    {{- end }}
 spec:
   {{- if .Values.ingress.className }}
   ingressClassName: {{ .Values.ingress.className | quote }}

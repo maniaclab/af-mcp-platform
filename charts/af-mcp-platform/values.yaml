@@ -27,6 +27,11 @@ serviceAccount:
   name: ""
   annotations: {}
 
+# RBAC (Role + RoleBinding) for the broker's ServiceAccount: it mints x509
+# proxies via ephemeral k8s Jobs and needs to manage those Jobs/Pods.
+rbac:
+  create: true
+
 # ---------------------------------------------------------------------------
 # Broker: FastAPI (/v1 REST) + FastMCP aggregator (/mcp) — same pod
 # ---------------------------------------------------------------------------
@@ -70,6 +75,8 @@ broker:
     # Name of the PVC when mode=pvc
     claimName: "af-user-homes"
     mountPath: "/data/homes"
+    # Host path to bind-mount when mode=hostPath (dev/testing only).
+    hostPath: "/data/homes"
     readOnly: true
     # The root path inside the container where user homes are expected.
     # The broker uses this to construct per-user paths: {homeRoot}/{username}
@@ -90,9 +97,6 @@ broker:
 # Aggregator: FastMCP backend registry
 # ---------------------------------------------------------------------------
 aggregator:
-  # If true, deploys the aggregator as a separate Deployment (advanced).
-  # Default (false) runs the aggregator inside the broker pod.
-  separate: false
   # List of BackendSpec objects passed verbatim into backends.yaml.
   # Each entry should follow the FastMCP BackendSpec schema, e.g.:
   #   - name: my-tool
@@ -146,11 +150,10 @@ ingress:
   mcpHost: mcp.af.uchicago.edu
   # FQDN for the portal (static site)
   portalHost: mcp-portal.af.uchicago.edu
+  # Extra annotations merged onto the Ingress. auth-url/auth-signin are derived
+  # from oauth2Proxy.* below and always added; put other annotations here.
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
-    nginx.ingress.kubernetes.io/auth-url: "http://oauth2-proxy.traefik-triton.svc.cluster.local:4180/oauth2/auth"
-    nginx.ingress.kubernetes.io/auth-signin: "https://oauth2-proxy.af.uchicago.edu/oauth2/sign_in?rd=$escaped_request_uri"
-    nginx.ingress.kubernetes.io/auth-response-headers: "Authorization,X-Auth-Request-User,X-Auth-Request-Email,X-Auth-Request-Groups"
   tls:
     enabled: true
     # Secret name for the broker TLS certificate (managed by cert-manager)
