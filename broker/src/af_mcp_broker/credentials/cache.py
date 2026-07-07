@@ -5,14 +5,11 @@ import os
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import structlog
 
 from af_mcp_broker.credentials.base import IssuedCredential
-
-if TYPE_CHECKING:
-    pass
 
 log = structlog.get_logger(__name__)
 
