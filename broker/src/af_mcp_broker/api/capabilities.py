@@ -1,13 +1,20 @@
 from __future__ import annotations
 
-import fnmatch
 from typing import Any, Literal
 
 import structlog
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict
 
+from af_mcp_broker.authorization import (
+    CAPABILITIES,
+    EntitlementPolicy,
+    _get_action_type,
+    check_entitlement,
+    get_principal_capabilities,
+)
 from af_mcp_broker.identity import Principal, keycloak_dependency
+from af_mcp_broker.mcp.registry import BackendRegistry
 
 logger = structlog.get_logger(__name__)
 
@@ -38,6 +45,7 @@ class AuthorizeRequest(BaseModel):
 
     capability: str
     target: str
+    # The concrete tool name being invoked; used to resolve the action type.
     action: str
     context: dict[str, Any] = {}
 
@@ -47,7 +55,8 @@ class AuthorizeResponse(BaseModel):
 
     allow: bool
     reason: str
-    obligations: list[str]
+    action_type: Literal["read", "state_change"]
+    obligations: list[str] = []
 
 
 class CatalogTool(BaseModel):
@@ -67,127 +76,50 @@ class CatalogResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Authorization logic — thin wrapper around the policy engine loaded at startup.
+# Helpers — all decisions run through the authorization/ policy engine, which
+# is the schema shipped in policy.yaml.
 # ---------------------------------------------------------------------------
 
 
-def check_entitlement(
-    principal: Principal,
-    capability: str,
-    target: str,
-    action: str,
-    policy: dict[str, Any],
-) -> AuthorizeResponse:
-    """Evaluate a single capability/target/action triple against the loaded policy.
+def _empty_policy() -> EntitlementPolicy:
+    return EntitlementPolicy()
 
-    The policy dict is expected to contain a top-level "rules" list where each
-    entry is:
 
-        - capability: <str>
-          targets: ["*"] | [<glob>, ...]
-          actions: ["*"] | [<str>, ...]
-          groups: ["*"] | [<group>, ...]
-          obligations: [<str>, ...]
+def _get_policy(request: Request) -> EntitlementPolicy:
+    return getattr(request.app.state, "entitlement_policy", None) or _empty_policy()
 
-    Returns deny-by-default when no rule matches.
+
+def _get_registry(request: Request) -> BackendRegistry:
+    return getattr(request.app.state, "backend_registry", None) or BackendRegistry()
+
+
+def _action_type_for_capability(capability: str) -> Literal["read", "state_change"]:
+    cap = CAPABILITIES.get(capability)
+    return cap.action_type if cap else "read"  # type: ignore[return-value]
+
+
+def _grants_for(
+    principal: Principal, policy: EntitlementPolicy
+) -> list[CapabilityGrant]:
+    """Build per-capability grants from the principal's capabilities.
+
+    For each granted capability we list the targets that require it (from
+    ``target_capabilities``) and the capability's action type.
     """
-    rules: list[dict[str, Any]] = policy.get("rules", [])
-
-    caller_groups = set(principal.groups)
-
-    for rule in rules:
-        if rule.get("capability") != capability:
-            continue
-
-        # Target match
-        targets: list[str] = rule.get("targets", [])
-        if not any(fnmatch.fnmatch(target, t) for t in targets):
-            continue
-
-        # Action match
-        actions: list[str] = rule.get("actions", [])
-        if "*" not in actions and action not in actions:
-            continue
-
-        # Group membership match
-        allowed_groups: list[str] = rule.get("groups", [])
-        if "*" not in allowed_groups and not caller_groups.intersection(allowed_groups):
-            continue
-
-        obligations: list[str] = rule.get("obligations", [])
-        return AuthorizeResponse(
-            allow=True,
-            reason=f"Matched rule for capability '{capability}'",
-            obligations=obligations,
+    caps = get_principal_capabilities(principal, policy)
+    grants: list[CapabilityGrant] = []
+    for cap in sorted(caps):
+        targets = sorted(
+            t for t, req in policy.target_capabilities.items() if req == cap
         )
-
-    return AuthorizeResponse(
-        allow=False,
-        reason=f"No policy rule grants '{action}' on '{target}' for capability '{capability}'",
-        obligations=[],
-    )
-
-
-def _get_grants(principal: Principal, policy: dict[str, Any]) -> list[CapabilityGrant]:
-    """Collect all capability grants for the caller from the policy."""
-    caller_groups = set(principal.groups)
-    # Aggregate per-capability targets and action_types.
-    grants: dict[str, dict[str, Any]] = {}
-
-    for rule in policy.get("rules", []):
-        cap: str = rule.get("capability", "")
-        if not cap:
-            continue
-
-        allowed_groups: list[str] = rule.get("groups", [])
-        if "*" not in allowed_groups and not caller_groups.intersection(allowed_groups):
-            continue
-
-        entry = grants.setdefault(cap, {"targets": set(), "action_types": set()})
-        entry["targets"].update(rule.get("targets", []))
-        for action in rule.get("actions", []):
-            # Classify actions coarsely: reads are non-mutating
-            if action in {"read", "get", "list", "*"}:
-                entry["action_types"].add("read")
-            else:
-                entry["action_types"].add("state_change")
-
-    return [
-        CapabilityGrant(
-            capability=cap,
-            targets=sorted(v["targets"]),
-            action_types=sorted(v["action_types"]),  # type: ignore[arg-type]
-        )
-        for cap, v in grants.items()
-    ]
-
-
-def _filter_catalog(
-    principal: Principal,
-    backends: list[dict[str, Any]],
-    policy: dict[str, Any],
-) -> list[CatalogTool]:
-    """Return tools from backends that the principal is entitled to see."""
-    result: list[CatalogTool] = []
-    grants = _get_grants(principal, policy)
-    granted_caps = {g.capability for g in grants}
-
-    for backend in backends:
-        backend_name: str = backend.get("name", "")
-        for tool in backend.get("tools", []):
-            cap: str = tool.get("capability", "")
-            if cap not in granted_caps:
-                continue
-            result.append(
-                CatalogTool(
-                    name=tool.get("name", ""),
-                    backend=backend_name,
-                    description=tool.get("description", ""),
-                    capability=cap,
-                    action_type=tool.get("action_type", "read"),
-                )
+        grants.append(
+            CapabilityGrant(
+                capability=cap,
+                targets=targets,
+                action_types=[_action_type_for_capability(cap)],
             )
-    return result
+        )
+    return grants
 
 
 # ---------------------------------------------------------------------------
@@ -204,9 +136,10 @@ async def get_capabilities(
     request: Request,
     principal: Principal = Depends(keycloak_dependency),
 ) -> CapabilitiesResponse:
-    policy: dict[str, Any] = getattr(request.app.state, "policy", {})
-    grants = _get_grants(principal, policy)
-    return CapabilitiesResponse(subject=principal.subject, grants=grants)
+    policy = _get_policy(request)
+    return CapabilitiesResponse(
+        subject=principal.subject, grants=_grants_for(principal, policy)
+    )
 
 
 @router.post(
@@ -219,20 +152,25 @@ async def authorize(
     request: Request,
     principal: Principal = Depends(keycloak_dependency),
 ) -> AuthorizeResponse:
-    policy: dict[str, Any] = getattr(request.app.state, "policy", {})
-    result = check_entitlement(
-        principal, body.capability, body.target, body.action, policy
-    )
+    policy = _get_policy(request)
+    allow, reason = check_entitlement(principal, body.capability, body.target, policy)
+    action_type = _get_action_type(body.target, body.action, policy)
     logger.info(
         "authorize_decision",
         subject=principal.subject,
         capability=body.capability,
         target=body.target,
         action=body.action,
-        allow=result.allow,
-        reason=result.reason,
+        action_type=action_type,
+        allow=allow,
+        reason=reason,
     )
-    return result
+    return AuthorizeResponse(
+        allow=allow,
+        reason=reason,
+        action_type=action_type,  # type: ignore[arg-type]
+        obligations=[],
+    )
 
 
 @router.get(
@@ -244,7 +182,22 @@ async def get_catalog(
     request: Request,
     principal: Principal = Depends(keycloak_dependency),
 ) -> CatalogResponse:
-    policy: dict[str, Any] = getattr(request.app.state, "policy", {})
-    backends: list[dict[str, Any]] = getattr(request.app.state, "backends", [])
-    tools = _filter_catalog(principal, backends, policy)
+    policy = _get_policy(request)
+    registry = _get_registry(request)
+    caps = get_principal_capabilities(principal, policy)
+
+    tools: list[CatalogTool] = []
+    for spec in registry.all_backends():
+        required = spec.required_capability
+        if required != "__none__" and required not in caps:
+            continue
+        tools.append(
+            CatalogTool(
+                name=spec.prefix,
+                backend=spec.name,
+                description="",
+                capability=required,
+                action_type=_action_type_for_capability(required),
+            )
+        )
     return CatalogResponse(tools=tools)

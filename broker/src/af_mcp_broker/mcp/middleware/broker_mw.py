@@ -8,6 +8,7 @@ import httpx
 import structlog
 
 from af_mcp_broker.audit import AuditRecord, write_audit
+from af_mcp_broker.config import Settings
 
 logger = structlog.get_logger(__name__)
 
@@ -17,12 +18,12 @@ logger = structlog.get_logger(__name__)
 # middleware calls /v1/authorize and /v1/credential over HTTP loopback
 # rather than in-process calls. This keeps the aggregation layer swappable.
 
-_BROKER_BASE_URL = "http://localhost:8080"
-
 
 async def broker_middleware(request: Any, call_next: Any) -> Any:
     """Authorize + credential inject for every MCP tool call."""
     from af_mcp_broker.mcp.registry import BackendRegistry
+
+    broker_base_url = Settings().broker_internal_url
 
     principal = getattr(request, "context", {}).get("principal")
     if principal is None:
@@ -45,7 +46,7 @@ async def broker_middleware(request: Any, call_next: Any) -> Any:
     # 1. Authorize
     async with httpx.AsyncClient() as client:
         auth_resp = await client.post(
-            f"{_BROKER_BASE_URL}/v1/authorize",
+            f"{broker_base_url}/v1/authorize",
             json={
                 "capability": backend.required_capability,
                 "target": backend.name,
@@ -71,7 +72,7 @@ async def broker_middleware(request: Any, call_next: Any) -> Any:
     if backend.auth_type != "none":
         async with httpx.AsyncClient() as client:
             cred_resp = await client.post(
-                f"{_BROKER_BASE_URL}/v1/credential",
+                f"{broker_base_url}/v1/credential",
                 json={"target": backend.name},
                 headers={"Authorization": f"Bearer {bearer_token}"},
                 timeout=5.0,
@@ -88,10 +89,11 @@ async def broker_middleware(request: Any, call_next: Any) -> Any:
 
         credential = cred_resp.json()
 
-    # 3. Inject credential into the request
+    # 3. Inject credential into the request. Only bearer credentials carry a
+    # token in the response; x509 proxies are read server-side from a shared
+    # path and never transit the response body.
     if credential and credential.get("kind") == "bearer":
-        payload = credential.get("payload", {})
-        access_token = payload.get("access_token")
+        access_token = credential.get("token")
         if access_token and hasattr(request, "headers"):
             request.headers["Authorization"] = f"Bearer {access_token}"
 

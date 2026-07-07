@@ -1,12 +1,20 @@
 from __future__ import annotations
 
-import structlog
+import time
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel, ConfigDict, SecretStr
+from pydantic import BaseModel, ConfigDict, SecretBytes, SecretStr
 
+from af_mcp_broker.credentials import (
+    CredentialCache,
+    CredentialKind,
+    CredentialRegistry,
+    NeedsUnlock,
+    X509Provider,
+)
+from af_mcp_broker.credentials.base import IssuedCredential as _IssuedCredential
 from af_mcp_broker.identity import Principal, keycloak_dependency
-
-logger = structlog.get_logger(__name__)
 
 router = APIRouter(tags=["credentials"])
 
@@ -27,11 +35,15 @@ class IssuedCredential(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     target: str
-    credential_type: str
+    kind: str  # "bearer" | "x509_proxy_ref" | "none"
+    credential_type: str  # provider cred_class
     expires_at: str  # ISO-8601
     remaining_seconds: int
-    # bearer_token / scitokens are returned here; PEM is never returned.
+    # bearer credentials carry a token the aggregator injects server-side.
+    # x509 credentials return only handle/path metadata — never the PEM.
     token: str | None = None
+    proxy_handle: str | None = None
+    proxy_path: str | None = None
 
 
 class ProxyRequest(BaseModel):
@@ -41,17 +53,19 @@ class ProxyRequest(BaseModel):
     passphrase: SecretStr
     valid: str = "12:00"
     voms: str = "atlas"
+    # Which x509 target to mint for; defaults to the first configured x509 target.
+    target: str | None = None
 
 
 class ProxyMetadata(BaseModel):
     model_config = ConfigDict(frozen=True)
 
+    target: str
     dn: str
     voms_attributes: list[str]
     expires_at: str  # ISO-8601
     remaining_seconds: int
-    # PEM is intentionally absent from this model — the proxy is stored
-    # server-side and never returned to callers.
+    # PEM is intentionally absent — the proxy is stored server-side.
 
 
 class ProxyCacheStatus(BaseModel):
@@ -65,108 +79,74 @@ class ProxyCacheStatus(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Credential subsystem stubs — replaced by real implementations when the
-# backing stores (Vault, SciTokens issuer, proxy cache) are wired up.
+# Helpers
 # ---------------------------------------------------------------------------
 
 
-async def _issue_credential(
-    principal: Principal,
-    target: str,
-    min_remaining_seconds: int,
-    app_state: object,
-) -> IssuedCredential:
-    """Look up a cached credential or issue a new one for the target.
-
-    Raises HTTPException(409) when the target requires a proxy but the proxy
-    cache is empty — the client must call POST /v1/x509/proxy first.
-    """
-    proxy_status: ProxyCacheStatus = _get_proxy_cache_status(principal, app_state)
-
-    if target.startswith("rucio") or target.startswith("grid"):
-        if not proxy_status.cached:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail={
-                    "error": "proxy_unlock_required",
-                    "unlock_endpoint": "/v1/x509/proxy",
-                },
-            )
-
-    # Stub: return placeholder until real token issuance is implemented.
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail=f"Credential issuance for target '{target}' is not yet implemented",
-    )
+def _iso(epoch: float) -> str:
+    return datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat()
 
 
-def _get_proxy_cache_status(
-    principal: Principal, app_state: object
-) -> ProxyCacheStatus:
-    """Read the proxy cache for the caller's unixname.
-
-    The real implementation reads from a Redis store keyed by uid. This stub
-    always returns uncached so that downstream logic behaves correctly before
-    the cache is wired up.
-    """
-    return ProxyCacheStatus(cached=False)
-
-
-async def _burn_credentials(principal: Principal, app_state: object) -> None:
-    """Invalidate all cached credentials for the caller.
-
-    No-op until the credential store is wired up.
-    """
-    logger.info("credential_burn_requested", subject=principal.subject)
-
-
-async def _issue_proxy(
-    principal: Principal,
-    passphrase: SecretStr,
-    valid: str,
-    voms: str,
-    app_state: object,
-) -> ProxyMetadata:
-    """Run voms-proxy-init against the user's certificate, store the proxy.
-
-    The passphrase is consumed here and must never be logged or forwarded
-    further. PassphraseRedactProcessor in the logging pipeline ensures that
-    any accidental structlog calls with a 'passphrase' key are sanitised.
-
-    Raises HTTPException(424) when the ATLAS IAM identity is not linked — the
-    proxy workflow requires a delegated certificate from ATLAS IAM.
-    """
-    if principal.iam_sub is None:
+def _registry(request: Request) -> CredentialRegistry:
+    registry = getattr(request.app.state, "credential_registry", None)
+    if registry is None:
         raise HTTPException(
-            status_code=status.HTTP_424_FAILED_DEPENDENCY,
-            detail={
-                "error": "atlas_iam_not_linked",
-                "message": (
-                    "An ATLAS IAM identity must be linked before a VOMS proxy "
-                    "can be generated. Link at POST /v1/identities/link."
-                ),
-            },
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Credential subsystem is not configured",
         )
-
-    logger.info(
-        "proxy_issuance_requested",
-        subject=principal.subject,
-        unixname=principal.unixname,
-        voms=voms,
-        valid=valid,
-        # passphrase is intentionally absent — PassphraseRedactProcessor is a
-        # belt-and-suspenders guard; never pass it here at all.
-    )
-
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="VOMS proxy issuance is not yet implemented",
-    )
+    return registry
 
 
-async def _burn_proxy(principal: Principal, app_state: object) -> None:
-    """Revoke and delete the cached proxy for the caller."""
-    logger.info("proxy_burn_requested", subject=principal.subject)
+def _cache(request: Request) -> CredentialCache:
+    cache = getattr(request.app.state, "credential_cache", None)
+    if cache is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Credential cache is not configured",
+        )
+    return cache
+
+
+def _x509_provider(request: Request) -> X509Provider:
+    provider = getattr(request.app.state, "x509_provider", None)
+    if provider is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No x509 credential provider is configured",
+        )
+    return provider
+
+
+def _resolve_x509_target(request: Request, target: str | None) -> str:
+    if target is not None:
+        return target
+    targets: list[str] = getattr(request.app.state, "x509_targets", [])
+    if not targets:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No x509 target is configured",
+        )
+    return targets[0]
+
+
+def _to_response(cred: _IssuedCredential) -> IssuedCredential:
+    remaining = max(0, int(cred.expires_at - time.time()))
+    common = {
+        "target": cred.target,
+        "kind": cred.kind.value,
+        "credential_type": cred.cred_class,
+        "expires_at": _iso(cred.expires_at),
+        "remaining_seconds": remaining,
+    }
+    if cred.kind == CredentialKind.BEARER:
+        return IssuedCredential(token=cred.payload.get("access_token"), **common)
+    if cred.kind == CredentialKind.X509_PROXY_REF:
+        return IssuedCredential(
+            proxy_handle=cred.payload.get("proxy_handle"),
+            proxy_path=cred.payload.get("proxy_path"),
+            **common,
+        )
+    return IssuedCredential(**common)
 
 
 # ---------------------------------------------------------------------------
@@ -184,9 +164,27 @@ async def issue_credential(
     request: Request,
     principal: Principal = Depends(keycloak_dependency),
 ) -> IssuedCredential:
-    return await _issue_credential(
-        principal, body.target, body.min_remaining_seconds, request.app.state
-    )
+    registry = _registry(request)
+    try:
+        cred = await registry.issue(
+            principal,
+            body.target,
+            min_remaining_seconds=body.min_remaining_seconds,
+        )
+    except NeedsUnlock as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "proxy_unlock_required",
+                "unlock_endpoint": exc.unlock_endpoint,
+            },
+        ) from exc
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No credential provider registered for target '{body.target}'",
+        ) from exc
+    return _to_response(cred)
 
 
 @router.delete(
@@ -198,7 +196,7 @@ async def delete_credential(
     request: Request,
     principal: Principal = Depends(keycloak_dependency),
 ) -> None:
-    await _burn_credentials(principal, request.app.state)
+    await _cache(request).revoke_all(principal.uid)
 
 
 @router.post(
@@ -212,14 +210,29 @@ async def create_proxy(
     request: Request,
     principal: Principal = Depends(keycloak_dependency),
 ) -> ProxyMetadata:
-    # PassphraseRedactProcessor handles any accidental passphrase leakage in
-    # structlog calls within _issue_proxy. We do not log the body here.
-    return await _issue_proxy(
-        principal,
-        body.passphrase,
-        body.valid,
-        body.voms,
-        request.app.state,
+    provider = _x509_provider(request)
+    target = _resolve_x509_target(request, body.target)
+    passphrase = SecretBytes(body.passphrase.get_secret_value().encode())
+    try:
+        await provider.issue(principal, target, passphrase=passphrase)
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=str(exc),
+        ) from exc
+
+    meta = _cache(request).get_proxy_meta(principal.uid, target)
+    if meta is None:  # pragma: no cover - mint succeeded but nothing cached
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Proxy minted but no metadata was cached",
+        )
+    return ProxyMetadata(
+        target=target,
+        dn=meta.dn,
+        voms_attributes=meta.voms_attributes,
+        expires_at=_iso(meta.not_after),
+        remaining_seconds=max(0, int(meta.not_after - time.time())),
     )
 
 
@@ -230,9 +243,20 @@ async def create_proxy(
 )
 async def proxy_status(
     request: Request,
+    target: str | None = None,
     principal: Principal = Depends(keycloak_dependency),
 ) -> ProxyCacheStatus:
-    return _get_proxy_cache_status(principal, request.app.state)
+    resolved = _resolve_x509_target(request, target)
+    meta = _cache(request).get_proxy_meta(principal.uid, resolved)
+    if meta is None:
+        return ProxyCacheStatus(cached=False)
+    return ProxyCacheStatus(
+        cached=True,
+        dn=meta.dn,
+        voms_attributes=meta.voms_attributes,
+        expires_at=_iso(meta.not_after),
+        remaining_seconds=max(0, int(meta.not_after - time.time())),
+    )
 
 
 @router.delete(
@@ -242,6 +266,14 @@ async def proxy_status(
 )
 async def delete_proxy(
     request: Request,
+    target: str | None = None,
     principal: Principal = Depends(keycloak_dependency),
 ) -> None:
-    await _burn_proxy(principal, request.app.state)
+    provider = _x509_provider(request)
+    targets: list[str]
+    if target is not None:
+        targets = [target]
+    else:
+        targets = getattr(request.app.state, "x509_targets", [])
+    for tgt in targets:
+        await provider.revoke(principal, tgt)

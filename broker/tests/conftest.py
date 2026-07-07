@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
+from fastapi.testclient import TestClient
 from jwt.algorithms import RSAAlgorithm
+from pydantic import SecretStr
 
 from af_mcp_broker import identity
 from af_mcp_broker.config import Settings
@@ -16,6 +20,12 @@ from af_mcp_broker.config import Settings
 ISSUER = "https://keycloak.test/realms/connect"
 AUDIENCE = "mcp-gateway"
 JWKS_URI = "https://keycloak.test/realms/connect/protocol/openid-connect/certs"
+
+# Point tests at the YAML files that actually ship with the broker so the
+# entitlement decisions exercised here match production config.
+_SRC = Path(__file__).resolve().parents[1] / "src" / "af_mcp_broker"
+SHIPPED_POLICY = _SRC / "authorization" / "policy.yaml"
+SHIPPED_BACKENDS = _SRC / "mcp" / "backends.yaml"
 
 
 @dataclass
@@ -93,3 +103,63 @@ def make_claims(**overrides: Any) -> dict[str, Any]:
     }
     claims.update(overrides)
     return claims
+
+
+@pytest.fixture
+def policy():
+    from af_mcp_broker.authorization import load_policy
+
+    return load_policy(str(SHIPPED_POLICY))
+
+
+@pytest.fixture
+def make_principal() -> Callable[..., object]:
+    from af_mcp_broker.identity import Principal
+
+    def _make(
+        *,
+        groups: list[str] | None = None,
+        uid: int = 1000,
+        gid: int = 1000,
+        unixname: str = "tuser",
+        iam_sub: str | None = None,
+    ) -> Principal:
+        return Principal(
+            subject="sub-abc",
+            email="tuser@example.org",
+            uid=uid,
+            gid=gid,
+            unixname=unixname,
+            groups=list(groups or []),
+            iam_sub=iam_sub,
+            cern_sub=None,
+            raw_token=SecretStr("fake-token"),
+        )
+
+    return _make
+
+
+@pytest.fixture
+def app_client(
+    monkeypatch: pytest.MonkeyPatch, make_principal: Callable[..., object]
+) -> Iterator[tuple[TestClient, dict]]:
+    """Boot the real app with the lifespan running against the shipped YAML.
+
+    keycloak_dependency is bypassed via dependency_overrides; mutate
+    ``state["principal"]`` to change who the caller is for a given request.
+    """
+    monkeypatch.setenv("POLICY_FILE", str(SHIPPED_POLICY))
+    monkeypatch.setenv("BACKENDS_FILE", str(SHIPPED_BACKENDS))
+    # An unreachable issuer keeps startup JWKS priming a no-op (non-fatal).
+    monkeypatch.setenv("KEYCLOAK_ISSUER", "https://keycloak.invalid/realms/connect")
+
+    from af_mcp_broker.app import app
+    from af_mcp_broker.identity import keycloak_dependency
+
+    state: dict = {"principal": make_principal(groups=["atlas"], iam_sub="iam-sub-1")}
+    app.dependency_overrides[keycloak_dependency] = lambda: state["principal"]
+
+    with TestClient(app) as client:
+        yield client, state
+
+    app.dependency_overrides.clear()

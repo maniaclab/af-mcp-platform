@@ -24,7 +24,7 @@ class BackendRegistry:
 
     def load(self, path: str) -> None:
         with open(path) as fh:
-            raw = yaml.safe_load(fh)
+            raw = yaml.safe_load(fh) or {}
         for entry in raw.get("backends", []):
             spec = BackendSpec(
                 name=entry["name"],

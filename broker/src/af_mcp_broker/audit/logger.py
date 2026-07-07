@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import dataclasses
+import json
 import sys
 import uuid
 from dataclasses import dataclass, field
@@ -29,27 +31,19 @@ class AuditRecord:
 
 
 class AuditLogger:
-    """Append-only audit logger. Writes JSON lines via structlog."""
+    """Append-only audit logger. Writes one JSON line per record to *output*."""
 
     def __init__(self, output: TextIO = sys.stdout) -> None:
         self._output = output
 
     async def write(self, record: AuditRecord) -> None:
-        logger.info(
-            "audit",
-            audit_id=record.audit_id,
-            principal_sub=record.principal_sub,
-            principal_uid=record.principal_uid,
-            capability=record.capability,
-            target=record.target,
-            action=record.action,
-            action_type=record.action_type,
-            args_summary=record.args_summary[:500],  # truncate to 500 chars
-            timestamp=record.timestamp,
-            request_id=record.request_id,
-            mcp_backend=record.mcp_backend,
-            execution_model=record.execution_model,
-        )
+        payload = dataclasses.asdict(record)
+        # Truncate the args summary defensively — it is caller-supplied.
+        payload["args_summary"] = payload["args_summary"][:500]
+        payload["event"] = "audit"
+        line = json.dumps(payload, default=str)
+        self._output.write(line + "\n")
+        self._output.flush()
 
 
 def init_audit_logger(output: TextIO = sys.stdout) -> None:

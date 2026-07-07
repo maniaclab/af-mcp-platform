@@ -58,7 +58,7 @@ class EntitlementPolicy:
 
 def load_policy(path: str) -> EntitlementPolicy:
     with open(path) as fh:
-        raw = yaml.safe_load(fh)
+        raw = yaml.safe_load(fh) or {}
     policy = EntitlementPolicy()
     policy.group_capabilities = raw.get("group_capabilities", {})
     policy.target_capabilities = raw.get("target_capabilities", {})
@@ -97,7 +97,6 @@ def check_entitlement(
     principal: Principal,
     capability: str,
     target: str,
-    action: str,
     policy: EntitlementPolicy,
 ) -> tuple[bool, str]:
     """Returns (allow, reason)."""

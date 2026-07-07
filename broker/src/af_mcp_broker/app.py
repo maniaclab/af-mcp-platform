@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import os
+import sys
 from contextlib import asynccontextmanager
-from typing import Any, AsyncGenerator
+from typing import AsyncGenerator, TextIO
 
 import structlog
-import yaml  # type: ignore[import-untyped]
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import JSONResponse, Response
@@ -13,28 +12,31 @@ from pydantic import ValidationError
 
 from af_mcp_broker._version import version as __version__
 from af_mcp_broker.api.router import router as v1_router
+from af_mcp_broker.audit.logger import init_audit_logger
+from af_mcp_broker.authorization import EntitlementPolicy, load_policy
 from af_mcp_broker.config import Settings
+from af_mcp_broker.credentials import (
+    CredentialCache,
+    CredentialRegistry,
+    OIDCProvider,
+    X509Provider,
+)
 from af_mcp_broker.identity import get_jwks
 from af_mcp_broker.logging import configure_logging
 from af_mcp_broker.mcp.aggregator import aggregator_app
+from af_mcp_broker.mcp.registry import BackendRegistry
 
 logger = structlog.get_logger(__name__)
 
 
-def _load_yaml_file(path: str, label: str) -> dict[str, Any] | list[Any]:
-    """Load a YAML file and return the parsed content.
+def _open_audit_output(dest: str) -> TextIO:
+    """Resolve the AUDIT_LOG_FILE setting to a writable stream.
 
-    Returns an empty dict when the file does not exist, so the application
-    degrades gracefully in development environments without full config.
+    "-" means stdout; any other value is opened for appending.
     """
-    if not os.path.exists(path):
-        logger.warning(f"{label}_file_not_found", path=path)
-        return {}
-    with open(path) as fh:
-        data = yaml.safe_load(fh)
-    if data is None:
-        return {}
-    return data
+    if dest == "-":
+        return sys.stdout
+    return open(dest, "a")  # noqa: SIM115 - closed on lifespan shutdown
 
 
 @asynccontextmanager
@@ -42,21 +44,54 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     settings = Settings()
     configure_logging(settings.log_level)
 
-    # Load policy and backends into app state so route handlers can access them
-    # via request.app.state without passing Settings through every dependency.
-    policy = _load_yaml_file(settings.policy_file, "policy")
-    backends_raw = _load_yaml_file(settings.backends_file, "backends")
+    # --- Authorization: the authorization/ engine matches the shipped policy.yaml.
+    try:
+        entitlement_policy = load_policy(settings.policy_file)
+    except FileNotFoundError:
+        logger.warning("policy_file_not_found", path=settings.policy_file)
+        entitlement_policy = EntitlementPolicy()
 
-    application.state.policy = policy
+    # --- Backend registry (config-only; adding a backend needs no code change).
+    backend_registry = BackendRegistry()
+    try:
+        backend_registry.load(settings.backends_file)
+    except FileNotFoundError:
+        logger.warning("backends_file_not_found", path=settings.backends_file)
+    backends = backend_registry.all_backends()
+
+    # --- Credential subsystem: cache + janitor + provider registry.
+    credential_cache = CredentialCache()
+    credential_cache.start_janitor()
+
+    oidc_provider = OIDCProvider(settings, credential_cache)
+    x509_provider = X509Provider(settings, credential_cache)
+    credential_registry = CredentialRegistry([oidc_provider, x509_provider])
+
+    # Map each backend target to a provider by its declared auth_type.
+    #   bearer -> OIDCProvider (stored brokered IAM token)
+    #   x509   -> X509Provider (voms-proxy minted from the user's ~/.globus cert)
+    #   none   -> no user credential required, so no provider is registered.
+    x509_targets: list[str] = []
+    for spec in backends:
+        if spec.auth_type == "bearer":
+            credential_registry.register(spec.name, oidc_provider)
+        elif spec.auth_type == "x509":
+            credential_registry.register(spec.name, x509_provider)
+            x509_targets.append(spec.name)
+
+    # --- Audit: without init the module drops every record. Honor AUDIT_LOG_FILE.
+    audit_output = _open_audit_output(settings.audit_log_file)
+    init_audit_logger(audit_output)
+
     application.state.settings = settings
-
-    # backends.yaml is expected to have a top-level "backends" list.
-    if isinstance(backends_raw, dict):
-        application.state.backends = backends_raw.get("backends", [])
-    else:
-        application.state.backends = backends_raw
-
-    application.state.backends_loaded = bool(application.state.backends)
+    application.state.entitlement_policy = entitlement_policy
+    application.state.backend_registry = backend_registry
+    application.state.backends = backends
+    application.state.backends_loaded = bool(backends)
+    application.state.credential_cache = credential_cache
+    application.state.credential_registry = credential_registry
+    application.state.x509_provider = x509_provider
+    application.state.x509_targets = x509_targets
 
     # Prime the JWKS cache at startup so the first request does not pay the
     # latency cost of a remote fetch.
@@ -73,11 +108,15 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         keycloak_issuer=settings.keycloak_issuer,
         policy_file=settings.policy_file,
         backends_file=settings.backends_file,
-        backends_count=len(application.state.backends),
+        backends_count=len(backends),
+        x509_targets=x509_targets,
     )
 
     yield
 
+    await credential_cache.stop_janitor()
+    if audit_output is not sys.stdout:
+        audit_output.close()
     logger.info("af_mcp_broker_stopped")
 
 

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Any
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings
 
 # pydantic-settings matches env vars to field names case-insensitively, so the
@@ -11,6 +12,15 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
+    # ``keycloak_dependency`` injects Settings via ``Depends(Settings)``. FastAPI
+    # builds a request model from the callable's signature, and the pydantic-
+    # settings ``BaseSettings.__init__`` exposes private (``_cli_parse_args`` …)
+    # parameters that FastAPI cannot turn into fields. Overriding ``__init__``
+    # with a plain ``**data`` signature keeps env loading intact while giving
+    # FastAPI a clean signature to introspect.
+    def __init__(self, **data: Any) -> None:
+        super().__init__(**data)
+
     # Keycloak OIDC configuration
     keycloak_issuer: str = "https://keycloak-prod.tempest.uchicago.edu/realms/connect"
     keycloak_audience: str = "mcp-gateway"
@@ -31,7 +41,17 @@ class Settings(BaseSettings):
     # Audit log destination; "-" means stdout
     audit_log_file: str = "-"
 
-    log_level: str = "INFO"
+    # Loopback base URL the aggregator middleware uses to reach the broker's
+    # own /v1 API. The broker contract is HTTP even when co-located.
+    broker_internal_url: str = Field(
+        default="http://localhost:8080",
+        alias="BROKER_INTERNAL_URL",
+    )
+
+    log_level: str = Field(
+        default="INFO",
+        alias="LOG_LEVEL",
+    )
 
     @model_validator(mode="after")
     def _derive_jwks_uri(self) -> Settings:
