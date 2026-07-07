@@ -1,16 +1,21 @@
 <script setup lang="ts">
-import { ref } from 'vue';
-import type { CatalogEntry } from '../lib/api';
+import { ref, computed } from 'vue';
+import type { BackendGroup } from '../lib/api';
 import ToolTable from './ToolTable.vue';
 
 const props = defineProps<{
-  backend: CatalogEntry;
+  backend: BackendGroup;
 }>();
 
 const expanded = ref(false);
 
-const stateChangeCount = props.backend.tools.filter(t => t.action_type === 'state_change').length;
-const readCount = props.backend.tools.filter(t => t.action_type === 'read').length;
+// computed() so the badges track the parent's filtered `tools`.
+const stateChangeCount = computed(
+  () => props.backend.tools.filter(t => t.action_type === 'state_change').length,
+);
+const readCount = computed(
+  () => props.backend.tools.filter(t => t.action_type === 'read').length,
+);
 </script>
 
 <template>
@@ -19,19 +24,22 @@ const readCount = props.backend.tools.filter(t => t.action_type === 'read').leng
     <button
       class="bc__header"
       :aria-expanded="expanded"
-      :aria-controls="`tools-${backend.prefix}`"
+      :aria-controls="`tools-${backend.backend}`"
       @click="expanded = !expanded"
     >
       <div class="bc__header-left">
-        <span class="bc__prefix">{{ backend.prefix }}</span>
-        <span class="bc__name">{{ backend.backend }}</span>
-        <span v-if="backend.description" class="bc__desc">{{ backend.description }}</span>
+        <span class="bc__prefix">{{ backend.backend }}</span>
       </div>
 
       <div class="bc__header-right">
-        <!-- Capability badge -->
-        <span class="bc__cap-badge" :title="`Requires capability: ${backend.capability}`">
-          {{ backend.capability }}
+        <!-- Capability badges -->
+        <span
+          v-for="cap in backend.capabilities"
+          :key="cap"
+          class="bc__cap-badge"
+          :title="`Requires capability: ${cap}`"
+        >
+          {{ cap }}
         </span>
 
         <!-- Tool counts -->
@@ -59,7 +67,7 @@ const readCount = props.backend.tools.filter(t => t.action_type === 'read').leng
 
     <!-- Tool list — visible when expanded -->
     <div
-      :id="`tools-${backend.prefix}`"
+      :id="`tools-${backend.backend}`"
       class="bc__tools"
       :class="{ 'bc__tools--visible': expanded }"
       role="region"

@@ -2,28 +2,17 @@
 /**
  * Base.astro — shell layout for every portal page.
  *
- * oauth2-proxy injects these headers on every authenticated request:
- *   X-Auth-Request-User, X-Auth-Request-Email, X-Auth-Request-Groups
- *   Authorization: Bearer <token>
- *
- * Astro reads them from Astro.request.headers and injects them into
- * <meta> tags so client-side Vue islands can read them without an
- * extra round-trip.  In static/preview mode the headers will be absent
- * and the meta tags will be empty — the UI degrades gracefully.
+ * This is a static build. Identity is NOT read from request headers at render
+ * time (those are empty in a static output and embedding a token would be an
+ * XSS-exfiltration risk). Instead the nav username — and any element tagged
+ * `data-af-identity` — is filled client-side from GET /v1/identities, which
+ * rides the same-origin oauth2-proxy session cookie.
  */
 interface Props {
   title?: string;
 }
 
 const { title = 'AF MCP Platform' } = Astro.props;
-
-const headers = Astro.request.headers;
-const userEmail    = headers.get('x-auth-request-email')    ?? '';
-const userName     = headers.get('x-auth-request-user')     ?? '';
-const userGroups   = headers.get('x-auth-request-groups')   ?? '';
-// Strip "Bearer " prefix if present so the meta tag holds just the token.
-const rawAuth      = headers.get('authorization')           ?? '';
-const token        = rawAuth.startsWith('Bearer ') ? rawAuth.slice(7) : rawAuth;
 
 const navLinks = [
   { href: '/',            label: 'Overview' },
@@ -32,7 +21,7 @@ const navLinks = [
   { href: '/status',      label: 'AMI Proxy' },
 ];
 
-const currentPath = new URL(Astro.request.url).pathname.replace(/\/$/, '') || '/';
+const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
 ---
 
 <!doctype html>
@@ -42,19 +31,62 @@ const currentPath = new URL(Astro.request.url).pathname.replace(/\/$/, '') || '/
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>{title} — AF MCP Platform</title>
 
-  <!-- Identity & auth meta tags — read by src/lib/auth.ts and api.ts -->
-  <meta name="af-user-email"    content={userEmail} />
-  <meta name="af-user-username" content={userName} />
-  <meta name="af-user-groups"   content={userGroups} />
-  <meta name="af-token"         content={token} />
-
-  <!-- IBM Plex — the type system that grounds this design in instrumentation -->
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link
-    href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
-    rel="stylesheet"
-  />
+  <style>
+    /* -----------------------------------------------------------------------
+       IBM Plex — self-hosted so the strict CSP (default-src 'self') can serve
+       them without allowing fonts.googleapis.com / fonts.gstatic.com.
+       woff2 files live in portal/public/fonts/.
+    ----------------------------------------------------------------------- */
+    @font-face {
+      font-family: 'IBM Plex Sans';
+      font-style: normal;
+      font-weight: 400;
+      font-display: swap;
+      src: url('/fonts/ibm-plex-sans-latin-400-normal.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'IBM Plex Sans';
+      font-style: normal;
+      font-weight: 500;
+      font-display: swap;
+      src: url('/fonts/ibm-plex-sans-latin-500-normal.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'IBM Plex Sans';
+      font-style: normal;
+      font-weight: 600;
+      font-display: swap;
+      src: url('/fonts/ibm-plex-sans-latin-600-normal.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'IBM Plex Mono';
+      font-style: normal;
+      font-weight: 400;
+      font-display: swap;
+      src: url('/fonts/ibm-plex-mono-latin-400-normal.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'IBM Plex Mono';
+      font-style: normal;
+      font-weight: 500;
+      font-display: swap;
+      src: url('/fonts/ibm-plex-mono-latin-500-normal.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'IBM Plex Mono';
+      font-style: normal;
+      font-weight: 600;
+      font-display: swap;
+      src: url('/fonts/ibm-plex-mono-latin-600-normal.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'IBM Plex Mono';
+      font-style: normal;
+      font-weight: 700;
+      font-display: swap;
+      src: url('/fonts/ibm-plex-mono-latin-700-normal.woff2') format('woff2');
+    }
+  </style>
 
   <style>
     /* -----------------------------------------------------------------------
@@ -249,11 +281,7 @@ const currentPath = new URL(Astro.request.url).pathname.replace(/\/$/, '') || '/
 
     <div class="af-nav__spacer" aria-hidden="true"></div>
 
-    {userEmail && (
-      <span class="af-nav__user" aria-label={`Signed in as ${userEmail}`}>
-        {userEmail}
-      </span>
-    )}
+    <span class="af-nav__user" data-af-identity aria-label="Signed in" hidden></span>
   </nav>
 
   <main id="main-content" class="af-main">
@@ -279,5 +307,29 @@ const currentPath = new URL(Astro.request.url).pathname.replace(/\/$/, '') || '/
       atlas.cern
     </a>
   </footer>
+
+  <!--
+    Populate every [data-af-identity] element (nav username, hero greeting)
+    from the broker. This is the only identity source in a static build.
+  -->
+  <script>
+    import { fetchIdentities } from '../lib/api';
+
+    (async () => {
+      try {
+        const id = await fetchIdentities();
+        const label = id.email || id.unixname;
+        if (!label) return;
+        document.querySelectorAll<HTMLElement>('[data-af-identity]').forEach((el) => {
+          el.textContent = label;
+          const holder = el.closest<HTMLElement>('[data-af-user-holder]');
+          if (holder) holder.hidden = false;
+          else el.hidden = false;
+        });
+      } catch {
+        // Unauthenticated (static preview) or expired session — leave hidden.
+      }
+    })();
+  </script>
 </body>
 </html>

@@ -1,51 +1,23 @@
 /**
  * api.ts — typed broker API client.
  *
- * All requests require Authorization: Bearer <AF Keycloak token>.
- * The token is read from the <meta name="af-token"> tag that Base.astro
- * injects from the oauth2-proxy Authorization header.
+ * Auth model: in production oauth2-proxy fronts BOTH the portal and the broker
+ * on the same origin and injects the Authorization header on the upstream call.
+ * The browser therefore never handles a token — same-origin requests ride the
+ * oauth2-proxy session cookie. All requests use `credentials: 'same-origin'`.
  *
- * Base URL is configured via import.meta.env.PUBLIC_BROKER_URL (default:
- * same origin, path /v1).
+ * On a 401 the session has expired; callers should surface a "reload to
+ * re-authenticate" prompt rather than treating it as a hard error.
  */
 
-const BASE_URL = (import.meta.env.PUBLIC_BROKER_URL ?? '/v1') as string;
+// PUBLIC_BROKER_URL MUST include the `/v1` suffix when overridden
+// (e.g. https://mcp.af.uchicago.edu/v1). It replaces the base wholesale, so a
+// value without `/v1` would silently drop the API prefix. Default is the
+// same-origin `/v1` path served behind oauth2-proxy.
+const API_BASE = (import.meta.env.PUBLIC_BROKER_URL ?? '/v1') as string;
 
 // ---------------------------------------------------------------------------
-// Token
-// ---------------------------------------------------------------------------
-
-/** Returns the AF Keycloak bearer token injected by oauth2-proxy. */
-export function getToken(): string | null {
-  if (typeof document === 'undefined') return null;
-  const meta = document.querySelector<HTMLMetaElement>('meta[name="af-token"]');
-  return meta?.content ?? null;
-}
-
-function authHeaders(): HeadersInit {
-  const token = getToken();
-  return {
-    'Content-Type': 'application/json',
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  };
-}
-
-async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE_URL}${path}`, {
-    ...init,
-    headers: { ...authHeaders(), ...(init?.headers ?? {}) },
-  });
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new APIError(res.status, res.statusText, body);
-  }
-  // 204 No Content — return undefined cast to T
-  if (res.status === 204) return undefined as unknown as T;
-  return res.json() as Promise<T>;
-}
-
-// ---------------------------------------------------------------------------
-// Error type
+// Errors
 // ---------------------------------------------------------------------------
 
 export class APIError extends Error {
@@ -59,22 +31,57 @@ export class APIError extends Error {
   }
 }
 
+/** Thrown on HTTP 401 — the oauth2-proxy session cookie is gone or expired. */
+export class SessionExpiredError extends Error {
+  constructor() {
+    super('Session expired');
+    this.name = 'SessionExpiredError';
+  }
+}
+
+async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    credentials: 'same-origin',
+    ...init,
+    headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
+  });
+  if (res.status === 401) {
+    throw new SessionExpiredError();
+  }
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new APIError(res.status, res.statusText, body);
+  }
+  // 204 No Content — return undefined cast to T
+  if (res.status === 204) return undefined as unknown as T;
+  return res.json() as Promise<T>;
+}
+
 // ---------------------------------------------------------------------------
-// Identities
+// Identities — GET /v1/identities
 // ---------------------------------------------------------------------------
 
-export interface Identity {
-  provider: string;       // e.g. "atlas-iam", "cern", "gitlab"
+export interface LinkedAccount {
+  provider: string;
+  sub: string;
+}
+
+export interface AvailableProvider {
+  provider: string;
   display_name: string;
-  linked: boolean;
-  subject?: string;       // linked subject identifier, if available
-  linked_at?: string;     // ISO timestamp
-  capabilities_unlocked: string[];
-  description: string;
+  /** Human-readable description of what linking this provider enables. */
+  enables: string;
 }
 
 export interface IdentitiesResponse {
-  identities: Identity[];
+  subject: string;
+  email: string;
+  unixname: string;
+  uid: number;
+  gid: number;
+  groups: string[];
+  linked_accounts: LinkedAccount[];
+  available_providers: AvailableProvider[];
 }
 
 export async function fetchIdentities(): Promise<IdentitiesResponse> {
@@ -88,68 +95,57 @@ export async function startIdentityLink(provider: string): Promise<{ redirect_ur
   });
 }
 
-export async function unlinkIdentity(provider: string): Promise<void> {
-  return apiFetch<void>(`/identities/link/${encodeURIComponent(provider)}`, {
-    method: 'DELETE',
-  });
-}
+// NOTE: DELETE /v1/identities/link/{provider} always returns 501 — unlinking is
+// done through the Keycloak account console, so there is no unlink client here.
 
 // ---------------------------------------------------------------------------
-// Capabilities
-// ---------------------------------------------------------------------------
-
-export interface Capability {
-  name: string;
-  description: string;
-  granted: boolean;
-  required_provider?: string;
-}
-
-export async function fetchCapabilities(): Promise<Capability[]> {
-  return apiFetch<Capability[]>('/capabilities');
-}
-
-// ---------------------------------------------------------------------------
-// Catalog
+// Catalog — GET /v1/catalog (flat tool list)
 // ---------------------------------------------------------------------------
 
 export type ActionType = 'read' | 'state_change';
 
-export interface ToolEntry {
+export interface CatalogTool {
   name: string;
-  description: string;
-  action_type: ActionType;
-}
-
-export interface CatalogEntry {
   backend: string;
-  prefix: string;
-  tools: ToolEntry[];
+  description: string;
   capability: string;
   action_type: ActionType;
-  description?: string;
 }
 
-export async function fetchCatalog(): Promise<CatalogEntry[]> {
-  return apiFetch<CatalogEntry[]>('/catalog');
+export interface CatalogResponse {
+  tools: CatalogTool[];
+}
+
+/** Client-side grouping of catalog tools by backend (broker returns them flat). */
+export interface BackendGroup {
+  backend: string;
+  tools: CatalogTool[];
+  capabilities: string[];
+}
+
+export async function fetchCatalog(): Promise<CatalogResponse> {
+  return apiFetch<CatalogResponse>('/catalog');
 }
 
 // ---------------------------------------------------------------------------
-// X.509 proxy
+// X.509 proxy — GET/POST/DELETE /v1/x509/proxy
 // ---------------------------------------------------------------------------
 
+/** GET /v1/x509/proxy/status */
 export interface ProxyStatus {
-  has_proxy: boolean;
-  expires_at?: string;          // ISO 8601 timestamp
-  remaining_seconds?: number;
-  voms_attributes?: string[];   // e.g. ["/atlas/Role=production"]
-  subject_dn?: string;          // e.g. "/DC=ch/DC=cern/OU=Users/CN=kratsg"
+  cached: boolean;
+  dn?: string | null;
+  voms_attributes: string[];
+  expires_at?: string | null;
+  remaining_seconds?: number | null;
 }
 
-export interface ProxyMeta {
-  subject_dn: string;
-  expires_at: string;
+/** POST /v1/x509/proxy response (PEM is never returned). */
+export interface ProxyMetadata {
+  dn: string;
   voms_attributes: string[];
+  expires_at: string;
+  remaining_seconds: number;
 }
 
 export async function fetchProxyStatus(): Promise<ProxyStatus> {
@@ -159,15 +155,18 @@ export async function fetchProxyStatus(): Promise<ProxyStatus> {
 /**
  * Request a new x509 proxy.
  *
- * IMPORTANT: The caller MUST clear the passphrase from Vue state
- * immediately after this call returns — regardless of success or failure.
+ * `valid` is an "HH:MM" lifetime (e.g. "12:00"); `voms` is the VO name with no
+ * leading slash (e.g. "atlas").
+ *
+ * IMPORTANT: The caller MUST clear the passphrase from Vue state immediately
+ * after this call returns — regardless of success or failure.
  */
 export async function requestProxy(
   passphrase: string,
-  valid: string = '12h',
-  voms: string = '/atlas',
-): Promise<ProxyMeta> {
-  return apiFetch<ProxyMeta>('/x509/proxy', {
+  valid: string = '12:00',
+  voms: string = 'atlas',
+): Promise<ProxyMetadata> {
+  return apiFetch<ProxyMetadata>('/x509/proxy', {
     method: 'POST',
     body: JSON.stringify({ passphrase, valid, voms }),
   });
@@ -195,16 +194,16 @@ export async function fetchDashboardSummary(): Promise<DashboardSummary> {
   ]);
 
   const linkedCount = identityData.status === 'fulfilled'
-    ? identityData.value.identities.filter(i => i.linked).length
+    ? identityData.value.linked_accounts.length
     : 0;
 
   const toolCount = catalog.status === 'fulfilled'
-    ? catalog.value.reduce((sum, b) => sum + b.tools.length, 0)
+    ? catalog.value.tools.length
     : 0;
 
   const proxy: ProxyStatus = proxyStatus.status === 'fulfilled'
     ? proxyStatus.value
-    : { has_proxy: false };
+    : { cached: false, voms_attributes: [] };
 
   return { linkedCount, toolCount, proxyStatus: proxy };
 }

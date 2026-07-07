@@ -19,10 +19,11 @@ const emit = defineEmits<{
   (e: 'revoked'): void;
 }>();
 
-// Form state — passphrase is ref('') and cleared immediately after use
+// Form state — passphrase is ref('') and cleared immediately after use.
+// `valid` is an "HH:MM" lifetime; `voms` is a VO name with no leading slash.
 const passphrase = ref('');
-const validDuration = ref<'4h' | '8h' | '12h'>('12h');
-const vomsRole = ref('/atlas');
+const validDuration = ref<'04:00' | '08:00' | '12:00'>('12:00');
+const vomsRole = ref('atlas');
 const busy = ref(false);
 const error = ref<string | null>(null);
 const showRevokeConfirm = ref(false);
@@ -40,14 +41,13 @@ async function handleUnlock(evt: Event) {
 
   try {
     const meta = await requestProxy(captured, validDuration.value, vomsRole.value);
+    // Use the server's remaining_seconds directly — no client recomputation.
     emit('unlocked', {
-      has_proxy: true,
-      subject_dn: meta.subject_dn,
+      cached: true,
+      dn: meta.dn,
       expires_at: meta.expires_at,
       voms_attributes: meta.voms_attributes,
-      remaining_seconds: Math.floor(
-        (new Date(meta.expires_at).getTime() - Date.now()) / 1000
-      ),
+      remaining_seconds: meta.remaining_seconds,
     });
   } catch (err) {
     error.value = err instanceof Error
@@ -101,7 +101,7 @@ const remainingClass = computed(() => {
 
 <template>
   <!-- ── Active proxy view ─────────────────────────────────────────── -->
-  <div v-if="status.has_proxy" class="ps">
+  <div v-if="status.cached" class="ps">
     <div class="ps__status-bar">
       <span class="ps__indicator ps__indicator--active" aria-label="Proxy active"></span>
       <span class="ps__status-text">AMI proxy active</span>
@@ -113,7 +113,7 @@ const remainingClass = computed(() => {
     <div class="ps__grid">
       <div class="ps__field">
         <span class="ps__label">Subject DN</span>
-        <code class="ps__dn">{{ status.subject_dn ?? '—' }}</code>
+        <code class="ps__dn">{{ status.dn ?? '—' }}</code>
       </div>
 
       <div class="ps__field">
@@ -211,18 +211,16 @@ const remainingClass = computed(() => {
         <div class="ps__form-group ps__form-group--inline">
           <label for="proxy-valid" class="ps__form-label">Valid for</label>
           <select id="proxy-valid" v-model="validDuration" class="ps__select" :disabled="busy">
-            <option value="4h">4 hours</option>
-            <option value="8h">8 hours</option>
-            <option value="12h">12 hours</option>
+            <option value="04:00">4 hours</option>
+            <option value="08:00">8 hours</option>
+            <option value="12:00">12 hours</option>
           </select>
         </div>
 
         <div class="ps__form-group ps__form-group--inline">
-          <label for="proxy-voms" class="ps__form-label">VOMS role</label>
+          <label for="proxy-voms" class="ps__form-label">VOMS</label>
           <select id="proxy-voms" v-model="vomsRole" class="ps__select" :disabled="busy">
-            <option value="/atlas">/atlas</option>
-            <option value="/atlas/Role=production">/atlas/Role=production</option>
-            <option value="/atlas/Role=pilot">/atlas/Role=pilot</option>
+            <option value="atlas">atlas</option>
           </select>
         </div>
       </div>

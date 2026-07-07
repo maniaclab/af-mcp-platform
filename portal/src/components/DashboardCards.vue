@@ -44,11 +44,11 @@ onMounted(async () => {
     <!-- Proxy card -->
     <div
       class="dc__card"
-      :class="!loading && summary?.proxyStatus.has_proxy ? 'dc__card--ok' : 'dc__card--neutral'"
+      :class="!loading && summary?.proxyStatus.cached ? 'dc__card--ok' : 'dc__card--neutral'"
     >
       <span class="dc__label">AMI proxy</span>
       <span class="dc__value" :class="{ 'dc__value--loading': loading }">
-        {{ loading ? '—' : (summary?.proxyStatus.has_proxy ? 'Active' : 'No proxy') }}
+        {{ loading ? '—' : (summary?.proxyStatus.cached ? 'Active' : 'No proxy') }}
       </span>
       <a href="/status" class="dc__link">Manage →</a>
     </div>

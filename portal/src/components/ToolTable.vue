@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import type { ToolEntry } from '../lib/api';
+import type { CatalogTool } from '../lib/api';
 
 defineProps<{
-  tools: ToolEntry[];
+  tools: CatalogTool[];
 }>();
 </script>
 

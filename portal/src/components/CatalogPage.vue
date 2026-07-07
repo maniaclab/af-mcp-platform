@@ -1,32 +1,55 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
-import { fetchCatalog } from '../lib/api';
-import type { CatalogEntry } from '../lib/api';
+import { fetchCatalog, SessionExpiredError } from '../lib/api';
+import type { CatalogTool, BackendGroup } from '../lib/api';
 import BackendCard from './BackendCard.vue';
 
-const backends = ref<CatalogEntry[]>([]);
+const tools = ref<CatalogTool[]>([]);
 const loading = ref(true);
 const error = ref<string | null>(null);
+const sessionExpired = ref(false);
 const filter = ref<'all' | 'read' | 'state_change'>('all');
 const search = ref('');
 
 onMounted(async () => {
   try {
-    backends.value = await fetchCatalog();
+    const data = await fetchCatalog();
+    tools.value = data.tools;
   } catch (err) {
-    error.value = err instanceof Error
-      ? err.message
-      : 'Failed to load catalog. Check that your identities are linked.';
+    if (err instanceof SessionExpiredError) {
+      sessionExpired.value = true;
+    } else {
+      error.value = err instanceof Error
+        ? err.message
+        : 'Failed to load catalog. Check that your identities are linked.';
+    }
   } finally {
     loading.value = false;
   }
 });
 
-const totalTools = computed(() =>
-  backends.value.reduce((sum, b) => sum + b.tools.length, 0)
-);
+function reload() {
+  location.reload();
+}
 
-const filteredBackends = computed(() => {
+// The broker returns a flat tool list; group by backend for the UI.
+const backends = computed<BackendGroup[]>(() => {
+  const map = new Map<string, BackendGroup>();
+  for (const tool of tools.value) {
+    let group = map.get(tool.backend);
+    if (!group) {
+      group = { backend: tool.backend, tools: [], capabilities: [] };
+      map.set(tool.backend, group);
+    }
+    group.tools.push(tool);
+    if (!group.capabilities.includes(tool.capability)) {
+      group.capabilities.push(tool.capability);
+    }
+  }
+  return [...map.values()].sort((a, b) => a.backend.localeCompare(b.backend));
+});
+
+const filteredBackends = computed<BackendGroup[]>(() => {
   let result = backends.value;
 
   if (filter.value !== 'all') {
@@ -42,8 +65,7 @@ const filteredBackends = computed(() => {
     const q = search.value.toLowerCase();
     result = result.filter(b =>
       b.backend.toLowerCase().includes(q) ||
-      b.prefix.toLowerCase().includes(q) ||
-      b.capability.toLowerCase().includes(q) ||
+      b.capabilities.some(c => c.toLowerCase().includes(q)) ||
       b.tools.some(t =>
         t.name.toLowerCase().includes(q) ||
         t.description.toLowerCase().includes(q)
@@ -53,6 +75,11 @@ const filteredBackends = computed(() => {
 
   return result;
 });
+
+// Both toolbar counts derive from the filtered set so they stay consistent.
+const visibleToolCount = computed(() =>
+  filteredBackends.value.reduce((sum, b) => sum + b.tools.length, 0)
+);
 </script>
 
 <template>
@@ -88,9 +115,9 @@ const filteredBackends = computed(() => {
         </button>
       </div>
 
-      <span v-if="!loading && !error" class="cp__count" aria-live="polite">
+      <span v-if="!loading && !error && !sessionExpired" class="cp__count" aria-live="polite">
         {{ filteredBackends.length }} backend{{ filteredBackends.length !== 1 ? 's' : '' }}
-        · {{ totalTools }} tool{{ totalTools !== 1 ? 's' : '' }}
+        · {{ visibleToolCount }} tool{{ visibleToolCount !== 1 ? 's' : '' }}
       </span>
     </div>
 
@@ -98,6 +125,16 @@ const filteredBackends = computed(() => {
     <div v-if="loading" class="cp__loading" aria-live="polite" aria-label="Loading catalog">
       <span class="cp__spinner" aria-hidden="true"></span>
       <span>Loading catalog…</span>
+    </div>
+
+    <!-- Session expired -->
+    <div v-else-if="sessionExpired" class="cp__error" role="alert">
+      <span class="cp__error-title">Session expired</span>
+      <span class="cp__error-body">
+        Your session has expired.
+        <button type="button" class="cp__reload" @click="reload">Reload</button>
+        to re-authenticate.
+      </span>
     </div>
 
     <!-- Error -->
@@ -131,7 +168,7 @@ const filteredBackends = computed(() => {
 
     <!-- Backend list -->
     <div v-else class="cp__list" role="list" aria-label="Available backends">
-      <div v-for="backend in filteredBackends" :key="backend.prefix" role="listitem">
+      <div v-for="backend in filteredBackends" :key="backend.backend" role="listitem">
         <BackendCard :backend="backend" />
       </div>
     </div>
@@ -278,6 +315,16 @@ const filteredBackends = computed(() => {
 
 .cp__error-link {
   color: #00D4C8;
+  text-decoration: underline;
+}
+
+.cp__reload {
+  font: inherit;
+  color: #00D4C8;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
   text-decoration: underline;
 }
 

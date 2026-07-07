@@ -1,25 +1,17 @@
 <script setup lang="ts">
 import { ref } from 'vue';
-import { startIdentityLink, unlinkIdentity } from '../lib/api';
+import { startIdentityLink } from '../lib/api';
 
 const props = defineProps<{
   provider: string;
   linked: boolean;
   display_name: string;
   description: string;
-  capabilities_unlocked: string[];
-  subject?: string;
-  linked_at?: string;
-}>();
-
-const emit = defineEmits<{
-  (e: 'linked', provider: string): void;
-  (e: 'unlinked', provider: string): void;
+  sub?: string;
 }>();
 
 const busy = ref(false);
 const error = ref<string | null>(null);
-const showConfirm = ref(false);
 
 async function handleLink() {
   busy.value = true;
@@ -34,32 +26,10 @@ async function handleLink() {
   }
 }
 
-async function confirmUnlink() {
-  showConfirm.value = false;
-  busy.value = true;
-  error.value = null;
-  try {
-    await unlinkIdentity(props.provider);
-    emit('unlinked', props.provider);
-  } catch (err) {
-    error.value = err instanceof Error ? err.message : 'Unlink failed. Try again.';
-  } finally {
-    busy.value = false;
-  }
-}
-
-function formatDate(iso?: string): string {
-  if (!iso) return '';
-  return new Date(iso).toLocaleDateString('en-US', {
-    year: 'numeric', month: 'short', day: 'numeric',
-  });
-}
-
 // Provider icon character — monospaced glyph, not an emoji
 const providerGlyph: Record<string, string> = {
   'atlas-iam': 'A',
   'cern':      'C',
-  'gitlab':    'G',
 };
 const glyph = providerGlyph[props.provider] ?? props.provider[0]?.toUpperCase() ?? '?';
 </script>
@@ -78,28 +48,15 @@ const glyph = providerGlyph[props.provider] ?? props.provider[0]?.toUpperCase() 
 
       <p class="il__desc">{{ description }}</p>
 
-      <div v-if="linked && subject" class="il__subject">
+      <div v-if="linked && sub" class="il__subject">
         <span class="il__subject-label">Subject</span>
-        <code class="il__subject-val">{{ subject }}</code>
-      </div>
-
-      <div v-if="linked && linked_at" class="il__meta">
-        Linked {{ formatDate(linked_at) }}
-      </div>
-
-      <div v-if="capabilities_unlocked.length > 0" class="il__caps">
-        <span class="il__caps-label">Unlocks</span>
-        <span
-          v-for="cap in capabilities_unlocked"
-          :key="cap"
-          class="il__cap-badge"
-        >{{ cap }}</span>
+        <code class="il__subject-val">{{ sub }}</code>
       </div>
 
       <div v-if="error" class="il__error" role="alert">{{ error }}</div>
     </div>
 
-    <!-- Action button -->
+    <!-- Action -->
     <div class="il__actions">
       <button
         v-if="!linked"
@@ -111,37 +68,17 @@ const glyph = providerGlyph[props.provider] ?? props.provider[0]?.toUpperCase() 
         {{ busy ? 'Redirecting…' : 'Link account' }}
       </button>
 
-      <button
-        v-else
-        class="il__btn il__btn--unlink"
-        :disabled="busy"
-        @click="showConfirm = true"
-        :aria-busy="busy"
-      >
-        {{ busy ? 'Removing…' : 'Unlink' }}
-      </button>
+      <!-- Unlinking is not exposed by the broker (DELETE returns 501). -->
+      <span v-else class="il__hint">
+        Unlink via the
+        <a
+          class="il__hint-link"
+          href="https://keycloak.af.uchicago.edu/realms/connect/account/#/account-security/linked-accounts"
+          target="_blank"
+          rel="noopener noreferrer"
+        >Keycloak account console</a>.
+      </span>
     </div>
-
-    <!-- Confirm unlink modal -->
-    <Teleport to="body">
-      <div v-if="showConfirm" class="il__modal-backdrop" role="dialog" aria-modal="true" :aria-label="`Unlink ${display_name}`">
-        <div class="il__modal">
-          <h2 class="il__modal-title">Unlink {{ display_name }}?</h2>
-          <p class="il__modal-body">
-            This removes the identity association. Any capabilities that depend on
-            <strong>{{ display_name }}</strong> will stop working until you re-link.
-          </p>
-          <div class="il__modal-actions">
-            <button class="il__btn il__btn--cancel" @click="showConfirm = false">
-              Cancel
-            </button>
-            <button class="il__btn il__btn--confirm" @click="confirmUnlink">
-              Remove link
-            </button>
-          </div>
-        </div>
-      </div>
-    </Teleport>
   </div>
 </template>
 
@@ -256,42 +193,6 @@ const glyph = providerGlyph[props.provider] ?? props.provider[0]?.toUpperCase() 
   word-break: break-all;
 }
 
-.il__meta {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.6875rem;
-  color: #4B5563;
-}
-
-.il__caps {
-  display: flex;
-  align-items: center;
-  gap: 0.375rem;
-  flex-wrap: wrap;
-  margin-top: 0.25rem;
-}
-
-.il__caps-label {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.5625rem;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: #6B7280;
-}
-
-.il__cap-badge {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.5625rem;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  padding: 0.125rem 0.375rem;
-  border-radius: 2px;
-  background: rgba(0, 212, 200, 0.08);
-  color: #00D4C8;
-  border: 1px solid rgba(0, 212, 200, 0.18);
-}
-
 .il__error {
   font-family: 'IBM Plex Mono', monospace;
   font-size: 0.75rem;
@@ -302,6 +203,20 @@ const glyph = providerGlyph[props.provider] ?? props.provider[0]?.toUpperCase() 
 .il__actions {
   flex-shrink: 0;
   padding-top: 0.125rem;
+  max-width: 14rem;
+  text-align: right;
+}
+
+/* Hint shown for already-linked accounts (unlink lives in Keycloak). */
+.il__hint {
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  font-size: 0.6875rem;
+  color: #6B7280;
+  line-height: 1.5;
+}
+.il__hint-link {
+  color: #00D4C8;
+  text-decoration: underline;
 }
 
 /* Buttons */
@@ -331,85 +246,6 @@ const glyph = providerGlyph[props.provider] ?? props.provider[0]?.toUpperCase() 
 .il__btn--link:not(:disabled):hover {
   background: rgba(0, 212, 200, 0.18);
   border-color: rgba(0, 212, 200, 0.5);
-}
-
-.il__btn--unlink {
-  background: transparent;
-  color: #6B7280;
-  border-color: #374151;
-}
-.il__btn--unlink:not(:disabled):hover {
-  color: #EF4444;
-  border-color: rgba(239, 68, 68, 0.35);
-  background: rgba(239, 68, 68, 0.06);
-}
-
-.il__btn--cancel {
-  background: transparent;
-  color: #6B7280;
-  border-color: #374151;
-}
-.il__btn--cancel:hover {
-  color: #E8ECF0;
-  border-color: #6B7280;
-}
-
-.il__btn--confirm {
-  background: rgba(239, 68, 68, 0.1);
-  color: #EF4444;
-  border-color: rgba(239, 68, 68, 0.3);
-}
-.il__btn--confirm:hover {
-  background: rgba(239, 68, 68, 0.18);
-  border-color: rgba(239, 68, 68, 0.5);
-}
-
-/* Modal */
-.il__modal-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(10, 14, 26, 0.85);
-  backdrop-filter: blur(4px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 100;
-  padding: 1rem;
-}
-
-.il__modal {
-  background: #111827;
-  border: 1px solid #374151;
-  border-radius: 6px;
-  padding: 1.75rem;
-  max-width: 28rem;
-  width: 100%;
-}
-
-.il__modal-title {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 1rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: #E8ECF0;
-  margin: 0 0 0.75rem;
-}
-
-.il__modal-body {
-  font-size: 0.875rem;
-  color: #9CA3AF;
-  line-height: 1.6;
-  margin: 0 0 1.5rem;
-}
-
-.il__modal-body strong {
-  color: #E8ECF0;
-}
-
-.il__modal-actions {
-  display: flex;
-  gap: 0.75rem;
-  justify-content: flex-end;
 }
 
 @media (max-width: 640px) {
