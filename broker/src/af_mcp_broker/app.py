@@ -5,10 +5,10 @@ from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator
 
 import structlog
-import yaml
+import yaml  # type: ignore[import-untyped]
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exception_handlers import http_exception_handler
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import ValidationError
 
 from af_mcp_broker.api.router import router as v1_router
@@ -122,9 +122,7 @@ except ImportError:
 
 
 @app.exception_handler(HTTPException)
-async def _http_exception_handler(
-    request: Request, exc: HTTPException
-) -> JSONResponse:
+async def _http_exception_handler(request: Request, exc: HTTPException) -> Response:
     # Delegate to FastAPI's built-in handler so WWW-Authenticate headers etc.
     # are preserved, then let structlog capture the event.
     logger.info(

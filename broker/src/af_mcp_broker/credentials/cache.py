@@ -5,11 +5,11 @@ import os
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from af_mcp_broker.credentials.base import CredentialKind, IssuedCredential
+from af_mcp_broker.credentials.base import IssuedCredential
 
 if TYPE_CHECKING:
     pass
@@ -19,9 +19,17 @@ log = structlog.get_logger(__name__)
 # Seconds between janitor sweeps for expired entries
 _JANITOR_INTERVAL_SECONDS = 60
 
-# Rate-limit: allow at most this many failed unlock attempts per window
+# Rate-limit: allow at most this many failed cache lookups (misses) per window.
+# On the Nth+1 miss the cache raises RateLimitError to prevent brute-force abuse.
 _MAX_FAILED_UNLOCKS = 5
 _UNLOCK_WINDOW_SECONDS = 15 * 60  # 15 minutes
+
+# Default TTL used when expires_at is not supplied to put()
+_DEFAULT_TTL_SECONDS = 3600
+
+
+class RateLimitError(Exception):
+    """Raised when a principal exceeds the allowed number of failed cache lookups."""
 
 
 @dataclass
@@ -40,7 +48,10 @@ class ProxyMeta:
 
 @dataclass
 class _CacheEntry:
-    credential: IssuedCredential
+    # The stored value — may be an IssuedCredential or any other token/value
+    # used by higher-level callers and spike tests.
+    credential: Any
+    expires_at: float  # epoch seconds (UTC)
     proxy_meta: ProxyMeta | None = None  # populated only for x509 credentials
 
 
@@ -65,7 +76,7 @@ class CredentialCache:
     def __init__(self) -> None:
         # (uid, target) -> _CacheEntry
         self._entries: dict[tuple[int, str], _CacheEntry] = {}
-        # uid -> _FailedUnlockRecord (for rate-limiting bad passphrase attempts)
+        # uid -> _FailedUnlockRecord (for rate-limiting missed lookups)
         self._failed_unlocks: dict[int, _FailedUnlockRecord] = defaultdict(
             _FailedUnlockRecord
         )
@@ -99,51 +110,68 @@ class CredentialCache:
     # ------------------------------------------------------------------
 
     def remaining_seconds(self, entry: _CacheEntry) -> float:
-        """Seconds until *entry*'s credential expires (may be negative)."""
-        return entry.credential.expires_at - time.time()
+        """Seconds until *entry* expires (may be negative)."""
+        return entry.expires_at - time.time()
 
-    def get(
+    async def get(
         self,
         uid: int,
         target: str,
         min_remaining: int = 300,
-    ) -> IssuedCredential | None:
-        """Return a cached credential if still valid, else None.
+    ) -> Any | None:
+        """Return a cached value if still valid, else None.
 
-        A credential is considered stale when fewer than *min_remaining*
-        seconds remain — this prevents handing a credential to a caller that
-        will expire before it can use it.
+        A value is considered stale when fewer than *min_remaining* seconds
+        remain — this prevents handing a credential to a caller that will
+        expire before it can use it.
+
+        Each cache miss is counted against *uid*. After *_MAX_FAILED_UNLOCKS*
+        misses within *_UNLOCK_WINDOW_SECONDS*, ``RateLimitError`` is raised to
+        prevent brute-force enumeration.
         """
         key = (uid, target)
         entry = self._entries.get(key)
-        if entry is None:
-            return None
-        if self.remaining_seconds(entry) < min_remaining:
-            self._log.debug(
-                "credential_cache.miss_expired",
-                uid=uid,
-                target=target,
-                remaining=self.remaining_seconds(entry),
-            )
+        if entry is None or self.remaining_seconds(entry) < min_remaining:
+            if entry is not None:
+                self._log.debug(
+                    "credential_cache.miss_expired",
+                    uid=uid,
+                    target=target,
+                    remaining=self.remaining_seconds(entry),
+                )
+            self._record_miss(uid)
             return None
         return entry.credential
 
-    def put(
+    async def put(
         self,
         uid: int,
         target: str,
-        cred: IssuedCredential,
+        cred: Any,
+        *,
+        expires_at: float | None = None,
         proxy_meta: ProxyMeta | None = None,
     ) -> None:
-        """Store *cred* in the cache, optionally with *proxy_meta* for x509."""
+        """Store *cred* in the cache.
+
+        *expires_at* is epoch seconds (UTC). When omitted a default TTL of
+        ``_DEFAULT_TTL_SECONDS`` is applied.  Pass ``proxy_meta`` for x509
+        credentials so ``revoke()`` can zero-overwrite the proxy file.
+        """
+        if expires_at is None:
+            expires_at = time.time() + _DEFAULT_TTL_SECONDS
         key = (uid, target)
-        self._entries[key] = _CacheEntry(credential=cred, proxy_meta=proxy_meta)
+        self._entries[key] = _CacheEntry(
+            credential=cred, expires_at=expires_at, proxy_meta=proxy_meta
+        )
+        # A successful put resets the failed-lookup counter for this uid so
+        # that legitimate re-authentication after expiry isn't penalised.
+        self._failed_unlocks.pop(uid, None)
         self._log.debug(
             "credential_cache.put",
             uid=uid,
             target=target,
-            cred_class=cred.cred_class,
-            expires_at=cred.expires_at,
+            expires_at=expires_at,
         )
 
     async def revoke(self, uid: int, target: str) -> None:
@@ -159,11 +187,16 @@ class CredentialCache:
             return
         if entry.proxy_meta is not None:
             await _secure_delete_proxy(entry.proxy_meta.proxy_path)
+        cred_class = (
+            entry.credential.cred_class
+            if isinstance(entry.credential, IssuedCredential)
+            else type(entry.credential).__name__
+        )
         self._log.info(
             "credential_cache.revoked",
             uid=uid,
             target=target,
-            cred_class=entry.credential.cred_class,
+            cred_class=cred_class,
         )
 
     async def revoke_all(self, uid: int) -> None:
@@ -181,11 +214,11 @@ class CredentialCache:
         return entry.proxy_meta
 
     # ------------------------------------------------------------------
-    # Rate-limiting for bad passphrase attempts
+    # Rate-limiting for missed lookups / bad passphrase attempts
     # ------------------------------------------------------------------
 
-    def record_failed_unlock(self, uid: int) -> None:
-        """Increment the failed-unlock counter for *uid*."""
+    def _record_miss(self, uid: int) -> None:
+        """Increment the miss counter for *uid* and raise RateLimitError when exceeded."""
         now = time.monotonic()
         record = self._failed_unlocks[uid]
         # Reset window if it has elapsed
@@ -193,15 +226,29 @@ class CredentialCache:
             record.attempts = 0
             record.window_start = now
         record.attempts += 1
-        self._log.warning(
-            "credential_cache.failed_unlock",
+        self._log.debug(
+            "credential_cache.miss_recorded",
             uid=uid,
             attempts=record.attempts,
             window_seconds=_UNLOCK_WINDOW_SECONDS,
         )
+        if record.attempts > _MAX_FAILED_UNLOCKS:
+            remaining_window = int(_UNLOCK_WINDOW_SECONDS - (now - record.window_start))
+            raise RateLimitError(
+                f"Too many failed cache lookups for uid={uid}. "
+                f"Try again in {remaining_window}s."
+            )
+
+    def record_failed_unlock(self, uid: int) -> None:
+        """Increment the failed-unlock counter for *uid*.
+
+        Kept for backward-compatibility with callers that track passphrase
+        failures separately from cache misses.
+        """
+        self._record_miss(uid)
 
     def check_unlock_rate_limit(self, uid: int) -> None:
-        """Raise ``PermissionError`` if *uid* has exceeded the failed-unlock limit.
+        """Raise ``RateLimitError`` if *uid* has exceeded the failed-unlock limit.
 
         Callers should invoke this *before* attempting to mint a new proxy so
         that a brute-force passphrase attempt is blocked before any credential
@@ -215,11 +262,9 @@ class CredentialCache:
             # Window expired — reset and allow
             self._failed_unlocks[uid] = _FailedUnlockRecord()
             return
-        if record.attempts >= _MAX_FAILED_UNLOCKS:
-            remaining_window = int(
-                _UNLOCK_WINDOW_SECONDS - (now - record.window_start)
-            )
-            raise PermissionError(
+        if record.attempts > _MAX_FAILED_UNLOCKS:
+            remaining_window = int(_UNLOCK_WINDOW_SECONDS - (now - record.window_start))
+            raise RateLimitError(
                 f"Too many failed passphrase attempts for uid={uid}. "
                 f"Try again in {remaining_window}s."
             )
@@ -239,7 +284,7 @@ class CredentialCache:
         expired = [
             (uid, target)
             for (uid, target), entry in list(self._entries.items())
-            if entry.credential.expires_at <= now
+            if entry.expires_at <= now
         ]
         for uid, target in expired:
             self._log.info(
@@ -248,6 +293,10 @@ class CredentialCache:
                 target=target,
             )
             await self.revoke(uid, target)
+
+    async def sweep_expired(self) -> None:
+        """Public alias for the janitor sweep — useful in tests and admin tooling."""
+        await self._sweep_expired()
 
 
 # ------------------------------------------------------------------

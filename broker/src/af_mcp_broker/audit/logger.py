@@ -21,7 +21,7 @@ class AuditRecord:
     action: str
     action_type: str  # "read" | "state_change"
     args_summary: str  # truncated, no secrets
-    timestamp: float   # epoch seconds
+    timestamp: float  # epoch seconds
     request_id: str
     audit_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     mcp_backend: str | None = None

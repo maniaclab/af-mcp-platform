@@ -5,7 +5,7 @@ import os
 import time
 import uuid
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 import httpx
 import structlog
@@ -48,8 +48,8 @@ class ServiceProvider(CredentialProvider):
     keys, and refresh tokens are never persisted.
     """
 
-    cred_class: str = "service_account"
-    execution_model: ExecutionModel = ExecutionModel.ON_BEHALF
+    cred_class: ClassVar[str] = "service_account"
+    execution_model: ClassVar[ExecutionModel] = ExecutionModel.ON_BEHALF
 
     def __init__(
         self,
@@ -117,13 +117,19 @@ class ServiceProvider(CredentialProvider):
     async def _get_service_token(self) -> str:
         """Return a valid service token, refreshing via client_credentials if needed."""
         remaining = self._service_token_expires_at - time.time()
-        if self._service_token is not None and remaining > _SERVICE_TOKEN_REFRESH_BUFFER_SECONDS:
+        if (
+            self._service_token is not None
+            and remaining > _SERVICE_TOKEN_REFRESH_BUFFER_SECONDS
+        ):
             return self._service_token
 
         async with self._refresh_lock:
             # Re-check under lock to avoid double-refresh
             remaining = self._service_token_expires_at - time.time()
-            if self._service_token is not None and remaining > _SERVICE_TOKEN_REFRESH_BUFFER_SECONDS:
+            if (
+                self._service_token is not None
+                and remaining > _SERVICE_TOKEN_REFRESH_BUFFER_SECONDS
+            ):
                 return self._service_token
 
             token, expires_at = await self._refresh_service_token()
@@ -204,18 +210,23 @@ class ServiceProvider(CredentialProvider):
         This import is deferred to avoid a circular dependency at module load.
         """
         try:
+            from af_mcp_broker.audit.logger import AuditRecord  # noqa: PLC0415
             from af_mcp_broker.audit import logger as audit_logger  # noqa: PLC0415
 
-            await audit_logger.write_audit(
-                event="credential.issued",
-                execution_model=self.execution_model.value,
-                cred_class=self.cred_class,
+            record = AuditRecord(
+                principal_sub=principal.subject,
+                principal_uid=principal.uid,
+                capability=self.cred_class,
                 target=target,
+                action="credential.issued",
+                action_type="state_change",
+                args_summary=f"on_behalf_of={principal.email} username={principal.unixname}",
+                timestamp=time.time(),
+                request_id=audit_id,
                 audit_id=audit_id,
-                uid=principal.uid,
-                username=principal.unixname,
-                on_behalf_of=principal.email,
+                execution_model=self.execution_model.value,
             )
+            await audit_logger.write_audit(record)
         except ImportError:
             # audit module not yet implemented — log a warning so it is visible
             self._log.warning(

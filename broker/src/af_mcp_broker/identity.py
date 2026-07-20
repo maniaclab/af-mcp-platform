@@ -141,7 +141,7 @@ async def get_principal(token: str, settings: Settings) -> Principal:
             public_key = jwt.algorithms.RSAAlgorithm.from_jwk(key_data)
             claims = jwt.decode(
                 token,
-                public_key,
+                public_key,  # type: ignore[arg-type]  # JWKS only has public keys
                 algorithms=["RS256"],
                 audience=settings.keycloak_audience,
                 issuer=settings.keycloak_issuer,

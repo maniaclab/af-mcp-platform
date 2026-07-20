@@ -28,6 +28,7 @@ async def entitlement_middleware(request: Any, call_next: Any) -> Any:
     # The registry maps tool prefix -> backend -> required_capability.
     # We filter at the list_tools level by calling the registry.
     from af_mcp_broker.mcp.registry import BackendRegistry
+
     registry: BackendRegistry | None = getattr(request, "app_registry", None)
     if registry is None:
         return response
@@ -40,7 +41,8 @@ async def entitlement_middleware(request: Any, call_next: Any) -> Any:
 
     if hasattr(response, "tools"):
         response.tools = [
-            tool for tool in response.tools
+            tool
+            for tool in response.tools
             if _tool_is_allowed(tool, registry, principal_caps)
         ]
 

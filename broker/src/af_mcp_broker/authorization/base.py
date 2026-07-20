@@ -4,7 +4,7 @@ import fnmatch
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-import yaml
+import yaml  # type: ignore[import-untyped]
 
 if TYPE_CHECKING:
     from af_mcp_broker.identity import Principal
@@ -20,14 +20,28 @@ class Capability:
 CAPABILITIES: dict[str, Capability] = {
     "read_data": Capability("read_data", "read", "Read datasets from data stores"),
     "read_metadata": Capability("read_metadata", "read", "Read metadata catalogs"),
-    "read_monitoring": Capability("read_monitoring", "read", "Read monitoring dashboards and metrics"),
-    "read_gitlab": Capability("read_gitlab", "read", "Browse GitLab repos, issues, MRs, and pipelines"),
+    "read_monitoring": Capability(
+        "read_monitoring", "read", "Read monitoring dashboards and metrics"
+    ),
+    "read_gitlab": Capability(
+        "read_gitlab", "read", "Browse GitLab repos, issues, MRs, and pipelines"
+    ),
     "submit_jobs": Capability("submit_jobs", "state_change", "Submit compute jobs"),
-    "manage_jobs": Capability("manage_jobs", "state_change", "Cancel or modify compute jobs"),
-    "launch_compute": Capability("launch_compute", "state_change", "Launch interactive compute sessions"),
-    "manage_jupyter": Capability("manage_jupyter", "state_change", "Start, stop, and configure Jupyter servers"),
-    "manage_gitlab": Capability("manage_gitlab", "state_change", "Create MRs, open issues, retry CI"),
-    "manage_data": Capability("manage_data", "state_change", "Write or delete data (gated)"),
+    "manage_jobs": Capability(
+        "manage_jobs", "state_change", "Cancel or modify compute jobs"
+    ),
+    "launch_compute": Capability(
+        "launch_compute", "state_change", "Launch interactive compute sessions"
+    ),
+    "manage_jupyter": Capability(
+        "manage_jupyter", "state_change", "Start, stop, and configure Jupyter servers"
+    ),
+    "manage_gitlab": Capability(
+        "manage_gitlab", "state_change", "Create MRs, open issues, retry CI"
+    ),
+    "manage_data": Capability(
+        "manage_data", "state_change", "Write or delete data (gated)"
+    ),
     "admin": Capability("admin", "state_change", "Platform administration"),
 }
 
@@ -96,7 +110,10 @@ def check_entitlement(
         return False, f"target '{target}' is not registered in policy"
 
     if capability != required_cap:
-        return False, f"target '{target}' requires capability '{required_cap}', got '{capability}'"
+        return (
+            False,
+            f"target '{target}' requires capability '{required_cap}', got '{capability}'",
+        )
 
     principal_caps = get_principal_capabilities(principal, policy)
     if required_cap not in principal_caps:

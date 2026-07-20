@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, ClassVar
 
@@ -9,7 +10,6 @@ import structlog
 from pydantic import SecretBytes
 
 if TYPE_CHECKING:
-    from af_mcp_broker.config import Settings
     from af_mcp_broker.identity import Principal
 
 log = structlog.get_logger(__name__)
@@ -24,9 +24,6 @@ class CredentialKind(str, Enum):
 class ExecutionModel(str, Enum):
     DELEGATED = "delegated"
     ON_BEHALF = "on_behalf"
-
-
-from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)

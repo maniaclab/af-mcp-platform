@@ -21,13 +21,15 @@ async def identity_middleware(request: Any, call_next: Any) -> Any:
     Raises an MCP error if the token is missing or invalid.
     """
     from af_mcp_broker.identity import get_principal
-    from af_mcp_broker.config import get_settings
+    from af_mcp_broker.config import Settings
 
-    settings = get_settings()
+    settings = Settings()
 
     auth_header: str | None = None
     if hasattr(request, "headers"):
-        auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
+        auth_header = request.headers.get("Authorization") or request.headers.get(
+            "authorization"
+        )
 
     if not auth_header or not auth_header.lower().startswith("bearer "):
         raise ValueError("Missing Authorization: Bearer <token> header")

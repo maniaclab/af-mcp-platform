@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 import httpx
 import structlog
@@ -24,9 +24,7 @@ if TYPE_CHECKING:
 log = structlog.get_logger(__name__)
 
 # Targets served by the OIDC provider — config-overridable at construction time
-_DEFAULT_OIDC_TARGETS: frozenset[str] = frozenset(
-    {"rucio", "opendata", "af-internal"}
-)
+_DEFAULT_OIDC_TARGETS: frozenset[str] = frozenset({"rucio", "opendata", "af-internal"})
 
 
 class OIDCProvider(CredentialProvider):
@@ -50,8 +48,8 @@ class OIDCProvider(CredentialProvider):
     server-side by the broker.
     """
 
-    cred_class: str = "oidc_native"
-    execution_model: ExecutionModel = ExecutionModel.DELEGATED
+    cred_class: ClassVar[str] = "oidc_native"
+    execution_model: ClassVar[ExecutionModel] = ExecutionModel.DELEGATED
 
     def __init__(
         self,
@@ -99,7 +97,9 @@ class OIDCProvider(CredentialProvider):
             )
 
         # Cache hit — avoid a round-trip to Keycloak
-        cached = self._cache.get(principal.uid, target, min_remaining=min_remaining_seconds)
+        cached = await self._cache.get(
+            principal.uid, target, min_remaining=min_remaining_seconds
+        )
         if cached is not None:
             self._log.debug("oidc.issue.cache_hit", uid=principal.uid, target=target)
             return cached
@@ -121,7 +121,7 @@ class OIDCProvider(CredentialProvider):
             execution_model=self.execution_model,
         )
 
-        self._cache.put(principal.uid, target, cred)
+        await self._cache.put(principal.uid, target, cred)
         self._log.info(
             "oidc.issue.success",
             uid=principal.uid,
@@ -131,9 +131,7 @@ class OIDCProvider(CredentialProvider):
         )
         return cred
 
-    async def _fetch_brokered_token(
-        self, principal: Principal
-    ) -> tuple[str, float]:
+    async def _fetch_brokered_token(self, principal: Principal) -> tuple[str, float]:
         """Call Keycloak's stored-brokered-token endpoint.
 
         Returns ``(iam_access_token, expires_at_epoch)``.

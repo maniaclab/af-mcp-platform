@@ -10,7 +10,7 @@ import time
 import uuid
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar, cast
 
 import structlog
 from pydantic import SecretBytes
@@ -245,10 +245,8 @@ class HomeDirVomsBackend(X509Backend):
         cache: CredentialCache,
     ) -> ProxyMeta:
         import copy
-        import json
 
         try:
-            import kubernetes_asyncio as k8s  # type: ignore[import]
             from kubernetes_asyncio import client as k8s_client, config as k8s_config  # type: ignore[import]
         except ImportError as exc:
             raise RuntimeError(
@@ -283,11 +281,16 @@ class HomeDirVomsBackend(X509Backend):
         container["command"] = [
             "voms-proxy-init",
             "-pwstdin",
-            "-voms", voms,
-            "-cert", "/mnt/home/.globus/usercert.pem",
-            "-key", "/mnt/home/.globus/userkey.pem",
-            "-out", "/run/proxy/proxy.pem",
-            "-valid", valid,
+            "-voms",
+            voms,
+            "-cert",
+            "/mnt/home/.globus/usercert.pem",
+            "-key",
+            "/mnt/home/.globus/userkey.pem",
+            "-out",
+            "/run/proxy/proxy.pem",
+            "-valid",
+            valid,
         ]
 
         async with k8s_client.ApiClient() as api_client:
@@ -307,9 +310,7 @@ class HomeDirVomsBackend(X509Backend):
                 # Transmit passphrase via pod stdin then immediately zero it
                 passphrase_bytes = passphrase.get_secret_value()
                 try:
-                    await self._send_stdin_to_pod(
-                        core_v1, job_name, passphrase_bytes
-                    )
+                    await self._send_stdin_to_pod(core_v1, job_name, passphrase_bytes)
                 finally:
                     # Zero the local copy regardless of outcome
                     passphrase_bytes = b"\x00" * len(passphrase_bytes)
@@ -325,7 +326,9 @@ class HomeDirVomsBackend(X509Backend):
                     await batch_v1.delete_namespaced_job(
                         name=job_name,
                         namespace=self._namespace,
-                        body=k8s_client.V1DeleteOptions(propagation_policy="Foreground"),
+                        body=k8s_client.V1DeleteOptions(
+                            propagation_policy="Foreground"
+                        ),
                     )
                     self._log.debug("x509.kubernetes_job.deleted", job=job_name)
                 except Exception as cleanup_err:
@@ -349,7 +352,6 @@ class HomeDirVomsBackend(X509Backend):
         after this coroutine returns, regardless of success or failure.
         """
         # kubernetes_asyncio uses websocket for exec/attach
-        from kubernetes_asyncio.stream import WsApiClient  # type: ignore[import]
 
         pods = await core_v1.list_namespaced_pod(
             namespace=self._namespace,
@@ -453,11 +455,16 @@ class HomeDirVomsBackend(X509Backend):
         cmd = [
             "voms-proxy-init",
             "-pwstdin",
-            "-voms", voms,
-            "-cert", str(cert_path),
-            "-key", str(key_path),
-            "-out", str(proxy_path),
-            "-valid", valid,
+            "-voms",
+            voms,
+            "-cert",
+            str(cert_path),
+            "-key",
+            str(key_path),
+            "-out",
+            str(proxy_path),
+            "-valid",
+            valid,
         ]
 
         passphrase_bytes = passphrase.get_secret_value()
@@ -478,7 +485,9 @@ class HomeDirVomsBackend(X509Backend):
 
         if result.returncode != 0:
             stderr = result.stderr.decode(errors="replace")
-            self._log.warning("x509.local_mint.failed", uid=principal.uid, stderr=stderr)
+            self._log.warning(
+                "x509.local_mint.failed", uid=principal.uid, stderr=stderr
+            )
             cache.record_failed_unlock(principal.uid)
             raise ValueError(
                 f"voms-proxy-init failed (rc={result.returncode}): {stderr[:200]}"
@@ -537,7 +546,6 @@ def _parse_proxy_pem(proxy_pem: bytes) -> tuple[str, list[str], float]:
     Returns ``(dn, voms_attributes, not_after_epoch)``.
     """
     from cryptography import x509 as cx509
-    from cryptography.hazmat.primitives.serialization import Encoding
 
     # The proxy PEM may contain multiple certs (proxy chain); parse the first
     pem_blocks = proxy_pem.split(b"-----END CERTIFICATE-----")
@@ -561,7 +569,8 @@ def _parse_proxy_pem(proxy_pem: bytes) -> tuple[str, list[str], float]:
         ext = cert.extensions.get_extension_for_oid(voms_oid)
         # Raw value — production code would parse the ASN.1 AC here.
         # Returning the raw bytes as a placeholder avoids a hard voms-api dependency.
-        voms_attributes = [f"<voms_ac_bytes:{len(ext.value.value)}b>"]
+        raw_ext = cast(cx509.UnrecognizedExtension, ext.value)
+        voms_attributes = [f"<voms_ac_bytes:{len(raw_ext.value)}b>"]
     except cx509.ExtensionNotFound:
         pass
 
@@ -587,8 +596,8 @@ class X509Provider(CredentialProvider):
     - Rate-limited to 5 attempts per 15 minutes per uid to prevent brute force.
     """
 
-    cred_class: str = "user_x509"
-    execution_model: ExecutionModel = ExecutionModel.DELEGATED
+    cred_class: ClassVar[str] = "user_x509"
+    execution_model: ClassVar[ExecutionModel] = ExecutionModel.DELEGATED
 
     def __init__(
         self,
@@ -628,14 +637,12 @@ class X509Provider(CredentialProvider):
         was provided, raises ``NeedsUnlock`` so the caller can guide the user
         to POST their passphrase to ``/v1/x509/proxy``.
         """
-        cached = self._cache.get(
+        cached = await self._cache.get(
             principal.uid, target, min_remaining=min_remaining_seconds
         )
         if cached is not None:
             meta = self._cache.get_proxy_meta(principal.uid, target)
-            self._log.debug(
-                "x509.issue.cache_hit", uid=principal.uid, target=target
-            )
+            self._log.debug("x509.issue.cache_hit", uid=principal.uid, target=target)
             return cached
 
         if passphrase is None:
@@ -647,7 +654,7 @@ class X509Provider(CredentialProvider):
 
         meta = await self._mint(principal, passphrase)
         cred = self._build_credential(principal, target, meta)
-        self._cache.put(principal.uid, target, cred, proxy_meta=meta)
+        await self._cache.put(principal.uid, target, cred, proxy_meta=meta)
         return cred
 
     async def revoke(self, principal: Principal, target: str) -> None:
@@ -655,6 +662,7 @@ class X509Provider(CredentialProvider):
         meta = self._cache.get_proxy_meta(principal.uid, target)
         if meta is not None:
             from af_mcp_broker.credentials.cache import _secure_delete_proxy
+
             await _secure_delete_proxy(meta.proxy_path)
             self._log.info(
                 "x509.revoked",

@@ -101,17 +101,19 @@ async def broker_middleware(request: Any, call_next: Any) -> Any:
     # 5. Audit every state_change action
     if action_type == "state_change":
         args_summary = ", ".join(f"{k}=..." for k in list(tool_args.keys())[:10])
-        await write_audit(AuditRecord(
-            principal_sub=principal.subject,
-            principal_uid=principal.uid,
-            capability=backend.required_capability,
-            target=backend.name,
-            action=tool_name,
-            action_type=action_type,
-            args_summary=args_summary,
-            timestamp=time.time(),
-            request_id=request_id,
-            mcp_backend=backend.name,
-        ))
+        await write_audit(
+            AuditRecord(
+                principal_sub=principal.subject,
+                principal_uid=principal.uid,
+                capability=backend.required_capability,
+                target=backend.name,
+                action=tool_name,
+                action_type=action_type,
+                args_summary=args_summary,
+                timestamp=time.time(),
+                request_id=request_id,
+                mcp_backend=backend.name,
+            )
+        )
 
     return response

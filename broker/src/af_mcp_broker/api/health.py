@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import cast
+
 import structlog
 from fastapi import APIRouter, Request, Response, status
 from pydantic import BaseModel, ConfigDict
@@ -46,7 +48,9 @@ async def readyz(
     response: Response,
 ) -> ReadinessResponse:
     """Returns 200 when both JWKS and backends config are available."""
-    settings: Settings = getattr(request.app.state, "settings", Settings())
+    settings: Settings = (
+        cast(Settings, getattr(request.app.state, "settings", None)) or Settings()
+    )
 
     jwks_ok = False
     try:

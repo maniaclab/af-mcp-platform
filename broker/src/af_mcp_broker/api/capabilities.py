@@ -4,7 +4,7 @@ import fnmatch
 from typing import Any, Literal
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict
 
 from af_mcp_broker.identity import Principal, keycloak_dependency
@@ -128,9 +128,7 @@ def check_entitlement(
     )
 
 
-def _get_grants(
-    principal: Principal, policy: dict[str, Any]
-) -> list[CapabilityGrant]:
+def _get_grants(principal: Principal, policy: dict[str, Any]) -> list[CapabilityGrant]:
     """Collect all capability grants for the caller from the policy."""
     caller_groups = set(principal.groups)
     # Aggregate per-capability targets and action_types.

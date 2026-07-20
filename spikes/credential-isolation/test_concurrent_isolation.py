@@ -67,9 +67,9 @@ async def test_concurrent_cross_principal_isolation(n: int) -> None:
 
     uid_to_expected = {p.uid: p.token for p in principals}
     for uid, retrieved in results:
-        assert retrieved == uid_to_expected[uid], (
-            f"uid={uid} got '{retrieved}' but expected '{uid_to_expected[uid]}'"
-        )
+        assert (
+            retrieved == uid_to_expected[uid]
+        ), f"uid={uid} got '{retrieved}' but expected '{uid_to_expected[uid]}'"
 
     # Extra cross-check: each uid returns only its OWN credential, never a neighbour's.
     for cred in principals:
@@ -85,6 +85,7 @@ async def test_concurrent_cross_principal_isolation(n: int) -> None:
 # ---------------------------------------------------------------------------
 # Scenario 2: rate-limit on repeated failed lookups
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.anyio
 async def test_rate_limit_triggers_after_six_failures() -> None:
@@ -106,6 +107,7 @@ async def test_rate_limit_triggers_after_six_failures() -> None:
 # ---------------------------------------------------------------------------
 # Scenario 3: janitor sweeps expired entries
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.anyio
 async def test_janitor_removes_expired_entries() -> None:
