@@ -1,0 +1,47 @@
+github_url = "https://github.com/maniaclab/af-mcp-platform"
+
+[version]
+current = "0.1.0"
+
+regex = '''
+  (?P<major>\d+)
+  \.
+  (?P<minor>\d+)
+  \.
+  (?P<patch>\d+)
+  (rc
+    (?P<candidate>\d+)
+  )?
+  '''
+
+[git]
+message_template = "Bump version: {current_version} → {new_version}"
+tag_template = "v{new_version}"
+
+[[file]]
+src = "tbump.toml"
+search = "Bump version: {current_version} → "
+
+[[file]]
+src = "pixi.toml"
+search = 'version = "{current_version}"'
+
+[[file]]
+src = "broker/pyproject.toml"
+search = 'version = "{current_version}"'
+
+[[file]]
+src = "broker/src/af_mcp_broker/__init__.py"
+search = '__version__ = "{current_version}"'
+
+[[file]]
+src = "charts/af-mcp-platform/Chart.yaml"
+search = 'appVersion: "{current_version}"'
+
+[[file]]
+src = "charts/af-mcp-platform/Chart.yaml"
+search = 'version: {current_version}'
+
+[[field]]
+name = "candidate"
+default = ""
