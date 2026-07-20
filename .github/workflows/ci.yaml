@@ -16,14 +16,8 @@ jobs:
         with:
           environments: dev
 
-      - name: pre-commit
-        run: pixi run -e dev pre-commit-run
-
-      - name: Ruff lint
+      - name: Lint
         run: pixi run -e dev lint
-
-      - name: mypy
-        run: pixi run -e dev typecheck
 
   test-broker:
     name: Broker tests
@@ -36,13 +30,7 @@ jobs:
           environments: dev
 
       - name: Run tests with coverage
-        env:
-          PYTHONPATH: broker/src
-        run: |
-          pixi run -e dev python -m pytest spikes/ -v \
-            --cov=af_mcp_broker \
-            --cov-report=xml \
-            --cov-report=term-missing
+        run: pixi run -e dev test-all
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4

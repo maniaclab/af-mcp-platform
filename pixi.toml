@@ -40,16 +40,17 @@ httpx = ">=0.27"
 tbump = ">=6.7.0"
 
 [feature.broker.tasks]
-broker = "uvicorn af_mcp_broker.app:app --host 0.0.0.0 --port 8080 --reload"
-test = "pytest broker/src -v"
-lint = "ruff check broker/src && ruff format --check broker/src"
-fmt = "ruff format broker/src && ruff check --fix broker/src"
-typecheck = "mypy broker/src"
+serve = { cmd = "uvicorn af_mcp_broker.app:app --host 0.0.0.0 --port 8080 --reload", description = "Run broker dev server" }
 
 [feature.dev.tasks]
-test-broker = {cmd = "pytest broker/ -v", depends-on = []}
-test-spikes = {cmd = "pytest spikes/ -v", depends-on = []}
-pre-commit-run = "pre-commit run --all-files"
+pre-commit = { cmd = "pre-commit run --all-files", description = "Run pre-commit hooks on all files" }
+typecheck = { cmd = "mypy broker/src", description = "Type-check broker source" }
+fmt = { cmd = "ruff format broker/src && ruff check --fix broker/src", description = "Format and auto-fix broker source" }
+test = { cmd = "pytest spikes/ -v", env = { PYTHONPATH = "broker/src" }, description = "Run tests" }
+test-all = { cmd = "pytest spikes/ -v --cov=af_mcp_broker --cov-report=xml --cov-report=term-missing", env = { PYTHONPATH = "broker/src" }, description = "Run tests with coverage" }
+lint = { depends-on = ["pre-commit", "typecheck"], description = "Run all linting (pre-commit + mypy)" }
+check = { depends-on = ["lint", "test"], description = "Quick check: lint + tests" }
+check-all = { depends-on = ["lint", "test-all"], description = "Full check: lint + tests with coverage" }
 
 [environments]
 broker = {features = ["broker"], solve-group = "default"}
