@@ -19,10 +19,6 @@ message_template = "Bump version: {current_version} → {new_version}"
 tag_template = "v{new_version}"
 
 [[file]]
-src = "tbump.toml"
-search = "Bump version: {current_version} → "
-
-[[file]]
 src = "pixi.toml"
 # Match only the workspace-level version line, not dependency version constraints.
 search = 'version = "{current_version}"'
