@@ -15,6 +15,7 @@ af-mcp-broker = "af_mcp_broker.__main__:main"
 
 [tool.hatch]
 version.source = "vcs"
+version.raw-options.root = ".."
 build.hooks.vcs.version-file = "src/af_mcp_broker/_version.py"
 
 [tool.hatch.build.targets.wheel]

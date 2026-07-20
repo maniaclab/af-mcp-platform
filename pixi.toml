@@ -15,6 +15,8 @@ pydantic-settings = ">=2.3"
 python-jose = ">=3.3"
 
 [feature.broker.pypi-dependencies]
+# Editable install triggers hatch-vcs to generate _version.py from git tags.
+af-mcp-broker = {path = "broker/", editable = true}
 # uvicorn[standard] brings httptools + uvloop; python-jose[cryptography] brings the crypto backend.
 # conda-forge packages don't support pip extras syntax, so these live here.
 uvicorn = {version = ">=0.30", extras = ["standard"]}
@@ -46,8 +48,8 @@ serve = { cmd = "uvicorn af_mcp_broker.app:app --host 0.0.0.0 --port 8080 --relo
 pre-commit = { cmd = "pre-commit run --all-files", description = "Run pre-commit hooks on all files" }
 typecheck = { cmd = "mypy broker/src", description = "Type-check broker source" }
 fmt = { cmd = "ruff format broker/src && ruff check --fix broker/src", description = "Format and auto-fix broker source" }
-test = { cmd = "pytest spikes/ -v", env = { PYTHONPATH = "broker/src" }, description = "Run tests" }
-test-all = { cmd = "pytest spikes/ -v --cov=af_mcp_broker --cov-report=xml --cov-report=term-missing", env = { PYTHONPATH = "broker/src" }, description = "Run tests with coverage" }
+test = { cmd = "pytest spikes/ -v", description = "Run tests" }
+test-all = { cmd = "pytest spikes/ -v --cov=af_mcp_broker --cov-report=xml --cov-report=term-missing", description = "Run tests with coverage" }
 lint = { depends-on = ["pre-commit", "typecheck"], description = "Run all linting (pre-commit + mypy)" }
 check = { depends-on = ["lint", "test"], description = "Quick check: lint + tests" }
 check-all = { depends-on = ["lint", "test-all"], description = "Full check: lint + tests with coverage" }

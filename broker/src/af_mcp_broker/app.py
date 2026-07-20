@@ -11,7 +11,7 @@ from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import JSONResponse, Response
 from pydantic import ValidationError
 
-from af_mcp_broker._version import __version__
+from af_mcp_broker._version import version as __version__
 from af_mcp_broker.api.router import router as v1_router
 from af_mcp_broker.config import Settings
 from af_mcp_broker.identity import get_jwks

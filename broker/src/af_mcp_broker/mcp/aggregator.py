@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 
-from af_mcp_broker._version import __version__
+from af_mcp_broker._version import version as __version__
 
 # Placeholder ASGI app so that app.py can mount something at /mcp today.
 # Replace with the real FastMCP aggregator instance once the backend routing
