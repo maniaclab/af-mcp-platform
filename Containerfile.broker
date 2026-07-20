@@ -1,4 +1,4 @@
-FROM ghcr.io/prefix-dev/pixi:0.41.0 AS builder
+FROM ghcr.io/prefix-dev/pixi:latest AS builder
 
 WORKDIR /app
 COPY pixi.toml pixi.lock* ./

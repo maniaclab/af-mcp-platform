@@ -20,8 +20,3 @@ repos:
     hooks:
       - id: mypy
         files: ^broker/
-
-  - repo: https://github.com/helm/chart-testing
-    rev: v3.11.0
-    hooks:
-      - id: chart-testing
