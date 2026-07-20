@@ -20,5 +20,5 @@ aggregator_app = FastAPI(
         "Internal ASGI sub-application that proxies MCP tool calls to "
         "downstream backends. Mounted at /mcp by the broker application."
     ),
-    version="0.1.0",
+    version="0.0.1",
 )

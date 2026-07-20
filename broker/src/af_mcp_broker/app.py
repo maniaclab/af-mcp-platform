@@ -68,7 +68,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
 
     logger.info(
         "af_mcp_broker_started",
-        version="0.1.0",
+        version="0.0.1",
         keycloak_issuer=settings.keycloak_issuer,
         policy_file=settings.policy_file,
         backends_file=settings.backends_file,
