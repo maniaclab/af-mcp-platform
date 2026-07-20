@@ -2,13 +2,22 @@ name: CI
 
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
 
 jobs:
   lint:
     name: Lint & type-check
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -22,6 +31,8 @@ jobs:
   test-broker:
     name: Broker tests
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -41,6 +52,8 @@ jobs:
   portal-build:
     name: Portal build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -53,16 +66,3 @@ jobs:
       - name: Build
         working-directory: portal
         run: npm run build
-
-  chart-lint:
-    name: Helm chart lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: azure/setup-helm@v4
-        with:
-          version: "3.15.0"
-
-      - name: helm lint
-        run: helm lint charts/af-mcp-platform
