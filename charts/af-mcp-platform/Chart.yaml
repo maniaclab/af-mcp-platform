@@ -5,8 +5,8 @@ type: application
 version: 0.1.0
 appVersion: "0.1.0"
 keywords: [mcp, atlas, hep, analysis-facility]
-home: https://github.com/kratsg/af-mcp-platform
-sources: [https://github.com/kratsg/af-mcp-platform]
+home: https://github.com/maniaclab/af-mcp-platform
+sources: [https://github.com/maniaclab/af-mcp-platform]
 maintainers:
   - name: Giordon Stark
     email: kratsg@gmail.com

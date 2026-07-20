@@ -9,7 +9,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  OWNER: kratsg
+  OWNER: maniaclab
 
 jobs:
   build-push:
@@ -24,10 +24,10 @@ jobs:
         include:
           - component: broker
             dockerfile: Containerfile.broker
-            image: ghcr.io/kratsg/af-mcp-platform-broker
+            image: ghcr.io/maniaclab/af-mcp-platform-broker
           - component: portal
             dockerfile: Containerfile.portal
-            image: ghcr.io/kratsg/af-mcp-platform-portal
+            image: ghcr.io/maniaclab/af-mcp-platform-portal
 
     steps:
       - uses: actions/checkout@v4
