@@ -9,9 +9,15 @@ python = ">=3.12,<3.13"
 
 [feature.broker.dependencies]
 fastapi = ">=0.115"
-uvicorn = {version = ">=0.30", extras = ["standard"]}
+uvicorn = ">=0.30"
 pydantic = ">=2.7"
 pydantic-settings = ">=2.3"
+python-jose = ">=3.3"
+
+[feature.broker.pypi-dependencies]
+# uvicorn[standard] brings httptools + uvloop; python-jose[cryptography] brings the crypto backend.
+# conda-forge packages don't support pip extras syntax, so these live here.
+uvicorn = {version = ">=0.30", extras = ["standard"]}
 python-jose = {version = ">=3.3", extras = ["cryptography"]}
 httpx = ">=0.27"
 structlog = ">=24.4"
