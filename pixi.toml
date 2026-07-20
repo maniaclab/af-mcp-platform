@@ -1,4 +1,4 @@
-[project]
+[workspace]
 name = "af-mcp-platform"
 version = "0.1.0"
 channels = ["conda-forge"]
