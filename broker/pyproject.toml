@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.26", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
 name = "af-mcp-broker"
-version = "0.0.1"
+dynamic = ["version"]
 description = "Credential-brokered MCP gateway for the UChicago ATLAS Analysis Facility"
 requires-python = ">=3.12"
 # Dependencies are managed by pixi — see pixi.toml at the workspace root.
@@ -12,6 +12,10 @@ dependencies = []
 
 [project.scripts]
 af-mcp-broker = "af_mcp_broker.__main__:main"
+
+[tool.hatch]
+version.source = "vcs"
+build.hooks.vcs.version-file = "src/af_mcp_broker/_version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/af_mcp_broker"]

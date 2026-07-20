@@ -11,6 +11,7 @@ from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import JSONResponse, Response
 from pydantic import ValidationError
 
+from af_mcp_broker._version import __version__
 from af_mcp_broker.api.router import router as v1_router
 from af_mcp_broker.config import Settings
 from af_mcp_broker.identity import get_jwks
@@ -68,7 +69,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
 
     logger.info(
         "af_mcp_broker_started",
-        version="0.0.1",
+        version=__version__,
         keycloak_issuer=settings.keycloak_issuer,
         policy_file=settings.policy_file,
         backends_file=settings.backends_file,
@@ -86,7 +87,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
 
 app = FastAPI(
     title="AF MCP Broker",
-    version="0.1.0",
+    version=__version__,
     description=(
         "Credential-brokered MCP gateway for the UChicago ATLAS Analysis Facility. "
         "Provides Identity, Authorization, Credentialing, and Audit subsystems."

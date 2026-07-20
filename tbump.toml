@@ -15,7 +15,7 @@ regex = '''
   '''
 
 [git]
-message_template = "Bump version: 0.0.1 → {new_version}"
+message_template = "Bump version: {current_version} → {new_version}"
 tag_template = "v{new_version}"
 
 [[file]]
@@ -24,15 +24,12 @@ search = "Bump version: {current_version} → "
 
 [[file]]
 src = "pixi.toml"
+# Match only the workspace-level version line, not dependency version constraints.
 search = 'version = "{current_version}"'
 
 [[file]]
-src = "broker/pyproject.toml"
-search = 'version = "{current_version}"'
-
-[[file]]
-src = "broker/src/af_mcp_broker/__init__.py"
-search = '__version__ = "{current_version}"'
+src = "portal/package.json"
+search = '"version": "{current_version}"'
 
 [[file]]
 src = "charts/af-mcp-platform/Chart.yaml"
