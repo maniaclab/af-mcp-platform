@@ -20,9 +20,10 @@ class Settings(BaseSettings):
         alias="KEYCLOAK_JWKS_URI",
     )
 
-    # ATLAS IAM broker alias used in Keycloak identity provider config
+    # ATLAS IAM broker alias — must match the IdP alias in Keycloak connect realm.
+    # Verified alias is "atlas-oidc" (Settings → Identity Providers → ATLAS IAM).
     atlas_iam_broker_alias: str = Field(
-        default="atlas-iam",
+        default="atlas-oidc",
         alias="ATLAS_IAM_BROKER_ALIAS",
     )
 
