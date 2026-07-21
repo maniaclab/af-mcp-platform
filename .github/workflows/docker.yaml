@@ -55,6 +55,7 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta-broker.outputs.tags }}
           labels: ${{ steps.meta-broker.outputs.labels }}
+          build-args: VERSION=${{ steps.meta-broker.outputs.version }}
           pull: true
 
   build-portal:
