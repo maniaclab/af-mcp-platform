@@ -183,9 +183,7 @@ async def get_principal(token: str, settings: Settings) -> Principal:
     )
 
 
-def _select_jwk(
-    keys: list[dict[str, Any]], kid: str | None
-) -> dict[str, Any] | None:
+def _select_jwk(keys: list[dict[str, Any]], kid: str | None) -> dict[str, Any] | None:
     """Return the JWK matching ``kid``.
 
     When the token carries no ``kid`` and the JWKS publishes exactly one key,

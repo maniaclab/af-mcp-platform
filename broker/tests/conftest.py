@@ -38,7 +38,9 @@ class RsaKey:
 
 
 def _make_key(kid: str) -> RsaKey:
-    return RsaKey(kid=kid, private=rsa.generate_private_key(public_exponent=65537, key_size=2048))
+    return RsaKey(
+        kid=kid, private=rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    )
 
 
 @pytest.fixture
