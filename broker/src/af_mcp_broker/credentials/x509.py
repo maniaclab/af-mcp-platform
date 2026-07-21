@@ -10,7 +10,7 @@ import time
 import uuid
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import structlog
 from pydantic import SecretBytes
@@ -304,7 +304,7 @@ class HomeDirVomsBackend(X509Backend):
                     uid=principal.uid,
                 )
                 await batch_v1.create_namespaced_job(
-                    namespace=self._namespace, body=spec
+                    namespace=self._namespace, body=cast(Any, spec)
                 )
 
                 # Transmit passphrase via pod stdin then immediately zero it
