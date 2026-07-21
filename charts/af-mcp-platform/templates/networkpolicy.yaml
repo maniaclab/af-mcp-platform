@@ -28,14 +28,14 @@ spec:
       ports:
         - protocol: TCP
           port: 8080
-    # Allow Prometheus to scrape /metrics (served on the http port) from the prom namespace.
+    # Allow Prometheus to scrape the metrics port from the prom namespace.
     - from:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: prom
       ports:
         - protocol: TCP
-          port: 8080
+          port: 9090
     # Allow the chart's own helm-test pod (same namespace) to hit the broker.
     - from:
         - podSelector:

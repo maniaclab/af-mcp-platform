@@ -11,7 +11,7 @@ spec:
     matchLabels:
       {{- include "af-mcp-platform.broker.selectorLabels" . | nindent 6 }}
   endpoints:
-    - port: http
+    - port: metrics
       interval: {{ .Values.serviceMonitor.interval | quote }}
       path: /metrics
       scheme: http
