@@ -345,10 +345,10 @@ class HomeDirVomsBackend(X509Backend):
         container["securityContext"]["runAsUser"] = principal.uid
         container["securityContext"]["runAsGroup"] = principal.gid
         script = (
-            "voms-proxy-init -pwstdin -voms \"$1\" "
+            'voms-proxy-init -pwstdin -voms "$1" '
             "-cert /mnt/home/.globus/usercert.pem "
             "-key /mnt/home/.globus/userkey.pem "
-            "-out /run/proxy/proxy.pem -valid \"$2\" 1>&2 && "
+            '-out /run/proxy/proxy.pem -valid "$2" 1>&2 && '
             f"echo '{_PROXY_B64_BEGIN}' && "
             "base64 /run/proxy/proxy.pem && "
             f"echo '{_PROXY_B64_END}'"
@@ -757,9 +757,7 @@ class X509Provider(CredentialProvider):
             principal.uid, target, min_remaining=min_remaining_seconds
         )
         if cached is not None:
-            self._log.debug(
-                "x509.issue.cache_hit", uid=principal.uid, target=target
-            )
+            self._log.debug("x509.issue.cache_hit", uid=principal.uid, target=target)
             return cached
 
         if passphrase is None:
