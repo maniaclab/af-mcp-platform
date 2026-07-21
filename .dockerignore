@@ -1,9 +1,6 @@
 # Pixi environment (rebuilt in the container)
 .pixi/
 
-# Version control
-.git/
-.gitignore
 
 # Node / portal build artifacts
 node_modules/

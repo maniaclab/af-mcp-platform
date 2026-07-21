@@ -16,6 +16,9 @@ af-mcp-broker = "af_mcp_broker.__main__:main"
 [tool.hatch]
 version.source = "vcs"
 version.raw-options.root = ".."
+# Fallback for untagged checkouts (PRs, shallow clones without tags).
+# Tagged releases always override this via git describe.
+version.raw-options.fallback_version = "0.0.0"
 build.hooks.vcs.version-file = "src/af_mcp_broker/_version.py"
 
 [tool.hatch.build.targets.wheel]

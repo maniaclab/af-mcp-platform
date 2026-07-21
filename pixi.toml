@@ -12,23 +12,18 @@ fastapi = ">=0.115"
 uvicorn = ">=0.30"
 pydantic = ">=2.7"
 pydantic-settings = ">=2.3"
-python-jose = ">=3.3"
+pyjwt = ">=2.8"
+cryptography = ">=42"
+httpx2 = ">=2.0.0"
+structlog = ">=24.4"
+fastmcp = ">=2.0"
+prometheus-fastapi-instrumentator = ">=7.0"
+kubernetes_asyncio = ">=30.0"
+pyyaml = ">=6.0"
 
 [feature.broker.pypi-dependencies]
 # Editable install triggers hatch-vcs to generate _version.py from git tags.
 af-mcp-broker = {path = "broker/", editable = true}
-# uvicorn[standard] brings httptools + uvloop; python-jose[cryptography] brings the crypto backend.
-# conda-forge packages don't support pip extras syntax, so these live here.
-uvicorn = {version = ">=0.30", extras = ["standard"]}
-python-jose = {version = ">=3.3", extras = ["cryptography"]}
-httpx = ">=0.27"
-structlog = ">=24.4"
-fastmcp = ">=2.0"
-prometheus-fastapi-instrumentator = ">=7.0"
-python-multipart = ">=0.0.9"
-cachetools = ">=5.3"
-kubernetes = ">=30.0"
-pyyaml = ">=6.0"
 
 [feature.dev.dependencies]
 pytest = ">=8.0"
@@ -38,17 +33,23 @@ anyio = ">=4.0"
 ruff = ">=0.4"
 mypy = ">=1.10"
 pre-commit = ">=3.7"
-httpx = ">=0.27"
+httpx2 = ">=2.0.0"
 tbump = ">=6.7.0"
 
 [feature.broker.tasks]
 serve = { cmd = "uvicorn af_mcp_broker.app:app --host 0.0.0.0 --port 8080 --reload", description = "Run broker dev server" }
+test = "pytest broker/src -v"
+lint = "ruff check broker/src && ruff format --check broker/src"
+fmt = "ruff format broker/src && ruff check --fix broker/src"
+typecheck = "mypy broker/src"
 
 [feature.dev.tasks]
 pre-commit = { cmd = "pre-commit run --all-files", description = "Run pre-commit hooks on all files" }
 typecheck = { cmd = "mypy broker/src", description = "Type-check broker source" }
 fmt = { cmd = "ruff format broker/src && ruff check --fix broker/src", description = "Format and auto-fix broker source" }
 test = { cmd = "pytest spikes/ -v", description = "Run tests" }
+test-broker = {cmd = "pytest broker/ -v"}
+test-spikes = {cmd = "pytest spikes/ -v"}
 test-all = { cmd = "pytest spikes/ -v --cov=af_mcp_broker --cov-report=xml --cov-report=term-missing", description = "Run tests with coverage" }
 lint = { depends-on = ["pre-commit", "typecheck"], description = "Run all linting (pre-commit + mypy)" }
 check = { depends-on = ["lint", "test"], description = "Quick check: lint + tests" }
