@@ -57,7 +57,7 @@ def _tool_is_allowed(
     tool_name: str = getattr(tool, "name", "") or ""
     backend = registry.get_by_tool_prefix(tool_name)
     if backend is None:
-        return True  # unknown prefix: pass through
+        return False  # unknown prefix: deny by default (fail-closed)
     required = backend.required_capability
     if required == "__none__":
         return True
