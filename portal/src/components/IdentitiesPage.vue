@@ -1,45 +1,74 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
-import { fetchIdentities } from '../lib/api';
-import type { Identity } from '../lib/api';
+import { fetchIdentities, SessionExpiredError } from '../lib/api';
 import IdentityLink from './IdentityLink.vue';
 
-const identities = ref<Identity[]>([]);
+interface ProviderRow {
+  provider: string;
+  display_name: string;
+  description: string;
+  linked: boolean;
+  sub?: string;
+}
+
+// The broker only returns display_name/enables for providers still AVAILABLE to
+// link; already-linked accounts arrive as {provider, sub}. Fill their labels
+// from this client-side map (mirrors the broker's _PROVIDERS metadata).
+const PROVIDER_META: Record<string, { display_name: string; enables: string }> = {
+  'atlas-iam': {
+    display_name: 'ATLAS IAM',
+    enables: 'VOMS proxy generation and grid certificate credential brokering',
+  },
+  'cern': {
+    display_name: 'CERN SSO',
+    enables: 'CERN resource access and CMS/ATLAS experiment datasets',
+  },
+};
+
+const rows = ref<ProviderRow[]>([]);
+const linkedProviders = ref<Set<string>>(new Set());
 const loading = ref(true);
 const error = ref<string | null>(null);
-
-// Which capabilities depend on which providers — used for the warning banner
-const requiredProviders: Record<string, string> = {
-  'atlas-iam': 'AMI, Rucio, ATLAS grid jobs',
-  'cern':      'CERN computing resources, CVMFS, grid proxies',
-  'gitlab':    'ATLAS GitLab repositories and CI pipelines',
-};
+const sessionExpired = ref(false);
 
 onMounted(async () => {
   try {
     const data = await fetchIdentities();
-    identities.value = data.identities;
+    const linked: ProviderRow[] = data.linked_accounts.map(a => ({
+      provider: a.provider,
+      display_name: PROVIDER_META[a.provider]?.display_name ?? a.provider,
+      description: PROVIDER_META[a.provider]?.enables ?? '',
+      linked: true,
+      sub: a.sub,
+    }));
+    const available: ProviderRow[] = data.available_providers.map(p => ({
+      provider: p.provider,
+      display_name: p.display_name,
+      description: p.enables,
+      linked: false,
+    }));
+    rows.value = [...linked, ...available];
+    linkedProviders.value = new Set(data.linked_accounts.map(a => a.provider));
   } catch (err) {
-    error.value = err instanceof Error
-      ? err.message
-      : 'Could not load identity status.';
+    if (err instanceof SessionExpiredError) {
+      sessionExpired.value = true;
+    } else {
+      error.value = err instanceof Error
+        ? err.message
+        : 'Could not load identity status.';
+    }
   } finally {
     loading.value = false;
   }
 });
 
-// Unlink handler — update the local state so the UI reflects the change
-function handleUnlinked(provider: string) {
-  const idx = identities.value.findIndex(i => i.provider === provider);
-  if (idx !== -1) {
-    identities.value[idx] = { ...identities.value[idx], linked: false, subject: undefined };
-  }
+function reload() {
+  location.reload();
 }
 
-// Determines whether we should show the "missing required identity" warning
+// Show the "missing required identity" warning when a key provider is unlinked.
 function missingRequired(provider: string): boolean {
-  const id = identities.value.find(i => i.provider === provider);
-  return id !== undefined && !id.linked;
+  return !linkedProviders.value.has(provider);
 }
 </script>
 
@@ -49,6 +78,16 @@ function missingRequired(provider: string): boolean {
     <div v-if="loading" class="ip__loading" aria-live="polite">
       <span class="ip__spinner" aria-hidden="true"></span>
       Loading identity status…
+    </div>
+
+    <!-- Session expired -->
+    <div v-else-if="sessionExpired" class="ip__error" role="alert">
+      <span class="ip__error-title">Session expired</span>
+      <span class="ip__error-body">
+        Your session has expired.
+        <button type="button" class="ip__reload" @click="reload">Reload</button>
+        to re-authenticate.
+      </span>
     </div>
 
     <!-- Error -->
@@ -75,18 +114,15 @@ function missingRequired(provider: string): boolean {
       </div>
 
       <!-- Identity list -->
-      <div v-if="identities.length > 0" class="ip__list">
+      <div v-if="rows.length > 0" class="ip__list">
         <IdentityLink
-          v-for="id in identities"
-          :key="id.provider"
-          :provider="id.provider"
-          :linked="id.linked"
-          :display_name="id.display_name"
-          :description="id.description"
-          :capabilities_unlocked="id.capabilities_unlocked"
-          :subject="id.subject"
-          :linked_at="id.linked_at"
-          @unlinked="handleUnlinked"
+          v-for="row in rows"
+          :key="row.provider"
+          :provider="row.provider"
+          :linked="row.linked"
+          :display_name="row.display_name"
+          :description="row.description"
+          :sub="row.sub"
         />
       </div>
 
@@ -102,9 +138,9 @@ function missingRequired(provider: string): boolean {
       <div class="ip__explainer">
         <h2 class="ip__explainer-title">What each identity unlocks</h2>
         <div class="ip__explainer-grid">
-          <div v-for="(description, provider) in requiredProviders" :key="provider" class="ip__explainer-row">
+          <div v-for="(meta, provider) in PROVIDER_META" :key="provider" class="ip__explainer-row">
             <span class="ip__explainer-provider">{{ provider }}</span>
-            <span class="ip__explainer-desc">{{ description }}</span>
+            <span class="ip__explainer-desc">{{ meta.enables }}</span>
           </div>
         </div>
       </div>
@@ -185,6 +221,16 @@ function missingRequired(provider: string): boolean {
 .ip__error-body {
   font-size: 0.875rem;
   color: #9CA3AF;
+}
+
+.ip__reload {
+  font: inherit;
+  color: #00D4C8;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
 }
 
 /* Empty */

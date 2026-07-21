@@ -2,9 +2,8 @@
 import Base from '../layouts/Base.astro';
 import DashboardCards from '../components/DashboardCards.vue';
 
-const headers = Astro.request.headers;
-const userEmail = headers.get('x-auth-request-email') ?? '';
-
+// Identity is filled client-side (see Base.astro) — the greeting element is
+// tagged data-af-identity and stays hidden until GET /v1/identities resolves.
 const mcpEndpoint = 'https://mcp.af.uchicago.edu/mcp';
 ---
 
@@ -21,12 +20,10 @@ const mcpEndpoint = 'https://mcp.af.uchicago.edu/mcp';
         AI assistant to Rucio, AMI, and the analysis grid.
       </p>
 
-      {userEmail && (
-        <div class="hero__user">
-          <span class="hero__user-label">Signed in as</span>
-          <span class="hero__user-email">{userEmail}</span>
-        </div>
-      )}
+      <div class="hero__user" data-af-user-holder hidden>
+        <span class="hero__user-label">Signed in as</span>
+        <span class="hero__user-email" data-af-identity></span>
+      </div>
     </div>
   </section>
 
@@ -87,11 +84,26 @@ curl -H "Authorization: Bearer $AF_TOKEN" \\
 -->
 <script>
   (function() {
-    const canvas = document.getElementById('track-canvas');
+    interface Track {
+      angle: number;
+      curvature: number;
+      length: number;
+      palette: string;
+      alpha: number;
+      lineWidth: number;
+      phase: number;
+    }
+
+    // Cast to non-null after the runtime guards so TS keeps them narrowed
+    // inside the resize()/draw() closures (control-flow narrowing of a `| null`
+    // const is not carried into nested functions).
+    const canvas = document.getElementById('track-canvas') as HTMLCanvasElement;
     if (!canvas) return;
 
-    const ctx = canvas.getContext('2d');
-    let W, H, tracks, animId;
+    const ctx = canvas.getContext('2d') as CanvasRenderingContext2D;
+    if (!ctx) return;
+    let W: number, H: number, tracks: Track[];
+    let animId = 0;
 
     const TRACK_COUNT = 18;
     const TEAL  = 'rgba(0, 212, 200,';
@@ -204,10 +216,11 @@ curl -H "Authorization: Bearer $AF_TOKEN" \\
 
 <!-- ── Copy button ───────────────────────────────────────────────────── -->
 <script>
-  const btn = document.getElementById('copy-btn');
+  const btn = document.getElementById('copy-btn') as HTMLButtonElement | null;
   if (btn) {
     btn.addEventListener('click', async () => {
       const url = btn.dataset.url;
+      if (!url) return;
       try {
         await navigator.clipboard.writeText(url);
         btn.textContent = 'Copied';

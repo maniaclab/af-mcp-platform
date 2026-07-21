@@ -1,20 +1,25 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
-import { fetchProxyStatus } from '../lib/api';
+import { fetchProxyStatus, SessionExpiredError } from '../lib/api';
 import type { ProxyStatus } from '../lib/api';
 import ProxyStatusWidget from './ProxyStatus.vue';
 
 const status = ref<ProxyStatus | null>(null);
 const loading = ref(true);
 const error = ref<string | null>(null);
+const sessionExpired = ref(false);
 
 onMounted(async () => {
   try {
     status.value = await fetchProxyStatus();
   } catch (err) {
-    error.value = err instanceof Error
-      ? err.message
-      : 'Could not load proxy status.';
+    if (err instanceof SessionExpiredError) {
+      sessionExpired.value = true;
+    } else {
+      error.value = err instanceof Error
+        ? err.message
+        : 'Could not load proxy status.';
+    }
   } finally {
     loading.value = false;
   }
@@ -25,7 +30,11 @@ function handleUnlocked(newStatus: ProxyStatus) {
 }
 
 function handleRevoked() {
-  status.value = { has_proxy: false };
+  status.value = { cached: false, voms_attributes: [] };
+}
+
+function reload() {
+  location.reload();
 }
 </script>
 
@@ -34,6 +43,15 @@ function handleRevoked() {
     <div v-if="loading" class="psp__loading" aria-live="polite">
       <span class="psp__spinner" aria-hidden="true"></span>
       Checking proxy status…
+    </div>
+
+    <div v-else-if="sessionExpired" class="psp__error" role="alert">
+      <span class="psp__error-title">Session expired</span>
+      <span class="psp__error-body">
+        Your session has expired.
+        <button type="button" class="psp__reload" @click="reload">Reload</button>
+        to re-authenticate.
+      </span>
     </div>
 
     <div v-else-if="error" class="psp__error" role="alert">
@@ -94,4 +112,14 @@ function handleRevoked() {
   color: #EF4444;
 }
 .psp__error-body { font-size: 0.875rem; color: #9CA3AF; }
+
+.psp__reload {
+  font: inherit;
+  color: #00D4C8;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+}
 </style>
