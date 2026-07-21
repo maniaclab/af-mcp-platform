@@ -15,6 +15,9 @@ spec:
         # Trigger rolling update when ConfigMaps change
         checksum/config-policy: {{ include (print $.Template.BasePath "/configmap-policy.yaml") . | sha256sum }}
         checksum/config-backends: {{ include (print $.Template.BasePath "/configmap-backends.yaml") . | sha256sum }}
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
       labels:
         {{- include "af-mcp-platform.broker.selectorLabels" . | nindent 8 }}
     spec:
@@ -44,6 +47,9 @@ spec:
           ports:
             - name: http
               containerPort: 8080
+              protocol: TCP
+            - name: metrics
+              containerPort: 9090
               protocol: TCP
           env:
             # OIDC / Keycloak settings
