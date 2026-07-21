@@ -1,20 +1,17 @@
 FROM ghcr.io/prefix-dev/pixi:latest AS builder
 
 WORKDIR /app
-COPY pixi.toml pixi.lock* ./
-COPY broker/ ./broker/
-
-ARG VERSION=0.0.0
-ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AF_MCP_BROKER=${VERSION}
+# Copy everything including .git so hatch-vcs can read git tags for versioning.
+COPY . .
 
 # Install only the broker feature, not dev
 RUN pixi install --frozen --environment broker
 
-# Final stage
+# Final stage — only carry over what's needed to run; .git stays in builder
 FROM debian:bookworm-slim
 WORKDIR /app
 COPY --from=builder /app/.pixi/envs/broker /opt/pixi-env
-COPY --from=builder /app /app
+COPY --from=builder /app/broker/src /app/broker/src
 
 ENV PATH="/opt/pixi-env/bin:${PATH}" \
     PYTHONPATH="/app/broker/src" \
