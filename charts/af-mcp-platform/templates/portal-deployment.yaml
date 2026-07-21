@@ -21,6 +21,9 @@ spec:
       serviceAccountName: {{ include "af-mcp-platform.serviceAccountName" . }}
       securityContext:
         runAsNonRoot: true
+        # nginxinc/nginx-unprivileged's built-in nginx user/group.
+        runAsUser: 101
+        runAsGroup: 101
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -35,7 +38,7 @@ spec:
                 - ALL
           ports:
             - name: http
-              containerPort: 3000
+              containerPort: 8081
               protocol: TCP
           livenessProbe:
             httpGet:

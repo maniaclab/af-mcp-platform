@@ -14,16 +14,17 @@ Portal:
 {{- if .Values.ingress.enabled }}
   https://{{ .Values.ingress.portalHost }}
 {{- else }}
-  kubectl port-forward svc/{{ include "af-mcp-platform.portal.fullname" . }} 3000:3000
-  http://127.0.0.1:3000
+  kubectl port-forward svc/{{ include "af-mcp-platform.portal.fullname" . }} 8081:8081
+  http://127.0.0.1:8081
 {{- end }}
 
 Next steps:
 
 1. Link identities (ATLAS IAM <-> Keycloak):
    Users must complete the identity-linking flow before the broker can mint
-   ATLAS credentials. Direct them to:
-   https://{{ .Values.ingress.mcpHost }}/v1/link-identity
+   ATLAS credentials. Direct them to the portal (which calls
+   POST /v1/identities/link on the broker):
+   https://{{ .Values.ingress.portalHost }}/identities
 
 2. Verify the service token secret is in place:
 {{- if .Values.broker.existingServiceTokenSecret }}

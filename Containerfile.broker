@@ -18,7 +18,8 @@ ENV PATH="/opt/pixi-env/bin:${PATH}" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-RUN groupadd -r af-mcp && useradd -r -g af-mcp af-mcp
+# Numeric uid/gid required: k8s runAsUser/runAsGroup can't resolve names.
+RUN groupadd -r -g 1000 af-mcp && useradd -r -u 1000 -g af-mcp af-mcp
 USER af-mcp
 
 EXPOSE 8080

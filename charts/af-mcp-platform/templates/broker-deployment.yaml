@@ -28,6 +28,10 @@ spec:
       serviceAccountName: {{ include "af-mcp-platform.serviceAccountName" . }}
       securityContext:
         runAsNonRoot: true
+        # Matches the numeric uid/gid the af-mcp user is created with in
+        # Containerfile.broker (kubelet requires numeric ids, not names).
+        runAsUser: 1000
+        runAsGroup: 1000
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -134,7 +138,7 @@ spec:
           {{- else if eq .Values.broker.homeDir.mode "hostPath" }}
           # WARNING: hostPath is for local development only. Never use in production.
           hostPath:
-            path: {{ .Values.broker.homeDir.mountPath | quote }}
+            path: {{ .Values.broker.homeDir.hostPath | quote }}
             type: Directory
           {{- end }}
         {{- end }}
