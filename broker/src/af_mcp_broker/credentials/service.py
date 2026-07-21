@@ -7,7 +7,6 @@ import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
 
-import httpx
 import structlog
 from pydantic import SecretBytes
 
@@ -17,6 +16,7 @@ from af_mcp_broker.credentials.base import (
     ExecutionModel,
     IssuedCredential,
 )
+from af_mcp_broker.http import get_http_client
 
 if TYPE_CHECKING:
     from af_mcp_broker.config import Settings
@@ -72,8 +72,8 @@ class ServiceProvider(CredentialProvider):
         self,
         principal: Principal,
         target: str,
-        min_remaining_seconds: int = 300,
-        passphrase: SecretBytes | None = None,
+        min_remaining_seconds: int = 300,  # noqa: ARG002 (interface)
+        passphrase: SecretBytes | None = None,  # noqa: ARG002 (interface)
     ) -> IssuedCredential:
         """Return a bearer credential backed by the AF service account.
 
@@ -176,15 +176,15 @@ class ServiceProvider(CredentialProvider):
             f"{self._settings.keycloak_issuer.rstrip('/')}"
             "/protocol/openid-connect/token"
         )
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(
-                token_endpoint,
-                data={
-                    "grant_type": "client_credentials",
-                    "client_id": client_id,
-                    "client_secret": client_secret,
-                },
-            )
+        resp = await get_http_client().post(
+            token_endpoint,
+            data={
+                "grant_type": "client_credentials",
+                "client_id": client_id,
+                "client_secret": client_secret,
+            },
+            timeout=10.0,
+        )
         resp.raise_for_status()
         data = resp.json()
 
@@ -210,8 +210,8 @@ class ServiceProvider(CredentialProvider):
         This import is deferred to avoid a circular dependency at module load.
         """
         try:
-            from af_mcp_broker.audit.logger import AuditRecord  # noqa: PLC0415
-            from af_mcp_broker.audit import logger as audit_logger  # noqa: PLC0415
+            from af_mcp_broker.audit import logger as audit_logger
+            from af_mcp_broker.audit.logger import AuditRecord
 
             record = AuditRecord(
                 principal_sub=principal.subject,

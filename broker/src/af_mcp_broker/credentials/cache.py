@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import structlog
@@ -96,10 +98,8 @@ class CredentialCache:
         """Cancel the janitor task gracefully.  Call on shutdown."""
         if self._janitor_task and not self._janitor_task.done():
             self._janitor_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._janitor_task
-            except asyncio.CancelledError:
-                pass
             self._log.info("credential_cache.janitor_stopped")
 
     # ------------------------------------------------------------------
@@ -309,7 +309,7 @@ async def _secure_delete_proxy(path: str) -> None:
     the file content is gone before the directory entry is removed.
     """
     try:
-        size = os.path.getsize(path)
+        size = Path(path).stat().st_size
         # Run the blocking I/O on the default executor to avoid stalling the loop
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, _overwrite_and_unlink, path, size)
@@ -322,13 +322,11 @@ async def _secure_delete_proxy(path: str) -> None:
 def _overwrite_and_unlink(path: str, size: int) -> None:
     """Blocking: overwrite *path* with zeros then unlink."""
     try:
-        with open(path, "r+b") as fh:
+        with Path(path).open("r+b") as fh:
             fh.write(b"\x00" * size)
             fh.flush()
             os.fsync(fh.fileno())
     except OSError:
         pass  # best-effort
-    try:
-        os.unlink(path)
-    except FileNotFoundError:
-        pass
+    with contextlib.suppress(FileNotFoundError):
+        Path(path).unlink()

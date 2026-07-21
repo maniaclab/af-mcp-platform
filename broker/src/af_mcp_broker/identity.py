@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Annotated, Any
 
-import httpx
 import jwt
 import structlog
 from fastapi import Depends, HTTPException, status
@@ -12,6 +12,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import SecretStr
 
 from af_mcp_broker.config import Settings, get_settings
+from af_mcp_broker.http import get_http_client
 
 logger = structlog.get_logger(__name__)
 
@@ -31,6 +32,19 @@ class _JwksEntry:
 
 
 _jwks_cache: dict[str, _JwksEntry] = {}
+# Single-flight: dedupe concurrent refreshes of the same URI. Locks are
+# per-event-loop because asyncio.Lock binds to the loop that first uses it
+# (tests run many short-lived loops in one process).
+_jwks_locks: dict[str, tuple[asyncio.AbstractEventLoop, asyncio.Lock]] = {}
+
+
+def _get_jwks_lock(uri: str) -> asyncio.Lock:
+    loop = asyncio.get_running_loop()
+    entry = _jwks_locks.get(uri)
+    if entry is None or entry[0] is not loop:
+        entry = (loop, asyncio.Lock())
+        _jwks_locks[uri] = entry
+    return entry[1]
 
 
 async def _fetch_jwks(jwks_uri: str) -> list[dict[str, Any]]:
@@ -40,10 +54,9 @@ async def _fetch_jwks(jwks_uri: str) -> list[dict[str, Any]]:
     higher up the stack can surface a useful error rather than a raw 500.
     """
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(jwks_uri)
-            resp.raise_for_status()
-            return resp.json()["keys"]
+        resp = await get_http_client().get(jwks_uri, timeout=10.0)
+        resp.raise_for_status()
+        return resp.json()["keys"]
     except Exception as exc:
         logger.error("jwks_fetch_failed", uri=jwks_uri, error=str(exc))
         raise HTTPException(
@@ -53,19 +66,36 @@ async def _fetch_jwks(jwks_uri: str) -> list[dict[str, Any]]:
 
 
 async def get_jwks(settings: Settings) -> list[dict[str, Any]]:
-    """Return JWKS keys, using a 5-minute in-process TTL cache."""
+    """Return JWKS keys, using a 5-minute in-process TTL cache.
+
+    Concurrent refreshes of the same URI are deduplicated, and a refresh
+    failure falls back to the stale entry so a Keycloak blip does not take
+    auth down with it.
+    """
     uri = settings.keycloak_jwks_uri
     entry = _jwks_cache.get(uri)
     now = time.monotonic()
 
-    if entry is None or (now - entry.fetched_at) > _JWKS_CACHE_TTL_SECONDS:
-        keys = await _fetch_jwks(uri)
+    if entry is not None and (now - entry.fetched_at) <= _JWKS_CACHE_TTL_SECONDS:
+        return entry.keys
+
+    async with _get_jwks_lock(uri):
+        # Another request may have refreshed while we waited on the lock.
+        entry = _jwks_cache.get(uri)
+        now = time.monotonic()
+        if entry is not None and (now - entry.fetched_at) <= _JWKS_CACHE_TTL_SECONDS:
+            return entry.keys
+
+        try:
+            keys = await _fetch_jwks(uri)
+        except HTTPException:
+            if entry is not None:
+                logger.warning("jwks_refresh_failed_serving_stale", uri=uri)
+                return entry.keys
+            raise
         _jwks_cache[uri] = _JwksEntry(keys=keys, fetched_at=now)
         logger.debug("jwks_cache_refreshed", uri=uri, key_count=len(keys))
-    else:
-        keys = entry.keys
-
-    return keys
+        return keys
 
 
 # ---------------------------------------------------------------------------
@@ -212,15 +242,17 @@ def _peek_sub(token: str) -> str:
 
 
 async def keycloak_dependency(
-    credentials: HTTPAuthorizationCredentials = Depends(_bearer_scheme),
-    settings: Settings = Depends(get_settings),
+    credentials: Annotated[HTTPAuthorizationCredentials, Depends(_bearer_scheme)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> Principal:
     """FastAPI dependency that resolves to the authenticated Principal.
 
     Inject this into route handlers that require authentication:
 
         @router.get("/example")
-        async def example(principal: Principal = Depends(keycloak_dependency)):
+        async def example(
+            principal: Annotated[Principal, Depends(keycloak_dependency)],
+        ):
             ...
     """
     return await get_principal(credentials.credentials, settings)

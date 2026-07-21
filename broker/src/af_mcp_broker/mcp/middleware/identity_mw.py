@@ -20,10 +20,10 @@ async def identity_middleware(request: Any, call_next: Any) -> Any:
     Stores the Principal in request.context["principal"] for downstream middleware.
     Raises an MCP error if the token is missing or invalid.
     """
+    from af_mcp_broker.config import get_settings
     from af_mcp_broker.identity import get_principal
-    from af_mcp_broker.config import Settings
 
-    settings = Settings()
+    settings = get_settings()
 
     auth_header: str | None = None
     if hasattr(request, "headers"):

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, ClassVar
 
 from pydantic import SecretStr
 
@@ -39,31 +39,24 @@ class _FakeResponse:
 class _FakeClient:
     """Captures the headers passed to ``get`` for assertion."""
 
-    captured: dict[str, str] = {}
+    captured: ClassVar[dict[str, str]] = {}
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        pass
-
-    async def __aenter__(self) -> _FakeClient:
-        return self
-
-    async def __aexit__(self, *args: Any) -> None:
-        pass
-
-    async def get(self, url: str, headers: dict[str, str]) -> _FakeResponse:
+    async def get(
+        self, url: str, headers: dict[str, str], **kwargs: Any
+    ) -> _FakeResponse:
         type(self).captured = dict(headers)
         return _FakeResponse()
 
 
 async def test_fetch_brokered_token_sends_real_token(monkeypatch):
     """Regression for bug 2 — the real token, not the masked SecretStr repr."""
-    monkeypatch.setattr(oidc.httpx, "AsyncClient", _FakeClient)
+    monkeypatch.setattr(oidc, "get_http_client", _FakeClient)
 
     provider = oidc.OIDCProvider(
         settings=Settings(keycloak_issuer="https://keycloak.test/realms/connect"),
         cache=CredentialCache(),
     )
-    token, expires_at = await provider._fetch_brokered_token(_principal())
+    token, _expires_at = await provider._fetch_brokered_token(_principal())
 
     assert token == "iam-token"
     auth = _FakeClient.captured["Authorization"]

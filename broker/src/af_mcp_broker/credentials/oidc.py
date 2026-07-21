@@ -4,7 +4,6 @@ import time
 import uuid
 from typing import TYPE_CHECKING, ClassVar
 
-import httpx
 import structlog
 from fastapi import HTTPException
 from pydantic import SecretBytes
@@ -16,6 +15,7 @@ from af_mcp_broker.credentials.base import (
     IssuedCredential,
 )
 from af_mcp_broker.credentials.cache import CredentialCache
+from af_mcp_broker.http import get_http_client
 
 if TYPE_CHECKING:
     from af_mcp_broker.config import Settings
@@ -70,7 +70,7 @@ class OIDCProvider(CredentialProvider):
         principal: Principal,
         target: str,
         min_remaining_seconds: int = 300,
-        passphrase: SecretBytes | None = None,
+        passphrase: SecretBytes | None = None,  # noqa: ARG002 (interface)
     ) -> IssuedCredential:
         """Return a bearer credential carrying the user's ATLAS IAM token.
 
@@ -144,15 +144,13 @@ class OIDCProvider(CredentialProvider):
             f"/broker/{self._settings.atlas_iam_broker_alias}/token"
         )
 
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(
-                broker_token_url,
-                headers={
-                    "Authorization": (
-                        f"Bearer {principal.raw_token.get_secret_value()}"
-                    )
-                },
-            )
+        resp = await get_http_client().get(
+            broker_token_url,
+            headers={
+                "Authorization": f"Bearer {principal.raw_token.get_secret_value()}"
+            },
+            timeout=10.0,
+        )
 
         if resp.status_code == 401:
             raise HTTPException(

@@ -46,10 +46,11 @@ Answers: "is this principal allowed to call this tool?"
 
 - Policy is declarative YAML (`policy.yaml`) — no code change needed to add a
   capability.
-- Each tool is tagged with a `required_capability` (e.g., `rucio:read`,
-  `panda:submit`).
+- Each backend target requires a capability (e.g., rucio requires `read_data`,
+  panda requires `submit_jobs`) via `target_capabilities` in `policy.yaml`.
 - A principal's capabilities come from their Keycloak group memberships via
-  `entitlements.group_capabilities` in the HelmRelease values.
+  `group_capabilities` in `policy.yaml` (shipped in the chart's policy
+  ConfigMap).
 - Authorization failures are logged with structured fields (uid, tool, capability)
   and return HTTP 403 to the aggregator.
 
@@ -62,7 +63,7 @@ Two axes define the provider matrix:
 
 | | **Short-lived mint** | **Stored brokered token** |
 |---|---|---|
-| **IAM-based** | Keycloak token exchange (AF-internal only) | `GET /realms/connect/broker/atlas-iam/token` → ATLAS IAM token |
+| **IAM-based** | Keycloak token exchange (AF-internal only) | `GET /realms/connect/broker/atlas-oidc/token` → ATLAS IAM token |
 | **x509/VOMS** | Ephemeral k8s Job (NFS subPath mount of `~/.globus`) | N/A — always minted fresh |
 
 The `CredentialCache` (in-process, async-safe) stores minted credentials keyed by
@@ -71,7 +72,7 @@ The `CredentialCache` (in-process, async-safe) stores minted credentials keyed b
 
 Important: Keycloak Standard Token Exchange (V2) is internal-to-AF only. It
 **cannot** mint a token that `atlas-auth.cern.ch` will accept. Use the stored
-brokered token path via `GET /realms/connect/broker/atlas-iam/token` for any
+brokered token path via `GET /realms/connect/broker/atlas-oidc/token` for any
 credential that must be accepted by external ATLAS services (Rucio, PanDA, AMI).
 
 ### 4. Audit
@@ -84,8 +85,10 @@ Structured log (structlog + JSON) of every tool invocation, including:
 - response status and latency
 - request ID (propagated in `X-Request-ID` header)
 
-Prometheus metrics (`/metrics`) expose per-tool latency histograms and error
-counters, scraped by the cluster's Prometheus instance.
+Prometheus metrics expose per-tool latency histograms and error counters,
+served as `/metrics` on a dedicated port (9090, `METRICS_PORT`) so the
+chart's NetworkPolicy can allow Prometheus scraping without opening the API
+port. The API port does not serve `/metrics`.
 
 ---
 
@@ -99,11 +102,21 @@ Key endpoints:
 
 | Method | Path | Purpose |
 |---|---|---|
-| `POST` | `/v1/tools/{tool_name}` | Execute a tool call for the authenticated principal |
-| `GET` | `/v1/tools` | List available tools (filtered by principal's capabilities) |
-| `GET` | `/v1/health` | Liveness probe |
-| `GET` | `/v1/ready` | Readiness probe (checks backend connectivity) |
-| `GET` | `/metrics` | Prometheus metrics |
+| `GET` | `/v1/identities` | Caller identity, linked accounts, linkable providers |
+| `POST` | `/v1/identities/link` | Start Keycloak IdP linking (returns redirect URL) |
+| `GET` | `/v1/capabilities` | Caller's granted capabilities |
+| `POST` | `/v1/authorize` | Check one entitlement (used by the aggregator per call) |
+| `GET` | `/v1/catalog` | Tools visible to the caller after entitlement filtering |
+| `POST` | `/v1/credential` | Issue or return a cached credential for a target |
+| `POST` | `/v1/x509/proxy` | Mint and cache a VOMS proxy (passphrase unlock) |
+| `GET` | `/v1/x509/proxy/status` | Proxy cache status |
+| `GET` | `/v1/healthz` | Liveness probe |
+| `GET` | `/v1/readyz` | Readiness probe (JWKS + backends config loaded) |
+
+Tool execution itself flows through the MCP mount (`/mcp`); the aggregator
+authorizes and fetches credentials by calling `/v1/authorize` and
+`/v1/credential` per tool call. Prometheus metrics are served on the
+dedicated metrics port (9090), not under `/v1`.
 
 All requests require a valid AF bearer token. The aggregator translates
 MCP-over-HTTP into `/v1` calls; external callers can also hit `/v1` directly
@@ -133,7 +146,7 @@ the simplest correct thing. The extraction path if it becomes necessary:
 2. oauth2-proxy validates the bearer token against Keycloak and forwards the
    request with the validated JWT in a header.
 3. The FastMCP Aggregator receives the `tools/call`, extracts tool name + args,
-   and calls the broker's `POST /v1/tools/{tool_name}`.
+   and calls the broker's `POST /v1/authorize` and `POST /v1/credential`.
 4. The broker Identity subsystem validates the JWT and resolves the `Principal`.
 5. The Authorization subsystem checks `principal.capabilities` against the tool's
    `required_capability`. Deny → 403 logged and returned.

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, SecretBytes, SecretStr
@@ -84,7 +85,7 @@ class ProxyCacheStatus(BaseModel):
 
 
 def _iso(epoch: float) -> str:
-    return datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat()
+    return datetime.fromtimestamp(epoch, tz=UTC).isoformat()
 
 
 def _registry(request: Request) -> CredentialRegistry:
@@ -131,7 +132,7 @@ def _resolve_x509_target(request: Request, target: str | None) -> str:
 
 def _to_response(cred: _IssuedCredential) -> IssuedCredential:
     remaining = max(0, int(cred.expires_at - time.time()))
-    common = {
+    common: dict[str, Any] = {
         "target": cred.target,
         "kind": cred.kind.value,
         "credential_type": cred.cred_class,
@@ -162,7 +163,7 @@ def _to_response(cred: _IssuedCredential) -> IssuedCredential:
 async def issue_credential(
     body: CredentialRequest,
     request: Request,
-    principal: Principal = Depends(keycloak_dependency),
+    principal: Annotated[Principal, Depends(keycloak_dependency)],
 ) -> IssuedCredential:
     registry = _registry(request)
     try:
@@ -194,7 +195,7 @@ async def issue_credential(
 )
 async def delete_credential(
     request: Request,
-    principal: Principal = Depends(keycloak_dependency),
+    principal: Annotated[Principal, Depends(keycloak_dependency)],
 ) -> None:
     await _cache(request).revoke_all(principal.uid)
 
@@ -208,7 +209,7 @@ async def delete_credential(
 async def create_proxy(
     body: ProxyRequest,
     request: Request,
-    principal: Principal = Depends(keycloak_dependency),
+    principal: Annotated[Principal, Depends(keycloak_dependency)],
 ) -> ProxyMetadata:
     provider = _x509_provider(request)
     target = _resolve_x509_target(request, body.target)
@@ -243,8 +244,8 @@ async def create_proxy(
 )
 async def proxy_status(
     request: Request,
+    principal: Annotated[Principal, Depends(keycloak_dependency)],
     target: str | None = None,
-    principal: Principal = Depends(keycloak_dependency),
 ) -> ProxyCacheStatus:
     resolved = _resolve_x509_target(request, target)
     meta = _cache(request).get_proxy_meta(principal.uid, resolved)
@@ -266,8 +267,8 @@ async def proxy_status(
 )
 async def delete_proxy(
     request: Request,
+    principal: Annotated[Principal, Depends(keycloak_dependency)],
     target: str | None = None,
-    principal: Principal = Depends(keycloak_dependency),
 ) -> None:
     provider = _x509_provider(request)
     targets: list[str]

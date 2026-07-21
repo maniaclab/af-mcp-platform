@@ -27,7 +27,7 @@ jobs:
           environments: dev
 
       - name: Lint
-        run: pixi run -e dev lint
+        run: pixi run -e dev lint-all
 
   test-broker:
     name: Broker tests
@@ -60,10 +60,13 @@ jobs:
       - uses: actions/checkout@v5
 
       - uses: actions/setup-node@v4
+        with:
+          cache: npm
+          cache-dependency-path: portal/package-lock.json
 
       - name: Install dependencies
         working-directory: portal
-        run: npm install
+        run: npm ci
 
       - name: Build
         working-directory: portal

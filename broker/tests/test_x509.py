@@ -23,23 +23,24 @@ from af_mcp_broker.credentials.x509 import (
     _zero_bytearray,
 )
 
-
 # ---------------------------------------------------------------------------
 # _extract_proxy_from_log
 # ---------------------------------------------------------------------------
 
 
-def _wrap_log(proxy_bytes: bytes, *, noise_before: str = "", noise_after: str = "") -> str:
+def _wrap_log(
+    proxy_bytes: bytes, *, noise_before: str = "", noise_after: str = ""
+) -> str:
     payload = base64.b64encode(proxy_bytes).decode()
     return (
-        f"{noise_before}"
-        f"{_PROXY_B64_BEGIN}\n{payload}\n{_PROXY_B64_END}\n"
-        f"{noise_after}"
+        f"{noise_before}{_PROXY_B64_BEGIN}\n{payload}\n{_PROXY_B64_END}\n{noise_after}"
     )
 
 
 def test_extract_proxy_with_surrounding_noise():
-    proxy = b"-----BEGIN CERTIFICATE-----\nfake proxy bytes\n-----END CERTIFICATE-----\n"
+    proxy = (
+        b"-----BEGIN CERTIFICATE-----\nfake proxy bytes\n-----END CERTIFICATE-----\n"
+    )
     log = _wrap_log(
         proxy,
         noise_before="voms-proxy-init: contacting voms server...\nCreating proxy .. Done\n",
@@ -94,7 +95,7 @@ def _make_self_signed_pem(common_name: str, not_after: datetime.datetime) -> byt
             cx509.NameAttribute(NameOID.COMMON_NAME, common_name),
         ]
     )
-    not_before = datetime.datetime(2024, 1, 1, tzinfo=datetime.timezone.utc)
+    not_before = datetime.datetime(2024, 1, 1, tzinfo=datetime.UTC)
     cert = (
         cx509.CertificateBuilder()
         .subject_name(name)
@@ -109,7 +110,7 @@ def _make_self_signed_pem(common_name: str, not_after: datetime.datetime) -> byt
 
 
 def test_parse_proxy_pem_extracts_dn_and_expiry():
-    not_after = datetime.datetime(2030, 6, 15, 12, 0, 0, tzinfo=datetime.timezone.utc)
+    not_after = datetime.datetime(2030, 6, 15, 12, 0, 0, tzinfo=datetime.UTC)
     pem = _make_self_signed_pem("Jane Doe", not_after)
 
     dn, voms_attributes, parsed_not_after = _parse_proxy_pem(pem)

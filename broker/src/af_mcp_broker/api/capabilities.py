@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 import structlog
 from fastapi import APIRouter, Depends, Request
@@ -9,8 +9,8 @@ from pydantic import BaseModel, ConfigDict
 from af_mcp_broker.authorization import (
     CAPABILITIES,
     EntitlementPolicy,
-    _get_action_type,
     check_entitlement,
+    get_action_type,
     get_principal_capabilities,
 )
 from af_mcp_broker.identity import Principal, keycloak_dependency
@@ -134,7 +134,7 @@ def _grants_for(
 )
 async def get_capabilities(
     request: Request,
-    principal: Principal = Depends(keycloak_dependency),
+    principal: Annotated[Principal, Depends(keycloak_dependency)],
 ) -> CapabilitiesResponse:
     policy = _get_policy(request)
     return CapabilitiesResponse(
@@ -150,11 +150,11 @@ async def get_capabilities(
 async def authorize(
     body: AuthorizeRequest,
     request: Request,
-    principal: Principal = Depends(keycloak_dependency),
+    principal: Annotated[Principal, Depends(keycloak_dependency)],
 ) -> AuthorizeResponse:
     policy = _get_policy(request)
     allow, reason = check_entitlement(principal, body.capability, body.target, policy)
-    action_type = _get_action_type(body.target, body.action, policy)
+    action_type = get_action_type(body.target, body.action, policy)
     logger.info(
         "authorize_decision",
         subject=principal.subject,
@@ -180,7 +180,7 @@ async def authorize(
 )
 async def get_catalog(
     request: Request,
-    principal: Principal = Depends(keycloak_dependency),
+    principal: Annotated[Principal, Depends(keycloak_dependency)],
 ) -> CatalogResponse:
     policy = _get_policy(request)
     registry = _get_registry(request)

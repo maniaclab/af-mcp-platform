@@ -4,8 +4,8 @@ from collections.abc import Callable
 
 from af_mcp_broker.authorization import (
     EntitlementPolicy,
-    _get_action_type,
     check_entitlement,
+    get_action_type,
     get_principal_capabilities,
 )
 
@@ -52,9 +52,9 @@ def test_unknown_target_denied(
 
 def test_action_type_resolution(policy: EntitlementPolicy) -> None:
     # panda submit_* is a state_change override.
-    assert _get_action_type("panda", "submit_job", policy) == "state_change"
+    assert get_action_type("panda", "submit_job", policy) == "state_change"
     # A non-override tool falls back to the capability's action type
     # (panda -> submit_jobs -> state_change).
-    assert _get_action_type("panda", "list_jobs", policy) == "state_change"
+    assert get_action_type("panda", "list_jobs", policy) == "state_change"
     # rucio -> read_data -> read.
-    assert _get_action_type("rucio", "list_dids", policy) == "read"
+    assert get_action_type("rucio", "list_dids", policy) == "read"

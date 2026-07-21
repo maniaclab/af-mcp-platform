@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import fnmatch
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import yaml  # type: ignore[import-untyped]
@@ -57,7 +58,7 @@ class EntitlementPolicy:
 
 
 def load_policy(path: str) -> EntitlementPolicy:
-    with open(path) as fh:
+    with Path(path).open() as fh:
         raw = yaml.safe_load(fh) or {}
     policy = EntitlementPolicy()
     policy.group_capabilities = raw.get("group_capabilities", {})
@@ -80,7 +81,7 @@ def get_principal_capabilities(
     return caps
 
 
-def _get_action_type(target: str, tool_name: str, policy: EntitlementPolicy) -> str:
+def get_action_type(target: str, tool_name: str, policy: EntitlementPolicy) -> str:
     """Resolve the action type for a specific tool on a target."""
     overrides = policy.target_action_types.get(target, {})
     for pattern, action_type in overrides.items():

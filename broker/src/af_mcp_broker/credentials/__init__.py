@@ -14,10 +14,10 @@ from af_mcp_broker.credentials.service import ServiceProvider
 from af_mcp_broker.credentials.x509 import X509Provider
 
 __all__ = [
+    "CredentialCache",
     "CredentialKind",
     "CredentialProvider",
     "CredentialRegistry",
-    "CredentialCache",
     "ExecutionModel",
     "IssuedCredential",
     "NeedsUnlock",

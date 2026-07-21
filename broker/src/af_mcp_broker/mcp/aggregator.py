@@ -8,7 +8,6 @@ from __future__ import annotations
 # minimal at this stage: the full aggregation logic (backend discovery, per-call
 # credential injection, audit emission) will be layered in here once the
 # credential subsystem is complete.
-
 from fastapi import FastAPI
 
 from af_mcp_broker._version import version as __version__

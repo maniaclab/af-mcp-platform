@@ -4,11 +4,11 @@ import time
 import uuid
 from typing import Any
 
-import httpx
 import structlog
 
 from af_mcp_broker.audit import AuditRecord, write_audit
-from af_mcp_broker.config import Settings
+from af_mcp_broker.config import get_settings
+from af_mcp_broker.http import get_http_client
 
 logger = structlog.get_logger(__name__)
 
@@ -23,7 +23,8 @@ async def broker_middleware(request: Any, call_next: Any) -> Any:
     """Authorize + credential inject for every MCP tool call."""
     from af_mcp_broker.mcp.registry import BackendRegistry
 
-    broker_base_url = Settings().broker_internal_url
+    settings = get_settings()
+    broker_base_url = settings.broker_internal_url
 
     principal = getattr(request, "context", {}).get("principal")
     if principal is None:
@@ -44,18 +45,17 @@ async def broker_middleware(request: Any, call_next: Any) -> Any:
     request_id = str(uuid.uuid4())
 
     # 1. Authorize
-    async with httpx.AsyncClient() as client:
-        auth_resp = await client.post(
-            f"{broker_base_url}/v1/authorize",
-            json={
-                "capability": backend.required_capability,
-                "target": backend.name,
-                "action": tool_name,
-                "context": {"args_keys": list(tool_args.keys())},
-            },
-            headers={"Authorization": f"Bearer {bearer_token}"},
-            timeout=5.0,
-        )
+    auth_resp = await get_http_client().post(
+        f"{broker_base_url}/v1/authorize",
+        json={
+            "capability": backend.required_capability,
+            "target": backend.name,
+            "action": tool_name,
+            "context": {"args_keys": list(tool_args.keys())},
+        },
+        headers={"Authorization": f"Bearer {bearer_token}"},
+        timeout=5.0,
+    )
 
     if auth_resp.status_code != 200:
         raise ValueError(f"Authorization denied for tool '{tool_name}'")
@@ -70,19 +70,19 @@ async def broker_middleware(request: Any, call_next: Any) -> Any:
     # 2. Acquire credential if the backend needs one
     credential: dict | None = None
     if backend.auth_type != "none":
-        async with httpx.AsyncClient() as client:
-            cred_resp = await client.post(
-                f"{broker_base_url}/v1/credential",
-                json={"target": backend.name},
-                headers={"Authorization": f"Bearer {bearer_token}"},
-                timeout=5.0,
-            )
+        cred_resp = await get_http_client().post(
+            f"{broker_base_url}/v1/credential",
+            json={"target": backend.name},
+            headers={"Authorization": f"Bearer {bearer_token}"},
+            timeout=5.0,
+        )
 
         if cred_resp.status_code == 409:
             detail = cred_resp.json()
+            portal = settings.portal_url.rstrip("/")
             raise ValueError(
                 f"Credential unlock required. Visit the portal: "
-                f"https://mcp-portal.af.uchicago.edu{detail.get('unlock_endpoint', '/status')}"
+                f"{portal}{detail.get('unlock_endpoint', '/status')}"
             )
         if cred_resp.status_code != 200:
             raise ValueError(f"Failed to acquire credential for '{backend.name}'")
@@ -100,22 +100,22 @@ async def broker_middleware(request: Any, call_next: Any) -> Any:
     # 4. Forward to backend
     response = await call_next(request)
 
-    # 5. Audit every state_change action
-    if action_type == "state_change":
-        args_summary = ", ".join(f"{k}=..." for k in list(tool_args.keys())[:10])
-        await write_audit(
-            AuditRecord(
-                principal_sub=principal.subject,
-                principal_uid=principal.uid,
-                capability=backend.required_capability,
-                target=backend.name,
-                action=tool_name,
-                action_type=action_type,
-                args_summary=args_summary,
-                timestamp=time.time(),
-                request_id=request_id,
-                mcp_backend=backend.name,
-            )
+    # 5. Audit every tool invocation (docs/architecture.md promises a line per
+    # call, not just per state change).
+    args_summary = ", ".join(f"{k}=..." for k in list(tool_args.keys())[:10])
+    await write_audit(
+        AuditRecord(
+            principal_sub=principal.subject,
+            principal_uid=principal.uid,
+            capability=backend.required_capability,
+            target=backend.name,
+            action=tool_name,
+            action_type=action_type,
+            args_summary=args_summary,
+            timestamp=time.time(),
+            request_id=request_id,
+            mcp_backend=backend.name,
         )
+    )
 
     return response

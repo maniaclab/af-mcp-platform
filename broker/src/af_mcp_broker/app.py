@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator, TextIO
+from pathlib import Path
+from typing import TextIO
 
 import structlog
 from fastapi import FastAPI, HTTPException, Request
@@ -21,6 +23,7 @@ from af_mcp_broker.credentials import (
     OIDCProvider,
     X509Provider,
 )
+from af_mcp_broker.http import aclose_http_client
 from af_mcp_broker.identity import get_jwks
 from af_mcp_broker.logging import configure_logging
 from af_mcp_broker.mcp.aggregator import aggregator_app
@@ -36,7 +39,7 @@ def _open_audit_output(dest: str) -> TextIO:
     """
     if dest == "-":
         return sys.stdout
-    return open(dest, "a")  # noqa: SIM115 - closed on lifespan shutdown
+    return Path(dest).open("a")
 
 
 @asynccontextmanager
@@ -83,6 +86,21 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     audit_output = _open_audit_output(settings.audit_log_file)
     init_audit_logger(audit_output)
 
+    # --- Metrics: /metrics lives on its own port (chart NetworkPolicy allows
+    # Prometheus only there), served by prometheus_client's thread so the
+    # single uvicorn worker owns the process-wide registry.
+    metrics_server = None
+    application.state.metrics_port = None
+    if settings.metrics_port >= 0:
+        try:
+            from prometheus_client import start_http_server
+
+            metrics_server, _ = start_http_server(settings.metrics_port)
+            application.state.metrics_port = metrics_server.server_port
+            logger.info("metrics_server_started", port=metrics_server.server_port)
+        except ImportError:
+            logger.debug("prometheus_client_not_installed")
+
     application.state.settings = settings
     application.state.entitlement_policy = entitlement_policy
     application.state.backend_registry = backend_registry
@@ -115,6 +133,10 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     yield
 
     await credential_cache.stop_janitor()
+    await aclose_http_client()
+    if metrics_server is not None:
+        metrics_server.shutdown()
+        metrics_server.server_close()
     if audit_output is not sys.stdout:
         audit_output.close()
     logger.info("af_mcp_broker_stopped")
@@ -149,7 +171,10 @@ app.include_router(v1_router)
 try:
     from prometheus_fastapi_instrumentator import Instrumentator  # type: ignore[import]
 
-    Instrumentator().instrument(app).expose(app, endpoint="/metrics")
+    # instrument() records request metrics into the default prometheus
+    # registry; the lifespan serves that registry on METRICS_PORT (9090).
+    # No expose() here — the API port must not serve /metrics (issue #11).
+    Instrumentator().instrument(app)
 except ImportError:
     # prometheus-fastapi-instrumentator is an optional dependency. The broker
     # functions correctly without it; metrics simply won't be available.
@@ -178,12 +203,16 @@ async def _http_exception_handler(request: Request, exc: HTTPException) -> Respo
 async def _validation_error_handler(
     request: Request, exc: ValidationError
 ) -> JSONResponse:
-    logger.warning(
-        "request_validation_error",
+    # A bare pydantic ValidationError reaching here is an internal bug
+    # (e.g. building a response model): report a 500, not a client 422.
+    # Bad request bodies raise RequestValidationError, which FastAPI's
+    # default handler already turns into a 422.
+    logger.error(
+        "internal_validation_error",
         path=request.url.path,
         errors=exc.errors(),
     )
     return JSONResponse(
-        status_code=422,
-        content={"detail": exc.errors()},
+        status_code=500,
+        content={"detail": "Internal server error"},
     )

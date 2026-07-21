@@ -34,12 +34,24 @@ class Settings(BaseSettings):
     # Filesystem
     home_root: str = "/data/homes"
 
+    # Broker-owned per-uid proxy files live here (tmpfs in the chart, which
+    # passes PROXY_DIR when broker.tmpfsProxy is enabled).
+    proxy_dir: str = "/run/broker/proxies"
+
     # Policy and backend config files read at startup
     policy_file: str = "/etc/af-mcp/policy.yaml"
     backends_file: str = "/etc/af-mcp/backends.yaml"
 
     # Audit log destination; "-" means stdout
     audit_log_file: str = "-"
+
+    # Prometheus /metrics is served on its own port so a NetworkPolicy can
+    # firewall scraping separately from API traffic. 0 picks an ephemeral
+    # port (tests); a negative value disables the metrics server.
+    metrics_port: int = 9090
+
+    # User-facing portal, used in unlock hints and identity-linking redirects.
+    portal_url: str = "https://mcp-portal.af.uchicago.edu"
 
     # Loopback base URL the aggregator middleware uses to reach the broker's
     # own /v1 API. The broker contract is HTTP even when co-located.

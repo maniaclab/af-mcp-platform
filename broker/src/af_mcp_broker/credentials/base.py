@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING, ClassVar
 
 import structlog
@@ -15,13 +15,13 @@ if TYPE_CHECKING:
 log = structlog.get_logger(__name__)
 
 
-class CredentialKind(str, Enum):
+class CredentialKind(StrEnum):
     BEARER = "bearer"
     X509_PROXY_REF = "x509_proxy_ref"
     NONE = "none"
 
 
-class ExecutionModel(str, Enum):
+class ExecutionModel(StrEnum):
     DELEGATED = "delegated"
     ON_BEHALF = "on_behalf"
 
@@ -100,7 +100,7 @@ class CredentialProvider(ABC):
         - For ON_BEHALF providers, always write an audit record.
         """
 
-    async def revoke(self, principal: Principal, target: str) -> None:
+    async def revoke(self, principal: Principal, target: str) -> None:  # noqa: B027
         """Revoke / purge a cached credential.  Default is a no-op.
 
         X509Provider overrides this to zero-overwrite the proxy file before
