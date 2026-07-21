@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-# requires: kubernetes>=30.0
+# requires: kubernetes_asyncio>=30.0
 
 import asyncio
+import base64
+import binascii
 import os
 import stat
 import subprocess
@@ -39,6 +41,52 @@ _PROXY_TMPFS_ROOT = "/run/broker/proxies"
 # Default voms-proxy-init validity in hours
 _DEFAULT_PROXY_VALID_HOURS = "192:00"  # 8 days
 
+# Sentinel lines that delimit the base64-encoded proxy in the mint pod's log.
+# The proxy is harvested by reading the pod log after the Job completes (a
+# completed pod cannot be exec'd into), so the payload must be unambiguous.
+# Base64's alphabet ([A-Za-z0-9+/=] plus newlines) never contains the literal
+# "-----...-----" sentinel text, so voms-proxy-init's own output cannot be
+# mistaken for the payload.
+_PROXY_B64_BEGIN = "-----BEGIN-PROXY-B64-----"
+_PROXY_B64_END = "-----END-PROXY-B64-----"
+
+
+def _zero_bytearray(buf: bytearray) -> None:
+    """Overwrite *buf* in place with NUL bytes.
+
+    Unlike rebinding an immutable ``bytes`` object, mutating a ``bytearray``
+    genuinely clears the underlying buffer, so a secret held in one is erased
+    once this returns.
+    """
+    for i in range(len(buf)):
+        buf[i] = 0
+
+
+def _extract_proxy_from_log(log_text: str) -> bytes:
+    """Extract and base64-decode the proxy payload from a mint pod's log.
+
+    The mint container prints the proxy between :data:`_PROXY_B64_BEGIN` and
+    :data:`_PROXY_B64_END`; any voms-proxy-init noise appears before the begin
+    sentinel.  Raises ``ValueError`` if either sentinel is missing or the
+    payload does not decode.
+    """
+    begin = log_text.find(_PROXY_B64_BEGIN)
+    if begin == -1:
+        raise ValueError("proxy begin sentinel not found in mint pod log")
+    payload_start = begin + len(_PROXY_B64_BEGIN)
+    end = log_text.find(_PROXY_B64_END, payload_start)
+    if end == -1:
+        raise ValueError("proxy end sentinel not found in mint pod log")
+    b64 = log_text[payload_start:end]
+    try:
+        # validate=False discards the newlines base64 wraps its output with.
+        decoded = base64.b64decode(b64, validate=False)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError("failed to decode proxy payload from mint pod log") from exc
+    if not decoded:
+        raise ValueError("proxy payload in mint pod log was empty")
+    return decoded
+
 
 # ------------------------------------------------------------------
 # X509Backend ABC
@@ -70,7 +118,9 @@ class X509Backend(ABC):
 
         Implementations MUST:
         - Call cache.check_unlock_rate_limit(principal.uid) first.
-        - Zero the passphrase bytes immediately after transmission.
+        - Copy the passphrase into a mutable bytearray and zero it (in a finally
+          block) immediately after transmission. The SecretBytes original is
+          owned by pydantic and cannot be zeroed here.
         - Store the resulting proxy at the path returned in ProxyMeta.proxy_path.
         - Delete any intermediate files / Jobs created during minting.
         """
@@ -100,7 +150,10 @@ _K8S_JOB_SPEC_TEMPLATE: dict = {
         "labels": {"app.kubernetes.io/component": "voms-proxy-mint"},
     },
     "spec": {
-        "ttlSecondsAfterFinished": 30,
+        # Comfortably above the harvest window so the pod log survives long
+        # enough to read after completion.  The broker also deletes the Job
+        # explicitly in the mint finally block, so this is only a backstop.
+        "ttlSecondsAfterFinished": 120,
         "backoffLimit": 0,
         "template": {
             "spec": {
@@ -247,14 +300,17 @@ class HomeDirVomsBackend(X509Backend):
         import copy
 
         try:
-            from kubernetes_asyncio import client as k8s_client, config as k8s_config  # type: ignore[import]
+            from kubernetes_asyncio import client as k8s_client  # type: ignore[import]
+            from kubernetes_asyncio import config as k8s_config  # type: ignore[import]
         except ImportError as exc:
             raise RuntimeError(
                 "kubernetes_asyncio package is required for Kubernetes-based proxy "
                 "minting. Install it or set DEV_MODE_LOCAL_VOMS=true."
             ) from exc
 
-        await k8s_config.load_incluster_config()
+        # load_incluster_config is synchronous in kubernetes_asyncio; awaiting
+        # it raises TypeError.
+        k8s_config.load_incluster_config()
 
         job_name = f"voms-mint-{principal.uid}-{uuid.uuid4().hex[:8]}"
         spec = copy.deepcopy(_K8S_JOB_SPEC_TEMPLATE)
@@ -274,24 +330,30 @@ class HomeDirVomsBackend(X509Backend):
         nfs_vol["server"] = self._nfs_server
         nfs_vol["path"] = f"{self._nfs_home_root}/{principal.unixname}"
 
-        # Container: security context + command
+        # Container: security context + command.
+        #
+        # A shell wrapper runs voms-proxy-init and, only on success (&&), prints
+        # the proxy as base64 between sentinel lines.  The proxy is harvested
+        # from the pod LOG after completion — you cannot exec into a completed
+        # pod whose only container has terminated.
+        #
+        # - voms/valid are passed as positional args ($1/$2) to avoid injection.
+        # - voms-proxy-init reads the passphrase from stdin (-pwstdin) and never
+        #   echoes it; its own stdout is redirected to stderr (1>&2) so it can
+        #   never be confused with the base64 payload between the sentinels.
         container = pod_spec["containers"][0]
         container["securityContext"]["runAsUser"] = principal.uid
         container["securityContext"]["runAsGroup"] = principal.gid
-        container["command"] = [
-            "voms-proxy-init",
-            "-pwstdin",
-            "-voms",
-            voms,
-            "-cert",
-            "/mnt/home/.globus/usercert.pem",
-            "-key",
-            "/mnt/home/.globus/userkey.pem",
-            "-out",
-            "/run/proxy/proxy.pem",
-            "-valid",
-            valid,
-        ]
+        script = (
+            'voms-proxy-init -pwstdin -voms "$1" '
+            "-cert /mnt/home/.globus/usercert.pem "
+            "-key /mnt/home/.globus/userkey.pem "
+            '-out /run/proxy/proxy.pem -valid "$2" 1>&2 && '
+            f"echo '{_PROXY_B64_BEGIN}' && "
+            "base64 /run/proxy/proxy.pem && "
+            f"echo '{_PROXY_B64_END}'"
+        )
+        container["command"] = ["sh", "-c", script, "sh", voms, valid]
 
         async with k8s_client.ApiClient() as api_client:
             batch_v1 = k8s_client.BatchV1Api(api_client)
@@ -307,18 +369,23 @@ class HomeDirVomsBackend(X509Backend):
                     namespace=self._namespace, body=cast(Any, spec)
                 )
 
-                # Transmit passphrase via pod stdin then immediately zero it
-                passphrase_bytes = passphrase.get_secret_value()
-                try:
-                    await self._send_stdin_to_pod(core_v1, job_name, passphrase_bytes)
-                finally:
-                    # Zero the local copy regardless of outcome
-                    passphrase_bytes = b"\x00" * len(passphrase_bytes)
+                # Transmit the passphrase via pod stdin. It lives in a mutable
+                # bytearray that _send_stdin_to_pod genuinely zeros before it
+                # returns; only the SecretBytes original (owned by pydantic) is
+                # out of reach.
+                passphrase_buf = bytearray(passphrase.get_secret_value())
+                await self._send_stdin_to_pod(core_v1, job_name, passphrase_buf)
 
-                # Wait for Job completion
-                proxy_pem = await self._wait_for_job_and_harvest(
-                    batch_v1, core_v1, job_name, principal
-                )
+                # Wait for Job completion and read the proxy from the pod log.
+                # A failed Job most likely means a bad passphrase, so count it
+                # against the rate limiter just like the local path does.
+                try:
+                    proxy_pem = await self._wait_for_job_and_harvest(
+                        batch_v1, core_v1, job_name, principal
+                    )
+                except ValueError:
+                    cache.record_failed_unlock(principal.uid)
+                    raise
 
             finally:
                 # Always delete the Job — best effort
@@ -340,37 +407,77 @@ class HomeDirVomsBackend(X509Backend):
 
         return await self._store_proxy_and_parse(proxy_pem, principal)
 
+    async def _wait_for_running_pod(self, core_v1, job_name: str) -> str:
+        """Return the name of the Job's pod once it reaches ``Running``.
+
+        Immediately after the Job is created the pod usually does not exist yet,
+        and attaching stdin requires the container to be Running.  Poll until a
+        pod for the Job exists and its phase is Running, bounded by
+        ``job_timeout_seconds``.
+        """
+        deadline = time.monotonic() + self._job_timeout_seconds
+        while time.monotonic() < deadline:
+            pods = await core_v1.list_namespaced_pod(
+                namespace=self._namespace,
+                label_selector=f"job-name={job_name}",
+            )
+            if pods.items:
+                pod = pods.items[0]
+                phase = pod.status.phase if pod.status else None
+                if phase == "Running":
+                    return pod.metadata.name
+                if phase == "Failed":
+                    raise ValueError(
+                        f"mint pod for Job {job_name!r} failed before stdin "
+                        "could be attached."
+                    )
+            await asyncio.sleep(1)
+        raise TimeoutError(
+            f"mint pod for Job {job_name!r} did not reach Running within "
+            f"{self._job_timeout_seconds}s."
+        )
+
     async def _send_stdin_to_pod(
         self,
         core_v1,
         job_name: str,
-        passphrase_bytes: bytes,
+        passphrase_buf: bytearray,
     ) -> None:
-        """Stream *passphrase_bytes* to the pod's stdin.
+        """Stream the passphrase in *passphrase_buf* to the pod's stdin.
 
-        The passphrase_bytes reference should be zeroed by the caller immediately
-        after this coroutine returns, regardless of success or failure.
+        Waits for the pod to be Running (voms-proxy-init blocks reading stdin,
+        so the pod stays Running until the passphrase arrives) before attaching.
+        Takes ownership of *passphrase_buf* and zeros it — plus the transient
+        copy built at the I/O boundary — before returning, on success or error.
         """
-        # kubernetes_asyncio uses websocket for exec/attach
+        # kubernetes_asyncio drives exec/attach over a websocket client.
+        from kubernetes_asyncio import client as k8s_client  # type: ignore[import]
+        from kubernetes_asyncio.stream import WsApiClient  # type: ignore[import]
 
-        pods = await core_v1.list_namespaced_pod(
-            namespace=self._namespace,
-            label_selector=f"job-name={job_name}",
-        )
-        pod_name = pods.items[0].metadata.name
-
-        ws_client = await core_v1.connect_get_namespaced_pod_attach(
-            name=pod_name,
-            namespace=self._namespace,
-            stdin=True,
-            stdout=False,
-            stderr=False,
-            _preload_content=False,
-        )
         try:
-            await ws_client.write_stdin(passphrase_bytes + b"\n")
+            pod_name = await self._wait_for_running_pod(core_v1, job_name)
+
+            # Convert to bytes only at the write boundary; zero the copy after.
+            payload = bytearray(passphrase_buf)
+            payload.extend(b"\n")
+            async with WsApiClient() as ws_api:
+                ws_core = k8s_client.CoreV1Api(ws_api)
+                ws_client = await ws_core.connect_get_namespaced_pod_attach(
+                    name=pod_name,
+                    namespace=self._namespace,
+                    container="voms-proxy-init",
+                    stdin=True,
+                    stdout=False,
+                    stderr=False,
+                    _preload_content=False,
+                )
+                try:
+                    await ws_client.write_stdin(bytes(payload))
+                finally:
+                    _zero_bytearray(payload)
+                    await ws_client.close()
         finally:
-            await ws_client.close()
+            _zero_bytearray(passphrase_buf)
 
     async def _wait_for_job_and_harvest(
         self,
@@ -379,11 +486,13 @@ class HomeDirVomsBackend(X509Backend):
         job_name: str,
         principal: Principal,
     ) -> bytes:
-        """Poll until the Job succeeds then read the proxy PEM bytes from the pod log.
+        """Poll until the Job succeeds, then read the proxy from the pod log.
 
-        The voms-proxy-init container writes the proxy to /run/proxy/proxy.pem
-        (tmpfs).  We retrieve the bytes via the pod exec API before the Job's
-        TTL fires.
+        The mint container prints the proxy as base64 between sentinel lines on
+        success.  We read the pod log (``read_namespaced_pod_log``) after the
+        Job completes — a completed pod cannot be exec'd into — and decode the
+        payload.  Raises ``ValueError`` on Job failure (likely a bad passphrase)
+        or if the log lacks a valid payload.
         """
         deadline = time.monotonic() + self._job_timeout_seconds
         while time.monotonic() < deadline:
@@ -405,22 +514,25 @@ class HomeDirVomsBackend(X509Backend):
                 f"{self._job_timeout_seconds}s."
             )
 
-        # Exec into pod to cat the proxy file
         pods = await core_v1.list_namespaced_pod(
             namespace=self._namespace,
             label_selector=f"job-name={job_name}",
         )
+        if not pods.items:
+            raise ValueError(
+                f"no pod found for completed Job {job_name!r} — cannot harvest "
+                "proxy (TTL may have reaped it)."
+            )
         pod_name = pods.items[0].metadata.name
 
-        exec_resp = await core_v1.connect_get_namespaced_pod_exec(
+        log_text = await core_v1.read_namespaced_pod_log(
             name=pod_name,
             namespace=self._namespace,
-            command=["cat", "/run/proxy/proxy.pem"],
-            stdout=True,
-            stderr=False,
-            _preload_content=True,
+            container="voms-proxy-init",
         )
-        return exec_resp.encode() if isinstance(exec_resp, str) else exec_resp
+        if isinstance(log_text, bytes):
+            log_text = log_text.decode(errors="replace")
+        return _extract_proxy_from_log(log_text)
 
     # ------------------------------------------------------------------
     # Local / dev minting path
@@ -467,21 +579,23 @@ class HomeDirVomsBackend(X509Backend):
             valid,
         ]
 
-        passphrase_bytes = passphrase.get_secret_value()
+        # Mutable copy so the secret is genuinely zeroed after the subprocess
+        # returns; input= converts to bytes only at the call boundary.
+        passphrase_buf = bytearray(passphrase.get_secret_value())
+        passphrase_buf.extend(b"\n")
         try:
             loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(
                 None,
                 lambda: subprocess.run(
                     cmd,
-                    input=passphrase_bytes + b"\n",
+                    input=bytes(passphrase_buf),
                     capture_output=True,
                     timeout=30,
                 ),
             )
         finally:
-            # Zero the local passphrase reference immediately
-            passphrase_bytes = b"\x00" * len(passphrase_bytes)
+            _zero_bytearray(passphrase_buf)
 
         if result.returncode != 0:
             stderr = result.stderr.decode(errors="replace")
@@ -592,7 +706,9 @@ class X509Provider(CredentialProvider):
 
     Passphrase rules:
     - Never logged, never persisted, never stored in the cache.
-    - Zeroed in memory immediately after transmission to the minting backend.
+    - The working copy is held in a bytearray and zeroed in memory immediately
+      after transmission to the minting backend (the SecretBytes original is
+      owned by pydantic).
     - Rate-limited to 5 attempts per 15 minutes per uid to prevent brute force.
     """
 
@@ -641,7 +757,6 @@ class X509Provider(CredentialProvider):
             principal.uid, target, min_remaining=min_remaining_seconds
         )
         if cached is not None:
-            meta = self._cache.get_proxy_meta(principal.uid, target)
             self._log.debug("x509.issue.cache_hit", uid=principal.uid, target=target)
             return cached
 
@@ -658,19 +773,17 @@ class X509Provider(CredentialProvider):
         return cred
 
     async def revoke(self, principal: Principal, target: str) -> None:
-        """Zero-overwrite and unlink the proxy file, then clear the cache entry."""
+        """Clear the cache entry; cache.revoke secure-deletes the proxy file."""
+        # Grab the path before revoke() pops the entry, for the audit log only.
         meta = self._cache.get_proxy_meta(principal.uid, target)
+        await self._cache.revoke(principal.uid, target)
         if meta is not None:
-            from af_mcp_broker.credentials.cache import _secure_delete_proxy
-
-            await _secure_delete_proxy(meta.proxy_path)
             self._log.info(
                 "x509.revoked",
                 uid=principal.uid,
                 target=target,
                 proxy_path=meta.proxy_path,
             )
-        await self._cache.revoke(principal.uid, target)
 
     # ------------------------------------------------------------------
     # Internal helpers
