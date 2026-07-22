@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from dataclasses import dataclass, field
 from typing import Annotated, Any
+from urllib.parse import urlparse
 
 import jwt
 import structlog
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import SecretStr
 
@@ -16,7 +18,9 @@ from af_mcp_broker.http import get_http_client
 
 logger = structlog.get_logger(__name__)
 
-_bearer_scheme = HTTPBearer(auto_error=True)
+# ``auto_error=False`` so we can decide the auth outcome ourselves — HTTPBearer
+# would otherwise raise before the dev-bypass short-circuit gets a chance.
+_bearer_scheme = HTTPBearer(auto_error=False)
 
 # ---------------------------------------------------------------------------
 # JWKS cache — one entry per JWKS URI, refreshed after TTL seconds.
@@ -242,7 +246,10 @@ def _peek_sub(token: str) -> str:
 
 
 async def keycloak_dependency(
-    credentials: Annotated[HTTPAuthorizationCredentials, Depends(_bearer_scheme)],
+    request: Request,
+    credentials: Annotated[
+        HTTPAuthorizationCredentials | None, Depends(_bearer_scheme)
+    ],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> Principal:
     """FastAPI dependency that resolves to the authenticated Principal.
@@ -254,5 +261,129 @@ async def keycloak_dependency(
             principal: Annotated[Principal, Depends(keycloak_dependency)],
         ):
             ...
+
+    When the local-dev auth bypass is active (see ``BROKER_DEV_INSECURE_PRINCIPAL``
+    and the lifespan startup check), this returns the pre-parsed dev principal
+    without inspecting the request. That path is unconditional: a real bearer
+    token, if present, is ignored.
     """
+    if getattr(request.app.state, "dev_bypass_active", False):
+        dev_principal: Principal = request.app.state.dev_bypass_principal
+        # Emit an audit-visible line on every bypassed request so the trail
+        # captures every call that skipped real authentication.
+        logger.info(
+            "dev_auth_bypass_used",
+            path=request.url.path,
+            unixname=dev_principal.unixname,
+            uid=dev_principal.uid,
+        )
+        return dev_principal
+
+    if credentials is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     return await get_principal(credentials.credentials, settings)
+
+
+# ---------------------------------------------------------------------------
+# Local-development auth bypass helpers
+# ---------------------------------------------------------------------------
+
+# Hostnames that count as "obviously local" for the dev bypass. Exact-match
+# set + a suffix list; anything else is treated as production.
+_LOCAL_HOSTS: frozenset[str] = frozenset({"localhost", "127.0.0.1", "::1"})
+_LOCAL_SUFFIXES: tuple[str, ...] = (".localhost", ".local", ".test")
+
+# JSON keys we require in the BROKER_DEV_INSECURE_PRINCIPAL payload. Missing
+# any of these fails the startup sanity check rather than crashing later at
+# request time with a KeyError inside the dependency.
+_DEV_PRINCIPAL_REQUIRED_KEYS: frozenset[str] = frozenset({"uid", "gid", "unixname"})
+
+
+def issuer_is_local(issuer: str) -> bool:
+    """Return True when the Keycloak issuer clearly points at a dev machine.
+
+    Local means either the URL's hostname is exactly one of ``localhost``,
+    ``127.0.0.1``, ``::1``, or the hostname ends with ``.localhost``, ``.local``,
+    or ``.test``. Anything else — including a real-looking domain — is
+    treated as production for the purposes of the dev-bypass safety check.
+    """
+    try:
+        hostname = urlparse(issuer).hostname
+    except ValueError:
+        return False
+    if not hostname:
+        return False
+    host = hostname.lower()
+    if host in _LOCAL_HOSTS:
+        return True
+    return any(host.endswith(sfx) for sfx in _LOCAL_SUFFIXES)
+
+
+def build_dev_principal(payload_json: str) -> Principal:
+    """Parse the ``BROKER_DEV_INSECURE_PRINCIPAL`` JSON into a Principal.
+
+    Raises RuntimeError with a descriptive message when the payload is
+    malformed or missing required keys, so the lifespan can fail loudly
+    at startup instead of dying inside a request handler.
+    """
+    try:
+        data = json.loads(payload_json)
+    except json.JSONDecodeError as exc:
+        msg = (
+            "BROKER_DEV_INSECURE_PRINCIPAL is not valid JSON: "
+            f"{exc.msg} (line {exc.lineno}, column {exc.colno})"
+        )
+        raise RuntimeError(msg) from exc
+
+    if not isinstance(data, dict):
+        msg = (
+            "BROKER_DEV_INSECURE_PRINCIPAL must be a JSON object, "
+            f"got {type(data).__name__}"
+        )
+        raise RuntimeError(msg)  # noqa: TRY004 — uniform RuntimeError shape for lifespan
+
+    missing = sorted(_DEV_PRINCIPAL_REQUIRED_KEYS - data.keys())
+    if missing:
+        msg = (
+            "BROKER_DEV_INSECURE_PRINCIPAL is missing required keys: "
+            f"{', '.join(missing)}"
+        )
+        raise RuntimeError(msg)
+
+    try:
+        uid = int(data["uid"])
+        gid = int(data["gid"])
+    except (TypeError, ValueError) as exc:
+        msg = "BROKER_DEV_INSECURE_PRINCIPAL uid/gid must be integers"
+        raise RuntimeError(msg) from exc
+
+    unixname = str(data["unixname"])
+    email = str(data.get("email", ""))
+    groups_raw = data.get("groups", [])
+    if not isinstance(groups_raw, list) or not all(
+        isinstance(g, str) for g in groups_raw
+    ):
+        msg = "BROKER_DEV_INSECURE_PRINCIPAL 'groups' must be a list of strings"
+        raise RuntimeError(msg)
+
+    # Synthesise a subject that clearly identifies bypassed traffic in any
+    # log line that carries it — production sub claims are Keycloak UUIDs
+    # and never take this shape, so a grep for "dev-insecure:" turns up
+    # every bypassed request unambiguously.
+    subject = f"dev-insecure:{unixname}"
+
+    return Principal(
+        subject=subject,
+        email=email,
+        uid=uid,
+        gid=gid,
+        unixname=unixname,
+        groups=list(groups_raw),
+        iam_sub=None,
+        cern_sub=None,
+        raw_token=SecretStr(""),
+    )

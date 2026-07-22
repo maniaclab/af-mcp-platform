@@ -24,9 +24,13 @@ pixi run -e dev pytest broker/ -k <name> -v   # single test
 Portal (Astro + Vue + Tailwind):
 
 ```bash
-cd portal && npm install && npm run dev   # dev server
-npm run build                             # what CI checks
+pixi run -e portal dev        # dev server on :4321, proxies /v1/* to broker
+pixi run -e portal build      # what CI checks
 ```
+
+The two-terminal broker + portal workflow (and the
+`BROKER_DEV_INSECURE_PRINCIPAL` local-dev auth bypass) is documented in
+`docs/local-development.md`.
 
 Helm chart: `helm lint charts/af-mcp-platform` (CI runs chart-testing in `chart-lint.yaml`).
 

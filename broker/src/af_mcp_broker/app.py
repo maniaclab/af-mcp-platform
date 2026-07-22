@@ -26,7 +26,7 @@ from af_mcp_broker.credentials import (
     X509Provider,
 )
 from af_mcp_broker.http import aclose_http_client
-from af_mcp_broker.identity import get_jwks
+from af_mcp_broker.identity import build_dev_principal, get_jwks, issuer_is_local
 from af_mcp_broker.logging import configure_logging
 from af_mcp_broker.mcp.aggregator import aggregator_app
 from af_mcp_broker.mcp.registry import BackendRegistry
@@ -48,6 +48,36 @@ def _open_audit_output(dest: str) -> TextIO:
 async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     settings = Settings()
     configure_logging(settings.log_level)
+
+    # --- Local-development auth bypass. When BROKER_DEV_INSECURE_PRINCIPAL is
+    # set we parse it into a Principal at startup and refuse to boot unless
+    # the configured issuer clearly points at a local host — this is the
+    # only line of defence against the bypass being enabled in production
+    # by mistake, so it must be loud and fail-closed.
+    application.state.dev_bypass_active = False
+    application.state.dev_bypass_principal = None
+    if settings.dev_insecure_principal is not None:
+        if not issuer_is_local(settings.keycloak_issuer):
+            msg = (
+                "BROKER_DEV_INSECURE_PRINCIPAL is set but KEYCLOAK_ISSUER "
+                f"({settings.keycloak_issuer!r}) does not look like a local "
+                "development host. Refusing to start. Local hosts are "
+                "'localhost', '127.0.0.1', '::1', or a hostname ending in "
+                "'.localhost' / '.local' / '.test'."
+            )
+            raise RuntimeError(msg)
+        # build_dev_principal raises RuntimeError with a clear message on
+        # bad JSON or missing required keys — propagate as-is.
+        dev_principal = build_dev_principal(settings.dev_insecure_principal)
+        application.state.dev_bypass_active = True
+        application.state.dev_bypass_principal = dev_principal
+        logger.warning(
+            "dev_auth_bypass_active",
+            message="AUTH BYPASSED — DO NOT USE IN PRODUCTION",
+            keycloak_issuer=settings.keycloak_issuer,
+            unixname=dev_principal.unixname,
+            uid=dev_principal.uid,
+        )
 
     # --- Authorization: the authorization/ engine matches the shipped policy.yaml.
     try:
@@ -164,6 +194,22 @@ app = FastAPI(
 app.mount("/mcp", aggregator_app)
 
 app.include_router(v1_router)
+
+
+@app.middleware("http")
+async def _dev_bypass_header(request: Request, call_next):  # type: ignore[no-untyped-def]
+    """Annotate every response with ``X-Dev-Bypass: true`` when the local-dev
+    auth bypass is active.
+
+    Making bypassed responses visibly different from real ones is the
+    client-side half of the defence-in-depth: any curl/browser interaction
+    against a "prod" URL that unexpectedly answers with this header is a
+    signal the deployment is misconfigured.
+    """
+    response = await call_next(request)
+    if getattr(request.app.state, "dev_bypass_active", False):
+        response.headers["X-Dev-Bypass"] = "true"
+    return response
 
 
 # ---------------------------------------------------------------------------
