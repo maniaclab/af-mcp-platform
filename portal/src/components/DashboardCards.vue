@@ -24,7 +24,10 @@ onMounted(async () => {
 <template>
   <div class="dc" role="region" aria-label="Quick status">
     <!-- Identities card -->
-    <div class="dc__card" :class="!loading && summary && summary.linkedCount > 0 ? 'dc__card--ok' : 'dc__card--neutral'">
+    <div
+      class="dc__card"
+      :class="!loading && summary && summary.linkedCount > 0 ? 'dc__card--ok' : 'dc__card--neutral'"
+    >
       <span class="dc__label">Linked identities</span>
       <span class="dc__value" :class="{ 'dc__value--loading': loading }">
         {{ loading ? '—' : `${summary?.linkedCount ?? 0} linked` }}
@@ -33,7 +36,10 @@ onMounted(async () => {
     </div>
 
     <!-- Tools card -->
-    <div class="dc__card" :class="!loading && summary && summary.toolCount > 0 ? 'dc__card--ok' : 'dc__card--neutral'">
+    <div
+      class="dc__card"
+      :class="!loading && summary && summary.toolCount > 0 ? 'dc__card--ok' : 'dc__card--neutral'"
+    >
       <span class="dc__label">Tools available</span>
       <span class="dc__value" :class="{ 'dc__value--loading': loading }">
         {{ loading ? '—' : `${summary?.toolCount ?? 0} tools` }}
@@ -48,7 +54,7 @@ onMounted(async () => {
     >
       <span class="dc__label">AMI proxy</span>
       <span class="dc__value" :class="{ 'dc__value--loading': loading }">
-        {{ loading ? '—' : (summary?.proxyStatus.cached ? 'Active' : 'No proxy') }}
+        {{ loading ? '—' : summary?.proxyStatus.cached ? 'Active' : 'No proxy' }}
       </span>
       <a href="/status" class="dc__link">Manage →</a>
     </div>
@@ -68,15 +74,21 @@ onMounted(async () => {
   flex-direction: column;
   gap: 0.375rem;
   padding: 1.125rem 1.25rem;
-  border: 1px solid #1F2937;
+  border: 1px solid var(--color-af-border);
   border-radius: 4px;
-  background: #111827;
+  background: var(--color-af-surface);
   border-left-width: 2px;
 }
 
-.dc__card--ok      { border-left-color: #10B981; }
-.dc__card--warn    { border-left-color: #F59E0B; }
-.dc__card--neutral { border-left-color: #374151; }
+.dc__card--ok {
+  border-left-color: var(--color-af-green);
+}
+.dc__card--warn {
+  border-left-color: var(--color-af-amber);
+}
+.dc__card--neutral {
+  border-left-color: var(--color-af-muted);
+}
 
 .dc__label {
   font-family: 'IBM Plex Mono', monospace;
@@ -84,31 +96,37 @@ onMounted(async () => {
   font-weight: 600;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: #4B5563;
+  color: #4b5563;
 }
 
 .dc__value {
   font-family: 'IBM Plex Mono', monospace;
   font-size: 1.375rem;
   font-weight: 700;
-  color: #E8ECF0;
+  color: var(--color-af-text);
   line-height: 1;
 }
 
-.dc__value--loading { color: #374151; }
+.dc__value--loading {
+  color: var(--color-af-muted);
+}
 
 .dc__link {
   font-family: 'IBM Plex Mono', monospace;
   font-size: 0.6875rem;
-  color: #374151;
+  color: var(--color-af-muted);
   text-decoration: none;
   margin-top: 0.25rem;
   transition: color 150ms;
 }
 .dc__card:hover .dc__link,
-.dc__link:focus-visible { color: #00D4C8; }
+.dc__link:focus-visible {
+  color: var(--color-af-teal);
+}
 
 @media (max-width: 640px) {
-  .dc { grid-template-columns: 1fr; }
+  .dc {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

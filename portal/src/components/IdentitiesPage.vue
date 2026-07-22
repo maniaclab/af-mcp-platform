@@ -19,7 +19,7 @@ const PROVIDER_META: Record<string, { display_name: string; enables: string }> =
     display_name: 'ATLAS IAM',
     enables: 'VOMS proxy generation and grid certificate credential brokering',
   },
-  'cern': {
+  cern: {
     display_name: 'CERN SSO',
     enables: 'CERN resource access and CMS/ATLAS experiment datasets',
   },
@@ -34,28 +34,26 @@ const sessionExpired = ref(false);
 onMounted(async () => {
   try {
     const data = await fetchIdentities();
-    const linked: ProviderRow[] = data.linked_accounts.map(a => ({
+    const linked: ProviderRow[] = data.linked_accounts.map((a) => ({
       provider: a.provider,
       display_name: PROVIDER_META[a.provider]?.display_name ?? a.provider,
       description: PROVIDER_META[a.provider]?.enables ?? '',
       linked: true,
       sub: a.sub,
     }));
-    const available: ProviderRow[] = data.available_providers.map(p => ({
+    const available: ProviderRow[] = data.available_providers.map((p) => ({
       provider: p.provider,
       display_name: p.display_name,
       description: p.enables,
       linked: false,
     }));
     rows.value = [...linked, ...available];
-    linkedProviders.value = new Set(data.linked_accounts.map(a => a.provider));
+    linkedProviders.value = new Set(data.linked_accounts.map((a) => a.provider));
   } catch (err) {
     if (err instanceof SessionExpiredError) {
       sessionExpired.value = true;
     } else {
-      error.value = err instanceof Error
-        ? err.message
-        : 'Could not load identity status.';
+      error.value = err instanceof Error ? err.message : 'Could not load identity status.';
     }
   } finally {
     loading.value = false;
@@ -104,9 +102,19 @@ function missingRequired(provider: string): boolean {
         role="status"
       >
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-          <path d="M7 1L13 12H1L7 1Z" stroke="#F59E0B" stroke-width="1.25" stroke-linejoin="round"/>
-          <path d="M7 5.5V8" stroke="#F59E0B" stroke-width="1.25" stroke-linecap="round"/>
-          <circle cx="7" cy="10" r="0.6" fill="#F59E0B"/>
+          <path
+            d="M7 1L13 12H1L7 1Z"
+            stroke="var(--color-af-amber)"
+            stroke-width="1.25"
+            stroke-linejoin="round"
+          />
+          <path
+            d="M7 5.5V8"
+            stroke="var(--color-af-amber)"
+            stroke-width="1.25"
+            stroke-linecap="round"
+          />
+          <circle cx="7" cy="10" r="0.6" fill="var(--color-af-amber)" />
         </svg>
         <span>
           Link CERN and ATLAS IAM to access the full tool catalog and grid proxy generation.
@@ -161,15 +169,18 @@ function missingRequired(provider: string): boolean {
   align-items: flex-start;
   gap: 0.625rem;
   padding: 0.875rem 1rem;
-  border: 1px solid rgba(245, 158, 11, 0.25);
+  border: 1px solid rgb(from var(--color-af-amber) r g b / 0.25);
   border-radius: 4px;
-  background: rgba(245, 158, 11, 0.06);
+  background: rgb(from var(--color-af-amber) r g b / 0.06);
   font-size: 0.875rem;
-  color: #D97706;
+  color: #d97706;
   line-height: 1.5;
 }
 
-.ip__warn svg { flex-shrink: 0; margin-top: 0.1875rem; }
+.ip__warn svg {
+  flex-shrink: 0;
+  margin-top: 0.1875rem;
+}
 
 /* List */
 .ip__list {
@@ -186,20 +197,27 @@ function missingRequired(provider: string): boolean {
   padding: 2rem;
   font-family: 'IBM Plex Mono', monospace;
   font-size: 0.8125rem;
-  color: #6B7280;
+  color: var(--color-af-dim);
 }
 
 .ip__spinner {
   width: 16px;
   height: 16px;
-  border: 2px solid #1F2937;
-  border-top-color: #00D4C8;
+  border: 2px solid var(--color-af-border);
+  border-top-color: var(--color-af-teal);
   border-radius: 50%;
   animation: spin 600ms linear infinite;
 }
-@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
 @media (prefers-reduced-motion: reduce) {
-  .ip__spinner { animation: none; border-top-color: #6B7280; }
+  .ip__spinner {
+    animation: none;
+    border-top-color: var(--color-af-dim);
+  }
 }
 
 /* Error */
@@ -208,24 +226,24 @@ function missingRequired(provider: string): boolean {
   flex-direction: column;
   gap: 0.375rem;
   padding: 1rem;
-  border: 1px solid rgba(239, 68, 68, 0.2);
+  border: 1px solid rgb(from var(--color-af-red) r g b / 0.2);
   border-radius: 4px;
-  background: rgba(239, 68, 68, 0.05);
+  background: rgb(from var(--color-af-red) r g b / 0.05);
 }
 .ip__error-title {
   font-family: 'IBM Plex Mono', monospace;
   font-size: 0.8125rem;
   font-weight: 600;
-  color: #EF4444;
+  color: var(--color-af-red);
 }
 .ip__error-body {
   font-size: 0.875rem;
-  color: #9CA3AF;
+  color: #9ca3af;
 }
 
 .ip__reload {
   font: inherit;
-  color: #00D4C8;
+  color: var(--color-af-teal);
   background: none;
   border: none;
   padding: 0;
@@ -237,23 +255,27 @@ function missingRequired(provider: string): boolean {
 .ip__empty {
   padding: 3rem 1.5rem;
   text-align: center;
-  border: 1px dashed #1F2937;
+  border: 1px dashed var(--color-af-border);
   border-radius: 4px;
 }
 .ip__empty-title {
   font-family: 'IBM Plex Mono', monospace;
   font-size: 1rem;
-  color: #4B5563;
+  color: #4b5563;
   margin: 0 0 0.5rem;
 }
-.ip__empty-body { font-size: 0.875rem; color: #374151; margin: 0; }
+.ip__empty-body {
+  font-size: 0.875rem;
+  color: var(--color-af-muted);
+  margin: 0;
+}
 
 /* Explainer */
 .ip__explainer {
   padding: 1.25rem;
-  border: 1px solid #1F2937;
+  border: 1px solid var(--color-af-border);
   border-radius: 4px;
-  background: rgba(17, 24, 39, 0.5);
+  background: rgb(from var(--color-af-surface) r g b / 0.5);
 }
 
 .ip__explainer-title {
@@ -262,7 +284,7 @@ function missingRequired(provider: string): boolean {
   font-weight: 600;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: #4B5563;
+  color: #4b5563;
   margin: 0 0 0.875rem;
 }
 
@@ -282,11 +304,11 @@ function missingRequired(provider: string): boolean {
 .ip__explainer-provider {
   font-family: 'IBM Plex Mono', monospace;
   font-size: 0.75rem;
-  color: #00D4C8;
+  color: var(--color-af-teal);
 }
 
 .ip__explainer-desc {
   font-size: 0.8125rem;
-  color: #6B7280;
+  color: var(--color-af-dim);
 }
 </style>

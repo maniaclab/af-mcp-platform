@@ -11,10 +11,10 @@ const expanded = ref(false);
 
 // computed() so the badges track the parent's filtered `tools`.
 const stateChangeCount = computed(
-  () => props.backend.tools.filter(t => t.action_type === 'state_change').length,
+  () => props.backend.tools.filter((t) => t.action_type === 'state_change').length,
 );
 const readCount = computed(
-  () => props.backend.tools.filter(t => t.action_type === 'read').length,
+  () => props.backend.tools.filter((t) => t.action_type === 'read').length,
 );
 </script>
 
@@ -43,9 +43,7 @@ const readCount = computed(
         </span>
 
         <!-- Tool counts -->
-        <span v-if="readCount > 0" class="bc__count bc__count--read">
-          {{ readCount }} read
-        </span>
+        <span v-if="readCount > 0" class="bc__count bc__count--read"> {{ readCount }} read </span>
         <span v-if="stateChangeCount > 0" class="bc__count bc__count--state">
           {{ stateChangeCount }} write
         </span>
@@ -60,7 +58,13 @@ const readCount = computed(
           fill="none"
           aria-hidden="true"
         >
-          <path d="M3 5L7 9L11 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          <path
+            d="M3 5L7 9L11 5"
+            stroke="currentColor"
+            stroke-width="1.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
         </svg>
       </div>
     </button>
@@ -80,7 +84,7 @@ const readCount = computed(
 
 <style scoped>
 .bc {
-  border: 1px solid #1F2937;
+  border: 1px solid var(--color-af-border);
   border-radius: 4px;
   overflow: hidden;
   transition: border-color 150ms;
@@ -88,11 +92,11 @@ const readCount = computed(
 
 .bc:hover,
 .bc--expanded {
-  border-color: #374151;
+  border-color: var(--color-af-muted);
 }
 
 .bc--expanded {
-  border-color: rgba(0, 212, 200, 0.25);
+  border-color: rgb(from var(--color-af-teal) r g b / 0.25);
 }
 
 .bc__header {
@@ -101,7 +105,7 @@ const readCount = computed(
   align-items: center;
   gap: 1rem;
   padding: 0.875rem 1rem;
-  background: #111827;
+  background: var(--color-af-surface);
   cursor: pointer;
   text-align: left;
   border: none;
@@ -115,7 +119,7 @@ const readCount = computed(
 }
 
 .bc__header:focus-visible {
-  outline: 2px solid #00D4C8;
+  outline: 2px solid var(--color-af-teal);
   outline-offset: -2px;
 }
 
@@ -133,7 +137,7 @@ const readCount = computed(
   font-size: 0.75rem;
   font-weight: 600;
   letter-spacing: 0.04em;
-  color: #00D4C8;
+  color: var(--color-af-teal);
   white-space: nowrap;
 }
 
@@ -141,14 +145,14 @@ const readCount = computed(
   font-family: 'IBM Plex Sans', system-ui, sans-serif;
   font-size: 0.9375rem;
   font-weight: 600;
-  color: #E8ECF0;
+  color: var(--color-af-text);
   white-space: nowrap;
 }
 
 .bc__desc {
   font-family: 'IBM Plex Sans', system-ui, sans-serif;
   font-size: 0.8125rem;
-  color: #6B7280;
+  color: var(--color-af-dim);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -169,9 +173,9 @@ const readCount = computed(
   text-transform: uppercase;
   padding: 0.1875rem 0.5rem;
   border-radius: 2px;
-  background: rgba(0, 212, 200, 0.08);
-  color: #00D4C8;
-  border: 1px solid rgba(0, 212, 200, 0.2);
+  background: rgb(from var(--color-af-teal) r g b / 0.08);
+  color: var(--color-af-teal);
+  border: 1px solid rgb(from var(--color-af-teal) r g b / 0.2);
 }
 
 .bc__count {
@@ -185,32 +189,34 @@ const readCount = computed(
 }
 
 .bc__count--read {
-  background: rgba(16, 185, 129, 0.08);
-  color: #10B981;
-  border: 1px solid rgba(16, 185, 129, 0.18);
+  background: rgb(from var(--color-af-green) r g b / 0.08);
+  color: var(--color-af-green);
+  border: 1px solid rgb(from var(--color-af-green) r g b / 0.18);
 }
 
 .bc__count--state {
-  background: rgba(245, 158, 11, 0.08);
-  color: #F59E0B;
-  border: 1px solid rgba(245, 158, 11, 0.18);
+  background: rgb(from var(--color-af-amber) r g b / 0.08);
+  color: var(--color-af-amber);
+  border: 1px solid rgb(from var(--color-af-amber) r g b / 0.18);
 }
 
 .bc__chevron {
-  color: #6B7280;
-  transition: transform 200ms, color 150ms;
+  color: var(--color-af-dim);
+  transition:
+    transform 200ms,
+    color 150ms;
   flex-shrink: 0;
 }
 .bc__chevron--open {
   transform: rotate(180deg);
-  color: #00D4C8;
+  color: var(--color-af-teal);
 }
 
 .bc__tools {
   display: none;
-  border-top: 1px solid #1F2937;
+  border-top: 1px solid var(--color-af-border);
   padding: 0.25rem 0;
-  background: rgba(10, 14, 26, 0.5);
+  background: rgb(from var(--color-af-void) r g b / 0.5);
 }
 
 .bc__tools--visible {
@@ -218,7 +224,11 @@ const readCount = computed(
 }
 
 @media (max-width: 640px) {
-  .bc__desc { display: none; }
-  .bc__cap-badge { display: none; }
+  .bc__desc {
+    display: none;
+  }
+  .bc__cap-badge {
+    display: none;
+  }
 }
 </style>

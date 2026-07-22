@@ -24,12 +24,16 @@ defineProps<{
           <td class="tool-table__td tool-table__td--type">
             <span
               class="tool-table__badge"
-              :class="tool.action_type === 'state_change'
-                ? 'tool-table__badge--state'
-                : 'tool-table__badge--read'"
-              :title="tool.action_type === 'state_change'
-                ? 'Modifies state — use with care'
-                : 'Read-only — no side effects'"
+              :class="
+                tool.action_type === 'state_change'
+                  ? 'tool-table__badge--state'
+                  : 'tool-table__badge--read'
+              "
+              :title="
+                tool.action_type === 'state_change'
+                  ? 'Modifies state — use with care'
+                  : 'Read-only — no side effects'
+              "
             >
               {{ tool.action_type === 'state_change' ? 'write' : 'read' }}
             </span>
@@ -63,40 +67,50 @@ defineProps<{
   font-weight: 600;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: #6B7280;
-  border-bottom: 1px solid #1F2937;
+  color: var(--color-af-dim);
+  border-bottom: 1px solid var(--color-af-border);
   white-space: nowrap;
 }
 
-.tool-table__th--type { width: 5rem; }
-.tool-table__th--desc { width: auto; }
+.tool-table__th--type {
+  width: 5rem;
+}
+.tool-table__th--desc {
+  width: auto;
+}
 
 .tool-table__row {
-  border-bottom: 1px solid #1F2937;
+  border-bottom: 1px solid var(--color-af-border);
   transition: background 120ms;
 }
-.tool-table__row:hover { background: rgba(255,255,255,0.025); }
-.tool-table__row:last-child { border-bottom: none; }
+.tool-table__row:hover {
+  background: rgba(255, 255, 255, 0.025);
+}
+.tool-table__row:last-child {
+  border-bottom: none;
+}
 
 .tool-table__td {
   padding: 0.625rem 0.75rem;
   vertical-align: top;
-  color: #E8ECF0;
+  color: var(--color-af-text);
 }
 
-.tool-table__td--name { white-space: nowrap; }
+.tool-table__td--name {
+  white-space: nowrap;
+}
 
 .tool-table__code {
   font-family: 'IBM Plex Mono', monospace;
   font-size: 0.75rem;
-  color: #00D4C8;
-  background: rgba(0, 212, 200, 0.08);
+  color: var(--color-af-teal);
+  background: rgb(from var(--color-af-teal) r g b / 0.08);
   padding: 0.125rem 0.375rem;
   border-radius: 2px;
 }
 
 .tool-table__td--desc {
-  color: #9CA3AF;
+  color: #9ca3af;
   line-height: 1.5;
 }
 
@@ -112,14 +126,14 @@ defineProps<{
 }
 
 .tool-table__badge--read {
-  background: rgba(16, 185, 129, 0.12);
-  color: #10B981;
-  border: 1px solid rgba(16, 185, 129, 0.25);
+  background: rgb(from var(--color-af-green) r g b / 0.12);
+  color: var(--color-af-green);
+  border: 1px solid rgb(from var(--color-af-green) r g b / 0.25);
 }
 
 .tool-table__badge--state {
-  background: rgba(245, 158, 11, 0.12);
-  color: #F59E0B;
-  border: 1px solid rgba(245, 158, 11, 0.25);
+  background: rgb(from var(--color-af-amber) r g b / 0.12);
+  color: var(--color-af-amber);
+  border: 1px solid rgb(from var(--color-af-amber) r g b / 0.25);
 }
 </style>

@@ -19,9 +19,10 @@ onMounted(async () => {
     if (err instanceof SessionExpiredError) {
       sessionExpired.value = true;
     } else {
-      error.value = err instanceof Error
-        ? err.message
-        : 'Failed to load catalog. Check that your identities are linked.';
+      error.value =
+        err instanceof Error
+          ? err.message
+          : 'Failed to load catalog. Check that your identities are linked.';
     }
   } finally {
     loading.value = false;
@@ -54,22 +55,22 @@ const filteredBackends = computed<BackendGroup[]>(() => {
 
   if (filter.value !== 'all') {
     result = result
-      .map(b => ({
+      .map((b) => ({
         ...b,
-        tools: b.tools.filter(t => t.action_type === filter.value),
+        tools: b.tools.filter((t) => t.action_type === filter.value),
       }))
-      .filter(b => b.tools.length > 0);
+      .filter((b) => b.tools.length > 0);
   }
 
   if (search.value.trim()) {
     const q = search.value.toLowerCase();
-    result = result.filter(b =>
-      b.backend.toLowerCase().includes(q) ||
-      b.capabilities.some(c => c.toLowerCase().includes(q)) ||
-      b.tools.some(t =>
-        t.name.toLowerCase().includes(q) ||
-        t.description.toLowerCase().includes(q)
-      )
+    result = result.filter(
+      (b) =>
+        b.backend.toLowerCase().includes(q) ||
+        b.capabilities.some((c) => c.toLowerCase().includes(q)) ||
+        b.tools.some(
+          (t) => t.name.toLowerCase().includes(q) || t.description.toLowerCase().includes(q),
+        ),
     );
   }
 
@@ -78,7 +79,7 @@ const filteredBackends = computed<BackendGroup[]>(() => {
 
 // Both toolbar counts derive from the filtered set so they stay consistent.
 const visibleToolCount = computed(() =>
-  filteredBackends.value.reduce((sum, b) => sum + b.tools.length, 0)
+  filteredBackends.value.reduce((sum, b) => sum + b.tools.length, 0),
 );
 </script>
 
@@ -101,8 +102,8 @@ const visibleToolCount = computed(() =>
       <div class="cp__filters" role="group" aria-label="Filter by type">
         <button
           v-for="opt in [
-            { value: 'all',          label: 'All' },
-            { value: 'read',         label: 'Read only' },
+            { value: 'all', label: 'All' },
+            { value: 'read', label: 'Read only' },
             { value: 'state_change', label: 'Write ops' },
           ]"
           :key="opt.value"
@@ -116,8 +117,8 @@ const visibleToolCount = computed(() =>
       </div>
 
       <span v-if="!loading && !error && !sessionExpired" class="cp__count" aria-live="polite">
-        {{ filteredBackends.length }} backend{{ filteredBackends.length !== 1 ? 's' : '' }}
-        · {{ visibleToolCount }} tool{{ visibleToolCount !== 1 ? 's' : '' }}
+        {{ filteredBackends.length }} backend{{ filteredBackends.length !== 1 ? 's' : '' }} ·
+        {{ visibleToolCount }} tool{{ visibleToolCount !== 1 ? 's' : '' }}
       </span>
     </div>
 
@@ -151,8 +152,8 @@ const visibleToolCount = computed(() =>
     <div v-else-if="backends.length === 0" class="cp__empty">
       <p class="cp__empty-title">No backends available</p>
       <p class="cp__empty-body">
-        Your account doesn't have any granted capabilities yet.
-        Link your external identities to unlock access.
+        Your account doesn't have any granted capabilities yet. Link your external identities to
+        unlock access.
       </p>
       <a href="/identities" class="cp__empty-cta">Link identities →</a>
     </div>
@@ -161,8 +162,8 @@ const visibleToolCount = computed(() =>
     <div v-else-if="filteredBackends.length === 0" class="cp__empty">
       <p class="cp__empty-title">No matches</p>
       <p class="cp__empty-body">
-        No backends or tools match "{{ search }}" with the current filter.
-        Try a different search term or clear the filter.
+        No backends or tools match "{{ search }}" with the current filter. Try a different search
+        term or clear the filter.
       </p>
     </div>
 
@@ -197,26 +198,28 @@ const visibleToolCount = computed(() =>
 
 .cp__search {
   width: 100%;
-  background: #111827;
-  border: 1px solid #374151;
+  background: var(--color-af-surface);
+  border: 1px solid var(--color-af-muted);
   border-radius: 3px;
-  color: #E8ECF0;
+  color: var(--color-af-text);
   font-family: 'IBM Plex Mono', monospace;
   font-size: 0.8125rem;
   padding: 0.4375rem 0.75rem;
   transition: border-color 150ms;
 }
-.cp__search::placeholder { color: #4B5563; }
+.cp__search::placeholder {
+  color: #4b5563;
+}
 .cp__search:focus {
   outline: none;
-  border-color: #00D4C8;
-  box-shadow: 0 0 0 2px rgba(0, 212, 200, 0.1);
+  border-color: var(--color-af-teal);
+  box-shadow: 0 0 0 2px rgb(from var(--color-af-teal) r g b / 0.1);
 }
 
 .cp__filters {
   display: flex;
   gap: 0;
-  border: 1px solid #374151;
+  border: 1px solid var(--color-af-muted);
   border-radius: 3px;
   overflow: hidden;
 }
@@ -228,26 +231,36 @@ const visibleToolCount = computed(() =>
   font-weight: 600;
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  color: #6B7280;
+  color: var(--color-af-dim);
   background: transparent;
   border: none;
-  border-right: 1px solid #374151;
+  border-right: 1px solid var(--color-af-muted);
   cursor: pointer;
-  transition: color 120ms, background 120ms;
+  transition:
+    color 120ms,
+    background 120ms;
   white-space: nowrap;
 }
-.cp__filter-btn:last-child { border-right: none; }
-.cp__filter-btn:hover { color: #E8ECF0; background: rgba(255,255,255,0.04); }
-.cp__filter-btn:focus-visible { outline: 2px solid #00D4C8; outline-offset: -2px; }
+.cp__filter-btn:last-child {
+  border-right: none;
+}
+.cp__filter-btn:hover {
+  color: var(--color-af-text);
+  background: rgba(255, 255, 255, 0.04);
+}
+.cp__filter-btn:focus-visible {
+  outline: 2px solid var(--color-af-teal);
+  outline-offset: -2px;
+}
 .cp__filter-btn--active {
-  color: #00D4C8;
-  background: rgba(0, 212, 200, 0.08);
+  color: var(--color-af-teal);
+  background: rgb(from var(--color-af-teal) r g b / 0.08);
 }
 
 .cp__count {
   font-family: 'IBM Plex Mono', monospace;
   font-size: 0.6875rem;
-  color: #4B5563;
+  color: #4b5563;
   white-space: nowrap;
   margin-left: auto;
 }
@@ -267,22 +280,29 @@ const visibleToolCount = computed(() =>
   padding: 2rem;
   font-family: 'IBM Plex Mono', monospace;
   font-size: 0.8125rem;
-  color: #6B7280;
+  color: var(--color-af-dim);
 }
 
 .cp__spinner {
   width: 16px;
   height: 16px;
-  border: 2px solid #1F2937;
-  border-top-color: #00D4C8;
+  border: 2px solid var(--color-af-border);
+  border-top-color: var(--color-af-teal);
   border-radius: 50%;
   animation: spin 600ms linear infinite;
 }
 
-@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
 
 @media (prefers-reduced-motion: reduce) {
-  .cp__spinner { animation: none; border-top-color: #6B7280; }
+  .cp__spinner {
+    animation: none;
+    border-top-color: var(--color-af-dim);
+  }
 }
 
 /* Error */
@@ -291,36 +311,36 @@ const visibleToolCount = computed(() =>
   flex-direction: column;
   gap: 0.5rem;
   padding: 1.25rem;
-  border: 1px solid rgba(239, 68, 68, 0.2);
+  border: 1px solid rgb(from var(--color-af-red) r g b / 0.2);
   border-radius: 4px;
-  background: rgba(239, 68, 68, 0.05);
+  background: rgb(from var(--color-af-red) r g b / 0.05);
 }
 
 .cp__error-title {
   font-family: 'IBM Plex Mono', monospace;
   font-size: 0.8125rem;
   font-weight: 600;
-  color: #EF4444;
+  color: var(--color-af-red);
 }
 
 .cp__error-body {
   font-size: 0.875rem;
-  color: #9CA3AF;
+  color: #9ca3af;
 }
 
 .cp__error-hint {
   font-size: 0.8125rem;
-  color: #6B7280;
+  color: var(--color-af-dim);
 }
 
 .cp__error-link {
-  color: #00D4C8;
+  color: var(--color-af-teal);
   text-decoration: underline;
 }
 
 .cp__reload {
   font: inherit;
-  color: #00D4C8;
+  color: var(--color-af-teal);
   background: none;
   border: none;
   padding: 0;
@@ -332,7 +352,7 @@ const visibleToolCount = computed(() =>
 .cp__empty {
   padding: 3rem 1.5rem;
   text-align: center;
-  border: 1px dashed #1F2937;
+  border: 1px dashed var(--color-af-border);
   border-radius: 4px;
 }
 
@@ -340,13 +360,13 @@ const visibleToolCount = computed(() =>
   font-family: 'IBM Plex Mono', monospace;
   font-size: 1rem;
   font-weight: 600;
-  color: #4B5563;
+  color: #4b5563;
   margin: 0 0 0.5rem;
 }
 
 .cp__empty-body {
   font-size: 0.875rem;
-  color: #374151;
+  color: var(--color-af-muted);
   margin: 0 0 1.25rem;
   max-width: 32rem;
   margin-inline: auto;
@@ -357,11 +377,13 @@ const visibleToolCount = computed(() =>
   font-family: 'IBM Plex Mono', monospace;
   font-size: 0.75rem;
   font-weight: 600;
-  color: #00D4C8;
+  color: var(--color-af-teal);
   text-decoration: none;
   letter-spacing: 0.04em;
 }
-.cp__empty-cta:hover { text-decoration: underline; }
+.cp__empty-cta:hover {
+  text-decoration: underline;
+}
 
 .sr-only {
   position: absolute;
