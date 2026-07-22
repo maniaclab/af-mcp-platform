@@ -1,0 +1,41 @@
+---
+import Base from '../layouts/Base.astro';
+import TokensPage from '../components/TokensPage.vue';
+---
+
+<Base title="Tokens">
+  <div class="page-header">
+    <h1 class="page-title">Bearer tokens</h1>
+    <p class="page-subtitle">
+      Interactive sign-in doesn't need this page — oauth2-proxy handles browser sessions
+      transparently. This page is for bootstrapping <strong>programmatic</strong> MCP clients (like Claude
+      Desktop) that don't yet support OAuth discovery: mint a static Bearer token here, paste it into
+      the client's config, and revoke it whenever you're done with it.
+    </p>
+  </div>
+
+  <TokensPage client:load />
+</Base>
+
+<style>
+  .page-header {
+    margin-bottom: 1.75rem;
+  }
+
+  .page-title {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 1.5rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    color: var(--color-af-text);
+    margin: 0 0 0.5rem;
+  }
+
+  .page-subtitle {
+    font-size: 0.9375rem;
+    color: var(--color-af-dim);
+    line-height: 1.6;
+    margin: 0;
+    max-width: 52rem;
+  }
+</style>
