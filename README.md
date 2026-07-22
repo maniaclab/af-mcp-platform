@@ -54,6 +54,12 @@ See [docs/deploy.md](docs/deploy.md) for Flux CD / Helm deployment instructions,
 
 ## For Developers
 
+The full new-contributor walkthrough lives in
+[docs/local-development.md](docs/local-development.md): two-terminal broker +
+portal workflow, the `BROKER_DEV_INSECURE_PRINCIPAL` bypass for clicking
+through the UI without oauth2-proxy, `PORTAL_DEV_BROKER_URL` for a non-default
+broker host, test/lint tasks, and a ports summary.
+
 ### Prerequisites
 
 - [pixi](https://pixi.sh) installed (`curl -fsSL https://pixi.sh/install.sh | bash`)
@@ -70,23 +76,22 @@ The broker API is available at <http://localhost:8080/docs>.
 ### Start the portal locally
 
 ```bash
-cd portal
-npm install
-npm run dev
+pixi run -e portal dev
 ```
 
 ### Run tests
 
 ```bash
-pixi run test          # broker unit tests
-pixi run test-spikes   # spike validation tests
+pixi run -e dev test          # broker unit tests
+pixi run test-spikes          # spike validation tests
+pixi run -e portal test       # portal vitest suite
 ```
 
 ### Lint / format
 
 ```bash
-pixi run lint
-pixi run fmt
+pixi run -e dev lint
+pixi run -e dev fmt
 ```
 
 ## License
