@@ -51,23 +51,23 @@ jobs:
           files: coverage.xml
           fail_ci_if_error: false
 
-  portal-build:
-    name: Portal build
+  portal-check:
+    name: Portal check
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: prefix-dev/setup-pixi@v0.10.0
         with:
-          cache: npm
-          cache-dependency-path: portal/package-lock.json
+          pixi-version: v0.72.1
+          environments: portal
 
-      - name: Install dependencies
-        working-directory: portal
-        run: npm ci
+      # Runs prettier --check, eslint, astro check, and vitest — the same
+      # aggregate command a developer runs locally before a PR.
+      - name: Portal check (format + lint + astro check + tests)
+        run: pixi run -e portal check
 
-      - name: Build
-        working-directory: portal
-        run: npm run build
+      - name: Build portal
+        run: pixi run -e portal build
