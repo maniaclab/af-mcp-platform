@@ -62,6 +62,18 @@ check = { depends-on = ["format-check", "lint", "astro-check", "test"], descript
 
 # Each task name must be defined in exactly one feature: pixi resolves
 # duplicate names across features nondeterministically.
+[feature.docs.dependencies]
+zensical = "*"
+lychee = "*"
+pydocstyle = "*"
+
+[feature.docs.tasks]
+docs-build = { cmd = "zensical build", description = "Build documentation (static)", inputs = ["docs/", "zensical.toml"], outputs = ["site"] }
+docs-linkcheck = { cmd = "lychee docs/", description = "Check documentation for broken links" }
+docs-serve = { cmd = "zensical serve", depends-on = ["docs-build"], description = "Build and serve documentation" }
+docs-clean = { cmd = "rm -rf site", description = "Clean documentation build artifacts", inputs = ["site"] }
+check-docstrings = { cmd = "pydocstyle broker/src/af_mcp_broker/", description = "Check docstring style" }
+
 [feature.dev.tasks]
 lint = { cmd = "ruff check broker && ruff format --check broker", description = "Ruff lint + format check" }
 fmt = { cmd = "ruff format broker && ruff check --fix broker", description = "Format and auto-fix broker source" }
@@ -89,4 +101,4 @@ broker = {features = ["broker"], solve-group = "default"}
 dev = {features = ["broker", "dev"], solve-group = "default"}
 portal = {features = ["portal"], no-default-feature = true}
 bypass = {features = ["broker", "bypass"], solve-group = "default"}
-default = {features = ["broker", "dev"], solve-group = "default"}
+docs = {features = ["docs"], solve-group = "default"}
