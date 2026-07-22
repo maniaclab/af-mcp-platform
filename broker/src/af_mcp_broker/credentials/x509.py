@@ -709,7 +709,9 @@ class X509Provider(CredentialProvider):
     - The working copy is held in a bytearray and zeroed in memory immediately
       after transmission to the minting backend (the SecretBytes original is
       owned by pydantic).
-    - Rate-limited to 5 attempts per 15 minutes per uid to prevent brute force.
+    - Rate-limited per uid; see ``Settings.credential_unlock_max_failures`` and
+      ``Settings.credential_unlock_window_seconds`` for the defaults
+      (5 attempts / 15 minutes).
     """
 
     cred_class: ClassVar[str] = "user_x509"

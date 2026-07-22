@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Any
 
-from pydantic import Field, model_validator
+from pydantic import Field, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 # pydantic-settings matches env vars to field names case-insensitively, so the
@@ -77,6 +77,31 @@ class Settings(BaseSettings):
         default=None,
         alias="BROKER_DEV_INSECURE_PRINCIPAL",
     )
+
+    # CredentialCache.check_unlock_rate_limit()/get()/put() count failed cache
+    # lookups and bad passphrase attempts per uid; this many are allowed
+    # inside the window below before RateLimitError trips. 5 is generous
+    # enough to tolerate a mistyped passphrase but tight enough to slow a
+    # brute-force guesser who has read access to a user's ~/.globus.
+    credential_unlock_max_failures: int = 5
+
+    # Sliding window, in seconds, over which the failures above are counted.
+    # 15 minutes roughly matches how often a browser session's token refresh
+    # forces re-authentication anyway, so it rarely inconveniences real users.
+    credential_unlock_window_seconds: int = 15 * 60
+
+    @field_validator(
+        "credential_unlock_max_failures", "credential_unlock_window_seconds"
+    )
+    @classmethod
+    def _validate_positive_rate_limit(cls, value: int, info: ValidationInfo) -> int:
+        if value < 1:
+            raise ValueError(
+                f"{info.field_name} must be >= 1; a zero or negative value "
+                "disables the rate limit instead of tuning it, defeating "
+                "its purpose as a brute-force defence."
+            )
+        return value
 
     @model_validator(mode="after")
     def _derive_jwks_uri(self) -> Settings:

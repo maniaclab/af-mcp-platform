@@ -18,11 +18,6 @@ log = structlog.get_logger(__name__)
 # Seconds between janitor sweeps for expired entries
 _JANITOR_INTERVAL_SECONDS = 60
 
-# Rate-limit: allow at most this many failed cache lookups (misses) per window.
-# On the Nth+1 miss the cache raises RateLimitError to prevent brute-force abuse.
-_MAX_FAILED_UNLOCKS = 5
-_UNLOCK_WINDOW_SECONDS = 15 * 60  # 15 minutes
-
 # Default TTL used when expires_at is not supplied to put()
 _DEFAULT_TTL_SECONDS = 3600
 
@@ -70,15 +65,30 @@ class CredentialCache:
     Thread-safety: all public methods are coroutine-safe because asyncio is
     single-threaded within a single event loop.  Do not share this instance
     across multiple event loops.
+
+    Rate-limiting: *max_failed_unlocks* / *unlock_window_seconds* bound how
+    many failed cache lookups (misses) or bad passphrase attempts a single
+    uid may accrue before ``RateLimitError`` is raised — see ``_record_miss``
+    and ``check_unlock_rate_limit``. Production wiring reads these from
+    ``Settings.credential_unlock_max_failures`` /
+    ``Settings.credential_unlock_window_seconds`` (see ``app.py`` lifespan);
+    the defaults here exist only so callers that construct ``CredentialCache``
+    without Settings (tests, spikes) keep the pre-existing behaviour.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        max_failed_unlocks: int = 5,
+        unlock_window_seconds: int = 15 * 60,
+    ) -> None:
         # (uid, target) -> _CacheEntry
         self._entries: dict[tuple[int, str], _CacheEntry] = {}
         # uid -> _FailedUnlockRecord (for rate-limiting missed lookups)
         self._failed_unlocks: dict[int, _FailedUnlockRecord] = defaultdict(
             _FailedUnlockRecord
         )
+        self._max_failed_unlocks = max_failed_unlocks
+        self._unlock_window_seconds = unlock_window_seconds
         self._janitor_task: asyncio.Task | None = None
         self._log = structlog.get_logger(__name__).bind(component="CredentialCache")
 
@@ -122,9 +132,9 @@ class CredentialCache:
         remain — this prevents handing a credential to a caller that will
         expire before it can use it.
 
-        Each cache miss is counted against *uid*. After *_MAX_FAILED_UNLOCKS*
-        misses within *_UNLOCK_WINDOW_SECONDS*, ``RateLimitError`` is raised to
-        prevent brute-force enumeration.
+        Each cache miss is counted against *uid*. After ``max_failed_unlocks``
+        misses within ``unlock_window_seconds`` (constructor parameters),
+        ``RateLimitError`` is raised to prevent brute-force enumeration.
         """
         key = (uid, target)
         entry = self._entries.get(key)
@@ -219,7 +229,7 @@ class CredentialCache:
         now = time.monotonic()
         record = self._failed_unlocks[uid]
         # Reset window if it has elapsed
-        if now - record.window_start > _UNLOCK_WINDOW_SECONDS:
+        if now - record.window_start > self._unlock_window_seconds:
             record.attempts = 0
             record.window_start = now
         record.attempts += 1
@@ -227,10 +237,12 @@ class CredentialCache:
             "credential_cache.miss_recorded",
             uid=uid,
             attempts=record.attempts,
-            window_seconds=_UNLOCK_WINDOW_SECONDS,
+            window_seconds=self._unlock_window_seconds,
         )
-        if record.attempts > _MAX_FAILED_UNLOCKS:
-            remaining_window = int(_UNLOCK_WINDOW_SECONDS - (now - record.window_start))
+        if record.attempts > self._max_failed_unlocks:
+            remaining_window = int(
+                self._unlock_window_seconds - (now - record.window_start)
+            )
             raise RateLimitError(
                 f"Too many failed cache lookups for uid={uid}. "
                 f"Try again in {remaining_window}s."
@@ -255,12 +267,14 @@ class CredentialCache:
         record = self._failed_unlocks.get(uid)
         if record is None:
             return
-        if now - record.window_start > _UNLOCK_WINDOW_SECONDS:
+        if now - record.window_start > self._unlock_window_seconds:
             # Window expired — reset and allow
             self._failed_unlocks[uid] = _FailedUnlockRecord()
             return
-        if record.attempts > _MAX_FAILED_UNLOCKS:
-            remaining_window = int(_UNLOCK_WINDOW_SECONDS - (now - record.window_start))
+        if record.attempts > self._max_failed_unlocks:
+            remaining_window = int(
+                self._unlock_window_seconds - (now - record.window_start)
+            )
             raise RateLimitError(
                 f"Too many failed passphrase attempts for uid={uid}. "
                 f"Try again in {remaining_window}s."
