@@ -16,9 +16,7 @@ onMounted(async () => {
     if (err instanceof SessionExpiredError) {
       sessionExpired.value = true;
     } else {
-      error.value = err instanceof Error
-        ? err.message
-        : 'Could not load proxy status.';
+      error.value = err instanceof Error ? err.message : 'Could not load proxy status.';
     }
   } finally {
     loading.value = false;
@@ -80,20 +78,27 @@ function reload() {
   padding: 2rem 0;
   font-family: 'IBM Plex Mono', monospace;
   font-size: 0.8125rem;
-  color: #6B7280;
+  color: var(--color-af-dim);
 }
 
 .psp__spinner {
   width: 16px;
   height: 16px;
-  border: 2px solid #1F2937;
-  border-top-color: #00D4C8;
+  border: 2px solid var(--color-af-border);
+  border-top-color: var(--color-af-teal);
   border-radius: 50%;
   animation: spin 600ms linear infinite;
 }
-@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
 @media (prefers-reduced-motion: reduce) {
-  .psp__spinner { animation: none; border-top-color: #6B7280; }
+  .psp__spinner {
+    animation: none;
+    border-top-color: var(--color-af-dim);
+  }
 }
 
 .psp__error {
@@ -101,21 +106,24 @@ function reload() {
   flex-direction: column;
   gap: 0.375rem;
   padding: 1rem;
-  border: 1px solid rgba(239, 68, 68, 0.2);
+  border: 1px solid rgb(from var(--color-af-red) r g b / 0.2);
   border-radius: 4px;
-  background: rgba(239, 68, 68, 0.05);
+  background: rgb(from var(--color-af-red) r g b / 0.05);
 }
 .psp__error-title {
   font-family: 'IBM Plex Mono', monospace;
   font-size: 0.8125rem;
   font-weight: 600;
-  color: #EF4444;
+  color: var(--color-af-red);
 }
-.psp__error-body { font-size: 0.875rem; color: #9CA3AF; }
+.psp__error-body {
+  font-size: 0.875rem;
+  color: #9ca3af;
+}
 
 .psp__reload {
   font: inherit;
-  color: #00D4C8;
+  color: var(--color-af-teal);
   background: none;
   border: none;
   padding: 0;

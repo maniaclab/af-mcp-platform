@@ -1,0 +1,68 @@
+/*
+ * global.css — Tailwind v4 entrypoint and single source of truth for the
+ * AF palette, fonts, and type scale.
+ *
+ * Tailwind 4 is CSS-first: the JS `tailwind.config.mjs` is gone. Design tokens
+ * are declared here in a `@theme` block. Tailwind generates matching utility
+ * classes (e.g. `--color-af-teal` → `bg-af-teal`, `text-af-teal`, ...) AND
+ * exposes each token as a CSS custom property, so scoped `<style>` blocks in
+ * .vue / .astro files reference them via `var(--color-af-teal)`.
+ *
+ * If you change a color here, that is the ONLY place it needs to change.
+ */
+
+@import 'tailwindcss';
+
+@plugin '@tailwindcss/forms';
+@plugin '@tailwindcss/typography';
+
+@theme {
+  /* --------------------------------------------------------------------
+   * Ground palette — drawn from detector visualization: the void of a
+   * collision event display and the Cherenkov radiation track spectrum.
+   * ------------------------------------------------------------------ */
+  --color-af-void: #0a0e1a; /* near-black ground */
+  --color-af-surface: #111827; /* elevated surface (cards, panels) */
+  --color-af-border: #1f2937; /* structural dividers */
+  --color-af-muted: #374151; /* muted borders and disabled states */
+  --color-af-dim: #6b7280; /* secondary text, labels */
+  --color-af-text: #e8ecf0; /* primary text */
+  --color-af-teal: #00d4c8; /* Cherenkov accent — primary action */
+  --color-af-amber: #f59e0b; /* calorimeter heat — warnings, state-change */
+  --color-af-red: #ef4444; /* error, revoke */
+  --color-af-green: #10b981; /* active/healthy status */
+
+  /* --------------------------------------------------------------------
+   * Fonts — self-hosted IBM Plex woff2 files live in portal/public/fonts/.
+   * ------------------------------------------------------------------ */
+  --font-mono: 'IBM Plex Mono', 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+  --font-sans: 'IBM Plex Sans', 'Inter', system-ui, sans-serif;
+
+  /* --------------------------------------------------------------------
+   * Type scale — display / h1 / h2 / h3 / label.
+   * ------------------------------------------------------------------ */
+  --text-display: 3.5rem;
+  --text-display--line-height: 1.05;
+  --text-display--letter-spacing: 0.04em;
+  --text-display--font-weight: 700;
+
+  --text-h1: 2.25rem;
+  --text-h1--line-height: 1.1;
+  --text-h1--letter-spacing: 0.03em;
+  --text-h1--font-weight: 700;
+
+  --text-h2: 1.5rem;
+  --text-h2--line-height: 1.2;
+  --text-h2--letter-spacing: 0.02em;
+  --text-h2--font-weight: 600;
+
+  --text-h3: 1.125rem;
+  --text-h3--line-height: 1.3;
+  --text-h3--letter-spacing: 0.02em;
+  --text-h3--font-weight: 600;
+
+  --text-label: 0.6875rem;
+  --text-label--line-height: 1;
+  --text-label--letter-spacing: 0.1em;
+  --text-label--font-weight: 600;
+}

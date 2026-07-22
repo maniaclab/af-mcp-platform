@@ -7,9 +7,8 @@ import ProxyStatusPage from '../components/ProxyStatusPage.vue';
   <div class="page-header">
     <h1 class="page-title">AMI proxy</h1>
     <p class="page-subtitle">
-      Your x509 VOMS proxy credential for ATLAS grid access and AMI queries.
-      Generated on demand from your grid certificate — the passphrase is used
-      once and never stored.
+      Your x509 VOMS proxy credential for ATLAS grid access and AMI queries. Generated on demand
+      from your grid certificate — the passphrase is used once and never stored.
     </p>
   </div>
 
@@ -23,103 +22,113 @@ import ProxyStatusPage from '../components/ProxyStatusPage.vue';
     <div class="info-grid">
       <div class="info-item">
         <span class="info-item__name">AMI tag navigation</span>
-        <span class="info-item__desc">Query the ATLAS Metadata Interface for dataset definitions and physics tags</span>
+        <span class="info-item__desc"
+          >Query the ATLAS Metadata Interface for dataset definitions and physics tags</span
+        >
       </div>
       <div class="info-item">
         <span class="info-item__name">Rucio data management</span>
-        <span class="info-item__desc">List, locate, and stage datasets from ATLAS distributed data management</span>
+        <span class="info-item__desc"
+          >List, locate, and stage datasets from ATLAS distributed data management</span
+        >
       </div>
       <div class="info-item">
         <span class="info-item__name">Grid job submission</span>
-        <span class="info-item__desc">Submit and monitor analysis jobs on the WLCG through PanDA and DIANE</span>
+        <span class="info-item__desc"
+          >Submit and monitor analysis jobs on the WLCG through PanDA and DIANE</span
+        >
       </div>
     </div>
   </section>
 </Base>
 
 <style>
-.page-header {
-  margin-bottom: 1.75rem;
-}
-
-.page-title {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 1.5rem;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  color: #E8ECF0;
-  margin: 0 0 0.5rem;
-}
-
-.page-subtitle {
-  font-size: 0.9375rem;
-  color: #6B7280;
-  line-height: 1.6;
-  margin: 0;
-  max-width: 52rem;
-}
-
-.proxy-panel {
-  background: #111827;
-  border: 1px solid #1F2937;
-  border-radius: 4px;
-  padding: 1.5rem;
-  margin-bottom: 2.5rem;
-  max-width: 52rem;
-}
-
-/* Info section */
-.info-section {
-  max-width: 52rem;
-}
-
-.info-heading {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.625rem;
-  font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: #4B5563;
-  margin: 0 0 1rem;
-}
-
-.info-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-  border: 1px solid #1F2937;
-  border-radius: 4px;
-  overflow: hidden;
-}
-
-.info-item {
-  display: grid;
-  grid-template-columns: 12rem 1fr;
-  gap: 1rem;
-  align-items: baseline;
-  padding: 0.75rem 1rem;
-  border-bottom: 1px solid #1F2937;
-}
-.info-item:last-child { border-bottom: none; }
-
-.info-item__name {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: #9CA3AF;
-}
-
-.info-item__desc {
-  font-size: 0.8125rem;
-  color: #6B7280;
-  line-height: 1.5;
-}
-
-@media (max-width: 640px) {
-  .info-item {
-    grid-template-columns: 1fr;
-    gap: 0.25rem;
+  .page-header {
+    margin-bottom: 1.75rem;
   }
-  .proxy-panel { padding: 1rem; }
-}
+
+  .page-title {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 1.5rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    color: var(--color-af-text);
+    margin: 0 0 0.5rem;
+  }
+
+  .page-subtitle {
+    font-size: 0.9375rem;
+    color: var(--color-af-dim);
+    line-height: 1.6;
+    margin: 0;
+    max-width: 52rem;
+  }
+
+  .proxy-panel {
+    background: var(--color-af-surface);
+    border: 1px solid var(--color-af-border);
+    border-radius: 4px;
+    padding: 1.5rem;
+    margin-bottom: 2.5rem;
+    max-width: 52rem;
+  }
+
+  /* Info section */
+  .info-section {
+    max-width: 52rem;
+  }
+
+  .info-heading {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.625rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: #4b5563;
+    margin: 0 0 1rem;
+  }
+
+  .info-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    border: 1px solid var(--color-af-border);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .info-item {
+    display: grid;
+    grid-template-columns: 12rem 1fr;
+    gap: 1rem;
+    align-items: baseline;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--color-af-border);
+  }
+  .info-item:last-child {
+    border-bottom: none;
+  }
+
+  .info-item__name {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #9ca3af;
+  }
+
+  .info-item__desc {
+    font-size: 0.8125rem;
+    color: var(--color-af-dim);
+    line-height: 1.5;
+  }
+
+  @media (max-width: 640px) {
+    .info-item {
+      grid-template-columns: 1fr;
+      gap: 0.25rem;
+    }
+    .proxy-panel {
+      padding: 1rem;
+    }
+  }
 </style>

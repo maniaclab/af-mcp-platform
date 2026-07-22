@@ -193,17 +193,13 @@ export async function fetchDashboardSummary(): Promise<DashboardSummary> {
     fetchProxyStatus(),
   ]);
 
-  const linkedCount = identityData.status === 'fulfilled'
-    ? identityData.value.linked_accounts.length
-    : 0;
+  const linkedCount =
+    identityData.status === 'fulfilled' ? identityData.value.linked_accounts.length : 0;
 
-  const toolCount = catalog.status === 'fulfilled'
-    ? catalog.value.tools.length
-    : 0;
+  const toolCount = catalog.status === 'fulfilled' ? catalog.value.tools.length : 0;
 
-  const proxy: ProxyStatus = proxyStatus.status === 'fulfilled'
-    ? proxyStatus.value
-    : { cached: false, voms_attributes: [] };
+  const proxy: ProxyStatus =
+    proxyStatus.status === 'fulfilled' ? proxyStatus.value : { cached: false, voms_attributes: [] };
 
   return { linkedCount, toolCount, proxyStatus: proxy };
 }

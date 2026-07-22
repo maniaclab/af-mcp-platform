@@ -8,6 +8,8 @@
  * `data-af-identity` — is filled client-side from GET /v1/identities, which
  * rides the same-origin oauth2-proxy session cookie.
  */
+import '../styles/global.css';
+
 interface Props {
   title?: string;
 }
@@ -15,10 +17,10 @@ interface Props {
 const { title = 'AF MCP Platform' } = Astro.props;
 
 const navLinks = [
-  { href: '/',            label: 'Overview' },
-  { href: '/catalog',     label: 'Tool Catalog' },
-  { href: '/identities',  label: 'Identities' },
-  { href: '/status',      label: 'AMI Proxy' },
+  { href: '/', label: 'Overview' },
+  { href: '/catalog', label: 'Tool Catalog' },
+  { href: '/identities', label: 'Identities' },
+  { href: '/status', label: 'AMI Proxy' },
 ];
 
 const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
@@ -26,310 +28,314 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
 
 <!doctype html>
 <html lang="en" class="h-full">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>{title} — AF MCP Platform</title>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title} — AF MCP Platform</title>
 
-  <style>
-    /* -----------------------------------------------------------------------
+    <style>
+      /* -----------------------------------------------------------------------
        IBM Plex — self-hosted so the strict CSP (default-src 'self') can serve
        them without allowing fonts.googleapis.com / fonts.gstatic.com.
        woff2 files live in portal/public/fonts/.
     ----------------------------------------------------------------------- */
-    @font-face {
-      font-family: 'IBM Plex Sans';
-      font-style: normal;
-      font-weight: 400;
-      font-display: swap;
-      src: url('/fonts/ibm-plex-sans-latin-400-normal.woff2') format('woff2');
-    }
-    @font-face {
-      font-family: 'IBM Plex Sans';
-      font-style: normal;
-      font-weight: 500;
-      font-display: swap;
-      src: url('/fonts/ibm-plex-sans-latin-500-normal.woff2') format('woff2');
-    }
-    @font-face {
-      font-family: 'IBM Plex Sans';
-      font-style: normal;
-      font-weight: 600;
-      font-display: swap;
-      src: url('/fonts/ibm-plex-sans-latin-600-normal.woff2') format('woff2');
-    }
-    @font-face {
-      font-family: 'IBM Plex Mono';
-      font-style: normal;
-      font-weight: 400;
-      font-display: swap;
-      src: url('/fonts/ibm-plex-mono-latin-400-normal.woff2') format('woff2');
-    }
-    @font-face {
-      font-family: 'IBM Plex Mono';
-      font-style: normal;
-      font-weight: 500;
-      font-display: swap;
-      src: url('/fonts/ibm-plex-mono-latin-500-normal.woff2') format('woff2');
-    }
-    @font-face {
-      font-family: 'IBM Plex Mono';
-      font-style: normal;
-      font-weight: 600;
-      font-display: swap;
-      src: url('/fonts/ibm-plex-mono-latin-600-normal.woff2') format('woff2');
-    }
-    @font-face {
-      font-family: 'IBM Plex Mono';
-      font-style: normal;
-      font-weight: 700;
-      font-display: swap;
-      src: url('/fonts/ibm-plex-mono-latin-700-normal.woff2') format('woff2');
-    }
-  </style>
+      @font-face {
+        font-family: 'IBM Plex Sans';
+        font-style: normal;
+        font-weight: 400;
+        font-display: swap;
+        src: url('/fonts/ibm-plex-sans-latin-400-normal.woff2') format('woff2');
+      }
+      @font-face {
+        font-family: 'IBM Plex Sans';
+        font-style: normal;
+        font-weight: 500;
+        font-display: swap;
+        src: url('/fonts/ibm-plex-sans-latin-500-normal.woff2') format('woff2');
+      }
+      @font-face {
+        font-family: 'IBM Plex Sans';
+        font-style: normal;
+        font-weight: 600;
+        font-display: swap;
+        src: url('/fonts/ibm-plex-sans-latin-600-normal.woff2') format('woff2');
+      }
+      @font-face {
+        font-family: 'IBM Plex Mono';
+        font-style: normal;
+        font-weight: 400;
+        font-display: swap;
+        src: url('/fonts/ibm-plex-mono-latin-400-normal.woff2') format('woff2');
+      }
+      @font-face {
+        font-family: 'IBM Plex Mono';
+        font-style: normal;
+        font-weight: 500;
+        font-display: swap;
+        src: url('/fonts/ibm-plex-mono-latin-500-normal.woff2') format('woff2');
+      }
+      @font-face {
+        font-family: 'IBM Plex Mono';
+        font-style: normal;
+        font-weight: 600;
+        font-display: swap;
+        src: url('/fonts/ibm-plex-mono-latin-600-normal.woff2') format('woff2');
+      }
+      @font-face {
+        font-family: 'IBM Plex Mono';
+        font-style: normal;
+        font-weight: 700;
+        font-display: swap;
+        src: url('/fonts/ibm-plex-mono-latin-700-normal.woff2') format('woff2');
+      }
+    </style>
 
-  <style>
-    /* -----------------------------------------------------------------------
-       CSS custom properties — single source of truth for the palette.
-       Tailwind config mirrors these values; touch only here if you change color.
+    <style>
+      /* -----------------------------------------------------------------------
+       All colour tokens live in src/styles/global.css inside the Tailwind
+       `@theme` block. Reference them here as var(--color-af-*).
     ----------------------------------------------------------------------- */
-    :root {
-      --ground:   #0A0E1A;
-      --surface:  #111827;
-      --border:   #1F2937;
-      --muted:    #374151;
-      --dim:      #6B7280;
-      --text:     #E8ECF0;
-      --accent:   #00D4C8;   /* Cherenkov teal */
-      --accent-2: #F59E0B;   /* calorimeter amber — warnings, state-change */
-      --error:    #EF4444;
-      --ok:       #10B981;
-    }
+      * {
+        box-sizing: border-box;
+      }
 
-    * { box-sizing: border-box; }
+      html,
+      body {
+        background: var(--color-af-void);
+        color: var(--color-af-text);
+        font-family: 'IBM Plex Sans', system-ui, sans-serif;
+        font-size: 15px;
+        line-height: 1.6;
+        -webkit-font-smoothing: antialiased;
+        min-height: 100%;
+      }
 
-    html, body {
-      background: var(--ground);
-      color: var(--text);
-      font-family: 'IBM Plex Sans', system-ui, sans-serif;
-      font-size: 15px;
-      line-height: 1.6;
-      -webkit-font-smoothing: antialiased;
-      min-height: 100%;
-    }
+      /* Skip link for keyboard accessibility */
+      .skip-link {
+        position: absolute;
+        top: -100%;
+        left: 1rem;
+        background: var(--color-af-teal);
+        color: var(--color-af-void);
+        padding: 0.5rem 1rem;
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-decoration: none;
+        z-index: 1000;
+      }
+      .skip-link:focus {
+        top: 1rem;
+      }
 
-    /* Skip link for keyboard accessibility */
-    .skip-link {
-      position: absolute;
-      top: -100%;
-      left: 1rem;
-      background: var(--accent);
-      color: var(--ground);
-      padding: 0.5rem 1rem;
-      font-family: 'IBM Plex Mono', monospace;
-      font-size: 0.75rem;
-      font-weight: 600;
-      text-decoration: none;
-      z-index: 1000;
-    }
-    .skip-link:focus { top: 1rem; }
+      /* Nav ------------------------------------------------------------------ */
+      .af-nav {
+        position: sticky;
+        top: 0;
+        z-index: 50;
+        background: rgb(from var(--color-af-void) r g b / 0.92);
+        backdrop-filter: blur(12px);
+        border-bottom: 1px solid var(--color-af-border);
+        display: flex;
+        align-items: center;
+        gap: 0;
+        padding: 0 2rem;
+        height: 56px;
+      }
 
-    /* Nav ------------------------------------------------------------------ */
-    .af-nav {
-      position: sticky;
-      top: 0;
-      z-index: 50;
-      background: rgba(10, 14, 26, 0.92);
-      backdrop-filter: blur(12px);
-      border-bottom: 1px solid var(--border);
-      display: flex;
-      align-items: center;
-      gap: 0;
-      padding: 0 2rem;
-      height: 56px;
-    }
+      .af-nav__logo {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 0.875rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        color: var(--color-af-teal);
+        text-decoration: none;
+        white-space: nowrap;
+        margin-right: 3rem;
+        text-transform: uppercase;
+      }
 
-    .af-nav__logo {
-      font-family: 'IBM Plex Mono', monospace;
-      font-size: 0.875rem;
-      font-weight: 700;
-      letter-spacing: 0.06em;
-      color: var(--accent);
-      text-decoration: none;
-      white-space: nowrap;
-      margin-right: 3rem;
-      text-transform: uppercase;
-    }
+      .af-nav__links {
+        display: flex;
+        align-items: stretch;
+        gap: 0;
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        height: 100%;
+      }
 
-    .af-nav__links {
-      display: flex;
-      align-items: stretch;
-      gap: 0;
-      list-style: none;
-      margin: 0;
-      padding: 0;
-      height: 100%;
-    }
+      .af-nav__link {
+        display: flex;
+        align-items: center;
+        padding: 0 1.25rem;
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 0.75rem;
+        font-weight: 500;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        text-decoration: none;
+        color: var(--color-af-dim);
+        border-bottom: 2px solid transparent;
+        transition:
+          color 150ms,
+          border-color 150ms;
+      }
 
-    .af-nav__link {
-      display: flex;
-      align-items: center;
-      padding: 0 1.25rem;
-      font-family: 'IBM Plex Mono', monospace;
-      font-size: 0.75rem;
-      font-weight: 500;
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
-      text-decoration: none;
-      color: var(--dim);
-      border-bottom: 2px solid transparent;
-      transition: color 150ms, border-color 150ms;
-    }
+      .af-nav__link:hover,
+      .af-nav__link:focus-visible {
+        color: var(--color-af-text);
+        border-bottom-color: var(--color-af-muted);
+        outline: none;
+      }
 
-    .af-nav__link:hover,
-    .af-nav__link:focus-visible {
-      color: var(--text);
-      border-bottom-color: var(--muted);
-      outline: none;
-    }
+      .af-nav__link[aria-current='page'] {
+        color: var(--color-af-teal);
+        border-bottom-color: var(--color-af-teal);
+      }
 
-    .af-nav__link[aria-current="page"] {
-      color: var(--accent);
-      border-bottom-color: var(--accent);
-    }
+      .af-nav__spacer {
+        flex: 1;
+      }
 
-    .af-nav__spacer { flex: 1; }
+      .af-nav__user {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 0.6875rem;
+        color: var(--color-af-dim);
+        letter-spacing: 0.04em;
+      }
 
-    .af-nav__user {
-      font-family: 'IBM Plex Mono', monospace;
-      font-size: 0.6875rem;
-      color: var(--dim);
-      letter-spacing: 0.04em;
-    }
+      /* Main content --------------------------------------------------------- */
+      .af-main {
+        min-height: calc(100vh - 56px - 48px);
+        padding: 2.5rem 2rem;
+        max-width: 1200px;
+        margin: 0 auto;
+        width: 100%;
+      }
 
-    /* Main content --------------------------------------------------------- */
-    .af-main {
-      min-height: calc(100vh - 56px - 48px);
-      padding: 2.5rem 2rem;
-      max-width: 1200px;
-      margin: 0 auto;
-      width: 100%;
-    }
+      /* Footer --------------------------------------------------------------- */
+      .af-footer {
+        border-top: 1px solid var(--color-af-border);
+        padding: 0 2rem;
+        height: 48px;
+        display: flex;
+        align-items: center;
+        gap: 2rem;
+      }
 
-    /* Footer --------------------------------------------------------------- */
-    .af-footer {
-      border-top: 1px solid var(--border);
-      padding: 0 2rem;
-      height: 48px;
-      display: flex;
-      align-items: center;
-      gap: 2rem;
-    }
+      .af-footer__text {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 0.6875rem;
+        color: var(--color-af-dim);
+        letter-spacing: 0.04em;
+      }
 
-    .af-footer__text {
-      font-family: 'IBM Plex Mono', monospace;
-      font-size: 0.6875rem;
-      color: var(--dim);
-      letter-spacing: 0.04em;
-    }
+      .af-footer__link {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 0.6875rem;
+        color: var(--color-af-dim);
+        letter-spacing: 0.04em;
+        text-decoration: none;
+      }
+      .af-footer__link:hover {
+        color: var(--color-af-teal);
+      }
 
-    .af-footer__link {
-      font-family: 'IBM Plex Mono', monospace;
-      font-size: 0.6875rem;
-      color: var(--dim);
-      letter-spacing: 0.04em;
-      text-decoration: none;
-    }
-    .af-footer__link:hover { color: var(--accent); }
+      /* Responsive ----------------------------------------------------------- */
+      @media (max-width: 640px) {
+        .af-nav {
+          padding: 0 1rem;
+        }
+        .af-nav__logo {
+          margin-right: 1.5rem;
+          font-size: 0.75rem;
+        }
+        .af-nav__link {
+          padding: 0 0.75rem;
+          font-size: 0.6875rem;
+        }
+        .af-nav__user {
+          display: none;
+        }
+        .af-main {
+          padding: 1.5rem 1rem;
+        }
+      }
+    </style>
+  </head>
+  <body class="h-full">
+    <a href="#main-content" class="skip-link">Skip to content</a>
 
-    /* Responsive ----------------------------------------------------------- */
-    @media (max-width: 640px) {
-      .af-nav { padding: 0 1rem; }
-      .af-nav__logo { margin-right: 1.5rem; font-size: 0.75rem; }
-      .af-nav__link { padding: 0 0.75rem; font-size: 0.6875rem; }
-      .af-nav__user { display: none; }
-      .af-main { padding: 1.5rem 1rem; }
-    }
-  </style>
-</head>
-<body class="h-full">
-  <a href="#main-content" class="skip-link">Skip to content</a>
+    <nav class="af-nav" aria-label="Primary navigation">
+      <a href="/" class="af-nav__logo" aria-label="AF MCP Platform home"> AF&nbsp;/&nbsp;MCP </a>
 
-  <nav class="af-nav" aria-label="Primary navigation">
-    <a href="/" class="af-nav__logo" aria-label="AF MCP Platform home">
-      AF&nbsp;/&nbsp;MCP
-    </a>
+      <ul class="af-nav__links" role="list">
+        {
+          navLinks.map(({ href, label }) => {
+            const isActive = href === '/' ? currentPath === '/' : currentPath.startsWith(href);
+            return (
+              <li>
+                <a href={href} class="af-nav__link" aria-current={isActive ? 'page' : undefined}>
+                  {label}
+                </a>
+              </li>
+            );
+          })
+        }
+      </ul>
 
-    <ul class="af-nav__links" role="list">
-      {navLinks.map(({ href, label }) => {
-        const isActive = href === '/'
-          ? currentPath === '/'
-          : currentPath.startsWith(href);
-        return (
-          <li>
-            <a
-              href={href}
-              class="af-nav__link"
-              aria-current={isActive ? 'page' : undefined}
-            >
-              {label}
-            </a>
-          </li>
-        );
-      })}
-    </ul>
+      <div class="af-nav__spacer" aria-hidden="true"></div>
 
-    <div class="af-nav__spacer" aria-hidden="true"></div>
+      <span class="af-nav__user" data-af-identity aria-label="Signed in" hidden></span>
+    </nav>
 
-    <span class="af-nav__user" data-af-identity aria-label="Signed in" hidden></span>
-  </nav>
+    <main id="main-content" class="af-main">
+      <slot />
+    </main>
 
-  <main id="main-content" class="af-main">
-    <slot />
-  </main>
+    <footer class="af-footer" aria-label="Site footer">
+      <span class="af-footer__text">UChicago ATLAS Analysis Facility</span>
+      <a
+        href="https://af.uchicago.edu"
+        class="af-footer__link"
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        af.uchicago.edu
+      </a>
+      <a
+        href="https://atlas.cern"
+        class="af-footer__link"
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        atlas.cern
+      </a>
+    </footer>
 
-  <footer class="af-footer" aria-label="Site footer">
-    <span class="af-footer__text">UChicago ATLAS Analysis Facility</span>
-    <a
-      href="https://af.uchicago.edu"
-      class="af-footer__link"
-      target="_blank"
-      rel="noopener noreferrer"
-    >
-      af.uchicago.edu
-    </a>
-    <a
-      href="https://atlas.cern"
-      class="af-footer__link"
-      target="_blank"
-      rel="noopener noreferrer"
-    >
-      atlas.cern
-    </a>
-  </footer>
-
-  <!--
+    <!--
     Populate every [data-af-identity] element (nav username, hero greeting)
     from the broker. This is the only identity source in a static build.
   -->
-  <script>
-    import { fetchIdentities } from '../lib/api';
+    <script>
+      import { fetchIdentities } from '../lib/api';
 
-    (async () => {
-      try {
-        const id = await fetchIdentities();
-        const label = id.email || id.unixname;
-        if (!label) return;
-        document.querySelectorAll<HTMLElement>('[data-af-identity]').forEach((el) => {
-          el.textContent = label;
-          const holder = el.closest<HTMLElement>('[data-af-user-holder]');
-          if (holder) holder.hidden = false;
-          else el.hidden = false;
-        });
-      } catch {
-        // Unauthenticated (static preview) or expired session — leave hidden.
-      }
-    })();
-  </script>
-</body>
+      (async () => {
+        try {
+          const id = await fetchIdentities();
+          const label = id.email || id.unixname;
+          if (!label) return;
+          document.querySelectorAll<HTMLElement>('[data-af-identity]').forEach((el) => {
+            el.textContent = label;
+            const holder = el.closest<HTMLElement>('[data-af-user-holder]');
+            if (holder) holder.hidden = false;
+            else el.hidden = false;
+          });
+        } catch {
+          // Unauthenticated (static preview) or expired session — leave hidden.
+        }
+      })();
+    </script>
+  </body>
 </html>

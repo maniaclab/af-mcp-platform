@@ -39,6 +39,27 @@ httpx2 = ">=2.7.0,<3"
 [feature.broker.tasks]
 broker = { cmd = "uvicorn af_mcp_broker.app:app --host 0.0.0.0 --port 8080 --reload", description = "Run broker dev server" }
 
+# ---------------------------------------------------------------------------
+# Portal (Astro / Vue / Tailwind) — Node comes from conda-forge. Every task
+# `cwd`s into portal/ so `pixi run -e portal dev` behaves identically to
+# `cd portal && npm run dev`. Task names live only under `feature.portal` to
+# avoid the nondeterministic-name-resolution issue documented above.
+# ---------------------------------------------------------------------------
+[feature.portal.dependencies]
+nodejs = ">=20"
+
+[feature.portal.tasks]
+install = { cmd = "npm install", cwd = "portal", description = "Install portal npm dependencies", inputs = ["portal/package.json", "portal/package-lock.json"], outputs = ["portal/node_modules/.package-lock.json"] }
+dev = { cmd = "npm run dev", cwd = "portal", depends-on = ["install"], description = "Start portal dev server at http://localhost:4321" }
+build = { cmd = "npm run build", cwd = "portal", depends-on = ["install"], description = "Build portal static site to portal/dist/", inputs = ["portal/src/**", "portal/public/**", "portal/astro.config.mjs", "portal/tsconfig.json", "portal/src/styles/**"], outputs = ["portal/dist/"] }
+preview = { cmd = "npm run preview", cwd = "portal", depends-on = ["build"], description = "Serve production portal build locally" }
+astro-check = { cmd = "npm run check", cwd = "portal", depends-on = ["install"], description = "Run `astro check` (types + template diagnostics)" }
+format = { cmd = "npx prettier --write .", cwd = "portal", depends-on = ["install"], description = "Auto-format portal source" }
+format-check = { cmd = "npx prettier --check .", cwd = "portal", depends-on = ["install"], description = "Verify portal source is prettier-formatted (CI-safe)" }
+lint = { cmd = "npx eslint .", cwd = "portal", depends-on = ["install"], description = "Lint portal source with eslint-plugin-astro" }
+test = { cmd = "npx vitest run", cwd = "portal", depends-on = ["install"], description = "Run portal vitest suite" }
+check = { depends-on = ["format-check", "lint", "astro-check", "test"], description = "Full portal CI check: format + lint + astro check + tests" }
+
 # Each task name must be defined in exactly one feature: pixi resolves
 # duplicate names across features nondeterministically.
 [feature.dev.tasks]
@@ -56,4 +77,5 @@ check-all = { depends-on = ["lint-all", "test-all"], description = "Full check: 
 [environments]
 broker = {features = ["broker"], solve-group = "default"}
 dev = {features = ["broker", "dev"], solve-group = "default"}
+portal = {features = ["portal"], no-default-feature = true}
 default = {features = ["broker", "dev"], solve-group = "default"}
