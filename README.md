@@ -29,24 +29,29 @@ mcp.af.uchicago.edu   (oauth2-proxy → AF Keycloak OIDC)
 
 ## Quick Start for ATLAS AF Users
 
-Add the MCP endpoint to Claude Desktop (`~/.config/claude/claude_desktop_config.json`):
+Point your MCP client at `https://mcp.af.uchicago.edu/mcp`. The endpoint speaks standard MCP-over-HTTP (SSE or streamable-HTTP), so any client that supports the HTTP transport (Claude Desktop, Gemini, the MCP CLI, etc.) can connect.
+
+Example `~/.config/claude/claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
     "atlas-af": {
-      "url": "https://mcp.af.uchicago.edu/mcp",
-      "headers": {
-        "Authorization": "Bearer <your-AF-token>"
-      }
+      "url": "https://mcp.af.uchicago.edu/mcp"
     }
   }
 }
 ```
 
-Get your bearer token from the AF portal: <https://portal.af.uchicago.edu/tokens>
+### How authentication works
 
-For Gemini / other clients that support the MCP HTTP transport, use the same URL. The endpoint speaks standard MCP-over-HTTP (SSE or streamable-HTTP).
+The gateway sits behind **oauth2-proxy**, which handles browser-based OIDC login against AF Keycloak — you never fetch, paste, or configure a raw bearer token by hand.
+
+- The first time your MCP client connects, oauth2-proxy redirects the browser to AF Keycloak. Sign in with your AF credentials; oauth2-proxy stores the resulting session cookie, and the client's subsequent requests ride that session.
+- The broker re-validates the Keycloak JWT that oauth2-proxy forwards on every call (defence-in-depth), resolves your POSIX identity, and brokers per-user credentials (ATLAS IAM token, x509/VOMS proxy) to whichever backend the tool call targets. **Your MCP client never sees those brokered credentials.**
+- If your client supports the MCP OAuth flow, it can perform the OIDC dance itself against AF Keycloak; otherwise it inherits the browser session established by oauth2-proxy.
+
+For the full credential chain — Keycloak, oauth2-proxy, brokered ATLAS IAM tokens, and x509 proxy minting — see [docs/auth.md](docs/auth.md).
 
 ## For Operators
 

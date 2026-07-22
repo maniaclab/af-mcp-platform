@@ -19,6 +19,9 @@ htmlcov/
 *.so
 build/
 
+# Zensical build output
+site/
+
 # Virtual environments
 .venv/
 venv/

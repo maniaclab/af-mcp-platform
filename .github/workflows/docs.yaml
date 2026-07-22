@@ -1,0 +1,87 @@
+name: Docs
+
+# Build the Zensical documentation site on every PR (so broken docs do not
+# merge) and deploy to GitHub Pages on push to main. Everything runs
+# through pixi so local and CI use the exact same environment.
+#
+# Deploy will fail until a repo admin enables GitHub Pages
+# (Settings > Pages > Source: GitHub Actions). The build job still gates
+# PRs regardless.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: prefix-dev/setup-pixi@v0.10.0
+        with:
+          pixi-version: v0.72.1
+          cache: true
+          cache-key: docs-${{ github.ref_name }}
+          cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
+          environments: docs
+
+      - name: Check docstrings
+        run: pixi run -e docs check-docstrings
+
+      - name: Check for broken links
+        run: pixi run -e docs docs-linkcheck -v --no-progress --format detailed
+
+      - name: Build docs
+        run: pixi run -e docs docs-build
+
+      # deploy-pages requires the tarball to have world-readable perms; without
+      # this the upload occasionally fails on files created by pixi/zensical.
+      - name: Fix permissions if needed
+        run: |
+          chmod -c -R +rX "site/" | while read line; do
+            echo "::warning title=Invalid file permissions automatically fixed::$line"
+          done
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: "site/"
+
+  deploy:
+    name: Deploy docs to GitHub Pages
+    # Only deploy on push to main of the canonical repo. Forks that inherit
+    # this workflow (and admins who have not yet enabled Pages) skip the
+    # deploy step; the build job above still validates their docs.
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      github.repository == 'maniaclab/af-mcp-platform'
+    needs: build
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

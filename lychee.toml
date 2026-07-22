@@ -1,0 +1,11 @@
+# Config for `pixi run docs-linkcheck` (lychee).
+#
+# Localhost URLs in docs/local-development.md describe the developer's own
+# machine (broker on :8080, portal on :4321). They aren't reachable from CI
+# and shouldn't be — they're documentation, not live links.
+
+exclude = [
+    "^https?://localhost(:\\d+)?(/|$)",
+    "^https?://127\\.0\\.0\\.1(:\\d+)?(/|$)",
+    "^https?://\\[::1\\](:\\d+)?(/|$)",
+]

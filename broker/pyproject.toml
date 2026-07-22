@@ -92,6 +92,15 @@ ignore = [
 [tool.ruff.lint.isort]
 known-first-party = ["af_mcp_broker"]
 
+[tool.pydocstyle]
+# Pragmatic starter ruleset. Existing modules were not written with a
+# specific docstring convention in mind, so a full check would drown the
+# docs CI in noise unrelated to the docs site itself. This selects only the
+# checks that catch things every reasonable convention agrees on
+# (triple-double-quote style, no backslashes without a raw string). Widen
+# this as docstrings get filled in.
+select = ["D300", "D301"]
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
