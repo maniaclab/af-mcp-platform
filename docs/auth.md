@@ -129,3 +129,47 @@ target_capabilities:
 Keycloak group membership is resolved once per request from the validated
 token's `groups` claim. There is no group-membership cache in the broker —
 Keycloak is the authoritative source.
+
+---
+
+## Programmatic client bootstrap
+
+The chain above ("Full Auth Chain") describes the interactive path:
+oauth2-proxy handles browser-based OIDC login transparently, and a signed-in
+user never fetches, pastes, or configures a raw bearer token by hand. That
+story is unchanged and remains the default for anyone opening
+`mcp.af.uchicago.edu` in a browser-capable client.
+
+It does not cover MCP clients that speak MCP-over-HTTP but can't yet perform
+OAuth discovery — Claude Desktop today. Those clients have no browser session
+to inherit and no way to run the OIDC dance themselves, so they need a static
+Bearer token to put directly in their config's `Authorization` header. The
+portal's `mcp-portal.af.uchicago.edu/tokens` page exists for exactly this:
+
+1. **Mint** — `POST /v1/tokens` performs a Keycloak RFC 8693 token exchange,
+   self-audience (`aud=mcp-gateway`). This is "Path B" above (AF-internal
+   token exchange), not Path A — the token only ever needs to satisfy this
+   broker's own `identity.keycloak_dependency`, so the "atlas-auth.cern.ch
+   rejects this token" caveat for Path B does not apply. The plain token
+   value is shown exactly once by the portal.
+2. **List** — `GET /v1/tokens` shows tokens minted through this endpoint
+   (`source: "manual"`). Keycloak's admin REST API exposes user sessions and
+   IdP consents, not per-token metadata for RFC 8693 token-exchange output,
+   so tokens issued via the interactive oauth2-proxy flow or a future MCP
+   OAuth flow are not enumerable here — a real gap, documented rather than
+   silently omitted.
+3. **Revoke** — `DELETE /v1/tokens/{jti}` removes the row from the list and
+   best-effort-calls Keycloak's RFC 7009 revoke endpoint. Because this
+   broker validates bearer tokens via local JWT signature verification
+   against the JWKS (not Keycloak introspection), a successful upstream
+   revoke does not by itself force the broker to reject the token before its
+   natural expiry — true early revocation would require wiring jti-denylist
+   enforcement into `identity.keycloak_dependency`, tracked as follow-up
+   work.
+
+This is a stopgap. Once MCP OAuth discovery lands and Claude Desktop (or
+whichever client) can drive the flow itself, the manual `/tokens` page
+becomes unnecessary for that client — the interactive and MCP-OAuth paths
+both bypass it already. Until then, both stories coexist: sign in with a
+browser and you never see a token; connect a client that can't do OAuth
+discovery yet and you mint one here.

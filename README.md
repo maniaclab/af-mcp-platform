@@ -43,6 +43,8 @@ Example `~/.config/claude/claude_desktop_config.json`:
 }
 ```
 
+If your client can't do the browser-based flow below (Claude Desktop today has no MCP OAuth discovery), mint a static Bearer token at `mcp-portal.af.uchicago.edu/tokens` and add it as an `Authorization` header instead — see [docs/auth.md](docs/auth.md#programmatic-client-bootstrap).
+
 ### How authentication works
 
 The gateway sits behind **oauth2-proxy**, which handles browser-based OIDC login against AF Keycloak — you never fetch, paste, or configure a raw bearer token by hand.
