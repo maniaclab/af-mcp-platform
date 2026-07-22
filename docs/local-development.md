@@ -46,11 +46,18 @@ At this point the broker will 401 on every `/v1/*` call because no bearer
 is being sent. The broker ships a local-dev opt-in that returns a hardcoded
 "dev principal" without inspecting the token.
 
-Restart the broker in terminal 1 with:
+Restart the broker in terminal 1 with the `bypass` environment — it sets
+both env vars as pixi feature activation:
+
+```bash
+pixi run -e bypass broker
+```
+
+Equivalent long form, for one-off overrides:
 
 ```bash
 export BROKER_DEV_INSECURE_PRINCIPAL='{"uid":1000,"gid":1000,"unixname":"devuser","email":"dev@localhost","groups":["af-users"]}'
-export KEYCLOAK_ISSUER=http://localhost:8081/realms/x
+export KEYCLOAK_ISSUER=http://localhost:8081/realms/dev
 pixi run broker
 ```
 

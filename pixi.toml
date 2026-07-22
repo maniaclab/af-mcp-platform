@@ -74,8 +74,19 @@ test-all = { cmd = "pytest broker/ spikes/ -v --cov=af_mcp_broker --cov-report=x
 check = { depends-on = ["lint", "typecheck", "test"], description = "Quick check: lint + typecheck + broker tests" }
 check-all = { depends-on = ["lint-all", "test-all"], description = "Full check: all linting + all tests with coverage" }
 
+# ---------------------------------------------------------------------------
+# Local-dev bypass: `pixi run -e bypass broker` starts uvicorn with the auth
+# bypass activated so the portal can click through without oauth2-proxy in
+# front. See docs/local-development.md for the full workflow. The activation
+# env is documented rather than baked into any chart / container / CI env.
+# ---------------------------------------------------------------------------
+[feature.bypass.activation.env]
+BROKER_DEV_INSECURE_PRINCIPAL = '{"uid":1000,"gid":1000,"unixname":"devuser","email":"dev@localhost","groups":["af-users"]}'
+KEYCLOAK_ISSUER = "http://localhost:8081/realms/dev"
+
 [environments]
 broker = {features = ["broker"], solve-group = "default"}
 dev = {features = ["broker", "dev"], solve-group = "default"}
 portal = {features = ["portal"], no-default-feature = true}
+bypass = {features = ["broker", "bypass"], solve-group = "default"}
 default = {features = ["broker", "dev"], solve-group = "default"}
