@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, TextIO
 
@@ -25,6 +26,7 @@ from af_mcp_broker.credentials import (
     OIDCProvider,
     X509Provider,
 )
+from af_mcp_broker.credentials.cache import RateLimitError
 from af_mcp_broker.http import aclose_http_client
 from af_mcp_broker.identity import build_dev_principal, get_jwks, issuer_is_local
 from af_mcp_broker.logging import configure_logging
@@ -266,4 +268,33 @@ async def _validation_error_handler(
     return JSONResponse(
         status_code=500,
         content={"detail": "Internal server error"},
+    )
+
+
+@app.exception_handler(RateLimitError)
+async def _rate_limit_error_handler(
+    request: Request, exc: RateLimitError
+) -> JSONResponse:
+    # RateLimitError is raised by CredentialCache.get()/check_unlock_rate_limit()
+    # from both the OIDC and x509 credential-issuance paths (unlimited
+    # passphrase/lookup guessing against a colocated user's stored
+    # credentials). Map it to 429 with Retry-After so well-behaved clients —
+    # and the portal — back off instead of hammering the endpoint.
+    retry_after = exc.retry_after_seconds
+    retry_at = datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=retry_after)
+    logger.info(
+        "rate_limit_exceeded",
+        path=request.url.path,
+        retry_after_seconds=retry_after,
+    )
+    return JSONResponse(
+        status_code=429,
+        content={
+            "detail": (
+                f"Too many failed unlock attempts. Try again in {retry_after} seconds."
+            ),
+            "retry_after_seconds": retry_after,
+            "retry_at": retry_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        },
+        headers={"Retry-After": str(retry_after)},
     )

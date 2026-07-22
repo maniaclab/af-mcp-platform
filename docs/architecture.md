@@ -81,7 +81,7 @@ credential that must be accepted by external ATLAS services (Rucio, PanDA, AMI).
 directory, so a passphrase is the only thing standing between a local
 attacker and a user's x509 proxy. `CredentialCache` (`credentials/cache.py`)
 counts failed cache lookups and bad passphrase attempts per uid and raises
-`RateLimitError` once a threshold is exceeded within a sliding window, to
+`RateLimitError` once a threshold is exceeded within a fixed window, to
 slow brute-force guessing. `X509Provider.mint()` calls
 `cache.check_unlock_rate_limit()` before doing any minting work, so a
 locked-out uid never reaches the k8s Job / subprocess path (`x509.py`).
@@ -99,11 +99,25 @@ often a browser session's token refresh forces re-authentication anyway.
 Both must be >= 1 — `Settings` rejects zero or negative values, since either
 would silently disable the limit.
 
-On trip, `RateLimitError` propagates out of `X509Provider.mint()`. Nothing in
-the `/v1` API layer currently catches it — `api/credentials.py` only maps
-`PermissionError` to `429` — so callers see a bare `500` rather than a `429`.
-Mapping `RateLimitError` to `429` alongside `PermissionError` is a known gap,
-not yet fixed.
+On trip, `RateLimitError` propagates out of `X509Provider.mint()` (and out of
+`CredentialCache.get()` on the ordinary cache-miss path used by both the OIDC
+and x509 providers). A global handler in `app.py`
+(`@app.exception_handler(RateLimitError)`) maps it to `429 Too Many Requests`
+with a `Retry-After` header, so it never reaches a client as a bare `500`.
+`retry_after_seconds` on the exception is computed at the raise site as
+`max(0, window_start + credential_unlock_window_seconds - now)` — the time
+left before the uid's fixed window closes — and the handler mirrors it into
+both the `Retry-After` header (seconds, per RFC 7231 §7.1.3) and the response
+body, so HTTP clients that honor the header and the portal (which wants a
+wall-clock timestamp to render a countdown) are both served:
+
+```json
+{
+  "detail": "Too many failed unlock attempts. Try again in 42 seconds.",
+  "retry_after_seconds": 42,
+  "retry_at": "2026-07-22T18:34:12Z"
+}
+```
 
 ### 4. Audit
 
