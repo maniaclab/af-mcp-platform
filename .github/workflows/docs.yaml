@@ -1,0 +1,82 @@
+name: Docs
+
+# Build the Zensical documentation site on every PR (so broken docs don't
+# merge) and deploy to GitHub Pages on push to main.
+#
+# Deploy will fail until a repo admin enables GitHub Pages
+# (Settings → Pages → Source: GitHub Actions). The build job runs regardless
+# and gates PRs on its own.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "zensical.toml"
+      - ".github/workflows/docs.yaml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "zensical.toml"
+      - ".github/workflows/docs.yaml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  build:
+    name: Build docs
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Zensical
+        run: pip install zensical
+
+      # --strict aborts on warnings so PRs catch broken links / bad config.
+      - name: Build site
+        run: zensical build --strict --clean
+
+      - name: Upload Pages artifact
+        # Only prep the Pages artifact on push to main on the canonical repo
+        # — forks and PR builds still exercise the build step above.
+        if: >-
+          github.event_name == 'push' &&
+          github.ref == 'refs/heads/main' &&
+          github.repository == 'maniaclab/af-mcp-platform'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    # Guard: only deploy on push to main of the canonical repo. This job
+    # will fail until an admin enables Pages under Settings → Pages, with
+    # source "GitHub Actions".
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      github.repository == 'maniaclab/af-mcp-platform'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
