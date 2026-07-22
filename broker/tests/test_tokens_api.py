@@ -201,6 +201,26 @@ def test_revoke_unknown_jti_404(
     assert resp.status_code == 404, resp.text
 
 
+def test_mint_upstream_unreachable_returns_502(
+    app_client: tuple[TestClient, dict], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: a connection failure to Keycloak must surface as a clean
+    502, not an unhandled 500 (caught this via manual smoke testing against
+    a broker with no Keycloak listening)."""
+
+    class _UnreachableClient:
+        async def post(self, *args: object, **kwargs: object) -> None:
+            raise ConnectionError("all connection attempts failed")
+
+    monkeypatch.setattr(tokens_module, "get_http_client", _UnreachableClient)
+    monkeypatch.setenv("TOKEN_MINT_CLIENT_ID", "test-mint-client")
+    monkeypatch.setenv("TOKEN_MINT_CLIENT_SECRET", "test-mint-secret")
+
+    client, _ = app_client
+    resp = _mint(client)
+    assert resp.status_code == 502, resp.text
+
+
 def test_mint_falls_back_to_synthetic_jti_when_keycloak_omits_one(
     app_client: tuple[TestClient, dict], monkeypatch: pytest.MonkeyPatch
 ) -> None:

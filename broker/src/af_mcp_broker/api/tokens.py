@@ -269,19 +269,28 @@ async def _exchange_for_bearer(
     token_endpoint = (
         f"{settings.keycloak_issuer.rstrip('/')}/protocol/openid-connect/token"
     )
-    resp = await get_http_client().post(
-        token_endpoint,
-        data={
-            "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "subject_token": principal.raw_token.get_secret_value(),
-            "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
-            "requested_token_type": "urn:ietf:params:oauth:token-type:access_token",
-            "audience": settings.keycloak_audience,
-        },
-        timeout=10.0,
-    )
+    try:
+        resp = await get_http_client().post(
+            token_endpoint,
+            data={
+                "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "subject_token": principal.raw_token.get_secret_value(),
+                "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
+                "requested_token_type": "urn:ietf:params:oauth:token-type:access_token",
+                "audience": settings.keycloak_audience,
+            },
+            timeout=10.0,
+        )
+    except Exception as exc:
+        # Mirrors identity._fetch_jwks: an unreachable Keycloak is a 502 for
+        # our caller, not an unhandled 500.
+        logger.exception("token_exchange_unreachable", uid=principal.uid)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Unable to reach Keycloak token endpoint: {token_endpoint}",
+        ) from exc
     if resp.status_code >= 400:
         logger.warning(
             "token_exchange_failed",
