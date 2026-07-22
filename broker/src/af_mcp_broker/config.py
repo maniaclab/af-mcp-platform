@@ -65,6 +65,19 @@ class Settings(BaseSettings):
         alias="LOG_LEVEL",
     )
 
+    # Local-development auth bypass. When set to a JSON blob describing a
+    # principal, the broker's keycloak_dependency short-circuits and returns
+    # that principal *without validating any bearer token*. This exists so
+    # `astro dev` can hit `/v1/*` on a locally-running broker without
+    # oauth2-proxy in front. The lifespan refuses to start unless
+    # ``keycloak_issuer`` points at a local host — defence-in-depth against
+    # accidental production deployment. Never set this in any chart values,
+    # container default, or CI env.
+    dev_insecure_principal: str | None = Field(
+        default=None,
+        alias="BROKER_DEV_INSECURE_PRINCIPAL",
+    )
+
     @model_validator(mode="after")
     def _derive_jwks_uri(self) -> Settings:
         if not self.keycloak_jwks_uri:
