@@ -75,7 +75,8 @@ Update this section after the spike is run.
 
 Regardless of outcome, the following are unchanged:
 
-- `POST /v1/tools/{tool_name}` is the broker's tool-execution interface.
+- `POST /v1/authorize` + `POST /v1/credential` are the broker's per-call
+  interface for the aggregation layer.
 - The FastMCP aggregator (or agentgateway) calls the broker; it does not
   hold credentials or make authorization decisions.
 - The `CredentialCache` and all four broker subsystems remain in the broker

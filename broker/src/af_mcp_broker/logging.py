@@ -20,7 +20,10 @@ class PassphraseRedactProcessor:
     _REDACTED_VALUE: str = "[REDACTED]"
 
     def __call__(
-        self, logger: WrappedLogger, method: str, event_dict: EventDict
+        self,
+        logger: WrappedLogger,  # noqa: ARG002 (structlog processor signature)
+        method: str,  # noqa: ARG002 (structlog processor signature)
+        event_dict: EventDict,
     ) -> EventDict:
         for key in self._REDACTED_KEYS:
             if key in event_dict:

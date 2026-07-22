@@ -14,7 +14,7 @@ pydantic = ">=2.7"
 pydantic-settings = ">=2.3"
 pyjwt = ">=2.8"
 cryptography = ">=42"
-httpx2 = ">=2.0.0"
+httpx2 = ">=2.7.0,<3"
 structlog = ">=24.4"
 fastmcp = ">=2.0"
 prometheus-fastapi-instrumentator = ">=7.0"
@@ -33,27 +33,25 @@ anyio = ">=4.0"
 ruff = ">=0.4"
 mypy = ">=1.10"
 pre-commit = ">=3.7"
-httpx2 = ">=2.0.0"
 tbump = ">=6.7.0"
+httpx2 = ">=2.7.0,<3"
 
 [feature.broker.tasks]
-serve = { cmd = "uvicorn af_mcp_broker.app:app --host 0.0.0.0 --port 8080 --reload", description = "Run broker dev server" }
-test = "pytest broker/src -v"
-lint = "ruff check broker/src && ruff format --check broker/src"
-fmt = "ruff format broker/src && ruff check --fix broker/src"
-typecheck = "mypy broker/src"
+broker = { cmd = "uvicorn af_mcp_broker.app:app --host 0.0.0.0 --port 8080 --reload", description = "Run broker dev server" }
 
+# Each task name must be defined in exactly one feature: pixi resolves
+# duplicate names across features nondeterministically.
 [feature.dev.tasks]
-pre-commit = { cmd = "pre-commit run --all-files", description = "Run pre-commit hooks on all files" }
+lint = { cmd = "ruff check broker && ruff format --check broker", description = "Ruff lint + format check" }
+fmt = { cmd = "ruff format broker && ruff check --fix broker", description = "Format and auto-fix broker source" }
 typecheck = { cmd = "mypy broker/src", description = "Type-check broker source" }
-fmt = { cmd = "ruff format broker/src && ruff check --fix broker/src", description = "Format and auto-fix broker source" }
-test = { cmd = "pytest spikes/ -v", description = "Run tests" }
-test-broker = {cmd = "pytest broker/ -v"}
-test-spikes = {cmd = "pytest spikes/ -v"}
-test-all = { cmd = "pytest spikes/ -v --cov=af_mcp_broker --cov-report=xml --cov-report=term-missing", description = "Run tests with coverage" }
-lint = { depends-on = ["pre-commit", "typecheck"], description = "Run all linting (pre-commit + mypy)" }
-check = { depends-on = ["lint", "test"], description = "Quick check: lint + tests" }
-check-all = { depends-on = ["lint", "test-all"], description = "Full check: lint + tests with coverage" }
+pre-commit = { cmd = "pre-commit run --all-files", description = "Run pre-commit hooks on all files" }
+lint-all = { depends-on = ["lint", "typecheck", "pre-commit"], description = "Everything the CI lint job runs" }
+test = { cmd = "pytest broker/ -v", description = "Broker unit tests" }
+test-spikes = { cmd = "pytest spikes/ -v", description = "Spike validation tests" }
+test-all = { cmd = "pytest broker/ spikes/ -v --cov=af_mcp_broker --cov-report=xml --cov-report=term-missing", description = "All tests with coverage" }
+check = { depends-on = ["lint", "typecheck", "test"], description = "Quick check: lint + typecheck + broker tests" }
+check-all = { depends-on = ["lint-all", "test-all"], description = "Full check: all linting + all tests with coverage" }
 
 [environments]
 broker = {features = ["broker"], solve-group = "default"}

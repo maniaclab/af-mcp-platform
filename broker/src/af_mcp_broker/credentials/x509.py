@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 # requires: kubernetes_asyncio>=30.0
-
 import asyncio
 import base64
 import binascii
@@ -34,9 +33,6 @@ log = structlog.get_logger(__name__)
 
 # Targets served by the x509 provider
 _DEFAULT_X509_TARGETS: frozenset[str] = frozenset({"ami"})
-
-# Location of broker-owned per-uid proxy files on its tmpfs
-_PROXY_TMPFS_ROOT = "/run/broker/proxies"
 
 # Default voms-proxy-init validity in hours
 _DEFAULT_PROXY_VALID_HOURS = "192:00"  # 8 days
@@ -263,10 +259,9 @@ class HomeDirVomsBackend(X509Backend):
         )
         try:
             loop = asyncio.get_running_loop()
-            readable = await loop.run_in_executor(
+            return await loop.run_in_executor(
                 None, lambda: cert_path.exists() and os.access(cert_path, os.R_OK)
             )
-            return readable
         except OSError:
             return False
 
@@ -462,7 +457,9 @@ class HomeDirVomsBackend(X509Backend):
             payload.extend(b"\n")
             async with WsApiClient() as ws_api:
                 ws_core = k8s_client.CoreV1Api(ws_api)
-                ws_client = await ws_core.connect_get_namespaced_pod_attach(
+                # Stubs type this as str; _preload_content=False yields a
+                # websocket client instead.
+                ws_client: Any = await ws_core.connect_get_namespaced_pod_attach(
                     name=pod_name,
                     namespace=self._namespace,
                     container="voms-proxy-init",
@@ -484,7 +481,7 @@ class HomeDirVomsBackend(X509Backend):
         batch_v1,
         core_v1,
         job_name: str,
-        principal: Principal,
+        principal: Principal,  # noqa: ARG002 (interface)
     ) -> bytes:
         """Poll until the Job succeeds, then read the proxy from the pod log.
 
@@ -547,7 +544,7 @@ class HomeDirVomsBackend(X509Backend):
         cache: CredentialCache,
     ) -> ProxyMeta:
         """Run voms-proxy-init locally as a subprocess — dev/testing only."""
-        proxy_dir = Path(_PROXY_TMPFS_ROOT) / str(principal.uid)
+        proxy_dir = Path(self._settings.proxy_dir) / str(principal.uid)
         proxy_dir.mkdir(parents=True, exist_ok=True)
         proxy_path = proxy_dir / "proxy.pem"
 
@@ -591,6 +588,7 @@ class HomeDirVomsBackend(X509Backend):
                     cmd,
                     input=bytes(passphrase_buf),
                     capture_output=True,
+                    check=False,
                     timeout=30,
                 ),
             )
@@ -618,7 +616,7 @@ class HomeDirVomsBackend(X509Backend):
         self, proxy_pem: bytes, principal: Principal
     ) -> ProxyMeta:
         """Write *proxy_pem* to the broker's per-uid tmpfs and parse its metadata."""
-        proxy_dir = Path(_PROXY_TMPFS_ROOT) / str(principal.uid)
+        proxy_dir = Path(self._settings.proxy_dir) / str(principal.uid)
         proxy_dir.mkdir(parents=True, exist_ok=True)
         proxy_path = proxy_dir / "proxy.pem"
 
@@ -833,7 +831,7 @@ class X509Provider(CredentialProvider):
             execution_model=self.execution_model,
         )
 
-    def _resolve_backend_name(self, principal: Principal) -> str:
+    def _resolve_backend_name(self, principal: Principal) -> str:  # noqa: ARG002
         """Return the name of the first available backend for logging/audit."""
         # Synchronous best-effort — used only for the source field on IssuedCredential.
         # The actual availability check happens during mint(); this is metadata only.

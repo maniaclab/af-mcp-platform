@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -140,10 +141,10 @@ def make_principal() -> Callable[..., object]:
 
 
 @pytest.fixture
-def app_client(
+def app_client_factory(
     monkeypatch: pytest.MonkeyPatch, make_principal: Callable[..., object]
-) -> Iterator[tuple[TestClient, dict]]:
-    """Boot the real app with the lifespan running against the shipped YAML.
+) -> Callable[..., Any]:
+    """Context manager that boots the real app against the shipped YAML.
 
     keycloak_dependency is bypassed via dependency_overrides; mutate
     ``state["principal"]`` to change who the caller is for a given request.
@@ -152,14 +153,28 @@ def app_client(
     monkeypatch.setenv("BACKENDS_FILE", str(SHIPPED_BACKENDS))
     # An unreachable issuer keeps startup JWKS priming a no-op (non-fatal).
     monkeypatch.setenv("KEYCLOAK_ISSUER", "https://keycloak.invalid/realms/connect")
+    # Ephemeral metrics port so test runs never collide on 9090.
+    monkeypatch.setenv("METRICS_PORT", "0")
 
     from af_mcp_broker.app import app
     from af_mcp_broker.identity import keycloak_dependency
 
-    state: dict = {"principal": make_principal(groups=["atlas"], iam_sub="iam-sub-1")}
-    app.dependency_overrides[keycloak_dependency] = lambda: state["principal"]
+    @contextmanager
+    def _factory() -> Iterator[tuple[TestClient, dict]]:
+        state: dict = {
+            "principal": make_principal(groups=["atlas"], iam_sub="iam-sub-1")
+        }
+        app.dependency_overrides[keycloak_dependency] = lambda: state["principal"]
+        try:
+            with TestClient(app) as client:
+                yield client, state
+        finally:
+            app.dependency_overrides.clear()
 
-    with TestClient(app) as client:
-        yield client, state
+    return _factory
 
-    app.dependency_overrides.clear()
+
+@pytest.fixture
+def app_client(app_client_factory) -> Iterator[tuple[TestClient, dict]]:
+    with app_client_factory() as pair:
+        yield pair

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from typing import Annotated
+from urllib.parse import urlencode
+
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict
@@ -96,7 +99,7 @@ def _available_to_link(linked: list[LinkedAccount]) -> list[AvailableProvider]:
 
 @router.get("", response_model=IdentitiesResponse, summary="Get caller identity")
 async def get_identities(
-    principal: Principal = Depends(keycloak_dependency),
+    principal: Annotated[Principal, Depends(keycloak_dependency)],
 ) -> IdentitiesResponse:
     linked = _build_linked_accounts(principal)
     return IdentitiesResponse(
@@ -118,8 +121,8 @@ async def get_identities(
 )
 async def link_identity(
     body: LinkIdentityRequest,
-    principal: Principal = Depends(keycloak_dependency),
-    settings: Settings = Depends(get_settings),
+    principal: Annotated[Principal, Depends(keycloak_dependency)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> LinkIdentityResponse:
     if body.provider not in _PROVIDERS:
         raise HTTPException(
@@ -128,14 +131,27 @@ async def link_identity(
             f"Available: {list(_PROVIDERS.keys())}",
         )
 
-    # Keycloak's account console IDP linking endpoint. The client redirects the
-    # user here; Keycloak handles the federation handshake and updates the token.
-    base = settings.keycloak_issuer.rstrip("/")
-    redirect_url = (
-        f"{base}/protocol/openid-connect/auth"
-        f"?kc_action=LINK_IDP"
-        f"&provider_id={body.provider}"
+    # Application-initiated action: a full OIDC auth request with
+    # kc_action=LINK_IDP. Keycloak rejects the request without client_id,
+    # redirect_uri, response_type, and scope. provider_id must be the
+    # Keycloak IdP alias, which for ATLAS differs from the public name.
+    alias = (
+        settings.atlas_iam_broker_alias
+        if body.provider == "atlas-iam"
+        else body.provider
     )
+    base = settings.keycloak_issuer.rstrip("/")
+    params = urlencode(
+        {
+            "client_id": settings.keycloak_audience,
+            "redirect_uri": f"{settings.portal_url.rstrip('/')}/identities",
+            "response_type": "code",
+            "scope": "openid",
+            "kc_action": "LINK_IDP",
+            "provider_id": alias,
+        }
+    )
+    redirect_url = f"{base}/protocol/openid-connect/auth?{params}"
 
     logger.info(
         "identity_link_initiated",
@@ -152,7 +168,7 @@ async def link_identity(
 )
 async def unlink_identity(
     provider: str,
-    principal: Principal = Depends(keycloak_dependency),
+    principal: Annotated[Principal, Depends(keycloak_dependency)],
 ) -> None:
     if provider not in _PROVIDERS:
         raise HTTPException(

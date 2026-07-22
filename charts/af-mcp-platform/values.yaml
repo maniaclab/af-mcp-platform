@@ -57,7 +57,9 @@ broker:
     issuer: "https://keycloak-prod.tempest.uchicago.edu/realms/connect"
     audience: "mcp-gateway"
     # Broker alias used to resolve the ATLAS IAM identity link
-    atlasIamBrokerAlias: "atlas-iam"
+    # Keycloak IdP alias for ATLAS IAM. The verified alias in the connect
+    # realm is "atlas-oidc" (Settings -> Identity Providers -> ATLAS IAM).
+    atlasIamBrokerAlias: "atlas-oidc"
 
   # Name of a pre-existing Secret providing the AF service token.
   # The Secret must contain a key named `af-service-token`.
@@ -137,8 +139,6 @@ oauth2Proxy:
   # All ingress routes use this as the nginx auth-url.
   forwardAuthUrl: "http://oauth2-proxy.traefik-triton.svc.cluster.local:4180/oauth2/auth"
   signInUrl: "https://oauth2-proxy.af.uchicago.edu/oauth2/sign_in"
-  # Set to true to deploy a dedicated oauth2-proxy for this release (advanced use).
-  dedicated: false
 
 # ---------------------------------------------------------------------------
 # Ingress

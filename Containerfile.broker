@@ -22,5 +22,8 @@ ENV PATH="/opt/pixi-env/bin:${PATH}" \
 RUN groupadd -r -g 1000 af-mcp && useradd -r -u 1000 -g af-mcp af-mcp
 USER af-mcp
 
-EXPOSE 8080
-CMD ["uvicorn", "af_mcp_broker.app:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "2"]
+# 8080 = API, 9090 = Prometheus metrics (separate server started in lifespan).
+EXPOSE 8080 9090
+# Single worker: each worker would race to bind the metrics port and keep its
+# own metrics registry. Scale with pod replicas instead.
+CMD ["uvicorn", "af_mcp_broker.app:app", "--host", "0.0.0.0", "--port", "8080"]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import yaml  # type: ignore[import-untyped]
 
@@ -23,7 +24,7 @@ class BackendRegistry:
         self._backends: dict[str, BackendSpec] = {}
 
     def load(self, path: str) -> None:
-        with open(path) as fh:
+        with Path(path).open() as fh:
             raw = yaml.safe_load(fh) or {}
         for entry in raw.get("backends", []):
             spec = BackendSpec(

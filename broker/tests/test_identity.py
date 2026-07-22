@@ -3,11 +3,10 @@ from __future__ import annotations
 import time
 
 import pytest
+from conftest import make_claims
 from fastapi import HTTPException
 
 from af_mcp_broker.identity import get_principal
-
-from conftest import make_claims
 
 
 async def test_get_principal_selects_signing_key_when_listed_second(

@@ -8,23 +8,21 @@ ATLAS AF User
     │  (1) Login via AF portal / device flow
     ▼
 AF Keycloak  ──────────────────────────────────────────────────────────────
-    │  issues AF access token (JWT, audience: af-mcp-client)
+    │  issues AF access token (JWT, audience: mcp-gateway)
     ▼
 oauth2-proxy  (sidecar in front of the broker ingress)
     │  validates token signature + expiry + audience
     │  forwards: Authorization: Bearer <af-token>
-    │              X-Forwarded-User: <keycloak-subject>
-    │              X-Forwarded-Groups: <keycloak-groups>
     ▼
 AF Credential Broker  (Identity subsystem)
     │  re-validates JWT (defence-in-depth)
-    │  resolves uid/gid from Keycloak user attributes
-    │  resolves capabilities from X-Forwarded-Groups via policy.yaml
+    │  resolves uid/gid from the token's posix claim
+    │  resolves capabilities from the token's groups claim via policy.yaml
     ▼
 Credential subsystem
     │
     ├── Path A: ATLAS IAM token (for Rucio, PanDA, AMI)
-    │       GET /realms/connect/broker/atlas-iam/token
+    │       GET /realms/connect/broker/atlas-oidc/token
     │       (Keycloak's stored brokered token for the principal's linked
     │        atlas-auth.cern.ch identity — this is the ONLY way to obtain
     │        a token that atlas-auth.cern.ch will accept)
@@ -56,7 +54,7 @@ Backend MCP server  (receives brokered credential in the Authorization header
 When the broker calls Keycloak's token exchange endpoint on behalf of a principal,
 the resulting token has:
 
-- Issuer: `https://keycloak.af.uchicago.edu/realms/<realm>`
+- Issuer: `https://keycloak-prod.tempest.uchicago.edu/realms/connect`
 - Audience: whatever `audience` was requested (an AF-internal service)
 
 `atlas-auth.cern.ch` (the CERN IAM instance that issues tokens for Rucio, PanDA,
@@ -67,9 +65,12 @@ by federation partners it has explicitly configured.
 that Keycloak holds after the principal has linked their CERN account:
 
 ```
-GET https://keycloak.af.uchicago.edu/realms/<realm>/broker/atlas-iam/token
+GET https://keycloak-prod.tempest.uchicago.edu/realms/connect/broker/atlas-oidc/token
 Authorization: Bearer <af-token>
 ```
+
+(`atlas-oidc` is the IdP alias in the connect realm; configurable via
+`ATLAS_IAM_BROKER_ALIAS`.)
 
 This returns the ATLAS IAM access token that Keycloak obtained during the
 account-linking flow. That token:
@@ -86,7 +87,7 @@ credential. Operators must ensure that:
 2. Users have completed the account-linking step in the AF portal before their
    first tool call that requires an ATLAS credential.
 3. The broker's service account has permission to call the broker token endpoint
-   (Keycloak fine-grained authorization, `view-token` scope on the `atlas-iam`
+   (Keycloak fine-grained authorization, `view-token` scope on the `atlas-oidc`
    identity provider).
 
 ---
@@ -107,28 +108,24 @@ expired entries, triggering a fresh mint on the next request.
 
 ## Group-to-Capability Mapping Example
 
+From the shipped `policy.yaml` (mounted from the chart's policy ConfigMap):
+
 ```yaml
-# In HelmRelease values.entitlements.group_capabilities:
-af-atlas-users:
-  - rucio:read
-  - ami:read
-  - panda:monitor
-af-atlas-analysts:
-  - rucio:read
-  - rucio:write
-  - ami:read
-  - panda:submit
-  - condor:submit
-af-platform-ops:
-  - rucio:read
-  - rucio:write
-  - ami:read
-  - panda:submit
-  - condor:submit
-  - jupyter:admin
-  - gitlab:write
+group_capabilities:
+  atlas: [read_data, read_metadata, read_monitoring, read_gitlab,
+          submit_jobs, manage_jobs, launch_compute, manage_jupyter,
+          manage_gitlab]
+  escape: [read_data, read_metadata]
+  # Any authenticated user (no group membership required)
+  __authenticated__: [read_metadata, read_monitoring]
+
+target_capabilities:
+  rucio: read_data
+  ami: read_metadata
+  panda: submit_jobs
+  docs: __none__     # open to any authenticated user
 ```
 
-Keycloak group membership is resolved once per request from the
-`X-Forwarded-Groups` header set by oauth2-proxy. There is no group-membership
-cache in the broker — Keycloak is the authoritative source.
+Keycloak group membership is resolved once per request from the validated
+token's `groups` claim. There is no group-membership cache in the broker —
+Keycloak is the authoritative source.

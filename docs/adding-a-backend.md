@@ -91,8 +91,8 @@ flux reconcile helmrelease af-mcp-platform --namespace flux-system --with-source
 ```
 
 Flux will render the new HelmRelease values, update the aggregator ConfigMap, and
-roll the broker pods. The new backend's tools appear in `GET /v1/tools` once the
-pods are healthy.
+roll the broker pods. The new backend's tools appear in `GET /v1/catalog` once
+the pods are healthy.
 
 ---
 
@@ -101,9 +101,9 @@ pods are healthy.
 ```bash
 # Check the broker sees the new backend
 kubectl exec -n af-mcp deploy/af-mcp-broker -- \
-  curl -s http://localhost:8080/v1/tools | jq '.[].backend' | sort -u
+  curl -s http://localhost:8080/v1/catalog | jq '.tools[].backend' | sort -u
 
 # Confirm the new backend's tools are listed
 kubectl exec -n af-mcp deploy/af-mcp-broker -- \
-  curl -s http://localhost:8080/v1/tools | jq '.[] | select(.backend=="my-new-backend")'
+  curl -s http://localhost:8080/v1/catalog | jq '.tools[] | select(.backend=="my-new-backend")'
 ```
