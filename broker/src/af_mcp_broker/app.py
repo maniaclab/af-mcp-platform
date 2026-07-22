@@ -23,6 +23,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from af_mcp_broker._version import version as __version__
 from af_mcp_broker.api.router import router as v1_router
+from af_mcp_broker.api.tokens import TokenRegistry
 from af_mcp_broker.api.wellknown import router as wellknown_router
 from af_mcp_broker.audit.logger import init_audit_logger
 from af_mcp_broker.authorization import EntitlementPolicy, load_policy
@@ -266,6 +267,11 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     audit_output = _open_audit_output(settings.audit_log_file)
     init_audit_logger(audit_output)
 
+    # --- Tokens: process-local bookkeeping for manually-minted bearers
+    # (POST/GET/DELETE /v1/tokens, issue #24). Fresh on every restart — see
+    # TokenRegistry's docstring for why that's fine.
+    token_registry = TokenRegistry()
+
     # --- Metrics: /metrics lives on its own port (chart NetworkPolicy allows
     # Prometheus only there), served by prometheus_client's thread so the
     # single uvicorn worker owns the process-wide registry.
@@ -295,6 +301,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     application.state.target_to_alias = target_to_alias
     application.state.oauth21_token_store = oauth21_token_store
     application.state.oauth21_state_cipher = oauth21_state_cipher
+    application.state.token_registry = token_registry
 
     # Prime the JWKS cache at startup so the first request does not pay the
     # latency cost of a remote fetch.
