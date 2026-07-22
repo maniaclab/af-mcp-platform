@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from af_mcp_broker.authorization import (
     EntitlementPolicy,
@@ -8,6 +8,9 @@ from af_mcp_broker.authorization import (
     get_action_type,
     get_principal_capabilities,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 def test_atlas_allowed_rucio_read_data(

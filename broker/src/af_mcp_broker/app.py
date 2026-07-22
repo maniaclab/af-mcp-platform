@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import sys
-from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import TextIO
+from typing import TYPE_CHECKING, TextIO
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
 
 import structlog
 from fastapi import FastAPI, HTTPException, Request
@@ -116,7 +118,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     try:
         keys = await get_jwks(settings)
         logger.info("jwks_cache_primed", key_count=len(keys))
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001  # non-fatal prime; broad catch intentional
         # Non-fatal at startup — the cache will be retried on the first request.
         logger.warning("jwks_cache_prime_failed", error=str(exc))
 

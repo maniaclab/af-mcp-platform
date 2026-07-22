@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 from datetime import UTC, datetime
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, SecretBytes, SecretStr
@@ -14,8 +14,10 @@ from af_mcp_broker.credentials import (
     NeedsUnlock,
     X509Provider,
 )
-from af_mcp_broker.credentials.base import IssuedCredential as _IssuedCredential
 from af_mcp_broker.identity import Principal, keycloak_dependency
+
+if TYPE_CHECKING:
+    from af_mcp_broker.credentials.base import IssuedCredential as _IssuedCredential
 
 router = APIRouter(tags=["credentials"])
 

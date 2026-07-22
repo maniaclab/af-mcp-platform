@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import time
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
 from af_mcp_broker.audit import AuditRecord, write_audit
 from af_mcp_broker.config import get_settings
 from af_mcp_broker.http import get_http_client
+
+if TYPE_CHECKING:
+    from af_mcp_broker.mcp.registry import BackendRegistry
 
 logger = structlog.get_logger(__name__)
 
@@ -21,8 +24,6 @@ logger = structlog.get_logger(__name__)
 
 async def broker_middleware(request: Any, call_next: Any) -> Any:
     """Authorize + credential inject for every MCP tool call."""
-    from af_mcp_broker.mcp.registry import BackendRegistry
-
     settings = get_settings()
     broker_base_url = settings.broker_internal_url
 
