@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
+
+if TYPE_CHECKING:
+    from af_mcp_broker.mcp.registry import BackendRegistry
 
 logger = structlog.get_logger(__name__)
 
@@ -27,8 +30,6 @@ async def entitlement_middleware(request: Any, call_next: Any) -> Any:
     # Filter tools: only show tools from backends the principal has the capability for.
     # The registry maps tool prefix -> backend -> required_capability.
     # We filter at the list_tools level by calling the registry.
-    from af_mcp_broker.mcp.registry import BackendRegistry
-
     registry: BackendRegistry | None = getattr(request, "app_registry", None)
     if registry is None:
         return response

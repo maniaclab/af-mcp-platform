@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING, ClassVar
 
 import structlog
 from fastapi import HTTPException
-from pydantic import SecretBytes
 
 from af_mcp_broker.credentials.base import (
     CredentialKind,
@@ -14,11 +13,13 @@ from af_mcp_broker.credentials.base import (
     ExecutionModel,
     IssuedCredential,
 )
-from af_mcp_broker.credentials.cache import CredentialCache
 from af_mcp_broker.http import get_http_client
 
 if TYPE_CHECKING:
+    from pydantic import SecretBytes
+
     from af_mcp_broker.config import Settings
+    from af_mcp_broker.credentials.cache import CredentialCache
     from af_mcp_broker.identity import Principal
 
 log = structlog.get_logger(__name__)

@@ -58,7 +58,7 @@ async def _fetch_jwks(jwks_uri: str) -> list[dict[str, Any]]:
         resp.raise_for_status()
         return resp.json()["keys"]
     except Exception as exc:
-        logger.error("jwks_fetch_failed", uri=jwks_uri, error=str(exc))
+        logger.exception("jwks_fetch_failed", uri=jwks_uri, error=str(exc))
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Unable to reach JWKS endpoint: {jwks_uri}",
@@ -232,7 +232,7 @@ def _peek_sub(token: str) -> str:
     try:
         payload = jwt.decode(token, options={"verify_signature": False})
         return payload.get("sub", "<unknown>")
-    except Exception:
+    except Exception:  # noqa: BLE001  # log-only helper; never raises
         return "<unparseable>"
 
 

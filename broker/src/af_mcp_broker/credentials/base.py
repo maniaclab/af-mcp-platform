@@ -7,9 +7,10 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, ClassVar
 
 import structlog
-from pydantic import SecretBytes
 
 if TYPE_CHECKING:
+    from pydantic import SecretBytes
+
     from af_mcp_broker.identity import Principal
 
 log = structlog.get_logger(__name__)

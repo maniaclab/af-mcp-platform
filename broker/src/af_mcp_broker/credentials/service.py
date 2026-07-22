@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
 
 import structlog
-from pydantic import SecretBytes
 
 from af_mcp_broker.credentials.base import (
     CredentialKind,
@@ -19,6 +18,8 @@ from af_mcp_broker.credentials.base import (
 from af_mcp_broker.http import get_http_client
 
 if TYPE_CHECKING:
+    from pydantic import SecretBytes
+
     from af_mcp_broker.config import Settings
     from af_mcp_broker.identity import Principal
 

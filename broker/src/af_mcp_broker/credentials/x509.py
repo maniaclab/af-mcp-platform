@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import structlog
-from pydantic import SecretBytes
 
 from af_mcp_broker.credentials.base import (
     CredentialKind,
@@ -23,10 +22,13 @@ from af_mcp_broker.credentials.base import (
     IssuedCredential,
     NeedsUnlock,
 )
-from af_mcp_broker.credentials.cache import CredentialCache, ProxyMeta
+from af_mcp_broker.credentials.cache import ProxyMeta
 
 if TYPE_CHECKING:
+    from pydantic import SecretBytes
+
     from af_mcp_broker.config import Settings
+    from af_mcp_broker.credentials.cache import CredentialCache
     from af_mcp_broker.identity import Principal
 
 log = structlog.get_logger(__name__)
@@ -361,7 +363,7 @@ class HomeDirVomsBackend(X509Backend):
                     uid=principal.uid,
                 )
                 await batch_v1.create_namespaced_job(
-                    namespace=self._namespace, body=cast(Any, spec)
+                    namespace=self._namespace, body=cast("Any", spec)
                 )
 
                 # Transmit the passphrase via pod stdin. It lives in a mutable
@@ -393,7 +395,7 @@ class HomeDirVomsBackend(X509Backend):
                         ),
                     )
                     self._log.debug("x509.kubernetes_job.deleted", job=job_name)
-                except Exception as cleanup_err:
+                except Exception as cleanup_err:  # noqa: BLE001  # best-effort cleanup
                     self._log.warning(
                         "x509.kubernetes_job.delete_failed",
                         job=job_name,
@@ -681,7 +683,7 @@ def _parse_proxy_pem(proxy_pem: bytes) -> tuple[str, list[str], float]:
         ext = cert.extensions.get_extension_for_oid(voms_oid)
         # Raw value — production code would parse the ASN.1 AC here.
         # Returning the raw bytes as a placeholder avoids a hard voms-api dependency.
-        raw_ext = cast(cx509.UnrecognizedExtension, ext.value)
+        raw_ext = cast("cx509.UnrecognizedExtension", ext.value)
         voms_attributes = [f"<voms_ac_bytes:{len(raw_ext.value)}b>"]
     except cx509.ExtensionNotFound:
         pass
