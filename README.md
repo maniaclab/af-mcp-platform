@@ -5,12 +5,15 @@ The AF MCP Platform is a credential-brokered [Model Context Protocol](https://mo
 ## Architecture
 
 ```
-Claude / Gemini / any MCP client
-        │
-        ▼
-mcp.af.uchicago.edu   (oauth2-proxy → AF Keycloak OIDC)
-        │
-        ▼
+Claude / Gemini / any MCP client         Browser (portal SPA)
+        │  own Bearer (OIDC)                     │  oauth2-proxy: HTML only
+        ▼                                         ▼
+mcp.af.uchicago.edu                     mcp-portal.af.uchicago.edu
+(no oauth2-proxy — broker               (portal does its own OIDC; /v1
+ validates the Bearer itself)            + /mcp bypass oauth2-proxy too)
+        │                                         │
+        └───────────────────┬─────────────────────┘
+                             ▼
 ┌──────────────────────────────────────────────┐
 │  FastMCP Aggregator  +  AF Credential Broker │
 │  (FastAPI /v1 HTTP API)                      │
@@ -45,17 +48,18 @@ Example `~/.config/claude/claude_desktop_config.json`:
 
 ### How authentication works
 
-The gateway sits behind **oauth2-proxy**, which handles browser-based OIDC login against AF Keycloak — you never fetch, paste, or configure a raw bearer token by hand.
+Every caller — the portal SPA in your browser, or an MCP client like Claude Desktop — obtains its own bearer token via OIDC Authorization Code + PKCE against AF Keycloak's `connect` realm, carrying `aud=mcp-gateway`. Nobody fetches, pastes, or configures a raw token by hand for the portal; MCP clients run the OIDC flow themselves.
 
-- The first time your MCP client connects, oauth2-proxy redirects the browser to AF Keycloak. Sign in with your AF credentials; oauth2-proxy stores the resulting session cookie, and the client's subsequent requests ride that session.
-- The broker re-validates the Keycloak JWT that oauth2-proxy forwards on every call (defence-in-depth), resolves your POSIX identity, and brokers per-user credentials (ATLAS IAM token, x509/VOMS proxy) to whichever backend the tool call targets. **Your MCP client never sees those brokered credentials.**
-- If your client supports the MCP OAuth flow, it can perform the OIDC dance itself against AF Keycloak; otherwise it inherits the browser session established by oauth2-proxy.
+- The broker's `HTTPBearer` dependency validates every request directly against the connect-realm JWKS — it's the sole validator, on both `mcp.af.uchicago.edu` and `mcp-portal.af.uchicago.edu`. There's no ForwardAuth proxy in the `/v1` or `/mcp` path on either host.
+- oauth2-proxy still gates the portal's HTML for browser single sign-on across `.af.uchicago.edu`, but never sees or forwards the broker's own bearer tokens.
+- Once validated, the broker resolves your POSIX identity and brokers per-user credentials (ATLAS IAM token, x509/VOMS proxy) to whichever backend the tool call targets. **Your MCP client never sees those brokered credentials.**
+- **Current limitation:** MCP OAuth discovery isn't implemented yet, so a programmatic client needs another way to bootstrap its first bearer token. Issue #24 tracks a portal `/tokens` page for this (on hold pending #2's OpenBao design).
 
-For the full credential chain — Keycloak, oauth2-proxy, brokered ATLAS IAM tokens, and x509 proxy minting — see [docs/auth.md](docs/auth.md).
+For the full credential chain — Keycloak, the broker's token validation, brokered ATLAS IAM tokens, and x509 proxy minting — see [docs/auth.md](docs/auth.md).
 
 ## For Operators
 
-See [docs/deploy.md](docs/deploy.md) for Flux CD / Helm deployment instructions, secret management, and runbooks.
+Deployment is via the Helm chart in [`charts/af-mcp-platform`](charts/af-mcp-platform) — `values.yaml` documents every configurable field. See [docs/architecture.md](docs/architecture.md) for the reference architecture and auth model.
 
 ## For Developers
 

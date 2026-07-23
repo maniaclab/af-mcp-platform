@@ -168,7 +168,9 @@ port. The API port does not serve `/metrics`.
 
 The FastAPI `/v1` HTTP API is the **platform boundary**. Anything behind it
 (aggregator, backends, credential providers) is an implementation detail.
-Anything in front of it (oauth2-proxy, LLM clients) sees only this surface.
+Anything in front of it (LLM clients, the portal SPA) sees only this
+surface — and presents its own bearer token directly; oauth2-proxy is not
+in this path (see [docs/auth.md](auth.md)).
 
 Key endpoints:
 
