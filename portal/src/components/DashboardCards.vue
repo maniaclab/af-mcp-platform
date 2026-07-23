@@ -32,7 +32,7 @@ onMounted(async () => {
       <span class="dc__value" :class="{ 'dc__value--loading': loading }">
         {{ loading ? '—' : `${summary?.linkedCount ?? 0} linked` }}
       </span>
-      <a href="/identities" class="dc__link">Manage →</a>
+      <a href="/identities/" class="dc__link">Manage →</a>
     </div>
 
     <!-- Tools card -->
@@ -44,7 +44,7 @@ onMounted(async () => {
       <span class="dc__value" :class="{ 'dc__value--loading': loading }">
         {{ loading ? '—' : `${summary?.toolCount ?? 0} tools` }}
       </span>
-      <a href="/catalog" class="dc__link">Browse →</a>
+      <a href="/catalog/" class="dc__link">Browse →</a>
     </div>
 
     <!-- Proxy card -->
@@ -56,7 +56,7 @@ onMounted(async () => {
       <span class="dc__value" :class="{ 'dc__value--loading': loading }">
         {{ loading ? '—' : summary?.proxyStatus.cached ? 'Active' : 'No proxy' }}
       </span>
-      <a href="/status" class="dc__link">Manage →</a>
+      <a href="/status/" class="dc__link">Manage →</a>
     </div>
   </div>
 </template>

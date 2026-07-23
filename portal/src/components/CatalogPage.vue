@@ -144,7 +144,7 @@ const visibleToolCount = computed(() =>
       <span class="cp__error-body">{{ error }}</span>
       <span class="cp__error-hint">
         Make sure your ATLAS IAM and CERN identities are linked on the
-        <a href="/identities" class="cp__error-link">Identities page</a>.
+        <a href="/identities/" class="cp__error-link">Identities page</a>.
       </span>
     </div>
 
@@ -155,7 +155,7 @@ const visibleToolCount = computed(() =>
         Your account doesn't have any granted capabilities yet. Link your external identities to
         unlock access.
       </p>
-      <a href="/identities" class="cp__empty-cta">Link identities →</a>
+      <a href="/identities/" class="cp__empty-cta">Link identities →</a>
     </div>
 
     <!-- Empty search result -->

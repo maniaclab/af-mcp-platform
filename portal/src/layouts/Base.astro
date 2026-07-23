@@ -18,9 +18,9 @@ const { title = 'AF MCP Platform' } = Astro.props;
 
 const navLinks = [
   { href: '/', label: 'Overview' },
-  { href: '/catalog', label: 'Tool Catalog' },
-  { href: '/identities', label: 'Identities' },
-  { href: '/status', label: 'AMI Proxy' },
+  { href: '/catalog/', label: 'Tool Catalog' },
+  { href: '/identities/', label: 'Identities' },
+  { href: '/status/', label: 'AMI Proxy' },
 ];
 
 const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
@@ -273,7 +273,8 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
       <ul class="af-nav__links" role="list">
         {
           navLinks.map(({ href, label }) => {
-            const isActive = href === '/' ? currentPath === '/' : currentPath.startsWith(href);
+            const isActive =
+              href === '/' ? currentPath === '/' : currentPath.startsWith(href.replace(/\/$/, ''));
             return (
               <li>
                 <a href={href} class="af-nav__link" aria-current={isActive ? 'page' : undefined}>
