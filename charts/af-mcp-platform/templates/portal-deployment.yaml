@@ -58,3 +58,17 @@ spec:
             failureThreshold: 3
           resources:
             {{- toYaml .Values.portal.resources | nindent 12 }}
+          volumeMounts:
+            # readOnlyRootFilesystem blocks all writes to the image's own
+            # filesystem; nginx needs somewhere to put its pid file (/tmp) and
+            # its temp/cache dirs (/var/cache/nginx) even when serving only
+            # static files.
+            - name: tmp
+              mountPath: /tmp
+            - name: nginx-cache
+              mountPath: /var/cache/nginx
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: nginx-cache
+          emptyDir: {}

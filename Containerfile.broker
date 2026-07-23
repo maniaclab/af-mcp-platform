@@ -10,10 +10,13 @@ RUN pixi install --frozen --environment broker
 # Final stage — only carry over what's needed to run; .git stays in builder
 FROM debian:bookworm-slim
 WORKDIR /app
-COPY --from=builder /app/.pixi/envs/broker /opt/pixi-env
+# Keep the same absolute path as the builder stage: pixi-installed console
+# scripts (e.g. uvicorn) get a shebang baked in at this exact path, and
+# relocating the env directory breaks it.
+COPY --from=builder /app/.pixi/envs/broker /app/.pixi/envs/broker
 COPY --from=builder /app/broker/src /app/broker/src
 
-ENV PATH="/opt/pixi-env/bin:${PATH}" \
+ENV PATH="/app/.pixi/envs/broker/bin:${PATH}" \
     PYTHONPATH="/app/broker/src" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
