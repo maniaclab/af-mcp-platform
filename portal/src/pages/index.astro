@@ -1,4 +1,7 @@
 ---
+// Reserved paths: /v1/* and /mcp/* are routed to the broker on this host
+// (see docs/architecture.md, "Reserved paths on the portal host"). New
+// portal pages must not use those prefixes.
 import Base from '../layouts/Base.astro';
 import DashboardCards from '../components/DashboardCards.vue';
 

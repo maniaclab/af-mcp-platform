@@ -44,10 +44,33 @@ spec:
                 name: {{ include "af-mcp-platform.broker.fullname" . }}
                 port:
                   name: http
-    # Portal host — routes everything to the static Astro site
+    # Portal host — the Astro build is a static site, and its API client fetches
+    # /v1/* same-origin (see portal/src/lib/api.ts). Without these two paths,
+    # those requests fall through to nginx's SPA try_files fallback and get
+    # index.html back instead of JSON. So /v1 and /mcp are routed to the same
+    # broker Service here as on mcpHost, and everything else falls through to
+    # the portal. Longest-prefix matching means /v1/* and /mcp/* win over /.
+    #
+    # IMPORTANT: any new portal page route MUST NOT start with /v1/ or /mcp/ —
+    # those prefixes are reserved for the broker and would be silently
+    # shadowed on this host.
     - host: {{ .Values.ingress.portalHost | quote }}
       http:
         paths:
+          - path: /v1
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "af-mcp-platform.broker.fullname" . }}
+                port:
+                  name: http
+          - path: /mcp
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "af-mcp-platform.broker.fullname" . }}
+                port:
+                  name: http
           - path: /
             pathType: Prefix
             backend:
