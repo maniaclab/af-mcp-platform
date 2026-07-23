@@ -131,6 +131,32 @@ portal:
       cpu: 500m
       memory: 512Mi
 
+  # OIDC config for the portal SPA's own OAuth public client (Authorization
+  # Code + PKCE against the issuer below; see docs/auth.md and #42). Delivered
+  # to the browser at runtime via /config.json (configmap-portal-config.yaml)
+  # rather than baked into the image at build time, so one built image works
+  # against any realm/client/institution. REQUIRED — set in your deploying
+  # values overlay (e.g. a HelmRelease), there is no safe cross-institution
+  # default. Left empty, the portal skips OIDC entirely and runs in
+  # unauthenticated / dev-bypass mode (see docs/local-development.md).
+  oidc:
+    # e.g. "https://keycloak.example.com/realms/your-realm"
+    issuer: ""
+    # e.g. "your-portal-client" — a public client, Client Authentication OFF,
+    # Standard flow ON, PKCE S256 required.
+    clientId: ""
+    # openid/profile/email are OIDC-standard; append your audience-mapping
+    # client scope so the access token carries the broker's expected `aud`
+    # (must match broker.keycloak.audience above).
+    scope: "openid profile email"
+
+  # Origin the SPA calls for the broker's /v1 and /mcp paths, and what the
+  # portal's CSP connect-src allows. REQUIRED — e.g. "https://mcp.example.com".
+  # Same-origin (ingress.portalHost) also works if you'd rather not expose
+  # mcpHost to the browser; set this to that origin either way since it's
+  # also used to build the CSP header.
+  brokerOrigin: ""
+
 # ---------------------------------------------------------------------------
 # OAuth2 Proxy — forward-auth integration
 # ---------------------------------------------------------------------------

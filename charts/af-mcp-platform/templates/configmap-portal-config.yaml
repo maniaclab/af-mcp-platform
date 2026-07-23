@@ -1,0 +1,23 @@
+# Runtime config for the portal SPA, fetched client-side from GET /config.json
+# (see portal/src/lib/auth.ts). Mounted over the build's placeholder copy
+# (portal/public/config.json, which ships benign empty values so the image
+# alone — no ConfigMap — still runs, just with OIDC skipped) via a subPath
+# volume mount in portal-deployment.yaml. This is how one built portal image
+# stays deployable against any realm/client/institution: rotating IdP config
+# is a values change + rolling restart, not a rebuild. See docs/auth.md, #42.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "af-mcp-platform.portal.fullname" . }}-config
+  labels:
+    {{- include "af-mcp-platform.portal.labels" . | nindent 4 }}
+data:
+  config.json: |
+    {
+      "oidc": {
+        "issuer": {{ required "portal.oidc.issuer must be set (e.g. via your deploying HelmRelease values)" .Values.portal.oidc.issuer | quote }},
+        "clientId": {{ required "portal.oidc.clientId must be set (e.g. via your deploying HelmRelease values)" .Values.portal.oidc.clientId | quote }},
+        "scope": {{ .Values.portal.oidc.scope | quote }}
+      },
+      "brokerOrigin": {{ required "portal.brokerOrigin must be set (e.g. via your deploying HelmRelease values)" .Values.portal.brokerOrigin | quote }}
+    }
