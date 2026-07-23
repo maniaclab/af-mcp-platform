@@ -166,6 +166,19 @@ All requests require a valid AF bearer token. The aggregator translates
 MCP-over-HTTP into `/v1` calls; external callers can also hit `/v1` directly
 (useful for scripting and debugging).
 
+### Reserved paths on the portal host
+
+The portal (`mcp-portal.af.uchicago.edu`) is a static Astro build; its API
+client fetches `/v1/*` same-origin. The portal-host ingress rule therefore
+routes `/v1` and `/mcp` to the broker Service, same as `mcpHost`, before
+falling through to the portal for everything else. Current portal page
+routes: `/`, `/catalog/`, `/identities/`, `/status/`.
+
+**New portal pages MUST NOT use the `/v1/` or `/mcp/` prefixes** — those are
+reserved for the broker on both hosts and would be silently shadowed. A
+future `tokens` page, for example, belongs at `/tokens/`, not `/mcp-tokens/`
+or anything else starting with a reserved prefix.
+
 ---
 
 ## Aggregation Extraction Path
