@@ -7,17 +7,25 @@ COPY . .
 # Install only the broker feature, not dev
 RUN pixi install --frozen --environment broker
 
+# Capture pixi's full activation (PATH, and anything else the environment
+# needs — e.g. lib/cert paths for conda-provided packages) as a static
+# entrypoint script, so the final image needs no pixi binary at runtime.
+RUN echo '#!/bin/bash' > /app/entrypoint.sh && \
+    pixi shell-hook --manifest-path /app/pixi.toml --environment broker -s bash >> /app/entrypoint.sh && \
+    echo 'exec "$@"' >> /app/entrypoint.sh && \
+    chmod +x /app/entrypoint.sh
+
 # Final stage — only carry over what's needed to run; .git stays in builder
 FROM debian:bookworm-slim
 WORKDIR /app
-# Keep the same absolute path as the builder stage: pixi-installed console
-# scripts (e.g. uvicorn) get a shebang baked in at this exact path, and
-# relocating the env directory breaks it.
+# Keep the same absolute path as the builder stage: the entrypoint script's
+# activation exports (and any console-script shebangs, e.g. uvicorn) are
+# baked in at this exact path, and relocating the env directory breaks them.
 COPY --from=builder /app/.pixi/envs/broker /app/.pixi/envs/broker
 COPY --from=builder /app/broker/src /app/broker/src
+COPY --from=builder /app/entrypoint.sh /app/entrypoint.sh
 
-ENV PATH="/app/.pixi/envs/broker/bin:${PATH}" \
-    PYTHONPATH="/app/broker/src" \
+ENV PYTHONPATH="/app/broker/src" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
@@ -27,6 +35,7 @@ USER af-mcp
 
 # 8080 = API, 9090 = Prometheus metrics (separate server started in lifespan).
 EXPOSE 8080 9090
+ENTRYPOINT ["/app/entrypoint.sh"]
 # Single worker: each worker would race to bind the metrics port and keep its
 # own metrics registry. Scale with pod replicas instead.
 CMD ["uvicorn", "af_mcp_broker.app:app", "--host", "0.0.0.0", "--port", "8080"]
