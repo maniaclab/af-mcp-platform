@@ -237,6 +237,52 @@ credential. Operators must ensure that:
 
 ---
 
+## Required Keycloak role: `broker`'s `read-token`
+
+Retrieving a stored external-IdP token via
+`GET /realms/<realm>/broker/<alias>/token` (the call `credentials/oidc.py`
+makes for the ATLAS IAM path above) requires the caller's access token to
+grant the **`read-token`** client role from Keycloak's built-in **`broker`**
+client. Without it, Keycloak returns:
+
+```
+HTTP 403
+{"errorMessage":"Client [<client_id>] not authorized to retrieve tokens from identity provider [<alias>]."}
+```
+
+This is **in addition to**, not instead of, "Store Tokens: ON" and "Stored
+Tokens Readable: ON" on the IdP config (Identity Providers → `atlas-oidc` →
+Settings). Both the IdP flags and the role are required; either one missing
+produces the same 403.
+
+**Why it's easy to miss:** it's a Keycloak-specific authorization check, not
+part of the OAuth 2.0 or OIDC standard. The admin UI doesn't surface it when
+you flip "Store Tokens" on an IdP — that toggle lives under Identity
+Providers, while the role lives under Clients → `broker`, with no cross-link
+between the two screens. Keycloak's own "Retrieving External IdP Tokens"
+docs mention the role, but not prominently enough to catch before you hit
+the 403 above.
+
+**What `broker` is:** a built-in client that ships with every Keycloak
+realm — not created by anything in this repo. Its purpose is precisely to
+hang roles like `read-token` off of, for this exact permission model.
+
+**Two ways to grant it:**
+
+- **Per-user** — Users → find the user → Role Mapping → Assign role →
+  filter by clients: `broker` → check `read-token`. Simple; doesn't scale.
+- **Via a client scope** — Client scopes → the scope assigned to your
+  caller (e.g. `mcp-gateway`) → Scope tab → Assign role → filter by
+  clients: `broker` → check `read-token`. Every user who gets the scope
+  gets the role transitively — the right approach for production.
+
+**Verifying:** decode the caller's access token and confirm `read-token`
+appears in `resource_access.broker.roles`. `credentials/oidc.py` is the
+only code path in this repo that exercises `/broker/<alias>/token` — grep
+there if you need to trace how the broker consumes the resulting token.
+
+---
+
 ## Token Lifetime and Refresh
 
 | Credential type | Typical lifetime | Refresh strategy |
