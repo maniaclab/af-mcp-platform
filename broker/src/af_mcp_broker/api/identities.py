@@ -4,7 +4,7 @@ from typing import Annotated
 from urllib.parse import urlencode
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict
 
 from af_mcp_broker.config import Settings, get_settings
@@ -78,12 +78,27 @@ _PROVIDERS: dict[str, AvailableProvider] = {
 }
 
 
-def _build_linked_accounts(principal: Principal) -> list[LinkedAccount]:
+async def _build_linked_accounts(
+    request: Request, principal: Principal
+) -> list[LinkedAccount]:
+    """Probe each configured provider's ``is_linked()`` to determine linkage.
+
+    This reflects reality (Keycloak's actual stored-linkage state) rather
+    than trusting a JWT claim that may simply be absent from the token.
+
+    Only "atlas-iam" is backed by a real provider today (``OIDCProvider``,
+    which owns the Keycloak stored-brokered-token check). "cern" remains in
+    ``_PROVIDERS`` as a not-yet-linkable placeholder — there is no dedicated
+    credential provider for it yet, so it can never appear in
+    ``linked_accounts`` until one exists.
+    """
     accounts: list[LinkedAccount] = []
-    if principal.iam_sub:
-        accounts.append(LinkedAccount(provider="atlas-iam", sub=principal.iam_sub))
-    if principal.cern_sub:
-        accounts.append(LinkedAccount(provider="cern", sub=principal.cern_sub))
+    oidc_provider = getattr(request.app.state, "oidc_provider", None)
+    if oidc_provider is not None and await oidc_provider.is_linked(principal):
+        # is_linked() only reports True/False — it has no federated `sub`
+        # claim to surface, so this is intentionally empty (the portal
+        # already treats an empty/missing `sub` as "no subject to display").
+        accounts.append(LinkedAccount(provider="atlas-iam", sub=""))
     return accounts
 
 
@@ -99,9 +114,10 @@ def _available_to_link(linked: list[LinkedAccount]) -> list[AvailableProvider]:
 
 @router.get("", response_model=IdentitiesResponse, summary="Get caller identity")
 async def get_identities(
+    request: Request,
     principal: Annotated[Principal, Depends(keycloak_dependency)],
 ) -> IdentitiesResponse:
-    linked = _build_linked_accounts(principal)
+    linked = await _build_linked_accounts(request, principal)
     return IdentitiesResponse(
         subject=principal.subject,
         email=principal.email,

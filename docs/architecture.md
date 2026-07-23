@@ -103,6 +103,29 @@ Important: Keycloak Standard Token Exchange (V2) is internal-to-AF only. It
 brokered token path via `GET /realms/connect/broker/atlas-oidc/token` for any
 credential that must be accepted by external ATLAS services (Rucio, PanDA, AMI).
 
+#### Linkage detection is per-provider
+
+Before calling `issue()`, the API layer (`api/credentials.py`) gates on
+`provider.is_linked(principal)` — an abstract method every `CredentialProvider`
+implements against its own storage backend, since linkage state lives in
+whichever system actually holds it and cannot be represented uniformly as a
+JWT claim:
+
+- `OIDCProvider` probes Keycloak's stored-brokered-token endpoint
+  (`GET /realms/connect/broker/atlas-oidc/token`) with the principal's own
+  bearer token; HTTP 200 means linked. The result is cached per uid for a
+  short TTL to avoid a Keycloak round-trip on every call.
+- `X509Provider` checks for a readable `usercert.pem` + `userkey.pem` pair
+  under the principal's home directory.
+- `ServiceProvider` always reports linked — the broker's own service account
+  is the credential source, so there is no user-side linkage to check.
+
+An unlinked provider surfaces as `404` before `issue()` is ever called, rather
+than as an opaque failure from inside the provider. `GET /v1/identities`'s
+`linked_accounts` is built the same way — by probing `is_linked()` — so it
+reflects Keycloak's actual state instead of a claim that may be absent from
+the token.
+
 #### Passphrase-unlock rate limiting
 
 `~/.globus` is readable by anyone colocated on the same NFS-mounted home

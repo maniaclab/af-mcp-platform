@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    import pytest
     from fastapi.testclient import TestClient
 
 _AUTH = {"Authorization": "Bearer test"}
@@ -83,10 +85,70 @@ def test_credential_unknown_target_404(app_client: tuple[TestClient, dict]) -> N
 
 def test_credential_x509_needs_unlock_409(app_client: tuple[TestClient, dict]) -> None:
     client, _ = app_client
-    # ami is x509; with an empty cache and no passphrase the provider raises
-    # NeedsUnlock, which the endpoint maps to 409 + unlock_endpoint.
+    # ami is x509; the app_client fixture pre-creates a fake usercert/userkey
+    # pair so is_linked() reports True. With an empty cache and no passphrase
+    # the provider then raises NeedsUnlock, which the endpoint maps to 409 +
+    # unlock_endpoint.
     resp = client.post("/v1/credential", json={"target": "ami"}, headers=_AUTH)
     assert resp.status_code == 409, resp.text
     detail = resp.json()["detail"]
     assert detail["error"] == "proxy_unlock_required"
     assert detail["unlock_endpoint"] == "/v1/x509/proxy"
+
+
+def test_credential_unlinked_provider_404(
+    app_client: tuple[TestClient, dict], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A provider whose is_linked() reports False must 404 before issue()."""
+    from af_mcp_broker.credentials.oidc import OIDCProvider
+
+    async def _not_linked(self, principal) -> bool:
+        return False
+
+    monkeypatch.setattr(OIDCProvider, "is_linked", _not_linked)
+
+    client, _ = app_client
+    resp = client.post("/v1/credential", json={"target": "rucio"}, headers=_AUTH)
+
+    assert resp.status_code == 404, resp.text
+    detail = resp.json()["detail"]
+    assert "OIDCProvider not linked" in detail
+    assert "Visit the portal Identities page to connect it." in detail
+
+
+def test_credential_linked_provider_proceeds_to_issue(
+    app_client: tuple[TestClient, dict], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A provider whose is_linked() reports True must reach issue()."""
+    from af_mcp_broker.credentials.base import CredentialKind, IssuedCredential
+    from af_mcp_broker.credentials.oidc import OIDCProvider
+
+    async def _linked(self, principal) -> bool:
+        return True
+
+    async def _fake_issue(
+        self,
+        principal,
+        target: str,
+        min_remaining_seconds: int = 300,
+        passphrase=None,
+    ) -> IssuedCredential:
+        return IssuedCredential(
+            cred_class=self.cred_class,
+            target=target,
+            kind=CredentialKind.BEARER,
+            expires_at=time.time() + 3600,
+            payload={"access_token": "fake-iam-token", "token_type": "Bearer"},
+            audit_id="test-audit",
+            source="test",
+            execution_model=self.execution_model,
+        )
+
+    monkeypatch.setattr(OIDCProvider, "is_linked", _linked)
+    monkeypatch.setattr(OIDCProvider, "issue", _fake_issue)
+
+    client, _ = app_client
+    resp = client.post("/v1/credential", json={"target": "rucio"}, headers=_AUTH)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["token"] == "fake-iam-token"

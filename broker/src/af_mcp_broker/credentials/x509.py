@@ -741,6 +741,31 @@ class X509Provider(CredentialProvider):
     async def handles(self, target: str) -> bool:
         return target in self._targets
 
+    async def is_linked(self, principal: Principal) -> bool:
+        """True when both halves of *principal*'s ``~/.globus`` certificate
+        pair exist and are readable by the broker's uid/gid.
+
+        Mirrors the path construction ``HomeDirVomsBackend`` uses to locate
+        the user's home directory, but — unlike ``HomeDirVomsBackend.available()``,
+        which only needs the public cert to decide whether it can attempt a
+        mint — requires BOTH ``usercert.pem`` and ``userkey.pem``, since
+        minting cannot proceed with only the public half.
+        """
+        globus_dir = Path(self._settings.home_root) / principal.unixname / ".globus"
+        cert_path = globus_dir / "usercert.pem"
+        key_path = globus_dir / "userkey.pem"
+
+        def _both_readable() -> bool:
+            try:
+                return all(
+                    p.exists() and os.access(p, os.R_OK) for p in (cert_path, key_path)
+                )
+            except OSError:
+                return False
+
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, _both_readable)
+
     async def issue(
         self,
         principal: Principal,

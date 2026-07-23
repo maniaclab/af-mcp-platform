@@ -115,10 +115,6 @@ class Principal:
     gid: int
     unixname: str
     groups: list[str]
-    # Present when the user has linked an ATLAS IAM identity in Keycloak.
-    iam_sub: str | None
-    # Present when the user has linked a CERN identity in Keycloak.
-    cern_sub: str | None
     # Keep the raw token for downstream credential flows; SecretStr prevents
     # accidental logging.
     raw_token: SecretStr = field(compare=False, repr=False)
@@ -150,11 +146,6 @@ def _extract_principal(claims: dict[str, Any], raw_token: str) -> Principal:
     email = claims.get("email", "")
     groups: list[str] = claims.get("groups", [])
 
-    # Identity-brokered sub claims from federated providers are surfaced as
-    # top-level string claims by the Keycloak mapper configuration.
-    iam_sub: str | None = claims.get("atlas_iam_sub") or claims.get("iam_sub")
-    cern_sub: str | None = claims.get("cern_sub")
-
     return Principal(
         subject=subject,
         email=email,
@@ -162,8 +153,6 @@ def _extract_principal(claims: dict[str, Any], raw_token: str) -> Principal:
         gid=int(posix["gid"]),
         unixname=str(posix["unixname"]),
         groups=groups,
-        iam_sub=iam_sub,
-        cern_sub=cern_sub,
         raw_token=SecretStr(raw_token),
     )
 
@@ -383,7 +372,5 @@ def build_dev_principal(payload_json: str) -> Principal:
         gid=gid,
         unixname=unixname,
         groups=list(groups_raw),
-        iam_sub=None,
-        cern_sub=None,
         raw_token=SecretStr(""),
     )
