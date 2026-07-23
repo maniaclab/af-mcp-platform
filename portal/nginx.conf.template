@@ -2,6 +2,17 @@ server {
     listen 8081;
     server_name _;
 
+    # Keycloak's registered redirect_uri for mcp-portal is the external
+    # https://mcp-portal.af.uchicago.edu/callback (no trailing slash, per
+    # #42) — outside our control. That request lands here as `/callback`,
+    # try_files below sees it as a directory (Astro emits
+    # /callback/index.html) and 301s to `/callback/`. Without this,
+    # nginx's default port_in_redirect on would put the internal `listen
+    # 8081` port in that redirect's Location header, sending the browser
+    # to a port that isn't externally exposed. Emitting relative Location
+    # headers sidesteps the scheme/host/port question entirely.
+    absolute_redirect off;
+
     root /usr/share/nginx/html;
     index index.html;
 
