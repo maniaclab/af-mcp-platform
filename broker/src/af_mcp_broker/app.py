@@ -152,6 +152,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     application.state.backends_loaded = backends_loaded
     application.state.credential_cache = credential_cache
     application.state.credential_registry = credential_registry
+    application.state.oidc_provider = oidc_provider
     application.state.x509_provider = x509_provider
     application.state.x509_targets = x509_targets
 

@@ -24,8 +24,6 @@ def _principal() -> Principal:
         gid=5000,
         unixname="auser",
         groups=["af-atlas-users"],
-        iam_sub=None,
-        cern_sub=None,
         raw_token=SecretStr("fake-token"),
     )
 

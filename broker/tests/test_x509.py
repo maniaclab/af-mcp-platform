@@ -240,8 +240,6 @@ def _principal(unixname: str) -> Principal:
         gid=5000,
         unixname=unixname,
         groups=["af-atlas-users"],
-        iam_sub=None,
-        cern_sub=None,
         raw_token=SecretStr("fake-token"),
     )
 

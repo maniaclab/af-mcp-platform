@@ -136,8 +136,11 @@ class OIDCProvider(CredentialProvider):
     ) -> IssuedCredential:
         """Return a bearer credential carrying the user's ATLAS IAM token.
 
+        Callers are expected to have gated on ``is_linked()`` already (see
+        ``api/credentials.py``); this method assumes linkage and only handles
+        the narrower failure modes of the fetch itself.
+
         Raises:
-            HTTPException(403): if the principal has no linked IAM identity.
             HTTPException(401): if the Keycloak brokered-token endpoint rejects
                 the principal's token (session expired — user must re-link).
             HTTPException(404): if no brokered token is stored yet (user must
@@ -148,15 +151,6 @@ class OIDCProvider(CredentialProvider):
             uid=principal.uid,
             target=target,
         )
-
-        if principal.iam_sub is None:
-            raise HTTPException(
-                status_code=403,
-                detail=(
-                    "ATLAS IAM identity not linked. "
-                    "Visit /v1/identities/link to connect your ATLAS account."
-                ),
-            )
 
         # Cache hit — avoid a round-trip to Keycloak
         cached = await self._cache.get(

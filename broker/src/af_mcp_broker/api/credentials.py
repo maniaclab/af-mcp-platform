@@ -169,7 +169,28 @@ async def issue_credential(
 ) -> IssuedCredential:
     registry = _registry(request)
     try:
-        cred = await registry.issue(
+        provider = await registry.resolve(body.target)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No credential provider registered for target '{body.target}'",
+        ) from exc
+
+    # Gate on linkage BEFORE issue() so an unlinked user gets a clean 404
+    # instead of an opaque failure surfacing from inside the provider. Every
+    # provider benefits uniformly from this one check rather than each
+    # duplicating its own pre-check.
+    if not await provider.is_linked(principal):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                f"{type(provider).__name__} not linked. "
+                "Visit the portal Identities page to connect it."
+            ),
+        )
+
+    try:
+        cred = await provider.issue(
             principal,
             body.target,
             min_remaining_seconds=body.min_remaining_seconds,
@@ -181,11 +202,6 @@ async def issue_credential(
                 "error": "proxy_unlock_required",
                 "unlock_endpoint": exc.unlock_endpoint,
             },
-        ) from exc
-    except KeyError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No credential provider registered for target '{body.target}'",
         ) from exc
     return _to_response(cred)
 

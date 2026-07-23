@@ -125,7 +125,6 @@ def make_principal() -> Callable[..., object]:
         uid: int = 1000,
         gid: int = 1000,
         unixname: str = "tuser",
-        iam_sub: str | None = None,
     ) -> Principal:
         return Principal(
             subject="sub-abc",
@@ -134,8 +133,6 @@ def make_principal() -> Callable[..., object]:
             gid=gid,
             unixname=unixname,
             groups=list(groups or []),
-            iam_sub=iam_sub,
-            cern_sub=None,
             raw_token=SecretStr("fake-token"),
         )
 
@@ -144,7 +141,9 @@ def make_principal() -> Callable[..., object]:
 
 @pytest.fixture
 def app_client_factory(
-    monkeypatch: pytest.MonkeyPatch, make_principal: Callable[..., object]
+    monkeypatch: pytest.MonkeyPatch,
+    make_principal: Callable[..., object],
+    tmp_path: Path,
 ) -> Callable[..., Any]:
     """Context manager that boots the real app against the shipped YAML.
 
@@ -158,14 +157,23 @@ def app_client_factory(
     # Ephemeral metrics port so test runs never collide on 9090.
     monkeypatch.setenv("METRICS_PORT", "0")
 
+    # X509Provider.is_linked() checks for a real usercert.pem/userkey.pem pair
+    # under HOME_ROOT/<unixname>/.globus/ — pre-create that pair for the
+    # default test principal's unixname ("tuser") so tests exercising the
+    # x509 "ami" target (cache-miss -> NeedsUnlock -> 409) see a *linked*
+    # principal, same as before this pre-check existed.
+    globus_dir = tmp_path / "tuser" / ".globus"
+    globus_dir.mkdir(parents=True)
+    (globus_dir / "usercert.pem").write_text("fake-cert")
+    (globus_dir / "userkey.pem").write_text("fake-key")
+    monkeypatch.setenv("HOME_ROOT", str(tmp_path))
+
     from af_mcp_broker.app import app
     from af_mcp_broker.identity import keycloak_dependency
 
     @contextmanager
     def _factory() -> Iterator[tuple[TestClient, dict]]:
-        state: dict = {
-            "principal": make_principal(groups=["atlas"], iam_sub="iam-sub-1")
-        }
+        state: dict = {"principal": make_principal(groups=["atlas"])}
         app.dependency_overrides[keycloak_dependency] = lambda: state["principal"]
         try:
             with TestClient(app) as client:
