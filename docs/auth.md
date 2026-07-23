@@ -267,19 +267,65 @@ the 403 above.
 realm — not created by anything in this repo. Its purpose is precisely to
 hang roles like `read-token` off of, for this exact permission model.
 
-**Two ways to grant it:**
+**Ways to grant it:**
 
 - **Per-user** — Users → find the user → Role Mapping → Assign role →
   filter by clients: `broker` → check `read-token`. Simple; doesn't scale.
-- **Via a client scope** — Client scopes → the scope assigned to your
-  caller (e.g. `mcp-gateway`) → Scope tab → Assign role → filter by
-  clients: `broker` → check `read-token`. Every user who gets the scope
-  gets the role transitively — the right approach for production.
+- **At production scale** — a client scope's Scope tab is *not* a grant
+  mechanism, despite looking like one. See the next section for why, and
+  for the two mechanisms that actually grant the role to many users.
 
 **Verifying:** decode the caller's access token and confirm `read-token`
 appears in `resource_access.broker.roles`. `credentials/oidc.py` is the
 only code path in this repo that exercises `/broker/<alias>/token` — grep
 there if you need to trace how the broker consumes the resulting token.
+
+---
+
+## Client scope Scope tab: a filter, not a grant
+
+A client scope's **Scope** tab looks like a place to grant `read-token` to
+everyone who gets that scope. It isn't — Keycloak's own admin UI says so,
+in the info banner on that tab:
+
+> If there is no role scope mapping defined, each user is permitted to use
+> this client scope. If there are role scope mappings defined, the user must
+> be a member of at least one of the roles.
+
+Populating the Scope tab **restricts** the scope to users who already hold
+one of the listed roles; it does not grant the role to anyone. Add
+`read-token` there without users already having it some other way, and
+Keycloak silently excludes every user from the scope.
+
+**The cascading failure:** a scope's audience mapper — the thing that puts
+`mcp-gateway` (or whatever audience a backend expects) into the token's
+`aud` claim — only fires for users who actually get the scope. Excluded
+from the scope means excluded from the mapper too, so minted tokens are
+missing the audience entirely, not just the role. If a decoded token's
+`aud` doesn't contain the audience you expected, suspect this before
+anything else in the credential path.
+
+**How to actually grant `read-token` at scale:**
+
+- **Realm default role** — Realm settings → Realm roles →
+  `default-roles-<realm>` → Associated roles → assign `read-token`. Every
+  user in the realm gets it transitively, with no per-user or per-group
+  admin. Right for a realm dedicated to one purpose (e.g. an AF-only realm).
+- **Group membership** — Groups → new group → add users → the group's Role
+  Mapping tab → assign `read-token`. Users in the group get the role,
+  users outside don't. Right for a realm serving multiple purposes, where
+  only some users should get broker-token access.
+
+Once one of those actually grants the role, the Scope tab becomes optional
+belt-and-suspenders — it can additionally restrict which users obtain a
+given scope — but it is never itself where the grant happens.
+
+**AF's setup:** the `connect` realm has a `default-roles-connect` composite,
+but we grant `read-token` via group membership instead of adding it there,
+since `connect` serves more than just the AF. The `mcp-gateway` scope's
+Scope tab also lists `read-token`, purely as a second filter: group
+membership is what actually grants the role, and users get both the role
+and the scope's audience together.
 
 ---
 
