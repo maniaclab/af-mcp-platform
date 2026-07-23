@@ -6,7 +6,13 @@
  * class or breaks the fetch contract. Expand these when we touch api.ts.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { APIError, SessionExpiredError, fetchIdentities } from '../api';
+import {
+  APIError,
+  SessionExpiredError,
+  clearIdentitiesCache,
+  fetchIdentities,
+  fetchProxyStatus,
+} from '../api';
 import * as auth from '../auth';
 
 // Stash + restore the real fetch. The tests below install a per-test mock.
@@ -23,6 +29,10 @@ vi.mock('../auth', () => ({
 
 beforeEach(() => {
   vi.restoreAllMocks();
+  // The fetchIdentities() cache is sessionStorage-backed — jsdom's
+  // sessionStorage persists across tests in the same file, so clear it
+  // explicitly rather than relying on per-test isolation.
+  window.sessionStorage.clear();
   // Default: a configured environment with a valid token, matching most
   // tests below; individual tests override as needed.
   vi.mocked(auth.getAccessToken).mockResolvedValue('test-token');
@@ -34,12 +44,18 @@ afterEach(() => {
   globalThis.fetch = realFetch;
 });
 
+// A fresh Response per call — a single shared instance would blow up on a
+// second .json() read (the body stream is one-shot), which the identities
+// cache tests below rely on triggering (TTL expiry, cache-clear) more than
+// once against the same mock.
 function mockJson(status: number, body: unknown) {
-  return vi.fn().mockResolvedValue(
-    new Response(JSON.stringify(body), {
-      status,
-      headers: { 'Content-Type': 'application/json' },
-    }),
+  return vi.fn().mockImplementation(() =>
+    Promise.resolve(
+      new Response(JSON.stringify(body), {
+        status,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    ),
   );
 }
 
@@ -156,5 +172,78 @@ describe('api client', () => {
       status: 500,
       body: 'nope',
     });
+  });
+});
+
+describe('fetchIdentities() sessionStorage cache', () => {
+  const identity = {
+    subject: 's',
+    email: 'e',
+    unixname: 'u',
+    uid: 1,
+    gid: 2,
+    groups: [],
+    linked_accounts: [],
+    available_providers: [],
+  };
+
+  it('fetches from the broker and caches the response on first call', async () => {
+    globalThis.fetch = mockJson(200, identity);
+    await expect(fetchIdentities()).resolves.toMatchObject({ email: 'e' });
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    expect(window.sessionStorage.getItem('af-portal.identities')).not.toBeNull();
+  });
+
+  it('returns the cached response within the TTL without hitting the broker', async () => {
+    globalThis.fetch = mockJson(200, identity);
+    await fetchIdentities();
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+
+    await expect(fetchIdentities()).resolves.toMatchObject({ email: 'e' });
+    // Still just the one call from the first fetchIdentities() above.
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-fetches from the broker once the cache entry has expired', async () => {
+    vi.useFakeTimers();
+    try {
+      globalThis.fetch = mockJson(200, identity);
+      await fetchIdentities();
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+
+      vi.advanceTimersByTime(5 * 60 * 1000 + 1);
+
+      await fetchIdentities();
+      expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('clears the cache when SessionExpiredError is thrown from any api call', async () => {
+    globalThis.fetch = mockJson(200, identity);
+    await fetchIdentities();
+    expect(window.sessionStorage.getItem('af-portal.identities')).not.toBeNull();
+
+    // Force a SessionExpiredError (no token, OIDC configured) from a
+    // *different* endpoint than the one whose cache we're checking — this is
+    // the "any api call" case, since fetchIdentities() itself would just
+    // serve the still-fresh cache without ever reaching apiFetch().
+    vi.mocked(auth.getAccessToken).mockResolvedValue(null);
+    globalThis.fetch = vi.fn();
+    await expect(fetchProxyStatus()).rejects.toBeInstanceOf(SessionExpiredError);
+    expect(window.sessionStorage.getItem('af-portal.identities')).toBeNull();
+  });
+
+  it('clearIdentitiesCache() removes a populated cache entry', async () => {
+    globalThis.fetch = mockJson(200, identity);
+    await fetchIdentities();
+    expect(window.sessionStorage.getItem('af-portal.identities')).not.toBeNull();
+
+    clearIdentitiesCache();
+    expect(window.sessionStorage.getItem('af-portal.identities')).toBeNull();
+
+    await fetchIdentities();
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
   });
 });

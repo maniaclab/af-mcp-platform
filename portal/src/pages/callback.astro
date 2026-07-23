@@ -38,6 +38,7 @@ import Base from '../layouts/Base.astro';
 </Base>
 
 <script>
+  import { clearIdentitiesCache } from '../lib/api';
   import { handleCallback } from '../lib/auth';
 
   (async () => {
@@ -47,6 +48,12 @@ import Base from '../layouts/Base.astro';
 
     try {
       const returnUrl = await handleCallback();
+      // Covers both a normal sign-in and a LINK_IDP callback. In the LINK_IDP
+      // case this drops the pre-link identities snapshot so the target page
+      // fetches fresh data reflecting the newly-linked provider instead of
+      // serving the stale cache for up to its TTL; a normal sign-in clearing
+      // an (empty or absent) cache is a harmless no-op.
+      clearIdentitiesCache();
       window.location.replace(returnUrl);
     } catch (err) {
       if (statusEl) statusEl.hidden = true;
