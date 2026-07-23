@@ -3,13 +3,14 @@
 You just cloned the repo and you want to load the portal in a browser with
 real broker data. This page tells you how.
 
-In production, [oauth2-proxy](https://oauth2-proxy.github.io/oauth2-proxy/)
-fronts both the portal and the broker on a single origin and injects the
-`Authorization` header on every upstream request. Locally there is no
-oauth2-proxy, and `astro dev`'s built-in proxy of `/v1/*` to
-`http://localhost:8080` cannot mint a token — every Vue island would 401
-and the UI would show "Session expired" indefinitely. The recommended
-workflow uses a broker-side bypass to get past that.
+In production, the portal is its own OAuth client and sends its own
+`aud=mcp-gateway` Bearer on every `/v1/*` request (see
+[docs/auth.md](auth.md)); the broker validates it directly. Locally, the
+checked-in `portal/public/config.json` ships with OIDC turned off (empty
+`oidc.issuer`), so `astro dev`'s built-in proxy of `/v1/*` to
+`http://localhost:8080` would otherwise send no Bearer at all and every Vue
+island would 401. The recommended workflow uses a broker-side bypass to get
+past that instead of standing up a real Keycloak locally.
 
 ## Prerequisites
 
@@ -83,14 +84,43 @@ portal — the Vue islands now render with the dev principal.
 
 ### Alternative: inject a real token from a live deployment
 
-If you'd rather not run the bypass, copy a real bearer from a deployed
-oauth2-proxy'd session and inject it with a browser extension like
+If you'd rather not run the bypass, copy a real bearer — e.g. from
+`sessionStorage` in a deployed portal tab's devtools, or from any other
+client that's completed the OIDC dance — and inject it with a browser
+extension like
 [ModHeader](https://modheader.com/) or
 [Requestly](https://requestly.io/) — set
 `Authorization: Bearer <token>` for `http://localhost:4321`. The vite
 proxy forwards headers to the broker, which validates them normally.
 Tokens are short-lived, so this is fine for a spot-check but tedious
 for extended UI work.
+
+## Testing the real OIDC flow locally (optional)
+
+The checked-in `portal/public/config.json` ships with an empty `oidc.issuer`,
+so by default `astro dev` skips OIDC entirely (see the bypass workflow
+above — that's the normal path for UI work). To exercise the real
+Authorization Code + PKCE flow against AF Keycloak instead, edit that file
+locally (never commit real values):
+
+```json
+{
+  "oidc": {
+    "issuer": "https://keycloak-prod.tempest.uchicago.edu/realms/connect",
+    "clientId": "mcp-portal",
+    "scope": "openid profile email mcp-gateway"
+  },
+  "brokerOrigin": "http://localhost:8080"
+}
+```
+
+`http://localhost:4321/callback` is already a registered redirect URI on the
+`mcp-portal` client (see #42), so this works without any Keycloak-side
+changes. You'll still need a broker that accepts the resulting token —
+either a real `KEYCLOAK_ISSUER`/`KEYCLOAK_AUDIENCE` pointed at the same
+realm, or continue using the bypass broker (it ignores the Bearer either
+way, so this is only useful for exercising the portal's own OIDC code path,
+not an end-to-end auth check).
 
 ## Talking to a broker on a different port
 

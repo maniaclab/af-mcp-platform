@@ -8,12 +8,29 @@ ensure that tool calls are authenticated, authorized, and executed with the righ
 per-user credentials — without ever handing raw secrets to the LLM or requiring
 backends to implement their own auth plumbing.
 
+Two distinct client identities obtain tokens for the same audience
+(`aud=mcp-gateway`) against AF Keycloak, then hit the broker the same way:
+
 ```
-LLM client
-    │  MCP-over-HTTP (SSE / streamable-HTTP)
+mcp-portal              MCP-client identities
+(portal SPA;        (Claude Desktop et al. — placeholder
+ Code+PKCE, #42)      until #24 registers one; not yet landed)
+     │                          │
+     └──────────┬───────────────┘
+                 ▼
+       AF Keycloak OIDC (connect realm)
+                 │  issues aud=mcp-gateway access token
+                 ▼
+       Bearer sent directly by the client
+```
+
+```
+LLM client / Portal SPA
+    │  Authorization: Bearer <aud=mcp-gateway token>
     ▼
-oauth2-proxy  ──────────────────────── AF Keycloak OIDC
-    │  validated OIDC JWT (AF principal)
+AF Credential Broker  — validates the Bearer itself
+    │  (HTTPBearer + keycloak_dependency; no ForwardAuth proxy
+    │   in this path — see docs/auth.md)
     ▼
 FastMCP Aggregator  ◄────────────────  tool registry (in-memory, hot-reload)
     │  internal call: tool_name + args + principal
@@ -24,8 +41,16 @@ AF Credential Broker  (/v1 HTTP API)
 Backend MCP server  (rucio-mcp, ami-mcp, panda-mcp, …)
     │  result / error
     ▼  (back up the chain)
-LLM client
+LLM client / Portal SPA
 ```
+
+oauth2-proxy still exists, but only in front of the portal's HTML/static
+assets (`ingress-portal.yaml`) — it is not in the request path for `/v1/*`
+or `/mcp/*` on either host (`ingress-mcp.yaml` for mcpHost,
+`ingress-portal-api.yaml` for portalHost). Every caller obtains its own
+`aud=mcp-gateway` token and presents it directly; the broker's validator is
+identical regardless of which client identity issued the token. See
+[docs/auth.md](auth.md) and #42 for the full design record.
 
 ---
 
@@ -35,7 +60,10 @@ LLM client
 
 Extracts and validates the AF principal from the incoming request.
 
-- Trusts only the Keycloak-issued JWT forwarded by oauth2-proxy.
+- Validates the caller's Keycloak-issued JWT directly (`HTTPBearer` +
+  `keycloak_dependency`) — there's no ForwardAuth proxy forwarding it; every
+  caller (portal SPA, Claude Desktop, `curl`) presents its own Bearer. See
+  [docs/auth.md](auth.md) for the per-client-identity breakdown.
 - Resolves the POSIX `uid` / `gid` for the principal (needed for NFS-scoped
   credential operations).
 - Produces a `Principal` dataclass that flows through the rest of the call.
@@ -169,10 +197,12 @@ MCP-over-HTTP into `/v1` calls; external callers can also hit `/v1` directly
 ### Reserved paths on the portal host
 
 The portal (`mcp-portal.af.uchicago.edu`) is a static Astro build; its API
-client fetches `/v1/*` same-origin. The portal-host ingress rule therefore
-routes `/v1` and `/mcp` to the broker Service, same as `mcpHost`, before
-falling through to the portal for everything else. Current portal page
-routes: `/`, `/catalog/`, `/identities/`, `/status/`.
+client fetches `/v1/*` same-origin. A dedicated `ingress-portal-api.yaml`
+Ingress object (same host, no oauth2-proxy annotations) routes `/v1` and
+`/mcp` to the broker Service, ahead of `ingress-portal.yaml`'s `/`
+catch-all via nginx's longest-prefix matching — see
+[docs/auth.md](auth.md#portal-auth-oidc-public-client). Current portal page
+routes: `/`, `/callback/`, `/catalog/`, `/identities/`, `/status/`.
 
 **New portal pages MUST NOT use the `/v1/` or `/mcp/` prefixes** — those are
 reserved for the broker on both hosts and would be silently shadowed. A
@@ -199,17 +229,18 @@ the simplest correct thing. The extraction path if it becomes necessary:
 
 ## Full Data Flow for a Tool Call
 
-1. LLM sends `tools/call` MCP message over HTTPS to `mcp.af.uchicago.edu`.
-2. oauth2-proxy validates the bearer token against Keycloak and forwards the
-   request with the validated JWT in a header.
-3. The FastMCP Aggregator receives the `tools/call`, extracts tool name + args,
+1. LLM sends `tools/call` MCP message over HTTPS to `mcp.af.uchicago.edu`,
+   with its own `aud=mcp-gateway` Bearer (see [docs/auth.md](auth.md) for how
+   each client identity obtains one).
+2. The FastMCP Aggregator receives the `tools/call`, extracts tool name + args,
    and calls the broker's `POST /v1/authorize` and `POST /v1/credential`.
-4. The broker Identity subsystem validates the JWT and resolves the `Principal`.
-5. The Authorization subsystem checks `principal.capabilities` against the tool's
+3. The broker Identity subsystem validates the Bearer directly (no ForwardAuth
+   proxy in this path) and resolves the `Principal`.
+4. The Authorization subsystem checks `principal.capabilities` against the tool's
    `required_capability`. Deny → 403 logged and returned.
-6. The Credential subsystem looks up `(uid, target)` in the `CredentialCache`. On
+5. The Credential subsystem looks up `(uid, target)` in the `CredentialCache`. On
    miss, it invokes the appropriate provider (token exchange or x509 mint Job).
-7. The broker constructs the backend request, injecting the credential, and calls
+6. The broker constructs the backend request, injecting the credential, and calls
    the target backend MCP server.
-8. The backend response is returned through the broker → aggregator → LLM client.
-9. The Audit subsystem writes a structured log line and updates Prometheus counters.
+7. The backend response is returned through the broker → aggregator → LLM client.
+8. The Audit subsystem writes a structured log line and updates Prometheus counters.
