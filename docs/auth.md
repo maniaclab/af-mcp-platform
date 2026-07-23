@@ -52,6 +52,63 @@ Backend MCP server  (receives brokered credential in the Authorization header
 
 ---
 
+## Token claims required by the broker
+
+**What the broker requires.** The incoming access token MUST contain a
+top-level `posix` claim: an object with `uid` (integer), `gid` (integer), and
+`unixname` (string). Optional companion fields such as `unixname-v2` are
+present in AF's tokens but ignored by the broker. If the `posix` object is
+absent, or present but missing any of the three required keys, the broker
+rejects the request with HTTP 401 and `"JWT is missing required 'posix'
+claim"` (or a keys-missing variant of that message). See
+`broker/src/af_mcp_broker/identity.py` (`_extract_principal`) for the
+authoritative validation logic.
+
+**Why.** The broker resolves this claim to a POSIX identity so downstream
+credential minting — x509/VOMS proxy Jobs that NFS-subPath-mount a home
+directory, and any other filesystem- or batch-facing operation — can run as
+the correct uid/gid. A POSIX uid/gid isn't derivable from an OIDC `sub`
+(typically a UUID); it has to be carried in the token explicitly.
+
+The claim shape, literally:
+
+```json
+{
+  "posix": {
+    "uid": 33155,
+    "gid": 33155,
+    "unixname": "kratsg"
+  }
+}
+```
+
+**How Keycloak provides it (AF's implementation, for context).** AF Keycloak
+has a realm-level client scope named `posix`. Inside that scope, four User
+Attribute protocol mappers copy `uid`, `gid`, `unixname` (and optionally
+`unixname-v2`) from each user's Keycloak profile attributes into the token
+under the `posix.*` namespace. Those profile attributes are themselves
+populated by upstream identity brokering (CERN → ATLAS IAM → Keycloak) or LDAP
+sync, depending on the deployment. The `posix` client scope must be assigned
+to every OAuth client that needs to obtain broker-ready tokens (e.g.
+`mcp-portal`) — either as a Default scope (auto-included in every token) or an
+Optional scope (the client must explicitly request `scope=posix`).
+
+**Non-Keycloak IdPs.** `posix` as a client-scope name is a Keycloak-side
+convention, not a broker requirement. Any OIDC IdP — Dex, Zitadel, Auth0, Ory
+Hydra, etc. — can satisfy the broker as long as the decoded access token has
+a top-level `posix` claim in the shape above. How that claim gets populated
+is IdP-specific: some use scopes and mappers the same way Keycloak does,
+others use custom claims, hooks, or rules.
+
+**Verifying.** Decode a client's access token (paste the middle segment into
+any JWT decoder) and confirm `posix` appears as a top-level key with
+`uid`/`gid`/`unixname` populated. If it doesn't, the broker will 401 every
+call from that client — this is exactly what happened during Phase B rollout
+when the portal's OAuth client hadn't yet been assigned the `posix` client
+scope.
+
+---
+
 ## Portal auth (OIDC public client)
 
 The portal (`mcp-portal.af.uchicago.edu`) is a static Astro/Vue SPA — there's
