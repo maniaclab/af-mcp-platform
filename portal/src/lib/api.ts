@@ -50,12 +50,23 @@ export class SessionExpiredError extends Error {
   }
 }
 
+/**
+ * Every SessionExpiredError, from whichever call site below, invalidates the
+ * identities cache — a session expiring means the next fetchIdentities()
+ * must go back to the broker rather than serve stale cached data through a
+ * dead session.
+ */
+function throwSessionExpired(): never {
+  clearIdentitiesCache();
+  throw new SessionExpiredError();
+}
+
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const token = await getAccessToken();
   if (!token && (await isOidcConfigured())) {
     // OIDC is configured but there's no session (or renewal already failed
     // inside getAccessToken) — skip the round trip, it would just 401.
-    throw new SessionExpiredError();
+    throwSessionExpired();
   }
 
   const doFetch = (bearer: string | null) =>
@@ -77,7 +88,7 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
       res = await doFetch(renewed);
     }
     if (res.status === 401) {
-      throw new SessionExpiredError();
+      throwSessionExpired();
     }
   }
   if (!res.ok) {
@@ -116,8 +127,60 @@ export interface IdentitiesResponse {
   available_providers: AvailableProvider[];
 }
 
+// Identity data (linked_accounts / available_providers) changes only when the
+// user completes a LINK_IDP flow, so every portal page load hitting the
+// broker for it is wasted work — Base.astro's inline script calls
+// fetchIdentities() on every page to populate the nav's username display.
+// sessionStorage-cache it with a short TTL: long enough to cover a typical
+// rapid-nav session, short enough not to go stale if something changes the
+// identity out from under a lingering tab. Explicit invalidation (see
+// clearIdentitiesCache()) handles the two cases that actually change this
+// data: a session expiring, and the LINK_IDP callback completing.
+const IDENTITIES_CACHE_KEY = 'af-portal.identities';
+const IDENTITIES_CACHE_TTL_MS = 5 * 60 * 1000;
+
+interface CachedIdentities {
+  data: IdentitiesResponse;
+  expiresAt: number;
+}
+
+function readIdentitiesCache(): IdentitiesResponse | null {
+  const raw = window.sessionStorage.getItem(IDENTITIES_CACHE_KEY);
+  if (!raw) return null;
+  let cached: CachedIdentities;
+  try {
+    cached = JSON.parse(raw) as CachedIdentities;
+  } catch {
+    // Corrupt entry (shouldn't happen since we're the only writer) — treat
+    // as a miss rather than throwing.
+    return null;
+  }
+  if (cached.expiresAt <= Date.now()) return null;
+  return cached.data;
+}
+
+function writeIdentitiesCache(data: IdentitiesResponse): void {
+  const cached: CachedIdentities = { data, expiresAt: Date.now() + IDENTITIES_CACHE_TTL_MS };
+  window.sessionStorage.setItem(IDENTITIES_CACHE_KEY, JSON.stringify(cached));
+}
+
+/**
+ * Invalidates the identities cache. Called on SessionExpiredError (see
+ * throwSessionExpired()) and by callback.astro once a LINK_IDP callback
+ * completes, so the next fetchIdentities() reflects the newly-linked
+ * provider instead of serving the pre-link snapshot for up to the full TTL.
+ */
+export function clearIdentitiesCache(): void {
+  window.sessionStorage.removeItem(IDENTITIES_CACHE_KEY);
+}
+
 export async function fetchIdentities(): Promise<IdentitiesResponse> {
-  return apiFetch<IdentitiesResponse>('/identities');
+  const cached = readIdentitiesCache();
+  if (cached) return Promise.resolve(cached);
+
+  const data = await apiFetch<IdentitiesResponse>('/identities');
+  writeIdentitiesCache(data);
+  return data;
 }
 
 export async function startIdentityLink(provider: string): Promise<{ redirect_url: string }> {
