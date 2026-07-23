@@ -13,15 +13,19 @@ import types
 from types import SimpleNamespace
 
 import pytest
+from pydantic import SecretStr
 
+from af_mcp_broker.credentials.cache import CredentialCache
 from af_mcp_broker.credentials.x509 import (
     _PROXY_B64_BEGIN,
     _PROXY_B64_END,
     HomeDirVomsBackend,
+    X509Provider,
     _extract_proxy_from_log,
     _parse_proxy_pem,
     _zero_bytearray,
 )
+from af_mcp_broker.identity import Principal
 
 # ---------------------------------------------------------------------------
 # _extract_proxy_from_log
@@ -221,3 +225,73 @@ async def test_send_stdin_zeros_buffer_even_when_transport_fails(monkeypatch):
         )
 
     assert passphrase_buf == bytearray(original_len)
+
+
+# ---------------------------------------------------------------------------
+# X509Provider.is_linked
+# ---------------------------------------------------------------------------
+
+
+def _principal(unixname: str) -> Principal:
+    return Principal(
+        subject="user-123",
+        email="user@example.org",
+        uid=50123,
+        gid=5000,
+        unixname=unixname,
+        groups=["af-atlas-users"],
+        iam_sub=None,
+        cern_sub=None,
+        raw_token=SecretStr("fake-token"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_is_linked_true_when_both_files_present(tmp_path):
+    globus_dir = tmp_path / "auser" / ".globus"
+    globus_dir.mkdir(parents=True)
+    (globus_dir / "usercert.pem").write_text("cert")
+    (globus_dir / "userkey.pem").write_text("key")
+
+    provider = X509Provider(
+        settings=SimpleNamespace(home_root=str(tmp_path)), cache=CredentialCache()
+    )
+
+    assert await provider.is_linked(_principal("auser")) is True
+
+
+@pytest.mark.asyncio
+async def test_is_linked_false_when_key_missing(tmp_path):
+    globus_dir = tmp_path / "auser" / ".globus"
+    globus_dir.mkdir(parents=True)
+    (globus_dir / "usercert.pem").write_text("cert")
+    # userkey.pem intentionally absent.
+
+    provider = X509Provider(
+        settings=SimpleNamespace(home_root=str(tmp_path)), cache=CredentialCache()
+    )
+
+    assert await provider.is_linked(_principal("auser")) is False
+
+
+@pytest.mark.asyncio
+async def test_is_linked_false_when_cert_missing(tmp_path):
+    globus_dir = tmp_path / "auser" / ".globus"
+    globus_dir.mkdir(parents=True)
+    (globus_dir / "userkey.pem").write_text("key")
+    # usercert.pem intentionally absent.
+
+    provider = X509Provider(
+        settings=SimpleNamespace(home_root=str(tmp_path)), cache=CredentialCache()
+    )
+
+    assert await provider.is_linked(_principal("auser")) is False
+
+
+@pytest.mark.asyncio
+async def test_is_linked_false_when_neither_present(tmp_path):
+    provider = X509Provider(
+        settings=SimpleNamespace(home_root=str(tmp_path)), cache=CredentialCache()
+    )
+
+    assert await provider.is_linked(_principal("nosuchuser")) is False

@@ -86,6 +86,20 @@ class CredentialProvider(ABC):
         """Return True if this provider can issue credentials for *target*."""
 
     @abstractmethod
+    async def is_linked(self, principal: Principal) -> bool:
+        """Whether this principal has completed the external-identity linkage
+        this provider needs to mint a credential. Called BEFORE `issue()` to
+        surface a clean 404/403 instead of an opaque failure inside `issue()`.
+        Each provider owns the concrete check appropriate to its storage
+        backend — Keycloak federated_identity for OIDC providers, filesystem
+        presence for x509, KV lookup for future providers, etc.
+
+        This is an authoritative check, not a hint: callers gate on it before
+        ever calling `issue()`, so a False here must mean the credential
+        genuinely cannot be minted yet, not merely "we didn't check."
+        """
+
+    @abstractmethod
     async def issue(
         self,
         principal: Principal,

@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import time
 import uuid
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar
 
+import httpx
 import structlog
 from fastapi import HTTPException
 
@@ -26,6 +28,21 @@ log = structlog.get_logger(__name__)
 
 # Targets served by the OIDC provider — config-overridable at construction time
 _DEFAULT_OIDC_TARGETS: frozenset[str] = frozenset({"rucio", "opendata", "af-internal"})
+
+# is_linked() probes Keycloak's stored-brokered-token endpoint, which is a
+# real network round-trip; cache the result per uid for this many seconds so
+# a burst of calls for the same user (e.g. the aggregator checking several
+# tool calls in quick succession) costs one Keycloak request rather than one
+# per call. 60s is a defensible middle ground: short enough that a user who
+# just completed the linking flow sees it reflected almost immediately, long
+# enough to absorb realistic call bursts without hammering Keycloak.
+_LINK_CACHE_TTL_SECONDS = 60
+
+
+@dataclass
+class _LinkStatus:
+    linked: bool
+    checked_at: float  # time.monotonic()
 
 
 class OIDCProvider(CredentialProvider):
@@ -61,10 +78,54 @@ class OIDCProvider(CredentialProvider):
         self._settings = settings
         self._cache = cache
         self._targets = targets
+        self._link_cache: dict[int, _LinkStatus] = {}
         self._log = structlog.get_logger(__name__).bind(provider="OIDCProvider")
 
     async def handles(self, target: str) -> bool:
         return target in self._targets
+
+    async def is_linked(self, principal: Principal) -> bool:
+        """Return True if Keycloak holds a brokered ATLAS IAM token for *principal*.
+
+        Probes ``GET {oidc_issuer}/broker/{oidc_idp_alias}/token`` with the
+        principal's own bearer token: HTTP 200 means Keycloak has a stored
+        brokered token (the user completed IdP linking). Any other outcome —
+        a 4xx/5xx response or an unreachable Keycloak — is treated as "not
+        linked", since a credential broker should fail closed rather than
+        assume linkage it cannot verify. Results are cached per uid for
+        ``_LINK_CACHE_TTL_SECONDS`` seconds (see module docstring comment).
+        """
+        now = time.monotonic()
+        cached = self._link_cache.get(principal.uid)
+        if cached is not None and (now - cached.checked_at) <= _LINK_CACHE_TTL_SECONDS:
+            return cached.linked
+
+        linked = await self._probe_linked(principal)
+        self._link_cache[principal.uid] = _LinkStatus(linked=linked, checked_at=now)
+        return linked
+
+    async def _probe_linked(self, principal: Principal) -> bool:
+        broker_token_url = (
+            f"{self._settings.oidc_issuer.rstrip('/')}"
+            f"/broker/{self._settings.oidc_idp_alias}/token"
+        )
+        headers = {"Authorization": f"Bearer {principal.raw_token.get_secret_value()}"}
+        try:
+            resp = await get_http_client().head(
+                broker_token_url, headers=headers, timeout=10.0
+            )
+            if resp.status_code == 405:
+                # Some Keycloak versions don't allow HEAD on this endpoint —
+                # fall back to a minimal GET and discard the body.
+                resp = await get_http_client().get(
+                    broker_token_url, headers=headers, timeout=10.0
+                )
+        except httpx.HTTPError as exc:
+            self._log.warning(
+                "oidc.is_linked.probe_failed", uid=principal.uid, error=str(exc)
+            )
+            return False
+        return resp.status_code == 200
 
     async def issue(
         self,
