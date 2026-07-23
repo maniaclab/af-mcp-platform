@@ -89,12 +89,19 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         entitlement_policy = EntitlementPolicy()
 
     # --- Backend registry (config-only; adding a backend needs no code change).
+    # backends_loaded means "backends.yaml parsed without error" — an empty
+    # `backends: []` is a valid, successfully-parsed degraded state (issue #29);
+    # it is only False when the file is missing or fails to parse.
     backend_registry = BackendRegistry()
     try:
         backend_registry.load(settings.backends_file)
+        backends_loaded = True
     except FileNotFoundError:
         logger.warning("backends_file_not_found", path=settings.backends_file)
+        backends_loaded = False
     backends = backend_registry.all_backends()
+    if not backends:
+        logger.warning("no_backends_configured")
 
     # --- Credential subsystem: cache + janitor + provider registry.
     credential_cache = CredentialCache(
@@ -142,7 +149,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     application.state.entitlement_policy = entitlement_policy
     application.state.backend_registry = backend_registry
     application.state.backends = backends
-    application.state.backends_loaded = bool(backends)
+    application.state.backends_loaded = backends_loaded
     application.state.credential_cache = credential_cache
     application.state.credential_registry = credential_registry
     application.state.x509_provider = x509_provider
