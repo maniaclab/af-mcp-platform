@@ -17,6 +17,7 @@ from pydantic import ValidationError
 
 from af_mcp_broker._version import version as __version__
 from af_mcp_broker.api.router import router as v1_router
+from af_mcp_broker.api.tokens import TokenRegistry
 from af_mcp_broker.audit.logger import init_audit_logger
 from af_mcp_broker.authorization import EntitlementPolicy, load_policy
 from af_mcp_broker.config import Settings
@@ -123,6 +124,11 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     audit_output = _open_audit_output(settings.audit_log_file)
     init_audit_logger(audit_output)
 
+    # --- Tokens: process-local bookkeeping for manually-minted bearers
+    # (POST/GET/DELETE /v1/tokens, issue #24). Fresh on every restart — see
+    # TokenRegistry's docstring for why that's fine.
+    token_registry = TokenRegistry()
+
     # --- Metrics: /metrics lives on its own port (chart NetworkPolicy allows
     # Prometheus only there), served by prometheus_client's thread so the
     # single uvicorn worker owns the process-wide registry.
@@ -147,6 +153,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     application.state.credential_registry = credential_registry
     application.state.x509_provider = x509_provider
     application.state.x509_targets = x509_targets
+    application.state.token_registry = token_registry
 
     # Prime the JWKS cache at startup so the first request does not pay the
     # latency cost of a remote fetch.

@@ -81,6 +81,18 @@ portal — the Vue islands now render with the dev principal.
 > `.test`). The env var is never set by the Helm chart, containers, or
 > CI — it exists exclusively for a developer machine.
 
+### Testing the manual `/tokens` flow locally
+
+The portal's `/tokens` page (issue #24) mints a static Bearer via Keycloak
+RFC 8693 token exchange, which needs a confidential client's credentials —
+set `TOKEN_MINT_CLIENT_ID` / `TOKEN_MINT_CLIENT_SECRET` before starting the
+broker, or POST/GET `/v1/tokens` will 503 with a message saying so. Under the
+`bypass` environment every `keycloak_dependency` call already returns the dev
+principal without touching Keycloak, but minting still calls the real
+`KEYCLOAK_ISSUER`'s token endpoint — point that at a real (or locally-run)
+Keycloak realm if you want to exercise the mint/list/revoke round trip rather
+than just the 503 branch.
+
 ### Alternative: inject a real token from a live deployment
 
 If you'd rather not run the bypass, copy a real bearer from a deployed

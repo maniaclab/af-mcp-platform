@@ -177,6 +177,51 @@ export async function revokeProxy(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Tokens — POST/GET/DELETE /v1/tokens (manual Bearer bootstrap, issue #24)
+// ---------------------------------------------------------------------------
+
+/** Where a listed token came from. Today the broker only ever reports
+ * `manual` — see docs/auth.md for why auto-flow tokens aren't listed yet. */
+export type TokenSource = 'manual' | 'mcp-oauth' | 'oauth2-proxy';
+
+/** POST /v1/tokens response. `token` is present ONLY here — the broker never
+ * returns a previously-minted token's value again. */
+export interface MintedToken {
+  token: string;
+  jti: string;
+  issued_at: string;
+  expires_at: string;
+  note?: string | null;
+}
+
+/** GET /v1/tokens row — no `token` field, by design. */
+export interface TokenSummary {
+  jti: string;
+  issued_at: string;
+  expires_at: string;
+  source: TokenSource;
+  note?: string | null;
+  last_used_at?: string | null;
+}
+
+export async function mintToken(ttlSeconds: number, note?: string): Promise<MintedToken> {
+  return apiFetch<MintedToken>('/tokens', {
+    method: 'POST',
+    body: JSON.stringify({ ttl_seconds: ttlSeconds, ...(note ? { note } : {}) }),
+  });
+}
+
+export async function listTokens(): Promise<TokenSummary[]> {
+  return apiFetch<TokenSummary[]>('/tokens');
+}
+
+export async function revokeToken(jti: string): Promise<void> {
+  await apiFetch<{ jti: string; revoked: boolean }>(`/tokens/${encodeURIComponent(jti)}`, {
+    method: 'DELETE',
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Dashboard summary (parallel fetch helper for the landing page)
 // ---------------------------------------------------------------------------
 
