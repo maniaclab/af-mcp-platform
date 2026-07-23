@@ -155,7 +155,7 @@ Key endpoints:
 | `POST` | `/v1/x509/proxy` | Mint and cache a VOMS proxy (passphrase unlock) |
 | `GET` | `/v1/x509/proxy/status` | Proxy cache status |
 | `GET` | `/v1/healthz` | Liveness probe |
-| `GET` | `/v1/readyz` | Readiness probe (JWKS + backends config loaded) |
+| `GET` | `/v1/readyz` | Readiness probe (gated on JWKS reachability only; backends config is reported informationally) |
 
 Tool execution itself flows through the MCP mount (`/mcp`); the aggregator
 authorizes and fetches credentials by calling `/v1/authorize` and

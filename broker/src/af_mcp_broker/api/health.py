@@ -26,6 +26,7 @@ class ReadinessResponse(BaseModel):
     status: str
     jwks_reachable: bool
     backends_loaded: bool
+    backends_count: int
 
 
 @router.get(
@@ -47,7 +48,13 @@ async def readyz(
     request: Request,
     response: Response,
 ) -> ReadinessResponse:
-    """Returns 200 when both JWKS and backends config are available."""
+    """Returns 200 as long as JWKS is reachable.
+
+    An empty backend list is a valid degraded state — /v1/identities,
+    /v1/capabilities, and /v1/x509/proxy don't need any backend configured
+    (issue #29) — so backends_loaded/backends_count are informational only
+    and never gate the HTTP status.
+    """
     settings: Settings = (
         cast("Settings", getattr(request.app.state, "settings", None)) or Settings()
     )
@@ -59,15 +66,18 @@ async def readyz(
     except Exception:  # noqa: BLE001  # readiness probe: broad catch is intentional
         logger.warning("readyz_jwks_check_failed")
 
-    # backends_loaded is set on app.state during the lifespan startup handler.
+    # backends_loaded/backends are set on app.state during the lifespan
+    # startup handler. backends_loaded reflects whether backends.yaml parsed
+    # without error, not whether any backend is configured.
     backends_ok: bool = getattr(request.app.state, "backends_loaded", False)
+    backends_count: int = len(getattr(request.app.state, "backends", []))
 
-    all_ready = jwks_ok and backends_ok
-    if not all_ready:
+    if not jwks_ok:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
 
     return ReadinessResponse(
-        status="ready" if all_ready else "not_ready",
+        status="ready" if jwks_ok else "not_ready",
         jwks_reachable=jwks_ok,
         backends_loaded=backends_ok,
+        backends_count=backends_count,
     )
