@@ -1,0 +1,48 @@
+{{- if .Values.ingress.enabled }}
+# This Ingress deliberately carries NO oauth2-proxy annotations. The broker
+# owns JWT validation for mcpHost (see identity.py's keycloak_dependency) —
+# routing mcpHost through the shared oauth2-proxy ForwardAuth gate would 302
+# every Bearer request instead of passing it through, because oauth2-proxy's
+# keycloak-oidc provider validates `aud` against its own client_id, which
+# doesn't match the broker's expected audience. Verified live in #26;
+# analysis and settled architecture in #42.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "af-mcp-platform.fullname" . }}-mcp
+  labels:
+    {{- include "af-mcp-platform.labels" . | nindent 4 }}
+  annotations:
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className | quote }}
+  {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.mcpHost | quote }}
+      secretName: {{ .Values.ingress.tls.mcpSecretName | quote }}
+  {{- end }}
+  rules:
+    # Broker host — routes /v1 (REST API) and /mcp (FastMCP aggregator)
+    - host: {{ .Values.ingress.mcpHost | quote }}
+      http:
+        paths:
+          - path: /v1
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "af-mcp-platform.broker.fullname" . }}
+                port:
+                  name: http
+          - path: /mcp
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "af-mcp-platform.broker.fullname" . }}
+                port:
+                  name: http
+{{- end }}

@@ -1,8 +1,14 @@
 {{- if .Values.ingress.enabled }}
+# This Ingress carries oauth2-proxy annotations because portalHost serves
+# browser-facing HTML and needs the ForwardAuth session gate. The /v1 and
+# /mcp routes on this host currently 401 for programmatic callers — that's
+# expected until Phase B (portal OIDC, see #42) lands; the portal's own JS
+# is what actually needs those routes today, and it runs inside the
+# already-authenticated browser session.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "af-mcp-platform.fullname" . }}
+  name: {{ include "af-mcp-platform.fullname" . }}-portal
   labels:
     {{- include "af-mcp-platform.labels" . | nindent 4 }}
   annotations:
@@ -25,31 +31,10 @@ spec:
   {{- if .Values.ingress.tls.enabled }}
   tls:
     - hosts:
-        - {{ .Values.ingress.mcpHost | quote }}
-      secretName: {{ .Values.ingress.tls.mcpSecretName | quote }}
-    - hosts:
         - {{ .Values.ingress.portalHost | quote }}
       secretName: {{ .Values.ingress.tls.portalSecretName | quote }}
   {{- end }}
   rules:
-    # Broker host — routes /v1 (REST API) and /mcp (FastMCP aggregator)
-    - host: {{ .Values.ingress.mcpHost | quote }}
-      http:
-        paths:
-          - path: /v1
-            pathType: Prefix
-            backend:
-              service:
-                name: {{ include "af-mcp-platform.broker.fullname" . }}
-                port:
-                  name: http
-          - path: /mcp
-            pathType: Prefix
-            backend:
-              service:
-                name: {{ include "af-mcp-platform.broker.fullname" . }}
-                port:
-                  name: http
     # Portal host — the Astro build is a static site, and its API client fetches
     # /v1/* same-origin (see portal/src/lib/api.ts). Without these two paths,
     # those requests fall through to nginx's SPA try_files fallback and get
