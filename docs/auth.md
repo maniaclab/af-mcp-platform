@@ -129,3 +129,24 @@ target_capabilities:
 Keycloak group membership is resolved once per request from the validated
 token's `groups` claim. There is no group-membership cache in the broker —
 Keycloak is the authoritative source.
+
+---
+
+## Auth-edge decision
+
+#26 found the shared oauth2-proxy (`provider = "keycloak-oidc"`, v7.6.0)
+validates a Bearer's `aud` claim against its own `client_id`, not the
+broker's audience — so mcpHost's ForwardAuth gate 302'd every Bearer
+request, including Claude Desktop's, instead of letting it reach the
+broker's own JWT validator:
+
+```
+$ curl -sS -o /dev/null -w "HTTP %{http_code}\nLocation: %{redirect_url}\n" https://mcp.af.uchicago.edu/mcp/
+HTTP 302
+Location: https://oauth2-proxy.af.uchicago.edu/oauth2/sign_in?rd=%2Fmcp%2F
+```
+
+Phase A (`ingress-mcp.yaml` / `ingress-portal.yaml` split) removes the
+oauth2-proxy annotations from mcpHost so the broker validates Bearers
+itself. portalHost is unaffected and still 401s on `/v1/*` until the portal
+becomes its own OAuth client — see #42 for the full follow-through.
