@@ -279,8 +279,78 @@ const appVersion = import.meta.env.PUBLIC_APP_VERSION || 'dev';
         }
       }
     </style>
+
+    <!--
+    is:inline keeps this literally inline in the HTML instead of Astro
+    bundling it into the external, hashed stylesheet (which is where the two
+    <style> blocks above end up — check dist/*.html after a build if that's
+    surprising). The auth-init script below can remove #af-auth-splash before
+    that external stylesheet's <link> has even started fetching, so this
+    block's rules need to be present the instant the element is parsed.
+  -->
+    <style is:inline>
+      .af-auth-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--color-af-void);
+      }
+
+      .af-auth-splash__inner {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 1rem;
+      }
+
+      .af-auth-splash__spinner {
+        width: 28px;
+        height: 28px;
+        border: 3px solid var(--color-af-border);
+        border-top-color: var(--color-af-teal);
+        border-radius: 50%;
+        animation: af-auth-splash-spin 600ms linear infinite;
+      }
+
+      .af-auth-splash__inner p {
+        margin: 0;
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 0.8125rem;
+        color: var(--color-af-dim);
+        letter-spacing: 0.04em;
+      }
+
+      @keyframes af-auth-splash-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .af-auth-splash__spinner {
+          animation: none;
+          border-top-color: var(--color-af-dim);
+        }
+      }
+    </style>
   </head>
   <body class="h-full">
+    {
+      // /callback runs its own OIDC exchange (see pages/callback.astro) and
+      // has its own "Completing sign-in…" status UI — don't double it up.
+      currentPath !== '/callback' && (
+        <div id="af-auth-splash" role="status" aria-live="polite">
+          <div class="af-auth-splash__inner">
+            <div class="af-auth-splash__spinner" aria-hidden="true" />
+            <p>Signing in…</p>
+          </div>
+        </div>
+      )
+    }
+
     <a href="#main-content" class="skip-link">Skip to content</a>
 
     <nav class="af-nav" aria-label="Primary navigation">
@@ -340,18 +410,44 @@ const appVersion = import.meta.env.PUBLIC_APP_VERSION || 'dev';
   -->
     <script>
       import { fetchIdentities } from '../lib/api';
-      import { getUser, login } from '../lib/auth';
+      import { getUser, isOidcConfigured, login } from '../lib/auth';
 
       (async () => {
-        const user = await getUser();
-        if (!user) {
-          // Don't redirect while /callback's own exchange is in flight —
-          // that page runs the OIDC handshake itself and lands the user back
-          // wherever they started once it completes (see pages/callback.astro).
-          const path = window.location.pathname.replace(/\/$/, '') || '/';
-          if (path !== '/callback') {
-            await login();
+        const splash = document.getElementById('af-auth-splash');
+
+        try {
+          const user = await getUser();
+          if (!user) {
+            // Don't redirect while /callback's own exchange is in flight —
+            // that page runs the OIDC handshake itself and lands the user back
+            // wherever they started once it completes (see pages/callback.astro).
+            const path = window.location.pathname.replace(/\/$/, '') || '/';
+            if (path !== '/callback') {
+              if (await isOidcConfigured()) {
+                // Leave the splash up — login() replaces this page with
+                // Keycloak's redirect, so the last thing visible is the
+                // splash rather than a flash of portal chrome.
+                await login();
+              } else {
+                // Dev-bypass mode: no Keycloak in the loop to redirect to —
+                // render the page unauthenticated.
+                splash?.remove();
+              }
+            }
+            return;
           }
+
+          splash?.remove();
+        } catch (err) {
+          // getUser()/isOidcConfigured() already swallow config-load and
+          // token errors internally (see ../lib/auth), but guard against
+          // anything else throwing — render unauthenticated rather than
+          // trap the user behind a permanent splash.
+          console.warn(
+            '[auth] session check failed unexpectedly — rendering unauthenticated.',
+            err,
+          );
+          splash?.remove();
           return;
         }
 
