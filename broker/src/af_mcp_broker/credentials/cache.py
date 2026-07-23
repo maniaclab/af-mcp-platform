@@ -23,7 +23,17 @@ _DEFAULT_TTL_SECONDS = 3600
 
 
 class RateLimitError(Exception):
-    """Raised when a principal exceeds the allowed number of failed cache lookups."""
+    """Raised when a principal exceeds the allowed number of failed cache lookups.
+
+    *retry_after_seconds* is how long until the current fixed window closes
+    and the uid is allowed to try again — ``max(0, window_start +
+    unlock_window_seconds - now)``. The API layer's exception handler formats
+    this into a ``Retry-After`` header and JSON body (see ``app.py``).
+    """
+
+    def __init__(self, message: str, *, retry_after_seconds: int) -> None:
+        super().__init__(message)
+        self.retry_after_seconds = retry_after_seconds
 
 
 @dataclass
@@ -240,12 +250,13 @@ class CredentialCache:
             window_seconds=self._unlock_window_seconds,
         )
         if record.attempts > self._max_failed_unlocks:
-            remaining_window = int(
-                self._unlock_window_seconds - (now - record.window_start)
+            remaining_window = max(
+                0, int(self._unlock_window_seconds - (now - record.window_start))
             )
             raise RateLimitError(
                 f"Too many failed cache lookups for uid={uid}. "
-                f"Try again in {remaining_window}s."
+                f"Try again in {remaining_window}s.",
+                retry_after_seconds=remaining_window,
             )
 
     def record_failed_unlock(self, uid: int) -> None:
@@ -272,12 +283,13 @@ class CredentialCache:
             self._failed_unlocks[uid] = _FailedUnlockRecord()
             return
         if record.attempts > self._max_failed_unlocks:
-            remaining_window = int(
-                self._unlock_window_seconds - (now - record.window_start)
+            remaining_window = max(
+                0, int(self._unlock_window_seconds - (now - record.window_start))
             )
             raise RateLimitError(
                 f"Too many failed passphrase attempts for uid={uid}. "
-                f"Try again in {remaining_window}s."
+                f"Try again in {remaining_window}s.",
+                retry_after_seconds=remaining_window,
             )
 
     # ------------------------------------------------------------------

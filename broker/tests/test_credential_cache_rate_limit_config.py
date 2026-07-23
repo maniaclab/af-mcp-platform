@@ -78,3 +78,34 @@ async def test_cache_defaults_unchanged():
 
     with pytest.raises(RateLimitError):
         await cache.get(uid, TARGET)
+
+
+async def test_rate_limit_error_carries_retry_after_seconds():
+    """``RateLimitError.retry_after_seconds`` reflects the fixed window's
+    remaining time (issue #25) when tripped via a cache miss (``get()``)."""
+    cache = CredentialCache(max_failed_unlocks=2, unlock_window_seconds=60)
+    uid = 99_999
+
+    for _ in range(2):
+        await cache.get(uid, TARGET)
+
+    with pytest.raises(RateLimitError) as excinfo:
+        await cache.get(uid, TARGET)
+
+    assert 0 <= excinfo.value.retry_after_seconds <= 60
+
+
+def test_check_unlock_rate_limit_carries_retry_after_seconds():
+    """Same ``retry_after_seconds`` contract on the ``check_unlock_rate_limit``
+    raise site (the guard called before minting, x509.py:279)."""
+    cache = CredentialCache(max_failed_unlocks=1, unlock_window_seconds=30)
+    uid = 88_888
+
+    cache.record_failed_unlock(uid)  # 1st failure: attempts == limit, no raise
+    with pytest.raises(RateLimitError):
+        cache.record_failed_unlock(uid)  # 2nd failure: trips the limiter
+
+    with pytest.raises(RateLimitError) as excinfo:
+        cache.check_unlock_rate_limit(uid)  # already-tripped guard
+
+    assert 0 <= excinfo.value.retry_after_seconds <= 30
