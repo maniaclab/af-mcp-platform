@@ -59,6 +59,21 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # `/v1/*` and `/mcp/*` are reserved for the broker on the portal host
+      # (see docs/architecture.md "Reserved paths on the portal host"). A page
+      # under those prefixes would be silently shadowed by the ingress
+      # rewrite. Fail fast rather than let it merge.
+      - name: Guard reserved portal paths
+        working-directory: portal/src/pages
+        run: |
+          hits=$(find . -mindepth 1 \( -name 'v1' -o -name 'mcp' -o -name 'v1.*' -o -name 'mcp.*' \) \
+                 -o -path './v1/*' -o -path './mcp/*' 2>/dev/null || true)
+          if [ -n "$hits" ]; then
+            echo "::error::Portal page routes must not start with /v1/ or /mcp/ (reserved for broker on portalHost)."
+            echo "$hits"
+            exit 1
+          fi
+
       - uses: prefix-dev/setup-pixi@v0.10.0
         with:
           pixi-version: v0.72.1
