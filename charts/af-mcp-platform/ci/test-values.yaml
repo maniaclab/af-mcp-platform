@@ -1,8 +1,8 @@
 # Values chart-testing's `ct lint` (see .github/workflows/chart-lint.yaml)
 # renders the chart with, so the `required` OIDC/broker-origin fields in
 # values.yaml (which have no safe cross-institution default) don't fail CI.
-# These are placeholder example.com values, not a real deployment — the AF
-# values live in Giordon's separate flux_apps HelmRelease, not this repo.
+# These are placeholder example.com values, not a real deployment — actual
+# values are provided by the operator's HelmRelease overlay, not this chart.
 portal:
   oidc:
     issuer: "https://keycloak.example.com/realms/example"
