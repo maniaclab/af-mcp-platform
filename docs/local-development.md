@@ -115,8 +115,7 @@ locally (never commit real values):
 ```
 
 `http://localhost:4321/callback` is already a registered redirect URI on the
-`mcp-portal` client (see #42), so this works without any Keycloak-side
-changes. You'll still need a broker that accepts the resulting token —
+`mcp-portal` client, so this works without any Keycloak-side changes. You'll still need a broker that accepts the resulting token —
 either a real `KEYCLOAK_ISSUER`/`KEYCLOAK_AUDIENCE` pointed at the same
 realm, or continue using the bypass broker (it ignores the Bearer either
 way, so this is only useful for exercising the portal's own OIDC code path,

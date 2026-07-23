@@ -13,8 +13,8 @@ Two distinct client identities obtain tokens for the same audience
 
 ```
 mcp-portal              MCP-client identities
-(portal SPA;        (Claude Desktop et al. — placeholder
- Code+PKCE, #42)      until #24 registers one; not yet landed)
+(portal SPA;        (Claude Desktop et al. — placeholder for
+ Code+PKCE)           a future MCP-client identity; not yet implemented)
      │                          │
      └──────────┬───────────────┘
                  ▼
@@ -50,7 +50,7 @@ or `/mcp/*` on either host (`ingress-mcp.yaml` for mcpHost,
 `ingress-portal-api.yaml` for portalHost). Every caller obtains its own
 `aud=mcp-gateway` token and presents it directly; the broker's validator is
 identical regardless of which client identity issued the token. See
-[docs/auth.md](auth.md) and #42 for the full design record.
+[docs/auth.md](auth.md) for the full design record.
 
 ---
 

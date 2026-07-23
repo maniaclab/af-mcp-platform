@@ -53,7 +53,7 @@ Every caller — the portal SPA in your browser, or an MCP client like Claude De
 - The broker's `HTTPBearer` dependency validates every request directly against the connect-realm JWKS — it's the sole validator, on both `mcp.af.uchicago.edu` and `mcp-portal.af.uchicago.edu`. There's no ForwardAuth proxy in the `/v1` or `/mcp` path on either host.
 - oauth2-proxy still gates the portal's HTML for browser single sign-on across `.af.uchicago.edu`, but never sees or forwards the broker's own bearer tokens.
 - Once validated, the broker resolves your POSIX identity and brokers per-user credentials (ATLAS IAM token, x509/VOMS proxy) to whichever backend the tool call targets. **Your MCP client never sees those brokered credentials.**
-- **Current limitation:** MCP OAuth discovery isn't implemented yet, so a programmatic client needs another way to bootstrap its first bearer token. Issue #24 tracks a portal `/tokens` page for this (on hold pending #2's OpenBao design).
+- **Current limitation:** MCP OAuth discovery isn't implemented yet, so a programmatic client needs another way to bootstrap its first bearer token. A portal `/tokens` page for this is planned but not yet implemented, pending a separate credential-storage design decision.
 
 For the full credential chain — Keycloak, the broker's token validation, brokered ATLAS IAM tokens, and x509 proxy minting — see [docs/auth.md](docs/auth.md).
 

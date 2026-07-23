@@ -8,8 +8,7 @@ audience (`mcp-gateway`) and sends it as a Bearer directly. The broker
 validates it itself (`HTTPBearer` + `keycloak_dependency` in `identity.py`);
 there is no ForwardAuth proxy in this path. oauth2-proxy still exists in
 front of the portal, but only to gate the portal's HTML/static assets — see
-[Portal auth](#portal-auth-oidc-public-client) below and #42 for the full
-design record.
+[Portal auth](#portal-auth-oidc-public-client) below.
 
 ```
 ATLAS AF User
@@ -59,8 +58,8 @@ The portal (`mcp-portal.af.uchicago.edu`) is a static Astro/Vue SPA — there's
 no server-side session to hold a token, so it becomes its own OAuth 2.0
 **public client** (`mcp-portal`) and runs Authorization Code + PKCE against
 the `connect` realm itself, the same way any other caller of the broker does
-(see [Full Auth Chain](#full-auth-chain) above). This is Phase B of #42;
-Phase A (mcpHost bypassing oauth2-proxy for Claude Desktop) landed in #43.
+(see [Full Auth Chain](#full-auth-chain) above). This is Phase B; Phase A
+(mcpHost bypassing oauth2-proxy for Claude Desktop) is in place.
 
 ```
 Browser (portal SPA)
@@ -95,9 +94,9 @@ Key points:
   *client* that runs the code+PKCE flow; `mcp-gateway` is the *audience*
   the broker's `KEYCLOAK_AUDIENCE` expects in the token — configured via a
   Keycloak client scope with an Audience mapper, assigned as a default scope
-  on `mcp-portal` (and on any future MCP-client identity, e.g. #24's
-  `claude-desktop`). Different clients, same audience — that's what lets the
-  broker's validator stay identical for every caller.
+  on `mcp-portal` (and on any future MCP-client identity, e.g. a
+  `claude-desktop` client). Different clients, same audience — that's what
+  lets the broker's validator stay identical for every caller.
 - **Token storage: `sessionStorage`, not `localStorage`.** Confines a token
   stolen via XSS to the tab's lifetime rather than indefinitely across tabs
   and browser restarts, at the cost of losing the session on tab close (a
@@ -105,8 +104,7 @@ Key points:
   portal's XSS surface is bounded: it renders only build-time constants and
   Vue-escaped typed broker responses, under the CSP in
   `portal/nginx.conf.template`. See the top-of-file comment in
-  `portal/src/lib/auth.ts` for the full tradeoff writeup, and #42 for the
-  decision record.
+  `portal/src/lib/auth.ts` for the full tradeoff writeup.
 - **Refresh tokens, not re-login.** Keycloak's Standard flow issues a
   refresh token alongside the access token; `oidc-client-ts`'s
   `signinSilent()` uses it via the refresh_token grant (a plain `fetch()` to
@@ -187,7 +185,7 @@ credential. Operators must ensure that:
 | Credential type | Typical lifetime | Refresh strategy |
 |---|---|---|
 | AF access token (portal SPA) | 5 minutes | `oidc-client-ts` silent renew via refresh_token grant (see [Portal auth](#portal-auth-oidc-public-client)) |
-| AF access token (other MCP clients) | 5 minutes | Client-specific — e.g. Claude Desktop's own OAuth flow (#24, not yet landed) |
+| AF access token (other MCP clients) | 5 minutes | Client-specific — e.g. Claude Desktop's own OAuth flow (not yet implemented) |
 | ATLAS IAM token (brokered) | 1 hour | Broker re-fetches from Keycloak on cache miss |
 | x509 VOMS proxy | 12–96 hours (configurable) | Re-mint Job triggered when cache entry expires |
 
@@ -225,11 +223,11 @@ Keycloak is the authoritative source.
 
 ## Auth-edge decision
 
-#26 found the shared oauth2-proxy (`provider = "keycloak-oidc"`, v7.6.0)
-validates a Bearer's `aud` claim against its own `client_id`, not the
-broker's audience — so mcpHost's ForwardAuth gate 302'd every Bearer
-request, including Claude Desktop's, instead of letting it reach the
-broker's own JWT validator:
+The shared oauth2-proxy (`provider = "keycloak-oidc"`, v7.6.0) validates a
+Bearer's `aud` claim against its own `client_id`, not the broker's
+audience — so mcpHost's ForwardAuth gate 302'd every Bearer request,
+including Claude Desktop's, instead of letting it reach the broker's own
+JWT validator:
 
 ```
 $ curl -sS -o /dev/null -w "HTTP %{http_code}\nLocation: %{redirect_url}\n" https://mcp.af.uchicago.edu/mcp/
@@ -237,10 +235,10 @@ HTTP 302
 Location: https://oauth2-proxy.af.uchicago.edu/oauth2/sign_in?rd=%2Fmcp%2F
 ```
 
-Phase A (`ingress-mcp.yaml` / `ingress-portal.yaml` split, #43) removed the
+Phase A (`ingress-mcp.yaml` / `ingress-portal.yaml` split) removed the
 oauth2-proxy annotations from mcpHost so the broker validates Bearers
 itself there. Phase B (this doc's [Portal auth](#portal-auth-oidc-public-client)
-section, #42) carries the same fix to portalHost: `/v1` and `/mcp` move to a
+section) carries the same fix to portalHost: `/v1` and `/mcp` move to a
 separate `ingress-portal-api.yaml` with no oauth2-proxy annotations, and the
 portal SPA obtains its own `aud=mcp-gateway` Bearer instead of relying on a
 cookie oauth2-proxy never actually forwarded as a header anyway. oauth2-proxy
