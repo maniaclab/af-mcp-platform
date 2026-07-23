@@ -27,7 +27,8 @@ spec:
       secretName: {{ .Values.ingress.tls.mcpSecretName | quote }}
   {{- end }}
   rules:
-    # Broker host — routes /v1 (REST API) and /mcp (FastMCP aggregator)
+    # Broker host — routes /v1 (REST API), /mcp (FastMCP aggregator), and
+    # /.well-known/cimd (Client ID Metadata Document, public, unauthenticated)
     - host: {{ .Values.ingress.mcpHost | quote }}
       http:
         paths:
@@ -40,6 +41,13 @@ spec:
                   name: http
           - path: /mcp
             pathType: Prefix
+            backend:
+              service:
+                name: {{ include "af-mcp-platform.broker.fullname" . }}
+                port:
+                  name: http
+          - path: /.well-known/cimd
+            pathType: Exact
             backend:
               service:
                 name: {{ include "af-mcp-platform.broker.fullname" . }}
