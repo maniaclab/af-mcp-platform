@@ -20,13 +20,17 @@ jobs:
 
       - uses: helm/chart-testing-action@v2.8.0
 
+      # portal.oidc.* and portal.brokerOrigin are `required` (no safe
+      # cross-institution default, see values.yaml) — ci/test-values.yaml
+      # supplies placeholder values so lint/template can render.
       - name: helm lint
-        run: helm lint charts/af-mcp-platform
+        run: helm lint charts/af-mcp-platform -f charts/af-mcp-platform/ci/test-values.yaml
 
       - name: helm template (dry-run)
         run: |
           helm template af-mcp-platform charts/af-mcp-platform \
             --debug \
+            -f charts/af-mcp-platform/ci/test-values.yaml \
             --set image.broker.tag=sha-test \
             --set image.portal.tag=sha-test
 

@@ -1,0 +1,124 @@
+---
+/**
+ * callback.astro — OIDC Authorization Code redirect target.
+ *
+ * Keycloak redirects here with `?code=&state=` after the user (silently or
+ * interactively) authenticates. handleCallback() (see ../lib/auth) exchanges
+ * the code for tokens and returns the path the user started from; on success
+ * we replace the current entry with that path so the callback URL never ends
+ * up in browser history. On failure (state mismatch, a 4xx from the token
+ * endpoint, a network error) we render an inline error with a link back to
+ * `/`, which re-initiates the flow from scratch via Base.astro's own
+ * getUser()-or-login() check.
+ *
+ * Rendered inside Base so the shared nav/footer chrome is consistent — Base's
+ * inline script special-cases this path (see layouts/Base.astro) so it
+ * doesn't also try to redirect to Keycloak while this exchange is in flight.
+ */
+import Base from '../layouts/Base.astro';
+---
+
+<Base title="Signing in">
+  <div class="page-header">
+    <h1 class="page-title">Signing in</h1>
+  </div>
+
+  <div id="callback-status" class="cb__status" aria-live="polite">
+    <span class="cb__spinner" aria-hidden="true"></span>
+    <span>Completing sign-in…</span>
+  </div>
+
+  <div id="callback-error" class="cb__error" role="alert" hidden>
+    <span class="cb__error-title">Sign-in failed</span>
+    <span class="cb__error-body">
+      <span id="callback-error-message"></span>
+      <a href="/" class="cb__retry">Try again</a>
+    </span>
+  </div>
+</Base>
+
+<script>
+  import { handleCallback } from '../lib/auth';
+
+  (async () => {
+    const statusEl = document.getElementById('callback-status');
+    const errorEl = document.getElementById('callback-error');
+    const messageEl = document.getElementById('callback-error-message');
+
+    try {
+      const returnUrl = await handleCallback();
+      window.location.replace(returnUrl);
+    } catch (err) {
+      if (statusEl) statusEl.hidden = true;
+      if (errorEl) errorEl.hidden = false;
+      if (messageEl) {
+        messageEl.textContent = err instanceof Error ? err.message : 'Unknown error.';
+      }
+    }
+  })();
+</script>
+
+<style>
+  .page-header {
+    margin-bottom: 1.75rem;
+  }
+
+  .page-title {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 1.5rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    color: var(--color-af-text);
+    margin: 0;
+  }
+
+  .cb__status,
+  .cb__error {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-size: 0.9375rem;
+    color: var(--color-af-dim);
+  }
+
+  .cb__spinner {
+    width: 16px;
+    height: 16px;
+    border: 2px solid var(--color-af-border);
+    border-top-color: var(--color-af-teal);
+    border-radius: 50%;
+    animation: cb-spin 600ms linear infinite;
+  }
+
+  @keyframes cb-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .cb__spinner {
+      animation: none;
+      border-top-color: var(--color-af-dim);
+    }
+  }
+
+  .cb__error {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+
+  .cb__error-title {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--color-af-red);
+  }
+
+  .cb__retry {
+    color: var(--color-af-teal);
+    text-decoration: underline;
+    margin-left: 0.5ch;
+  }
+</style>

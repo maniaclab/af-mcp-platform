@@ -1,10 +1,12 @@
 {{- if .Values.ingress.enabled }}
 # This Ingress carries oauth2-proxy annotations because portalHost serves
-# browser-facing HTML and needs the ForwardAuth session gate. The /v1 and
-# /mcp routes on this host currently 401 for programmatic callers — that's
-# expected until Phase B (portal OIDC, see #42) lands; the portal's own JS
-# is what actually needs those routes today, and it runs inside the
-# already-authenticated browser session.
+# browser-facing HTML and needs the ForwardAuth session gate. It ONLY serves
+# `/` (the portal's static assets) — /v1 and /mcp on this host are routed by
+# ingress-portal-api.yaml instead, deliberately WITHOUT oauth2-proxy in front,
+# because the portal SPA is its own OAuth public client (Authorization Code +
+# PKCE) and sends the broker its own `aud=mcp-gateway` Bearer directly; the
+# broker validates it the same way it validates any other caller's token. See
+# #42 for the full design.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -35,12 +37,9 @@ spec:
       secretName: {{ .Values.ingress.tls.portalSecretName | quote }}
   {{- end }}
   rules:
-    # Portal host — the Astro build is a static site, and its API client fetches
-    # /v1/* same-origin (see portal/src/lib/api.ts). Without these two paths,
-    # those requests fall through to nginx's SPA try_files fallback and get
-    # index.html back instead of JSON. So /v1 and /mcp are routed to the same
-    # broker Service here as on mcpHost, and everything else falls through to
-    # the portal. Longest-prefix matching means /v1/* and /mcp/* win over /.
+    # Portal host — everything falls through to the portal Service here.
+    # ingress-portal-api.yaml routes /v1/* and /mcp/* to the broker on this
+    # same host, ahead of this rule via nginx's longest-prefix matching.
     #
     # IMPORTANT: any new portal page route MUST NOT start with /v1/ or /mcp/ —
     # those prefixes are reserved for the broker and would be silently
@@ -48,20 +47,6 @@ spec:
     - host: {{ .Values.ingress.portalHost | quote }}
       http:
         paths:
-          - path: /v1
-            pathType: Prefix
-            backend:
-              service:
-                name: {{ include "af-mcp-platform.broker.fullname" . }}
-                port:
-                  name: http
-          - path: /mcp
-            pathType: Prefix
-            backend:
-              service:
-                name: {{ include "af-mcp-platform.broker.fullname" . }}
-                port:
-                  name: http
           - path: /
             pathType: Prefix
             backend:

@@ -1,0 +1,43 @@
+# portalHost API paths deliberately bypass oauth2-proxy — the portal SPA
+# obtains its own `aud=mcp-gateway` Bearer via OIDC Code+PKCE against the
+# `connect` realm; broker validates directly. See #42.
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "af-mcp-platform.fullname" . }}-portal-api
+  labels:
+    {{- include "af-mcp-platform.labels" . | nindent 4 }}
+  annotations:
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className | quote }}
+  {{- end }}
+  # No `tls:` block here — nginx-ingress consolidates certs per host across
+  # Ingress objects sharing that host, and ingress-portal.yaml already
+  # declares the TLS secret for portalHost.
+  rules:
+    # Same host as ingress-portal.yaml (portalHost), routing /v1 and /mcp to
+    # the broker Service ahead of that Ingress's `/` catch-all via nginx's
+    # longest-prefix matching.
+    - host: {{ .Values.ingress.portalHost | quote }}
+      http:
+        paths:
+          - path: /v1
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "af-mcp-platform.broker.fullname" . }}
+                port:
+                  name: http
+          - path: /mcp
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "af-mcp-platform.broker.fullname" . }}
+                port:
+                  name: http
+{{- end }}

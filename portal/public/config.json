@@ -1,0 +1,8 @@
+{
+  "oidc": {
+    "issuer": "",
+    "clientId": "",
+    "scope": "openid profile email"
+  },
+  "brokerOrigin": ""
+}

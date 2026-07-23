@@ -4,9 +4,11 @@
  *
  * This is a static build. Identity is NOT read from request headers at render
  * time (those are empty in a static output and embedding a token would be an
- * XSS-exfiltration risk). Instead the nav username — and any element tagged
- * `data-af-identity` — is filled client-side from GET /v1/identities, which
- * rides the same-origin oauth2-proxy session cookie.
+ * XSS-exfiltration risk). Instead, on mount the inline script below checks
+ * for a valid OIDC session (see ../lib/auth) — initiating the Authorization
+ * Code + PKCE redirect if there isn't one — and once authenticated fills the
+ * nav username (and any element tagged `data-af-identity`) from
+ * GET /v1/identities, sent with the session's Bearer token (see ../lib/api).
  */
 import '../styles/global.css';
 
@@ -331,13 +333,28 @@ const appVersion = import.meta.env.PUBLIC_APP_VERSION || 'dev';
     </footer>
 
     <!--
-    Populate every [data-af-identity] element (nav username, hero greeting)
-    from the broker. This is the only identity source in a static build.
+    On mount: ensure an OIDC session exists (redirecting to Keycloak if not),
+    then populate every [data-af-identity] element (nav username, hero
+    greeting) from the broker. This is the only identity source in a static
+    build.
   -->
     <script>
       import { fetchIdentities } from '../lib/api';
+      import { getUser, login } from '../lib/auth';
 
       (async () => {
+        const user = await getUser();
+        if (!user) {
+          // Don't redirect while /callback's own exchange is in flight —
+          // that page runs the OIDC handshake itself and lands the user back
+          // wherever they started once it completes (see pages/callback.astro).
+          const path = window.location.pathname.replace(/\/$/, '') || '/';
+          if (path !== '/callback') {
+            await login();
+          }
+          return;
+        }
+
         try {
           const id = await fetchIdentities();
           const label = id.email || id.unixname;
@@ -349,7 +366,8 @@ const appVersion = import.meta.env.PUBLIC_APP_VERSION || 'dev';
             else el.hidden = false;
           });
         } catch {
-          // Unauthenticated (static preview) or expired session — leave hidden.
+          // Session expired mid-page (broker 401'd after silent renew also
+          // failed) — leave the identity slot hidden rather than looping.
         }
       })();
     </script>

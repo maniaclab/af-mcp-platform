@@ -11,6 +11,9 @@ spec:
       {{- include "af-mcp-platform.portal.selectorLabels" . | nindent 6 }}
   template:
     metadata:
+      annotations:
+        # Trigger rolling update when the runtime OIDC config changes.
+        checksum/config-portal: {{ include (print $.Template.BasePath "/configmap-portal-config.yaml") . | sha256sum }}
       labels:
         {{- include "af-mcp-platform.portal.selectorLabels" . | nindent 8 }}
     spec:
@@ -40,6 +43,19 @@ spec:
             - name: http
               containerPort: 8081
               protocol: TCP
+          env:
+            # nginx.conf.template is rendered by the base image's
+            # docker-entrypoint.d envsubst-on-templates.sh at container start
+            # (writes to /etc/nginx/conf.d/, see the nginx-conf volume below).
+            # NGINX_ENVSUBST_FILTER restricts substitution to just these two
+            # names — without it, envsubst would also try to expand nginx's
+            # own `$uri` in the template and blank it out.
+            - name: NGINX_ENVSUBST_FILTER
+              value: "^(BROKER_ORIGIN|OIDC_ORIGIN)$"
+            - name: BROKER_ORIGIN
+              value: {{ required "portal.brokerOrigin must be set (e.g. via your deploying HelmRelease values)" .Values.portal.brokerOrigin | quote }}
+            - name: OIDC_ORIGIN
+              value: {{ include "af-mcp-platform.portal.oidcOrigin" . | quote }}
           livenessProbe:
             httpGet:
               path: /
@@ -60,15 +76,29 @@ spec:
             {{- toYaml .Values.portal.resources | nindent 12 }}
           volumeMounts:
             # readOnlyRootFilesystem blocks all writes to the image's own
-            # filesystem; nginx needs somewhere to put its pid file (/tmp) and
-            # its temp/cache dirs (/var/cache/nginx) even when serving only
-            # static files.
+            # filesystem; nginx needs somewhere to put its pid file (/tmp),
+            # its temp/cache dirs (/var/cache/nginx), and the config rendered
+            # from nginx.conf.template by envsubst at startup (/etc/nginx/conf.d)
+            # even when serving only static files.
             - name: tmp
               mountPath: /tmp
             - name: nginx-cache
               mountPath: /var/cache/nginx
+            - name: nginx-conf
+              mountPath: /etc/nginx/conf.d
+            # Overlays the build's placeholder portal/public/config.json with
+            # the runtime OIDC config rendered into the ConfigMap above.
+            - name: portal-config
+              mountPath: /usr/share/nginx/html/config.json
+              subPath: config.json
+              readOnly: true
       volumes:
         - name: tmp
           emptyDir: {}
         - name: nginx-cache
           emptyDir: {}
+        - name: nginx-conf
+          emptyDir: {}
+        - name: portal-config
+          configMap:
+            name: {{ include "af-mcp-platform.portal.fullname" . }}-config

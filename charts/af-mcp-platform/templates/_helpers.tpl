@@ -121,3 +121,15 @@ Portal image reference.
 {{- define "af-mcp-platform.portal.image" -}}
 {{- printf "%s/%s:%s" .Values.image.registry .Values.image.portal.repository (.Values.image.portal.tag | default .Chart.AppVersion) }}
 {{- end }}
+
+{{/*
+Origin (scheme + host, no path) of the portal's OIDC issuer — derived rather
+than duplicated in values, so the portal's nginx CSP connect-src always
+matches whatever `portal.oidc.issuer` points at. Used to render the
+OIDC_ORIGIN env var consumed by nginx.conf.template's envsubst.
+*/}}
+{{- define "af-mcp-platform.portal.oidcOrigin" -}}
+{{- $issuer := required "portal.oidc.issuer must be set (e.g. via your deploying HelmRelease values)" .Values.portal.oidc.issuer -}}
+{{- $u := urlParse $issuer -}}
+{{- printf "%s://%s" $u.scheme $u.host -}}
+{{- end }}
