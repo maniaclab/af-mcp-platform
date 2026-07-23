@@ -178,6 +178,16 @@ credential. Operators must ensure that:
    (Keycloak fine-grained authorization, `view-token` scope on the `atlas-oidc`
    identity provider).
 
+The broker itself does not infer linkage from anything in the caller's JWT —
+Keycloak is the only source of truth for whether a user has completed
+account-linking, and that state can't be represented as a token claim anyway
+(it's per-IdP, and x509/GitLab-style linkage lives in entirely different
+storage). Each `CredentialProvider` instead calls its own `is_linked()` check
+against the storage backend it actually understands before `issue()` runs;
+for `OIDCProvider` that means a live probe of the broker token endpoint above.
+See [docs/architecture.md](architecture.md#linkage-detection-is-per-provider)
+for the other providers.
+
 ---
 
 ## Token Lifetime and Refresh
