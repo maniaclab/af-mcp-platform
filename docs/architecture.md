@@ -103,6 +103,19 @@ Important: Keycloak Standard Token Exchange (V2) is internal-to-AF only. It
 brokered token path via `GET /realms/connect/broker/atlas-oidc/token` for any
 credential that must be accepted by external ATLAS services (Rucio, PanDA, AMI).
 
+#### Client ID Metadata Document (CIMD)
+
+Some backends act as their own OAuth 2.1 authorization server rather than
+delegating entirely to Keycloak (rucio-mcp is the first). Instead of
+pre-registering the broker as a client via Dynamic Client Registration against
+every such backend, the broker publishes a public, unauthenticated
+`GET /.well-known/cimd` endpoint implementing
+[draft-ietf-oauth-client-id-metadata-document](https://datatracker.ietf.org/doc/draft-ietf-oauth-client-id-metadata-document/):
+a self-describing JSON document whose `client_id` is the URL of the document
+itself. A backend's authorization server fetches this URL directly to learn
+the broker's `redirect_uris` (one per configured Keycloak IdP alias) and
+client metadata, with no per-backend registration step required.
+
 #### Linkage detection is per-provider
 
 Before calling `issue()`, the API layer (`api/credentials.py`) gates on
