@@ -145,6 +145,45 @@ export async function login(): Promise<void> {
   await manager.signinRedirect({ state });
 }
 
+/** Options for {@link startIdpLink}. */
+export interface IdpLinkOptions {
+  /** Keycloak IdP alias — the LINK_IDP request's `provider_id` param, e.g. "atlas-oidc". */
+  providerAlias: string;
+  /** Portal path to return to once the callback completes; defaults to the current path. */
+  returnUrl?: string;
+}
+
+/**
+ * Starts (or re-runs) Keycloak's account-linking flow for a single IdP via
+ * `kc_action=LINK_IDP`, redirecting the top-level window to Keycloak. Used
+ * both for the initial "Link account" action and the "Reconnect" action
+ * (see IdentityLink.vue) — Keycloak (re)writes the federated_identity's
+ * stored token on callback either way, so re-running this is exactly how a
+ * stale/broken stored token gets refreshed in place.
+ *
+ * Shares signinRedirect() and PKCE with login() (same UserManager, same
+ * AuthState shape), so callback.astro's handling is identical regardless of
+ * which flow sent the user to Keycloak.
+ */
+export async function startIdpLink(opts: IdpLinkOptions): Promise<void> {
+  const manager = await getUserManager();
+  if (!manager) {
+    console.warn('[auth] startIdpLink() called but OIDC is not configured — ignoring.');
+    return;
+  }
+  const state: AuthState = {
+    returnUrl: opts.returnUrl ?? window.location.pathname + window.location.search,
+  };
+  await manager.signinRedirect({
+    state,
+    extraQueryParams: {
+      kc_action: 'LINK_IDP',
+      provider_id: opts.providerAlias,
+      prompt: 'login',
+    },
+  });
+}
+
 /** Clears the local session and redirects to Keycloak's end-session endpoint. */
 export async function logout(): Promise<void> {
   const manager = await getUserManager();

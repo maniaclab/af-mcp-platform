@@ -9,19 +9,27 @@ interface ProviderRow {
   description: string;
   linked: boolean;
   sub?: string;
+  alias: string;
 }
 
 // The broker only returns display_name/enables for providers still AVAILABLE to
 // link; already-linked accounts arrive as {provider, sub}. Fill their labels
-// from this client-side map (mirrors the broker's _PROVIDERS metadata).
-const PROVIDER_META: Record<string, { display_name: string; enables: string }> = {
+// from this client-side map (mirrors the broker's _PROVIDERS metadata). `alias`
+// mirrors the broker's provider -> Keycloak IdP alias mapping (see
+// broker/src/af_mcp_broker/api/identities.py, which used
+// settings.oidc_idp_alias — default "atlas-oidc" — for atlas-iam and the
+// provider id itself for everything else) now that the portal constructs the
+// LINK_IDP URL directly (see ../lib/auth.ts::startIdpLink).
+const PROVIDER_META: Record<string, { display_name: string; enables: string; alias: string }> = {
   'atlas-iam': {
     display_name: 'ATLAS IAM',
     enables: 'VOMS proxy generation and grid certificate credential brokering',
+    alias: 'atlas-oidc',
   },
   cern: {
     display_name: 'CERN SSO',
     enables: 'CERN resource access and CMS/ATLAS experiment datasets',
+    alias: 'cern',
   },
 };
 
@@ -40,12 +48,14 @@ onMounted(async () => {
       description: PROVIDER_META[a.provider]?.enables ?? '',
       linked: true,
       sub: a.sub,
+      alias: PROVIDER_META[a.provider]?.alias ?? a.provider,
     }));
     const available: ProviderRow[] = data.available_providers.map((p) => ({
       provider: p.provider,
       display_name: p.display_name,
       description: p.enables,
       linked: false,
+      alias: PROVIDER_META[p.provider]?.alias ?? p.provider,
     }));
     rows.value = [...linked, ...available];
     linkedProviders.value = new Set(data.linked_accounts.map((a) => a.provider));
@@ -127,6 +137,7 @@ function missingRequired(provider: string): boolean {
           v-for="row in rows"
           :key="row.provider"
           :provider="row.provider"
+          :alias="row.alias"
           :linked="row.linked"
           :display_name="row.display_name"
           :description="row.description"

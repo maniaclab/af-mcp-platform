@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { ref } from 'vue';
-import { startIdentityLink } from '../lib/api';
+import { startIdpLink } from '../lib/auth';
 
 const props = defineProps<{
   provider: string;
+  alias: string;
   linked: boolean;
   display_name: string;
   description: string;
@@ -13,13 +14,14 @@ const props = defineProps<{
 const busy = ref(false);
 const error = ref<string | null>(null);
 
+// Shared by both the "Link account" and "Reconnect" buttons below — same
+// LINK_IDP flow either way, just re-run to overwrite a stale stored token in
+// place when already linked (see ../lib/auth.ts::startIdpLink).
 async function handleLink() {
   busy.value = true;
   error.value = null;
   try {
-    const { redirect_url } = await startIdentityLink(props.provider);
-    // Redirect the top-level window to the IdP
-    window.location.href = redirect_url;
+    await startIdpLink({ providerAlias: props.alias, returnUrl: '/identities/' });
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Link failed. Try again.';
     busy.value = false;
@@ -68,17 +70,22 @@ const glyph = providerGlyph[props.provider] ?? props.provider[0]?.toUpperCase() 
         {{ busy ? 'Redirecting…' : 'Link account' }}
       </button>
 
-      <!-- Unlinking is not exposed by the broker (DELETE returns 501). -->
-      <span v-else class="il__hint">
-        Unlink via the
-        <a
-          class="il__hint-link"
-          href="https://keycloak.af.uchicago.edu/realms/connect/account/#/account-security/linked-accounts"
-          target="_blank"
-          rel="noopener noreferrer"
-          >Keycloak account console</a
-        >.
-      </span>
+      <!--
+      Unlinking isn't exposed by the broker (DELETE returns 501) and most AF
+      users don't have Keycloak admin access anyway. Reconnect re-runs the
+      same LINK_IDP flow, which overwrites the stored token in place — the
+      fix for a stale/broken linkage without touching the Keycloak
+      federated_identity record.
+      -->
+      <button
+        v-else
+        class="il__btn il__btn--reconnect"
+        :disabled="busy"
+        @click="handleLink"
+        :aria-busy="busy"
+      >
+        {{ busy ? 'Redirecting…' : 'Reconnect' }}
+      </button>
     </div>
   </div>
 </template>
@@ -208,16 +215,16 @@ const glyph = providerGlyph[props.provider] ?? props.provider[0]?.toUpperCase() 
   text-align: right;
 }
 
-/* Hint shown for already-linked accounts (unlink lives in Keycloak). */
-.il__hint {
-  font-family: 'IBM Plex Sans', system-ui, sans-serif;
-  font-size: 0.6875rem;
-  color: var(--color-af-dim);
-  line-height: 1.5;
-}
-.il__hint-link {
-  color: var(--color-af-teal);
-  text-decoration: underline;
+/*
+ * .il's grid keeps align-items: start so the icon lines up with the top of
+ * the body text — but the linked-state action (button or, formerly, hint
+ * text) has a different natural height than the body column (name + status +
+ * description + subject line), which left it stranded near the top of a
+ * taller row instead of centered in it. Scoped to the linked variant only —
+ * the unlinked row's single-line body keeps looking right at align-items: start.
+ */
+.il--linked .il__actions {
+  align-self: center;
 }
 
 /* Buttons */
@@ -255,6 +262,21 @@ const glyph = providerGlyph[props.provider] ?? props.provider[0]?.toUpperCase() 
 }
 .il__btn--link:not(:disabled):hover {
   background: rgb(from var(--color-af-teal) r g b / 0.18);
+  border-color: rgb(from var(--color-af-teal) r g b / 0.5);
+}
+
+/* Reconnect: a maintenance action, not a required one — deliberately more
+   subdued than the primary Link CTA (dashed border, smaller, quieter teal). */
+.il__btn--reconnect {
+  background: transparent;
+  color: var(--color-af-teal);
+  border-style: dashed;
+  border-color: rgb(from var(--color-af-teal) r g b / 0.35);
+  font-size: 0.625rem;
+  padding: 0.375rem 0.75rem;
+}
+.il__btn--reconnect:not(:disabled):hover {
+  background: rgb(from var(--color-af-teal) r g b / 0.08);
   border-color: rgb(from var(--color-af-teal) r g b / 0.5);
 }
 

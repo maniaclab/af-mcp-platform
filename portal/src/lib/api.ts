@@ -120,15 +120,12 @@ export async function fetchIdentities(): Promise<IdentitiesResponse> {
   return apiFetch<IdentitiesResponse>('/identities');
 }
 
-export async function startIdentityLink(provider: string): Promise<{ redirect_url: string }> {
-  return apiFetch<{ redirect_url: string }>('/identities/link', {
-    method: 'POST',
-    body: JSON.stringify({ provider }),
-  });
-}
-
-// NOTE: DELETE /v1/identities/link/{provider} always returns 501 — unlinking is
-// done through the Keycloak account console, so there is no unlink client here.
+// NOTE: identity linking (POST /v1/identities/link) was moved into the portal
+// SPA itself — see ../lib/auth.ts::startIdpLink — because the portal already
+// has everything it needs (OIDC config, PKCE) to build the LINK_IDP URL
+// without a broker round trip (closes #50). DELETE /v1/identities/link/{provider}
+// always returns 501 — unlinking is done through the Keycloak account
+// console, so there is no unlink client here either.
 
 // ---------------------------------------------------------------------------
 // Catalog — GET /v1/catalog (flat tool list)
