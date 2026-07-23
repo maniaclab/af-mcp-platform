@@ -16,6 +16,13 @@ af-mcp-broker = "af_mcp_broker.__main__:main"
 [tool.hatch]
 version.source = "vcs"
 version.raw-options.root = ".."
+# hatch-vcs never forwards a dist_name to setuptools_scm.get_version(), so
+# without this, SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AF_MCP_BROKER is silently
+# ignored (setuptools_scm can only match a dist-name-scoped pretend-version
+# env var against a known dist_name) — only the unscoped
+# SETUPTOOLS_SCM_PRETEND_VERSION would be read. Setting it here is what makes
+# the packaging-safe, name-scoped variable actually take effect.
+version.raw-options.dist_name = "af-mcp-broker"
 # Fallback for untagged checkouts (PRs, shallow clones without tags).
 # Tagged releases always override this via git describe.
 version.raw-options.fallback_version = "0.0.0"

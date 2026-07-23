@@ -3,6 +3,12 @@ WORKDIR /app
 COPY portal/package.json portal/package-lock.json* ./
 RUN npm install
 COPY portal/ ./
+
+# Astro inlines PUBLIC_* env vars into the client bundle at build time via
+# import.meta.env — falls back to the 'dev' string in Base.astro when unset
+# (local `docker build` / `astro dev`).
+ARG PUBLIC_APP_VERSION
+ENV PUBLIC_APP_VERSION=${PUBLIC_APP_VERSION}
 RUN npm run build
 
 FROM nginxinc/nginx-unprivileged:alpine

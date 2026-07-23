@@ -24,6 +24,12 @@ const navLinks = [
 ];
 
 const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
+
+// Inlined at build time from the PUBLIC_APP_VERSION build-arg (see
+// Containerfile.portal); falls back to 'dev' for local `astro dev` and for
+// a container built without the build-arg (ARG still sets ENV to an empty
+// string in that case, so `||` is required here — `??` would not catch it).
+const appVersion = import.meta.env.PUBLIC_APP_VERSION || 'dev';
 ---
 
 <!doctype html>
@@ -242,6 +248,14 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
         color: var(--color-af-teal);
       }
 
+      .af-footer__version {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 0.625rem;
+        color: var(--color-af-dim);
+        letter-spacing: 0.04em;
+        opacity: 0.6;
+      }
+
       /* Responsive ----------------------------------------------------------- */
       @media (max-width: 640px) {
         .af-nav {
@@ -297,6 +311,7 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
 
     <footer class="af-footer" aria-label="Site footer">
       <span class="af-footer__text">UChicago ATLAS Analysis Facility</span>
+      <span class="af-footer__version">v{appVersion}</span>
       <a
         href="https://af.uchicago.edu"
         class="af-footer__link"

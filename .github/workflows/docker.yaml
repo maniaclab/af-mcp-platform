@@ -48,6 +48,12 @@ jobs:
             type=semver,pattern={{major}}
             type=sha
 
+      - name: Compute version
+        id: version
+        run: |
+          pipx install setuptools-scm
+          echo "version=$(cd broker && setuptools-scm --root ..)" >> "$GITHUB_OUTPUT"
+
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
@@ -57,6 +63,8 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta-broker.outputs.tags }}
           labels: ${{ steps.meta-broker.outputs.labels }}
+          build-args: |
+            SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AF_MCP_BROKER=${{ steps.version.outputs.version }}
           pull: true
 
   build-portal:
@@ -92,6 +100,12 @@ jobs:
             type=semver,pattern={{major}}
             type=sha
 
+      - name: Compute version
+        id: version
+        run: |
+          pipx install setuptools-scm
+          echo "version=$(cd broker && setuptools-scm --root ..)" >> "$GITHUB_OUTPUT"
+
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
@@ -101,4 +115,6 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta-portal.outputs.tags }}
           labels: ${{ steps.meta-portal.outputs.labels }}
+          build-args: |
+            PUBLIC_APP_VERSION=${{ steps.version.outputs.version }}
           pull: true

@@ -4,6 +4,12 @@ WORKDIR /app
 # Copy everything including .git so hatch-vcs can read git tags for versioning.
 COPY . .
 
+# The pixi builder image has no git binary, so hatch-vcs can't shell out to
+# `git describe` even though .git is present — pass the version in instead.
+# Falls back to pyproject.toml's fallback_version when unset (local `docker build`).
+ARG SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AF_MCP_BROKER
+ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AF_MCP_BROKER=${SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AF_MCP_BROKER}
+
 # Install only the broker feature, not dev
 RUN pixi install --frozen --environment broker
 
