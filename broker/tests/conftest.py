@@ -71,7 +71,7 @@ def settings() -> Settings:
     return Settings(
         oidc_issuer=ISSUER,
         oidc_audience=AUDIENCE,
-        keycloak_jwks_uri=JWKS_URI,
+        oidc_jwks_uri=JWKS_URI,
     )
 
 
@@ -84,12 +84,12 @@ def prime_jwks(settings: Settings):
     """
 
     def _install(jwks: list[dict[str, Any]]) -> None:
-        identity._jwks_cache[settings.keycloak_jwks_uri] = identity._JwksEntry(
+        identity._jwks_cache[settings.oidc_jwks_uri] = identity._JwksEntry(
             keys=jwks, fetched_at=time.monotonic()
         )
 
     yield _install
-    identity._jwks_cache.pop(settings.keycloak_jwks_uri, None)
+    identity._jwks_cache.pop(settings.oidc_jwks_uri, None)
 
 
 def make_claims(**overrides: Any) -> dict[str, Any]:

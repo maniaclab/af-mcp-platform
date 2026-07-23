@@ -17,7 +17,7 @@ def test_oidc_issuer_env_var_still_works(monkeypatch):
     assert settings.oidc_issuer == "https://kc.example/realms/foo"
     assert settings.oidc_audience == "custom-aud"
     # jwks_uri is derived from the issuer when not set explicitly.
-    assert settings.keycloak_jwks_uri.startswith("https://kc.example/realms/foo/")
+    assert settings.oidc_jwks_uri.startswith("https://kc.example/realms/foo/")
     get_settings.cache_clear()
 
 

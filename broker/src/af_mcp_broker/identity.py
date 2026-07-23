@@ -76,7 +76,7 @@ async def get_jwks(settings: Settings) -> list[dict[str, Any]]:
     failure falls back to the stale entry so a Keycloak blip does not take
     auth down with it.
     """
-    uri = settings.keycloak_jwks_uri
+    uri = settings.oidc_jwks_uri
     entry = _jwks_cache.get(uri)
     now = time.monotonic()
 

@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     oidc_issuer: str = "https://keycloak-prod.tempest.uchicago.edu/realms/connect"
     oidc_audience: str = "mcp-gateway"
     # Derived from oidc_issuer when not set explicitly.
-    keycloak_jwks_uri: str = ""
+    oidc_jwks_uri: str = ""
 
     # Linked external IdP alias — must match the IdP alias in the OIDC
     # issuer's connect realm. Verified alias is "atlas-oidc" (Settings →
@@ -106,9 +106,9 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _derive_jwks_uri(self) -> Settings:
-        if not self.keycloak_jwks_uri:
+        if not self.oidc_jwks_uri:
             # Standard OIDC discovery path
-            self.keycloak_jwks_uri = (
+            self.oidc_jwks_uri = (
                 f"{self.oidc_issuer.rstrip('/')}/protocol/openid-connect/certs"
             )
         return self
