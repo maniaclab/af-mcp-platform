@@ -144,7 +144,7 @@ class OIDCProvider(CredentialProvider):
             HTTPException(401): if the Keycloak brokered-token endpoint rejects
                 the principal's token (session expired — user must re-link).
             HTTPException(404): if no brokered token is stored yet (user must
-                visit /v1/identities/link to connect their ATLAS account).
+                link their ATLAS account from the portal's Identities page).
         """
         self._log.debug(
             "oidc.issue.start",
@@ -214,7 +214,8 @@ class OIDCProvider(CredentialProvider):
                 detail=(
                     "Your Keycloak session has expired or the ATLAS IAM "
                     "identity link is invalid. Please re-authenticate and "
-                    "visit /v1/identities/link to reconnect your ATLAS account."
+                    "reconnect your ATLAS account from the portal's "
+                    "Identities page."
                 ),
             )
         if resp.status_code == 404:
@@ -222,7 +223,7 @@ class OIDCProvider(CredentialProvider):
                 status_code=404,
                 detail=(
                     "No ATLAS IAM token stored for your account. "
-                    "Visit /v1/identities/link to connect your ATLAS account."
+                    "Link your ATLAS account from the portal's Identities page."
                 ),
             )
 

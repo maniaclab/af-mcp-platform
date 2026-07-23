@@ -200,7 +200,6 @@ Key endpoints:
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/v1/identities` | Caller identity, linked accounts, linkable providers |
-| `POST` | `/v1/identities/link` | Start Keycloak IdP linking (returns redirect URL) |
 | `GET` | `/v1/capabilities` | Caller's granted capabilities |
 | `POST` | `/v1/authorize` | Check one entitlement (used by the aggregator per call) |
 | `GET` | `/v1/catalog` | Tools visible to the caller after entitlement filtering |

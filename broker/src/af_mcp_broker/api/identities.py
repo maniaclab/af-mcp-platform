@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 from typing import Annotated
-from urllib.parse import urlencode
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict
 
-from af_mcp_broker.config import Settings, get_settings
 from af_mcp_broker.identity import Principal, keycloak_dependency
 
 logger = structlog.get_logger(__name__)
@@ -46,18 +44,6 @@ class IdentitiesResponse(BaseModel):
     groups: list[str]
     linked_accounts: list[LinkedAccount]
     available_providers: list[AvailableProvider]
-
-
-class LinkIdentityRequest(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    provider: str
-
-
-class LinkIdentityResponse(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    redirect_url: str
 
 
 # ---------------------------------------------------------------------------
@@ -128,49 +114,6 @@ async def get_identities(
         linked_accounts=linked,
         available_providers=_available_to_link(linked),
     )
-
-
-@router.post(
-    "/link",
-    response_model=LinkIdentityResponse,
-    summary="Initiate identity linking",
-)
-async def link_identity(
-    body: LinkIdentityRequest,
-    principal: Annotated[Principal, Depends(keycloak_dependency)],
-    settings: Annotated[Settings, Depends(get_settings)],
-) -> LinkIdentityResponse:
-    if body.provider not in _PROVIDERS:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Unknown provider '{body.provider}'. "
-            f"Available: {list(_PROVIDERS.keys())}",
-        )
-
-    # Application-initiated action: a full OIDC auth request with
-    # kc_action=LINK_IDP. Keycloak rejects the request without client_id,
-    # redirect_uri, response_type, and scope. provider_id must be the
-    # Keycloak IdP alias, which for ATLAS differs from the public name.
-    alias = settings.oidc_idp_alias if body.provider == "atlas-iam" else body.provider
-    base = settings.oidc_issuer.rstrip("/")
-    params = urlencode(
-        {
-            "client_id": settings.oidc_audience,
-            "redirect_uri": f"{settings.portal_url.rstrip('/')}/identities",
-            "response_type": "code",
-            "scope": "openid",
-            "kc_action": "LINK_IDP",
-            "provider_id": alias,
-        }
-    )
-    redirect_url = f"{base}/protocol/openid-connect/auth?{params}"
-
-    logger.info(
-        "identity_link_initiated",
-        subject=principal.subject,
-        provider=body.provider,
-    )
-    return LinkIdentityResponse(redirect_url=redirect_url)
 
 
 @router.delete(

@@ -57,6 +57,13 @@ describe('auth — OIDC not configured (dev-bypass mode)', () => {
     expect(warnSpy).toHaveBeenCalled();
   });
 
+  it('startIdpLink() warns and resolves without throwing', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { startIdpLink } = await import('../auth');
+    await expect(startIdpLink({ providerAlias: 'atlas-oidc' })).resolves.toBeUndefined();
+    expect(warnSpy).toHaveBeenCalled();
+  });
+
   it('handleCallback() rejects rather than crashing', async () => {
     const { handleCallback } = await import('../auth');
     await expect(handleCallback()).rejects.toThrow(/not configured/i);
@@ -120,6 +127,30 @@ describe('auth — OIDC configured', () => {
     expect(signinRedirect).toHaveBeenCalledWith(
       expect.objectContaining({
         state: expect.objectContaining({ returnUrl: expect.any(String) }),
+      }),
+    );
+  });
+
+  it('startIdpLink() calls signinRedirect with the LINK_IDP query params and returnUrl', async () => {
+    const { startIdpLink } = await import('../auth');
+    await startIdpLink({ providerAlias: 'atlas-oidc', returnUrl: '/identities/' });
+    expect(signinRedirect).toHaveBeenCalledWith({
+      state: { returnUrl: '/identities/' },
+      extraQueryParams: {
+        kc_action: 'LINK_IDP',
+        provider_id: 'atlas-oidc',
+        prompt: 'login',
+      },
+    });
+  });
+
+  it('startIdpLink() defaults returnUrl to the current path when omitted', async () => {
+    const { startIdpLink } = await import('../auth');
+    await startIdpLink({ providerAlias: 'atlas-oidc' });
+    expect(signinRedirect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        state: expect.objectContaining({ returnUrl: expect.any(String) }),
+        extraQueryParams: expect.objectContaining({ provider_id: 'atlas-oidc' }),
       }),
     );
   });

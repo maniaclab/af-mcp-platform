@@ -342,7 +342,7 @@ const appVersion = import.meta.env.PUBLIC_APP_VERSION || 'dev';
       // /callback runs its own OIDC exchange (see pages/callback.astro) and
       // has its own "Completing sign-in…" status UI — don't double it up.
       currentPath !== '/callback' && (
-        <div id="af-auth-splash" role="status" aria-live="polite">
+        <div id="af-auth-splash" class="af-auth-splash" role="status" aria-live="polite">
           <div class="af-auth-splash__inner">
             <div class="af-auth-splash__spinner" aria-hidden="true" />
             <p>Signing in…</p>
