@@ -7,7 +7,13 @@ metadata:
     {{- include "af-mcp-platform.labels" . | nindent 4 }}
   annotations:
     nginx.ingress.kubernetes.io/auth-url: {{ .Values.oauth2Proxy.forwardAuthUrl | quote }}
-    nginx.ingress.kubernetes.io/auth-signin: {{ printf "%s?rd=$escaped_request_uri" .Values.oauth2Proxy.signInUrl | quote }}
+    # rd= must be a full URL, not just a path: oauth2-proxy treats a bare-path
+    # rd as same-host and redirects back to its own host after login, which
+    # 404s for anything requested on mcpHost or portalHost. $scheme://$best_http_host
+    # supplies the origin so oauth2-proxy redirects back to the requesting
+    # subdomain instead — allowed because whitelist_domains = [".af.uchicago.edu"]
+    # in the shared oauth2-proxy config covers both hosts.
+    nginx.ingress.kubernetes.io/auth-signin: {{ printf "%s?rd=$scheme://$best_http_host$escaped_request_uri" .Values.oauth2Proxy.signInUrl | quote }}
     nginx.ingress.kubernetes.io/auth-response-headers: "Authorization,X-Auth-Request-User,X-Auth-Request-Email,X-Auth-Request-Groups"
     {{- with .Values.ingress.annotations }}
     {{- toYaml . | nindent 4 }}
