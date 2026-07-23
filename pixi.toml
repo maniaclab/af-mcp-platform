@@ -94,7 +94,7 @@ check-all = { depends-on = ["lint-all", "test-all"], description = "Full check: 
 # ---------------------------------------------------------------------------
 [feature.bypass.activation.env]
 BROKER_DEV_INSECURE_PRINCIPAL = '{"uid":1000,"gid":1000,"unixname":"devuser","email":"dev@localhost","groups":["af-users"]}'
-KEYCLOAK_ISSUER = "http://localhost:8081/realms/dev"
+OIDC_ISSUER = "http://localhost:8081/realms/dev"
 
 [environments]
 broker = {features = ["broker"], solve-group = "default"}

@@ -92,7 +92,7 @@ Key points:
 
 - **Client identity vs. resource/audience.** `mcp-portal` is the OAuth
   *client* that runs the code+PKCE flow; `mcp-gateway` is the *audience*
-  the broker's `KEYCLOAK_AUDIENCE` expects in the token — configured via a
+  the broker's `OIDC_AUDIENCE` expects in the token — configured via a
   Keycloak client scope with an Audience mapper, assigned as a default scope
   on `mcp-portal` (and on any future MCP-client identity, e.g. a
   `claude-desktop` client). Different clients, same audience — that's what
@@ -126,7 +126,7 @@ Key points:
   → `portal.oidc.*` values), fetched once at startup — not baked into the
   image. One built portal image is deployable against any realm, client, or
   institution's fork via a values change and a rolling restart, mirroring
-  how the broker itself takes `KEYCLOAK_ISSUER` from an env var rather than
+  how the broker itself takes `OIDC_ISSUER` from an env var rather than
   a build constant. Locally, an empty `oidc.issuer` (the checked-in
   `portal/public/config.json` placeholder) makes the portal skip OIDC
   entirely and run in unauthenticated / dev-bypass mode against a broker
@@ -158,7 +158,7 @@ Authorization: Bearer <af-token>
 ```
 
 (`atlas-oidc` is the IdP alias in the connect realm; configurable via
-`ATLAS_IAM_BROKER_ALIAS`.)
+`OIDC_IDP_ALIAS`.)
 
 This returns the ATLAS IAM access token that Keycloak obtained during the
 account-linking flow. That token:
