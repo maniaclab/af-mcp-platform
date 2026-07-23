@@ -70,6 +70,16 @@ spec:
             - name: PROXY_DIR
               value: {{ .Values.broker.tmpfsProxy.mountPath | quote }}
             {{- end }}
+            # CIMD (/.well-known/cimd) settings — omitted when empty so the
+            # broker's pydantic defaults apply.
+            {{- if .Values.broker.cimd.clientName }}
+            - name: CIMD_CLIENT_NAME
+              value: {{ .Values.broker.cimd.clientName | quote }}
+            {{- end }}
+            {{- if .Values.broker.cimd.idpAliases }}
+            - name: CIMD_IDP_ALIASES
+              value: {{ .Values.broker.cimd.idpAliases | toJson | quote }}
+            {{- end }}
             {{- if .Values.broker.existingServiceTokenSecret }}
             - name: AF_SERVICE_TOKEN
               valueFrom:

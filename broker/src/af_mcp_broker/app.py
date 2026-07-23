@@ -17,6 +17,7 @@ from pydantic import ValidationError
 
 from af_mcp_broker._version import version as __version__
 from af_mcp_broker.api.router import router as v1_router
+from af_mcp_broker.api.wellknown import router as wellknown_router
 from af_mcp_broker.audit.logger import init_audit_logger
 from af_mcp_broker.authorization import EntitlementPolicy, load_policy
 from af_mcp_broker.config import Settings
@@ -207,6 +208,7 @@ app = FastAPI(
 app.mount("/mcp", aggregator_app)
 
 app.include_router(v1_router)
+app.include_router(wellknown_router)
 
 
 @app.middleware("http")

@@ -91,6 +91,17 @@ class Settings(BaseSettings):
     # forces re-authentication anyway, so it rarely inconveniences real users.
     credential_unlock_window_seconds: int = 15 * 60
 
+    # Client ID Metadata Document (CIMD, draft-ietf-oauth-client-id-metadata-
+    # document) served at /.well-known/cimd — lets the broker identify itself
+    # to backend OAuth 2.1 authorization servers without per-backend Dynamic
+    # Client Registration.
+    cimd_client_name: str = "AF MCP Broker"
+
+    # Keycloak IdP aliases the broker proxies for; each becomes a
+    # redirect_uris entry in the CIMD document. Parsed from CIMD_IDP_ALIASES
+    # as a JSON array, e.g. '["rucio-atlas","rucio-escape"]'.
+    cimd_idp_aliases: list[str] = Field(default_factory=list)
+
     @field_validator(
         "credential_unlock_max_failures", "credential_unlock_window_seconds"
     )

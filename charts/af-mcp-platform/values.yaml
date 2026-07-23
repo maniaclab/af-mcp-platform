@@ -97,6 +97,14 @@ broker:
     mountPath: "/run/broker/proxies"
     sizeLimit: "64Mi"
 
+  # Client ID Metadata Document (CIMD, draft-ietf-oauth-client-id-metadata-
+  # document) served at /.well-known/cimd, for backend OAuth 2.1 authorization
+  # servers to identify this broker without per-backend Dynamic Client
+  # Registration. Empty defaults — no AF-specific leak in the public chart.
+  cimd:
+    clientName: ""
+    idpAliases: []
+
 # ---------------------------------------------------------------------------
 # Aggregator: FastMCP backend registry
 # ---------------------------------------------------------------------------
