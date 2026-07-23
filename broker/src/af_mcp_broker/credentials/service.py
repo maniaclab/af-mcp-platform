@@ -174,8 +174,7 @@ class ServiceProvider(CredentialProvider):
             )
 
         token_endpoint = (
-            f"{self._settings.keycloak_issuer.rstrip('/')}"
-            "/protocol/openid-connect/token"
+            f"{self._settings.oidc_issuer.rstrip('/')}/protocol/openid-connect/token"
         )
         resp = await get_http_client().post(
             token_endpoint,

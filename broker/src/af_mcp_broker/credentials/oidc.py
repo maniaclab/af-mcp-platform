@@ -38,7 +38,7 @@ class OIDCProvider(CredentialProvider):
       2. Keycloak has an identity provider link to ATLAS IAM; it stores the
          brokered IAM token internally.
       3. We call the Keycloak stored-brokered-token endpoint:
-           GET {KEYCLOAK_ISSUER}/broker/{ATLAS_IAM_BROKER_ALIAS}/token
+           GET {OIDC_ISSUER}/broker/{OIDC_IDP_ALIAS}/token
            Authorization: Bearer {principal.raw_token}
          to retrieve the user's current ATLAS IAM access token.
       4. That IAM token is what downstream services (rucio-mcp, etc.) expect.
@@ -141,8 +141,8 @@ class OIDCProvider(CredentialProvider):
         token — user must re-link).
         """
         broker_token_url = (
-            f"{self._settings.keycloak_issuer.rstrip('/')}"
-            f"/broker/{self._settings.atlas_iam_broker_alias}/token"
+            f"{self._settings.oidc_issuer.rstrip('/')}"
+            f"/broker/{self._settings.oidc_idp_alias}/token"
         )
 
         resp = await get_http_client().get(

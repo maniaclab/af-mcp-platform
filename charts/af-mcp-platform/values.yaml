@@ -47,19 +47,21 @@ broker:
       memory: 2Gi
 
   # Extra environment variables merged into the broker container.
-  # These supplement the env vars derived from broker.keycloak.* below.
+  # These supplement the env vars derived from broker.oidc.* below.
   # Format: key: value (rendered as EnvVars with name/value pairs)
   env: {}
   # MY_EXTRA_VAR: "some-value"
 
-  # OIDC / Keycloak configuration — rendered as env vars in the broker container.
-  keycloak:
+  # OIDC configuration — rendered as env vars in the broker container. The
+  # broker validates via JWKS + iss/aud/exp, all standard OIDC; any
+  # OIDC-compliant issuer works, not just Keycloak.
+  oidc:
     issuer: "https://keycloak-prod.tempest.uchicago.edu/realms/connect"
     audience: "mcp-gateway"
-    # Broker alias used to resolve the ATLAS IAM identity link
-    # Keycloak IdP alias for ATLAS IAM. The verified alias in the connect
-    # realm is "atlas-oidc" (Settings -> Identity Providers -> ATLAS IAM).
-    atlasIamBrokerAlias: "atlas-oidc"
+    # Alias of the linked external IdP used to resolve the ATLAS IAM
+    # identity link. The verified alias in the connect realm is "atlas-oidc"
+    # (Settings -> Identity Providers -> ATLAS IAM).
+    idpAlias: "atlas-oidc"
 
   # Name of a pre-existing Secret providing the AF service token.
   # The Secret must contain a key named `af-service-token`.
@@ -147,7 +149,7 @@ portal:
     clientId: ""
     # openid/profile/email are OIDC-standard; append your audience-mapping
     # client scope so the access token carries the broker's expected `aud`
-    # (must match broker.keycloak.audience above).
+    # (must match broker.oidc.audience above).
     scope: "openid profile email"
 
   # Origin the SPA calls for the broker's /v1 and /mcp paths, and what the

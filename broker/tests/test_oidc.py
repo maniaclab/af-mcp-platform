@@ -53,7 +53,7 @@ async def test_fetch_brokered_token_sends_real_token(monkeypatch):
     monkeypatch.setattr(oidc, "get_http_client", _FakeClient)
 
     provider = oidc.OIDCProvider(
-        settings=Settings(keycloak_issuer="https://keycloak.test/realms/connect"),
+        settings=Settings(oidc_issuer="https://keycloak.test/realms/connect"),
         cache=CredentialCache(),
     )
     token, _expires_at = await provider._fetch_brokered_token(_principal())

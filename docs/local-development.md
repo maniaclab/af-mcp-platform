@@ -58,7 +58,7 @@ Equivalent long form, for one-off overrides:
 
 ```bash
 export BROKER_DEV_INSECURE_PRINCIPAL='{"uid":1000,"gid":1000,"unixname":"devuser","email":"dev@localhost","groups":["af-users"]}'
-export KEYCLOAK_ISSUER=http://localhost:8081/realms/dev
+export OIDC_ISSUER=http://localhost:8081/realms/dev
 pixi run broker
 ```
 
@@ -67,7 +67,7 @@ You should see a very loud warning line at startup:
 ```json
 {"message": "AUTH BYPASSED — DO NOT USE IN PRODUCTION",
  "event": "dev_auth_bypass_active",
- "keycloak_issuer": "http://localhost:8081/realms/x",
+ "oidc_issuer": "http://localhost:8081/realms/x",
  "unixname": "devuser", "uid": 1000,
  "level": "warning", ...}
 ```
@@ -77,7 +77,7 @@ request writes an `event="dev_auth_bypass_used"` log line. Refresh the
 portal — the Vue islands now render with the dev principal.
 
 > **Do not use this in production.** The broker will refuse to start
-> unless the configured `KEYCLOAK_ISSUER` looks local (hostname is
+> unless the configured `OIDC_ISSUER` looks local (hostname is
 > `localhost`, `127.0.0.1`, `::1`, or ends in `.localhost` / `.local` /
 > `.test`). The env var is never set by the Helm chart, containers, or
 > CI — it exists exclusively for a developer machine.
@@ -116,7 +116,7 @@ locally (never commit real values):
 
 `http://localhost:4321/callback` is already a registered redirect URI on the
 `mcp-portal` client, so this works without any Keycloak-side changes. You'll still need a broker that accepts the resulting token —
-either a real `KEYCLOAK_ISSUER`/`KEYCLOAK_AUDIENCE` pointed at the same
+either a real `OIDC_ISSUER`/`OIDC_AUDIENCE` pointed at the same
 realm, or continue using the bypass broker (it ignores the Bearer either
 way, so this is only useful for exercising the portal's own OIDC code path,
 not an end-to-end auth check).

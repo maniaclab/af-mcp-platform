@@ -76,7 +76,7 @@ async def get_jwks(settings: Settings) -> list[dict[str, Any]]:
     failure falls back to the stale entry so a Keycloak blip does not take
     auth down with it.
     """
-    uri = settings.keycloak_jwks_uri
+    uri = settings.oidc_jwks_uri
     entry = _jwks_cache.get(uri)
     now = time.monotonic()
 
@@ -193,8 +193,8 @@ async def get_principal(token: str, settings: Settings) -> Principal:
                 token,
                 public_key,  # type: ignore[arg-type]  # JWKS only has public keys
                 algorithms=["RS256"],
-                audience=settings.keycloak_audience,
-                issuer=settings.keycloak_issuer,
+                audience=settings.oidc_audience,
+                issuer=settings.oidc_issuer,
                 options={"verify_exp": True},
             )
             return _extract_principal(claims, token)
@@ -304,7 +304,7 @@ _DEV_PRINCIPAL_REQUIRED_KEYS: frozenset[str] = frozenset({"uid", "gid", "unixnam
 
 
 def issuer_is_local(issuer: str) -> bool:
-    """Return True when the Keycloak issuer clearly points at a dev machine.
+    """Return True when the OIDC issuer clearly points at a dev machine.
 
     Local means either the URL's hostname is exactly one of ``localhost``,
     ``127.0.0.1``, ``::1``, or the hostname ends with ``.localhost``, ``.local``,
