@@ -75,6 +75,36 @@ Important: Keycloak Standard Token Exchange (V2) is internal-to-AF only. It
 brokered token path via `GET /realms/connect/broker/atlas-oidc/token` for any
 credential that must be accepted by external ATLAS services (Rucio, PanDA, AMI).
 
+#### Passphrase-unlock rate limiting
+
+`~/.globus` is readable by anyone colocated on the same NFS-mounted home
+directory, so a passphrase is the only thing standing between a local
+attacker and a user's x509 proxy. `CredentialCache` (`credentials/cache.py`)
+counts failed cache lookups and bad passphrase attempts per uid and raises
+`RateLimitError` once a threshold is exceeded within a sliding window, to
+slow brute-force guessing. `X509Provider.mint()` calls
+`cache.check_unlock_rate_limit()` before doing any minting work, so a
+locked-out uid never reaches the k8s Job / subprocess path (`x509.py`).
+
+The threshold and window are configurable via `Settings`:
+
+| Env var | Settings field | Default |
+|---|---|---|
+| `CREDENTIAL_UNLOCK_MAX_FAILURES` | `credential_unlock_max_failures` | 5 attempts |
+| `CREDENTIAL_UNLOCK_WINDOW_SECONDS` | `credential_unlock_window_seconds` | 900s (15 min) |
+
+Five attempts is generous enough to tolerate a mistyped passphrase but tight
+enough to slow a brute-force guesser; fifteen minutes roughly matches how
+often a browser session's token refresh forces re-authentication anyway.
+Both must be >= 1 — `Settings` rejects zero or negative values, since either
+would silently disable the limit.
+
+On trip, `RateLimitError` propagates out of `X509Provider.mint()`. Nothing in
+the `/v1` API layer currently catches it — `api/credentials.py` only maps
+`PermissionError` to `429` — so callers see a bare `500` rather than a `429`.
+Mapping `RateLimitError` to `429` alongside `PermissionError` is a known gap,
+not yet fixed.
+
 ### 4. Audit
 
 Structured log (structlog + JSON) of every tool invocation, including:

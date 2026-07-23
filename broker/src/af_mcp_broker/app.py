@@ -95,7 +95,10 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     backends = backend_registry.all_backends()
 
     # --- Credential subsystem: cache + janitor + provider registry.
-    credential_cache = CredentialCache()
+    credential_cache = CredentialCache(
+        max_failed_unlocks=settings.credential_unlock_max_failures,
+        unlock_window_seconds=settings.credential_unlock_window_seconds,
+    )
     credential_cache.start_janitor()
 
     oidc_provider = OIDCProvider(settings, credential_cache)
