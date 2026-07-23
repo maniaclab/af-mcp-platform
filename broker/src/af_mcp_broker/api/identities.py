@@ -135,15 +135,11 @@ async def link_identity(
     # kc_action=LINK_IDP. Keycloak rejects the request without client_id,
     # redirect_uri, response_type, and scope. provider_id must be the
     # Keycloak IdP alias, which for ATLAS differs from the public name.
-    alias = (
-        settings.atlas_iam_broker_alias
-        if body.provider == "atlas-iam"
-        else body.provider
-    )
-    base = settings.keycloak_issuer.rstrip("/")
+    alias = settings.oidc_idp_alias if body.provider == "atlas-iam" else body.provider
+    base = settings.oidc_issuer.rstrip("/")
     params = urlencode(
         {
-            "client_id": settings.keycloak_audience,
+            "client_id": settings.oidc_audience,
             "redirect_uri": f"{settings.portal_url.rstrip('/')}/identities",
             "response_type": "code",
             "scope": "openid",

@@ -59,10 +59,10 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     application.state.dev_bypass_active = False
     application.state.dev_bypass_principal = None
     if settings.dev_insecure_principal is not None:
-        if not issuer_is_local(settings.keycloak_issuer):
+        if not issuer_is_local(settings.oidc_issuer):
             msg = (
-                "BROKER_DEV_INSECURE_PRINCIPAL is set but KEYCLOAK_ISSUER "
-                f"({settings.keycloak_issuer!r}) does not look like a local "
+                "BROKER_DEV_INSECURE_PRINCIPAL is set but OIDC_ISSUER "
+                f"({settings.oidc_issuer!r}) does not look like a local "
                 "development host. Refusing to start. Local hosts are "
                 "'localhost', '127.0.0.1', '::1', or a hostname ending in "
                 "'.localhost' / '.local' / '.test'."
@@ -76,7 +76,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         logger.warning(
             "dev_auth_bypass_active",
             message="AUTH BYPASSED — DO NOT USE IN PRODUCTION",
-            keycloak_issuer=settings.keycloak_issuer,
+            oidc_issuer=settings.oidc_issuer,
             unixname=dev_principal.unixname,
             uid=dev_principal.uid,
         )
@@ -167,7 +167,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     logger.info(
         "af_mcp_broker_started",
         version=__version__,
-        keycloak_issuer=settings.keycloak_issuer,
+        oidc_issuer=settings.oidc_issuer,
         policy_file=settings.policy_file,
         backends_file=settings.backends_file,
         backends_count=len(backends),

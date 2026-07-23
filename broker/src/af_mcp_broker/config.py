@@ -7,7 +7,7 @@ from pydantic import Field, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 # pydantic-settings matches env vars to field names case-insensitively, so the
-# uppercase env var names (KEYCLOAK_ISSUER, ...) map to these fields without
+# uppercase env var names (OIDC_ISSUER, ...) map to these fields without
 # explicit aliases.
 
 
@@ -21,15 +21,16 @@ class Settings(BaseSettings):
     def __init__(self, **data: Any) -> None:
         super().__init__(**data)
 
-    # Keycloak OIDC configuration
-    keycloak_issuer: str = "https://keycloak-prod.tempest.uchicago.edu/realms/connect"
-    keycloak_audience: str = "mcp-gateway"
-    # Derived from keycloak_issuer when not set explicitly.
+    # OIDC configuration
+    oidc_issuer: str = "https://keycloak-prod.tempest.uchicago.edu/realms/connect"
+    oidc_audience: str = "mcp-gateway"
+    # Derived from oidc_issuer when not set explicitly.
     keycloak_jwks_uri: str = ""
 
-    # ATLAS IAM broker alias — must match the IdP alias in Keycloak connect realm.
-    # Verified alias is "atlas-oidc" (Settings → Identity Providers → ATLAS IAM).
-    atlas_iam_broker_alias: str = "atlas-oidc"
+    # Linked external IdP alias — must match the IdP alias in the OIDC
+    # issuer's connect realm. Verified alias is "atlas-oidc" (Settings →
+    # Identity Providers → ATLAS IAM).
+    oidc_idp_alias: str = "atlas-oidc"
 
     # Filesystem
     home_root: str = "/data/homes"
@@ -70,7 +71,7 @@ class Settings(BaseSettings):
     # that principal *without validating any bearer token*. This exists so
     # `astro dev` can hit `/v1/*` on a locally-running broker without
     # oauth2-proxy in front. The lifespan refuses to start unless
-    # ``keycloak_issuer`` points at a local host — defence-in-depth against
+    # ``oidc_issuer`` points at a local host — defence-in-depth against
     # accidental production deployment. Never set this in any chart values,
     # container default, or CI env.
     dev_insecure_principal: str | None = Field(
@@ -108,7 +109,7 @@ class Settings(BaseSettings):
         if not self.keycloak_jwks_uri:
             # Standard OIDC discovery path
             self.keycloak_jwks_uri = (
-                f"{self.keycloak_issuer.rstrip('/')}/protocol/openid-connect/certs"
+                f"{self.oidc_issuer.rstrip('/')}/protocol/openid-connect/certs"
             )
         return self
 

@@ -69,8 +69,8 @@ def enc_key() -> RsaKey:
 @pytest.fixture
 def settings() -> Settings:
     return Settings(
-        keycloak_issuer=ISSUER,
-        keycloak_audience=AUDIENCE,
+        oidc_issuer=ISSUER,
+        oidc_audience=AUDIENCE,
         keycloak_jwks_uri=JWKS_URI,
     )
 
@@ -154,7 +154,7 @@ def app_client_factory(
     monkeypatch.setenv("POLICY_FILE", str(SHIPPED_POLICY))
     monkeypatch.setenv("BACKENDS_FILE", str(SHIPPED_BACKENDS))
     # An unreachable issuer keeps startup JWKS priming a no-op (non-fatal).
-    monkeypatch.setenv("KEYCLOAK_ISSUER", "https://keycloak.invalid/realms/connect")
+    monkeypatch.setenv("OIDC_ISSUER", "https://keycloak.invalid/realms/connect")
     # Ephemeral metrics port so test runs never collide on 9090.
     monkeypatch.setenv("METRICS_PORT", "0")
 

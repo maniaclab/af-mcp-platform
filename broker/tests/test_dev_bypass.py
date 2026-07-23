@@ -59,7 +59,7 @@ def _fresh_app():
 def test_bypass_activates_with_local_issuer(monkeypatch: pytest.MonkeyPatch) -> None:
     _bootstrap_env(monkeypatch)
     monkeypatch.setenv("BROKER_DEV_INSECURE_PRINCIPAL", DEV_PRINCIPAL_JSON)
-    monkeypatch.setenv("KEYCLOAK_ISSUER", "http://localhost:8081/realms/x")
+    monkeypatch.setenv("OIDC_ISSUER", "http://localhost:8081/realms/x")
 
     app = _fresh_app()
     with TestClient(app) as client:
@@ -80,7 +80,7 @@ def test_bypass_refuses_to_start_with_real_issuer(
     _bootstrap_env(monkeypatch)
     monkeypatch.setenv("BROKER_DEV_INSECURE_PRINCIPAL", DEV_PRINCIPAL_JSON)
     monkeypatch.setenv(
-        "KEYCLOAK_ISSUER",
+        "OIDC_ISSUER",
         "https://keycloak-prod.tempest.uchicago.edu/realms/connect",
     )
 
@@ -94,7 +94,7 @@ def test_bypass_disabled_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     _bootstrap_env(monkeypatch)
     monkeypatch.delenv("BROKER_DEV_INSECURE_PRINCIPAL", raising=False)
     # Unreachable issuer keeps startup JWKS priming a no-op (non-fatal).
-    monkeypatch.setenv("KEYCLOAK_ISSUER", "https://keycloak.invalid/realms/connect")
+    monkeypatch.setenv("OIDC_ISSUER", "https://keycloak.invalid/realms/connect")
 
     app = _fresh_app()
     with TestClient(app) as client:
@@ -106,7 +106,7 @@ def test_bypass_disabled_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_bypass_ignores_real_token(monkeypatch: pytest.MonkeyPatch) -> None:
     _bootstrap_env(monkeypatch)
     monkeypatch.setenv("BROKER_DEV_INSECURE_PRINCIPAL", DEV_PRINCIPAL_JSON)
-    monkeypatch.setenv("KEYCLOAK_ISSUER", "http://localhost:8081/realms/x")
+    monkeypatch.setenv("OIDC_ISSUER", "http://localhost:8081/realms/x")
 
     app = _fresh_app()
     with TestClient(app) as client:
@@ -123,7 +123,7 @@ def test_bypass_ignores_real_token(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_bypass_bad_json_fails_startup(monkeypatch: pytest.MonkeyPatch) -> None:
     _bootstrap_env(monkeypatch)
     monkeypatch.setenv("BROKER_DEV_INSECURE_PRINCIPAL", "{not json")
-    monkeypatch.setenv("KEYCLOAK_ISSUER", "http://localhost:8081/realms/x")
+    monkeypatch.setenv("OIDC_ISSUER", "http://localhost:8081/realms/x")
 
     app = _fresh_app()
     with pytest.raises(RuntimeError, match="BROKER_DEV_INSECURE_PRINCIPAL"):  # noqa: SIM117
@@ -134,7 +134,7 @@ def test_bypass_bad_json_fails_startup(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_bypass_response_header_present(monkeypatch: pytest.MonkeyPatch) -> None:
     _bootstrap_env(monkeypatch)
     monkeypatch.setenv("BROKER_DEV_INSECURE_PRINCIPAL", DEV_PRINCIPAL_JSON)
-    monkeypatch.setenv("KEYCLOAK_ISSUER", "http://localhost:8081/realms/x")
+    monkeypatch.setenv("OIDC_ISSUER", "http://localhost:8081/realms/x")
 
     app = _fresh_app()
     with TestClient(app) as client:
@@ -153,7 +153,7 @@ def test_bypass_missing_required_key_fails_startup(
     monkeypatch.setenv(
         "BROKER_DEV_INSECURE_PRINCIPAL", json.dumps({"unixname": "onlyname"})
     )
-    monkeypatch.setenv("KEYCLOAK_ISSUER", "http://localhost:8081/realms/x")
+    monkeypatch.setenv("OIDC_ISSUER", "http://localhost:8081/realms/x")
 
     app = _fresh_app()
     with pytest.raises(RuntimeError, match="BROKER_DEV_INSECURE_PRINCIPAL"):  # noqa: SIM117
