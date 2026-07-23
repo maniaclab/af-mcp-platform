@@ -52,13 +52,13 @@ spec:
               containerPort: 9090
               protocol: TCP
           env:
-            # OIDC / Keycloak settings — names must match broker Settings fields
-            - name: KEYCLOAK_ISSUER
-              value: {{ .Values.broker.keycloak.issuer | quote }}
-            - name: KEYCLOAK_AUDIENCE
-              value: {{ .Values.broker.keycloak.audience | quote }}
-            - name: ATLAS_IAM_BROKER_ALIAS
-              value: {{ .Values.broker.keycloak.atlasIamBrokerAlias | quote }}
+            # OIDC settings — names must match broker Settings fields
+            - name: OIDC_ISSUER
+              value: {{ .Values.broker.oidc.issuer | quote }}
+            - name: OIDC_AUDIENCE
+              value: {{ .Values.broker.oidc.audience | quote }}
+            - name: OIDC_IDP_ALIAS
+              value: {{ .Values.broker.oidc.idpAlias | quote }}
             # Home directory root (broker constructs per-user paths from this)
             - name: HOME_ROOT
               value: {{ .Values.broker.homeDir.homeRoot | quote }}
