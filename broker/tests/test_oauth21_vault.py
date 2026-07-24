@@ -415,6 +415,7 @@ def _bootstrap_oauth21_vault_env(
     monkeypatch.setenv("OIDC_ISSUER", STATE_ISSUER)
     monkeypatch.setenv("BROKER_STATE_KEY", Fernet.generate_key().decode())
     monkeypatch.setenv("OAUTH21_CLIENT_ID", CIMD_CLIENT_ID)
+    monkeypatch.setenv("BROKER_PUBLIC_ORIGIN", "https://mcp-portal.example.com")
     monkeypatch.setenv(
         "IDENTITY_PROVIDERS",
         json.dumps(

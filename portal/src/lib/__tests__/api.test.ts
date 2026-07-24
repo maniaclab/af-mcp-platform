@@ -12,6 +12,7 @@ import {
   clearIdentitiesCache,
   fetchDashboardSummary,
   fetchIdentities,
+  fetchOAuth21AuthorizeUrl,
   fetchProxyStatus,
 } from '../api';
 import * as auth from '../auth';
@@ -251,6 +252,54 @@ describe('fetchIdentities() sessionStorage cache', () => {
 
     await fetchIdentities();
     expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('fetchOAuth21AuthorizeUrl()', () => {
+  const LINK_URL =
+    'https://mcp.example.com/v1/oauth/authorize/rucio-mcp-atlas?return=%2Fidentities%2F';
+
+  it('sends the Bearer and Accept: application/json against the absolute link_url', async () => {
+    globalThis.fetch = mockJson(200, {
+      authorize_url: 'https://backend-as.example/authorize?client_id=x',
+    });
+    await fetchOAuth21AuthorizeUrl(LINK_URL);
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      LINK_URL,
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: 'Bearer test-token',
+          Accept: 'application/json',
+        }),
+      }),
+    );
+  });
+
+  it('returns the authorize_url from the parsed JSON body', async () => {
+    globalThis.fetch = mockJson(200, {
+      authorize_url: 'https://backend-as.example/authorize?client_id=x',
+    });
+    await expect(fetchOAuth21AuthorizeUrl(LINK_URL)).resolves.toBe(
+      'https://backend-as.example/authorize?client_id=x',
+    );
+  });
+
+  it('raises APIError with the response body on non-2xx', async () => {
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValue(new Response('nope', { status: 503, statusText: 'Service Unavailable' }));
+    await expect(fetchOAuth21AuthorizeUrl(LINK_URL)).rejects.toMatchObject({
+      name: 'APIError',
+      status: 503,
+      body: 'nope',
+    });
+  });
+
+  it('throws SessionExpiredError without hitting the network when there is no token', async () => {
+    vi.mocked(auth.getAccessToken).mockResolvedValue(null);
+    globalThis.fetch = vi.fn();
+    await expect(fetchOAuth21AuthorizeUrl(LINK_URL)).rejects.toBeInstanceOf(SessionExpiredError);
+    expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 });
 

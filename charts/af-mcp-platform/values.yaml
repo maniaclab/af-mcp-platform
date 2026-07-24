@@ -103,6 +103,18 @@ broker:
   cimd:
     clientName: ""
 
+  # Canonical origin (scheme + host, no trailing slash, e.g.
+  # "https://mcp-portal.af.uchicago.edu") for every externally-visible OAuth
+  # 2.1 URL the broker constructs itself: the redirect_uri sent to a backend
+  # AS at authorize/callback time, and every redirect_uris entry in the CIMD
+  # document above. Must be the exact origin the portal SPA is served from —
+  # the linking flow's nonce cookie is host-only, so authorize and callback
+  # must resolve to the same origin regardless of which ingress host a given
+  # request arrived through. Empty default — no AF-specific hardcode in the
+  # public chart. Required (the broker refuses to start otherwise) whenever
+  # identityProviders has an oauth21-direct entry.
+  publicOrigin: ""
+
   # Identity providers — one entry per identity provider the broker can link
   # a user's account to, either Keycloak's stored-broker-token pattern
   # (type: keycloak-brokered, e.g. ATLAS IAM) or the broker acting as a

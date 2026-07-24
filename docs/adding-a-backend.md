@@ -15,10 +15,13 @@ the portal's Identities page — no separate mapping to keep in sync.
 - **`type: oauth21-direct`** — use this when the backend is itself an OAuth
   2.1 authorization server (e.g. rucio-mcp). No Keycloak IdP configuration
   is needed at all; the broker is a direct OAuth 2.1 client via its own
-  CIMD document (`GET /.well-known/cimd`).
+  CIMD document (`GET /.well-known/cimd`). Also requires
+  `broker.publicOrigin` to be set to the portal's origin (see below) — the
+  broker refuses to start otherwise.
 
   ```yaml
   broker:
+    publicOrigin: "https://mcp-portal.af.uchicago.edu"
     identityProviders:
       - type: oauth21-direct
         alias: my-backend-oauth
@@ -29,6 +32,14 @@ the portal's Identities page — no separate mapping to keep in sync.
         displayName: "My New Backend"
         enables: "Access to my-new-backend on your behalf"
   ```
+
+  `broker.publicOrigin` is the canonical origin (scheme + host, no trailing
+  slash) every OAuth 2.1 URL the broker constructs itself is built from: the
+  `redirect_uri` it sends to the backend's authorization server, and every
+  `redirect_uris` entry in the CIMD document above. Register the backend's
+  authorization server client with exactly
+  `<publicOrigin>/v1/oauth/callback/<alias>` as its redirect_uri whitelist
+  entry (or point it at the CIMD document, which advertises the same URL).
 
 - **`type: keycloak-brokered`** — use this when the backend is (or can be
   registered as) an OIDC identity provider. This *does* require configuring

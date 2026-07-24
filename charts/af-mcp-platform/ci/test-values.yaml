@@ -16,6 +16,10 @@ portal:
 # Secret for template rendering — it doesn't need to exist for `helm
 # lint`/`helm template` to succeed.
 broker:
+  # Dummy value so `helm template` renders the BROKER_PUBLIC_ORIGIN env var
+  # path exercised below (an oauth21-direct identityProviders entry requires
+  # it, per the broker's own startup validation).
+  publicOrigin: "https://portal.example.com"
   identityProviders:
     - type: keycloak-brokered
       alias: atlas-oidc-example

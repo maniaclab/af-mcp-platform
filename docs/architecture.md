@@ -117,6 +117,18 @@ the broker's `redirect_uris` (one per `oauth21-direct` entry in
 `Settings.identity_providers`) and client metadata, with no per-backend
 registration step required.
 
+Every `redirect_uris` entry, and the `redirect_uri` the broker itself sends
+in the authorize/token-exchange calls, is built from
+`Settings.broker_public_origin` (chart `broker.publicOrigin`) — the
+canonical `<scheme>://<host>` the portal SPA is served from, with no
+trailing slash. Neither URL is derived from the incoming request: the same
+broker deployment is reachable through more than one ingress host, and the
+linking flow's nonce cookie is host-only, so a request-relative callback
+would land on whichever host a given request happened to arrive through and
+drop the cookie on the callback leg. `broker_public_origin` is required
+(the broker refuses to start otherwise) whenever `identity_providers`
+contains an `oauth21-direct` entry.
+
 #### Identity providers are a single, unified list
 
 `Settings.identity_providers` (env `IDENTITY_PROVIDERS`, chart

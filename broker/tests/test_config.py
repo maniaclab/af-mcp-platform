@@ -49,6 +49,8 @@ _OAUTH21_ENTRY = {
     "issuer": "https://backend-as.example",
 }
 
+_PUBLIC_ORIGIN = "https://mcp-portal.example"
+
 
 def test_identity_providers_empty_list_is_valid():
     Settings()  # must not raise -- a degraded but valid config
@@ -63,6 +65,7 @@ def test_identity_providers_discriminates_entries_by_type():
     settings = Settings(
         broker_state_key="fake-key",
         oauth21_client_id="https://mcp.example/.well-known/cimd",
+        broker_public_origin=_PUBLIC_ORIGIN,
         identity_providers=[_KEYCLOAK_ENTRY, _OAUTH21_ENTRY],
     )
     assert [p.type for p in settings.identity_providers] == [
@@ -76,6 +79,7 @@ def test_identity_providers_oauth21_direct_ok_when_state_key_and_client_id_set()
     Settings(
         broker_state_key="fake-key",
         oauth21_client_id="https://mcp.example/.well-known/cimd",
+        broker_public_origin=_PUBLIC_ORIGIN,
         identity_providers=[_OAUTH21_ENTRY],
     )  # must not raise
 
@@ -84,6 +88,7 @@ def test_identity_providers_oauth21_direct_raises_when_state_key_missing():
     with pytest.raises(ValueError, match="broker_state_key"):
         Settings(
             oauth21_client_id="https://mcp.example/.well-known/cimd",
+            broker_public_origin=_PUBLIC_ORIGIN,
             identity_providers=[_OAUTH21_ENTRY],
         )
 
@@ -92,6 +97,36 @@ def test_identity_providers_oauth21_direct_raises_when_client_id_missing():
     with pytest.raises(ValueError, match="oauth21_client_id"):
         Settings(
             broker_state_key="fake-key",
+            broker_public_origin=_PUBLIC_ORIGIN,
+            identity_providers=[_OAUTH21_ENTRY],
+        )
+
+
+def test_identity_providers_oauth21_direct_raises_when_public_origin_missing():
+    with pytest.raises(ValueError, match="broker_public_origin"):
+        Settings(
+            broker_state_key="fake-key",
+            oauth21_client_id="https://mcp.example/.well-known/cimd",
+            identity_providers=[_OAUTH21_ENTRY],
+        )
+
+
+def test_identity_providers_oauth21_direct_raises_when_public_origin_has_trailing_slash():
+    with pytest.raises(ValueError, match="trailing slash"):
+        Settings(
+            broker_state_key="fake-key",
+            oauth21_client_id="https://mcp.example/.well-known/cimd",
+            broker_public_origin=f"{_PUBLIC_ORIGIN}/",
+            identity_providers=[_OAUTH21_ENTRY],
+        )
+
+
+def test_identity_providers_oauth21_direct_raises_when_public_origin_not_http():
+    with pytest.raises(ValueError, match="broker_public_origin"):
+        Settings(
+            broker_state_key="fake-key",
+            oauth21_client_id="https://mcp.example/.well-known/cimd",
+            broker_public_origin="ftp://mcp-portal.example",
             identity_providers=[_OAUTH21_ENTRY],
         )
 

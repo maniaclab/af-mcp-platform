@@ -59,6 +59,13 @@ TOKEN_ENDPOINT = "https://backend-as.example/token"
 PROVIDER_ISSUER = "https://backend-as.example"
 CLIENT_ID = "https://mcp.af.uchicago.edu/.well-known/cimd"
 
+# The canonical origin every outgoing OAuth 2.1 redirect_uri is built from
+# (see api/oauth21.py's `_callback_url`) — deliberately different from
+# TestClient's default request host ("testserver") so a test asserting on
+# this value actually proves the redirect_uri is public-origin-derived
+# rather than request-relative.
+PUBLIC_ORIGIN = "https://mcp-portal.example"
+
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -140,6 +147,7 @@ def _run(coro: Any) -> Any:
 def _configure_oauth21_env(monkeypatch: pytest.MonkeyPatch, fernet_key: str) -> None:
     monkeypatch.setenv("BROKER_STATE_KEY", fernet_key)
     monkeypatch.setenv("OAUTH21_CLIENT_ID", CLIENT_ID)
+    monkeypatch.setenv("BROKER_PUBLIC_ORIGIN", PUBLIC_ORIGIN)
     monkeypatch.setenv(
         "IDENTITY_PROVIDERS",
         json.dumps(
@@ -578,6 +586,82 @@ def test_authorize_redirects_with_correct_params(
     assert payload.sub == "sub-abc"  # make_principal()'s default subject
     assert payload.alias == ALIAS
     assert payload.nonce == nonce_cookie
+
+
+def test_authorize_url_uses_public_origin_for_redirect_uri(
+    monkeypatch: pytest.MonkeyPatch, app_client_factory: Any
+) -> None:
+    """The outgoing `redirect_uri` must come from `broker_public_origin`,
+    not whichever host the request actually arrived on (Bug 3 — the nonce
+    cookie is host-only, so authorize and callback must share an origin).
+    """
+    fernet_key = Fernet.generate_key().decode()
+    _configure_oauth21_env(monkeypatch, fernet_key)
+
+    with app_client_factory() as (client, _state):
+        resp = client.get(
+            f"/v1/oauth/authorize/{ALIAS}",
+            follow_redirects=False,
+            # TestClient's default request host is "testserver" -- a
+            # request-relative redirect_uri would reflect *this* Host
+            # instead, which is exactly the bug being fixed.
+            headers={"Host": "attacker-controlled.example"},
+        )
+
+    assert resp.status_code == 302, resp.text
+    query = parse_qs(urlparse(resp.headers["location"]).query)
+    assert query["redirect_uri"] == [f"{PUBLIC_ORIGIN}/v1/oauth/callback/{ALIAS}"]
+
+
+def test_authorize_returns_json_when_accept_json(
+    monkeypatch: pytest.MonkeyPatch, app_client_factory: Any
+) -> None:
+    fernet_key = Fernet.generate_key().decode()
+    _configure_oauth21_env(monkeypatch, fernet_key)
+
+    with app_client_factory() as (client, _state):
+        resp = client.get(
+            f"/v1/oauth/authorize/{ALIAS}",
+            headers={"Accept": "application/json"},
+            follow_redirects=False,
+        )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["authorize_url"].startswith(AUTHORIZATION_ENDPOINT + "?")
+    query = parse_qs(urlparse(body["authorize_url"]).query)
+    assert query["redirect_uri"] == [f"{PUBLIC_ORIGIN}/v1/oauth/callback/{ALIAS}"]
+    assert resp.cookies.get(NONCE_COOKIE_NAME) is not None
+
+
+def test_authorize_returns_302_when_accept_html(
+    monkeypatch: pytest.MonkeyPatch, app_client_factory: Any
+) -> None:
+    fernet_key = Fernet.generate_key().decode()
+    _configure_oauth21_env(monkeypatch, fernet_key)
+
+    with app_client_factory() as (client, _state):
+        resp = client.get(
+            f"/v1/oauth/authorize/{ALIAS}",
+            headers={"Accept": "text/html"},
+            follow_redirects=False,
+        )
+
+    assert resp.status_code == 302, resp.text
+    assert resp.headers["location"].startswith(AUTHORIZATION_ENDPOINT + "?")
+
+
+def test_authorize_returns_302_when_no_accept(
+    monkeypatch: pytest.MonkeyPatch, app_client_factory: Any
+) -> None:
+    fernet_key = Fernet.generate_key().decode()
+    _configure_oauth21_env(monkeypatch, fernet_key)
+
+    with app_client_factory() as (client, _state):
+        resp = client.get(f"/v1/oauth/authorize/{ALIAS}", follow_redirects=False)
+
+    assert resp.status_code == 302, resp.text
+    assert resp.headers["location"].startswith(AUTHORIZATION_ENDPOINT + "?")
 
 
 def test_authorize_404_for_unknown_alias(

@@ -61,7 +61,15 @@ function throwSessionExpired(): never {
   throw new SessionExpiredError();
 }
 
-async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+/**
+ * Bearer-authenticated fetch against an absolute *url* — the silent-renew-
+ * on-401 logic shared by `apiFetch` (broker `/v1` paths, relative to
+ * `API_BASE`) and `fetchOAuth21AuthorizeUrl` (an absolute `link_url` handed
+ * back by GET /v1/identities, potentially on a different origin than
+ * `API_BASE`). Callers still own status-code handling (`!res.ok`, `204`,
+ * `.json()`) — this only owns getting a validly-Bearer'd `Response`.
+ */
+async function authFetch(url: string, init?: RequestInit): Promise<Response> {
   const token = await getAccessToken();
   if (!token && (await isOidcConfigured())) {
     // OIDC is configured but there's no session (or renewal already failed
@@ -70,7 +78,7 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   const doFetch = (bearer: string | null) =>
-    fetch(`${API_BASE}${path}`, {
+    fetch(url, {
       ...init,
       headers: {
         'Content-Type': 'application/json',
@@ -91,6 +99,11 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
       throwSessionExpired();
     }
   }
+  return res;
+}
+
+async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await authFetch(`${API_BASE}${path}`, init);
   if (!res.ok) {
     const body = await res.text().catch(() => '');
     throw new APIError(res.status, res.statusText, body);
@@ -200,10 +213,35 @@ export async function fetchIdentities(): Promise<IdentitiesResponse> {
 // navigation can't complete that handshake, which is why this provider type
 // always goes through the client-side flow rather than a `link_url`
 // navigation. An "oauth21-direct" provider carries a full `link_url` (the
-// broker's own /v1/oauth/authorize/{alias}) and the click handler is a plain
-// `window.location.href` navigation, unchanged. DELETE
-// /v1/identities/link/{provider} always returns 501 — unlinking is not
-// implemented yet, so there is no unlink client here.
+// broker's own /v1/oauth/authorize/{alias}) — but a plain top-level
+// navigation to it can't carry the SPA's Bearer either (browsers don't
+// attach JS-held Authorization headers to top-level navigations), so
+// IdentityLink.vue calls fetchOAuth21AuthorizeUrl() first and navigates to
+// the `authorize_url` it returns instead of navigating to `link_url`
+// directly. DELETE /v1/identities/link/{provider} always returns 501 —
+// unlinking is not implemented yet, so there is no unlink client here.
+
+/**
+ * Fetches the backend authorization server's authorize URL for an
+ * "oauth21-direct" provider's `link_url`, using the SPA's own Bearer.
+ *
+ * `link_url` points at the broker's own `/v1/oauth/authorize/{alias}`
+ * (content-negotiated — see api/oauth21.py::authorize): requesting it with
+ * `Accept: application/json` gets back `{ authorize_url }` plus a
+ * `Set-Cookie` for the linking flow's nonce, instead of the 302 a bare
+ * browser navigation would receive. The caller is responsible for the actual
+ * `window.location.href = authorize_url` navigation — this only performs
+ * the Bearer'd fetch a top-level navigation couldn't.
+ */
+export async function fetchOAuth21AuthorizeUrl(linkUrl: string): Promise<string> {
+  const res = await authFetch(linkUrl, { headers: { Accept: 'application/json' } });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new APIError(res.status, res.statusText, body);
+  }
+  const data = (await res.json()) as { authorize_url: string };
+  return data.authorize_url;
+}
 
 // ---------------------------------------------------------------------------
 // Catalog — GET /v1/catalog (flat tool list)

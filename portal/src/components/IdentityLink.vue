@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue';
-import type { ProviderType } from '../lib/api';
+import { fetchOAuth21AuthorizeUrl, type ProviderType } from '../lib/api';
 import { startIdpLink } from '../lib/auth';
 
 const props = defineProps<{
@@ -40,7 +40,13 @@ async function handleLink() {
       // to parse.
       await startIdpLink({ providerAlias: props.id, returnUrl: '/identities/' });
     } else if (props.link_url) {
-      window.location.href = props.link_url;
+      // A top-level `window.location.href` navigation to link_url can't
+      // carry the SPA's Bearer (browsers don't attach JS-held Authorization
+      // headers to top-level navigations), so fetch the actual backend AS
+      // authorize_url with the Bearer first, then navigate to that instead
+      // — see api/oauth21.py::authorize's content negotiation.
+      const authorizeUrl = await fetchOAuth21AuthorizeUrl(props.link_url);
+      window.location.href = authorizeUrl;
     }
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Link failed. Try again.';

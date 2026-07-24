@@ -9,6 +9,7 @@ from pydantic import (
     BaseModel,
     Field,
     SecretStr,
+    ValidationError,
     ValidationInfo,
     field_validator,
     model_validator,
@@ -176,6 +177,17 @@ class Settings(BaseSettings):
     # used as `client_id` when the broker acts as an OAuth 2.1 client.
     oauth21_client_id: str = ""
 
+    # Canonical origin (scheme + host, no trailing slash) for every
+    # externally-visible URL the broker itself constructs in the OAuth 2.1
+    # flow: the `redirect_uri` sent to a backend AS at authorize/callback
+    # time, and every `redirect_uris` entry in the CIMD document. Both must
+    # resolve to the same origin the portal SPA is served from -- the flow's
+    # nonce cookie is host-only, so a request-relative callback URL (varying
+    # by which ingress host the request arrived on) would drop the cookie on
+    # the callback leg. Required (non-empty) whenever `identity_providers`
+    # contains an oauth21-direct entry; enforced by `_validate_oauth21_config`.
+    broker_public_origin: str = ""
+
     # One entry per identity provider the broker can link a user's account
     # to — either Keycloak's stored-broker-token pattern
     # (`keycloak-brokered`, OIDCProvider) or the broker acting as a direct
@@ -282,6 +294,35 @@ class Settings(BaseSettings):
                 "identifies the broker as an OAuth 2.1 client via its CIMD "
                 "document."
             )
+        if not self.broker_public_origin:
+            log.error(
+                "oauth21_config_invalid",
+                reason=(
+                    "broker_public_origin is empty but an oauth21-direct "
+                    "identity provider is configured"
+                ),
+            )
+            raise ValueError(
+                "broker_public_origin (BROKER_PUBLIC_ORIGIN) must be set when "
+                "identity_providers contains an oauth21-direct entry — it is "
+                "the canonical origin for the redirect_uri the broker sends "
+                "to a backend AS and for the redirect_uris advertised in the "
+                "CIMD document; the two must always agree."
+            )
+        if self.broker_public_origin.endswith("/"):
+            raise ValueError(
+                "broker_public_origin (BROKER_PUBLIC_ORIGIN) must not have a "
+                "trailing slash — it is concatenated directly with a "
+                "leading-slash path, e.g. f'{broker_public_origin}/v1/oauth/"
+                "callback/{alias}'."
+            )
+        try:
+            AnyHttpUrl(self.broker_public_origin)
+        except ValidationError as exc:
+            raise ValueError(
+                "broker_public_origin (BROKER_PUBLIC_ORIGIN) must be a valid "
+                f"http(s) URL: {exc}"
+            ) from exc
         return self
 
     @model_validator(mode="after")
