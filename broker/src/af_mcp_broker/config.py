@@ -3,8 +3,34 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Any
 
-from pydantic import Field, ValidationInfo, field_validator, model_validator
+import structlog
+from pydantic import (
+    AnyHttpUrl,
+    BaseModel,
+    Field,
+    SecretStr,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings
+
+log = structlog.get_logger(__name__)
+
+# ---------------------------------------------------------------------------
+# OAuth 2.1 provider config (issue #66 PR1) — one entry per backend
+# authorization server the broker acts as a direct OAuth 2.1 client to.
+# ---------------------------------------------------------------------------
+
+
+class OAuth21ProviderConfig(BaseModel):
+    alias: str
+    targets: list[str]
+    authorization_endpoint: AnyHttpUrl
+    token_endpoint: AnyHttpUrl
+    issuer: str
+    scope: str = "openid profile email"
+
 
 # pydantic-settings matches env vars to field names case-insensitively, so the
 # uppercase env var names (OIDC_ISSUER, ...) map to these fields without
@@ -102,6 +128,35 @@ class Settings(BaseSettings):
     # as a JSON array, e.g. '["rucio-atlas","rucio-escape"]'.
     cimd_idp_aliases: list[str] = Field(default_factory=list)
 
+    # Fernet key (urlsafe-base64-encoded 32 bytes) that encrypts the OAuth 2.1
+    # flow's `state` token — see oauth_state.py. Required (non-empty) whenever
+    # `oauth21_providers` is non-empty; enforced by `_validate_oauth21_config`.
+    broker_state_key: SecretStr = SecretStr("")
+
+    # `iss`/`aud` self-reference embedded in the OAuth 2.1 state token, so a
+    # token minted by one deployment is rejected by another. Empty means "use
+    # oidc_issuer" — resolved at read time via `oauth21_effective_state_issuer`
+    # rather than baked in here, so it always tracks the current oidc_issuer.
+    oauth21_state_issuer: str = ""
+
+    # The broker's own CIMD URL (e.g. https://mcp.af.uchicago.edu/.well-known/cimd),
+    # used as `client_id` when the broker acts as an OAuth 2.1 client.
+    oauth21_client_id: str = ""
+
+    # One entry per OAuth 2.1 backend authorization server. Parsed from
+    # OAUTH21_PROVIDERS as a JSON array, same style as CIMD_IDP_ALIASES.
+    oauth21_providers: list[OAuth21ProviderConfig] = Field(default_factory=list)
+
+    @property
+    def oauth21_effective_state_issuer(self) -> str:
+        """``oauth21_state_issuer`` if set, else ``oidc_issuer``.
+
+        Computed at read time (unlike ``oidc_jwks_uri``, which is derived once
+        in ``_derive_jwks_uri``) so it always reflects the current value of
+        either field rather than a value frozen at construction time.
+        """
+        return self.oauth21_state_issuer or self.oidc_issuer
+
     @field_validator(
         "credential_unlock_max_failures", "credential_unlock_window_seconds"
     )
@@ -121,6 +176,36 @@ class Settings(BaseSettings):
             # Standard OIDC discovery path
             self.oidc_jwks_uri = (
                 f"{self.oidc_issuer.rstrip('/')}/protocol/openid-connect/certs"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_oauth21_config(self) -> Settings:
+        """Fail startup loudly when OAuth 2.1 providers are configured but the
+        settings they depend on are not — a half-configured OAuth21Provider
+        would otherwise fail at first request instead of at boot.
+        """
+        if not self.oauth21_providers:
+            return self
+        if not self.broker_state_key.get_secret_value():
+            log.error(
+                "oauth21_config_invalid",
+                reason="broker_state_key is empty but oauth21_providers is configured",
+            )
+            raise ValueError(
+                "broker_state_key (BROKER_STATE_KEY) must be set when "
+                "oauth21_providers is non-empty — it protects in-flight "
+                "OAuth 2.1 linking flows."
+            )
+        if not self.oauth21_client_id:
+            log.error(
+                "oauth21_config_invalid",
+                reason="oauth21_client_id is empty but oauth21_providers is configured",
+            )
+            raise ValueError(
+                "oauth21_client_id (OAUTH21_CLIENT_ID) must be set when "
+                "oauth21_providers is non-empty — it identifies the broker "
+                "as an OAuth 2.1 client via its CIMD document."
             )
         return self
 

@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
 import structlog
+from cryptography.fernet import Fernet
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import JSONResponse, Response
@@ -25,6 +26,8 @@ from af_mcp_broker.config import Settings
 from af_mcp_broker.credentials import (
     CredentialCache,
     CredentialRegistry,
+    InMemoryTokenStore,
+    OAuth21Provider,
     OIDCProvider,
     X509Provider,
 )
@@ -128,6 +131,33 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
             credential_registry.register(spec.name, x509_provider)
             x509_targets.append(spec.name)
 
+    # --- OAuth 2.1 credential providers (issue #66 PR1): one OAuth21Provider
+    # per configured backend AS, sharing a single in-memory token store.
+    # `Settings._validate_oauth21_config` already refused to construct
+    # `settings` above if oauth21_providers is non-empty but broker_state_key
+    # or oauth21_client_id is empty, so both are guaranteed present here.
+    oauth21_providers: dict[str, OAuth21Provider] = {}
+    oauth21_token_store = None
+    oauth21_state_cipher = None
+    if settings.oauth21_providers:
+        oauth21_token_store = InMemoryTokenStore()
+        oauth21_state_cipher = Fernet(
+            settings.broker_state_key.get_secret_value().encode()
+        )
+        for cfg in settings.oauth21_providers:
+            provider = OAuth21Provider(
+                alias=cfg.alias,
+                targets=frozenset(cfg.targets),
+                authorization_endpoint=str(cfg.authorization_endpoint),
+                token_endpoint=str(cfg.token_endpoint),
+                issuer=cfg.issuer,
+                scope=cfg.scope,
+                store=oauth21_token_store,
+            )
+            oauth21_providers[cfg.alias] = provider
+            for target in cfg.targets:
+                credential_registry.register(target, provider)
+
     # --- Audit: without init the module drops every record. Honor AUDIT_LOG_FILE.
     audit_output = _open_audit_output(settings.audit_log_file)
     init_audit_logger(audit_output)
@@ -157,6 +187,9 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     application.state.oidc_provider = oidc_provider
     application.state.x509_provider = x509_provider
     application.state.x509_targets = x509_targets
+    application.state.oauth21_providers = oauth21_providers
+    application.state.oauth21_token_store = oauth21_token_store
+    application.state.oauth21_state_cipher = oauth21_state_cipher
 
     # Prime the JWKS cache at startup so the first request does not pay the
     # latency cost of a remote fetch.
@@ -175,6 +208,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         backends_file=settings.backends_file,
         backends_count=len(backends),
         x509_targets=x509_targets,
+        oauth21_aliases=list(oauth21_providers),
     )
 
     yield

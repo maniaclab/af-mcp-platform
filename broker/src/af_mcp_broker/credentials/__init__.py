@@ -9,6 +9,13 @@ from af_mcp_broker.credentials.base import (
     NeedsUnlock,
 )
 from af_mcp_broker.credentials.cache import CredentialCache
+from af_mcp_broker.credentials.oauth21 import (
+    InMemoryTokenStore,
+    OAuth21Provider,
+    StoredOAuthCredential,
+    TokenStore,
+    VersionConflict,
+)
 from af_mcp_broker.credentials.oidc import OIDCProvider
 from af_mcp_broker.credentials.service import ServiceProvider
 from af_mcp_broker.credentials.x509 import X509Provider
@@ -19,9 +26,14 @@ __all__ = [
     "CredentialProvider",
     "CredentialRegistry",
     "ExecutionModel",
+    "InMemoryTokenStore",
     "IssuedCredential",
     "NeedsUnlock",
+    "OAuth21Provider",
     "OIDCProvider",
     "ServiceProvider",
+    "StoredOAuthCredential",
+    "TokenStore",
+    "VersionConflict",
     "X509Provider",
 ]
