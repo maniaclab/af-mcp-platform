@@ -1,7 +1,7 @@
 github_url = "https://github.com/maniaclab/af-mcp-platform"
 
 [version]
-current = "0.0.11"
+current = "0.0.12"
 
 regex = '''
   (?P<major>\d+)
@@ -15,7 +15,7 @@ regex = '''
   '''
 
 [git]
-message_template = "chore: bump version 0.0.11 → {new_version}"
+message_template = "chore: bump version 0.0.12 → {new_version}"
 tag_template = "v{new_version}"
 
 [[file]]
