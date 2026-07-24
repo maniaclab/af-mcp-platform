@@ -14,6 +14,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import JSONResponse, Response
 from pydantic import ValidationError
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from af_mcp_broker._version import version as __version__
 from af_mcp_broker.api.router import router as v1_router
@@ -201,6 +202,14 @@ app = FastAPI(
     ),
     lifespan=lifespan,
 )
+
+# Trust X-Forwarded-{Proto,For,Host} from the fronting proxy so ``request.url``
+# reports the client-visible scheme (https) instead of the container-local one
+# (http). Load-bearing for /.well-known/cimd, whose self-referential
+# ``client_id`` must equal the URL the fetcher used. ``trusted_hosts="*"`` is
+# acceptable because the broker pod's HTTP port is only reachable inside the
+# cluster via its Service — reaching it already implies cluster-network access.
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
 # Mount the MCP aggregator at /mcp. Requests to /mcp/** are handled entirely
 # by the aggregator_app sub-application; they do not pass through the broker's
