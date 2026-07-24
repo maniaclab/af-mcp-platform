@@ -58,17 +58,6 @@ broker:
   oidc:
     issuer: "https://keycloak-prod.tempest.uchicago.edu/realms/connect"
     audience: "mcp-gateway"
-    # Alias of the linked external IdP used to resolve the ATLAS IAM
-    # identity link. The verified alias in the connect realm is "atlas-oidc"
-    # (Settings -> Identity Providers -> ATLAS IAM).
-    idpAlias: "atlas-oidc"
-
-  # The portal's own Keycloak client id (a public client). Used to build
-  # "Link account" URLs for keycloak-brokered identities on GET
-  # /v1/identities (see docs/auth.md). Empty means the broker can't build
-  # these URLs — the portal degrades to hiding the Link button for
-  # keycloak-brokered providers (e.g. ATLAS IAM) until this is set.
-  identitiesLinkClientId: ""
 
   # Name of a pre-existing Secret providing the AF service token.
   # The Secret must contain a key named `af-service-token`.
@@ -108,35 +97,50 @@ broker:
   # document) served at /.well-known/cimd, for backend OAuth 2.1 authorization
   # servers to identify this broker without per-backend Dynamic Client
   # Registration. Empty defaults — no AF-specific leak in the public chart.
+  # `redirect_uris` in the served document is derived from the oauth21-direct
+  # entries in identityProviders below — no separate alias list to keep in
+  # sync.
   cimd:
     clientName: ""
-    idpAliases: []
 
-  # OAuth 2.1 credential brokering — one entry per backend authorization
-  # server the broker acts as a direct OAuth 2.1 client to (e.g. rucio-mcp).
-  # Empty defaults — no AF-specific backends in the public chart. Every
-  # entry's `alias` MUST also appear in `cimd.idpAliases` above (the broker
-  # refuses to start otherwise — its redirect URI has to be advertised in
-  # the CIMD document backends fetch), and vice versa.
+  # Identity providers — one entry per identity provider the broker can link
+  # a user's account to, either Keycloak's stored-broker-token pattern
+  # (type: keycloak-brokered, e.g. ATLAS IAM) or the broker acting as a
+  # direct OAuth 2.1 client (type: oauth21-direct, e.g. rucio-mcp). `alias`
+  # doubles as the portal-facing id on GET /v1/identities. Empty default —
+  # no AF-specific providers in the public chart.
+  #
+  # Consolidates the former broker.oidc.idpAlias / broker.oauth21.providers /
+  # broker.cimd.idpAliases / broker.identitiesLinkClientId — see
+  # docs/adding-a-backend.md for the migration.
+  identityProviders: []
+  # - type: keycloak-brokered
+  #   alias: atlas-oidc
+  #   displayName: "ATLAS IAM"
+  #   enables: "VOMS proxy generation and grid certificate credential brokering"
+  #   targets: ["rucio"]
+  # - type: oauth21-direct
+  #   alias: rucio-mcp-atlas
+  #   targets: ["rucio-mcp-atlas"]
+  #   authorizationEndpoint: "https://rucio-mcp.example/authorize"
+  #   tokenEndpoint: "https://rucio-mcp.example/token"
+  #   issuer: "https://rucio-mcp.example"
+  #   scope: "openid profile email"
+  #   displayName: "Rucio (ATLAS)"
+  #   enables: "ATLAS Rucio operations via rucio-mcp"
+
+  # OAuth 2.1 credential-brokering infrastructure shared by every
+  # oauth21-direct entry in identityProviders above.
   oauth21:
     # Name of a pre-existing Secret providing the Fernet key (urlsafe-
     # base64-encoded 32 bytes) that encrypts the OAuth 2.1 linking flow's
     # `state` token. The Secret must contain a key named `broker-state-key`.
-    # Required (non-empty) whenever providers below is non-empty. Create via
-    # SealedSecret externally; the chart does NOT create it.
+    # Required (non-empty) whenever identityProviders has an oauth21-direct
+    # entry. Create via SealedSecret externally; the chart does NOT create it.
     existingStateKeySecret: ""
     # `iss`/`aud` self-reference embedded in the state token. Empty means
     # "use broker.oidc.issuer".
     stateIssuer: ""
-    providers: []
-    # - alias: rucio-mcp-atlas
-    #   targets: ["rucio-mcp-atlas"]
-    #   authorizationEndpoint: "https://rucio-mcp.example/authorize"
-    #   tokenEndpoint: "https://rucio-mcp.example/token"
-    #   issuer: "https://rucio-mcp.example"
-    #   scope: "openid profile email"
-    #   displayName: "Rucio (ATLAS)"
-    #   enables: "ATLAS Rucio operations via rucio-mcp"
 
     # Where OAuth 2.1 credentials (above) are persisted. "in-memory" is
     # single-replica and lost on restart; "vault" persists to a Vault/OpenBao

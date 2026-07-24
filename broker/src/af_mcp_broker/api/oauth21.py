@@ -44,7 +44,12 @@ router = APIRouter(tags=["oauth21"])
 
 
 def _oauth21_providers(request: Request) -> dict[str, OAuth21Provider]:
-    providers = getattr(request.app.state, "oauth21_providers", None)
+    identity_providers = getattr(request.app.state, "identity_providers", None) or {}
+    providers = {
+        alias: p
+        for alias, p in identity_providers.items()
+        if isinstance(p, OAuth21Provider)
+    }
     if not providers:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

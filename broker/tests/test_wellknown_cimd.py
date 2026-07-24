@@ -46,10 +46,11 @@ def test_cimd_token_endpoint_auth_method_is_none(
     assert resp.json()["token_endpoint_auth_method"] == "none"
 
 
-def test_cimd_empty_idp_aliases_yields_empty_redirect_uris(
+def test_cimd_empty_identity_providers_yields_empty_redirect_uris(
     app_client_factory: Callable[..., Any],
 ) -> None:
-    # cimd_idp_aliases defaults to [] — no CIMD_IDP_ALIASES env var set.
+    # app_client_factory's default identity_providers entry (see conftest.py)
+    # is keycloak-brokered, which never contributes a redirect_uri.
     with app_client_factory() as (client, _):
         resp: Any = client.get("/.well-known/cimd")
 
@@ -57,21 +58,27 @@ def test_cimd_empty_idp_aliases_yields_empty_redirect_uris(
     assert resp.json()["redirect_uris"] == []
 
 
-def test_cimd_redirect_uris_derived_from_aliases_in_order(
+def test_cimd_redirect_uris_derived_from_oauth21_direct_aliases_in_order(
     monkeypatch: pytest.MonkeyPatch,
     app_client_factory: Callable[..., Any],
 ) -> None:
     monkeypatch.setenv("OIDC_ISSUER", "https://kc.example.com/realms/foo")
-    monkeypatch.setenv("CIMD_IDP_ALIASES", '["rucio-atlas", "rucio-escape"]')
-    # `Settings._validate_oauth21_cimd_alias_parity` requires every
-    # cimd_idp_aliases entry to have a matching oauth21_providers alias.
     monkeypatch.setenv("BROKER_STATE_KEY", Fernet.generate_key().decode())
     monkeypatch.setenv("OAUTH21_CLIENT_ID", "https://mcp.example.com/.well-known/cimd")
     monkeypatch.setenv(
-        "OAUTH21_PROVIDERS",
+        "IDENTITY_PROVIDERS",
         json.dumps(
             [
+                # A keycloak-brokered entry alongside the oauth21-direct ones
+                # below must be excluded from redirect_uris — only
+                # oauth21-direct entries contribute one.
                 {
+                    "type": "keycloak-brokered",
+                    "alias": "atlas-oidc",
+                    "targets": ["rucio"],
+                },
+                {
+                    "type": "oauth21-direct",
                     "alias": "rucio-atlas",
                     "targets": ["rucio-atlas"],
                     "authorization_endpoint": "https://backend-as.example/authorize",
@@ -79,6 +86,7 @@ def test_cimd_redirect_uris_derived_from_aliases_in_order(
                     "issuer": "https://backend-as.example",
                 },
                 {
+                    "type": "oauth21-direct",
                     "alias": "rucio-escape",
                     "targets": ["rucio-escape"],
                     "authorization_endpoint": "https://backend-as-2.example/authorize",

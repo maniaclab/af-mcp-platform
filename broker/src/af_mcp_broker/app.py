@@ -9,6 +9,9 @@ from typing import TYPE_CHECKING, TextIO
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
+    from af_mcp_broker.config import IdentityProviderConfig
+    from af_mcp_broker.credentials import CredentialProvider
+
 import structlog
 from cryptography.fernet import Fernet
 from fastapi import FastAPI, HTTPException, Request
@@ -116,32 +119,37 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     )
     credential_cache.start_janitor()
 
-    oidc_provider = OIDCProvider(settings, credential_cache)
     x509_provider = X509Provider(settings, credential_cache)
-    credential_registry = CredentialRegistry([oidc_provider, x509_provider])
+    credential_registry = CredentialRegistry([x509_provider])
 
-    # Map each backend target to a provider by its declared auth_type.
-    #   bearer -> OIDCProvider (stored brokered IAM token)
-    #   x509   -> X509Provider (voms-proxy minted from the user's ~/.globus cert)
-    #   none   -> no user credential required, so no provider is registered.
+    # Map each x509-auth backend target to X509Provider (voms-proxy minted
+    # from the user's ~/.globus cert). `bearer`-auth backends' credential
+    # provider now comes from `identity_providers`' per-entry `targets` list
+    # (see below), not a blanket auth_type == "bearer" match against a single
+    # OIDCProvider — this lets different backends bind to different
+    # keycloak-brokered/oauth21-direct aliases. `none` requires no user
+    # credential, so no provider is registered.
     x509_targets: list[str] = []
     for spec in backends:
-        if spec.auth_type == "bearer":
-            credential_registry.register(spec.name, oidc_provider)
-        elif spec.auth_type == "x509":
+        if spec.auth_type == "x509":
             credential_registry.register(spec.name, x509_provider)
             x509_targets.append(spec.name)
 
-    # --- OAuth 2.1 credential providers (issue #66 PR1): one OAuth21Provider
-    # per configured backend AS, sharing a single token store (in-memory or
-    # Vault-backed, per `settings.token_store_backend` -- issue #66 PR3).
-    # `Settings._validate_oauth21_config` already refused to construct
-    # `settings` above if oauth21_providers is non-empty but broker_state_key
-    # or oauth21_client_id is empty, so both are guaranteed present here.
-    oauth21_providers: dict[str, OAuth21Provider] = {}
+    # --- Identity providers (issue #66 PR4): one CredentialProvider instance
+    # per configured `identity_providers` entry, keyed by alias — either
+    # Keycloak's stored-broker-token pattern (`keycloak-brokered`,
+    # OIDCProvider) or the broker acting as a direct OAuth 2.1 client
+    # (`oauth21-direct`, OAuth21Provider), sharing a single token store
+    # (in-memory or Vault-backed, per `settings.token_store_backend` — issue
+    # #66 PR3). `Settings._validate_oauth21_config` already refused to
+    # construct `settings` above if an oauth21-direct entry is configured
+    # without broker_state_key/oauth21_client_id, so both are guaranteed
+    # present here whenever an oauth21-direct entry exists.
+    identity_providers: dict[str, CredentialProvider] = {}
+    identity_provider_configs: dict[str, IdentityProviderConfig] = {}
     oauth21_token_store: InMemoryTokenStore | VaultTokenStore | None = None
     oauth21_state_cipher = None
-    if settings.oauth21_providers:
+    if any(cfg.type == "oauth21-direct" for cfg in settings.identity_providers):
         if settings.token_store_backend == "vault":
             oauth21_token_store = VaultTokenStore(
                 addr=settings.vault_addr,
@@ -167,7 +175,18 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         oauth21_state_cipher = Fernet(
             settings.broker_state_key.get_secret_value().encode()
         )
-        for cfg in settings.oauth21_providers:
+
+    for cfg in settings.identity_providers:
+        provider: CredentialProvider
+        if cfg.type == "keycloak-brokered":
+            provider = OIDCProvider(
+                settings,
+                credential_cache,
+                alias=cfg.alias,
+                targets=frozenset(cfg.targets),
+            )
+        else:
+            assert oauth21_token_store is not None  # guaranteed by the check above
             provider = OAuth21Provider(
                 alias=cfg.alias,
                 targets=frozenset(cfg.targets),
@@ -177,9 +196,10 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
                 scope=cfg.scope,
                 store=oauth21_token_store,
             )
-            oauth21_providers[cfg.alias] = provider
-            for target in cfg.targets:
-                credential_registry.register(target, provider)
+        identity_providers[cfg.alias] = provider
+        identity_provider_configs[cfg.alias] = cfg
+        for target in cfg.targets:
+            credential_registry.register(target, provider)
 
     # --- Audit: without init the module drops every record. Honor AUDIT_LOG_FILE.
     audit_output = _open_audit_output(settings.audit_log_file)
@@ -207,10 +227,10 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     application.state.backends_loaded = backends_loaded
     application.state.credential_cache = credential_cache
     application.state.credential_registry = credential_registry
-    application.state.oidc_provider = oidc_provider
     application.state.x509_provider = x509_provider
     application.state.x509_targets = x509_targets
-    application.state.oauth21_providers = oauth21_providers
+    application.state.identity_providers = identity_providers
+    application.state.identity_provider_configs = identity_provider_configs
     application.state.oauth21_token_store = oauth21_token_store
     application.state.oauth21_state_cipher = oauth21_state_cipher
 
@@ -231,7 +251,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         backends_file=settings.backends_file,
         backends_count=len(backends),
         x509_targets=x509_targets,
-        oauth21_aliases=list(oauth21_providers),
+        identity_provider_aliases=list(identity_providers),
     )
 
     yield

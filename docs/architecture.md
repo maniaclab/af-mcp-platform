@@ -113,8 +113,31 @@ every such backend, the broker publishes a public, unauthenticated
 [draft-ietf-oauth-client-id-metadata-document](https://datatracker.ietf.org/doc/draft-ietf-oauth-client-id-metadata-document/):
 a self-describing JSON document whose `client_id` is the URL of the document
 itself. A backend's authorization server fetches this URL directly to learn
-the broker's `redirect_uris` (one per configured Keycloak IdP alias) and
-client metadata, with no per-backend registration step required.
+the broker's `redirect_uris` (one per `oauth21-direct` entry in
+`Settings.identity_providers`) and client metadata, with no per-backend
+registration step required.
+
+#### Identity providers are a single, unified list
+
+`Settings.identity_providers` (env `IDENTITY_PROVIDERS`, chart
+`broker.identityProviders`) is the one config surface for every identity
+provider the broker can link a user's account to. Each entry is a
+discriminated union on `type`:
+
+- `keycloak-brokered` — Keycloak's stored-broker-token pattern (see below),
+  handled by `OIDCProvider`. `alias` must match the IdP alias configured in
+  the OIDC issuer's realm (e.g. `atlas-oidc`).
+- `oauth21-direct` — the broker acting as a direct OAuth 2.1 client (see
+  CIMD above), handled by `OAuth21Provider`.
+
+An entry's `alias` doubles as the portal-facing id on `GET /v1/identities` —
+there is no separate id-to-alias mapping. `app.py`'s lifespan builds one
+`CredentialProvider` instance per entry, keyed by alias, on
+`app.state.identity_providers`, and registers each entry's `targets` with the
+`CredentialRegistry` the same way regardless of provider type. The identities
+API (`api/identities.py`) iterates this dict — in the same order the entries
+were configured — to build `GET /v1/identities`'s `providers` list, with no
+hardcoded provider set of its own.
 
 #### Linkage detection is per-provider
 
@@ -125,9 +148,11 @@ whichever system actually holds it and cannot be represented uniformly as a
 JWT claim:
 
 - `OIDCProvider` probes Keycloak's stored-brokered-token endpoint
-  (`GET /realms/connect/broker/atlas-oidc/token`) with the principal's own
+  (`GET /realms/connect/broker/<alias>/token`) with the principal's own
   bearer token; HTTP 200 means linked. The result is cached per uid for a
   short TTL to avoid a Keycloak round-trip on every call.
+- `OAuth21Provider` checks the `TokenStore` for a non-expired stored token
+  for `(principal.sub, alias)`.
 - `X509Provider` checks for a readable `usercert.pem` + `userkey.pem` pair
   under the principal's home directory.
 - `ServiceProvider` always reports linked — the broker's own service account

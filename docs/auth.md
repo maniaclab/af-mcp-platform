@@ -52,6 +52,31 @@ Backend MCP server  (receives brokered credential in the Authorization header
 
 ---
 
+## Identity provider types
+
+The broker links a user's account to an external identity two ways, declared
+side by side in `Settings.identity_providers` (env `IDENTITY_PROVIDERS`,
+chart `broker.identityProviders`). Both authenticate the principal via
+Keycloak first (the chain above) — they differ only in *how the backend
+token is obtained and stored* once that's done:
+
+| | `keycloak-brokered` | `oauth21-direct` |
+|---|---|---|
+| Handled by | `OIDCProvider` | `OAuth21Provider` |
+| Backend token source | Keycloak's stored-broker-token pattern — the user links via `kc_action=LINK_IDP`, Keycloak stores the resulting token internally | The broker itself is an OAuth 2.1 client to the backend's own authorization server (PKCE + CIMD `client_id`, see `docs/architecture.md#client-id-metadata-document-cimd`) |
+| Broker retrieves it via | `GET /realms/<realm>/broker/<alias>/token` | `TokenStore.get(sub, alias)`, refreshing on demand near expiry |
+| Token persistence | Keycloak (broker holds no copy) | The broker's own `TokenStore` (in-memory or Vault-backed — see PR3) |
+| Requires backend to be | An OIDC-compatible IdP Keycloak can broker to | An OAuth 2.1 authorization server (no OIDC discovery needed) |
+| Portal `link_url` | Always `null` — the portal re-runs its own client-side `startIdpLink()` flow | Full URL to the broker's own `/v1/oauth/authorize/{alias}` |
+
+Use `keycloak-brokered` when the backend is (or can be registered as) an
+OIDC identity provider Keycloak already understands — this is the path for
+ATLAS IAM (`atlas-oidc`). Use `oauth21-direct` when the backend is an OAuth
+2.1 authorization server in its own right and cannot be made to look like an
+OIDC IdP to Keycloak — this is the path for rucio-mcp.
+
+---
+
 ## Token claims required by the broker
 
 **What the broker requires.** The incoming access token MUST contain a
@@ -214,8 +239,9 @@ GET https://keycloak-prod.tempest.uchicago.edu/realms/connect/broker/atlas-oidc/
 Authorization: Bearer <af-token>
 ```
 
-(`atlas-oidc` is the IdP alias in the connect realm; configurable via
-`OIDC_IDP_ALIAS`.)
+(`atlas-oidc` is the IdP alias in the connect realm; configurable via the
+`alias` field of this provider's `keycloak-brokered` entry in
+`Settings.identity_providers` / `broker.identityProviders`.)
 
 This returns the ATLAS IAM access token that Keycloak obtained during the
 account-linking flow. That token:

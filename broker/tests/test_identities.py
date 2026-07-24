@@ -1,12 +1,13 @@
 """Tests for GET /v1/identities' ``providers`` list.
 
-``providers`` flattens the old ``linked_accounts``/``available_providers``
-split into one list, uniform across both linking mechanisms: Keycloak's
-stored-broker-token pattern (``OIDCProvider``) and the broker's own direct
-OAuth 2.1 client (``OAuth21Provider``). These tests exercise
+``providers`` reflects whatever ``identity_providers`` entries are
+configured, in config order, uniform across both linking mechanisms:
+Keycloak's stored-broker-token pattern (``OIDCProvider``) and the broker's
+own direct OAuth 2.1 client (``OAuth21Provider``). These tests exercise
 building that list: probing ``is_linked()`` so the response reflects reality
 rather than a JWT claim that may be absent, ``link_url`` shape for both
-provider types, and the degraded-config cases where ``link_url`` is null.
+provider types (always null for keycloak-brokered — issue #66 PR4), and
+config-order preservation.
 """
 
 from __future__ import annotations
@@ -28,6 +29,9 @@ if TYPE_CHECKING:
 
 _AUTH = {"Authorization": "Bearer test"}
 
+# Matches conftest.py's app_client_factory default `identity_providers` entry.
+DEFAULT_KEYCLOAK_ALIAS = "atlas-oidc"
+
 ALIAS = "rucio-mcp-atlas"
 AUTHORIZATION_ENDPOINT = "https://backend-as.example/authorize"
 TOKEN_ENDPOINT = "https://backend-as.example/token"
@@ -37,12 +41,12 @@ PROVIDER_ISSUER = "https://backend-as.example"
 def _configure_oauth21_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("BROKER_STATE_KEY", Fernet.generate_key().decode())
     monkeypatch.setenv("OAUTH21_CLIENT_ID", "https://mcp.example.com/.well-known/cimd")
-    monkeypatch.setenv("CIMD_IDP_ALIASES", json.dumps([ALIAS]))
     monkeypatch.setenv(
-        "OAUTH21_PROVIDERS",
+        "IDENTITY_PROVIDERS",
         json.dumps(
             [
                 {
+                    "type": "oauth21-direct",
                     "alias": ALIAS,
                     "targets": [ALIAS],
                     "authorization_endpoint": AUTHORIZATION_ENDPOINT,
@@ -56,20 +60,16 @@ def _configure_oauth21_env(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-def _keycloak_entries(body: dict) -> dict[str, dict]:
-    return {p["id"]: p for p in body["providers"] if p["type"] == "keycloak-brokered"}
-
-
-def _oauth21_entries(body: dict) -> dict[str, dict]:
-    return {p["id"]: p for p in body["providers"] if p["type"] == "oauth21-direct"}
+def _by_id(body: dict) -> dict[str, dict]:
+    return {p["id"]: p for p in body["providers"]}
 
 
 # ---------------------------------------------------------------------------
-# Keycloak-brokered providers
+# keycloak-brokered providers
 # ---------------------------------------------------------------------------
 
 
-def test_providers_reflects_is_linked_true(
+def test_keycloak_brokered_provider_reflects_is_linked_true(
     app_client: tuple[TestClient, dict], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from af_mcp_broker.credentials.oidc import OIDCProvider
@@ -83,13 +83,12 @@ def test_providers_reflects_is_linked_true(
     resp = client.get("/v1/identities", headers=_AUTH)
 
     assert resp.status_code == 200, resp.text
-    body = resp.json()
-    kc = _keycloak_entries(body)
-    assert kc["atlas-iam"]["linked"] is True
-    assert kc["cern"]["linked"] is False
+    entry = _by_id(resp.json())[DEFAULT_KEYCLOAK_ALIAS]
+    assert entry["type"] == "keycloak-brokered"
+    assert entry["linked"] is True
 
 
-def test_providers_empty_when_not_linked(
+def test_keycloak_brokered_provider_reflects_is_linked_false(
     app_client: tuple[TestClient, dict], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from af_mcp_broker.credentials.oidc import OIDCProvider
@@ -103,13 +102,11 @@ def test_providers_empty_when_not_linked(
     resp = client.get("/v1/identities", headers=_AUTH)
 
     assert resp.status_code == 200, resp.text
-    body = resp.json()
-    kc = _keycloak_entries(body)
-    assert kc["atlas-iam"]["linked"] is False
-    assert kc["cern"]["linked"] is False
+    entry = _by_id(resp.json())[DEFAULT_KEYCLOAK_ALIAS]
+    assert entry["linked"] is False
 
 
-def test_providers_probes_not_jwt_claims(
+def test_keycloak_brokered_provider_probes_not_jwt_claims(
     app_client_factory: Callable[..., object], make_principal: Callable[..., object]
 ) -> None:
     """A principal has no JWT-derived sub claim to carry any more (the fields
@@ -127,58 +124,22 @@ def test_providers_probes_not_jwt_claims(
             resp = client.get("/v1/identities", headers=_AUTH)
 
     assert resp.status_code == 200, resp.text
-    body = resp.json()
-    kc = _keycloak_entries(body)
-    assert kc["atlas-iam"]["linked"] is True
-    assert kc["cern"]["linked"] is False
+    entry = _by_id(resp.json())[DEFAULT_KEYCLOAK_ALIAS]
+    assert entry["linked"] is True
 
 
-def test_atlas_iam_link_url_null_when_client_id_unset(
+def test_keycloak_brokered_link_url_always_null(
     app_client: tuple[TestClient, dict],
 ) -> None:
-    # identities_link_client_id defaults to "" — app_client_factory doesn't
-    # set IDENTITIES_LINK_CLIENT_ID.
+    """Per issue #66 PR4, keycloak-brokered link_urls are unconditionally
+    null — the portal re-runs its own client-side startIdpLink() flow for
+    these instead of navigating to a broker-built URL."""
     client, _ = app_client
     resp = client.get("/v1/identities", headers=_AUTH)
 
     assert resp.status_code == 200, resp.text
-    kc = _keycloak_entries(resp.json())
-    assert kc["atlas-iam"]["link_url"] is None
-
-
-def test_atlas_iam_link_url_set_when_client_id_configured(
-    monkeypatch: pytest.MonkeyPatch, app_client_factory: Callable[..., object]
-) -> None:
-    monkeypatch.setenv("IDENTITIES_LINK_CLIENT_ID", "mcp-portal")
-
-    with app_client_factory() as (client, _state):
-        resp = client.get("/v1/identities", headers=_AUTH)
-
-    assert resp.status_code == 200, resp.text
-    kc = _keycloak_entries(resp.json())
-    link_url = kc["atlas-iam"]["link_url"]
-    assert link_url is not None
-    parsed = urlparse(link_url)
-    assert parsed.path.endswith("/protocol/openid-connect/auth")
-    query = parse_qs(parsed.query)
-    assert query["client_id"] == ["mcp-portal"]
-    assert query["kc_action"] == ["LINK_IDP"]
-    assert query["provider_id"] == ["atlas-oidc"]
-    assert query["redirect_uri"] == ["https://mcp-portal.af.uchicago.edu/callback"]
-
-
-def test_cern_link_url_always_null_even_when_client_id_configured(
-    monkeypatch: pytest.MonkeyPatch, app_client_factory: Callable[..., object]
-) -> None:
-    """cern has no real backing IdP — it's a placeholder, no link possible."""
-    monkeypatch.setenv("IDENTITIES_LINK_CLIENT_ID", "mcp-portal")
-
-    with app_client_factory() as (client, _state):
-        resp = client.get("/v1/identities", headers=_AUTH)
-
-    assert resp.status_code == 200, resp.text
-    kc = _keycloak_entries(resp.json())
-    assert kc["cern"]["link_url"] is None
+    entry = _by_id(resp.json())[DEFAULT_KEYCLOAK_ALIAS]
+    assert entry["link_url"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -193,7 +154,8 @@ def test_oauth21_provider_absent_when_not_configured(
     resp = client.get("/v1/identities", headers=_AUTH)
 
     assert resp.status_code == 200, resp.text
-    assert _oauth21_entries(resp.json()) == {}
+    types = {p["type"] for p in resp.json()["providers"]}
+    assert "oauth21-direct" not in types
 
 
 def test_oauth21_provider_present_with_metadata_and_link_url(
@@ -205,8 +167,8 @@ def test_oauth21_provider_present_with_metadata_and_link_url(
         resp = client.get("/v1/identities", headers=_AUTH)
 
     assert resp.status_code == 200, resp.text
-    entries = _oauth21_entries(resp.json())
-    entry = entries[ALIAS]
+    entry = _by_id(resp.json())[ALIAS]
+    assert entry["type"] == "oauth21-direct"
     assert entry["display_name"] == "Rucio (ATLAS)"
     assert entry["enables"] == "ATLAS Rucio operations via rucio-mcp"
     assert entry["linked"] is False
@@ -247,8 +209,52 @@ def test_oauth21_provider_linked_reflects_token_store_state(
         resp = client.get("/v1/identities", headers=_AUTH)
 
     assert resp.status_code == 200, resp.text
-    entries = _oauth21_entries(resp.json())
-    assert entries[ALIAS]["linked"] is True
+    entry = _by_id(resp.json())[ALIAS]
+    assert entry["linked"] is True
+
+
+# ---------------------------------------------------------------------------
+# Config-order preservation
+# ---------------------------------------------------------------------------
+
+
+def test_providers_order_matches_identity_providers_config_order(
+    monkeypatch: pytest.MonkeyPatch, app_client_factory: Callable[..., object]
+) -> None:
+    """The response's providers list must reflect identity_providers' config
+    order, not grouped by type — Python dicts preserve insertion order, and
+    app.py's lifespan populates app.state.identity_providers by iterating
+    identity_providers in order, so this is structural rather than an
+    explicit sort."""
+    monkeypatch.setenv("BROKER_STATE_KEY", Fernet.generate_key().decode())
+    monkeypatch.setenv("OAUTH21_CLIENT_ID", "https://mcp.example.com/.well-known/cimd")
+    monkeypatch.setenv(
+        "IDENTITY_PROVIDERS",
+        json.dumps(
+            [
+                {
+                    "type": "oauth21-direct",
+                    "alias": "z-oauth21-provider",
+                    "targets": ["z-oauth21-provider"],
+                    "authorization_endpoint": AUTHORIZATION_ENDPOINT,
+                    "token_endpoint": TOKEN_ENDPOINT,
+                    "issuer": PROVIDER_ISSUER,
+                },
+                {
+                    "type": "keycloak-brokered",
+                    "alias": "a-keycloak-provider",
+                    "targets": ["a-keycloak-provider"],
+                },
+            ]
+        ),
+    )
+
+    with app_client_factory() as (client, _state):
+        resp = client.get("/v1/identities", headers=_AUTH)
+
+    assert resp.status_code == 200, resp.text
+    ids = [p["id"] for p in resp.json()["providers"]]
+    assert ids == ["z-oauth21-provider", "a-keycloak-provider"]
 
 
 # ---------------------------------------------------------------------------
@@ -268,7 +274,7 @@ def test_unlink_known_keycloak_provider_returns_501(
     app_client: tuple[TestClient, dict],
 ) -> None:
     client, _ = app_client
-    resp = client.delete("/v1/identities/link/atlas-iam", headers=_AUTH)
+    resp = client.delete(f"/v1/identities/link/{DEFAULT_KEYCLOAK_ALIAS}", headers=_AUTH)
     assert resp.status_code == 501
 
 

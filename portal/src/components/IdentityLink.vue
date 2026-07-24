@@ -15,11 +15,18 @@ const props = defineProps<{
 const busy = ref(false);
 const error = ref<string | null>(null);
 
+// keycloak-brokered providers always carry link_url: null (issue #66 PR4) —
+// the broker can't build a URL the portal could navigate to directly and
+// have it complete (see the comment in handleLink() below), so link_url's
+// presence isn't a usable signal for these. `id` doubling as the broker's
+// configured alias (no separate id-to-alias mapping) is what makes linking
+// possible regardless.
+const canLink = props.type === 'keycloak-brokered' || !!props.link_url;
+
 // Shared by both the "Link account" and "Reconnect" buttons below — same
 // flow either way, just re-run to overwrite a stale stored token in place
 // when already linked.
 async function handleLink() {
-  if (!props.link_url) return; // button isn't rendered in this case anyway
   busy.value = true;
   error.value = null;
   try {
@@ -27,17 +34,12 @@ async function handleLink() {
       // Keycloak's kc_action=LINK_IDP flow's callback lands on /callback,
       // which only completes via oidc-client-ts's own locally-stored
       // PKCE/state (see ../lib/api.ts's linking-mechanisms note) — a bare
-      // top-level navigation to link_url can't complete that handshake, so
-      // re-run the portal's own client-side flow instead. link_url still
-      // carries the Keycloak IdP alias as its `provider_id` query param,
-      // which is all startIdpLink() needs — the portal never has to know
-      // any other Keycloak detail.
-      const providerId = new URL(props.link_url).searchParams.get('provider_id');
-      if (!providerId) {
-        throw new Error('Malformed link URL: missing provider_id');
-      }
-      await startIdpLink({ providerAlias: providerId, returnUrl: '/identities/' });
-    } else {
+      // top-level navigation can't complete that handshake, so always
+      // re-run the portal's own client-side flow instead. `id` is the same
+      // alias the broker configured this provider under, so there's no URL
+      // to parse.
+      await startIdpLink({ providerAlias: props.id, returnUrl: '/identities/' });
+    } else if (props.link_url) {
       window.location.href = props.link_url;
     }
   } catch (err) {
@@ -74,7 +76,7 @@ const glyph = providerGlyph[props.id] ?? props.id[0]?.toUpperCase() ?? '?';
     <!-- Action -->
     <div class="il__actions">
       <button
-        v-if="!linked && link_url"
+        v-if="!linked && canLink"
         class="il__btn il__btn--link"
         :disabled="busy"
         @click="handleLink"
@@ -89,7 +91,7 @@ const glyph = providerGlyph[props.id] ?? props.id[0]?.toUpperCase() ?? '?';
       place — the fix for a stale/broken linkage without an explicit unlink.
       -->
       <button
-        v-else-if="linked && link_url"
+        v-else-if="linked && canLink"
         class="il__btn il__btn--reconnect"
         :disabled="busy"
         @click="handleLink"

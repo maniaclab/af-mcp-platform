@@ -30,10 +30,18 @@ def test_env_var_is_case_insensitive(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# oauth21_providers <-> cimd_idp_aliases alias parity
+# identity_providers (issue #66 PR4) — discriminated-union parsing +
+# oauth21-direct dependent-settings validation
 # ---------------------------------------------------------------------------
 
-_A_PROVIDER = {
+_KEYCLOAK_ENTRY = {
+    "type": "keycloak-brokered",
+    "alias": "atlas-oidc",
+    "targets": ["rucio"],
+}
+
+_OAUTH21_ENTRY = {
+    "type": "oauth21-direct",
     "alias": "a",
     "targets": ["a"],
     "authorization_endpoint": "https://backend-as.example/authorize",
@@ -42,34 +50,50 @@ _A_PROVIDER = {
 }
 
 
-def test_oauth21_cimd_alias_parity_ok_when_both_empty():
-    Settings()  # must not raise
+def test_identity_providers_empty_list_is_valid():
+    Settings()  # must not raise -- a degraded but valid config
 
 
-def test_oauth21_cimd_alias_parity_ok_when_alias_sets_match():
+def test_identity_providers_keycloak_brokered_only_is_valid():
+    Settings(identity_providers=[_KEYCLOAK_ENTRY])  # must not raise -- no
+    # broker_state_key/oauth21_client_id needed for this provider type
+
+
+def test_identity_providers_discriminates_entries_by_type():
+    settings = Settings(
+        broker_state_key="fake-key",
+        oauth21_client_id="https://mcp.example/.well-known/cimd",
+        identity_providers=[_KEYCLOAK_ENTRY, _OAUTH21_ENTRY],
+    )
+    assert [p.type for p in settings.identity_providers] == [
+        "keycloak-brokered",
+        "oauth21-direct",
+    ]
+    assert [p.alias for p in settings.identity_providers] == ["atlas-oidc", "a"]
+
+
+def test_identity_providers_oauth21_direct_ok_when_state_key_and_client_id_set():
     Settings(
         broker_state_key="fake-key",
         oauth21_client_id="https://mcp.example/.well-known/cimd",
-        cimd_idp_aliases=["a"],
-        oauth21_providers=[_A_PROVIDER],
+        identity_providers=[_OAUTH21_ENTRY],
     )  # must not raise
 
 
-def test_oauth21_cimd_alias_parity_raises_when_oauth21_alias_missing_from_cimd():
-    with pytest.raises(ValueError, match="cimd_idp_aliases"):
+def test_identity_providers_oauth21_direct_raises_when_state_key_missing():
+    with pytest.raises(ValueError, match="broker_state_key"):
         Settings(
-            broker_state_key="fake-key",
             oauth21_client_id="https://mcp.example/.well-known/cimd",
-            cimd_idp_aliases=[],
-            oauth21_providers=[_A_PROVIDER],
+            identity_providers=[_OAUTH21_ENTRY],
         )
 
 
-def test_oauth21_cimd_alias_parity_raises_when_cimd_alias_is_dangling():
-    """A cimd_idp_aliases entry with no matching oauth21_providers alias
-    advertises a redirect URI nothing will ever complete."""
-    with pytest.raises(ValueError, match="oauth21_providers"):
-        Settings(cimd_idp_aliases=["dangling-alias"])
+def test_identity_providers_oauth21_direct_raises_when_client_id_missing():
+    with pytest.raises(ValueError, match="oauth21_client_id"):
+        Settings(
+            broker_state_key="fake-key",
+            identity_providers=[_OAUTH21_ENTRY],
+        )
 
 
 # ---------------------------------------------------------------------------
