@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Any
+from typing import Any, Literal
 
 import structlog
 from pydantic import (
@@ -162,6 +162,35 @@ class Settings(BaseSettings):
     # OAUTH21_PROVIDERS as a JSON array, same style as CIMD_IDP_ALIASES.
     oauth21_providers: list[OAuth21ProviderConfig] = Field(default_factory=list)
 
+    # Which TokenStore implementation backs the OAuth 2.1 providers above.
+    # "in_memory" is single-replica and lost on restart (fine for dev/testing);
+    # "vault" persists to Vault/OpenBao KV-v2 via the broker's K8s auth
+    # identity — see credentials/vault.py.
+    token_store_backend: Literal["in_memory", "vault"] = "in_memory"
+
+    # Vault/OpenBao HTTP API base URL, no trailing slash (e.g.
+    # https://vault.example.com). Required when token_store_backend="vault".
+    vault_addr: str = ""
+
+    # Vault auth mount point for the K8s auth backend (auth/<mount>/login).
+    vault_auth_mount: str = "kubernetes"
+
+    # Vault role the broker's ServiceAccount JWT is exchanged against.
+    # Required when token_store_backend="vault".
+    vault_auth_role: str = ""
+
+    # Vault KV-v2 secrets engine mount point.
+    vault_kv_mount: str = "secret"
+
+    # Path prefix under the KV mount where per-subject/alias credentials are
+    # stored: {vault_kv_mount}/data/{vault_kv_path_prefix}/{subject}/{alias}.
+    vault_kv_path_prefix: str = "mcp/tokens"
+
+    # Filesystem path to the broker's own ServiceAccount JWT, projected by
+    # Kubernetes automatically whenever a ServiceAccount is set on the pod —
+    # no extra volume mount needed at the chart's default.
+    vault_sa_token_path: str = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+
     @property
     def oauth21_effective_state_issuer(self) -> str:
         """``oauth21_state_issuer`` if set, else ``oidc_issuer``.
@@ -251,6 +280,35 @@ class Settings(BaseSettings):
                 "oauth21_providers aliases and cimd_idp_aliases must match "
                 f"exactly; missing from cimd_idp_aliases: {missing_from_cimd}; "
                 f"missing from oauth21_providers: {missing_from_oauth21}"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_vault_config(self) -> Settings:
+        """Fail startup loudly when the vault TokenStore backend is selected
+        but the settings it depends on are not — a half-configured
+        VaultTokenStore would otherwise fail at first request instead of at
+        boot (see also app.py's lifespan trial authentication).
+        """
+        if self.token_store_backend != "vault":
+            return self
+        if not self.vault_addr:
+            log.error(
+                "vault_config_invalid",
+                reason="vault_addr is empty but token_store_backend is 'vault'",
+            )
+            raise ValueError(
+                "vault_addr (VAULT_ADDR) must be set when token_store_backend "
+                "is 'vault'."
+            )
+        if not self.vault_auth_role:
+            log.error(
+                "vault_config_invalid",
+                reason="vault_auth_role is empty but token_store_backend is 'vault'",
+            )
+            raise ValueError(
+                "vault_auth_role (VAULT_AUTH_ROLE) must be set when "
+                "token_store_backend is 'vault'."
             )
         return self
 

@@ -29,6 +29,7 @@ from af_mcp_broker.credentials import (
     InMemoryTokenStore,
     OAuth21Provider,
     OIDCProvider,
+    VaultTokenStore,
     X509Provider,
 )
 from af_mcp_broker.credentials.cache import RateLimitError
@@ -132,15 +133,37 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
             x509_targets.append(spec.name)
 
     # --- OAuth 2.1 credential providers (issue #66 PR1): one OAuth21Provider
-    # per configured backend AS, sharing a single in-memory token store.
+    # per configured backend AS, sharing a single token store (in-memory or
+    # Vault-backed, per `settings.token_store_backend` -- issue #66 PR3).
     # `Settings._validate_oauth21_config` already refused to construct
     # `settings` above if oauth21_providers is non-empty but broker_state_key
     # or oauth21_client_id is empty, so both are guaranteed present here.
     oauth21_providers: dict[str, OAuth21Provider] = {}
-    oauth21_token_store = None
+    oauth21_token_store: InMemoryTokenStore | VaultTokenStore | None = None
     oauth21_state_cipher = None
     if settings.oauth21_providers:
-        oauth21_token_store = InMemoryTokenStore()
+        if settings.token_store_backend == "vault":
+            oauth21_token_store = VaultTokenStore(
+                addr=settings.vault_addr,
+                auth_mount=settings.vault_auth_mount,
+                auth_role=settings.vault_auth_role,
+                kv_mount=settings.vault_kv_mount,
+                kv_path_prefix=settings.vault_kv_path_prefix,
+                sa_token_path=settings.vault_sa_token_path,
+            )
+            # Trial authentication only -- proves the K8s auth flow works
+            # (SA JWT readable, Vault reachable, role accepted) without
+            # touching any stored credential. A misconfigured Vault backend
+            # is a security-sensitive state; refusing to start is safer than
+            # silently degrading to a broker that can't persist tokens.
+            try:
+                await oauth21_token_store._authenticate()
+            except Exception as exc:
+                logger.exception("vault_auth.failed")
+                raise RuntimeError(f"Vault K8s auth failed at startup: {exc}") from exc
+            logger.info("vault_auth.ok", vault_addr=settings.vault_addr)
+        else:
+            oauth21_token_store = InMemoryTokenStore()
         oauth21_state_cipher = Fernet(
             settings.broker_state_key.get_secret_value().encode()
         )

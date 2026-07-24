@@ -29,3 +29,11 @@ broker:
         issuer: "https://rucio-mcp.example.com"
         displayName: "Rucio (example)"
         enables: "Example Rucio operations via rucio-mcp"
+    # Exercises the Vault-backend template path in CI (`helm template` only
+    # -- these dummy values don't need a reachable Vault). See
+    # `tokenStore.backend` in values.yaml.
+    tokenStore:
+      backend: "vault"
+      vault:
+        addr: "https://vault.example.com"
+        authRole: "af-mcp-broker-example"

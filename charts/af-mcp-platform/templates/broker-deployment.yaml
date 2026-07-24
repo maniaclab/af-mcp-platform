@@ -108,6 +108,34 @@ spec:
                   key: broker-state-key
             {{- end }}
             {{- end }}
+            # OAuth 2.1 TokenStore backend — always set (pydantic default is
+            # "in_memory" so an unset value here is equivalent, but the env
+            # var is rendered unconditionally to make the active backend
+            # visible in `kubectl describe pod`/manifests).
+            - name: TOKEN_STORE_BACKEND
+              value: {{ .Values.broker.oauth21.tokenStore.backend | replace "-" "_" | quote }}
+            {{- if eq .Values.broker.oauth21.tokenStore.backend "vault" }}
+            {{- if .Values.broker.oauth21.tokenStore.vault.addr }}
+            - name: VAULT_ADDR
+              value: {{ .Values.broker.oauth21.tokenStore.vault.addr | quote }}
+            {{- end }}
+            {{- if .Values.broker.oauth21.tokenStore.vault.authMount }}
+            - name: VAULT_AUTH_MOUNT
+              value: {{ .Values.broker.oauth21.tokenStore.vault.authMount | quote }}
+            {{- end }}
+            {{- if .Values.broker.oauth21.tokenStore.vault.authRole }}
+            - name: VAULT_AUTH_ROLE
+              value: {{ .Values.broker.oauth21.tokenStore.vault.authRole | quote }}
+            {{- end }}
+            {{- if .Values.broker.oauth21.tokenStore.vault.kvMount }}
+            - name: VAULT_KV_MOUNT
+              value: {{ .Values.broker.oauth21.tokenStore.vault.kvMount | quote }}
+            {{- end }}
+            {{- if .Values.broker.oauth21.tokenStore.vault.kvPathPrefix }}
+            - name: VAULT_KV_PATH_PREFIX
+              value: {{ .Values.broker.oauth21.tokenStore.vault.kvPathPrefix | quote }}
+            {{- end }}
+            {{- end }}
             {{- if .Values.broker.existingServiceTokenSecret }}
             - name: AF_SERVICE_TOKEN
               valueFrom:
