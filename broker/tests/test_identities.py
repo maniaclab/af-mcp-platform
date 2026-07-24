@@ -41,6 +41,7 @@ PROVIDER_ISSUER = "https://backend-as.example"
 def _configure_oauth21_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("BROKER_STATE_KEY", Fernet.generate_key().decode())
     monkeypatch.setenv("OAUTH21_CLIENT_ID", "https://mcp.example.com/.well-known/cimd")
+    monkeypatch.setenv("BROKER_PUBLIC_ORIGIN", "https://mcp-portal.example.com")
     monkeypatch.setenv(
         "IDENTITY_PROVIDERS",
         json.dumps(
@@ -228,6 +229,7 @@ def test_providers_order_matches_identity_providers_config_order(
     explicit sort."""
     monkeypatch.setenv("BROKER_STATE_KEY", Fernet.generate_key().decode())
     monkeypatch.setenv("OAUTH21_CLIENT_ID", "https://mcp.example.com/.well-known/cimd")
+    monkeypatch.setenv("BROKER_PUBLIC_ORIGIN", "https://mcp-portal.example.com")
     monkeypatch.setenv(
         "IDENTITY_PROVIDERS",
         json.dumps(

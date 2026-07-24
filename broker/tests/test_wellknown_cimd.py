@@ -58,13 +58,19 @@ def test_cimd_empty_identity_providers_yields_empty_redirect_uris(
     assert resp.json()["redirect_uris"] == []
 
 
-def test_cimd_redirect_uris_derived_from_oauth21_direct_aliases_in_order(
+def test_cimd_redirect_uris_use_public_origin(
     monkeypatch: pytest.MonkeyPatch,
     app_client_factory: Callable[..., Any],
 ) -> None:
+    """`redirect_uris` must be the broker's own `/v1/oauth/callback/{alias}`
+    on its canonical `broker_public_origin` — the backend AS validates the
+    outgoing authorize call's `redirect_uri` against this exact whitelist
+    (Bug 2), and the two must always agree regardless of `oidc_issuer`.
+    """
     monkeypatch.setenv("OIDC_ISSUER", "https://kc.example.com/realms/foo")
     monkeypatch.setenv("BROKER_STATE_KEY", Fernet.generate_key().decode())
     monkeypatch.setenv("OAUTH21_CLIENT_ID", "https://mcp.example.com/.well-known/cimd")
+    monkeypatch.setenv("BROKER_PUBLIC_ORIGIN", "https://mcp-portal.example.com")
     monkeypatch.setenv(
         "IDENTITY_PROVIDERS",
         json.dumps(
@@ -102,8 +108,8 @@ def test_cimd_redirect_uris_derived_from_oauth21_direct_aliases_in_order(
 
     assert resp.status_code == 200, resp.text
     assert resp.json()["redirect_uris"] == [
-        "https://kc.example.com/realms/foo/broker/rucio-atlas/endpoint",
-        "https://kc.example.com/realms/foo/broker/rucio-escape/endpoint",
+        "https://mcp-portal.example.com/v1/oauth/callback/rucio-atlas",
+        "https://mcp-portal.example.com/v1/oauth/callback/rucio-escape",
     ]
 
 

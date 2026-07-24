@@ -74,6 +74,15 @@ spec:
             - name: CIMD_CLIENT_NAME
               value: {{ .Values.broker.cimd.clientName | quote }}
             {{- end }}
+            # Canonical origin for every OAuth 2.1 URL the broker constructs
+            # itself (redirect_uri, CIMD redirect_uris) — omitted when empty
+            # so the broker's pydantic default applies; the broker's own
+            # startup validation rejects an empty value when identityProviders
+            # has an oauth21-direct entry.
+            {{- if .Values.broker.publicOrigin }}
+            - name: BROKER_PUBLIC_ORIGIN
+              value: {{ .Values.broker.publicOrigin | quote }}
+            {{- end }}
             # Identity providers (issue #66 PR4) — one entry per
             # keycloak-brokered or oauth21-direct provider the broker can
             # link a user's account to. Omitted entirely when none are

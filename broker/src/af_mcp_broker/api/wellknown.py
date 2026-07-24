@@ -43,9 +43,9 @@ async def get_cimd(request: Request) -> CimdResponse:
         cast("Settings", getattr(request.app.state, "settings", None)) or Settings()
     )
 
-    issuer = settings.oidc_issuer.rstrip("/")
+    public_origin = settings.broker_public_origin.rstrip("/")
     redirect_uris = [
-        f"{issuer}/broker/{p.alias}/endpoint"
+        f"{public_origin}/v1/oauth/callback/{p.alias}"
         for p in settings.identity_providers
         if p.type == "oauth21-direct"
     ]

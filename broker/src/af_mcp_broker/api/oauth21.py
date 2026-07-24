@@ -5,7 +5,7 @@ from urllib.parse import urlencode
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
 from af_mcp_broker.config import Settings, get_settings
 from af_mcp_broker.credentials.oauth21 import (
@@ -88,6 +88,46 @@ def _state_cipher(request: Request) -> Fernet:
     return cipher
 
 
+def _callback_url(settings: Settings, alias: str) -> str:
+    """The broker's own callback URL for *alias*, on its canonical public origin.
+
+    Deliberately *not* derived from ``request.url_for`` (request-relative):
+    the same broker deployment is reachable through more than one ingress
+    host, so a request-relative callback would land on whichever host the
+    authorize/callback request happened to arrive through. That breaks two
+    invariants that must hold regardless of request path: this URL must
+    match the ``redirect_uris`` the broker advertises in its CIMD document
+    (see ``api/wellknown.py``), and the callback must share an origin with
+    the authorize call so the host-only nonce cookie set there is actually
+    sent back here.
+    """
+    return f"{settings.broker_public_origin.rstrip('/')}/v1/oauth/callback/{alias}"
+
+
+def _prefers_json(accept: str) -> bool:
+    """Decide whether the caller wants a JSON body instead of a redirect.
+
+    A full RFC 7231 media-range parser (wildcards, ``q=`` weighting) is
+    overkill for this one call site — the only two callers are the portal
+    SPA (which always sends a bare ``Accept: application/json``) and a human
+    with ``curl``/a browser (``text/html`` or no header at all). This walks
+    the comma-separated media types in the order the client listed them and
+    returns on the first of ``application/json``/``text/html``/``*/*`` seen,
+    so an explicit preference for JSON ahead of html still wins even when
+    both are present. Missing/empty header falls back to the existing
+    302 (browser-navigable) behavior.
+    """
+    if not accept:
+        return False
+    parts = [p.split(";")[0].strip().lower() for p in accept.split(",")]
+    for p in parts:
+        if p == "application/json":
+            return True
+        if p in ("text/html", "*/*"):
+            return False
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -104,12 +144,20 @@ async def authorize(
     settings: Annotated[Settings, Depends(get_settings)],
     return_path: Annotated[str | None, Query(alias="return")] = None,
 ) -> Response:
-    """Redirect the browser to *alias*'s backend authorization server.
+    """Send the browser to *alias*'s backend authorization server.
 
     Generates a PKCE verifier/challenge pair and a random nonce, encrypts
     them (plus the initiating principal's subject and the sanitized return
-    path) into the ``state`` parameter, sets the nonce as an HttpOnly cookie,
-    and 302s to the backend's ``authorization_endpoint``.
+    path) into the ``state`` parameter, and sets the nonce as an HttpOnly
+    cookie.
+
+    Content-negotiated on ``Accept`` (see ``_prefers_json``): a plain
+    top-level browser navigation can't carry the JS-held Bearer this route
+    requires, so the portal SPA must fetch this endpoint itself (with its
+    Bearer and ``Accept: application/json``) and then navigate the browser
+    to the ``authorize_url`` it gets back, rather than navigating here
+    directly. ``curl``/manual browser testing keep working unchanged via the
+    302 fallback.
     """
     provider = _resolve_provider(request, alias)
 
@@ -132,7 +180,7 @@ async def authorize(
         nonce=nonce,
     )
 
-    redirect_uri = str(request.url_for("oauth21_callback", alias=alias))
+    redirect_uri = _callback_url(settings, alias)
     query = urlencode(
         {
             "client_id": settings.oauth21_client_id,
@@ -144,11 +192,15 @@ async def authorize(
             "response_type": "code",
         }
     )
+    authorize_url = f"{provider.authorization_endpoint}?{query}"
 
-    response = RedirectResponse(
-        url=f"{provider.authorization_endpoint}?{query}",
-        status_code=status.HTTP_302_FOUND,
-    )
+    response: Response
+    if _prefers_json(request.headers.get("accept", "")):
+        response = JSONResponse({"authorize_url": authorize_url})
+    else:
+        response = RedirectResponse(
+            url=authorize_url, status_code=status.HTTP_302_FOUND
+        )
     response.set_cookie(
         NONCE_COOKIE_NAME,
         nonce,
@@ -221,7 +273,7 @@ async def callback(
             detail="OAuth state alias does not match callback URL",
         )
 
-    redirect_uri = str(request.url_for("oauth21_callback", alias=alias))
+    redirect_uri = _callback_url(settings, alias)
     resp = await get_http_client().post(
         provider.token_endpoint,
         data={
