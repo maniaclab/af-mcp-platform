@@ -134,27 +134,14 @@ Principals in the `af-my-new-backend-users` Keycloak group will be granted
 
 ## Step 4 — Allow egress to the backend in NetworkPolicy (if needed)
 
-If the backend pod is not already covered by an existing egress rule, add it to
-the broker's NetworkPolicy. Edit
-`charts/af-mcp-platform/templates/networkpolicy.yaml` or the relevant values key:
+The broker's NetworkPolicy allows in-cluster egress to backend pods **in the
+same namespace** as the broker, on a configured list of ports. If your new
+backend is in the same namespace and uses one of the default ports (8000,
+8080), no change is needed.
 
-```yaml
-values:
-  networkPolicy:
-    egressBackends:
-      - namespace: af-mcp-backends
-        podSelector:
-          matchLabels:
-            app.kubernetes.io/name: my-new-backend
-```
-
-If the backend is in the same namespace or already covered by a wildcard rule,
-skip this step.
-
-If the backend is in the same namespace as the broker but listens on a port
-other than the chart's defaults (8000, 8080), append it to
-`networkPolicy.broker.backendPorts` in your `HelmRelease` values instead —
-no template edit needed:
+If it listens on a different port, append it to
+`networkPolicy.broker.backendPorts` in your `HelmRelease` values — no template
+edit needed:
 
 ```yaml
 values:
@@ -165,6 +152,13 @@ values:
         - 8080
         - 9000  # e.g. rucio-mcp
 ```
+
+**Cross-namespace backends** are not currently exposed through values — the
+namespace selector in `templates/networkpolicy.yaml` is scoped to the release
+namespace. To reach a backend in a different namespace you'd need to either
+move it into the broker's namespace or extend the chart's egress rule. If
+that becomes a recurring need, file an issue to parameterize
+`backendNamespaces` similarly.
 
 ---
 
