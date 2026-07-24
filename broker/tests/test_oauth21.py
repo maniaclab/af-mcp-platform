@@ -36,6 +36,7 @@ from af_mcp_broker.oauth_state import (
     NONCE_COOKIE_NAME,
     NONCE_COOKIE_PATH,
     StateTokenError,
+    append_linked_error_params,
     append_linked_query_param,
     build_state_token,
     decrypt_state_token,
@@ -355,6 +356,43 @@ def test_append_linked_query_param_preserves_existing_query() -> None:
     assert append_linked_query_param("/identities?foo=bar", "rucio-mcp-atlas") == (
         "/identities?foo=bar&linked=rucio-mcp-atlas"
     )
+
+
+def test_append_linked_error_params_no_existing_query() -> None:
+    assert append_linked_error_params(
+        "/identities", "rucio-mcp-atlas", "server_error"
+    ) == ("/identities?linked_error_alias=rucio-mcp-atlas&linked_error=server_error")
+
+
+def test_append_linked_error_params_preserves_existing_query() -> None:
+    assert append_linked_error_params(
+        "/identities?foo=bar", "rucio-mcp-atlas", "server_error"
+    ) == (
+        "/identities?foo=bar&linked_error_alias=rucio-mcp-atlas&linked_error=server_error"
+    )
+
+
+def test_append_linked_error_params_includes_description_and_uri_when_present() -> None:
+    url = append_linked_error_params(
+        "/identities",
+        "rucio-mcp-atlas",
+        "server_error",
+        error_description="An unexpected error occurred",
+        error_uri="https://backend-as.example/errors/server_error",
+    )
+    query = parse_qs(urlparse(url).query)
+    assert query["linked_error_alias"] == ["rucio-mcp-atlas"]
+    assert query["linked_error"] == ["server_error"]
+    assert query["linked_error_description"] == ["An unexpected error occurred"]
+    assert query["linked_error_uri"] == [
+        "https://backend-as.example/errors/server_error"
+    ]
+
+
+def test_append_linked_error_params_omits_absent_description_and_uri() -> None:
+    url = append_linked_error_params("/identities", "rucio-mcp-atlas", "server_error")
+    assert "linked_error_description" not in url
+    assert "linked_error_uri" not in url
 
 
 # ---------------------------------------------------------------------------
@@ -902,6 +940,143 @@ def test_callback_400_when_state_expired(
         resp = client.get(
             f"/v1/oauth/callback/{ALIAS}",
             params={"code": "x", "state": state_token},
+        )
+
+    assert resp.status_code == 400
+
+
+def test_callback_returns_400_when_neither_code_nor_error(
+    monkeypatch: pytest.MonkeyPatch, app_client_factory: Any
+) -> None:
+    fernet_key = Fernet.generate_key().decode()
+    _configure_oauth21_env(monkeypatch, fernet_key)
+
+    with app_client_factory() as (client, _state):
+        resp = client.get(f"/v1/oauth/callback/{ALIAS}", params={"state": "irrelevant"})
+
+    assert resp.status_code == 400
+    assert "code or error" in resp.text
+
+
+def test_callback_redirects_to_return_url_with_error_params(
+    monkeypatch: pytest.MonkeyPatch, app_client_factory: Any
+) -> None:
+    fernet_key = Fernet.generate_key().decode()
+    _configure_oauth21_env(monkeypatch, fernet_key)
+
+    with app_client_factory() as (client, _state):
+        authorize_resp = client.get(
+            f"/v1/oauth/authorize/{ALIAS}",
+            params={"return": "/identities"},
+            follow_redirects=False,
+        )
+        state_token = parse_qs(urlparse(authorize_resp.headers["location"]).query)[
+            "state"
+        ][0]
+        nonce_cookie = authorize_resp.cookies.get(NONCE_COOKIE_NAME)
+        assert nonce_cookie is not None
+        client.cookies.set(NONCE_COOKIE_NAME, nonce_cookie, path=NONCE_COOKIE_PATH)
+
+        callback_resp = client.get(
+            f"/v1/oauth/callback/{ALIAS}",
+            params={
+                "state": state_token,
+                "error": "server_error",
+                "error_description": "An unexpected error occurred",
+            },
+            follow_redirects=False,
+        )
+
+    assert callback_resp.status_code == 302, callback_resp.text
+    location = callback_resp.headers["location"]
+    parsed_path = urlparse(location).path
+    query = parse_qs(urlparse(location).query)
+    assert parsed_path == "/identities"
+    assert query["linked_error_alias"] == [ALIAS]
+    assert query["linked_error"] == ["server_error"]
+    assert query["linked_error_description"] == ["An unexpected error occurred"]
+    # Nonce cookie must be cleared on the error path too, same as success.
+    deletion_header = callback_resp.headers["set-cookie"]
+    assert f'{NONCE_COOKIE_NAME}=""' in deletion_header
+    assert "Max-Age=0" in deletion_header
+
+
+def test_callback_logs_error_at_warn(
+    monkeypatch: pytest.MonkeyPatch, app_client_factory: Any
+) -> None:
+    fernet_key = Fernet.generate_key().decode()
+    _configure_oauth21_env(monkeypatch, fernet_key)
+
+    from af_mcp_broker.api import oauth21 as oauth21_module
+
+    events: list[tuple[str, dict[str, Any]]] = []
+    original_warning = oauth21_module.log.warning
+
+    def _capture(event: str, **kwargs: Any) -> Any:
+        events.append((event, kwargs))
+        return original_warning(event, **kwargs)
+
+    monkeypatch.setattr(oauth21_module.log, "warning", _capture)
+
+    with app_client_factory() as (client, _state):
+        authorize_resp = client.get(
+            f"/v1/oauth/authorize/{ALIAS}", follow_redirects=False
+        )
+        state_token = parse_qs(urlparse(authorize_resp.headers["location"]).query)[
+            "state"
+        ][0]
+        nonce_cookie = authorize_resp.cookies.get(NONCE_COOKIE_NAME)
+        assert nonce_cookie is not None
+        client.cookies.set(NONCE_COOKIE_NAME, nonce_cookie, path=NONCE_COOKIE_PATH)
+
+        client.get(
+            f"/v1/oauth/callback/{ALIAS}",
+            params={
+                "state": state_token,
+                "error": "server_error",
+                "error_description": "An unexpected error occurred",
+            },
+            follow_redirects=False,
+        )
+
+    assert len(events) == 1
+    event, kwargs = events[0]
+    assert event == "oauth21.callback.backend_error"
+    assert kwargs["alias"] == ALIAS
+    assert kwargs["subject"] == "sub-abc"
+    assert kwargs["error"] == "server_error"
+    assert kwargs["error_description"] == "An unexpected error occurred"
+
+
+def test_callback_state_still_validated_on_error_path(
+    monkeypatch: pytest.MonkeyPatch, app_client_factory: Any
+) -> None:
+    """A malformed/expired state must still 400 on the error path -- state
+    validation runs before any branching on code vs error.
+    """
+    fernet_key = Fernet.generate_key().decode()
+    _configure_oauth21_env(monkeypatch, fernet_key)
+
+    with app_client_factory() as (client, _state):
+        client.cookies.set(NONCE_COOKIE_NAME, "whatever")
+        resp = client.get(
+            f"/v1/oauth/callback/{ALIAS}",
+            params={"state": "not-a-valid-fernet-token", "error": "server_error"},
+        )
+
+    assert resp.status_code == 400
+
+
+def test_callback_missing_state_cookie_on_error_path(
+    monkeypatch: pytest.MonkeyPatch, app_client_factory: Any
+) -> None:
+    fernet_key = Fernet.generate_key().decode()
+    _configure_oauth21_env(monkeypatch, fernet_key)
+
+    with app_client_factory() as (client, _state):
+        resp = client.get(
+            f"/v1/oauth/callback/{ALIAS}",
+            params={"state": "irrelevant", "error": "server_error"},
         )
 
     assert resp.status_code == 400

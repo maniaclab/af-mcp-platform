@@ -141,6 +141,38 @@ def append_linked_query_param(return_url: str, alias: str) -> str:
     return urlunparse(parsed._replace(query=urlencode(query)))
 
 
+def append_linked_error_params(
+    return_url: str,
+    alias: str,
+    error: str,
+    *,
+    error_description: str | None = None,
+    error_uri: str | None = None,
+) -> str:
+    """Append OAuth 2.1 error params to *return_url*'s query string.
+
+    Sibling to ``append_linked_query_param`` for the failure path (per OAuth
+    2.1 §4.1.2.1, a backend AS's callback redirect carries either ``code`` or
+    ``error`` -- never both). Lets the OAuth 2.1 callback tell the portal
+    which provider failed to link and why, so the Identities page can show an
+    error banner instead of a bare validation error. ``linked_error_alias``
+    is included (unlike the success path's bare ``linked=<alias>``, which
+    doubles as both the alias and the banner trigger) so the portal can look
+    up the failed provider's ``display_name`` the same way the success path
+    does. ``error_description``/``error_uri`` are omitted from the query
+    string entirely when absent, rather than appended as empty strings.
+    """
+    parsed = urlparse(return_url)
+    query = parse_qsl(parsed.query, keep_blank_values=True)
+    query.append(("linked_error_alias", alias))
+    query.append(("linked_error", error))
+    if error_description is not None:
+        query.append(("linked_error_description", error_description))
+    if error_uri is not None:
+        query.append(("linked_error_uri", error_uri))
+    return urlunparse(parsed._replace(query=urlencode(query)))
+
+
 def build_state_token(
     cipher: Fernet,
     *,

@@ -6,7 +6,7 @@ import {
   SessionExpiredError,
   type IdentityProvider,
 } from '../lib/api';
-import { extractLinkedParam } from '../lib/linkedBanner';
+import { extractLinkedErrorParams, extractLinkedParam } from '../lib/linkedBanner';
 import IdentityLink from './IdentityLink.vue';
 
 const providers = ref<IdentityProvider[]>([]);
@@ -21,22 +21,39 @@ const sessionExpired = ref(false);
 const linkedBanner = ref<string | null>(null);
 let linkedBannerTimer: ReturnType<typeof setTimeout> | undefined;
 
+// Set by a `?linked_error=<code>&linked_error_alias=<id>` landing — the
+// backend AS itself failed (e.g. rucio-mcp's outbound call to Rucio auth
+// 401ing), surfaced as a friendly message instead of the broker's raw 422.
+// Same fade/dismiss behavior as `linkedBanner`.
+const linkedErrorBanner = ref<string | null>(null);
+let linkedErrorBannerTimer: ReturnType<typeof setTimeout> | undefined;
+
 function dismissLinkedBanner() {
   linkedBanner.value = null;
   clearTimeout(linkedBannerTimer);
 }
 
+function dismissLinkedErrorBanner() {
+  linkedErrorBanner.value = null;
+  clearTimeout(linkedErrorBannerTimer);
+}
+
 onMounted(async () => {
-  const { linkedId, remainingSearch } = extractLinkedParam(window.location.search);
-  if (linkedId) {
+  const { linkedId, remainingSearch: afterLinked } = extractLinkedParam(window.location.search);
+  const linkedError = extractLinkedErrorParams(afterLinked);
+  if (linkedId || linkedError) {
     // The cache now reflects a pre-link snapshot — drop it so the fetch
     // below (and every subsequent page load) sees the newly-linked provider.
+    // Harmless on the error path too (linking didn't actually change
+    // anything), but keeps this behavior uniform across both outcomes.
     clearIdentitiesCache();
     // Rewrite the URL so a refresh doesn't re-show the banner.
     window.history.replaceState(
       {},
       '',
-      window.location.pathname + remainingSearch + window.location.hash,
+      window.location.pathname +
+        (linkedError ? linkedError.remainingSearch : afterLinked) +
+        window.location.hash,
     );
   }
 
@@ -47,6 +64,13 @@ onMounted(async () => {
       const linked = data.providers.find((p) => p.id === linkedId);
       linkedBanner.value = linked ? linked.display_name : linkedId;
       linkedBannerTimer = setTimeout(dismissLinkedBanner, 5000);
+    }
+    if (linkedError) {
+      const failed = data.providers.find((p) => p.id === linkedError.alias);
+      const displayName = failed ? failed.display_name : linkedError.alias;
+      const reason = linkedError.description ?? linkedError.code;
+      linkedErrorBanner.value = `Linking ${displayName} failed: ${reason}`;
+      linkedErrorBannerTimer = setTimeout(dismissLinkedErrorBanner, 5000);
     }
   } catch (err) {
     if (err instanceof SessionExpiredError) {
@@ -81,6 +105,19 @@ function missingRequired(id: string): boolean {
         class="ip__banner-close"
         aria-label="Dismiss"
         @click="dismissLinkedBanner"
+      >
+        &times;
+      </button>
+    </div>
+
+    <!-- Linking failure banner -->
+    <div v-if="linkedErrorBanner" class="ip__banner ip__banner--error" role="alert">
+      <span>{{ linkedErrorBanner }}</span>
+      <button
+        type="button"
+        class="ip__banner-close"
+        aria-label="Dismiss"
+        @click="dismissLinkedErrorBanner"
       >
         &times;
       </button>
@@ -207,6 +244,12 @@ function missingRequired(id: string): boolean {
 }
 .ip__banner-close:hover {
   color: var(--color-af-text);
+}
+
+/* Linking failure banner — same layout as the success banner, red/warning styling */
+.ip__banner--error {
+  border-color: rgb(from var(--color-af-red) r g b / 0.25);
+  background: rgb(from var(--color-af-red) r g b / 0.06);
 }
 
 @keyframes ip-banner-fade-in {
