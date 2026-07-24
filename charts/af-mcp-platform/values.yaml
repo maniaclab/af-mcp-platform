@@ -144,7 +144,7 @@ broker:
     # Vault's Kubernetes auth method. Vault/OpenBao itself is BYO — this
     # chart only consumes an existing instance, it does not deploy one.
     tokenStore:
-      backend: "in-memory" # or "vault"
+      backend: "in-memory"  # or "vault"
       vault:
         # Vault HTTP API base URL, e.g. https://vault.example.com. Required
         # when backend="vault".
