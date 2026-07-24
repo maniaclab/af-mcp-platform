@@ -31,6 +31,13 @@ class OAuth21ProviderConfig(BaseModel):
     issuer: str
     scope: str = "openid profile email"
 
+    # Portal-facing metadata for GET /v1/identities. Optional so a minimal
+    # provider config still parses; an operator who leaves these blank just
+    # gets an empty label/description on the Identities page until they fill
+    # them in.
+    display_name: str = ""
+    enables: str = ""
+
 
 # pydantic-settings matches env vars to field names case-insensitively, so the
 # uppercase env var names (OIDC_ISSUER, ...) map to these fields without
@@ -57,6 +64,14 @@ class Settings(BaseSettings):
     # issuer's connect realm. Verified alias is "atlas-oidc" (Settings →
     # Identity Providers → ATLAS IAM).
     oidc_idp_alias: str = "atlas-oidc"
+
+    # The portal's own Keycloak client id (a public client — see
+    # portal/src/lib/auth.ts). GET /v1/identities uses this to build the
+    # `kc_action=LINK_IDP` URL for keycloak-brokered providers, so the portal
+    # doesn't need Keycloak details itself. Empty means the broker can't
+    # build these URLs — keycloak-brokered `link_url`s come back null and the
+    # portal renders no Link button for them.
+    identities_link_client_id: str = ""
 
     # Filesystem
     home_root: str = "/data/homes"
@@ -206,6 +221,36 @@ class Settings(BaseSettings):
                 "oauth21_client_id (OAUTH21_CLIENT_ID) must be set when "
                 "oauth21_providers is non-empty — it identifies the broker "
                 "as an OAuth 2.1 client via its CIMD document."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_oauth21_cimd_alias_parity(self) -> Settings:
+        """Every ``oauth21_providers`` alias must have a matching
+        ``cimd_idp_aliases`` entry, and vice versa.
+
+        The CIMD document advertises ``redirect_uris`` per alias — an
+        ``OAuth21Provider`` whose alias is missing from ``cimd_idp_aliases``
+        would silently be unable to complete its callback with backends that
+        actually check the advertised redirect URIs, and a ``cimd_idp_aliases``
+        entry with no matching provider is dangling config that advertises a
+        redirect URI nothing will ever complete. This is a stopgap until both
+        settings collapse into one unified identity-provider config.
+        """
+        oauth21_aliases = {cfg.alias for cfg in self.oauth21_providers}
+        cimd_aliases = set(self.cimd_idp_aliases)
+        if oauth21_aliases != cimd_aliases:
+            missing_from_cimd = sorted(oauth21_aliases - cimd_aliases)
+            missing_from_oauth21 = sorted(cimd_aliases - oauth21_aliases)
+            log.error(
+                "oauth21_cimd_alias_mismatch",
+                missing_from_cimd_idp_aliases=missing_from_cimd,
+                missing_from_oauth21_providers=missing_from_oauth21,
+            )
+            raise ValueError(
+                "oauth21_providers aliases and cimd_idp_aliases must match "
+                f"exactly; missing from cimd_idp_aliases: {missing_from_cimd}; "
+                f"missing from oauth21_providers: {missing_from_oauth21}"
             )
         return self
 

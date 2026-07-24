@@ -18,7 +18,7 @@ from jwt.algorithms import RSAAlgorithm
 from pydantic import SecretStr
 
 from af_mcp_broker import identity
-from af_mcp_broker.config import Settings
+from af_mcp_broker.config import Settings, get_settings
 
 ISSUER = "https://keycloak.test/realms/connect"
 AUDIENCE = "mcp-gateway"
@@ -175,6 +175,12 @@ def app_client_factory(
     def _factory() -> Iterator[tuple[TestClient, dict]]:
         state: dict = {"principal": make_principal(groups=["atlas"])}
         app.dependency_overrides[keycloak_dependency] = lambda: state["principal"]
+        # get_settings() is a process-wide lru_cache with no arguments, so a
+        # route depending on it (e.g. GET /v1/identities) would otherwise
+        # keep serving whichever Settings a *previous* test's env happened to
+        # produce. Clear it so every test client reflects exactly the env
+        # this factory call just set up.
+        get_settings.cache_clear()
         try:
             with TestClient(app) as client:
                 yield client, state

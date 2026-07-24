@@ -22,6 +22,7 @@ import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from cryptography.fernet import InvalidToken
 
@@ -123,6 +124,21 @@ def sanitize_return_url(return_url: str | None) -> str:
         msg = f"return_url must not contain '..' path segments: {return_url!r}"
         raise ValueError(msg)
     return return_url
+
+
+def append_linked_query_param(return_url: str, alias: str) -> str:
+    """Append ``linked=<alias>`` to *return_url*'s query string.
+
+    Lets the OAuth 2.1 callback tell the portal which provider was just
+    linked, so the Identities page can show a confirmation banner without an
+    extra round trip. Preserves any existing query string rather than
+    clobbering it — a plain ``f"{return_url}?linked={alias}"`` would double
+    up on ``?`` if *return_url* already has query parameters.
+    """
+    parsed = urlparse(return_url)
+    query = parse_qsl(parsed.query, keep_blank_values=True)
+    query.append(("linked", alias))
+    return urlunparse(parsed._replace(query=urlencode(query)))
 
 
 def build_state_token(

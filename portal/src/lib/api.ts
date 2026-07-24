@@ -104,16 +104,22 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
 // Identities — GET /v1/identities
 // ---------------------------------------------------------------------------
 
-export interface LinkedAccount {
-  provider: string;
-  sub: string;
-}
+/** "keycloak-brokered" — Keycloak's stored-broker-token pattern; "oauth21-direct"
+ * — the broker acting as a direct OAuth 2.1 client. The portal never needs
+ * to branch display logic on this — it's carried through mainly so
+ * IdentityLink.vue knows which linking mechanism `link_url` belongs to. */
+export type ProviderType = 'keycloak-brokered' | 'oauth21-direct';
 
-export interface AvailableProvider {
-  provider: string;
+export interface IdentityProvider {
+  /** Portal-facing stable identifier (e.g. "atlas-iam", or an OAuth 2.1 provider's alias). */
+  id: string;
+  type: ProviderType;
   display_name: string;
   /** Human-readable description of what linking this provider enables. */
   enables: string;
+  linked: boolean;
+  /** URL to navigate the browser to in order to link this provider, or null if linking isn't possible right now. */
+  link_url: string | null;
 }
 
 export interface IdentitiesResponse {
@@ -123,19 +129,20 @@ export interface IdentitiesResponse {
   uid: number;
   gid: number;
   groups: string[];
-  linked_accounts: LinkedAccount[];
-  available_providers: AvailableProvider[];
+  providers: IdentityProvider[];
 }
 
-// Identity data (linked_accounts / available_providers) changes only when the
-// user completes a LINK_IDP flow, so every portal page load hitting the
-// broker for it is wasted work — Base.astro's inline script calls
-// fetchIdentities() on every page to populate the nav's username display.
-// sessionStorage-cache it with a short TTL: long enough to cover a typical
-// rapid-nav session, short enough not to go stale if something changes the
-// identity out from under a lingering tab. Explicit invalidation (see
-// clearIdentitiesCache()) handles the two cases that actually change this
-// data: a session expiring, and the LINK_IDP callback completing.
+// Identity data (providers[].linked) changes only when the user completes a
+// linking flow, so every portal page load hitting the broker for it is
+// wasted work — Base.astro's inline script calls fetchIdentities() on every
+// page to populate the nav's username display. sessionStorage-cache it with
+// a short TTL: long enough to cover a typical rapid-nav session, short
+// enough not to go stale if something changes the identity out from under a
+// lingering tab. Explicit invalidation (see clearIdentitiesCache()) handles
+// the cases that actually change this data: a session expiring, a
+// keycloak-brokered LINK_IDP callback completing (callback.astro), and an
+// oauth21-direct linking flow's callback landing back on the Identities page
+// with a `?linked=<id>` query param (see IdentitiesPage.vue).
 const IDENTITIES_CACHE_KEY = 'af-portal.identities';
 const IDENTITIES_CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -183,12 +190,20 @@ export async function fetchIdentities(): Promise<IdentitiesResponse> {
   return data;
 }
 
-// NOTE: identity linking (POST /v1/identities/link) was moved into the portal
-// SPA itself — see ../lib/auth.ts::startIdpLink — because the portal already
-// has everything it needs (OIDC config, PKCE) to build the LINK_IDP URL
-// without a broker round trip (closes #50). DELETE /v1/identities/link/{provider}
-// always returns 501 — unlinking is done through the Keycloak account
-// console, so there is no unlink client here either.
+// NOTE on linking mechanisms: every provider row carries its
+// own `link_url` and the click handler is a plain `window.location.href`
+// navigation (see IdentityLink.vue) — the portal itself does not build these
+// URLs. For a "keycloak-brokered" provider that URL still round-trips
+// through the portal's own oidc-client-ts session (../lib/auth.ts::
+// startIdpLink) rather than a bare top-level navigation, because Keycloak's
+// `kc_action=LINK_IDP` callback lands on /callback, which only completes via
+// oidc-client-ts's own locally-stored PKCE/state — IdentityLink.vue reads
+// the `provider_id` query param off the broker-built `link_url` and re-runs
+// startIdpLink() with it rather than navigating to it directly. An
+// "oauth21-direct" provider's `link_url` (the broker's own
+// /v1/oauth/authorize/{alias}) has no such constraint and is navigated to
+// as-is. DELETE /v1/identities/link/{provider} always returns 501 —
+// unlinking is not implemented yet, so there is no unlink client here.
 
 // ---------------------------------------------------------------------------
 // Catalog — GET /v1/catalog (flat tool list)
@@ -286,7 +301,9 @@ export async function fetchDashboardSummary(): Promise<DashboardSummary> {
   ]);
 
   const linkedCount =
-    identityData.status === 'fulfilled' ? identityData.value.linked_accounts.length : 0;
+    identityData.status === 'fulfilled'
+      ? identityData.value.providers.filter((p) => p.linked).length
+      : 0;
 
   const toolCount = catalog.status === 'fulfilled' ? catalog.value.tools.length : 0;
 

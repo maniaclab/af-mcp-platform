@@ -8,7 +8,10 @@ be reachable with no auth headers, and ``client_id`` must be self-referential
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any
+
+from cryptography.fernet import Fernet
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -60,6 +63,31 @@ def test_cimd_redirect_uris_derived_from_aliases_in_order(
 ) -> None:
     monkeypatch.setenv("OIDC_ISSUER", "https://kc.example.com/realms/foo")
     monkeypatch.setenv("CIMD_IDP_ALIASES", '["rucio-atlas", "rucio-escape"]')
+    # `Settings._validate_oauth21_cimd_alias_parity` requires every
+    # cimd_idp_aliases entry to have a matching oauth21_providers alias.
+    monkeypatch.setenv("BROKER_STATE_KEY", Fernet.generate_key().decode())
+    monkeypatch.setenv("OAUTH21_CLIENT_ID", "https://mcp.example.com/.well-known/cimd")
+    monkeypatch.setenv(
+        "OAUTH21_PROVIDERS",
+        json.dumps(
+            [
+                {
+                    "alias": "rucio-atlas",
+                    "targets": ["rucio-atlas"],
+                    "authorization_endpoint": "https://backend-as.example/authorize",
+                    "token_endpoint": "https://backend-as.example/token",
+                    "issuer": "https://backend-as.example",
+                },
+                {
+                    "alias": "rucio-escape",
+                    "targets": ["rucio-escape"],
+                    "authorization_endpoint": "https://backend-as-2.example/authorize",
+                    "token_endpoint": "https://backend-as-2.example/token",
+                    "issuer": "https://backend-as-2.example",
+                },
+            ]
+        ),
+    )
 
     with app_client_factory() as (client, _):
         resp: Any = client.get("/.well-known/cimd")

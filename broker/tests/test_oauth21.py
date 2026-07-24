@@ -36,6 +36,7 @@ from af_mcp_broker.oauth_state import (
     NONCE_COOKIE_NAME,
     NONCE_COOKIE_PATH,
     StateTokenError,
+    append_linked_query_param,
     build_state_token,
     decrypt_state_token,
     sanitize_return_url,
@@ -150,10 +151,15 @@ def _configure_oauth21_env(monkeypatch: pytest.MonkeyPatch, fernet_key: str) -> 
                     "token_endpoint": TOKEN_ENDPOINT,
                     "issuer": PROVIDER_ISSUER,
                     "scope": "openid profile",
+                    "display_name": "Rucio (ATLAS)",
+                    "enables": "ATLAS Rucio operations via rucio-mcp",
                 }
             ]
         ),
     )
+    # `Settings._validate_oauth21_cimd_alias_parity` requires every
+    # oauth21_providers alias to have a matching cimd_idp_aliases entry.
+    monkeypatch.setenv("CIMD_IDP_ALIASES", json.dumps([ALIAS]))
 
 
 # ---------------------------------------------------------------------------
@@ -331,6 +337,18 @@ def test_sanitize_return_url_accepts_relative_path() -> None:
 def test_sanitize_return_url_rejects_unsafe(bad_url: str) -> None:
     with pytest.raises(ValueError, match="return_url"):
         sanitize_return_url(bad_url)
+
+
+def test_append_linked_query_param_no_existing_query() -> None:
+    assert append_linked_query_param("/identities", "rucio-mcp-atlas") == (
+        "/identities?linked=rucio-mcp-atlas"
+    )
+
+
+def test_append_linked_query_param_preserves_existing_query() -> None:
+    assert append_linked_query_param("/identities?foo=bar", "rucio-mcp-atlas") == (
+        "/identities?foo=bar&linked=rucio-mcp-atlas"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -668,7 +686,7 @@ def test_callback_completes_flow_and_stores_credential(
         )
 
         assert callback_resp.status_code == 302, callback_resp.text
-        assert callback_resp.headers["location"] == "/identities"
+        assert callback_resp.headers["location"] == f"/identities?linked={ALIAS}"
         # Assert on the Set-Cookie header directly (expiry in the past,
         # value cleared) rather than the TestClient's cookie jar -- a
         # manually-injected jar entry (above) and the real cookie the jar

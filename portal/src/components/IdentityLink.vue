@@ -1,27 +1,45 @@
 <script setup lang="ts">
 import { ref } from 'vue';
+import type { ProviderType } from '../lib/api';
 import { startIdpLink } from '../lib/auth';
 
 const props = defineProps<{
-  provider: string;
-  alias: string;
+  id: string;
+  type: ProviderType;
   linked: boolean;
   display_name: string;
-  description: string;
-  sub?: string;
+  enables: string;
+  link_url: string | null;
 }>();
 
 const busy = ref(false);
 const error = ref<string | null>(null);
 
 // Shared by both the "Link account" and "Reconnect" buttons below — same
-// LINK_IDP flow either way, just re-run to overwrite a stale stored token in
-// place when already linked (see ../lib/auth.ts::startIdpLink).
+// flow either way, just re-run to overwrite a stale stored token in place
+// when already linked.
 async function handleLink() {
+  if (!props.link_url) return; // button isn't rendered in this case anyway
   busy.value = true;
   error.value = null;
   try {
-    await startIdpLink({ providerAlias: props.alias, returnUrl: '/identities/' });
+    if (props.type === 'keycloak-brokered') {
+      // Keycloak's kc_action=LINK_IDP flow's callback lands on /callback,
+      // which only completes via oidc-client-ts's own locally-stored
+      // PKCE/state (see ../lib/api.ts's linking-mechanisms note) — a bare
+      // top-level navigation to link_url can't complete that handshake, so
+      // re-run the portal's own client-side flow instead. link_url still
+      // carries the Keycloak IdP alias as its `provider_id` query param,
+      // which is all startIdpLink() needs — the portal never has to know
+      // any other Keycloak detail.
+      const providerId = new URL(props.link_url).searchParams.get('provider_id');
+      if (!providerId) {
+        throw new Error('Malformed link URL: missing provider_id');
+      }
+      await startIdpLink({ providerAlias: providerId, returnUrl: '/identities/' });
+    } else {
+      window.location.href = props.link_url;
+    }
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Link failed. Try again.';
     busy.value = false;
@@ -33,7 +51,7 @@ const providerGlyph: Record<string, string> = {
   'atlas-iam': 'A',
   cern: 'C',
 };
-const glyph = providerGlyph[props.provider] ?? props.provider[0]?.toUpperCase() ?? '?';
+const glyph = providerGlyph[props.id] ?? props.id[0]?.toUpperCase() ?? '?';
 </script>
 
 <template>
@@ -48,12 +66,7 @@ const glyph = providerGlyph[props.provider] ?? props.provider[0]?.toUpperCase() 
         <span v-else class="il__status il__status--unlinked">not linked</span>
       </div>
 
-      <p class="il__desc">{{ description }}</p>
-
-      <div v-if="linked && sub" class="il__subject">
-        <span class="il__subject-label">Subject</span>
-        <code class="il__subject-val">{{ sub }}</code>
-      </div>
+      <p class="il__desc">{{ enables }}</p>
 
       <div v-if="error" class="il__error" role="alert">{{ error }}</div>
     </div>
@@ -61,7 +74,7 @@ const glyph = providerGlyph[props.provider] ?? props.provider[0]?.toUpperCase() 
     <!-- Action -->
     <div class="il__actions">
       <button
-        v-if="!linked"
+        v-if="!linked && link_url"
         class="il__btn il__btn--link"
         :disabled="busy"
         @click="handleLink"
@@ -71,14 +84,12 @@ const glyph = providerGlyph[props.provider] ?? props.provider[0]?.toUpperCase() 
       </button>
 
       <!--
-      Unlinking isn't exposed by the broker (DELETE returns 501) and most AF
-      users don't have Keycloak admin access anyway. Reconnect re-runs the
-      same LINK_IDP flow, which overwrites the stored token in place — the
-      fix for a stale/broken linkage without touching the Keycloak
-      federated_identity record.
+      Unlinking isn't exposed by the broker (DELETE returns 501). Reconnect
+      re-runs the same linking flow, which overwrites the stored token in
+      place — the fix for a stale/broken linkage without an explicit unlink.
       -->
       <button
-        v-else
+        v-else-if="linked && link_url"
         class="il__btn il__btn--reconnect"
         :disabled="busy"
         @click="handleLink"
@@ -178,29 +189,6 @@ const glyph = providerGlyph[props.provider] ?? props.provider[0]?.toUpperCase() 
   line-height: 1.5;
 }
 
-.il__subject {
-  display: flex;
-  align-items: baseline;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-}
-
-.il__subject-label {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.5625rem;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--color-af-dim);
-}
-
-.il__subject-val {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.6875rem;
-  color: #9ca3af;
-  word-break: break-all;
-}
-
 .il__error {
   font-family: 'IBM Plex Mono', monospace;
   font-size: 0.75rem;
@@ -219,9 +207,9 @@ const glyph = providerGlyph[props.provider] ?? props.provider[0]?.toUpperCase() 
  * .il's grid keeps align-items: start so the icon lines up with the top of
  * the body text — but the linked-state action (button or, formerly, hint
  * text) has a different natural height than the body column (name + status +
- * description + subject line), which left it stranded near the top of a
- * taller row instead of centered in it. Scoped to the linked variant only —
- * the unlinked row's single-line body keeps looking right at align-items: start.
+ * description), which left it stranded near the top of a taller row instead
+ * of centered in it. Scoped to the linked variant only — the unlinked row's
+ * single-line body keeps looking right at align-items: start.
  */
 .il--linked .il__actions {
   align-self: center;
