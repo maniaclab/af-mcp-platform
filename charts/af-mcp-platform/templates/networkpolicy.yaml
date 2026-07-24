@@ -73,16 +73,19 @@ spec:
         - protocol: TCP
           port: 443
 
-    # In-cluster: allow broker to reach backend MCP services within the same namespace.
+    # In-cluster: allow broker to reach backend MCP services within the same
+    # namespace, on the configured ports (see values.yaml networkPolicy.broker.backendPorts).
+    {{- if .Values.networkPolicy.broker.backendPorts }}
     - to:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: {{ .Release.Namespace | quote }}
       ports:
+        {{- range .Values.networkPolicy.broker.backendPorts }}
         - protocol: TCP
-          port: 8000
-        - protocol: TCP
-          port: 8080
+          port: {{ . }}
+        {{- end }}
+    {{- end }}
 ---
 # Portal network policy: allow ingress from nginx only; no special egress rules.
 apiVersion: networking.k8s.io/v1

@@ -151,6 +151,21 @@ values:
 If the backend is in the same namespace or already covered by a wildcard rule,
 skip this step.
 
+If the backend is in the same namespace as the broker but listens on a port
+other than the chart's defaults (8000, 8080), append it to
+`networkPolicy.broker.backendPorts` in your `HelmRelease` values instead —
+no template edit needed:
+
+```yaml
+values:
+  networkPolicy:
+    broker:
+      backendPorts:
+        - 8000
+        - 8080
+        - 9000  # e.g. rucio-mcp
+```
+
 ---
 
 ## Step 5 — Redeploy

@@ -44,3 +44,13 @@ broker:
       vault:
         addr: "https://vault.example.com"
         authRole: "af-mcp-broker-example"
+
+# Exercises the ranged networkPolicy.broker.backendPorts template path in CI
+# (a non-default port alongside the chart's defaults) so a broken render is
+# caught by `helm template`, not just by eyeballing the diff.
+networkPolicy:
+  broker:
+    backendPorts:
+      - 8000
+      - 8080
+      - 9000

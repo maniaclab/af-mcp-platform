@@ -276,6 +276,15 @@ networkPolicy:
   # restrict broker egress to DNS, Keycloak, ATLAS IAM, backends, and Prometheus.
   enabled: true
 
+  broker:
+    # Ports the broker is allowed to reach on in-namespace backend services.
+    # Add a port here when introducing a backend MCP that listens on a
+    # non-default port (e.g., rucio-mcp on 9000). Defaults cover the two most
+    # common backend port choices; extend as needed.
+    backendPorts:
+      - 8000
+      - 8080
+
 # ---------------------------------------------------------------------------
 # Prometheus ServiceMonitor
 # ---------------------------------------------------------------------------
