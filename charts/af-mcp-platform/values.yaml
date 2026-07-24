@@ -138,6 +138,28 @@ broker:
     #   displayName: "Rucio (ATLAS)"
     #   enables: "ATLAS Rucio operations via rucio-mcp"
 
+    # Where OAuth 2.1 credentials (above) are persisted. "in-memory" is
+    # single-replica and lost on restart; "vault" persists to a Vault/OpenBao
+    # KV-v2 mount via the broker's own ServiceAccount, authenticated through
+    # Vault's Kubernetes auth method. Vault/OpenBao itself is BYO — this
+    # chart only consumes an existing instance, it does not deploy one.
+    tokenStore:
+      backend: "in-memory"  # or "vault"
+      vault:
+        # Vault HTTP API base URL, e.g. https://vault.example.com. Required
+        # when backend="vault".
+        addr: ""
+        # Vault auth mount point for the Kubernetes auth method.
+        authMount: "kubernetes"
+        # Vault role the broker's ServiceAccount JWT is exchanged against.
+        # Required when backend="vault".
+        authRole: ""
+        # Vault KV-v2 secrets engine mount point.
+        kvMount: "secret"
+        # Path prefix under the KV mount where per-subject/alias credentials
+        # are stored.
+        kvPathPrefix: "mcp/tokens"
+
 # ---------------------------------------------------------------------------
 # Aggregator: FastMCP backend registry
 # ---------------------------------------------------------------------------

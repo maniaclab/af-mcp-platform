@@ -70,3 +70,30 @@ def test_oauth21_cimd_alias_parity_raises_when_cimd_alias_is_dangling():
     advertises a redirect URI nothing will ever complete."""
     with pytest.raises(ValueError, match="oauth21_providers"):
         Settings(cimd_idp_aliases=["dangling-alias"])
+
+
+# ---------------------------------------------------------------------------
+# Vault TokenStore backend config
+# ---------------------------------------------------------------------------
+
+
+def test_vault_config_ok_when_backend_is_in_memory():
+    Settings(token_store_backend="in_memory")  # must not raise
+
+
+def test_vault_config_ok_when_addr_and_role_set():
+    Settings(
+        token_store_backend="vault",
+        vault_addr="https://vault.example",
+        vault_auth_role="af-mcp-broker",
+    )  # must not raise
+
+
+def test_vault_config_raises_when_addr_missing():
+    with pytest.raises(ValueError, match="vault_addr"):
+        Settings(token_store_backend="vault", vault_auth_role="af-mcp-broker")
+
+
+def test_vault_config_raises_when_auth_role_missing():
+    with pytest.raises(ValueError, match="vault_auth_role"):
+        Settings(token_store_backend="vault", vault_addr="https://vault.example")
