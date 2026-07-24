@@ -1,64 +1,53 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
-import { fetchIdentities, SessionExpiredError } from '../lib/api';
+import { onMounted, ref } from 'vue';
+import {
+  clearIdentitiesCache,
+  fetchIdentities,
+  SessionExpiredError,
+  type IdentityProvider,
+} from '../lib/api';
+import { extractLinkedParam } from '../lib/linkedBanner';
 import IdentityLink from './IdentityLink.vue';
 
-interface ProviderRow {
-  provider: string;
-  display_name: string;
-  description: string;
-  linked: boolean;
-  sub?: string;
-  alias: string;
-}
-
-// The broker only returns display_name/enables for providers still AVAILABLE to
-// link; already-linked accounts arrive as {provider, sub}. Fill their labels
-// from this client-side map (mirrors the broker's _PROVIDERS metadata). `alias`
-// mirrors the broker's provider -> Keycloak IdP alias mapping (see
-// broker/src/af_mcp_broker/api/identities.py, which used
-// settings.oidc_idp_alias — default "atlas-oidc" — for atlas-iam and the
-// provider id itself for everything else) now that the portal constructs the
-// LINK_IDP URL directly (see ../lib/auth.ts::startIdpLink).
-const PROVIDER_META: Record<string, { display_name: string; enables: string; alias: string }> = {
-  'atlas-iam': {
-    display_name: 'ATLAS IAM',
-    enables: 'VOMS proxy generation and grid certificate credential brokering',
-    alias: 'atlas-oidc',
-  },
-  cern: {
-    display_name: 'CERN SSO',
-    enables: 'CERN resource access and CMS/ATLAS experiment datasets',
-    alias: 'cern',
-  },
-};
-
-const rows = ref<ProviderRow[]>([]);
-const linkedProviders = ref<Set<string>>(new Set());
+const providers = ref<IdentityProvider[]>([]);
 const loading = ref(true);
 const error = ref<string | null>(null);
 const sessionExpired = ref(false);
 
+// Set by a `?linked=<id>` landing (see broker/src/af_mcp_broker/api/oauth21.py's
+// `callback` route) — the display_name of the just-linked provider, or the
+// raw id as a fallback if it doesn't match anything in `providers`. Fades on
+// its own after ~5s; also dismissed by the banner's own close affordance.
+const linkedBanner = ref<string | null>(null);
+let linkedBannerTimer: ReturnType<typeof setTimeout> | undefined;
+
+function dismissLinkedBanner() {
+  linkedBanner.value = null;
+  clearTimeout(linkedBannerTimer);
+}
+
 onMounted(async () => {
+  const { linkedId, remainingSearch } = extractLinkedParam(window.location.search);
+  if (linkedId) {
+    // The cache now reflects a pre-link snapshot — drop it so the fetch
+    // below (and every subsequent page load) sees the newly-linked provider.
+    clearIdentitiesCache();
+    // Rewrite the URL so a refresh doesn't re-show the banner.
+    window.history.replaceState(
+      {},
+      '',
+      window.location.pathname + remainingSearch + window.location.hash,
+    );
+  }
+
   try {
     const data = await fetchIdentities();
-    const linked: ProviderRow[] = data.linked_accounts.map((a) => ({
-      provider: a.provider,
-      display_name: PROVIDER_META[a.provider]?.display_name ?? a.provider,
-      description: PROVIDER_META[a.provider]?.enables ?? '',
-      linked: true,
-      sub: a.sub,
-      alias: PROVIDER_META[a.provider]?.alias ?? a.provider,
-    }));
-    const available: ProviderRow[] = data.available_providers.map((p) => ({
-      provider: p.provider,
-      display_name: p.display_name,
-      description: p.enables,
-      linked: false,
-      alias: PROVIDER_META[p.provider]?.alias ?? p.provider,
-    }));
-    rows.value = [...linked, ...available];
-    linkedProviders.value = new Set(data.linked_accounts.map((a) => a.provider));
+    providers.value = data.providers;
+    if (linkedId) {
+      const linked = data.providers.find((p) => p.id === linkedId);
+      linkedBanner.value = linked ? linked.display_name : linkedId;
+      linkedBannerTimer = setTimeout(dismissLinkedBanner, 5000);
+    }
   } catch (err) {
     if (err instanceof SessionExpiredError) {
       sessionExpired.value = true;
@@ -75,13 +64,28 @@ function reload() {
 }
 
 // Show the "missing required identity" warning when a key provider is unlinked.
-function missingRequired(provider: string): boolean {
-  return !linkedProviders.value.has(provider);
+function missingRequired(id: string): boolean {
+  return !providers.value.some((p) => p.id === id && p.linked);
 }
 </script>
 
 <template>
   <div class="ip">
+    <!-- Linked confirmation banner -->
+    <div v-if="linkedBanner" class="ip__banner" role="status">
+      <span
+        >Linked <strong>{{ linkedBanner }}</strong> successfully.</span
+      >
+      <button
+        type="button"
+        class="ip__banner-close"
+        aria-label="Dismiss"
+        @click="dismissLinkedBanner"
+      >
+        &times;
+      </button>
+    </div>
+
     <!-- Loading -->
     <div v-if="loading" class="ip__loading" aria-live="polite">
       <span class="ip__spinner" aria-hidden="true"></span>
@@ -131,17 +135,18 @@ function missingRequired(provider: string): boolean {
         </span>
       </div>
 
-      <!-- Identity list -->
-      <div v-if="rows.length > 0" class="ip__list">
+      <!-- Identity list — one flat list, rendered uniformly regardless of
+           linking mechanism (keycloak-brokered or oauth21-direct). -->
+      <div v-if="providers.length > 0" class="ip__list">
         <IdentityLink
-          v-for="row in rows"
-          :key="row.provider"
-          :provider="row.provider"
-          :alias="row.alias"
-          :linked="row.linked"
-          :display_name="row.display_name"
-          :description="row.description"
-          :sub="row.sub"
+          v-for="p in providers"
+          :key="p.id"
+          :id="p.id"
+          :type="p.type"
+          :linked="p.linked"
+          :display_name="p.display_name"
+          :enables="p.enables"
+          :link_url="p.link_url"
         />
       </div>
 
@@ -154,12 +159,12 @@ function missingRequired(provider: string): boolean {
       </div>
 
       <!-- What each provider unlocks -->
-      <div class="ip__explainer">
+      <div v-if="providers.length > 0" class="ip__explainer">
         <h2 class="ip__explainer-title">What each identity unlocks</h2>
         <div class="ip__explainer-grid">
-          <div v-for="(meta, provider) in PROVIDER_META" :key="provider" class="ip__explainer-row">
-            <span class="ip__explainer-provider">{{ provider }}</span>
-            <span class="ip__explainer-desc">{{ meta.enables }}</span>
+          <div v-for="p in providers" :key="p.id" class="ip__explainer-row">
+            <span class="ip__explainer-provider">{{ p.id }}</span>
+            <span class="ip__explainer-desc">{{ p.enables }}</span>
           </div>
         </div>
       </div>
@@ -172,6 +177,52 @@ function missingRequired(provider: string): boolean {
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
+}
+
+/* Linked confirmation banner */
+.ip__banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.875rem 1rem;
+  border: 1px solid rgb(from var(--color-af-green) r g b / 0.25);
+  border-radius: 4px;
+  background: rgb(from var(--color-af-green) r g b / 0.08);
+  font-size: 0.875rem;
+  color: var(--color-af-text);
+  animation: ip-banner-fade-in 200ms ease-out;
+}
+
+.ip__banner-close {
+  flex-shrink: 0;
+  font: inherit;
+  font-size: 1rem;
+  line-height: 1;
+  color: var(--color-af-dim);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0 0.25rem;
+}
+.ip__banner-close:hover {
+  color: var(--color-af-text);
+}
+
+@keyframes ip-banner-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ip__banner {
+    animation: none;
+  }
 }
 
 /* Warning */

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from af_mcp_broker.config import Settings, get_settings
 
 
@@ -25,3 +27,46 @@ def test_env_var_is_case_insensitive(monkeypatch):
     """pydantic-settings matches field names case-insensitively by default."""
     monkeypatch.setenv("oidc_audience", "lowercase-aud")
     assert Settings().oidc_audience == "lowercase-aud"
+
+
+# ---------------------------------------------------------------------------
+# oauth21_providers <-> cimd_idp_aliases alias parity
+# ---------------------------------------------------------------------------
+
+_A_PROVIDER = {
+    "alias": "a",
+    "targets": ["a"],
+    "authorization_endpoint": "https://backend-as.example/authorize",
+    "token_endpoint": "https://backend-as.example/token",
+    "issuer": "https://backend-as.example",
+}
+
+
+def test_oauth21_cimd_alias_parity_ok_when_both_empty():
+    Settings()  # must not raise
+
+
+def test_oauth21_cimd_alias_parity_ok_when_alias_sets_match():
+    Settings(
+        broker_state_key="fake-key",
+        oauth21_client_id="https://mcp.example/.well-known/cimd",
+        cimd_idp_aliases=["a"],
+        oauth21_providers=[_A_PROVIDER],
+    )  # must not raise
+
+
+def test_oauth21_cimd_alias_parity_raises_when_oauth21_alias_missing_from_cimd():
+    with pytest.raises(ValueError, match="cimd_idp_aliases"):
+        Settings(
+            broker_state_key="fake-key",
+            oauth21_client_id="https://mcp.example/.well-known/cimd",
+            cimd_idp_aliases=[],
+            oauth21_providers=[_A_PROVIDER],
+        )
+
+
+def test_oauth21_cimd_alias_parity_raises_when_cimd_alias_is_dangling():
+    """A cimd_idp_aliases entry with no matching oauth21_providers alias
+    advertises a redirect URI nothing will ever complete."""
+    with pytest.raises(ValueError, match="oauth21_providers"):
+        Settings(cimd_idp_aliases=["dangling-alias"])

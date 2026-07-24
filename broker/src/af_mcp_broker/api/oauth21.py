@@ -21,6 +21,7 @@ from af_mcp_broker.oauth_state import (
     NONCE_COOKIE_PATH,
     STATE_TOKEN_TTL_SECONDS,
     StateTokenError,
+    append_linked_query_param,
     build_state_token,
     decrypt_state_token,
     generate_nonce,
@@ -260,8 +261,11 @@ async def callback(
 
     log.info("oauth21.callback.linked", alias=alias, subject=payload.sub)
 
-    response = RedirectResponse(
-        url=payload.return_url, status_code=status.HTTP_302_FOUND
-    )
+    # Tell the portal which provider was just linked so the Identities page
+    # can show a confirmation banner without an extra round trip — appended
+    # rather than assumed-absent since return_url may already carry its own
+    # query string.
+    redirect_url = append_linked_query_param(payload.return_url, alias)
+    response = RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
     response.delete_cookie(NONCE_COOKIE_NAME, path=NONCE_COOKIE_PATH)
     return response

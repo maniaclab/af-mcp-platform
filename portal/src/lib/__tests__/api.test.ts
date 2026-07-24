@@ -10,6 +10,7 @@ import {
   APIError,
   SessionExpiredError,
   clearIdentitiesCache,
+  fetchDashboardSummary,
   fetchIdentities,
   fetchProxyStatus,
 } from '../api';
@@ -75,8 +76,7 @@ describe('api client', () => {
       uid: 1,
       gid: 2,
       groups: [],
-      linked_accounts: [],
-      available_providers: [],
+      providers: [],
     });
     await fetchIdentities();
     expect(globalThis.fetch).toHaveBeenCalledWith(
@@ -104,8 +104,7 @@ describe('api client', () => {
       uid: 1,
       gid: 2,
       groups: [],
-      linked_accounts: [],
-      available_providers: [],
+      providers: [],
     });
     await expect(fetchIdentities()).resolves.toMatchObject({ email: 'e' });
     const [, init] = vi.mocked(globalThis.fetch).mock.calls[0] as [string, RequestInit];
@@ -126,8 +125,7 @@ describe('api client', () => {
             uid: 1,
             gid: 2,
             groups: [],
-            linked_accounts: [],
-            available_providers: [],
+            providers: [],
           }),
           { status: 200, headers: { 'Content-Type': 'application/json' } },
         ),
@@ -155,12 +153,21 @@ describe('api client', () => {
       uid: 1,
       gid: 2,
       groups: [],
-      linked_accounts: [],
-      available_providers: [],
+      providers: [
+        {
+          id: 'atlas-iam',
+          type: 'keycloak-brokered',
+          display_name: 'ATLAS IAM',
+          enables: 'VOMS proxy generation',
+          linked: true,
+          link_url: null,
+        },
+      ],
     });
     const result = await fetchIdentities();
     expect(result.email).toBe('e');
-    expect(result.linked_accounts).toEqual([]);
+    expect(result.providers).toHaveLength(1);
+    expect(result.providers[0]).toMatchObject({ id: 'atlas-iam', linked: true });
   });
 
   it('raises APIError with the response body on non-2xx', async () => {
@@ -183,8 +190,7 @@ describe('fetchIdentities() sessionStorage cache', () => {
     uid: 1,
     gid: 2,
     groups: [],
-    linked_accounts: [],
-    available_providers: [],
+    providers: [],
   };
 
   it('fetches from the broker and caches the response on first call', async () => {
@@ -245,5 +251,71 @@ describe('fetchIdentities() sessionStorage cache', () => {
 
     await fetchIdentities();
     expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('fetchDashboardSummary()', () => {
+  it('counts only linked providers, regardless of provider type', async () => {
+    globalThis.fetch = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/identities')) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              subject: 's',
+              email: 'e',
+              unixname: 'u',
+              uid: 1,
+              gid: 2,
+              groups: [],
+              providers: [
+                {
+                  id: 'atlas-iam',
+                  type: 'keycloak-brokered',
+                  display_name: 'ATLAS IAM',
+                  enables: '',
+                  linked: true,
+                  link_url: null,
+                },
+                {
+                  id: 'rucio-mcp-atlas',
+                  type: 'oauth21-direct',
+                  display_name: 'Rucio (ATLAS)',
+                  enables: '',
+                  linked: false,
+                  link_url: '/v1/oauth/authorize/rucio-mcp-atlas',
+                },
+                {
+                  id: 'cern',
+                  type: 'keycloak-brokered',
+                  display_name: 'CERN SSO',
+                  enables: '',
+                  linked: true,
+                  link_url: null,
+                },
+              ],
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          ),
+        );
+      }
+      if (url.includes('/catalog')) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ tools: [] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        );
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify({ cached: false, voms_attributes: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+    });
+
+    const summary = await fetchDashboardSummary();
+    expect(summary.linkedCount).toBe(2);
   });
 });

@@ -80,6 +80,34 @@ spec:
             - name: CIMD_IDP_ALIASES
               value: {{ .Values.broker.cimd.idpAliases | toJson | quote }}
             {{- end }}
+            # Portal's own Keycloak client id, used to build "Link account"
+            # URLs for keycloak-brokered identities on GET /v1/identities.
+            # Omitted when empty so those link_urls degrade to null (see
+            # api/identities.py).
+            {{- if .Values.broker.identitiesLinkClientId }}
+            - name: IDENTITIES_LINK_CLIENT_ID
+              value: {{ .Values.broker.identitiesLinkClientId | quote }}
+            {{- end }}
+            # OAuth 2.1 credential brokering — omitted entirely when no
+            # providers are configured so the broker's pydantic defaults
+            # (which disable the feature) apply.
+            {{- if .Values.broker.oauth21.providers }}
+            - name: OAUTH21_CLIENT_ID
+              value: {{ printf "https://%s/.well-known/cimd" .Values.ingress.mcpHost | quote }}
+            - name: OAUTH21_PROVIDERS
+              value: {{ include "af-mcp-platform.oauth21Providers" . | quote }}
+            {{- if .Values.broker.oauth21.stateIssuer }}
+            - name: OAUTH21_STATE_ISSUER
+              value: {{ .Values.broker.oauth21.stateIssuer | quote }}
+            {{- end }}
+            {{- if .Values.broker.oauth21.existingStateKeySecret }}
+            - name: BROKER_STATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.broker.oauth21.existingStateKeySecret | quote }}
+                  key: broker-state-key
+            {{- end }}
+            {{- end }}
             {{- if .Values.broker.existingServiceTokenSecret }}
             - name: AF_SERVICE_TOKEN
               valueFrom:

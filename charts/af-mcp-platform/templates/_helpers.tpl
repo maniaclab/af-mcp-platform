@@ -133,3 +133,26 @@ OIDC_ORIGIN env var consumed by nginx.conf.template's envsubst.
 {{- $u := urlParse $issuer -}}
 {{- printf "%s://%s" $u.scheme $u.host -}}
 {{- end }}
+
+{{/*
+JSON-serialized OAUTH21_PROVIDERS env var value, converting
+`broker.oauth21.providers`' camelCase chart-value keys into the snake_case
+field names `OAuth21ProviderConfig` (broker/src/af_mcp_broker/config.py)
+parses from JSON.
+*/}}
+{{- define "af-mcp-platform.oauth21Providers" -}}
+{{- $providers := list -}}
+{{- range .Values.broker.oauth21.providers -}}
+{{- $providers = append $providers (dict
+      "alias" .alias
+      "targets" .targets
+      "authorization_endpoint" .authorizationEndpoint
+      "token_endpoint" .tokenEndpoint
+      "issuer" .issuer
+      "scope" (.scope | default "openid profile email")
+      "display_name" (.displayName | default "")
+      "enables" (.enables | default "")
+    ) -}}
+{{- end -}}
+{{- $providers | toJson -}}
+{{- end }}

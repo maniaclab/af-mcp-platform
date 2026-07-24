@@ -63,6 +63,13 @@ broker:
     # (Settings -> Identity Providers -> ATLAS IAM).
     idpAlias: "atlas-oidc"
 
+  # The portal's own Keycloak client id (a public client). Used to build
+  # "Link account" URLs for keycloak-brokered identities on GET
+  # /v1/identities (see docs/auth.md). Empty means the broker can't build
+  # these URLs — the portal degrades to hiding the Link button for
+  # keycloak-brokered providers (e.g. ATLAS IAM) until this is set.
+  identitiesLinkClientId: ""
+
   # Name of a pre-existing Secret providing the AF service token.
   # The Secret must contain a key named `af-service-token`.
   # Create this via SealedSecret externally; the chart does NOT create it.
@@ -104,6 +111,32 @@ broker:
   cimd:
     clientName: ""
     idpAliases: []
+
+  # OAuth 2.1 credential brokering — one entry per backend authorization
+  # server the broker acts as a direct OAuth 2.1 client to (e.g. rucio-mcp).
+  # Empty defaults — no AF-specific backends in the public chart. Every
+  # entry's `alias` MUST also appear in `cimd.idpAliases` above (the broker
+  # refuses to start otherwise — its redirect URI has to be advertised in
+  # the CIMD document backends fetch), and vice versa.
+  oauth21:
+    # Name of a pre-existing Secret providing the Fernet key (urlsafe-
+    # base64-encoded 32 bytes) that encrypts the OAuth 2.1 linking flow's
+    # `state` token. The Secret must contain a key named `broker-state-key`.
+    # Required (non-empty) whenever providers below is non-empty. Create via
+    # SealedSecret externally; the chart does NOT create it.
+    existingStateKeySecret: ""
+    # `iss`/`aud` self-reference embedded in the state token. Empty means
+    # "use broker.oidc.issuer".
+    stateIssuer: ""
+    providers: []
+    # - alias: rucio-mcp-atlas
+    #   targets: ["rucio-mcp-atlas"]
+    #   authorizationEndpoint: "https://rucio-mcp.example/authorize"
+    #   tokenEndpoint: "https://rucio-mcp.example/token"
+    #   issuer: "https://rucio-mcp.example"
+    #   scope: "openid profile email"
+    #   displayName: "Rucio (ATLAS)"
+    #   enables: "ATLAS Rucio operations via rucio-mcp"
 
 # ---------------------------------------------------------------------------
 # Aggregator: FastMCP backend registry

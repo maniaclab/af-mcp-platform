@@ -135,9 +135,9 @@ JWT claim:
 
 An unlinked provider surfaces as `404` before `issue()` is ever called, rather
 than as an opaque failure from inside the provider. `GET /v1/identities`'s
-`linked_accounts` is built the same way — by probing `is_linked()` — so it
-reflects Keycloak's actual state instead of a claim that may be absent from
-the token.
+`providers[].linked` is built the same way — by probing `is_linked()` — so it
+reflects Keycloak's (or the OAuth 2.1 `TokenStore`'s) actual state instead of
+a claim that may be absent from the token.
 
 #### Passphrase-unlock rate limiting
 
