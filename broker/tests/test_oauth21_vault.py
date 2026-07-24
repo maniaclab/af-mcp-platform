@@ -416,10 +416,11 @@ def _bootstrap_oauth21_vault_env(
     monkeypatch.setenv("BROKER_STATE_KEY", Fernet.generate_key().decode())
     monkeypatch.setenv("OAUTH21_CLIENT_ID", CIMD_CLIENT_ID)
     monkeypatch.setenv(
-        "OAUTH21_PROVIDERS",
+        "IDENTITY_PROVIDERS",
         json.dumps(
             [
                 {
+                    "type": "oauth21-direct",
                     "alias": ALIAS,
                     "targets": [ALIAS],
                     "authorization_endpoint": "https://backend-as.example/authorize",
@@ -429,7 +430,6 @@ def _bootstrap_oauth21_vault_env(
             ]
         ),
     )
-    monkeypatch.setenv("CIMD_IDP_ALIASES", json.dumps([ALIAS]))
     monkeypatch.setenv("TOKEN_STORE_BACKEND", "vault")
     monkeypatch.setenv("VAULT_ADDR", ADDR)
     monkeypatch.setenv("VAULT_AUTH_ROLE", AUTH_ROLE)

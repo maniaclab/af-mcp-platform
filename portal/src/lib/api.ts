@@ -190,20 +190,20 @@ export async function fetchIdentities(): Promise<IdentitiesResponse> {
   return data;
 }
 
-// NOTE on linking mechanisms: every provider row carries its
-// own `link_url` and the click handler is a plain `window.location.href`
-// navigation (see IdentityLink.vue) — the portal itself does not build these
-// URLs. For a "keycloak-brokered" provider that URL still round-trips
-// through the portal's own oidc-client-ts session (../lib/auth.ts::
-// startIdpLink) rather than a bare top-level navigation, because Keycloak's
+// NOTE on linking mechanisms: a "keycloak-brokered" provider always carries
+// `link_url: null` (issue #66 PR4) — IdentityLink.vue calls
+// startIdpLink({ providerAlias: entry.id, ... }) directly using the
+// provider's own `id`, which the broker guarantees equals its configured
+// alias, so there's no URL to build or parse for these. Keycloak's
 // `kc_action=LINK_IDP` callback lands on /callback, which only completes via
-// oidc-client-ts's own locally-stored PKCE/state — IdentityLink.vue reads
-// the `provider_id` query param off the broker-built `link_url` and re-runs
-// startIdpLink() with it rather than navigating to it directly. An
-// "oauth21-direct" provider's `link_url` (the broker's own
-// /v1/oauth/authorize/{alias}) has no such constraint and is navigated to
-// as-is. DELETE /v1/identities/link/{provider} always returns 501 —
-// unlinking is not implemented yet, so there is no unlink client here.
+// oidc-client-ts's own locally-stored PKCE/state — a bare top-level
+// navigation can't complete that handshake, which is why this provider type
+// always goes through the client-side flow rather than a `link_url`
+// navigation. An "oauth21-direct" provider carries a full `link_url` (the
+// broker's own /v1/oauth/authorize/{alias}) and the click handler is a plain
+// `window.location.href` navigation, unchanged. DELETE
+// /v1/identities/link/{provider} always returns 501 — unlinking is not
+// implemented yet, so there is no unlink client here.
 
 // ---------------------------------------------------------------------------
 // Catalog — GET /v1/catalog (flat tool list)

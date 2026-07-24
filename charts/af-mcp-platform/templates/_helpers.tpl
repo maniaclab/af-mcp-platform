@@ -135,24 +135,51 @@ OIDC_ORIGIN env var consumed by nginx.conf.template's envsubst.
 {{- end }}
 
 {{/*
-JSON-serialized OAUTH21_PROVIDERS env var value, converting
-`broker.oauth21.providers`' camelCase chart-value keys into the snake_case
-field names `OAuth21ProviderConfig` (broker/src/af_mcp_broker/config.py)
-parses from JSON.
+JSON-serialized IDENTITY_PROVIDERS env var value, converting
+`broker.identityProviders`' camelCase chart-value keys into the snake_case
+field names `IdentityProviderConfig` (broker/src/af_mcp_broker/config.py)
+parses from JSON. Every entry carries alias/type/targets/displayName/enables;
+oauth21-direct entries additionally carry the endpoint/issuer/scope fields.
 */}}
-{{- define "af-mcp-platform.oauth21Providers" -}}
+{{- define "af-mcp-platform.identityProviders" -}}
 {{- $providers := list -}}
-{{- range .Values.broker.oauth21.providers -}}
+{{- range .Values.broker.identityProviders -}}
+{{- if eq .type "oauth21-direct" -}}
 {{- $providers = append $providers (dict
+      "type" .type
       "alias" .alias
-      "targets" .targets
+      "targets" (.targets | default (list))
+      "display_name" (.displayName | default "")
+      "enables" (.enables | default "")
       "authorization_endpoint" .authorizationEndpoint
       "token_endpoint" .tokenEndpoint
       "issuer" .issuer
       "scope" (.scope | default "openid profile email")
+    ) -}}
+{{- else -}}
+{{- $providers = append $providers (dict
+      "type" .type
+      "alias" .alias
+      "targets" (.targets | default (list))
       "display_name" (.displayName | default "")
       "enables" (.enables | default "")
     ) -}}
 {{- end -}}
+{{- end -}}
 {{- $providers | toJson -}}
+{{- end }}
+
+{{/*
+True when at least one broker.identityProviders entry is type
+"oauth21-direct" — gates OAUTH21_CLIENT_ID/BROKER_STATE_KEY/
+OAUTH21_STATE_ISSUER env wiring, which only matters for that provider type.
+*/}}
+{{- define "af-mcp-platform.hasOAuth21Provider" -}}
+{{- $has := false -}}
+{{- range .Values.broker.identityProviders -}}
+{{- if eq .type "oauth21-direct" -}}
+{{- $has = true -}}
+{{- end -}}
+{{- end -}}
+{{- $has -}}
 {{- end }}

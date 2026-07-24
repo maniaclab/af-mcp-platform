@@ -55,6 +55,7 @@ async def test_fetch_brokered_token_sends_real_token(monkeypatch):
     provider = oidc.OIDCProvider(
         settings=Settings(oidc_issuer="https://keycloak.test/realms/connect"),
         cache=CredentialCache(),
+        alias="atlas-oidc",
     )
     token, _expires_at = await provider._fetch_brokered_token(_principal())
 
@@ -96,6 +97,7 @@ def _make_provider() -> oidc.OIDCProvider:
     return oidc.OIDCProvider(
         settings=Settings(oidc_issuer="https://keycloak.test/realms/connect"),
         cache=CredentialCache(),
+        alias="atlas-oidc",
     )
 
 

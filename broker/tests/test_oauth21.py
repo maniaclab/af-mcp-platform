@@ -141,10 +141,11 @@ def _configure_oauth21_env(monkeypatch: pytest.MonkeyPatch, fernet_key: str) -> 
     monkeypatch.setenv("BROKER_STATE_KEY", fernet_key)
     monkeypatch.setenv("OAUTH21_CLIENT_ID", CLIENT_ID)
     monkeypatch.setenv(
-        "OAUTH21_PROVIDERS",
+        "IDENTITY_PROVIDERS",
         json.dumps(
             [
                 {
+                    "type": "oauth21-direct",
                     "alias": ALIAS,
                     "targets": [ALIAS],
                     "authorization_endpoint": AUTHORIZATION_ENDPOINT,
@@ -157,9 +158,6 @@ def _configure_oauth21_env(monkeypatch: pytest.MonkeyPatch, fernet_key: str) -> 
             ]
         ),
     )
-    # `Settings._validate_oauth21_cimd_alias_parity` requires every
-    # oauth21_providers alias to have a matching cimd_idp_aliases entry.
-    monkeypatch.setenv("CIMD_IDP_ALIASES", json.dumps([ALIAS]))
 
 
 # ---------------------------------------------------------------------------
@@ -835,10 +833,11 @@ def test_config_raises_when_state_key_missing_but_providers_configured(
     _bootstrap_no_override_env(monkeypatch)
     monkeypatch.setenv("OAUTH21_CLIENT_ID", CLIENT_ID)
     monkeypatch.setenv(
-        "OAUTH21_PROVIDERS",
+        "IDENTITY_PROVIDERS",
         json.dumps(
             [
                 {
+                    "type": "oauth21-direct",
                     "alias": ALIAS,
                     "targets": [ALIAS],
                     "authorization_endpoint": AUTHORIZATION_ENDPOINT,

@@ -30,6 +30,24 @@ _SRC = Path(__file__).resolve().parents[1] / "src" / "af_mcp_broker"
 SHIPPED_POLICY = _SRC / "authorization" / "policy.yaml"
 SHIPPED_BACKENDS = _SRC / "mcp" / "backends.yaml"
 
+# Default `identity_providers` entry `app_client_factory` configures below —
+# one keycloak-brokered provider bound to the historic default OIDCProvider
+# targets, so `bearer`-auth backends (e.g. "rucio" in SHIPPED_BACKENDS) still
+# resolve to an OIDCProvider instance the way they did before issue #66 PR4
+# replaced the single `oidc_idp_alias`-derived singleton with per-entry
+# `identity_providers` config. Tests that care about a specific
+# `identity_providers` shape (test_identities.py, test_oauth21*.py,
+# test_wellknown_cimd.py) override IDENTITY_PROVIDERS themselves.
+_DEFAULT_IDENTITY_PROVIDERS = [
+    {
+        "type": "keycloak-brokered",
+        "alias": "atlas-oidc",
+        "display_name": "ATLAS IAM",
+        "enables": "VOMS proxy generation and grid certificate credential brokering",
+        "targets": ["rucio", "opendata", "af-internal"],
+    }
+]
+
 
 @dataclass
 class RsaKey:
@@ -156,6 +174,7 @@ def app_client_factory(
     monkeypatch.setenv("OIDC_ISSUER", "https://keycloak.invalid/realms/connect")
     # Ephemeral metrics port so test runs never collide on 9090.
     monkeypatch.setenv("METRICS_PORT", "0")
+    monkeypatch.setenv("IDENTITY_PROVIDERS", json.dumps(_DEFAULT_IDENTITY_PROVIDERS))
 
     # X509Provider.is_linked() checks for a real usercert.pem/userkey.pem pair
     # under HOME_ROOT/<unixname>/.globus/ — pre-create that pair for the

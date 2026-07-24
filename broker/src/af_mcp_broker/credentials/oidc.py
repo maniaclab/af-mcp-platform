@@ -52,10 +52,10 @@ class OIDCProvider(CredentialProvider):
     Auth flow:
       1. User authenticates to Keycloak (realm: *connect*) and receives a
          Keycloak access token — this is ``principal.raw_token``.
-      2. Keycloak has an identity provider link to ATLAS IAM; it stores the
-         brokered IAM token internally.
+      2. Keycloak has an identity provider link to the configured ``alias``;
+         it stores the brokered IAM token internally.
       3. We call the Keycloak stored-brokered-token endpoint:
-           GET {OIDC_ISSUER}/broker/{OIDC_IDP_ALIAS}/token
+           GET {OIDC_ISSUER}/broker/{alias}/token
            Authorization: Bearer {principal.raw_token}
          to retrieve the user's current ATLAS IAM access token.
       4. That IAM token is what downstream services (rucio-mcp, etc.) expect.
@@ -73,13 +73,17 @@ class OIDCProvider(CredentialProvider):
         self,
         settings: Settings,
         cache: CredentialCache,
+        alias: str,
         targets: frozenset[str] = _DEFAULT_OIDC_TARGETS,
     ) -> None:
         self._settings = settings
         self._cache = cache
+        self._alias = alias
         self._targets = targets
         self._link_cache: dict[int, _LinkStatus] = {}
-        self._log = structlog.get_logger(__name__).bind(provider="OIDCProvider")
+        self._log = structlog.get_logger(__name__).bind(
+            provider="OIDCProvider", alias=alias
+        )
 
     async def handles(self, target: str) -> bool:
         return target in self._targets
@@ -87,7 +91,7 @@ class OIDCProvider(CredentialProvider):
     async def is_linked(self, principal: Principal) -> bool:
         """Return True if Keycloak holds a brokered ATLAS IAM token for *principal*.
 
-        Probes ``GET {oidc_issuer}/broker/{oidc_idp_alias}/token`` with the
+        Probes ``GET {oidc_issuer}/broker/{alias}/token`` with the
         principal's own bearer token: HTTP 200 means Keycloak has a stored
         brokered token (the user completed IdP linking). Any other outcome —
         a 4xx/5xx response or an unreachable Keycloak — is treated as "not
@@ -106,8 +110,7 @@ class OIDCProvider(CredentialProvider):
 
     async def _probe_linked(self, principal: Principal) -> bool:
         broker_token_url = (
-            f"{self._settings.oidc_issuer.rstrip('/')}"
-            f"/broker/{self._settings.oidc_idp_alias}/token"
+            f"{self._settings.oidc_issuer.rstrip('/')}/broker/{self._alias}/token"
         )
         headers = {"Authorization": f"Bearer {principal.raw_token.get_secret_value()}"}
         try:
@@ -196,8 +199,7 @@ class OIDCProvider(CredentialProvider):
         token — user must re-link).
         """
         broker_token_url = (
-            f"{self._settings.oidc_issuer.rstrip('/')}"
-            f"/broker/{self._settings.oidc_idp_alias}/token"
+            f"{self._settings.oidc_issuer.rstrip('/')}/broker/{self._alias}/token"
         )
 
         resp = await get_http_client().get(

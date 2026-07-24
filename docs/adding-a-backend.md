@@ -5,6 +5,64 @@ changes** — only configuration. The five steps below are the complete procedur
 
 ---
 
+## Adding a new Identity Provider
+
+If your new backend needs its own credential-linking flow (rather than
+reusing one already configured), add an entry to `broker.identityProviders`
+in your HelmRelease values. Each entry's `alias` doubles as the id shown on
+the portal's Identities page — no separate mapping to keep in sync.
+
+- **`type: oauth21-direct`** — use this when the backend is itself an OAuth
+  2.1 authorization server (e.g. rucio-mcp). No Keycloak IdP configuration
+  is needed at all; the broker is a direct OAuth 2.1 client via its own
+  CIMD document (`GET /.well-known/cimd`).
+
+  ```yaml
+  broker:
+    identityProviders:
+      - type: oauth21-direct
+        alias: my-backend-oauth
+        targets: ["my-new-backend"]
+        authorizationEndpoint: "https://my-new-backend.example/authorize"
+        tokenEndpoint: "https://my-new-backend.example/token"
+        issuer: "https://my-new-backend.example"
+        displayName: "My New Backend"
+        enables: "Access to my-new-backend on your behalf"
+  ```
+
+- **`type: keycloak-brokered`** — use this when the backend is (or can be
+  registered as) an OIDC identity provider. This *does* require configuring
+  the backend as an Identity Provider in Keycloak (Settings → Identity
+  Providers), with "Store Tokens" and "Stored Tokens Readable" both on, plus
+  the `read-token` client role from Keycloak's `broker` client granted to
+  callers (see `docs/auth.md`).
+
+  ```yaml
+  broker:
+    identityProviders:
+      - type: keycloak-brokered
+        alias: my-backend-oidc
+        targets: ["my-new-backend"]
+        displayName: "My New Backend"
+        enables: "Access to my-new-backend on your behalf"
+  ```
+
+See `docs/auth.md#identity-provider-types` for how the two types differ.
+
+### Migrating from the pre-unification chart values
+
+Older chart releases configured identity providers across four separate
+values. All four are consolidated into `broker.identityProviders` above:
+
+| Old value | New equivalent |
+|---|---|
+| `broker.oidc.idpAlias` | A `keycloak-brokered` entry's `alias` |
+| `broker.oauth21.providers` | `oauth21-direct` entries (same fields, still camelCase) |
+| `broker.cimd.idpAliases` | Derived automatically from `oauth21-direct` entries — remove this value entirely |
+| `broker.identitiesLinkClientId` | Removed entirely — `keycloak-brokered` entries no longer need it; the portal links them via its own client-side flow regardless |
+
+---
+
 ## Step 1 — Add the backend to the aggregator backend list
 
 Edit the HelmRelease for the platform (typically

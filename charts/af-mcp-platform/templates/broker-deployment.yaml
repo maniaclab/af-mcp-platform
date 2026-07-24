@@ -57,8 +57,6 @@ spec:
               value: {{ .Values.broker.oidc.issuer | quote }}
             - name: OIDC_AUDIENCE
               value: {{ .Values.broker.oidc.audience | quote }}
-            - name: OIDC_IDP_ALIAS
-              value: {{ .Values.broker.oidc.idpAlias | quote }}
             # Home directory root (broker constructs per-user paths from this)
             - name: HOME_ROOT
               value: {{ .Values.broker.homeDir.homeRoot | quote }}
@@ -76,26 +74,20 @@ spec:
             - name: CIMD_CLIENT_NAME
               value: {{ .Values.broker.cimd.clientName | quote }}
             {{- end }}
-            {{- if .Values.broker.cimd.idpAliases }}
-            - name: CIMD_IDP_ALIASES
-              value: {{ .Values.broker.cimd.idpAliases | toJson | quote }}
+            # Identity providers (issue #66 PR4) — one entry per
+            # keycloak-brokered or oauth21-direct provider the broker can
+            # link a user's account to. Omitted entirely when none are
+            # configured so the broker's pydantic default (empty list,
+            # degraded but valid) applies.
+            {{- if .Values.broker.identityProviders }}
+            - name: IDENTITY_PROVIDERS
+              value: {{ include "af-mcp-platform.identityProviders" . | quote }}
             {{- end }}
-            # Portal's own Keycloak client id, used to build "Link account"
-            # URLs for keycloak-brokered identities on GET /v1/identities.
-            # Omitted when empty so those link_urls degrade to null (see
-            # api/identities.py).
-            {{- if .Values.broker.identitiesLinkClientId }}
-            - name: IDENTITIES_LINK_CLIENT_ID
-              value: {{ .Values.broker.identitiesLinkClientId | quote }}
-            {{- end }}
-            # OAuth 2.1 credential brokering — omitted entirely when no
-            # providers are configured so the broker's pydantic defaults
-            # (which disable the feature) apply.
-            {{- if .Values.broker.oauth21.providers }}
+            # OAuth 2.1 state-token infrastructure — only needed when at
+            # least one identityProviders entry is oauth21-direct.
+            {{- if eq (include "af-mcp-platform.hasOAuth21Provider" .) "true" }}
             - name: OAUTH21_CLIENT_ID
               value: {{ printf "https://%s/.well-known/cimd" .Values.ingress.mcpHost | quote }}
-            - name: OAUTH21_PROVIDERS
-              value: {{ include "af-mcp-platform.oauth21Providers" . | quote }}
             {{- if .Values.broker.oauth21.stateIssuer }}
             - name: OAUTH21_STATE_ISSUER
               value: {{ .Values.broker.oauth21.stateIssuer | quote }}

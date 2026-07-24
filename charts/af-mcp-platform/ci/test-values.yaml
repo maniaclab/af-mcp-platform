@@ -10,25 +10,28 @@ portal:
     scope: "openid profile email example-audience"
   brokerOrigin: "https://mcp.example.com"
 
-# Exercises the OAuth 2.1 credential-brokering template path in CI so a
-# broken OAUTH21_PROVIDERS/CIMD_IDP_ALIASES render is caught by
-# `helm template`, not just by eyeballing the diff. `existingStateKeySecret`
-# only needs to name a Secret for template rendering — it doesn't need to
-# exist for `helm lint`/`helm template` to succeed.
+# Exercises the identityProviders template path in CI (both provider types)
+# so a broken IDENTITY_PROVIDERS render is caught by `helm template`, not
+# just by eyeballing the diff. `existingStateKeySecret` only needs to name a
+# Secret for template rendering — it doesn't need to exist for `helm
+# lint`/`helm template` to succeed.
 broker:
-  identitiesLinkClientId: "example-portal-client"
-  cimd:
-    idpAliases: ["rucio-mcp-example"]
+  identityProviders:
+    - type: keycloak-brokered
+      alias: atlas-oidc-example
+      displayName: "ATLAS IAM (example)"
+      enables: "Example VOMS proxy generation and grid certificate credential brokering"
+      targets: ["rucio-example"]
+    - type: oauth21-direct
+      alias: rucio-mcp-example
+      targets: ["rucio-mcp-example"]
+      authorizationEndpoint: "https://rucio-mcp.example.com/authorize"
+      tokenEndpoint: "https://rucio-mcp.example.com/token"
+      issuer: "https://rucio-mcp.example.com"
+      displayName: "Rucio (example)"
+      enables: "Example Rucio operations via rucio-mcp"
   oauth21:
     existingStateKeySecret: "example-broker-state-key"
-    providers:
-      - alias: rucio-mcp-example
-        targets: ["rucio-mcp-example"]
-        authorizationEndpoint: "https://rucio-mcp.example.com/authorize"
-        tokenEndpoint: "https://rucio-mcp.example.com/token"
-        issuer: "https://rucio-mcp.example.com"
-        displayName: "Rucio (example)"
-        enables: "Example Rucio operations via rucio-mcp"
     # Exercises the Vault-backend template path in CI (`helm template` only
     # -- these dummy values don't need a reachable Vault). See
     # `tokenStore.backend` in values.yaml.
