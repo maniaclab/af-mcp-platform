@@ -92,3 +92,23 @@ def test_cimd_client_name_from_settings(
 
     assert resp.status_code == 200, resp.text
     assert resp.json()["client_name"] == "Test AF Broker"
+
+
+def test_cimd_client_id_honors_x_forwarded_proto(
+    app_client_factory: Callable[..., Any],
+) -> None:
+    """Behind a TLS-terminating ingress, ``request.url`` must report ``https``.
+
+    Without proxy-header trust the broker sees ``scheme=http`` even though the
+    client fetched via ``https``, and the self-referential ``client_id`` in the
+    CIMD document ends up ``http://…`` — a scheme mismatch backend AS's must
+    reject per draft-ietf-oauth-client-id-metadata-document.
+    """
+    with app_client_factory() as (client, _):
+        resp: Any = client.get(
+            "/.well-known/cimd", headers={"X-Forwarded-Proto": "https"}
+        )
+
+    assert resp.status_code == 200, resp.text
+    client_id = resp.json()["client_id"]
+    assert client_id.startswith("https://"), client_id
