@@ -21,6 +21,7 @@ from af_mcp_broker.oauth_state import (
     NONCE_COOKIE_PATH,
     STATE_TOKEN_TTL_SECONDS,
     StateTokenError,
+    append_linked_error_params,
     append_linked_query_param,
     build_state_token,
     decrypt_state_token,
@@ -220,13 +221,18 @@ async def authorize(
 )
 async def callback(
     alias: str,
-    code: str,
     state: str,
     request: Request,
     settings: Annotated[Settings, Depends(get_settings)],
+    code: str | None = None,
+    error: str | None = None,
+    error_description: str | None = None,
+    error_uri: str | None = None,
 ) -> Response:
     """Receive the authorization code from a backend AS and store the
-    resulting token pair.
+    resulting token pair -- or, if the backend AS itself failed, redirect
+    the browser back to the portal with the failure surfaced instead of a
+    raw validation error.
 
     Unlike every other ``/v1`` route, this one carries no ``Authorization:
     Bearer`` header and is **not** gated by ``keycloak_dependency``. It
@@ -241,8 +247,27 @@ async def callback(
     the same browser together prove this callback continues a flow that
     *was* authenticated at authorize-time. It is not an authentication
     endpoint in its own right.
+
+    Per OAuth 2.1 §4.1.2.1, the backend AS's redirect back here carries
+    *either* ``code`` on success *or* ``error`` (plus optional
+    ``error_description``/``error_uri``) on failure — never both. ``code``
+    is therefore optional at the FastAPI level: a backend AS's own
+    downstream failure (e.g. rucio-mcp's outbound call to Rucio auth
+    401ing) surfaces exactly this way, with ``code`` omitted entirely, and a
+    naive required ``code: str`` parameter would bounce that off FastAPI's
+    request validation as a 422 before this handler — and its OAuth-aware
+    error handling below — ever ran.
     """
     provider = _resolve_provider(request, alias)
+
+    if code is None and error is None:
+        # A compliant AS always sends one or the other. Don't attempt to
+        # decrypt state for this case -- we have no reason to trust a
+        # request shaped like this came from the AS at all.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing code or error in callback",
+        )
 
     cookie_nonce = request.cookies.get(NONCE_COOKIE_NAME)
     if cookie_nonce is None:
@@ -272,6 +297,27 @@ async def callback(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="OAuth state alias does not match callback URL",
         )
+
+    if error is not None:
+        log.warning(
+            "oauth21.callback.backend_error",
+            alias=alias,
+            subject=payload.sub,
+            error=error,
+            error_description=error_description,
+        )
+        redirect_url = append_linked_error_params(
+            payload.return_url,
+            alias,
+            error,
+            error_description=error_description,
+            error_uri=error_uri,
+        )
+        response = RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
+        response.delete_cookie(NONCE_COOKIE_NAME, path=NONCE_COOKIE_PATH)
+        return response
+
+    assert code is not None  # guaranteed by the missing-code-or-error check above
 
     redirect_uri = _callback_url(settings, alias)
     resp = await get_http_client().post(
