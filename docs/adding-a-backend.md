@@ -96,20 +96,22 @@ subsystem will check before forwarding any tool call to this backend.
 
 ---
 
-## Step 2 — Ensure the capability exists in policy.yaml
+## Step 2 — Pick (or reuse) a capability for the backend
 
-Check `charts/af-mcp-platform/files/policy.yaml` (or the ConfigMap it renders
-into). If `my-new-backend:use` is not already listed, add it:
+There's no separate capability registration step — capabilities are just
+string identifiers, declared implicitly by using them in two places that
+must agree:
 
-```yaml
-capabilities:
-  # ...existing entries...
-  - name: my-new-backend:use
-    description: "Access to my-new-backend tools"
-```
+- `required_capability` in `backends.yaml` (Step 1 above), and
+- `group_capabilities` values in the rendered policy — see
+  `charts/af-mcp-platform/templates/configmap-policy.yaml`, a Helm template
+  rendered from `.Values.entitlements.*` (default vocabulary mirrors the
+  broker's own built-in `broker/src/af_mcp_broker/authorization/policy.yaml`).
 
-If the capability already exists (e.g., a generic `af:user` capability that covers
-many backends), skip this step.
+If an existing capability already covers the new backend (e.g. a generic
+`read_metadata` that several backends already require), reuse it and skip to
+Step 4 — no policy change needed. Only continue to Step 3 if you're
+introducing a genuinely new capability name.
 
 ---
 
