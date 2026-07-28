@@ -78,7 +78,9 @@ Answers: "is this principal allowed to call this tool?"
   panda requires `submit_jobs`) via `target_capabilities` in `policy.yaml`.
 - A principal's capabilities come from their Keycloak group memberships via
   `group_capabilities` in `policy.yaml` (shipped in the chart's policy
-  ConfigMap).
+  ConfigMap). This requires a Group Membership mapper on the Keycloak client
+  scope so the `groups` claim actually reaches the token — see
+  [docs/auth.md#keycloak-group-membership-mapper-required](auth.md#keycloak-group-membership-mapper-required).
 - Authorization failures are logged with structured fields (uid, tool, capability)
   and return HTTP 403 to the aggregator.
 

@@ -380,6 +380,37 @@ expired entries, triggering a fresh mint on the next request.
 
 ---
 
+## Keycloak: Group Membership mapper (required)
+
+The broker's authorization gates on a top-level `groups` claim in the access
+token. If Keycloak isn't configured to add it, no user is granted any
+capability and `/v1/catalog` returns an empty list for everyone.
+
+### One-time setup
+
+1. **Add a Group Membership mapper to the `mcp-gateway` client scope**
+   (or your equivalent scope):
+   - Admin → Client Scopes → `mcp-gateway` → Mappers → Add mapper → **Group Membership**
+   - Name: `groups`
+   - Token Claim Name: `groups`
+   - Full group path: **OFF** (the broker string-matches literal group
+     names; a leading `/` would prevent every policy match)
+   - Add to ID token: OFF
+   - Add to access token: **ON**
+   - Add to userinfo: OFF
+
+2. **Create the groups you reference in `group_capabilities`** and
+   assign users to them. The broker's built-in default policy uses
+   `atlas`, `cms`, `dune`, `escape`, `af-admins`.
+
+### Verify
+
+Mint a fresh token (via `scripts/mint-token.py`) and confirm the payload
+has a top-level `groups` claim listing your group names as strings.
+Without it, the broker treats the caller as `__authenticated__`-only.
+
+---
+
 ## Group-to-Capability Mapping Example
 
 From the shipped `policy.yaml` (mounted from the chart's policy ConfigMap):

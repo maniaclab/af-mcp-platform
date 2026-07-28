@@ -41,6 +41,9 @@ portal/node_modules/
 *.pem
 *.key
 
+# Local-only operator helper scripts (e.g. mint-token.py) — not versioned for now.
+scripts/
+
 # Helm — packed charts and downloaded dependencies
 charts/*/charts/
 *.tgz

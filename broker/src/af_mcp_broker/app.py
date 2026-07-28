@@ -112,6 +112,23 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     if not backends:
         logger.warning("no_backends_configured")
 
+    # An empty group_capabilities means every principal falls back to
+    # __authenticated__-only capabilities, silently denying every backend
+    # that requires one -- e.g. a chart-rendered policy.yaml with a stale key
+    # name the broker doesn't read (issue #59). Not fatal -- operators may
+    # deliberately deploy with an all-open policy for a dev environment --
+    # but it must be a loud, visible signal rather than a silent
+    # "why can't anyone see anything" state.
+    if not entitlement_policy.group_capabilities:
+        gated_backends = [
+            spec.name for spec in backends if spec.required_capability != "__none__"
+        ]
+        if gated_backends:
+            logger.error(
+                "policy.group_capabilities_empty_but_required",
+                backends=gated_backends,
+            )
+
     # --- Credential subsystem: cache + janitor + provider registry.
     credential_cache = CredentialCache(
         max_failed_unlocks=settings.credential_unlock_max_failures,

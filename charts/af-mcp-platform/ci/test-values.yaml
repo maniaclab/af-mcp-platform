@@ -54,3 +54,11 @@ networkPolicy:
       - 8000
       - 8080
       - 9000
+
+# Exercises the ranged entitlements.group_capabilities template path in CI
+# so a broken policy.yaml render is caught by `helm template`, not just by
+# eyeballing the diff. Vocabulary matches the broker's built-in
+# broker/src/af_mcp_broker/authorization/policy.yaml.
+entitlements:
+  group_capabilities:
+    atlas: [read_data, read_metadata]

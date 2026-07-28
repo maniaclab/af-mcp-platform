@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import yaml  # type: ignore[import-untyped]
@@ -13,7 +13,6 @@ class BackendSpec:
     url: str
     transport: str  # "http" | "sse"
     required_capability: str
-    entitlement_groups: list[str] = field(default_factory=list)
     auth_type: str = "bearer"  # "bearer" | "x509" | "none"
 
 
@@ -33,7 +32,6 @@ class BackendRegistry:
                 url=entry["url"],
                 transport=entry.get("transport", "http"),
                 required_capability=entry.get("required_capability", "__none__"),
-                entitlement_groups=entry.get("entitlement_groups", []),
                 auth_type=entry.get("auth_type", "bearer"),
             )
             self._backends[spec.name] = spec
