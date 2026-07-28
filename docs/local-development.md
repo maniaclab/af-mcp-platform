@@ -57,7 +57,10 @@ pixi run -e bypass broker
 Equivalent long form, for one-off overrides:
 
 ```bash
-export BROKER_DEV_INSECURE_PRINCIPAL='{"uid":1000,"gid":1000,"unixname":"devuser","email":"dev@localhost","groups":["af-users"]}'
+# the built-in policy grants read_data and friends to atlas; pick a
+# different group here if your local POLICY_FILE overlay uses a different
+# mapping
+export BROKER_DEV_INSECURE_PRINCIPAL='{"uid":1000,"gid":1000,"unixname":"devuser","email":"dev@localhost","groups":["atlas"]}'
 export OIDC_ISSUER=http://localhost:8081/realms/dev
 pixi run broker
 ```
