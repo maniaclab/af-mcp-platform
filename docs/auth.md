@@ -118,6 +118,18 @@ to every OAuth client that needs to obtain broker-ready tokens (e.g.
 `mcp-portal`) — either as a Default scope (auto-included in every token) or an
 Optional scope (the client must explicitly request `scope=posix`).
 
+**Common footgun:** each of the four User Attribute mappers has the same
+two-name-field shape as the Group Membership mapper above — **Name** (an
+internal identifier) and **Token Claim Name** (the key that actually
+appears in the JWT payload). Leaving Token Claim Name blank produces an
+inert mapper: no `posix.uid` (or `.gid` / `.unixname` / `.unixname-v2`)
+claim ever appears in the token, silently. Token Claim Name **must** be
+set explicitly, using the dotted path that nests it under `posix`
+(`posix.uid`, `posix.gid`, `posix.unixname`, ...) to match the claim shape
+above. Verify via Client Scopes → `posix` → **Evaluate** tab — select the
+target user and client, and the Generated Access Token panel shows exactly
+what each mapper actually contributed.
+
 **Non-Keycloak IdPs.** `posix` as a client-scope name is a Keycloak-side
 convention, not a broker requirement. Any OIDC IdP — Dex, Zitadel, Auth0, Ory
 Hydra, etc. — can satisfy the broker as long as the decoded access token has
@@ -398,6 +410,17 @@ capability and `/v1/catalog` returns an empty list for everyone.
    - Add to ID token: OFF
    - Add to access token: **ON**
    - Add to userinfo: OFF
+
+   **Common footgun:** the mapper form has two similarly-named fields —
+   **Name** (an internal identifier for the mapper itself) and **Token
+   Claim Name** (the key that actually appears in the JWT payload). Both
+   look optional. Set `Name: groups` and leave Token Claim Name blank, and
+   the mapper is inert: no `groups` claim ever appears in the token,
+   silently — no error, no warning, nothing to notice until you decode a
+   minted token. Token Claim Name **must** be set to `groups` explicitly.
+   Verify via Client Scopes → `mcp-gateway` → **Evaluate** tab — select the
+   target user and the `mcp-portal` client, and the Generated Access Token
+   panel shows exactly what the mapper actually contributed.
 
 2. **Create the groups you reference in `group_capabilities`** and
    assign users to them. The broker's built-in default policy uses

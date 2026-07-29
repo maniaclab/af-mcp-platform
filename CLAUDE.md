@@ -51,8 +51,8 @@ One FastAPI process serves two surfaces: the FastMCP aggregator mounted at `/mcp
 Four subsystems, each a package under `broker/src/af_mcp_broker/`:
 
 1. **Identity** (`identity.py`) — validates the Keycloak JWT presented by the client (`Authorization: Bearer`), resolves POSIX uid/gid (from the token's `posix` claim — see docs/auth.md), produces a `Principal` that flows through the whole call. Broker is the sole token validator; oauth2-proxy still fronts the portal's HTML on `mcp-portal.af.uchicago.edu/` but is not in the `/v1` or `/mcp` path on either host.
-2. **Authorization** (`authorization/`) — declarative `policy.yaml`; each backend target requires a capability (e.g. rucio → `read_data`), capabilities come from the validated token's `groups` claim. No group cache — Keycloak is authoritative.
-3. **Credentials** (`credentials/`) — provider classes (oidc, x509, service) behind `CredentialProvider`; minted creds cached in-process by `(uid, target)` in `CredentialCache` with expiry sweeping.
+2. **Authorization** (`authorization/`) — declarative `policy.yaml`; each backend target requires a capability (e.g. rucio → `read_data`), capabilities come from the validated token's `groups` claim. No group cache — Keycloak is authoritative. Requires a Keycloak Group Membership mapper populating that claim — see docs/auth.md.
+3. **Credentials** (`credentials/`) — provider classes (oidc, oauth21, x509, service) behind `CredentialProvider`; minted creds cached in-process by `(uid, target)` in `CredentialCache` with expiry sweeping.
 4. **Audit** (`audit/`) — structlog JSON line per tool invocation + Prometheus metrics served on a dedicated port (9090, `METRICS_PORT`); the API port has no `/metrics`.
 
 Configuration is file + env driven: `POLICY_FILE` and `BACKENDS_FILE` (defaults under `/etc/af-mcp/`) are loaded at startup into `app.state` (see `app.py` lifespan); missing files degrade gracefully for local dev. Settings are pydantic-settings env vars in `config.py`.
