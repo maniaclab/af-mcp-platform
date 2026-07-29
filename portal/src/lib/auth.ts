@@ -179,7 +179,14 @@ export async function startIdpLink(opts: IdpLinkOptions): Promise<void> {
     extraQueryParams: {
       kc_action: 'LINK_IDP',
       provider_id: opts.providerAlias,
-      prompt: 'login',
+      // LINK_IDP needs a fresh auth_time. `prompt=login` triggers an
+      // atlas-auth /authorize loop (atlas-auth re-enters its own /authorize
+      // with prompt=login attached instead of returning to Keycloak).
+      // `max_age` is a soft freshness bound: if the Keycloak session's
+      // auth_time is within this many seconds, Keycloak accepts without
+      // forcing a re-auth prompt. 600s covers any normal linking session
+      // without provoking the loop.
+      max_age: '600',
     },
   });
 }

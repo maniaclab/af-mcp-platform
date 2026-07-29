@@ -139,7 +139,7 @@ describe('auth — OIDC configured', () => {
       extraQueryParams: {
         kc_action: 'LINK_IDP',
         provider_id: 'atlas-oidc',
-        prompt: 'login',
+        max_age: '600',
       },
     });
   });
