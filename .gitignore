@@ -42,7 +42,13 @@ portal/node_modules/
 *.key
 
 # Local-only operator helper scripts (e.g. mint-token.py) — not versioned for now.
-scripts/
+# `scripts/*` (not `scripts/`) so the exception below can re-include one file --
+# git cannot un-ignore a path whose parent directory is itself excluded.
+scripts/*
+# Exception: verify-mcp-flow.py is a real PR deliverable (issue #58 Part D) --
+# a runnable /mcp end-to-end check meant for any operator to check out and
+# run, not a personal local-only helper like the rest of scripts/.
+!scripts/verify-mcp-flow.py
 
 # Helm — packed charts and downloaded dependencies
 charts/*/charts/

@@ -28,15 +28,19 @@ mcp-portal              MCP-client identities
 LLM client / Portal SPA
     │  Authorization: Bearer <aud=mcp-gateway token>
     ▼
-AF Credential Broker  — validates the Bearer itself
-    │  (HTTPBearer + keycloak_dependency; no ForwardAuth proxy
-    │   in this path — see docs/auth.md)
+FastMCP Aggregator (mounted at /mcp)
+    │  IdentityMiddleware — validates the Bearer itself, same
+    │  identity.get_principal() /v1 uses; no ForwardAuth proxy
+    │  in this path — see docs/auth.md
     ▼
-FastMCP Aggregator  ◄────────────────  tool registry (in-memory, hot-reload)
-    │  internal call: tool_name + args + principal
+    │  EntitlementMiddleware (tools/list) / AuthorizationMiddleware
+    │  (tools/call) — capability check in-process against the same
+    │  functions POST /v1/authorize calls; AuthorizationMiddleware
+    │  also writes the audit record for every call
     ▼
-AF Credential Broker  (/v1 HTTP API)
-    │  brokered credential (rucio token, x509 proxy, IAM token, …)
+    │  client_factory — for auth_type="bearer" backends, mints the
+    │  caller's credential in-process via the same provider code
+    │  POST /v1/credential calls (rucio token, x509 proxy, IAM token, …)
     ▼
 Backend MCP server  (rucio-mcp, ami-mcp, panda-mcp, …)
     │  result / error
@@ -273,14 +277,17 @@ Key endpoints:
 | `GET` | `/v1/healthz` | Liveness probe |
 | `GET` | `/v1/readyz` | Readiness probe (gated on JWKS reachability only; backends config is reported informationally) |
 
-Tool execution itself flows through the MCP mount (`/mcp`); the aggregator
-authorizes and fetches credentials by calling `/v1/authorize` and
-`/v1/credential` per tool call. Prometheus metrics are served on the
-dedicated metrics port (9090), not under `/v1`.
+Tool execution itself flows through the MCP mount (`/mcp`); the aggregator's
+middleware pipeline authorizes and mints credentials by calling the same
+in-process functions the `/v1/authorize` and `/v1/credential` route bodies
+call, rather than looping back over HTTP to them — see
+`mcp/middleware/authorization_mw.py` and `mcp/aggregator.py`'s
+`client_factory`. Prometheus metrics are served on the dedicated metrics
+port (9090), not under `/v1`.
 
-All requests require a valid AF bearer token. The aggregator translates
-MCP-over-HTTP into `/v1` calls; external callers can also hit `/v1` directly
-(useful for scripting and debugging).
+All requests require a valid AF bearer token. External callers can also hit
+`/v1` directly (useful for scripting and debugging) — the `/v1` route bodies
+remain the canonical authorization/credential logic either way.
 
 ### Reserved paths on the portal host
 
@@ -320,15 +327,25 @@ the simplest correct thing. The extraction path if it becomes necessary:
 1. LLM sends `tools/call` MCP message over HTTPS to `mcp.af.uchicago.edu`,
    with its own `aud=mcp-gateway` Bearer (see [docs/auth.md](auth.md) for how
    each client identity obtains one).
-2. The FastMCP Aggregator receives the `tools/call`, extracts tool name + args,
-   and calls the broker's `POST /v1/authorize` and `POST /v1/credential`.
-3. The broker Identity subsystem validates the Bearer directly (no ForwardAuth
-   proxy in this path) and resolves the `Principal`.
-4. The Authorization subsystem checks `principal.capabilities` against the tool's
-   `required_capability`. Deny → 403 logged and returned.
-5. The Credential subsystem looks up `(uid, target)` in the `CredentialCache`. On
-   miss, it invokes the appropriate provider (token exchange or x509 mint Job).
-6. The broker constructs the backend request, injecting the credential, and calls
-   the target backend MCP server.
-7. The backend response is returned through the broker → aggregator → LLM client.
-8. The Audit subsystem writes a structured log line and updates Prometheus counters.
+2. `IdentityMiddleware` validates the Bearer directly (no ForwardAuth proxy
+   in this path), the same way `identity.get_principal()` does for `/v1`,
+   and resolves the `Principal`.
+3. `AuthorizationMiddleware` maps the tool name to a backend by prefix and
+   checks `principal`'s capabilities against that backend's
+   `required_capability`, in-process against the same function
+   `POST /v1/authorize` calls. Deny → a clean MCP error, audited as
+   `"denied"`, and the call never reaches credential resolution.
+4. `mcp/aggregator.py`'s `client_factory` resolves the caller's credential
+   for `auth_type: "bearer"` backends, in-process against the same provider
+   code `POST /v1/credential` calls — cache hit or a fresh mint (token
+   exchange or x509 mint Job) either way. `auth_type: "none"` backends skip
+   this step; `auth_type: "x509"` isn't yet deliverable over `/mcp` (see
+   `mcp/aggregator.py`'s `TODO(#58)`).
+5. The aggregator forwards the call to the target backend MCP server with
+   the minted credential injected as `Authorization: Bearer <token>` — the
+   caller's own inbound bearer is never forwarded.
+6. The backend's response streams back through the aggregator to the LLM
+   client.
+7. `AuthorizationMiddleware` writes a structured audit log line
+   (`outcome: "success"`/`"denied"`/`"error"`) and updates Prometheus
+   counters exactly once per call, regardless of outcome.
