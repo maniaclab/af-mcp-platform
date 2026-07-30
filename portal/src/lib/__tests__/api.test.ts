@@ -350,10 +350,33 @@ describe('fetchDashboardSummary()', () => {
       }
       if (url.includes('/catalog')) {
         return Promise.resolve(
-          new Response(JSON.stringify({ tools: [] }), {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' },
-          }),
+          new Response(
+            JSON.stringify({
+              servers: [
+                {
+                  name: 'rucio',
+                  display_name: 'Rucio',
+                  description: 'ATLAS distributed data management',
+                  capability: 'read_data',
+                  auth_type: 'bearer',
+                  action_type: 'read',
+                  credential_provider: 'atlas-iam',
+                  tools: [],
+                },
+                {
+                  name: 'docs',
+                  display_name: 'Docs',
+                  description: 'Facility documentation',
+                  capability: '__none__',
+                  auth_type: 'none',
+                  action_type: 'read',
+                  credential_provider: null,
+                  tools: [],
+                },
+              ],
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          ),
         );
       }
       return Promise.resolve(
@@ -366,5 +389,6 @@ describe('fetchDashboardSummary()', () => {
 
     const summary = await fetchDashboardSummary();
     expect(summary.linkedCount).toBe(2);
+    expect(summary.serverCount).toBe(2);
   });
 });
