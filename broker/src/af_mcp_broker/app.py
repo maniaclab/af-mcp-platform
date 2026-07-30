@@ -151,13 +151,6 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
                 backends=gated_backends,
             )
 
-    # --- MCP aggregator: the FastMCP instance and its ASGI app already exist
-    # (built eagerly at module scope below, since the aggregator must be
-    # mountable before Settings()/BackendRegistry() are known — see the
-    # comment above `_mcp_aggregator`). Push the registry/policy/settings
-    # just loaded above into it now that they're real.
-    populate_aggregator(_mcp_aggregator, backend_registry, settings, entitlement_policy)
-
     # --- Credential subsystem: cache + janitor + provider registry.
     credential_cache = CredentialCache(
         max_failed_unlocks=settings.credential_unlock_max_failures,
@@ -256,6 +249,19 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # identity_providers config already assembled above.
     target_to_alias = _build_target_to_alias(x509_targets, settings.identity_providers)
 
+    # --- MCP aggregator: the FastMCP instance and its ASGI app already exist
+    # (built eagerly at module scope below, since the aggregator must be
+    # mountable before Settings()/BackendRegistry() are known — see the
+    # comment above `_mcp_aggregator`). Push the registry/policy/settings/
+    # credential_registry just loaded above into it now that they're real.
+    populate_aggregator(
+        _mcp_aggregator,
+        backend_registry,
+        settings,
+        entitlement_policy,
+        credential_registry,
+    )
+
     # --- Audit: without init the module drops every record. Honor AUDIT_LOG_FILE.
     audit_output = _open_audit_output(settings.audit_log_file)
     init_audit_logger(audit_output)
@@ -334,10 +340,12 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
 # app's `.lifespan` must already exist when `lifespan=` is passed to
 # FastAPI() below. Settings()/BackendRegistry() are only loaded inside the
 # async `lifespan()` above, which runs later — so this is built with an
-# empty registry and placeholder Settings()/EntitlementPolicy(), and
-# `lifespan()` calls `populate_aggregator()` to push in the real values
-# before the app starts serving requests.
-_mcp_aggregator = build_aggregator(BackendRegistry(), Settings(), EntitlementPolicy())
+# empty registry and placeholder Settings()/EntitlementPolicy()/
+# CredentialRegistry(), and `lifespan()` calls `populate_aggregator()` to
+# push in the real values before the app starts serving requests.
+_mcp_aggregator = build_aggregator(
+    BackendRegistry(), Settings(), EntitlementPolicy(), CredentialRegistry([])
+)
 _mcp_aggregator_app = _mcp_aggregator.http_app(path="/")
 
 app = FastAPI(
