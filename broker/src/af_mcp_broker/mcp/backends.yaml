@@ -11,6 +11,9 @@ backends:
     # OIDCProvider returns the stored IAM-brokered token.
     # rucio-mcp handles the aud=rucio RFC 8693 exchange itself.
     auth_type: bearer
+    # rucio-mcp's tools are already self-prefixed (rucio_list_dids, ...);
+    # namespacing again would produce rucio_rucio_*.
+    apply_namespace: false
 
   - name: ami
     prefix: ami
