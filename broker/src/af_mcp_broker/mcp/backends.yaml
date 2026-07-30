@@ -3,7 +3,7 @@
 backends:
   - name: rucio
     prefix: rucio
-    url: "http://rucio-mcp.mcp.svc.cluster.local:80/mcp"
+    url: "http://rucio-mcp.mcp.svc.cluster.local:80/site/atlas"
     transport: http
     required_capability: read_data
     display_name: Rucio
@@ -11,6 +11,12 @@ backends:
     # OIDCProvider returns the stored IAM-brokered token.
     # rucio-mcp handles the aud=rucio RFC 8693 exchange itself.
     auth_type: bearer
+    # rucio-mcp's tools are already self-prefixed (rucio_list_dids, ...);
+    # namespacing again would produce rucio_rucio_*.
+    apply_namespace: false
+    # rucio-mcp serves each site's FastMCP app under /site/{site}, not a flat
+    # /mcp path. Deployments override name/prefix/url per site via Helm
+    # values — e.g. a second entry pointed at /site/escape for the ESCAPE VO.
 
   - name: ami
     prefix: ami

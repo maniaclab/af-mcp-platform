@@ -16,6 +16,11 @@ class BackendSpec:
     auth_type: str = "bearer"  # "bearer" | "x509" | "none"
     description: str = ""
     display_name: str = ""
+    # Whether the aggregator namespaces this backend's tools as
+    # "<prefix>_<toolname>". Backends whose tools are already self-prefixed
+    # (e.g. rucio-mcp ships "rucio_list_dids") must set this False, or
+    # namespacing would double up into "rucio_rucio_list_dids".
+    apply_namespace: bool = True
 
 
 class BackendRegistry:
@@ -37,6 +42,7 @@ class BackendRegistry:
                 auth_type=entry.get("auth_type", "bearer"),
                 description=entry.get("description", ""),
                 display_name=entry.get("display_name", ""),
+                apply_namespace=entry.get("apply_namespace", True),
             )
             self._backends[spec.name] = spec
 
