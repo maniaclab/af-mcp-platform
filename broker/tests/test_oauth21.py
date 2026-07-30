@@ -483,6 +483,10 @@ async def test_issue_refreshes_when_within_window(
     assert len(fake_client.calls) == 1
     assert fake_client.calls[0]["data"]["grant_type"] == "refresh_token"
     assert fake_client.calls[0]["data"]["refresh_token"] == "refresh-token-1"
+    # Per OAuth 2.1 (RFC 6749 §6 + §3.2.1), a public client (CIMD
+    # `token_endpoint_auth_method: "none"`) MUST send client_id on every
+    # token request, including the refresh_token grant -- see issue #68.
+    assert fake_client.calls[0]["data"]["client_id"] == CLIENT_ID
 
     stored = await store.get(SUBJECT, ALIAS)
     assert stored is not None

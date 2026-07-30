@@ -404,6 +404,7 @@ class OAuth21Provider(CredentialProvider):
             data={
                 "grant_type": "refresh_token",
                 "refresh_token": cred.refresh_token.get_secret_value(),
+                "client_id": self._client_id,
             },
             timeout=10.0,
         )
