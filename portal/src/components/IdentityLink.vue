@@ -55,11 +55,7 @@ async function handleLink() {
 }
 
 // Provider icon character — monospaced glyph, not an emoji
-const providerGlyph: Record<string, string> = {
-  'atlas-iam': 'A',
-  cern: 'C',
-};
-const glyph = providerGlyph[props.id] ?? props.id[0]?.toUpperCase() ?? '?';
+const glyph = props.id[0]?.toUpperCase() ?? '?';
 </script>
 
 <template>
