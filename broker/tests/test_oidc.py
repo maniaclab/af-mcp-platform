@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any, ClassVar
 
 import httpx
@@ -163,3 +164,72 @@ async def test_is_linked_reprobes_after_ttl_expires(monkeypatch):
 
     assert await provider.is_linked(principal) is True
     assert client.head_calls == 2
+
+
+# ---------------------------------------------------------------------------
+# issue() single-flighting (issue #94)
+# ---------------------------------------------------------------------------
+
+
+class _CountingTokenClient:
+    """Fake httpx client for the brokered-token fetch; counts calls and
+    forces a real suspension so concurrent callers actually overlap instead
+    of each running to completion before the next one starts."""
+
+    def __init__(self):
+        self.calls = 0
+
+    async def get(self, url: str, headers: dict[str, str], **kwargs: Any):
+        self.calls += 1
+        await asyncio.sleep(0.01)
+        return _FakeResponse()
+
+
+async def test_issue_single_flights_concurrent_misses(monkeypatch):
+    """N concurrent issue() calls for the same (uid, target) must cost
+    exactly one Keycloak brokered-token fetch (issue #94)."""
+    client = _CountingTokenClient()
+    monkeypatch.setattr(oidc, "get_http_client", lambda: client)
+
+    provider = _make_provider()
+    principal = _principal()
+
+    results = await asyncio.gather(
+        *[provider.issue(principal, "rucio") for _ in range(5)]
+    )
+
+    assert client.calls == 1
+    assert all(r.payload["access_token"] == "iam-token" for r in results)
+
+
+async def test_issue_different_targets_do_not_serialize(monkeypatch):
+    """Concurrent misses for different targets must not block on each
+    other's single-flight lock."""
+    entered: list[str] = []
+    both_entered = asyncio.Event()
+
+    class _BlockingClient:
+        async def get(self, url: str, headers: dict[str, str], **kwargs: Any):
+            entered.append(url)
+            if len(entered) == 2:
+                both_entered.set()
+            # Deadlocks (and the test times out) if the two targets were
+            # serialized behind a single shared lock instead of per-key ones.
+            await asyncio.wait_for(both_entered.wait(), timeout=2.0)
+            return _FakeResponse()
+
+    monkeypatch.setattr(oidc, "get_http_client", _BlockingClient)
+
+    provider = _make_provider()
+    principal = _principal()
+
+    results = await asyncio.wait_for(
+        asyncio.gather(
+            provider.issue(principal, "rucio"),
+            provider.issue(principal, "opendata"),
+        ),
+        timeout=2.0,
+    )
+
+    assert len(entered) == 2
+    assert {r.target for r in results} == {"rucio", "opendata"}

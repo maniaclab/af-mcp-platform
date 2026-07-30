@@ -1,11 +1,16 @@
 """Unit tests for the testable parts of the x509 proxy provider.
 
-The Kubernetes attach/harvest flow cannot be exercised without a real cluster;
-these tests cover the pure helpers and the passphrase-zeroing contract.
+Exercising the Kubernetes attach/harvest flow against a real cluster is out
+of scope here; most of these tests cover the pure helpers and the
+passphrase-zeroing contract, but a full mint round trip can still be driven
+by injecting a fake ``kubernetes_asyncio`` module (see
+``_install_fake_k8s_full``) -- used by the issue()-single-flighting tests
+below.
 """
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import datetime
 import sys
@@ -178,6 +183,97 @@ def _install_fake_k8s(monkeypatch, captured: dict) -> None:
     monkeypatch.setitem(sys.modules, "kubernetes_asyncio.stream", stream_mod)
 
 
+def _install_fake_k8s_full(
+    monkeypatch,
+    proxy_pem: bytes,
+    job_names: list[str],
+    *,
+    job_create_delay: float = 0.0,
+) -> None:
+    """Inject a fake ``kubernetes_asyncio`` sufficient to drive a full
+    ``HomeDirVomsBackend._mint_kubernetes()`` round trip: the Job "creates"
+    immediately (recording its name into *job_names*, after an optional
+    *job_create_delay* to force concurrent callers to overlap), a pod is
+    immediately ``Running`` for stdin attach, the Job immediately
+    "succeeds", and the harvested pod log yields *proxy_pem*.
+    """
+
+    class FakeWsClient:
+        async def write_stdin(self, data):
+            pass
+
+        async def close(self):
+            pass
+
+    class FakePod:
+        def __init__(self, phase: str, name: str):
+            self.status = SimpleNamespace(phase=phase)
+            self.metadata = SimpleNamespace(name=name)
+
+    class FakeCoreV1Api:
+        def __init__(self, api_client):
+            pass
+
+        async def list_namespaced_pod(self, namespace, label_selector):
+            return SimpleNamespace(items=[FakePod("Running", "fake-mint-pod")])
+
+        async def connect_get_namespaced_pod_attach(self, **kwargs):
+            return FakeWsClient()
+
+        async def read_namespaced_pod_log(self, name, namespace, container):
+            payload = base64.b64encode(proxy_pem).decode()
+            return f"{_PROXY_B64_BEGIN}\n{payload}\n{_PROXY_B64_END}\n"
+
+    class FakeBatchV1Api:
+        def __init__(self, api_client):
+            pass
+
+        async def create_namespaced_job(self, namespace, body):
+            if job_create_delay:
+                await asyncio.sleep(job_create_delay)
+            job_names.append(body["metadata"]["name"])
+
+        async def read_namespaced_job(self, name, namespace):
+            return SimpleNamespace(status=SimpleNamespace(succeeded=True, failed=None))
+
+        async def delete_namespaced_job(self, name, namespace, body):
+            pass
+
+    class FakeApiClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    class FakeWsApiClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    k8s = types.ModuleType("kubernetes_asyncio")
+    client_mod = types.ModuleType("kubernetes_asyncio.client")
+    stream_mod = types.ModuleType("kubernetes_asyncio.stream")
+    config_mod = types.ModuleType("kubernetes_asyncio.config")
+
+    client_mod.CoreV1Api = FakeCoreV1Api
+    client_mod.BatchV1Api = FakeBatchV1Api
+    client_mod.ApiClient = FakeApiClient
+    client_mod.V1DeleteOptions = SimpleNamespace
+    stream_mod.WsApiClient = FakeWsApiClient
+    config_mod.load_incluster_config = lambda: None
+    k8s.client = client_mod
+    k8s.stream = stream_mod
+    k8s.config = config_mod
+
+    monkeypatch.setitem(sys.modules, "kubernetes_asyncio", k8s)
+    monkeypatch.setitem(sys.modules, "kubernetes_asyncio.client", client_mod)
+    monkeypatch.setitem(sys.modules, "kubernetes_asyncio.stream", stream_mod)
+    monkeypatch.setitem(sys.modules, "kubernetes_asyncio.config", config_mod)
+
+
 @pytest.mark.asyncio
 async def test_send_stdin_zeros_passphrase_buffer(monkeypatch):
     captured: dict = {}
@@ -234,11 +330,11 @@ async def test_send_stdin_zeros_buffer_even_when_transport_fails(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def _principal(unixname: str) -> Principal:
+def _principal(unixname: str, *, uid: int = 50123) -> Principal:
     return Principal(
         subject="user-123",
         email="user@example.org",
-        uid=50123,
+        uid=uid,
         gid=5000,
         unixname=unixname,
         groups=["af-atlas-users"],
@@ -447,3 +543,110 @@ async def test_mint_kubernetes_harvest_failure_does_not_record_failed_unlock(
         )
 
     cache.record_failed_unlock.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# X509Provider.issue() single-flighting (issue #94)
+# ---------------------------------------------------------------------------
+
+
+def _globus_dir_for(tmp_path, unixname: str) -> None:
+    globus_dir = tmp_path / unixname / ".globus"
+    globus_dir.mkdir(parents=True)
+    (globus_dir / "usercert.pem").write_text("cert")
+    (globus_dir / "userkey.pem").write_text("key")
+
+
+@pytest.mark.asyncio
+async def test_issue_single_flights_concurrent_mints(monkeypatch, tmp_path):
+    """N concurrent issue() calls for the same (uid, target) with a correct
+    passphrase must create exactly one k8s Job (issue #94) -- a real
+    resource, unlike the OIDC provider's network fetch."""
+    _globus_dir_for(tmp_path, "auser")
+    not_after = datetime.datetime(2030, 6, 15, 12, 0, 0, tzinfo=datetime.UTC)
+    proxy_pem = _make_self_signed_pem("Jane Doe", not_after)
+
+    job_names: list[str] = []
+    _install_fake_k8s_full(monkeypatch, proxy_pem, job_names, job_create_delay=0.01)
+
+    settings = SimpleNamespace(
+        home_root=str(tmp_path), proxy_dir=str(tmp_path / "proxies")
+    )
+    cache = CredentialCache()
+    provider = X509Provider(
+        settings=settings,
+        cache=cache,
+        backends=[HomeDirVomsBackend(settings=settings)],
+    )
+    principal = _principal("auser")
+    passphrase = SecretBytes(b"hunter2")
+
+    results = await asyncio.gather(
+        *[provider.issue(principal, "ami", passphrase=passphrase) for _ in range(5)]
+    )
+
+    assert len(job_names) == 1
+    assert all(r.payload["proxy_handle"] for r in results)
+
+
+@pytest.mark.asyncio
+async def test_issue_different_uids_do_not_serialize(monkeypatch, tmp_path):
+    """Concurrent mints for different uids must not block on each other's
+    single-flight lock."""
+    _globus_dir_for(tmp_path, "auser")
+    _globus_dir_for(tmp_path, "buser")
+    not_after = datetime.datetime(2030, 6, 15, 12, 0, 0, tzinfo=datetime.UTC)
+    proxy_pem = _make_self_signed_pem("Jane Doe", not_after)
+
+    entered: list[str] = []
+    both_entered = asyncio.Event()
+
+    class _BlockingBatchV1Api:
+        def __init__(self, api_client):
+            pass
+
+        async def create_namespaced_job(self, namespace, body):
+            entered.append(body["metadata"]["name"])
+            if len(entered) == 2:
+                both_entered.set()
+            # Deadlocks (and the test times out) if the two uids were
+            # serialized behind a single shared lock instead of per-key ones.
+            await asyncio.wait_for(both_entered.wait(), timeout=2.0)
+
+        async def read_namespaced_job(self, name, namespace):
+            return SimpleNamespace(status=SimpleNamespace(succeeded=True, failed=None))
+
+        async def delete_namespaced_job(self, name, namespace, body):
+            pass
+
+    job_names: list[str] = []
+    _install_fake_k8s_full(monkeypatch, proxy_pem, job_names)
+    import kubernetes_asyncio.client as fake_client_mod
+
+    monkeypatch.setattr(fake_client_mod, "BatchV1Api", _BlockingBatchV1Api)
+
+    settings = SimpleNamespace(
+        home_root=str(tmp_path), proxy_dir=str(tmp_path / "proxies")
+    )
+    cache = CredentialCache()
+    provider = X509Provider(
+        settings=settings,
+        cache=cache,
+        backends=[HomeDirVomsBackend(settings=settings)],
+    )
+    passphrase = SecretBytes(b"hunter2")
+
+    results = await asyncio.wait_for(
+        asyncio.gather(
+            provider.issue(
+                _principal("auser", uid=60_001), "ami", passphrase=passphrase
+            ),
+            provider.issue(
+                _principal("buser", uid=60_002), "ami", passphrase=passphrase
+            ),
+        ),
+        timeout=2.0,
+    )
+
+    assert len(entered) == 2
+    assert len(results) == 2

@@ -815,10 +815,18 @@ class X509Provider(CredentialProvider):
                 unlock_endpoint="/v1/x509/proxy",
             )
 
-        meta = await self._mint(principal, passphrase)
-        cred = self._build_credential(principal, target, meta)
-        await self._cache.put(principal.uid, target, cred, proxy_meta=meta)
-        return cred
+        async def _do_mint() -> IssuedCredential:
+            meta = await self._mint(principal, passphrase)
+            cred = self._build_credential(principal, target, meta)
+            await self._cache.put(principal.uid, target, cred, proxy_meta=meta)
+            return cred
+
+        # Single-flighted: concurrent misses for this (uid, target) await one
+        # k8s Job / subprocess mint instead of each independently starting
+        # their own real-resource mint (issue #94).
+        return await self._cache.get_or_mint(
+            principal.uid, target, min_remaining_seconds, _do_mint
+        )
 
     async def revoke(self, principal: Principal, target: str) -> None:
         """Clear the cache entry; cache.revoke secure-deletes the proxy file."""
