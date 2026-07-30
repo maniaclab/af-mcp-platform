@@ -58,17 +58,26 @@ broker subsystems and the `/v1` contract, and
   x509/VOMS proxy minting.
 - [Adding a Backend](adding-a-backend.md) — the five-step, config-only
   procedure for wiring a new MCP backend into the aggregator.
+- [Connecting a Client](connecting-a-client.md) — end-user setup for Claude,
+  Claude Code, and any other MCP-over-HTTP client, plus the exact error
+  strings you'll see if a prerequisite (capability, linked identity) is
+  missing.
+- [Phase 1 Acceptance Checklist](phase1-acceptance-checklist.md) — what's
+  verified by automated tests vs. what still needs a live-deploy check.
 - [agentgateway Spike](agentgateway-spike.md) — the acceptance test that
   decides whether agentgateway can replace the embedded FastMCP aggregator.
 
 ## Connecting an MCP client
 
-For end-user setup — Claude Desktop, Gemini, and other MCP-capable clients —
-see the [top-level README](https://github.com/maniaclab/af-mcp-platform#quick-start-for-atlas-af-users).
-Every client obtains its own bearer token via OIDC against AF Keycloak and
-presents it directly to the broker; users do not fetch or paste raw tokens
-by hand. The [Authentication](auth.md) page walks through every hop of the
-credential chain.
+See [Connecting a Client](connecting-a-client.md) for concrete config for
+Claude, Claude Code, and other MCP-over-HTTP clients (the
+[top-level README](https://github.com/maniaclab/af-mcp-platform#quick-start-for-atlas-af-users)
+has a short version). Every client presents its own `aud=mcp-gateway` bearer
+token directly to the broker; the portal obtains its own automatically via
+OIDC, but MCP clients currently require pasting a token obtained from the
+portal into their configuration once — MCP OAuth discovery isn't
+implemented yet. The [Authentication](auth.md) page walks through every hop
+of the credential chain.
 
 ## Repository
 
