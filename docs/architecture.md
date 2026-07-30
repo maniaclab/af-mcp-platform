@@ -183,11 +183,22 @@ a claim that may be absent from the token.
 `~/.globus` is readable by anyone colocated on the same NFS-mounted home
 directory, so a passphrase is the only thing standing between a local
 attacker and a user's x509 proxy. `CredentialCache` (`credentials/cache.py`)
-counts failed cache lookups and bad passphrase attempts per uid and raises
+counts actual failed unlock attempts — a bad passphrase or a minting-backend
+failure, recorded via `record_failed_unlock()` — per uid and raises
 `RateLimitError` once a threshold is exceeded within a fixed window, to
 slow brute-force guessing. `X509Provider.mint()` calls
 `cache.check_unlock_rate_limit()` before doing any minting work, so a
 locked-out uid never reaches the k8s Job / subprocess path (`x509.py`).
+
+Plain cache misses from `CredentialCache.get()` — "nothing cached yet, no
+passphrase given" — do **not** count against this budget. That used to be a
+single combined bucket (any cache miss counted the same as a bad passphrase
+attempt), but it made the ordinary `NeedsUnlock` probe an MCP client makes
+before ever prompting for a passphrase indistinguishable from an attack: a
+handful of routine retries could burn through the whole budget and lock the
+user out of their own next (correct) unlock attempt — including the very
+`POST /v1/x509/proxy` call that would have succeeded, since it also goes
+through `get()` first (issue #93).
 
 The threshold and window are configurable via `Settings`:
 
@@ -202,9 +213,10 @@ often a browser session's token refresh forces re-authentication anyway.
 Both must be >= 1 — `Settings` rejects zero or negative values, since either
 would silently disable the limit.
 
-On trip, `RateLimitError` propagates out of `X509Provider.mint()` (and out of
-`CredentialCache.get()` on the ordinary cache-miss path used by both the OIDC
-and x509 providers). A global handler in `app.py`
+On trip, `RateLimitError` propagates out of `X509Provider.mint()` (via
+`check_unlock_rate_limit()`/`record_failed_unlock()`) — never out of
+`CredentialCache.get()`, which only ever returns `None` on a miss. A global
+handler in `app.py`
 (`@app.exception_handler(RateLimitError)`) maps it to `429 Too Many Requests`
 with a `Retry-After` header, so it never reaches a client as a bare `500`.
 `retry_after_seconds` on the exception is computed at the raise site as
