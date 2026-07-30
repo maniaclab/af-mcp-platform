@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, TextIO
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
+    from collections.abc import AsyncGenerator, Iterable
 
     from af_mcp_broker.config import IdentityProviderConfig
     from af_mcp_broker.credentials import CredentialProvider
@@ -43,6 +43,27 @@ from af_mcp_broker.mcp.aggregator import aggregator_app
 from af_mcp_broker.mcp.registry import BackendRegistry
 
 logger = structlog.get_logger(__name__)
+
+
+def _build_target_to_alias(
+    x509_targets: list[str],
+    identity_providers_cfgs: Iterable[IdentityProviderConfig],
+) -> dict[str, str]:
+    """Reverse map from backend target name to the credential-provider alias
+    that services it, surfaced on /v1/catalog as ``credential_provider``
+    (issue #90). x509 targets get the synthetic "x509" alias (there is no
+    per-entry ``identity_providers`` config for x509 — see the x509_targets
+    loop in ``lifespan``); keycloak-brokered/oauth21-direct targets get their
+    configured alias. Targets with ``auth_type: none`` need no user
+    credential and are simply absent from the mapping.
+    """
+    target_to_alias: dict[str, str] = {}
+    for target in x509_targets:
+        target_to_alias[target] = "x509"
+    for cfg in identity_providers_cfgs:
+        for target in cfg.targets:
+            target_to_alias[target] = cfg.alias
+    return target_to_alias
 
 
 def _open_audit_output(dest: str) -> TextIO:
@@ -218,6 +239,11 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         for target in cfg.targets:
             credential_registry.register(target, provider)
 
+    # --- Identity<->backend join for /v1/catalog's credential_provider field
+    # (issue #90): who services each target, reusing the x509_targets and
+    # identity_providers config already assembled above.
+    target_to_alias = _build_target_to_alias(x509_targets, settings.identity_providers)
+
     # --- Audit: without init the module drops every record. Honor AUDIT_LOG_FILE.
     audit_output = _open_audit_output(settings.audit_log_file)
     init_audit_logger(audit_output)
@@ -248,6 +274,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     application.state.x509_targets = x509_targets
     application.state.identity_providers = identity_providers
     application.state.identity_provider_configs = identity_provider_configs
+    application.state.target_to_alias = target_to_alias
     application.state.oauth21_token_store = oauth21_token_store
     application.state.oauth21_state_cipher = oauth21_state_cipher
 

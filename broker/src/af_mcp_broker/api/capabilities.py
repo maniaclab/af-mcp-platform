@@ -59,20 +59,31 @@ class AuthorizeResponse(BaseModel):
     obligations: list[str] = []
 
 
-class CatalogTool(BaseModel):
+class CatalogServer(BaseModel):
+    """One MCP server visible to the caller post-entitlement filtering.
+
+    ``tools`` is an empty placeholder until the /mcp aggregator can enumerate
+    real subtools per server (issue #58); it exists now so the portal's
+    per-server tool listing has a stable field to render once populated,
+    rather than needing a second response-shape change later.
+    """
+
     model_config = ConfigDict(frozen=True)
 
     name: str
-    backend: str
+    display_name: str
     description: str
     capability: str
+    auth_type: str
     action_type: Literal["read", "state_change"]
+    credential_provider: str | None
+    tools: list[Any] = []
 
 
 class CatalogResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    tools: list[CatalogTool]
+    servers: list[CatalogServer]
 
 
 # ---------------------------------------------------------------------------
@@ -93,9 +104,34 @@ def _get_registry(request: Request) -> BackendRegistry:
     return getattr(request.app.state, "backend_registry", None) or BackendRegistry()
 
 
+def _get_target_to_alias(request: Request) -> dict[str, str]:
+    return getattr(request.app.state, "target_to_alias", None) or {}
+
+
 def _action_type_for_capability(capability: str) -> Literal["read", "state_change"]:
     cap = CAPABILITIES.get(capability)
     return cap.action_type if cap else "read"  # type: ignore[return-value]
+
+
+def _action_type_for_backend(
+    target: str, capability: str, policy: EntitlementPolicy
+) -> Literal["read", "state_change"]:
+    """Server-level read/write badge for a backend target.
+
+    Real enforcement (``get_action_type`` in authorization/base.py) resolves
+    ``policy.target_action_types[target]`` glob overrides per tool. The
+    catalog has no per-tool enumeration yet (issue #58), so this reports the
+    safe rollup: "state_change" if the capability's default action type is
+    already "state_change", or if *any* per-tool override for this target
+    maps to "state_change" (i.e. the server has at least one state-changing
+    tool available) — otherwise "read".
+    """
+    if _action_type_for_capability(capability) == "state_change":
+        return "state_change"
+    overrides = policy.target_action_types.get(target, {})
+    if any(action_type == "state_change" for action_type in overrides.values()):
+        return "state_change"
+    return "read"
 
 
 def _grants_for(
@@ -176,7 +212,7 @@ async def authorize(
 @router.get(
     "/catalog",
     response_model=CatalogResponse,
-    summary="List visible tools post-entitlement filtering",
+    summary="List visible MCP servers post-entitlement filtering",
 )
 async def get_catalog(
     request: Request,
@@ -185,19 +221,23 @@ async def get_catalog(
     policy = _get_policy(request)
     registry = _get_registry(request)
     caps = get_principal_capabilities(principal, policy)
+    target_to_alias = _get_target_to_alias(request)
 
-    tools: list[CatalogTool] = []
+    servers: list[CatalogServer] = []
     for spec in registry.all_backends():
         required = spec.required_capability
         if required != "__none__" and required not in caps:
             continue
-        tools.append(
-            CatalogTool(
-                name=spec.prefix,
-                backend=spec.name,
-                description="",
+        servers.append(
+            CatalogServer(
+                name=spec.name,
+                display_name=spec.display_name or spec.name,
+                description=spec.description,
                 capability=required,
-                action_type=_action_type_for_capability(required),
+                auth_type=spec.auth_type,
+                action_type=_action_type_for_backend(spec.name, required, policy),
+                credential_provider=target_to_alias.get(spec.name),
+                tools=[],
             )
         )
-    return CatalogResponse(tools=tools)
+    return CatalogResponse(servers=servers)
