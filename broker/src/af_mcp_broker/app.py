@@ -17,6 +17,7 @@ from cryptography.fernet import Fernet
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import JSONResponse, Response
+from fastmcp.utilities.lifespan import combine_lifespans
 from pydantic import ValidationError
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
@@ -39,7 +40,7 @@ from af_mcp_broker.credentials.cache import RateLimitError
 from af_mcp_broker.http import aclose_http_client
 from af_mcp_broker.identity import build_dev_principal, get_jwks, issuer_is_local
 from af_mcp_broker.logging import configure_logging
-from af_mcp_broker.mcp.aggregator import aggregator_app
+from af_mcp_broker.mcp.aggregator import build_aggregator, populate_aggregator
 from af_mcp_broker.mcp.registry import BackendRegistry
 
 logger = structlog.get_logger(__name__)
@@ -149,6 +150,13 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
                 "policy.group_capabilities_empty_but_required",
                 backends=gated_backends,
             )
+
+    # --- MCP aggregator: the FastMCP instance and its ASGI app already exist
+    # (built eagerly at module scope below, since the aggregator must be
+    # mountable before Settings()/BackendRegistry() are known — see the
+    # comment above `_mcp_aggregator`). Push the registry/policy/settings
+    # just loaded above into it now that they're real.
+    populate_aggregator(_mcp_aggregator, backend_registry, settings, entitlement_policy)
 
     # --- Credential subsystem: cache + janitor + provider registry.
     credential_cache = CredentialCache(
@@ -318,6 +326,20 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
 # Application factory
 # ---------------------------------------------------------------------------
 
+# The aggregator's FastMCP instance (and the ASGI app built from it) must
+# exist before FastAPI is constructed below: Starlette's Mount needs a
+# concrete ASGI app at `app.mount()` time, and combining the aggregator's own
+# lifespan (required so its StreamableHTTPSessionManager task group actually
+# starts — omitting this makes every /mcp/** request 500) means the ASGI
+# app's `.lifespan` must already exist when `lifespan=` is passed to
+# FastAPI() below. Settings()/BackendRegistry() are only loaded inside the
+# async `lifespan()` above, which runs later — so this is built with an
+# empty registry and placeholder Settings()/EntitlementPolicy(), and
+# `lifespan()` calls `populate_aggregator()` to push in the real values
+# before the app starts serving requests.
+_mcp_aggregator = build_aggregator(BackendRegistry(), Settings(), EntitlementPolicy())
+_mcp_aggregator_app = _mcp_aggregator.http_app(path="/")
+
 app = FastAPI(
     title="AF MCP Broker",
     version=__version__,
@@ -325,7 +347,7 @@ app = FastAPI(
         "Credential-brokered MCP gateway for the UChicago ATLAS Analysis Facility. "
         "Provides Identity, Authorization, Credentialing, and Audit subsystems."
     ),
-    lifespan=lifespan,
+    lifespan=combine_lifespans(lifespan, _mcp_aggregator_app.lifespan),
 )
 
 # Trust X-Forwarded-{Proto,For,Host} from the fronting proxy so ``request.url``
@@ -337,9 +359,9 @@ app = FastAPI(
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
 # Mount the MCP aggregator at /mcp. Requests to /mcp/** are handled entirely
-# by the aggregator_app sub-application; they do not pass through the broker's
+# by the aggregator sub-application; they do not pass through the broker's
 # FastAPI middleware chain after the mount point.
-app.mount("/mcp", aggregator_app)
+app.mount("/mcp", _mcp_aggregator_app)
 
 app.include_router(v1_router)
 app.include_router(wellknown_router)
