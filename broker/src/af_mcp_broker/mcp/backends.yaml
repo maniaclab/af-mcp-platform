@@ -6,6 +6,8 @@ backends:
     url: "http://rucio-mcp.mcp.svc.cluster.local:80/mcp"
     transport: http
     required_capability: read_data
+    display_name: Rucio
+    description: ATLAS distributed data management — browse and query datasets, files, and replicas.
     # OIDCProvider returns the stored IAM-brokered token.
     # rucio-mcp handles the aud=rucio RFC 8693 exchange itself.
     auth_type: bearer
@@ -15,6 +17,8 @@ backends:
     url: "https://ami.cern.ch/mcp"
     transport: http
     required_capability: read_metadata
+    display_name: AMI
+    description: ATLAS Metadata Interface — dataset provenance and metadata catalogs.
     # X509Provider mints a voms-proxy via the user's home-dir cert.
     auth_type: x509
 
@@ -23,6 +27,8 @@ backends:
     url: "http://atlasopenmagic-mcp.mcp.svc.cluster.local/mcp"
     transport: http
     required_capability: read_metadata
+    display_name: ATLAS Open Data
+    description: Metadata and access helpers for ATLAS Open Data releases.
     # ServiceProvider: on_behalf with AF service credential.
     auth_type: none
 
@@ -31,6 +37,8 @@ backends:
     url: "http://jupyterhub.jupyterhub.svc.cluster.local:8081/mcp"
     transport: http
     required_capability: manage_jupyter
+    display_name: Jupyter Control
+    description: Start, stop, and configure Jupyter servers on the Analysis Facility.
     # Authorization via platform k8s SA; no user credential forwarded.
     auth_type: none
 
@@ -39,6 +47,8 @@ backends:
     url: "http://grafana.prom.svc.cluster.local:3000/mcp"
     transport: http
     required_capability: read_monitoring
+    display_name: Monitoring
+    description: Grafana dashboards and metrics for facility monitoring.
     auth_type: none
 
   - name: docs
@@ -46,4 +56,6 @@ backends:
     url: "http://docs-mcp.af.svc.cluster.local/mcp"
     transport: http
     required_capability: __none__
+    display_name: Docs
+    description: Search and browse Analysis Facility documentation.
     auth_type: none
