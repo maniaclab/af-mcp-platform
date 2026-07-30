@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import inspect
 import time
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -9,6 +11,10 @@ from fastmcp import FastMCP
 from fastmcp.client import Client
 from fastmcp.client.transports import SSETransport, StreamableHttpTransport
 from fastmcp.exceptions import ToolError
+from fastmcp.server.providers.proxy import (
+    default_proxy_log_handler,
+    default_proxy_progress_handler,
+)
 
 from af_mcp_broker.authorization import EntitlementPolicy
 from af_mcp_broker.credentials import (
@@ -258,6 +264,55 @@ def test_client_factory_selects_transport_by_spec(
     # unlike fastmcp's ProxyClient convenience wrapper (which this code
     # deliberately avoids using).
     assert client.transport.forward_incoming_headers is False
+
+
+def test_client_factory_none_auth_type_applies_backend_timeout(settings: Any) -> None:
+    spec = _spec(auth_type="none", timeout_seconds=5.0)
+    client = _make_client_factory(spec, CredentialRegistry([]), settings)()
+    assert client._session_kwargs["read_timeout_seconds"] == timedelta(seconds=5.0)
+
+
+async def test_client_factory_x509_auth_type_applies_backend_timeout(
+    settings: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # active_backend=None takes the tools/list-refresh path (connect without
+    # raising the not-yet-supported error), so the timeout can be inspected
+    # on the returned Client the same way as the "none" branch above.
+    _patch_context(monkeypatch, None, active_backend=None)
+    spec = _spec(auth_type="x509", timeout_seconds=5.0)
+    client = await _make_client_factory(spec, CredentialRegistry([]), settings)()
+    assert client._session_kwargs["read_timeout_seconds"] == timedelta(seconds=5.0)
+
+
+async def test_client_factory_bearer_auth_type_applies_backend_timeout(
+    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_context(monkeypatch, make_principal(), active_backend=None)
+    spec = _spec(auth_type="bearer", timeout_seconds=5.0)
+    client = await _make_client_factory(spec, CredentialRegistry([]), settings)()
+    assert client._session_kwargs["read_timeout_seconds"] == timedelta(seconds=5.0)
+
+
+def test_client_factory_installs_progress_and_log_forwarding_handlers(
+    settings: Any,
+) -> None:
+    """PR A/B's client_factory deliberately builds a plain Client (never
+    fastmcp's ProxyClient convenience wrapper) so the caller's inbound
+    Authorization header is never forwarded -- see the security property
+    documented on _make_client_factory. That convenience wrapper is also
+    where fastmcp's progress/log *notification* forwarding defaults live, so
+    a plain Client must opt into those explicitly (independently of header
+    forwarding, which stays governed solely by the transport's default of
+    False) or a backend's progress/log notifications would be swallowed
+    (logged locally) instead of reaching the aggregator's own caller."""
+    spec = _spec(auth_type="none")
+    client = _make_client_factory(spec, CredentialRegistry([]), settings)()
+    assert client._progress_handler is default_proxy_progress_handler
+    # logging_callback is create_log_callback(handler)'s closure -- inspect
+    # the closed-over handler directly rather than relying on identity of
+    # the wrapper create_log_callback() returns.
+    closure = inspect.getclosurevars(client._session_kwargs["logging_callback"])
+    assert closure.nonlocals["handler"] is default_proxy_log_handler
 
 
 def test_client_factory_none_auth_type_never_touches_credential_registry(

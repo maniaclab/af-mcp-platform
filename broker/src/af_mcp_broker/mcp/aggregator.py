@@ -19,7 +19,12 @@ from fastmcp.client import Client
 from fastmcp.client.transports import SSETransport, StreamableHttpTransport
 from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_context
-from fastmcp.server.providers.proxy import ClientFactoryT, ProxyProvider
+from fastmcp.server.providers.proxy import (
+    ClientFactoryT,
+    ProxyProvider,
+    default_proxy_log_handler,
+    default_proxy_progress_handler,
+)
 
 from af_mcp_broker.credentials import CredentialKind, NeedsUnlock
 from af_mcp_broker.mcp.middleware.authorization_mw import AuthorizationMiddleware
@@ -31,6 +36,34 @@ if TYPE_CHECKING:
     from af_mcp_broker.config import Settings
     from af_mcp_broker.credentials import CredentialRegistry
     from af_mcp_broker.mcp.registry import BackendRegistry, BackendSpec
+
+
+def _build_client(
+    spec: BackendSpec,
+    transport_cls: type[SSETransport | StreamableHttpTransport],
+    headers: dict[str, str] | None = None,
+) -> Client:
+    """Construct the plain (never ProxyClient) Client every branch of
+    _make_client_factory returns.
+
+    Applies the backend's configured per-call read timeout (BackendSpec.
+    timeout_seconds) so a slow/unresponsive backend fails that one call
+    cleanly instead of hanging the aggregator, and installs the same
+    progress/log *notification* forwarding handlers fastmcp's ProxyClient
+    installs by default -- ProxyClient itself is still not used (see
+    _make_client_factory's docstring: its unconditional
+    forward_incoming_headers=True for HTTP/SSE transports is the one
+    behavior deliberately avoided here), but that has nothing to do with
+    these two handlers, which only relay already-decided-safe notification
+    content from the backend to the aggregator's own caller, never inbound
+    credentials.
+    """
+    return Client(
+        transport_cls(spec.url, headers=headers),
+        timeout=spec.timeout_seconds,
+        progress_handler=default_proxy_progress_handler,
+        log_handler=default_proxy_log_handler,
+    )
 
 
 def _make_client_factory(
@@ -82,7 +115,7 @@ def _make_client_factory(
     if spec.auth_type == "none":
 
         def _none_factory() -> Client:
-            return Client(transport_cls(spec.url))
+            return _build_client(spec, transport_cls)
 
         return _none_factory
 
@@ -91,7 +124,7 @@ def _make_client_factory(
         async def _x509_factory() -> Client:
             ctx = get_context()
             if await ctx.get_state("authorized_call_target") != spec.name:
-                return Client(transport_cls(spec.url))
+                return _build_client(spec, transport_cls)
             raise ToolError(
                 f"Backend '{spec.name}' requires an x509/VOMS proxy credential. "
                 "x509 proxies are consumed server-side from an NFS-mounted home "
@@ -104,7 +137,7 @@ def _make_client_factory(
     async def _bearer_factory() -> Client:
         ctx = get_context()
         if await ctx.get_state("authorized_call_target") != spec.name:
-            return Client(transport_cls(spec.url))
+            return _build_client(spec, transport_cls)
 
         principal = await ctx.get_state("principal")
         if principal is None:
@@ -145,7 +178,7 @@ def _make_client_factory(
             token = cred.payload.get("access_token")
             if token:
                 headers["Authorization"] = f"Bearer {token}"
-        return Client(transport_cls(spec.url, headers=headers))
+        return _build_client(spec, transport_cls, headers=headers)
 
     return _bearer_factory
 
