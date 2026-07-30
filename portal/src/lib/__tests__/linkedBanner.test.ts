@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { extractLinkedErrorParams, extractLinkedParam } from '../linkedBanner';
+import {
+  extractLinkedErrorParams,
+  extractLinkedParam,
+  resolveLinkedBanner,
+  resolveLinkedErrorBanner,
+} from '../linkedBanner';
 
 describe('extractLinkedParam', () => {
   it('returns null linkedId and empty remainingSearch when there is no query string', () => {
@@ -89,5 +94,71 @@ describe('extractLinkedErrorParams', () => {
     expect(remaining.get('baz')).toBe('qux');
     expect(remaining.has('linked_error')).toBe(false);
     expect(remaining.has('linked_error_alias')).toBe(false);
+  });
+});
+
+describe('resolveLinkedBanner', () => {
+  const providers = [
+    { id: 'rucio-mcp-atlas', display_name: 'Rucio (ATLAS)' },
+    { id: 'atlas-oidc', display_name: 'ATLAS IAM' },
+  ];
+
+  it('returns null when linkedId is null', () => {
+    expect(resolveLinkedBanner(providers, null)).toBeNull();
+  });
+
+  it('returns the display_name when linkedId matches a known provider', () => {
+    expect(resolveLinkedBanner(providers, 'atlas-oidc')).toBe('ATLAS IAM');
+  });
+
+  it('returns null when linkedId does not match any known provider', () => {
+    // A stale bookmark or someone poking at the URL — the OAuth callback
+    // would only ever set a real id, so an unrecognized one isn't a
+    // genuine success and shouldn't render a "Linked successfully" banner.
+    expect(resolveLinkedBanner(providers, 'fake-provider-name-that-doesnt-exist')).toBeNull();
+  });
+});
+
+describe('resolveLinkedErrorBanner', () => {
+  const providers = [
+    { id: 'rucio-mcp-atlas', display_name: 'Rucio (ATLAS)' },
+    { id: 'atlas-oidc', display_name: 'ATLAS IAM' },
+  ];
+
+  it('returns null when linkedError is null', () => {
+    expect(resolveLinkedErrorBanner(providers, null)).toBeNull();
+  });
+
+  it('returns null when the alias does not match any known provider', () => {
+    expect(
+      resolveLinkedErrorBanner(providers, {
+        alias: 'fake-provider-name-that-doesnt-exist',
+        code: 'server_error',
+        description: null,
+        remainingSearch: '',
+      }),
+    ).toBeNull();
+  });
+
+  it('builds message from display_name and description when alias matches', () => {
+    expect(
+      resolveLinkedErrorBanner(providers, {
+        alias: 'atlas-oidc',
+        code: 'server_error',
+        description: 'An unexpected error occurred',
+        remainingSearch: '',
+      }),
+    ).toBe('Linking ATLAS IAM failed: An unexpected error occurred');
+  });
+
+  it('falls back to the error code when description is null', () => {
+    expect(
+      resolveLinkedErrorBanner(providers, {
+        alias: 'atlas-oidc',
+        code: 'server_error',
+        description: null,
+        remainingSearch: '',
+      }),
+    ).toBe('Linking ATLAS IAM failed: server_error');
   });
 });
