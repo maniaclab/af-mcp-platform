@@ -81,6 +81,54 @@ def test_shipped_backends_others_apply_namespace_true(name: str) -> None:
     assert spec.apply_namespace is True
 
 
+def test_backend_spec_timeout_seconds_defaults_to_30() -> None:
+    spec = BackendSpec(
+        name="example",
+        prefix="example",
+        url="http://example.invalid/mcp",
+        transport="http",
+        required_capability="__none__",
+    )
+    assert spec.timeout_seconds == 30.0
+
+
+def test_load_defaults_timeout_seconds_when_absent(tmp_path: Path) -> None:
+    backends_file = tmp_path / "backends.yaml"
+    backends_file.write_text(
+        """
+backends:
+  - name: example
+    prefix: example
+    url: "http://example.invalid/mcp"
+    required_capability: __none__
+"""
+    )
+    registry = BackendRegistry()
+    registry.load(str(backends_file))
+    spec = registry.get("example")
+    assert spec is not None
+    assert spec.timeout_seconds == 30.0
+
+
+def test_load_respects_custom_timeout_seconds(tmp_path: Path) -> None:
+    backends_file = tmp_path / "backends.yaml"
+    backends_file.write_text(
+        """
+backends:
+  - name: example
+    prefix: example
+    url: "http://example.invalid/mcp"
+    required_capability: __none__
+    timeout_seconds: 5
+"""
+    )
+    registry = BackendRegistry()
+    registry.load(str(backends_file))
+    spec = registry.get("example")
+    assert spec is not None
+    assert spec.timeout_seconds == 5.0
+
+
 def test_get_by_tool_prefix_unaffected_by_apply_namespace() -> None:
     """apply_namespace only controls FastMCP's namespace= wiring; the
     registry's own prefix matching used for entitlement filtering is
