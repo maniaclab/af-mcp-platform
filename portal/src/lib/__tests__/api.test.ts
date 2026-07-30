@@ -14,6 +14,7 @@ import {
   fetchIdentities,
   fetchOAuth21AuthorizeUrl,
   fetchProxyStatus,
+  revokeAllCredentials,
   unlinkIdentity,
 } from '../api';
 import * as auth from '../auth';
@@ -349,6 +350,31 @@ describe('unlinkIdentity()', () => {
     globalThis.fetch = vi.fn();
     await expect(unlinkIdentity('rucio-mcp-atlas')).rejects.toBeInstanceOf(SessionExpiredError);
     expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('revokeAllCredentials()', () => {
+  it('sends DELETE /v1/credential with the Bearer', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    await revokeAllCredentials();
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/credential'),
+      expect.objectContaining({
+        method: 'DELETE',
+        headers: expect.objectContaining({ Authorization: 'Bearer test-token' }),
+      }),
+    );
+  });
+
+  it('raises APIError with the response body on non-2xx', async () => {
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValue(new Response('nope', { status: 500, statusText: 'Server Error' }));
+    await expect(revokeAllCredentials()).rejects.toMatchObject({
+      name: 'APIError',
+      status: 500,
+      body: 'nope',
+    });
   });
 });
 

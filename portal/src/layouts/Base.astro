@@ -206,11 +206,40 @@ const appVersion = import.meta.env.PUBLIC_APP_VERSION || 'dev';
         flex: 1;
       }
 
+      .af-nav__user-group {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+      }
+
       .af-nav__user {
         font-family: 'IBM Plex Mono', monospace;
         font-size: 0.6875rem;
         color: var(--color-af-dim);
         letter-spacing: 0.04em;
+      }
+
+      .af-nav__signout {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 0.6875rem;
+        font-weight: 500;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--color-af-dim);
+        background: transparent;
+        border: 1px solid var(--color-af-border);
+        border-radius: 2px;
+        padding: 0.25rem 0.625rem;
+        cursor: pointer;
+        transition:
+          color 150ms,
+          border-color 150ms;
+      }
+      .af-nav__signout:hover,
+      .af-nav__signout:focus-visible {
+        color: var(--color-af-red);
+        border-color: rgb(from var(--color-af-red) r g b / 0.4);
+        outline: none;
       }
 
       /* Main content --------------------------------------------------------- */
@@ -271,7 +300,7 @@ const appVersion = import.meta.env.PUBLIC_APP_VERSION || 'dev';
           padding: 0 0.75rem;
           font-size: 0.6875rem;
         }
-        .af-nav__user {
+        .af-nav__user-group {
           display: none;
         }
         .af-main {
@@ -374,7 +403,10 @@ const appVersion = import.meta.env.PUBLIC_APP_VERSION || 'dev';
 
       <div class="af-nav__spacer" aria-hidden="true"></div>
 
-      <span class="af-nav__user" data-af-identity aria-label="Signed in" hidden></span>
+      <div class="af-nav__user-group" data-af-user-holder hidden>
+        <span class="af-nav__user" data-af-identity aria-label="Signed in"></span>
+        <button type="button" class="af-nav__signout" data-af-signout hidden>Sign out</button>
+      </div>
     </nav>
 
     <main id="main-content" class="af-main">
@@ -409,8 +441,8 @@ const appVersion = import.meta.env.PUBLIC_APP_VERSION || 'dev';
     build.
   -->
     <script>
-      import { fetchIdentities } from '../lib/api';
-      import { getUser, isOidcConfigured, login } from '../lib/auth';
+      import { clearIdentitiesCache, fetchIdentities, revokeAllCredentials } from '../lib/api';
+      import { getUser, isOidcConfigured, login, logout } from '../lib/auth';
 
       (async () => {
         const splash = document.getElementById('af-auth-splash');
@@ -461,6 +493,24 @@ const appVersion = import.meta.env.PUBLIC_APP_VERSION || 'dev';
             if (holder) holder.hidden = false;
             else el.hidden = false;
           });
+
+          // Sign-out control is nav-only and OIDC-only — dev-bypass mode has
+          // no Keycloak session to end, so it stays hidden there.
+          if (await isOidcConfigured()) {
+            const signOutBtn = document.querySelector<HTMLButtonElement>('[data-af-signout]');
+            if (signOutBtn) {
+              signOutBtn.hidden = false;
+              signOutBtn.addEventListener('click', async () => {
+                try {
+                  await revokeAllCredentials();
+                } catch {
+                  // Best-effort purge — a failed revoke must not block sign-out.
+                }
+                clearIdentitiesCache();
+                await logout();
+              });
+            }
+          }
         } catch {
           // Session expired mid-page (broker 401'd after silent renew also
           // failed) — leave the identity slot hidden rather than looping.

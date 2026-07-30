@@ -84,11 +84,13 @@ describe('auth — OIDC configured', () => {
   const signinRedirect = vi.fn().mockResolvedValue(undefined);
   const signinSilent = vi.fn();
   const getUserMock = vi.fn();
+  const signoutRedirect = vi.fn().mockResolvedValue(undefined);
 
   beforeEach(() => {
     signinRedirect.mockClear();
     signinSilent.mockClear();
     getUserMock.mockClear();
+    signoutRedirect.mockClear();
     mockConfig({
       oidc: {
         issuer: 'https://kc.example.com/realms/test',
@@ -107,7 +109,7 @@ describe('auth — OIDC configured', () => {
           signinRedirect,
           signinSilent,
           getUser: getUserMock,
-          signoutRedirect: vi.fn(),
+          signoutRedirect,
         };
       }),
       WebStorageStateStore: vi.fn().mockImplementation(function (opts: unknown) {
@@ -174,5 +176,11 @@ describe('auth — OIDC configured', () => {
     signinSilent.mockRejectedValue(new Error('no refresh token'));
     const { renewAccessToken } = await import('../auth');
     await expect(renewAccessToken()).resolves.toBeNull();
+  });
+
+  it('logout() calls signoutRedirect() on the UserManager', async () => {
+    const { logout } = await import('../auth');
+    await logout();
+    expect(signoutRedirect).toHaveBeenCalledTimes(1);
   });
 });

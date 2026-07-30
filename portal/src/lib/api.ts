@@ -347,6 +347,19 @@ export interface DashboardSummary {
   proxyStatus: ProxyStatus;
 }
 
+// ---------------------------------------------------------------------------
+// Credentials — DELETE /v1/credential
+// ---------------------------------------------------------------------------
+
+/**
+ * Purges every cached credential the broker holds for the caller
+ * (CredentialCache.revoke_all) — called on sign-out (see Base.astro) so a
+ * later sign-in doesn't inherit this session's minted tokens/proxies.
+ */
+export async function revokeAllCredentials(): Promise<void> {
+  return apiFetch<void>('/credential', { method: 'DELETE' });
+}
+
 export async function fetchDashboardSummary(): Promise<DashboardSummary> {
   const [identityData, catalog, proxyStatus] = await Promise.allSettled([
     fetchIdentities(),
