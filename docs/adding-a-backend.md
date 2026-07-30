@@ -89,10 +89,21 @@ values:
         url: http://my-new-backend.af-mcp-backends.svc.cluster.local:8000/mcp
         required_capability: my-new-backend:use
         timeout_seconds: 30
+        auth_type: none  # or "bearer" (default) / "x509" -- see below
 ```
 
 `required_capability` is the capability string the broker's Authorization
 subsystem will check before forwarding any tool call to this backend.
+
+`auth_type` controls what per-user credential the aggregator injects into
+the backend call and **defaults to `bearer`** if omitted — meaning the
+broker will try to mint a per-user credential for every caller, which
+requires an identity provider configured for this backend's `name` (see
+"Adding a new Identity Provider" above) and fails with a friendly
+"not linked" error otherwise. Set `auth_type: none` explicitly if the
+backend authorizes itself some other way (e.g. a platform k8s service
+account) and needs no per-user credential forwarded at all. `auth_type: x509`
+is not yet deliverable over `/mcp` (see `mcp/aggregator.py`'s `TODO(#58)`).
 
 ---
 
