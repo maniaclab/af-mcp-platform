@@ -19,7 +19,7 @@ from af_mcp_broker.credentials.oauth21 import (
 from af_mcp_broker.credentials.oidc import OIDCProvider
 from af_mcp_broker.credentials.service import ServiceProvider
 from af_mcp_broker.credentials.vault import VaultError, VaultTokenStore
-from af_mcp_broker.credentials.x509 import X509Provider
+from af_mcp_broker.credentials.x509 import ProxyHarvestError, X509Provider
 
 __all__ = [
     "CredentialCache",
@@ -32,6 +32,7 @@ __all__ = [
     "NeedsUnlock",
     "OAuth21Provider",
     "OIDCProvider",
+    "ProxyHarvestError",
     "ServiceProvider",
     "StoredOAuthCredential",
     "TokenStore",
