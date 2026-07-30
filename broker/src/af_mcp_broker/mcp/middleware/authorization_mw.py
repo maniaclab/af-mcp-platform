@@ -31,7 +31,10 @@ logger = structlog.get_logger(__name__)
 # last, so innermost among the three) and before any credential is minted --
 # credential resolution happens inside the aggregator's client_factory,
 # which call_next only reaches once this middleware has already allowed the
-# call through.
+# call through. On allow, this middleware also stamps request-scoped state
+# (see the comment above set_state() below) telling that client_factory this
+# is a genuine tools/call for a specific backend, not a tools/list
+# schema-cache refresh sharing the same factory.
 #
 # Supersedes the old HTTP-loopback broker_mw.py: that module re-validated the
 # same JWT per call over /v1/authorize and /v1/credential even when
@@ -57,12 +60,13 @@ class AuthorizationMiddleware(Middleware):
         tool_name = context.message.name
         tool_args = context.message.arguments or {}
 
+        fastmcp_context = context.fastmcp_context
         principal = (
-            await context.fastmcp_context.get_state("principal")
-            if context.fastmcp_context is not None
+            await fastmcp_context.get_state("principal")
+            if fastmcp_context is not None
             else None
         )
-        if principal is None:
+        if fastmcp_context is None or principal is None:
             # identity_mw should always have set this by now; fail closed
             # without writing an audit record for a principal we don't have
             # (mirrors entitlement_mw's identical defensive branch).
@@ -112,6 +116,20 @@ class AuthorizationMiddleware(Middleware):
                 )
             )
             raise AuthorizationError(f"Authorization denied: {reason}")
+
+        # Signal to the aggregator's client_factory (aggregator.py) that this
+        # in-flight request is a genuine, authorized tools/call targeting
+        # this backend -- credential minting is gated on this because
+        # ProxyProvider shares the same client_factory for tools/list schema
+        # caching (process-wide, up to 5 minutes, across all sessions), and
+        # a factory invocation triggered by that cache refresh is otherwise
+        # indistinguishable from one triggered by an actual call. Minting a
+        # per-user credential during a shared schema listing would be both
+        # wasteful and semantically wrong. Request-scoped state, so it never
+        # leaks into a later, unrelated request.
+        await fastmcp_context.set_state(
+            "authorized_call_target", backend.name, serializable=False
+        )
 
         try:
             result = await call_next(context)

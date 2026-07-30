@@ -23,6 +23,11 @@ class _FakeFastMCPContext:
     async def get_state(self, key: str) -> Any:
         return self._state.get(key)
 
+    async def set_state(
+        self, key: str, value: Any, *, serializable: bool = True
+    ) -> None:
+        self._state[key] = value
+
 
 class _FakeMiddlewareContext:
     def __init__(
@@ -135,6 +140,11 @@ async def test_entitled_call_proceeds_and_audits_success(
     assert record.mcp_backend == "rucio"
     assert record.principal_uid == principal.uid
     assert record.principal_sub == principal.subject
+    # The client_factory (aggregator.py) reads this to distinguish a genuine
+    # tools/call from a tools/list schema-cache refresh sharing the same
+    # client_factory -- it must be set before call_next() reaches the
+    # factory.
+    assert await context.fastmcp_context.get_state("authorized_call_target") == "rucio"
 
 
 async def test_unentitled_call_denied_before_call_next(

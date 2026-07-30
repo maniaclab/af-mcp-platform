@@ -108,6 +108,10 @@ def running_broker(
     object every test module shares) behind a real HTTP server, wired to
     three test backends via a temp backends.yaml/policy.yaml."""
     backends_file = tmp_path / "backends.yaml"
+    # auth_type: none on all three -- these tests exercise aggregator
+    # plumbing (namespacing, entitlement filtering, dead-backend tolerance,
+    # header non-forwarding), not credential injection, which has its own
+    # dedicated tests/fixtures registering real credential providers.
     backends_file.write_text(
         f"""
 backends:
@@ -116,17 +120,20 @@ backends:
     url: "{toy_backend_url}"
     transport: http
     required_capability: read_data
+    auth_type: none
   - name: selfpfx
     prefix: selfpfx
     url: "{selfpfx_backend_url}"
     transport: http
     required_capability: __none__
     apply_namespace: false
+    auth_type: none
   - name: dead
     prefix: dead
     url: "{dead_backend_url}"
     transport: http
     required_capability: __none__
+    auth_type: none
 """
     )
     policy_file = tmp_path / "policy.yaml"
