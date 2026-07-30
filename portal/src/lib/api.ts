@@ -260,28 +260,37 @@ export async function unlinkIdentity(provider: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Catalog — GET /v1/catalog (flat tool list)
+// Catalog — GET /v1/catalog (one entry per MCP server)
 // ---------------------------------------------------------------------------
 
 export type ActionType = 'read' | 'state_change';
 
+export type AuthType = 'bearer' | 'x509' | 'none';
+
+/** Placeholder shape for CatalogServer.tools -- always empty until the /mcp
+ * aggregator can enumerate real subtools (issue #58). */
 export interface CatalogTool {
   name: string;
-  backend: string;
   description: string;
-  capability: string;
   action_type: ActionType;
 }
 
-export interface CatalogResponse {
+export interface CatalogServer {
+  name: string;
+  display_name: string;
+  description: string;
+  capability: string;
+  auth_type: AuthType;
+  action_type: ActionType;
+  /** The identity_providers alias (or synthetic "x509" alias) that services
+   * this server's credential, or null when auth_type is "none". */
+  credential_provider: string | null;
+  /** Empty placeholder until #58 lands per-tool enumeration. */
   tools: CatalogTool[];
 }
 
-/** Client-side grouping of catalog tools by backend (broker returns them flat). */
-export interface BackendGroup {
-  backend: string;
-  tools: CatalogTool[];
-  capabilities: string[];
+export interface CatalogResponse {
+  servers: CatalogServer[];
 }
 
 export async function fetchCatalog(): Promise<CatalogResponse> {
@@ -343,7 +352,7 @@ export async function revokeProxy(): Promise<void> {
 
 export interface DashboardSummary {
   linkedCount: number;
-  toolCount: number;
+  serverCount: number;
   proxyStatus: ProxyStatus;
 }
 
@@ -372,10 +381,10 @@ export async function fetchDashboardSummary(): Promise<DashboardSummary> {
       ? identityData.value.providers.filter((p) => p.linked).length
       : 0;
 
-  const toolCount = catalog.status === 'fulfilled' ? catalog.value.tools.length : 0;
+  const serverCount = catalog.status === 'fulfilled' ? catalog.value.servers.length : 0;
 
   const proxy: ProxyStatus =
     proxyStatus.status === 'fulfilled' ? proxyStatus.value : { cached: false, voms_attributes: [] };
 
-  return { linkedCount, toolCount, proxyStatus: proxy };
+  return { linkedCount, serverCount, proxyStatus: proxy };
 }

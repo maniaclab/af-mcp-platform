@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import {
   clearIdentitiesCache,
+  fetchCatalog,
   fetchIdentities,
   SessionExpiredError,
+  type CatalogServer,
   type IdentityProvider,
 } from '../lib/api';
+import { groupServersByAlias } from '../lib/catalog';
 import { extractLinkedErrorParams, extractLinkedParam } from '../lib/linkedBanner';
 import IdentityLink from './IdentityLink.vue';
 
@@ -13,6 +16,19 @@ const providers = ref<IdentityProvider[]>([]);
 const loading = ref(true);
 const error = ref<string | null>(null);
 const sessionExpired = ref(false);
+
+// Which servers each identity feeds, for the "What each identity unlocks"
+// grid below — joined client-side from the catalog's credential_provider
+// field (issue #90). Fetched separately from providers/error/sessionExpired
+// above since it's an enhancement to the explainer, not core identity-linking
+// functionality: a catalog fetch failure just leaves the grid without its
+// server list rather than blocking the page.
+const catalogServers = ref<CatalogServer[]>([]);
+const serversByAlias = computed(() => groupServersByAlias(catalogServers.value));
+
+function serversForAlias(id: string): CatalogServer[] {
+  return serversByAlias.value.get(id) ?? [];
+}
 
 // Set by a `?linked=<id>` landing (see broker/src/af_mcp_broker/api/oauth21.py's
 // `callback` route) — the display_name of the just-linked provider, or the
@@ -80,6 +96,13 @@ onMounted(async () => {
     }
   } finally {
     loading.value = false;
+  }
+
+  try {
+    const catalog = await fetchCatalog();
+    catalogServers.value = catalog.servers;
+  } catch {
+    // Non-critical -- see the comment on catalogServers above.
   }
 });
 
@@ -211,7 +234,17 @@ function handleUnlinked(id: string) {
         <div class="ip__explainer-grid">
           <div v-for="p in providers" :key="p.id" class="ip__explainer-row">
             <span class="ip__explainer-provider">{{ p.id }}</span>
-            <span class="ip__explainer-desc">{{ p.enables }}</span>
+            <span class="ip__explainer-desc">
+              {{ p.enables }}
+              <span v-if="serversForAlias(p.id).length > 0" class="ip__explainer-servers">
+                Powers:
+                {{
+                  serversForAlias(p.id)
+                    .map((s) => s.display_name)
+                    .join(', ')
+                }}
+              </span>
+            </span>
           </div>
         </div>
       </div>
@@ -425,5 +458,13 @@ function handleUnlinked(id: string) {
 .ip__explainer-desc {
   font-size: 0.8125rem;
   color: var(--color-af-dim);
+}
+
+.ip__explainer-servers {
+  display: block;
+  margin-top: 0.25rem;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.6875rem;
+  color: var(--color-af-teal);
 }
 </style>

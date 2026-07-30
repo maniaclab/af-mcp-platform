@@ -35,14 +35,14 @@ onMounted(async () => {
       <a href="/identities/" class="dc__link">Manage →</a>
     </div>
 
-    <!-- Tools card -->
+    <!-- Servers card -->
     <div
       class="dc__card"
-      :class="!loading && summary && summary.toolCount > 0 ? 'dc__card--ok' : 'dc__card--neutral'"
+      :class="!loading && summary && summary.serverCount > 0 ? 'dc__card--ok' : 'dc__card--neutral'"
     >
-      <span class="dc__label">Tools available</span>
+      <span class="dc__label">MCP servers available</span>
       <span class="dc__value" :class="{ 'dc__value--loading': loading }">
-        {{ loading ? '—' : `${summary?.toolCount ?? 0} tools` }}
+        {{ loading ? '—' : `${summary?.serverCount ?? 0} servers` }}
       </span>
       <a href="/catalog/" class="dc__link">Browse →</a>
     </div>

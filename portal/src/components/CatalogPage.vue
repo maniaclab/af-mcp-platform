@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
-import { fetchCatalog, SessionExpiredError } from '../lib/api';
-import type { CatalogTool, BackendGroup } from '../lib/api';
+import { fetchCatalog, fetchIdentities, SessionExpiredError } from '../lib/api';
+import type { CatalogServer, IdentityProvider } from '../lib/api';
+import { resolvePoweredBy } from '../lib/catalog';
 import BackendCard from './BackendCard.vue';
 
-const tools = ref<CatalogTool[]>([]);
+const servers = ref<CatalogServer[]>([]);
+const providers = ref<IdentityProvider[]>([]);
 const loading = ref(true);
 const error = ref<string | null>(null);
 const sessionExpired = ref(false);
@@ -13,8 +15,9 @@ const search = ref('');
 
 onMounted(async () => {
   try {
-    const data = await fetchCatalog();
-    tools.value = data.tools;
+    const [catalog, identities] = await Promise.all([fetchCatalog(), fetchIdentities()]);
+    servers.value = catalog.servers;
+    providers.value = identities.providers;
   } catch (err) {
     if (err instanceof SessionExpiredError) {
       sessionExpired.value = true;
@@ -33,54 +36,34 @@ function reload() {
   location.reload();
 }
 
-// The broker returns a flat tool list; group by backend for the UI.
-const backends = computed<BackendGroup[]>(() => {
-  const map = new Map<string, BackendGroup>();
-  for (const tool of tools.value) {
-    let group = map.get(tool.backend);
-    if (!group) {
-      group = { backend: tool.backend, tools: [], capabilities: [] };
-      map.set(tool.backend, group);
-    }
-    group.tools.push(tool);
-    if (!group.capabilities.includes(tool.capability)) {
-      group.capabilities.push(tool.capability);
-    }
-  }
-  return [...map.values()].sort((a, b) => a.backend.localeCompare(b.backend));
-});
+const sortedServers = computed<CatalogServer[]>(() =>
+  [...servers.value].sort((a, b) => a.name.localeCompare(b.name)),
+);
 
-const filteredBackends = computed<BackendGroup[]>(() => {
-  let result = backends.value;
+const filteredServers = computed<CatalogServer[]>(() => {
+  let result = sortedServers.value;
 
   if (filter.value !== 'all') {
-    result = result
-      .map((b) => ({
-        ...b,
-        tools: b.tools.filter((t) => t.action_type === filter.value),
-      }))
-      .filter((b) => b.tools.length > 0);
+    result = result.filter((s) => s.action_type === filter.value);
   }
 
   if (search.value.trim()) {
     const q = search.value.toLowerCase();
     result = result.filter(
-      (b) =>
-        b.backend.toLowerCase().includes(q) ||
-        b.capabilities.some((c) => c.toLowerCase().includes(q)) ||
-        b.tools.some(
-          (t) => t.name.toLowerCase().includes(q) || t.description.toLowerCase().includes(q),
-        ),
+      (s) =>
+        s.name.toLowerCase().includes(q) ||
+        s.display_name.toLowerCase().includes(q) ||
+        s.description.toLowerCase().includes(q) ||
+        s.capability.toLowerCase().includes(q),
     );
   }
 
   return result;
 });
 
-// Both toolbar counts derive from the filtered set so they stay consistent.
-const visibleToolCount = computed(() =>
-  filteredBackends.value.reduce((sum, b) => sum + b.tools.length, 0),
-);
+function poweredByFor(server: CatalogServer) {
+  return resolvePoweredBy(server.credential_provider, providers.value);
+}
 </script>
 
 <template>
@@ -88,14 +71,14 @@ const visibleToolCount = computed(() =>
     <!-- Toolbar -->
     <div class="cp__toolbar" role="toolbar" aria-label="Catalog filters">
       <div class="cp__search-wrap">
-        <label for="catalog-search" class="sr-only">Search tools and backends</label>
+        <label for="catalog-search" class="sr-only">Search MCP servers</label>
         <input
           id="catalog-search"
           v-model="search"
           type="search"
           class="cp__search"
-          placeholder="Search backends, tools, capabilities…"
-          aria-label="Search catalog"
+          placeholder="Search servers, descriptions, capabilities…"
+          aria-label="Search MCP servers"
         />
       </div>
 
@@ -117,15 +100,14 @@ const visibleToolCount = computed(() =>
       </div>
 
       <span v-if="!loading && !error && !sessionExpired" class="cp__count" aria-live="polite">
-        {{ filteredBackends.length }} backend{{ filteredBackends.length !== 1 ? 's' : '' }} ·
-        {{ visibleToolCount }} tool{{ visibleToolCount !== 1 ? 's' : '' }}
+        {{ filteredServers.length }} server{{ filteredServers.length !== 1 ? 's' : '' }}
       </span>
     </div>
 
     <!-- Loading -->
-    <div v-if="loading" class="cp__loading" aria-live="polite" aria-label="Loading catalog">
+    <div v-if="loading" class="cp__loading" aria-live="polite" aria-label="Loading MCP servers">
       <span class="cp__spinner" aria-hidden="true"></span>
-      <span>Loading catalog…</span>
+      <span>Loading MCP servers…</span>
     </div>
 
     <!-- Session expired -->
@@ -140,7 +122,7 @@ const visibleToolCount = computed(() =>
 
     <!-- Error -->
     <div v-else-if="error" class="cp__error" role="alert">
-      <span class="cp__error-title">Catalog unavailable</span>
+      <span class="cp__error-title">MCP servers unavailable</span>
       <span class="cp__error-body">{{ error }}</span>
       <span class="cp__error-hint">
         Make sure your ATLAS IAM and CERN identities are linked on the
@@ -148,9 +130,9 @@ const visibleToolCount = computed(() =>
       </span>
     </div>
 
-    <!-- Empty (no backends at all) -->
-    <div v-else-if="backends.length === 0" class="cp__empty">
-      <p class="cp__empty-title">No backends available</p>
+    <!-- Empty (no servers at all) -->
+    <div v-else-if="servers.length === 0" class="cp__empty">
+      <p class="cp__empty-title">No MCP servers available</p>
       <p class="cp__empty-body">
         Your account doesn't have any granted capabilities yet. Link your external identities to
         unlock access.
@@ -159,18 +141,18 @@ const visibleToolCount = computed(() =>
     </div>
 
     <!-- Empty search result -->
-    <div v-else-if="filteredBackends.length === 0" class="cp__empty">
+    <div v-else-if="filteredServers.length === 0" class="cp__empty">
       <p class="cp__empty-title">No matches</p>
       <p class="cp__empty-body">
-        No backends or tools match "{{ search }}" with the current filter. Try a different search
-        term or clear the filter.
+        No MCP servers match "{{ search }}" with the current filter. Try a different search term or
+        clear the filter.
       </p>
     </div>
 
-    <!-- Backend list -->
-    <div v-else class="cp__list" role="list" aria-label="Available backends">
-      <div v-for="backend in filteredBackends" :key="backend.backend" role="listitem">
-        <BackendCard :backend="backend" />
+    <!-- Server list -->
+    <div v-else class="cp__list" role="list" aria-label="Available MCP servers">
+      <div v-for="server in filteredServers" :key="server.name" role="listitem">
+        <BackendCard :server="server" :powered-by="poweredByFor(server)" />
       </div>
     </div>
   </div>

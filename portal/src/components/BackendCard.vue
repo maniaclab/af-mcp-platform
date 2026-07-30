@@ -1,83 +1,77 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
-import type { BackendGroup } from '../lib/api';
+import type { CatalogServer } from '../lib/api';
+import type { PoweredBy } from '../lib/catalog';
 import ToolTable from './ToolTable.vue';
 
 const props = defineProps<{
-  backend: BackendGroup;
+  server: CatalogServer;
+  poweredBy: PoweredBy;
 }>();
 
-const expanded = ref(false);
-
-// computed() so the badges track the parent's filtered `tools`.
-const stateChangeCount = computed(
-  () => props.backend.tools.filter((t) => t.action_type === 'state_change').length,
-);
-const readCount = computed(
-  () => props.backend.tools.filter((t) => t.action_type === 'read').length,
-);
+const actionLabel = props.server.action_type === 'state_change' ? 'write' : 'read';
 </script>
 
 <template>
-  <div class="bc" :class="{ 'bc--expanded': expanded }">
-    <!-- Header row — always visible -->
-    <button
-      class="bc__header"
-      :aria-expanded="expanded"
-      :aria-controls="`tools-${backend.backend}`"
-      @click="expanded = !expanded"
-    >
+  <div class="bc">
+    <!-- Header row -->
+    <div class="bc__header">
       <div class="bc__header-left">
-        <span class="bc__prefix">{{ backend.backend }}</span>
+        <span class="bc__prefix">{{ server.name }}</span>
+        <span class="bc__name">{{ server.display_name }}</span>
+        <span class="bc__desc">{{ server.description }}</span>
       </div>
 
       <div class="bc__header-right">
-        <!-- Capability badges -->
         <span
-          v-for="cap in backend.capabilities"
-          :key="cap"
+          v-if="server.capability !== '__none__'"
           class="bc__cap-badge"
-          :title="`Requires capability: ${cap}`"
+          :title="`Requires capability: ${server.capability}`"
         >
-          {{ cap }}
+          {{ server.capability }}
         </span>
 
-        <!-- Tool counts -->
-        <span v-if="readCount > 0" class="bc__count bc__count--read"> {{ readCount }} read </span>
-        <span v-if="stateChangeCount > 0" class="bc__count bc__count--state">
-          {{ stateChangeCount }} write
+        <span class="bc__auth-badge" :title="`Credential type: ${server.auth_type}`">
+          {{ server.auth_type }}
         </span>
 
-        <!-- Expand/collapse chevron -->
-        <svg
-          class="bc__chevron"
-          :class="{ 'bc__chevron--open': expanded }"
-          width="14"
-          height="14"
-          viewBox="0 0 14 14"
-          fill="none"
-          aria-hidden="true"
+        <span
+          class="bc__count"
+          :class="server.action_type === 'state_change' ? 'bc__count--state' : 'bc__count--read'"
+          :title="
+            server.action_type === 'state_change'
+              ? 'Has at least one state-changing tool — use with care'
+              : 'Read-only — no side effects'
+          "
         >
-          <path
-            d="M3 5L7 9L11 5"
-            stroke="currentColor"
-            stroke-width="1.5"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          />
-        </svg>
+          {{ actionLabel }}
+        </span>
       </div>
-    </button>
+    </div>
 
-    <!-- Tool list — visible when expanded -->
-    <div
-      :id="`tools-${backend.backend}`"
-      class="bc__tools"
-      :class="{ 'bc__tools--visible': expanded }"
-      role="region"
-      :aria-label="`Tools for ${backend.backend}`"
-    >
-      <ToolTable :tools="backend.tools" />
+    <!-- Powered by -->
+    <div class="bc__powered-by">
+      <span class="bc__powered-by-label">Powered by:</span>
+      <span v-if="poweredBy.kind === 'none'" class="bc__powered-by-value">
+        {{ poweredBy.label }}
+      </span>
+      <template v-else>
+        <a :href="poweredBy.linkHref ?? '#'" class="bc__powered-by-value bc__powered-by-link">
+          {{ poweredBy.label }}
+        </a>
+        <span
+          v-if="poweredBy.linked !== null"
+          class="bc__link-status"
+          :class="poweredBy.linked ? 'bc__link-status--linked' : 'bc__link-status--unlinked'"
+        >
+          {{ poweredBy.linked ? 'linked' : 'unlinked' }}
+        </span>
+      </template>
+    </div>
+
+    <!-- Tools -->
+    <div class="bc__tools" role="region" :aria-label="`Tools for ${server.name}`">
+      <ToolTable v-if="server.tools.length > 0" :tools="server.tools" />
+      <p v-else class="bc__tools-placeholder">Tool listing coming soon.</p>
     </div>
   </div>
 </template>
@@ -90,13 +84,8 @@ const readCount = computed(
   transition: border-color 150ms;
 }
 
-.bc:hover,
-.bc--expanded {
+.bc:hover {
   border-color: var(--color-af-muted);
-}
-
-.bc--expanded {
-  border-color: rgb(from var(--color-af-teal) r g b / 0.25);
 }
 
 .bc__header {
@@ -106,21 +95,6 @@ const readCount = computed(
   gap: 1rem;
   padding: 0.875rem 1rem;
   background: var(--color-af-surface);
-  cursor: pointer;
-  text-align: left;
-  border: none;
-  transition: background 120ms;
-}
-
-.bc__header:hover,
-.bc__header:focus-visible {
-  background: #1a2235;
-  outline: none;
-}
-
-.bc__header:focus-visible {
-  outline: 2px solid var(--color-af-teal);
-  outline-offset: -2px;
 }
 
 .bc__header-left {
@@ -178,6 +152,19 @@ const readCount = computed(
   border: 1px solid rgb(from var(--color-af-teal) r g b / 0.2);
 }
 
+.bc__auth-badge {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.5625rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 0.1875rem 0.5rem;
+  border-radius: 2px;
+  background: rgb(from var(--color-af-dim) r g b / 0.08);
+  color: var(--color-af-dim);
+  border: 1px solid rgb(from var(--color-af-dim) r g b / 0.2);
+}
+
 .bc__count {
   font-family: 'IBM Plex Mono', monospace;
   font-size: 0.5625rem;
@@ -200,27 +187,73 @@ const readCount = computed(
   border: 1px solid rgb(from var(--color-af-amber) r g b / 0.18);
 }
 
-.bc__chevron {
-  color: var(--color-af-dim);
-  transition:
-    transform 200ms,
-    color 150ms;
-  flex-shrink: 0;
-}
-.bc__chevron--open {
-  transform: rotate(180deg);
-  color: var(--color-af-teal);
+/* Powered by */
+.bc__powered-by {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  border-top: 1px solid var(--color-af-border);
+  background: rgb(from var(--color-af-void) r g b / 0.5);
+  font-size: 0.75rem;
 }
 
+.bc__powered-by-label {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #4b5563;
+}
+
+.bc__powered-by-value {
+  color: var(--color-af-dim);
+}
+
+.bc__powered-by-link {
+  color: var(--color-af-teal);
+  text-decoration: none;
+}
+.bc__powered-by-link:hover {
+  text-decoration: underline;
+}
+
+.bc__link-status {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.5625rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 0.125rem 0.375rem;
+  border-radius: 2px;
+}
+
+.bc__link-status--linked {
+  background: rgb(from var(--color-af-green) r g b / 0.12);
+  color: var(--color-af-green);
+  border: 1px solid rgb(from var(--color-af-green) r g b / 0.25);
+}
+
+.bc__link-status--unlinked {
+  background: rgb(from var(--color-af-dim) r g b / 0.12);
+  color: var(--color-af-dim);
+  border: 1px solid rgb(from var(--color-af-dim) r g b / 0.25);
+}
+
+/* Tools */
 .bc__tools {
-  display: none;
   border-top: 1px solid var(--color-af-border);
   padding: 0.25rem 0;
   background: rgb(from var(--color-af-void) r g b / 0.5);
 }
 
-.bc__tools--visible {
-  display: block;
+.bc__tools-placeholder {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  font-size: 0.8125rem;
+  font-style: italic;
+  color: var(--color-af-dim);
 }
 
 @media (max-width: 640px) {
@@ -228,6 +261,9 @@ const readCount = computed(
     display: none;
   }
   .bc__cap-badge {
+    display: none;
+  }
+  .bc__auth-badge {
     display: none;
   }
 }

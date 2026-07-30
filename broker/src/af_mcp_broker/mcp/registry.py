@@ -14,6 +14,8 @@ class BackendSpec:
     transport: str  # "http" | "sse"
     required_capability: str
     auth_type: str = "bearer"  # "bearer" | "x509" | "none"
+    description: str = ""
+    display_name: str = ""
 
 
 class BackendRegistry:
@@ -33,6 +35,8 @@ class BackendRegistry:
                 transport=entry.get("transport", "http"),
                 required_capability=entry.get("required_capability", "__none__"),
                 auth_type=entry.get("auth_type", "bearer"),
+                description=entry.get("description", ""),
+                display_name=entry.get("display_name", ""),
             )
             self._backends[spec.name] = spec
 
