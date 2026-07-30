@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 from fastapi import HTTPException
@@ -8,8 +8,10 @@ from fastmcp.exceptions import AuthorizationError
 from fastmcp.server.dependencies import get_http_headers
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 
-from af_mcp_broker.config import Settings
 from af_mcp_broker.identity import build_dev_principal, get_principal, issuer_is_local
+
+if TYPE_CHECKING:
+    from af_mcp_broker.config import Settings
 
 logger = structlog.get_logger(__name__)
 
@@ -59,9 +61,7 @@ class IdentityMiddleware(Middleware):
             headers = get_http_headers(include={"authorization"})
             auth_header = headers.get("authorization")
             if not auth_header or not auth_header.lower().startswith("bearer "):
-                raise AuthorizationError(
-                    "Missing Authorization: Bearer <token> header"
-                )
+                raise AuthorizationError("Missing Authorization: Bearer <token> header")
             token = auth_header[len("Bearer ") :]
             try:
                 principal = await get_principal(token, settings)

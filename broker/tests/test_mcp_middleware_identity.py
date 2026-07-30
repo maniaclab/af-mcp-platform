@@ -79,7 +79,9 @@ async def test_non_bearer_scheme_rejected(settings, monkeypatch):
         await mw.on_request(context, _call_next)
 
 
-async def test_invalid_signature_rejected(settings, sig_key, enc_key, prime_jwks, monkeypatch):
+async def test_invalid_signature_rejected(
+    settings, sig_key, enc_key, prime_jwks, monkeypatch
+):
     # Signing key is never published to the JWKS the middleware sees -> the
     # token's signature cannot be verified.
     prime_jwks([enc_key.jwk])

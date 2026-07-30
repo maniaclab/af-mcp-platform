@@ -128,7 +128,9 @@ async def test_missing_fastmcp_context_returns_empty_list(registry, policy):
     assert result == []
 
 
-async def test_registry_and_policy_are_mutable_attributes(registry, policy, make_principal):
+async def test_registry_and_policy_are_mutable_attributes(
+    registry, policy, make_principal
+):
     """populate_aggregator() refreshes these in place on every lifespan
     entry rather than constructing a new middleware instance."""
     mw = EntitlementMiddleware(BackendRegistry(), EntitlementPolicy())

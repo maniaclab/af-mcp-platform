@@ -70,7 +70,9 @@ def test_shipped_backends_rucio_apply_namespace_false() -> None:
     assert rucio.apply_namespace is False
 
 
-@pytest.mark.parametrize("name", ["ami", "atlasopenmagic", "jupyter-control", "monitoring", "docs"])
+@pytest.mark.parametrize(
+    "name", ["ami", "atlasopenmagic", "jupyter-control", "monitoring", "docs"]
+)
 def test_shipped_backends_others_apply_namespace_true(name: str) -> None:
     registry = BackendRegistry()
     registry.load(str(SHIPPED_BACKENDS))

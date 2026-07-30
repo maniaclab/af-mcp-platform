@@ -1,15 +1,19 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import Any
+from typing import TYPE_CHECKING
 
-import mcp.types as mt
 import structlog
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
-from fastmcp.tools.base import Tool
 
 from af_mcp_broker.authorization import EntitlementPolicy, get_principal_capabilities
-from af_mcp_broker.mcp.registry import BackendRegistry
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    import mcp.types as mt
+    from fastmcp.tools.base import Tool
+
+    from af_mcp_broker.mcp.registry import BackendRegistry
 
 logger = structlog.get_logger(__name__)
 

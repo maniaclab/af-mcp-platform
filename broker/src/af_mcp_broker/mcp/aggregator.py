@@ -11,18 +11,22 @@ from __future__ import annotations
 # no credential-injection or audit logic yet -- both land in a later PR. The
 # client_factory below deliberately never forwards the caller's inbound
 # Authorization header to a backend; see its docstring.
-from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from fastmcp import FastMCP
 from fastmcp.client import Client
 from fastmcp.client.transports import SSETransport, StreamableHttpTransport
 from fastmcp.server.providers.proxy import ProxyProvider
 
-from af_mcp_broker.authorization import EntitlementPolicy
-from af_mcp_broker.config import Settings
 from af_mcp_broker.mcp.middleware.entitlement_mw import EntitlementMiddleware
 from af_mcp_broker.mcp.middleware.identity_mw import IdentityMiddleware
-from af_mcp_broker.mcp.registry import BackendRegistry, BackendSpec
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from af_mcp_broker.authorization import EntitlementPolicy
+    from af_mcp_broker.config import Settings
+    from af_mcp_broker.mcp.registry import BackendRegistry, BackendSpec
 
 
 def _make_client_factory(spec: BackendSpec) -> Callable[[], Client]:
