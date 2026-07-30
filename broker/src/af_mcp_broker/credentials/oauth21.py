@@ -5,6 +5,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol
 
+import httpx
 import structlog
 from fastapi import HTTPException
 from pydantic import AnyHttpUrl, BaseModel, SecretStr, field_validator
@@ -227,6 +228,8 @@ class OAuth21Provider(CredentialProvider):
         issuer: str,
         scope: str,
         store: TokenStore,
+        client_id: str,
+        revocation_endpoint: str | None = None,
     ) -> None:
         self._alias = alias
         self._targets = targets
@@ -235,6 +238,8 @@ class OAuth21Provider(CredentialProvider):
         self._issuer = issuer
         self._scope = scope
         self._store = store
+        self._client_id = client_id
+        self._revocation_endpoint = revocation_endpoint
         self._log = structlog.get_logger(__name__).bind(
             provider="OAuth21Provider", alias=alias
         )
@@ -343,6 +348,45 @@ class OAuth21Provider(CredentialProvider):
             version=new_version,
         )
         return self._to_issued(refreshed, target)
+
+    async def revoke(self, principal: Principal, target: str) -> None:  # noqa: ARG002 (interface; revocation is alias-scoped, not target-scoped)
+        """Unlink this alias: best-effort RFC 7009 revocation, then delete.
+
+        The stored token covers every target this alias is bound to, not
+        just *target* -- so there is nothing target-specific to do here; the
+        parameter only exists to satisfy ``CredentialProvider.revoke``'s
+        interface. The revocation-endpoint POST never blocks the local
+        delete: an unreachable or rejecting backend AS must not prevent the
+        portal's unlink button from working.
+        """
+        entry = await self._store.get(principal.subject, self._alias)
+        if entry is not None and self._revocation_endpoint is not None:
+            cred, _version = entry
+            if cred.refresh_token is not None:
+                token = cred.refresh_token
+                token_type_hint = "refresh_token"
+            else:
+                token = cred.access_token
+                token_type_hint = "access_token"
+            try:
+                resp = await get_http_client().post(
+                    self._revocation_endpoint,
+                    data={
+                        "token": token.get_secret_value(),
+                        "token_type_hint": token_type_hint,
+                        "client_id": self._client_id,
+                    },
+                    timeout=10.0,
+                )
+                resp.raise_for_status()
+            except httpx.HTTPError as exc:
+                self._log.warning(
+                    "oauth21.revoke.upstream_failed",
+                    subject=principal.subject,
+                    error=str(exc),
+                )
+        await self._store.delete(principal.subject, self._alias)
+        self._log.info("oauth21.revoke.deleted", subject=principal.subject)
 
     async def _refresh(self, cred: StoredOAuthCredential) -> StoredOAuthCredential:
         """POST the refresh_token grant to the backend's token endpoint.

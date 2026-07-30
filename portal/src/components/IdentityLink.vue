@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref } from 'vue';
-import { fetchOAuth21AuthorizeUrl, type ProviderType } from '../lib/api';
+import { nextTick, ref } from 'vue';
+import { fetchOAuth21AuthorizeUrl, unlinkIdentity, type ProviderType } from '../lib/api';
 import { startIdpLink } from '../lib/auth';
 
 const props = defineProps<{
@@ -10,6 +10,10 @@ const props = defineProps<{
   display_name: string;
   enables: string;
   link_url: string | null;
+}>();
+
+const emit = defineEmits<{
+  (e: 'unlinked'): void;
 }>();
 
 const busy = ref(false);
@@ -22,6 +26,53 @@ const error = ref<string | null>(null);
 // configured alias (no separate id-to-alias mapping) is what makes linking
 // possible regardless.
 const canLink = props.type === 'keycloak-brokered' || !!props.link_url;
+
+// Unlinking is only wired up for oauth21-direct aliases — DELETE
+// /v1/identities/link/{provider} still returns 501 for keycloak-brokered
+// ones (Keycloak admin API unlink is out of scope, see api.ts's
+// linking-mechanisms note), so the action is never shown for those.
+const canUnlink = props.type === 'oauth21-direct';
+
+// Unlink-confirm dialog uses the native <dialog> element (showModal()), same
+// pattern as ProxyStatus.vue's revoke-confirm dialog — real focus trap, ESC
+// to close, inert siblings for free. We only need to remember the trigger so
+// focus can return to it on close.
+const unlinkDialog = ref<HTMLDialogElement | null>(null);
+const unlinkTrigger = ref<HTMLButtonElement | null>(null);
+const cancelUnlinkBtn = ref<HTMLButtonElement | null>(null);
+
+async function openUnlinkConfirm(evt: Event) {
+  unlinkTrigger.value = evt.currentTarget as HTMLButtonElement;
+  await nextTick();
+  unlinkDialog.value?.showModal();
+  // Move focus off the destructive "Unlink" button — start on Cancel.
+  cancelUnlinkBtn.value?.focus();
+}
+
+function closeUnlinkConfirm() {
+  unlinkDialog.value?.close();
+}
+
+// Native <dialog> fires `close` whether it was closed by ESC, form method="dialog",
+// or an explicit .close() call — this is our single place to restore focus.
+function onUnlinkDialogClose() {
+  unlinkTrigger.value?.focus();
+  unlinkTrigger.value = null;
+}
+
+async function handleUnlink() {
+  closeUnlinkConfirm();
+  busy.value = true;
+  error.value = null;
+  try {
+    await unlinkIdentity(props.id);
+    emit('unlinked');
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : 'Unlink failed. Try again.';
+  } finally {
+    busy.value = false;
+  }
+}
 
 // Shared by both the "Link account" and "Reconnect" buttons below — same
 // flow either way, just re-run to overwrite a stale stored token in place
@@ -92,20 +143,69 @@ const glyph = providerGlyph[props.id] ?? props.id[0]?.toUpperCase() ?? '?';
       </button>
 
       <!--
-      Unlinking isn't exposed by the broker (DELETE returns 501). Reconnect
-      re-runs the same linking flow, which overwrites the stored token in
-      place — the fix for a stale/broken linkage without an explicit unlink.
+      Reconnect re-runs the same linking flow, which overwrites the stored
+      token in place — a fix for a stale/broken linkage without an explicit
+      unlink. Unlink (oauth21-direct only — DELETE still returns 501 for
+      keycloak-brokered, Keycloak admin API unlink is out of scope) actually
+      revokes the stored token instead.
       -->
-      <button
-        v-else-if="linked && canLink"
-        class="il__btn il__btn--reconnect"
-        :disabled="busy"
-        @click="handleLink"
-        :aria-busy="busy"
-      >
-        {{ busy ? 'Redirecting…' : 'Reconnect' }}
-      </button>
+      <div v-else-if="linked && canLink" class="il__linked-actions">
+        <button
+          class="il__btn il__btn--reconnect"
+          :disabled="busy"
+          @click="handleLink"
+          :aria-busy="busy"
+        >
+          {{ busy ? 'Redirecting…' : 'Reconnect' }}
+        </button>
+        <button
+          v-if="canUnlink"
+          class="il__btn il__btn--unlink"
+          :disabled="busy"
+          @click="openUnlinkConfirm"
+          :aria-busy="busy"
+        >
+          {{ busy ? 'Unlinking…' : 'Unlink' }}
+        </button>
+      </div>
     </div>
+
+    <!--
+      Native <dialog> gives us a real focus trap (TAB cycles inside), ESC to
+      close, and inert siblings, all handled by the platform — same pattern
+      as ProxyStatus.vue's revoke-confirm dialog. We restore focus to the
+      trigger button in onUnlinkDialogClose.
+    -->
+    <dialog
+      ref="unlinkDialog"
+      class="il__modal"
+      :aria-labelledby="`il-unlink-title-${id}`"
+      @close="onUnlinkDialogClose"
+    >
+      <h2 :id="`il-unlink-title-${id}`" class="il__modal-title">Unlink {{ display_name }}?</h2>
+      <p class="il__modal-body">
+        This revokes the stored token for {{ display_name }}. Tools that depend on it will stop
+        working until you link it again.
+      </p>
+      <div class="il__modal-actions">
+        <button
+          ref="cancelUnlinkBtn"
+          type="button"
+          class="il__btn il__btn--cancel"
+          @click="closeUnlinkConfirm"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          class="il__btn il__btn--confirm-unlink"
+          :disabled="busy"
+          @click="handleUnlink"
+        >
+          {{ busy ? 'Unlinking…' : 'Unlink' }}
+        </button>
+      </div>
+    </dialog>
   </div>
 </template>
 
@@ -207,8 +307,16 @@ const glyph = providerGlyph[props.id] ?? props.id[0]?.toUpperCase() ?? '?';
 .il__actions {
   flex-shrink: 0;
   padding-top: 0.125rem;
-  max-width: 14rem;
+  max-width: 18rem;
   text-align: right;
+}
+
+.il__linked-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  flex-wrap: wrap;
 }
 
 /*
@@ -274,6 +382,80 @@ const glyph = providerGlyph[props.id] ?? props.id[0]?.toUpperCase() ?? '?';
 .il__btn--reconnect:not(:disabled):hover {
   background: rgb(from var(--color-af-teal) r g b / 0.08);
   border-color: rgb(from var(--color-af-teal) r g b / 0.5);
+}
+
+/* Unlink: a destructive action — quiet by default, red on hover, matching
+   ProxyStatus.vue's ps__btn--revoke treatment. */
+.il__btn--unlink {
+  background: transparent;
+  color: var(--color-af-dim);
+  border-color: var(--color-af-muted);
+  font-size: 0.625rem;
+  padding: 0.375rem 0.75rem;
+}
+.il__btn--unlink:not(:disabled):hover {
+  color: var(--color-af-red);
+  border-color: rgb(from var(--color-af-red) r g b / 0.35);
+  background: rgb(from var(--color-af-red) r g b / 0.06);
+}
+
+.il__btn--cancel {
+  background: transparent;
+  color: var(--color-af-dim);
+  border-color: var(--color-af-muted);
+}
+.il__btn--cancel:hover {
+  color: var(--color-af-text);
+  border-color: var(--color-af-dim);
+}
+
+.il__btn--confirm-unlink {
+  background: rgb(from var(--color-af-red) r g b / 0.1);
+  color: var(--color-af-red);
+  border-color: rgb(from var(--color-af-red) r g b / 0.3);
+}
+.il__btn--confirm-unlink:hover {
+  background: rgb(from var(--color-af-red) r g b / 0.18);
+}
+
+/* Modal — the native <dialog> element sits centered via its UA styles; we
+ * override the box chrome and add our own ::backdrop with the AF ground tint
+ * (same treatment as ProxyStatus.vue's revoke-confirm modal).
+ */
+.il__modal {
+  background: var(--color-af-surface);
+  border: 1px solid var(--color-af-muted);
+  border-radius: 6px;
+  padding: 1.75rem;
+  max-width: 28rem;
+  width: calc(100% - 2rem);
+  color: inherit;
+}
+
+.il__modal::backdrop {
+  background: rgb(from var(--color-af-void) r g b / 0.85);
+  backdrop-filter: blur(4px);
+}
+
+.il__modal-title {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--color-af-text);
+  margin: 0 0 0.75rem;
+}
+
+.il__modal-body {
+  font-size: 0.875rem;
+  color: #9ca3af;
+  line-height: 1.6;
+  margin: 0 0 1.5rem;
+}
+
+.il__modal-actions {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: flex-end;
 }
 
 @media (max-width: 640px) {

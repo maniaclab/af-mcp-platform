@@ -218,8 +218,11 @@ export async function fetchIdentities(): Promise<IdentitiesResponse> {
 // attach JS-held Authorization headers to top-level navigations), so
 // IdentityLink.vue calls fetchOAuth21AuthorizeUrl() first and navigates to
 // the `authorize_url` it returns instead of navigating to `link_url`
-// directly. DELETE /v1/identities/link/{provider} always returns 501 —
-// unlinking is not implemented yet, so there is no unlink client here.
+// directly. DELETE /v1/identities/link/{provider} returns 204 for an
+// "oauth21-direct" alias (see unlinkIdentity() below) but still 501 for a
+// "keycloak-brokered" one — Keycloak admin API unlink is out of scope
+// (issue #86) — so IdentityLink.vue only surfaces the unlink action for
+// "oauth21-direct" providers.
 
 /**
  * Fetches the backend authorization server's authorize URL for an
@@ -241,6 +244,19 @@ export async function fetchOAuth21AuthorizeUrl(linkUrl: string): Promise<string>
   }
   const data = (await res.json()) as { authorize_url: string };
   return data.authorize_url;
+}
+
+/**
+ * Revokes a stored "oauth21-direct" identity token — DELETE
+ * /v1/identities/link/{provider} (see api/identities.py::unlink_identity).
+ * Returns 204 on success; still 501 for a "keycloak-brokered" provider,
+ * which IdentityLink.vue never calls this for (see the linking-mechanisms
+ * note above).
+ */
+export async function unlinkIdentity(provider: string): Promise<void> {
+  return apiFetch<void>(`/identities/link/${encodeURIComponent(provider)}`, {
+    method: 'DELETE',
+  });
 }
 
 // ---------------------------------------------------------------------------

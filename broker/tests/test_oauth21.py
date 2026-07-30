@@ -59,6 +59,7 @@ AUTHORIZATION_ENDPOINT = "https://backend-as.example/authorize"
 TOKEN_ENDPOINT = "https://backend-as.example/token"
 PROVIDER_ISSUER = "https://backend-as.example"
 CLIENT_ID = "https://mcp.af.uchicago.edu/.well-known/cimd"
+REVOCATION_ENDPOINT = "https://backend-as.example/revoke"
 
 # The canonical origin every outgoing OAuth 2.1 redirect_uri is built from
 # (see api/oauth21.py's `_callback_url`) — deliberately different from
@@ -102,7 +103,9 @@ def _principal(subject: str = SUBJECT) -> Principal:
     )
 
 
-def _make_provider(store: InMemoryTokenStore) -> OAuth21Provider:
+def _make_provider(
+    store: InMemoryTokenStore, revocation_endpoint: str | None = None
+) -> OAuth21Provider:
     return OAuth21Provider(
         alias=ALIAS,
         targets=frozenset({ALIAS}),
@@ -111,6 +114,8 @@ def _make_provider(store: InMemoryTokenStore) -> OAuth21Provider:
         issuer=PROVIDER_ISSUER,
         scope="openid profile",
         store=store,
+        client_id=CLIENT_ID,
+        revocation_endpoint=revocation_endpoint,
     )
 
 
@@ -587,6 +592,134 @@ async def test_issue_handles_version_conflict_during_refresh(
     issued = await provider.issue(_principal(), ALIAS)
 
     assert issued.payload["access_token"] == "winning-racer-token"
+
+
+# ---------------------------------------------------------------------------
+# OAuth21Provider.revoke
+# ---------------------------------------------------------------------------
+
+
+async def test_revoke_without_revocation_endpoint_only_deletes_locally(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No revocation_endpoint configured -- best-effort upstream call is
+    skipped entirely, but the stored token is still deleted."""
+    store = InMemoryTokenStore()
+    await store.write_cas(SUBJECT, ALIAS, _make_cred(), expected_version=None)
+    provider = _make_provider(store)
+
+    fake_client = _FakeTokenClient()
+    monkeypatch.setattr(
+        "af_mcp_broker.credentials.oauth21.get_http_client", lambda: fake_client
+    )
+
+    await provider.revoke(_principal(), ALIAS)
+
+    assert fake_client.calls == []
+    assert await store.get(SUBJECT, ALIAS) is None
+
+
+async def test_revoke_with_revocation_endpoint_posts_token_and_deletes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = InMemoryTokenStore()
+    await store.write_cas(SUBJECT, ALIAS, _make_cred(), expected_version=None)
+    provider = _make_provider(store, revocation_endpoint=REVOCATION_ENDPOINT)
+
+    fake_client = _FakeTokenClient(status_code=200)
+    monkeypatch.setattr(
+        "af_mcp_broker.credentials.oauth21.get_http_client", lambda: fake_client
+    )
+
+    await provider.revoke(_principal(), ALIAS)
+
+    assert len(fake_client.calls) == 1
+    call = fake_client.calls[0]
+    assert call["url"] == REVOCATION_ENDPOINT
+    assert call["data"]["token"] == "refresh-token-1"
+    assert call["data"]["token_type_hint"] == "refresh_token"
+    assert call["data"]["client_id"] == CLIENT_ID
+    assert await store.get(SUBJECT, ALIAS) is None
+
+
+async def test_revoke_falls_back_to_access_token_when_no_refresh_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = InMemoryTokenStore()
+    await store.write_cas(
+        SUBJECT, ALIAS, _make_cred(refresh_token=None), expected_version=None
+    )
+    provider = _make_provider(store, revocation_endpoint=REVOCATION_ENDPOINT)
+
+    fake_client = _FakeTokenClient(status_code=200)
+    monkeypatch.setattr(
+        "af_mcp_broker.credentials.oauth21.get_http_client", lambda: fake_client
+    )
+
+    await provider.revoke(_principal(), ALIAS)
+
+    assert len(fake_client.calls) == 1
+    call = fake_client.calls[0]
+    assert call["data"]["token"] == "access-token-1"
+    assert call["data"]["token_type_hint"] == "access_token"
+
+
+async def test_revoke_upstream_failure_still_deletes_locally(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The revocation-endpoint call is best-effort -- an unreachable or
+    rejecting backend AS must never block the local unlink."""
+    store = InMemoryTokenStore()
+    await store.write_cas(SUBJECT, ALIAS, _make_cred(), expected_version=None)
+    provider = _make_provider(store, revocation_endpoint=REVOCATION_ENDPOINT)
+
+    fake_client = _FakeTokenClient(status_code=500)
+    monkeypatch.setattr(
+        "af_mcp_broker.credentials.oauth21.get_http_client", lambda: fake_client
+    )
+
+    await provider.revoke(_principal(), ALIAS)
+
+    assert len(fake_client.calls) == 1
+    assert await store.get(SUBJECT, ALIAS) is None
+
+
+async def test_revoke_upstream_unreachable_still_deletes_locally(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = InMemoryTokenStore()
+    await store.write_cas(SUBJECT, ALIAS, _make_cred(), expected_version=None)
+    provider = _make_provider(store, revocation_endpoint=REVOCATION_ENDPOINT)
+
+    class _RaisingClient:
+        async def post(self, *args: Any, **kwargs: Any) -> httpx.Response:
+            raise httpx.ConnectError("connection refused")
+
+    monkeypatch.setattr(
+        "af_mcp_broker.credentials.oauth21.get_http_client", _RaisingClient
+    )
+
+    await provider.revoke(_principal(), ALIAS)
+
+    assert await store.get(SUBJECT, ALIAS) is None
+
+
+async def test_revoke_when_nothing_stored_is_a_noop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unlinking an alias with no stored token must not attempt an upstream
+    call -- there is no token to revoke -- and must not raise."""
+    store = InMemoryTokenStore()
+    provider = _make_provider(store, revocation_endpoint=REVOCATION_ENDPOINT)
+
+    fake_client = _FakeTokenClient()
+    monkeypatch.setattr(
+        "af_mcp_broker.credentials.oauth21.get_http_client", lambda: fake_client
+    )
+
+    await provider.revoke(_principal(), ALIAS)
+
+    assert fake_client.calls == []
 
 
 # ---------------------------------------------------------------------------

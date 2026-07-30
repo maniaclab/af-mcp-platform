@@ -159,16 +159,38 @@ async def unlink_identity(
     request: Request,
     principal: Annotated[Principal, Depends(keycloak_dependency)],
 ) -> None:
-    known_ids = set(getattr(request.app.state, "identity_provider_configs", None) or {})
-    if provider not in known_ids:
+    identity_provider_configs: dict[str, IdentityProviderConfig] = (
+        getattr(request.app.state, "identity_provider_configs", None) or {}
+    )
+    cfg = identity_provider_configs.get(provider)
+    if cfg is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Unknown provider '{provider}'",
         )
 
-    # Full IDP unlink requires Keycloak admin REST API calls (keycloak-
-    # brokered) or a TokenStore.delete() (oauth21-direct); neither is wired
-    # up yet — surface a clear 501 rather than silently succeeding.
+    if cfg.type == "oauth21-direct":
+        identity_providers: dict[str, CredentialProvider] = (
+            getattr(request.app.state, "identity_providers", None) or {}
+        )
+        await identity_providers[provider].revoke(principal, provider)
+
+        credential_cache = getattr(request.app.state, "credential_cache", None)
+        if credential_cache is not None:
+            for target in cfg.targets:
+                await credential_cache.revoke(principal.uid, target)
+
+        logger.info(
+            "identity_unlink_completed",
+            subject=principal.subject,
+            provider=provider,
+        )
+        return
+
+    # Keycloak-brokered unlink requires the Keycloak Admin REST API
+    # (DELETE /admin/realms/{realm}/users/{id}/federated-identity/{alias}),
+    # which the broker doesn't hold credentials for — surface a clear 501
+    # rather than silently succeeding. Out of scope per issue #86.
     logger.info(
         "identity_unlink_requested",
         subject=principal.subject,

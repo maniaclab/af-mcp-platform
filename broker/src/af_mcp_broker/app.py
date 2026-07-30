@@ -212,6 +212,10 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
                 issuer=cfg.issuer,
                 scope=cfg.scope,
                 store=oauth21_token_store,
+                client_id=settings.oauth21_client_id,
+                revocation_endpoint=(
+                    str(cfg.revocation_endpoint) if cfg.revocation_endpoint else None
+                ),
             )
         identity_providers[cfg.alias] = provider
         identity_provider_configs[cfg.alias] = cfg

@@ -91,6 +91,15 @@ function reload() {
 function missingRequired(id: string): boolean {
   return !providers.value.some((p) => p.id === id && p.linked);
 }
+
+// Called on IdentityLink's `unlinked` event, once the DELETE has already
+// succeeded — reflect it locally rather than re-fetching, and drop the
+// cache so a subsequent page load doesn't serve the pre-unlink snapshot.
+function handleUnlinked(id: string) {
+  const provider = providers.value.find((p) => p.id === id);
+  if (provider) provider.linked = false;
+  clearIdentitiesCache();
+}
 </script>
 
 <template>
@@ -184,6 +193,7 @@ function missingRequired(id: string): boolean {
           :display_name="p.display_name"
           :enables="p.enables"
           :link_url="p.link_url"
+          @unlinked="handleUnlinked(p.id)"
         />
       </div>
 
