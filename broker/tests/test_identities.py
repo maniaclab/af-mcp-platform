@@ -280,12 +280,130 @@ def test_unlink_known_keycloak_provider_returns_501(
     assert resp.status_code == 501
 
 
-def test_unlink_known_oauth21_alias_returns_501(
+def test_unlink_known_oauth21_alias_returns_204_and_deletes_stored_token(
     monkeypatch: pytest.MonkeyPatch, app_client_factory: Callable[..., object]
 ) -> None:
+    from af_mcp_broker.app import app as broker_app
+    from af_mcp_broker.credentials.oauth21 import StoredOAuthCredential
+
+    _configure_oauth21_env(monkeypatch)
+
+    with app_client_factory() as (client, state):
+        subject = state["principal"].subject
+        store = broker_app.state.oauth21_token_store
+        cred = StoredOAuthCredential(
+            alias=ALIAS,
+            subject=subject,
+            access_token=SecretStr("access-token"),
+            refresh_token=SecretStr("refresh-token"),
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+            refresh_expires_at=datetime.now(UTC) + timedelta(days=30),
+            scope=["openid"],
+            issuer=PROVIDER_ISSUER,
+            token_endpoint=TOKEN_ENDPOINT,
+        )
+        asyncio.run(store.write_cas(subject, ALIAS, cred, expected_version=None))
+
+        resp = client.delete(f"/v1/identities/link/{ALIAS}", headers=_AUTH)
+
+        assert resp.status_code == 204, resp.text
+        assert asyncio.run(store.get(subject, ALIAS)) is None
+
+
+def test_unlink_known_oauth21_alias_purges_credential_cache(
+    monkeypatch: pytest.MonkeyPatch, app_client_factory: Callable[..., object]
+) -> None:
+    """The alias's targets must have their in-process cached credentials
+    purged too, not just the stored TokenStore entry -- otherwise a still-
+    cached credential would keep being handed out until it naturally
+    expires."""
+    from af_mcp_broker.app import app as broker_app
+
+    _configure_oauth21_env(monkeypatch)
+
+    with app_client_factory() as (client, state):
+        uid = state["principal"].uid
+        cache = broker_app.state.credential_cache
+        asyncio.run(cache.put(uid, ALIAS, "fake-cached-credential"))
+        assert asyncio.run(cache.get(uid, ALIAS)) is not None
+
+        resp = client.delete(f"/v1/identities/link/{ALIAS}", headers=_AUTH)
+
+        assert resp.status_code == 204, resp.text
+        # get() itself would raise on a rate-limited miss -- read the entry
+        # dict directly to assert absence without tripping that.
+        assert (uid, ALIAS) not in cache._entries
+
+
+def test_unlink_oauth21_alias_returns_204_even_when_nothing_was_stored(
+    monkeypatch: pytest.MonkeyPatch, app_client_factory: Callable[..., object]
+) -> None:
+    """Unlinking an alias that was never actually linked must still succeed
+    -- there's nothing to revoke, but that's not an error."""
     _configure_oauth21_env(monkeypatch)
 
     with app_client_factory() as (client, _state):
         resp = client.delete(f"/v1/identities/link/{ALIAS}", headers=_AUTH)
 
-    assert resp.status_code == 501
+    assert resp.status_code == 204, resp.text
+
+
+def test_unlink_oauth21_alias_204_even_when_revocation_endpoint_fails(
+    monkeypatch: pytest.MonkeyPatch, app_client_factory: Callable[..., object]
+) -> None:
+    """A rejecting/unreachable revocation_endpoint must not turn into a
+    failed unlink -- OAuth21Provider.revoke() is best-effort upstream."""
+    from af_mcp_broker.app import app as broker_app
+    from af_mcp_broker.credentials.oauth21 import StoredOAuthCredential
+
+    monkeypatch.setenv("BROKER_STATE_KEY", Fernet.generate_key().decode())
+    monkeypatch.setenv("OAUTH21_CLIENT_ID", "https://mcp.example.com/.well-known/cimd")
+    monkeypatch.setenv("BROKER_PUBLIC_ORIGIN", "https://mcp-portal.example.com")
+    monkeypatch.setenv(
+        "IDENTITY_PROVIDERS",
+        json.dumps(
+            [
+                {
+                    "type": "oauth21-direct",
+                    "alias": ALIAS,
+                    "targets": [ALIAS],
+                    "authorization_endpoint": AUTHORIZATION_ENDPOINT,
+                    "token_endpoint": TOKEN_ENDPOINT,
+                    "issuer": PROVIDER_ISSUER,
+                    "revocation_endpoint": "https://backend-as.example/revoke",
+                }
+            ]
+        ),
+    )
+
+    class _RejectingClient:
+        async def post(self, *args, **kwargs):
+            import httpx
+
+            return httpx.Response(500, request=httpx.Request("POST", args[0]))
+
+    monkeypatch.setattr(
+        "af_mcp_broker.credentials.oauth21.get_http_client",
+        _RejectingClient,
+    )
+
+    with app_client_factory() as (client, state):
+        subject = state["principal"].subject
+        store = broker_app.state.oauth21_token_store
+        cred = StoredOAuthCredential(
+            alias=ALIAS,
+            subject=subject,
+            access_token=SecretStr("access-token"),
+            refresh_token=SecretStr("refresh-token"),
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+            refresh_expires_at=datetime.now(UTC) + timedelta(days=30),
+            scope=["openid"],
+            issuer=PROVIDER_ISSUER,
+            token_endpoint=TOKEN_ENDPOINT,
+        )
+        asyncio.run(store.write_cas(subject, ALIAS, cred, expected_version=None))
+
+        resp = client.delete(f"/v1/identities/link/{ALIAS}", headers=_AUTH)
+
+        assert resp.status_code == 204, resp.text
+        assert asyncio.run(store.get(subject, ALIAS)) is None

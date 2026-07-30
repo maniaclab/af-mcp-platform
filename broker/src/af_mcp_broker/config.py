@@ -61,6 +61,11 @@ class OAuth21DirectProviderConfig(BaseModel):
     issuer: str
     scope: str = "openid profile email"
 
+    # RFC 7009 token revocation endpoint. Optional -- when unset,
+    # OAuth21Provider.revoke() skips the upstream call entirely and only
+    # deletes the locally-stored token (see docs/auth.md and issue #86).
+    revocation_endpoint: AnyHttpUrl | None = None
+
     # Portal-facing metadata for GET /v1/identities. Optional so a minimal
     # provider config still parses; an operator who leaves these blank just
     # gets an empty label/description on the Identities page until they fill

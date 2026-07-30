@@ -14,6 +14,7 @@ import {
   fetchIdentities,
   fetchOAuth21AuthorizeUrl,
   fetchProxyStatus,
+  unlinkIdentity,
 } from '../api';
 import * as auth from '../auth';
 
@@ -299,6 +300,54 @@ describe('fetchOAuth21AuthorizeUrl()', () => {
     vi.mocked(auth.getAccessToken).mockResolvedValue(null);
     globalThis.fetch = vi.fn();
     await expect(fetchOAuth21AuthorizeUrl(LINK_URL)).rejects.toBeInstanceOf(SessionExpiredError);
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('unlinkIdentity()', () => {
+  it('sends a DELETE against /identities/link/{provider} with the Bearer', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    await unlinkIdentity('rucio-mcp-atlas');
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/identities/link/rucio-mcp-atlas'),
+      expect.objectContaining({
+        method: 'DELETE',
+        headers: expect.objectContaining({ Authorization: 'Bearer test-token' }),
+      }),
+    );
+  });
+
+  it('encodes the provider id in the URL path', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    await unlinkIdentity('a/b');
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/identities/link/a%2Fb'),
+      expect.anything(),
+    );
+  });
+
+  it('resolves to undefined on a 204 response', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    await expect(unlinkIdentity('rucio-mcp-atlas')).resolves.toBeUndefined();
+  });
+
+  it('raises APIError with the response body on non-2xx (e.g. 501 for keycloak-brokered)', async () => {
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValue(
+        new Response('not implemented', { status: 501, statusText: 'Not Implemented' }),
+      );
+    await expect(unlinkIdentity('atlas-iam')).rejects.toMatchObject({
+      name: 'APIError',
+      status: 501,
+      body: 'not implemented',
+    });
+  });
+
+  it('throws SessionExpiredError without hitting the network when there is no token', async () => {
+    vi.mocked(auth.getAccessToken).mockResolvedValue(null);
+    globalThis.fetch = vi.fn();
+    await expect(unlinkIdentity('rucio-mcp-atlas')).rejects.toBeInstanceOf(SessionExpiredError);
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 });
