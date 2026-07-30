@@ -21,6 +21,12 @@ class BackendSpec:
     # (e.g. rucio-mcp ships "rucio_list_dids") must set this False, or
     # namespacing would double up into "rucio_rucio_list_dids".
     apply_namespace: bool = True
+    # Per-call read timeout (seconds) applied to this backend's Client, so a
+    # slow/unresponsive backend fails that one call cleanly instead of
+    # hanging the aggregator. 30s is a generous default for a synchronous
+    # tool call; docs/adding-a-backend.md's example already assumes this
+    # value, so it doubles as an operator-visible default.
+    timeout_seconds: float = 30.0
 
 
 class BackendRegistry:
@@ -43,6 +49,7 @@ class BackendRegistry:
                 description=entry.get("description", ""),
                 display_name=entry.get("display_name", ""),
                 apply_namespace=entry.get("apply_namespace", True),
+                timeout_seconds=entry.get("timeout_seconds", 30.0),
             )
             self._backends[spec.name] = spec
 
