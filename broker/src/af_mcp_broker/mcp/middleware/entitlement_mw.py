@@ -1,65 +1,57 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from collections.abc import Sequence
+from typing import Any
 
+import mcp.types as mt
 import structlog
+from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
+from fastmcp.tools.base import Tool
 
-if TYPE_CHECKING:
-    from af_mcp_broker.mcp.registry import BackendRegistry
+from af_mcp_broker.authorization import EntitlementPolicy, get_principal_capabilities
+from af_mcp_broker.mcp.registry import BackendRegistry
 
 logger = structlog.get_logger(__name__)
 
-# on_list_tools middleware: filters the tool list to capabilities the Principal has.
-# Backends whose required_capability the Principal lacks are hidden entirely.
+# on_list_tools middleware: filters the tool list to capabilities the
+# Principal (stored by identity_mw, which must be registered first so it
+# runs outermost) actually has. Backends whose required_capability the
+# Principal lacks are hidden entirely, as are tools that don't map to any
+# known backend.
 
 
-async def entitlement_middleware(request: Any, call_next: Any) -> Any:
-    """Filter visible tools to those the caller is entitled to.
+class EntitlementMiddleware(Middleware):
+    def __init__(self, registry: BackendRegistry, policy: EntitlementPolicy) -> None:
+        # Mutable on purpose: populate_aggregator() refreshes these in place
+        # on every lifespan entry rather than constructing a new middleware
+        # instance each time.
+        self.registry = registry
+        self.policy = policy
 
-    Operates on list_tools responses. Tool call requests are checked by broker_mw.
-    """
-    from af_mcp_broker.authorization import get_principal_capabilities
+    async def on_list_tools(
+        self,
+        context: MiddlewareContext[mt.ListToolsRequest],
+        call_next: CallNext[mt.ListToolsRequest, Sequence[Tool]],
+    ) -> Sequence[Tool]:
+        tools = await call_next(context)
 
-    principal = getattr(request, "context", {}).get("principal")
-    if principal is None:
-        # identity_mw should always set this; if absent, pass through (fail-closed at broker_mw)
-        return await call_next(request)
+        principal = (
+            await context.fastmcp_context.get_state("principal")
+            if context.fastmcp_context is not None
+            else None
+        )
+        if principal is None:
+            # identity_mw should always have set this by now; fail closed
+            # rather than leak the unfiltered tool list if it somehow didn't.
+            return []
 
-    response = await call_next(request)
+        principal_caps = get_principal_capabilities(principal, self.policy)
+        return [tool for tool in tools if self._tool_is_allowed(tool, principal_caps)]
 
-    # Filter tools: only show tools from backends the principal has the capability for.
-    # The registry maps tool prefix -> backend -> required_capability.
-    # We filter at the list_tools level by calling the registry.
-    registry: BackendRegistry | None = getattr(request, "app_registry", None)
-    if registry is None:
-        return response
-
-    policy = getattr(request, "app_policy", None)
-    if policy is None:
-        return response
-
-    principal_caps = get_principal_capabilities(principal, policy)
-
-    if hasattr(response, "tools"):
-        response.tools = [
-            tool
-            for tool in response.tools
-            if _tool_is_allowed(tool, registry, principal_caps)
-        ]
-
-    return response
-
-
-def _tool_is_allowed(
-    tool: Any,
-    registry: Any,
-    principal_caps: set[str],
-) -> bool:
-    tool_name: str = getattr(tool, "name", "") or ""
-    backend = registry.get_by_tool_prefix(tool_name)
-    if backend is None:
-        return False  # unknown prefix: deny by default (fail-closed)
-    required = backend.required_capability
-    if required == "__none__":
-        return True
-    return required in principal_caps
+    def _tool_is_allowed(self, tool: Tool, principal_caps: set[str]) -> bool:
+        backend = self.registry.get_by_tool_prefix(tool.name)
+        if backend is None:
+            return False  # unknown prefix: deny by default (fail-closed)
+        if backend.required_capability == "__none__":
+            return True
+        return backend.required_capability in principal_caps
