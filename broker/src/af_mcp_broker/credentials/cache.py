@@ -77,9 +77,11 @@ class CredentialCache:
     across multiple event loops.
 
     Rate-limiting: *max_failed_unlocks* / *unlock_window_seconds* bound how
-    many failed cache lookups (misses) or bad passphrase attempts a single
-    uid may accrue before ``RateLimitError`` is raised — see ``_record_miss``
-    and ``check_unlock_rate_limit``. Production wiring reads these from
+    many actual failed unlock attempts (bad passphrase, or a minting-backend
+    failure) a single uid may accrue before ``RateLimitError`` is raised —
+    see ``record_failed_unlock`` and ``check_unlock_rate_limit``. Plain cache
+    misses from ``get()`` do not count against this budget — see ``get()``'s
+    docstring. Production wiring reads these from
     ``Settings.credential_unlock_max_failures`` /
     ``Settings.credential_unlock_window_seconds`` (see ``app.py`` lifespan);
     the defaults here exist only so callers that construct ``CredentialCache``
@@ -142,9 +144,12 @@ class CredentialCache:
         remain — this prevents handing a credential to a caller that will
         expire before it can use it.
 
-        Each cache miss is counted against *uid*. After ``max_failed_unlocks``
-        misses within ``unlock_window_seconds`` (constructor parameters),
-        ``RateLimitError`` is raised to prevent brute-force enumeration.
+        A plain miss (nothing cached, or a stale entry) does *not* count
+        against *uid*'s unlock rate limit — only an actual failed unlock
+        attempt does (see ``record_failed_unlock``). Counting misses here
+        made every ordinary "not cached yet" probe indistinguishable from a
+        bad passphrase attempt, so a handful of routine retries could lock a
+        user out of their own next (correct) unlock attempt.
         """
         key = (uid, target)
         entry = self._entries.get(key)
@@ -156,7 +161,6 @@ class CredentialCache:
                     target=target,
                     remaining=self.remaining_seconds(entry),
                 )
-            self._record_miss(uid)
             return None
         return entry.credential
 
@@ -231,11 +235,17 @@ class CredentialCache:
         return entry.proxy_meta
 
     # ------------------------------------------------------------------
-    # Rate-limiting for missed lookups / bad passphrase attempts
+    # Rate-limiting for failed unlock attempts
     # ------------------------------------------------------------------
 
-    def _record_miss(self, uid: int) -> None:
-        """Increment the miss counter for *uid* and raise RateLimitError when exceeded."""
+    def record_failed_unlock(self, uid: int) -> None:
+        """Increment the failed-unlock counter for *uid* and raise
+        ``RateLimitError`` when exceeded.
+
+        Callers invoke this only for an unlock attempt that actually failed
+        (bad passphrase, or a minting-backend failure) — plain cache misses
+        (see ``get()``) do not consume this budget.
+        """
         now = time.monotonic()
         record = self._failed_unlocks[uid]
         # Reset window if it has elapsed
@@ -244,7 +254,7 @@ class CredentialCache:
             record.window_start = now
         record.attempts += 1
         self._log.debug(
-            "credential_cache.miss_recorded",
+            "credential_cache.failed_unlock_recorded",
             uid=uid,
             attempts=record.attempts,
             window_seconds=self._unlock_window_seconds,
@@ -254,18 +264,10 @@ class CredentialCache:
                 0, int(self._unlock_window_seconds - (now - record.window_start))
             )
             raise RateLimitError(
-                f"Too many failed cache lookups for uid={uid}. "
+                f"Too many failed unlock attempts for uid={uid}. "
                 f"Try again in {remaining_window}s.",
                 retry_after_seconds=remaining_window,
             )
-
-    def record_failed_unlock(self, uid: int) -> None:
-        """Increment the failed-unlock counter for *uid*.
-
-        Kept for backward-compatibility with callers that track passphrase
-        failures separately from cache misses.
-        """
-        self._record_miss(uid)
 
     def check_unlock_rate_limit(self, uid: int) -> None:
         """Raise ``RateLimitError`` if *uid* has exceeded the failed-unlock limit.

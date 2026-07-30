@@ -419,11 +419,12 @@ async def _validation_error_handler(
 async def _rate_limit_error_handler(
     request: Request, exc: RateLimitError
 ) -> JSONResponse:
-    # RateLimitError is raised by CredentialCache.get()/check_unlock_rate_limit()
-    # from both the OIDC and x509 credential-issuance paths (unlimited
-    # passphrase/lookup guessing against a colocated user's stored
-    # credentials). Map it to 429 with Retry-After so well-behaved clients —
-    # and the portal — back off instead of hammering the endpoint.
+    # RateLimitError is raised by CredentialCache.record_failed_unlock()/
+    # check_unlock_rate_limit() on the x509 credential-issuance path (bad
+    # passphrase / minting-backend failures against a colocated user's
+    # ~/.globus) -- plain cache misses never raise it (see cache.py's get()).
+    # Map it to 429 with Retry-After so well-behaved clients — and the portal
+    # — back off instead of hammering the endpoint.
     retry_after = exc.retry_after_seconds
     retry_at = datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=retry_after)
     logger.info(

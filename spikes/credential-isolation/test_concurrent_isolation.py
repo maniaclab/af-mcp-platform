@@ -6,8 +6,10 @@ Phase 0 Spike — validates the real ``CredentialCache`` in
 Scenarios covered:
   1. Cross-principal isolation — under concurrent access the cache never
      hands one principal's credential to another.
-  2. Rate-limit lockout — repeated failed lookups for a single uid raise
-     ``RateLimitError`` once the miss counter exceeds ``_MAX_FAILED_UNLOCKS``.
+  2. Rate-limit lockout — repeated genuine failed-unlock attempts (bad
+     passphrase, or a minting-backend failure) for a single uid raise
+     ``RateLimitError`` once the counter exceeds ``_MAX_FAILED_UNLOCKS``.
+     Plain cache misses from ``get()`` never count against this budget.
   3. Janitor sweep — an entry stored with ``expires_at`` in the past is
      removed by ``sweep_expired()``.
 
@@ -113,55 +115,59 @@ async def test_concurrent_cross_principal_isolation(n: int) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Scenario 2: rate-limit on repeated failed lookups
+# Scenario 2: rate-limit on repeated genuine failed unlocks
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.anyio
 async def test_rate_limit_triggers_after_max_failed_unlocks() -> None:
-    """The (N+1)th miss within the window raises ``RateLimitError``.
+    """The (N+1)th genuine failed unlock within the window raises ``RateLimitError``.
 
-    ``_MAX_FAILED_UNLOCKS`` is 5 in the real cache, so five consecutive misses
-    return ``None`` and the sixth trips the limiter. The threshold constant is
-    not imported so that a future bump in the real cache surfaces here as a
-    single-place update rather than a hidden magic number.
+    ``_MAX_FAILED_UNLOCKS`` is 5 in the real cache, so five consecutive calls
+    to ``record_failed_unlock`` (bad passphrase, or a minting-backend
+    failure) do not raise and the sixth trips the limiter. The threshold
+    constant is not imported so that a future bump in the real cache surfaces
+    here as a single-place update rather than a hidden magic number.
+
+    Plain cache misses from ``get()`` do NOT count against this budget — see
+    ``test_needs_unlock_probes_never_trip_rate_limit`` in
+    ``broker/tests/test_rate_limit_api.py``.
     """
     cache = CredentialCache()
     uid = 99_999
 
-    # Five misses in a row — the key has never been stored, so each lookup
-    # counts as a failure against this uid.
-    for attempt in range(1, 6):
-        result = await cache.get(uid, TARGET)
-        assert result is None, f"attempt {attempt}: expected None, got {result!r}"
+    # Five genuine failed-unlock attempts in a row.
+    for _attempt in range(1, 6):
+        cache.record_failed_unlock(uid)
 
     # The sixth attempt exceeds the threshold and must raise.
     with pytest.raises(RateLimitError):
-        await cache.get(uid, TARGET)
+        cache.record_failed_unlock(uid)
 
 
 @pytest.mark.anyio
 async def test_successful_put_resets_rate_limit_counter() -> None:
-    """A successful ``put`` clears the failed-lookup counter for that uid.
+    """A successful ``put`` clears the failed-unlock counter for that uid.
 
     Documented behaviour of the real cache: legitimate re-authentication after
-    an expiry-driven miss must not be penalised. Without this, a user whose
-    cached token drifted just past ``min_remaining`` would be locked out on
-    their next login.
+    a run of genuine failed unlocks must not carry forward stale attempts.
+    Without this, a user who eventually supplies the correct passphrase would
+    still be one attempt away from lockout on their very next (unrelated)
+    failure.
     """
     cache = CredentialCache()
     uid = 77_777
 
-    # Rack up misses just short of the limit.
+    # Rack up genuine failed-unlock attempts just short of the limit.
     for _ in range(5):
-        assert await cache.get(uid, TARGET) is None
+        cache.record_failed_unlock(uid)
 
-    # A successful put must clear the counter — the next miss should NOT raise.
+    # A successful put must clear the counter.
     await cache.put(uid, TARGET, _make_credential(uid))
-    await cache.revoke(uid, TARGET)  # remove so the next get() is a miss
 
-    # If the counter had persisted, this would be the sixth miss and raise.
-    assert await cache.get(uid, TARGET) is None
+    # If the counter had persisted, this single failure would be the sixth
+    # and trip the limiter immediately.
+    cache.record_failed_unlock(uid)
 
 
 # ---------------------------------------------------------------------------
