@@ -31,3 +31,31 @@ async def test_write_audit_emits_json_line() -> None:
     assert line["target"] == "panda"
     assert line["action_type"] == "state_change"
     assert line["principal_uid"] == 1000
+    # outcome defaults to "success" so pre-existing call sites (that never
+    # set it) still audit as a successful invocation.
+    assert line["outcome"] == "success"
+    assert line["error"] is None
+
+
+async def test_write_audit_records_denied_outcome_and_error() -> None:
+    buffer = io.StringIO()
+    init_audit_logger(buffer)
+
+    record = AuditRecord(
+        principal_sub="sub-abc",
+        principal_uid=1000,
+        capability="submit_jobs",
+        target="panda",
+        action="submit_task",
+        action_type="state_change",
+        args_summary="task=...",
+        timestamp=1234.5,
+        request_id="req-1",
+        outcome="denied",
+        error="principal lacks capability 'submit_jobs'",
+    )
+    await write_audit(record)
+
+    line = json.loads(buffer.getvalue().strip())
+    assert line["outcome"] == "denied"
+    assert line["error"] == "principal lacks capability 'submit_jobs'"

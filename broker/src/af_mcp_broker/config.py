@@ -123,13 +123,6 @@ class Settings(BaseSettings):
     # User-facing portal, used in unlock hints and identity-linking redirects.
     portal_url: str = "https://mcp-portal.af.uchicago.edu"
 
-    # Loopback base URL the aggregator middleware uses to reach the broker's
-    # own /v1 API. The broker contract is HTTP even when co-located.
-    broker_internal_url: str = Field(
-        default="http://localhost:8080",
-        alias="BROKER_INTERNAL_URL",
-    )
-
     log_level: str = Field(
         default="INFO",
         alias="LOG_LEVEL",

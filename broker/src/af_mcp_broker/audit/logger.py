@@ -28,6 +28,11 @@ class AuditRecord:
     audit_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     mcp_backend: str | None = None
     execution_model: str | None = None
+    # "success" | "denied" | "error" -- lets a single audit line cover both a
+    # completed tool call and an authorization denial or a downstream
+    # failure, rather than only ever recording successes.
+    outcome: str = "success"
+    error: str | None = None
 
 
 class AuditLogger:
