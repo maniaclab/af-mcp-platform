@@ -1,9 +1,10 @@
 <script setup lang="ts">
 /**
  * TokensPage.vue — manual Bearer bootstrap for programmatic MCP clients
- * (issue #24). Interactive browser use never touches this page — oauth2-proxy
- * handles that transparently (see docs/auth.md). This page exists for clients
- * like Claude Desktop that can't do OAuth discovery yet.
+ * (issue #24), backed by a durable, HA-safe registry with enforced
+ * revocation (issue #115). Interactive browser use never touches this page
+ * — oauth2-proxy handles that transparently (see docs/auth.md). This page
+ * exists for clients like Claude Desktop that can't do OAuth discovery yet.
  *
  * CRITICAL SECURITY NOTE: the minted token value only ever lives in
  * `mintedToken` for the lifetime of the mint dialog. It is cleared the moment
@@ -14,6 +15,7 @@
 import { ref, computed, onMounted, nextTick } from 'vue';
 import { mintToken, listTokens, revokeToken, SessionExpiredError } from '../lib/api';
 import type { MintedToken, TokenSummary } from '../lib/api';
+import { shortJti, tokenStatus } from '../lib/tokenDisplay';
 
 const tokens = ref<TokenSummary[]>([]);
 const loading = ref(true);
@@ -51,7 +53,7 @@ const mintDialog = ref<HTMLDialogElement | null>(null);
 const mintTrigger = ref<HTMLButtonElement | null>(null);
 
 const ttlSeconds = ref<'3600' | '21600' | '86400'>('3600');
-const note = ref('');
+const name = ref('');
 const minting = ref(false);
 const mintError = ref<string | null>(null);
 const mintedToken = ref<MintedToken | null>(null);
@@ -61,7 +63,7 @@ async function openMintDialog(evt: Event) {
   mintTrigger.value = evt.currentTarget as HTMLButtonElement;
   mintedToken.value = null;
   mintError.value = null;
-  note.value = '';
+  name.value = '';
   ttlSeconds.value = '3600';
   copyLabel.value = 'Copy';
   await nextTick();
@@ -81,7 +83,7 @@ async function handleMint(evt: Event) {
   minting.value = true;
   mintError.value = null;
   try {
-    mintedToken.value = await mintToken(Number(ttlSeconds.value), note.value.trim() || undefined);
+    mintedToken.value = await mintToken(Number(ttlSeconds.value), name.value.trim() || undefined);
   } catch (err) {
     mintError.value = err instanceof Error ? err.message : 'Could not mint a token. Try again.';
   } finally {
@@ -116,7 +118,11 @@ async function handleRevoke(jti: string) {
   revokeError.value = null;
   try {
     await revokeToken(jti);
-    tokens.value = tokens.value.filter((t) => t.jti !== jti);
+    // issue #115: revoking no longer removes the row (PR #28's behavior) --
+    // it stays listed with a "revoked" status, so patch it in place rather
+    // than refetching the whole list.
+    const row = tokens.value.find((t) => t.jti === jti);
+    if (row) row.revoked_at = new Date().toISOString();
   } catch (err) {
     revokeError.value = err instanceof Error ? err.message : 'Revoke failed.';
   } finally {
@@ -155,6 +161,12 @@ const sourceLabel: Record<string, string> = {
   manual: 'manual',
   'mcp-oauth': 'mcp-oauth',
   'oauth2-proxy': 'oauth2-proxy',
+};
+
+const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
+  active: 'active',
+  revoked: 'revoked',
+  expired: 'expired',
 };
 </script>
 
@@ -204,10 +216,12 @@ const sourceLabel: Record<string, string> = {
         <table class="tp__table-el" aria-label="Your issued tokens">
           <thead>
             <tr>
-              <th scope="col" class="tp__th">Note</th>
-              <th scope="col" class="tp__th">Issued</th>
+              <th scope="col" class="tp__th">Name</th>
+              <th scope="col" class="tp__th">Token ID</th>
+              <th scope="col" class="tp__th">Minted</th>
               <th scope="col" class="tp__th">Expires</th>
               <th scope="col" class="tp__th">Source</th>
+              <th scope="col" class="tp__th">Status</th>
               <th scope="col" class="tp__th tp__th--action">
                 <span class="sr-only">Actions</span>
               </th>
@@ -215,9 +229,10 @@ const sourceLabel: Record<string, string> = {
           </thead>
           <tbody>
             <tr v-for="row in sortedTokens" :key="row.jti" class="tp__row">
-              <td class="tp__td tp__td--note">{{ row.note || '(no note)' }}</td>
+              <td class="tp__td tp__td--name">{{ row.name }}</td>
+              <td class="tp__td tp__td--jti" :title="row.jti">{{ shortJti(row.jti) }}</td>
               <td class="tp__td" :title="formatAbsolute(row.issued_at)">
-                {{ formatRelative(row.issued_at) }}
+                {{ formatAbsolute(row.issued_at) }}
               </td>
               <td
                 class="tp__td"
@@ -231,11 +246,16 @@ const sourceLabel: Record<string, string> = {
                   {{ sourceLabel[row.source] ?? row.source }}
                 </span>
               </td>
+              <td class="tp__td">
+                <span class="tp__badge" :class="`tp__badge--status-${tokenStatus(row)}`">
+                  {{ statusLabel[tokenStatus(row)] }}
+                </span>
+              </td>
               <td class="tp__td tp__td--action">
                 <button
                   type="button"
                   class="tp__btn tp__btn--revoke"
-                  :disabled="revokingJti === row.jti"
+                  :disabled="revokingJti === row.jti || tokenStatus(row) !== 'active'"
                   @click="handleRevoke(row.jti)"
                 >
                   {{ revokingJti === row.jti ? 'Revoking…' : 'Revoke' }}
@@ -286,10 +306,10 @@ const sourceLabel: Record<string, string> = {
           </div>
 
           <div class="tp__form-group">
-            <label for="tp-note" class="tp__form-label">Note (optional)</label>
+            <label for="tp-name" class="tp__form-label">Name (optional)</label>
             <input
-              id="tp-note"
-              v-model="note"
+              id="tp-name"
+              v-model="name"
               type="text"
               class="tp__input"
               placeholder="e.g. claude-desktop"
@@ -332,8 +352,8 @@ const sourceLabel: Record<string, string> = {
 
         <dl class="tp__token-meta">
           <div class="tp__token-meta-row">
-            <dt>Note</dt>
-            <dd>{{ mintedToken.note || '(no note)' }}</dd>
+            <dt>Name</dt>
+            <dd>{{ mintedToken.name }}</dd>
           </div>
           <div class="tp__token-meta-row">
             <dt>Expires</dt>
@@ -484,8 +504,14 @@ const sourceLabel: Record<string, string> = {
   color: var(--color-af-text);
 }
 
-.tp__td--note {
+.tp__td--name {
   color: #9ca3af;
+}
+
+.tp__td--jti {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.75rem;
+  color: var(--color-af-dim);
 }
 
 .tp__td--expired {
@@ -514,6 +540,22 @@ const sourceLabel: Record<string, string> = {
 }
 .tp__badge--mcp-oauth,
 .tp__badge--oauth2-proxy {
+  background: rgb(from var(--color-af-dim) r g b / 0.12);
+  color: var(--color-af-dim);
+  border: 1px solid rgb(from var(--color-af-dim) r g b / 0.25);
+}
+
+.tp__badge--status-active {
+  background: rgb(from var(--color-af-teal) r g b / 0.12);
+  color: var(--color-af-teal);
+  border: 1px solid rgb(from var(--color-af-teal) r g b / 0.25);
+}
+.tp__badge--status-revoked {
+  background: rgb(from var(--color-af-red) r g b / 0.12);
+  color: var(--color-af-red);
+  border: 1px solid rgb(from var(--color-af-red) r g b / 0.25);
+}
+.tp__badge--status-expired {
   background: rgb(from var(--color-af-dim) r g b / 0.12);
   color: var(--color-af-dim);
   border: 1px solid rgb(from var(--color-af-dim) r g b / 0.25);

@@ -347,7 +347,8 @@ export async function revokeProxy(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Tokens — POST/GET/DELETE /v1/tokens (manual Bearer bootstrap, issue #24)
+// Tokens — POST/GET/DELETE /v1/tokens (manual Bearer bootstrap, issue #24;
+// Vault-backed registry + enforced revocation, issue #115)
 // ---------------------------------------------------------------------------
 
 /** Where a listed token came from. Today the broker only ever reports
@@ -361,23 +362,26 @@ export interface MintedToken {
   jti: string;
   issued_at: string;
   expires_at: string;
-  note?: string | null;
+  name: string;
 }
 
-/** GET /v1/tokens row — no `token` field, by design. */
+/** GET /v1/tokens row — no `token` field, by design. `revoked_at` is null
+ * until DELETE /v1/tokens/{jti} is called -- revoked rows stay listed
+ * (rather than disappearing, as PR #28 did) so the portal can show a
+ * revoked/active/expired status; see tokenDisplay.ts's tokenStatus(). */
 export interface TokenSummary {
   jti: string;
+  name: string;
   issued_at: string;
   expires_at: string;
+  revoked_at: string | null;
   source: TokenSource;
-  note?: string | null;
-  last_used_at?: string | null;
 }
 
-export async function mintToken(ttlSeconds: number, note?: string): Promise<MintedToken> {
+export async function mintToken(ttlSeconds: number, name?: string): Promise<MintedToken> {
   return apiFetch<MintedToken>('/tokens', {
     method: 'POST',
-    body: JSON.stringify({ ttl_seconds: ttlSeconds, ...(note ? { note } : {}) }),
+    body: JSON.stringify({ ttl_seconds: ttlSeconds, ...(name ? { name } : {}) }),
   });
 }
 
