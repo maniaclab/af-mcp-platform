@@ -32,10 +32,13 @@ Before a tool call succeeds, three things have to be true, in order:
 Every MCP client presents its own `aud=mcp-gateway` bearer token directly —
 there is no ForwardAuth proxy in front of `/mcp` (see
 [Architecture](architecture.md)). **MCP OAuth discovery (RFC 8414) is not
-implemented yet** (tracked by issue #58 as an explicit non-goal, deferred to
-the portal's planned `/tokens` page), so no client can bootstrap its first
-token automatically today — you obtain one via the portal and paste it into
-your client's configuration once. The mechanism for doing that without the
+implemented yet** (tracked by issue #58 as an explicit non-goal), so no
+client can bootstrap its first token automatically today — mint one at
+[`mcp-portal.af.uchicago.edu/tokens`](https://mcp-portal.af.uchicago.edu/tokens/)
+and paste it into your client's configuration once (see
+[Programmatic client bootstrap](auth.md#programmatic-client-bootstrap) for
+what that page's mint/list/revoke endpoints actually do and their known
+limitations). The mechanism for doing that without the
 token touching disk or shell history is client-specific; see each section
 below.
 
