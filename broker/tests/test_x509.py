@@ -11,15 +11,17 @@ import datetime
 import sys
 import types
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
-from pydantic import SecretStr
+from pydantic import SecretBytes, SecretStr
 
 from af_mcp_broker.credentials.cache import CredentialCache
 from af_mcp_broker.credentials.x509 import (
     _PROXY_B64_BEGIN,
     _PROXY_B64_END,
     HomeDirVomsBackend,
+    ProxyHarvestError,
     X509Provider,
     _extract_proxy_from_log,
     _parse_proxy_pem,
@@ -293,3 +295,155 @@ async def test_is_linked_false_when_neither_present(tmp_path):
     )
 
     assert await provider.is_linked(_principal("nosuchuser")) is False
+
+
+# ---------------------------------------------------------------------------
+# _mint_kubernetes: Job-failed vs. harvest-failed must not be miscounted
+# ---------------------------------------------------------------------------
+
+
+def _install_fake_k8s_for_mint(
+    monkeypatch,
+    captured: dict,
+    *,
+    job_succeeded: bool,
+    job_failed: bool,
+    pod_log: str,
+) -> None:
+    """Inject a fake kubernetes_asyncio sufficient to drive _mint_kubernetes
+    end-to-end: Job creation, stdin attach, Job status polling, pod log
+    harvest, and Job deletion.
+    """
+
+    fake_job = SimpleNamespace(
+        status=SimpleNamespace(succeeded=job_succeeded, failed=job_failed)
+    )
+    fake_pod = SimpleNamespace(
+        status=SimpleNamespace(phase="Running"),
+        metadata=SimpleNamespace(name="voms-mint-pod-abc123"),
+    )
+    fake_pod_list = SimpleNamespace(items=[fake_pod])
+
+    class FakeWsClient:
+        async def write_stdin(self, data):
+            captured["stdin"] = bytes(data)
+
+        async def close(self):
+            captured["closed"] = True
+
+    class FakeCoreV1Api:
+        def __init__(self, api_client):
+            pass
+
+        async def connect_get_namespaced_pod_attach(self, **kwargs):
+            captured["attach_kwargs"] = kwargs
+            return FakeWsClient()
+
+        async def list_namespaced_pod(self, **kwargs):
+            return fake_pod_list
+
+        async def read_namespaced_pod_log(self, **kwargs):
+            return pod_log
+
+    class FakeBatchV1Api:
+        def __init__(self, api_client):
+            pass
+
+        async def create_namespaced_job(self, **kwargs):
+            captured["created_job"] = kwargs
+
+        async def read_namespaced_job(self, **kwargs):
+            return fake_job
+
+        async def delete_namespaced_job(self, **kwargs):
+            captured["deleted_job"] = kwargs
+
+    class FakeApiClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    class FakeWsApiClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    class FakeV1DeleteOptions:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    def fake_load_incluster_config():
+        captured["loaded_incluster_config"] = True
+
+    k8s = types.ModuleType("kubernetes_asyncio")
+    client_mod = types.ModuleType("kubernetes_asyncio.client")
+    stream_mod = types.ModuleType("kubernetes_asyncio.stream")
+    config_mod = types.ModuleType("kubernetes_asyncio.config")
+    client_mod.CoreV1Api = FakeCoreV1Api
+    client_mod.BatchV1Api = FakeBatchV1Api
+    client_mod.ApiClient = FakeApiClient
+    client_mod.V1DeleteOptions = FakeV1DeleteOptions
+    stream_mod.WsApiClient = FakeWsApiClient
+    config_mod.load_incluster_config = fake_load_incluster_config
+    k8s.client = client_mod
+    k8s.stream = stream_mod
+    k8s.config = config_mod
+
+    monkeypatch.setitem(sys.modules, "kubernetes_asyncio", k8s)
+    monkeypatch.setitem(sys.modules, "kubernetes_asyncio.client", client_mod)
+    monkeypatch.setitem(sys.modules, "kubernetes_asyncio.stream", stream_mod)
+    monkeypatch.setitem(sys.modules, "kubernetes_asyncio.config", config_mod)
+
+
+@pytest.mark.asyncio
+async def test_mint_kubernetes_job_failed_records_failed_unlock(monkeypatch):
+    """A Job that FAILED is a genuine bad-passphrase signal — it must still
+    burn the user's unlock-attempt budget.
+    """
+    captured: dict = {}
+    _install_fake_k8s_for_mint(
+        monkeypatch, captured, job_succeeded=False, job_failed=True, pod_log=""
+    )
+
+    backend = HomeDirVomsBackend(settings=SimpleNamespace(home_root="/data/homes"))
+    cache = CredentialCache()
+    monkeypatch.setattr(cache, "record_failed_unlock", MagicMock())
+    principal = _principal("auser")
+
+    with pytest.raises(ValueError, match="failed"):
+        await backend._mint_kubernetes(
+            principal, SecretBytes(b"hunter2"), valid="12:00", voms="atlas", cache=cache
+        )
+
+    cache.record_failed_unlock.assert_called_once_with(principal.uid)
+
+
+@pytest.mark.asyncio
+async def test_mint_kubernetes_harvest_failure_does_not_record_failed_unlock(
+    monkeypatch,
+):
+    """A Job that SUCCEEDED but whose pod log is missing the sentinel payload
+    is an infra failure (truncated log, kubelet limits, transient read
+    issue) — it must NOT be miscounted as a bad-passphrase attempt.
+    """
+    captured: dict = {}
+    pod_log = f"voms-proxy-init: contacting voms server...\n{_PROXY_B64_BEGIN}\ntruncated, no end sentinel\n"
+    _install_fake_k8s_for_mint(
+        monkeypatch, captured, job_succeeded=True, job_failed=False, pod_log=pod_log
+    )
+
+    backend = HomeDirVomsBackend(settings=SimpleNamespace(home_root="/data/homes"))
+    cache = CredentialCache()
+    monkeypatch.setattr(cache, "record_failed_unlock", MagicMock())
+    principal = _principal("auser")
+
+    with pytest.raises(ProxyHarvestError, match="end sentinel"):
+        await backend._mint_kubernetes(
+            principal, SecretBytes(b"hunter2"), valid="12:00", voms="atlas", cache=cache
+        )
+
+    cache.record_failed_unlock.assert_not_called()

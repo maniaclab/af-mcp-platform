@@ -49,6 +49,17 @@ _PROXY_B64_BEGIN = "-----BEGIN-PROXY-B64-----"
 _PROXY_B64_END = "-----END-PROXY-B64-----"
 
 
+class ProxyHarvestError(ValueError):
+    """Raised when a mint Job SUCCEEDED but its proxy could not be harvested
+    from the pod log (truncated log, kubelet log-size limits, transient read
+    issue). This is an infra failure, not a bad-passphrase signal, so callers
+    must NOT count it against the passphrase rate limiter the way a genuine
+    Job failure is. Subclasses ``ValueError`` so existing ``except
+    ValueError`` call sites still catch it; callers that need to tell the two
+    apart (see ``_mint_kubernetes``) catch this first.
+    """
+
+
 def _zero_bytearray(buf: bytearray) -> None:
     """Overwrite *buf* in place with NUL bytes.
 
@@ -65,24 +76,27 @@ def _extract_proxy_from_log(log_text: str) -> bytes:
 
     The mint container prints the proxy between :data:`_PROXY_B64_BEGIN` and
     :data:`_PROXY_B64_END`; any voms-proxy-init noise appears before the begin
-    sentinel.  Raises ``ValueError`` if either sentinel is missing or the
-    payload does not decode.
+    sentinel.  Raises :class:`ProxyHarvestError` if either sentinel is missing
+    or the payload does not decode — the Job having reached this point means
+    it already succeeded, so this is an infra failure, not a bad passphrase.
     """
     begin = log_text.find(_PROXY_B64_BEGIN)
     if begin == -1:
-        raise ValueError("proxy begin sentinel not found in mint pod log")
+        raise ProxyHarvestError("proxy begin sentinel not found in mint pod log")
     payload_start = begin + len(_PROXY_B64_BEGIN)
     end = log_text.find(_PROXY_B64_END, payload_start)
     if end == -1:
-        raise ValueError("proxy end sentinel not found in mint pod log")
+        raise ProxyHarvestError("proxy end sentinel not found in mint pod log")
     b64 = log_text[payload_start:end]
     try:
         # validate=False discards the newlines base64 wraps its output with.
         decoded = base64.b64decode(b64, validate=False)
     except (binascii.Error, ValueError) as exc:
-        raise ValueError("failed to decode proxy payload from mint pod log") from exc
+        raise ProxyHarvestError(
+            "failed to decode proxy payload from mint pod log"
+        ) from exc
     if not decoded:
-        raise ValueError("proxy payload in mint pod log was empty")
+        raise ProxyHarvestError("proxy payload in mint pod log was empty")
     return decoded
 
 
@@ -375,11 +389,17 @@ class HomeDirVomsBackend(X509Backend):
 
                 # Wait for Job completion and read the proxy from the pod log.
                 # A failed Job most likely means a bad passphrase, so count it
-                # against the rate limiter just like the local path does.
+                # against the rate limiter just like the local path does. A
+                # Job that SUCCEEDED but whose log couldn't be harvested is an
+                # infra failure, not a passphrase signal, so it must NOT count
+                # against that same rate limiter — check ProxyHarvestError
+                # (a ValueError subclass) before the general ValueError case.
                 try:
                     proxy_pem = await self._wait_for_job_and_harvest(
                         batch_v1, core_v1, job_name, principal
                     )
+                except ProxyHarvestError:
+                    raise
                 except ValueError:
                     cache.record_failed_unlock(principal.uid)
                     raise
@@ -491,7 +511,8 @@ class HomeDirVomsBackend(X509Backend):
         success.  We read the pod log (``read_namespaced_pod_log``) after the
         Job completes — a completed pod cannot be exec'd into — and decode the
         payload.  Raises ``ValueError`` on Job failure (likely a bad passphrase)
-        or if the log lacks a valid payload.
+        or :class:`ProxyHarvestError` if the Job succeeded but the log lacks a
+        valid payload (infra failure, not a bad passphrase).
         """
         deadline = time.monotonic() + self._job_timeout_seconds
         while time.monotonic() < deadline:
@@ -518,7 +539,7 @@ class HomeDirVomsBackend(X509Backend):
             label_selector=f"job-name={job_name}",
         )
         if not pods.items:
-            raise ValueError(
+            raise ProxyHarvestError(
                 f"no pod found for completed Job {job_name!r} — cannot harvest "
                 "proxy (TTL may have reaped it)."
             )
