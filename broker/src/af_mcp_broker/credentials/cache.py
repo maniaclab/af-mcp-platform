@@ -7,9 +7,12 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
 
 from af_mcp_broker.credentials.base import IssuedCredential
 
@@ -99,6 +102,14 @@ class CredentialCache:
         self._failed_unlocks: dict[int, _FailedUnlockRecord] = defaultdict(
             _FailedUnlockRecord
         )
+        # (uid, target) -> asyncio.Lock, single-flighting concurrent mints for
+        # the same key (see get_or_mint()). Never cleaned up, same as
+        # _failed_unlocks above -- the key space is bounded by real
+        # authenticated uids and configured backend targets, not
+        # attacker-controlled, so leaving idle Locks around is harmless.
+        self._mint_locks: dict[tuple[int, str], asyncio.Lock] = defaultdict(
+            asyncio.Lock
+        )
         self._max_failed_unlocks = max_failed_unlocks
         self._unlock_window_seconds = unlock_window_seconds
         self._janitor_task: asyncio.Task | None = None
@@ -163,6 +174,36 @@ class CredentialCache:
                 )
             return None
         return entry.credential
+
+    async def get_or_mint(
+        self,
+        uid: int,
+        target: str,
+        min_remaining: int,
+        mint: Callable[[], Awaitable[Any]],
+    ) -> Any:
+        """Single-flight a mint for *(uid, target)*.
+
+        Concurrent callers that each independently miss the cache for the
+        same key would otherwise each repeat *mint* — an expensive, real
+        -resource operation (a Keycloak round-trip, or a k8s Job) — instead
+        of the N-1 redundant callers reusing the one already in flight.
+        Callers are expected to have already called ``get()`` and found a
+        miss before calling this; it only serializes what happens *after*
+        that miss, so a cache hit still short-circuits before ever touching
+        the per-key lock.
+
+        Once the per-key lock is acquired, the cache is re-checked — another
+        caller may have completed a mint (and called ``put()``) while this
+        one was waiting — and *mint* is only invoked if it's still empty.
+        *mint* is expected to store its own result via ``put()``, exactly as
+        callers already do on the non-single-flighted path.
+        """
+        async with self._mint_locks[(uid, target)]:
+            cached = await self.get(uid, target, min_remaining)
+            if cached is not None:
+                return cached
+            return await mint()
 
     async def put(
         self,

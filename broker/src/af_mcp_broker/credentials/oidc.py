@@ -163,32 +163,40 @@ class OIDCProvider(CredentialProvider):
             self._log.debug("oidc.issue.cache_hit", uid=principal.uid, target=target)
             return cached
 
-        iam_token, expires_at = await self._fetch_brokered_token(principal)
+        async def _do_fetch() -> IssuedCredential:
+            iam_token, expires_at = await self._fetch_brokered_token(principal)
 
-        audit_id = uuid.uuid4().hex
-        cred = IssuedCredential(
-            cred_class=self.cred_class,
-            target=target,
-            kind=CredentialKind.BEARER,
-            expires_at=expires_at,
-            payload={
-                "access_token": iam_token,
-                "token_type": "Bearer",
-            },
-            audit_id=audit_id,
-            source="keycloak_brokered_token",
-            execution_model=self.execution_model,
-        )
+            audit_id = uuid.uuid4().hex
+            cred = IssuedCredential(
+                cred_class=self.cred_class,
+                target=target,
+                kind=CredentialKind.BEARER,
+                expires_at=expires_at,
+                payload={
+                    "access_token": iam_token,
+                    "token_type": "Bearer",
+                },
+                audit_id=audit_id,
+                source="keycloak_brokered_token",
+                execution_model=self.execution_model,
+            )
 
-        await self._cache.put(principal.uid, target, cred)
-        self._log.info(
-            "oidc.issue.success",
-            uid=principal.uid,
-            target=target,
-            audit_id=audit_id,
-            expires_at=expires_at,
+            await self._cache.put(principal.uid, target, cred)
+            self._log.info(
+                "oidc.issue.success",
+                uid=principal.uid,
+                target=target,
+                audit_id=audit_id,
+                expires_at=expires_at,
+            )
+            return cred
+
+        # Single-flighted: concurrent misses for this (uid, target) await one
+        # brokered-token fetch instead of each independently hitting Keycloak
+        # (issue #94).
+        return await self._cache.get_or_mint(
+            principal.uid, target, min_remaining_seconds, _do_fetch
         )
-        return cred
 
     async def _fetch_brokered_token(self, principal: Principal) -> tuple[str, float]:
         """Call Keycloak's stored-brokered-token endpoint.
