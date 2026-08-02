@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from af_mcp_broker.config import Settings
     from af_mcp_broker.credentials import CredentialRegistry
     from af_mcp_broker.mcp.registry import BackendRegistry, BackendSpec
+    from af_mcp_broker.token_registry import RevokedJtiCache
 
 
 def _build_client(
@@ -188,6 +189,7 @@ def build_aggregator(
     settings: Settings,
     policy: EntitlementPolicy,
     credential_registry: CredentialRegistry,
+    revoked_jti_cache: RevokedJtiCache | None = None,
 ) -> FastMCP:
     """Construct a fully-wired aggregator FastMCP instance.
 
@@ -199,9 +201,14 @@ def build_aggregator(
     audits every invocation) -- then adds one ProxyProvider per backend in
     ``registry``. Namespacing follows ``BackendSpec.apply_namespace`` --
     backends whose tools already self-prefix (e.g. rucio-mcp) opt out.
+
+    *revoked_jti_cache* defaults to None here because app.py builds the
+    aggregator eagerly, before the real token registry exists (see the
+    module-level comment above ``_mcp_aggregator``) -- ``populate_aggregator``
+    pushes the real one in once the lifespan has it, same as settings/policy.
     """
     mcp = FastMCP(name="af-mcp-aggregator")
-    mcp.add_middleware(IdentityMiddleware(settings))
+    mcp.add_middleware(IdentityMiddleware(settings, revoked_jti_cache))
     mcp.add_middleware(EntitlementMiddleware(registry, policy))
     mcp.add_middleware(AuthorizationMiddleware(registry, policy))
     _register_backends(mcp, registry, credential_registry, settings)
@@ -214,9 +221,10 @@ def populate_aggregator(
     settings: Settings,
     policy: EntitlementPolicy,
     credential_registry: CredentialRegistry,
+    revoked_jti_cache: RevokedJtiCache | None = None,
 ) -> None:
     """Refresh an aggregator built by ``build_aggregator`` with a freshly
-    loaded registry/settings/policy/credential_registry.
+    loaded registry/settings/policy/credential_registry/revoked_jti_cache.
 
     app.py's mount-time constraint means the aggregator's FastMCP instance
     and ASGI app must exist before BACKENDS_FILE/POLICY_FILE/the credential
@@ -230,6 +238,7 @@ def populate_aggregator(
     """
     identity_mw, entitlement_mw, authorization_mw = _find_middleware(mcp)
     identity_mw.settings = settings
+    identity_mw.revoked_jti_cache = revoked_jti_cache
     entitlement_mw.registry = registry
     entitlement_mw.policy = policy
     authorization_mw.registry = registry

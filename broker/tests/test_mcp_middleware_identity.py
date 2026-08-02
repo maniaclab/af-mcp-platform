@@ -10,6 +10,11 @@ from fastmcp.exceptions import AuthorizationError
 
 from af_mcp_broker.mcp.middleware import identity_mw
 from af_mcp_broker.mcp.middleware.identity_mw import IdentityMiddleware
+from af_mcp_broker.token_registry import (
+    InMemoryTokenRegistryBackend,
+    RevokedJtiCache,
+    TokenRecord,
+)
 
 
 class _FakeFastMCPContext:
@@ -165,3 +170,58 @@ async def test_missing_fastmcp_context_fails_closed(
 
     with pytest.raises(AuthorizationError):
         await mw.on_request(context, _call_next)
+
+
+# ---------------------------------------------------------------------------
+# Revoked-jti enforcement (issue #115) — /mcp must reject a revoked token
+# exactly like /v1 does, since both call identity.get_principal directly.
+# ---------------------------------------------------------------------------
+
+
+async def test_revoked_jti_rejected_on_mcp_path(
+    settings, sig_key, prime_jwks, monkeypatch
+):
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims(jti="revoked-on-mcp"))
+    _set_headers(monkeypatch, {"authorization": f"Bearer {token}"})
+
+    backend = InMemoryTokenRegistryBackend()
+    await backend.add(
+        TokenRecord(
+            jti="revoked-on-mcp",
+            uid=50123,
+            subject="user-123",
+            name="test-token",
+            issued_at=time.time(),
+            expires_at=time.time() + 3600,
+            revoked_at=None,
+            minted_via="portal",
+        )
+    )
+    await backend.revoke(50123, "revoked-on-mcp", revoked_at=time.time())
+    cache = RevokedJtiCache(backend, refresh_interval_seconds=30.0)
+
+    mw = IdentityMiddleware(settings, revoked_jti_cache=cache)
+    context = _FakeMiddlewareContext(_FakeFastMCPContext())
+
+    with pytest.raises(AuthorizationError):
+        await mw.on_request(context, _call_next)
+
+
+async def test_active_jti_allowed_through_mcp_path_with_cache_configured(
+    settings, sig_key, prime_jwks, monkeypatch
+):
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims(jti="still-active"))
+    _set_headers(monkeypatch, {"authorization": f"Bearer {token}"})
+
+    cache = RevokedJtiCache(
+        InMemoryTokenRegistryBackend(), refresh_interval_seconds=30.0
+    )
+    mw = IdentityMiddleware(settings, revoked_jti_cache=cache)
+    fake_ctx = _FakeFastMCPContext()
+    context = _FakeMiddlewareContext(fake_ctx)
+
+    result = await mw.on_request(context, _call_next)
+
+    assert result == "ok"

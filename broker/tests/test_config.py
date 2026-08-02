@@ -156,3 +156,31 @@ def test_vault_config_raises_when_addr_missing():
 def test_vault_config_raises_when_auth_role_missing():
     with pytest.raises(ValueError, match="vault_auth_role"):
         Settings(token_store_backend="vault", vault_addr="https://vault.example")
+
+
+# ---------------------------------------------------------------------------
+# Vault TokenRegistryBackend config (issue #115) — shares the same
+# vault_addr/vault_auth_role validation as the TokenStore backend above.
+# ---------------------------------------------------------------------------
+
+
+def test_vault_config_ok_when_registry_backend_is_in_memory():
+    Settings(token_registry_backend="in_memory")  # must not raise
+
+
+def test_vault_config_ok_when_registry_backend_vault_and_addr_and_role_set():
+    Settings(
+        token_registry_backend="vault",
+        vault_addr="https://vault.example",
+        vault_auth_role="af-mcp-broker",
+    )  # must not raise
+
+
+def test_vault_config_raises_when_registry_backend_vault_and_addr_missing():
+    with pytest.raises(ValueError, match="vault_addr"):
+        Settings(token_registry_backend="vault", vault_auth_role="af-mcp-broker")
+
+
+def test_vault_config_raises_when_registry_backend_vault_and_auth_role_missing():
+    with pytest.raises(ValueError, match="vault_auth_role"):
+        Settings(token_registry_backend="vault", vault_addr="https://vault.example")
