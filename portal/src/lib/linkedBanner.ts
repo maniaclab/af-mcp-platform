@@ -62,3 +62,44 @@ export function extractLinkedErrorParams(search: string): LinkedErrorParams | nu
   const remaining = params.toString();
   return { alias, code, description, remainingSearch: remaining ? `?${remaining}` : '' };
 }
+
+/** The minimal provider shape resolveLinkedBanner/resolveLinkedErrorBanner need
+ * to look up a display_name — deliberately narrower than api.ts's
+ * IdentityProvider so this module stays a self-contained leaf. */
+export interface BannerProvider {
+  id: string;
+  display_name: string;
+}
+
+/**
+ * Resolves the "Linked successfully" banner text for a parsed `linked` id,
+ * given the current provider list. Returns null when there's nothing to
+ * show: no `linked` param, or an id that doesn't match a real provider — the
+ * OAuth callback would only ever set a real id, so an unrecognized one is
+ * either a stale bookmark or someone poking at the URL, not a genuine
+ * success (see issue #81).
+ */
+export function resolveLinkedBanner(
+  providers: BannerProvider[],
+  linkedId: string | null,
+): string | null {
+  if (!linkedId) return null;
+  const linked = providers.find((p) => p.id === linkedId);
+  return linked ? linked.display_name : null;
+}
+
+/**
+ * Resolves the linking-failure banner text for parsed `linked_error*` params,
+ * given the current provider list. Same "only show for a known provider"
+ * guard as resolveLinkedBanner, and the same reasoning (see issue #81).
+ */
+export function resolveLinkedErrorBanner(
+  providers: BannerProvider[],
+  linkedError: LinkedErrorParams | null,
+): string | null {
+  if (!linkedError) return null;
+  const failed = providers.find((p) => p.id === linkedError.alias);
+  if (!failed) return null;
+  const reason = linkedError.description ?? linkedError.code;
+  return `Linking ${failed.display_name} failed: ${reason}`;
+}

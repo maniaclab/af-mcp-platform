@@ -9,7 +9,12 @@ import {
   type IdentityProvider,
 } from '../lib/api';
 import { groupServersByAlias } from '../lib/catalog';
-import { extractLinkedErrorParams, extractLinkedParam } from '../lib/linkedBanner';
+import {
+  extractLinkedErrorParams,
+  extractLinkedParam,
+  resolveLinkedBanner,
+  resolveLinkedErrorBanner,
+} from '../lib/linkedBanner';
 import IdentityLink from './IdentityLink.vue';
 
 const providers = ref<IdentityProvider[]>([]);
@@ -31,9 +36,10 @@ function serversForAlias(id: string): CatalogServer[] {
 }
 
 // Set by a `?linked=<id>` landing (see broker/src/af_mcp_broker/api/oauth21.py's
-// `callback` route) — the display_name of the just-linked provider, or the
-// raw id as a fallback if it doesn't match anything in `providers`. Fades on
-// its own after ~5s; also dismissed by the banner's own close affordance.
+// `callback` route) — the display_name of the just-linked provider, or null
+// if `linked` was absent or didn't match a real provider (see
+// resolveLinkedBanner in ../lib/linkedBanner.ts). Fades on its own after
+// ~5s; also dismissed by the banner's own close affordance.
 const linkedBanner = ref<string | null>(null);
 let linkedBannerTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -76,16 +82,12 @@ onMounted(async () => {
   try {
     const data = await fetchIdentities();
     providers.value = data.providers;
-    if (linkedId) {
-      const linked = data.providers.find((p) => p.id === linkedId);
-      linkedBanner.value = linked ? linked.display_name : linkedId;
+    linkedBanner.value = resolveLinkedBanner(data.providers, linkedId);
+    if (linkedBanner.value) {
       linkedBannerTimer = setTimeout(dismissLinkedBanner, 5000);
     }
-    if (linkedError) {
-      const failed = data.providers.find((p) => p.id === linkedError.alias);
-      const displayName = failed ? failed.display_name : linkedError.alias;
-      const reason = linkedError.description ?? linkedError.code;
-      linkedErrorBanner.value = `Linking ${displayName} failed: ${reason}`;
+    linkedErrorBanner.value = resolveLinkedErrorBanner(data.providers, linkedError);
+    if (linkedErrorBanner.value) {
       linkedErrorBannerTimer = setTimeout(dismissLinkedErrorBanner, 5000);
     }
   } catch (err) {
@@ -108,11 +110,6 @@ onMounted(async () => {
 
 function reload() {
   location.reload();
-}
-
-// Show the "missing required identity" warning when a key provider is unlinked.
-function missingRequired(id: string): boolean {
-  return !providers.value.some((p) => p.id === id && p.linked);
 }
 
 // Called on IdentityLink's `unlinked` event, once the DELETE has already
@@ -178,32 +175,6 @@ function handleUnlinked(id: string) {
     </div>
 
     <template v-else>
-      <!-- Warning: missing required identities -->
-      <div
-        v-if="missingRequired('cern') || missingRequired('atlas-iam')"
-        class="ip__warn"
-        role="status"
-      >
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-          <path
-            d="M7 1L13 12H1L7 1Z"
-            stroke="var(--color-af-amber)"
-            stroke-width="1.25"
-            stroke-linejoin="round"
-          />
-          <path
-            d="M7 5.5V8"
-            stroke="var(--color-af-amber)"
-            stroke-width="1.25"
-            stroke-linecap="round"
-          />
-          <circle cx="7" cy="10" r="0.6" fill="var(--color-af-amber)" />
-        </svg>
-        <span>
-          Link CERN and ATLAS IAM to access the full tool catalog and grid proxy generation.
-        </span>
-      </div>
-
       <!-- Identity list — one flat list, rendered uniformly regardless of
            linking mechanism (keycloak-brokered or oauth21-direct). -->
       <div v-if="providers.length > 0" class="ip__list">
@@ -309,25 +280,6 @@ function handleUnlinked(id: string) {
   .ip__banner {
     animation: none;
   }
-}
-
-/* Warning */
-.ip__warn {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.625rem;
-  padding: 0.875rem 1rem;
-  border: 1px solid rgb(from var(--color-af-amber) r g b / 0.25);
-  border-radius: 4px;
-  background: rgb(from var(--color-af-amber) r g b / 0.06);
-  font-size: 0.875rem;
-  color: #d97706;
-  line-height: 1.5;
-}
-
-.ip__warn svg {
-  flex-shrink: 0;
-  margin-top: 0.1875rem;
 }
 
 /* List */
