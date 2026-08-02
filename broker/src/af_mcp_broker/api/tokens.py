@@ -9,7 +9,7 @@ re-exposes a token's value once it has been returned once.
 Design notes / known limitations (see the PR description for the full
 writeup — these are real gaps, not oversights):
 
-* Minting targets the broker's OWN audience (``settings.keycloak_audience``,
+* Minting targets the broker's OWN audience (``settings.oidc_audience``,
   i.e. ``mcp-gateway``). This is deliberately "Path B" from docs/auth.md
   (AF-internal token exchange) — the "atlas-auth.cern.ch rejects this token"
   caveat does not apply here because the token only ever needs to satisfy
@@ -266,9 +266,7 @@ async def _exchange_for_bearer(
             ),
         )
 
-    token_endpoint = (
-        f"{settings.keycloak_issuer.rstrip('/')}/protocol/openid-connect/token"
-    )
+    token_endpoint = f"{settings.oidc_issuer.rstrip('/')}/protocol/openid-connect/token"
     try:
         resp = await get_http_client().post(
             token_endpoint,
@@ -279,7 +277,7 @@ async def _exchange_for_bearer(
                 "subject_token": principal.raw_token.get_secret_value(),
                 "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
                 "requested_token_type": "urn:ietf:params:oauth:token-type:access_token",
-                "audience": settings.keycloak_audience,
+                "audience": settings.oidc_audience,
             },
             timeout=10.0,
         )
@@ -316,7 +314,7 @@ async def _best_effort_keycloak_revoke(settings: Settings, raw_token: str) -> No
     if not client_id or not client_secret:
         return
     revoke_endpoint = (
-        f"{settings.keycloak_issuer.rstrip('/')}/protocol/openid-connect/revoke"
+        f"{settings.oidc_issuer.rstrip('/')}/protocol/openid-connect/revoke"
     )
     try:
         await get_http_client().post(
