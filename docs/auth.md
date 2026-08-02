@@ -504,22 +504,38 @@ portal's `mcp-portal.af.uchicago.edu/tokens` page exists for exactly this:
    self-audience (`aud=mcp-gateway`). This is "Path B" above (AF-internal
    token exchange), not Path A — the token only ever needs to satisfy this
    broker's own `identity.keycloak_dependency`, so the "atlas-auth.cern.ch
-   rejects this token" caveat for Path B does not apply. The plain token
-   value is shown exactly once by the portal.
-2. **List** — `GET /v1/tokens` shows tokens minted through this endpoint
-   (`source: "manual"`). Keycloak's admin REST API exposes user sessions and
-   IdP consents, not per-token metadata for RFC 8693 token-exchange output,
-   so tokens issued via the interactive oauth2-proxy flow or a future MCP
-   OAuth flow are not enumerable here — a real gap, documented rather than
-   silently omitted.
-3. **Revoke** — `DELETE /v1/tokens/{jti}` removes the row from the list and
-   best-effort-calls Keycloak's RFC 7009 revoke endpoint. Because this
-   broker validates bearer tokens via local JWT signature verification
-   against the JWKS (not Keycloak introspection), a successful upstream
-   revoke does not by itself force the broker to reject the token before its
-   natural expiry — true early revocation would require wiring jti-denylist
-   enforcement into `identity.keycloak_dependency`, tracked as follow-up
-   work.
+   rejects this token" caveat for Path B does not apply. **The plain token
+   value is shown exactly once**, in this response — the portal never
+   displays it again, and the broker never persists it: the token registry
+   (below) stores only metadata (`jti`, an optional user-supplied name or a
+   server-generated `mcp-YYYYMMDD-<jti prefix>` default, issue/expiry times,
+   revocation state), never anything the token could be reconstructed from.
+2. **List** — `GET /v1/tokens` shows metadata for tokens minted through this
+   endpoint (`source: "manual"`), including ones already revoked (shown with
+   a revoked status rather than removed, so the portal can distinguish
+   active/revoked/expired). Keycloak's admin REST API exposes user sessions
+   and IdP consents, not per-token metadata for RFC 8693 token-exchange
+   output, so tokens issued via the interactive oauth2-proxy flow or a
+   future MCP OAuth flow are not enumerable here — a real gap, documented
+   rather than silently omitted.
+3. **Revoke** — `DELETE /v1/tokens/{jti}` marks the token revoked in the
+   registry. Unlike the mint-rate-limit window (still per-replica, in-memory
+   — see the module docstring in `api/tokens.py` for why that's an
+   acceptable tradeoff for a soft anti-abuse counter), the registry itself
+   is durable and HA-safe: it's backed by the same Vault/OpenBao KV-v2
+   pattern `credentials/vault.py`'s `VaultTokenStore` uses (one entry per
+   uid, CAS writes, a flat `revoked-jtis` index), selected via
+   `TOKEN_REGISTRY_BACKEND=vault` the same way `TOKEN_STORE_BACKEND` selects
+   the oauth21 token store — so a token minted on one broker replica can be
+   listed and revoked from another, and survives a pod restart. Revocation
+   is **enforced**, not cosmetic: `identity.get_principal` — the single
+   choke point both `/v1`'s `keycloak_dependency` and `/mcp`'s
+   `IdentityMiddleware` call — checks every token's `jti` against a
+   `RevokedJtiCache` that refreshes from the registry on a bounded interval
+   (`REVOKED_JTI_CACHE_REFRESH_SECONDS`, default 30s). A revoked token is
+   rejected with 401 everywhere once that interval has elapsed; only jtis
+   the registry actually knows about can be revoked at all, so ordinary
+   Keycloak session tokens are never affected.
 
 This is a stopgap. Once MCP OAuth discovery lands and Claude Desktop (or
 whichever client) can drive the flow itself, the manual `/tokens` page
