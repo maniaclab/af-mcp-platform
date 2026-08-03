@@ -28,6 +28,7 @@ from af_mcp_broker.token_registry import (
     TokenRegistryBackend,
     VaultTokenRegistryBackend,
 )
+from af_mcp_broker.vault_kv import VaultKV
 
 ADDR = "https://vault.invalid"
 AUTH_MOUNT = "kubernetes"
@@ -141,15 +142,15 @@ def sa_token_path(tmp_path: Path) -> Path:
 def _make_vault_backend(
     fake: _FakeRegistryVault, sa_token_path: Path
 ) -> VaultTokenRegistryBackend:
-    return VaultTokenRegistryBackend(
+    vault_kv = VaultKV(
         addr=ADDR,
         auth_mount=AUTH_MOUNT,
         auth_role=AUTH_ROLE,
         kv_mount=KV_MOUNT,
-        kv_path_prefix=KV_PATH_PREFIX,
         sa_token_path=str(sa_token_path),
         http_client=httpx.AsyncClient(transport=httpx.MockTransport(fake.handle)),
     )
+    return VaultTokenRegistryBackend(vault_kv=vault_kv, kv_path_prefix=KV_PATH_PREFIX)
 
 
 # ---------------------------------------------------------------------------

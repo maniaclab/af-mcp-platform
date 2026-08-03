@@ -238,6 +238,30 @@ wall-clock timestamp to render a countdown) are both served:
 }
 ```
 
+#### Vault storage layering
+
+Two independent pieces of state persist to Vault/OpenBao KV-v2: the
+oauth21-direct `TokenStore` above, and the manual bearer-token registry (see
+"Programmatic client bootstrap" in `docs/auth.md`). Both compose the same
+`VaultKV` (`vault_kv.py`) rather than each re-implementing Kubernetes auth
+and the KV-v2 verbs:
+
+```
+VaultKV (auth, get/write_cas/list/delete_metadata)
+  ├── VaultTokenStore        (credentials/vault.py)  -- oauth21 credentials
+  └── VaultTokenRegistryBackend (token_registry.py)   -- token inventory
+```
+
+`VaultKV` is transport only — Kubernetes auth (with the re-authentication
+caching/safety-margin/single-flight-lock behavior), the four KV-v2 verbs,
+and error taxonomy (`VaultError`, `CasConflict`). It has no opinion on path
+layout, record shape, or retry policy: each consumer above owns its own KV
+path prefix, (de)serialization, and CAS retry loop. `app.py`'s lifespan
+constructs one `VaultKV` per process (one Kubernetes auth login, shared by
+whichever of the two consumers is configured to use Vault) and passes it to
+each. A future Vault-backed store should compose the same `VaultKV` rather
+than re-implementing this transport.
+
 ### 4. Audit
 
 Structured log (structlog + JSON) of every tool invocation, including:

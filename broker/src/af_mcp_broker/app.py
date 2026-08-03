@@ -49,6 +49,7 @@ from af_mcp_broker.token_registry import (
     TokenRegistryBackend,
     VaultTokenRegistryBackend,
 )
+from af_mcp_broker.vault_kv import VaultKV
 
 logger = structlog.get_logger(__name__)
 
@@ -181,6 +182,34 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
             credential_registry.register(spec.name, x509_provider)
             x509_targets.append(spec.name)
 
+    # --- Vault/OpenBao transport: one VaultKV instance (one K8s auth login
+    # per process) shared by the oauth21 token store and the token registry
+    # below, whichever of the two (or both) is configured to use Vault — see
+    # vault_kv.py's module docstring for the transport/domain split.
+    vault_kv: VaultKV | None = None
+    if (
+        settings.token_store_backend == "vault"
+        or settings.token_registry_backend == "vault"
+    ):
+        vault_kv = VaultKV(
+            addr=settings.vault_addr,
+            auth_mount=settings.vault_auth_mount,
+            auth_role=settings.vault_auth_role,
+            kv_mount=settings.vault_kv_mount,
+            sa_token_path=settings.vault_sa_token_path,
+        )
+        # Trial authentication only -- proves the K8s auth flow works (SA JWT
+        # readable, Vault reachable, role accepted) without touching any
+        # stored credential or token-registry entry. A misconfigured Vault
+        # backend is a security-sensitive state; refusing to start is safer
+        # than silently degrading to a broker that can't persist state.
+        try:
+            await vault_kv._authenticate()
+        except Exception as exc:
+            logger.exception("vault_auth.failed")
+            raise RuntimeError(f"Vault K8s auth failed at startup: {exc}") from exc
+        logger.info("vault_auth.ok", vault_addr=settings.vault_addr)
+
     # --- Identity providers (issue #66 PR4): one CredentialProvider instance
     # per configured `identity_providers` entry, keyed by alias — either
     # Keycloak's stored-broker-token pattern (`keycloak-brokered`,
@@ -197,25 +226,11 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     oauth21_state_cipher = None
     if any(cfg.type == "oauth21-direct" for cfg in settings.identity_providers):
         if settings.token_store_backend == "vault":
+            assert vault_kv is not None  # guaranteed by the check above
             oauth21_token_store = VaultTokenStore(
-                addr=settings.vault_addr,
-                auth_mount=settings.vault_auth_mount,
-                auth_role=settings.vault_auth_role,
-                kv_mount=settings.vault_kv_mount,
+                vault_kv=vault_kv,
                 kv_path_prefix=settings.vault_kv_path_prefix,
-                sa_token_path=settings.vault_sa_token_path,
             )
-            # Trial authentication only -- proves the K8s auth flow works
-            # (SA JWT readable, Vault reachable, role accepted) without
-            # touching any stored credential. A misconfigured Vault backend
-            # is a security-sensitive state; refusing to start is safer than
-            # silently degrading to a broker that can't persist tokens.
-            try:
-                await oauth21_token_store._authenticate()
-            except Exception as exc:
-                logger.exception("vault_auth.failed")
-                raise RuntimeError(f"Vault K8s auth failed at startup: {exc}") from exc
-            logger.info("vault_auth.ok", vault_addr=settings.vault_addr)
         else:
             oauth21_token_store = InMemoryTokenStore()
         oauth21_state_cipher = Fernet(
@@ -262,26 +277,11 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # in-memory local-dev fallback pattern as oauth21_token_store above.
     token_registry_backend: TokenRegistryBackend
     if settings.token_registry_backend == "vault":
+        assert vault_kv is not None  # guaranteed by the check above
         token_registry_backend = VaultTokenRegistryBackend(
-            addr=settings.vault_addr,
-            auth_mount=settings.vault_auth_mount,
-            auth_role=settings.vault_auth_role,
-            kv_mount=settings.vault_kv_mount,
+            vault_kv=vault_kv,
             kv_path_prefix=settings.token_registry_kv_path_prefix,
-            sa_token_path=settings.vault_sa_token_path,
         )
-        # Trial authentication only, same rationale as oauth21_token_store's
-        # equivalent check above: a misconfigured Vault backend is a
-        # security-sensitive state, so fail startup loudly rather than
-        # silently degrade to a broker that can't persist token metadata.
-        try:
-            await token_registry_backend._authenticate()
-        except Exception as exc:
-            logger.exception("token_registry_vault_auth.failed")
-            raise RuntimeError(
-                f"Vault K8s auth failed at startup for token registry: {exc}"
-            ) from exc
-        logger.info("token_registry_vault_auth.ok", vault_addr=settings.vault_addr)
     else:
         token_registry_backend = InMemoryTokenRegistryBackend()
     token_registry = TokenRegistry(token_registry_backend)

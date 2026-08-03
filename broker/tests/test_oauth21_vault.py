@@ -1,14 +1,15 @@
 """Tests for the Vault-backed ``TokenStore`` (issue #66 PR3).
 
 A fake Vault HTTP API is built with ``httpx.MockTransport`` -- no real Vault
-process, no ``hvac``. Covers the Kubernetes auth login/re-auth flow, KV-v2
-CAS read/write/delete semantics, the ``SecretStr`` round trip through
-storage, and error mapping.
+process, no ``hvac``. Covers KV-v2 CAS read/write/delete semantics, the
+``SecretStr`` round trip through storage, and error mapping. The
+Kubernetes auth login/re-auth flow this store's ``VaultKV`` uses is covered
+by ``test_vault_kv.py`` instead -- that behavior no longer lives on
+``VaultTokenStore`` itself.
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -22,7 +23,8 @@ from pydantic import SecretStr
 
 from af_mcp_broker.config import get_settings
 from af_mcp_broker.credentials.oauth21 import StoredOAuthCredential, VersionConflict
-from af_mcp_broker.credentials.vault import VaultError, VaultTokenStore
+from af_mcp_broker.credentials.vault import VaultTokenStore
+from af_mcp_broker.vault_kv import VaultError, VaultKV
 
 ADDR = "https://vault.invalid"
 AUTH_MOUNT = "kubernetes"
@@ -168,20 +170,16 @@ def _json_body(request: httpx.Request) -> dict[str, Any]:
     return json.loads(request.content.decode())
 
 
-def _make_store(
-    fake: _FakeVault, sa_token_path: Path, **overrides: Any
-) -> VaultTokenStore:
-    kwargs: dict[str, Any] = {
-        "addr": ADDR,
-        "auth_mount": AUTH_MOUNT,
-        "auth_role": AUTH_ROLE,
-        "kv_mount": KV_MOUNT,
-        "kv_path_prefix": KV_PATH_PREFIX,
-        "sa_token_path": str(sa_token_path),
-        "http_client": httpx.AsyncClient(transport=httpx.MockTransport(fake.handle)),
-    }
-    kwargs.update(overrides)
-    return VaultTokenStore(**kwargs)
+def _make_store(fake: _FakeVault, sa_token_path: Path) -> VaultTokenStore:
+    vault_kv = VaultKV(
+        addr=ADDR,
+        auth_mount=AUTH_MOUNT,
+        auth_role=AUTH_ROLE,
+        kv_mount=KV_MOUNT,
+        sa_token_path=str(sa_token_path),
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(fake.handle)),
+    )
+    return VaultTokenStore(vault_kv=vault_kv, kv_path_prefix=KV_PATH_PREFIX)
 
 
 @pytest.fixture
@@ -189,61 +187,6 @@ def sa_token_path(tmp_path: Path) -> Path:
     path = tmp_path / "sa-token"
     path.write_text("fake-sa-jwt\n")
     return path
-
-
-# ---------------------------------------------------------------------------
-# K8s auth: login, caching, re-authentication
-# ---------------------------------------------------------------------------
-
-
-async def test_authenticate_reads_sa_jwt_and_logs_in(sa_token_path: Path) -> None:
-    fake = _FakeVault()
-    store = _make_store(fake, sa_token_path)
-
-    token = await store._authenticate()
-
-    assert token == "vault-test-token"
-    assert len(fake.login_calls) == 1
-    assert fake.login_calls[0] == {"role": AUTH_ROLE, "jwt": "fake-sa-jwt"}
-
-
-async def test_authenticate_caches_token_across_calls(sa_token_path: Path) -> None:
-    fake = _FakeVault()
-    store = _make_store(fake, sa_token_path)
-
-    await store._authenticate()
-    await store._authenticate()
-
-    assert len(fake.login_calls) == 1
-
-
-async def test_authenticate_reauthenticates_when_near_expiry(
-    sa_token_path: Path,
-) -> None:
-    fake = _FakeVault()
-    store = _make_store(fake, sa_token_path)
-
-    await store._authenticate()
-    assert len(fake.login_calls) == 1
-
-    # Force the cached token to look like it's within the safety margin of
-    # expiry (or already past it) without needing to sleep in the test.
-    store._expires_at = datetime.now(UTC) - timedelta(seconds=1)
-
-    await store._authenticate()
-    assert len(fake.login_calls) == 2
-
-
-async def test_authenticate_concurrent_callers_login_once(sa_token_path: Path) -> None:
-    """The asyncio.Lock around re-authentication must prevent a login storm
-    when multiple coroutines race to authenticate with no cached token yet.
-    """
-    fake = _FakeVault()
-    store = _make_store(fake, sa_token_path)
-
-    await asyncio.gather(*(store._authenticate() for _ in range(5)))
-
-    assert len(fake.login_calls) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -451,7 +394,7 @@ def test_lifespan_boots_with_vault_backend_on_successful_trial_auth(
     _bootstrap_oauth21_vault_env(monkeypatch, sa_token_path)
     fake = _FakeVault()
     monkeypatch.setattr(
-        "af_mcp_broker.credentials.vault.get_http_client",
+        "af_mcp_broker.vault_kv.get_http_client",
         lambda: httpx.AsyncClient(transport=httpx.MockTransport(fake.handle)),
     )
 
@@ -472,7 +415,7 @@ def test_lifespan_fails_fast_when_vault_login_rejected(
         )
 
     monkeypatch.setattr(
-        "af_mcp_broker.credentials.vault.get_http_client",
+        "af_mcp_broker.vault_kv.get_http_client",
         lambda: httpx.AsyncClient(transport=httpx.MockTransport(_reject_login)),
     )
 
