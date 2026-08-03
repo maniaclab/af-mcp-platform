@@ -15,7 +15,7 @@
 import { ref, computed, onMounted, nextTick } from 'vue';
 import { mintToken, listTokens, revokeToken, SessionExpiredError } from '../lib/api';
 import type { MintedToken, TokenSummary } from '../lib/api';
-import { shortJti, tokenStatus } from '../lib/tokenDisplay';
+import { shortJti, tokenStatus, truncateNote } from '../lib/tokenDisplay';
 
 const tokens = ref<TokenSummary[]>([]);
 const loading = ref(true);
@@ -54,6 +54,7 @@ const mintTrigger = ref<HTMLButtonElement | null>(null);
 
 const ttlSeconds = ref<'3600' | '21600' | '86400'>('3600');
 const name = ref('');
+const note = ref('');
 const minting = ref(false);
 const mintError = ref<string | null>(null);
 const mintedToken = ref<MintedToken | null>(null);
@@ -64,6 +65,7 @@ async function openMintDialog(evt: Event) {
   mintedToken.value = null;
   mintError.value = null;
   name.value = '';
+  note.value = '';
   ttlSeconds.value = '3600';
   copyLabel.value = 'Copy';
   await nextTick();
@@ -83,8 +85,14 @@ async function handleMint(evt: Event) {
   minting.value = true;
   mintError.value = null;
   try {
-    mintedToken.value = await mintToken(Number(ttlSeconds.value), name.value.trim() || undefined);
+    mintedToken.value = await mintToken(
+      Number(ttlSeconds.value),
+      name.value.trim() || undefined,
+      note.value.trim() || undefined,
+    );
   } catch (err) {
+    // Includes the 409 duplicate-name case (api/tokens.py's DuplicateNameError)
+    // -- APIError's message already carries the broker's `detail` text.
     mintError.value = err instanceof Error ? err.message : 'Could not mint a token. Try again.';
   } finally {
     minting.value = false;
@@ -229,7 +237,12 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
           </thead>
           <tbody>
             <tr v-for="row in sortedTokens" :key="row.jti" class="tp__row">
-              <td class="tp__td tp__td--name">{{ row.name }}</td>
+              <td class="tp__td">
+                <div class="tp__td-name">{{ row.name }}</div>
+                <div v-if="row.note" class="tp__td-note" :title="row.note">
+                  {{ truncateNote(row.note) }}
+                </div>
+              </td>
               <td class="tp__td tp__td--jti" :title="row.jti">{{ shortJti(row.jti) }}</td>
               <td class="tp__td" :title="formatAbsolute(row.issued_at)">
                 {{ formatAbsolute(row.issued_at) }}
@@ -318,6 +331,19 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
             />
           </div>
 
+          <div class="tp__form-group">
+            <label for="tp-note" class="tp__form-label">Note (optional)</label>
+            <textarea
+              id="tp-note"
+              v-model="note"
+              class="tp__input tp__textarea"
+              placeholder="e.g. used by the CI bot for nightly runs"
+              maxlength="256"
+              rows="2"
+              :disabled="minting"
+            ></textarea>
+          </div>
+
           <div v-if="mintError" class="tp__error" role="alert">{{ mintError }}</div>
 
           <div class="tp__modal-actions">
@@ -354,6 +380,10 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
           <div class="tp__token-meta-row">
             <dt>Name</dt>
             <dd>{{ mintedToken.name }}</dd>
+          </div>
+          <div v-if="mintedToken.note" class="tp__token-meta-row">
+            <dt>Note</dt>
+            <dd>{{ mintedToken.note }}</dd>
           </div>
           <div class="tp__token-meta-row">
             <dt>Expires</dt>
@@ -504,8 +534,18 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
   color: var(--color-af-text);
 }
 
-.tp__td--name {
-  color: #9ca3af;
+.tp__td-name {
+  color: var(--color-af-text);
+}
+
+.tp__td-note {
+  margin-top: 0.125rem;
+  font-size: 0.75rem;
+  color: var(--color-af-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 16rem;
 }
 
 .tp__td--jti {
@@ -711,6 +751,11 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
   outline: none;
   border-color: var(--color-af-teal);
   box-shadow: 0 0 0 2px rgb(from var(--color-af-teal) r g b / 0.15);
+}
+
+.tp__textarea {
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  resize: vertical;
 }
 .tp__input:disabled,
 .tp__select:disabled {

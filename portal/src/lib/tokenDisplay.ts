@@ -34,3 +34,20 @@ export function tokenStatus(row: TokenStatusInput, now: number = Date.now()): To
 export function shortJti(jti: string): string {
   return jti.length <= 8 ? jti : `${jti.slice(0, 8)}…`;
 }
+
+// Notes can be up to 256 chars (api/tokens.py's _MAX_NOTE_LENGTH) -- too long
+// to show in full inline in the token list's secondary-text cell.
+const NOTE_DISPLAY_MAX_LENGTH = 80;
+
+/**
+ * Truncates a token's free-text note (issue #116) for the list view. `null`
+ * (no note supplied) passes through unchanged. As with `shortJti`, the full
+ * note is always available via a `title` attribute on the caller's side.
+ */
+export function truncateNote(
+  note: string | null,
+  maxLength: number = NOTE_DISPLAY_MAX_LENGTH,
+): string | null {
+  if (note === null) return null;
+  return note.length <= maxLength ? note : `${note.slice(0, maxLength)}…`;
+}

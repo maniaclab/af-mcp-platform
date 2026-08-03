@@ -356,13 +356,17 @@ export async function revokeProxy(): Promise<void> {
 export type TokenSource = 'manual' | 'mcp-oauth' | 'oauth2-proxy';
 
 /** POST /v1/tokens response. `token` is present ONLY here — the broker never
- * returns a previously-minted token's value again. */
+ * returns a previously-minted token's value again. `name` is unique per uid
+ * among live (non-revoked, non-expired) tokens, case-insensitively -- a
+ * collision is a 409 (see mintToken's caller). `note` is optional, free-text,
+ * purely self-descriptive, and absent (`null`) unless supplied. */
 export interface MintedToken {
   token: string;
   jti: string;
   issued_at: string;
   expires_at: string;
   name: string;
+  note: string | null;
 }
 
 /** GET /v1/tokens row — no `token` field, by design. `revoked_at` is null
@@ -372,16 +376,25 @@ export interface MintedToken {
 export interface TokenSummary {
   jti: string;
   name: string;
+  note: string | null;
   issued_at: string;
   expires_at: string;
   revoked_at: string | null;
   source: TokenSource;
 }
 
-export async function mintToken(ttlSeconds: number, name?: string): Promise<MintedToken> {
+export async function mintToken(
+  ttlSeconds: number,
+  name?: string,
+  note?: string,
+): Promise<MintedToken> {
   return apiFetch<MintedToken>('/tokens', {
     method: 'POST',
-    body: JSON.stringify({ ttl_seconds: ttlSeconds, ...(name ? { name } : {}) }),
+    body: JSON.stringify({
+      ttl_seconds: ttlSeconds,
+      ...(name ? { name } : {}),
+      ...(note ? { note } : {}),
+    }),
   });
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { shortJti, tokenStatus } from '../tokenDisplay';
+import { shortJti, tokenStatus, truncateNote } from '../tokenDisplay';
 
 describe('tokenStatus', () => {
   const NOW = Date.parse('2026-07-21T12:00:00Z');
@@ -53,5 +53,30 @@ describe('shortJti', () => {
 
   it('handles an empty string', () => {
     expect(shortJti('')).toBe('');
+  });
+});
+
+describe('truncateNote', () => {
+  it('returns null unchanged when there is no note', () => {
+    expect(truncateNote(null)).toBeNull();
+  });
+
+  it('returns a short note unchanged', () => {
+    expect(truncateNote('for the CI bot')).toBe('for the CI bot');
+  });
+
+  it('returns a note at exactly the max length unchanged', () => {
+    const note = 'x'.repeat(80);
+    expect(truncateNote(note)).toBe(note);
+  });
+
+  it('truncates a note longer than the max length with an ellipsis', () => {
+    const note = 'x'.repeat(90);
+    const result = truncateNote(note);
+    expect(result).toBe(`${'x'.repeat(80)}…`);
+  });
+
+  it('accepts a custom max length', () => {
+    expect(truncateNote('abcdefghij', 5)).toBe('abcde…');
   });
 });
