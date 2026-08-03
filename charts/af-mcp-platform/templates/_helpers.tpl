@@ -183,3 +183,131 @@ OAUTH21_STATE_ISSUER env wiring, which only matters for that provider type.
 {{- end -}}
 {{- $has -}}
 {{- end }}
+
+{{/*
+Broker container environment variables — shared verbatim between the broker
+Deployment (broker-deployment.yaml) and the token-sweep CronJob
+(cronjob-token-sweep.yaml). The sweep CLI (token_sweep.py) builds a Settings
+instance from the environment exactly like app.py's lifespan does, so it
+needs the identical env: the same Vault connection (shared by
+oauth21.tokenStore and tokenRegistry — see config.py's
+_validate_vault_config), and the same oauth21-direct identityProviders
+validation requirements (Settings() raises at construction time otherwise).
+Callers pipe this through `nindent` at whatever depth their container's
+`env:` list sits at.
+*/}}
+{{- define "af-mcp-platform.broker.env" -}}
+# OIDC settings — names must match broker Settings fields
+- name: OIDC_ISSUER
+  value: {{ .Values.broker.oidc.issuer | quote }}
+- name: OIDC_AUDIENCE
+  value: {{ .Values.broker.oidc.audience | quote }}
+# Home directory root (broker constructs per-user paths from this)
+- name: HOME_ROOT
+  value: {{ .Values.broker.homeDir.homeRoot | quote }}
+# Portal base URL for unlock hints and identity-linking redirects
+- name: PORTAL_URL
+  value: {{ printf "https://%s" .Values.ingress.portalHost | quote }}
+# Proxy tmpfs mount path
+{{- if .Values.broker.tmpfsProxy.enabled }}
+- name: PROXY_DIR
+  value: {{ .Values.broker.tmpfsProxy.mountPath | quote }}
+{{- end }}
+# CIMD (/.well-known/cimd) settings — omitted when empty so the
+# broker's pydantic defaults apply.
+{{- if .Values.broker.cimd.clientName }}
+- name: CIMD_CLIENT_NAME
+  value: {{ .Values.broker.cimd.clientName | quote }}
+{{- end }}
+# Canonical origin for every OAuth 2.1 URL the broker constructs
+# itself (redirect_uri, CIMD redirect_uris) — omitted when empty
+# so the broker's pydantic default applies; the broker's own
+# startup validation rejects an empty value when identityProviders
+# has an oauth21-direct entry.
+{{- if .Values.broker.publicOrigin }}
+- name: BROKER_PUBLIC_ORIGIN
+  value: {{ .Values.broker.publicOrigin | quote }}
+{{- end }}
+# Identity providers (issue #66 PR4) — one entry per
+# keycloak-brokered or oauth21-direct provider the broker can
+# link a user's account to. Omitted entirely when none are
+# configured so the broker's pydantic default (empty list,
+# degraded but valid) applies.
+{{- if .Values.broker.identityProviders }}
+- name: IDENTITY_PROVIDERS
+  value: {{ include "af-mcp-platform.identityProviders" . | quote }}
+{{- end }}
+# OAuth 2.1 state-token infrastructure — only needed when at
+# least one identityProviders entry is oauth21-direct.
+{{- if eq (include "af-mcp-platform.hasOAuth21Provider" .) "true" }}
+- name: OAUTH21_CLIENT_ID
+  value: {{ printf "https://%s/.well-known/cimd" .Values.ingress.mcpHost | quote }}
+{{- if .Values.broker.oauth21.stateIssuer }}
+- name: OAUTH21_STATE_ISSUER
+  value: {{ .Values.broker.oauth21.stateIssuer | quote }}
+{{- end }}
+{{- if .Values.broker.oauth21.existingStateKeySecret }}
+- name: BROKER_STATE_KEY
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.broker.oauth21.existingStateKeySecret | quote }}
+      key: broker-state-key
+{{- end }}
+{{- end }}
+# OAuth 2.1 TokenStore backend — always set (pydantic default is
+# "in_memory" so an unset value here is equivalent, but the env
+# var is rendered unconditionally to make the active backend
+# visible in `kubectl describe pod`/manifests).
+- name: TOKEN_STORE_BACKEND
+  value: {{ .Values.broker.oauth21.tokenStore.backend | replace "-" "_" | quote }}
+# Token registry backend (issue #115) — durable storage for manually-minted
+# bearer tokens (POST/GET/DELETE /v1/tokens). Always set, same visibility
+# rationale as TOKEN_STORE_BACKEND above.
+- name: TOKEN_REGISTRY_BACKEND
+  value: {{ .Values.broker.tokenRegistry.backend | replace "-" "_" | quote }}
+{{- if .Values.broker.tokenRegistry.kvPathPrefix }}
+- name: TOKEN_REGISTRY_KV_PATH_PREFIX
+  value: {{ .Values.broker.tokenRegistry.kvPathPrefix | quote }}
+{{- end }}
+{{- /*
+Vault connection settings are shared by both Vault-backed stores above (one
+VaultKV instance, per config.py/app.py) — rendered once whenever either
+needs it, not duplicated per-backend.
+*/}}
+{{- if or (eq .Values.broker.oauth21.tokenStore.backend "vault") (eq .Values.broker.tokenRegistry.backend "vault") }}
+{{- if .Values.broker.oauth21.tokenStore.vault.addr }}
+- name: VAULT_ADDR
+  value: {{ .Values.broker.oauth21.tokenStore.vault.addr | quote }}
+{{- end }}
+{{- if .Values.broker.oauth21.tokenStore.vault.authMount }}
+- name: VAULT_AUTH_MOUNT
+  value: {{ .Values.broker.oauth21.tokenStore.vault.authMount | quote }}
+{{- end }}
+{{- if .Values.broker.oauth21.tokenStore.vault.authRole }}
+- name: VAULT_AUTH_ROLE
+  value: {{ .Values.broker.oauth21.tokenStore.vault.authRole | quote }}
+{{- end }}
+{{- if .Values.broker.oauth21.tokenStore.vault.kvMount }}
+- name: VAULT_KV_MOUNT
+  value: {{ .Values.broker.oauth21.tokenStore.vault.kvMount | quote }}
+{{- end }}
+{{- if eq .Values.broker.oauth21.tokenStore.backend "vault" }}
+{{- if .Values.broker.oauth21.tokenStore.vault.kvPathPrefix }}
+- name: VAULT_KV_PATH_PREFIX
+  value: {{ .Values.broker.oauth21.tokenStore.vault.kvPathPrefix | quote }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if .Values.broker.existingServiceTokenSecret }}
+- name: AF_SERVICE_TOKEN
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.broker.existingServiceTokenSecret | quote }}
+      key: af-service-token
+{{- end }}
+# Extra env vars from values (key: value pairs)
+{{- range $key, $val := .Values.broker.env }}
+- name: {{ $key | quote }}
+  value: {{ $val | quote }}
+{{- end }}
+{{- end }}

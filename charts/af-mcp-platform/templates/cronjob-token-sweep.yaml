@@ -1,0 +1,67 @@
+{{- if .Values.tokenSweep.enabled }}
+# Periodic janitor for the Vault-backed token registry (issue #28 -> #116 ->
+# #117's last layer) — see broker/src/af_mcp_broker/token_sweep.py and
+# tokenSweep's values.yaml comments. Refuses to run (exit code 2) unless
+# broker.tokenRegistry.backend="vault"; the in-memory backend self-sweeps
+# inline and needs no cron.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "af-mcp-platform.broker.fullname" . }}-token-sweep
+  labels:
+    {{- include "af-mcp-platform.broker.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.tokenSweep.schedule | quote }}
+  # A previous run still in flight is a sign something's wrong (Vault
+  # unreachable, or a run taking far longer than one sweep should) — piling
+  # up concurrent sweeps on top of it would only make diagnosing that
+  # harder, not fix it.
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      # A sweep pass is a handful of Vault round trips per uid — generous
+      # enough to tolerate a slow Vault without masking a genuinely hung run.
+      activeDeadlineSeconds: 300
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            {{- include "af-mcp-platform.broker.selectorLabels" . | nindent 12 }}
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ include "af-mcp-platform.serviceAccountName" . }}
+          securityContext:
+            runAsNonRoot: true
+            # Matches the numeric uid/gid the af-mcp user is created with in
+            # Containerfile.broker (kubelet requires numeric ids, not names).
+            runAsUser: 1000
+            runAsGroup: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: token-sweep
+              image: {{ include "af-mcp-platform.broker.image" . | quote }}
+              imagePullPolicy: {{ .Values.image.broker.pullPolicy }}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+              command: ["python", "-m", "af_mcp_broker.token_sweep"]
+              env:
+                {{- include "af-mcp-platform.broker.env" . | nindent 16 }}
+                {{- if .Values.tokenSweep.graceSeconds }}
+                - name: TOKEN_SWEEP_GRACE_SECONDS
+                  value: {{ .Values.tokenSweep.graceSeconds | quote }}
+                {{- end }}
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  cpu: 500m
+                  memory: 256Mi
+{{- end }}

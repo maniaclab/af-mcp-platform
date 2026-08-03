@@ -176,6 +176,40 @@ broker:
         # are stored.
         kvPathPrefix: "mcp/tokens"
 
+  # Durable registry backing the manual bearer-token bootstrap flow
+  # (POST/GET/DELETE /v1/tokens, issue #115/#116). "in-memory" is
+  # single-replica and lost on restart; "vault" persists to the same
+  # Vault/OpenBao instance as oauth21.tokenStore.vault above (one shared
+  # connection — addr/authMount/authRole/kvMount are not repeated here),
+  # under a separate kvPathPrefix so the two Vault-backed stores never
+  # collide under the same kvMount.
+  tokenRegistry:
+    backend: "in-memory"  # or "vault"
+    # Path prefix under oauth21.tokenStore.vault.kvMount where token-registry
+    # records are stored. Only meaningful when backend="vault".
+    kvPathPrefix: "mcp/token-registry"
+
+# ---------------------------------------------------------------------------
+# Token sweep: periodic janitor for the Vault-backed token registry above
+# (broker.tokenRegistry.backend="vault"). Removes registry entries whose
+# expires_at is more than tokenSweep.graceSeconds in the past and prunes the
+# revoked-jtis denylist of anything that's now expired regardless of
+# revocation — see broker/src/af_mcp_broker/token_registry.py's
+# sweep_expired() docstring. Not needed (and refuses to run, exit code 2) for
+# the in-memory registry backend, which already self-sweeps inline.
+# ---------------------------------------------------------------------------
+tokenSweep:
+  # Deploys the CronJob below. Only useful when
+  # broker.tokenRegistry.backend="vault" — the CronJob's container refuses
+  # to run otherwise (see token_sweep.py).
+  enabled: false
+  # Standard cron syntax, evaluated in the cluster's local time zone.
+  schedule: "17 3 * * *"
+  # Grace window (seconds) a record is kept after its expires_at passes,
+  # before the sweep removes it — see broker's TOKEN_SWEEP_GRACE_SECONDS
+  # (config.py). Empty means "use the broker's own default" (7 days).
+  graceSeconds: ""
+
 # ---------------------------------------------------------------------------
 # Aggregator: FastMCP backend registry
 # ---------------------------------------------------------------------------
