@@ -10,17 +10,14 @@ silently caps the effective mint-rate-limit at N times the configured value.
 * ``InMemoryTokenRegistryBackend`` -- single-replica, lost on restart. Local-
   dev fallback, selected the same way ``credentials.oauth21.InMemoryTokenStore``
   is (``settings.token_registry_backend == "in_memory"``, the default).
-* ``VaultTokenRegistryBackend`` -- persists to Vault/OpenBao KV-v2 via the
-  Kubernetes auth method, following the same pattern
-  ``credentials/vault.py``'s ``VaultTokenStore`` uses (re-authenticates from
-  the pod's ServiceAccount JWT rather than holding a long-lived Vault
-  credential of its own). Deliberately a separate, self-contained
-  implementation rather than a subclass/composition of ``VaultTokenStore`` --
-  the two stores persist unrelated payload shapes under different KV
-  prefixes, and keeping them independent avoids coupling two differently
-  tested Vault clients together. This does duplicate the small K8s-auth
-  login routine; a shared helper is a reasonable follow-up if a third
-  Vault-backed store ever appears.
+* ``VaultTokenRegistryBackend`` -- persists to Vault/OpenBao KV-v2, via the
+  same shared ``VaultKV`` transport client (``vault_kv.py``)
+  ``credentials/vault.py``'s ``VaultTokenStore`` holds (Kubernetes auth,
+  re-authenticating from the pod's ServiceAccount JWT rather than holding a
+  long-lived Vault credential of its own). The two stores persist unrelated
+  payload shapes under different KV prefixes, so each keeps its own path
+  layout, record (de)serialization, and CAS retry loop -- only the
+  transport (auth + the four KV verbs) is shared.
 
 Vault KV-v2 layout, all under ``{kv_mount}/data/{kv_path_prefix}/...``:
 
@@ -77,16 +74,12 @@ import contextlib
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime, timedelta
-from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from datetime import UTC, datetime
+from typing import Any
 
 import structlog
 
-from af_mcp_broker.http import get_http_client
-
-if TYPE_CHECKING:
-    import httpx
+from af_mcp_broker.vault_kv import CasConflict, VaultError, VaultKV
 
 log = structlog.get_logger(__name__)
 
@@ -95,14 +88,6 @@ log = structlog.get_logger(__name__)
 # (far beyond two replicas racing once), so failing loudly past this point
 # is preferable to retrying forever.
 _MAX_CAS_RETRIES = 5
-
-# Vault K8s auth tokens are re-minted this many seconds before their lease
-# actually expires -- mirrors credentials/vault.py's VaultTokenStore.
-_AUTH_SAFETY_MARGIN_SECONDS = 60
-
-
-class VaultError(Exception):
-    """Raised when Vault's HTTP API returns an unexpected response."""
 
 
 class DuplicateNameError(Exception):
@@ -302,7 +287,8 @@ def _record_from_fields(fields: dict[str, Any]) -> TokenRecord:
 
 
 class VaultTokenRegistryBackend(TokenRegistryBackend):
-    """``TokenRegistryBackend`` backed by Vault/OpenBao KV-v2.
+    """``TokenRegistryBackend`` backed by Vault/OpenBao KV-v2 via a shared
+    ``VaultKV`` transport client.
 
     See this module's docstring for the KV layout and the write-ordering
     rationale in ``revoke()``. Not thread-safe across processes beyond
@@ -311,35 +297,9 @@ class VaultTokenRegistryBackend(TokenRegistryBackend):
     ``credentials/oauth21.py``'s ``OAuth21Provider`` handles refresh races.
     """
 
-    def __init__(
-        self,
-        *,
-        addr: str,
-        auth_mount: str,
-        auth_role: str,
-        kv_mount: str,
-        kv_path_prefix: str,
-        sa_token_path: str,
-        http_client: httpx.AsyncClient | None = None,
-    ) -> None:
-        self._addr = addr.rstrip("/")
-        self._auth_mount = auth_mount
-        self._auth_role = auth_role
-        self._kv_mount = kv_mount
+    def __init__(self, *, vault_kv: VaultKV, kv_path_prefix: str) -> None:
+        self._vault_kv = vault_kv
         self._kv_path_prefix = kv_path_prefix.strip("/")
-        self._sa_token_path = sa_token_path
-        self._http_client = http_client
-
-        self._client_token: str | None = None
-        self._expires_at: datetime | None = None
-        self._auth_lock = asyncio.Lock()
-
-        self._log = structlog.get_logger(__name__).bind(
-            provider="VaultTokenRegistryBackend"
-        )
-
-    def _http(self) -> httpx.AsyncClient:
-        return self._http_client if self._http_client is not None else get_http_client()
 
     def _uid_path(self, uid: int) -> str:
         return f"{self._kv_path_prefix}/by-uid/{uid}"
@@ -350,88 +310,11 @@ class VaultTokenRegistryBackend(TokenRegistryBackend):
     def _revoked_path(self) -> str:
         return f"{self._kv_path_prefix}/revoked-jtis"
 
-    async def _authenticate(self) -> str:
-        """Return a valid Vault client token, re-authenticating if the
-        cached one is missing or near expiry. See ``VaultTokenStore``
-        (credentials/vault.py) for the identical pattern this mirrors."""
-        async with self._auth_lock:
-            now = datetime.now(UTC)
-            if (
-                self._client_token is not None
-                and self._expires_at is not None
-                and now < self._expires_at
-            ):
-                return self._client_token
-
-            jwt = Path(self._sa_token_path).read_text().strip()
-            resp = await self._http().post(
-                f"{self._addr}/v1/auth/{self._auth_mount}/login",
-                json={"role": self._auth_role, "jwt": jwt},
-                timeout=10.0,
-            )
-            if resp.status_code != 200:
-                raise VaultError(
-                    "vault k8s auth login failed: "
-                    f"status={resp.status_code} body={resp.text!r}"
-                )
-
-            auth = resp.json()["auth"]
-            client_token: str = auth["client_token"]
-            lease_duration = int(auth["lease_duration"])
-
-            self._client_token = client_token
-            self._expires_at = now + timedelta(
-                seconds=lease_duration - _AUTH_SAFETY_MARGIN_SECONDS
-            )
-            self._log.info(
-                "vault_token_registry.reauthenticated", lease_duration=lease_duration
-            )
-            return client_token
-
-    async def _kv_get(self, path: str) -> tuple[dict[str, Any], int] | None:
-        token = await self._authenticate()
-        resp = await self._http().get(
-            f"{self._addr}/v1/{self._kv_mount}/data/{path}",
-            headers={"X-Vault-Token": token},
-            timeout=10.0,
-        )
-        if resp.status_code == 404:
-            return None
-        if resp.status_code != 200:
-            raise VaultError(
-                f"vault kv read failed for path={path!r}: "
-                f"status={resp.status_code} body={resp.text!r}"
-            )
-        body = resp.json()["data"]
-        return body["data"], int(body["metadata"]["version"])
-
-    async def _kv_write_cas(
-        self, path: str, data: dict[str, Any], expected_version: int | None
-    ) -> int:
-        token = await self._authenticate()
-        cas = 0 if expected_version is None else expected_version
-        resp = await self._http().post(
-            f"{self._addr}/v1/{self._kv_mount}/data/{path}",
-            headers={"X-Vault-Token": token},
-            json={"options": {"cas": cas}, "data": data},
-            timeout=10.0,
-        )
-        if resp.status_code == 200:
-            return int(resp.json()["data"]["version"])
-        if resp.status_code == 400:
-            errors = resp.json().get("errors", [])
-            if any("check-and-set" in err for err in errors):
-                raise _CasConflict(path)
-        raise VaultError(
-            f"vault kv write failed for path={path!r}: "
-            f"status={resp.status_code} body={resp.text!r}"
-        )
-
     async def add(self, record: TokenRecord) -> None:
         path = self._uid_path(record.uid)
         now = time.time()
         for _attempt in range(_MAX_CAS_RETRIES):
-            current = await self._kv_get(path)
+            current = await self._vault_kv.get(path)
             data, version = current if current is not None else ({}, None)
             # Re-checked on every retry against the just-re-read data, not
             # just once up front -- see this module's docstring for why that
@@ -445,9 +328,9 @@ class VaultTokenRegistryBackend(TokenRegistryBackend):
             data = dict(data)
             data[record.jti] = _record_to_fields(record)
             try:
-                await self._kv_write_cas(path, data, version)
+                await self._vault_kv.write_cas(path, data, version)
                 break
-            except _CasConflict:
+            except CasConflict:
                 continue
         else:
             raise VaultError(f"add(): exceeded retry budget for uid={record.uid!r}")
@@ -455,16 +338,16 @@ class VaultTokenRegistryBackend(TokenRegistryBackend):
         # Ownership index: written once at mint time, never mutated again --
         # a plain create (expected_version=None) is correct even under a
         # (vanishingly unlikely) jti collision, since the same jti can only
-        # ever belong to the uid that first minted it. A _CasConflict here
+        # ever belong to the uid that first minted it. A CasConflict here
         # just means a previous attempt of this same add() already recorded
         # it -- nothing to do.
-        with contextlib.suppress(_CasConflict):
-            await self._kv_write_cas(
+        with contextlib.suppress(CasConflict):
+            await self._vault_kv.write_cas(
                 self._owner_path(record.jti), {"uid": record.uid}, None
             )
 
     async def list_for_uid(self, uid: int) -> list[TokenRecord]:
-        current = await self._kv_get(self._uid_path(uid))
+        current = await self._vault_kv.get(self._uid_path(uid))
         if current is None:
             return []
         data, _version = current
@@ -473,7 +356,7 @@ class VaultTokenRegistryBackend(TokenRegistryBackend):
         return rows
 
     async def get(self, uid: int, jti: str) -> TokenRecord | None:
-        current = await self._kv_get(self._uid_path(uid))
+        current = await self._vault_kv.get(self._uid_path(uid))
         if current is None:
             return None
         data, _version = current
@@ -481,7 +364,7 @@ class VaultTokenRegistryBackend(TokenRegistryBackend):
         return _record_from_fields(fields) if fields is not None else None
 
     async def owner_uid(self, jti: str) -> int | None:
-        current = await self._kv_get(self._owner_path(jti))
+        current = await self._vault_kv.get(self._owner_path(jti))
         if current is None:
             return None
         data, _version = current
@@ -490,15 +373,15 @@ class VaultTokenRegistryBackend(TokenRegistryBackend):
     async def _add_to_revoked_index(self, jti: str) -> None:
         path = self._revoked_path()
         for _attempt in range(_MAX_CAS_RETRIES):
-            current = await self._kv_get(path)
+            current = await self._vault_kv.get(path)
             data, version = current if current is not None else ({"jtis": []}, None)
             jtis = set(data.get("jtis", []))
             if jti in jtis:
                 return
             jtis.add(jti)
             try:
-                await self._kv_write_cas(path, {"jtis": sorted(jtis)}, version)
-            except _CasConflict:
+                await self._vault_kv.write_cas(path, {"jtis": sorted(jtis)}, version)
+            except CasConflict:
                 continue
             else:
                 return
@@ -516,7 +399,7 @@ class VaultTokenRegistryBackend(TokenRegistryBackend):
 
         path = self._uid_path(uid)
         for _attempt in range(_MAX_CAS_RETRIES):
-            current = await self._kv_get(path)
+            current = await self._vault_kv.get(path)
             if current is None:
                 return None
             data, version = current
@@ -528,26 +411,20 @@ class VaultTokenRegistryBackend(TokenRegistryBackend):
             new_data = dict(data)
             new_data[jti] = fields
             try:
-                await self._kv_write_cas(path, new_data, version)
+                await self._vault_kv.write_cas(path, new_data, version)
                 return _record_from_fields(fields)
-            except _CasConflict:
+            except CasConflict:
                 continue
         raise VaultError(
             f"revoke(): exceeded retry budget updating uid={uid!r} jti={jti!r}"
         )
 
     async def list_revoked_jtis(self) -> frozenset[str]:
-        current = await self._kv_get(self._revoked_path())
+        current = await self._vault_kv.get(self._revoked_path())
         if current is None:
             return frozenset()
         data, _version = current
         return frozenset(data.get("jtis", []))
-
-
-class _CasConflict(Exception):
-    """Internal signal for a Vault KV-v2 CAS version mismatch -- caught by
-    the retry loops in add()/revoke()/_add_to_revoked_index(), never raised
-    to callers of the public TokenRegistryBackend interface."""
 
 
 # ---------------------------------------------------------------------------
