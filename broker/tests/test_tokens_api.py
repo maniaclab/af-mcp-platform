@@ -1,7 +1,8 @@
-"""Tests for POST/GET/DELETE /v1/tokens — manual bearer bootstrap (issue #24).
+"""Tests for POST/GET/DELETE /v1/tokens — manual bearer bootstrap (issue #24)
+and its Vault-backed registry + enforced revocation (issue #115).
 
 These exercise the real app through ``app_client``/``app_client_factory``
-(see conftest.py); the Keycloak token-exchange and revoke calls are faked via
+(see conftest.py); the Keycloak token-exchange call is faked via
 monkeypatching ``af_mcp_broker.api.tokens.get_http_client`` so no network call
 ever happens. Every test that mints a token sets TOKEN_MINT_CLIENT_ID/SECRET
 so the endpoint doesn't short-circuit with 503.
@@ -9,6 +10,7 @@ so the endpoint doesn't short-circuit with 503.
 
 from __future__ import annotations
 
+import re
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -23,6 +25,11 @@ if TYPE_CHECKING:
     from fastapi.testclient import TestClient
 
 _AUTH = {"Authorization": "Bearer test"}
+
+# A JWT looks like three base64url segments joined by dots. Used to assert
+# list/detail payloads never carry a token-shaped string anywhere (issue #115
+# requirement 1) -- not just that the "token" key is absent.
+_JWT_SHAPED = re.compile(r"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
 
 
 def _make_kc_access_token(*, ttl_seconds: int = 3600, jti: str | None = None) -> str:
@@ -51,26 +58,24 @@ class _FakeResponse:
 
 
 class _FakeKeycloakClient:
-    """Fakes both the token-exchange and revoke POSTs tokens.py makes."""
+    """Fakes the token-exchange POST tokens.py makes."""
 
     def __init__(self, *, mint_status: int = 200, ttl_seconds: int = 3600) -> None:
         self.mint_status = mint_status
         self.ttl_seconds = ttl_seconds
-        self.revoke_calls: list[dict[str, Any]] = []
         self.mint_calls: list[dict[str, Any]] = []
 
     async def post(
         self, url: str, *, data: dict[str, Any], **kwargs: Any
     ) -> _FakeResponse:
-        if data.get("grant_type") == "urn:ietf:params:oauth:grant-type:token-exchange":
-            self.mint_calls.append(data)
-            if self.mint_status >= 400:
-                return _FakeResponse(self.mint_status, {})
-            token = _make_kc_access_token(ttl_seconds=self.ttl_seconds)
-            return _FakeResponse(200, {"access_token": token})
-        # Revocation call (RFC 7009)
-        self.revoke_calls.append(data)
-        return _FakeResponse(200, {})
+        assert (
+            data.get("grant_type") == "urn:ietf:params:oauth:grant-type:token-exchange"
+        )
+        self.mint_calls.append(data)
+        if self.mint_status >= 400:
+            return _FakeResponse(self.mint_status, {})
+        token = _make_kc_access_token(ttl_seconds=self.ttl_seconds)
+        return _FakeResponse(200, {"access_token": token})
 
 
 @pytest.fixture
@@ -84,9 +89,15 @@ def fake_keycloak(monkeypatch: pytest.MonkeyPatch) -> _FakeKeycloakClient:
 
 
 def _mint(
-    client: TestClient, *, ttl_seconds: int = 3600, note: str | None = "claude-desktop"
+    client: TestClient,
+    *,
+    ttl_seconds: int = 3600,
+    name: str | None = "claude-desktop",
+    note: str | None = None,
 ):
     body: dict[str, Any] = {"ttl_seconds": ttl_seconds}
+    if name is not None:
+        body["name"] = name
     if note is not None:
         body["note"] = note
     return client.post("/v1/tokens", json=body, headers=_AUTH)
@@ -96,7 +107,7 @@ def test_mint_happy_path(
     app_client: tuple[TestClient, dict], fake_keycloak: _FakeKeycloakClient
 ) -> None:
     client, _ = app_client
-    resp = _mint(client, ttl_seconds=3600, note="claude-desktop")
+    resp = _mint(client, ttl_seconds=3600, name="claude-desktop")
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
@@ -104,9 +115,71 @@ def test_mint_happy_path(
     assert body["token"]
     assert isinstance(body["jti"], str)
     assert body["jti"]
-    assert body["note"] == "claude-desktop"
+    assert body["name"] == "claude-desktop"
     assert "issued_at" in body
     assert "expires_at" in body
+
+
+def test_mint_without_name_generates_a_default(
+    app_client: tuple[TestClient, dict], fake_keycloak: _FakeKeycloakClient
+) -> None:
+    client, _ = app_client
+    resp = _mint(client, name=None)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["name"].startswith("mcp-")
+    assert body["jti"][:8] in body["name"]
+
+
+def test_mint_rejects_name_above_max_length(
+    app_client: tuple[TestClient, dict], fake_keycloak: _FakeKeycloakClient
+) -> None:
+    client, _ = app_client
+    resp = _mint(client, name="x" * 201)
+    assert resp.status_code == 422, resp.text
+
+
+def test_mint_duplicate_name_returns_409(
+    app_client: tuple[TestClient, dict], fake_keycloak: _FakeKeycloakClient
+) -> None:
+    """`name` is a unique-per-user identifier (design change) -- minting a
+    second token with a name already in use by an active token for the same
+    uid must fail clearly rather than silently creating two rows with the
+    same displayed name."""
+    client, _ = app_client
+    first = _mint(client, name="claude-desktop")
+    assert first.status_code == 200, first.text
+
+    second = _mint(client, name="claude-desktop")
+    assert second.status_code == 409, second.text
+    assert "claude-desktop" in second.json()["detail"]
+
+
+def test_mint_duplicate_name_is_case_insensitive(
+    app_client: tuple[TestClient, dict], fake_keycloak: _FakeKeycloakClient
+) -> None:
+    client, _ = app_client
+    first = _mint(client, name="Claude-Desktop")
+    assert first.status_code == 200, first.text
+
+    second = _mint(client, name="claude-desktop")
+    assert second.status_code == 409, second.text
+
+
+def test_mint_duplicate_name_allowed_after_first_token_revoked(
+    app_client: tuple[TestClient, dict], fake_keycloak: _FakeKeycloakClient
+) -> None:
+    """Collisions with dead (revoked) tokens are allowed -- rejecting them
+    would be confusing, since the old token can no longer be mistaken for
+    the new one."""
+    client, _ = app_client
+    first = _mint(client, name="claude-desktop")
+    jti = first.json()["jti"]
+    revoke_resp = client.delete(f"/v1/tokens/{jti}", headers=_AUTH)
+    assert revoke_resp.status_code == 200, revoke_resp.text
+
+    second = _mint(client, name="claude-desktop")
+    assert second.status_code == 200, second.text
 
 
 def test_mint_without_client_credentials_configured_returns_503(
@@ -127,15 +200,50 @@ def test_mint_rejects_ttl_above_max(
     assert resp.status_code == 422, resp.text
 
 
+def test_mint_note_round_trips_through_list(
+    app_client: tuple[TestClient, dict], fake_keycloak: _FakeKeycloakClient
+) -> None:
+    """`note` (issue #116) is a free-text, purely self-descriptive field --
+    not consumed by the broker, just stored and shown back."""
+    client, _ = app_client
+    mint_resp = _mint(client, name="claude-desktop", note="for the CI bot")
+    assert mint_resp.status_code == 200, mint_resp.text
+    assert mint_resp.json()["note"] == "for the CI bot"
+
+    listed = client.get("/v1/tokens", headers=_AUTH)
+    assert listed.status_code == 200, listed.text
+    assert listed.json()[0]["note"] == "for the CI bot"
+
+
+def test_mint_note_absent_by_default(
+    app_client: tuple[TestClient, dict], fake_keycloak: _FakeKeycloakClient
+) -> None:
+    client, _ = app_client
+    mint_resp = _mint(client, name="claude-desktop")
+    assert mint_resp.status_code == 200, mint_resp.text
+    assert mint_resp.json()["note"] is None
+
+    listed = client.get("/v1/tokens", headers=_AUTH)
+    assert listed.json()[0]["note"] is None
+
+
+def test_mint_rejects_note_above_max_length(
+    app_client: tuple[TestClient, dict], fake_keycloak: _FakeKeycloakClient
+) -> None:
+    client, _ = app_client
+    resp = _mint(client, note="x" * 257)
+    assert resp.status_code == 422, resp.text
+
+
 def test_mint_rate_limit_11th_call_429(
     app_client: tuple[TestClient, dict], fake_keycloak: _FakeKeycloakClient
 ) -> None:
     client, _ = app_client
     for i in range(10):
-        resp = _mint(client, note=f"token-{i}")
+        resp = _mint(client, name=f"token-{i}")
         assert resp.status_code == 200, resp.text
 
-    resp = _mint(client, note="eleventh")
+    resp = _mint(client, name="eleventh")
     assert resp.status_code == 429, resp.text
 
 
@@ -145,14 +253,14 @@ def test_list_returns_own_tokens_only(
     make_principal: Callable[..., object],
 ) -> None:
     client, state = app_client
-    mint_resp = _mint(client, note="mine")
+    mint_resp = _mint(client, name="mine")
     assert mint_resp.status_code == 200, mint_resp.text
 
     listed = client.get("/v1/tokens", headers=_AUTH)
     assert listed.status_code == 200, listed.text
     rows = listed.json()
     assert len(rows) == 1
-    assert rows[0]["note"] == "mine"
+    assert rows[0]["name"] == "mine"
     assert rows[0]["source"] == "manual"
     assert "token" not in rows[0]  # never re-exposed
 
@@ -163,20 +271,49 @@ def test_list_returns_own_tokens_only(
     assert listed_other.json() == []
 
 
-def test_revoke_success_then_list_omits_row(
+def test_list_and_mint_responses_never_leak_a_jwt_shaped_string(
     app_client: tuple[TestClient, dict], fake_keycloak: _FakeKeycloakClient
 ) -> None:
+    """issue #115 requirement 1: the registry never re-exposes anything a
+    token could be reconstructed from. Scan the *raw* response bodies (not
+    just specific keys) so a renamed or newly-added field can't silently
+    smuggle a token value back out."""
     client, _ = app_client
-    mint_resp = _mint(client, note="to-revoke")
+    mint_resp = _mint(client, name="scan-me")
+    assert mint_resp.status_code == 200, mint_resp.text
+    minted_token = mint_resp.json()["token"]
+    assert _JWT_SHAPED.search(minted_token)  # sanity: our fake token IS jwt-shaped
+
+    listed = client.get("/v1/tokens", headers=_AUTH)
+    assert listed.status_code == 200, listed.text
+    assert not _JWT_SHAPED.search(listed.text)
+
+    jti = mint_resp.json()["jti"]
+    revoke_resp = client.delete(f"/v1/tokens/{jti}", headers=_AUTH)
+    assert not _JWT_SHAPED.search(revoke_resp.text)
+
+
+def test_revoke_success_then_list_shows_revoked_row(
+    app_client: tuple[TestClient, dict], fake_keycloak: _FakeKeycloakClient
+) -> None:
+    """issue #115 changes revoke from "remove the row" (PR #28) to "mark it
+    revoked" -- the portal now needs to show a revoked/active/expired status,
+    which requires the row to still be listed."""
+    client, _ = app_client
+    mint_resp = _mint(client, name="to-revoke")
     jti = mint_resp.json()["jti"]
 
     revoke_resp = client.delete(f"/v1/tokens/{jti}", headers=_AUTH)
     assert revoke_resp.status_code == 200, revoke_resp.text
     assert revoke_resp.json()["jti"] == jti
+    assert revoke_resp.json()["revoked"] is True
 
     listed = client.get("/v1/tokens", headers=_AUTH)
     assert listed.status_code == 200, listed.text
-    assert listed.json() == []
+    rows = listed.json()
+    assert len(rows) == 1
+    assert rows[0]["jti"] == jti
+    assert rows[0]["revoked_at"] is not None
 
 
 def test_revoke_non_owned_jti_403(
@@ -185,7 +322,7 @@ def test_revoke_non_owned_jti_403(
     make_principal: Callable[..., object],
 ) -> None:
     client, state = app_client
-    mint_resp = _mint(client, note="owned-by-first-user")
+    mint_resp = _mint(client, name="owned-by-first-user")
     jti = mint_resp.json()["jti"]
 
     state["principal"] = make_principal(uid=99999, groups=["atlas"])
@@ -235,3 +372,27 @@ def test_mint_falls_back_to_synthetic_jti_when_keycloak_omits_one(
     resp = _mint(client)
     assert resp.status_code == 200, resp.text
     assert resp.json()["jti"]
+
+
+def test_revoke_marks_jti_in_the_apps_revoked_registry(
+    app_client: tuple[TestClient, dict], fake_keycloak: _FakeKeycloakClient
+) -> None:
+    """Confirms DELETE /v1/tokens/{jti} actually reaches the same
+    token_registry app.state wires into identity's revocation check --
+    end-to-end enforcement itself (a revoked jti rejecting a real Bearer) is
+    covered directly against get_principal/IdentityMiddleware in
+    test_identity.py and test_mcp_middleware_identity.py, which control a
+    real RSA-signed JWT + primed JWKS the way this fixture's dependency
+    override does not."""
+    from af_mcp_broker.app import app
+
+    client, _ = app_client
+    mint_resp = _mint(client, name="to-be-revoked")
+    jti = mint_resp.json()["jti"]
+
+    client.delete(f"/v1/tokens/{jti}", headers=_AUTH)
+
+    import asyncio
+
+    revoked = asyncio.run(app.state.token_registry._backend.list_revoked_jtis())
+    assert jti in revoked

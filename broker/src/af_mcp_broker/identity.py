@@ -4,7 +4,7 @@ import asyncio
 import json
 import time
 from dataclasses import dataclass, field
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
 from urllib.parse import urlparse
 
 import jwt
@@ -15,6 +15,9 @@ from pydantic import SecretStr
 
 from af_mcp_broker.config import Settings, get_settings
 from af_mcp_broker.http import get_http_client
+
+if TYPE_CHECKING:
+    from af_mcp_broker.token_registry import RevokedJtiCache
 
 logger = structlog.get_logger(__name__)
 
@@ -157,11 +160,23 @@ def _extract_principal(claims: dict[str, Any], raw_token: str) -> Principal:
     )
 
 
-async def get_principal(token: str, settings: Settings) -> Principal:
+async def get_principal(
+    token: str,
+    settings: Settings,
+    revoked_jti_cache: RevokedJtiCache | None = None,
+) -> Principal:
     """Validate a Bearer token and return the extracted Principal.
 
     Raises HTTPException(401) on any validation failure so FastAPI can return
     a proper WWW-Authenticate response.
+
+    *revoked_jti_cache*, when provided, is consulted against the token's
+    `jti` claim (issue #115) -- this is the single choke point both
+    `keycloak_dependency` (/v1) and `IdentityMiddleware` (/mcp) call, so
+    enforcing revocation here covers both surfaces. A token with no `jti`
+    claim, or one whose `jti` was never minted through the manual bearer
+    registry, is never affected -- only jtis the registry actually knows
+    about can be revoked (see token_registry.RevokedJtiCache).
     """
     keys = await get_jwks(settings)
 
@@ -186,6 +201,13 @@ async def get_principal(token: str, settings: Settings) -> Principal:
                 issuer=settings.oidc_issuer,
                 options={"verify_exp": True},
             )
+            jti = claims.get("jti")
+            if (
+                jti
+                and revoked_jti_cache is not None
+                and await revoked_jti_cache.is_revoked(jti)
+            ):
+                _raise_revoked(jti)
             return _extract_principal(claims, token)
     except jwt.ExpiredSignatureError as exc:
         error = exc
@@ -204,6 +226,13 @@ async def get_principal(token: str, settings: Settings) -> Principal:
         detail="Invalid or expired token",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
+
+def _raise_revoked(jti: str) -> None:
+    """Raised from inside get_principal's try block -- caught by the same
+    ``except (ValueError, KeyError)`` branch _extract_principal's malformed-
+    posix-claim check uses, so a revoked jti maps to 401 the same way."""
+    raise ValueError(f"token jti={jti!r} has been revoked")
 
 
 def _select_jwk(keys: list[dict[str, Any]], kid: str | None) -> dict[str, Any] | None:
@@ -274,7 +303,12 @@ async def keycloak_dependency(
             detail="Not authenticated",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    return await get_principal(credentials.credentials, settings)
+    # Absent (getattr default None) whenever the token registry isn't wired
+    # up at all -- e.g. tests that construct a bare app.state -- in which
+    # case get_principal simply skips the revocation check, same as before
+    # issue #115.
+    revoked_jti_cache = getattr(request.app.state, "revoked_jti_cache", None)
+    return await get_principal(credentials.credentials, settings, revoked_jti_cache)
 
 
 # ---------------------------------------------------------------------------

@@ -471,14 +471,14 @@ describe('fetchDashboardSummary()', () => {
   });
 });
 
-describe('tokens client (issue #24)', () => {
-  it('mintToken posts ttl_seconds and note, returns the one-shot token', async () => {
+describe('tokens client (issue #24, issue #115)', () => {
+  it('mintToken posts ttl_seconds and name, returns the one-shot token', async () => {
     const fetchMock = mockJson(200, {
       token: 'eyJraWQ...fake',
       jti: 'jti-1',
       issued_at: '2026-07-21T00:00:00+00:00',
       expires_at: '2026-07-21T01:00:00+00:00',
-      note: 'claude-desktop',
+      name: 'claude-desktop',
     });
     globalThis.fetch = fetchMock;
 
@@ -488,15 +488,16 @@ describe('tokens client (issue #24)', () => {
     expect(result.jti).toBe('jti-1');
     const [, init] = fetchMock.mock.calls[0];
     expect(init.method).toBe('POST');
-    expect(JSON.parse(init.body as string)).toEqual({ ttl_seconds: 3600, note: 'claude-desktop' });
+    expect(JSON.parse(init.body as string)).toEqual({ ttl_seconds: 3600, name: 'claude-desktop' });
   });
 
-  it('mintToken omits note when not provided', async () => {
+  it('mintToken omits name when not provided', async () => {
     const fetchMock = mockJson(200, {
       token: 't',
       jti: 'jti-2',
       issued_at: '2026-07-21T00:00:00+00:00',
       expires_at: '2026-07-21T01:00:00+00:00',
+      name: 'mcp-20260721-jti2abcd',
     });
     globalThis.fetch = fetchMock;
 
@@ -510,17 +511,18 @@ describe('tokens client (issue #24)', () => {
     globalThis.fetch = mockJson(200, [
       {
         jti: 'jti-1',
+        name: 'claude-desktop',
         issued_at: '2026-07-21T00:00:00+00:00',
         expires_at: '2026-07-21T01:00:00+00:00',
+        revoked_at: null,
         source: 'manual',
-        note: null,
-        last_used_at: null,
       },
     ]);
 
     const rows = await listTokens();
     expect(rows).toHaveLength(1);
     expect(rows[0].source).toBe('manual');
+    expect(rows[0].revoked_at).toBeNull();
     expect(rows[0]).not.toHaveProperty('token');
   });
 

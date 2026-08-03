@@ -226,6 +226,24 @@ class Settings(BaseSettings):
     # no extra volume mount needed at the chart's default.
     vault_sa_token_path: str = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 
+    # Which TokenRegistryBackend implementation backs the manual bearer-token
+    # bootstrap flow (POST/GET/DELETE /v1/tokens, issue #115). "in_memory" is
+    # single-replica and lost on restart (fine for dev/testing); "vault"
+    # persists to the same Vault/OpenBao instance as token_store_backend
+    # above, under a separate kv_path_prefix — see token_registry.py.
+    token_registry_backend: Literal["in_memory", "vault"] = "in_memory"
+
+    # KV-v2 path prefix for the token registry, distinct from
+    # vault_kv_path_prefix (which is oauth21's TokenStore prefix) so the two
+    # Vault-backed stores never collide under the same kv_mount.
+    token_registry_kv_path_prefix: str = "mcp/token-registry"
+
+    # How often (seconds) identity.RevokedJtiCache re-reads the token
+    # registry's revoked-jti set. Bounds how long a revoked token keeps
+    # working after DELETE /v1/tokens/{jti} -- see token_registry.py's
+    # RevokedJtiCache docstring.
+    revoked_jti_cache_refresh_seconds: float = 30.0
+
     @property
     def oauth21_effective_state_issuer(self) -> str:
         """``oauth21_state_issuer`` if set, else ``oidc_issuer``.
@@ -327,30 +345,42 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _validate_vault_config(self) -> Settings:
-        """Fail startup loudly when the vault TokenStore backend is selected
-        but the settings it depends on are not — a half-configured
-        VaultTokenStore would otherwise fail at first request instead of at
-        boot (see also app.py's lifespan trial authentication).
+        """Fail startup loudly when either Vault-backed store is selected but
+        the settings they depend on are not — a half-configured
+        VaultTokenStore/VaultTokenRegistryBackend would otherwise fail at
+        first request instead of at boot (see also app.py's lifespan trial
+        authentication). Both stores share the same Vault connection
+        settings (only their kv_path_prefix differs), so one validator
+        covers either or both being selected.
         """
-        if self.token_store_backend != "vault":
+        if (
+            self.token_store_backend != "vault"
+            and self.token_registry_backend != "vault"
+        ):
             return self
         if not self.vault_addr:
             log.error(
                 "vault_config_invalid",
-                reason="vault_addr is empty but token_store_backend is 'vault'",
+                reason=(
+                    "vault_addr is empty but token_store_backend and/or "
+                    "token_registry_backend is 'vault'"
+                ),
             )
             raise ValueError(
                 "vault_addr (VAULT_ADDR) must be set when token_store_backend "
-                "is 'vault'."
+                "or token_registry_backend is 'vault'."
             )
         if not self.vault_auth_role:
             log.error(
                 "vault_config_invalid",
-                reason="vault_auth_role is empty but token_store_backend is 'vault'",
+                reason=(
+                    "vault_auth_role is empty but token_store_backend and/or "
+                    "token_registry_backend is 'vault'"
+                ),
             )
             raise ValueError(
                 "vault_auth_role (VAULT_AUTH_ROLE) must be set when "
-                "token_store_backend is 'vault'."
+                "token_store_backend or token_registry_backend is 'vault'."
             )
         return self
 

@@ -43,6 +43,12 @@ from af_mcp_broker.identity import build_dev_principal, get_jwks, issuer_is_loca
 from af_mcp_broker.logging import configure_logging
 from af_mcp_broker.mcp.aggregator import build_aggregator, populate_aggregator
 from af_mcp_broker.mcp.registry import BackendRegistry
+from af_mcp_broker.token_registry import (
+    InMemoryTokenRegistryBackend,
+    RevokedJtiCache,
+    TokenRegistryBackend,
+    VaultTokenRegistryBackend,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -250,27 +256,64 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # identity_providers config already assembled above.
     target_to_alias = _build_target_to_alias(x509_targets, settings.identity_providers)
 
+    # --- Tokens: durable registry backing the manual bearer-token bootstrap
+    # flow (POST/GET/DELETE /v1/tokens, issue #24), Vault/OpenBao-backed for
+    # HA-safe list/revoke across replicas (issue #115) with the same
+    # in-memory local-dev fallback pattern as oauth21_token_store above.
+    token_registry_backend: TokenRegistryBackend
+    if settings.token_registry_backend == "vault":
+        token_registry_backend = VaultTokenRegistryBackend(
+            addr=settings.vault_addr,
+            auth_mount=settings.vault_auth_mount,
+            auth_role=settings.vault_auth_role,
+            kv_mount=settings.vault_kv_mount,
+            kv_path_prefix=settings.token_registry_kv_path_prefix,
+            sa_token_path=settings.vault_sa_token_path,
+        )
+        # Trial authentication only, same rationale as oauth21_token_store's
+        # equivalent check above: a misconfigured Vault backend is a
+        # security-sensitive state, so fail startup loudly rather than
+        # silently degrade to a broker that can't persist token metadata.
+        try:
+            await token_registry_backend._authenticate()
+        except Exception as exc:
+            logger.exception("token_registry_vault_auth.failed")
+            raise RuntimeError(
+                f"Vault K8s auth failed at startup for token registry: {exc}"
+            ) from exc
+        logger.info("token_registry_vault_auth.ok", vault_addr=settings.vault_addr)
+    else:
+        token_registry_backend = InMemoryTokenRegistryBackend()
+    token_registry = TokenRegistry(token_registry_backend)
+
+    # --- Revoked-jti cache: bridges the token registry to identity.py's hot
+    # JWT-validation path (both /v1's keycloak_dependency and /mcp's
+    # IdentityMiddleware call identity.get_principal, the single choke point
+    # this enforces revocation at) without a per-request Vault round trip.
+    # See token_registry.RevokedJtiCache's docstring for the staleness bound.
+    revoked_jti_cache = RevokedJtiCache(
+        token_registry_backend,
+        refresh_interval_seconds=settings.revoked_jti_cache_refresh_seconds,
+    )
+
     # --- MCP aggregator: the FastMCP instance and its ASGI app already exist
     # (built eagerly at module scope below, since the aggregator must be
     # mountable before Settings()/BackendRegistry() are known — see the
     # comment above `_mcp_aggregator`). Push the registry/policy/settings/
-    # credential_registry just loaded above into it now that they're real.
+    # credential_registry/revoked_jti_cache just loaded above into it now
+    # that they're real.
     populate_aggregator(
         _mcp_aggregator,
         backend_registry,
         settings,
         entitlement_policy,
         credential_registry,
+        revoked_jti_cache,
     )
 
     # --- Audit: without init the module drops every record. Honor AUDIT_LOG_FILE.
     audit_output = _open_audit_output(settings.audit_log_file)
     init_audit_logger(audit_output)
-
-    # --- Tokens: process-local bookkeeping for manually-minted bearers
-    # (POST/GET/DELETE /v1/tokens, issue #24). Fresh on every restart — see
-    # TokenRegistry's docstring for why that's fine.
-    token_registry = TokenRegistry()
 
     # --- Metrics: /metrics lives on its own port (chart NetworkPolicy allows
     # Prometheus only there), served by prometheus_client's thread so the
@@ -302,6 +345,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     application.state.oauth21_token_store = oauth21_token_store
     application.state.oauth21_state_cipher = oauth21_state_cipher
     application.state.token_registry = token_registry
+    application.state.revoked_jti_cache = revoked_jti_cache
 
     # Prime the JWKS cache at startup so the first request does not pay the
     # latency cost of a remote fetch.

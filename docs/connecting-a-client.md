@@ -37,10 +37,12 @@ client can bootstrap its first token automatically today — mint one at
 [`mcp-portal.af.uchicago.edu/tokens`](https://mcp-portal.af.uchicago.edu/tokens/)
 and paste it into your client's configuration once (see
 [Programmatic client bootstrap](auth.md#programmatic-client-bootstrap) for
-what that page's mint/list/revoke endpoints actually do and their known
-limitations). The mechanism for doing that without the
-token touching disk or shell history is client-specific; see each section
-below.
+what that page's mint/list/revoke endpoints actually do, including the
+remaining known limitations and how revocation is enforced). The token's
+value is shown exactly once at mint time — if you lose it, revoke it from
+the portal and mint a new one, rather than trying to retrieve it again. The
+mechanism for doing that without the token touching disk or shell history
+is client-specific; see each section below.
 
 ## Claude (Claude.ai, Claude Desktop)
 

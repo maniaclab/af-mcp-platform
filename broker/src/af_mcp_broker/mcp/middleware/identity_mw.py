@@ -12,6 +12,7 @@ from af_mcp_broker.identity import build_dev_principal, get_principal, issuer_is
 
 if TYPE_CHECKING:
     from af_mcp_broker.config import Settings
+    from af_mcp_broker.token_registry import RevokedJtiCache
 
 logger = structlog.get_logger(__name__)
 
@@ -24,8 +25,15 @@ logger = structlog.get_logger(__name__)
 
 
 class IdentityMiddleware(Middleware):
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self, settings: Settings, revoked_jti_cache: RevokedJtiCache | None = None
+    ) -> None:
         self.settings = settings
+        # Populated by aggregator.populate_aggregator() once app.py's
+        # lifespan has built the real token registry (issue #115) -- see
+        # get_principal's docstring for why enforcing revocation here covers
+        # /mcp the same way keycloak_dependency covers /v1.
+        self.revoked_jti_cache = revoked_jti_cache
 
     async def on_request(
         self,
@@ -64,7 +72,7 @@ class IdentityMiddleware(Middleware):
                 raise AuthorizationError("Missing Authorization: Bearer <token> header")
             token = auth_header[len("Bearer ") :]
             try:
-                principal = await get_principal(token, settings)
+                principal = await get_principal(token, settings, self.revoked_jti_cache)
             except HTTPException as exc:
                 logger.warning("mcp_identity_validation_failed", error=str(exc.detail))
                 raise AuthorizationError(str(exc.detail)) from exc
