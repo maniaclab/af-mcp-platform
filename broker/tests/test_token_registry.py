@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 from af_mcp_broker.token_registry import (
+    DuplicateNameError,
     InMemoryTokenRegistryBackend,
     RevokedJtiCache,
     TokenRecord,
@@ -246,13 +247,107 @@ async def test_revoke_sets_revoked_at_and_appears_in_list_revoked_jtis(
 async def test_list_revoked_jtis_excludes_active_tokens(
     backend: TokenRegistryBackend,
 ) -> None:
-    await backend.add(_make_record(jti="active-jti", uid=1000))
-    await backend.add(_make_record(jti="revoked-jti", uid=1000))
+    await backend.add(_make_record(jti="active-jti", uid=1000, name="active-name"))
+    await backend.add(_make_record(jti="revoked-jti", uid=1000, name="revoked-name"))
     await backend.revoke(1000, "revoked-jti", revoked_at=1.0)
 
     revoked = await backend.list_revoked_jtis()
 
     assert revoked == frozenset({"revoked-jti"})
+
+
+async def test_add_stores_and_returns_note(backend: TokenRegistryBackend) -> None:
+    await backend.add(_make_record(jti="jti-1", uid=1000, note="for the CI bot"))
+
+    rows = await backend.list_for_uid(1000)
+
+    assert len(rows) == 1
+    assert rows[0].note == "for the CI bot"
+
+
+async def test_add_note_absent_by_default(backend: TokenRegistryBackend) -> None:
+    await backend.add(_make_record(jti="jti-1", uid=1000))
+
+    rows = await backend.list_for_uid(1000)
+
+    assert rows[0].note is None
+
+
+# ---------------------------------------------------------------------------
+# Name uniqueness (per-uid, case-insensitive, dead tokens don't collide) —
+# design change: `name` is now a unique-per-user identifier, not free text.
+# ---------------------------------------------------------------------------
+
+
+async def test_add_rejects_duplicate_name_for_same_uid(
+    backend: TokenRegistryBackend,
+) -> None:
+    await backend.add(_make_record(jti="jti-1", uid=1000, name="claude-desktop"))
+
+    with pytest.raises(DuplicateNameError):
+        await backend.add(_make_record(jti="jti-2", uid=1000, name="claude-desktop"))
+
+    # The rejected add() must not have been persisted.
+    rows = await backend.list_for_uid(1000)
+    assert [r.jti for r in rows] == ["jti-1"]
+
+
+async def test_add_rejects_duplicate_name_case_insensitively(
+    backend: TokenRegistryBackend,
+) -> None:
+    await backend.add(_make_record(jti="jti-1", uid=1000, name="Claude-Desktop"))
+
+    with pytest.raises(DuplicateNameError):
+        await backend.add(_make_record(jti="jti-2", uid=1000, name="claude-desktop"))
+
+
+async def test_add_allows_same_name_for_different_uids(
+    backend: TokenRegistryBackend,
+) -> None:
+    await backend.add(_make_record(jti="jti-1", uid=1000, name="claude-desktop"))
+
+    # Must not raise -- uniqueness is per-uid, not global.
+    await backend.add(_make_record(jti="jti-2", uid=2000, name="claude-desktop"))
+
+    rows = await backend.list_for_uid(2000)
+    assert [r.jti for r in rows] == ["jti-2"]
+
+
+async def test_add_allows_name_that_collides_with_a_revoked_token(
+    backend: TokenRegistryBackend,
+) -> None:
+    """Collisions with dead (revoked or expired) tokens would be confusing to
+    reject -- the name is effectively free again once the old token can no
+    longer be mistaken for the new one."""
+    await backend.add(_make_record(jti="jti-1", uid=1000, name="claude-desktop"))
+    await backend.revoke(1000, "jti-1", revoked_at=time.time())
+
+    # Must not raise.
+    await backend.add(_make_record(jti="jti-2", uid=1000, name="claude-desktop"))
+
+    rows = await backend.list_for_uid(1000)
+    assert {r.jti for r in rows} == {"jti-1", "jti-2"}
+
+
+async def test_add_allows_name_that_collides_with_an_expired_token(
+    backend: TokenRegistryBackend,
+) -> None:
+    now = time.time()
+    await backend.add(
+        _make_record(
+            jti="jti-1",
+            uid=1000,
+            name="claude-desktop",
+            issued_at=now - 7200,
+            expires_at=now - 3600,
+        )
+    )
+
+    # Must not raise -- an expired token's name is free again.
+    await backend.add(_make_record(jti="jti-2", uid=1000, name="claude-desktop"))
+
+    rows = [r for r in await backend.list_for_uid(1000) if r.expires_at > now]
+    assert [r.jti for r in rows] == ["jti-2"]
 
 
 # ---------------------------------------------------------------------------
@@ -309,12 +404,40 @@ async def test_add_retries_on_concurrent_cas_conflict(sa_token_path: Path) -> No
     replica_b = _make_vault_backend(fake, sa_token_path)
 
     await asyncio.gather(
-        replica_a.add(_make_record(jti="jti-a", uid=1000)),
-        replica_b.add(_make_record(jti="jti-b", uid=1000)),
+        replica_a.add(_make_record(jti="jti-a", uid=1000, name="name-a")),
+        replica_b.add(_make_record(jti="jti-b", uid=1000, name="name-b")),
     )
 
     rows = await replica_a.list_for_uid(1000)
     assert {r.jti for r in rows} == {"jti-a", "jti-b"}
+
+
+async def test_add_cas_retry_reevaluates_name_uniqueness_against_the_winner(
+    sa_token_path: Path,
+) -> None:
+    """Two replicas racing to mint the *same name* for the same uid: a plain
+    check-then-write (read list_for_uid, then add()) would let both pass the
+    uniqueness check before either writes. The by-uid CAS write forces a
+    loser to retry -- and that retry must re-read the winner's data and
+    re-run the uniqueness check against it, not just retry the blind write."""
+    fake = _FakeRegistryVault()
+    replica_a = _make_vault_backend(fake, sa_token_path)
+    replica_b = _make_vault_backend(fake, sa_token_path)
+
+    results = await asyncio.gather(
+        replica_a.add(_make_record(jti="jti-a", uid=1000, name="dup")),
+        replica_b.add(_make_record(jti="jti-b", uid=1000, name="dup")),
+        return_exceptions=True,
+    )
+
+    successes = [r for r in results if r is None]
+    errors = [r for r in results if isinstance(r, DuplicateNameError)]
+    assert len(successes) == 1, results
+    assert len(errors) == 1, results
+
+    # Only the winner's record was actually persisted.
+    rows = await replica_a.list_for_uid(1000)
+    assert len(rows) == 1
 
 
 async def test_vault_authenticates_once_and_caches_token(sa_token_path: Path) -> None:

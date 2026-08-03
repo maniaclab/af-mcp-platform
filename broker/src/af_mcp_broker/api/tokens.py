@@ -38,6 +38,20 @@ writeup — these are real gaps, not oversights):
   tokens issued via oauth2-proxy's interactive flow or a future MCP OAuth
   flow cannot be enumerated here today. That gap is surfaced in the route
   docstring/response description rather than silently omitted.
+* ``name`` is a unique-per-user identifier, not free text (issue #116):
+  minting a second token whose name matches an existing *live* one for the
+  same uid (case-insensitive) is rejected with 409. "Live" excludes revoked
+  and expired tokens -- a name freed up by revocation or natural expiry can
+  be reused, since the dead token can no longer be mistaken for the new one.
+  The check runs after the Keycloak exchange (see ``mint_token``), so a
+  user-supplied name and the server-generated default both go through the
+  exact same check point rather than two different pre/post paths; the
+  uniqueness enforcement itself lives in ``token_registry.TokenRegistryBackend
+  .add()`` (see that module's docstring), not here, so it stays correct under
+  concurrent mints from multiple broker replicas.
+* ``note`` is an optional, free-text, user-supplied field -- purely
+  self-descriptive, never consumed by the broker, stored alongside the
+  record and shown back on mint/list. Absent (``None``) unless supplied.
 """
 
 from __future__ import annotations
@@ -59,6 +73,7 @@ from af_mcp_broker.config import Settings, get_settings
 from af_mcp_broker.http import get_http_client
 from af_mcp_broker.identity import Principal, keycloak_dependency
 from af_mcp_broker.token_registry import (
+    DuplicateNameError,
     TokenRecord,
     TokenRegistryBackend,
     default_token_name,
@@ -90,6 +105,7 @@ _MIN_TTL_SECONDS = 60
 _MAX_TTL_SECONDS = 86400
 _DEFAULT_TTL_SECONDS = 3600
 _MAX_NAME_LENGTH = 200
+_MAX_NOTE_LENGTH = 256
 
 # Rate limit is per-uid and intentionally separate from
 # CredentialCache's failed-unlock limiter (credentials/cache.py) — that one
@@ -120,8 +136,13 @@ class MintTokenRequest(BaseModel):
         default=_DEFAULT_TTL_SECONDS, ge=_MIN_TTL_SECONDS, le=_MAX_TTL_SECONDS
     )
     # Optional; a server-generated default (see default_token_name) is used
-    # when absent so every record always has a displayable name.
+    # when absent so every record always has a displayable name. Unique per
+    # uid among live (non-revoked, non-expired) tokens, case-insensitively --
+    # see this module's docstring and token_registry.py.
     name: str | None = Field(default=None, max_length=_MAX_NAME_LENGTH)
+    # Optional free-text note (issue #116) -- purely self-descriptive, never
+    # consumed by the broker. None (absent) by default.
+    note: str | None = Field(default=None, max_length=_MAX_NOTE_LENGTH)
 
 
 class MintTokenResponse(BaseModel):
@@ -133,6 +154,7 @@ class MintTokenResponse(BaseModel):
     issued_at: str
     expires_at: str
     name: str
+    note: str | None
 
 
 class TokenSummary(BaseModel):
@@ -140,6 +162,7 @@ class TokenSummary(BaseModel):
 
     jti: str
     name: str
+    note: str | None
     issued_at: str
     expires_at: str
     # None until revoked; once set, the portal shows a "revoked" status
@@ -375,19 +398,33 @@ async def mint_token(
     issued_at = float(claims.get("iat", time.time()))
     expires_at = float(claims.get("exp", time.time() + body.ttl_seconds))
     name = (body.name or "").strip() or default_token_name(jti, issued_at)
+    note = (body.note or "").strip() or None
 
-    await registry.put(
-        TokenRecord(
-            jti=jti,
-            uid=principal.uid,
-            subject=principal.subject,
-            name=name,
-            issued_at=issued_at,
-            expires_at=expires_at,
-            revoked_at=None,
-            minted_via=_MINTED_VIA,
+    try:
+        await registry.put(
+            TokenRecord(
+                jti=jti,
+                uid=principal.uid,
+                subject=principal.subject,
+                name=name,
+                issued_at=issued_at,
+                expires_at=expires_at,
+                revoked_at=None,
+                minted_via=_MINTED_VIA,
+                note=note,
+            )
         )
-    )
+    except DuplicateNameError as exc:
+        # Checked post-exchange, not pre-exchange -- see this module's
+        # docstring for why: it keeps the user-supplied and server-generated
+        # name paths on one code path instead of two. The already-exchanged
+        # Keycloak token is simply never registered; it remains valid until
+        # its own natural expiry but unlisted/unrevocable, same as any other
+        # registry-write failure after a successful exchange.
+        logger.warning("token_mint_duplicate_name", uid=principal.uid, name=name)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
     registry.record_mint(principal.uid)
 
     # Log jti-only — never the token itself.
@@ -404,6 +441,7 @@ async def mint_token(
         issued_at=_iso(issued_at),
         expires_at=_iso(expires_at),
         name=name,
+        note=note,
     )
 
 
@@ -433,6 +471,7 @@ async def list_tokens(
         TokenSummary(
             jti=r.jti,
             name=r.name,
+            note=r.note,
             issued_at=_iso(r.issued_at),
             expires_at=_iso(r.expires_at),
             revoked_at=_iso(r.revoked_at) if r.revoked_at is not None else None,

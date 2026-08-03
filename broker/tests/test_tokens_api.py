@@ -89,11 +89,17 @@ def fake_keycloak(monkeypatch: pytest.MonkeyPatch) -> _FakeKeycloakClient:
 
 
 def _mint(
-    client: TestClient, *, ttl_seconds: int = 3600, name: str | None = "claude-desktop"
+    client: TestClient,
+    *,
+    ttl_seconds: int = 3600,
+    name: str | None = "claude-desktop",
+    note: str | None = None,
 ):
     body: dict[str, Any] = {"ttl_seconds": ttl_seconds}
     if name is not None:
         body["name"] = name
+    if note is not None:
+        body["note"] = note
     return client.post("/v1/tokens", json=body, headers=_AUTH)
 
 
@@ -133,6 +139,49 @@ def test_mint_rejects_name_above_max_length(
     assert resp.status_code == 422, resp.text
 
 
+def test_mint_duplicate_name_returns_409(
+    app_client: tuple[TestClient, dict], fake_keycloak: _FakeKeycloakClient
+) -> None:
+    """`name` is a unique-per-user identifier (design change) -- minting a
+    second token with a name already in use by an active token for the same
+    uid must fail clearly rather than silently creating two rows with the
+    same displayed name."""
+    client, _ = app_client
+    first = _mint(client, name="claude-desktop")
+    assert first.status_code == 200, first.text
+
+    second = _mint(client, name="claude-desktop")
+    assert second.status_code == 409, second.text
+    assert "claude-desktop" in second.json()["detail"]
+
+
+def test_mint_duplicate_name_is_case_insensitive(
+    app_client: tuple[TestClient, dict], fake_keycloak: _FakeKeycloakClient
+) -> None:
+    client, _ = app_client
+    first = _mint(client, name="Claude-Desktop")
+    assert first.status_code == 200, first.text
+
+    second = _mint(client, name="claude-desktop")
+    assert second.status_code == 409, second.text
+
+
+def test_mint_duplicate_name_allowed_after_first_token_revoked(
+    app_client: tuple[TestClient, dict], fake_keycloak: _FakeKeycloakClient
+) -> None:
+    """Collisions with dead (revoked) tokens are allowed -- rejecting them
+    would be confusing, since the old token can no longer be mistaken for
+    the new one."""
+    client, _ = app_client
+    first = _mint(client, name="claude-desktop")
+    jti = first.json()["jti"]
+    revoke_resp = client.delete(f"/v1/tokens/{jti}", headers=_AUTH)
+    assert revoke_resp.status_code == 200, revoke_resp.text
+
+    second = _mint(client, name="claude-desktop")
+    assert second.status_code == 200, second.text
+
+
 def test_mint_without_client_credentials_configured_returns_503(
     app_client: tuple[TestClient, dict], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -148,6 +197,41 @@ def test_mint_rejects_ttl_above_max(
 ) -> None:
     client, _ = app_client
     resp = _mint(client, ttl_seconds=86401)
+    assert resp.status_code == 422, resp.text
+
+
+def test_mint_note_round_trips_through_list(
+    app_client: tuple[TestClient, dict], fake_keycloak: _FakeKeycloakClient
+) -> None:
+    """`note` (issue #116) is a free-text, purely self-descriptive field --
+    not consumed by the broker, just stored and shown back."""
+    client, _ = app_client
+    mint_resp = _mint(client, name="claude-desktop", note="for the CI bot")
+    assert mint_resp.status_code == 200, mint_resp.text
+    assert mint_resp.json()["note"] == "for the CI bot"
+
+    listed = client.get("/v1/tokens", headers=_AUTH)
+    assert listed.status_code == 200, listed.text
+    assert listed.json()[0]["note"] == "for the CI bot"
+
+
+def test_mint_note_absent_by_default(
+    app_client: tuple[TestClient, dict], fake_keycloak: _FakeKeycloakClient
+) -> None:
+    client, _ = app_client
+    mint_resp = _mint(client, name="claude-desktop")
+    assert mint_resp.status_code == 200, mint_resp.text
+    assert mint_resp.json()["note"] is None
+
+    listed = client.get("/v1/tokens", headers=_AUTH)
+    assert listed.json()[0]["note"] is None
+
+
+def test_mint_rejects_note_above_max_length(
+    app_client: tuple[TestClient, dict], fake_keycloak: _FakeKeycloakClient
+) -> None:
+    client, _ = app_client
+    resp = _mint(client, note="x" * 257)
     assert resp.status_code == 422, resp.text
 
 

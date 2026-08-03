@@ -51,6 +51,23 @@ growth here is a display/storage concern, not a security one. A future janitor
 could sweep expired entries; out of scope here (`InMemoryTokenRegistryBackend`
 does still self-sweep, since it is a plain in-process dict with no external
 TTL of its own).
+
+``name`` is a unique-per-user identifier, not free text (issue #116): two
+records for the same uid may not share a name, compared case-insensitively.
+Only *live* records (``revoked_at`` unset and not yet past ``expires_at``)
+count as a collision -- a name freed up by revocation or natural expiry can
+be reused without confusion, since the old record can no longer be mistaken
+for the new one. ``add()`` enforces this itself (see
+``_check_name_available`` and each backend's ``add()``) rather than leaving
+it to a caller-side check-then-write, because a caller-side check racing two
+concurrent mints (e.g. two broker replicas) could let both pass the check
+before either writes. Both backends' single per-uid record is small enough
+that a full scan of it at mint time is fine -- no separate name index. For
+``VaultTokenRegistryBackend`` specifically, the uniqueness check re-runs on
+every iteration of ``add()``'s existing read-modify-write CAS retry loop
+(the same one that already protects the by-uid write from lost updates), so
+a loser that retries after a conflict re-checks against the winner's
+just-written data rather than a stale read from before the race.
 """
 
 from __future__ import annotations
@@ -88,6 +105,17 @@ class VaultError(Exception):
     """Raised when Vault's HTTP API returns an unexpected response."""
 
 
+class DuplicateNameError(Exception):
+    """Raised by add() when a record's ``name`` collides, case-insensitively,
+    with an existing live (non-revoked, non-expired) record for the same
+    uid -- see this module's docstring for the uniqueness rule."""
+
+    def __init__(self, uid: int, name: str) -> None:
+        self.uid = uid
+        self.name = name
+        super().__init__(f"Token name {name!r} is already in use.")
+
+
 @dataclass(frozen=True)
 class TokenRecord:
     """Metadata for one manually-minted bearer token.
@@ -106,6 +134,19 @@ class TokenRecord:
     expires_at: float
     revoked_at: float | None
     minted_via: str
+    # Free-text, user-supplied, purely self-descriptive -- never consumed by
+    # the broker itself (issue #116). None when the caller didn't supply one.
+    note: str | None = None
+
+
+def _collides(existing: TokenRecord, candidate: TokenRecord, now: float) -> bool:
+    """True if *existing* is a live record that blocks *candidate*'s name."""
+    return (
+        existing.jti != candidate.jti
+        and existing.revoked_at is None
+        and existing.expires_at > now
+        and existing.name.casefold() == candidate.name.casefold()
+    )
 
 
 def default_token_name(jti: str, issued_at: float) -> str:
@@ -120,7 +161,12 @@ class TokenRegistryBackend(ABC):
 
     @abstractmethod
     async def add(self, record: TokenRecord) -> None:
-        """Persist a newly minted record."""
+        """Persist a newly minted record.
+
+        Raises DuplicateNameError if *record*'s name collides, case-
+        insensitively, with an existing live record for the same uid --
+        see this module's docstring for the uniqueness rule.
+        """
 
     @abstractmethod
     async def list_for_uid(self, uid: int) -> list[TokenRecord]:
@@ -179,6 +225,10 @@ class InMemoryTokenRegistryBackend(TokenRegistryBackend):
     async def add(self, record: TokenRecord) -> None:
         async with self._lock:
             self._sweep_expired_locked()
+            now = time.time()
+            for existing in self._by_uid.get(record.uid, {}).values():
+                if _collides(existing, record, now):
+                    raise DuplicateNameError(record.uid, record.name)
             self._by_uid.setdefault(record.uid, {})[record.jti] = record
 
     async def list_for_uid(self, uid: int) -> list[TokenRecord]:
@@ -228,6 +278,7 @@ def _record_to_fields(record: TokenRecord) -> dict[str, Any]:
         "expires_at": record.expires_at,
         "revoked_at": record.revoked_at,
         "minted_via": record.minted_via,
+        "note": record.note,
     }
 
 
@@ -245,6 +296,8 @@ def _record_from_fields(fields: dict[str, Any]) -> TokenRecord:
             else None
         ),
         minted_via=fields["minted_via"],
+        # .get(), not [] -- entries written before issue #116 don't have this key.
+        note=fields.get("note"),
     )
 
 
@@ -376,9 +429,19 @@ class VaultTokenRegistryBackend(TokenRegistryBackend):
 
     async def add(self, record: TokenRecord) -> None:
         path = self._uid_path(record.uid)
+        now = time.time()
         for _attempt in range(_MAX_CAS_RETRIES):
             current = await self._kv_get(path)
             data, version = current if current is not None else ({}, None)
+            # Re-checked on every retry against the just-re-read data, not
+            # just once up front -- see this module's docstring for why that
+            # matters: a loser retrying after a CAS conflict must re-evaluate
+            # uniqueness against whatever the winner just wrote, not a stale
+            # read from before the race.
+            for fields in data.values():
+                existing = _record_from_fields(fields)
+                if _collides(existing, record, now):
+                    raise DuplicateNameError(record.uid, record.name)
             data = dict(data)
             data[record.jti] = _record_to_fields(record)
             try:

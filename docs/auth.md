@@ -508,8 +508,17 @@ portal's `mcp-portal.af.uchicago.edu/tokens` page exists for exactly this:
    value is shown exactly once**, in this response — the portal never
    displays it again, and the broker never persists it: the token registry
    (below) stores only metadata (`jti`, an optional user-supplied name or a
-   server-generated `mcp-YYYYMMDD-<jti prefix>` default, issue/expiry times,
-   revocation state), never anything the token could be reconstructed from.
+   server-generated `mcp-YYYYMMDD-<jti prefix>` default, an optional
+   free-text note, issue/expiry times, revocation state), never anything the
+   token could be reconstructed from. `name` is a unique-per-user identifier,
+   not free text: minting a second token whose name matches an existing
+   *live* one for the same uid (case-insensitive) is rejected with 409. Live
+   means neither revoked nor expired — a name freed up by revocation or
+   natural expiry can be reused, since the dead token can no longer be
+   mistaken for the new one. `note`, unlike `name`, is purely self-descriptive
+   free text (up to 256 chars) that the broker never inspects or acts on — it
+   exists only so the portal's token list can show the caller a reminder of
+   what a token is for.
 2. **List** — `GET /v1/tokens` shows metadata for tokens minted through this
    endpoint (`source: "manual"`), including ones already revoked (shown with
    a revoked status rather than removed, so the portal can distinguish
