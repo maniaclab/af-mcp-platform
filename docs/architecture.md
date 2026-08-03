@@ -262,6 +262,12 @@ whichever of the two consumers is configured to use Vault) and passes it to
 each. A future Vault-backed store should compose the same `VaultKV` rather
 than re-implementing this transport.
 
+Neither consumer's Vault entries are pruned by the running broker process
+itself. `VaultTokenStore` leans on Vault's own credential lifetime; the token
+registry needs an external janitor instead, since a revoked or expired token
+record otherwise persists forever — see "Programmatic client bootstrap" §4
+in `docs/auth.md` for `token_sweep.py` and the `tokenSweep` CronJob.
+
 ### 4. Audit
 
 Structured log (structlog + JSON) of every tool invocation, including:
