@@ -41,13 +41,17 @@ list looking briefly stale ("active" a moment longer than it should), never
 the reverse (enforced-revoked but still shown as active would be a security
 gap; shown-as-active-a-bit-longer while actually enforced is just UI lag).
 
-Neither backend actively prunes expired entries from Vault -- an entry
-simply stops mattering once its JWT's own ``exp`` claim makes it invalid
-regardless of registry state (see identity.get_principal), so unbounded
-growth here is a display/storage concern, not a security one. A future janitor
-could sweep expired entries; out of scope here (`InMemoryTokenRegistryBackend`
-does still self-sweep, since it is a plain in-process dict with no external
-TTL of its own).
+An expired entry stops mattering the instant its JWT's own ``exp`` claim
+makes it invalid, regardless of registry state (see identity.get_principal),
+so leaving it around a while longer is a display/storage concern, not a
+security one -- but Vault-side growth is still unbounded unless something
+external prunes it. ``InMemoryTokenRegistryBackend`` needs no such external
+janitor: it self-sweeps expired records inline on every ``add()``, since it's
+just an in-process dict with no external TTL of its own.
+``VaultTokenRegistryBackend`` does, via ``sweep_expired()`` below (a grace
+window keeps a just-expired record visible as "expired" for a while rather
+than removing it the instant it lapses) -- see ``token_sweep.py`` for the
+cron-triggered CLI that calls it.
 
 ``name`` is a unique-per-user identifier, not free text (issue #116): two
 records for the same uid may not share a name, compared case-insensitively.
@@ -141,6 +145,24 @@ def default_token_name(jti: str, issued_at: float) -> str:
     return f"mcp-{date_str}-{jti[:8]}"
 
 
+@dataclass(frozen=True)
+class SweepStats:
+    """Counts returned by ``TokenRegistryBackend.sweep_expired()`` -- what a
+    single sweep pass actually did, for the CLI's structlog line and (for
+    ``VaultTokenRegistryBackend``) test assertions on Vault-only bookkeeping.
+
+    ``owners_removed`` is always 0 for ``InMemoryTokenRegistryBackend``: it
+    has no separate ``jti-owner`` index (``owner_uid()`` scans the by-uid
+    dicts directly), so there's nothing extra to delete beyond the record
+    itself.
+    """
+
+    records_removed: int
+    owners_removed: int
+    revoked_pruned: int
+    uids_emptied: int
+
+
 class TokenRegistryBackend(ABC):
     """Durable per-uid storage for manually-minted bearer token metadata."""
 
@@ -179,6 +201,26 @@ class TokenRegistryBackend(ABC):
     async def list_revoked_jtis(self) -> frozenset[str]:
         """Return every jti, across all uids, whose ``revoked_at`` is set."""
 
+    @abstractmethod
+    async def sweep_expired(self, *, grace_seconds: int) -> SweepStats:
+        """Remove every record whose ``expires_at`` is more than
+        *grace_seconds* in the past, across all uids.
+
+        The grace window is deliberate, not an implementation accident: a
+        token that just expired is still meaningful to show the caller as
+        "expired" on the portal's token list for a while, rather than
+        vanishing the instant its JWT's own ``exp`` claim passes. Live
+        records (``expires_at`` still in the future) and records expired
+        less than *grace_seconds* ago are both left untouched.
+
+        Also prunes ``revoked-jtis`` of any jti this pass removes for being
+        expired past grace -- an expired JWT can never authenticate again
+        regardless of its revoked status (see identity.get_principal), so
+        keeping it in the denylist forever would only make that set grow
+        without bound. A live-but-revoked record is untouched by this
+        pruning; it stays in the denylist until its own expiry catches up.
+        """
+
 
 # ---------------------------------------------------------------------------
 # In-memory backend -- local-dev fallback.
@@ -198,14 +240,39 @@ class InMemoryTokenRegistryBackend(TokenRegistryBackend):
         self._by_uid: dict[int, dict[str, TokenRecord]] = {}
         self._lock = asyncio.Lock()
 
-    def _sweep_expired_locked(self) -> None:
+    def _sweep_expired_locked(self, *, grace_seconds: float = 0.0) -> SweepStats:
+        """Remove records expired more than *grace_seconds* in the past.
+
+        Called with the default ``grace_seconds=0.0`` from ``add()`` --
+        the existing self-sweep, unchanged -- and with a caller-supplied
+        grace from the public ``sweep_expired()`` below (see that method's
+        docstring for why a grace window exists at all).
+        """
         now = time.time()
+        cutoff = now - grace_seconds
+        records_removed = 0
+        revoked_pruned = 0
+        uids_emptied = 0
         for uid, jtis in list(self._by_uid.items()):
-            expired = [jti for jti, r in jtis.items() if r.expires_at <= now]
+            expired = [jti for jti, r in jtis.items() if r.expires_at <= cutoff]
             for jti in expired:
+                if jtis[jti].revoked_at is not None:
+                    revoked_pruned += 1
                 del jtis[jti]
+            records_removed += len(expired)
             if not jtis:
                 del self._by_uid[uid]
+                uids_emptied += 1
+        return SweepStats(
+            records_removed=records_removed,
+            owners_removed=0,
+            revoked_pruned=revoked_pruned,
+            uids_emptied=uids_emptied,
+        )
+
+    async def sweep_expired(self, *, grace_seconds: int) -> SweepStats:
+        async with self._lock:
+            return self._sweep_expired_locked(grace_seconds=grace_seconds)
 
     async def add(self, record: TokenRecord) -> None:
         async with self._lock:
@@ -300,6 +367,9 @@ class VaultTokenRegistryBackend(TokenRegistryBackend):
     def __init__(self, *, vault_kv: VaultKV, kv_path_prefix: str) -> None:
         self._vault_kv = vault_kv
         self._kv_path_prefix = kv_path_prefix.strip("/")
+
+    def _by_uid_prefix(self) -> str:
+        return f"{self._kv_path_prefix}/by-uid"
 
     def _uid_path(self, uid: int) -> str:
         return f"{self._kv_path_prefix}/by-uid/{uid}"
@@ -425,6 +495,103 @@ class VaultTokenRegistryBackend(TokenRegistryBackend):
             return frozenset()
         data, _version = current
         return frozenset(data.get("jtis", []))
+
+    async def sweep_expired(self, *, grace_seconds: int) -> SweepStats:
+        now = time.time()
+        cutoff = now - grace_seconds
+        revoked_before = await self.list_revoked_jtis()
+
+        records_removed = 0
+        owners_removed = 0
+        uids_emptied = 0
+        jtis_to_prune_from_denylist: set[str] = set()
+
+        prefix = self._by_uid_prefix()
+        for uid_key in await self._vault_kv.list(prefix):
+            path = f"{prefix}/{uid_key}"
+            removed_this_uid: list[str] = []
+            for _attempt in range(_MAX_CAS_RETRIES):
+                current = await self._vault_kv.get(path)
+                if current is None:
+                    # Already gone -- a concurrent sweep/revoke/expiry race.
+                    removed_this_uid = []
+                    break
+                data, version = current
+                # Recomputed on every retry against the just-re-read data,
+                # same reasoning as add()'s CAS loop: a conflict means
+                # something else wrote this uid's entry in between, so the
+                # set of still-expired jtis must be re-evaluated against
+                # that write, not replayed from a stale read.
+                to_remove = [
+                    jti
+                    for jti, fields in data.items()
+                    if _record_from_fields(fields).expires_at <= cutoff
+                ]
+                if not to_remove:
+                    removed_this_uid = []
+                    break
+                remaining = {
+                    jti: fields for jti, fields in data.items() if jti not in to_remove
+                }
+                try:
+                    if remaining:
+                        await self._vault_kv.write_cas(path, remaining, version)
+                    else:
+                        # Metadata delete (not an empty-dict write_cas) so the
+                        # version counter is destroyed too -- preserves a
+                        # subsequent add()'s plain create (cas=0) for this
+                        # uid, exactly as vault_kv.delete_metadata's
+                        # docstring describes.
+                        await self._vault_kv.delete_metadata(path)
+                        uids_emptied += 1
+                except CasConflict:
+                    continue
+                removed_this_uid = to_remove
+                break
+            else:
+                raise VaultError(
+                    f"sweep_expired(): exceeded retry budget for path={path!r}"
+                )
+
+            for jti in removed_this_uid:
+                await self._vault_kv.delete_metadata(self._owner_path(jti))
+                owners_removed += 1
+                if jti in revoked_before:
+                    jtis_to_prune_from_denylist.add(jti)
+            records_removed += len(removed_this_uid)
+
+        revoked_pruned = 0
+        if jtis_to_prune_from_denylist:
+            path = self._revoked_path()
+            for _attempt in range(_MAX_CAS_RETRIES):
+                current = await self._vault_kv.get(path)
+                if current is None:
+                    break
+                data, version = current
+                jtis = set(data.get("jtis", []))
+                still_present = jtis & jtis_to_prune_from_denylist
+                if not still_present:
+                    break
+                jtis -= still_present
+                try:
+                    await self._vault_kv.write_cas(
+                        path, {"jtis": sorted(jtis)}, version
+                    )
+                except CasConflict:
+                    continue
+                revoked_pruned = len(still_present)
+                break
+            else:
+                raise VaultError(
+                    "sweep_expired(): exceeded retry budget pruning revoked-jtis"
+                )
+
+        return SweepStats(
+            records_removed=records_removed,
+            owners_removed=owners_removed,
+            revoked_pruned=revoked_pruned,
+            uids_emptied=uids_emptied,
+        )
 
 
 # ---------------------------------------------------------------------------

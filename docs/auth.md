@@ -545,6 +545,26 @@ portal's `mcp-portal.af.uchicago.edu/tokens` page exists for exactly this:
    rejected with 401 everywhere once that interval has elapsed; only jtis
    the registry actually knows about can be revoked at all, so ordinary
    Keycloak session tokens are never affected.
+4. **Sweep** (operations) — neither mint nor revoke above ever removes a
+   registry entry, so a Vault-backed registry (`TOKEN_REGISTRY_BACKEND=vault`)
+   accumulates state forever unless something prunes it. A cron-triggered
+   janitor does: `python -m af_mcp_broker.token_sweep`, deployed as the
+   `CronJob` the chart renders when `tokenSweep.enabled: true`
+   (`charts/af-mcp-platform/templates/cronjob-token-sweep.yaml`, default
+   schedule `17 3 * * *`). Each run performs one
+   `TokenRegistryBackend.sweep_expired()` pass: it removes registry entries
+   whose `expires_at` is more than `TOKEN_SWEEP_GRACE_SECONDS` (default 7
+   days, chart value `tokenSweep.graceSeconds`) in the past, and prunes the
+   `revoked-jtis` denylist of any jti that's now expired past that same grace
+   — an expired JWT can never authenticate again regardless of revocation
+   (see `identity.get_principal`), so leaving it in the denylist forever
+   would only make that set grow without bound. The grace window is
+   deliberate, not a cleanup delay: it keeps a just-expired token showing up
+   as "expired" (not simply gone) on the portal's token list for a while
+   before it disappears. `InMemoryTokenRegistryBackend` needs none of this —
+   it already self-sweeps expired records inline on every mint, since it's
+   just an in-process dict with no external TTL of its own — so the CLI
+   refuses to run (exit code 2) unless the registry backend is `vault`.
 
 This is a stopgap. Once MCP OAuth discovery lands and Claude Desktop (or
 whichever client) can drive the flow itself, the manual `/tokens` page
