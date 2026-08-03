@@ -184,3 +184,7 @@ def test_vault_config_raises_when_registry_backend_vault_and_addr_missing():
 def test_vault_config_raises_when_registry_backend_vault_and_auth_role_missing():
     with pytest.raises(ValueError, match="vault_auth_role"):
         Settings(token_registry_backend="vault", vault_addr="https://vault.example")
+
+
+def test_token_sweep_grace_seconds_defaults_to_seven_days():
+    assert Settings().token_sweep_grace_seconds == 7 * 24 * 60 * 60

@@ -244,6 +244,13 @@ class Settings(BaseSettings):
     # RevokedJtiCache docstring.
     revoked_jti_cache_refresh_seconds: float = 30.0
 
+    # Grace window (seconds) token_sweep.py's expired-token janitor keeps a
+    # record around after its expires_at passes, before removing it from
+    # Vault -- see TokenRegistryBackend.sweep_expired's docstring. Default is
+    # 7 days: long enough that a recently-expired token still shows up as
+    # "expired" (not simply gone) on the portal's token list for a while.
+    token_sweep_grace_seconds: int = 7 * 24 * 60 * 60
+
     @property
     def oauth21_effective_state_issuer(self) -> str:
         """``oauth21_state_issuer`` if set, else ``oidc_issuer``.

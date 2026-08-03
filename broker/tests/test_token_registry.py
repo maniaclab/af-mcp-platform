@@ -24,6 +24,7 @@ from af_mcp_broker.token_registry import (
     DuplicateNameError,
     InMemoryTokenRegistryBackend,
     RevokedJtiCache,
+    SweepStats,
     TokenRecord,
     TokenRegistryBackend,
     VaultTokenRegistryBackend,
@@ -54,10 +55,10 @@ def _make_record(**overrides: Any) -> TokenRecord:
 
 
 # ---------------------------------------------------------------------------
-# Fake Vault KV-v2 HTTP API (generic get/write_cas -- no delete needed, the
-# registry never removes an entry, only sets revoked_at -- see the module
-# docstring in token_registry.py for why unbounded Vault-side growth is an
-# accepted, documented tradeoff.)
+# Fake Vault KV-v2 HTTP API. Originally get/write_cas only -- the registry
+# didn't remove entries, only set revoked_at. sweep_expired() (the expired-
+# token janitor) needs LIST (to enumerate by-uid) and DELETE (metadata) too,
+# so this fake now mirrors test_vault_kv.py's _FakeVault for those two verbs.
 # ---------------------------------------------------------------------------
 
 
@@ -85,14 +86,21 @@ class _FakeRegistryVault:
                 request=request,
             )
 
-        prefix = f"{KV_MOUNT}/data/"
-        if not path.startswith(prefix):
+        data_prefix = f"{KV_MOUNT}/data/"
+        meta_prefix = f"{KV_MOUNT}/metadata/"
+
+        if path.startswith(data_prefix):
+            key = path[len(data_prefix) :]
+            is_metadata = False
+        elif path.startswith(meta_prefix):
+            key = path[len(meta_prefix) :]
+            is_metadata = True
+        else:
             return httpx.Response(
                 404, json={"errors": ["unknown path"]}, request=request
             )
-        key = path[len(prefix) :]
 
-        if request.method == "GET":
+        if request.method == "GET" and not is_metadata:
             entry = self.entries.get(key)
             if entry is None:
                 return httpx.Response(404, json={"errors": []}, request=request)
@@ -107,7 +115,7 @@ class _FakeRegistryVault:
                 request=request,
             )
 
-        if request.method == "POST":
+        if request.method == "POST" and not is_metadata:
             body = json.loads(request.content.decode())
             cas = body["options"]["cas"]
             current_version = self.entries.get(key, {}).get("version", 0)
@@ -126,6 +134,22 @@ class _FakeRegistryVault:
             return httpx.Response(
                 200, json={"data": {"version": new_version}}, request=request
             )
+
+        if request.method == "LIST" and is_metadata:
+            keys = sorted(
+                {
+                    k[len(key) :].lstrip("/").split("/")[0]
+                    for k in self.entries
+                    if k.startswith(key)
+                }
+            )
+            if not keys:
+                return httpx.Response(404, json={"errors": []}, request=request)
+            return httpx.Response(200, json={"data": {"keys": keys}}, request=request)
+
+        if request.method == "DELETE" and is_metadata:
+            self.entries.pop(key, None)
+            return httpx.Response(204, request=request)
 
         return httpx.Response(
             404, json={"errors": ["unhandled"]}, request=request
@@ -348,6 +372,193 @@ async def test_add_allows_name_that_collides_with_an_expired_token(
     await backend.add(_make_record(jti="jti-2", uid=1000, name="claude-desktop"))
 
     rows = [r for r in await backend.list_for_uid(1000) if r.expires_at > now]
+    assert [r.jti for r in rows] == ["jti-2"]
+
+
+# ---------------------------------------------------------------------------
+# sweep_expired() -- the expired-token janitor (issue #28/#116/#117 chain's
+# last layer). Grace window keeps recently-expired tokens visible in the
+# portal as "expired" for a while rather than yanking them the instant their
+# JWT's exp claim passes.
+# ---------------------------------------------------------------------------
+
+_ONE_DAY = 24 * 3600.0
+
+
+async def test_sweep_removes_record_expired_beyond_grace(
+    backend: TokenRegistryBackend,
+) -> None:
+    now = time.time()
+    await backend.add(
+        _make_record(
+            jti="jti-1",
+            uid=1000,
+            issued_at=now - 10 * _ONE_DAY,
+            expires_at=now - 2 * _ONE_DAY,
+        )
+    )
+
+    stats = await backend.sweep_expired(grace_seconds=int(_ONE_DAY))
+
+    assert stats.records_removed == 1
+    assert stats.uids_emptied == 1
+    assert await backend.list_for_uid(1000) == []
+
+
+async def test_sweep_keeps_record_expired_within_grace(
+    backend: TokenRegistryBackend,
+) -> None:
+    now = time.time()
+    await backend.add(
+        _make_record(
+            jti="jti-1", uid=1000, issued_at=now - 2 * _ONE_DAY, expires_at=now - 3600
+        )
+    )
+
+    stats = await backend.sweep_expired(grace_seconds=int(_ONE_DAY))
+
+    assert stats.records_removed == 0
+    assert stats.uids_emptied == 0
+    rows = await backend.list_for_uid(1000)
+    assert [r.jti for r in rows] == ["jti-1"]
+
+
+async def test_sweep_keeps_live_record(backend: TokenRegistryBackend) -> None:
+    await backend.add(_make_record(jti="jti-1", uid=1000))
+
+    stats = await backend.sweep_expired(grace_seconds=int(_ONE_DAY))
+
+    assert stats.records_removed == 0
+    rows = await backend.list_for_uid(1000)
+    assert [r.jti for r in rows] == ["jti-1"]
+
+
+async def test_sweep_leaves_revoked_but_live_record_in_denylist(
+    backend: TokenRegistryBackend,
+) -> None:
+    """An expired-but-not-yet-past-grace record that was revoked must not be
+    pruned from either the by-uid map or the revoked-jtis denylist -- it's
+    still within its display grace window."""
+    now = time.time()
+    await backend.add(
+        _make_record(jti="jti-1", uid=1000, issued_at=now - 3600, expires_at=now + 3600)
+    )
+    await backend.revoke(1000, "jti-1", revoked_at=now)
+
+    stats = await backend.sweep_expired(grace_seconds=int(_ONE_DAY))
+
+    assert stats.records_removed == 0
+    assert stats.revoked_pruned == 0
+    assert "jti-1" in await backend.list_revoked_jtis()
+
+
+async def test_sweep_prunes_revoked_and_expired_from_denylist(
+    backend: TokenRegistryBackend,
+) -> None:
+    """A revoked jti whose JWT has also expired well past grace is dead
+    regardless of revocation -- denylist hygiene so revoked-jtis can't grow
+    forever (see token_registry.py's module docstring)."""
+    now = time.time()
+    await backend.add(
+        _make_record(
+            jti="jti-1",
+            uid=1000,
+            issued_at=now - 10 * _ONE_DAY,
+            expires_at=now - 2 * _ONE_DAY,
+        )
+    )
+    await backend.revoke(1000, "jti-1", revoked_at=now - 2 * _ONE_DAY)
+
+    stats = await backend.sweep_expired(grace_seconds=int(_ONE_DAY))
+
+    assert stats.records_removed == 1
+    assert stats.revoked_pruned == 1
+    assert "jti-1" not in await backend.list_revoked_jtis()
+
+
+async def test_sweep_removes_only_expired_beyond_grace_leaves_others(
+    backend: TokenRegistryBackend,
+) -> None:
+    """A dead record and a live one share a uid -- sweeping must not empty
+    the whole uid entry, only the dead record.
+
+    Doesn't assert on ``records_removed`` here: ``InMemoryTokenRegistryBackend``
+    self-sweeps (grace=0) on every ``add()``, so its second ``add()`` call
+    above already evicted "dead" before ``sweep_expired()`` ever runs --
+    covered precisely instead by ``test_sweep_removes_record_expired_beyond_grace``.
+    """
+    now = time.time()
+    await backend.add(
+        _make_record(
+            jti="dead",
+            uid=1000,
+            issued_at=now - 10 * _ONE_DAY,
+            expires_at=now - 2 * _ONE_DAY,
+        )
+    )
+    await backend.add(_make_record(jti="alive", uid=1000, expires_at=now + 3600))
+
+    stats = await backend.sweep_expired(grace_seconds=int(_ONE_DAY))
+
+    assert stats.uids_emptied == 0
+    rows = await backend.list_for_uid(1000)
+    assert [r.jti for r in rows] == ["alive"]
+
+
+async def test_sweep_stats_is_a_sweep_stats_instance(
+    backend: TokenRegistryBackend,
+) -> None:
+    stats = await backend.sweep_expired(grace_seconds=int(_ONE_DAY))
+    assert isinstance(stats, SweepStats)
+
+
+async def test_sweep_owners_removed_for_vault_backend(sa_token_path: Path) -> None:
+    """Vault-specific: sweeping a by-uid record must also delete its
+    jti-owner index entry -- owner_uid() must forget the jti once its record
+    is gone, not just leave a dangling ownership pointer."""
+    fake = _FakeRegistryVault()
+    backend = _make_vault_backend(fake, sa_token_path)
+    now = time.time()
+    await backend.add(
+        _make_record(
+            jti="jti-1",
+            uid=1000,
+            issued_at=now - 10 * _ONE_DAY,
+            expires_at=now - 2 * _ONE_DAY,
+        )
+    )
+
+    stats = await backend.sweep_expired(grace_seconds=int(_ONE_DAY))
+
+    assert stats.owners_removed == 1
+    assert await backend.owner_uid("jti-1") is None
+
+
+async def test_sweep_emptied_uid_path_can_be_recreated(sa_token_path: Path) -> None:
+    """Vault-specific: emptying a by-uid path must actually delete its
+    metadata (not just write an empty dict) so a subsequent add() for that
+    uid -- a plain CAS-create (expected_version=None) -- still works, exactly
+    the cas=0 recreate semantics vault_kv.delete_metadata's docstring
+    describes."""
+    fake = _FakeRegistryVault()
+    backend = _make_vault_backend(fake, sa_token_path)
+    now = time.time()
+    await backend.add(
+        _make_record(
+            jti="jti-1",
+            uid=1000,
+            issued_at=now - 10 * _ONE_DAY,
+            expires_at=now - 2 * _ONE_DAY,
+        )
+    )
+
+    stats = await backend.sweep_expired(grace_seconds=int(_ONE_DAY))
+    assert stats.uids_emptied == 1
+
+    # Must not raise -- a stale cached version for the now-destroyed path
+    # would surface as a CasConflict on this add()'s create-only write.
+    await backend.add(_make_record(jti="jti-2", uid=1000))
+    rows = await backend.list_for_uid(1000)
     assert [r.jti for r in rows] == ["jti-2"]
 
 
