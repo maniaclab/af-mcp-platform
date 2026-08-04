@@ -15,7 +15,7 @@ data:
   config.json: |
     {
       "oidc": {
-        "issuer": {{ required "portal.oidc.issuer must be set (e.g. via your deploying HelmRelease values)" .Values.portal.oidc.issuer | quote }},
+        "issuer": {{ required "oidc.issuer must be set (e.g. via your deploying HelmRelease values)" .Values.oidc.issuer | quote }},
         "clientId": {{ required "portal.oidc.clientId must be set (e.g. via your deploying HelmRelease values)" .Values.portal.oidc.clientId | quote }},
         "scope": {{ .Values.portal.oidc.scope | quote }}
       },

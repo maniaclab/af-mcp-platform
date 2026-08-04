@@ -123,13 +123,13 @@ Portal image reference.
 {{- end }}
 
 {{/*
-Origin (scheme + host, no path) of the portal's OIDC issuer — derived rather
+Origin (scheme + host, no path) of the shared OIDC issuer — derived rather
 than duplicated in values, so the portal's nginx CSP connect-src always
-matches whatever `portal.oidc.issuer` points at. Used to render the
-OIDC_ORIGIN env var consumed by nginx.conf.template's envsubst.
+matches whatever `oidc.issuer` points at. Used to render the OIDC_ORIGIN env
+var consumed by nginx.conf.template's envsubst.
 */}}
 {{- define "af-mcp-platform.portal.oidcOrigin" -}}
-{{- $issuer := required "portal.oidc.issuer must be set (e.g. via your deploying HelmRelease values)" .Values.portal.oidc.issuer -}}
+{{- $issuer := required "oidc.issuer must be set (e.g. via your deploying HelmRelease values)" .Values.oidc.issuer -}}
 {{- $u := urlParse $issuer -}}
 {{- printf "%s://%s" $u.scheme $u.host -}}
 {{- end }}
@@ -197,9 +197,11 @@ Callers pipe this through `nindent` at whatever depth their container's
 `env:` list sits at.
 */}}
 {{- define "af-mcp-platform.broker.env" -}}
-# OIDC settings — names must match broker Settings fields
+# OIDC settings — names must match broker Settings fields. Issuer is the
+# shared top-level `oidc.issuer` (also consumed by the portal); audience is
+# broker-specific.
 - name: OIDC_ISSUER
-  value: {{ .Values.broker.oidc.issuer | quote }}
+  value: {{ .Values.oidc.issuer | quote }}
 - name: OIDC_AUDIENCE
   value: {{ .Values.broker.oidc.audience | quote }}
 # Home directory root (broker constructs per-user paths from this)

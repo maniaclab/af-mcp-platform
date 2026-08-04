@@ -33,6 +33,26 @@ rbac:
   create: true
 
 # ---------------------------------------------------------------------------
+# OIDC issuer — single source of truth shared by the broker and the portal
+# ---------------------------------------------------------------------------
+oidc:
+  # e.g. "https://keycloak.example.com/realms/your-realm". Both the broker
+  # (OIDC_ISSUER, JWKS + iss/aud/exp validation) and the portal
+  # (config.json's oidc.issuer, Authorization Code + PKCE) validate/present
+  # against this one realm — it must be the same realm for both, so it is
+  # configured once here rather than as broker.oidc.issuer/portal.oidc.issuer
+  # separately. Those used to have to be kept in sync by hand; letting them
+  # drift meant the portal minted tokens whose `iss` the broker rejected,
+  # presenting as "login works, every API call 401s" with nothing obviously
+  # wrong in either config (issue #143). REQUIRED — set in your deploying
+  # values overlay (e.g. a HelmRelease), there is no safe cross-institution
+  # default. Left empty, the portal skips OIDC entirely and runs in
+  # unauthenticated / dev-bypass mode (see docs/local-development.md); the
+  # broker has no equivalent bypass, so an empty issuer fails its own
+  # startup validation instead.
+  issuer: ""
+
+# ---------------------------------------------------------------------------
 # Broker: FastAPI (/v1 REST) + FastMCP aggregator (/mcp) — same pod
 # ---------------------------------------------------------------------------
 broker:
@@ -66,9 +86,13 @@ broker:
 
   # OIDC configuration — rendered as env vars in the broker container. The
   # broker validates via JWKS + iss/aud/exp, all standard OIDC; any
-  # OIDC-compliant issuer works, not just Keycloak.
+  # OIDC-compliant issuer works, not just Keycloak. The issuer itself is the
+  # top-level `oidc.issuer` above (shared with the portal); `audience` is
+  # broker-specific — the *resource-server audience* the broker validates,
+  # deliberately kept separate from portal.oidc.clientId and
+  # broker.tokenMint.clientId (see the comment on portal.oidc.clientId
+  # below).
   oidc:
-    issuer: "https://keycloak-prod.tempest.uchicago.edu/realms/connect"
     audience: "mcp-gateway"
 
   # Name of a pre-existing Secret providing the AF service token.
@@ -86,7 +110,9 @@ broker:
   # behavior for a deployment that doesn't need the manual bootstrap flow.
   tokenMint:
     # Client id of the confidential client. Not a secret -- a plain value,
-    # like portal.oidc.clientId above.
+    # like portal.oidc.clientId above. Deliberately a separate client from
+    # portal.oidc.clientId and broker.oidc.audience -- see the comment on
+    # portal.oidc.clientId below for why.
     clientId: ""
     # Name of a pre-existing Secret providing the client secret.
     # The Secret must contain a key named `token-mint-client-secret`.
@@ -180,7 +206,7 @@ broker:
     # entry. Create via SealedSecret externally; the chart does NOT create it.
     existingStateKeySecret: ""
     # `iss`/`aud` self-reference embedded in the state token. Empty means
-    # "use broker.oidc.issuer".
+    # "use oidc.issuer".
     stateIssuer: ""
 
     # Where OAuth 2.1 credentials (above) are persisted. "in-memory" is
@@ -306,18 +332,28 @@ portal:
       memory: 512Mi
 
   # OIDC config for the portal SPA's own OAuth public client (Authorization
-  # Code + PKCE against the issuer below; see docs/auth.md and #42). Delivered
-  # to the browser at runtime via /config.json (configmap-portal-config.yaml)
-  # rather than baked into the image at build time, so one built image works
-  # against any realm/client/institution. REQUIRED — set in your deploying
-  # values overlay (e.g. a HelmRelease), there is no safe cross-institution
-  # default. Left empty, the portal skips OIDC entirely and runs in
-  # unauthenticated / dev-bypass mode (see docs/local-development.md).
+  # Code + PKCE against top-level `oidc.issuer`; see docs/auth.md and #42).
+  # Delivered to the browser at runtime via /config.json
+  # (configmap-portal-config.yaml) rather than baked into the image at build
+  # time, so one built image works against any realm/client/institution.
   oidc:
-    # e.g. "https://keycloak.example.com/realms/your-realm"
-    issuer: ""
     # e.g. "your-portal-client" — a public client, Client Authentication OFF,
-    # Standard flow ON, PKCE S256 required.
+    # Standard flow ON, PKCE S256 required. REQUIRED — set in your deploying
+    # values overlay (e.g. a HelmRelease), there is no safe cross-institution
+    # default.
+    #
+    # Deliberately NOT unified with broker.oidc.audience or
+    # broker.tokenMint.clientId, even though all three are "some kind of
+    # OIDC client id/value" in the same realm: this is a *public* client
+    # doing browser-side Authorization Code + PKCE and cannot hold a secret;
+    # broker.oidc.audience is not a client at all, it's the *resource-server
+    # audience* the broker validates incoming tokens against; and
+    # broker.tokenMint.clientId (#142) names a *confidential* client because
+    # RFC 8693 token exchange is a privileged operation — only the broker
+    # may perform it. Merging any pair of these would blur that boundary:
+    # e.g. folding tokenMint into this public client would let any holder of
+    # a browser access token mint tokens directly against Keycloak, bypassing
+    # the broker's registry, rate limiting, and revocation entirely.
     clientId: ""
     # openid/profile/email are OIDC-standard; append your audience-mapping
     # client scope so the access token carries the broker's expected `aud`

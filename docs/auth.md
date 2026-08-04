@@ -219,7 +219,8 @@ Key points:
   second interactive login.
 - **Runtime, not build-time, OIDC config.** The issuer/client id/scope the
   portal uses come from `GET /config.json` (see `configmap-portal-config.yaml`
-  → `portal.oidc.*` values), fetched once at startup — not baked into the
+  → top-level `oidc.issuer` plus `portal.oidc.clientId`/`scope`), fetched once
+  at startup — not baked into the
   image. One built portal image is deployable against any realm, client, or
   institution's fork via a values change and a rolling restart, mirroring
   how the broker itself takes `OIDC_ISSUER` from an env var rather than
@@ -646,7 +647,7 @@ authenticate *as* when it performs the exchange on the caller's behalf.
 Nothing in this repo can create that client for you — it's a one-time,
 per-realm Keycloak administrative step:
 
-1. **Clients → Create client**, in the same realm as `broker.oidc.issuer`
+1. **Clients → Create client**, in the same realm as `oidc.issuer`
    (`connect`, in the example above).
 2. **Client authentication: On** — this must be a *confidential* client
    (it authenticates with a `client_secret`, not just a redirect URI),
