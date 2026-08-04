@@ -188,3 +188,27 @@ def test_vault_config_raises_when_registry_backend_vault_and_auth_role_missing()
 
 def test_token_sweep_grace_seconds_defaults_to_seven_days():
     assert Settings().token_sweep_grace_seconds == 7 * 24 * 60 * 60
+
+
+# ---------------------------------------------------------------------------
+# /mcp aggregator transport mode (issue #128)
+# ---------------------------------------------------------------------------
+
+
+def test_mcp_stateless_http_defaults_to_true():
+    # Safe-by-default at any replica count -- see app.py's startup check.
+    assert Settings().mcp_stateless_http is True
+
+
+def test_mcp_stateless_http_env_var_still_works(monkeypatch):
+    monkeypatch.setenv("MCP_STATELESS_HTTP", "false")
+    assert Settings().mcp_stateless_http is False
+
+
+def test_mcp_replica_count_defaults_to_none():
+    assert Settings().mcp_replica_count is None
+
+
+def test_mcp_replica_count_env_var_still_works(monkeypatch):
+    monkeypatch.setenv("MCP_REPLICA_COUNT", "3")
+    assert Settings().mcp_replica_count == 3

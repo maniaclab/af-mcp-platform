@@ -35,6 +35,16 @@ Next steps:
    broker.existingServiceTokenSecret in your values overlay.
 {{- end }}
 
+{{- if and (not .Values.broker.mcpStatelessHttp) (gt (.Values.broker.replicaCount | int) 1) }}
+
+   WARNING: broker.mcpStatelessHttp is false with broker.replicaCount > 1.
+   Streamable-HTTP sessions are in-process state; without session-affinity
+   ingress config (e.g. client-IP-hash), a load balancer will route a
+   session's later requests to a replica that never created it, which
+   intermittently surfaces as "Session terminated" to MCP clients (issue
+   #128). See docs/architecture.md before relying on this configuration.
+{{- end }}
+
 3. Check broker health:
    kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/component=broker
 
