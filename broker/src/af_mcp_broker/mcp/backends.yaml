@@ -12,7 +12,10 @@ backends:
     # rucio-mcp handles the aud=rucio RFC 8693 exchange itself.
     auth_type: bearer
     # rucio-mcp's tools are already self-prefixed (rucio_list_dids, ...);
-    # namespacing again would produce rucio_rucio_*.
+    # namespacing again would produce rucio_rucio_*. Safe only while a single
+    # rucio site is configured -- see docs/adding-a-backend.md's
+    # apply_namespace section and #113 before adding a second site, since two
+    # apply_namespace: false rucio entries would shadow each other's tools.
     apply_namespace: false
     # rucio-mcp serves each site's FastMCP app under /site/{site}, not a flat
     # /mcp path. Deployments override name/prefix/url per site via Helm

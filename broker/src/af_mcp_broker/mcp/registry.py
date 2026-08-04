@@ -17,9 +17,13 @@ class BackendSpec:
     description: str = ""
     display_name: str = ""
     # Whether the aggregator namespaces this backend's tools as
-    # "<prefix>_<toolname>". Backends whose tools are already self-prefixed
+    # "<prefix>_<toolname>". Defaults to True because that's what prevents
+    # two backends from advertising the same tool name and one silently
+    # shadowing the other. Backends whose tools are already self-prefixed
     # (e.g. rucio-mcp ships "rucio_list_dids") must set this False, or
-    # namespacing would double up into "rucio_rucio_list_dids".
+    # namespacing would double up into "rucio_rucio_list_dids" -- see
+    # docs/adding-a-backend.md's apply_namespace section and #113 for when
+    # False stops being safe.
     apply_namespace: bool = True
     # Per-call read timeout (seconds) applied to this backend's Client, so a
     # slow/unresponsive backend fails that one call cleanly instead of
