@@ -54,13 +54,12 @@ def _spec(**overrides: Any) -> BackendSpec:
 
 # Every direct _make_client_factory() call below cares about credential
 # resolution, not entitlement -- _bearer_factory's list-time branch (see
-# aggregator.py) now also gates on check_entitlement(), so an open policy
-# for every target name this file uses (both _spec()'s default "example"
-# and the "no-such-target" override) keeps that gate a no-op here, same as
-# before that check existed.
-_OPEN_POLICY = EntitlementPolicy(
-    target_capabilities={"example": "__none__", "no-such-target": "__none__"}
-)
+# aggregator.py) now also gates on check_entitlement(), but that check takes
+# the required capability straight from the spec (BackendSpec.
+# required_capability, see issue #60) rather than looking it up in
+# policy.yaml, and _spec()'s default of "__none__" already keeps the gate a
+# no-op here -- so an empty policy is sufficient.
+_OPEN_POLICY = EntitlementPolicy()
 
 
 class _FakeProvider(CredentialProvider):
@@ -598,10 +597,7 @@ async def test_client_factory_bearer_list_time_mints_when_entitled_and_linked(
     """The actual fix for issue #121: a tools/list-time connection for a
     linked, entitled caller now carries a minted credential, not just an
     authorized tools/call."""
-    policy = EntitlementPolicy(
-        group_capabilities={"atlas": ["read_data"]},
-        target_capabilities={"example": "read_data"},
-    )
+    policy = EntitlementPolicy(group_capabilities={"atlas": ["read_data"]})
     principal = make_principal(groups=["atlas"])
     ctx = _patch_context(monkeypatch, principal, active_backend=None)
     spec = _spec(auth_type="bearer", required_capability="read_data")
@@ -624,10 +620,7 @@ async def test_client_factory_bearer_list_time_skips_mint_when_not_entitled(
     hides this backend's tools from such a caller's own tools/list response,
     so minting would just be wasted work (proven with an empty issue_calls
     list on a provider that WOULD otherwise happily mint)."""
-    policy = EntitlementPolicy(
-        group_capabilities={"atlas": ["read_data"]},
-        target_capabilities={"example": "read_data"},
-    )
+    policy = EntitlementPolicy(group_capabilities={"atlas": ["read_data"]})
     principal = make_principal(groups=[])  # lacks read_data
     _patch_context(monkeypatch, principal, active_backend=None)
     spec = _spec(auth_type="bearer", required_capability="read_data")

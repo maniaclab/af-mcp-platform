@@ -179,13 +179,11 @@ class _FakeListProvider(CredentialProvider):
 
 @pytest.fixture
 def policy() -> EntitlementPolicy:
+    # Each backend's required capability comes straight from its own
+    # BackendSpec.required_capability below (issue #60), not from a
+    # policy.yaml lookup, so this only needs to grant "read_data" itself.
     return EntitlementPolicy(
         group_capabilities={"atlas": ["read_data"], "__authenticated__": []},
-        target_capabilities={
-            "secure": "read_data",
-            "open": "__none__",
-            "dead": "read_data",
-        },
     )
 
 
