@@ -247,14 +247,18 @@ aggregator:
 # ---------------------------------------------------------------------------
 entitlements:
   # The rendered policy.yaml is mounted at /etc/af-mcp/policy.yaml.
-  # Empty here means the chart falls back to its built-in ATLAS defaults —
-  # see templates/configmap-policy.yaml's `else` branches, which mirror the
-  # broker's own built-in vocabulary in
-  # broker/src/af_mcp_broker/authorization/policy.yaml (the source of truth
-  # for the capability vocabulary). Set either of the two below to override
-  # that section of the rendered policy.yaml wholesale. Which capability a
-  # backend target requires is declared by `required_capability` in
-  # backends.yaml (aggregator.backends), not here -- see issue #60.
+  # Group names are inherently site-specific (they come from the deployer's
+  # own Keycloak realm), so this chart ships no site-specific
+  # group_capabilities default -- leaving this empty means only the
+  # `__authenticated__` baseline applies (see
+  # templates/configmap-policy.yaml's `else` branch), and any backend whose
+  # `required_capability` isn't __none__ becomes unreachable by everyone
+  # (the broker logs a loud startup error naming it). Set group_capabilities
+  # below to grant real capabilities -- see docs/auth.md's "Group-to-
+  # Capability Mapping Example" for a copyable ATLAS AF worked example.
+  # Which capability a backend target requires is declared by
+  # `required_capability` in backends.yaml (aggregator.backends), not here --
+  # see issue #60.
   group_capabilities: {}
   # group_capabilities:
   #   atlas: [read_data, read_metadata, submit_jobs]

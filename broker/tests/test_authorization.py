@@ -91,32 +91,28 @@ def test_action_type_resolution_omitted_capability_defaults_to_read(
     assert get_action_type("mystery", "list_things", None, policy) == "read"
 
 
-def _write_empty_group_capabilities_policy(tmp_path: Path) -> str:
+def _write_policy(tmp_path: Path, text: str) -> str:
     path = tmp_path / "policy.yaml"
-    path.write_text("group_capabilities: {}\ntarget_action_types: {}\n")
+    path.write_text(text)
     return str(path)
 
 
-def test_startup_errors_on_empty_group_capabilities_with_gated_backends(
+def _write_backends(tmp_path: Path, text: str) -> str:
+    path = tmp_path / "backends.yaml"
+    path.write_text(text)
+    return str(path)
+
+
+def _capture_errors(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    app_client_factory: Callable[..., Any],
-) -> None:
-    """An empty ``group_capabilities`` means every principal falls back to
-    ``__authenticated__``-only capabilities, silently denying every backend
-    that requires one (issue #59: the chart's configmap template rendered
-    ``groups:`` instead of ``group_capabilities:``, so ``/v1/catalog``
-    returned zero tools for every user). Not a startup failure -- operators
-    may deliberately deploy with an all-open policy -- but it must be a
-    loud, visible ERROR-level structlog line naming the affected backends.
+) -> list[tuple[str, dict[str, Any]]]:
+    """Spy on app.py's module-level logger.error calls.
 
     configure_logging() rewrites the root logger's handlers during the app
-    lifespan, which would otherwise swallow pytest's caplog handler, so this
-    asserts directly against the app module's logger call instead, mirroring
-    test_health.py::test_startup_warns_on_no_backends.
+    lifespan, which would otherwise swallow pytest's caplog handler, so
+    startup-error tests assert directly against the app module's logger call
+    instead, mirroring test_health.py::test_startup_warns_on_no_backends.
     """
-    monkeypatch.setenv("POLICY_FILE", _write_empty_group_capabilities_policy(tmp_path))
-
     from af_mcp_broker import app as app_module
 
     events: list[tuple[str, dict[str, Any]]] = []
@@ -127,16 +123,126 @@ def test_startup_errors_on_empty_group_capabilities_with_gated_backends(
         return original_error(event, **kwargs)
 
     monkeypatch.setattr(app_module.logger, "error", _capture)
+    return events
+
+
+def test_startup_logs_unreachable_capability_when_group_capabilities_empty(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    app_client_factory: Callable[..., Any],
+) -> None:
+    """An empty ``group_capabilities`` means every principal falls back to
+    ``__authenticated__``-only capabilities, silently denying every backend
+    that requires a capability ``__authenticated__`` doesn't grant (issue
+    #59: the chart's configmap template rendered ``groups:`` instead of
+    ``group_capabilities:``, so ``/v1/catalog`` returned zero tools for
+    every user). Not a startup failure -- operators may deliberately deploy
+    with an all-open policy -- but it must be a loud, visible ERROR-level
+    structlog line naming both the affected backend and the unreachable
+    capability.
+    """
+    monkeypatch.setenv(
+        "POLICY_FILE",
+        _write_policy(tmp_path, "group_capabilities: {}\ntarget_action_types: {}\n"),
+    )
+    events = _capture_errors(monkeypatch)
 
     with app_client_factory():
         pass
 
-    matches = [
-        kwargs
-        for event, kwargs in events
-        if event == "policy.group_capabilities_empty_but_required"
+    unreachable = [
+        kwargs for event, kwargs in events if event == "policy.capability_unreachable"
     ]
-    assert matches, events
     # SHIPPED_BACKENDS' "rucio" entry requires "read_data" (!= "__none__"),
-    # so it must be named among the affected backends.
-    assert "rucio" in matches[0]["backends"]
+    # so it must be named -- together with the capability it requires.
+    assert {"backend": "rucio", "capability": "read_data"} in unreachable, events
+
+
+def test_startup_quiet_when_capabilities_are_all_reachable(
+    app_client_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The shipped policy.yaml grants every capability SHIPPED_BACKENDS
+    requires (to at least one group), so no unreachable-capability error
+    should fire for the default local-dev configuration."""
+    events = _capture_errors(monkeypatch)
+
+    with app_client_factory():
+        pass
+
+    assert not [
+        kwargs for event, kwargs in events if event == "policy.capability_unreachable"
+    ], events
+
+
+def test_startup_logs_unreachable_capability_for_typoed_capability_name(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    app_client_factory: Callable[..., Any],
+) -> None:
+    """group_capabilities that cover some, but not all, required capabilities
+    (e.g. a typo'd capability name) must name exactly the unreachable one --
+    reachable capabilities must stay quiet."""
+    monkeypatch.setenv(
+        "POLICY_FILE",
+        _write_policy(
+            tmp_path,
+            "group_capabilities:\n"
+            "  atlas: [read_data, read_metadta]\n"  # typo: read_metadta
+            "target_action_types: {}\n",
+        ),
+    )
+    events = _capture_errors(monkeypatch)
+
+    with app_client_factory():
+        pass
+
+    unreachable = [
+        kwargs for event, kwargs in events if event == "policy.capability_unreachable"
+    ]
+    # "ami" requires read_metadata, which the typo means nobody actually
+    # grants -- it must be named.
+    assert {"backend": "ami", "capability": "read_metadata"} in unreachable, events
+    # "rucio" requires read_data, correctly spelled and reachable -- it must
+    # not be named.
+    assert not [kw for kw in unreachable if kw["backend"] == "rucio"], events
+
+
+def test_startup_stays_quiet_with_empty_group_capabilities_and_no_gated_backends(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    app_client_factory: Callable[..., Any],
+) -> None:
+    """Backends that omit required_capability (with a credential-layer gate)
+    or set it to __none__ need no group_capabilities entry at all -- an
+    empty group_capabilities must not be flagged as unreachable for them,
+    and the broker must still start cleanly."""
+    monkeypatch.setenv(
+        "POLICY_FILE",
+        _write_policy(tmp_path, "group_capabilities: {}\ntarget_action_types: {}\n"),
+    )
+    monkeypatch.setenv(
+        "BACKENDS_FILE",
+        _write_backends(
+            tmp_path,
+            "backends:\n"
+            "  - name: docs\n"
+            "    prefix: docs\n"
+            "    url: http://docs.invalid/mcp\n"
+            "    auth_type: none\n"
+            "    required_capability: __none__\n"
+            "  - name: ami\n"
+            "    prefix: ami\n"
+            "    url: http://ami.invalid/mcp\n"
+            "    auth_type: x509\n",
+        ),
+    )
+    events = _capture_errors(monkeypatch)
+
+    with app_client_factory() as (client, _):
+        resp = client.get("/v1/healthz")
+
+    assert resp.status_code == 200, resp.text
+    assert not [
+        kwargs for event, kwargs in events if event == "policy.capability_unreachable"
+    ], events

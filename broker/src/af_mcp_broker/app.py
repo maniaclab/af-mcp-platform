@@ -171,21 +171,27 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     if not backends:
         logger.warning("no_backends_configured")
 
-    # An empty group_capabilities means every principal falls back to
-    # __authenticated__-only capabilities, silently denying every backend
-    # that requires one -- e.g. a chart-rendered policy.yaml with a stale key
-    # name the broker doesn't read (issue #59). Not fatal -- operators may
-    # deliberately deploy with an all-open policy for a dev environment --
-    # but it must be a loud, visible signal rather than a silent
-    # "why can't anyone see anything" state.
-    if not entitlement_policy.group_capabilities:
-        gated_backends = [
-            spec.name for spec in backends if spec.required_capability != "__none__"
-        ]
-        if gated_backends:
+    # A backend's required_capability that no group in group_capabilities
+    # grants makes that backend unusable by every principal -- e.g. the
+    # operator never wrote a policy for it (a chart-rendered policy.yaml
+    # with a stale key name the broker doesn't read, issue #59) or typo'd
+    # the capability name. Unlike the fail-closed check below (an omitted
+    # required_capability with no credential provider is outright unsafe --
+    # any caller could reach the backend), this is merely useless, not
+    # dangerous: the backend is unreachable by everyone rather than open to
+    # unauthorized callers. So it's a loud, structured error rather than a
+    # refusal to start -- the broker keeps serving its other backends.
+    granted_capabilities = {
+        cap for caps in entitlement_policy.group_capabilities.values() for cap in caps
+    }
+    for spec in backends:
+        if spec.required_capability in (None, "__none__"):
+            continue
+        if spec.required_capability not in granted_capabilities:
             logger.error(
-                "policy.group_capabilities_empty_but_required",
-                backends=gated_backends,
+                "policy.capability_unreachable",
+                backend=spec.name,
+                capability=spec.required_capability,
             )
 
     # --- Credential subsystem: cache + janitor + provider registry.

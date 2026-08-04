@@ -425,8 +425,13 @@ capability and `/v1/catalog` returns an empty list for everyone.
    panel shows exactly what the mapper actually contributed.
 
 2. **Create the groups you reference in `group_capabilities`** and
-   assign users to them. The broker's built-in default policy uses
-   `atlas`, `cms`, `dune`, `escape`, `af-admins`.
+   assign users to them. Group names are entirely up to you — the chart
+   ships no site-specific default, so pick names that match your own
+   Keycloak realm (see the worked example below). The broker's own
+   dev-only fallback policy (`broker/src/af_mcp_broker/authorization/
+   policy.yaml`, used when no `POLICY_FILE` is configured) mirrors the
+   ATLAS AF's own group names: `atlas`, `cms`, `dune`, `escape`,
+   `af-admins`.
 
 ### Verify
 
@@ -438,14 +443,26 @@ Without it, the broker treats the caller as `__authenticated__`-only.
 
 ## Group-to-Capability Mapping Example
 
-From the shipped `policy.yaml` (mounted from the chart's policy ConfigMap):
+The chart ships no site-specific `group_capabilities` default — group names
+come from the deployer's own Keycloak realm, so a same-named group in a
+different realm could mean something else entirely. Set
+`entitlements.group_capabilities` in your `HelmRelease` overlay; only the
+`__authenticated__` baseline (not tied to any group) is a built-in default.
+
+This is the ATLAS AF's own mapping, copyable as a starting point:
 
 ```yaml
 group_capabilities:
-  atlas: [read_data, read_metadata, read_monitoring, read_gitlab,
-          submit_jobs, manage_jobs, launch_compute, manage_jupyter,
-          manage_gitlab]
+  # Full ATLAS analysis + compute + GitLab access.
+  atlas: [read_data, read_metadata, read_monitoring, read_gitlab, submit_jobs, manage_jobs, launch_compute, manage_jupyter, manage_gitlab]
+  # Analysis + compute access, no GitLab/Jupyter management.
+  cms: [read_data, read_metadata, read_monitoring, submit_jobs, manage_jobs, launch_compute]
+  # Analysis + compute access, no monitoring dashboards.
+  dune: [read_data, read_metadata, submit_jobs, manage_jobs, launch_compute]
+  # Read-only data + metadata access.
   escape: [read_data, read_metadata]
+  # Full access plus data management and platform administration.
+  af-admins: [read_data, read_metadata, read_monitoring, read_gitlab, submit_jobs, manage_jobs, launch_compute, manage_jupyter, manage_gitlab, manage_data, admin]
   # Any authenticated user (no group membership required)
   __authenticated__: [read_metadata, read_monitoring]
 ```
