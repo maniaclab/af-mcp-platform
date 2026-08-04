@@ -43,11 +43,15 @@ server {
     # portal.brokerOrigin in values.yaml — see NGINX_ENVSUBST_FILTER in
     # portal-deployment.yaml, which restricts substitution to just these two
     # names so nginx's own `$uri` below isn't touched).
-    # `'unsafe-inline'` allows Astro's inline island-hydration scripts. XSS surface
-    # is bounded because the portal renders only build-time constants and
-    # Vue-escaped typed broker responses. See #33 for the hardening follow-up
-    # (build-time sha256 hash pinning).
-    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ${BROKER_ORIGIN} ${OIDC_ORIGIN}; frame-ancestors 'none';" always;
+    # script-src/style-src are sha256 hash-pinned instead of 'unsafe-inline' —
+    # __ASTRO_CSP_SCRIPT_SRC__ / __ASTRO_CSP_STYLE_SRC__ are placeholders
+    # substituted by scripts/sync-csp-hashes.mjs (run as part of `npm run
+    # build`, before this template ever reaches envsubst) with the exact
+    # hashes of the scripts/styles Astro emitted inline for this build. That
+    # script fails the build if it can't find a hash for every inline
+    # script/style actually present in dist/, so this policy can never drift
+    # from what's shipped. See #33.
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self' __ASTRO_CSP_SCRIPT_SRC__; style-src 'self' __ASTRO_CSP_STYLE_SRC__; img-src 'self' data:; font-src 'self'; connect-src 'self' ${BROKER_ORIGIN} ${OIDC_ORIGIN}; frame-ancestors 'none';" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 
     # SPA routing — serve index.html for all non-file paths
@@ -69,10 +73,8 @@ server {
         add_header Cache-Control "no-cache, no-store, must-revalidate";
         add_header X-Frame-Options "SAMEORIGIN" always;
         add_header X-Content-Type-Options "nosniff" always;
-        # `'unsafe-inline'` allows Astro's inline island-hydration scripts. XSS surface
-        # is bounded because the portal renders only build-time constants and
-        # Vue-escaped typed broker responses. See #33 for the hardening follow-up
-        # (build-time sha256 hash pinning).
-        add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ${BROKER_ORIGIN} ${OIDC_ORIGIN}; frame-ancestors 'none';" always;
+        # See the main server block above for what __ASTRO_CSP_SCRIPT_SRC__ /
+        # __ASTRO_CSP_STYLE_SRC__ are and how they get filled in.
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self' __ASTRO_CSP_SCRIPT_SRC__; style-src 'self' __ASTRO_CSP_STYLE_SRC__; img-src 'self' data:; font-src 'self'; connect-src 'self' ${BROKER_ORIGIN} ${OIDC_ORIGIN}; frame-ancestors 'none';" always;
     }
 }

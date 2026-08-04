@@ -4,7 +4,7 @@
   "version": "0.0.17",
   "scripts": {
     "dev": "astro dev",
-    "build": "astro build",
+    "build": "astro build && node scripts/sync-csp-hashes.mjs",
     "preview": "astro preview",
     "check": "astro check",
     "lint": "eslint .",
@@ -25,6 +25,7 @@
   "devDependencies": {
     "@astrojs/check": "^0.9.9",
     "@eslint/compat": "^2.1.0",
+    "@types/node": "^26.1.2",
     "@typescript-eslint/parser": "^8.65.0",
     "eslint": "^10.2.0",
     "eslint-plugin-astro": "^3.0.1",

@@ -18,5 +18,11 @@ COPY --from=builder /app/dist /usr/share/nginx/html
 # here through envsubst at container start, substituting ${BROKER_ORIGIN} /
 # ${OIDC_ORIGIN} from the portal Deployment's env (see nginx.conf.template
 # and portal-deployment.yaml's NGINX_ENVSUBST_FILTER).
-COPY portal/nginx.conf.template /etc/nginx/templates/default.conf.template
+# nginx.conf.generated (not the checked-in nginx.conf.template) is what gets
+# templated into the running container: `npm run build`'s sync-csp-hashes.mjs
+# step (see portal/scripts/) renders it from nginx.conf.template with the
+# CSP's script-src/style-src __ASTRO_CSP_*_SRC__ placeholders filled in with
+# the sha256 hashes Astro computed for this build's actual inline
+# scripts/styles — see #33.
+COPY --from=builder /app/nginx.conf.generated /etc/nginx/templates/default.conf.template
 EXPOSE 8081
