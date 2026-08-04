@@ -1,24 +1,30 @@
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import time
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import AsyncIterator, Callable, Iterator
+
+    from fastmcp import FastMCP
 
 import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
+from fastmcp.utilities.http import find_available_port
 from jwt.algorithms import RSAAlgorithm
 from pydantic import SecretStr
 
 from af_mcp_broker import identity
 from af_mcp_broker.config import Settings, get_settings
+from af_mcp_broker.mcp.aggregator import build_asgi_auth_middleware
 
 ISSUER = "https://keycloak.test/realms/connect"
 AUDIENCE = "mcp-gateway"
@@ -108,6 +114,38 @@ def prime_jwks(settings: Settings):
 
     yield _install
     identity._jwks_cache.pop(settings.oidc_jwks_uri, None)
+
+
+@asynccontextmanager
+async def run_aggregator_async(mcp: FastMCP, path: str = "/mcp") -> AsyncIterator[str]:
+    """Like fastmcp.utilities.tests.run_server_async, but for an aggregator
+    built by mcp.aggregator.build_aggregator(): installs the ASGI-layer
+    identity middleware (build_asgi_auth_middleware) the same way app.py
+    does when mounting /mcp, since issue #138/#144 step 1 moved identity
+    enforcement to that layer, out of FastMCP's own middleware pipeline --
+    run_server_async's run_http_async() call has no way to attach it without
+    reimplementing this same loop, so tests that need a real aggregator
+    (rather than a bare test FastMCP backend) use this instead.
+    """
+    port = find_available_port()
+    await asyncio.sleep(0.01)
+    server_task = asyncio.create_task(
+        mcp.run_http_async(
+            host="127.0.0.1",
+            port=port,
+            path=path,
+            middleware=[build_asgi_auth_middleware(mcp)],
+            show_banner=False,
+        )
+    )
+    await mcp._started.wait()
+    await asyncio.sleep(0.1)
+    try:
+        yield f"http://127.0.0.1:{port}{path}"
+    finally:
+        server_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
+            await asyncio.wait_for(server_task, timeout=2.0)
 
 
 def make_claims(**overrides: Any) -> dict[str, Any]:

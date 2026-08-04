@@ -6,7 +6,7 @@ from typing import Any
 
 import mcp.types as mt
 import pytest
-from conftest import make_claims
+from conftest import make_claims, run_aggregator_async
 from fastmcp import Client, FastMCP
 from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.exceptions import ToolError
@@ -123,7 +123,7 @@ async def test_upstream_mcp_level_error_passes_through_unchanged(
         policy = EntitlementPolicy()
         mcp = build_aggregator(registry, settings, policy, CredentialRegistry())
 
-        async with run_server_async(mcp, path="/mcp") as agg_url:
+        async with run_aggregator_async(mcp, path="/mcp") as agg_url:
             transport = StreamableHttpTransport(
                 agg_url, headers={"Authorization": f"Bearer {token}"}
             )
@@ -172,7 +172,7 @@ async def test_slow_backend_call_times_out_cleanly_instead_of_hanging(
         policy = EntitlementPolicy()
         mcp = build_aggregator(registry, settings, policy, CredentialRegistry())
 
-        async with run_server_async(mcp, path="/mcp") as agg_url:
+        async with run_aggregator_async(mcp, path="/mcp") as agg_url:
             transport = StreamableHttpTransport(
                 agg_url, headers={"Authorization": f"Bearer {token}"}
             )

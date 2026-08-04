@@ -4,6 +4,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
+import httpx
 import pytest
 import uvicorn
 from conftest import AUDIENCE, ISSUER, make_claims
@@ -12,7 +13,6 @@ from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.server.dependencies import get_http_headers
 from fastmcp.utilities.http import find_available_port
 from fastmcp.utilities.tests import run_server_async
-from mcp.shared.exceptions import McpError
 
 from af_mcp_broker.config import get_settings
 
@@ -203,10 +203,18 @@ async def test_unentitled_principal_does_not_see_gated_tools(running_broker, sig
 
 
 async def test_missing_bearer_rejected(running_broker):
+    """A missing bearer must produce a genuine HTTP 401 (issue #138/#144
+    step 1), not the pre-fix HTTP 200 carrying a JSON-RPC -32602 error --
+    MCP client OAuth discovery is gated on the real status code, and a
+    generic JSON-RPC error gave users no actionable signal for an expired
+    token either."""
     async with _run_asgi_app(running_broker) as base_url:
-        with pytest.raises(McpError):
+        with pytest.raises(httpx.HTTPStatusError) as exc_info:
             async with Client(f"{base_url}/mcp/") as client:
                 await client.list_tools()
+
+    assert exc_info.value.response.status_code == 401
+    assert exc_info.value.response.headers.get("www-authenticate") == "Bearer"
 
 
 async def test_tool_call_round_trips_to_backend(running_broker, sig_key):
