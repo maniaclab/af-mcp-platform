@@ -12,7 +12,15 @@ class BackendSpec:
     prefix: str
     url: str
     transport: str  # "http" | "sse"
-    required_capability: str
+    # The capability a caller must hold to invoke this backend's tools:
+    #   - a capability name (e.g. "read_data") -> gated on that capability.
+    #   - "__none__" -> open to any authenticated user (deliberate opt-in).
+    #   - None (omitted) -> no capability gate; the credential layer is the
+    #     gate instead (the caller must have a linked identity / mintable
+    #     credential for this target). app.py's lifespan refuses to start if
+    #     a backend omits this AND has no resolvable credential provider,
+    #     since that would mean no gate at all -- see issue #60.
+    required_capability: str | None = None
     auth_type: str = "bearer"  # "bearer" | "x509" | "none"
     description: str = ""
     display_name: str = ""
@@ -48,7 +56,7 @@ class BackendRegistry:
                 prefix=entry.get("prefix", entry["name"]),
                 url=entry["url"],
                 transport=entry.get("transport", "http"),
-                required_capability=entry.get("required_capability", "__none__"),
+                required_capability=entry.get("required_capability"),
                 auth_type=entry.get("auth_type", "bearer"),
                 description=entry.get("description", ""),
                 display_name=entry.get("display_name", ""),

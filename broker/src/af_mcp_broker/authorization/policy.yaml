@@ -9,18 +9,11 @@ group_capabilities:
   # Any authenticated user (no group membership required)
   __authenticated__: [read_metadata, read_monitoring]
 
-# Which capability is required to use each backend target.
-# "__none__" means open to any authenticated user.
-target_capabilities:
-  rucio: read_data
-  ami: read_metadata
-  atlasopenmagic: read_metadata
-  panda: submit_jobs
-  condor: submit_jobs
-  gitlab: read_gitlab
-  jupyter-control: manage_jupyter
-  monitoring: read_monitoring
-  docs: __none__
+# Which capability is required to use each backend target is declared by
+# `required_capability` in backends.yaml, not here -- backends.yaml is the
+# sole source of truth for that mapping (see issue #60; this file used to
+# carry a parallel `target_capabilities` section that could silently drift
+# out of sync with backends.yaml).
 
 # Action type overrides per backend (tool glob pattern -> action type).
 # Anything not listed defaults to "read".

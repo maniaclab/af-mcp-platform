@@ -67,7 +67,7 @@ def aggregator_url(settings, progress_backend_url):
         )
     )
 
-    policy = EntitlementPolicy(target_capabilities={"progress": "__none__"})
+    policy = EntitlementPolicy()
 
     async def _run():
         mcp = build_aggregator(registry, settings, policy, CredentialRegistry([]))

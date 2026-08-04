@@ -118,7 +118,7 @@ async def test_upstream_mcp_level_error_passes_through_unchanged(
                 auth_type="none",
             )
         )
-        policy = EntitlementPolicy(target_capabilities={"toy": "__none__"})
+        policy = EntitlementPolicy()
         mcp = build_aggregator(registry, settings, policy, CredentialRegistry([]))
 
         async with run_server_async(mcp, path="/mcp") as agg_url:
@@ -167,7 +167,7 @@ async def test_slow_backend_call_times_out_cleanly_instead_of_hanging(
                 timeout_seconds=0.2,
             )
         )
-        policy = EntitlementPolicy(target_capabilities={"slow": "__none__"})
+        policy = EntitlementPolicy()
         mcp = build_aggregator(registry, settings, policy, CredentialRegistry([]))
 
         async with run_server_async(mcp, path="/mcp") as agg_url:

@@ -446,12 +446,22 @@ group_capabilities:
   escape: [read_data, read_metadata]
   # Any authenticated user (no group membership required)
   __authenticated__: [read_metadata, read_monitoring]
+```
 
-target_capabilities:
-  rucio: read_data
-  ami: read_metadata
-  panda: submit_jobs
-  docs: __none__     # open to any authenticated user
+Which capability a backend target requires is declared alongside the
+backend itself, in `backends.yaml`'s `required_capability` field, not in
+`policy.yaml` (see `docs/adding-a-backend.md`):
+
+```yaml
+backends:
+  - name: rucio
+    required_capability: read_data
+  - name: ami
+    required_capability: read_metadata
+  - name: panda
+    required_capability: submit_jobs
+  - name: docs
+    required_capability: __none__     # open to any authenticated user
 ```
 
 Keycloak group membership is resolved once per request from the validated

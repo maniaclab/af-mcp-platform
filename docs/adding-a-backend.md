@@ -145,15 +145,28 @@ the config alone.
 
 ## Step 2 — Pick (or reuse) a capability for the backend
 
-There's no separate capability registration step — capabilities are just
-string identifiers, declared implicitly by using them in two places that
-must agree:
+`required_capability` in `backends.yaml` (Step 1 above) is the **sole**
+declaration of what a backend target requires — the backend registry, not
+`policy.yaml`, is authoritative here (see issue #60; `policy.yaml` used to
+carry a parallel `target_capabilities` section that had to be kept in sync
+by hand, and drifting out of sync silently broke authorization in
+production). `policy.yaml`'s only remaining job is mapping capabilities to
+Keycloak groups via `group_capabilities` (Step 3 below).
 
-- `required_capability` in `backends.yaml` (Step 1 above), and
-- `group_capabilities` values in the rendered policy — see
-  `charts/af-mcp-platform/templates/configmap-policy.yaml`, a Helm template
-  rendered from `.Values.entitlements.*` (default vocabulary mirrors the
-  broker's own built-in `broker/src/af_mcp_broker/authorization/policy.yaml`).
+`required_capability` has three forms:
+
+- **A capability name** (e.g. `read_data`) — the caller must hold that
+  capability, granted via `group_capabilities`.
+- **`__none__`** — open to any authenticated user; no capability needed.
+  Use this only as a deliberate, explicit opt-in.
+- **Omitted entirely** — no capability gate; the credential layer becomes
+  the gate instead (the caller must have a linked identity / mintable
+  credential for this target, which is itself the authorization). The
+  broker **refuses to start** if a backend omits `required_capability` and
+  no credential provider resolves for its target either (e.g. `auth_type:
+  bearer` with no `identity_providers` entry naming it, or `auth_type: none`
+  with nothing registered) — that combination would mean the backend has no
+  gate at all, neither a capability nor a credential requirement.
 
 If an existing capability already covers the new backend (e.g. a generic
 `read_metadata` that several backends already require), reuse it and skip to

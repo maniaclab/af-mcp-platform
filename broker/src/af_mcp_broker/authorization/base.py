@@ -51,8 +51,6 @@ CAPABILITIES: dict[str, Capability] = {
 class EntitlementPolicy:
     # group_name -> list[capability_name]
     group_capabilities: dict[str, list[str]] = field(default_factory=dict)
-    # target_name -> required capability_name (or "__none__" for open access)
-    target_capabilities: dict[str, str] = field(default_factory=dict)
     # target_name -> {tool_glob_pattern -> "read"|"state_change"}
     target_action_types: dict[str, dict[str, str]] = field(default_factory=dict)
 
@@ -62,7 +60,6 @@ def load_policy(path: str) -> EntitlementPolicy:
         raw = yaml.safe_load(fh) or {}
     policy = EntitlementPolicy()
     policy.group_capabilities = raw.get("group_capabilities", {})
-    policy.target_capabilities = raw.get("target_capabilities", {})
     policy.target_action_types = raw.get("target_action_types", {})
     return policy
 
@@ -81,45 +78,54 @@ def get_principal_capabilities(
     return caps
 
 
-def get_action_type(target: str, tool_name: str, policy: EntitlementPolicy) -> str:
-    """Resolve the action type for a specific tool on a target."""
+def get_action_type(
+    target: str,
+    tool_name: str,
+    capability: str | None,
+    policy: EntitlementPolicy,
+) -> str:
+    """Resolve the action type for a specific tool on a target.
+
+    ``capability`` is the target's required capability as declared by the
+    backend registry (``BackendSpec.required_capability``) -- the fallback
+    below a tool-glob override, same as before this took the capability as a
+    parameter instead of looking it up in ``policy.target_capabilities``
+    (deleted; the backend registry is now the sole source for what capability
+    a target requires -- see issue #60).
+    """
     overrides = policy.target_action_types.get(target, {})
     for pattern, action_type in overrides.items():
         if fnmatch.fnmatch(tool_name, pattern):
             return action_type
     # Default: look up from the capability
-    required_cap = policy.target_capabilities.get(target, "__none__")
-    if required_cap in CAPABILITIES:
-        return CAPABILITIES[required_cap].action_type
+    if capability in CAPABILITIES:
+        return CAPABILITIES[capability].action_type
     return "read"
 
 
 def check_entitlement(
     principal: Principal,
-    capability: str,
+    capability: str | None,
     target: str,
     policy: EntitlementPolicy,
 ) -> tuple[bool, str]:
-    """Returns (allow, reason)."""
-    # Open-access targets require no capability
-    required_cap = policy.target_capabilities.get(target)
-    if required_cap == "__none__":
+    """Returns (allow, reason).
+
+    ``capability`` is the target's required capability as declared by the
+    backend registry (``BackendSpec.required_capability`` -- backends.yaml is
+    the sole source of truth for what a target requires; policy.yaml no
+    longer duplicates it):
+      - a capability name (e.g. "read_data") -> principal must hold it.
+      - "__none__" -> open to any authenticated user (deliberate opt-in).
+      - None (omitted) -> no capability gate; the credential layer is the
+        gate instead (enforced at startup -- see app.py's lifespan), so any
+        authenticated principal is allowed through here.
+    """
+    if capability is None or capability == "__none__":
         return True, ""
 
-    if required_cap is None:
-        return False, f"target '{target}' is not registered in policy"
-
-    if capability != required_cap:
-        return (
-            False,
-            f"target '{target}' requires capability '{required_cap}', got '{capability}'",
-        )
-
     principal_caps = get_principal_capabilities(principal, policy)
-    if required_cap not in principal_caps:
-        return False, (
-            f"principal lacks capability '{required_cap}'. "
-            f"Granted capabilities: {sorted(principal_caps)}"
-        )
+    if capability not in principal_caps:
+        return False, f"target '{target}' requires capability '{capability}'"
 
     return True, ""

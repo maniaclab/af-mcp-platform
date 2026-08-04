@@ -142,10 +142,6 @@ backends:
 group_capabilities:
   atlas: [read_data]
   __authenticated__: []
-target_capabilities:
-  toy: read_data
-  selfpfx: __none__
-  dead: __none__
 """
     )
 

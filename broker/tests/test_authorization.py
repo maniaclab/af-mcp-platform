@@ -47,30 +47,53 @@ def test_no_groups_denied_panda(
     assert "submit_jobs" in reason
 
 
-def test_unknown_target_denied(
+def test_open_sentinel_requires_no_capability(
     policy: EntitlementPolicy, make_principal: Callable[..., object]
 ) -> None:
-    principal = make_principal(groups=["atlas"])
-    allow, reason = check_entitlement(principal, "read_data", "no-such-target", policy)
-    assert not allow
-    assert "not registered" in reason
+    """ "__none__" is a deliberate open-access opt-in: no capability, not even
+    __authenticated__'s, is required."""
+    principal = make_principal(groups=[])
+    allow, reason = check_entitlement(principal, "__none__", "docs", policy)
+    assert allow, reason
+
+
+def test_omitted_capability_is_allowed(
+    policy: EntitlementPolicy, make_principal: Callable[..., object]
+) -> None:
+    """Omitted required_capability (None) means the credential layer is the
+    gate instead of a capability check (issue #60) -- enforced at startup
+    (see test_app.py's fail-closed test), not here. check_entitlement itself
+    must allow any authenticated principal straight through."""
+    principal = make_principal(groups=[])
+    allow, reason = check_entitlement(principal, None, "some-target", policy)
+    assert allow, reason
 
 
 def test_action_type_resolution(policy: EntitlementPolicy) -> None:
     # panda submit_* is a state_change override.
-    assert get_action_type("panda", "submit_job", policy) == "state_change"
+    assert (
+        get_action_type("panda", "submit_job", "submit_jobs", policy) == "state_change"
+    )
     # A non-override tool falls back to the capability's action type
-    # (panda -> submit_jobs -> state_change).
-    assert get_action_type("panda", "list_jobs", policy) == "state_change"
+    # (panda's declared capability is submit_jobs -> state_change).
+    assert (
+        get_action_type("panda", "list_jobs", "submit_jobs", policy) == "state_change"
+    )
     # rucio -> read_data -> read.
-    assert get_action_type("rucio", "list_dids", policy) == "read"
+    assert get_action_type("rucio", "list_dids", "read_data", policy) == "read"
+
+
+def test_action_type_resolution_omitted_capability_defaults_to_read(
+    policy: EntitlementPolicy,
+) -> None:
+    """A target with no glob override and no declared capability (None) has
+    no action-type signal to derive from, so it defaults to "read"."""
+    assert get_action_type("mystery", "list_things", None, policy) == "read"
 
 
 def _write_empty_group_capabilities_policy(tmp_path: Path) -> str:
     path = tmp_path / "policy.yaml"
-    path.write_text(
-        "group_capabilities: {}\ntarget_capabilities: {}\ntarget_action_types: {}\n"
-    )
+    path.write_text("group_capabilities: {}\ntarget_action_types: {}\n")
     return str(path)
 
 

@@ -15,15 +15,31 @@ if TYPE_CHECKING:
 _AUTH = {"Authorization": "Bearer test"}
 
 
+def _register_panda_backend(client: TestClient) -> None:
+    """panda isn't in the shipped backends.yaml -- register it directly on
+    the booted app's registry the same way test_catalog_action_type_reflects_
+    target_action_type_overrides does for gitlab, so /v1/authorize (which now
+    derives the required capability from the registry, not the request body
+    -- issue #60) has a real backend to look up."""
+    from af_mcp_broker.mcp.registry import BackendSpec
+
+    client.app.state.backend_registry.register(
+        BackendSpec(
+            name="panda",
+            prefix="panda",
+            url="http://panda-mcp.mcp.svc.cluster.local/mcp",
+            transport="http",
+            required_capability="submit_jobs",
+            auth_type="none",
+        )
+    )
+
+
 def test_authorize_atlas_rucio_allow(app_client: tuple[TestClient, dict]) -> None:
     client, _ = app_client
     resp = client.post(
         "/v1/authorize",
-        json={
-            "capability": "read_data",
-            "target": "rucio",
-            "action": "rucio_list_dids",
-        },
+        json={"target": "rucio", "action": "rucio_list_dids"},
         headers=_AUTH,
     )
     assert resp.status_code == 200, resp.text
@@ -37,9 +53,10 @@ def test_authorize_panda_submit_state_change(
 ) -> None:
     client, state = app_client
     state["principal"] = make_principal(groups=["atlas"])
+    _register_panda_backend(client)
     resp = client.post(
         "/v1/authorize",
-        json={"capability": "submit_jobs", "target": "panda", "action": "submit_task"},
+        json={"target": "panda", "action": "submit_task"},
         headers=_AUTH,
     )
     assert resp.status_code == 200, resp.text
@@ -53,13 +70,56 @@ def test_authorize_no_groups_denied_panda(
 ) -> None:
     client, state = app_client
     state["principal"] = make_principal(groups=[])
+    _register_panda_backend(client)
     resp = client.post(
         "/v1/authorize",
-        json={"capability": "submit_jobs", "target": "panda", "action": "submit_task"},
+        json={"target": "panda", "action": "submit_task"},
         headers=_AUTH,
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["allow"] is False
+
+
+def test_authorize_unregistered_target_denied_without_leaking_internals(
+    app_client: tuple[TestClient, dict],
+) -> None:
+    """A target absent from the backend registry must be denied cleanly --
+    and the response must not be confused with a capability-based denial."""
+    client, _ = app_client
+    resp = client.post(
+        "/v1/authorize",
+        json={"target": "no-such-target", "action": "whatever"},
+        headers=_AUTH,
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["allow"] is False
+    assert "no-such-target" in body["reason"]
+
+
+def test_authorize_ignores_client_supplied_capability(
+    app_client: tuple[TestClient, dict], make_principal: Callable[..., object]
+) -> None:
+    """The required capability is derived server-side from the registry
+    (rucio -> read_data), not trusted from the request body -- a caller
+    claiming an unrelated/higher capability for the same target must not
+    change the outcome (issue #60)."""
+    client, state = app_client
+    state["principal"] = make_principal(groups=[])
+    resp = client.post(
+        "/v1/authorize",
+        json={
+            "target": "rucio",
+            "action": "rucio_list_dids",
+            "capability": "admin",
+        },
+        headers=_AUTH,
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    # __authenticated__ (no groups) lacks read_data -> denied, regardless of
+    # the bogus "admin" capability the request body claimed.
+    assert body["allow"] is False
 
 
 def test_catalog_reflects_capabilities(

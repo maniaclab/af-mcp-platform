@@ -49,6 +49,17 @@ def registry() -> BackendRegistry:
             required_capability="__none__",
         )
     )
+    reg.register(
+        BackendSpec(
+            name="credentialed",
+            prefix="credentialed",
+            url="http://credentialed.invalid/mcp",
+            transport="http",
+            # Omitted required_capability -- the credential layer is the
+            # gate instead (issue #60); entitlement filtering itself must
+            # not hide this tool from anyone.
+        )
+    )
     return reg
 
 
@@ -56,7 +67,6 @@ def registry() -> BackendRegistry:
 def policy() -> EntitlementPolicy:
     return EntitlementPolicy(
         group_capabilities={"atlas": ["read_data"], "__authenticated__": []},
-        target_capabilities={"rucio": "read_data", "docs": "__none__"},
     )
 
 
@@ -91,6 +101,22 @@ async def test_unentitled_principal_only_sees_open_tools(
     result = await mw.on_list_tools(context, _call_next_factory(tools))
 
     assert {t.name for t in result} == {"docs_search"}
+
+
+async def test_unentitled_principal_sees_omitted_capability_tools_too(
+    registry, policy, make_principal
+):
+    """A backend that omits required_capability has no capability gate --
+    the credential layer gates it instead (issue #60) -- so entitlement
+    filtering must not hide it even from a principal with no groups."""
+    mw = EntitlementMiddleware(registry, policy)
+    principal = make_principal(groups=[])
+    context = _FakeMiddlewareContext(_FakeFastMCPContext({"principal": principal}))
+    tools = [_tool("rucio_list_dids"), _tool("credentialed_ping")]
+
+    result = await mw.on_list_tools(context, _call_next_factory(tools))
+
+    assert {t.name for t in result} == {"credentialed_ping"}
 
 
 async def test_tool_with_unknown_prefix_is_denied(registry, policy, make_principal):

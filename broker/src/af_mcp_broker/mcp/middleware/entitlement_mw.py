@@ -56,6 +56,12 @@ class EntitlementMiddleware(Middleware):
         backend = self.registry.get_by_tool_prefix(tool.name)
         if backend is None:
             return False  # unknown prefix: deny by default (fail-closed)
-        if backend.required_capability == "__none__":
+        if (
+            backend.required_capability is None
+            or backend.required_capability == "__none__"
+        ):
+            # Omitted -> the credential layer is the gate (see app.py's
+            # startup validation); "__none__" -> open to any authenticated
+            # user. Either way, no capability check gates this tool's listing.
             return True
         return backend.required_capability in principal_caps

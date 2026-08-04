@@ -78,8 +78,14 @@ Answers: "is this principal allowed to call this tool?"
 
 - Policy is declarative YAML (`policy.yaml`) — no code change needed to add a
   capability.
-- Each backend target requires a capability (e.g., rucio requires `read_data`,
-  panda requires `submit_jobs`) via `target_capabilities` in `policy.yaml`.
+- Each backend target's required capability is declared by
+  `required_capability` in `backends.yaml` (e.g., rucio requires `read_data`,
+  panda requires `submit_jobs`) — backends.yaml is the sole source of truth
+  for that mapping; `policy.yaml` doesn't enumerate targets. It's optional:
+  omit it and the credential layer becomes the gate instead (the broker
+  refuses to start if that would leave the backend with no gate at all), or
+  set it to `__none__` to explicitly open the backend to any authenticated
+  user. See `docs/adding-a-backend.md` for the full model.
 - A principal's capabilities come from their Keycloak group memberships via
   `group_capabilities` in `policy.yaml` (shipped in the chart's policy
   ConfigMap). This requires a Group Membership mapper on the Keycloak client

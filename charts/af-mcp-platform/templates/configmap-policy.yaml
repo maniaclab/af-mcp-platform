@@ -30,22 +30,9 @@ data:
       __authenticated__: [read_metadata, read_monitoring]
     {{- end }}
 
-    # Which capability is required to use each backend target.
-    # "__none__" means open to any authenticated user.
-    target_capabilities:
-    {{- if .Values.entitlements.target_capabilities }}
-      {{- toYaml .Values.entitlements.target_capabilities | nindent 6 }}
-    {{- else }}
-      rucio: read_data
-      ami: read_metadata
-      atlasopenmagic: read_metadata
-      panda: submit_jobs
-      condor: submit_jobs
-      gitlab: read_gitlab
-      jupyter-control: manage_jupyter
-      monitoring: read_monitoring
-      docs: __none__
-    {{- end }}
+    # Which capability is required to use each backend target is declared by
+    # `required_capability` in backends.yaml, not here -- backends.yaml is
+    # the sole source of truth for that mapping (see issue #60).
 
     # Action type overrides per backend (tool glob pattern -> action type).
     # Anything not listed defaults to "read".
