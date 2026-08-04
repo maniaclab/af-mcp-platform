@@ -53,6 +53,12 @@ class BackendRegistry:
 
     def __init__(self) -> None:
         self._backends: dict[str, BackendSpec] = {}
+        # backend name -> most recently classified tools/list failure reason
+        # ("not_linked" | "unauthorized" | "unavailable", see aggregator.py's
+        # _classify_list_failure). Best-effort, last-write-wins, no history --
+        # lets /v1/catalog's status derivation (issue #123) factor in a recent
+        # listing failure without an extra live probe of its own.
+        self._recent_list_failures: dict[str, str] = {}
 
     def load(self, path: str) -> None:
         with Path(path).open() as fh:
@@ -88,3 +94,14 @@ class BackendRegistry:
             if tool_name == spec.prefix or tool_name.startswith(f"{spec.prefix}_"):
                 return spec
         return None
+
+    def record_list_failure(self, name: str, reason: str) -> None:
+        """Record the most recent classified tools/list failure *reason* for
+        backend *name*. Called by aggregator.py's _ObservableProxyProvider
+        when a tools/list request fails -- see _classify_list_failure."""
+        self._recent_list_failures[name] = reason
+
+    def recent_list_failure(self, name: str) -> str | None:
+        """The most recently recorded tools/list failure reason for *name*,
+        or None if none has been recorded (the healthy default)."""
+        return self._recent_list_failures.get(name)

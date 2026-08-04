@@ -374,22 +374,31 @@ class _ObservableProxyProvider(ProxyProvider):
     stale-cache refresh in particular -- see ``_resolve_list_time_headers``'s
     docstring for why that path matters here), or its cache-write-only-on-
     success behavior change on a future fastmcp bump, re-check this class.
+
+    Also records the classified reason onto ``registry`` (BackendRegistry.
+    record_list_failure) so /v1/catalog's per-backend status derivation
+    (issue #123) can factor in a recent listing failure -- e.g. downgrading
+    an otherwise "available" backend to "unavailable" -- without an extra
+    live probe of its own.
     """
 
     def __init__(
         self,
         backend_name: str,
         client_factory: ClientFactoryT,
+        registry: BackendRegistry,
         cache_ttl: float | None = None,
     ) -> None:
         super().__init__(client_factory, cache_ttl=cache_ttl)
         self._backend_name = backend_name
+        self._registry = registry
 
     async def _list_tools(self) -> Sequence[Tool]:
         try:
             return await super()._list_tools()
         except Exception as exc:
             reason, detail = await _classify_list_failure(exc, self._backend_name)
+            self._registry.record_list_failure(self._backend_name, reason)
             logger.warning(
                 "aggregator.backend_list_failed",
                 backend=self._backend_name,
@@ -475,6 +484,7 @@ def _register_backends(
             client_factory=_make_client_factory(
                 spec, credential_registry, settings, policy
             ),
+            registry=registry,
             cache_ttl=spec.tools_cache_ttl,
         )
         namespace = spec.prefix if spec.apply_namespace else ""
