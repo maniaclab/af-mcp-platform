@@ -29,6 +29,7 @@ nav = [
   { "Architecture" = "architecture.md" },
   { "Authentication" = "auth.md" },
   { "Adding a Backend" = "adding-a-backend.md" },
+  { "Rucio: Per-Site Setup" = "rucio-per-site-setup.md" },
   { "Connecting a Client" = "connecting-a-client.md" },
   { "Phase 1 Acceptance Checklist" = "phase1-acceptance-checklist.md" },
   { "agentgateway Spike" = "agentgateway-spike.md" },

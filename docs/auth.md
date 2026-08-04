@@ -73,7 +73,9 @@ Use `keycloak-brokered` when the backend is (or can be registered as) an
 OIDC identity provider Keycloak already understands — this is the path for
 ATLAS IAM (`atlas-oidc`). Use `oauth21-direct` when the backend is an OAuth
 2.1 authorization server in its own right and cannot be made to look like an
-OIDC IdP to Keycloak — this is the path for rucio-mcp.
+OIDC IdP to Keycloak — this is the path for rucio-mcp. See
+[Rucio: Per-Site Setup](rucio-per-site-setup.md) for the concrete, deployed
+`oauth21-direct` configuration rucio-mcp uses, one entry per Rucio site.
 
 ---
 
