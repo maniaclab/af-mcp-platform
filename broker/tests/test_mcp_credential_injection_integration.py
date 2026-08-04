@@ -169,7 +169,15 @@ async def test_credential_injected_and_inbound_token_not_forwarded(
 
     assert result.data == "Bearer minted-for-501"
     assert result.data != f"Bearer {inbound_token}"
-    assert provider.issue_calls == [501]
+    # >= 1, not == 1: this principal is entitled+linked, so the aggregator's
+    # own incidental tools/list-time minting (issue #121's fix -- see
+    # aggregator.py's _bearer_factory) also mints for uid 501 in addition to
+    # this explicit call, on top of whatever implicit listing the MCP client
+    # itself performs. The security property under test -- only uid 501 is
+    # ever minted for, never some other principal -- still holds regardless
+    # of how many times.
+    assert provider.issue_calls
+    assert set(provider.issue_calls) == {501}
 
 
 async def test_per_user_credential_isolation(
@@ -194,7 +202,11 @@ async def test_per_user_credential_isolation(
 
     assert alice_result.data == "Bearer minted-for-111"
     assert bob_result.data == "Bearer minted-for-222"
-    assert sorted(provider.issue_calls) == [111, 222]
+    # Not an exact count (see the comment in
+    # test_credential_injected_and_inbound_token_not_forwarded above): the
+    # isolation property under test is that only 111 and 222 ever get
+    # minted for, each with their own token, never a mix-up between them.
+    assert set(provider.issue_calls) == {111, 222}
 
 
 async def test_unauthorized_principal_denied_before_credential_provider_touched(

@@ -31,6 +31,13 @@ class BackendSpec:
     # tool call; docs/adding-a-backend.md's example already assumes this
     # value, so it doubles as an operator-visible default.
     timeout_seconds: float = 30.0
+    # How long (seconds) ProxyProvider's _get_tool() may serve a cached
+    # component list for this backend before refreshing -- see aggregator.py's
+    # _make_client_factory docstring for the cross-user cache assumption this
+    # relies on (tool schemas, not credentials, are what's cached). 300s
+    # matches fastmcp's own ProxyProvider default; set 0 to disable caching
+    # entirely for a backend whose tool list personalizes per caller.
+    tools_cache_ttl: float = 300.0
 
 
 class BackendRegistry:
@@ -54,6 +61,7 @@ class BackendRegistry:
                 display_name=entry.get("display_name", ""),
                 apply_namespace=entry.get("apply_namespace", True),
                 timeout_seconds=entry.get("timeout_seconds", 30.0),
+                tools_cache_ttl=entry.get("tools_cache_ttl", 300.0),
             )
             self._backends[spec.name] = spec
 

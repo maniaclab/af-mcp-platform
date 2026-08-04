@@ -220,6 +220,9 @@ aggregator:
   #     transport: sse
   #     url: http://my-tool-svc:8000/mcp
   #     apply_namespace: true
+  #     tools_cache_ttl: 300  # optional; 0 disables the by-name lookup cache
+  #                           # for a backend whose tool list personalizes
+  #                           # per caller -- see docs/adding-a-backend.md
   # apply_namespace defaults to true (mounts tools as <prefix>_<toolname>) to
   # prevent cross-backend tool-name collisions; set false only for a backend
   # whose tools are already self-prefixed at the source, and only when no

@@ -52,6 +52,17 @@ def _spec(**overrides: Any) -> BackendSpec:
     return BackendSpec(**defaults)
 
 
+# Every direct _make_client_factory() call below cares about credential
+# resolution, not entitlement -- _bearer_factory's list-time branch (see
+# aggregator.py) now also gates on check_entitlement(), so an open policy
+# for every target name this file uses (both _spec()'s default "example"
+# and the "no-such-target" override) keeps that gate a no-op here, same as
+# before that check existed.
+_OPEN_POLICY = EntitlementPolicy(
+    target_capabilities={"example": "__none__", "no-such-target": "__none__"}
+)
+
+
 class _FakeProvider(CredentialProvider):
     """A CredentialProvider test double whose is_linked/issue outcomes are
     configured directly, rather than exercising a real provider's network
@@ -108,20 +119,31 @@ class _FakeFastMCPContext:
     def __init__(self, principal: Principal | None, active_backend: str | None) -> None:
         self._principal = principal
         self._active_backend = active_backend
+        # Populated by set_state() -- the list-time branch records its
+        # credential-status decision here (see aggregator.py's
+        # _classify_list_failure), keyed the same way the real Context would.
+        self.recorded_state: dict[str, Any] = {}
 
     async def get_state(self, key: str) -> Any:
         if key == "principal":
             return self._principal
         if key == "authorized_call_target":
             return self._active_backend
+        if key in self.recorded_state:
+            return self.recorded_state[key]
         raise AssertionError(f"unexpected state key {key!r}")
+
+    async def set_state(
+        self, key: str, value: Any, *, serializable: bool = True
+    ) -> None:
+        self.recorded_state[key] = value
 
 
 def _patch_context(
     monkeypatch: pytest.MonkeyPatch,
     principal: Principal | None,
     active_backend: str | None = "example",
-) -> None:
+) -> _FakeFastMCPContext:
     """_make_client_factory's bearer/x509 branches read the caller's
     Principal, and whether AuthorizationMiddleware stamped this request as a
     genuine tools/call for this backend, via
@@ -130,12 +152,14 @@ def _patch_context(
     hook into the current request. Patch the name aggregator imports it
     under, mirroring identity_mw's test pattern for get_http_headers.
     ``active_backend`` defaults to "example" to match ``_spec()``'s default
-    name, simulating a genuine call for that backend."""
-    monkeypatch.setattr(
-        aggregator,
-        "get_context",
-        lambda: _FakeFastMCPContext(principal, active_backend),
-    )
+    name, simulating a genuine call for that backend. Returns the single
+    shared context instance every ``get_context()`` call resolves to, so a
+    test can inspect what the list-time branch recorded via ``set_state()``
+    after calling the factory.
+    """
+    ctx = _FakeFastMCPContext(principal, active_backend)
+    monkeypatch.setattr(aggregator, "get_context", lambda: ctx)
+    return ctx
 
 
 def test_build_aggregator_returns_fastmcp(settings: Any) -> None:
@@ -286,7 +310,7 @@ def test_client_factory_selects_transport_by_spec(
     spec = _spec(
         transport=transport, url="http://example.invalid/mcp", auth_type="none"
     )
-    factory = _make_client_factory(spec, CredentialRegistry([]), settings)
+    factory = _make_client_factory(spec, CredentialRegistry([]), settings, _OPEN_POLICY)
     client = factory()
     assert isinstance(client, Client)
     assert isinstance(client.transport, expected_type)
@@ -299,7 +323,9 @@ def test_client_factory_selects_transport_by_spec(
 
 def test_client_factory_none_auth_type_applies_backend_timeout(settings: Any) -> None:
     spec = _spec(auth_type="none", timeout_seconds=5.0)
-    client = _make_client_factory(spec, CredentialRegistry([]), settings)()
+    client = _make_client_factory(
+        spec, CredentialRegistry([]), settings, _OPEN_POLICY
+    )()
     assert client._session_kwargs["read_timeout_seconds"] == timedelta(seconds=5.0)
 
 
@@ -311,7 +337,9 @@ async def test_client_factory_x509_auth_type_applies_backend_timeout(
     # on the returned Client the same way as the "none" branch above.
     _patch_context(monkeypatch, None, active_backend=None)
     spec = _spec(auth_type="x509", timeout_seconds=5.0)
-    client = await _make_client_factory(spec, CredentialRegistry([]), settings)()
+    client = await _make_client_factory(
+        spec, CredentialRegistry([]), settings, _OPEN_POLICY
+    )()
     assert client._session_kwargs["read_timeout_seconds"] == timedelta(seconds=5.0)
 
 
@@ -320,7 +348,9 @@ async def test_client_factory_bearer_auth_type_applies_backend_timeout(
 ) -> None:
     _patch_context(monkeypatch, make_principal(), active_backend=None)
     spec = _spec(auth_type="bearer", timeout_seconds=5.0)
-    client = await _make_client_factory(spec, CredentialRegistry([]), settings)()
+    client = await _make_client_factory(
+        spec, CredentialRegistry([]), settings, _OPEN_POLICY
+    )()
     assert client._session_kwargs["read_timeout_seconds"] == timedelta(seconds=5.0)
 
 
@@ -337,7 +367,9 @@ def test_client_factory_installs_progress_and_log_forwarding_handlers(
     False) or a backend's progress/log notifications would be swallowed
     (logged locally) instead of reaching the aggregator's own caller."""
     spec = _spec(auth_type="none")
-    client = _make_client_factory(spec, CredentialRegistry([]), settings)()
+    client = _make_client_factory(
+        spec, CredentialRegistry([]), settings, _OPEN_POLICY
+    )()
     assert client._progress_handler is default_proxy_progress_handler
     # logging_callback is create_log_callback(handler)'s closure -- inspect
     # the closed-over handler directly rather than relying on identity of
@@ -353,7 +385,9 @@ def test_client_factory_none_auth_type_never_touches_credential_registry(
     # An empty registry would raise KeyError if resolve() were ever called
     # for this target -- proving auth_type="none" skips credential
     # resolution entirely rather than merely succeeding to find nothing.
-    client = _make_client_factory(spec, CredentialRegistry([]), settings)()
+    client = _make_client_factory(
+        spec, CredentialRegistry([]), settings, _OPEN_POLICY
+    )()
     assert "Authorization" not in client.transport.headers
 
 
@@ -362,7 +396,7 @@ async def test_client_factory_x509_auth_type_raises_clear_tool_error(
 ) -> None:
     _patch_context(monkeypatch, None)
     spec = _spec(auth_type="x509")
-    factory = _make_client_factory(spec, CredentialRegistry([]), settings)
+    factory = _make_client_factory(spec, CredentialRegistry([]), settings, _OPEN_POLICY)
     with pytest.raises(ToolError, match="x509"):
         await factory()
 
@@ -376,7 +410,7 @@ async def test_client_factory_x509_auth_type_lists_without_raising(
     error above."""
     _patch_context(monkeypatch, None, active_backend=None)
     spec = _spec(auth_type="x509")
-    factory = _make_client_factory(spec, CredentialRegistry([]), settings)
+    factory = _make_client_factory(spec, CredentialRegistry([]), settings, _OPEN_POLICY)
     client = await factory()
     assert isinstance(client, Client)
     assert "Authorization" not in client.transport.headers
@@ -392,7 +426,7 @@ async def test_client_factory_bearer_injects_minted_token_not_inbound(
     registry = CredentialRegistry([])
     registry.register(spec.name, provider)
 
-    factory = _make_client_factory(spec, registry, settings)
+    factory = _make_client_factory(spec, registry, settings, _OPEN_POLICY)
     client = await factory()
 
     assert client.transport.headers["Authorization"] == "Bearer minted-abc"
@@ -430,7 +464,7 @@ async def test_client_factory_bearer_per_user_isolation(
     provider = _PerUserProvider()
     registry = CredentialRegistry([])
     registry.register(spec.name, provider)
-    factory = _make_client_factory(spec, registry, settings)
+    factory = _make_client_factory(spec, registry, settings, _OPEN_POLICY)
 
     alice = make_principal(uid=111, unixname="alice")
     _patch_context(monkeypatch, alice)
@@ -449,7 +483,7 @@ async def test_client_factory_bearer_unknown_target_raises_tool_error(
 ) -> None:
     spec = _spec(auth_type="bearer", name="no-such-target")
     _patch_context(monkeypatch, make_principal(), active_backend=spec.name)
-    factory = _make_client_factory(spec, CredentialRegistry([]), settings)
+    factory = _make_client_factory(spec, CredentialRegistry([]), settings, _OPEN_POLICY)
 
     with pytest.raises(ToolError):
         await factory()
@@ -465,7 +499,7 @@ async def test_client_factory_bearer_not_linked_raises_friendly_error(
     registry.register(spec.name, provider)
 
     with pytest.raises(ToolError, match="not linked"):
-        await _make_client_factory(spec, registry, settings)()
+        await _make_client_factory(spec, registry, settings, _OPEN_POLICY)()
 
 
 async def test_client_factory_bearer_needs_unlock_raises_friendly_error(
@@ -482,7 +516,7 @@ async def test_client_factory_bearer_needs_unlock_raises_friendly_error(
     registry.register(spec.name, provider)
 
     with pytest.raises(ToolError, match="portal") as excinfo:
-        await _make_client_factory(spec, registry, settings)()
+        await _make_client_factory(spec, registry, settings, _OPEN_POLICY)()
     assert "/v1/x509/proxy" in str(excinfo.value)
 
 
@@ -498,7 +532,7 @@ async def test_client_factory_bearer_provider_http_exception_surfaces_detail(
     registry.register(spec.name, provider)
 
     with pytest.raises(ToolError, match="No ATLAS IAM token stored"):
-        await _make_client_factory(spec, registry, settings)()
+        await _make_client_factory(spec, registry, settings, _OPEN_POLICY)()
 
 
 async def test_client_factory_bearer_missing_principal_raises(
@@ -506,22 +540,103 @@ async def test_client_factory_bearer_missing_principal_raises(
 ) -> None:
     _patch_context(monkeypatch, None)
     spec = _spec(auth_type="bearer")
-    factory = _make_client_factory(spec, CredentialRegistry([]), settings)
+    factory = _make_client_factory(spec, CredentialRegistry([]), settings, _OPEN_POLICY)
 
     with pytest.raises(ToolError):
         await factory()
 
 
-async def test_client_factory_bearer_lists_without_minting_when_not_an_active_call(
+async def test_client_factory_bearer_list_time_falls_back_when_no_provider_registered(
     settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A tools/list schema-cache refresh reuses the same client_factory as a
-    real call, but must not mint a credential -- proven with an empty
-    registry that would raise KeyError if resolve() were ever reached."""
-    _patch_context(monkeypatch, make_principal(), active_backend=None)
+    real call, and now attempts a best-effort mint too (issue #121) -- but an
+    empty registry (no provider configured for this target at all) must
+    still fall back to an uncredentialed connection rather than raising,
+    exactly like a "none" backend would."""
+    ctx = _patch_context(monkeypatch, make_principal(), active_backend=None)
     spec = _spec(auth_type="bearer")
-    factory = _make_client_factory(spec, CredentialRegistry([]), settings)
+    factory = _make_client_factory(spec, CredentialRegistry([]), settings, _OPEN_POLICY)
 
     client = await factory()
 
     assert "Authorization" not in client.transport.headers
+    assert ctx.recorded_state[f"__list_credential_status__:{spec.name}"] == (
+        False,
+        "unavailable",
+    )
+
+
+async def test_client_factory_bearer_list_time_falls_back_when_not_linked(
+    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same non-fatal fallback as the no-provider case above, but for a
+    registered provider that says the caller isn't linked -- classified
+    distinctly ("not_linked" vs "unavailable") so _ObservableProxyProvider
+    can log the precise reason if the resulting uncredentialed connection
+    goes on to fail (e.g. the backend itself gates listing on auth)."""
+    ctx = _patch_context(monkeypatch, make_principal(), active_backend=None)
+    spec = _spec(auth_type="bearer")
+    provider = _FakeProvider(linked=False)
+    registry = CredentialRegistry([])
+    registry.register(spec.name, provider)
+    factory = _make_client_factory(spec, registry, settings, _OPEN_POLICY)
+
+    client = await factory()
+
+    assert "Authorization" not in client.transport.headers
+    assert provider.issue_calls == []
+    assert ctx.recorded_state[f"__list_credential_status__:{spec.name}"] == (
+        False,
+        "not_linked",
+    )
+
+
+async def test_client_factory_bearer_list_time_mints_when_entitled_and_linked(
+    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The actual fix for issue #121: a tools/list-time connection for a
+    linked, entitled caller now carries a minted credential, not just an
+    authorized tools/call."""
+    policy = EntitlementPolicy(
+        group_capabilities={"atlas": ["read_data"]},
+        target_capabilities={"example": "read_data"},
+    )
+    principal = make_principal(groups=["atlas"])
+    ctx = _patch_context(monkeypatch, principal, active_backend=None)
+    spec = _spec(auth_type="bearer", required_capability="read_data")
+    provider = _FakeProvider(token="minted-for-list")
+    registry = CredentialRegistry([])
+    registry.register(spec.name, provider)
+    factory = _make_client_factory(spec, registry, settings, policy)
+
+    client = await factory()
+
+    assert client.transport.headers["Authorization"] == "Bearer minted-for-list"
+    assert ctx.recorded_state[f"__list_credential_status__:{spec.name}"] == (True, None)
+
+
+async def test_client_factory_bearer_list_time_skips_mint_when_not_entitled(
+    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A caller who lacks the backend's required_capability shouldn't trigger
+    a mint attempt during a listing at all -- EntitlementMiddleware already
+    hides this backend's tools from such a caller's own tools/list response,
+    so minting would just be wasted work (proven with an empty issue_calls
+    list on a provider that WOULD otherwise happily mint)."""
+    policy = EntitlementPolicy(
+        group_capabilities={"atlas": ["read_data"]},
+        target_capabilities={"example": "read_data"},
+    )
+    principal = make_principal(groups=[])  # lacks read_data
+    _patch_context(monkeypatch, principal, active_backend=None)
+    spec = _spec(auth_type="bearer", required_capability="read_data")
+    provider = _FakeProvider()
+    registry = CredentialRegistry([])
+    registry.register(spec.name, provider)
+    factory = _make_client_factory(spec, registry, settings, policy)
+
+    client = await factory()
+
+    assert "Authorization" not in client.transport.headers
+    assert provider.issue_calls == []

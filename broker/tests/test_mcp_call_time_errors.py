@@ -64,7 +64,9 @@ async def test_dead_backend_call_surfaces_as_clean_tool_error_not_a_traceback(
         required_capability="__none__",
         auth_type="none",
     )
-    factory = _make_client_factory(spec, CredentialRegistry([]), settings)
+    factory = _make_client_factory(
+        spec, CredentialRegistry([]), settings, EntitlementPolicy()
+    )
     mcp_tool = mt.Tool(
         name="dead_echo", inputSchema={"type": "object", "properties": {}}
     )

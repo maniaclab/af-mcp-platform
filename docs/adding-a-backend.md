@@ -90,6 +90,7 @@ values:
         required_capability: my-new-backend:use
         timeout_seconds: 30
         auth_type: none  # or "bearer" (default) / "x509" -- see below
+        tools_cache_ttl: 300  # seconds; see below
 ```
 
 `required_capability` is the capability string the broker's Authorization
@@ -104,6 +105,19 @@ requires an identity provider configured for this backend's `name` (see
 backend authorizes itself some other way (e.g. a platform k8s service
 account) and needs no per-user credential forwarded at all. `auth_type: x509`
 is not yet deliverable over `/mcp` (see `mcp/aggregator.py`'s `TODO(#58)`).
+For a `bearer` backend, the aggregator also attempts a best-effort per-user
+credential mint during `tools/list` (not only `tools/call`), so a backend
+whose own MCP endpoint requires auth just to list tools (e.g. rucio-mcp)
+isn't invisible to every caller — see `mcp/aggregator.py`'s
+`_make_client_factory` docstring for the full rationale.
+
+`tools_cache_ttl` (seconds, default 300, matching fastmcp's own
+`ProxyProvider` default) controls how long a cached component list for this
+backend may be served from a by-name lookup (e.g. resolving a tool during a
+`tools/call`) before refreshing. Tool *schemas* are assumed
+caller-independent, so a schema cached under one caller's credential being
+served to another isn't a credential leak — only set this to `0` for a
+backend whose tool list genuinely personalizes per caller.
 
 ### `apply_namespace` — tool naming
 
