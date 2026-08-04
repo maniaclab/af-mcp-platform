@@ -96,12 +96,9 @@ class BackendRegistry:
         return None
 
     def record_list_failure(self, name: str, reason: str) -> None:
-        """Record the most recent classified tools/list failure *reason* for
-        backend *name*. Called by aggregator.py's _ObservableProxyProvider
-        when a tools/list request fails -- see _classify_list_failure."""
+        """Record the most recent classified tools/list failure *reason* for backend *name*. Called by aggregator.py's _ObservableProxyProvider when a tools/list request fails -- see _classify_list_failure."""
         self._recent_list_failures[name] = reason
 
     def recent_list_failure(self, name: str) -> str | None:
-        """The most recently recorded tools/list failure reason for *name*,
-        or None if none has been recorded (the healthy default)."""
+        """Return the most recently recorded tools/list failure reason for *name*, or None if none has been recorded (the healthy default)."""
         return self._recent_list_failures.get(name)

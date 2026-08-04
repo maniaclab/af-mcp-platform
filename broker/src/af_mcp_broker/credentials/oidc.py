@@ -46,8 +46,7 @@ class _LinkStatus:
 
 
 class OIDCProvider(CredentialProvider):
-    """Issues delegated OIDC bearer tokens by retrieving the user's brokered
-    IAM token from Keycloak.
+    """Issues delegated OIDC bearer tokens by retrieving the user's brokered IAM token from Keycloak.
 
     Auth flow:
       1. User authenticates to Keycloak (realm: *connect*) and receives a
@@ -145,6 +144,7 @@ class OIDCProvider(CredentialProvider):
                 the principal's token (session expired — user must re-link).
             HTTPException(404): if no brokered token is stored yet (user must
                 link their ATLAS account from the portal's Identities page).
+
         """
         self._log.debug(
             "oidc.issue.start",

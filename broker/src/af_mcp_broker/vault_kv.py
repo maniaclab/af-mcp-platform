@@ -1,5 +1,4 @@
-"""Vault/OpenBao KV-v2 transport client, shared by ``credentials/vault.py``'s
-``VaultTokenStore`` and ``token_registry.py``'s ``VaultTokenRegistryBackend``.
+"""Vault/OpenBao KV-v2 transport client, shared by ``credentials/vault.py``'s ``VaultTokenStore`` and ``token_registry.py``'s ``VaultTokenRegistryBackend``.
 
 Scope boundary: transport only -- Kubernetes auth, the four KV-v2 verbs, and
 error taxonomy. No domain records, no path layouts, no retry policies; those
@@ -41,9 +40,7 @@ class VaultError(Exception):
 
 
 class CasConflict(Exception):
-    """Raised by ``write_cas()`` when Vault's check-and-set version guard
-    rejects the write -- the caller's ``expected_version`` no longer matches
-    the entry's current version."""
+    """Raised by ``write_cas()`` when Vault's check-and-set version guard rejects the write -- the caller's ``expected_version`` no longer matches the entry's current version."""
 
 
 class VaultKV:
@@ -86,9 +83,7 @@ class VaultKV:
         return self._http_client if self._http_client is not None else get_http_client()
 
     async def _authenticate(self) -> str:
-        """Return a valid Vault client token, re-authenticating if the
-        cached one is missing or within ``_AUTH_SAFETY_MARGIN_SECONDS`` of
-        expiry.
+        """Return a valid Vault client token, re-authenticating if the cached one is missing or within ``_AUTH_SAFETY_MARGIN_SECONDS`` of expiry.
 
         Locked so concurrent callers racing to refresh don't each POST their
         own login request to Vault -- do NOT use ``auth/token/renew-self``
@@ -149,11 +144,7 @@ class VaultKV:
     async def write_cas(
         self, path: str, data: dict[str, Any], expected_version: int | None
     ) -> int:
-        """KV-v2 data write, check-and-set on *expected_version*
-        (``None`` -> ``cas=0``, i.e. "create; fail if an entry already
-        exists"). Returns the new version; raises ``CasConflict`` if
-        *expected_version* no longer matches the entry's current version.
-        """
+        """KV-v2 data write, check-and-set on *expected_version* (``None`` -> ``cas=0``, i.e. "create; fail if an entry already exists"). Returns the new version; raises ``CasConflict`` if *expected_version* no longer matches the entry's current version."""
         token = await self._authenticate()
         cas = 0 if expected_version is None else expected_version
 
@@ -180,8 +171,7 @@ class VaultKV:
         )
 
     async def list(self, path: str) -> list[str]:
-        """KV-v2 metadata LIST: immediate child keys under *path*, or ``[]``
-        on a 404 (path has no children)."""
+        """KV-v2 metadata LIST: immediate child keys under *path*, or ``[]`` on a 404 (path has no children)."""
         token = await self._authenticate()
         resp = await self._http().request(
             "LIST",

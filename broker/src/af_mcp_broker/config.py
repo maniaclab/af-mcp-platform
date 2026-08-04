@@ -29,8 +29,7 @@ log = structlog.get_logger(__name__)
 
 
 class KeycloakBrokeredProviderConfig(BaseModel):
-    """A Keycloak IdP the broker retrieves a stored brokered token from
-    (``OIDCProvider`` — see ``GET /realms/<realm>/broker/<alias>/token``).
+    """A Keycloak IdP the broker retrieves a stored brokered token from (``OIDCProvider`` — see ``GET /realms/<realm>/broker/<alias>/token``).
 
     ``alias`` must match the IdP alias configured in the OIDC issuer's realm.
     """
@@ -48,10 +47,7 @@ class KeycloakBrokeredProviderConfig(BaseModel):
 
 
 class OAuth21DirectProviderConfig(BaseModel):
-    """A backend OAuth 2.1 authorization server the broker acts as a direct
-    client to (``OAuth21Provider``) — see docs/auth.md for why this differs
-    from the Keycloak-brokered path above.
-    """
+    """A backend OAuth 2.1 authorization server the broker acts as a direct client to (``OAuth21Provider``) — see docs/auth.md for why this differs from the Keycloak-brokered path above."""
 
     type: Literal["oauth21-direct"] = "oauth21-direct"
     alias: str
@@ -308,11 +304,7 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _validate_oauth21_config(self) -> Settings:
-        """Fail startup loudly when an ``oauth21-direct`` identity provider is
-        configured but the settings it depends on are not — a
-        half-configured OAuth21Provider would otherwise fail at first
-        request instead of at boot.
-        """
+        """Fail startup loudly when an ``oauth21-direct`` identity provider is configured but the settings it depends on are not — a half-configured OAuth21Provider would otherwise fail at first request instead of at boot."""
         if not any(p.type == "oauth21-direct" for p in self.identity_providers):
             return self
         if not self.broker_state_key.get_secret_value():
@@ -375,14 +367,7 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _validate_vault_config(self) -> Settings:
-        """Fail startup loudly when either Vault-backed store is selected but
-        the settings they depend on are not — a half-configured
-        VaultTokenStore/VaultTokenRegistryBackend would otherwise fail at
-        first request instead of at boot (see also app.py's lifespan trial
-        authentication). Both stores share the same Vault connection
-        settings (only their kv_path_prefix differs), so one validator
-        covers either or both being selected.
-        """
+        """Fail startup loudly when either Vault-backed store is selected but the settings they depend on are not — a half-configured VaultTokenStore/VaultTokenRegistryBackend would otherwise fail at first request instead of at boot (see also app.py's lifespan trial authentication). Both stores share the same Vault connection settings (only their kv_path_prefix differs), so one validator covers either or both being selected."""
         if (
             self.token_store_backend != "vault"
             and self.token_registry_backend != "vault"

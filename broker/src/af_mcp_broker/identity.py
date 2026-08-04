@@ -229,9 +229,7 @@ async def get_principal(
 
 
 def _raise_revoked(jti: str) -> None:
-    """Raised from inside get_principal's try block -- caught by the same
-    ``except (ValueError, KeyError)`` branch _extract_principal's malformed-
-    posix-claim check uses, so a revoked jti maps to 401 the same way."""
+    """Raise a revoked-token ``ValueError`` from inside get_principal's try block -- caught by the same ``except (ValueError, KeyError)`` branch _extract_principal's malformed-posix-claim check uses, so a revoked jti maps to 401 the same way."""
     raise ValueError(f"token jti={jti!r} has been revoked")
 
 

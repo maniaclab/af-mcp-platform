@@ -31,7 +31,7 @@ class CimdResponse(BaseModel):
     summary="Client ID Metadata Document",
 )
 async def get_cimd(request: Request) -> CimdResponse:
-    """Serves the broker's CIMD (draft-ietf-oauth-client-id-metadata-document).
+    """Serve the broker's CIMD (draft-ietf-oauth-client-id-metadata-document).
 
     Unauthenticated by design — CIMD documents are public per spec, fetched by
     backend OAuth 2.1 authorization servers to identify this client without

@@ -71,9 +71,7 @@ class IdentitiesResponse(BaseModel):
 
 
 def _oauth21_link_url(request: Request, alias: str) -> str:
-    """Full URL (the broker's own origin) the portal navigates to in order
-    to begin an OAuth 2.1 linking flow — see ``api/oauth21.py``'s
-    ``authorize`` route.
+    """Full URL (the broker's own origin) the portal navigates to in order to begin an OAuth 2.1 linking flow — see ``api/oauth21.py``'s ``authorize`` route.
 
     Returned as a full URL rather than a bare path since the portal is
     served from a different origin than the broker (``request.url``/

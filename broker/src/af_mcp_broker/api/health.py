@@ -35,7 +35,7 @@ class ReadinessResponse(BaseModel):
     summary="Liveness probe",
 )
 async def healthz() -> HealthResponse:
-    """Always returns 200 OK as long as the process is alive."""
+    """Return 200 OK unconditionally, as long as the process is alive."""
     return HealthResponse(status="ok")
 
 
@@ -48,7 +48,7 @@ async def readyz(
     request: Request,
     response: Response,
 ) -> ReadinessResponse:
-    """Returns 200 as long as JWKS is reachable.
+    """Return 200 as long as JWKS is reachable.
 
     An empty backend list is a valid degraded state — /v1/identities,
     /v1/capabilities, and /v1/x509/proxy don't need any backend configured

@@ -90,7 +90,7 @@ def _state_cipher(request: Request) -> Fernet:
 
 
 def _callback_url(settings: Settings, alias: str) -> str:
-    """The broker's own callback URL for *alias*, on its canonical public origin.
+    """Return the broker's own callback URL for *alias*, on its canonical public origin.
 
     Deliberately *not* derived from ``request.url_for`` (request-relative):
     the same broker deployment is reachable through more than one ingress
@@ -229,10 +229,7 @@ async def callback(
     error_description: str | None = None,
     error_uri: str | None = None,
 ) -> Response:
-    """Receive the authorization code from a backend AS and store the
-    resulting token pair -- or, if the backend AS itself failed, redirect
-    the browser back to the portal with the failure surfaced instead of a
-    raw validation error.
+    """Receive the authorization code from a backend AS and store the resulting token pair -- or, if the backend AS itself failed, redirect the browser back to the portal with the failure surfaced instead of a raw validation error.
 
     Unlike every other ``/v1`` route, this one carries no ``Authorization:
     Bearer`` header and is **not** gated by ``keycloak_dependency``. It

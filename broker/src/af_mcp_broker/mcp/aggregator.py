@@ -54,8 +54,7 @@ def _build_client(
     transport_cls: type[SSETransport | StreamableHttpTransport],
     headers: dict[str, str] | None = None,
 ) -> Client:
-    """Construct the plain (never ProxyClient) Client every branch of
-    _make_client_factory returns.
+    """Construct the plain (never ProxyClient) Client every branch of _make_client_factory returns.
 
     Applies the backend's configured per-call read timeout (BackendSpec.
     timeout_seconds) so a slow/unresponsive backend fails that one call
@@ -358,13 +357,7 @@ def _make_client_factory(
 
 
 class _ObservableProxyProvider(ProxyProvider):
-    """ProxyProvider that structured-logs a classified reason when its
-    ``tools/list`` fails, then re-raises so ``AggregateProvider``'s existing
-    ``provider_error_strategy="warn"`` still drops this backend's
-    contribution and keeps every other backend's listing unaffected --
-    exactly today's degrade-gracefully behavior, just with an
-    ``aggregator.backend_list_failed`` structlog event on record instead of
-    only fastmcp's own unparseable stdlib WARNING (see issue #121).
+    """ProxyProvider that structured-logs a classified reason when its ``tools/list`` fails, then re-raises so ``AggregateProvider``'s existing ``provider_error_strategy="warn"`` still drops this backend's contribution and keeps every other backend's listing unaffected -- exactly today's degrade-gracefully behavior, just with an ``aggregator.backend_list_failed`` structlog event on record instead of only fastmcp's own unparseable stdlib WARNING (see issue #121).
 
     Overrides only the private ``_list_tools()`` extension hook that
     ``fastmcp.server.providers.proxy.ProxyProvider`` (pinned at 3.4.4, see
@@ -447,8 +440,7 @@ def populate_aggregator(
     credential_registry: CredentialRegistry,
     revoked_jti_cache: RevokedJtiCache | None = None,
 ) -> None:
-    """Refresh an aggregator built by ``build_aggregator`` with a freshly
-    loaded registry/settings/policy/credential_registry/revoked_jti_cache.
+    """Refresh an aggregator built by ``build_aggregator`` with a freshly loaded registry/settings/policy/credential_registry/revoked_jti_cache.
 
     app.py's mount-time constraint means the aggregator's FastMCP instance
     and ASGI app must exist before BACKENDS_FILE/POLICY_FILE/the credential

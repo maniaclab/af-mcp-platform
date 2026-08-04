@@ -51,9 +51,9 @@ _PROXY_B64_END = "-----END-PROXY-B64-----"
 
 
 class ProxyHarvestError(ValueError):
-    """Raised when a mint Job SUCCEEDED but its proxy could not be harvested
-    from the pod log (truncated log, kubelet log-size limits, transient read
-    issue). This is an infra failure, not a bad-passphrase signal, so callers
+    """Raised when a mint Job SUCCEEDED but its proxy could not be harvested from the pod log (truncated log, kubelet log-size limits, transient read issue).
+
+    This is an infra failure, not a bad-passphrase signal, so callers
     must NOT count it against the passphrase rate limiter the way a genuine
     Job failure is. Subclasses ``ValueError`` so existing ``except
     ValueError`` call sites still catch it; callers that need to tell the two
@@ -265,9 +265,7 @@ class HomeDirVomsBackend(X509Backend):
         self._log = structlog.get_logger(__name__).bind(backend="HomeDirVomsBackend")
 
     async def available(self, principal: Principal) -> bool:
-        """Return True if the user's certificate exists and is readable as a
-        public cert (no passphrase needed for this check).
-        """
+        """Return True if the user's certificate exists and is readable as a public cert (no passphrase needed for this check)."""
         cert_path = (
             Path(self._settings.home_root)
             / principal.unixname
@@ -767,8 +765,7 @@ class X509Provider(CredentialProvider):
         self._log = structlog.get_logger(__name__).bind(provider="X509Provider")
 
     async def is_linked(self, principal: Principal) -> bool:
-        """True when both halves of *principal*'s ``~/.globus`` certificate
-        pair exist and are readable by the broker's uid/gid.
+        """Return True when both halves of *principal*'s ``~/.globus`` certificate pair exist and are readable by the broker's uid/gid.
 
         Mirrors the path construction ``HomeDirVomsBackend`` uses to locate
         the user's home directory, but — unlike ``HomeDirVomsBackend.available()``,
