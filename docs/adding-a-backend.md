@@ -17,7 +17,9 @@ the portal's Identities page — no separate mapping to keep in sync.
   is needed at all; the broker is a direct OAuth 2.1 client via its own
   CIMD document (`GET /.well-known/cimd`). Also requires
   `broker.publicOrigin` to be set to the portal's origin (see below) — the
-  broker refuses to start otherwise.
+  broker refuses to start otherwise. See
+  [Rucio: Per-Site Setup](rucio-per-site-setup.md) for a concrete, deployed
+  worked example of this provider type (one entry per Rucio site).
 
   ```yaml
   broker:
@@ -151,9 +153,13 @@ double-prefixed names (`rucio_atlas_rucio_whoami`, `rucio_escape_rucio_whoami`)
 full tradeoff discussion.
 
 Whatever you choose, the deployed tool names are what callers actually see
-in `GET /v1/catalog` and the portal's tool list — confirm the names you
-expect show up there (see Verification below) rather than assuming from
-the config alone.
+via `tools/list` on `/mcp` — confirm the names you expect show up there (see
+Verification below) rather than assuming from the config alone. `GET
+/v1/catalog` and the portal's Catalog page show the backend itself (name,
+capability, auth type) but not its individual tool names yet:
+`CatalogServer.tools` is an empty placeholder until issue #58 lands per-tool
+enumeration over `/v1`, and the portal renders "Tool listing coming soon."
+in its place.
 
 ---
 
@@ -245,19 +251,36 @@ flux reconcile helmrelease af-mcp-platform --namespace flux-system --with-source
 ```
 
 Flux will render the new HelmRelease values, update the aggregator ConfigMap, and
-roll the broker pods. The new backend's tools appear in `GET /v1/catalog` once
-the pods are healthy.
+roll the broker pods. The new backend appears as its own entry in
+`GET /v1/catalog` once the pods are healthy; its individual tool names show up
+in `tools/list` over `/mcp` (see Verification below).
 
 ---
 
 ## Verification
 
 ```bash
-# Check the broker sees the new backend
+# Check the broker sees the new backend as a catalog entry
 kubectl exec -n af-mcp deploy/af-mcp-broker -- \
-  curl -s http://localhost:8080/v1/catalog | jq '.tools[].backend' | sort -u
+  curl -s http://localhost:8080/v1/catalog | jq '.servers[].name'
 
-# Confirm the new backend's tools are listed
+# Confirm the new backend's entry has the fields you expect
 kubectl exec -n af-mcp deploy/af-mcp-broker -- \
-  curl -s http://localhost:8080/v1/catalog | jq '.tools[] | select(.backend=="my-new-backend")'
+  curl -s http://localhost:8080/v1/catalog | jq '.servers[] | select(.name=="my-new-backend")'
 ```
+
+`/v1/catalog` reports one entry per backend, not per tool —
+`CatalogServer.tools` is an empty placeholder until issue #58 lands per-tool
+enumeration there. To confirm the actual tool names callers will see
+(namespaced per `apply_namespace` above), talk to the aggregator's MCP
+protocol surface directly:
+
+```bash
+read -s -p "Bearer token: " MCP_BEARER_TOKEN
+export MCP_BEARER_TOKEN
+pixi run -e dev python scripts/verify-mcp-flow.py
+```
+
+This is the same script [Connecting a Client](connecting-a-client.md)
+recommends for sanity-checking a token — it prints every tool visible to the
+caller, grouped by inferred backend prefix.

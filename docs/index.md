@@ -58,6 +58,8 @@ broker subsystems and the `/v1` contract, and
   x509/VOMS proxy minting.
 - [Adding a Backend](adding-a-backend.md) — the five-step, config-only
   procedure for wiring a new MCP backend into the aggregator.
+- [Rucio: Per-Site Setup](rucio-per-site-setup.md) — the concrete, deployed
+  procedure for wiring up an additional Rucio VO/site behind rucio-mcp.
 - [Connecting a Client](connecting-a-client.md) — end-user setup for Claude,
   Claude Code, and any other MCP-over-HTTP client, plus the exact error
   strings you'll see if a prerequisite (capability, linked identity) is
