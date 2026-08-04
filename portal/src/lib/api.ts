@@ -275,6 +275,13 @@ export interface CatalogTool {
   action_type: ActionType;
 }
 
+/** Per-caller availability (issue #123) -- see broker/src/af_mcp_broker/
+ * api/capabilities.py's _backend_status. Every registered backend is
+ * listed, even one the caller can't currently use; status/status_detail say
+ * why instead of a silent omission. */
+export type BackendStatus =
+  'available' | 'link_required' | 'capability_required' | 'unavailable' | 'misconfigured';
+
 export interface CatalogServer {
   name: string;
   display_name: string;
@@ -285,6 +292,13 @@ export interface CatalogServer {
   /** The identity_providers alias (or synthetic "x509" alias) that services
    * this server's credential, or null when auth_type is "none". */
   credential_provider: string | null;
+  status: BackendStatus;
+  /** Short, human, internals-free sentence -- never a URL or upstream error. */
+  status_detail: string;
+  /** Set only for admin-actionable statuses (capability_required,
+   * misconfigured) -- quote it in a ticket so an admin can grep the audit
+   * log. Null otherwise. */
+  correlation_id: string | null;
   /** Empty placeholder until #58 lands per-tool enumeration. */
   tools: CatalogTool[];
 }

@@ -4,12 +4,12 @@ import json
 import time
 from typing import TYPE_CHECKING
 
+import pytest
 from cryptography.fernet import Fernet
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    import pytest
     from fastapi.testclient import TestClient
 
 _AUTH = {"Authorization": "Bearer test"}
@@ -129,12 +129,19 @@ def test_catalog_reflects_capabilities(
     state["principal"] = make_principal(groups=[])
     resp = client.get("/v1/catalog", headers=_AUTH)
     assert resp.status_code == 200, resp.text
-    servers = {s["name"] for s in resp.json()["servers"]}
-    # __authenticated__ sees open + read_metadata/read_monitoring backends,
-    # but not rucio (read_data) or panda (submit_jobs).
+    servers = {s["name"]: s for s in resp.json()["servers"]}
+    # __authenticated__ holds read_metadata/read_monitoring but not read_data.
+    # Every registered backend is still listed (issue #123: hiding a
+    # capability-gated backend entirely left the portal unable to say *why*
+    # it has no tools) -- rucio (read_data) now appears flagged
+    # "capability_required" rather than being omitted.
     assert "docs" in servers
+    assert servers["docs"]["status"] == "available"
     assert "ami" in servers
-    assert "rucio" not in servers
+    assert servers["ami"]["status"] == "available"
+    assert "rucio" in servers
+    assert servers["rucio"]["status"] == "capability_required"
+    # panda isn't in the shipped backends.yaml at all -- absent regardless.
     assert "panda" not in servers
 
 
@@ -185,6 +192,247 @@ def test_catalog_never_exposes_backend_url(
     resp = client.get("/v1/catalog", headers=_AUTH)
     assert resp.status_code == 200, resp.text
     assert "url" not in json.dumps(resp.json()["servers"])
+
+
+# ---------------------------------------------------------------------------
+# Per-backend availability status (issue #123) -- a machine-readable `status`
+# plus a short human `status_detail`, so the portal's MCP Servers page can
+# say *why* a backend contributes no tools instead of showing an
+# unexplained empty list.
+# ---------------------------------------------------------------------------
+
+
+def test_catalog_status_available_for_open_backend(
+    app_client: tuple[TestClient, dict], make_principal: Callable[..., object]
+) -> None:
+    """ "docs" opts into "__none__" (no capability gate) and auth_type "none"
+    (no credential needed) -- always "available"."""
+    client, state = app_client
+    state["principal"] = make_principal(groups=[])
+    resp = client.get("/v1/catalog", headers=_AUTH)
+    assert resp.status_code == 200, resp.text
+    docs = {s["name"]: s for s in resp.json()["servers"]}["docs"]
+    assert docs["status"] == "available"
+    assert docs["status_detail"]
+    assert docs["correlation_id"] is None
+
+
+def test_catalog_status_link_required_when_not_linked(
+    app_client: tuple[TestClient, dict], make_principal: Callable[..., object]
+) -> None:
+    """ "rucio" needs read_data (held by "atlas") and a linked atlas-oidc
+    identity; the default test principal isn't linked (OIDCProvider.
+    is_linked() probes an unreachable issuer -- see test_credential_
+    unlinked_provider_404), so the capability check passes but linkage
+    doesn't -- "link_required", not "capability_required"."""
+    client, state = app_client
+    state["principal"] = make_principal(groups=["atlas"])
+    resp = client.get("/v1/catalog", headers=_AUTH)
+    assert resp.status_code == 200, resp.text
+    rucio = {s["name"]: s for s in resp.json()["servers"]}["rucio"]
+    assert rucio["status"] == "link_required"
+    assert rucio["status_detail"]
+    assert rucio["correlation_id"] is None
+
+
+def test_catalog_status_available_when_capability_and_linked(
+    app_client: tuple[TestClient, dict],
+    make_principal: Callable[..., object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Once linked (and entitled), "rucio" reports "available"."""
+    from af_mcp_broker.credentials.oidc import OIDCProvider
+
+    async def _linked(self, principal) -> bool:
+        return True
+
+    monkeypatch.setattr(OIDCProvider, "is_linked", _linked)
+
+    client, state = app_client
+    state["principal"] = make_principal(groups=["atlas"])
+    resp = client.get("/v1/catalog", headers=_AUTH)
+    assert resp.status_code == 200, resp.text
+    rucio = {s["name"]: s for s in resp.json()["servers"]}["rucio"]
+    assert rucio["status"] == "available"
+    assert rucio["correlation_id"] is None
+
+
+def test_catalog_status_capability_required_includes_correlation_id(
+    app_client: tuple[TestClient, dict], make_principal: Callable[..., object]
+) -> None:
+    """__authenticated__ lacks read_data -- "rucio" is flagged
+    "capability_required" with a correlation id an admin can grep the audit
+    log for, per issue #123's "never leak internals, but let an admin trace
+    it" constraint."""
+    client, state = app_client
+    state["principal"] = make_principal(groups=[])
+    resp = client.get("/v1/catalog", headers=_AUTH)
+    assert resp.status_code == 200, resp.text
+    rucio = {s["name"]: s for s in resp.json()["servers"]}["rucio"]
+    assert rucio["status"] == "capability_required"
+    assert rucio["status_detail"]
+    assert rucio["correlation_id"]
+
+
+def test_catalog_status_misconfigured_when_no_credential_provider_resolves(
+    app_client: tuple[TestClient, dict], make_principal: Callable[..., object]
+) -> None:
+    """A backend that omits required_capability (credential layer is the
+    gate -- issue #60) but has no credential provider resolving for it is a
+    genuine platform misconfiguration, not a transient failure -- flagged
+    "misconfigured" with a correlation id. (app.py's startup check normally
+    refuses to boot with this config at all; registering it directly on an
+    already-booted registry, as other tests here do for "panda"/"gitlab",
+    exercises the defensive path.)"""
+    from af_mcp_broker.app import app
+    from af_mcp_broker.mcp.registry import BackendSpec
+
+    client, state = app_client
+    state["principal"] = make_principal(groups=["atlas"])
+    app.state.backend_registry.register(
+        BackendSpec(
+            name="orphan",
+            prefix="orphan",
+            url="http://orphan-mcp.mcp.svc.cluster.local/mcp",
+            transport="http",
+            auth_type="bearer",
+        )
+    )
+    resp = client.get("/v1/catalog", headers=_AUTH)
+    assert resp.status_code == 200, resp.text
+    orphan = {s["name"]: s for s in resp.json()["servers"]}["orphan"]
+    assert orphan["status"] == "misconfigured"
+    assert orphan["status_detail"]
+    assert orphan["correlation_id"]
+
+
+def test_catalog_status_unavailable_when_recent_list_failure_recorded(
+    app_client: tuple[TestClient, dict],
+    make_principal: Callable[..., object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A recent tools/list failure the aggregator classified as "unavailable"
+    (BackendRegistry.record_list_failure -- see aggregator.py's
+    _ObservableProxyProvider) downgrades an otherwise-available backend to
+    "unavailable" without an extra live probe."""
+    from af_mcp_broker.app import app
+    from af_mcp_broker.credentials.oidc import OIDCProvider
+
+    async def _linked(self, principal) -> bool:
+        return True
+
+    monkeypatch.setattr(OIDCProvider, "is_linked", _linked)
+    app.state.backend_registry.record_list_failure("rucio", "unavailable")
+
+    client, state = app_client
+    state["principal"] = make_principal(groups=["atlas"])
+    resp = client.get("/v1/catalog", headers=_AUTH)
+    assert resp.status_code == 200, resp.text
+    rucio = {s["name"]: s for s in resp.json()["servers"]}["rucio"]
+    assert rucio["status"] == "unavailable"
+    assert rucio["correlation_id"] is None
+
+
+def test_catalog_status_unauthorized_failure_prompts_relink(
+    app_client: tuple[TestClient, dict],
+    make_principal: Callable[..., object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A recorded "unauthorized" listing failure (the stored credential
+    itself was rejected -- see aggregator.py's _classify_list_failure) means
+    the user needs to re-link, not wait out a transient outage -- reported
+    as "link_required", same actionable status as never having linked."""
+    from af_mcp_broker.app import app
+    from af_mcp_broker.credentials.oidc import OIDCProvider
+
+    async def _linked(self, principal) -> bool:
+        return True
+
+    monkeypatch.setattr(OIDCProvider, "is_linked", _linked)
+    app.state.backend_registry.record_list_failure("rucio", "unauthorized")
+
+    client, state = app_client
+    state["principal"] = make_principal(groups=["atlas"])
+    resp = client.get("/v1/catalog", headers=_AUTH)
+    assert resp.status_code == 200, resp.text
+    rucio = {s["name"]: s for s in resp.json()["servers"]}["rucio"]
+    assert rucio["status"] == "link_required"
+
+
+@pytest.mark.parametrize(
+    ("required_capability", "groups", "expected_status"),
+    [
+        # Omitted (None) -- no capability gate, credential layer is the sole
+        # gate (issue #60); auth_type "none" below means that gate is a
+        # no-op too, so this reports "available" regardless of groups.
+        (None, [], "available"),
+        # "__none__" -- the explicit open-access opt-in; same as above.
+        ("__none__", [], "available"),
+        # An explicit capability the principal holds.
+        ("read_data", ["atlas"], "available"),
+        # An explicit capability the principal lacks.
+        ("read_data", [], "capability_required"),
+    ],
+)
+def test_catalog_status_required_capability_forms(
+    app_client: tuple[TestClient, dict],
+    make_principal: Callable[..., object],
+    required_capability: str | None,
+    groups: list[str],
+    expected_status: str,
+) -> None:
+    """All three `required_capability` forms (declared / "__none__" /
+    omitted) must be handled by the status derivation, not just the
+    declared-string form (issue #127 made backends.yaml authoritative for
+    all three)."""
+    from af_mcp_broker.app import app
+    from af_mcp_broker.mcp.registry import BackendSpec
+
+    client, state = app_client
+    state["principal"] = make_principal(groups=groups)
+    app.state.backend_registry.register(
+        BackendSpec(
+            name="capform",
+            prefix="capform",
+            url="http://capform-mcp.mcp.svc.cluster.local/mcp",
+            transport="http",
+            required_capability=required_capability,
+            auth_type="none",
+        )
+    )
+    resp = client.get("/v1/catalog", headers=_AUTH)
+    assert resp.status_code == 200, resp.text
+    capform = {s["name"]: s for s in resp.json()["servers"]}["capform"]
+    assert capform["status"] == expected_status
+
+
+def test_catalog_status_never_leaks_urls_or_upstream_errors(
+    app_client: tuple[TestClient, dict], make_principal: Callable[..., object]
+) -> None:
+    """Across every status (capability_required, link_required,
+    misconfigured, available), the catalog response must never carry a
+    backend URL, an upstream error body, policy internals, or a group list
+    -- issue #123's "never leak internals" constraint."""
+    from af_mcp_broker.app import app
+    from af_mcp_broker.mcp.registry import BackendSpec
+
+    client, state = app_client
+    state["principal"] = make_principal(groups=[])
+    app.state.backend_registry.register(
+        BackendSpec(
+            name="orphan",
+            prefix="orphan",
+            url="http://orphan-mcp.mcp.svc.cluster.local/mcp",
+            transport="http",
+            auth_type="bearer",
+        )
+    )
+    resp = client.get("/v1/catalog", headers=_AUTH)
+    assert resp.status_code == 200, resp.text
+    body = json.dumps(resp.json()["servers"])
+    assert "http://" not in body
+    assert "https://" not in body
+    assert "af-atlas-users" not in body
 
 
 def test_catalog_action_type_reflects_target_action_type_overrides(

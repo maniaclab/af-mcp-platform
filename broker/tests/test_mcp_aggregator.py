@@ -633,3 +633,30 @@ async def test_client_factory_bearer_list_time_skips_mint_when_not_entitled(
 
     assert "Authorization" not in client.transport.headers
     assert provider.issue_calls == []
+
+
+async def test_observable_proxy_provider_records_list_failure_on_registry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_ObservableProxyProvider now also records the classified tools/list
+    failure reason onto the BackendRegistry (BackendRegistry.
+    record_list_failure), alongside the existing structured
+    'aggregator.backend_list_failed' log -- so /v1/catalog's per-backend
+    status derivation (issue #123) can factor in a recent listing failure
+    without an extra live probe of its own."""
+    ctx = _patch_context(monkeypatch, None, active_backend=None)
+    ctx.recorded_state["__list_credential_status__:example"] = (False, "unavailable")
+
+    async def _raising_factory() -> Client:
+        raise ConnectionError("connection refused")
+
+    registry = BackendRegistry()
+    registry.register(_spec())
+    provider = aggregator._ObservableProxyProvider(
+        "example", _raising_factory, registry=registry
+    )
+
+    with pytest.raises(ConnectionError):
+        await provider._list_tools()
+
+    assert registry.recent_list_failure("example") == "unavailable"

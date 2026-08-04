@@ -86,3 +86,23 @@ def test_registry_load_omitted_required_capability_is_none(tmp_path: Path) -> No
     spec = registry.get("rucio")
     assert spec is not None
     assert spec.required_capability is None
+
+
+def test_recent_list_failure_absent_by_default() -> None:
+    """A backend with no recorded tools/list failure reports None -- the
+    common case for a healthy backend (issue #123's /v1/catalog status)."""
+    registry = BackendRegistry()
+    assert registry.recent_list_failure("rucio") is None
+
+
+def test_recent_list_failure_reflects_last_recorded_reason() -> None:
+    """record_list_failure() is how the aggregator's _ObservableProxyProvider
+    (see aggregator.py's _classify_list_failure) reports a classified
+    tools/list failure so /v1/catalog can factor it into a backend's status
+    without an extra live probe (issue #123). Last write wins -- no history
+    is kept, only the most recent reason."""
+    registry = BackendRegistry()
+    registry.record_list_failure("rucio", "unauthorized")
+    assert registry.recent_list_failure("rucio") == "unauthorized"
+    registry.record_list_failure("rucio", "unavailable")
+    assert registry.recent_list_failure("rucio") == "unavailable"

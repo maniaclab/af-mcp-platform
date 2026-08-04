@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal
+import uuid
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 import structlog
 from fastapi import APIRouter, Depends, Request
@@ -13,10 +14,42 @@ from af_mcp_broker.authorization import (
     get_action_type,
     get_principal_capabilities,
 )
+from af_mcp_broker.credentials import CredentialRegistry
 from af_mcp_broker.identity import Principal, keycloak_dependency
 from af_mcp_broker.mcp.registry import BackendRegistry
 
+if TYPE_CHECKING:
+    from af_mcp_broker.mcp.registry import BackendSpec
+
 logger = structlog.get_logger(__name__)
+
+# Per-backend availability status for /v1/catalog (issue #123). A short,
+# canned sentence per status -- never an upstream error body or policy/group
+# detail (see _backend_status below).
+BackendStatus = Literal[
+    "available",
+    "link_required",
+    "capability_required",
+    "unavailable",
+    "misconfigured",
+]
+
+_STATUS_DETAILS: dict[BackendStatus, str] = {
+    "available": "Available.",
+    "link_required": "Link your identity to use this backend.",
+    "capability_required": (
+        "Your account doesn't have the access this backend requires. "
+        "Contact the AF admins."
+    ),
+    "unavailable": "Temporarily unavailable. Try again shortly.",
+    "misconfigured": "This backend is misconfigured. Contact the AF admins.",
+}
+
+# A stored credential that was itself rejected (a recorded "unauthorized"
+# listing failure -- see aggregator.py's _classify_list_failure) still maps
+# to "link_required" (re-linking is the fix, same as never having linked at
+# all), but the sentence should say "re-link", not "link for the first time".
+_RELINK_DETAIL = "Your linked credential was rejected. Re-link your identity."
 
 router = APIRouter(tags=["capabilities"])
 
@@ -59,7 +92,9 @@ class AuthorizeResponse(BaseModel):
 
 
 class CatalogServer(BaseModel):
-    """One MCP server visible to the caller post-entitlement filtering.
+    """One registered MCP server, including ones the caller can't currently
+    use -- ``status``/``status_detail`` say why instead of the caller
+    silently never seeing the entry (issue #123).
 
     ``tools`` is an empty placeholder until the /mcp aggregator can enumerate
     real subtools per server (issue #58); it exists now so the portal's
@@ -76,6 +111,14 @@ class CatalogServer(BaseModel):
     auth_type: str
     action_type: Literal["read", "state_change"]
     credential_provider: str | None
+    # Per-caller availability (issue #123) -- see _backend_status. Always
+    # populated; status_detail is a short, human, internals-free sentence.
+    status: BackendStatus
+    status_detail: str
+    # Set only for admin-actionable statuses (capability_required,
+    # misconfigured) -- a correlation id the caller can quote in a ticket so
+    # an admin can grep the audit log for it. None otherwise.
+    correlation_id: str | None
     tools: list[Any] = []
 
 
@@ -105,6 +148,12 @@ def _get_registry(request: Request) -> BackendRegistry:
 
 def _get_target_to_alias(request: Request) -> dict[str, str]:
     return getattr(request.app.state, "target_to_alias", None) or {}
+
+
+def _get_credential_registry(request: Request) -> CredentialRegistry:
+    return getattr(
+        request.app.state, "credential_registry", None
+    ) or CredentialRegistry([])
 
 
 def _action_type_for_capability(
@@ -160,6 +209,83 @@ def _grants_for(
             )
         )
     return grants
+
+
+async def _backend_status(
+    spec: BackendSpec,
+    principal: Principal,
+    caps: set[str],
+    credential_registry: CredentialRegistry,
+    registry: BackendRegistry,
+) -> tuple[BackendStatus, str, str | None]:
+    """Derive one backend's per-caller availability status for /v1/catalog
+    (issue #123) from data the broker already has -- never an upstream
+    probe of the backend itself, an upstream error body, a policy internal,
+    or a group list (see _STATUS_DETAILS's canned sentences).
+
+    Precedence mirrors the real enforcement order (AuthorizationMiddleware
+    checks entitlement before a client_factory ever attempts to mint a
+    credential -- see aggregator.py's _bearer_factory): a missing capability
+    is reported before a credential problem, since the credential is moot
+    until the capability gate is fixed. Returns
+    ``(status, status_detail, correlation_id)`` -- correlation_id is set
+    only for the two admin-actionable statuses.
+    """
+    required = spec.required_capability
+    if required not in (None, "__none__") and required not in caps:
+        correlation_id = uuid.uuid4().hex
+        logger.info(
+            "catalog.backend_status_flagged",
+            subject=principal.subject,
+            target=spec.name,
+            status="capability_required",
+            request_id=correlation_id,
+        )
+        return (
+            "capability_required",
+            _STATUS_DETAILS["capability_required"],
+            correlation_id,
+        )
+
+    if spec.auth_type == "none":
+        # No capability gate (or one just satisfied) and no user credential
+        # needed at all -- nothing left to block on.
+        return "available", _STATUS_DETAILS["available"], None
+
+    try:
+        provider = await credential_registry.resolve(spec.name)
+    except KeyError:
+        # auth_type is "bearer"/"x509" (a credential IS expected) but no
+        # provider resolves for this target -- a platform misconfiguration,
+        # not something the caller can fix themselves.
+        correlation_id = uuid.uuid4().hex
+        logger.info(
+            "catalog.backend_status_flagged",
+            subject=principal.subject,
+            target=spec.name,
+            status="misconfigured",
+            request_id=correlation_id,
+        )
+        return "misconfigured", _STATUS_DETAILS["misconfigured"], correlation_id
+
+    if not await provider.is_linked(principal):
+        return "link_required", _STATUS_DETAILS["link_required"], None
+
+    # Capability satisfied, provider resolves, and linked -- the live checks
+    # above all say "available". Factor in a recent classified tools/list
+    # failure (BackendRegistry.record_list_failure, written by aggregator.py's
+    # _ObservableProxyProvider) as a best-effort refinement, without an extra
+    # live probe of the backend itself. "not_linked" can't appear here (the
+    # live is_linked() check above already accounts for it); "unauthorized"
+    # means the stored credential itself was rejected, so re-linking (not
+    # waiting it out) is the fix.
+    failure = registry.recent_list_failure(spec.name)
+    if failure == "unavailable":
+        return "unavailable", _STATUS_DETAILS["unavailable"], None
+    if failure == "unauthorized":
+        return "link_required", _RELINK_DETAIL, None
+
+    return "available", _STATUS_DETAILS["available"], None
 
 
 # ---------------------------------------------------------------------------
@@ -251,14 +377,20 @@ async def get_catalog(
 ) -> CatalogResponse:
     policy = _get_policy(request)
     registry = _get_registry(request)
+    credential_registry = _get_credential_registry(request)
     caps = get_principal_capabilities(principal, policy)
     target_to_alias = _get_target_to_alias(request)
 
     servers: list[CatalogServer] = []
     for spec in registry.all_backends():
         required = spec.required_capability
-        if required not in (None, "__none__") and required not in caps:
-            continue
+        # Every registered backend is listed, even one this caller can't
+        # currently use -- status/status_detail say why instead of a silent
+        # omission (issue #123: a hidden, capability-gated backend left the
+        # portal unable to explain an empty tools/list).
+        status, status_detail, correlation_id = await _backend_status(
+            spec, principal, caps, credential_registry, registry
+        )
         servers.append(
             CatalogServer(
                 name=spec.name,
@@ -272,6 +404,9 @@ async def get_catalog(
                 auth_type=spec.auth_type,
                 action_type=_action_type_for_backend(spec.name, required, policy),
                 credential_provider=target_to_alias.get(spec.name),
+                status=status,
+                status_detail=status_detail,
+                correlation_id=correlation_id,
                 tools=[],
             )
         )
