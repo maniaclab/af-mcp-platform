@@ -10,23 +10,32 @@ data:
     # Mounted at /etc/af-mcp/policy.yaml in the broker container.
     # Override any section via values.entitlements.* in your overlay.
 
-    # ATLAS IAM group -> allowed broker capabilities.
-    # Built-in defaults cover standard ATLAS analysis groups.
+    # Keycloak group -> allowed broker capabilities. The default below (used
+    # when entitlements.group_capabilities is unset) is the UChicago ATLAS
+    # AF's own Keycloak group names -- a working convenience for that one
+    # deployment, and a template for what an overlay looks like, NOT a
+    # generic default. Group names are inherently site-specific (they come
+    # from the deployer's own Keycloak realm), so any OTHER analysis facility
+    # MUST set entitlements.group_capabilities in its own overlay with its
+    # own group names -- see values.yaml's entitlements.group_capabilities
+    # comment and docs/auth.md's "Group-to-Capability Mapping Example" for a
+    # non-ATLAS worked example. Deploying unmodified against a realm without
+    # these exact group names means no user can reach a backend whose
+    # `required_capability` (backends.yaml) isn't __none__ -- the broker
+    # refuses to start, naming each such backend and capability (issue #125).
     group_capabilities:
     {{- if .Values.entitlements.group_capabilities }}
       {{- toYaml .Values.entitlements.group_capabilities | nindent 6 }}
     {{- else }}
-      # Full ATLAS analysis + compute + GitLab access.
+      # UChicago ATLAS AF default -- see the comment above before relying on
+      # this for any other site.
       atlas: [read_data, read_metadata, read_monitoring, read_gitlab, submit_jobs, manage_jobs, launch_compute, manage_jupyter, manage_gitlab]
-      # Analysis + compute access, no GitLab/Jupyter management.
       cms: [read_data, read_metadata, read_monitoring, submit_jobs, manage_jobs, launch_compute]
-      # Analysis + compute access, no monitoring dashboards.
       dune: [read_data, read_metadata, submit_jobs, manage_jobs, launch_compute]
-      # Read-only data + metadata access.
       escape: [read_data, read_metadata]
-      # Full access plus data management and platform administration.
       af-admins: [read_data, read_metadata, read_monitoring, read_gitlab, submit_jobs, manage_jobs, launch_compute, manage_jupyter, manage_gitlab, manage_data, admin]
-      # Any authenticated user (no group membership required)
+      # Any authenticated user (no group membership required) -- the one
+      # entry that isn't site-specific.
       __authenticated__: [read_metadata, read_monitoring]
     {{- end }}
 

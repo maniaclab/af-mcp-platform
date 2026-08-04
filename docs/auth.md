@@ -425,8 +425,13 @@ capability and `/v1/catalog` returns an empty list for everyone.
    panel shows exactly what the mapper actually contributed.
 
 2. **Create the groups you reference in `group_capabilities`** and
-   assign users to them. The broker's built-in default policy uses
-   `atlas`, `cms`, `dune`, `escape`, `af-admins`.
+   assign users to them. Group names are entirely up to you — the chart
+   ships no site-specific default, so pick names that match your own
+   Keycloak realm (see the worked example below). The broker's own
+   dev-only fallback policy (`broker/src/af_mcp_broker/authorization/
+   policy.yaml`, used when no `POLICY_FILE` is configured) mirrors the
+   ATLAS AF's own group names: `atlas`, `cms`, `dune`, `escape`,
+   `af-admins`.
 
 ### Verify
 
@@ -438,17 +443,66 @@ Without it, the broker treats the caller as `__authenticated__`-only.
 
 ## Group-to-Capability Mapping Example
 
-From the shipped `policy.yaml` (mounted from the chart's policy ConfigMap):
+The chart ships the UChicago ATLAS AF's own `group_capabilities` mapping as
+its default (below) — a convenience for that one deployment and a template
+for what an overlay looks like, **not** a generic default. Group names come
+from the deployer's own Keycloak realm, so a same-named group in a
+different realm could mean something else entirely: any analysis facility
+other than the UChicago AF **must** override `entitlements.group_capabilities`
+in its `HelmRelease` overlay with its own group names (see the non-ATLAS
+worked example below), or every backend whose `required_capability` isn't
+`__none__` becomes unreachable by everyone. The broker's startup check (see
+`app.py`'s lifespan) walks every backend's `required_capability` and
+**refuses to start** if no group grants it, naming both the backend and the
+capability — a Kubernetes rollout failure with zero outage (the previous
+ReplicaSet keeps serving) is far more visible than a config that silently
+deploys broken.
+
+This is the ATLAS AF's own mapping, the chart default, copyable as a
+starting point if you're deploying for that AF or want a similar shape:
 
 ```yaml
 group_capabilities:
-  atlas: [read_data, read_metadata, read_monitoring, read_gitlab,
-          submit_jobs, manage_jobs, launch_compute, manage_jupyter,
-          manage_gitlab]
+  # Full ATLAS analysis + compute + GitLab access.
+  atlas: [read_data, read_metadata, read_monitoring, read_gitlab, submit_jobs, manage_jobs, launch_compute, manage_jupyter, manage_gitlab]
+  # Analysis + compute access, no GitLab/Jupyter management.
+  cms: [read_data, read_metadata, read_monitoring, submit_jobs, manage_jobs, launch_compute]
+  # Analysis + compute access, no monitoring dashboards.
+  dune: [read_data, read_metadata, submit_jobs, manage_jobs, launch_compute]
+  # Read-only data + metadata access.
   escape: [read_data, read_metadata]
+  # Full access plus data management and platform administration.
+  af-admins: [read_data, read_metadata, read_monitoring, read_gitlab, submit_jobs, manage_jobs, launch_compute, manage_jupyter, manage_gitlab, manage_data, admin]
   # Any authenticated user (no group membership required)
   __authenticated__: [read_metadata, read_monitoring]
 ```
+
+### Worked example: a non-ATLAS site
+
+If you are running this chart for a facility other than the UChicago ATLAS
+AF, override `entitlements.group_capabilities` entirely — the group names
+on the left must match Keycloak group names in *your* realm exactly (see
+"Create the groups you reference in `group_capabilities`" above); reusing
+`atlas`/`cms`/`dune`/`escape`/`af-admins` only makes sense if your realm
+happens to define groups with those same names. For example, a facility
+whose Keycloak realm defines `myexperiment-users` and
+`myexperiment-admins` groups instead might set:
+
+```yaml
+group_capabilities:
+  # Ordinary analysts: read data/metadata, submit jobs.
+  myexperiment-users: [read_data, read_metadata, submit_jobs]
+  # Full access plus data management and platform administration.
+  myexperiment-admins: [read_data, read_metadata, read_monitoring, submit_jobs, manage_jobs, manage_data, admin]
+  # Any authenticated user (no group membership required)
+  __authenticated__: [read_metadata]
+```
+
+The capability names on the right (`read_data`, `submit_jobs`, ...) are not
+site-specific — they're the fixed vocabulary this policy engine understands
+(see `CAPABILITIES` in `broker/src/af_mcp_broker/authorization/base.py`),
+matched against whatever `required_capability` values your `backends.yaml`
+declares.
 
 Which capability a backend target requires is declared alongside the
 backend itself, in `backends.yaml`'s `required_capability` field, not in

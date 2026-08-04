@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
+
+import pytest
 
 from af_mcp_broker.authorization import (
     EntitlementPolicy,
@@ -12,8 +14,7 @@ from af_mcp_broker.authorization import (
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
-
-    import pytest
+    from typing import Any
 
 
 def test_atlas_allowed_rucio_read_data(
@@ -91,52 +92,124 @@ def test_action_type_resolution_omitted_capability_defaults_to_read(
     assert get_action_type("mystery", "list_things", None, policy) == "read"
 
 
-def _write_empty_group_capabilities_policy(tmp_path: Path) -> str:
+def _write_policy(tmp_path: Path, text: str) -> str:
     path = tmp_path / "policy.yaml"
-    path.write_text("group_capabilities: {}\ntarget_action_types: {}\n")
+    path.write_text(text)
     return str(path)
 
 
-def test_startup_errors_on_empty_group_capabilities_with_gated_backends(
+def _write_backends(tmp_path: Path, text: str) -> str:
+    path = tmp_path / "backends.yaml"
+    path.write_text(text)
+    return str(path)
+
+
+def test_startup_refuses_to_start_when_group_capabilities_empty(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     app_client_factory: Callable[..., Any],
 ) -> None:
     """An empty ``group_capabilities`` means every principal falls back to
     ``__authenticated__``-only capabilities, silently denying every backend
-    that requires one (issue #59: the chart's configmap template rendered
-    ``groups:`` instead of ``group_capabilities:``, so ``/v1/catalog``
-    returned zero tools for every user). Not a startup failure -- operators
-    may deliberately deploy with an all-open policy -- but it must be a
-    loud, visible ERROR-level structlog line naming the affected backends.
-
-    configure_logging() rewrites the root logger's handlers during the app
-    lifespan, which would otherwise swallow pytest's caplog handler, so this
-    asserts directly against the app module's logger call instead, mirroring
-    test_health.py::test_startup_warns_on_no_backends.
+    that requires a capability ``__authenticated__`` doesn't grant (issue
+    #59: the chart's configmap template rendered ``groups:`` instead of
+    ``group_capabilities:``, so ``/v1/catalog`` returned zero tools for
+    every user). This is Kubernetes: a Deployment rollout with a failing new
+    pod leaves the previous ReplicaSet serving, so refusing to start turns
+    the misconfiguration into a visible rollout failure with zero outage,
+    naming both the affected backend and the unreachable capability.
     """
-    monkeypatch.setenv("POLICY_FILE", _write_empty_group_capabilities_policy(tmp_path))
+    monkeypatch.setenv(
+        "POLICY_FILE",
+        _write_policy(tmp_path, "group_capabilities: {}\ntarget_action_types: {}\n"),
+    )
 
-    from af_mcp_broker import app as app_module
+    with pytest.raises(RuntimeError) as exc_info:  # noqa: SIM117
+        with app_client_factory():
+            pass
 
-    events: list[tuple[str, dict[str, Any]]] = []
-    original_error = app_module.logger.error
-
-    def _capture(event: str, **kwargs: Any) -> Any:
-        events.append((event, kwargs))
-        return original_error(event, **kwargs)
-
-    monkeypatch.setattr(app_module.logger, "error", _capture)
-
-    with app_client_factory():
-        pass
-
-    matches = [
-        kwargs
-        for event, kwargs in events
-        if event == "policy.group_capabilities_empty_but_required"
-    ]
-    assert matches, events
     # SHIPPED_BACKENDS' "rucio" entry requires "read_data" (!= "__none__"),
-    # so it must be named among the affected backends.
-    assert "rucio" in matches[0]["backends"]
+    # so both must be named in the failure.
+    message = str(exc_info.value)
+    assert "rucio" in message, message
+    assert "read_data" in message, message
+
+
+def test_startup_quiet_when_capabilities_are_all_reachable(
+    app_client_factory: Callable[..., Any],
+) -> None:
+    """The shipped policy.yaml grants every capability SHIPPED_BACKENDS
+    requires (to at least one group), so startup must succeed for the
+    default local-dev configuration."""
+    with app_client_factory() as (client, _):
+        resp = client.get("/v1/healthz")
+
+    assert resp.status_code == 200, resp.text
+
+
+def test_startup_refuses_to_start_for_typoed_capability_name(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    app_client_factory: Callable[..., Any],
+) -> None:
+    """group_capabilities that cover some, but not all, required capabilities
+    (e.g. a typo'd capability name) must name exactly the unreachable one --
+    reachable capabilities must not be named."""
+    monkeypatch.setenv(
+        "POLICY_FILE",
+        _write_policy(
+            tmp_path,
+            "group_capabilities:\n"
+            "  atlas: [read_data, read_metadta]\n"  # typo: read_metadta
+            "target_action_types: {}\n",
+        ),
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:  # noqa: SIM117
+        with app_client_factory():
+            pass
+
+    message = str(exc_info.value)
+    # "ami" requires read_metadata, which the typo means nobody actually
+    # grants -- it must be named.
+    assert "ami" in message, message
+    assert "read_metadata" in message, message
+    # "rucio" requires read_data, correctly spelled and reachable -- it must
+    # not be named.
+    assert "rucio" not in message, message
+
+
+def test_startup_stays_quiet_with_empty_group_capabilities_and_no_gated_backends(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    app_client_factory: Callable[..., Any],
+) -> None:
+    """Backends that omit required_capability (with a credential-layer gate)
+    or set it to __none__ need no group_capabilities entry at all -- an
+    empty group_capabilities must not be flagged as unreachable for them,
+    and the broker must still start cleanly."""
+    monkeypatch.setenv(
+        "POLICY_FILE",
+        _write_policy(tmp_path, "group_capabilities: {}\ntarget_action_types: {}\n"),
+    )
+    monkeypatch.setenv(
+        "BACKENDS_FILE",
+        _write_backends(
+            tmp_path,
+            "backends:\n"
+            "  - name: docs\n"
+            "    prefix: docs\n"
+            "    url: http://docs.invalid/mcp\n"
+            "    auth_type: none\n"
+            "    required_capability: __none__\n"
+            "  - name: ami\n"
+            "    prefix: ami\n"
+            "    url: http://ami.invalid/mcp\n"
+            "    auth_type: x509\n",
+        ),
+    )
+
+    with app_client_factory() as (client, _):
+        resp = client.get("/v1/healthz")
+
+    assert resp.status_code == 200, resp.text

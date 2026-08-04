@@ -155,6 +155,19 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     except FileNotFoundError:
         logger.warning("policy_file_not_found", path=settings.policy_file)
         entitlement_policy = EntitlementPolicy()
+    # Observability for issue #125: the effective group -> capability mapping
+    # is otherwise implicit (chart default vs. operator override vs. dev-only
+    # fallback all merge into the same in-memory EntitlementPolicy), so an
+    # operator reading pod logs has no other way to see which policy is
+    # actually live. Group/capability names only -- no tokens or secrets ever
+    # pass through here.
+    logger.info(
+        "policy.group_capabilities_loaded",
+        group_capabilities={
+            group: sorted(caps)
+            for group, caps in sorted(entitlement_policy.group_capabilities.items())
+        },
+    )
 
     # --- Backend registry (config-only; adding a backend needs no code change).
     # backends_loaded means "backends.yaml parsed without error" — an empty
@@ -171,22 +184,37 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     if not backends:
         logger.warning("no_backends_configured")
 
-    # An empty group_capabilities means every principal falls back to
-    # __authenticated__-only capabilities, silently denying every backend
-    # that requires one -- e.g. a chart-rendered policy.yaml with a stale key
-    # name the broker doesn't read (issue #59). Not fatal -- operators may
-    # deliberately deploy with an all-open policy for a dev environment --
-    # but it must be a loud, visible signal rather than a silent
-    # "why can't anyone see anything" state.
-    if not entitlement_policy.group_capabilities:
-        gated_backends = [
-            spec.name for spec in backends if spec.required_capability != "__none__"
-        ]
-        if gated_backends:
-            logger.error(
-                "policy.group_capabilities_empty_but_required",
-                backends=gated_backends,
-            )
+    # A backend's required_capability that no group in group_capabilities
+    # grants makes that backend unusable by every principal -- e.g. the
+    # operator never wrote a policy for it (a chart-rendered policy.yaml
+    # with a stale key name the broker doesn't read, issue #59) or typo'd
+    # the capability name. This is a hard startup failure, not a log line:
+    # this is Kubernetes, so a Deployment rollout with a failing new pod
+    # leaves the previous ReplicaSet serving traffic unaffected -- refusing
+    # to start surfaces the misconfiguration as a visible rollout failure /
+    # CrashLoopBackOff / k8s event with zero outage risk, which is strictly
+    # better than a log line an operator has to be watching for. (Distinct
+    # from the fail-closed check below, which guards against a backend with
+    # *no* gate at all -- this one guards against a gate nobody can pass.)
+    granted_capabilities = {
+        cap for caps in entitlement_policy.group_capabilities.values() for cap in caps
+    }
+    unreachable_capabilities: list[tuple[str, str]] = []
+    for spec in backends:
+        if spec.required_capability in (None, "__none__"):
+            continue
+        if spec.required_capability not in granted_capabilities:
+            unreachable_capabilities.append((spec.name, spec.required_capability))
+    if unreachable_capabilities:
+        msg = (
+            "The following backends require a capability that no group in "
+            "group_capabilities grants, so they are unreachable by every "
+            "principal (a forgotten policy entry or a typo'd capability "
+            f"name): {sorted(unreachable_capabilities)}. Set "
+            "entitlements.group_capabilities (chart) / policy.yaml (local "
+            "dev) so at least one group grants each missing capability."
+        )
+        raise RuntimeError(msg)
 
     # --- Credential subsystem: cache + janitor + provider registry.
     credential_cache = CredentialCache(

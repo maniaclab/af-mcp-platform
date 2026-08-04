@@ -1,5 +1,10 @@
-# Default group→capability mappings for ATLAS AF
-# Groups come from the Keycloak connect realm token claims.
+# Local-dev fallback policy, dev-only -- not shipped by the Helm chart (see
+# charts/af-mcp-platform/templates/configmap-policy.yaml, which ships no
+# site-specific group_capabilities default). Group names are site-specific;
+# these ATLAS AF ones only make sense against the AF's own Keycloak realm.
+# Operators deploying via the chart should set entitlements.group_capabilities
+# in their overlay instead -- see docs/auth.md's "Group-to-Capability Mapping
+# Example" for a copyable worked example.
 group_capabilities:
   atlas: [read_data, read_metadata, read_monitoring, read_gitlab, submit_jobs, manage_jobs, launch_compute, manage_jupyter, manage_gitlab]
   cms: [read_data, read_metadata, read_monitoring, submit_jobs, manage_jobs, launch_compute]
