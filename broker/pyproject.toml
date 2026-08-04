@@ -100,13 +100,41 @@ ignore = [
 known-first-party = ["af_mcp_broker"]
 
 [tool.pydocstyle]
-# Pragmatic starter ruleset. Existing modules were not written with a
-# specific docstring convention in mind, so a full check would drown the
-# docs CI in noise unrelated to the docs site itself. This selects only the
-# checks that catch things every reasonable convention agrees on
-# (triple-double-quote style, no backslashes without a raw string). Widen
-# this as docstrings get filled in.
-select = ["D300", "D301"]
+# D1xx (missing docstrings) is deliberately excluded: this codebase does not
+# require docstrings on every private helper, and enforcing D100-D107 would
+# demand them on things like test functions and internal one-liners with no
+# readability payoff. D2xx/D3xx/D4xx below are the formatting and content
+# checks that catch genuine inconsistencies without that churn.
+#
+# D203/D211 and D212/D213 are mutually exclusive pairs (pydocstyle's own
+# built-in conventions each pick one side); D211 and D212 are selected here
+# because they match this codebase's existing style: no blank line before a
+# class docstring, and multi-line summaries starting on the docstring's
+# first line.
+#
+# D400 is excluded in favor of D415 (same content check for the first line's
+# terminal punctuation, but D415 also accepts "?"/"!").
+#
+# D402 and D403 are excluded because they false-positive within this
+# codebase's own conventions rather than catching real problems: D402 flags
+# any docstring first line that happens to mention calling a same-named
+# method on another object (this broker has several thin delegating
+# wrappers, e.g. CredentialRegistry.issue() describing a call to a
+# provider's issue()); D403 flags correctly-capitalized acronyms/proper
+# nouns starting a line (e.g. "FastAPI"), which this domain's vocabulary
+# (ATLAS, OIDC, VOMS, IAM, ...) makes likely to recur.
+#
+# D406-D409 are excluded because they enforce NumPy-style dashed section
+# underlines; this codebase's few docstring sections (Args/Returns/Raises)
+# use Google-style colons instead, and forcing the dashed-underline format
+# would fight that convention rather than improve it.
+select = [
+  "D200", "D201", "D202", "D204", "D205", "D206", "D207", "D208", "D209",
+  "D210", "D211", "D212", "D214", "D215",
+  "D300", "D301",
+  "D401", "D404", "D405", "D410", "D411", "D412", "D413", "D414", "D415",
+  "D416", "D417", "D418", "D419",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
