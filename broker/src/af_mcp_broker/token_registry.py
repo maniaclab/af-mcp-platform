@@ -95,9 +95,7 @@ _MAX_CAS_RETRIES = 5
 
 
 class DuplicateNameError(Exception):
-    """Raised by add() when a record's ``name`` collides, case-insensitively,
-    with an existing live (non-revoked, non-expired) record for the same
-    uid -- see this module's docstring for the uniqueness rule."""
+    """Raised by add() when a record's ``name`` collides, case-insensitively, with an existing live (non-revoked, non-expired) record for the same uid -- see this module's docstring for the uniqueness rule."""
 
     def __init__(self, uid: int, name: str) -> None:
         self.uid = uid
@@ -129,7 +127,7 @@ class TokenRecord:
 
 
 def _collides(existing: TokenRecord, candidate: TokenRecord, now: float) -> bool:
-    """True if *existing* is a live record that blocks *candidate*'s name."""
+    """Return True if *existing* is a live record that blocks *candidate*'s name."""
     return (
         existing.jti != candidate.jti
         and existing.revoked_at is None
@@ -139,17 +137,14 @@ def _collides(existing: TokenRecord, candidate: TokenRecord, now: float) -> bool
 
 
 def default_token_name(jti: str, issued_at: float) -> str:
-    """Server-generated name (``mcp-YYYYMMDD-<jti prefix>``) used when the
-    caller didn't supply one at mint time."""
+    """Server-generated name (``mcp-YYYYMMDD-<jti prefix>``) used when the caller didn't supply one at mint time."""
     date_str = datetime.fromtimestamp(issued_at, tz=UTC).strftime("%Y%m%d")
     return f"mcp-{date_str}-{jti[:8]}"
 
 
 @dataclass(frozen=True)
 class SweepStats:
-    """Counts returned by ``TokenRegistryBackend.sweep_expired()`` -- what a
-    single sweep pass actually did, for the CLI's structlog line and (for
-    ``VaultTokenRegistryBackend``) test assertions on Vault-only bookkeeping.
+    """Counts returned by ``TokenRegistryBackend.sweep_expired()`` -- what a single sweep pass actually did, for the CLI's structlog line and (for ``VaultTokenRegistryBackend``) test assertions on Vault-only bookkeeping.
 
     ``owners_removed`` is always 0 for ``InMemoryTokenRegistryBackend``: it
     has no separate ``jti-owner`` index (``owner_uid()`` scans the by-uid
@@ -194,8 +189,7 @@ class TokenRegistryBackend(ABC):
 
     @abstractmethod
     async def revoke(self, uid: int, jti: str, revoked_at: float) -> TokenRecord | None:
-        """Mark (*uid*, *jti*) revoked; returns the updated record, or None
-        if *jti* is unknown or not owned by *uid*."""
+        """Mark (*uid*, *jti*) revoked; returns the updated record, or None if *jti* is unknown or not owned by *uid*."""
 
     @abstractmethod
     async def list_revoked_jtis(self) -> frozenset[str]:
@@ -203,8 +197,7 @@ class TokenRegistryBackend(ABC):
 
     @abstractmethod
     async def sweep_expired(self, *, grace_seconds: int) -> SweepStats:
-        """Remove every record whose ``expires_at`` is more than
-        *grace_seconds* in the past, across all uids.
+        """Remove every record whose ``expires_at`` is more than *grace_seconds* in the past, across all uids.
 
         The grace window is deliberate, not an implementation accident: a
         token that just expired is still meaningful to show the caller as
@@ -354,8 +347,7 @@ def _record_from_fields(fields: dict[str, Any]) -> TokenRecord:
 
 
 class VaultTokenRegistryBackend(TokenRegistryBackend):
-    """``TokenRegistryBackend`` backed by Vault/OpenBao KV-v2 via a shared
-    ``VaultKV`` transport client.
+    """``TokenRegistryBackend`` backed by Vault/OpenBao KV-v2 via a shared ``VaultKV`` transport client.
 
     See this module's docstring for the KV layout and the write-ordering
     rationale in ``revoke()``. Not thread-safe across processes beyond
@@ -601,8 +593,7 @@ class VaultTokenRegistryBackend(TokenRegistryBackend):
 
 
 class RevokedJtiCache:
-    """In-process cache of revoked jtis, refreshed from a
-    ``TokenRegistryBackend`` on a bounded interval.
+    """In-process cache of revoked jtis, refreshed from a ``TokenRegistryBackend`` on a bounded interval.
 
     Every authenticated request (``/v1`` and ``/mcp`` alike) calls
     ``is_revoked()`` -- a per-request Vault read there would add real

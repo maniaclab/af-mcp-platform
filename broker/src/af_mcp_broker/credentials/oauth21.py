@@ -154,8 +154,7 @@ def normalize_token_response(
     token_endpoint: str,
     existing: StoredOAuthCredential | None = None,
 ) -> StoredOAuthCredential:
-    """Translate a backend token-endpoint JSON response into a
-    ``StoredOAuthCredential``.
+    """Translate a backend token-endpoint JSON response into a ``StoredOAuthCredential``.
 
     Falls back to *existing*'s ``refresh_token`` / ``scope`` /
     ``refresh_expires_at`` / ``metadata`` when the response omits them — many
@@ -206,10 +205,7 @@ def normalize_token_response(
 
 
 class OAuth21Provider(CredentialProvider):
-    """Issues delegated bearer tokens for an OAuth 2.1 backend authorization
-    server that the broker is a direct client to (see docs/auth.md and issue
-    #66 for why ``OIDCProvider``'s Keycloak-brokered pattern does not work
-    for backends that are OAuth 2.1 authorization servers, not OIDC IdPs).
+    """Issues delegated bearer tokens for an OAuth 2.1 backend authorization server that the broker is a direct client to (see docs/auth.md and issue #66 for why ``OIDCProvider``'s Keycloak-brokered pattern does not work for backends that are OAuth 2.1 authorization servers, not OIDC IdPs).
 
     The browser-facing PKCE linking flow lives in ``api/oauth21.py`` — this
     provider only reads and refreshes what that flow already wrote to the
@@ -289,6 +285,7 @@ class OAuth21Provider(CredentialProvider):
             HTTPException(401): if the stored token cannot be refreshed
                 (expired/missing refresh_token, or the backend AS rejects the
                 refresh attempt) — the user must re-link.
+
         """
         entry = await self._store.get(principal.subject, self._alias)
         if entry is None:

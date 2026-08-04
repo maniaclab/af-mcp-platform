@@ -1,6 +1,4 @@
-"""Manual Bearer token bootstrap — POST/GET/DELETE /v1/tokens (issue #24),
-backed by a durable, HA-safe token registry with enforced revocation
-(issue #115).
+"""Manual Bearer token bootstrap — POST/GET/DELETE /v1/tokens (issue #24), backed by a durable, HA-safe token registry with enforced revocation (issue #115).
 
 MCP clients that don't yet support OAuth discovery (Claude Desktop today)
 need a static Bearer to paste into their client config. This module mints

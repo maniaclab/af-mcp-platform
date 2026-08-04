@@ -62,14 +62,7 @@ def _build_target_to_alias(
     x509_targets: list[str],
     identity_providers_cfgs: Iterable[IdentityProviderConfig],
 ) -> dict[str, str]:
-    """Reverse map from backend target name to the credential-provider alias
-    that services it, surfaced on /v1/catalog as ``credential_provider``
-    (issue #90). x509 targets get the synthetic "x509" alias (there is no
-    per-entry ``identity_providers`` config for x509 — see the x509_targets
-    loop in ``lifespan``); keycloak-brokered/oauth21-direct targets get their
-    configured alias. Targets with ``auth_type: none`` need no user
-    credential and are simply absent from the mapping.
-    """
+    """Reverse map from backend target name to the credential-provider alias that services it, surfaced on /v1/catalog as ``credential_provider`` (issue #90). x509 targets get the synthetic "x509" alias (there is no per-entry ``identity_providers`` config for x509 — see the x509_targets loop in ``lifespan``); keycloak-brokered/oauth21-direct targets get their configured alias. Targets with ``auth_type: none`` need no user credential and are simply absent from the mapping."""
     target_to_alias: dict[str, str] = {}
     for target in x509_targets:
         target_to_alias[target] = "x509"
@@ -542,8 +535,7 @@ app.include_router(wellknown_router)
 
 @app.middleware("http")
 async def _dev_bypass_header(request: Request, call_next):  # type: ignore[no-untyped-def]
-    """Annotate every response with ``X-Dev-Bypass: true`` when the local-dev
-    auth bypass is active.
+    """Annotate every response with ``X-Dev-Bypass: true`` when the local-dev auth bypass is active.
 
     Making bypassed responses visibly different from real ones is the
     client-side half of the defence-in-depth: any curl/browser interaction

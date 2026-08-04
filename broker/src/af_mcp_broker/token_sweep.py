@@ -1,5 +1,4 @@
-"""CLI entrypoint for the expired-token sweep (issue #28 -> #116 -> #117's
-last layer).
+"""CLI entrypoint for the expired-token sweep (issue #28 -> #116 -> #117's last layer).
 
 Runnable as ``python -m af_mcp_broker.token_sweep``, meant to be invoked by
 the ``CronJob`` in ``charts/af-mcp-platform/templates/cronjob-token-sweep.yaml``

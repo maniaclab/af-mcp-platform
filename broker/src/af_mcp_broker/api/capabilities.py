@@ -92,9 +92,7 @@ class AuthorizeResponse(BaseModel):
 
 
 class CatalogServer(BaseModel):
-    """One registered MCP server, including ones the caller can't currently
-    use -- ``status``/``status_detail`` say why instead of the caller
-    silently never seeing the entry (issue #123).
+    """One registered MCP server, including ones the caller can't currently use -- ``status``/``status_detail`` say why instead of the caller silently never seeing the entry (issue #123).
 
     ``tools`` is an empty placeholder until the /mcp aggregator can enumerate
     real subtools per server (issue #58); it exists now so the portal's
@@ -218,10 +216,7 @@ async def _backend_status(
     credential_registry: CredentialRegistry,
     registry: BackendRegistry,
 ) -> tuple[BackendStatus, str, str | None]:
-    """Derive one backend's per-caller availability status for /v1/catalog
-    (issue #123) from data the broker already has -- never an upstream
-    probe of the backend itself, an upstream error body, a policy internal,
-    or a group list (see _STATUS_DETAILS's canned sentences).
+    """Derive one backend's per-caller availability status for /v1/catalog (issue #123) from data the broker already has -- never an upstream probe of the backend itself, an upstream error body, a policy internal, or a group list (see _STATUS_DETAILS's canned sentences).
 
     Precedence mirrors the real enforcement order (AuthorizationMiddleware
     checks entitlement before a client_factory ever attempts to mint a
@@ -319,12 +314,7 @@ async def authorize(
     request: Request,
     principal: Annotated[Principal, Depends(keycloak_dependency)],
 ) -> AuthorizeResponse:
-    """Derives the required capability server-side from the backend registry
-    (``body.target`` -> ``BackendSpec.required_capability``) rather than
-    trusting a capability supplied by the caller -- a client used to be able
-    to claim any capability for any target and have it evaluated at face
-    value (see issue #60).
-    """
+    """Derive the required capability server-side from the backend registry (``body.target`` -> ``BackendSpec.required_capability``) rather than trusting a capability supplied by the caller -- a client used to be able to claim any capability for any target and have it evaluated at face value (see issue #60)."""
     policy = _get_policy(request)
     registry = _get_registry(request)
     backend = registry.get(body.target)

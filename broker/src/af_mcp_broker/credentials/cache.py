@@ -306,8 +306,7 @@ class CredentialCache:
     # ------------------------------------------------------------------
 
     def record_failed_unlock(self, uid: int) -> None:
-        """Increment the failed-unlock counter for *uid* and raise
-        ``RateLimitError`` when exceeded.
+        """Increment the failed-unlock counter for *uid* and raise ``RateLimitError`` when exceeded.
 
         Callers invoke this only for an unlock attempt that actually failed
         (bad passphrase, or a minting-backend failure) — plain cache misses

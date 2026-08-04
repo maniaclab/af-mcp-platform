@@ -109,7 +109,7 @@ def check_entitlement(
     target: str,
     policy: EntitlementPolicy,
 ) -> tuple[bool, str]:
-    """Returns (allow, reason).
+    """Return (allow, reason).
 
     ``capability`` is the target's required capability as declared by the
     backend registry (``BackendSpec.required_capability`` -- backends.yaml is

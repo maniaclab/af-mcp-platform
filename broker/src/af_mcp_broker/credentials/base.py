@@ -51,9 +51,9 @@ class IssuedCredential:
 
 
 class NeedsUnlock(Exception):
-    """Raised when a credential requires user interaction (e.g. passphrase entry)
-    before it can be issued. The caller should surface `unlock_endpoint` to the
-    user so they know where to POST the passphrase.
+    """Raised when a credential requires user interaction (e.g. passphrase entry) before it can be issued.
+
+    The caller should surface `unlock_endpoint` to the user so they know where to POST the passphrase.
     """
 
     def __init__(
@@ -83,12 +83,13 @@ class CredentialProvider(ABC):
 
     @abstractmethod
     async def is_linked(self, principal: Principal) -> bool:
-        """Whether this principal has completed the external-identity linkage
-        this provider needs to mint a credential. Called BEFORE `issue()` to
-        surface a clean 404/403 instead of an opaque failure inside `issue()`.
-        Each provider owns the concrete check appropriate to its storage
-        backend — Keycloak federated_identity for OIDC providers, filesystem
-        presence for x509, KV lookup for future providers, etc.
+        """Whether this principal has completed the external-identity linkage this provider needs to mint a credential.
+
+        Called BEFORE `issue()` to surface a clean 404/403 instead of an
+        opaque failure inside `issue()`. Each provider owns the concrete
+        check appropriate to its storage backend — Keycloak
+        federated_identity for OIDC providers, filesystem presence for
+        x509, KV lookup for future providers, etc.
 
         This is an authoritative check, not a hint: callers gate on it before
         ever calling `issue()`, so a False here must mean the credential
@@ -175,7 +176,7 @@ class CredentialRegistry:
         target: str,
         **kwargs,
     ) -> IssuedCredential:
-        """Convenience: resolve the provider for *target* and call issue()."""
+        """Resolve the provider for *target* and call its issue(), as a convenience."""
         provider = await self.resolve(target)
         self._log.debug(
             "credential_registry.issuing",
