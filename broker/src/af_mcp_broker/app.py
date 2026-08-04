@@ -188,24 +188,33 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # grants makes that backend unusable by every principal -- e.g. the
     # operator never wrote a policy for it (a chart-rendered policy.yaml
     # with a stale key name the broker doesn't read, issue #59) or typo'd
-    # the capability name. Unlike the fail-closed check below (an omitted
-    # required_capability with no credential provider is outright unsafe --
-    # any caller could reach the backend), this is merely useless, not
-    # dangerous: the backend is unreachable by everyone rather than open to
-    # unauthorized callers. So it's a loud, structured error rather than a
-    # refusal to start -- the broker keeps serving its other backends.
+    # the capability name. This is a hard startup failure, not a log line:
+    # this is Kubernetes, so a Deployment rollout with a failing new pod
+    # leaves the previous ReplicaSet serving traffic unaffected -- refusing
+    # to start surfaces the misconfiguration as a visible rollout failure /
+    # CrashLoopBackOff / k8s event with zero outage risk, which is strictly
+    # better than a log line an operator has to be watching for. (Distinct
+    # from the fail-closed check below, which guards against a backend with
+    # *no* gate at all -- this one guards against a gate nobody can pass.)
     granted_capabilities = {
         cap for caps in entitlement_policy.group_capabilities.values() for cap in caps
     }
+    unreachable_capabilities: list[tuple[str, str]] = []
     for spec in backends:
         if spec.required_capability in (None, "__none__"):
             continue
         if spec.required_capability not in granted_capabilities:
-            logger.error(
-                "policy.capability_unreachable",
-                backend=spec.name,
-                capability=spec.required_capability,
-            )
+            unreachable_capabilities.append((spec.name, spec.required_capability))
+    if unreachable_capabilities:
+        msg = (
+            "The following backends require a capability that no group in "
+            "group_capabilities grants, so they are unreachable by every "
+            "principal (a forgotten policy entry or a typo'd capability "
+            f"name): {sorted(unreachable_capabilities)}. Set "
+            "entitlements.group_capabilities (chart) / policy.yaml (local "
+            "dev) so at least one group grants each missing capability."
+        )
+        raise RuntimeError(msg)
 
     # --- Credential subsystem: cache + janitor + provider registry.
     credential_cache = CredentialCache(

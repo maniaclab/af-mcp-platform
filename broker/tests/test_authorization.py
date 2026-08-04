@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
+
+import pytest
 
 from af_mcp_broker.authorization import (
     EntitlementPolicy,
@@ -12,8 +14,7 @@ from af_mcp_broker.authorization import (
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
-
-    import pytest
+    from typing import Any
 
 
 def test_atlas_allowed_rucio_read_data(
@@ -103,30 +104,7 @@ def _write_backends(tmp_path: Path, text: str) -> str:
     return str(path)
 
 
-def _capture_errors(
-    monkeypatch: pytest.MonkeyPatch,
-) -> list[tuple[str, dict[str, Any]]]:
-    """Spy on app.py's module-level logger.error calls.
-
-    configure_logging() rewrites the root logger's handlers during the app
-    lifespan, which would otherwise swallow pytest's caplog handler, so
-    startup-error tests assert directly against the app module's logger call
-    instead, mirroring test_health.py::test_startup_warns_on_no_backends.
-    """
-    from af_mcp_broker import app as app_module
-
-    events: list[tuple[str, dict[str, Any]]] = []
-    original_error = app_module.logger.error
-
-    def _capture(event: str, **kwargs: Any) -> Any:
-        events.append((event, kwargs))
-        return original_error(event, **kwargs)
-
-    monkeypatch.setattr(app_module.logger, "error", _capture)
-    return events
-
-
-def test_startup_logs_unreachable_capability_when_group_capabilities_empty(
+def test_startup_refuses_to_start_when_group_capabilities_empty(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     app_client_factory: Callable[..., Any],
@@ -136,53 +114,47 @@ def test_startup_logs_unreachable_capability_when_group_capabilities_empty(
     that requires a capability ``__authenticated__`` doesn't grant (issue
     #59: the chart's configmap template rendered ``groups:`` instead of
     ``group_capabilities:``, so ``/v1/catalog`` returned zero tools for
-    every user). Not a startup failure -- operators may deliberately deploy
-    with an all-open policy -- but it must be a loud, visible ERROR-level
-    structlog line naming both the affected backend and the unreachable
-    capability.
+    every user). This is Kubernetes: a Deployment rollout with a failing new
+    pod leaves the previous ReplicaSet serving, so refusing to start turns
+    the misconfiguration into a visible rollout failure with zero outage,
+    naming both the affected backend and the unreachable capability.
     """
     monkeypatch.setenv(
         "POLICY_FILE",
         _write_policy(tmp_path, "group_capabilities: {}\ntarget_action_types: {}\n"),
     )
-    events = _capture_errors(monkeypatch)
 
-    with app_client_factory():
-        pass
+    with pytest.raises(RuntimeError) as exc_info:  # noqa: SIM117
+        with app_client_factory():
+            pass
 
-    unreachable = [
-        kwargs for event, kwargs in events if event == "policy.capability_unreachable"
-    ]
     # SHIPPED_BACKENDS' "rucio" entry requires "read_data" (!= "__none__"),
-    # so it must be named -- together with the capability it requires.
-    assert {"backend": "rucio", "capability": "read_data"} in unreachable, events
+    # so both must be named in the failure.
+    message = str(exc_info.value)
+    assert "rucio" in message, message
+    assert "read_data" in message, message
 
 
 def test_startup_quiet_when_capabilities_are_all_reachable(
     app_client_factory: Callable[..., Any],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The shipped policy.yaml grants every capability SHIPPED_BACKENDS
-    requires (to at least one group), so no unreachable-capability error
-    should fire for the default local-dev configuration."""
-    events = _capture_errors(monkeypatch)
+    requires (to at least one group), so startup must succeed for the
+    default local-dev configuration."""
+    with app_client_factory() as (client, _):
+        resp = client.get("/v1/healthz")
 
-    with app_client_factory():
-        pass
-
-    assert not [
-        kwargs for event, kwargs in events if event == "policy.capability_unreachable"
-    ], events
+    assert resp.status_code == 200, resp.text
 
 
-def test_startup_logs_unreachable_capability_for_typoed_capability_name(
+def test_startup_refuses_to_start_for_typoed_capability_name(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     app_client_factory: Callable[..., Any],
 ) -> None:
     """group_capabilities that cover some, but not all, required capabilities
     (e.g. a typo'd capability name) must name exactly the unreachable one --
-    reachable capabilities must stay quiet."""
+    reachable capabilities must not be named."""
     monkeypatch.setenv(
         "POLICY_FILE",
         _write_policy(
@@ -192,20 +164,19 @@ def test_startup_logs_unreachable_capability_for_typoed_capability_name(
             "target_action_types: {}\n",
         ),
     )
-    events = _capture_errors(monkeypatch)
 
-    with app_client_factory():
-        pass
+    with pytest.raises(RuntimeError) as exc_info:  # noqa: SIM117
+        with app_client_factory():
+            pass
 
-    unreachable = [
-        kwargs for event, kwargs in events if event == "policy.capability_unreachable"
-    ]
+    message = str(exc_info.value)
     # "ami" requires read_metadata, which the typo means nobody actually
     # grants -- it must be named.
-    assert {"backend": "ami", "capability": "read_metadata"} in unreachable, events
+    assert "ami" in message, message
+    assert "read_metadata" in message, message
     # "rucio" requires read_data, correctly spelled and reachable -- it must
     # not be named.
-    assert not [kw for kw in unreachable if kw["backend"] == "rucio"], events
+    assert "rucio" not in message, message
 
 
 def test_startup_stays_quiet_with_empty_group_capabilities_and_no_gated_backends(
@@ -237,12 +208,8 @@ def test_startup_stays_quiet_with_empty_group_capabilities_and_no_gated_backends
             "    auth_type: x509\n",
         ),
     )
-    events = _capture_errors(monkeypatch)
 
     with app_client_factory() as (client, _):
         resp = client.get("/v1/healthz")
 
     assert resp.status_code == 200, resp.text
-    assert not [
-        kwargs for event, kwargs in events if event == "policy.capability_unreachable"
-    ], events
