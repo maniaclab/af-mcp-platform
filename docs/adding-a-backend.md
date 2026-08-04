@@ -105,6 +105,42 @@ backend authorizes itself some other way (e.g. a platform k8s service
 account) and needs no per-user credential forwarded at all. `auth_type: x509`
 is not yet deliverable over `/mcp` (see `mcp/aggregator.py`'s `TODO(#58)`).
 
+### `apply_namespace` — tool naming
+
+`apply_namespace` controls whether the aggregator mounts this backend's
+tools as `<prefix>_<toolname>` and **defaults to `true`** — the safe
+choice, since it's what prevents two backends from advertising the same
+tool name and one silently shadowing the other in `tools/list`. Leave it
+unset unless you have a specific reason to change it.
+
+Set it to `false` only for a backend whose tools are already self-prefixed
+at the source (baked into the tool names the backend itself advertises,
+not added by the aggregator). rucio-mcp is the shipped example: it serves
+tools already named `rucio_list_dids`, `rucio_whoami`, etc., so leaving
+`apply_namespace: true` would double-prefix them into
+`rucio_rucio_list_dids`. The shipped `backends.yaml` therefore sets
+`apply_namespace: false` on its `rucio` entry, and callers see the plain
+`rucio_list_dids` name.
+
+`false` is only safe when no other configured backend can advertise an
+overlapping tool name — with one rucio site configured, that holds. It
+stops holding the moment a second self-prefixed backend enters the picture:
+configuring both an ATLAS and an ESCAPE rucio site as separate backends
+(see the shipped `backends.yaml` comment) means both would advertise the
+same un-namespaced `rucio_*` names, and fastmcp resolves un-namespaced
+mounts in registration order — the second one silently shadows the first
+instead of failing loudly. The accepted fix for that case is to set
+`apply_namespace: true` on both site entries and accept the resulting
+double-prefixed names (`rucio_atlas_rucio_whoami`, `rucio_escape_rucio_whoami`)
+— ugly, but unambiguous and requires no upstream rucio-mcp change. See
+[#113](https://github.com/maniaclab/af-mcp-platform/issues/113) for the
+full tradeoff discussion.
+
+Whatever you choose, the deployed tool names are what callers actually see
+in `GET /v1/catalog` and the portal's tool list — confirm the names you
+expect show up there (see Verification below) rather than assuming from
+the config alone.
+
 ---
 
 ## Step 2 — Pick (or reuse) a capability for the backend

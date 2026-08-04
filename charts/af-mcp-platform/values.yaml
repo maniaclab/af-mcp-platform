@@ -219,6 +219,12 @@ aggregator:
   #   - name: my-tool
   #     transport: sse
   #     url: http://my-tool-svc:8000/mcp
+  #     apply_namespace: true
+  # apply_namespace defaults to true (mounts tools as <prefix>_<toolname>) to
+  # prevent cross-backend tool-name collisions; set false only for a backend
+  # whose tools are already self-prefixed at the source, and only when no
+  # other configured backend can advertise an overlapping name -- otherwise
+  # one silently shadows the other. See docs/adding-a-backend.md.
   backends: []
 
 # ---------------------------------------------------------------------------
