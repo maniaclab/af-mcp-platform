@@ -68,6 +68,11 @@ describe('auth — OIDC not configured (dev-bypass mode)', () => {
     const { handleCallback } = await import('../auth');
     await expect(handleCallback()).rejects.toThrow(/not configured/i);
   });
+
+  it('getBrokerOrigin() falls back to window.location.origin when brokerOrigin is empty', async () => {
+    const { getBrokerOrigin } = await import('../auth');
+    await expect(getBrokerOrigin()).resolves.toBe(window.location.origin);
+  });
 });
 
 describe('auth — /config.json unreachable', () => {
@@ -77,6 +82,12 @@ describe('auth — /config.json unreachable', () => {
     const { getUser, isOidcConfigured } = await import('../auth');
     await expect(isOidcConfigured()).resolves.toBe(false);
     await expect(getUser()).resolves.toBeNull();
+  });
+
+  it('getBrokerOrigin() falls back to window.location.origin instead of throwing', async () => {
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error('network down'));
+    const { getBrokerOrigin } = await import('../auth');
+    await expect(getBrokerOrigin()).resolves.toBe(window.location.origin);
   });
 });
 
@@ -182,5 +193,10 @@ describe('auth — OIDC configured', () => {
     const { logout } = await import('../auth');
     await logout();
     expect(signoutRedirect).toHaveBeenCalledTimes(1);
+  });
+
+  it("getBrokerOrigin() returns /config.json's brokerOrigin", async () => {
+    const { getBrokerOrigin } = await import('../auth');
+    await expect(getBrokerOrigin()).resolves.toBe('https://mcp.example.com');
   });
 });
