@@ -33,6 +33,10 @@ portal/dist/
 portal/.astro/
 portal/node_modules/
 .npm/
+# Rendered from nginx.conf.template by scripts/sync-csp-hashes.mjs at build
+# time (see `npm run build` in portal/package.json) — not checked in because
+# its CSP hashes are only valid for the build that produced them.
+portal/nginx.conf.generated
 
 # Environment / secrets
 .env
