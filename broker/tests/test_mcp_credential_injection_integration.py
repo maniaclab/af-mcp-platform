@@ -70,9 +70,6 @@ class _FakeProvider(CredentialProvider):
         self.needs_unlock = needs_unlock
         self.issue_calls: list[int] = []
 
-    async def handles(self, target: str) -> bool:
-        return True
-
     async def is_linked(self, principal: Principal) -> bool:
         return self.linked
 
@@ -136,7 +133,7 @@ def aggregator_app_url(settings, toy_backend_url, policy):
     )
 
     async def _run(provider: _FakeProvider):
-        credential_registry = CredentialRegistry([])
+        credential_registry = CredentialRegistry()
         credential_registry.register("toy", provider)
         mcp = build_aggregator(registry, settings, policy, credential_registry)
         async with run_server_async(mcp, path="/mcp") as url:

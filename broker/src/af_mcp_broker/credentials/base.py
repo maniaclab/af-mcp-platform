@@ -82,10 +82,6 @@ class CredentialProvider(ABC):
     execution_model: ClassVar[ExecutionModel]
 
     @abstractmethod
-    async def handles(self, target: str) -> bool:
-        """Return True if this provider can issue credentials for *target*."""
-
-    @abstractmethod
     async def is_linked(self, principal: Principal) -> bool:
         """Whether this principal has completed the external-identity linkage
         this provider needs to mint a credential. Called BEFORE `issue()` to
@@ -137,10 +133,8 @@ class CredentialRegistry:
     a credential broker.
     """
 
-    def __init__(self, providers: list[CredentialProvider]) -> None:
-        # Ordered list for `handles()` scanning; explicit map populated by register()
-        self._providers: list[CredentialProvider] = list(providers)
-        # target -> provider (populated by register() or auto-scanned at startup)
+    def __init__(self) -> None:
+        # target -> provider, populated by register()
         self._target_map: dict[str, CredentialProvider] = {}
         self._log = structlog.get_logger(__name__).bind(component="CredentialRegistry")
 
@@ -170,15 +164,6 @@ class CredentialRegistry:
         """Return the provider bound to *target*, or raise ``KeyError``."""
         if target in self._target_map:
             return self._target_map[target]
-        # Fall back to scanning the ordered provider list via handles()
-        for provider in self._providers:
-            if await provider.handles(target):
-                self._log.debug(
-                    "credential_registry.resolved_via_scan",
-                    target=target,
-                    provider=type(provider).__name__,
-                )
-                return provider
         raise KeyError(
             f"No credential provider registered for target {target!r}. "
             "Check backends.yaml or call CredentialRegistry.register()."

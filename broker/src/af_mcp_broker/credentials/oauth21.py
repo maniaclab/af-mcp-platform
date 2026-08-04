@@ -264,9 +264,6 @@ class OAuth21Provider(CredentialProvider):
     def scope(self) -> str:
         return self._scope
 
-    async def handles(self, target: str) -> bool:
-        return target in self._targets
-
     async def is_linked(self, principal: Principal) -> bool:
         entry = await self._store.get(principal.subject, self._alias)
         if entry is None:

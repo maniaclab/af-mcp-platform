@@ -70,7 +70,7 @@ def aggregator_url(settings, progress_backend_url):
     policy = EntitlementPolicy()
 
     async def _run():
-        mcp = build_aggregator(registry, settings, policy, CredentialRegistry([]))
+        mcp = build_aggregator(registry, settings, policy, CredentialRegistry())
         async with run_server_async(mcp, path="/mcp") as url:
             yield url
 

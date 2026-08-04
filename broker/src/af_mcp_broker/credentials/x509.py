@@ -759,9 +759,6 @@ class X509Provider(CredentialProvider):
         ]
         self._log = structlog.get_logger(__name__).bind(provider="X509Provider")
 
-    async def handles(self, target: str) -> bool:
-        return target in self._targets
-
     async def is_linked(self, principal: Principal) -> bool:
         """True when both halves of *principal*'s ``~/.globus`` certificate
         pair exist and are readable by the broker's uid/gid.

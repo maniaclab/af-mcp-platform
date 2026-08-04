@@ -66,9 +66,6 @@ class ServiceProvider(CredentialProvider):
         self._service_token_expires_at: float = 0.0
         self._refresh_lock = asyncio.Lock()
 
-    async def handles(self, target: str) -> bool:
-        return target in self._targets
-
     async def is_linked(self, principal: Principal) -> bool:  # noqa: ARG002 (interface)
         """Always True — the broker's own service account is the credential
         source, so there is no user-side linkage to check."""

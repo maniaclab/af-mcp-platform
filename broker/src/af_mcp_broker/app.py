@@ -224,7 +224,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     credential_cache.start_janitor()
 
     x509_provider = X509Provider(settings, credential_cache)
-    credential_registry = CredentialRegistry([x509_provider])
+    credential_registry = CredentialRegistry()
 
     # Map each x509-auth backend target to X509Provider (voms-proxy minted
     # from the user's ~/.globus cert). `bearer`-auth backends' credential
@@ -489,7 +489,7 @@ _mcp_aggregator = build_aggregator(
     BackendRegistry(),
     _mcp_aggregator_placeholder_settings,
     EntitlementPolicy(),
-    CredentialRegistry([]),
+    CredentialRegistry(),
 )
 # stateless_http (issue #128): unlike policy_file/backends_file, Settings()
 # reads env vars synchronously at construction, so the placeholder instance

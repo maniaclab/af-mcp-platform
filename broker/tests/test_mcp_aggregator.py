@@ -84,9 +84,6 @@ class _FakeProvider(CredentialProvider):
         self.http_error = http_error
         self.issue_calls: list[tuple[int, str]] = []
 
-    async def handles(self, target: str) -> bool:
-        return True
-
     async def is_linked(self, principal: Principal) -> bool:
         return self.linked
 
@@ -163,7 +160,7 @@ def _patch_context(
 
 def test_build_aggregator_returns_fastmcp(settings: Any) -> None:
     mcp = build_aggregator(
-        BackendRegistry(), settings, EntitlementPolicy(), CredentialRegistry([])
+        BackendRegistry(), settings, EntitlementPolicy(), CredentialRegistry()
     )
     assert isinstance(mcp, FastMCP)
 
@@ -177,7 +174,7 @@ def test_build_aggregator_wires_identity_before_entitlement_before_authorization
     prepends its own DereferenceRefsMiddleware, so assert relative order
     between ours rather than absolute list positions."""
     mcp = build_aggregator(
-        BackendRegistry(), settings, EntitlementPolicy(), CredentialRegistry([])
+        BackendRegistry(), settings, EntitlementPolicy(), CredentialRegistry()
     )
     identity_index = next(
         i for i, mw in enumerate(mcp.middleware) if isinstance(mw, IdentityMiddleware)
@@ -201,7 +198,7 @@ def test_build_aggregator_registers_one_provider_per_backend(settings: Any) -> N
     registry.register(_spec(name="b", prefix="b"))
 
     mcp = build_aggregator(
-        registry, settings, EntitlementPolicy(), CredentialRegistry([])
+        registry, settings, EntitlementPolicy(), CredentialRegistry()
     )
 
     assert len(mcp.providers) == 2
@@ -211,7 +208,7 @@ def test_populate_aggregator_replaces_providers_not_appends(settings: Any) -> No
     registry_a = BackendRegistry()
     registry_a.register(_spec(name="a", prefix="a"))
     mcp = build_aggregator(
-        registry_a, settings, EntitlementPolicy(), CredentialRegistry([])
+        registry_a, settings, EntitlementPolicy(), CredentialRegistry()
     )
     assert len(mcp.providers) == 1
 
@@ -219,7 +216,7 @@ def test_populate_aggregator_replaces_providers_not_appends(settings: Any) -> No
     registry_b.register(_spec(name="b", prefix="b"))
     registry_b.register(_spec(name="c", prefix="c"))
     populate_aggregator(
-        mcp, registry_b, settings, EntitlementPolicy(), CredentialRegistry([])
+        mcp, registry_b, settings, EntitlementPolicy(), CredentialRegistry()
     )
 
     assert len(mcp.providers) == 2
@@ -227,7 +224,7 @@ def test_populate_aggregator_replaces_providers_not_appends(settings: Any) -> No
 
 def test_populate_aggregator_refreshes_middleware_state(settings: Any) -> None:
     mcp = build_aggregator(
-        BackendRegistry(), settings, EntitlementPolicy(), CredentialRegistry([])
+        BackendRegistry(), settings, EntitlementPolicy(), CredentialRegistry()
     )
     identity_mw = next(
         mw for mw in mcp.middleware if isinstance(mw, IdentityMiddleware)
@@ -245,7 +242,7 @@ def test_populate_aggregator_refreshes_middleware_state(settings: Any) -> None:
     new_settings = settings.model_copy(update={"oidc_audience": "something-else"})
 
     populate_aggregator(
-        mcp, new_registry, new_settings, new_policy, CredentialRegistry([])
+        mcp, new_registry, new_settings, new_policy, CredentialRegistry()
     )
 
     assert identity_mw.settings is new_settings
@@ -263,7 +260,7 @@ def test_populate_aggregator_raises_if_middleware_missing(settings: Any) -> None
             BackendRegistry(),
             settings,
             EntitlementPolicy(),
-            CredentialRegistry([]),
+            CredentialRegistry(),
         )
 
 
@@ -278,7 +275,7 @@ def test_populate_aggregator_propagates_revoked_jti_cache(settings: Any) -> None
     )
 
     mcp = build_aggregator(
-        BackendRegistry(), settings, EntitlementPolicy(), CredentialRegistry([])
+        BackendRegistry(), settings, EntitlementPolicy(), CredentialRegistry()
     )
     identity_mw = next(
         mw for mw in mcp.middleware if isinstance(mw, IdentityMiddleware)
@@ -291,7 +288,7 @@ def test_populate_aggregator_propagates_revoked_jti_cache(settings: Any) -> None
         BackendRegistry(),
         settings,
         EntitlementPolicy(),
-        CredentialRegistry([]),
+        CredentialRegistry(),
         revoked_jti_cache=cache,
     )
 
@@ -309,7 +306,7 @@ def test_client_factory_selects_transport_by_spec(
     spec = _spec(
         transport=transport, url="http://example.invalid/mcp", auth_type="none"
     )
-    factory = _make_client_factory(spec, CredentialRegistry([]), settings, _OPEN_POLICY)
+    factory = _make_client_factory(spec, CredentialRegistry(), settings, _OPEN_POLICY)
     client = factory()
     assert isinstance(client, Client)
     assert isinstance(client.transport, expected_type)
@@ -322,9 +319,7 @@ def test_client_factory_selects_transport_by_spec(
 
 def test_client_factory_none_auth_type_applies_backend_timeout(settings: Any) -> None:
     spec = _spec(auth_type="none", timeout_seconds=5.0)
-    client = _make_client_factory(
-        spec, CredentialRegistry([]), settings, _OPEN_POLICY
-    )()
+    client = _make_client_factory(spec, CredentialRegistry(), settings, _OPEN_POLICY)()
     assert client._session_kwargs["read_timeout_seconds"] == timedelta(seconds=5.0)
 
 
@@ -337,7 +332,7 @@ async def test_client_factory_x509_auth_type_applies_backend_timeout(
     _patch_context(monkeypatch, None, active_backend=None)
     spec = _spec(auth_type="x509", timeout_seconds=5.0)
     client = await _make_client_factory(
-        spec, CredentialRegistry([]), settings, _OPEN_POLICY
+        spec, CredentialRegistry(), settings, _OPEN_POLICY
     )()
     assert client._session_kwargs["read_timeout_seconds"] == timedelta(seconds=5.0)
 
@@ -348,7 +343,7 @@ async def test_client_factory_bearer_auth_type_applies_backend_timeout(
     _patch_context(monkeypatch, make_principal(), active_backend=None)
     spec = _spec(auth_type="bearer", timeout_seconds=5.0)
     client = await _make_client_factory(
-        spec, CredentialRegistry([]), settings, _OPEN_POLICY
+        spec, CredentialRegistry(), settings, _OPEN_POLICY
     )()
     assert client._session_kwargs["read_timeout_seconds"] == timedelta(seconds=5.0)
 
@@ -366,9 +361,7 @@ def test_client_factory_installs_progress_and_log_forwarding_handlers(
     False) or a backend's progress/log notifications would be swallowed
     (logged locally) instead of reaching the aggregator's own caller."""
     spec = _spec(auth_type="none")
-    client = _make_client_factory(
-        spec, CredentialRegistry([]), settings, _OPEN_POLICY
-    )()
+    client = _make_client_factory(spec, CredentialRegistry(), settings, _OPEN_POLICY)()
     assert client._progress_handler is default_proxy_progress_handler
     # logging_callback is create_log_callback(handler)'s closure -- inspect
     # the closed-over handler directly rather than relying on identity of
@@ -384,9 +377,7 @@ def test_client_factory_none_auth_type_never_touches_credential_registry(
     # An empty registry would raise KeyError if resolve() were ever called
     # for this target -- proving auth_type="none" skips credential
     # resolution entirely rather than merely succeeding to find nothing.
-    client = _make_client_factory(
-        spec, CredentialRegistry([]), settings, _OPEN_POLICY
-    )()
+    client = _make_client_factory(spec, CredentialRegistry(), settings, _OPEN_POLICY)()
     assert "Authorization" not in client.transport.headers
 
 
@@ -395,7 +386,7 @@ async def test_client_factory_x509_auth_type_raises_clear_tool_error(
 ) -> None:
     _patch_context(monkeypatch, None)
     spec = _spec(auth_type="x509")
-    factory = _make_client_factory(spec, CredentialRegistry([]), settings, _OPEN_POLICY)
+    factory = _make_client_factory(spec, CredentialRegistry(), settings, _OPEN_POLICY)
     with pytest.raises(ToolError, match="x509"):
         await factory()
 
@@ -409,7 +400,7 @@ async def test_client_factory_x509_auth_type_lists_without_raising(
     error above."""
     _patch_context(monkeypatch, None, active_backend=None)
     spec = _spec(auth_type="x509")
-    factory = _make_client_factory(spec, CredentialRegistry([]), settings, _OPEN_POLICY)
+    factory = _make_client_factory(spec, CredentialRegistry(), settings, _OPEN_POLICY)
     client = await factory()
     assert isinstance(client, Client)
     assert "Authorization" not in client.transport.headers
@@ -422,7 +413,7 @@ async def test_client_factory_bearer_injects_minted_token_not_inbound(
     _patch_context(monkeypatch, principal)
     spec = _spec(auth_type="bearer")
     provider = _FakeProvider(token="minted-abc")
-    registry = CredentialRegistry([])
+    registry = CredentialRegistry()
     registry.register(spec.name, provider)
 
     factory = _make_client_factory(spec, registry, settings, _OPEN_POLICY)
@@ -461,7 +452,7 @@ async def test_client_factory_bearer_per_user_isolation(
             )
 
     provider = _PerUserProvider()
-    registry = CredentialRegistry([])
+    registry = CredentialRegistry()
     registry.register(spec.name, provider)
     factory = _make_client_factory(spec, registry, settings, _OPEN_POLICY)
 
@@ -482,7 +473,7 @@ async def test_client_factory_bearer_unknown_target_raises_tool_error(
 ) -> None:
     spec = _spec(auth_type="bearer", name="no-such-target")
     _patch_context(monkeypatch, make_principal(), active_backend=spec.name)
-    factory = _make_client_factory(spec, CredentialRegistry([]), settings, _OPEN_POLICY)
+    factory = _make_client_factory(spec, CredentialRegistry(), settings, _OPEN_POLICY)
 
     with pytest.raises(ToolError):
         await factory()
@@ -494,7 +485,7 @@ async def test_client_factory_bearer_not_linked_raises_friendly_error(
     _patch_context(monkeypatch, make_principal())
     spec = _spec(auth_type="bearer")
     provider = _FakeProvider(linked=False)
-    registry = CredentialRegistry([])
+    registry = CredentialRegistry()
     registry.register(spec.name, provider)
 
     with pytest.raises(ToolError, match="not linked"):
@@ -511,7 +502,7 @@ async def test_client_factory_bearer_needs_unlock_raises_friendly_error(
             spec.name, "no cached proxy", unlock_endpoint="/v1/x509/proxy"
         )
     )
-    registry = CredentialRegistry([])
+    registry = CredentialRegistry()
     registry.register(spec.name, provider)
 
     with pytest.raises(ToolError, match="portal") as excinfo:
@@ -527,7 +518,7 @@ async def test_client_factory_bearer_provider_http_exception_surfaces_detail(
     provider = _FakeProvider(
         http_error=HTTPException(status_code=404, detail="No ATLAS IAM token stored")
     )
-    registry = CredentialRegistry([])
+    registry = CredentialRegistry()
     registry.register(spec.name, provider)
 
     with pytest.raises(ToolError, match="No ATLAS IAM token stored"):
@@ -539,7 +530,7 @@ async def test_client_factory_bearer_missing_principal_raises(
 ) -> None:
     _patch_context(monkeypatch, None)
     spec = _spec(auth_type="bearer")
-    factory = _make_client_factory(spec, CredentialRegistry([]), settings, _OPEN_POLICY)
+    factory = _make_client_factory(spec, CredentialRegistry(), settings, _OPEN_POLICY)
 
     with pytest.raises(ToolError):
         await factory()
@@ -555,7 +546,7 @@ async def test_client_factory_bearer_list_time_falls_back_when_no_provider_regis
     exactly like a "none" backend would."""
     ctx = _patch_context(monkeypatch, make_principal(), active_backend=None)
     spec = _spec(auth_type="bearer")
-    factory = _make_client_factory(spec, CredentialRegistry([]), settings, _OPEN_POLICY)
+    factory = _make_client_factory(spec, CredentialRegistry(), settings, _OPEN_POLICY)
 
     client = await factory()
 
@@ -577,7 +568,7 @@ async def test_client_factory_bearer_list_time_falls_back_when_not_linked(
     ctx = _patch_context(monkeypatch, make_principal(), active_backend=None)
     spec = _spec(auth_type="bearer")
     provider = _FakeProvider(linked=False)
-    registry = CredentialRegistry([])
+    registry = CredentialRegistry()
     registry.register(spec.name, provider)
     factory = _make_client_factory(spec, registry, settings, _OPEN_POLICY)
 
@@ -602,7 +593,7 @@ async def test_client_factory_bearer_list_time_mints_when_entitled_and_linked(
     ctx = _patch_context(monkeypatch, principal, active_backend=None)
     spec = _spec(auth_type="bearer", required_capability="read_data")
     provider = _FakeProvider(token="minted-for-list")
-    registry = CredentialRegistry([])
+    registry = CredentialRegistry()
     registry.register(spec.name, provider)
     factory = _make_client_factory(spec, registry, settings, policy)
 
@@ -625,7 +616,7 @@ async def test_client_factory_bearer_list_time_skips_mint_when_not_entitled(
     _patch_context(monkeypatch, principal, active_backend=None)
     spec = _spec(auth_type="bearer", required_capability="read_data")
     provider = _FakeProvider()
-    registry = CredentialRegistry([])
+    registry = CredentialRegistry()
     registry.register(spec.name, provider)
     factory = _make_client_factory(spec, registry, settings, policy)
 
