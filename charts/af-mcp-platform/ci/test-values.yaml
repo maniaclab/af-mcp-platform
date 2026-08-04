@@ -3,9 +3,10 @@
 # values.yaml (which have no safe cross-institution default) don't fail CI.
 # These are placeholder example.com values, not a real deployment — actual
 # values are provided by the operator's HelmRelease overlay, not this chart.
+oidc:
+  issuer: "https://keycloak.example.com/realms/example"
 portal:
   oidc:
-    issuer: "https://keycloak.example.com/realms/example"
     clientId: "example-portal-client"
     scope: "openid profile email example-audience"
   brokerOrigin: "https://mcp.example.com"
@@ -50,6 +51,14 @@ broker:
   # the diff.
   tokenRegistry:
     backend: "vault"
+  # Exercises the TOKEN_MINT_CLIENT_ID/TOKEN_MINT_CLIENT_SECRET template
+  # path in CI so a broken render is caught by `helm template`, not just by
+  # eyeballing the diff. `existingClientSecretSecret` only needs to name a
+  # Secret for template rendering — it doesn't need to exist for `helm
+  # lint`/`helm template` to succeed.
+  tokenMint:
+    clientId: "example-token-mint-client"
+    existingClientSecretSecret: "example-token-mint-client-secret"
 
 # Exercises the token-sweep CronJob template path in CI (`helm template`
 # only -- these dummy values don't need a reachable Vault).

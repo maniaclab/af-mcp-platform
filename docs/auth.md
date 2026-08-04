@@ -219,7 +219,8 @@ Key points:
   second interactive login.
 - **Runtime, not build-time, OIDC config.** The issuer/client id/scope the
   portal uses come from `GET /config.json` (see `configmap-portal-config.yaml`
-  → `portal.oidc.*` values), fetched once at startup — not baked into the
+  → top-level `oidc.issuer` plus `portal.oidc.clientId`/`scope`), fetched once
+  at startup — not baked into the
   image. One built portal image is deployable against any realm, client, or
   institution's fork via a values change and a rolling restart, mirroring
   how the broker itself takes `OIDC_ISSUER` from an env var rather than
@@ -638,3 +639,87 @@ becomes unnecessary for that client — the interactive and MCP-OAuth paths
 both bypass it already. Until then, both stories coexist: sign in with a
 browser and you never see a token; connect a client that can't do OAuth
 discovery yet and you mint one here.
+
+### Operator setup: the token-mint client
+
+Step 1 above only works once a Keycloak client exists for the broker to
+authenticate *as* when it performs the exchange on the caller's behalf.
+Nothing in this repo can create that client for you — it's a one-time,
+per-realm Keycloak administrative step:
+
+1. **Clients → Create client**, in the same realm as `oidc.issuer`
+   (`connect`, in the example above).
+2. **Client authentication: On** — this must be a *confidential* client
+   (it authenticates with a `client_secret`, not just a redirect URI),
+   since `_exchange_for_bearer` (`api/tokens.py`) sends it in the token
+   request body.
+3. **Capability config → Standard token exchange: On** — this is
+   Keycloak's V2 token exchange feature; without it the exchange below
+   fails with `unauthorized_client`.
+4. Note the client's **Client ID** and, from the **Credentials** tab, its
+   **Client secret**. These become `TOKEN_MINT_CLIENT_ID` /
+   `TOKEN_MINT_CLIENT_SECRET` (`_TOKEN_MINT_CLIENT_ID_ENV` /
+   `_TOKEN_MINT_CLIENT_SECRET_ENV` in `api/tokens.py`) — read straight from
+   the environment, not part of the broker's pydantic `Settings`, for the
+   same "operational secret, not general configuration" reason
+   `credentials/service.py`'s `ServiceProvider` keeps `AF_SERVICE_CLIENT_ID`/
+   `AF_SERVICE_CLIENT_SECRET` out of `Settings` too.
+
+With that client in place, `_exchange_for_bearer` sends Keycloak exactly:
+
+```
+POST https://keycloak-prod.tempest.uchicago.edu/realms/connect/protocol/openid-connect/token
+grant_type=urn:ietf:params:oauth:grant-type:token-exchange
+client_id=<TOKEN_MINT_CLIENT_ID>
+client_secret=<TOKEN_MINT_CLIENT_SECRET>
+subject_token=<the caller's own AF access token>
+subject_token_type=urn:ietf:params:oauth:token-type:access_token
+requested_token_type=urn:ietf:params:oauth:token-type:access_token
+audience=mcp-gateway
+```
+
+`audience` is always `settings.oidc_audience` — the broker's **own**
+audience (`mcp-gateway`, `OIDC_AUDIENCE`), never an external one. This is
+"Path B" from the [Critical Note](#critical-note-keycloak-token-exchange-limitations)
+above: an AF-internal token exchange. It is exactly the kind of exchange
+`atlas-auth.cern.ch` rejects — and that's fine here, on purpose, because
+the resulting token only ever needs to satisfy this broker's own
+`identity.keycloak_dependency`, never an external ATLAS service. Nothing
+about this contradicts the "Standard Token Exchange (V2) is
+internal-to-AF only" constraint above; it's the same constraint, used for
+the one case (the broker authenticating to itself) where "internal-to-AF
+only" is not a limitation at all.
+
+Without `TOKEN_MINT_CLIENT_ID`/`TOKEN_MINT_CLIENT_SECRET` set,
+`POST /v1/tokens` returns `503` (`GET`/`DELETE /v1/tokens` are unaffected —
+listing and revoking work against whatever is already in the registry).
+The Helm chart (`charts/af-mcp-platform`) wires both env vars from
+`broker.tokenMint.clientId` (a plain value — the client id is not a
+secret) and `broker.tokenMint.existingClientSecretSecret` (the name of a
+pre-existing Secret with a `token-mint-client-secret` key), the same
+existing-Secret-by-reference pattern `broker.oauth21.existingStateKeySecret`
+and `broker.existingServiceTokenSecret` already use. Create that Secret as
+a SealedSecret, matching the `broker-state-key` example your `flux_apps`
+deployment repo already has for `broker.oauth21.existingStateKeySecret`:
+
+```bash
+kubectl create secret generic token-mint-client-secret \
+  --dry-run=client \
+  --from-literal=token-mint-client-secret='<client secret from the Credentials tab>' \
+  -o yaml \
+  | kubeseal --controller-namespace=sealed-secrets --format=yaml \
+  > token-mint-client-secret.sealed.yaml
+```
+
+Commit `token-mint-client-secret.sealed.yaml` to the cluster's GitOps repo
+alongside the `broker-state-key` SealedSecret, then reference it from the
+deploying `HelmRelease`:
+
+```yaml
+spec:
+  values:
+    broker:
+      tokenMint:
+        clientId: "mcp-token-mint"
+        existingClientSecretSecret: "token-mint-client-secret"
+```
