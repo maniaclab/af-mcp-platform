@@ -11,6 +11,9 @@ function makeServer(overrides: Partial<CatalogServer> = {}): CatalogServer {
     auth_type: 'bearer',
     action_type: 'read',
     credential_provider: 'atlas-oidc',
+    status: 'available',
+    status_detail: 'Available.',
+    correlation_id: null,
     tools: [],
     ...overrides,
   };
