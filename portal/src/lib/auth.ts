@@ -120,6 +120,23 @@ export async function isOidcConfigured(): Promise<boolean> {
   return (await getUserManager()) !== null;
 }
 
+/**
+ * Returns the broker's absolute origin (scheme + host, no trailing slash) —
+ * `/config.json`'s `brokerOrigin`, falling back to the portal's own origin
+ * when it's empty (mirrors the same-origin default api.ts's `API_BASE` uses)
+ * or if `/config.json` couldn't be loaded at all. Used by TokensPage.vue to
+ * build copy-paste CLI snippets that work outside the SPA, where a
+ * relative `/v1` path wouldn't resolve to anything.
+ */
+export async function getBrokerOrigin(): Promise<string> {
+  try {
+    const cfg = await loadConfig();
+    return cfg.brokerOrigin || window.location.origin;
+  } catch {
+    return window.location.origin;
+  }
+}
+
 /** Returns the current authenticated user, or null if there is none (or it's expired). */
 export async function getUser(): Promise<User | null> {
   const manager = await getUserManager();

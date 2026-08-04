@@ -12,10 +12,12 @@
  * `close` event) and is never written back into the token list — the list
  * always comes from GET /v1/tokens, which never echoes a token value.
  */
-import { ref, computed, onMounted, nextTick } from 'vue';
+import { ref, computed, onMounted, nextTick, type Ref } from 'vue';
 import { mintToken, listTokens, revokeToken, SessionExpiredError } from '../lib/api';
 import type { MintedToken, TokenSummary } from '../lib/api';
 import { shortJti, tokenStatus, truncateNote } from '../lib/tokenDisplay';
+import { curlMintSnippet, pythonMintAndConnectSnippet } from '../lib/tokenCliSnippets';
+import { getBrokerOrigin } from '../lib/auth';
 
 const tokens = ref<TokenSummary[]>([]);
 const loading = ref(true);
@@ -99,22 +101,58 @@ async function handleMint(evt: Event) {
   }
 }
 
+const CLIPBOARD_LABEL_RESET_MS = 2000;
+
+// Shared by copyToken() (the minted-token box) and the CLI snippets section
+// below (copyCurlSnippet()/copyPythonSnippet()) -- same "Copy" -> "Copied!" ->
+// reset dance, just against different clipboard text and label refs.
+async function copyToClipboard(text: string, label: Ref<string>) {
+  try {
+    await navigator.clipboard.writeText(text);
+    label.value = 'Copied!';
+    setTimeout(() => {
+      label.value = 'Copy';
+    }, CLIPBOARD_LABEL_RESET_MS);
+  } catch {
+    label.value = 'Copy failed — select and copy manually';
+  }
+}
+
 async function copyToken() {
   if (!mintedToken.value) return;
-  try {
-    await navigator.clipboard.writeText(mintedToken.value.token);
-    copyLabel.value = 'Copied!';
-    setTimeout(() => {
-      copyLabel.value = 'Copy';
-    }, 2000);
-  } catch {
-    copyLabel.value = 'Copy failed — select and copy manually';
-  }
+  await copyToClipboard(mintedToken.value.token, copyLabel);
 }
 
 async function handleDone() {
   mintDialog.value?.close(); // triggers onMintDialogClose, which clears mintedToken
   await loadTokens();
+}
+
+// ── "Use from the command line" (issue #122) ────────────────────────────
+// Copy-paste snippets for minting/using a token outside the portal (testing,
+// scripts, CI) -- the tracked path, as opposed to a token obtained directly
+// from Keycloak (which POST /v1/tokens never sees, so it can't be listed or
+// revoked below; see docs/connecting-a-client.md).
+// Empty until onMounted resolves it -- never read `window` at setup() time,
+// since Astro prerenders this component server-side (client:load) where
+// there is no window (see the build's SSR pass).
+const brokerOrigin = ref('');
+onMounted(async () => {
+  brokerOrigin.value = await getBrokerOrigin();
+});
+
+const curlSnippet = computed(() => curlMintSnippet(brokerOrigin.value));
+const pythonSnippet = computed(() => pythonMintAndConnectSnippet(brokerOrigin.value));
+
+const curlCopyLabel = ref('Copy');
+const pythonCopyLabel = ref('Copy');
+
+async function copyCurlSnippet() {
+  await copyToClipboard(curlSnippet.value, curlCopyLabel);
+}
+
+async function copyPythonSnippet() {
+  await copyToClipboard(pythonSnippet.value, pythonCopyLabel);
 }
 
 // ── Revoke ───────────────────────────────────────────────────────────────
@@ -290,6 +328,40 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
         interactive sign-in (oauth2-proxy) sessions or a future MCP OAuth flow, so those aren't
         listed — see <code>docs/auth.md</code>.
       </p>
+
+      <!-- issue #122: copy-paste snippets for minting/using a token outside the browser -->
+      <details class="tp__cli">
+        <summary class="tp__cli-summary">Use from the command line</summary>
+        <div class="tp__cli-body">
+          <p class="tp__cli-intro">
+            Mint and use a broker token without the browser — for testing, scripts, or CI. See
+            <code>docs/connecting-a-client.md</code> for the full client setup guide.
+          </p>
+
+          <h3 class="tp__cli-heading">1. Mint a token with curl</h3>
+          <div class="tp__cli-snippet">
+            <pre class="tp__cli-pre"><code>{{ curlSnippet }}</code></pre>
+            <button type="button" class="tp__btn tp__btn--copy" @click="copyCurlSnippet">
+              {{ curlCopyLabel }}
+            </button>
+          </div>
+
+          <h3 class="tp__cli-heading">2. Mint and connect from Python</h3>
+          <div class="tp__cli-snippet">
+            <pre class="tp__cli-pre"><code>{{ pythonSnippet }}</code></pre>
+            <button type="button" class="tp__btn tp__btn--copy" @click="copyPythonSnippet">
+              {{ pythonCopyLabel }}
+            </button>
+          </div>
+
+          <p class="tp__cli-note">
+            Tokens minted this way appear in the list above with their name, expiry, and a
+            <strong>Revoke</strong> action. Tokens obtained directly from Keycloak (e.g. a local
+            PKCE script) will not — the broker never saw them minted, so it has nothing to list or
+            revoke.
+          </p>
+        </div>
+      </details>
     </template>
 
     <!-- Mint dialog -->
@@ -630,6 +702,76 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
   font-family: 'IBM Plex Mono', monospace;
   font-size: 0.6875rem;
   color: #9ca3af;
+}
+
+/* "Use from the command line" (issue #122) */
+.tp__cli {
+  border: 1px solid var(--color-af-border);
+  border-radius: 4px;
+}
+.tp__cli-summary {
+  cursor: pointer;
+  padding: 0.75rem 1rem;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--color-af-text);
+}
+.tp__cli-summary:focus-visible {
+  outline: 2px solid var(--color-af-teal);
+  outline-offset: -2px;
+}
+.tp__cli-body {
+  padding: 0 1rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.tp__cli-intro {
+  font-size: 0.8125rem;
+  color: #9ca3af;
+  line-height: 1.6;
+  margin: 0;
+}
+.tp__cli-intro code {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.75rem;
+  color: #9ca3af;
+}
+.tp__cli-heading {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--color-af-dim);
+  margin: 0.25rem 0 0;
+}
+.tp__cli-snippet {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.625rem;
+}
+.tp__cli-pre {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 0.75rem;
+  background: var(--color-af-void);
+  border: 1px solid var(--color-af-muted);
+  border-radius: 4px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.75rem;
+  color: var(--color-af-text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+}
+.tp__cli-note {
+  font-size: 0.75rem;
+  color: var(--color-af-dim);
+  line-height: 1.6;
+  margin: 0;
 }
 
 /* Buttons (shared shape with ProxyStatus.vue / IdentityLink.vue) */

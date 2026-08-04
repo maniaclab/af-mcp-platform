@@ -44,6 +44,37 @@ the portal and mint a new one, rather than trying to retrieve it again. The
 mechanism for doing that without the token touching disk or shell history
 is client-specific; see each section below.
 
+## Minting a token from the command line
+
+Once you have one `aud=mcp-gateway` bearer (e.g. copied out of a logged-in
+portal session), you can mint further tokens without going back to the
+browser — handy for CI or scripts that need to rotate their own short-lived
+token. The `/tokens` page has a copy-paste "Use from the command line"
+section with these exact snippets pre-filled with your broker's origin; this
+is the same request:
+
+```bash
+read -s -p "Bearer token: " MCP_BEARER_TOKEN
+export MCP_BEARER_TOKEN
+
+curl -sS -X POST "https://mcp.af.uchicago.edu/v1/tokens" \
+  -H "Authorization: Bearer $MCP_BEARER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "my-laptop", "note": "optional free-text note"}'
+```
+
+`name` and `note` are both optional (see
+[Programmatic client bootstrap](auth.md#programmatic-client-bootstrap)). The
+response's `token` field is shown exactly once — the broker never returns a
+minted token's value again.
+
+**Only tokens minted this way — through `POST /v1/tokens` — show up in the
+portal's `/tokens` list** (name, expiry, revoke). A token obtained directly
+from Keycloak (e.g. a local PKCE script) is a perfectly valid `aud=mcp-gateway`
+bearer, but the broker never saw it minted, so it has no metadata to list or
+revoke there; see the [Programmatic client bootstrap](auth.md#programmatic-client-bootstrap)
+known limitations for why.
+
 ## Claude (Claude.ai, Claude Desktop)
 
 Claude's remote-MCP "custom connectors" support a static bearer token via a
