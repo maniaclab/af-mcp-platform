@@ -65,7 +65,7 @@ async def test_dead_backend_call_surfaces_as_clean_tool_error_not_a_traceback(
         auth_type="none",
     )
     factory = _make_client_factory(
-        spec, CredentialRegistry([]), settings, EntitlementPolicy()
+        spec, CredentialRegistry(), settings, EntitlementPolicy()
     )
     mcp_tool = mt.Tool(
         name="dead_echo", inputSchema={"type": "object", "properties": {}}
@@ -121,7 +121,7 @@ async def test_upstream_mcp_level_error_passes_through_unchanged(
             )
         )
         policy = EntitlementPolicy()
-        mcp = build_aggregator(registry, settings, policy, CredentialRegistry([]))
+        mcp = build_aggregator(registry, settings, policy, CredentialRegistry())
 
         async with run_server_async(mcp, path="/mcp") as agg_url:
             transport = StreamableHttpTransport(
@@ -170,7 +170,7 @@ async def test_slow_backend_call_times_out_cleanly_instead_of_hanging(
             )
         )
         policy = EntitlementPolicy()
-        mcp = build_aggregator(registry, settings, policy, CredentialRegistry([]))
+        mcp = build_aggregator(registry, settings, policy, CredentialRegistry())
 
         async with run_server_async(mcp, path="/mcp") as agg_url:
             transport = StreamableHttpTransport(

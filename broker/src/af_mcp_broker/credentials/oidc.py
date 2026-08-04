@@ -85,9 +85,6 @@ class OIDCProvider(CredentialProvider):
             provider="OIDCProvider", alias=alias
         )
 
-    async def handles(self, target: str) -> bool:
-        return target in self._targets
-
     async def is_linked(self, principal: Principal) -> bool:
         """Return True if Keycloak holds a brokered ATLAS IAM token for *principal*.
 

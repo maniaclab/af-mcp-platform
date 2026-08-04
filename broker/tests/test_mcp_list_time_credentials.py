@@ -152,9 +152,6 @@ class _FakeListProvider(CredentialProvider):
         self.unlinked_uids = unlinked_uids
         self.issue_calls: list[int] = []
 
-    async def handles(self, target: str) -> bool:
-        return True
-
     async def is_linked(self, principal: Principal) -> bool:
         return principal.uid not in self.unlinked_uids
 
@@ -239,7 +236,7 @@ async def aggregator_url(
         )
     )
 
-    credential_registry = CredentialRegistry([])
+    credential_registry = CredentialRegistry()
     credential_registry.register("secure", fake_provider)
     credential_registry.register(
         "dead", fake_provider
@@ -481,7 +478,7 @@ async def test_replica_split_session_continuity(
             auth_type="none",
         )
     )
-    credential_registry = CredentialRegistry([])
+    credential_registry = CredentialRegistry()
 
     def _replica() -> Any:
         mcp = build_aggregator(registry, settings, policy, credential_registry)

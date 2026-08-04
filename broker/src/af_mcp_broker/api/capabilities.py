@@ -153,7 +153,7 @@ def _get_target_to_alias(request: Request) -> dict[str, str]:
 def _get_credential_registry(request: Request) -> CredentialRegistry:
     return getattr(
         request.app.state, "credential_registry", None
-    ) or CredentialRegistry([])
+    ) or CredentialRegistry()
 
 
 def _action_type_for_capability(
