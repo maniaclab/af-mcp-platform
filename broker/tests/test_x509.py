@@ -135,7 +135,7 @@ def test_parse_proxy_pem_extracts_dn_and_expiry():
 
 # ---------------------------------------------------------------------------
 # Proxy mint counter (issue #84 -- the Grafana dashboard already queries
-# af_mcp_x509_proxy_mints_total{username}, but no broker code incremented it)
+# af_mcp_x509_proxy_mints_total, but no broker code incremented it)
 # ---------------------------------------------------------------------------
 
 
@@ -149,18 +149,11 @@ async def test_store_proxy_and_parse_increments_mint_counter(tmp_path):
         settings=SimpleNamespace(proxy_dir=str(tmp_path / "proxies"))
     )
     principal = _principal("auser")
-    before = (
-        REGISTRY.get_sample_value(
-            "af_mcp_x509_proxy_mints_total", {"username": "auser"}
-        )
-        or 0.0
-    )
+    before = REGISTRY.get_sample_value("af_mcp_x509_proxy_mints_total") or 0.0
 
     await backend._store_proxy_and_parse(proxy_pem, principal)
 
-    after = REGISTRY.get_sample_value(
-        "af_mcp_x509_proxy_mints_total", {"username": "auser"}
-    )
+    after = REGISTRY.get_sample_value("af_mcp_x509_proxy_mints_total")
     assert after == before + 1
 
 

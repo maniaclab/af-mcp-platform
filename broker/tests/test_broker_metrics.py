@@ -15,7 +15,14 @@ from __future__ import annotations
 from af_mcp_broker import metrics
 
 # Label names that must never appear on any custom metric -- each is either
-# unbounded (attacker- or session-influenced) or a secret.
+# unbounded (attacker- or session-influenced), a secret, or identifies a
+# specific user. Per-user labels are forbidden outright (not just unbounded
+# ones): the audit log already records every invocation with the caller's
+# identity attached, at full fidelity and behind access control, whereas
+# Prometheus series are long-retained and broadly readable via Grafana -- a
+# per-user label here would duplicate the audit log at worse fidelity while
+# adding storage cost and a privacy surface. See metrics.py's module
+# docstring.
 _FORBIDDEN_LABEL_NAMES = {
     "jti",
     "token",
@@ -28,13 +35,15 @@ _FORBIDDEN_LABEL_NAMES = {
     "secret",
     "args",
     "args_summary",
+    "identity",
+    "username",
+    "unixname",
 }
 
 
 def _all_counters() -> list:
     return [
         metrics.tool_invocations_total,
-        metrics.tool_invocations_by_tool_total,
         metrics.tool_invocations_denied_total,
         metrics.tool_invocations_unmapped_total,
         metrics.credential_cache_hits_total,
@@ -59,29 +68,15 @@ def test_no_metric_carries_a_forbidden_label():
         )
 
 
-def test_tool_invocations_total_labeled_by_identity_backend_action_type():
+def test_tool_invocations_total_labeled_by_backend_tool_action_type():
+    """No identity label -- per-user counting was dropped in favor of the
+    audit log; see the module docstring's cardinality policy."""
     assert _full_name(metrics.tool_invocations_total) == "af_mcp_tool_invocations_total"
     assert set(metrics.tool_invocations_total._labelnames) == {
-        "identity",
-        "backend",
-        "action_type",
-    }
-
-
-def test_tool_invocations_by_tool_total_omits_identity():
-    """Deliberately no identity label -- identity x backend x ~50 tools per
-    backend would multiply series for little dashboard value; see the
-    module docstring's cardinality policy."""
-    assert (
-        _full_name(metrics.tool_invocations_by_tool_total)
-        == "af_mcp_tool_invocations_by_tool_total"
-    )
-    assert set(metrics.tool_invocations_by_tool_total._labelnames) == {
         "backend",
         "tool",
         "action_type",
     }
-    assert "identity" not in metrics.tool_invocations_by_tool_total._labelnames
 
 
 def test_tool_invocations_denied_total_labeled_by_backend_action_type():
@@ -118,6 +113,9 @@ def test_credential_cache_counters_labeled_by_target():
     assert metrics.credential_cache_misses_total._labelnames == ("target",)
 
 
-def test_x509_proxy_mints_total_labeled_by_username():
+def test_x509_proxy_mints_total_has_no_labels():
+    """No username label -- mints are rare/expensive but still per-user
+    events, and per-user labels are forbidden outright; see the module
+    docstring's cardinality policy."""
     assert _full_name(metrics.x509_proxy_mints_total) == "af_mcp_x509_proxy_mints_total"
-    assert metrics.x509_proxy_mints_total._labelnames == ("username",)
+    assert metrics.x509_proxy_mints_total._labelnames == ()

@@ -305,8 +305,10 @@ async def test_registry_and_policy_are_mutable_attributes(
 
 
 # ---------------------------------------------------------------------------
-# Prometheus invocation counters (issue #83 -- per-identity tool-invocation
-# counters from the /mcp aggregator, incremented next to write_audit() above)
+# Prometheus invocation counters (issue #83 asked for per-identity counters;
+# Giordon declined that -- the audit log above already carries identity at
+# full fidelity behind access control, so these counters are backend/tool
+# only, incremented next to write_audit() above)
 # ---------------------------------------------------------------------------
 
 
@@ -314,16 +316,12 @@ async def test_entitled_call_increments_invocation_counters(
     registry, policy, make_principal, captured_audits
 ) -> None:
     mw = AuthorizationMiddleware(registry, policy)
-    principal = make_principal(groups=["atlas"], unixname="alice")
+    principal = make_principal(groups=["atlas"])
     context = _call_tool_context("rucio_list_dids", {"scope": "foo"}, principal)
     call_next = _CallNextRecorder(result=ToolResult(content=[]))
 
     before_total = _sample(
         "af_mcp_tool_invocations_total",
-        {"identity": "alice", "backend": "rucio", "action_type": "read"},
-    )
-    before_by_tool = _sample(
-        "af_mcp_tool_invocations_by_tool_total",
         {"backend": "rucio", "tool": "rucio_list_dids", "action_type": "read"},
     )
     before_denied = _sample(
@@ -336,16 +334,9 @@ async def test_entitled_call_increments_invocation_counters(
     assert (
         _sample(
             "af_mcp_tool_invocations_total",
-            {"identity": "alice", "backend": "rucio", "action_type": "read"},
-        )
-        == before_total + 1
-    )
-    assert (
-        _sample(
-            "af_mcp_tool_invocations_by_tool_total",
             {"backend": "rucio", "tool": "rucio_list_dids", "action_type": "read"},
         )
-        == before_by_tool + 1
+        == before_total + 1
     )
     # A successful call must not also count as a denial.
     assert (
@@ -361,16 +352,12 @@ async def test_unentitled_call_increments_invocation_and_denied_counters(
     registry, policy, make_principal, captured_audits
 ) -> None:
     mw = AuthorizationMiddleware(registry, policy)
-    principal = make_principal(groups=[], unixname="bob")
+    principal = make_principal(groups=[])
     context = _call_tool_context("rucio_list_dids", {}, principal)
     call_next = _CallNextRecorder()
 
     before_total = _sample(
         "af_mcp_tool_invocations_total",
-        {"identity": "bob", "backend": "rucio", "action_type": "read"},
-    )
-    before_by_tool = _sample(
-        "af_mcp_tool_invocations_by_tool_total",
         {"backend": "rucio", "tool": "rucio_list_dids", "action_type": "read"},
     )
     before_denied = _sample(
@@ -385,16 +372,9 @@ async def test_unentitled_call_increments_invocation_and_denied_counters(
     assert (
         _sample(
             "af_mcp_tool_invocations_total",
-            {"identity": "bob", "backend": "rucio", "action_type": "read"},
-        )
-        == before_total + 1
-    )
-    assert (
-        _sample(
-            "af_mcp_tool_invocations_by_tool_total",
             {"backend": "rucio", "tool": "rucio_list_dids", "action_type": "read"},
         )
-        == before_by_tool + 1
+        == before_total + 1
     )
     # ... and is additionally isolated in the denied-only counter.
     assert (
@@ -430,13 +410,13 @@ async def test_call_next_failure_increments_invocation_counters_not_denied(
     registry, policy, make_principal, captured_audits
 ) -> None:
     mw = AuthorizationMiddleware(registry, policy)
-    principal = make_principal(groups=["atlas"], unixname="carol")
+    principal = make_principal(groups=["atlas"])
     context = _call_tool_context("rucio_list_dids", {}, principal)
     call_next = _CallNextRecorder(error=RuntimeError("credential provider unreachable"))
 
     before_total = _sample(
         "af_mcp_tool_invocations_total",
-        {"identity": "carol", "backend": "rucio", "action_type": "read"},
+        {"backend": "rucio", "tool": "rucio_list_dids", "action_type": "read"},
     )
     before_denied = _sample(
         "af_mcp_tool_invocations_denied_total",
@@ -451,7 +431,7 @@ async def test_call_next_failure_increments_invocation_counters_not_denied(
     assert (
         _sample(
             "af_mcp_tool_invocations_total",
-            {"identity": "carol", "backend": "rucio", "action_type": "read"},
+            {"backend": "rucio", "tool": "rucio_list_dids", "action_type": "read"},
         )
         == before_total + 1
     )

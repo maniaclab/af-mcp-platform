@@ -339,26 +339,27 @@ call above serves them without extra wiring:
 
 | Metric | Labels | Incremented in |
 |---|---|---|
-| `af_mcp_tool_invocations_total` | `identity`, `backend`, `action_type` | `mcp/middleware/authorization_mw.py`, next to `write_audit()` |
-| `af_mcp_tool_invocations_by_tool_total` | `backend`, `tool`, `action_type` | same, no `identity` label |
+| `af_mcp_tool_invocations_total` | `backend`, `tool`, `action_type` | `mcp/middleware/authorization_mw.py`, next to `write_audit()` |
 | `af_mcp_tool_invocations_denied_total` | `backend`, `action_type` | same, denials only |
 | `af_mcp_tool_invocations_unmapped_total` | *(none)* | same, when a tool name matches no registered backend prefix |
 | `af_mcp_credential_cache_hits_total` / `..._misses_total` | `target` | `credentials/cache.py`'s `CredentialCache.get()` |
-| `af_mcp_x509_proxy_mints_total` | `username` | `credentials/x509.py`'s `HomeDirVomsBackend._store_proxy_and_parse()` |
+| `af_mcp_x509_proxy_mints_total` | *(none)* | `credentials/x509.py`'s `HomeDirVomsBackend._store_proxy_and_parse()` |
 
-Cardinality policy: `identity` (the caller's `unixname`) is bounded by the
-facility's user count and appears on exactly one counter above; `username`
-on the mint counter is the same bounded identity, kept there because
-mints are rare, expensive, per-user events. `backend`, `action_type`, and
-`target` are drawn from operator-configured `backends.yaml`/`policy.yaml`.
-`tool` is bounded by a backend's own fixed schema but deliberately excluded
-from the identity-bearing counter — `identity x backend x action_type`
-already covers per-user rate dashboards, and multiplying that by ~50 tools
-per backend buys little for a large increase in series. A tool name that
-matches no backend is client-supplied and unbounded, so it is never used as
-a label — see `metrics.py`'s module docstring for the full reasoning, and
-avoid adding a raw token, jti, or request ID as a label on any future
-metric for the same reason.
+Cardinality policy: no metric above carries a user identifier (username,
+unixname, subject, or otherwise) — ever. `identity` was on an early draft of
+`af_mcp_tool_invocations_total` and `username` on the mint counter, but both
+were dropped: the audit log above already records every invocation with the
+caller's identity attached, at full fidelity and behind access control,
+while these Prometheus series are long-retained and broadly readable via
+Grafana. A per-user label here would duplicate the audit log at worse
+fidelity while adding storage cost and a privacy surface, so per-identity
+questions are answered from the audit log, not from these counters.
+`backend`, `action_type`, and `target` are drawn from operator-configured
+`backends.yaml`/`policy.yaml`; `tool` is bounded by a backend's own fixed
+schema. A tool name that matches no backend is client-supplied and
+unbounded, so it is never used as a label — see `metrics.py`'s module
+docstring for the full reasoning, and avoid adding a raw token, jti, or
+request ID as a label on any future metric for the same reason.
 
 ---
 

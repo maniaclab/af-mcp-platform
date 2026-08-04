@@ -45,18 +45,15 @@ logger = structlog.get_logger(__name__)
 # functions/classes those routes call, rather than looping back over HTTP.
 
 
-def _record_invocation(
-    identity: str, backend_name: str, tool_name: str, action_type: str
-) -> None:
-    """Increment the two identity/tool invocation counters together --
-    every call site below that has a resolved backend increments both, so
-    this keeps them from drifting out of sync. See metrics.py's cardinality
-    policy for why one carries identity and the other doesn't.
+def _record_invocation(backend_name: str, tool_name: str, action_type: str) -> None:
+    """Increment the tool-invocation counter.
+
+    No identity label -- per-identity counting was deliberately dropped in
+    favor of the audit log (``write_audit()`` above already records the
+    same call with the caller's identity attached, at full fidelity and
+    behind access control); see metrics.py's cardinality policy.
     """
     metrics.tool_invocations_total.labels(
-        identity=identity, backend=backend_name, action_type=action_type
-    ).inc()
-    metrics.tool_invocations_by_tool_total.labels(
         backend=backend_name, tool=tool_name, action_type=action_type
     ).inc()
 
@@ -126,8 +123,8 @@ class AuthorizationMiddleware(Middleware):
             # A denial is still an attempted invocation for the coarse
             # counters, plus its own isolated denied counter -- see
             # metrics.py's cardinality policy for why outcome isn't a label
-            # on tool_invocations_total/_by_tool_total themselves.
-            _record_invocation(principal.unixname, backend.name, tool_name, action_type)
+            # on tool_invocations_total itself.
+            _record_invocation(backend.name, tool_name, action_type)
             metrics.tool_invocations_denied_total.labels(
                 backend=backend.name, action_type=action_type
             ).inc()
@@ -171,7 +168,7 @@ class AuthorizationMiddleware(Middleware):
             # authorization allowed it, so it's not a denial, and gets no
             # separate error counter (the audit log is the source of truth
             # for exact per-outcome fidelity; see metrics.py's docstring).
-            _record_invocation(principal.unixname, backend.name, tool_name, action_type)
+            _record_invocation(backend.name, tool_name, action_type)
             await write_audit(
                 AuditRecord(
                     principal_sub=principal.subject,
@@ -190,7 +187,7 @@ class AuthorizationMiddleware(Middleware):
             )
             raise
 
-        _record_invocation(principal.unixname, backend.name, tool_name, action_type)
+        _record_invocation(backend.name, tool_name, action_type)
         await write_audit(
             AuditRecord(
                 principal_sub=principal.subject,

@@ -11,24 +11,23 @@ rather than constructing its own.
 
 Cardinality policy -- read this before adding a label or a new metric:
 
-- ``identity`` (``principal.unixname``) is the only per-user label anywhere
-  in this module, and it appears on exactly one counter
-  (``tool_invocations_total``). NEVER label a metric with a raw token, jti,
-  request ID, or tool argument -- those are attacker-influenced or
-  session-scoped and unbounded, and will exhaust Prometheus memory.
+- No metric here may carry a per-user label (username, unixname, subject,
+  or any other user identifier) -- not because the set is unbounded, but
+  because the audit log (``audit/logger.py``) already records every
+  invocation with the caller's identity attached, at full fidelity and
+  behind access control, while these Prometheus series are long-retained
+  and broadly readable via Grafana. A per-user label here would duplicate
+  the audit log at worse fidelity while adding storage cost and a privacy
+  surface. Per-identity questions are answered from the audit log, never
+  from these counters.
+- NEVER label a metric with a raw token, jti, request ID, or tool argument
+  either -- those are attacker-influenced or session-scoped and unbounded,
+  and will exhaust Prometheus memory.
 - ``backend`` and ``action_type`` are drawn from the operator-configured
   ``backends.yaml`` / ``policy.yaml`` (single/low-digit cardinality at
   facility scale) -- safe on every counter that carries them.
 - ``tool`` is also configuration-bound (a backend's own fixed schema, on
-  the order of dozens of names) but is deliberately kept OFF the
-  identity-bearing counter: ``identity x backend x action_type`` already
-  covers per-user rate dashboards, and multiplying that by ~50 tools per
-  backend would buy little dashboard value for a large increase in series.
-- ``username`` on the x509 mint counter is the same bounded set as
-  ``identity`` above -- kept because the dashboard already keys the
-  "mints per hour" panel by user, and x509 mints are inherently rare and
-  expensive (one Kubernetes Job each), so the series count stays small even
-  at full facility scale.
+  the order of dozens of names) -- safe on ``tool_invocations_total``.
 - ``target`` on the credential-cache counters is the configured backend
   target set (``backends.yaml``), not user input.
 - A tool call whose name matches no registered backend prefix is audited
@@ -45,16 +44,10 @@ from prometheus_client import Counter
 
 tool_invocations_total = Counter(
     "af_mcp_tool_invocations_total",
-    "Tool invocations attempted via the /mcp aggregator, by identity. "
-    "Incremented once per call regardless of outcome (success, denied, or "
-    "error) -- see tool_invocations_denied_total to isolate denials.",
-    ["identity", "backend", "action_type"],
-)
-
-tool_invocations_by_tool_total = Counter(
-    "af_mcp_tool_invocations_by_tool_total",
-    "Tool invocations attempted via the /mcp aggregator, by tool. "
-    "Deliberately has no identity label -- see module docstring.",
+    "Tool invocations attempted via the /mcp aggregator, by backend, tool, "
+    "and action_type. Incremented once per call regardless of outcome "
+    "(success, denied, or error) -- see tool_invocations_denied_total to "
+    "isolate denials. No identity label -- see module docstring.",
     ["backend", "tool", "action_type"],
 )
 
@@ -84,6 +77,5 @@ credential_cache_misses_total = Counter(
 
 x509_proxy_mints_total = Counter(
     "af_mcp_x509_proxy_mints_total",
-    "Successful x509/VOMS proxy mints, by username.",
-    ["username"],
+    "Successful x509/VOMS proxy mints. No labels -- see module docstring.",
 )
