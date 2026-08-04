@@ -208,6 +208,15 @@ Callers pipe this through `nindent` at whatever depth their container's
 # Portal base URL for unlock hints and identity-linking redirects
 - name: PORTAL_URL
   value: {{ printf "https://%s" .Values.ingress.portalHost | quote }}
+# /mcp aggregator transport mode (issue #128) -- always set, same
+# visibility rationale as TOKEN_STORE_BACKEND below. MCP_REPLICA_COUNT is
+# not a knob of its own; it's this same replicaCount value, passed through
+# purely so the broker's own startup check can warn when mcpStatelessHttp
+# is disabled at more than one replica (see docs/architecture.md).
+- name: MCP_STATELESS_HTTP
+  value: {{ .Values.broker.mcpStatelessHttp | quote }}
+- name: MCP_REPLICA_COUNT
+  value: {{ .Values.broker.replicaCount | quote }}
 # Proxy tmpfs mount path
 {{- if .Values.broker.tmpfsProxy.enabled }}
 - name: PROXY_DIR

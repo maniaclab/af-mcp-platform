@@ -120,6 +120,35 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
             uid=dev_principal.uid,
         )
 
+    # --- /mcp transport mode (issue #128): a stateful aggregator (the
+    # fastmcp/mcp SDK default, mcp_stateless_http=False) pins a streamable-
+    # HTTP session to the pod that created it -- safe only with an external
+    # session-affinity mechanism (e.g. an ingress hashing on client IP) in
+    # front of more than one replica. The broker can't see whether that
+    # affinity exists, so this can only warn, not refuse to start; it warns
+    # whenever mcp_replica_count (chart-supplied) says there's more than one
+    # replica to possibly land on.
+    if (
+        not settings.mcp_stateless_http
+        and settings.mcp_replica_count is not None
+        and settings.mcp_replica_count > 1
+    ):
+        logger.warning(
+            "mcp_stateful_multi_replica",
+            message=(
+                "mcp_stateless_http=False with more than one broker replica: "
+                "streamable-HTTP sessions are in-process state, so a load "
+                "balancer without session affinity will route a session's "
+                "later requests to a replica that never created it, which "
+                "terminates the session and surfaces as an intermittent "
+                "'Session terminated' error to MCP clients. Either leave "
+                "mcp_stateless_http at its default (True) or put "
+                "client-IP-hash affinity in front of the ingress -- see "
+                "docs/architecture.md."
+            ),
+            replica_count=settings.mcp_replica_count,
+        )
+
     # --- Authorization: the authorization/ engine matches the shipped policy.yaml.
     try:
         entitlement_policy = load_policy(settings.policy_file)
@@ -427,10 +456,20 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
 # empty registry and placeholder Settings()/EntitlementPolicy()/
 # CredentialRegistry(), and `lifespan()` calls `populate_aggregator()` to
 # push in the real values before the app starts serving requests.
+_mcp_aggregator_placeholder_settings = Settings()
 _mcp_aggregator = build_aggregator(
-    BackendRegistry(), Settings(), EntitlementPolicy(), CredentialRegistry([])
+    BackendRegistry(),
+    _mcp_aggregator_placeholder_settings,
+    EntitlementPolicy(),
+    CredentialRegistry([]),
 )
-_mcp_aggregator_app = _mcp_aggregator.http_app(path="/")
+# stateless_http (issue #128): unlike policy_file/backends_file, Settings()
+# reads env vars synchronously at construction, so the placeholder instance
+# above already reflects the real MCP_STATELESS_HTTP value -- no need to
+# wait for populate_aggregator() to push in a later value.
+_mcp_aggregator_app = _mcp_aggregator.http_app(
+    path="/", stateless_http=_mcp_aggregator_placeholder_settings.mcp_stateless_http
+)
 
 app = FastAPI(
     title="AF MCP Broker",

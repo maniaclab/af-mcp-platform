@@ -123,6 +123,29 @@ class Settings(BaseSettings):
     # User-facing portal, used in unlock hints and identity-linking redirects.
     portal_url: str = "https://mcp-portal.af.uchicago.edu"
 
+    # /mcp aggregator transport mode (issue #128). Streamable-HTTP sessions
+    # are in-process state: a stateful session (the fastmcp/mcp SDK default)
+    # created by one pod's `initialize` only exists in that pod's memory, so
+    # an un-pinned load balancer routing a later request for the same
+    # session to a different replica gets an unknown-session 404 and the
+    # client sees "Session terminated" -- intermittently, invisibly in any
+    # single-replica test, and roughly as often as replicas outnumber 1.
+    # True (every request self-contained, any replica can serve it) is the
+    # only mode that is safe without session-affinity infrastructure, so it
+    # is the default. Disabling it trades that safety for the standalone GET
+    # SSE stream (server-initiated notifications outside an active
+    # tools/call, e.g. notifications/tools/list_changed) -- see
+    # docs/architecture.md. mcp_replica_count below backs the startup check
+    # that warns when this is disabled at replicaCount > 1.
+    mcp_stateless_http: bool = True
+
+    # Chart-supplied replica count (from .Values.broker.replicaCount),
+    # purely so app.py's startup check can warn about the unsafe
+    # mcp_stateless_http=False + replicaCount>1 combination described above.
+    # None outside the chart (e.g. local dev) -- the check is skipped rather
+    # than guessing.
+    mcp_replica_count: int | None = None
+
     log_level: str = Field(
         default="INFO",
         alias="LOG_LEVEL",

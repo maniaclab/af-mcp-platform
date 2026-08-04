@@ -6,6 +6,7 @@ import time
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
+import httpx
 import pytest
 import uvicorn
 from conftest import make_claims
@@ -179,9 +180,11 @@ class _FakeListProvider(CredentialProvider):
 
 @pytest.fixture
 def policy() -> EntitlementPolicy:
-    # Each backend's required capability comes straight from its own
-    # BackendSpec.required_capability below (issue #60), not from a
-    # policy.yaml lookup, so this only needs to grant "read_data" itself.
+    # required_capability for each target ("secure"/"open"/"dead") is
+    # declared on that target's BackendSpec in the aggregator_url fixture
+    # below -- the registry is authoritative for that, not EntitlementPolicy
+    # (see check_entitlement's docstring). This policy only needs to say
+    # which capabilities the "atlas" group grants.
     return EntitlementPolicy(
         group_capabilities={"atlas": ["read_data"], "__authenticated__": []},
     )
@@ -398,3 +401,138 @@ async def test_unlinked_listing_does_not_poison_a_linked_callers_authorized_call
         result = await client.call_tool("secure_whoami", {})
 
     assert result.data == "Bearer token-for-111"
+
+
+async def test_list_then_call_on_healthy_backend_survives_a_sibling_401_during_list(
+    aggregator_url: str, sig_key: Any, prime_jwks: Any
+) -> None:
+    """Attempted regression coverage for issue #58's "Session terminated"
+    report: production showed a single MCP session doing tools/list (which
+    succeeds -- some backends 401 during listing and are dropped per
+    provider_error_strategy="warn", exactly like "secure" is for carol
+    below) immediately followed by tools/call on an unrelated, healthy
+    backend's tool -- with the server tearing the session down before the
+    call was ever processed.
+
+    This reproduces the same shape in-process (one client session, one
+    backend 401ing during listing via a real ASGI 401 over a real HTTP
+    connection -- same as the not_linked test above -- followed by
+    tools/call on a different, healthy backend) and passes: the
+    ProxyProvider/AggregateProvider exception-containment path already
+    isolates "secure"'s listing failure from "open"'s tools/call in this
+    exact scenario. It is kept as a regression guard for that isolation
+    property, not as a confirmed repro of #58 -- see the issue for the
+    investigation into what in-process reproduction could and couldn't
+    establish.
+    """
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(_token_for(333, 333, "carol"))
+
+    async with _bearer_client(aggregator_url, token) as client:
+        names = {t.name for t in await client.list_tools()}
+        assert "secure_whoami" not in names
+        assert "open_ping" in names
+
+        result = await client.call_tool("open_ping", {})
+
+    assert result.data == "pong"
+
+
+@pytest.mark.parametrize("stateless", [True, False])
+async def test_replica_split_session_continuity(
+    settings: Any,
+    policy: EntitlementPolicy,
+    open_backend_url: str,
+    sig_key: Any,
+    prime_jwks: Any,
+    stateless: bool,
+) -> None:
+    """Issue #128: a stateful aggregator (mcp_stateless_http=False, the
+    fastmcp/mcp SDK default) pins a streamable-HTTP session to whichever pod
+    created it. With more than one replica and no session-affinity ingress
+    config, a load balancer routing a session's later requests to a
+    different replica hits an unknown session there, which terminates it --
+    surfacing as an intermittent "Session terminated" McpError to the
+    client, invisible to any single-instance test.
+
+    Simulates two replicas as two separate aggregator ASGI app instances
+    built from the same registry/policy/credential config (mirrors two pods
+    loading identical ConfigMap-sourced config), each with its own uvicorn
+    server. Talks raw HTTP (rather than fastmcp's Client) so the exact same
+    ``Mcp-Session-Id`` minted by replica 1's ``initialize`` can be replayed
+    against replica 2's ``tools/call`` -- reproducing a load balancer
+    routing one logical session's requests across replicas. Parametrized
+    over both modes: stateless must succeed (no server-side session state is
+    ever consulted), stateful must fail with 404 (replica 2 never minted
+    that session id) -- proving this test would actually have caught #128
+    before the fix, not just exercising a codepath that always passes.
+    """
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(_token_for(111, 111, "alice"))
+
+    registry = BackendRegistry()
+    registry.register(
+        BackendSpec(
+            name="open",
+            prefix="open",
+            url=open_backend_url,
+            transport="http",
+            required_capability="__none__",
+            auth_type="none",
+        )
+    )
+    credential_registry = CredentialRegistry([])
+
+    def _replica() -> Any:
+        mcp = build_aggregator(registry, settings, policy, credential_registry)
+        return mcp.http_app(path="/mcp", stateless_http=stateless)
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json, text/event-stream",
+        "Content-Type": "application/json",
+    }
+
+    async with (
+        _run_asgi_app(_replica()) as replica_1_url,
+        _run_asgi_app(_replica()) as replica_2_url,
+        httpx.AsyncClient() as http_client,
+    ):
+        init_body = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "test", "version": "0"},
+            },
+        }
+        init_resp = await http_client.post(
+            f"{replica_1_url}/mcp", json=init_body, headers=headers
+        )
+        assert init_resp.status_code == 200
+        session_id = init_resp.headers.get("mcp-session-id")
+        assert stateless or session_id is not None
+
+        call_headers = dict(headers)
+        if session_id is not None:
+            call_headers["Mcp-Session-Id"] = session_id
+        call_body = {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {"name": "open_ping", "arguments": {}},
+        }
+        call_resp = await http_client.post(
+            f"{replica_2_url}/mcp", json=call_body, headers=call_headers
+        )
+
+    if stateless:
+        assert call_resp.status_code == 200, call_resp.text
+        assert '"result":"pong"' in call_resp.text.replace(" ", "")
+    else:
+        # Replica 2 never minted this session id -- exactly the production
+        # failure: the client's request lands on a pod that terminates a
+        # session it never created.
+        assert call_resp.status_code == 404, call_resp.text

@@ -38,6 +38,18 @@ rbac:
 broker:
   replicaCount: 2
 
+  # /mcp aggregator transport mode (issue #128). Streamable-HTTP sessions
+  # are in-process state, so a stateful session (false) only survives an
+  # unpinned load balancer routing its later requests to a *different*
+  # replica if something in front of the broker provides session affinity
+  # (e.g. an ingress hashing on client IP) -- the broker cannot see whether
+  # that exists, so it can only warn, not refuse to start, when this is
+  # false at replicaCount > 1. See docs/architecture.md for the trade-off
+  # (this mode drops the standalone GET SSE stream used for
+  # notifications/tools/list_changed and other server-initiated messages
+  # outside an active tools/call).
+  mcpStatelessHttp: true
+
   resources:
     requests:
       cpu: 100m

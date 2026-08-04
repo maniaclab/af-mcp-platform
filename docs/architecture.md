@@ -56,6 +56,49 @@ or `/mcp/*` on either host (`ingress-mcp.yaml` for mcpHost,
 identical regardless of which client identity issued the token. See
 [docs/auth.md](auth.md) for the full design record.
 
+### `/mcp` transport mode and replica safety (issue #128)
+
+MCP streamable-HTTP sessions are **in-process state**: the session a
+client's `initialize` creates lives only in the memory of whichever broker
+pod handled it. At `replicaCount: 1` that's a non-issue; at
+`replicaCount > 1` it matters, because the chart's ingress load-balances
+each request independently with no session pinning by default.
+
+- **Stateless (`broker.mcpStatelessHttp: true`, the default)** — every
+  request is fully self-contained; the server never consults or requires
+  cross-request session state, so any replica can serve any request with
+  no affinity infrastructure. Progress/log notifications emitted *during*
+  a tool call are still delivered on that call's own response stream
+  (verified against fastmcp 3.4.4). What's lost is the standalone GET SSE
+  stream used for messages *outside* an active call —
+  `notifications/tools/list_changed` and any future server-initiated
+  sampling/elicitation request.
+- **Stateful (`broker.mcpStatelessHttp: false`)** — required only if a
+  backend/feature needs that standalone stream. Safe at `replicaCount > 1`
+  *only* with session-affinity in front of the ingress, e.g.:
+  ```yaml
+  nginx.ingress.kubernetes.io/upstream-hash-by: "$binary_remote_addr"
+  ```
+  Hashing on `$http_mcp_session_id` instead does **not** work: `initialize`
+  carries no session header, so it hashes an empty value onto an arbitrary
+  pod, and that pod's newly-minted session id may itself hash to a
+  *different* pod for the client's next request. Client-IP hashing needs
+  the ingress to see the real client IP (real-IP/forwarded-headers
+  configuration, or every client behind the same NAT egress lands on one
+  pod) but needs no client cooperation, unlike cookie affinity. A shared
+  session store (Redis/etc.) is not a viable alternative: the SDK session
+  holds a live `anyio` task group and open memory streams, not
+  serializable state.
+- Running a stateful aggregator at `replicaCount > 1` without that
+  affinity in place produces exactly the failure issue #128 describes: a
+  session's later request lands on a replica that never created it, which
+  terminates it — surfacing as an intermittent `McpError: Session
+  terminated` that no single-replica test will ever catch. The broker
+  cannot see whether affinity is configured upstream, so it can only warn
+  (`mcp_stateful_multi_replica` in the broker logs) rather than refuse to
+  start; the chart's `NOTES.txt` warns at install/upgrade time for the
+  same combination.
+
 ---
 
 ## The Four Broker Subsystems

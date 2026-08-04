@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+import af_mcp_broker.app as app_module
 from af_mcp_broker.app import _build_target_to_alias
 from af_mcp_broker.config import (
     KeycloakBrokeredProviderConfig,
@@ -122,3 +123,71 @@ def test_omitted_capability_without_credential_provider_refuses_to_start(
     with pytest.raises(RuntimeError, match="mystery"):  # noqa: SIM117
         with app_client_factory():
             pass
+
+
+# ---------------------------------------------------------------------------
+# /mcp transport mode startup check (issue #128): mcp_stateless_http=False
+# only pins a session safely with more than one replica if something in
+# front of the broker (e.g. client-IP-hash ingress affinity) provides it,
+# which the broker itself cannot see -- so this can only warn, never refuse
+# to start (unlike the fail-closed capability check above).
+# ---------------------------------------------------------------------------
+
+
+def test_stateful_multi_replica_warns_at_startup(
+    monkeypatch: pytest.MonkeyPatch,
+    app_client_factory: Callable[..., Any],
+) -> None:
+    monkeypatch.setenv("MCP_STATELESS_HTTP", "false")
+    monkeypatch.setenv("MCP_REPLICA_COUNT", "2")
+
+    events: list[tuple[str, dict[str, Any]]] = []
+    original_warning = app_module.logger.warning
+
+    def _capture(event: str, **kwargs: Any) -> Any:
+        events.append((event, kwargs))
+        return original_warning(event, **kwargs)
+
+    monkeypatch.setattr(app_module.logger, "warning", _capture)
+
+    with app_client_factory():
+        pass
+
+    matches = [
+        kwargs for event, kwargs in events if event == "mcp_stateful_multi_replica"
+    ]
+    assert matches, events
+    assert matches[0]["replica_count"] == 2
+
+
+@pytest.mark.parametrize(
+    ("stateless_http", "replica_count"),
+    [
+        ("true", "2"),  # safe default, even at replicaCount > 1
+        ("false", "1"),  # stateful is fine at a single replica
+        ("false", None),  # replica count unknown -- nothing to warn about
+    ],
+)
+def test_stateful_multi_replica_warning_does_not_fire_when_safe(
+    monkeypatch: pytest.MonkeyPatch,
+    app_client_factory: Callable[..., Any],
+    stateless_http: str,
+    replica_count: str | None,
+) -> None:
+    monkeypatch.setenv("MCP_STATELESS_HTTP", stateless_http)
+    if replica_count is not None:
+        monkeypatch.setenv("MCP_REPLICA_COUNT", replica_count)
+
+    events: list[tuple[str, dict[str, Any]]] = []
+    original_warning = app_module.logger.warning
+
+    def _capture(event: str, **kwargs: Any) -> Any:
+        events.append((event, kwargs))
+        return original_warning(event, **kwargs)
+
+    monkeypatch.setattr(app_module.logger, "warning", _capture)
+
+    with app_client_factory():
+        pass
+
+    assert not any(event == "mcp_stateful_multi_replica" for event, _ in events)
