@@ -210,7 +210,9 @@ values:
 ```
 
 Principals in the `af-my-new-backend-users` Keycloak group will be granted
-`my-new-backend:use`.
+`my-new-backend:use`. If you forget this step (or typo the capability name),
+the broker **refuses to start**, naming both the backend and the capability
+it can't reach — see docs/auth.md's "Group-to-Capability Mapping Example".
 
 ---
 

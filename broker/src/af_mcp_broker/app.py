@@ -155,6 +155,19 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     except FileNotFoundError:
         logger.warning("policy_file_not_found", path=settings.policy_file)
         entitlement_policy = EntitlementPolicy()
+    # Observability for issue #125: the effective group -> capability mapping
+    # is otherwise implicit (chart default vs. operator override vs. dev-only
+    # fallback all merge into the same in-memory EntitlementPolicy), so an
+    # operator reading pod logs has no other way to see which policy is
+    # actually live. Group/capability names only -- no tokens or secrets ever
+    # pass through here.
+    logger.info(
+        "policy.group_capabilities_loaded",
+        group_capabilities={
+            group: sorted(caps)
+            for group, caps in sorted(entitlement_policy.group_capabilities.items())
+        },
+    )
 
     # --- Backend registry (config-only; adding a backend needs no code change).
     # backends_loaded means "backends.yaml parsed without error" — an empty
