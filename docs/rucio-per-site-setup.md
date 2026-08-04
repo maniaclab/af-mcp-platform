@@ -130,11 +130,17 @@ host, e.g. `https://mcp.example.org/.well-known/cimd`) is a
 self-describing client registration: its `client_id` is the literal URL used
 to fetch it, and its `redirect_uris` list one entry per configured
 `oauth21-direct` provider — so adding a second rucio-mcp site adds a second
-`redirect_uris` entry automatically, no separate registration step. rucio-mcp
-fetches this document to learn the broker's `client_id` and permitted
-redirect URIs the same way for every site, rather than the broker
-pre-registering as a client against each site individually via Dynamic
-Client Registration.
+`redirect_uris` entry automatically, no separate registration step.
+
+This is a two-sided fit, not just the broker being economical about
+registration: rucio-mcp itself (`rucio_mcp/server.py`) deliberately disables
+Dynamic Client Registration and authenticates clients solely via CIMD,
+advertising `client_id_metadata_document_supported: true` in its OAuth 2.1
+authorization server metadata for every site. That's why `OAUTH21_CLIENT_ID`
+(the chart's `broker.publicOrigin`-derived CIMD URL) is what identifies the
+broker to rucio-mcp, rather than a client id issued through a registration
+step — rucio-mcp has no `/register` endpoint or per-client registry to
+register against in the first place.
 
 ## The linking flow the user experiences
 
