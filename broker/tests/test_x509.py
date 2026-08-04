@@ -134,6 +134,30 @@ def test_parse_proxy_pem_extracts_dn_and_expiry():
 
 
 # ---------------------------------------------------------------------------
+# Proxy mint counter (issue #84 -- the Grafana dashboard already queries
+# af_mcp_x509_proxy_mints_total, but no broker code incremented it)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_store_proxy_and_parse_increments_mint_counter(tmp_path):
+    from prometheus_client import REGISTRY
+
+    not_after = datetime.datetime(2030, 6, 15, 12, 0, 0, tzinfo=datetime.UTC)
+    proxy_pem = _make_self_signed_pem("Jane Doe", not_after)
+    backend = HomeDirVomsBackend(
+        settings=SimpleNamespace(proxy_dir=str(tmp_path / "proxies"))
+    )
+    principal = _principal("auser")
+    before = REGISTRY.get_sample_value("af_mcp_x509_proxy_mints_total") or 0.0
+
+    await backend._store_proxy_and_parse(proxy_pem, principal)
+
+    after = REGISTRY.get_sample_value("af_mcp_x509_proxy_mints_total")
+    assert after == before + 1
+
+
+# ---------------------------------------------------------------------------
 # Passphrase bytearray zeroing
 # ---------------------------------------------------------------------------
 

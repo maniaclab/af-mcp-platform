@@ -14,6 +14,7 @@ import structlog
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
+from af_mcp_broker import metrics
 from af_mcp_broker.credentials.base import IssuedCredential
 
 log = structlog.get_logger(__name__)
@@ -143,6 +144,28 @@ class CredentialCache:
         """Seconds until *entry* expires (may be negative)."""
         return entry.expires_at - time.time()
 
+    def _lookup(self, uid: int, target: str, min_remaining: int) -> Any | None:
+        """Return a cached value if still valid, else None -- no metrics.
+
+        The actual entry-freshness check, shared by ``get()`` (which records
+        the Prometheus hit/miss counters) and ``get_or_mint()``'s internal
+        double-check-locking re-read (which must NOT record a second sample
+        for what is, from a caller's point of view, still the same single
+        cache probe -- see ``get_or_mint()``'s docstring).
+        """
+        key = (uid, target)
+        entry = self._entries.get(key)
+        if entry is None or self.remaining_seconds(entry) < min_remaining:
+            if entry is not None:
+                self._log.debug(
+                    "credential_cache.miss_expired",
+                    uid=uid,
+                    target=target,
+                    remaining=self.remaining_seconds(entry),
+                )
+            return None
+        return entry.credential
+
     async def get(
         self,
         uid: int,
@@ -161,19 +184,19 @@ class CredentialCache:
         made every ordinary "not cached yet" probe indistinguishable from a
         bad passphrase attempt, so a handful of routine retries could lock a
         user out of their own next (correct) unlock attempt.
+
+        Records the ``af_mcp_credential_cache_hits_total`` /
+        ``..._misses_total`` Prometheus counters, labeled by *target* (a
+        configured backend name, not user input). ``get_or_mint()``'s
+        internal re-check calls ``_lookup()`` directly instead of this
+        method, precisely so it doesn't double-count the same logical probe.
         """
-        key = (uid, target)
-        entry = self._entries.get(key)
-        if entry is None or self.remaining_seconds(entry) < min_remaining:
-            if entry is not None:
-                self._log.debug(
-                    "credential_cache.miss_expired",
-                    uid=uid,
-                    target=target,
-                    remaining=self.remaining_seconds(entry),
-                )
-            return None
-        return entry.credential
+        value = self._lookup(uid, target, min_remaining)
+        if value is None:
+            metrics.credential_cache_misses_total.labels(target=target).inc()
+        else:
+            metrics.credential_cache_hits_total.labels(target=target).inc()
+        return value
 
     async def get_or_mint(
         self,
@@ -197,10 +220,13 @@ class CredentialCache:
         caller may have completed a mint (and called ``put()``) while this
         one was waiting — and *mint* is only invoked if it's still empty.
         *mint* is expected to store its own result via ``put()``, exactly as
-        callers already do on the non-single-flighted path.
+        callers already do on the non-single-flighted path. This re-check
+        calls ``_lookup()`` (not ``get()``) so it doesn't record a second
+        Prometheus sample for the same logical probe the caller's own
+        ``get()`` call already counted.
         """
         async with self._mint_locks[(uid, target)]:
-            cached = await self.get(uid, target, min_remaining)
+            cached = self._lookup(uid, target, min_remaining)
             if cached is not None:
                 return cached
             return await mint()

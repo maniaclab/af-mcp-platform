@@ -15,7 +15,7 @@ data:
       "__inputs": [],
       "__requires": [],
       "annotations": { "list": [] },
-      "description": "AF MCP Platform — broker request rates, latencies, errors, credential cache, x509 proxy mints, and audit events.",
+      "description": "AF MCP Platform — broker request rates, latencies, errors, credential cache, x509 proxy mints, and tool invocations.",
       "editable": true,
       "fiscalYearStartMonth": 0,
       "graphTooltip": 1,
@@ -109,8 +109,8 @@ data:
           "options": { "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
           "targets": [
             {
-              "expr": "sum(increase(af_mcp_x509_proxy_mints_total{job=~\".*af-mcp.*\"}[1h])) by (username)",
-              "legendFormat": "Mints {{`{{username}}`}}",
+              "expr": "sum(increase(af_mcp_x509_proxy_mints_total{job=~\".*af-mcp.*\"}[1h]))",
+              "legendFormat": "Mints",
               "refId": "A"
             }
           ],
@@ -128,12 +128,12 @@ data:
           "options": { "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
           "targets": [
             {
-              "expr": "sum(increase(af_mcp_audit_events_total{job=~\".*af-mcp.*\", action_type=\"state_change\"}[1h])) by (endpoint)",
-              "legendFormat": "state_change {{`{{endpoint}}`}}",
+              "expr": "sum(increase(af_mcp_tool_invocations_total{job=~\".*af-mcp.*\", action_type=\"state_change\"}[1h])) by (backend, tool)",
+              "legendFormat": "state_change {{`{{backend}}`}}/{{`{{tool}}`}}",
               "refId": "A"
             }
           ],
-          "title": "Audit Events (state_change) per Hour",
+          "title": "Tool Invocations (state_change) per Hour",
           "type": "timeseries"
         }
       ],
