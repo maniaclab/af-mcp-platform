@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
-from conftest import make_claims
+from conftest import make_claims, run_aggregator_async
 from fastmcp import Client, FastMCP
 from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.server.dependencies import get_context
@@ -71,7 +71,7 @@ def aggregator_url(settings, progress_backend_url):
 
     async def _run():
         mcp = build_aggregator(registry, settings, policy, CredentialRegistry())
-        async with run_server_async(mcp, path="/mcp") as url:
+        async with run_aggregator_async(mcp, path="/mcp") as url:
             yield url
 
     return _run

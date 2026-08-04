@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 import pytest
 import uvicorn
-from conftest import make_claims
+from conftest import make_claims, run_aggregator_async
 from fastmcp import Client, FastMCP
 from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.server.dependencies import get_http_headers
@@ -27,7 +27,7 @@ from af_mcp_broker.credentials import (
     IssuedCredential,
 )
 from af_mcp_broker.mcp import aggregator as aggregator_module
-from af_mcp_broker.mcp.aggregator import build_aggregator
+from af_mcp_broker.mcp.aggregator import build_aggregator, build_asgi_auth_middleware
 from af_mcp_broker.mcp.registry import BackendRegistry, BackendSpec
 
 if TYPE_CHECKING:
@@ -243,7 +243,7 @@ async def aggregator_url(
     )  # mints fine; connection still fails
 
     mcp = build_aggregator(registry, settings, policy, credential_registry)
-    async with run_server_async(mcp, path="/mcp") as url:
+    async with run_aggregator_async(mcp, path="/mcp") as url:
         yield url
 
 
@@ -482,7 +482,11 @@ async def test_replica_split_session_continuity(
 
     def _replica() -> Any:
         mcp = build_aggregator(registry, settings, policy, credential_registry)
-        return mcp.http_app(path="/mcp", stateless_http=stateless)
+        return mcp.http_app(
+            path="/mcp",
+            stateless_http=stateless,
+            middleware=[build_asgi_auth_middleware(mcp)],
+        )
 
     headers = {
         "Authorization": f"Bearer {token}",

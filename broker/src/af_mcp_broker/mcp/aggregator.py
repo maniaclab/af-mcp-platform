@@ -27,12 +27,16 @@ from fastmcp.server.providers.proxy import (
     default_proxy_log_handler,
     default_proxy_progress_handler,
 )
+from starlette.middleware import Middleware
 
 from af_mcp_broker.authorization import check_entitlement
 from af_mcp_broker.credentials import CredentialKind, NeedsUnlock
 from af_mcp_broker.mcp.middleware.authorization_mw import AuthorizationMiddleware
 from af_mcp_broker.mcp.middleware.entitlement_mw import EntitlementMiddleware
-from af_mcp_broker.mcp.middleware.identity_mw import IdentityMiddleware
+from af_mcp_broker.mcp.middleware.identity_mw import (
+    AsgiAuthMiddleware,
+    IdentityMiddleware,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -437,6 +441,22 @@ def build_aggregator(
     mcp.add_middleware(AuthorizationMiddleware(registry, policy))
     _register_backends(mcp, registry, credential_registry, settings, policy)
     return mcp
+
+
+def build_asgi_auth_middleware(mcp: FastMCP) -> Middleware:
+    """Return the Starlette middleware spec that enforces identity at the
+    ASGI layer for ``mcp``'s http_app (issue #138/#144 step 1) -- pass this
+    into ``FastMCP.http_app(middleware=[...])`` when mounting.
+
+    Must be built from the same FastMCP instance ``build_aggregator()``
+    constructed: it shares that instance's IdentityMiddleware (found via
+    ``_find_middleware``), which is the single mutable settings/
+    revoked_jti_cache handle ``populate_aggregator()`` keeps up to date --
+    see ``identity_mw.AsgiAuthMiddleware``'s docstring for why sharing it
+    rather than holding a second copy matters.
+    """
+    identity_mw, _, _ = _find_middleware(mcp)
+    return Middleware(AsgiAuthMiddleware, identity_mw=identity_mw)
 
 
 def populate_aggregator(

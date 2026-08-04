@@ -160,6 +160,12 @@ def _extract_principal(claims: dict[str, Any], raw_token: str) -> Principal:
     )
 
 
+class TokenExpiredError(HTTPException):
+    """HTTPException subclass raised by get_principal specifically when the
+    token's signature has expired -- see get_principal's docstring for why
+    this exists and why it does not change /v1's behavior."""
+
+
 async def get_principal(
     token: str,
     settings: Settings,
@@ -168,12 +174,19 @@ async def get_principal(
     """Validate a Bearer token and return the extracted Principal.
 
     Raises HTTPException(401) on any validation failure so FastAPI can return
-    a proper WWW-Authenticate response.
+    a proper WWW-Authenticate response. Raises the ``TokenExpiredError``
+    subclass specifically when the signature has expired -- same
+    status_code/detail/headers, so `/v1`'s `keycloak_dependency` (which lets
+    HTTPException bubble to FastAPI's generic handler unchanged) sees no
+    behavior difference, but `/mcp`'s ASGI-layer auth middleware
+    (mcp/middleware/identity_mw.py) can catch it separately to give expiry a
+    distinct, actionable message without this function leaking which claim
+    failed for every other invalid-token cause (issue #138).
 
     *revoked_jti_cache*, when provided, is consulted against the token's
     `jti` claim (issue #115) -- this is the single choke point both
-    `keycloak_dependency` (/v1) and `IdentityMiddleware` (/mcp) call, so
-    enforcing revocation here covers both surfaces. A token with no `jti`
+    `keycloak_dependency` (/v1) and `/mcp`'s ASGI-layer auth middleware call,
+    so enforcing revocation here covers both surfaces. A token with no `jti`
     claim, or one whose `jti` was never minted through the manual bearer
     registry, is never affected -- only jtis the registry actually knows
     about can be revoked (see token_registry.RevokedJtiCache).
@@ -181,6 +194,7 @@ async def get_principal(
     keys = await get_jwks(settings)
 
     error: Exception | str | None = None
+    expired = False
     try:
         # Select the signing key by the token's `kid`. A JWKS commonly carries
         # more than one key (e.g. Keycloak publishes both a signature and an
@@ -211,6 +225,7 @@ async def get_principal(
             return _extract_principal(claims, token)
     except jwt.ExpiredSignatureError as exc:
         error = exc
+        expired = True
         logger.info("jwt_expired", subject=_peek_sub(token))
     except jwt.InvalidTokenError as exc:
         error = exc
@@ -221,7 +236,8 @@ async def get_principal(
         "jwt_validation_failed",
         error=str(error) if error else "no matching key",
     )
-    raise HTTPException(
+    exc_cls = TokenExpiredError if expired else HTTPException
+    raise exc_cls(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid or expired token",
         headers={"WWW-Authenticate": "Bearer"},

@@ -4,7 +4,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from conftest import make_claims
+from conftest import make_claims, run_aggregator_async
 from fastmcp import Client, FastMCP
 from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.exceptions import ToolError
@@ -136,7 +136,7 @@ def aggregator_app_url(settings, toy_backend_url, policy):
         credential_registry = CredentialRegistry()
         credential_registry.register("toy", provider)
         mcp = build_aggregator(registry, settings, policy, credential_registry)
-        async with run_server_async(mcp, path="/mcp") as url:
+        async with run_aggregator_async(mcp, path="/mcp") as url:
             yield url
 
     return _run
