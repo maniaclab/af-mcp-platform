@@ -94,7 +94,9 @@ class AuthorizationMiddleware(Middleware):
             )
             raise AuthorizationError(f"No backend registered for tool '{tool_name}'")
 
-        action_type = get_action_type(backend.name, tool_name, self.policy)
+        action_type = get_action_type(
+            backend.name, tool_name, backend.required_capability, self.policy
+        )
         allow, reason = check_entitlement(
             principal, backend.required_capability, backend.name, self.policy
         )

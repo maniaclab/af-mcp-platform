@@ -18,7 +18,7 @@ _audit_logger: AuditLogger | None = None
 class AuditRecord:
     principal_sub: str
     principal_uid: int
-    capability: str
+    capability: str | None
     target: str
     action: str
     action_type: str  # "read" | "state_change"

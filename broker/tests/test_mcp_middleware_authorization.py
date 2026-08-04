@@ -75,6 +75,16 @@ def registry() -> BackendRegistry:
             required_capability="__none__",
         )
     )
+    reg.register(
+        BackendSpec(
+            name="credentialed",
+            prefix="credentialed",
+            url="http://credentialed.invalid/mcp",
+            transport="http",
+            # Omitted required_capability -- the credential layer is the
+            # gate instead (issue #60).
+        )
+    )
     return reg
 
 
@@ -82,7 +92,6 @@ def registry() -> BackendRegistry:
 def policy() -> EntitlementPolicy:
     return EntitlementPolicy(
         group_capabilities={"atlas": ["read_data"], "__authenticated__": []},
-        target_capabilities={"rucio": "read_data", "docs": "__none__"},
         target_action_types={"rucio": {"rucio_list_dids": "read"}},
     )
 
@@ -188,6 +197,24 @@ async def test_open_target_requires_no_capability(
     mw = AuthorizationMiddleware(registry, policy)
     principal = make_principal(groups=[])
     context = _call_tool_context("docs_search", {}, principal)
+    fake_result = ToolResult(content=[])
+    call_next = _CallNextRecorder(result=fake_result)
+
+    result = await mw.on_call_tool(context, call_next)
+
+    assert result is fake_result
+    assert captured_audits[0].outcome == "success"
+
+
+async def test_omitted_capability_target_requires_no_capability(
+    registry, policy, make_principal, captured_audits
+) -> None:
+    """A backend that omits required_capability has no capability gate --
+    the credential layer gates it instead (issue #60) -- so any
+    authenticated principal, regardless of groups, must pass this check."""
+    mw = AuthorizationMiddleware(registry, policy)
+    principal = make_principal(groups=[])
+    context = _call_tool_context("credentialed_ping", {}, principal)
     fake_result = ToolResult(content=[])
     call_next = _CallNextRecorder(result=fake_result)
 

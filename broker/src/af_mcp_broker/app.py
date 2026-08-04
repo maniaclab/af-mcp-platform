@@ -266,6 +266,39 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         for target in cfg.targets:
             credential_registry.register(target, provider)
 
+    # --- Fail-closed check (issue #60): a backend that omits
+    # `required_capability` in backends.yaml relies on the credential layer
+    # as its sole authorization gate -- the user must have a linked identity
+    # / mintable credential for that target. If credential_registry can't
+    # resolve a provider for it either (e.g. `auth_type: bearer` with no
+    # `identity_providers` entry targeting it, or `auth_type: none` with no
+    # provider registered at all), there is no gate whatsoever: any
+    # authenticated principal could call it. Refuse to start rather than
+    # silently exposing an ungated backend -- this must be based on whether
+    # credential_registry actually resolves the target, not the `auth_type`
+    # string, since `auth_type: bearer` alone doesn't guarantee a provider is
+    # wired up for this specific target.
+    ungated_backends: list[str] = []
+    for spec in backends:
+        if spec.required_capability is not None:
+            continue
+        try:
+            await credential_registry.resolve(spec.name)
+        except KeyError:
+            ungated_backends.append(spec.name)
+    if ungated_backends:
+        msg = (
+            "The following backends omit `required_capability` in "
+            "backends.yaml and have no credential provider resolving for "
+            "their target, so there is no authorization gate at all "
+            f"(neither a declared capability nor a mintable credential): "
+            f"{sorted(ungated_backends)}. Either declare `required_capability` "
+            "(or `__none__` to explicitly open it to any authenticated user), "
+            "or configure a credential provider (identity_providers / x509) "
+            "targeting this backend."
+        )
+        raise RuntimeError(msg)
+
     # --- Identity<->backend join for /v1/catalog's credential_provider field
     # (issue #90): who services each target, reusing the x509_targets and
     # identity_providers config already assembled above.

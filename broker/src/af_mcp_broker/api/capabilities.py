@@ -43,7 +43,6 @@ class CapabilitiesResponse(BaseModel):
 class AuthorizeRequest(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    capability: str
     target: str
     # The concrete tool name being invoked; used to resolve the action type.
     action: str
@@ -108,13 +107,15 @@ def _get_target_to_alias(request: Request) -> dict[str, str]:
     return getattr(request.app.state, "target_to_alias", None) or {}
 
 
-def _action_type_for_capability(capability: str) -> Literal["read", "state_change"]:
-    cap = CAPABILITIES.get(capability)
+def _action_type_for_capability(
+    capability: str | None,
+) -> Literal["read", "state_change"]:
+    cap = CAPABILITIES.get(capability) if capability is not None else None
     return cap.action_type if cap else "read"  # type: ignore[return-value]
 
 
 def _action_type_for_backend(
-    target: str, capability: str, policy: EntitlementPolicy
+    target: str, capability: str | None, policy: EntitlementPolicy
 ) -> Literal["read", "state_change"]:
     """Server-level read/write badge for a backend target.
 
@@ -135,18 +136,21 @@ def _action_type_for_backend(
 
 
 def _grants_for(
-    principal: Principal, policy: EntitlementPolicy
+    principal: Principal, policy: EntitlementPolicy, registry: BackendRegistry
 ) -> list[CapabilityGrant]:
     """Build per-capability grants from the principal's capabilities.
 
-    For each granted capability we list the targets that require it (from
-    ``target_capabilities``) and the capability's action type.
+    For each granted capability we list the targets that require it, per the
+    backend registry's ``required_capability`` (backends.yaml is the sole
+    source of truth for that mapping -- see issue #60).
     """
     caps = get_principal_capabilities(principal, policy)
     grants: list[CapabilityGrant] = []
     for cap in sorted(caps):
         targets = sorted(
-            t for t, req in policy.target_capabilities.items() if req == cap
+            spec.name
+            for spec in registry.all_backends()
+            if spec.required_capability == cap
         )
         grants.append(
             CapabilityGrant(
@@ -173,8 +177,9 @@ async def get_capabilities(
     principal: Annotated[Principal, Depends(keycloak_dependency)],
 ) -> CapabilitiesResponse:
     policy = _get_policy(request)
+    registry = _get_registry(request)
     return CapabilitiesResponse(
-        subject=principal.subject, grants=_grants_for(principal, policy)
+        subject=principal.subject, grants=_grants_for(principal, policy, registry)
     )
 
 
@@ -188,13 +193,39 @@ async def authorize(
     request: Request,
     principal: Annotated[Principal, Depends(keycloak_dependency)],
 ) -> AuthorizeResponse:
+    """Derives the required capability server-side from the backend registry
+    (``body.target`` -> ``BackendSpec.required_capability``) rather than
+    trusting a capability supplied by the caller -- a client used to be able
+    to claim any capability for any target and have it evaluated at face
+    value (see issue #60).
+    """
     policy = _get_policy(request)
-    allow, reason = check_entitlement(principal, body.capability, body.target, policy)
-    action_type = get_action_type(body.target, body.action, policy)
+    registry = _get_registry(request)
+    backend = registry.get(body.target)
+    if backend is None:
+        reason = f"target '{body.target}' is not a registered backend"
+        logger.info(
+            "authorize_decision",
+            subject=principal.subject,
+            target=body.target,
+            action=body.action,
+            allow=False,
+            reason=reason,
+        )
+        return AuthorizeResponse(
+            allow=False, reason=reason, action_type="read", obligations=[]
+        )
+
+    allow, reason = check_entitlement(
+        principal, backend.required_capability, backend.name, policy
+    )
+    action_type = get_action_type(
+        backend.name, body.action, backend.required_capability, policy
+    )
     logger.info(
         "authorize_decision",
         subject=principal.subject,
-        capability=body.capability,
+        capability=backend.required_capability,
         target=body.target,
         action=body.action,
         action_type=action_type,
@@ -226,14 +257,18 @@ async def get_catalog(
     servers: list[CatalogServer] = []
     for spec in registry.all_backends():
         required = spec.required_capability
-        if required != "__none__" and required not in caps:
+        if required not in (None, "__none__") and required not in caps:
             continue
         servers.append(
             CatalogServer(
                 name=spec.name,
                 display_name=spec.display_name or spec.name,
                 description=spec.description,
-                capability=required,
+                # Omitted required_capability means no capability gate (the
+                # credential layer gates it instead -- see registry.py); the
+                # catalog reports that the same way as the explicit "__none__"
+                # opt-in, since neither implies a capability requirement.
+                capability=required if required is not None else "__none__",
                 auth_type=spec.auth_type,
                 action_type=_action_type_for_backend(spec.name, required, policy),
                 credential_provider=target_to_alias.get(spec.name),

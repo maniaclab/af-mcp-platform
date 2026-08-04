@@ -104,7 +104,6 @@ class _FakeProvider(CredentialProvider):
 def policy() -> EntitlementPolicy:
     return EntitlementPolicy(
         group_capabilities={"atlas": ["read_data"], "__authenticated__": []},
-        target_capabilities={"toy": "read_data", "open": "__none__"},
     )
 
 
