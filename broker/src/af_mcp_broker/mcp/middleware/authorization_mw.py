@@ -8,6 +8,7 @@ import structlog
 from fastmcp.exceptions import AuthorizationError
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 
+from af_mcp_broker import metrics
 from af_mcp_broker.audit import AuditRecord, write_audit
 from af_mcp_broker.authorization import (
     EntitlementPolicy,
@@ -44,6 +45,22 @@ logger = structlog.get_logger(__name__)
 # functions/classes those routes call, rather than looping back over HTTP.
 
 
+def _record_invocation(
+    identity: str, backend_name: str, tool_name: str, action_type: str
+) -> None:
+    """Increment the two identity/tool invocation counters together --
+    every call site below that has a resolved backend increments both, so
+    this keeps them from drifting out of sync. See metrics.py's cardinality
+    policy for why one carries identity and the other doesn't.
+    """
+    metrics.tool_invocations_total.labels(
+        identity=identity, backend=backend_name, action_type=action_type
+    ).inc()
+    metrics.tool_invocations_by_tool_total.labels(
+        backend=backend_name, tool=tool_name, action_type=action_type
+    ).inc()
+
+
 class AuthorizationMiddleware(Middleware):
     def __init__(self, registry: BackendRegistry, policy: EntitlementPolicy) -> None:
         # Mutable on purpose: populate_aggregator() refreshes these in place
@@ -77,6 +94,11 @@ class AuthorizationMiddleware(Middleware):
         args_summary = ", ".join(f"{k}=..." for k in list(tool_args.keys())[:10])
 
         if backend is None:
+            # tool_name is client-supplied and matches no configured
+            # backend prefix here, so it must never become a label value
+            # (unbounded cardinality) -- count it in the label-free
+            # unmapped counter instead. See metrics.py's cardinality policy.
+            metrics.tool_invocations_unmapped_total.inc()
             await write_audit(
                 AuditRecord(
                     principal_sub=principal.subject,
@@ -101,6 +123,14 @@ class AuthorizationMiddleware(Middleware):
             principal, backend.required_capability, backend.name, self.policy
         )
         if not allow:
+            # A denial is still an attempted invocation for the coarse
+            # counters, plus its own isolated denied counter -- see
+            # metrics.py's cardinality policy for why outcome isn't a label
+            # on tool_invocations_total/_by_tool_total themselves.
+            _record_invocation(principal.unixname, backend.name, tool_name, action_type)
+            metrics.tool_invocations_denied_total.labels(
+                backend=backend.name, action_type=action_type
+            ).inc()
             await write_audit(
                 AuditRecord(
                     principal_sub=principal.subject,
@@ -136,6 +166,12 @@ class AuthorizationMiddleware(Middleware):
         try:
             result = await call_next(context)
         except Exception as exc:
+            # An error downstream of authorization (credential resolution,
+            # the backend call itself) is still an attempted invocation --
+            # authorization allowed it, so it's not a denial, and gets no
+            # separate error counter (the audit log is the source of truth
+            # for exact per-outcome fidelity; see metrics.py's docstring).
+            _record_invocation(principal.unixname, backend.name, tool_name, action_type)
             await write_audit(
                 AuditRecord(
                     principal_sub=principal.subject,
@@ -154,6 +190,7 @@ class AuthorizationMiddleware(Middleware):
             )
             raise
 
+        _record_invocation(principal.unixname, backend.name, tool_name, action_type)
         await write_audit(
             AuditRecord(
                 principal_sub=principal.subject,

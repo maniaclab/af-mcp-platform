@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import structlog
 
+from af_mcp_broker import metrics
 from af_mcp_broker.credentials.base import (
     CredentialKind,
     CredentialProvider,
@@ -665,6 +666,13 @@ class HomeDirVomsBackend(X509Backend):
             not_after=not_after,
             proxy_path=str(proxy_path),
         )
+        # Single choke point for both the Kubernetes and local-dev mint
+        # paths (_mint_kubernetes / _mint_local both funnel here on
+        # success), so this counts every successful mint exactly once
+        # regardless of backend. Labeled by username (bounded at facility
+        # scale, and mints are rare/expensive -- one Kubernetes Job each) --
+        # see metrics.py's cardinality policy.
+        metrics.x509_proxy_mints_total.labels(username=principal.unixname).inc()
         return meta
 
 

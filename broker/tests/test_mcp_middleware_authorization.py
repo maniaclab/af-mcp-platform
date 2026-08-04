@@ -6,6 +6,7 @@ import mcp.types as mt
 import pytest
 from fastmcp.exceptions import AuthorizationError
 from fastmcp.tools.base import ToolResult
+from prometheus_client import REGISTRY
 
 from af_mcp_broker.authorization import EntitlementPolicy
 from af_mcp_broker.mcp.middleware import authorization_mw
@@ -14,6 +15,10 @@ from af_mcp_broker.mcp.registry import BackendRegistry, BackendSpec
 
 if TYPE_CHECKING:
     from af_mcp_broker.audit import AuditRecord
+
+
+def _sample(name: str, labels: dict[str, str]) -> float:
+    return REGISTRY.get_sample_value(name, labels) or 0.0
 
 
 class _FakeFastMCPContext:
@@ -297,3 +302,165 @@ async def test_registry_and_policy_are_mutable_attributes(
     await mw.on_call_tool(context, call_next)
 
     assert captured_audits[0].outcome == "success"
+
+
+# ---------------------------------------------------------------------------
+# Prometheus invocation counters (issue #83 -- per-identity tool-invocation
+# counters from the /mcp aggregator, incremented next to write_audit() above)
+# ---------------------------------------------------------------------------
+
+
+async def test_entitled_call_increments_invocation_counters(
+    registry, policy, make_principal, captured_audits
+) -> None:
+    mw = AuthorizationMiddleware(registry, policy)
+    principal = make_principal(groups=["atlas"], unixname="alice")
+    context = _call_tool_context("rucio_list_dids", {"scope": "foo"}, principal)
+    call_next = _CallNextRecorder(result=ToolResult(content=[]))
+
+    before_total = _sample(
+        "af_mcp_tool_invocations_total",
+        {"identity": "alice", "backend": "rucio", "action_type": "read"},
+    )
+    before_by_tool = _sample(
+        "af_mcp_tool_invocations_by_tool_total",
+        {"backend": "rucio", "tool": "rucio_list_dids", "action_type": "read"},
+    )
+    before_denied = _sample(
+        "af_mcp_tool_invocations_denied_total",
+        {"backend": "rucio", "action_type": "read"},
+    )
+
+    await mw.on_call_tool(context, call_next)
+
+    assert (
+        _sample(
+            "af_mcp_tool_invocations_total",
+            {"identity": "alice", "backend": "rucio", "action_type": "read"},
+        )
+        == before_total + 1
+    )
+    assert (
+        _sample(
+            "af_mcp_tool_invocations_by_tool_total",
+            {"backend": "rucio", "tool": "rucio_list_dids", "action_type": "read"},
+        )
+        == before_by_tool + 1
+    )
+    # A successful call must not also count as a denial.
+    assert (
+        _sample(
+            "af_mcp_tool_invocations_denied_total",
+            {"backend": "rucio", "action_type": "read"},
+        )
+        == before_denied
+    )
+
+
+async def test_unentitled_call_increments_invocation_and_denied_counters(
+    registry, policy, make_principal, captured_audits
+) -> None:
+    mw = AuthorizationMiddleware(registry, policy)
+    principal = make_principal(groups=[], unixname="bob")
+    context = _call_tool_context("rucio_list_dids", {}, principal)
+    call_next = _CallNextRecorder()
+
+    before_total = _sample(
+        "af_mcp_tool_invocations_total",
+        {"identity": "bob", "backend": "rucio", "action_type": "read"},
+    )
+    before_by_tool = _sample(
+        "af_mcp_tool_invocations_by_tool_total",
+        {"backend": "rucio", "tool": "rucio_list_dids", "action_type": "read"},
+    )
+    before_denied = _sample(
+        "af_mcp_tool_invocations_denied_total",
+        {"backend": "rucio", "action_type": "read"},
+    )
+
+    with pytest.raises(AuthorizationError):
+        await mw.on_call_tool(context, call_next)
+
+    # A denial still counts as an attempted invocation ...
+    assert (
+        _sample(
+            "af_mcp_tool_invocations_total",
+            {"identity": "bob", "backend": "rucio", "action_type": "read"},
+        )
+        == before_total + 1
+    )
+    assert (
+        _sample(
+            "af_mcp_tool_invocations_by_tool_total",
+            {"backend": "rucio", "tool": "rucio_list_dids", "action_type": "read"},
+        )
+        == before_by_tool + 1
+    )
+    # ... and is additionally isolated in the denied-only counter.
+    assert (
+        _sample(
+            "af_mcp_tool_invocations_denied_total",
+            {"backend": "rucio", "action_type": "read"},
+        )
+        == before_denied + 1
+    )
+
+
+async def test_unknown_tool_prefix_increments_unmapped_counter_only(
+    registry, policy, make_principal, captured_audits
+) -> None:
+    """A tool name matching no registered backend prefix is client-supplied
+    and unbounded -- it must land only in the label-free
+    tool_invocations_unmapped_total, never in a per-tool or per-backend
+    counter (see metrics.py's cardinality policy)."""
+    mw = AuthorizationMiddleware(registry, policy)
+    principal = make_principal(groups=["atlas"])
+    context = _call_tool_context("mystery_tool", {}, principal)
+    call_next = _CallNextRecorder()
+
+    before_unmapped = _sample("af_mcp_tool_invocations_unmapped_total", {})
+
+    with pytest.raises(AuthorizationError):
+        await mw.on_call_tool(context, call_next)
+
+    assert _sample("af_mcp_tool_invocations_unmapped_total", {}) == before_unmapped + 1
+
+
+async def test_call_next_failure_increments_invocation_counters_not_denied(
+    registry, policy, make_principal, captured_audits
+) -> None:
+    mw = AuthorizationMiddleware(registry, policy)
+    principal = make_principal(groups=["atlas"], unixname="carol")
+    context = _call_tool_context("rucio_list_dids", {}, principal)
+    call_next = _CallNextRecorder(error=RuntimeError("credential provider unreachable"))
+
+    before_total = _sample(
+        "af_mcp_tool_invocations_total",
+        {"identity": "carol", "backend": "rucio", "action_type": "read"},
+    )
+    before_denied = _sample(
+        "af_mcp_tool_invocations_denied_total",
+        {"backend": "rucio", "action_type": "read"},
+    )
+
+    with pytest.raises(RuntimeError):
+        await mw.on_call_tool(context, call_next)
+
+    # An error downstream of authorization still counts as an attempted
+    # invocation (the call was authorized, just failed afterwards) ...
+    assert (
+        _sample(
+            "af_mcp_tool_invocations_total",
+            {"identity": "carol", "backend": "rucio", "action_type": "read"},
+        )
+        == before_total + 1
+    )
+    # ... but must not be miscounted as a denial -- denied_total is reserved
+    # for AuthorizationMiddleware's own entitlement decision.
+    assert (
+        _sample(
+            "af_mcp_tool_invocations_denied_total",
+            {"backend": "rucio", "action_type": "read"},
+        )
+        == before_denied
+    )

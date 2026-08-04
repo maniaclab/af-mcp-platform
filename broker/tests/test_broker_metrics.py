@@ -1,0 +1,123 @@
+"""Unit tests for the custom Prometheus metrics defined in ``metrics.py``.
+
+These tests check the *shape* of each metric (name, label set) rather than
+who increments it -- increment behavior is covered where each metric is
+actually incremented (``test_mcp_middleware_authorization.py``,
+``test_credential_cache.py``, ``test_x509.py``). The label-set assertions
+here exist specifically to catch a regression where someone adds an
+unbounded label (a token, jti, request_id, or raw tool argument) to one of
+these counters -- see the cardinality policy in ``metrics.py``'s module
+docstring.
+"""
+
+from __future__ import annotations
+
+from af_mcp_broker import metrics
+
+# Label names that must never appear on any custom metric -- each is either
+# unbounded (attacker- or session-influenced) or a secret.
+_FORBIDDEN_LABEL_NAMES = {
+    "jti",
+    "token",
+    "access_token",
+    "request_id",
+    "sub",
+    "subject",
+    "password",
+    "passphrase",
+    "secret",
+    "args",
+    "args_summary",
+}
+
+
+def _all_counters() -> list:
+    return [
+        metrics.tool_invocations_total,
+        metrics.tool_invocations_by_tool_total,
+        metrics.tool_invocations_denied_total,
+        metrics.tool_invocations_unmapped_total,
+        metrics.credential_cache_hits_total,
+        metrics.credential_cache_misses_total,
+        metrics.x509_proxy_mints_total,
+    ]
+
+
+def _full_name(counter) -> str:
+    """The name as actually scraped -- prometheus_client's Counter strips a
+    trailing ``_total`` off ``_name`` internally and re-appends it when
+    collecting samples, so ``_name`` alone is not what shows up on the wire.
+    """
+    return counter._name + "_total"
+
+
+def test_no_metric_carries_a_forbidden_label():
+    for counter in _all_counters():
+        offending = _FORBIDDEN_LABEL_NAMES & set(counter._labelnames)
+        assert not offending, (
+            f"{_full_name(counter)} has forbidden label(s): {offending}"
+        )
+
+
+def test_tool_invocations_total_labeled_by_identity_backend_action_type():
+    assert _full_name(metrics.tool_invocations_total) == "af_mcp_tool_invocations_total"
+    assert set(metrics.tool_invocations_total._labelnames) == {
+        "identity",
+        "backend",
+        "action_type",
+    }
+
+
+def test_tool_invocations_by_tool_total_omits_identity():
+    """Deliberately no identity label -- identity x backend x ~50 tools per
+    backend would multiply series for little dashboard value; see the
+    module docstring's cardinality policy."""
+    assert (
+        _full_name(metrics.tool_invocations_by_tool_total)
+        == "af_mcp_tool_invocations_by_tool_total"
+    )
+    assert set(metrics.tool_invocations_by_tool_total._labelnames) == {
+        "backend",
+        "tool",
+        "action_type",
+    }
+    assert "identity" not in metrics.tool_invocations_by_tool_total._labelnames
+
+
+def test_tool_invocations_denied_total_labeled_by_backend_action_type():
+    assert (
+        _full_name(metrics.tool_invocations_denied_total)
+        == "af_mcp_tool_invocations_denied_total"
+    )
+    assert set(metrics.tool_invocations_denied_total._labelnames) == {
+        "backend",
+        "action_type",
+    }
+
+
+def test_tool_invocations_unmapped_total_has_no_labels():
+    """Tool name is client-supplied and unbounded when it matches no
+    registered backend prefix -- this counter must never be labeled by it."""
+    assert (
+        _full_name(metrics.tool_invocations_unmapped_total)
+        == "af_mcp_tool_invocations_unmapped_total"
+    )
+    assert metrics.tool_invocations_unmapped_total._labelnames == ()
+
+
+def test_credential_cache_counters_labeled_by_target():
+    assert (
+        _full_name(metrics.credential_cache_hits_total)
+        == "af_mcp_credential_cache_hits_total"
+    )
+    assert metrics.credential_cache_hits_total._labelnames == ("target",)
+    assert (
+        _full_name(metrics.credential_cache_misses_total)
+        == "af_mcp_credential_cache_misses_total"
+    )
+    assert metrics.credential_cache_misses_total._labelnames == ("target",)
+
+
+def test_x509_proxy_mints_total_labeled_by_username():
+    assert _full_name(metrics.x509_proxy_mints_total) == "af_mcp_x509_proxy_mints_total"
+    assert metrics.x509_proxy_mints_total._labelnames == ("username",)
