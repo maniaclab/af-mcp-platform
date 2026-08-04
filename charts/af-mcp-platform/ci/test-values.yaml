@@ -50,6 +50,14 @@ broker:
   # the diff.
   tokenRegistry:
     backend: "vault"
+  # Exercises the TOKEN_MINT_CLIENT_ID/TOKEN_MINT_CLIENT_SECRET template
+  # path in CI so a broken render is caught by `helm template`, not just by
+  # eyeballing the diff. `existingClientSecretSecret` only needs to name a
+  # Secret for template rendering — it doesn't need to exist for `helm
+  # lint`/`helm template` to succeed.
+  tokenMint:
+    clientId: "example-token-mint-client"
+    existingClientSecretSecret: "example-token-mint-client-secret"
 
 # Exercises the token-sweep CronJob template path in CI (`helm template`
 # only -- these dummy values don't need a reachable Vault).

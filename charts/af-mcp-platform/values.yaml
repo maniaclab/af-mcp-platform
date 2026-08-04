@@ -76,6 +76,23 @@ broker:
   # Create this via SealedSecret externally; the chart does NOT create it.
   existingServiceTokenSecret: ""
 
+  # Confidential Keycloak client the broker uses to mint on-demand Bearer
+  # tokens for programmatic clients (POST /v1/tokens, issue #24/#116) via RFC
+  # 8693 Standard Token Exchange, self-audience — see docs/auth.md's
+  # "Programmatic client bootstrap" section for the Keycloak-side setup.
+  # TOKEN_MINT_CLIENT_ID/TOKEN_MINT_CLIENT_SECRET are each omitted when their
+  # source value below is empty; left unset entirely, the broker returns 503
+  # on POST /v1/tokens (list/revoke still work) -- the correct degraded
+  # behavior for a deployment that doesn't need the manual bootstrap flow.
+  tokenMint:
+    # Client id of the confidential client. Not a secret -- a plain value,
+    # like portal.oidc.clientId above.
+    clientId: ""
+    # Name of a pre-existing Secret providing the client secret.
+    # The Secret must contain a key named `token-mint-client-secret`.
+    # Create this via SealedSecret externally; the chart does NOT create it.
+    existingClientSecretSecret: ""
+
   # NFS home directory access — required by the x509 legacy credential provider.
   homeDir:
     enabled: true

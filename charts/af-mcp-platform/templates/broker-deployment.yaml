@@ -53,6 +53,27 @@ spec:
               protocol: TCP
           env:
             {{- include "af-mcp-platform.broker.env" . | nindent 12 }}
+            # Manual bearer-token mint credentials (TOKEN_MINT_CLIENT_ID/
+            # TOKEN_MINT_CLIENT_SECRET) -- deployment-only, not part of the
+            # shared af-mcp-platform.broker.env template: they exist purely
+            # for the POST /v1/tokens mint path (api/tokens.py), which the
+            # token-sweep CronJob's entrypoint (token_sweep.py) never
+            # imports, and -- like TOKEN_MINT_CLIENT_ID/SECRET themselves --
+            # are deliberately not part of the broker's pydantic Settings,
+            # so there's no Settings() construction requirement pulling
+            # them into the CronJob's env the way oauth21-direct's
+            # identityProviders validation does for the vars above.
+            {{- if .Values.broker.tokenMint.clientId }}
+            - name: TOKEN_MINT_CLIENT_ID
+              value: {{ .Values.broker.tokenMint.clientId | quote }}
+            {{- end }}
+            {{- if .Values.broker.tokenMint.existingClientSecretSecret }}
+            - name: TOKEN_MINT_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.broker.tokenMint.existingClientSecretSecret | quote }}
+                  key: token-mint-client-secret
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /v1/healthz
