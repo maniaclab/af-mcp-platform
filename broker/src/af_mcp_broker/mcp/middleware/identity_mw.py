@@ -103,9 +103,36 @@ async def _send_error(
     await response(scope, receive, send)
 
 
-async def _send_401(scope: Scope, receive: Receive, send: Send, detail: str) -> None:
+def _www_authenticate_header(settings: Settings) -> str:
+    """Build the ``WWW-Authenticate`` header value for /mcp's 401 responses.
+
+    Carries a ``resource_metadata`` pointer (RFC 9728, MCP spec's 2025-11-25
+    revision) at the ``/mcp``-suffixed protected-resource metadata path
+    (api/wellknown.py) whenever ``broker_public_origin`` is configured -- PR
+    #145 deliberately omitted this parameter because the metadata endpoint
+    did not exist yet (issue #140); it does now. Omitted (bare ``Bearer``,
+    the pre-#140 behavior) when ``broker_public_origin`` is unset, since no
+    resolvable metadata URL exists to point at -- a client without the
+    header still falls back to the well-known root path per spec.
+    """
+    if not settings.broker_public_origin:
+        return "Bearer"
+    origin = settings.broker_public_origin.rstrip("/")
+    return (
+        f'Bearer resource_metadata="{origin}/.well-known/oauth-protected-resource/mcp"'
+    )
+
+
+async def _send_401(
+    scope: Scope, receive: Receive, send: Send, detail: str, settings: Settings
+) -> None:
     await _send_error(
-        scope, receive, send, 401, detail, headers={"WWW-Authenticate": "Bearer"}
+        scope,
+        receive,
+        send,
+        401,
+        detail,
+        headers={"WWW-Authenticate": _www_authenticate_header(settings)},
     )
 
 
@@ -164,7 +191,11 @@ class AsgiAuthMiddleware:
             auth_header = _get_authorization_header(scope)
             if not auth_header or not auth_header.lower().startswith("bearer "):
                 await _send_401(
-                    scope, receive, send, "Missing Authorization: Bearer <token> header"
+                    scope,
+                    receive,
+                    send,
+                    "Missing Authorization: Bearer <token> header",
+                    settings,
                 )
                 return
             token = auth_header[len("Bearer ") :]
@@ -174,7 +205,7 @@ class AsgiAuthMiddleware:
                 # account -- see Settings.keycloak_admin_client_id/_secret)
                 # -- reject the same vague way as any other invalid PAT
                 # rather than crash or leak config state.
-                await _send_401(scope, receive, send, "Invalid bearer token")
+                await _send_401(scope, receive, send, "Invalid bearer token", settings)
                 return
             try:
                 if is_pat:
@@ -206,6 +237,7 @@ class AsgiAuthMiddleware:
                     send,
                     "Your access token has expired — mint a new one at "
                     f"{portal}/tokens",
+                    settings,
                 )
                 return
             except PrincipalDirectoryUnavailableError as exc:
@@ -226,7 +258,7 @@ class AsgiAuthMiddleware:
                 # Deliberately vague -- see the module docstring: never
                 # repeat which claim, issuer/audience, or JWKS detail failed
                 # to a client.
-                await _send_401(scope, receive, send, "Invalid bearer token")
+                await _send_401(scope, receive, send, "Invalid bearer token", settings)
                 return
 
         scope.setdefault("state", {})

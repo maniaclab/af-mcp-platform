@@ -43,6 +43,16 @@ _NONCE_BYTES = 16
 NONCE_COOKIE_NAME = "oauth_state_nonce"
 NONCE_COOKIE_PATH = "/v1/oauth/callback/"
 
+# Sibling cookie for the MCP OAuth discovery bootstrap flow (issue #140,
+# api/mcp_oauth.py) -- same CSRF-defence shape as NONCE_COOKIE_NAME/
+# NONCE_COOKIE_PATH above (a host-only nonce cookie set at authorize time and
+# checked at callback time), kept as its own name/path rather than reused
+# because it protects a different flow with a different payload shape
+# (McpAuthorizePayload below, not StatePayload) and a different callback
+# path.
+MCP_NONCE_COOKIE_NAME = "mcp_oauth_state_nonce"
+MCP_NONCE_COOKIE_PATH = "/v1/oauth/keycloak-login/callback"
+
 _STATE_PAYLOAD_FIELDS = (
     "iss",
     "aud",
@@ -235,3 +245,115 @@ def decrypt_state_token(
         raise StateTokenError("state token has expired")
 
     return StatePayload(**{k: data[k] for k in _STATE_PAYLOAD_FIELDS})
+
+
+# ---------------------------------------------------------------------------
+# MCP OAuth discovery bootstrap state (issue #140, api/mcp_oauth.py) --
+# sibling to StatePayload/build_state_token/decrypt_state_token above,
+# sharing the same Fernet cipher, TTL, and nonce-cookie CSRF pattern, but
+# carrying a different payload shape: at authorize time there is no
+# authenticated principal yet (that is the entire point of this flow), and
+# what must survive the round trip to Keycloak and back is the *MCP client's*
+# pending authorization request (its own redirect_uri/state/PKCE challenge),
+# not an already-known subject/backend-alias/portal-return-path.
+# ---------------------------------------------------------------------------
+
+_MCP_AUTHORIZE_PAYLOAD_FIELDS = (
+    "iss",
+    "aud",
+    "pkce_verifier",
+    "mcp_client_id",
+    "mcp_redirect_uri",
+    "mcp_state",
+    "mcp_code_challenge",
+    "mcp_client_name",
+    "nonce",
+    "iat",
+    "exp",
+)
+
+
+@dataclass(frozen=True)
+class McpAuthorizePayload:
+    iss: str
+    aud: str
+    # The broker's OWN PKCE verifier for its authorization_code exchange with
+    # Keycloak below -- unrelated to mcp_code_challenge, which is the MCP
+    # client's PKCE challenge for its exchange with the broker at /v1/oauth/token.
+    pkce_verifier: str
+    mcp_client_id: str
+    mcp_redirect_uri: str
+    mcp_state: str
+    mcp_code_challenge: str
+    # "" (never None -- the payload round-trips through JSON) when the CIMD
+    # document had no client_name.
+    mcp_client_name: str
+    nonce: str
+    iat: int
+    exp: int
+
+
+def build_mcp_authorize_state(
+    cipher: Fernet,
+    *,
+    iss: str,
+    pkce_verifier: str,
+    mcp_client_id: str,
+    mcp_redirect_uri: str,
+    mcp_state: str,
+    mcp_code_challenge: str,
+    mcp_client_name: str,
+    nonce: str,
+) -> str:
+    """Encrypt an in-flight MCP OAuth bootstrap authorize request into an opaque token -- the `state` the broker sends to Keycloak as its own OAuth client."""
+    now = int(datetime.now(UTC).timestamp())
+    payload = {
+        "iss": iss,
+        "aud": iss,
+        "pkce_verifier": pkce_verifier,
+        "mcp_client_id": mcp_client_id,
+        "mcp_redirect_uri": mcp_redirect_uri,
+        "mcp_state": mcp_state,
+        "mcp_code_challenge": mcp_code_challenge,
+        "mcp_client_name": mcp_client_name,
+        "nonce": nonce,
+        "iat": now,
+        "exp": now + STATE_TOKEN_TTL_SECONDS,
+    }
+    return cipher.encrypt(json.dumps(payload).encode()).decode()
+
+
+def decrypt_mcp_authorize_state(
+    cipher: Fernet, token: str, *, expected_iss: str
+) -> McpAuthorizePayload:
+    """Decrypt and validate a state token minted by ``build_mcp_authorize_state``.
+
+    Same failure modes as ``decrypt_state_token`` (see its docstring): Fernet
+    TTL/HMAC failure, malformed JSON, missing fields, a mismatched
+    ``iss``/``aud``, or an already-past ``exp`` all raise ``StateTokenError``.
+    """
+    try:
+        raw = cipher.decrypt(token.encode(), ttl=STATE_TOKEN_TTL_SECONDS)
+    except InvalidToken as exc:
+        raise StateTokenError("state token is invalid or expired") from exc
+
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise StateTokenError("state token payload is not valid JSON") from exc
+
+    if not isinstance(data, dict):
+        raise StateTokenError("state token payload is not a JSON object")
+
+    missing = [k for k in _MCP_AUTHORIZE_PAYLOAD_FIELDS if k not in data]
+    if missing:
+        raise StateTokenError(f"state token missing fields: {', '.join(missing)}")
+
+    if data["iss"] != expected_iss or data["aud"] != expected_iss:
+        raise StateTokenError("state token iss/aud does not match this deployment")
+
+    now = int(datetime.now(UTC).timestamp())
+    if data["exp"] < now:
+        raise StateTokenError("state token has expired")
+
+    return McpAuthorizePayload(**{k: data[k] for k in _MCP_AUTHORIZE_PAYLOAD_FIELDS})

@@ -27,8 +27,16 @@ spec:
       secretName: {{ .Values.ingress.tls.mcpSecretName | quote }}
   {{- end }}
   rules:
-    # Broker host — routes /v1 (REST API), /mcp (FastMCP aggregator), and
-    # /.well-known/cimd (Client ID Metadata Document, public, unauthenticated)
+    # Broker host — routes /v1 (REST API, including the MCP OAuth bootstrap
+    # flow's /v1/oauth/authorize and /v1/oauth/token, issue #140), /mcp
+    # (FastMCP aggregator), and the broker's well-known discovery documents:
+    # /.well-known/cimd (Client ID Metadata Document, public, unauthenticated,
+    # used when the broker acts as a *client* of a backend AS) plus the RFC
+    # 9728 protected-resource metadata (both the root and /mcp-suffixed
+    # forms an MCP client tries) and RFC 8414 authorization-server metadata
+    # naming the broker itself as the authorization server for MCP clients.
+    # Everything else under /.well-known hits nginx's default HTML 404 --
+    # exactly the confusing failure reported in #140 before these existed.
     - host: {{ .Values.ingress.mcpHost | quote }}
       http:
         paths:
@@ -47,6 +55,27 @@ spec:
                 port:
                   name: http
           - path: /.well-known/cimd
+            pathType: Exact
+            backend:
+              service:
+                name: {{ include "af-mcp-platform.broker.fullname" . }}
+                port:
+                  name: http
+          - path: /.well-known/oauth-protected-resource
+            pathType: Exact
+            backend:
+              service:
+                name: {{ include "af-mcp-platform.broker.fullname" . }}
+                port:
+                  name: http
+          - path: /.well-known/oauth-protected-resource/mcp
+            pathType: Exact
+            backend:
+              service:
+                name: {{ include "af-mcp-platform.broker.fullname" . }}
+                port:
+                  name: http
+          - path: /.well-known/oauth-authorization-server
             pathType: Exact
             backend:
               service:

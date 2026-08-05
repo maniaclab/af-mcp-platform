@@ -204,8 +204,31 @@ class Settings(BaseSettings):
     # nonce cookie is host-only, so a request-relative callback URL (varying
     # by which ingress host the request arrived on) would drop the cookie on
     # the callback leg. Required (non-empty) whenever `identity_providers`
-    # contains an oauth21-direct entry; enforced by `_validate_oauth21_config`.
+    # contains an oauth21-direct entry, or the MCP OAuth discovery bootstrap
+    # flow (`keycloak_login_client_id` below) is configured; enforced by
+    # `_validate_oauth21_config`/`_validate_mcp_oauth_config` respectively.
+    # It is also the AS/resource identifier the broker advertises in its own
+    # RFC 8414/RFC 9728 discovery metadata (api/wellknown.py, issue #140).
     broker_public_origin: str = ""
+
+    # Confidential Keycloak client the broker authenticates as (authorization_
+    # code grant, PKCE, plus this client secret) when it stands in for an MCP
+    # client during the OAuth discovery bootstrap flow (issue #140,
+    # api/mcp_oauth.py): the broker's own `/v1/oauth/authorize` redirects the
+    # browser to Keycloak using this client, then exchanges the resulting code
+    # at Keycloak's token endpoint to learn who logged in, before minting a
+    # PAT for the MCP client. `TOKEN_MINT_CLIENT_ID`/`TOKEN_MINT_CLIENT_SECRET`
+    # is the same "confidential client + sealed secret" env var pair the chart
+    # already wires (see charts/af-mcp-platform/values.yaml's
+    # `broker.tokenMint`) -- it was left unused when issue #144 step 2a
+    # replaced the RFC 8693 token-exchange design that originally needed it;
+    # this repurposes the identical shape for a different grant type
+    # (authorization_code instead of token-exchange) rather than adding a
+    # second confidential-client env var pair.
+    keycloak_login_client_id: str = Field(default="", alias="TOKEN_MINT_CLIENT_ID")
+    keycloak_login_client_secret: SecretStr = Field(
+        default=SecretStr(""), alias="TOKEN_MINT_CLIENT_SECRET"
+    )
 
     # One entry per identity provider the broker can link a user's account
     # to — either Keycloak's stored-broker-token pattern
@@ -450,6 +473,13 @@ class Settings(BaseSettings):
                 "to a backend AS and for the redirect_uris advertised in the "
                 "CIMD document; the two must always agree."
             )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_broker_public_origin_format(self) -> Settings:
+        """Validate ``broker_public_origin``'s shape whenever it is set, regardless of which feature required it (oauth21-direct linking or the MCP OAuth bootstrap flow below) -- split out from `_validate_oauth21_config` so both callers get the same format check instead of only whichever validator historically ran first."""
+        if not self.broker_public_origin:
+            return self
         if self.broker_public_origin.endswith("/"):
             raise ValueError(
                 "broker_public_origin (BROKER_PUBLIC_ORIGIN) must not have a "
@@ -464,6 +494,55 @@ class Settings(BaseSettings):
                 "broker_public_origin (BROKER_PUBLIC_ORIGIN) must be a valid "
                 f"http(s) URL: {exc}"
             ) from exc
+        return self
+
+    @model_validator(mode="after")
+    def _validate_mcp_oauth_config(self) -> Settings:
+        """Fail startup loudly when the MCP OAuth discovery bootstrap flow is half-configured -- a broker that redirected to Keycloak but couldn't exchange the resulting code (missing secret) or couldn't encrypt its own state (missing broker_state_key) would fail at first request instead of at boot, same rationale as `_validate_oauth21_config`."""
+        if not self.keycloak_login_client_id:
+            return self
+        if not self.keycloak_login_client_secret.get_secret_value():
+            log.error(
+                "mcp_oauth_config_invalid",
+                reason=(
+                    "keycloak_login_client_id is set but "
+                    "keycloak_login_client_secret is empty"
+                ),
+            )
+            raise ValueError(
+                "keycloak_login_client_secret (TOKEN_MINT_CLIENT_SECRET) must "
+                "be set when keycloak_login_client_id (TOKEN_MINT_CLIENT_ID) "
+                "is -- the broker authenticates as a confidential Keycloak "
+                "client to exchange the login code it receives."
+            )
+        if not self.broker_state_key.get_secret_value():
+            log.error(
+                "mcp_oauth_config_invalid",
+                reason=(
+                    "broker_state_key is empty but keycloak_login_client_id "
+                    "is configured"
+                ),
+            )
+            raise ValueError(
+                "broker_state_key (BROKER_STATE_KEY) must be set when "
+                "keycloak_login_client_id is configured -- it protects the "
+                "in-flight MCP OAuth bootstrap flow's state, the same way it "
+                "protects the oauth21-direct linking flow's state."
+            )
+        if not self.broker_public_origin:
+            log.error(
+                "mcp_oauth_config_invalid",
+                reason=(
+                    "broker_public_origin is empty but keycloak_login_client_id "
+                    "is configured"
+                ),
+            )
+            raise ValueError(
+                "broker_public_origin (BROKER_PUBLIC_ORIGIN) must be set when "
+                "keycloak_login_client_id is configured -- it is the redirect_"
+                "uri origin the broker sends to Keycloak and the issuer/"
+                "endpoint origin advertised in the broker's own AS metadata."
+            )
         return self
 
     @model_validator(mode="after")
