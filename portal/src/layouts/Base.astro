@@ -7,8 +7,12 @@
  * XSS-exfiltration risk). Instead, on mount the inline script below checks
  * for a valid OIDC session (see ../lib/auth) — initiating the Authorization
  * Code + PKCE redirect if there isn't one — and once authenticated fills the
- * nav username (and any element tagged `data-af-identity`) from
+ * topbar username (and any element tagged `data-af-identity`) from
  * GET /v1/identities, sent with the session's Bearer token (see ../lib/api).
+ *
+ * Shell structure (#166): fixed left sidebar with grouped nav + count badges,
+ * slim topbar with the user controls, content column with footer. On narrow
+ * viewports the sidebar becomes an off-canvas drawer toggled from the topbar.
  */
 import '../styles/global.css';
 
@@ -18,13 +22,45 @@ interface Props {
 
 const { title = 'AF MCP Platform' } = Astro.props;
 
-const navLinks = [
-  { href: '/', label: 'Overview' },
-  { href: '/catalog/', label: 'MCP Servers' },
-  { href: '/identities/', label: 'Identities' },
-  { href: '/tokens/', label: 'Tokens' },
-  { href: '/status/', label: 'AMI Proxy' },
+// Sidebar nav, grouped Filament-style. Badge slots are keyed by href and
+// filled on mount from the dashboard summary (see ../lib/navSummary).
+const navGroups: {
+  label: string | null;
+  items: { href: string; label: string; icon: string; badge: boolean }[];
+}[] = [
+  {
+    label: null,
+    items: [{ href: '/', label: 'Overview', icon: 'home', badge: false }],
+  },
+  {
+    label: 'Access',
+    items: [
+      { href: '/catalog/', label: 'MCP Servers', icon: 'servers', badge: true },
+      { href: '/identities/', label: 'Identities', icon: 'identity', badge: true },
+    ],
+  },
+  {
+    label: 'Credentials',
+    items: [
+      { href: '/tokens/', label: 'Tokens', icon: 'key', badge: true },
+      { href: '/status/', label: 'AMI Proxy', icon: 'shield', badge: true },
+    ],
+  },
 ];
+
+// Decorative stroke icons (aria-hidden), one or more path `d` strings each,
+// drawn on a 24×24 grid. Inlined so the strict CSP needs no image hosts.
+const icons: Record<string, string[]> = {
+  home: ['M3 10.5 12 3l9 7.5', 'M5.5 8.5V21h13V8.5'],
+  servers: ['M4 4.5h16v6.5H4z', 'M4 13h16v6.5H4z', 'M7.5 7.75h.01', 'M7.5 16.25h.01'],
+  identity: ['M12 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z', 'M4.5 20.5a7.5 7.5 0 0 1 15 0'],
+  key: [
+    'M8 15.5m-3.5 0a3.5 3.5 0 1 0 7 0 3.5 3.5 0 1 0-7 0',
+    'M10.8 13 19.5 4.3',
+    'M16.2 7.6l2.2 2.2',
+  ],
+  shield: ['M12 3l7 3v5.2c0 4.3-2.9 8.2-7 9.8-4.1-1.6-7-5.5-7-9.8V6l7-3z'],
+};
 
 const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
 
@@ -137,8 +173,141 @@ const appVersion = import.meta.env.PUBLIC_APP_VERSION || 'dev';
         top: 1rem;
       }
 
-      /* Nav ------------------------------------------------------------------ */
-      .af-nav {
+      /* Shell ------------------------------------------------------------------
+       Sidebar + content column. The sidebar is sticky full-height on desktop
+       and an off-canvas drawer below 900px.
+    ----------------------------------------------------------------------- */
+      .af-shell {
+        display: flex;
+        min-height: 100vh;
+      }
+
+      /* Sidebar ---------------------------------------------------------------- */
+      .af-sidebar {
+        width: 236px;
+        flex-shrink: 0;
+        position: sticky;
+        top: 0;
+        height: 100vh;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        padding: 0 0.75rem 1.25rem;
+        background: rgb(from var(--color-af-surface) r g b / 0.45);
+        border-right: 1px solid var(--color-af-border);
+      }
+
+      .af-sidebar__logo {
+        display: flex;
+        align-items: center;
+        flex-shrink: 0;
+        height: 56px;
+        padding: 0 0.75rem;
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 0.875rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        color: var(--color-af-teal);
+        text-decoration: none;
+        white-space: nowrap;
+        text-transform: uppercase;
+      }
+
+      .af-sidebar__group {
+        margin-top: 1rem;
+      }
+
+      .af-sidebar__group-label {
+        /* --text-label from the @theme type scale (0.6875rem / 600 / 0.1em) */
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 0.6875rem;
+        font-weight: 600;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--color-af-label);
+        padding: 0 0.75rem;
+        margin: 0 0 0.375rem;
+      }
+
+      .af-sidebar__list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+
+      .af-sidebar__link {
+        display: flex;
+        align-items: center;
+        gap: 0.625rem;
+        padding: 0.4375rem 0.75rem;
+        border-radius: 4px;
+        font-size: 0.875rem;
+        font-weight: 500;
+        text-decoration: none;
+        color: var(--color-af-dim);
+        transition:
+          color 150ms,
+          background-color 150ms;
+      }
+
+      .af-sidebar__link:hover,
+      .af-sidebar__link:focus-visible {
+        color: var(--color-af-text);
+        background: rgb(from var(--color-af-muted) r g b / 0.3);
+        outline: none;
+      }
+
+      .af-sidebar__link[aria-current='page'] {
+        color: var(--color-af-teal);
+        background: rgb(from var(--color-af-teal) r g b / 0.08);
+      }
+
+      .af-sidebar__icon {
+        width: 18px;
+        height: 18px;
+        flex-shrink: 0;
+        opacity: 0.85;
+      }
+
+      .af-sidebar__label {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .af-sidebar__badge {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 0.625rem;
+        font-weight: 600;
+        line-height: 1.4;
+        padding: 0.0625rem 0.4375rem;
+        border-radius: 999px;
+      }
+      .af-sidebar__badge--ok {
+        color: var(--color-af-teal);
+        background: rgb(from var(--color-af-teal) r g b / 0.12);
+      }
+      .af-sidebar__badge--neutral {
+        color: var(--color-af-dim);
+        background: rgb(from var(--color-af-muted) r g b / 0.35);
+      }
+
+      .af-sidebar-overlay {
+        display: none;
+      }
+
+      /* Content column --------------------------------------------------------- */
+      .af-content {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+      }
+
+      /* Topbar ------------------------------------------------------------------ */
+      .af-topbar {
         position: sticky;
         top: 0;
         z-index: 50;
@@ -147,80 +316,67 @@ const appVersion = import.meta.env.PUBLIC_APP_VERSION || 'dev';
         border-bottom: 1px solid var(--color-af-border);
         display: flex;
         align-items: center;
-        gap: 0;
+        gap: 1rem;
         padding: 0 2rem;
         height: 56px;
       }
 
-      .af-nav__logo {
+      .af-topbar__menu {
+        display: none;
+        align-items: center;
+        justify-content: center;
+        width: 36px;
+        height: 36px;
+        background: transparent;
+        border: 1px solid var(--color-af-border);
+        border-radius: 4px;
+        color: var(--color-af-dim);
+        cursor: pointer;
+        transition:
+          color 150ms,
+          border-color 150ms;
+      }
+      .af-topbar__menu:hover,
+      .af-topbar__menu:focus-visible {
+        color: var(--color-af-text);
+        border-color: var(--color-af-muted);
+        outline: none;
+      }
+      .af-topbar__menu svg {
+        width: 18px;
+        height: 18px;
+      }
+
+      .af-topbar__logo {
+        display: none;
         font-family: 'IBM Plex Mono', monospace;
-        font-size: 0.875rem;
+        font-size: 0.75rem;
         font-weight: 700;
         letter-spacing: 0.06em;
         color: var(--color-af-teal);
         text-decoration: none;
         white-space: nowrap;
-        margin-right: 3rem;
         text-transform: uppercase;
       }
 
-      .af-nav__links {
-        display: flex;
-        align-items: stretch;
-        gap: 0;
-        list-style: none;
-        margin: 0;
-        padding: 0;
-        height: 100%;
-      }
-
-      .af-nav__link {
-        display: flex;
-        align-items: center;
-        padding: 0 1.25rem;
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 0.75rem;
-        font-weight: 500;
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
-        text-decoration: none;
-        color: var(--color-af-dim);
-        border-bottom: 2px solid transparent;
-        transition:
-          color 150ms,
-          border-color 150ms;
-      }
-
-      .af-nav__link:hover,
-      .af-nav__link:focus-visible {
-        color: var(--color-af-text);
-        border-bottom-color: var(--color-af-muted);
-        outline: none;
-      }
-
-      .af-nav__link[aria-current='page'] {
-        color: var(--color-af-teal);
-        border-bottom-color: var(--color-af-teal);
-      }
-
-      .af-nav__spacer {
+      .af-topbar__spacer {
         flex: 1;
       }
 
-      .af-nav__user-group {
+      .af-topbar__user-group {
         display: flex;
         align-items: center;
         gap: 1rem;
       }
 
-      .af-nav__user {
+      .af-topbar__user {
         font-family: 'IBM Plex Mono', monospace;
         font-size: 0.6875rem;
         color: var(--color-af-dim);
         letter-spacing: 0.04em;
       }
 
-      .af-nav__signout {
+      .af-topbar__signout {
         font-family: 'IBM Plex Mono', monospace;
         font-size: 0.6875rem;
         font-weight: 500;
@@ -236,8 +392,8 @@ const appVersion = import.meta.env.PUBLIC_APP_VERSION || 'dev';
           color 150ms,
           border-color 150ms;
       }
-      .af-nav__signout:hover,
-      .af-nav__signout:focus-visible {
+      .af-topbar__signout:hover,
+      .af-topbar__signout:focus-visible {
         color: var(--color-af-red);
         border-color: rgb(from var(--color-af-red) r g b / 0.4);
         outline: none;
@@ -245,7 +401,7 @@ const appVersion = import.meta.env.PUBLIC_APP_VERSION || 'dev';
 
       /* Main content --------------------------------------------------------- */
       .af-main {
-        min-height: calc(100vh - 56px - 48px);
+        flex: 1;
         padding: 2.5rem 2rem;
         max-width: 1200px;
         margin: 0 auto;
@@ -289,23 +445,57 @@ const appVersion = import.meta.env.PUBLIC_APP_VERSION || 'dev';
       }
 
       /* Responsive ----------------------------------------------------------- */
-      @media (max-width: 640px) {
-        .af-nav {
-          padding: 0 1rem;
+      @media (max-width: 900px) {
+        .af-sidebar {
+          position: fixed;
+          left: 0;
+          top: 0;
+          z-index: 100;
+          width: 248px;
+          background: var(--color-af-surface);
+          transform: translateX(-100%);
+          transition: transform 200ms ease;
         }
-        .af-nav__logo {
-          margin-right: 1.5rem;
-          font-size: 0.75rem;
+        .af-sidebar.is-open {
+          transform: translateX(0);
+          box-shadow: 4px 0 24px rgb(0 0 0 / 0.4);
         }
-        .af-nav__link {
-          padding: 0 0.75rem;
-          font-size: 0.6875rem;
+
+        .af-sidebar-overlay {
+          display: block;
+          position: fixed;
+          inset: 0;
+          z-index: 90;
+          background: rgb(0 0 0 / 0.5);
         }
-        .af-nav__user-group {
+        .af-sidebar-overlay[hidden] {
           display: none;
         }
+
+        .af-topbar {
+          padding: 0 1rem;
+        }
+        .af-topbar__menu {
+          display: flex;
+        }
+        .af-topbar__logo {
+          display: block;
+        }
+
         .af-main {
           padding: 1.5rem 1rem;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .af-sidebar {
+          transition: none;
+        }
+      }
+
+      @media (max-width: 640px) {
+        .af-topbar__user-group {
+          display: none;
         }
       }
     </style>
@@ -383,67 +573,164 @@ const appVersion = import.meta.env.PUBLIC_APP_VERSION || 'dev';
 
     <a href="#main-content" class="skip-link">Skip to content</a>
 
-    <nav class="af-nav" aria-label="Primary navigation">
-      <a href="/" class="af-nav__logo" aria-label="AF MCP Platform home"> AF&nbsp;/&nbsp;MCP </a>
+    <div class="af-shell">
+      <aside class="af-sidebar" id="af-sidebar">
+        <a href="/" class="af-sidebar__logo" aria-label="AF MCP Platform home">
+          AF&nbsp;/&nbsp;MCP
+        </a>
 
-      <ul class="af-nav__links" role="list">
-        {
-          navLinks.map(({ href, label }) => {
-            const isActive =
-              href === '/' ? currentPath === '/' : currentPath.startsWith(href.replace(/\/$/, ''));
-            return (
-              <li>
-                <a href={href} class="af-nav__link" aria-current={isActive ? 'page' : undefined}>
-                  {label}
-                </a>
-              </li>
-            );
-          })
-        }
-      </ul>
+        <nav aria-label="Primary navigation">
+          {
+            navGroups.map((group) => (
+              <div class="af-sidebar__group">
+                {group.label && <p class="af-sidebar__group-label">{group.label}</p>}
+                <ul class="af-sidebar__list" role="list">
+                  {group.items.map(({ href, label, icon, badge }) => {
+                    const isActive =
+                      href === '/'
+                        ? currentPath === '/'
+                        : currentPath.startsWith(href.replace(/\/$/, ''));
+                    return (
+                      <li>
+                        <a
+                          href={href}
+                          class="af-sidebar__link"
+                          aria-current={isActive ? 'page' : undefined}
+                        >
+                          <svg
+                            class="af-sidebar__icon"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.6"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            aria-hidden="true"
+                          >
+                            {icons[icon].map((d) => (
+                              <path d={d} />
+                            ))}
+                          </svg>
+                          <span class="af-sidebar__label">{label}</span>
+                          {badge && (
+                            <span class="af-sidebar__badge" data-af-nav-badge={href} hidden />
+                          )}
+                        </a>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            ))
+          }
+        </nav>
+      </aside>
 
-      <div class="af-nav__spacer" aria-hidden="true"></div>
+      <div class="af-sidebar-overlay" data-af-sidebar-overlay role="presentation" hidden></div>
 
-      <div class="af-nav__user-group" data-af-user-holder hidden>
-        <span class="af-nav__user" data-af-identity aria-label="Signed in"></span>
-        <button type="button" class="af-nav__signout" data-af-signout hidden>Sign out</button>
+      <div class="af-content">
+        <header class="af-topbar">
+          <button
+            type="button"
+            class="af-topbar__menu"
+            data-af-sidebar-toggle
+            aria-controls="af-sidebar"
+            aria-expanded="false"
+            aria-label="Toggle navigation"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.6"
+              stroke-linecap="round"
+              aria-hidden="true"
+            >
+              <path d="M4 6.5h16M4 12h16M4 17.5h16"></path>
+            </svg>
+          </button>
+
+          <a href="/" class="af-topbar__logo" aria-label="AF MCP Platform home">
+            AF&nbsp;/&nbsp;MCP
+          </a>
+
+          <div class="af-topbar__spacer" aria-hidden="true"></div>
+
+          <div class="af-topbar__user-group" data-af-user-holder hidden>
+            <span class="af-topbar__user" data-af-identity aria-label="Signed in"></span>
+            <button type="button" class="af-topbar__signout" data-af-signout hidden>Sign out</button
+            >
+          </div>
+        </header>
+
+        <main id="main-content" class="af-main">
+          <slot />
+        </main>
+
+        <footer class="af-footer" aria-label="Site footer">
+          <span class="af-footer__text">UChicago ATLAS Analysis Facility</span>
+          <span class="af-footer__version">v{appVersion}</span>
+          <a
+            href="https://af.uchicago.edu"
+            class="af-footer__link"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            af.uchicago.edu
+          </a>
+          <a
+            href="https://atlas.cern"
+            class="af-footer__link"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            atlas.cern
+          </a>
+        </footer>
       </div>
-    </nav>
-
-    <main id="main-content" class="af-main">
-      <slot />
-    </main>
-
-    <footer class="af-footer" aria-label="Site footer">
-      <span class="af-footer__text">UChicago ATLAS Analysis Facility</span>
-      <span class="af-footer__version">v{appVersion}</span>
-      <a
-        href="https://af.uchicago.edu"
-        class="af-footer__link"
-        target="_blank"
-        rel="noopener noreferrer"
-      >
-        af.uchicago.edu
-      </a>
-      <a
-        href="https://atlas.cern"
-        class="af-footer__link"
-        target="_blank"
-        rel="noopener noreferrer"
-      >
-        atlas.cern
-      </a>
-    </footer>
+    </div>
 
     <!--
     On mount: ensure an OIDC session exists (redirecting to Keycloak if not),
-    then populate every [data-af-identity] element (nav username, hero
-    greeting) from the broker. This is the only identity source in a static
-    build.
+    then populate every [data-af-identity] element (topbar username, hero
+    greeting) from the broker, and pin the nav badges from the dashboard
+    summary. This is the only identity source in a static build.
   -->
     <script>
-      import { clearIdentitiesCache, fetchIdentities, revokeAllCredentials } from '../lib/api';
+      import {
+        clearIdentitiesCache,
+        fetchDashboardSummary,
+        fetchIdentities,
+        revokeAllCredentials,
+      } from '../lib/api';
       import { getUser, isOidcConfigured, login, logout } from '../lib/auth';
+      import { navBadges } from '../lib/navSummary';
+
+      // Off-canvas sidebar toggle — registered before the auth check so the
+      // drawer works even when the page renders unauthenticated (dev bypass).
+      (() => {
+        const sidebar = document.getElementById('af-sidebar');
+        const toggle = document.querySelector<HTMLButtonElement>('[data-af-sidebar-toggle]');
+        const overlay = document.querySelector<HTMLElement>('[data-af-sidebar-overlay]');
+        if (!sidebar || !toggle || !overlay) return;
+
+        const setOpen = (open: boolean) => {
+          sidebar.classList.toggle('is-open', open);
+          overlay.hidden = !open;
+          toggle.setAttribute('aria-expanded', String(open));
+        };
+
+        toggle.addEventListener('click', () => {
+          setOpen(!sidebar.classList.contains('is-open'));
+        });
+        overlay.addEventListener('click', () => setOpen(false));
+        document.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Escape' && sidebar.classList.contains('is-open')) {
+            setOpen(false);
+            toggle.focus();
+          }
+        });
+      })();
 
       (async () => {
         const splash = document.getElementById('af-auth-splash');
@@ -495,8 +782,8 @@ const appVersion = import.meta.env.PUBLIC_APP_VERSION || 'dev';
             else el.hidden = false;
           });
 
-          // Sign-out control is nav-only and OIDC-only — dev-bypass mode has
-          // no Keycloak session to end, so it stays hidden there.
+          // Sign-out control is topbar-only and OIDC-only — dev-bypass mode
+          // has no Keycloak session to end, so it stays hidden there.
           if (await isOidcConfigured()) {
             const signOutBtn = document.querySelector<HTMLButtonElement>('[data-af-signout]');
             if (signOutBtn) {
@@ -515,6 +802,21 @@ const appVersion = import.meta.env.PUBLIC_APP_VERSION || 'dev';
         } catch {
           // Session expired mid-page (broker 401'd after silent renew also
           // failed) — leave the identity slot hidden rather than looping.
+        }
+
+        // Sidebar badges are decorative — fill them best-effort and never
+        // let a summary failure disturb the page (navBadges(null) → none).
+        try {
+          const summary = await fetchDashboardSummary();
+          for (const badge of navBadges(summary)) {
+            const el = document.querySelector<HTMLElement>(`[data-af-nav-badge="${badge.href}"]`);
+            if (!el) continue;
+            el.textContent = badge.text;
+            el.classList.add(`af-sidebar__badge--${badge.tone}`);
+            el.hidden = false;
+          }
+        } catch {
+          // Badges stay hidden — the nav degrades to plain labels.
         }
       })();
     </script>

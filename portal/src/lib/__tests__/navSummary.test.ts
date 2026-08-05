@@ -8,9 +8,9 @@ const healthy: DashboardSummary = {
   serverCount: 3,
   proxyStatus: {
     cached: true,
-    subject: 'CN=user',
+    dn: 'CN=user',
     voms_attributes: ['/atlas/Role=NULL'],
-    not_after: '2026-08-06T00:00:00Z',
+    expires_at: '2026-08-06T00:00:00Z',
   },
   activeTokenCount: 4,
 };
