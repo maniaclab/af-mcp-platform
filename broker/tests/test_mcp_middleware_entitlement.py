@@ -7,7 +7,11 @@ from fastmcp.tools.base import Tool
 
 from af_mcp_broker.authorization import EntitlementPolicy
 from af_mcp_broker.mcp.middleware.entitlement_mw import EntitlementMiddleware
-from af_mcp_broker.mcp.registry import BackendRegistry, BackendSpec
+from af_mcp_broker.mcp.registry import (
+    DIAGNOSTIC_TOOL_NAMES,
+    BackendRegistry,
+    BackendSpec,
+)
 
 
 class _FakeFastMCPContext:
@@ -130,6 +134,28 @@ async def test_tool_with_unknown_prefix_is_denied(registry, policy, make_princip
     result = await mw.on_list_tools(context, _call_next_factory(tools))
 
     assert {t.name for t in result} == {"rucio_list_dids"}
+
+
+@pytest.mark.parametrize("tool_name", sorted(DIAGNOSTIC_TOOL_NAMES))
+async def test_diagnostic_tool_visible_to_principal_with_no_capabilities(
+    registry, policy, make_principal, tool_name
+):
+    """Requirement (issue #153): the af_* diagnostic tools must stay visible
+    regardless of entitlements -- unlike every other tool here, they need no
+    capability and no registered backend at all, so a principal with zero
+    group memberships (zero capabilities) must still see them, exactly as if
+    they were fully entitled."""
+    mw = EntitlementMiddleware(registry, policy)
+    principal = make_principal(groups=[])
+    context = _FakeMiddlewareContext(_FakeFastMCPContext({"principal": principal}))
+    tools = [_tool("rucio_list_dids"), _tool(tool_name)]
+
+    result = await mw.on_list_tools(context, _call_next_factory(tools))
+
+    assert tool_name in {t.name for t in result}
+    # The capability-gated tool alongside it is still correctly hidden --
+    # proves this is a deliberate, narrow bypass, not a broken filter.
+    assert "rucio_list_dids" not in {t.name for t in result}
 
 
 async def test_missing_principal_returns_empty_list(registry, policy):

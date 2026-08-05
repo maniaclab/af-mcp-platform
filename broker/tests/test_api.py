@@ -274,6 +274,29 @@ def test_catalog_status_capability_required_includes_correlation_id(
     assert rucio["correlation_id"]
 
 
+def test_catalog_status_detail_names_the_diagnostic_tools(
+    app_client: tuple[TestClient, dict], make_principal: Callable[..., object]
+) -> None:
+    """Close the loop (issue #153): both the "link_required" and
+    "capability_required" status_detail sentences name the af_* diagnostic
+    tool a model should call next, not just a human-facing instruction."""
+    from af_mcp_broker.mcp.registry import LIST_IDENTITIES_TOOL_NAME, WHOAMI_TOOL_NAME
+
+    client, state = app_client
+
+    state["principal"] = make_principal(groups=["atlas"])
+    resp = client.get("/v1/catalog", headers=_AUTH)
+    rucio = {s["name"]: s for s in resp.json()["servers"]}["rucio"]
+    assert rucio["status"] == "link_required"
+    assert LIST_IDENTITIES_TOOL_NAME in rucio["status_detail"]
+
+    state["principal"] = make_principal(groups=[])
+    resp = client.get("/v1/catalog", headers=_AUTH)
+    rucio = {s["name"]: s for s in resp.json()["servers"]}["rucio"]
+    assert rucio["status"] == "capability_required"
+    assert WHOAMI_TOOL_NAME in rucio["status_detail"]
+
+
 def test_catalog_status_misconfigured_when_no_credential_provider_resolves(
     app_client: tuple[TestClient, dict], make_principal: Callable[..., object]
 ) -> None:

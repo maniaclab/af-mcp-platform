@@ -158,6 +158,25 @@ up into `rucio_rucio_*`, so its `backends.yaml` entry opts out via
 `apply_namespace: false`). Either way, every tool you see starts with its
 backend's prefix, e.g. `rucio_whoami`.
 
+## Diagnosing tool problems yourself
+
+The broker exposes three tools directly on the aggregator, named with the
+reserved `af_` prefix so a backend can never shadow them (see
+[Architecture](architecture.md)). They need no capability and stay visible
+and callable for every authenticated caller no matter what's broken
+elsewhere — that's the point: they answer "why" when a tool is missing or a
+call fails, without needing anything else to be working first.
+
+| Tool | Call it when |
+|---|---|
+| `af_whoami` | A call fails with a capability/permission error, to see your own subject, groups, and effective capabilities. |
+| `af_list_identities` | A call fails with a "not linked" error, or a backend's tools are missing/non-functional, to see which identity provider it needs and whether you've linked it. |
+| `af_list_mcp_servers` | An expected tool is missing from `tools/list`, or a call fails for a reason that isn't an obviously bad argument — lists every backend, its tool prefix, the identity provider it depends on, and a short reason if it's unavailable. |
+
+An MCP client that lets you invoke tools directly (or an LLM using the
+broker through you) can call these the same way as any other tool — no
+extra setup, since they don't proxy to a backend at all.
+
 ## Errors you'll see
 
 These are the exact strings the aggregator raises (see
@@ -171,16 +190,17 @@ errors to you will show one of these verbatim:
 | Token invalid, expired, or wrong audience | `Invalid or expired token` |
 | Tool call denied (capability missing) | `Authorization denied: principal lacks capability '<cap>'. Granted capabilities: [...]` |
 | Tool name doesn't match any backend | `No backend registered for tool '<name>'` |
-| Bearer backend, not linked | `<ProviderClassName> not linked. Visit the portal Identities page to connect it.` (e.g. `OAuth21Provider not linked...` for rucio-mcp-escape) |
+| Bearer backend, not linked | `<ProviderClassName> not linked. Visit the portal Identities page to connect it. Call af_list_identities to see which identity provider this backend needs, or af_list_mcp_servers for this backend's current status.` (e.g. `OAuth21Provider not linked...` for rucio-mcp-escape) |
 | x509 backend needs unlock | `Credential unlock required. Visit the portal: <portal-url>/v1/x509/proxy` |
 | x509 backend called via /mcp at all | `Backend '<name>' requires an x509/VOMS proxy credential ... not yet deliverable over /mcp tool calls.` — a known gap (issue #58's TODO), not a bug |
 | Backend unreachable / times out | A clean MCP tool error naming the failure, never a raw traceback or the backend's HTTP body |
 
 A tool you lack the capability for won't appear in `tools/list` at all
 (entitlement filtering, not an error) — it isn't visible-but-denied the way
-the "not linked" case is. If a tool you expect is missing, check
-`GET /v1/capabilities` on the broker (or the portal's Catalog page) before
-assuming your token is broken.
+the "not linked" case is. If a tool you expect is missing, call
+`af_list_mcp_servers` (see [above](#diagnosing-tool-problems-yourself)) or
+check `GET /v1/capabilities` on the broker (or the portal's Catalog page)
+before assuming your token is broken.
 
 **Trailing slash**: point clients at `/mcp/` (trailing slash). Whether a
 client that only supports a bare `/mcp` (no trailing slash) works depends

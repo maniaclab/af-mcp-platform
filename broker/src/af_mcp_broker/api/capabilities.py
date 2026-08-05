@@ -16,7 +16,11 @@ from af_mcp_broker.authorization import (
 )
 from af_mcp_broker.credentials import CredentialRegistry
 from af_mcp_broker.identity import Principal, keycloak_dependency
-from af_mcp_broker.mcp.registry import BackendRegistry
+from af_mcp_broker.mcp.registry import (
+    LIST_IDENTITIES_TOOL_NAME,
+    WHOAMI_TOOL_NAME,
+    BackendRegistry,
+)
 
 if TYPE_CHECKING:
     from af_mcp_broker.mcp.registry import BackendSpec
@@ -36,10 +40,14 @@ BackendStatus = Literal[
 
 _STATUS_DETAILS: dict[BackendStatus, str] = {
     "available": "Available.",
-    "link_required": "Link your identity to use this backend.",
+    "link_required": (
+        "Link your identity to use this backend. Call "
+        f"`{LIST_IDENTITIES_TOOL_NAME}` to see which identity provider it needs."
+    ),
     "capability_required": (
         "Your account doesn't have the access this backend requires. "
-        "Contact the AF admins."
+        f"Contact the AF admins. Call `{WHOAMI_TOOL_NAME}` to see your "
+        "current capabilities."
     ),
     "unavailable": "Temporarily unavailable. Try again shortly.",
     "misconfigured": "This backend is misconfigured. Contact the AF admins.",
@@ -49,7 +57,10 @@ _STATUS_DETAILS: dict[BackendStatus, str] = {
 # listing failure -- see aggregator.py's _classify_list_failure) still maps
 # to "link_required" (re-linking is the fix, same as never having linked at
 # all), but the sentence should say "re-link", not "link for the first time".
-_RELINK_DETAIL = "Your linked credential was rejected. Re-link your identity."
+_RELINK_DETAIL = (
+    "Your linked credential was rejected. Re-link your identity. Call "
+    f"`{LIST_IDENTITIES_TOOL_NAME}` to see which identity provider to re-link."
+)
 
 router = APIRouter(tags=["capabilities"])
 

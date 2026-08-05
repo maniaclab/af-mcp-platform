@@ -5,6 +5,29 @@ from pathlib import Path
 
 import yaml  # type: ignore[import-untyped]
 
+# Reserved for the broker-native diagnostic tools registered directly on the
+# aggregator (mcp/diagnostics.py, issue #153): af_whoami, af_list_identities,
+# af_list_mcp_servers. No backend may configure this prefix -- doing so would
+# let a backend's own tools ("af_<toolname>", once namespaced) shadow the
+# diagnostic tools' names in a caller's tools/list, defeating the "always
+# visible, never proxied" guarantee those tools exist to provide. Enforced by
+# BackendRegistry.register() below.
+#
+# These names live here rather than in mcp/diagnostics.py itself so that
+# EntitlementMiddleware/AuthorizationMiddleware (which need DIAGNOSTIC_TOOL_NAMES
+# to bypass entitlement/authorization for these tools) and api/capabilities.py
+# (which names them in a status_detail sentence -- see _STATUS_DETAILS) can
+# both import them without either importing mcp/diagnostics.py itself, which
+# in turn imports api/capabilities.py's _backend_status -- that would be a
+# straight import cycle.
+RESERVED_PREFIX = "af"
+WHOAMI_TOOL_NAME = f"{RESERVED_PREFIX}_whoami"
+LIST_IDENTITIES_TOOL_NAME = f"{RESERVED_PREFIX}_list_identities"
+LIST_MCP_SERVERS_TOOL_NAME = f"{RESERVED_PREFIX}_list_mcp_servers"
+DIAGNOSTIC_TOOL_NAMES = frozenset(
+    {WHOAMI_TOOL_NAME, LIST_IDENTITIES_TOOL_NAME, LIST_MCP_SERVERS_TOOL_NAME}
+)
+
 
 @dataclass
 class BackendSpec:
@@ -77,9 +100,17 @@ class BackendRegistry:
                 timeout_seconds=entry.get("timeout_seconds", 30.0),
                 tools_cache_ttl=entry.get("tools_cache_ttl", 300.0),
             )
-            self._backends[spec.name] = spec
+            self.register(spec)
 
     def register(self, backend: BackendSpec) -> None:
+        if backend.prefix == RESERVED_PREFIX:
+            msg = (
+                f"backend '{backend.name}' cannot use prefix "
+                f"'{RESERVED_PREFIX}' -- reserved for the broker's own "
+                f"af_* diagnostic tools ({sorted(DIAGNOSTIC_TOOL_NAMES)}, "
+                "issue #153). Choose a different prefix."
+            )
+            raise ValueError(msg)
         self._backends[backend.name] = backend
 
     def all_backends(self) -> list[BackendSpec]:

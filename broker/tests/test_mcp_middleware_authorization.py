@@ -11,7 +11,11 @@ from prometheus_client import REGISTRY
 from af_mcp_broker.authorization import EntitlementPolicy
 from af_mcp_broker.mcp.middleware import authorization_mw
 from af_mcp_broker.mcp.middleware.authorization_mw import AuthorizationMiddleware
-from af_mcp_broker.mcp.registry import BackendRegistry, BackendSpec
+from af_mcp_broker.mcp.registry import (
+    DIAGNOSTIC_TOOL_NAMES,
+    BackendRegistry,
+    BackendSpec,
+)
 
 if TYPE_CHECKING:
     from af_mcp_broker.audit import AuditRecord
@@ -178,6 +182,30 @@ async def test_unentitled_call_denied_before_call_next(
     assert record.outcome == "denied"
     assert record.error is not None
     assert record.target == "rucio"
+
+
+@pytest.mark.parametrize("tool_name", sorted(DIAGNOSTIC_TOOL_NAMES))
+async def test_diagnostic_tool_call_bypasses_backend_lookup_and_audit(
+    registry, policy, make_principal, captured_audits, tool_name
+) -> None:
+    """Requirement (issue #153): an af_* diagnostic tool call must reach
+    call_next directly -- no backend lookup (there is none to look up: no
+    registered backend can claim this prefix, see registry.py), no
+    entitlement check, no credential minting, and no audit/metrics record,
+    since it never touches a backend and needs no capability. A principal
+    with no groups at all (so no capabilities) proves this isn't gated on
+    entitlement the way every other tool here is."""
+    mw = AuthorizationMiddleware(registry, policy)
+    principal = make_principal(groups=[])
+    context = _call_tool_context(tool_name, {}, principal)
+    fake_result = ToolResult(content=[])
+    call_next = _CallNextRecorder(result=fake_result)
+
+    result = await mw.on_call_tool(context, call_next)
+
+    assert result is fake_result
+    assert call_next.called is True
+    assert captured_audits == []
 
 
 async def test_unknown_tool_prefix_denied(
