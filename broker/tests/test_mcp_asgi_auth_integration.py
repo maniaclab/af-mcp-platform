@@ -179,6 +179,72 @@ async def test_valid_bearer_tools_list_and_call_unchanged(
     assert result.data == "pong"
 
 
+async def test_pat_round_trip_tools_list_and_call(
+    settings: Any, policy: EntitlementPolicy, registry: BackendRegistry
+) -> None:
+    """End-to-end coverage for issue #144 step 2a: mint a PAT through the
+    same TokenRecord shape POST /v1/tokens produces, present it as a real
+    Bearer against a live aggregator, and confirm it resolves a working
+    Principal all the way through tools/list and tools/call -- both
+    credential types now work on /mcp side by side (this test) and neither
+    disturbs the other (every JWT-path test above is unmodified)."""
+    from af_mcp_broker.pat import mint_pat
+    from af_mcp_broker.principal_cache import PrincipalCache
+    from af_mcp_broker.principal_directory import (
+        PrincipalAttributes,
+        PrincipalDirectory,
+    )
+    from af_mcp_broker.token_registry import InMemoryTokenRegistryBackend, TokenRecord
+
+    class _FakeDirectory(PrincipalDirectory):
+        async def resolve(self, principal_id: str) -> PrincipalAttributes:
+            return PrincipalAttributes(
+                uid=50123, gid=5000, unixname="auser", groups=[], email=""
+            )
+
+    pat_backend = InMemoryTokenRegistryBackend()
+    plaintext, lookup_id, secret_hash = mint_pat()
+    now = time.time()
+    await pat_backend.add(
+        TokenRecord(
+            lookup_id=lookup_id,
+            principal_id="kc-sub-pat-1",
+            secret_hash=secret_hash,
+            name="test-pat",
+            created_at=now,
+            expires_at=now + 3600,
+            revoked_at=None,
+            last_used_at=None,
+        )
+    )
+    principal_cache = PrincipalCache(
+        _FakeDirectory(), refresh_interval_seconds=1000.0, max_staleness_seconds=3600.0
+    )
+
+    mcp = build_aggregator(
+        registry,
+        settings,
+        policy,
+        CredentialRegistry(),
+        pat_backend=pat_backend,
+        principal_cache=principal_cache,
+    )
+
+    async with (
+        run_aggregator_async(mcp, path="/mcp") as url,
+        _bearer_client(url, plaintext) as client,
+    ):
+        names = {t.name for t in await client.list_tools()}
+        assert "open_ping" in names
+        result = await client.call_tool("open_ping", {})
+
+    assert result.data == "pong"
+
+    record = await pat_backend.get_by_lookup_id(lookup_id)
+    assert record is not None
+    assert record.last_used_at is not None  # touched by the successful call(s)
+
+
 async def test_dev_bypass_path_tools_list_and_call_still_work(
     settings: Any, policy: EntitlementPolicy, registry: BackendRegistry
 ) -> None:

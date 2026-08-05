@@ -251,17 +251,17 @@ async def test_revoked_jti_rejected_on_mcp_path(settings, sig_key, prime_jwks):
     backend = InMemoryTokenRegistryBackend()
     await backend.add(
         TokenRecord(
-            jti="revoked-on-mcp",
-            uid=50123,
-            subject="user-123",
+            lookup_id="revoked-on-mcp",
+            principal_id="user-123",
+            secret_hash="unused-in-this-test",
             name="test-token",
-            issued_at=time.time(),
+            created_at=time.time(),
             expires_at=time.time() + 3600,
             revoked_at=None,
-            minted_via="portal",
+            last_used_at=None,
         )
     )
-    await backend.revoke(50123, "revoked-on-mcp", revoked_at=time.time())
+    await backend.revoke("user-123", "revoked-on-mcp", revoked_at=time.time())
     cache = RevokedJtiCache(backend, refresh_interval_seconds=30.0)
 
     inner = _InnerApp()
@@ -295,6 +295,197 @@ async def test_active_jti_allowed_through_mcp_path_with_cache_configured(
 
     assert inner.called
     assert _status(messages) == 200
+
+
+# ---------------------------------------------------------------------------
+# Identity PAT recognition on /mcp (issue #144 step 2a). A non-mcp_pat_
+# bearer always falls through to the existing JWT path above, unchanged
+# (covered by every test above this section, all still passing unmodified).
+# ---------------------------------------------------------------------------
+
+
+async def test_valid_pat_stashes_principal_and_calls_inner_app(settings):
+    from af_mcp_broker.pat import mint_pat
+    from af_mcp_broker.principal_cache import PrincipalCache
+    from af_mcp_broker.principal_directory import (
+        PrincipalAttributes,
+        PrincipalDirectory,
+    )
+    from af_mcp_broker.token_registry import TokenRecord
+
+    class _FakeDirectory(PrincipalDirectory):
+        async def resolve(self, principal_id: str) -> PrincipalAttributes:
+            return PrincipalAttributes(
+                uid=50123, gid=5000, unixname="auser", groups=["atlas"], email=""
+            )
+
+    backend = InMemoryTokenRegistryBackend()
+    plaintext, lookup_id, secret_hash = mint_pat()
+    await backend.add(
+        TokenRecord(
+            lookup_id=lookup_id,
+            principal_id="user-123",
+            secret_hash=secret_hash,
+            name="test-token",
+            created_at=time.time(),
+            expires_at=time.time() + 3600,
+            revoked_at=None,
+            last_used_at=None,
+        )
+    )
+    principal_cache = PrincipalCache(
+        _FakeDirectory(), refresh_interval_seconds=1000.0, max_staleness_seconds=3600.0
+    )
+
+    inner = _InnerApp()
+    middleware = AsgiAuthMiddleware(
+        inner,
+        IdentityMiddleware(
+            settings, pat_backend=backend, principal_cache=principal_cache
+        ),
+    )
+
+    messages = await _run(
+        middleware, _http_scope({"authorization": f"Bearer {plaintext}"})
+    )
+
+    assert inner.called
+    principal = inner.scope["state"]["principal"]
+    assert principal.subject == "user-123"
+    assert principal.uid == 50123
+    assert _status(messages) == 200
+
+
+async def test_pat_shaped_bearer_rejected_when_pat_support_not_configured(
+    settings,
+):
+    """No pat_backend/principal_cache wired in (e.g. KEYCLOAK_ADMIN_CLIENT_ID
+    unset) -- a mcp_pat_... bearer must be rejected the same vague way as any
+    other invalid credential, not crash."""
+    inner = _InnerApp()
+    middleware = AsgiAuthMiddleware(inner, IdentityMiddleware(settings))
+
+    messages = await _run(
+        middleware, _http_scope({"authorization": "Bearer mcp_pat_abc123_secretvalue"})
+    )
+
+    assert not inner.called
+    assert _status(messages) == 401
+    body = json.loads(_body(messages))
+    assert body["detail"] == "Invalid bearer token"
+
+
+async def test_malformed_pat_rejected_with_vague_401(settings):
+    from af_mcp_broker.principal_cache import PrincipalCache
+    from af_mcp_broker.principal_directory import (
+        PrincipalAttributes,
+        PrincipalDirectory,
+    )
+
+    class _FakeDirectory(PrincipalDirectory):
+        async def resolve(self, principal_id: str) -> PrincipalAttributes:
+            raise AssertionError("must not be called for a malformed PAT")
+
+    backend = InMemoryTokenRegistryBackend()
+    principal_cache = PrincipalCache(
+        _FakeDirectory(), refresh_interval_seconds=1000.0, max_staleness_seconds=3600.0
+    )
+    inner = _InnerApp()
+    middleware = AsgiAuthMiddleware(
+        inner,
+        IdentityMiddleware(
+            settings, pat_backend=backend, principal_cache=principal_cache
+        ),
+    )
+
+    messages = await _run(
+        middleware, _http_scope({"authorization": "Bearer mcp_pat_missing_secret_part"})
+    )
+
+    assert not inner.called
+    assert _status(messages) == 401
+
+
+async def test_unknown_pat_lookup_id_rejected(settings):
+    from af_mcp_broker.pat import mint_pat
+    from af_mcp_broker.principal_cache import PrincipalCache
+    from af_mcp_broker.principal_directory import (
+        PrincipalAttributes,
+        PrincipalDirectory,
+    )
+
+    class _FakeDirectory(PrincipalDirectory):
+        async def resolve(self, principal_id: str) -> PrincipalAttributes:
+            raise AssertionError("must not be called for an unknown lookup_id")
+
+    backend = InMemoryTokenRegistryBackend()  # never populated
+    plaintext, _, _ = mint_pat()
+    principal_cache = PrincipalCache(
+        _FakeDirectory(), refresh_interval_seconds=1000.0, max_staleness_seconds=3600.0
+    )
+    inner = _InnerApp()
+    middleware = AsgiAuthMiddleware(
+        inner,
+        IdentityMiddleware(
+            settings, pat_backend=backend, principal_cache=principal_cache
+        ),
+    )
+
+    messages = await _run(
+        middleware, _http_scope({"authorization": f"Bearer {plaintext}"})
+    )
+
+    assert not inner.called
+    assert _status(messages) == 401
+
+
+async def test_expired_pat_rejected_with_actionable_portal_message(settings):
+    from af_mcp_broker.pat import mint_pat
+    from af_mcp_broker.principal_cache import PrincipalCache
+    from af_mcp_broker.principal_directory import (
+        PrincipalAttributes,
+        PrincipalDirectory,
+    )
+    from af_mcp_broker.token_registry import TokenRecord
+
+    class _FakeDirectory(PrincipalDirectory):
+        async def resolve(self, principal_id: str) -> PrincipalAttributes:
+            return PrincipalAttributes(uid=1, gid=1, unixname="u", groups=[], email="")
+
+    backend = InMemoryTokenRegistryBackend()
+    plaintext, lookup_id, secret_hash = mint_pat()
+    await backend.add(
+        TokenRecord(
+            lookup_id=lookup_id,
+            principal_id="user-123",
+            secret_hash=secret_hash,
+            name="test-token",
+            created_at=time.time() - 7200,
+            expires_at=time.time() - 3600,
+            revoked_at=None,
+            last_used_at=None,
+        )
+    )
+    principal_cache = PrincipalCache(
+        _FakeDirectory(), refresh_interval_seconds=1000.0, max_staleness_seconds=3600.0
+    )
+    inner = _InnerApp()
+    middleware = AsgiAuthMiddleware(
+        inner,
+        IdentityMiddleware(
+            settings, pat_backend=backend, principal_cache=principal_cache
+        ),
+    )
+
+    messages = await _run(
+        middleware, _http_scope({"authorization": f"Bearer {plaintext}"})
+    )
+
+    assert not inner.called
+    assert _status(messages) == 401
+    body = json.loads(_body(messages))
+    assert "expired" in body["detail"]
+    assert f"{settings.portal_url.rstrip('/')}/tokens" in body["detail"]
 
 
 # ---------------------------------------------------------------------------
