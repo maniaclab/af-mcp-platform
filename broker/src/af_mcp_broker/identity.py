@@ -128,6 +128,20 @@ class Principal:
     ``subject`` is always present (a validated JWT's `sub` claim, or a PAT's
     stored owner id), so it -- not uid -- is the identifier incidental
     consumers (cache keys, audit fields, log context) should use.
+
+    ``capability_grant`` (issue #144 step 4) is ``None`` for every JWT and
+    every identity PAT -- the overwhelming majority of principals -- and is
+    only ever set for a **capability PAT**: an explicit set of capability
+    names copied from ``token_registry.TokenRecord.capability_grant`` by
+    ``pat_auth._resolve_authority``. It is a RESTRICTION, never a source of
+    authority: ``authorization.get_principal_capabilities`` intersects it
+    with whatever capabilities the principal's *current* groups already
+    grant, rather than substituting for that computation. Intersecting
+    (not substituting) is what keeps a capability PAT killable by a group
+    removal exactly like every other credential, and what makes it
+    structurally impossible for a grant to hand out more than the principal
+    currently holds, however it got into the record -- see that function's
+    docstring for the mechanics.
     """
 
     subject: str
@@ -139,6 +153,7 @@ class Principal:
     # Keep the raw token for downstream credential flows; SecretStr prevents
     # accidental logging.
     raw_token: SecretStr = field(compare=False, repr=False)
+    capability_grant: frozenset[str] | None = None
 
 
 # ---------------------------------------------------------------------------

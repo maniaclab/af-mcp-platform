@@ -68,6 +68,7 @@ async def _mint_and_store(
     expires_at: float | None = None,
     revoked: bool = False,
     name: str = "test-token",
+    capability_grant: frozenset[str] | None = None,
 ) -> str:
     plaintext, lookup_id, secret_hash = mint_pat()
     now = time.time()
@@ -80,6 +81,7 @@ async def _mint_and_store(
         expires_at=expires_at if expires_at is not None else now + 3600,
         revoked_at=None,
         last_used_at=None,
+        capability_grant=capability_grant,
     )
     await pat_backend.add(record)
     if revoked:
@@ -128,6 +130,134 @@ async def test_valid_pat_with_no_posix_identity_resolves_principal(
     assert principal.gid is None
     assert principal.unixname is None
     assert principal.groups == ["atlas"]
+
+
+# ---------------------------------------------------------------------------
+# Capability PATs (issue #144 step 4): resolve_pat_principal's job is only to
+# carry TokenRecord.capability_grant through onto Principal.capability_grant
+# unchanged -- the intersection against current capabilities happens
+# downstream, in authorization.get_principal_capabilities (see
+# test_authorization.py for that). The group-removal test below crosses both
+# modules on purpose: it's the end-to-end property the whole design turns on.
+# ---------------------------------------------------------------------------
+
+
+async def test_capability_pat_grant_carried_through_onto_principal(
+    settings, pat_backend, principal_cache, directory, tracker
+) -> None:
+    directory.responses["kc-sub-1"] = PrincipalAttributes(
+        uid=1, gid=1, unixname="u", groups=["atlas"], email=""
+    )
+    token = await _mint_and_store(
+        pat_backend,
+        principal_id="kc-sub-1",
+        capability_grant=frozenset({"read_data"}),
+    )
+
+    principal = await resolve_pat_principal(
+        token, settings, pat_backend, principal_cache, tracker
+    )
+
+    assert principal.capability_grant == frozenset({"read_data"})
+
+
+async def test_identity_pat_has_no_capability_grant(
+    settings, pat_backend, principal_cache, directory, tracker
+) -> None:
+    """An identity PAT (no capability_grant on the record, today's default
+    for every PAT minted before this field existed) must resolve to
+    Principal.capability_grant=None -- behaving exactly as before."""
+    directory.responses["kc-sub-1"] = PrincipalAttributes(
+        uid=1, gid=1, unixname="u", groups=["atlas"], email=""
+    )
+    token = await _mint_and_store(pat_backend, principal_id="kc-sub-1")
+
+    principal = await resolve_pat_principal(
+        token, settings, pat_backend, principal_cache, tracker
+    )
+
+    assert principal.capability_grant is None
+
+
+async def test_capability_pat_loses_access_when_owner_loses_the_group(
+    settings, pat_backend, directory, tracker, policy
+) -> None:
+    """The property the whole design turns on (issue #144's binding
+    refinement, "a capability grant is a restriction, not a source of
+    authority"): a capability PAT's effective capability set is
+    re-intersected against the principal cache's CURRENT groups on every
+    resolve. Removing the owner from the group that granted a capability
+    kills it for the PAT within one refresh, exactly like it already does
+    for a fresh JWT -- the grant itself never changes; only what it gets
+    intersected against does.
+    """
+    from af_mcp_broker.authorization import get_principal_capabilities
+
+    short_refresh_cache = PrincipalCache(
+        directory,
+        backend=InMemoryPrincipalCacheBackend(),
+        refresh_interval_seconds=0.0,  # every get() re-hits the directory
+        max_staleness_seconds=3600.0,
+        heartbeat_interval_seconds=3600.0,
+    )
+    directory.responses["kc-sub-1"] = PrincipalAttributes(
+        uid=1, gid=1, unixname="u", groups=["atlas"], email=""
+    )
+    token = await _mint_and_store(
+        pat_backend,
+        principal_id="kc-sub-1",
+        capability_grant=frozenset({"read_data"}),
+    )
+
+    principal_before = await resolve_pat_principal(
+        token, settings, pat_backend, short_refresh_cache, tracker
+    )
+    assert get_principal_capabilities(principal_before, policy) == {"read_data"}
+
+    # Owner removed from "atlas" in Keycloak -- the directory now reports no
+    # groups at all for this subject.
+    directory.responses["kc-sub-1"] = PrincipalAttributes(
+        uid=1, gid=1, unixname="u", groups=[], email=""
+    )
+
+    principal_after = await resolve_pat_principal(
+        token, settings, pat_backend, short_refresh_cache, tracker
+    )
+    assert get_principal_capabilities(principal_after, policy) == set()
+
+
+async def test_capability_grant_exceeding_current_capabilities_is_still_clipped(
+    settings, pat_backend, directory, tracker, policy
+) -> None:
+    """Constructs a TokenRecord directly with a grant broader than the
+    owner's current capabilities (bypassing mint-time validation entirely)
+    to prove enforcement does not rely on that check having run -- see
+    api/tokens.py's MintTokenRequest.capabilities docstring."""
+    from af_mcp_broker.authorization import get_principal_capabilities
+
+    directory.responses["kc-sub-1"] = PrincipalAttributes(
+        uid=1, gid=1, unixname="u", groups=[], email=""
+    )
+    # __authenticated__-only capabilities for an empty-groups principal are
+    # {read_metadata, read_monitoring} -- "admin" is never reachable there.
+    token = await _mint_and_store(
+        pat_backend,
+        principal_id="kc-sub-1",
+        capability_grant=frozenset({"admin", "read_metadata"}),
+    )
+
+    principal_cache = PrincipalCache(
+        directory,
+        backend=InMemoryPrincipalCacheBackend(),
+        refresh_interval_seconds=1000.0,
+        max_staleness_seconds=3600.0,
+        heartbeat_interval_seconds=3600.0,
+    )
+    principal = await resolve_pat_principal(
+        token, settings, pat_backend, principal_cache, tracker
+    )
+
+    assert get_principal_capabilities(principal, policy) == {"read_metadata"}
 
 
 async def test_malformed_token_rejected(

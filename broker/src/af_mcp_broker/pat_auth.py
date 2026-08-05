@@ -14,17 +14,21 @@ attribute of the principal, not the token" resolution):
 
 2. **What authority does it carry?** For a JWT this is "read uid/gid/
    unixname/groups straight off the claims" -- self-contained, re-validated
-   every request. For an identity PAT it is *always* deferred to
-   ``principal_cache.PrincipalCache``, keyed by the principal id question 1
-   just answered -- never read off the PAT record itself, because an
-   identity PAT carries no authority of its own. This is the seam #144
-   deliberately keeps open for a future **capability PAT**: such a token
-   would answer question 2 from an explicit grant embedded in its own
-   record instead of deferring to the cache, entirely inside
-   ``_resolve_authority`` below, without question 1's resolution (or
-   anything upstream of it, e.g. ``pat.parse_pat``/hashing) needing to
-   change at all. Capability PATs are NOT implemented here -- this module
-   only ever calls the cache.
+   every request. For every PAT -- identity or capability alike -- it is
+   *always* deferred to ``principal_cache.PrincipalCache``, keyed by the
+   principal id question 1 just answered. This is the seam #144 step 4's
+   **capability PAT** uses (``_resolve_authority`` below): an identity PAT
+   carries no authority of its own, full stop, so the cache's answer is the
+   whole story; a capability PAT ALSO carries an explicit grant
+   (``TokenRecord.capability_grant``) -- but that grant is a RESTRICTION
+   layered on top of the cache's answer, never a substitute for consulting
+   it. Reading the grant *instead of* the cache would let a capability PAT
+   outlive a group removal, reintroducing exactly the staleness problem
+   group-snapshotting was rejected for; see ``_resolve_authority``'s
+   docstring for the mechanics and ``authorization.get_principal_capabilities``
+   for where the actual intersection happens. Question 1's resolution (and
+   anything upstream of it, e.g. ``pat.parse_pat``/hashing) is unchanged
+   either way.
 
 Mirrors ``identity.get_principal``'s error shape so ``AsgiAuthMiddleware``
 (``mcp/middleware/identity_mw.py``) can share its existing except-clause
@@ -61,7 +65,8 @@ from af_mcp_broker.principal_cache import PrincipalUnavailableError
 if TYPE_CHECKING:
     from af_mcp_broker.config import Settings
     from af_mcp_broker.principal_cache import PrincipalCache
-    from af_mcp_broker.token_registry import TokenRegistryBackend
+    from af_mcp_broker.principal_directory import PrincipalAttributes
+    from af_mcp_broker.token_registry import TokenRecord, TokenRegistryBackend
 
 logger = structlog.get_logger(__name__)
 
@@ -149,11 +154,11 @@ async def resolve_pat_principal(
         await pat_backend.touch_last_used(record.principal_id, lookup_id, now)
 
     # --- Question 2: what authority does it carry? --------------------------
-    # Always deferred to the principal cache -- see the module docstring for
-    # why this call, and only this call, is the seam a future capability PAT
-    # would need to change.
+    # Always deferred to the principal cache -- see the module docstring and
+    # _resolve_authority's docstring for why a capability PAT's grant, when
+    # present, does not change that.
     try:
-        attributes = await _resolve_authority(record.principal_id, principal_cache)
+        attributes = await _resolve_authority(record, principal_cache)
     except PrincipalUnavailableError:
         raise _vague_401() from None
 
@@ -165,14 +170,30 @@ async def resolve_pat_principal(
         unixname=attributes.unixname,
         groups=attributes.groups,
         raw_token=SecretStr(token),
+        capability_grant=record.capability_grant,
     )
 
 
-async def _resolve_authority(principal_id: str, principal_cache: PrincipalCache):
-    """Answer question 2 for an identity PAT: always the principal cache's current view.
+async def _resolve_authority(
+    record: TokenRecord, principal_cache: PrincipalCache
+) -> PrincipalAttributes:
+    """Answer question 2: the principal cache's current view -- identically for an identity PAT and a capability PAT.
 
-    A future capability PAT would branch here (reading an explicit grant off
-    the PAT record instead) without question 1's resolution above needing to
-    change -- see the module docstring.
+    Takes the full *record* (not just ``record.principal_id``) so this is
+    visibly the one seam issue #144 flagged for a future capability PAT, but
+    the lookup itself never changes shape: ``record.capability_grant`` is
+    NOT read here, and never substitutes for this call. A capability PAT
+    still needs the principal cache's CURRENT groups -- the grant is a
+    restriction applied on top of them, not a replacement for asking what
+    they currently are. Substituting the grant instead would let a capability
+    PAT keep working after its owner lost the underlying group, reintroducing
+    exactly the staleness problem group-snapshotting was rejected for.
+
+    The grant itself is carried through unchanged by ``resolve_pat_principal``
+    onto the returned ``Principal.capability_grant``; the actual intersection
+    against these attributes' groups happens downstream, in
+    ``authorization.get_principal_capabilities``, once a policy is available
+    to derive capabilities from groups in the first place -- see that
+    function's docstring.
     """
-    return await principal_cache.get(principal_id)
+    return await principal_cache.get(record.principal_id)

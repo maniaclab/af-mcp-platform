@@ -53,6 +53,11 @@ writeup — these are real gaps, not oversights):
 * Expiry default is 90 days (``Settings.pat_default_expiry_days``);
   never-expiring is an explicit opt-in (``MintTokenRequest.never_expires``),
   logged loudly when used, never the default.
+* ``capabilities`` (issue #144 step 4) mints a **capability PAT** -- see
+  ``MintTokenRequest.capabilities``'s docstring and docs/auth.md's
+  "Capability PATs" section for the mint-time-validation-vs-enforcement
+  split. Absent (``None``, the default) mints an ordinary identity PAT,
+  unchanged from every PAT minted before this field existed.
 """
 
 from __future__ import annotations
@@ -67,6 +72,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from af_mcp_broker.audit import AuditRecord, write_audit
+from af_mcp_broker.authorization import EntitlementPolicy, get_principal_capabilities
 from af_mcp_broker.config import Settings, get_settings
 from af_mcp_broker.identity import Principal, keycloak_dependency
 from af_mcp_broker.pat import mint_pat
@@ -129,6 +135,19 @@ class MintTokenRequest(BaseModel):
     # notes) -- never the default. Mutually exclusive with expires_in_days;
     # see _validate_expiry below.
     never_expires: bool = False
+    # Optional explicit capability grant (issue #144 step 4). None (the
+    # default) mints an ordinary identity PAT: its authority is always the
+    # caller's CURRENT capabilities, re-derived fresh on every request, same
+    # as before this field existed. A non-None value mints a **capability
+    # PAT** instead: mint_token below validates it's a subset of the
+    # caller's capabilities at mint time, purely for a clear error message
+    # naming any offending capability -- that check is advisory only, never
+    # the thing standing between a caller and extra access. Enforcement is
+    # the intersection ``authorization.get_principal_capabilities`` performs
+    # against the caller's current capabilities on every request, and does
+    # not depend on this validation having run; see docs/auth.md's
+    # "Capability PATs" section.
+    capabilities: list[str] | None = None
 
     @model_validator(mode="after")
     def _validate_expiry(self) -> MintTokenRequest:
@@ -148,6 +167,11 @@ class MintTokenResponse(BaseModel):
     expires_at: str | None
     name: str
     note: str | None
+    # None means an identity PAT (this token's authority is always the
+    # caller's current capabilities); a sorted list of capability names means
+    # a capability PAT scoped to at most those (issue #144 step 4) -- see
+    # MintTokenRequest.capabilities and docs/auth.md's "Capability PATs".
+    capability_grant: list[str] | None
 
 
 class TokenSummary(BaseModel):
@@ -163,6 +187,9 @@ class TokenSummary(BaseModel):
     # used to drop the row entirely on revoke, which no longer happens).
     revoked_at: str | None
     last_used_at: str | None
+    # See MintTokenResponse.capability_grant -- same meaning, read back from
+    # the stored record rather than the mint request.
+    capability_grant: list[str] | None
 
 
 class RevokeTokenResponse(BaseModel):
@@ -267,6 +294,11 @@ def _registry(request: Request) -> TokenRegistry:
     return registry
 
 
+def _get_policy(request: Request) -> EntitlementPolicy:
+    """Return the app's entitlement policy, falling back to an empty one -- same fallback ``api/capabilities.py``'s ``_get_policy`` uses. An unconfigured policy resolves to "the caller holds nothing" rather than a 503, since the only consumer here (mint-time capability-grant validation) degrades safely rather than needing this route unavailable."""
+    return getattr(request.app.state, "entitlement_policy", None) or EntitlementPolicy()
+
+
 def _iso(epoch: float) -> str:
     return datetime.fromtimestamp(epoch, tz=UTC).isoformat()
 
@@ -327,6 +359,28 @@ async def mint_token(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=str(exc)
         ) from exc
 
+    # Capability PAT grant (issue #144 step 4) -- see MintTokenRequest
+    # .capabilities's docstring for why this check is advisory-only: it
+    # exists purely to name the offending capabilities in a clear error
+    # right now, never as the sole thing preventing escalation. Enforcement
+    # is the intersection get_principal_capabilities performs against the
+    # caller's CURRENT capabilities on every request, which does not
+    # consult this check at all.
+    capability_grant: frozenset[str] | None = None
+    if body.capabilities is not None:
+        requested = frozenset(body.capabilities)
+        current_caps = get_principal_capabilities(principal, _get_policy(request))
+        missing = sorted(requested - current_caps)
+        if missing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "Cannot grant capabilities you don't currently hold: "
+                    + ", ".join(missing)
+                ),
+            )
+        capability_grant = requested
+
     plaintext, lookup_id, secret_hash = mint_pat()
     now = time.time()
 
@@ -360,6 +414,7 @@ async def mint_token(
                 revoked_at=None,
                 last_used_at=None,
                 note=note,
+                capability_grant=capability_grant,
             )
         )
     except DuplicateNameError as exc:
@@ -386,6 +441,9 @@ async def mint_token(
         expires_at=_iso(expires_at) if expires_at is not None else None,
         name=name,
         note=note,
+        capability_grant=sorted(capability_grant)
+        if capability_grant is not None
+        else None,
     )
 
 
@@ -415,6 +473,9 @@ async def list_tokens(
             expires_at=_iso(r.expires_at) if r.expires_at is not None else None,
             revoked_at=_iso(r.revoked_at) if r.revoked_at is not None else None,
             last_used_at=_iso(r.last_used_at) if r.last_used_at is not None else None,
+            capability_grant=sorted(r.capability_grant)
+            if r.capability_grant is not None
+            else None,
         )
         for r in rows
     ]

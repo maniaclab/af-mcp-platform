@@ -323,6 +323,44 @@ async def test_add_note_absent_by_default(backend: TokenRegistryBackend) -> None
 
 
 # ---------------------------------------------------------------------------
+# capability_grant (issue #144 step 4) -- round-trips across both backends,
+# including the Vault (de)serialization path where a frozenset must survive
+# a trip through JSON-shaped fields (_record_to_fields/_record_from_fields).
+# ---------------------------------------------------------------------------
+
+
+async def test_add_stores_and_returns_capability_grant(
+    backend: TokenRegistryBackend,
+) -> None:
+    await backend.add(
+        _make_record(
+            lookup_id="lookup-1",
+            principal_id="p1",
+            capability_grant=frozenset({"read_data", "submit_jobs"}),
+        )
+    )
+
+    rows = await backend.list_for_principal("p1")
+
+    assert len(rows) == 1
+    assert rows[0].capability_grant == frozenset({"read_data", "submit_jobs"})
+
+
+async def test_add_capability_grant_absent_by_default(
+    backend: TokenRegistryBackend,
+) -> None:
+    """An identity PAT (the default, and every PAT minted before this field
+    existed) round-trips with capability_grant=None -- never an empty set,
+    which authorization.get_principal_capabilities treats differently (see
+    that function's docstring: None skips the intersection entirely)."""
+    await backend.add(_make_record(lookup_id="lookup-1", principal_id="p1"))
+
+    rows = await backend.list_for_principal("p1")
+
+    assert rows[0].capability_grant is None
+
+
+# ---------------------------------------------------------------------------
 # touch_last_used()
 # ---------------------------------------------------------------------------
 

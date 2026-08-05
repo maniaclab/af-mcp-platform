@@ -937,6 +937,97 @@ group memberships and POSIX uid/gid/unixname — the same underlying data
 Keycloak already holds, but (when `PRINCIPAL_CACHE_BACKEND=vault`) now also
 resident in Vault, alongside the PAT store's own records (see above).
 
+### Capability PATs (issue #144 step 4)
+
+Every PAT described above is an **identity PAT**: it says "I am this user",
+and its authority is always the caller's current capabilities, derived
+fresh from the principal cache's groups on every request — exactly as if
+the caller had presented a Keycloak JWT. A **capability PAT** additionally
+carries an explicit grant: a fixed set of capability names, chosen at mint
+time, for least-privilege automation credentials (a CI job that only ever
+needs `read_data` has no business holding a token that can also mint x509
+proxies or submit jobs, even though its owner can).
+
+**The grant is a RESTRICTION, never a source of authority.** This is the
+one binding refinement worth over-stating, because the naive design (the
+grant supplies authority *instead of* deferring to the principal cache) is
+wrong and must not be reintroduced:
+
+> effective capabilities = the principal's *current* capabilities ∩ the
+> grant
+
+Concretely, `authorization.get_principal_capabilities` computes the same
+group-derived capability set it always has — unchanged for a JWT or an
+identity PAT — and, only when `Principal.capability_grant` is not `None`,
+intersects that set with the grant before returning it. Two consequences
+fall out of intersecting rather than substituting:
+
+1. **The kill switch survives.** If a grant conferred authority
+   independently of the principal cache, minting a capability PAT with
+   `read_data` and later being removed from the ATLAS group would leave
+   that PAT fully functional — reintroducing exactly the staleness problem
+   snapshotting groups into a PAT was rejected for (see "Open design gap"
+   in issue #144). Intersecting means removing a Keycloak group still kills
+   every credential the user holds, of any type, within one principal-cache
+   refresh interval — a capability PAT included.
+2. **Escalation is structurally impossible, not merely validated against.**
+   A user cannot mint (or otherwise come to hold) a capability PAT granting
+   more than they currently hold, because the intersection can never exceed
+   the group-derived set above, regardless of what the grant itself
+   contains. `POST /v1/tokens`' `capabilities` field is still validated as a
+   subset of the caller's capabilities at mint time (`MintTokenRequest
+   .capabilities`, `api/tokens.py`) — but purely for a clear, immediate
+   error naming the offending capabilities. That check is advisory only and
+   is never the only thing standing between a caller and extra access:
+   enforcement is the intersection above, on every request, and does not
+   consult whether mint-time validation ever ran.
+
+Semantics, stated plainly: *this token may use at most these capabilities,
+and only while its owner still currently holds them.* A capability PAT is
+an identity PAT plus a narrowing filter — it still requires the same
+principal-cache lookup an identity PAT does (see "Authorization is an
+attribute of the principal, not the token" above); a capability PAT is not
+a way to avoid that dependency, because the kill switch it preserves is
+exactly what that lookup provides.
+
+**Minting one.** `POST /v1/tokens` accepts an optional `capabilities` field
+— a list of capability names. Omitted (`None`, the default) mints an
+ordinary identity PAT, unchanged from every PAT minted before this field
+existed. A non-`None` value (including `[]`, a token scoped to nothing)
+mints a capability PAT; the response's and every subsequent `GET
+/v1/tokens` row's `capability_grant` field is `null` for an identity PAT or
+the sorted list of granted capability names otherwise. The portal's mint
+dialog (`TokensPage.vue`) offers this as an opt-in "Restrict capabilities"
+checkbox that, when checked, lists the caller's *current* capabilities
+(`GET /v1/capabilities`) as choices — never a static or cached list, since
+a stale choice list would misrepresent what the resulting grant could
+possibly enforce. The token list shows each row's scope via
+`tokenDisplay.ts`'s `capabilityGrantLabel()`: "Full account access" for an
+identity PAT, or the comma-joined capability names for a capability PAT.
+
+**When to prefer one.** An identity PAT remains the right default for a
+human's own interactive tooling (Claude Desktop, a personal script) — its
+authority tracks whatever the human is currently entitled to, with no
+extra bookkeeping. A capability PAT is the better choice for **CI and
+long-lived automation** specifically because it is least-privilege: a
+credential checked into a pipeline or left running unattended should hold
+only the capability it actually exercises, so that a leak exposes the
+narrowest possible blast radius — and because the grant can never exceed
+what its owner (the human or service account that minted it) currently
+holds, rotating that owner's group membership continues to bound every
+capability PAT they've ever minted, not just their own interactive access.
+
+**Audit.** A denied tool call's audit record (`AuditRecord
+.principal_capability_grant`, written by `mcp/middleware/authorization_mw
+.py`) carries the calling PAT's effective capability grant when it has
+one — `null` for a JWT or an identity PAT. This is what lets an admin
+reading a denial tell "the principal doesn't hold this capability at all"
+(grant is `null`, or the capability is missing from a non-`null` grant that
+still wouldn't have covered it) apart from "the principal holds it, but
+this particular PAT is scoped away from it" (the grant is a non-`null` list
+that omits the denied capability) — two very different remediation stories
+that a bare denial reason can't distinguish on its own.
+
 ### Operator setup: the Keycloak admin service account
 
 Resolving any principal's current groups/uid/gid/unixname means *asking
