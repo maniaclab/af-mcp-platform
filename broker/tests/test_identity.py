@@ -95,17 +95,17 @@ async def test_revoked_jti_raises_401(settings, sig_key, prime_jwks):
 
     await backend.add(
         TokenRecord(
-            jti="revoked-jti-1",
-            uid=50123,
-            subject="user-123",
+            lookup_id="revoked-jti-1",
+            principal_id="user-123",
+            secret_hash="unused-in-this-test",
             name="test-token",
-            issued_at=time.time(),
+            created_at=time.time(),
             expires_at=time.time() + 3600,
             revoked_at=None,
-            minted_via="portal",
+            last_used_at=None,
         )
     )
-    await backend.revoke(50123, "revoked-jti-1", revoked_at=time.time())
+    await backend.revoke("user-123", "revoked-jti-1", revoked_at=time.time())
     cache = RevokedJtiCache(backend, refresh_interval_seconds=30.0)
 
     with pytest.raises(HTTPException) as exc:

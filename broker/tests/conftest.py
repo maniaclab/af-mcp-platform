@@ -181,9 +181,10 @@ def make_principal() -> Callable[..., object]:
         uid: int = 1000,
         gid: int = 1000,
         unixname: str = "tuser",
+        subject: str = "sub-abc",
     ) -> Principal:
         return Principal(
-            subject="sub-abc",
+            subject=subject,
             email="tuser@example.org",
             uid=uid,
             gid=gid,

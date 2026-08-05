@@ -47,6 +47,8 @@ from af_mcp_broker.mcp.aggregator import (
     populate_aggregator,
 )
 from af_mcp_broker.mcp.registry import BackendRegistry
+from af_mcp_broker.principal_cache import PrincipalCache
+from af_mcp_broker.principal_directory import KeycloakPrincipalDirectory
 from af_mcp_broker.token_registry import (
     InMemoryTokenRegistryBackend,
     RevokedJtiCache,
@@ -383,6 +385,43 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         refresh_interval_seconds=settings.revoked_jti_cache_refresh_seconds,
     )
 
+    # --- Principal cache (issue #144 step 2a): resolves a PAT-authenticated
+    # request's *current* groups/uid/gid/unixname/email from Keycloak, since
+    # (unlike a JWT) a PAT carries none of that itself -- see
+    # principal_cache.py and principal_directory.py's module docstrings.
+    # Both empty (the default) is a valid, degraded state: a `mcp_pat_...`
+    # bearer on /mcp is rejected the same way an invalid one is (see
+    # mcp/middleware/identity_mw.py), rather than the broker refusing to
+    # start -- there's no existing config elsewhere that signals PAT support
+    # is "supposed to" work the way an oauth21-direct identity_providers
+    # entry does for BROKER_STATE_KEY, so there's nothing to fail loudly
+    # against at startup.
+    principal_cache: PrincipalCache | None = None
+    if (
+        settings.keycloak_admin_client_id
+        and settings.keycloak_admin_client_secret.get_secret_value()
+    ):
+        principal_directory = KeycloakPrincipalDirectory(
+            settings,
+            settings.keycloak_admin_client_id,
+            settings.keycloak_admin_client_secret.get_secret_value(),
+        )
+        principal_cache = PrincipalCache(
+            principal_directory,
+            refresh_interval_seconds=settings.principal_cache_refresh_seconds,
+            max_staleness_seconds=settings.principal_cache_max_staleness_seconds,
+        )
+    else:
+        logger.warning(
+            "keycloak_admin_not_configured",
+            message=(
+                "KEYCLOAK_ADMIN_CLIENT_ID/KEYCLOAK_ADMIN_CLIENT_SECRET are "
+                "unset -- identity PATs (issue #144) cannot be authenticated "
+                "on /mcp; every mcp_pat_... bearer will be rejected as an "
+                "invalid token. See docs/auth.md."
+            ),
+        )
+
     # --- MCP aggregator: the FastMCP instance and its ASGI app already exist
     # (built eagerly at module scope below, since the aggregator must be
     # mountable before Settings()/BackendRegistry() are known — see the
@@ -396,6 +435,8 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         entitlement_policy,
         credential_registry,
         revoked_jti_cache,
+        pat_backend=token_registry_backend,
+        principal_cache=principal_cache,
     )
 
     # --- Audit: without init the module drops every record. Honor AUDIT_LOG_FILE.
@@ -433,6 +474,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     application.state.oauth21_state_cipher = oauth21_state_cipher
     application.state.token_registry = token_registry
     application.state.revoked_jti_cache = revoked_jti_cache
+    application.state.principal_cache = principal_cache
 
     # Prime the JWKS cache at startup so the first request does not pay the
     # latency cost of a remote fetch.

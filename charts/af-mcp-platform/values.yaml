@@ -100,14 +100,16 @@ broker:
   # Create this via SealedSecret externally; the chart does NOT create it.
   existingServiceTokenSecret: ""
 
-  # Confidential Keycloak client the broker uses to mint on-demand Bearer
-  # tokens for programmatic clients (POST /v1/tokens, issue #24/#116) via RFC
-  # 8693 Standard Token Exchange, self-audience — see docs/auth.md's
-  # "Programmatic client bootstrap" section for the Keycloak-side setup.
-  # TOKEN_MINT_CLIENT_ID/TOKEN_MINT_CLIENT_SECRET are each omitted when their
-  # source value below is empty; left unset entirely, the broker returns 503
-  # on POST /v1/tokens (list/revoke still work) -- the correct degraded
-  # behavior for a deployment that doesn't need the manual bootstrap flow.
+  # UNUSED as of issue #144 step 2a: POST /v1/tokens now mints a
+  # broker-issued identity PAT (see `keycloakAdmin` below), which needs no
+  # Keycloak call at all -- this confidential client and its RFC 8693
+  # Standard Token Exchange grant were only ever needed for the design that
+  # replaces. Left in the chart rather than removed -- see docs/auth.md's
+  # "broker.tokenMint.* is now unused" section for why -- a later step of
+  # #144 may repurpose the same "confidential client + sealed secret" shape
+  # again. TOKEN_MINT_CLIENT_ID/TOKEN_MINT_CLIENT_SECRET are still rendered
+  # when set (each omitted when its source value below is empty), but
+  # nothing in the broker reads them anymore.
   tokenMint:
     # Client id of the confidential client. Not a secret -- a plain value,
     # like portal.oidc.clientId above. Deliberately a separate client from
@@ -116,6 +118,27 @@ broker:
     clientId: ""
     # Name of a pre-existing Secret providing the client secret.
     # The Secret must contain a key named `token-mint-client-secret`.
+    # Create this via SealedSecret externally; the chart does NOT create it.
+    existingClientSecretSecret: ""
+
+  # Confidential Keycloak client the broker authenticates as (client_credentials
+  # grant) to call the Admin REST API and resolve an identity-PAT-authenticated
+  # request's *current* groups/uid/gid/unixname (issue #144 step 2a) -- see
+  # docs/auth.md's "Operator setup: the Keycloak admin service account"
+  # section for the Keycloak-side setup (realm-management roles `view-users`
+  # + `query-groups` ONLY -- a deliberate, narrowly-scoped privilege
+  # increase, not a footnote). KEYCLOAK_ADMIN_CLIENT_ID/
+  # KEYCLOAK_ADMIN_CLIENT_SECRET are each omitted when their source value
+  # below is empty; left unset entirely, every `mcp_pat_...` bearer on /mcp
+  # is rejected the same way an invalid one is -- the correct degraded
+  # behavior for a deployment that doesn't need identity PATs yet.
+  keycloakAdmin:
+    # Client id of the confidential client. Not a secret -- a plain value.
+    # Deliberately a separate client from tokenMint/oidc above -- same
+    # "narrowest client for the narrowest job" reasoning as portal.oidc.clientId.
+    clientId: ""
+    # Name of a pre-existing Secret providing the client secret.
+    # The Secret must contain a key named `keycloak-admin-client-secret`.
     # Create this via SealedSecret externally; the chart does NOT create it.
     existingClientSecretSecret: ""
 

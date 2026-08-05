@@ -1,9 +1,9 @@
 <script setup lang="ts">
 /**
- * TokensPage.vue — manual Bearer bootstrap for programmatic MCP clients
- * (issue #24), backed by a durable, HA-safe registry with enforced
- * revocation (issue #115). Interactive browser use never touches this page
- * — oauth2-proxy handles that transparently (see docs/auth.md). This page
+ * TokensPage.vue — mints broker-issued identity PATs for programmatic MCP
+ * clients (issue #144 step 2a), backed by a durable, HA-safe registry with
+ * enforced revocation. Interactive browser use never touches this page —
+ * oauth2-proxy handles that transparently (see docs/auth.md). This page
  * exists for clients like Claude Desktop that can't do OAuth discovery yet.
  *
  * CRITICAL SECURITY NOTE: the minted token value only ever lives in
@@ -15,7 +15,7 @@
 import { ref, computed, onMounted, nextTick, type Ref } from 'vue';
 import { mintToken, listTokens, revokeToken, SessionExpiredError } from '../lib/api';
 import type { MintedToken, TokenSummary } from '../lib/api';
-import { shortJti, tokenStatus, truncateNote } from '../lib/tokenDisplay';
+import { shortLookupId, tokenStatus, truncateNote } from '../lib/tokenDisplay';
 import { curlMintSnippet, pythonMintAndConnectSnippet } from '../lib/tokenCliSnippets';
 import { getBrokerOrigin } from '../lib/auth';
 
@@ -25,7 +25,7 @@ const error = ref<string | null>(null);
 const sessionExpired = ref(false);
 
 const sortedTokens = computed(() =>
-  [...tokens.value].sort((a, b) => Date.parse(b.issued_at) - Date.parse(a.issued_at)),
+  [...tokens.value].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at)),
 );
 
 async function loadTokens() {
@@ -54,7 +54,12 @@ function reload() {
 const mintDialog = ref<HTMLDialogElement | null>(null);
 const mintTrigger = ref<HTMLButtonElement | null>(null);
 
-const ttlSeconds = ref<'3600' | '21600' | '86400'>('3600');
+// '90' is the broker's own default (Settings.pat_default_expiry_days) --
+// mirrored here only as the form's starting selection; the broker applies
+// its own default regardless if expires_in_days is omitted from the
+// request. 'never' maps to never_expires: true (an explicit opt-in per
+// api/tokens.py's MintTokenRequest -- never silently the default).
+const expiryOption = ref<'30' | '90' | '365' | 'never'>('90');
 const name = ref('');
 const note = ref('');
 const minting = ref(false);
@@ -68,7 +73,7 @@ async function openMintDialog(evt: Event) {
   mintError.value = null;
   name.value = '';
   note.value = '';
-  ttlSeconds.value = '3600';
+  expiryOption.value = '90';
   copyLabel.value = 'Copy';
   await nextTick();
   mintDialog.value?.showModal();
@@ -87,10 +92,12 @@ async function handleMint(evt: Event) {
   minting.value = true;
   mintError.value = null;
   try {
+    const neverExpires = expiryOption.value === 'never';
     mintedToken.value = await mintToken(
-      Number(ttlSeconds.value),
       name.value.trim() || undefined,
       note.value.trim() || undefined,
+      neverExpires ? undefined : Number(expiryOption.value),
+      neverExpires,
     );
   } catch (err) {
     // Includes the 409 duplicate-name case (api/tokens.py's DuplicateNameError)
@@ -156,23 +163,23 @@ async function copyPythonSnippet() {
 }
 
 // ── Revoke ───────────────────────────────────────────────────────────────
-const revokingJti = ref<string | null>(null);
+const revokingLookupId = ref<string | null>(null);
 const revokeError = ref<string | null>(null);
 
-async function handleRevoke(jti: string) {
-  revokingJti.value = jti;
+async function handleRevoke(lookupId: string) {
+  revokingLookupId.value = lookupId;
   revokeError.value = null;
   try {
-    await revokeToken(jti);
-    // issue #115: revoking no longer removes the row (PR #28's behavior) --
-    // it stays listed with a "revoked" status, so patch it in place rather
-    // than refetching the whole list.
-    const row = tokens.value.find((t) => t.jti === jti);
+    await revokeToken(lookupId);
+    // Revoking no longer removes the row (PR #28's behavior) -- it stays
+    // listed with a "revoked" status, so patch it in place rather than
+    // refetching the whole list.
+    const row = tokens.value.find((t) => t.lookup_id === lookupId);
     if (row) row.revoked_at = new Date().toISOString();
   } catch (err) {
     revokeError.value = err instanceof Error ? err.message : 'Revoke failed.';
   } finally {
-    revokingJti.value = null;
+    revokingLookupId.value = null;
   }
 }
 
@@ -199,15 +206,9 @@ function formatAbsolute(iso: string): string {
   });
 }
 
-function isExpired(iso: string): boolean {
-  return Date.parse(iso) <= Date.now();
+function isExpired(iso: string | null): boolean {
+  return iso !== null && Date.parse(iso) <= Date.now();
 }
-
-const sourceLabel: Record<string, string> = {
-  manual: 'manual',
-  'mcp-oauth': 'mcp-oauth',
-  'oauth2-proxy': 'oauth2-proxy',
-};
 
 const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
   active: 'active',
@@ -264,9 +265,9 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
             <tr>
               <th scope="col" class="tp__th">Name</th>
               <th scope="col" class="tp__th">Token ID</th>
-              <th scope="col" class="tp__th">Minted</th>
+              <th scope="col" class="tp__th">Created</th>
               <th scope="col" class="tp__th">Expires</th>
-              <th scope="col" class="tp__th">Source</th>
+              <th scope="col" class="tp__th">Last used</th>
               <th scope="col" class="tp__th">Status</th>
               <th scope="col" class="tp__th tp__th--action">
                 <span class="sr-only">Actions</span>
@@ -274,28 +275,34 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
             </tr>
           </thead>
           <tbody>
-            <tr v-for="row in sortedTokens" :key="row.jti" class="tp__row">
+            <tr v-for="row in sortedTokens" :key="row.lookup_id" class="tp__row">
               <td class="tp__td">
                 <div class="tp__td-name">{{ row.name }}</div>
                 <div v-if="row.note" class="tp__td-note" :title="row.note">
                   {{ truncateNote(row.note) }}
                 </div>
               </td>
-              <td class="tp__td tp__td--jti" :title="row.jti">{{ shortJti(row.jti) }}</td>
-              <td class="tp__td" :title="formatAbsolute(row.issued_at)">
-                {{ formatAbsolute(row.issued_at) }}
+              <td class="tp__td tp__td--jti" :title="row.lookup_id">
+                {{ shortLookupId(row.lookup_id) }}
+              </td>
+              <td class="tp__td" :title="formatAbsolute(row.created_at)">
+                {{ formatAbsolute(row.created_at) }}
               </td>
               <td
                 class="tp__td"
                 :class="{ 'tp__td--expired': isExpired(row.expires_at) }"
-                :title="formatAbsolute(row.expires_at)"
+                :title="row.expires_at ? formatAbsolute(row.expires_at) : 'Never expires'"
               >
-                {{ isExpired(row.expires_at) ? 'expired' : formatRelative(row.expires_at) }}
+                <template v-if="row.expires_at === null">Never</template>
+                <template v-else>
+                  {{ isExpired(row.expires_at) ? 'expired' : formatRelative(row.expires_at) }}
+                </template>
               </td>
-              <td class="tp__td">
-                <span class="tp__badge" :class="`tp__badge--${row.source}`">
-                  {{ sourceLabel[row.source] ?? row.source }}
-                </span>
+              <td
+                class="tp__td"
+                :title="row.last_used_at ? formatAbsolute(row.last_used_at) : 'Never used'"
+              >
+                {{ row.last_used_at ? formatRelative(row.last_used_at) : 'Never' }}
               </td>
               <td class="tp__td">
                 <span class="tp__badge" :class="`tp__badge--status-${tokenStatus(row)}`">
@@ -306,10 +313,10 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
                 <button
                   type="button"
                   class="tp__btn tp__btn--revoke"
-                  :disabled="revokingJti === row.jti || tokenStatus(row) !== 'active'"
-                  @click="handleRevoke(row.jti)"
+                  :disabled="revokingLookupId === row.lookup_id || tokenStatus(row) !== 'active'"
+                  @click="handleRevoke(row.lookup_id)"
                 >
-                  {{ revokingJti === row.jti ? 'Revoking…' : 'Revoke' }}
+                  {{ revokingLookupId === row.lookup_id ? 'Revoking…' : 'Revoke' }}
                 </button>
               </td>
             </tr>
@@ -382,10 +389,11 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
           <div class="tp__form-row">
             <div class="tp__form-group tp__form-group--inline">
               <label for="tp-ttl" class="tp__form-label">Valid for</label>
-              <select id="tp-ttl" v-model="ttlSeconds" class="tp__select" :disabled="minting">
-                <option value="3600">1 hour</option>
-                <option value="21600">6 hours</option>
-                <option value="86400">24 hours</option>
+              <select id="tp-ttl" v-model="expiryOption" class="tp__select" :disabled="minting">
+                <option value="30">30 days</option>
+                <option value="90">90 days (default)</option>
+                <option value="365">1 year</option>
+                <option value="never">Never expires</option>
               </select>
             </div>
           </div>
@@ -459,7 +467,9 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
           </div>
           <div class="tp__token-meta-row">
             <dt>Expires</dt>
-            <dd>{{ formatAbsolute(mintedToken.expires_at) }}</dd>
+            <dd>
+              {{ mintedToken.expires_at ? formatAbsolute(mintedToken.expires_at) : 'Never' }}
+            </dd>
           </div>
         </dl>
 
@@ -643,18 +653,6 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
   text-transform: uppercase;
   padding: 0.1875rem 0.5rem;
   border-radius: 2px;
-}
-
-.tp__badge--manual {
-  background: rgb(from var(--color-af-teal) r g b / 0.12);
-  color: var(--color-af-teal);
-  border: 1px solid rgb(from var(--color-af-teal) r g b / 0.25);
-}
-.tp__badge--mcp-oauth,
-.tp__badge--oauth2-proxy {
-  background: rgb(from var(--color-af-dim) r g b / 0.12);
-  color: var(--color-af-dim);
-  border: 1px solid rgb(from var(--color-af-dim) r g b / 0.25);
 }
 
 .tp__badge--status-active {

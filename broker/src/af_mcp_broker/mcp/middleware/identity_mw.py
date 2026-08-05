@@ -15,12 +15,15 @@ from af_mcp_broker.identity import (
     get_principal,
     issuer_is_local,
 )
+from af_mcp_broker.pat import PAT_PREFIX
+from af_mcp_broker.pat_auth import LastUsedTracker, resolve_pat_principal
 
 if TYPE_CHECKING:
     from starlette.types import Receive, Scope, Send
 
     from af_mcp_broker.config import Settings
-    from af_mcp_broker.token_registry import RevokedJtiCache
+    from af_mcp_broker.principal_cache import PrincipalCache
+    from af_mcp_broker.token_registry import RevokedJtiCache, TokenRegistryBackend
 
 logger = structlog.get_logger(__name__)
 
@@ -56,6 +59,18 @@ logger = structlog.get_logger(__name__)
 #    which should never happen in the real app (AsgiAuthMiddleware always
 #    runs first and never calls into this pipeline without one) but guards
 #    against a future embedding that forgets to install AsgiAuthMiddleware.
+#
+# Bearer recognition (issue #144 step 2a): AsgiAuthMiddleware dispatches on
+# the bearer's prefix alone. A ``mcp_pat_...`` bearer goes to
+# ``pat_auth.resolve_pat_principal`` (broker-issued identity PAT); anything
+# else falls through to ``identity.get_principal`` (Keycloak JWT) EXACTLY as
+# before this step -- no behavior change for existing JWT-bearing clients.
+# Both paths converge on the same Principal shape and the same stash-onto-
+# scope["state"] handoff below; IdentityMiddleware (layer 2 above) republishes
+# whichever kind was resolved identically, since it never inspects the token
+# itself. This is deliberately a *recognition* dispatch, not a replacement --
+# ``/mcp`` accepts both credential types until #144 step 5 flips it to
+# PAT-only, once OAuth bootstrap gives every client a way to obtain a PAT.
 
 
 def _get_authorization_header(scope: Scope) -> str | None:
@@ -82,9 +97,10 @@ async def _send_401(scope: Scope, receive: Receive, send: Send, detail: str) -> 
 
 
 class AsgiAuthMiddleware:
-    """Enforces identity at the ASGI layer, in front of the /mcp aggregator's
-    whole http_app -- see the module docstring above for why this has to
-    live here rather than as a FastMCP Middleware.
+    """Enforces identity at the ASGI layer, in front of the /mcp aggregator's whole http_app.
+
+    See the module docstring above for why this has to live here rather
+    than as a FastMCP Middleware.
 
     Reads settings/revoked_jti_cache off *identity_mw* rather than holding
     its own copy: identity_mw's attributes are already the single mutable
@@ -108,6 +124,8 @@ class AsgiAuthMiddleware:
 
         settings = self._identity_mw.settings
         revoked_jti_cache = self._identity_mw.revoked_jti_cache
+        pat_backend = self._identity_mw.pat_backend
+        principal_cache = self._identity_mw.principal_cache
 
         if settings.dev_insecure_principal is not None:
             # Local-dev auth bypass, mirroring app.py's lifespan check
@@ -137,8 +155,32 @@ class AsgiAuthMiddleware:
                 )
                 return
             token = auth_header[len("Bearer ") :]
+            is_pat = token.startswith(PAT_PREFIX)
+            if is_pat and (pat_backend is None or principal_cache is None):
+                # PAT support isn't configured (no Keycloak admin service
+                # account -- see Settings.keycloak_admin_client_id/_secret)
+                # -- reject the same vague way as any other invalid PAT
+                # rather than crash or leak config state.
+                await _send_401(scope, receive, send, "Invalid bearer token")
+                return
             try:
-                principal = await get_principal(token, settings, revoked_jti_cache)
+                if is_pat:
+                    # Identity PAT (issue #144 step 2a) -- recognized purely
+                    # by prefix, so a non-mcp_pat_ bearer always falls
+                    # through to the existing JWT path below unchanged.
+                    # Both are guaranteed non-None here by the guard above;
+                    # asserted rather than re-checked so mypy can narrow them.
+                    assert pat_backend is not None
+                    assert principal_cache is not None
+                    principal = await resolve_pat_principal(
+                        token,
+                        settings,
+                        pat_backend,
+                        principal_cache,
+                        self._identity_mw.pat_last_used_tracker,
+                    )
+                else:
+                    principal = await get_principal(token, settings, revoked_jti_cache)
             except TokenExpiredError:
                 # Safe to state explicitly -- expiry alone reveals nothing
                 # about why any *other* token would be rejected.
@@ -166,17 +208,28 @@ class AsgiAuthMiddleware:
 
 class IdentityMiddleware(Middleware):
     def __init__(
-        self, settings: Settings, revoked_jti_cache: RevokedJtiCache | None = None
+        self,
+        settings: Settings,
+        revoked_jti_cache: RevokedJtiCache | None = None,
+        pat_backend: TokenRegistryBackend | None = None,
+        principal_cache: PrincipalCache | None = None,
     ) -> None:
-        # on_request below reads neither of these directly -- it is a thin
+        # on_request below reads none of these directly -- it is a thin
         # hand-off (see the module docstring). They're kept here anyway
         # because this instance is the single mutable config handle
         # aggregator.populate_aggregator() already updates once app.py's
-        # lifespan has the real Settings/RevokedJtiCache; AsgiAuthMiddleware
-        # reads settings/revoked_jti_cache off *this* instance rather than
-        # holding a second, separately-updated copy.
+        # lifespan has the real Settings/RevokedJtiCache/PAT store/principal
+        # cache; AsgiAuthMiddleware reads all of them off *this* instance
+        # rather than holding a second, separately-updated copy.
         self.settings = settings
         self.revoked_jti_cache = revoked_jti_cache
+        self.pat_backend = pat_backend
+        self.principal_cache = principal_cache
+        # Purely in-process, ephemeral throttle state for PAT last_used_at
+        # writes (see pat_auth.LastUsedTracker) -- constructed unconditionally
+        # (not a constructor param) since it has no external dependency and
+        # is harmless to build even when PAT support itself isn't configured.
+        self.pat_last_used_tracker = LastUsedTracker()
 
     async def on_request(
         self,

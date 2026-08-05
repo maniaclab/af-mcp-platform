@@ -161,9 +161,11 @@ def _extract_principal(claims: dict[str, Any], raw_token: str) -> Principal:
 
 
 class TokenExpiredError(HTTPException):
-    """HTTPException subclass raised by get_principal specifically when the
-    token's signature has expired -- see get_principal's docstring for why
-    this exists and why it does not change /v1's behavior."""
+    """HTTPException subclass raised when the token's signature has expired.
+
+    Raised by get_principal specifically for this case -- see get_principal's
+    docstring for why this exists and why it does not change /v1's behavior.
+    """
 
 
 async def get_principal(

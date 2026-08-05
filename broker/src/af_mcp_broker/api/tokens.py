@@ -1,75 +1,75 @@
-"""Manual Bearer token bootstrap — POST/GET/DELETE /v1/tokens (issue #24), backed by a durable, HA-safe token registry with enforced revocation (issue #115).
+"""Broker-issued identity PAT bootstrap — POST/GET/DELETE /v1/tokens (issue #144 step 2a).
 
-MCP clients that don't yet support OAuth discovery (Claude Desktop today)
-need a static Bearer to paste into their client config. This module mints
-one on demand via Keycloak RFC 8693 token exchange, persists metadata (never
-the token itself — see token_registry.py) so the caller can list and revoke
-what they've issued across any broker replica, and never re-exposes a
-token's value once it has been returned once.
+Replaces the RFC 8693 token-exchange design (issue #24/#115/#116, PR #28
+and successors): instead of exchanging the caller's Keycloak JWT for another
+JWT via Standard Token Exchange, ``POST /v1/tokens`` now mints a broker-
+issued PAT directly (``pat.mint_pat`` -- 256-bit random secret, SHA-256
+hashed for storage, plaintext returned exactly once). No Keycloak round trip
+is needed to mint one, so the old 503 ("minting not configured")/502
+("Keycloak rejected the exchange") failure modes are gone entirely -- mint
+either succeeds for any authenticated principal or fails on something this
+endpoint itself controls (rate limit, duplicate name, validation).
+
+**This endpoint's own authentication is UNCHANGED.** It still requires a
+Keycloak JWT via ``keycloak_dependency`` -- only what it *returns* changed.
+This is deliberate and security-load-bearing, not an oversight: ``/v1`` stays
+Keycloak-JWT-only precisely so a PAT can never authenticate here. If a PAT
+could mint further PATs, a single leaked credential would become
+self-renewing, and revocation would degrade into whack-a-mole against
+tokens the leaked one itself created (GitHub disallows this by default for
+the same reason). A PAT is therefore always traceable back to an
+interactive Keycloak login -- whether initiated from the portal (this
+endpoint) or, in a future step of issue #144, an OAuth bootstrap flow that
+also authenticates via Keycloak first. See ``pat_auth.py``'s module
+docstring for where PATs *are* accepted (``/mcp``, via
+``mcp/middleware/identity_mw.py``'s ``AsgiAuthMiddleware``).
+
+Storage is the **PAT store** (``token_registry.py``, adapted from the
+original manual-bearer registry): identity and metadata only -- no groups,
+no capabilities, no authorization data (see that module's docstring). This
+endpoint never resolves or stores the caller's groups; the resulting PAT's
+authority is always re-resolved fresh at validation time from
+``principal_cache.py``, keyed by ``principal_id`` (the caller's Keycloak
+``sub``).
 
 Design notes / known limitations (see the PR description for the full
 writeup — these are real gaps, not oversights):
 
-* Minting targets the broker's OWN audience (``settings.oidc_audience``,
-  i.e. ``mcp-gateway``). This is deliberately "Path B" from docs/auth.md
-  (AF-internal token exchange) — the "atlas-auth.cern.ch rejects this token"
-  caveat does not apply here because the token only ever needs to satisfy
-  ``identity.keycloak_dependency``, not an external ATLAS service.
-* ``ttl_seconds`` is advisory. RFC 8693 has no standard mechanism for the
-  calling client to force a shorter/longer access-token lifespan than the
-  target client's configured Access Token Lifespan in Keycloak; the response
-  reports whatever ``exp`` Keycloak actually put on the token.
-* Revocation is enforced, with bounded staleness. DELETE marks the jti
-  revoked in the registry; ``identity.get_principal`` consults
-  ``RevokedJtiCache`` (refreshed on an interval, default 30s — see
-  ``Settings.revoked_jti_cache_refresh_seconds``) on every request, on both
-  ``/v1`` and ``/mcp``. This broker never held a Keycloak-side revocation
-  call in the first place that would help here: ``keycloak_dependency``
-  validates via local JWT signature verification against the JWKS, not
-  Keycloak introspection, so an RFC 7009 revoke call would not by itself
-  have made Keycloak's signature still verify-but-then-get-rejected before
-  natural expiry. The jti-denylist above is what actually makes revocation
-  take effect early.
-* Listing only covers tokens minted through this endpoint. Keycloak's admin
-  REST API exposes sessions and IdP consents, not per-token metadata for
-  RFC 8693 token-exchange output (which isn't tied to a browser session), so
-  tokens issued via oauth2-proxy's interactive flow or a future MCP OAuth
-  flow cannot be enumerated here today. That gap is surfaced in the route
-  docstring/response description rather than silently omitted.
-* ``name`` is a unique-per-user identifier, not free text (issue #116):
-  minting a second token whose name matches an existing *live* one for the
-  same uid (case-insensitive) is rejected with 409. "Live" excludes revoked
-  and expired tokens -- a name freed up by revocation or natural expiry can
-  be reused, since the dead token can no longer be mistaken for the new one.
-  The check runs after the Keycloak exchange (see ``mint_token``), so a
-  user-supplied name and the server-generated default both go through the
-  exact same check point rather than two different pre/post paths; the
-  uniqueness enforcement itself lives in ``token_registry.TokenRegistryBackend
-  .add()`` (see that module's docstring), not here, so it stays correct under
-  concurrent mints from multiple broker replicas.
+* Listing only covers tokens minted through this endpoint. A future OAuth
+  bootstrap flow (issue #144, later step) would mint through the same PAT
+  store, so this gap is expected to close rather than widen.
+* ``name`` is a unique-per-principal identifier, not free text (issue #116,
+  carried forward): minting a second token whose name matches an existing
+  *live* one for the same principal (case-insensitive) is rejected with 409.
+  "Live" excludes revoked and expired tokens -- a name freed up by
+  revocation or natural expiry can be reused, since the dead token can no
+  longer be mistaken for the new one. The uniqueness enforcement lives in
+  ``token_registry.TokenRegistryBackend.add()`` (see that module's
+  docstring), not here, so it stays correct under concurrent mints from
+  multiple broker replicas.
 * ``note`` is an optional, free-text, user-supplied field -- purely
   self-descriptive, never consumed by the broker, stored alongside the
   record and shown back on mint/list. Absent (``None``) unless supplied.
+* Expiry default is 90 days (``Settings.pat_default_expiry_days``);
+  never-expiring is an explicit opt-in (``MintTokenRequest.never_expires``),
+  logged loudly when used, never the default.
 """
 
 from __future__ import annotations
 
-import os
 import time
-import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Annotated, Any
+from typing import Annotated
 
-import jwt
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from af_mcp_broker.audit import AuditRecord, write_audit
 from af_mcp_broker.config import Settings, get_settings
-from af_mcp_broker.http import get_http_client
 from af_mcp_broker.identity import Principal, keycloak_dependency
+from af_mcp_broker.pat import mint_pat
 from af_mcp_broker.token_registry import (
     DuplicateNameError,
     TokenRecord,
@@ -81,29 +81,10 @@ logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/tokens", tags=["tokens"])
 
-# Recorded on every TokenRecord minted here -- distinguishes this mint path
-# from any future one (e.g. a CLI) that might write to the same registry.
-_MINTED_VIA = "portal"
-
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
-
-# The confidential Keycloak client used to authenticate the *broker* when it
-# performs RFC 8693 token exchange on the caller's behalf. Deliberately read
-# straight from the environment rather than added to the shared pydantic
-# Settings model — this mirrors credentials/service.py's ServiceProvider,
-# which keeps service-account secrets out of Settings for the same reason:
-# they're operational secrets, not general configuration. Unset disables
-# minting (503); list/revoke still work against whatever is already cached.
-_TOKEN_MINT_CLIENT_ID_ENV = "TOKEN_MINT_CLIENT_ID"
-_TOKEN_MINT_CLIENT_SECRET_ENV = "TOKEN_MINT_CLIENT_SECRET"
-
-_MIN_TTL_SECONDS = 60
-_MAX_TTL_SECONDS = 86400
-_DEFAULT_TTL_SECONDS = 3600
 _MAX_NAME_LENGTH = 200
 _MAX_NOTE_LENGTH = 256
+_MIN_EXPIRES_IN_DAYS = 1
+_MAX_EXPIRES_IN_DAYS = 3650
 
 # Rate limit is per-uid and intentionally separate from
 # CredentialCache's failed-unlock limiter (credentials/cache.py) — that one
@@ -130,17 +111,30 @@ _MINT_RATE_WINDOW_SECONDS = 60 * 60
 class MintTokenRequest(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    ttl_seconds: int = Field(
-        default=_DEFAULT_TTL_SECONDS, ge=_MIN_TTL_SECONDS, le=_MAX_TTL_SECONDS
-    )
     # Optional; a server-generated default (see default_token_name) is used
     # when absent so every record always has a displayable name. Unique per
-    # uid among live (non-revoked, non-expired) tokens, case-insensitively --
-    # see this module's docstring and token_registry.py.
+    # principal among live (non-revoked, unexpired-or-never-expiring) tokens,
+    # case-insensitively -- see this module's docstring and token_registry.py.
     name: str | None = Field(default=None, max_length=_MAX_NAME_LENGTH)
     # Optional free-text note (issue #116) -- purely self-descriptive, never
     # consumed by the broker. None (absent) by default.
     note: str | None = Field(default=None, max_length=_MAX_NOTE_LENGTH)
+    # None (the default) means "use Settings.pat_default_expiry_days" --
+    # resolved in mint_token, not here, so the default tracks the broker's
+    # configured value rather than a value frozen into this model.
+    expires_in_days: int | None = Field(
+        default=None, ge=_MIN_EXPIRES_IN_DAYS, le=_MAX_EXPIRES_IN_DAYS
+    )
+    # Explicit opt-in for a PAT that never expires (issue #144's design
+    # notes) -- never the default. Mutually exclusive with expires_in_days;
+    # see _validate_expiry below.
+    never_expires: bool = False
+
+    @model_validator(mode="after")
+    def _validate_expiry(self) -> MintTokenRequest:
+        if self.never_expires and self.expires_in_days is not None:
+            raise ValueError("Set either never_expires or expires_in_days, not both.")
+        return self
 
 
 class MintTokenResponse(BaseModel):
@@ -148,9 +142,10 @@ class MintTokenResponse(BaseModel):
 
     # Present ONLY in this response — never returned again by GET /v1/tokens.
     token: str
-    jti: str
-    issued_at: str
-    expires_at: str
+    lookup_id: str
+    created_at: str
+    # None means the PAT never expires.
+    expires_at: str | None
     name: str
     note: str | None
 
@@ -158,22 +153,22 @@ class MintTokenResponse(BaseModel):
 class TokenSummary(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    jti: str
+    lookup_id: str
     name: str
     note: str | None
-    issued_at: str
-    expires_at: str
+    created_at: str
+    expires_at: str | None
     # None until revoked; once set, the portal shows a "revoked" status
     # instead of removing the row (see docs/auth.md and issue #115 -- PR #28
     # used to drop the row entirely on revoke, which no longer happens).
     revoked_at: str | None
-    source: str
+    last_used_at: str | None
 
 
 class RevokeTokenResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    jti: str
+    lookup_id: str
     revoked: bool
 
 
@@ -231,21 +226,25 @@ class TokenRegistry:
         await self._backend.add(record)
         self._log.info(
             "token_registry.minted",
-            jti=record.jti,
-            uid=record.uid,
+            lookup_id=record.lookup_id,
+            principal_id=record.principal_id,
             expires_at=record.expires_at,
         )
 
-    async def list_for_uid(self, uid: int) -> list[TokenRecord]:
-        return await self._backend.list_for_uid(uid)
+    async def list_for_principal(self, principal_id: str) -> list[TokenRecord]:
+        return await self._backend.list_for_principal(principal_id)
 
-    async def owner_uid(self, jti: str) -> int | None:
-        return await self._backend.owner_uid(jti)
+    async def owner_principal_id(self, lookup_id: str) -> str | None:
+        return await self._backend.owner_principal_id(lookup_id)
 
-    async def revoke(self, uid: int, jti: str) -> TokenRecord | None:
-        record = await self._backend.revoke(uid, jti, revoked_at=time.time())
+    async def revoke(self, principal_id: str, lookup_id: str) -> TokenRecord | None:
+        record = await self._backend.revoke(
+            principal_id, lookup_id, revoked_at=time.time()
+        )
         if record is not None:
-            self._log.info("token_registry.revoked", jti=jti, uid=uid)
+            self._log.info(
+                "token_registry.revoked", lookup_id=lookup_id, principal_id=principal_id
+            )
         return record
 
 
@@ -263,84 +262,13 @@ def _iso(epoch: float) -> str:
     return datetime.fromtimestamp(epoch, tz=UTC).isoformat()
 
 
-def _decode_unverified(token: str) -> dict[str, Any]:
-    # We just received this token directly from Keycloak's token endpoint
-    # over an authenticated HTTPS call — re-verifying its signature here buys
-    # nothing; we only need iat/exp/jti for our own bookkeeping.
-    return jwt.decode(token, options={"verify_signature": False})
-
-
-# ---------------------------------------------------------------------------
-# Keycloak calls
-# ---------------------------------------------------------------------------
-
-
-async def _exchange_for_bearer(
-    settings: Settings, principal: Principal
-) -> tuple[str, dict[str, Any]]:
-    """Mint a static bearer via RFC 8693 token exchange, self-audience.
-
-    Raises HTTPException(503) if no client credentials are configured, or
-    HTTPException(502) if Keycloak rejects the exchange.
-    """
-    client_id = os.environ.get(_TOKEN_MINT_CLIENT_ID_ENV)
-    client_secret = os.environ.get(_TOKEN_MINT_CLIENT_SECRET_ENV)
-    if not client_id or not client_secret:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=(
-                "Token minting is not configured. Set TOKEN_MINT_CLIENT_ID and "
-                "TOKEN_MINT_CLIENT_SECRET for a confidential Keycloak client "
-                "granted 'Standard Token Exchange' permission."
-            ),
-        )
-
-    token_endpoint = f"{settings.oidc_issuer.rstrip('/')}/protocol/openid-connect/token"
-    try:
-        resp = await get_http_client().post(
-            token_endpoint,
-            data={
-                "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "subject_token": principal.raw_token.get_secret_value(),
-                "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
-                "requested_token_type": "urn:ietf:params:oauth:token-type:access_token",
-                "audience": settings.oidc_audience,
-            },
-            timeout=10.0,
-        )
-    except Exception as exc:
-        # Mirrors identity._fetch_jwks: an unreachable Keycloak is a 502 for
-        # our caller, not an unhandled 500.
-        logger.exception("token_exchange_unreachable", uid=principal.uid)
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Unable to reach Keycloak token endpoint: {token_endpoint}",
-        ) from exc
-    if resp.status_code >= 400:
-        logger.warning(
-            "token_exchange_failed",
-            status_code=resp.status_code,
-            uid=principal.uid,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Keycloak rejected the token-exchange request",
-        )
-    data = resp.json()
-    access_token: str = data["access_token"]
-    claims = _decode_unverified(access_token)
-    return access_token, claims
-
-
 # ---------------------------------------------------------------------------
 # Audit helper
 # ---------------------------------------------------------------------------
 
 
 async def _audit(
-    principal: Principal, action: str, jti: str, args_summary: str
+    principal: Principal, action: str, lookup_id: str, args_summary: str
 ) -> None:
     await write_audit(
         AuditRecord(
@@ -352,8 +280,8 @@ async def _audit(
             action_type="state_change",
             args_summary=args_summary,
             timestamp=time.time(),
-            request_id=jti,
-            audit_id=jti,
+            request_id=lookup_id,
+            audit_id=lookup_id,
         )
     )
 
@@ -366,7 +294,7 @@ async def _audit(
 @router.post(
     "",
     response_model=MintTokenResponse,
-    summary="Mint a new Bearer token for programmatic-client bootstrap",
+    summary="Mint a new identity PAT for programmatic-client bootstrap",
 )
 async def mint_token(
     body: MintTokenRequest,
@@ -374,6 +302,14 @@ async def mint_token(
     principal: Annotated[Principal, Depends(keycloak_dependency)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> MintTokenResponse:
+    """Mint a broker-issued PAT for the calling (Keycloak-JWT-authenticated) principal.
+
+    Authentication for THIS route is unchanged (``keycloak_dependency`` --
+    the same JWT dependency every other ``/v1`` route uses). Only the
+    returned credential type changed, from an RFC 8693 token-exchange JWT to
+    a PAT -- see this module's docstring for why a PAT must never be able to
+    authenticate here.
+    """
     registry = _registry(request)
     try:
         registry.check_mint_rate_limit(principal.uid)
@@ -382,62 +318,63 @@ async def mint_token(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=str(exc)
         ) from exc
 
-    access_token, claims = await _exchange_for_bearer(settings, principal)
+    plaintext, lookup_id, secret_hash = mint_pat()
+    now = time.time()
 
-    jti = claims.get("jti")
-    if not jti:
-        jti = uuid.uuid4().hex
+    if body.never_expires:
+        expires_at: float | None = None
         logger.warning(
-            "token_exchange_response_missing_jti",
-            uid=principal.uid,
-            synthetic_jti=jti,
+            "pat_minted_without_expiry",
+            principal_id=principal.subject,
+            lookup_id=lookup_id,
         )
+    else:
+        days = (
+            body.expires_in_days
+            if body.expires_in_days is not None
+            else settings.pat_default_expiry_days
+        )
+        expires_at = now + days * 86400
 
-    issued_at = float(claims.get("iat", time.time()))
-    expires_at = float(claims.get("exp", time.time() + body.ttl_seconds))
-    name = (body.name or "").strip() or default_token_name(jti, issued_at)
+    name = (body.name or "").strip() or default_token_name(lookup_id, now)
     note = (body.note or "").strip() or None
 
     try:
         await registry.put(
             TokenRecord(
-                jti=jti,
-                uid=principal.uid,
-                subject=principal.subject,
+                lookup_id=lookup_id,
+                principal_id=principal.subject,
+                secret_hash=secret_hash,
                 name=name,
-                issued_at=issued_at,
+                created_at=now,
                 expires_at=expires_at,
                 revoked_at=None,
-                minted_via=_MINTED_VIA,
+                last_used_at=None,
                 note=note,
             )
         )
     except DuplicateNameError as exc:
-        # Checked post-exchange, not pre-exchange -- see this module's
-        # docstring for why: it keeps the user-supplied and server-generated
-        # name paths on one code path instead of two. The already-exchanged
-        # Keycloak token is simply never registered; it remains valid until
-        # its own natural expiry but unlisted/unrevocable, same as any other
-        # registry-write failure after a successful exchange.
-        logger.warning("token_mint_duplicate_name", uid=principal.uid, name=name)
+        logger.warning(
+            "token_mint_duplicate_name", principal_id=principal.subject, name=name
+        )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail=str(exc)
         ) from exc
     registry.record_mint(principal.uid)
 
-    # Log jti-only — never the token itself.
+    # Log lookup_id-only — never the token itself.
     await _audit(
         principal,
         "token.minted",
-        jti,
-        args_summary=f"jti={jti} ttl_requested={body.ttl_seconds} name={name!r}",
+        lookup_id,
+        args_summary=f"lookup_id={lookup_id} name={name!r} never_expires={expires_at is None}",
     )
 
     return MintTokenResponse(
-        token=access_token,
-        jti=jti,
-        issued_at=_iso(issued_at),
-        expires_at=_iso(expires_at),
+        token=plaintext,
+        lookup_id=lookup_id,
+        created_at=_iso(now),
+        expires_at=_iso(expires_at) if expires_at is not None else None,
         name=name,
         note=note,
     )
@@ -446,70 +383,67 @@ async def mint_token(
 @router.get(
     "",
     response_model=list[TokenSummary],
-    summary="List Bearer tokens issued to the caller",
+    summary="List PATs issued to the caller",
 )
 async def list_tokens(
     request: Request,
     principal: Annotated[Principal, Depends(keycloak_dependency)],
 ) -> list[TokenSummary]:
-    """List tokens the caller owns.
+    """List PATs the caller owns.
 
-    Only covers tokens minted via POST /v1/tokens (``source: "manual"``).
-    Keycloak's admin REST API surfaces sessions and IdP consents, not
-    per-token metadata for RFC 8693 token-exchange output, so tokens issued
-    through oauth2-proxy's interactive flow or a future MCP OAuth flow are
-    not enumerable here yet — that is a real gap, not a silent omission; see
-    docs/auth.md and the PR description for the follow-up. Revoked rows stay
-    listed (``revoked_at`` set) rather than disappearing, so the portal can
-    show a revoked/active/expired status.
+    Only covers PATs minted via POST /v1/tokens -- see this module's
+    docstring. Revoked rows stay listed (``revoked_at`` set) rather than
+    disappearing, so the portal can show a revoked/active/expired status.
     """
     registry = _registry(request)
-    rows = await registry.list_for_uid(principal.uid)
+    rows = await registry.list_for_principal(principal.subject)
     return [
         TokenSummary(
-            jti=r.jti,
+            lookup_id=r.lookup_id,
             name=r.name,
             note=r.note,
-            issued_at=_iso(r.issued_at),
-            expires_at=_iso(r.expires_at),
+            created_at=_iso(r.created_at),
+            expires_at=_iso(r.expires_at) if r.expires_at is not None else None,
             revoked_at=_iso(r.revoked_at) if r.revoked_at is not None else None,
-            source="manual",
+            last_used_at=_iso(r.last_used_at) if r.last_used_at is not None else None,
         )
         for r in rows
     ]
 
 
 @router.delete(
-    "/{jti}",
+    "/{lookup_id}",
     response_model=RevokeTokenResponse,
-    summary="Revoke a token before its natural expiry",
+    summary="Revoke a PAT before its natural expiry",
 )
 async def revoke_token(
-    jti: str,
+    lookup_id: str,
     request: Request,
     principal: Annotated[Principal, Depends(keycloak_dependency)],
 ) -> RevokeTokenResponse:
     registry = _registry(request)
 
-    # owner_uid() distinguishes "unknown token" (404) from "exists but
-    # belongs to someone else" (403) without a uid-scoped lookup first --
-    # see token_registry.TokenRegistryBackend.owner_uid.
-    owner_uid = await registry.owner_uid(jti)
-    if owner_uid is None:
+    # owner_principal_id() distinguishes "unknown token" (404) from "exists
+    # but belongs to someone else" (403) without a principal-scoped lookup
+    # first -- see token_registry.TokenRegistryBackend.owner_principal_id.
+    owner_principal_id = await registry.owner_principal_id(lookup_id)
+    if owner_principal_id is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Unknown token"
         )
-    if owner_uid != principal.uid:
+    if owner_principal_id != principal.subject:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Not your token"
         )
 
-    record = await registry.revoke(principal.uid, jti)
+    record = await registry.revoke(principal.subject, lookup_id)
     if record is None:  # pragma: no cover - guarded by the ownership check above
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Unknown token"
         )
 
-    await _audit(principal, "token.revoked", jti, args_summary=f"jti={jti}")
+    await _audit(
+        principal, "token.revoked", lookup_id, args_summary=f"lookup_id={lookup_id}"
+    )
 
-    return RevokeTokenResponse(jti=jti, revoked=True)
+    return RevokeTokenResponse(lookup_id=lookup_id, revoked=True)

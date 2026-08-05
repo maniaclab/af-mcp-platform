@@ -48,7 +48,8 @@ if TYPE_CHECKING:
     from af_mcp_broker.credentials import CredentialRegistry
     from af_mcp_broker.identity import Principal
     from af_mcp_broker.mcp.registry import BackendRegistry, BackendSpec
-    from af_mcp_broker.token_registry import RevokedJtiCache
+    from af_mcp_broker.principal_cache import PrincipalCache
+    from af_mcp_broker.token_registry import RevokedJtiCache, TokenRegistryBackend
 
 logger = structlog.get_logger(__name__)
 
@@ -411,6 +412,8 @@ def build_aggregator(
     policy: EntitlementPolicy,
     credential_registry: CredentialRegistry,
     revoked_jti_cache: RevokedJtiCache | None = None,
+    pat_backend: TokenRegistryBackend | None = None,
+    principal_cache: PrincipalCache | None = None,
 ) -> FastMCP:
     """Construct a fully-wired aggregator FastMCP instance.
 
@@ -423,13 +426,20 @@ def build_aggregator(
     ``registry``. Namespacing follows ``BackendSpec.apply_namespace`` --
     backends whose tools already self-prefix (e.g. rucio-mcp) opt out.
 
-    *revoked_jti_cache* defaults to None here because app.py builds the
-    aggregator eagerly, before the real token registry exists (see the
-    module-level comment above ``_mcp_aggregator``) -- ``populate_aggregator``
-    pushes the real one in once the lifespan has it, same as settings/policy.
+    *revoked_jti_cache*/*pat_backend*/*principal_cache* default to None here
+    because app.py builds the aggregator eagerly, before the real token
+    registry/principal cache exist (see the module-level comment above
+    ``_mcp_aggregator``) -- ``populate_aggregator`` pushes the real ones in
+    once the lifespan has them, same as settings/policy. *pat_backend*/
+    *principal_cache* being None means identity PATs are recognized by prefix
+    on ``/mcp`` but always rejected (see ``mcp/middleware/identity_mw.py``'s
+    ``AsgiAuthMiddleware``) -- a broker with no Keycloak admin service
+    account configured (issue #144 step 2a).
     """
     mcp = FastMCP(name="af-mcp-aggregator")
-    mcp.add_middleware(IdentityMiddleware(settings, revoked_jti_cache))
+    mcp.add_middleware(
+        IdentityMiddleware(settings, revoked_jti_cache, pat_backend, principal_cache)
+    )
     mcp.add_middleware(EntitlementMiddleware(registry, policy))
     mcp.add_middleware(AuthorizationMiddleware(registry, policy))
     _register_backends(mcp, registry, credential_registry, settings, policy)
@@ -437,9 +447,10 @@ def build_aggregator(
 
 
 def build_asgi_auth_middleware(mcp: FastMCP) -> Middleware:
-    """Return the Starlette middleware spec that enforces identity at the
-    ASGI layer for ``mcp``'s http_app (issue #138/#144 step 1) -- pass this
-    into ``FastMCP.http_app(middleware=[...])`` when mounting.
+    """Return the Starlette middleware spec that enforces identity at the ASGI layer.
+
+    Enforces identity for ``mcp``'s http_app (issue #138/#144 step 1) -- pass
+    this into ``FastMCP.http_app(middleware=[...])`` when mounting.
 
     Must be built from the same FastMCP instance ``build_aggregator()``
     constructed: it shares that instance's IdentityMiddleware (found via
@@ -459,8 +470,10 @@ def populate_aggregator(
     policy: EntitlementPolicy,
     credential_registry: CredentialRegistry,
     revoked_jti_cache: RevokedJtiCache | None = None,
+    pat_backend: TokenRegistryBackend | None = None,
+    principal_cache: PrincipalCache | None = None,
 ) -> None:
-    """Refresh an aggregator built by ``build_aggregator`` with a freshly loaded registry/settings/policy/credential_registry/revoked_jti_cache.
+    """Refresh an aggregator built by ``build_aggregator`` with a freshly loaded registry/settings/policy/credential_registry/revoked_jti_cache/pat_backend/principal_cache.
 
     app.py's mount-time constraint means the aggregator's FastMCP instance
     and ASGI app must exist before BACKENDS_FILE/POLICY_FILE/the credential
@@ -475,6 +488,8 @@ def populate_aggregator(
     identity_mw, entitlement_mw, authorization_mw = _find_middleware(mcp)
     identity_mw.settings = settings
     identity_mw.revoked_jti_cache = revoked_jti_cache
+    identity_mw.pat_backend = pat_backend
+    identity_mw.principal_cache = principal_cache
     entitlement_mw.registry = registry
     entitlement_mw.policy = policy
     authorization_mw.registry = registry

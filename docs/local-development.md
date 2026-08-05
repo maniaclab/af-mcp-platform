@@ -87,15 +87,21 @@ portal — the Vue islands now render with the dev principal.
 
 ### Testing the manual `/tokens` flow locally
 
-The portal's `/tokens` page (issue #24) mints a static Bearer via Keycloak
-RFC 8693 token exchange, which needs a confidential client's credentials —
-set `TOKEN_MINT_CLIENT_ID` / `TOKEN_MINT_CLIENT_SECRET` before starting the
-broker, or POST/GET `/v1/tokens` will 503 with a message saying so. Under the
-`bypass` environment every `keycloak_dependency` call already returns the dev
-principal without touching Keycloak, but minting still calls the real
-`KEYCLOAK_ISSUER`'s token endpoint — point that at a real (or locally-run)
-Keycloak realm if you want to exercise the mint/list/revoke round trip rather
-than just the 503 branch.
+The portal's `/tokens` page mints a broker-issued identity PAT (issue #144
+step 2a) — no Keycloak call happens at mint time, so under the `bypass`
+environment the whole mint/list/revoke round trip works exactly as-is:
+`keycloak_dependency` returns the dev principal, and `POST /v1/tokens`
+generates the PAT locally. There's nothing extra to configure for this part.
+
+The minted PAT only authenticates on `/mcp`, though (see docs/auth.md's
+"Where PATs are accepted" — `/v1` stays Keycloak-JWT-only on purpose), and
+resolving its authority there requires `KEYCLOAK_ADMIN_CLIENT_ID` /
+`KEYCLOAK_ADMIN_CLIENT_SECRET` to be set (see docs/auth.md's "Operator
+setup: the Keycloak admin service account"). Without them, a PAT presented
+to `/mcp` is rejected the same way an invalid one is — fine for exercising
+the portal's mint/list/revoke UI, but point those two env vars at a real (or
+locally-run) Keycloak realm if you want to actually connect an MCP client
+with the PAT you just minted.
 
 ### Alternative: inject a real token from a live deployment
 

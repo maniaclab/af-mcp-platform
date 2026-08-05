@@ -270,6 +270,45 @@ class Settings(BaseSettings):
     # "expired" (not simply gone) on the portal's token list for a while.
     token_sweep_grace_seconds: int = 7 * 24 * 60 * 60
 
+    # Default lifetime (days) for a PAT minted via POST /v1/tokens when the
+    # caller doesn't request a specific expires_in_days -- issue #144 step
+    # 2a. A never-expiring PAT is an explicit opt-in (MintTokenRequest.
+    # never_expires), never the default: a long-lived, unrevoked-by-accident
+    # credential that reaches a grid-credential broker deserves a deliberate
+    # choice, not a config default nobody looked at twice.
+    pat_default_expiry_days: int = 90
+
+    # Confidential Keycloak client the broker authenticates as when calling
+    # the Admin REST API to resolve a PAT-authenticated principal's current
+    # groups/uid/gid/unixname (principal_directory.py's
+    # KeycloakPrincipalDirectory) -- client_credentials grant, requires the
+    # realm-management client roles `view-users` and `query-groups` (the
+    # narrowest roles that satisfy GET .../users/{id} and
+    # GET .../users/{id}/groups; see docs/auth.md). Both empty (the default)
+    # disables PAT authority resolution: a `mcp_pat_...` bearer on /mcp is
+    # rejected the same way an invalid one is, rather than crashing -- see
+    # app.py's lifespan. Deliberately not required at import time the way
+    # oauth21_client_id etc. are (_validate_oauth21_config) -- unlike those,
+    # there is no identity_providers-shaped signal in this Settings model
+    # that PAT support is "supposed to" be configured, so there is nothing to
+    # validate against; app.py logs a startup warning instead.
+    keycloak_admin_client_id: str = ""
+    keycloak_admin_client_secret: SecretStr = SecretStr("")
+
+    # Principal cache (principal_cache.py) staleness bounds -- two SEPARATE
+    # numbers, not one, because they answer different questions: how often to
+    # *try* refreshing (short -- a group removal should propagate quickly),
+    # and how long a value may be served *without* a successful refresh
+    # before failing closed (long -- a brief Keycloak outage should not lock
+    # out every PAT-authenticated caller; this is research infrastructure,
+    # not a bank). Mirrors RevokedJtiCache's single-interval shape, but that
+    # cache has only ever needed the one number because its failure mode
+    # (serve stale forever) has no analogous "eventually distrust this" bound
+    # -- a principal's authority is a stronger thing to get wrong than
+    # whether one specific token was revoked.
+    principal_cache_refresh_seconds: float = 45.0
+    principal_cache_max_staleness_seconds: float = 6 * 60 * 60.0
+
     @property
     def oauth21_effective_state_issuer(self) -> str:
         """``oauth21_state_issuer`` if set, else ``oidc_issuer``.

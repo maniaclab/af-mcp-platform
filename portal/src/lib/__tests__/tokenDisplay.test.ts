@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { shortJti, tokenStatus, truncateNote } from '../tokenDisplay';
+import { shortLookupId, tokenStatus, truncateNote } from '../tokenDisplay';
 
 describe('tokenStatus', () => {
   const NOW = Date.parse('2026-07-21T12:00:00Z');
@@ -39,20 +39,30 @@ describe('tokenStatus', () => {
     const farFuture = new Date(Date.now() + 3600_000).toISOString();
     expect(tokenStatus({ revoked_at: null, expires_at: farFuture })).toBe('active');
   });
-});
 
-describe('shortJti', () => {
-  it('truncates a long jti to 8 chars plus an ellipsis', () => {
-    expect(shortJti('abcdef1234567890')).toBe('abcdef12…');
+  it('is "active" (never expired) when expires_at is null', () => {
+    const status = tokenStatus({ revoked_at: null, expires_at: null }, NOW);
+    expect(status).toBe('active');
   });
 
-  it('returns a jti of 8 chars or fewer unchanged', () => {
-    expect(shortJti('abcd1234')).toBe('abcd1234');
-    expect(shortJti('short')).toBe('short');
+  it('is "revoked" (not "active") when expires_at is null but revoked_at is set', () => {
+    const status = tokenStatus({ revoked_at: '2026-07-21T11:00:00Z', expires_at: null }, NOW);
+    expect(status).toBe('revoked');
+  });
+});
+
+describe('shortLookupId', () => {
+  it('truncates a long lookup_id to 8 chars plus an ellipsis', () => {
+    expect(shortLookupId('abcdef1234567890')).toBe('abcdef12…');
+  });
+
+  it('returns a lookup_id of 8 chars or fewer unchanged', () => {
+    expect(shortLookupId('abcd1234')).toBe('abcd1234');
+    expect(shortLookupId('short')).toBe('short');
   });
 
   it('handles an empty string', () => {
-    expect(shortJti('')).toBe('');
+    expect(shortLookupId('')).toBe('');
   });
 });
 

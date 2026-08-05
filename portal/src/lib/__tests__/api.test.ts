@@ -471,84 +471,121 @@ describe('fetchDashboardSummary()', () => {
   });
 });
 
-describe('tokens client (issue #24, issue #115)', () => {
-  it('mintToken posts ttl_seconds and name, returns the one-shot token', async () => {
+describe('tokens client (issue #144 step 2a: broker-issued identity PAT)', () => {
+  it('mintToken posts name and returns the one-shot token', async () => {
     const fetchMock = mockJson(200, {
-      token: 'eyJraWQ...fake',
-      jti: 'jti-1',
-      issued_at: '2026-07-21T00:00:00+00:00',
-      expires_at: '2026-07-21T01:00:00+00:00',
+      token: 'mcp_pat_abc123_fake-secret',
+      lookup_id: 'abc123',
+      created_at: '2026-07-21T00:00:00+00:00',
+      expires_at: '2026-10-19T00:00:00+00:00',
       name: 'claude-desktop',
+      note: null,
     });
     globalThis.fetch = fetchMock;
 
-    const result = await mintToken(3600, 'claude-desktop');
+    const result = await mintToken('claude-desktop');
 
-    expect(result.token).toBe('eyJraWQ...fake');
-    expect(result.jti).toBe('jti-1');
+    expect(result.token).toBe('mcp_pat_abc123_fake-secret');
+    expect(result.lookup_id).toBe('abc123');
     const [, init] = fetchMock.mock.calls[0];
     expect(init.method).toBe('POST');
-    expect(JSON.parse(init.body as string)).toEqual({ ttl_seconds: 3600, name: 'claude-desktop' });
+    expect(JSON.parse(init.body as string)).toEqual({ name: 'claude-desktop' });
   });
 
   it('mintToken omits name when not provided', async () => {
     const fetchMock = mockJson(200, {
       token: 't',
-      jti: 'jti-2',
-      issued_at: '2026-07-21T00:00:00+00:00',
-      expires_at: '2026-07-21T01:00:00+00:00',
-      name: 'mcp-20260721-jti2abcd',
+      lookup_id: 'lookup-2',
+      created_at: '2026-07-21T00:00:00+00:00',
+      expires_at: '2026-10-19T00:00:00+00:00',
+      name: 'mcp-20260721-lookup2a',
+      note: null,
     });
     globalThis.fetch = fetchMock;
 
-    await mintToken(3600);
+    await mintToken();
 
     const [, init] = fetchMock.mock.calls[0];
-    expect(JSON.parse(init.body as string)).toEqual({ ttl_seconds: 3600 });
+    expect(JSON.parse(init.body as string)).toEqual({});
+  });
+
+  it('mintToken passes expiresInDays through as expires_in_days', async () => {
+    const fetchMock = mockJson(200, {
+      token: 't',
+      lookup_id: 'lookup-3',
+      created_at: '2026-07-21T00:00:00+00:00',
+      expires_at: '2026-07-28T00:00:00+00:00',
+      name: 'x',
+      note: null,
+    });
+    globalThis.fetch = fetchMock;
+
+    await mintToken('x', undefined, 7);
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect(JSON.parse(init.body as string)).toEqual({ name: 'x', expires_in_days: 7 });
+  });
+
+  it('mintToken passes neverExpires through as never_expires', async () => {
+    const fetchMock = mockJson(200, {
+      token: 't',
+      lookup_id: 'lookup-4',
+      created_at: '2026-07-21T00:00:00+00:00',
+      expires_at: null,
+      name: 'x',
+      note: null,
+    });
+    globalThis.fetch = fetchMock;
+
+    await mintToken('x', undefined, undefined, true);
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect(JSON.parse(init.body as string)).toEqual({ name: 'x', never_expires: true });
   });
 
   it('listTokens returns the parsed array and never a token value', async () => {
     globalThis.fetch = mockJson(200, [
       {
-        jti: 'jti-1',
+        lookup_id: 'lookup-1',
         name: 'claude-desktop',
-        issued_at: '2026-07-21T00:00:00+00:00',
-        expires_at: '2026-07-21T01:00:00+00:00',
+        note: null,
+        created_at: '2026-07-21T00:00:00+00:00',
+        expires_at: '2026-10-19T00:00:00+00:00',
         revoked_at: null,
-        source: 'manual',
+        last_used_at: null,
       },
     ]);
 
     const rows = await listTokens();
     expect(rows).toHaveLength(1);
-    expect(rows[0].source).toBe('manual');
     expect(rows[0].revoked_at).toBeNull();
+    expect(rows[0].last_used_at).toBeNull();
     expect(rows[0]).not.toHaveProperty('token');
   });
 
-  it('revokeToken DELETEs the jti-scoped path', async () => {
-    const fetchMock = mockJson(200, { jti: 'jti-1', revoked: true });
+  it('revokeToken DELETEs the lookup_id-scoped path', async () => {
+    const fetchMock = mockJson(200, { lookup_id: 'lookup-1', revoked: true });
     globalThis.fetch = fetchMock;
 
-    await revokeToken('jti-1');
+    await revokeToken('lookup-1');
 
     const [url, init] = fetchMock.mock.calls[0];
-    expect(String(url)).toContain('/tokens/jti-1');
+    expect(String(url)).toContain('/tokens/lookup-1');
     expect(init.method).toBe('DELETE');
   });
 
-  it('revokeToken URL-encodes the jti', async () => {
-    const fetchMock = mockJson(200, { jti: 'weird/jti', revoked: true });
+  it('revokeToken URL-encodes the lookup_id', async () => {
+    const fetchMock = mockJson(200, { lookup_id: 'weird/id', revoked: true });
     globalThis.fetch = fetchMock;
 
-    await revokeToken('weird/jti');
+    await revokeToken('weird/id');
 
     const [url] = fetchMock.mock.calls[0];
-    expect(String(url)).toContain('/tokens/weird%2Fjti');
+    expect(String(url)).toContain('/tokens/weird%2Fid');
   });
 
   it('mintToken maps a 401 to SessionExpiredError', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue(new Response('', { status: 401 }));
-    await expect(mintToken(3600)).rejects.toBeInstanceOf(SessionExpiredError);
+    await expect(mintToken()).rejects.toBeInstanceOf(SessionExpiredError);
   });
 });

@@ -1,17 +1,21 @@
 /**
  * tokenDisplay.ts — pure display-derivation helpers for TokensPage.vue's
- * token list (issue #115): deriving an active/revoked/expired status and a
- * compact "token id" from a full jti. Kept dependency-free (no DOM, no
- * implicit Date.now() reads inside tokenStatus) so they're trivially
- * unit-testable -- the caller supplies `now` explicitly rather than this
- * module reading the clock itself.
+ * token list: deriving an active/revoked/expired status and a compact
+ * "token id" from a full lookup_id (issue #144 step 2a renamed the
+ * identifier from `jti` -- a broker-issued PAT has no JWT, so no jti).
+ * Kept dependency-free (no DOM, no implicit Date.now() reads inside
+ * tokenStatus) so they're trivially unit-testable -- the caller supplies
+ * `now` explicitly rather than this module reading the clock itself.
  */
 
 export type TokenStatus = 'active' | 'revoked' | 'expired';
 
 export interface TokenStatusInput {
   revoked_at: string | null;
-  expires_at: string;
+  // null means the PAT never expires (an explicit opt-in at mint time --
+  // see api/tokens.py's MintTokenRequest.never_expires) -- never treated as
+  // expired.
+  expires_at: string | null;
 }
 
 /**
@@ -21,18 +25,18 @@ export interface TokenStatusInput {
  */
 export function tokenStatus(row: TokenStatusInput, now: number = Date.now()): TokenStatus {
   if (row.revoked_at) return 'revoked';
-  if (Date.parse(row.expires_at) <= now) return 'expired';
+  if (row.expires_at !== null && Date.parse(row.expires_at) <= now) return 'expired';
   return 'active';
 }
 
 /**
- * First 8 characters of a jti plus an ellipsis, for a compact but still
- * recognizable "token id" column. The full jti is always available via a
- * `title` attribute on the caller's side -- this never silently drops
- * information the user can't get back to.
+ * First 8 characters of a lookup_id plus an ellipsis, for a compact but
+ * still recognizable "token id" column. The full lookup_id is always
+ * available via a `title` attribute on the caller's side -- this never
+ * silently drops information the user can't get back to.
  */
-export function shortJti(jti: string): string {
-  return jti.length <= 8 ? jti : `${jti.slice(0, 8)}…`;
+export function shortLookupId(lookupId: string): string {
+  return lookupId.length <= 8 ? lookupId : `${lookupId.slice(0, 8)}…`;
 }
 
 // Notes can be up to 256 chars (api/tokens.py's _MAX_NOTE_LENGTH) -- too long
@@ -41,8 +45,8 @@ const NOTE_DISPLAY_MAX_LENGTH = 80;
 
 /**
  * Truncates a token's free-text note (issue #116) for the list view. `null`
- * (no note supplied) passes through unchanged. As with `shortJti`, the full
- * note is always available via a `title` attribute on the caller's side.
+ * (no note supplied) passes through unchanged. As with `shortLookupId`, the
+ * full note is always available via a `title` attribute on the caller's side.
  */
 export function truncateNote(
   note: string | null,
