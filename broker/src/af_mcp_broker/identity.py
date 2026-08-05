@@ -149,36 +149,28 @@ class Principal:
 def _extract_principal(claims: dict[str, Any], raw_token: str) -> Principal:
     """Map decoded JWT claims to a Principal.
 
-    POSIX identity (the `posix` claim's `uid`/`gid`/`unixname`) is resolved
-    opportunistically, one field at a time -- issue #148 made it optional on
-    `Principal`, since almost nothing in the broker needs it (the point-of-use
-    check now lives in credentials/x509.py, the one genuine consumer). A
-    `posix` claim that is absent entirely, or present but missing one or more
-    of the three keys, is therefore no longer a validation failure: this
-    function never raises for that reason, only for genuinely malformed
-    claims (handled by the caller's JWT-decode error paths).
-
-    ``groups`` is deliberately NOT read from ``claims`` (issue #144 step 3):
-    a `groups` claim, if the token happens to carry one, is ignored entirely
-    rather than trusted. The token answers only "who is this?" -- `get_principal`
-    answers "what groups do they currently have?" by asking the
-    `PrincipalDirectory` (via the principal cache), the same way it already
-    did for PATs, so the two credential types cannot disagree about a
-    principal's authority. The `groups=[]` here is a placeholder
-    `get_principal` immediately replaces; it is never the value a caller
-    actually sees.
+    Neither ``groups`` nor ``posix`` is read from ``claims`` (issue #144
+    steps 3 and 3b): a `groups` or `posix` claim, if the token happens to
+    carry either, is ignored entirely rather than trusted. The token answers
+    only "who is this?" -- `get_principal` answers "what groups/POSIX
+    identity do they currently have?" by asking the `PrincipalDirectory`
+    (via the principal cache), the same way it already did for PATs, so the
+    two credential types cannot disagree about a principal's identity or
+    authority. The `groups=[]`/`uid=None`/`gid=None`/`unixname=None` here are
+    placeholders `get_principal` immediately replaces; they are never the
+    values a caller actually sees. POSIX identity remains optional on
+    `Principal` (issue #148) -- the point-of-use check still lives in
+    credentials/x509.py, the one genuine consumer.
     """
-    posix = claims.get("posix") or {}
-
     subject = claims.get("sub", "")
     email = claims.get("email", "")
 
     return Principal(
         subject=subject,
         email=email,
-        uid=int(posix["uid"]) if "uid" in posix else None,
-        gid=int(posix["gid"]) if "gid" in posix else None,
-        unixname=str(posix["unixname"]) if "unixname" in posix else None,
+        uid=None,
+        gid=None,
+        unixname=None,
         groups=[],
         raw_token=SecretStr(raw_token),
     )
@@ -193,19 +185,19 @@ class TokenExpiredError(HTTPException):
 
 
 class PrincipalDirectoryUnavailableError(HTTPException):
-    """Raised by ``get_principal`` (issue #144 step 3) when a validated JWT's current groups cannot be determined because the ``PrincipalDirectory`` has no answer for this subject -- no ``PrincipalCache`` configured at all, or one configured but currently unable to reach the directory with nothing fresh-enough cached to fall back on.
+    """Raised by ``get_principal`` (issue #144 steps 3 and 3b) when a validated JWT's current groups/POSIX identity cannot be determined because the ``PrincipalDirectory`` has no answer for this subject -- no ``PrincipalCache`` configured at all, or one configured but currently unable to reach the directory with nothing fresh-enough cached to fall back on.
 
     Deliberately distinct from the plain ``HTTPException(401)`` this module
     otherwise raises for every JWT-validation failure. Those mean "these
     credentials are invalid" -- something re-authenticating fixes. This means
     the opposite: the token's signature, issuer, audience, and expiry all
     checked out, so the caller unambiguously proved who they are. What
-    failed is the platform's ability to answer "what groups do they have,"
-    which is not something the caller can fix by getting a new token. 503,
-    not 401, and a detail that says so explicitly -- see this module's
-    docstring on the availability regression this introduces for JWT
-    callers, previously self-contained and therefore immune to a Keycloak
-    outage.
+    failed is the platform's ability to answer "what groups/POSIX identity
+    do they have," which is not something the caller can fix by getting a
+    new token. 503, not 401, and a detail that says so explicitly -- see
+    this module's docstring on the availability regression this introduces
+    for JWT callers, previously self-contained and therefore immune to a
+    Keycloak outage.
     """
 
 
@@ -216,17 +208,17 @@ class PrincipalDirectoryUnavailableError(HTTPException):
 # docstring and this module's docstring for the availability regression it
 # names.
 _DIRECTORY_UNAVAILABLE_DETAIL = (
-    "Unable to determine your current group membership right now -- the "
-    "authorization directory is temporarily unavailable. This is a "
-    "platform issue, not a problem with your credentials; please try again "
-    "shortly."
+    "Unable to determine your current group membership and POSIX identity "
+    "right now -- the authorization directory is temporarily unavailable. "
+    "This is a platform issue, not a problem with your credentials; please "
+    "try again shortly."
 )
 
 
-async def _resolve_current_groups(
+async def _resolve_current_attributes(
     principal: Principal, principal_cache: PrincipalCache | None
 ) -> Principal:
-    """Replace *principal*'s placeholder (empty) groups with the ``PrincipalDirectory``'s current answer for its subject, via *principal_cache* -- the single point where a validated JWT's authority is resolved (issue #144 step 3; see ``_extract_principal``'s docstring for why the claim itself is never read).
+    """Replace *principal*'s placeholder groups/POSIX fields with the ``PrincipalDirectory``'s current answer for its subject, via *principal_cache* -- the single point where a validated JWT's authority and POSIX identity are resolved (issue #144 steps 3 and 3b; see ``_extract_principal``'s docstring for why neither is ever read from the token itself).
 
     *principal_cache* being ``None`` means no directory is configured at
     all -- a startup misconfiguration ``app.py``'s lifespan is meant to
@@ -247,7 +239,13 @@ async def _resolve_current_groups(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=_DIRECTORY_UNAVAILABLE_DETAIL,
         ) from exc
-    return replace(principal, groups=attributes.groups)
+    return replace(
+        principal,
+        uid=attributes.uid,
+        gid=attributes.gid,
+        unixname=attributes.unixname,
+        groups=attributes.groups,
+    )
 
 
 async def get_principal(
@@ -269,21 +267,22 @@ async def get_principal(
     failed for every other invalid-token cause (issue #138).
 
     *principal_cache* answers the second of two independent questions this
-    function resolves (issue #144 step 3, mirroring the split
+    function resolves (issue #144 steps 3 and 3b, mirroring the split
     ``pat_auth.resolve_pat_principal`` already uses for PATs): the JWT
     decode above answers "who is this?" (a signature-verified `sub` claim);
-    *principal_cache* answers "what groups do they currently have?", via the
-    `PrincipalDirectory` it wraps -- never the token's own `groups` claim,
-    which is ignored even when present (see `_extract_principal`'s
-    docstring). This is what makes removing someone from a Keycloak group a
-    real kill switch regardless of which credential type they present,
-    instead of the JWT and PAT paths being able to disagree about it. Raises
-    `PrincipalDirectoryUnavailableError` (503) rather than 401 when that
-    question cannot be answered -- see that exception's docstring for why,
-    and for the availability regression this introduces: a JWT used to be
-    self-contained, so a Keycloak outage never blocked authentication; now a
-    principal this cache has never resolved before, hit during an outage,
-    has no last-known value to fall back on and cannot authenticate at all.
+    *principal_cache* answers "what groups/POSIX identity do they currently
+    have?", via the `PrincipalDirectory` it wraps -- never the token's own
+    `groups`/`posix` claims, which are ignored even when present (see
+    `_extract_principal`'s docstring). This is what makes removing someone
+    from a Keycloak group a real kill switch regardless of which credential
+    type they present, instead of the JWT and PAT paths being able to
+    disagree about it. Raises `PrincipalDirectoryUnavailableError` (503)
+    rather than 401 when that question cannot be answered -- see that
+    exception's docstring for why, and for the availability regression this
+    introduces: a JWT used to be self-contained, so a Keycloak outage never
+    blocked authentication; now a principal this cache has never resolved
+    before, hit during an outage, has no last-known value to fall back on
+    and cannot authenticate at all.
 
     *revoked_jti_cache*, when provided, is consulted against the token's
     `jti` claim (issue #115) -- this is the single choke point both
@@ -325,7 +324,9 @@ async def get_principal(
             ):
                 _raise_revoked(jti)
             identity_principal = _extract_principal(claims, token)
-            return await _resolve_current_groups(identity_principal, principal_cache)
+            return await _resolve_current_attributes(
+                identity_principal, principal_cache
+            )
     except jwt.ExpiredSignatureError as exc:
         error = exc
         expired = True
@@ -348,7 +349,7 @@ async def get_principal(
 
 
 def _raise_revoked(jti: str) -> None:
-    """Raise a revoked-token ``ValueError`` from inside get_principal's try block -- caught by the same ``except (ValueError, KeyError)`` branch _extract_principal's malformed-posix-claim check uses, so a revoked jti maps to 401 the same way."""
+    """Raise a revoked-token ``ValueError`` from inside get_principal's try block -- caught by the same ``except (ValueError, KeyError)`` branch below, so a revoked jti maps to 401 the same way as any other JWT-validation failure."""
     raise ValueError(f"token jti={jti!r} has been revoked")
 
 

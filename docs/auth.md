@@ -21,10 +21,10 @@ AF Keycloak  ──────────────────────�
 AF Credential Broker  (Identity subsystem)
     │  validates JWT signature + expiry + audience (broker is the sole
     │  validator on this path — no ForwardAuth proxy in front of it)
-    │  resolves uid/gid from the token's posix claim
-    │  resolves current groups from the PrincipalDirectory (issue #144 step 3
-    │  — NOT from a groups claim; any such claim is ignored), then
-    │  capabilities from those groups via policy.yaml
+    │  resolves current groups and POSIX uid/gid/unixname from the
+    │  PrincipalDirectory (issue #144 steps 3/3b — NOT from groups/posix
+    │  claims; any such claims are ignored), then capabilities from those
+    │  groups via policy.yaml
     ▼
 Credential subsystem
     │
@@ -81,40 +81,44 @@ OIDC IdP to Keycloak — this is the path for rucio-mcp. See
 
 ---
 
-## Token claims required by the broker
+## Keycloak: POSIX User Attribute mappers (no longer read -- issue #144 step 3b)
 
-**POSIX identity is optional (issue #148).** The broker no longer requires
-any claim to authenticate a request. A `posix` claim, if the token carries
-one, is resolved opportunistically: `uid`/`gid`/`unixname` are read
-individually, and each is simply left unset on the resulting `Principal` if
-absent — an entirely missing `posix` object, or one missing one or more of
-the three keys, is no longer a rejection. `broker/src/af_mcp_broker/
-identity.py` (`_extract_principal`) is the authoritative logic. This is a
-deliberate relaxation from earlier behavior, where a `posix`-less token was
-rejected with HTTP 401 for every backend, including ones (bearer/oauth21
-targets like Rucio) that never touch POSIX identity at all.
+**As of issue #144 step 3b, the broker never reads a `posix` claim from any
+token.** Every credential type -- JWT and identity PAT alike -- resolves a
+principal's current POSIX identity (`uid`/`gid`/`unixname`) the same way:
+from `PrincipalDirectory` (the Keycloak Admin REST API lookup below), via
+the principal cache -- completing what step 3 did for groups. If your
+realm's four POSIX User Attribute mappers on the `posix` client scope exist
+only to satisfy this broker, **you may remove them (and the scope itself).**
+The settings that control which Keycloak profile attributes the directory
+reads are `posix_uid_attribute`/`posix_gid_attribute`/
+`posix_unixname_attribute` (see "Configurable POSIX attribute names and
+group-path matching" below) -- there is no longer a separate JWT-side mapper
+convention they need to stay consistent with, because there is no longer a
+JWT-side source of POSIX identity at all.
 
-**Why it used to be required, and why almost nothing actually needs it.**
-Only x509/VOMS proxy minting (`credentials/x509.py`) genuinely needs a POSIX
-identity — the mint Job's NFS home subPath and `runAsUser`/`runAsGroup` all
-require real uid/gid/unixname values. Everything else that used to read
-`principal.uid` (cache keys, audit fields, log context) has moved to
-`principal.subject` instead, which every principal has. The requirement is
-now enforced at that one point of use: a principal with no POSIX identity
-who reaches an x509-backed target gets a clear, actionable error naming the
-backend ("this backend needs a grid identity your account doesn't have")
-rather than being refused at the door for an unrelated backend.
+**POSIX identity remains optional (issue #148).** The broker still requires
+no POSIX attributes to authenticate a request: a principal the directory has
+no `uid`/`gid`/`unixname` for still authenticates successfully, with those
+fields simply left `None` on the resulting `Principal`. Only x509/VOMS proxy
+minting (`credentials/x509.py`) genuinely needs a POSIX identity — the mint
+Job's NFS home subPath and `runAsUser`/`runAsGroup` all require real
+uid/gid/unixname values — and that requirement is enforced at that one point
+of use: a principal with no POSIX identity who reaches an x509-backed target
+gets a clear, actionable error naming the backend ("this backend needs a
+grid identity your account doesn't have") rather than being refused at the
+door for an unrelated backend. Everything else that used to read
+`principal.uid` (cache keys, audit fields, log context) uses
+`principal.subject` instead, which every principal has.
 
-**Operators: what you can now remove.** If your Keycloak realm's only reason
-for the `posix` client scope's User Attribute mappers was satisfying this
-broker, you may remove them (and the scope itself) once every principal that
-needs an x509-backed target has POSIX profile attributes resolvable another
-way — see the PAT path below, which reads them directly via the Admin REST
-API rather than through a minted JWT's claims. Do this only after confirming
-which of your backends are x509-backed (`backends.yaml`'s `auth_type:
-x509`); everything else was never affected by the claim's presence at all.
+The rest of this section is kept for operators who haven't removed the
+mappers yet, or who are debugging a token minted before doing so -- it no
+longer describes broker behavior.
 
-The claim shape, when present, is unchanged:
+<details>
+<summary>Historical setup instructions (pre-#144-step-3b)</summary>
+
+The claim shape, when present, was:
 
 ```json
 {
@@ -126,16 +130,17 @@ The claim shape, when present, is unchanged:
 }
 ```
 
-**How Keycloak provides it (AF's implementation, for context).** AF Keycloak
+**How Keycloak provided it (AF's implementation, for context).** AF Keycloak
 has a realm-level client scope named `posix`. Inside that scope, four User
 Attribute protocol mappers copy `uid`, `gid`, `unixname` (and optionally
 `unixname-v2`) from each user's Keycloak profile attributes into the token
 under the `posix.*` namespace. Those profile attributes are themselves
 populated by upstream identity brokering (CERN → ATLAS IAM → Keycloak) or LDAP
-sync, depending on the deployment. The `posix` client scope must be assigned
-to every OAuth client that needs to obtain broker-ready tokens (e.g.
-`mcp-portal`) — either as a Default scope (auto-included in every token) or an
-Optional scope (the client must explicitly request `scope=posix`).
+sync, depending on the deployment. The `posix` client scope had to be
+assigned to every OAuth client that needed to obtain broker-ready tokens
+(e.g. `mcp-portal`) — either as a Default scope (auto-included in every
+token) or an Optional scope (the client must explicitly request
+`scope=posix`).
 
 **Common footgun:** each of the four User Attribute mappers has the same
 two-name-field shape as the Group Membership mapper above — **Name** (an
@@ -151,43 +156,52 @@ what each mapper actually contributed.
 
 **Non-Keycloak IdPs.** `posix` as a client-scope name is a Keycloak-side
 convention, not a broker requirement. Any OIDC IdP — Dex, Zitadel, Auth0, Ory
-Hydra, etc. — can satisfy the broker as long as the decoded access token has
-a top-level `posix` claim in the shape above. How that claim gets populated
-is IdP-specific: some use scopes and mappers the same way Keycloak does,
-others use custom claims, hooks, or rules.
+Hydra, etc. — could satisfy the broker as long as the decoded access token
+had a top-level `posix` claim in the shape above. How that claim got
+populated was IdP-specific: some use scopes and mappers the same way
+Keycloak does, others use custom claims, hooks, or rules.
 
-**Verifying.** Decode a client's access token (paste the middle segment into
-any JWT decoder) and confirm `posix` appears as a top-level key with
-`uid`/`gid`/`unixname` populated. Absence is no longer a broker-wide outage —
-only x509-backed targets (see above) are affected, and even then the
-resulting error names the backend so it's easy to tell apart from any other
-failure.
+Mint a fresh token (via `scripts/mint-token.py`) and confirm the payload has
+a top-level `posix` claim listing `uid`/`gid`/`unixname`. This no longer
+proves anything about what the broker will do with it -- see above.
 
-**Finding your real Keycloak attribute keys (issue #148).** Both the PAT
-path's configurable attribute names (`Settings.posix_uid_attribute`/
-`posix_gid_attribute`/`posix_unixname_attribute`, below) and the JWT
-mappers' source attribute above refer to the same underlying Keycloak
-user-profile attribute — an operator debugging either path needs the real
-key, not the display label the admin console shows by default:
+</details>
+
+### Verify (current)
+
+POSIX identity now takes effect through Keycloak profile-attribute
+assignment alone -- there is no token claim to inspect (any lingering
+`posix` claim in a token is ignored). Set (or change) a user's
+`posix_uid_attribute`/`posix_gid_attribute`/`posix_unixname_attribute`
+profile attributes in Keycloak and confirm the broker-resolved
+uid/gid/unixname changes within `principal_cache_refresh_seconds` (default
+~45s; see "Authorization is an attribute of the principal, not the token"
+below) on their next request, regardless of which credential type they
+present.
+
+**Finding your real Keycloak attribute keys (issue #148).** The directory's
+configurable attribute names (`Settings.posix_uid_attribute`/
+`posix_gid_attribute`/`posix_unixname_attribute`, below) refer to a
+Keycloak profile attribute — an operator needs the real key, not the
+display label the admin console shows by default:
 
 - **Realm settings → User profile → Attributes** lists every profile
   attribute with its key shown alongside its display label — the trap is
   that the *label* (e.g. "Unix UID") is what's visually prominent, while the
-  *key* (e.g. `uidNumber`) is what every mapper and the settings below
-  actually need.
-- **Client Scopes → `posix` → Mappers**, for each of the four mappers, shows
-  its source **User Attribute** — authoritative because it is exactly what
-  the working JWT path already reads today, so it can never disagree with
-  reality the way a written-down convention might.
+  *key* (e.g. `uidNumber`) is what the settings below actually need.
+- **Client Scopes → `posix` → Mappers** (if the mappers haven't been removed
+  yet), for each of the four mappers, shows its source **User Attribute** —
+  a convenient cross-check, since it names the same profile attribute the
+  directory itself reads.
 
 ## Configurable POSIX attribute names and group-path matching (issue #148)
 
-The PAT-authenticated path (`principal_directory.py`'s
-`KeycloakPrincipalDirectory`) reads a principal's POSIX identity directly
-from Keycloak's Admin REST API, bypassing the JWT mapper layer entirely — so
-unlike the JWT path above, it needs to know the *real* profile attribute key,
-not whatever a mapper normalizes it to. Three settings, all defaulting to
-AF's own convention:
+`principal_directory.py`'s `KeycloakPrincipalDirectory` reads a principal's
+POSIX identity directly from Keycloak's Admin REST API, bypassing the JWT
+mapper layer entirely — so, as of issue #144 step 3b, this is the *only*
+path (JWT and PAT alike; see above), and it needs to know the *real* profile
+attribute key, not whatever a mapper used to normalize it to. Three
+settings, all defaulting to AF's own convention:
 
 | Setting | Env var | Default |
 |---|---|---|
@@ -754,30 +768,31 @@ strictly worse than a JWT that expires in minutes.
 
 ### Authorization is an attribute of the principal, not the token
 
-**Issue #144 step 3 unified this for every credential type.** Before this
-change, a JWT was self-contained -- it carried `groups`/`posix` claims
-re-validated on every request -- while a PAT (carrying no authorization
-data of its own) always deferred to the principal cache. Two sources of the
-same fact, which could in principle disagree: a user could hold a valid JWT
-whose embedded claim disagreed with what the directory currently said about
-them. As of step 3, `identity.py` never reads a `groups` claim, even when a
-token happens to carry one -- **every** credential type, JWT and identity
-PAT alike, resolves current groups from the principal cache. The token
-answers only "who is this?"; the directory answers "what groups do they
-have?" `posix` (uid/gid/unixname) is unaffected by this change and still
-comes from the JWT's own claim for JWT callers -- see "Token claims
-required by the broker" above -- since POSIX identity is filesystem
-identity, not authorization (issue #148).
+**Issue #144 steps 3 and 3b unified this for every credential type.** Before
+this change, a JWT was self-contained -- it carried `groups`/`posix` claims
+re-validated on every request -- while a PAT (carrying no authorization or
+identity data of its own) always deferred to the principal cache. Two
+sources of the same facts, which could in principle disagree: a user could
+hold a valid JWT whose embedded claims disagreed with what the directory
+currently said about them. As of step 3, `identity.py` never reads a
+`groups` claim, even when a token happens to carry one -- **every**
+credential type, JWT and identity PAT alike, resolves current groups from
+the principal cache. As of step 3b, the same is true for `posix`
+(uid/gid/unixname) -- see "Keycloak: POSIX User Attribute mappers" above.
+The token answers only "who is this?"; the directory answers "what groups/
+POSIX identity do they have?" POSIX identity remains optional on every
+principal regardless of source (issue #148) -- only x509 credential minting
+genuinely needs it, enforced at that point of use.
 
 Three separate concerns, deliberately kept separate in the code:
 
 - **PAT store** (`token_registry.py`) — "who is this token?" (PATs only;
   a JWT's own signature already answers this for JWT callers).
-- **Principal cache** (`principal_cache.py`) — "what groups does this
-  user *currently* have?", keyed by **principal id** (the Keycloak `sub`),
-  not by credential, so multiple PATs (and any number of JWTs) belonging to
-  one user share cached authorization state, and rotating/revoking a PAT
-  never disturbs it. A group removal still propagates — within one refresh
+- **Principal cache** (`principal_cache.py`) — "what groups/POSIX identity
+  does this user *currently* have?", keyed by **principal id** (the
+  Keycloak `sub`), not by credential, so multiple PATs (and any number of
+  JWTs) belonging to one user share cached state, and rotating/revoking a
+  PAT never disturbs it. A group removal still propagates — within one refresh
   interval (default ~45s, `PRINCIPAL_CACHE_REFRESH_SECONDS`) rather than
   instantly, since neither credential type carries fresh claims of its own
   to re-derive this from anymore. Stale-while-revalidate: a refresh failure
@@ -789,8 +804,8 @@ Three separate concerns, deliberately kept separate in the code:
   `group_capabilities` from whatever groups the principal cache currently
   reports, regardless of which credential type asked.
 
-**Availability regression for JWT callers (issue #144 step 3) -- read this
-before relying on it in production.** A JWT used to be self-contained:
+**Availability regression for JWT callers (issue #144 steps 3/3b) -- read
+this before relying on it in production.** A JWT used to be self-contained:
 Keycloak being unreachable never blocked authentication, because the
 token's own signature and claims were the whole answer. That is no longer
 true. A JWT holder whose principal this cache has never resolved before --
@@ -806,10 +821,10 @@ it is what makes group removal a real kill switch for every credential type
 uniformly (the entire point of this unification), and it trades a rare,
 bounded, loudly-logged unavailability window for eliminating the
 JWT-claim/directory disagreement described above. Operators should
-understand this before removing the Group Membership mapper (see above) as
-irreversible without a plan: after removal, there is no fallback path left
-at all if the Keycloak admin service account itself becomes unreachable for
-an extended period.
+understand this before removing the Group Membership mapper or the four
+POSIX User Attribute mappers (see above, both) as irreversible without a
+plan: after removal, there is no fallback path left at all if the Keycloak
+admin service account itself becomes unreachable for an extended period.
 
 **Persisted across restarts (issue #144 step 2b).** The principal cache is
 backed by a `PrincipalCacheBackend`, selected via

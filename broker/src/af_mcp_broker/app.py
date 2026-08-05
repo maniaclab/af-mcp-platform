@@ -392,14 +392,15 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         refresh_interval_seconds=settings.revoked_jti_cache_refresh_seconds,
     )
 
-    # --- Principal cache (issue #144 steps 2a/3): resolves every
+    # --- Principal cache (issue #144 steps 2a/3/3b): resolves every
     # authenticated request's *current* groups/uid/gid/unixname/email from
     # Keycloak. Originally built only for PATs (opaque bearers carrying none
-    # of that themselves); step 3 made the JWT path defer to it too, so the
-    # token answers only "who is this?" and the directory alone answers
-    # "what groups do they have?" -- see identity.py's module docstring
-    # (`_resolve_current_groups`) and principal_cache.py/principal_directory.py's
-    # module docstrings for the mechanism.
+    # of that themselves); steps 3 and 3b made the JWT path defer to it too
+    # (groups, then POSIX identity), so the token answers only "who is this?"
+    # and the directory alone answers "what groups/POSIX identity do they
+    # have?" -- see identity.py's `_resolve_current_attributes` and
+    # principal_cache.py/principal_directory.py's module docstrings for the
+    # mechanism.
     #
     # Both empty used to be a valid, degraded state (PAT-only): the broker
     # still started, and only a `mcp_pat_...` bearer on /mcp was rejected.

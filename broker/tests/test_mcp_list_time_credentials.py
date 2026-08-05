@@ -205,13 +205,22 @@ async def aggregator_url(
     dead_backend_url: str,
     static_principal_cache: Any,
 ) -> AsyncIterator[str]:
-    # Every token minted via _token_for below shares the same JWT `sub`
-    # ("user-123", make_claims' default) and always claimed "atlas" -- now
-    # that groups come from the directory (issue #144 step 3), give that
-    # same subject "atlas" there too so this file's entitlement expectations
-    # are unaffected by where the fact comes from.
+    # Each test persona minted via _token_for below now gets its own JWT
+    # `sub` (issue #144 step 3b: POSIX identity comes from the directory,
+    # keyed by subject, so two principals sharing a subject would be unable
+    # to have distinct uids at all) -- give each of them "atlas" on the
+    # directory here so this file's entitlement expectations are unaffected
+    # by where that fact comes from (issue #144 step 3 did the same for a
+    # single shared subject before POSIX needed one each).
     principal_cache, directory = static_principal_cache
-    directory.groups_by_subject["user-123"] = ["atlas"]
+    for uid, gid, unixname in _TEST_PERSONAS:
+        sub = _subject_for(unixname)
+        directory.groups_by_subject[sub] = ["atlas"]
+        directory.posix_by_subject[sub] = {
+            "uid": uid,
+            "gid": gid,
+            "unixname": unixname,
+        }
     registry = BackendRegistry()
     registry.register(
         BackendSpec(
@@ -263,11 +272,31 @@ def _bearer_client(url: str, token: str) -> Client:
     )
 
 
+# The fixed set of test personas this file's tests mint tokens for -- each
+# needs its own JWT `sub` (issue #144 step 3b: POSIX identity, like groups,
+# is a directory fact keyed by subject, so distinct principals can no longer
+# share one), pre-registered on the test-controlled directory by the
+# aggregator_url fixture above.
+_TEST_PERSONAS: tuple[tuple[int, int, str], ...] = (
+    (111, 111, "alice"),
+    (222, 222, "bob"),
+    (333, 333, "carol"),
+)
+
+
+def _subject_for(unixname: str) -> str:
+    return f"user-{unixname}"
+
+
 def _token_for(uid: int, gid: int, unixname: str) -> Any:
-    # groups no longer travels via the claim (issue #144 step 3) -- the
-    # aggregator_url fixture above sets the matching entitlement directly on
-    # the test-controlled directory.
-    return make_claims(posix={"uid": uid, "gid": gid, "unixname": unixname})
+    # Neither groups nor POSIX identity travels via claims any more (issue
+    # #144 steps 3/3b) -- the aggregator_url fixture above sets the matching
+    # entitlement and uid/gid/unixname directly on the test-controlled
+    # directory, keyed by this same subject. Asserting membership in
+    # _TEST_PERSONAS here catches a typo'd/unregistered persona immediately,
+    # rather than as a confusing downstream assertion failure.
+    assert (uid, gid, unixname) in _TEST_PERSONAS
+    return make_claims(sub=_subject_for(unixname))
 
 
 async def test_linked_entitled_principal_sees_auth_gated_tools(

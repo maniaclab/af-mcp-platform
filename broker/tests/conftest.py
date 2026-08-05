@@ -173,17 +173,18 @@ def policy():
 
 @pytest.fixture
 def static_principal_cache() -> tuple[Any, Any]:
-    """A real ``PrincipalCache`` in front of a test-controlled ``PrincipalDirectory``, for tests exercising the directory-backed groups resolution (issue #144 step 3) without a real Keycloak.
+    """A real ``PrincipalCache`` in front of a test-controlled ``PrincipalDirectory``, for tests exercising the directory-backed groups/POSIX resolution (issue #144 steps 3 and 3b) without a real Keycloak.
 
     Returns ``(cache, directory)``. Set ``directory.groups_by_subject[sub]``
-    to control what the cache resolves for a given principal, or add a
-    subject to ``directory.unavailable_subjects`` to simulate an outage (the
-    directory raises instead of resolving). ``directory.resolve_calls``
-    records every principal id actually looked up, for tests asserting the
-    directory was (or wasn't) consulted. Generous refresh/staleness bounds
-    keep a test's own repeated ``get()`` calls from ever re-hitting the
-    directory or falling back to a stale value unless the test wants that
-    specifically.
+    or ``directory.posix_by_subject[sub]`` (a ``{"uid": ..., "gid": ...,
+    "unixname": ...}`` dict, any subset of keys) to control what the cache
+    resolves for a given principal, or add a subject to
+    ``directory.unavailable_subjects`` to simulate an outage (the directory
+    raises instead of resolving). ``directory.resolve_calls`` records every
+    principal id actually looked up, for tests asserting the directory was
+    (or wasn't) consulted. Generous refresh/staleness bounds keep a test's
+    own repeated ``get()`` calls from ever re-hitting the directory or
+    falling back to a stale value unless the test wants that specifically.
     """
     from af_mcp_broker.principal_cache import (
         InMemoryPrincipalCacheBackend,
@@ -197,6 +198,7 @@ def static_principal_cache() -> tuple[Any, Any]:
     class _StaticDirectory(PrincipalDirectory):
         def __init__(self) -> None:
             self.groups_by_subject: dict[str, list[str]] = {}
+            self.posix_by_subject: dict[str, dict[str, int | str]] = {}
             self.resolve_calls: list[str] = []
             self.unavailable_subjects: set[str] = set()
 
@@ -204,10 +206,11 @@ def static_principal_cache() -> tuple[Any, Any]:
             self.resolve_calls.append(principal_id)
             if principal_id in self.unavailable_subjects:
                 raise RuntimeError(f"directory unavailable for {principal_id!r} (test)")
+            posix = self.posix_by_subject.get(principal_id, {})
             return PrincipalAttributes(
-                uid=None,
-                gid=None,
-                unixname=None,
+                uid=posix.get("uid"),
+                gid=posix.get("gid"),
+                unixname=posix.get("unixname"),
                 groups=list(self.groups_by_subject.get(principal_id, [])),
                 email="",
             )
