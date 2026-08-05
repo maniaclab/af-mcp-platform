@@ -26,6 +26,7 @@ from af_mcp_broker.credentials.x509 import (
     _PROXY_B64_BEGIN,
     _PROXY_B64_END,
     HomeDirVomsBackend,
+    PosixIdentityRequiredError,
     ProxyHarvestError,
     X509Provider,
     _extract_proxy_from_log,
@@ -354,12 +355,18 @@ async def test_send_stdin_zeros_buffer_even_when_transport_fails(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def _principal(unixname: str, *, uid: int = 50123) -> Principal:
+def _principal(
+    unixname: str | None,
+    *,
+    uid: int | None = 50123,
+    gid: int | None = 5000,
+    subject: str = "user-123",
+) -> Principal:
     return Principal(
-        subject="user-123",
+        subject=subject,
         email="user@example.org",
         uid=uid,
-        gid=5000,
+        gid=gid,
         unixname=unixname,
         groups=["af-atlas-users"],
         raw_token=SecretStr("fake-token"),
@@ -415,6 +422,65 @@ async def test_is_linked_false_when_neither_present(tmp_path):
     )
 
     assert await provider.is_linked(_principal("nosuchuser")) is False
+
+
+@pytest.mark.asyncio
+async def test_is_linked_false_when_no_posix_identity(tmp_path):
+    """Issue #148: a principal with no POSIX identity at all must get a
+    plain False, not a crash -- is_linked() is used for best-effort status
+    probing (portal catalog, /mcp tools/list) that must never raise."""
+    provider = X509Provider(
+        settings=SimpleNamespace(home_root=str(tmp_path)), cache=CredentialCache()
+    )
+
+    assert await provider.is_linked(_principal(None, uid=None, gid=None)) is False
+
+
+# ---------------------------------------------------------------------------
+# X509Provider.issue() -- POSIX identity required at the point of use
+# (issue #148)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_issue_raises_actionable_error_when_posix_identity_missing(tmp_path):
+    """The one genuine consumer of POSIX identity must reject a principal
+    without one with a clear, actionable, backend-naming error -- not a
+    generic 401/crash, and not by silently minting garbage paths."""
+    settings = SimpleNamespace(
+        home_root=str(tmp_path),
+        proxy_dir=str(tmp_path / "proxies"),
+        posix_uid_attribute="uid",
+        posix_gid_attribute="gid",
+        posix_unixname_attribute="unixname",
+    )
+    provider = X509Provider(settings=settings, cache=CredentialCache())
+    principal = _principal(None, uid=None, gid=None)
+
+    with pytest.raises(PosixIdentityRequiredError) as excinfo:
+        await provider.issue(principal, "ami", passphrase=SecretBytes(b"hunter2"))
+
+    assert "ami" in str(excinfo.value)
+    assert excinfo.value.target == "ami"
+
+
+@pytest.mark.asyncio
+async def test_issue_posix_identity_error_raised_before_needs_unlock(tmp_path):
+    """Even with no passphrase supplied, a POSIX-less principal must see the
+    POSIX-identity error, not NeedsUnlock -- asking for a passphrase that can
+    never lead to a successful mint would be misleading."""
+    settings = SimpleNamespace(
+        home_root=str(tmp_path),
+        proxy_dir=str(tmp_path / "proxies"),
+        posix_uid_attribute="uid",
+        posix_gid_attribute="gid",
+        posix_unixname_attribute="unixname",
+    )
+    provider = X509Provider(settings=settings, cache=CredentialCache())
+    principal = _principal(None, uid=None, gid=None)
+
+    with pytest.raises(PosixIdentityRequiredError):
+        await provider.issue(principal, "ami")
 
 
 # ---------------------------------------------------------------------------
@@ -663,10 +729,14 @@ async def test_issue_different_uids_do_not_serialize(monkeypatch, tmp_path):
     results = await asyncio.wait_for(
         asyncio.gather(
             provider.issue(
-                _principal("auser", uid=60_001), "ami", passphrase=passphrase
+                _principal("auser", uid=60_001, subject="user-a"),
+                "ami",
+                passphrase=passphrase,
             ),
             provider.issue(
-                _principal("buser", uid=60_002), "ami", passphrase=passphrase
+                _principal("buser", uid=60_002, subject="user-b"),
+                "ami",
+                passphrase=passphrase,
             ),
         ),
         timeout=2.0,

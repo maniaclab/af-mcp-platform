@@ -221,7 +221,10 @@ class ServiceProvider(CredentialProvider):
                 target=target,
                 action="credential.issued",
                 action_type="state_change",
-                args_summary=f"on_behalf_of={principal.email} username={principal.unixname}",
+                args_summary=(
+                    f"on_behalf_of={principal.email} "
+                    f"username={principal.unixname or '<no-posix-identity>'}"
+                ),
                 timestamp=time.time(),
                 request_id=audit_id,
                 audit_id=audit_id,

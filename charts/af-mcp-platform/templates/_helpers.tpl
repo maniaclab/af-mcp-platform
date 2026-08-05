@@ -333,6 +333,20 @@ needs it, not duplicated per-backend.
       name: {{ .Values.broker.keycloakAdmin.existingClientSecretSecret | quote }}
       key: keycloak-admin-client-secret
 {{- end }}
+# Keycloak user-profile attribute keys for the PAT path's POSIX identity
+# resolution (issue #148) -- always set, same visibility rationale as
+# TOKEN_STORE_BACKEND above, since a misconfigured value here is exactly the
+# kind of thing an operator needs visible in `kubectl describe pod`.
+- name: POSIX_UID_ATTRIBUTE
+  value: {{ .Values.broker.posixAttributes.uid | quote }}
+- name: POSIX_GID_ATTRIBUTE
+  value: {{ .Values.broker.posixAttributes.gid | quote }}
+- name: POSIX_UNIXNAME_ATTRIBUTE
+  value: {{ .Values.broker.posixAttributes.unixname | quote }}
+# Whether the PAT path matches a Keycloak group by full path instead of bare
+# name (issue #148) -- always set, same rationale as above.
+- name: PRINCIPAL_DIRECTORY_GROUP_FULL_PATH
+  value: {{ .Values.broker.groupFullPath | quote }}
 # Extra env vars from values (key: value pairs)
 {{- range $key, $val := .Values.broker.env }}
 - name: {{ $key | quote }}

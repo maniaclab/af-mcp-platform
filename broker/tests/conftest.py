@@ -178,9 +178,9 @@ def make_principal() -> Callable[..., object]:
     def _make(
         *,
         groups: list[str] | None = None,
-        uid: int = 1000,
-        gid: int = 1000,
-        unixname: str = "tuser",
+        uid: int | None = 1000,
+        gid: int | None = 1000,
+        unixname: str | None = "tuser",
         subject: str = "sub-abc",
     ) -> Principal:
         return Principal(

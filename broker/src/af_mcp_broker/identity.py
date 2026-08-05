@@ -112,11 +112,27 @@ async def get_jwks(settings: Settings) -> list[dict[str, Any]]:
 
 @dataclass(frozen=True)
 class Principal:
+    """An authenticated caller's identity, as resolved from a JWT or a PAT.
+
+    ``uid``/``gid``/``unixname`` are optional (issue #148): POSIX identity
+    is only meaningful to backends that need a filesystem identity (x509/VOMS
+    proxy minting -- see credentials/x509.py), not to the broker's identity
+    or authorization layers themselves. ``None`` fields are used rather than
+    an ``int | None`` default hiding behind a truthy-looking sentinel, so
+    every call site that reads one of these three directly is forced (by
+    mypy, since the shipped config enables strict optional checking) to
+    handle the absent case rather than silently treating a missing identity
+    as uid/gid 0 or an empty unixname. Every OTHER field remains required:
+    ``subject`` is always present (a validated JWT's `sub` claim, or a PAT's
+    stored owner id), so it -- not uid -- is the identifier incidental
+    consumers (cache keys, audit fields, log context) should use.
+    """
+
     subject: str
     email: str
-    uid: int
-    gid: int
-    unixname: str
+    uid: int | None
+    gid: int | None
+    unixname: str | None
     groups: list[str]
     # Keep the raw token for downstream credential flows; SecretStr prevents
     # accidental logging.
@@ -131,19 +147,16 @@ class Principal:
 def _extract_principal(claims: dict[str, Any], raw_token: str) -> Principal:
     """Map decoded JWT claims to a Principal.
 
-    Raises ValueError with a descriptive message if required claims are absent
-    so the caller can convert it to an appropriate HTTP error.
+    POSIX identity (the `posix` claim's `uid`/`gid`/`unixname`) is resolved
+    opportunistically, one field at a time -- issue #148 made it optional on
+    `Principal`, since almost nothing in the broker needs it (the point-of-use
+    check now lives in credentials/x509.py, the one genuine consumer). A
+    `posix` claim that is absent entirely, or present but missing one or more
+    of the three keys, is therefore no longer a validation failure: this
+    function never raises for that reason, only for genuinely malformed
+    claims (handled by the caller's JWT-decode error paths).
     """
-    posix = claims.get("posix")
-    if not posix:
-        raise ValueError("JWT is missing required 'posix' claim")
-
-    # A malformed 'posix' claim (missing uid/gid/unixname) is a client-side
-    # invalid-token condition, not a server error — raise ValueError so the
-    # caller returns 401 rather than letting a KeyError escape as a 500.
-    missing = [k for k in ("uid", "gid", "unixname") if k not in posix]
-    if missing:
-        raise ValueError(f"JWT 'posix' claim is missing keys: {', '.join(missing)}")
+    posix = claims.get("posix") or {}
 
     subject = claims.get("sub", "")
     email = claims.get("email", "")
@@ -152,9 +165,9 @@ def _extract_principal(claims: dict[str, Any], raw_token: str) -> Principal:
     return Principal(
         subject=subject,
         email=email,
-        uid=int(posix["uid"]),
-        gid=int(posix["gid"]),
-        unixname=str(posix["unixname"]),
+        uid=int(posix["uid"]) if "uid" in posix else None,
+        gid=int(posix["gid"]) if "gid" in posix else None,
+        unixname=str(posix["unixname"]) if "unixname" in posix else None,
         groups=groups,
         raw_token=SecretStr(raw_token),
     )

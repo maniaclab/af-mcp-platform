@@ -142,6 +142,32 @@ broker:
     # Create this via SealedSecret externally; the chart does NOT create it.
     existingClientSecretSecret: ""
 
+  # Keycloak user-profile attribute keys `principal_directory.py`'s
+  # KeycloakPrincipalDirectory reads a PAT-authenticated principal's POSIX
+  # identity from, via the Admin REST API -- issue #148. Defaults match AF's
+  # own profile attribute names. A facility whose POSIX identity is
+  # LDAP-federated under different names (the common spelling is
+  # uidNumber/gidNumber) overrides these rather than the broker hardcoding
+  # AF's convention -- same reasoning as entitlements.group_capabilities.
+  # Unlike these, the JWT path is unaffected: a token's posix.uid/gid/unixname
+  # claim shape is fixed by convention (Keycloak's mappers already normalize
+  # whatever the underlying attribute is named into that shape) -- see
+  # docs/auth.md.
+  posixAttributes:
+    uid: "uid"
+    gid: "gid"
+    unixname: "unixname"
+
+  # Whether the PAT path (KeycloakPrincipalDirectory) matches a Keycloak
+  # group by its full `path` (e.g. "/atlas/users") instead of its bare `name`
+  # (e.g. "atlas") -- issue #148. False (bare name) matches AF's own Group
+  # Membership mapper convention ("Full group path: OFF", see docs/auth.md)
+  # and the JWT path's `groups` claim shape. A site whose mapper has "Full
+  # group path" enabled must set this true too, or every PAT-authenticated
+  # capability lookup silently returns nothing even though the equivalent
+  # JWT path works fine.
+  groupFullPath: false
+
   # NFS home directory access — required by the x509 legacy credential provider.
   homeDir:
     enabled: true

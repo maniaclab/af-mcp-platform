@@ -104,6 +104,28 @@ async def test_valid_pat_resolves_principal(
     assert principal.raw_token.get_secret_value() == token
 
 
+async def test_valid_pat_with_no_posix_identity_resolves_principal(
+    settings, pat_backend, principal_cache, directory, tracker
+) -> None:
+    """Issue #148: a PAT for a Keycloak user with no POSIX profile
+    attributes must still authenticate successfully, with uid/gid/unixname
+    left None -- mirroring the JWT path's same relaxation."""
+    directory.responses["kc-sub-1"] = PrincipalAttributes(
+        uid=None, gid=None, unixname=None, groups=["atlas"], email="a@x.org"
+    )
+    token = await _mint_and_store(pat_backend, principal_id="kc-sub-1")
+
+    principal = await resolve_pat_principal(
+        token, settings, pat_backend, principal_cache, tracker
+    )
+
+    assert principal.subject == "kc-sub-1"
+    assert principal.uid is None
+    assert principal.gid is None
+    assert principal.unixname is None
+    assert principal.groups == ["atlas"]
+
+
 async def test_malformed_token_rejected(
     settings, pat_backend, principal_cache, tracker
 ) -> None:

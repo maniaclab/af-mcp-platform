@@ -81,23 +81,38 @@ OIDC IdP to Keycloak — this is the path for rucio-mcp. See
 
 ## Token claims required by the broker
 
-**What the broker requires.** The incoming access token MUST contain a
-top-level `posix` claim: an object with `uid` (integer), `gid` (integer), and
-`unixname` (string). Optional companion fields such as `unixname-v2` are
-present in AF's tokens but ignored by the broker. If the `posix` object is
-absent, or present but missing any of the three required keys, the broker
-rejects the request with HTTP 401 and `"JWT is missing required 'posix'
-claim"` (or a keys-missing variant of that message). See
-`broker/src/af_mcp_broker/identity.py` (`_extract_principal`) for the
-authoritative validation logic.
+**POSIX identity is optional (issue #148).** The broker no longer requires
+any claim to authenticate a request. A `posix` claim, if the token carries
+one, is resolved opportunistically: `uid`/`gid`/`unixname` are read
+individually, and each is simply left unset on the resulting `Principal` if
+absent — an entirely missing `posix` object, or one missing one or more of
+the three keys, is no longer a rejection. `broker/src/af_mcp_broker/
+identity.py` (`_extract_principal`) is the authoritative logic. This is a
+deliberate relaxation from earlier behavior, where a `posix`-less token was
+rejected with HTTP 401 for every backend, including ones (bearer/oauth21
+targets like Rucio) that never touch POSIX identity at all.
 
-**Why.** The broker resolves this claim to a POSIX identity so downstream
-credential minting — x509/VOMS proxy Jobs that NFS-subPath-mount a home
-directory, and any other filesystem- or batch-facing operation — can run as
-the correct uid/gid. A POSIX uid/gid isn't derivable from an OIDC `sub`
-(typically a UUID); it has to be carried in the token explicitly.
+**Why it used to be required, and why almost nothing actually needs it.**
+Only x509/VOMS proxy minting (`credentials/x509.py`) genuinely needs a POSIX
+identity — the mint Job's NFS home subPath and `runAsUser`/`runAsGroup` all
+require real uid/gid/unixname values. Everything else that used to read
+`principal.uid` (cache keys, audit fields, log context) has moved to
+`principal.subject` instead, which every principal has. The requirement is
+now enforced at that one point of use: a principal with no POSIX identity
+who reaches an x509-backed target gets a clear, actionable error naming the
+backend ("this backend needs a grid identity your account doesn't have")
+rather than being refused at the door for an unrelated backend.
 
-The claim shape, literally:
+**Operators: what you can now remove.** If your Keycloak realm's only reason
+for the `posix` client scope's User Attribute mappers was satisfying this
+broker, you may remove them (and the scope itself) once every principal that
+needs an x509-backed target has POSIX profile attributes resolvable another
+way — see the PAT path below, which reads them directly via the Admin REST
+API rather than through a minted JWT's claims. Do this only after confirming
+which of your backends are x509-backed (`backends.yaml`'s `auth_type:
+x509`); everything else was never affected by the claim's presence at all.
+
+The claim shape, when present, is unchanged:
 
 ```json
 {
@@ -141,10 +156,64 @@ others use custom claims, hooks, or rules.
 
 **Verifying.** Decode a client's access token (paste the middle segment into
 any JWT decoder) and confirm `posix` appears as a top-level key with
-`uid`/`gid`/`unixname` populated. If it doesn't, the broker will 401 every
-call from that client — this is exactly what happened during Phase B rollout
-when the portal's OAuth client hadn't yet been assigned the `posix` client
-scope.
+`uid`/`gid`/`unixname` populated. Absence is no longer a broker-wide outage —
+only x509-backed targets (see above) are affected, and even then the
+resulting error names the backend so it's easy to tell apart from any other
+failure.
+
+**Finding your real Keycloak attribute keys (issue #148).** Both the PAT
+path's configurable attribute names (`Settings.posix_uid_attribute`/
+`posix_gid_attribute`/`posix_unixname_attribute`, below) and the JWT
+mappers' source attribute above refer to the same underlying Keycloak
+user-profile attribute — an operator debugging either path needs the real
+key, not the display label the admin console shows by default:
+
+- **Realm settings → User profile → Attributes** lists every profile
+  attribute with its key shown alongside its display label — the trap is
+  that the *label* (e.g. "Unix UID") is what's visually prominent, while the
+  *key* (e.g. `uidNumber`) is what every mapper and the settings below
+  actually need.
+- **Client Scopes → `posix` → Mappers**, for each of the four mappers, shows
+  its source **User Attribute** — authoritative because it is exactly what
+  the working JWT path already reads today, so it can never disagree with
+  reality the way a written-down convention might.
+
+## Configurable POSIX attribute names and group-path matching (issue #148)
+
+The PAT-authenticated path (`principal_directory.py`'s
+`KeycloakPrincipalDirectory`) reads a principal's POSIX identity directly
+from Keycloak's Admin REST API, bypassing the JWT mapper layer entirely — so
+unlike the JWT path above, it needs to know the *real* profile attribute key,
+not whatever a mapper normalizes it to. Three settings, all defaulting to
+AF's own convention:
+
+| Setting | Env var | Default |
+|---|---|---|
+| `posix_uid_attribute` | `POSIX_UID_ATTRIBUTE` | `uid` |
+| `posix_gid_attribute` | `POSIX_GID_ATTRIBUTE` | `gid` |
+| `posix_unixname_attribute` | `POSIX_UNIXNAME_ATTRIBUTE` | `unixname` |
+
+A facility whose POSIX identity is LDAP-federated under different names —
+the common spelling is `uidNumber`/`gidNumber` — overrides these
+(`broker.posixAttributes.*` in the chart) rather than the broker hardcoding
+AF's own convention, the same reasoning as `entitlements.group_capabilities`
+(see "Group-to-Capability Mapping Example" above). When none of the
+configured keys are present for a given user, the corresponding
+`PrincipalAttributes` field is simply left `None` — not an error — and the
+actionable error an x509-backed target eventually raises for that principal
+names exactly which keys it looked for, so the operator's first diagnostic
+step is checking those keys against the real attribute names above, not
+guessing.
+
+A related, separate setting: `principal_directory_group_full_path`
+(`PRINCIPAL_DIRECTORY_GROUP_FULL_PATH`, default `false`) controls whether
+this same PAT path matches a Keycloak group by its bare `name` (e.g.
+`atlas`) or its full `path` (e.g. `/atlas/users`). The default matches the
+JWT path's Group Membership mapper convention ("Full group path: OFF", see
+below) — a site with that mapper switched **ON** must set this `true` too,
+or every PAT-authenticated capability lookup silently returns nothing (the
+group names never match `policy.yaml`'s `group_capabilities`) even though
+the equivalent JWT path works fine.
 
 ---
 
@@ -399,7 +468,12 @@ expired entries, triggering a fresh mint on the next request.
 
 The broker's authorization gates on a top-level `groups` claim in the access
 token. If Keycloak isn't configured to add it, no user is granted any
-capability and `/v1/catalog` returns an empty list for everyone.
+capability and `/v1/catalog` returns an empty list for everyone. This applies
+to the JWT path only -- the separate PAT path's equivalent setting is
+`principal_directory_group_full_path` (see "Configurable POSIX attribute
+names and group-path matching" above), which must be kept consistent with
+this mapper's "Full group path" toggle or PAT-authenticated capability
+lookups silently break while the JWT path keeps working.
 
 ### One-time setup
 

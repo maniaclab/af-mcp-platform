@@ -50,6 +50,32 @@ _PROXY_B64_BEGIN = "-----BEGIN-PROXY-B64-----"
 _PROXY_B64_END = "-----END-PROXY-B64-----"
 
 
+class PosixIdentityRequiredError(RuntimeError):
+    """Raised when x509 proxy minting is attempted for a principal with no POSIX identity.
+
+    Issue #148 made ``Principal.uid``/``gid``/``unixname`` optional -- almost
+    nothing in the broker needs them, but x509 genuinely does (the mint
+    Job's NFS home subPath and ``runAsUser``/``runAsGroup`` all require real
+    values). Rather than reject such a principal at the door for every
+    backend (the old JWT-level behavior this issue removes), the requirement
+    moves to this point of use, naming *target* so the resulting error is
+    actionable: "this backend needs a grid identity your account doesn't
+    have" rather than an opaque failure.
+    """
+
+    def __init__(self, target: str, *, settings: Settings) -> None:
+        self.target = target
+        super().__init__(
+            f"Backend {target!r} requires an x509/VOMS proxy, which needs a "
+            "POSIX (grid) identity your account does not have. The broker "
+            "looked for the Keycloak profile attributes "
+            f"{settings.posix_uid_attribute!r}/{settings.posix_gid_attribute!r}/"
+            f"{settings.posix_unixname_attribute!r} and found none of them "
+            "set. Contact your Analysis Facility operator to request a grid "
+            "identity."
+        )
+
+
 class ProxyHarvestError(ValueError):
     """Raised when a mint Job SUCCEEDED but its proxy could not be harvested from the pod log (truncated log, kubelet log-size limits, transient read issue).
 
@@ -265,7 +291,15 @@ class HomeDirVomsBackend(X509Backend):
         self._log = structlog.get_logger(__name__).bind(backend="HomeDirVomsBackend")
 
     async def available(self, principal: Principal) -> bool:
-        """Return True if the user's certificate exists and is readable as a public cert (no passphrase needed for this check)."""
+        """Return True if the user's certificate exists and is readable as a public cert (no passphrase needed for this check).
+
+        Returns False (rather than raising) when *principal* has no POSIX
+        identity at all -- this backend genuinely cannot serve such a
+        principal, which is exactly what "not available" already means here
+        (issue #148).
+        """
+        if principal.unixname is None:
+            return False
         cert_path = (
             Path(self._settings.home_root)
             / principal.unixname
@@ -289,6 +323,13 @@ class HomeDirVomsBackend(X509Backend):
         cache: CredentialCache,
     ) -> ProxyMeta:
         """Mint a proxy using an ephemeral Job (or local subprocess in dev mode)."""
+        # X509Provider.issue() already rejects a principal with no POSIX
+        # identity (PosixIdentityRequiredError) before ever reaching here --
+        # this assert only narrows the type for mypy in the rest of this
+        # call chain, it is never expected to actually fail.
+        assert principal.uid is not None
+        assert principal.gid is not None
+        assert principal.unixname is not None
         cache.check_unlock_rate_limit(principal.uid)
 
         if self._dev_mode:
@@ -308,6 +349,12 @@ class HomeDirVomsBackend(X509Backend):
         cache: CredentialCache,
     ) -> ProxyMeta:
         import copy
+
+        # See mint()'s matching asserts -- HomeDirVomsBackend.mint() is the
+        # only caller of this method, and it already validated this.
+        assert principal.uid is not None
+        assert principal.gid is not None
+        assert principal.unixname is not None
 
         try:
             from kubernetes_asyncio import client as k8s_client  # type: ignore[import]
@@ -566,6 +613,11 @@ class HomeDirVomsBackend(X509Backend):
         cache: CredentialCache,
     ) -> ProxyMeta:
         """Run voms-proxy-init locally as a subprocess — dev/testing only."""
+        # See mint()'s matching asserts -- HomeDirVomsBackend.mint() is the
+        # only caller of this method, and it already validated this.
+        assert principal.uid is not None
+        assert principal.gid is not None
+        assert principal.unixname is not None
         proxy_dir = Path(self._settings.proxy_dir) / str(principal.uid)
         proxy_dir.mkdir(parents=True, exist_ok=True)
         proxy_path = proxy_dir / "proxy.pem"
@@ -638,6 +690,9 @@ class HomeDirVomsBackend(X509Backend):
         self, proxy_pem: bytes, principal: Principal
     ) -> ProxyMeta:
         """Write *proxy_pem* to the broker's per-uid tmpfs and parse its metadata."""
+        # See mint()'s matching asserts -- reached only via _mint_kubernetes/
+        # _mint_local, both of which already validated this.
+        assert principal.uid is not None
         proxy_dir = Path(self._settings.proxy_dir) / str(principal.uid)
         proxy_dir.mkdir(parents=True, exist_ok=True)
         proxy_path = proxy_dir / "proxy.pem"
@@ -764,6 +819,17 @@ class X509Provider(CredentialProvider):
         ]
         self._log = structlog.get_logger(__name__).bind(provider="X509Provider")
 
+    @property
+    def settings(self) -> Settings:
+        """The ``Settings`` this provider was constructed with.
+
+        Exposed so ``api/credentials.py`` can build the same actionable
+        ``PosixIdentityRequiredError`` message ``issue()`` would raise,
+        before its own ``is_linked()`` pre-check gate would otherwise hide it
+        behind a generic "not linked" 404 (issue #148).
+        """
+        return self._settings
+
     async def is_linked(self, principal: Principal) -> bool:
         """Return True when both halves of *principal*'s ``~/.globus`` certificate pair exist and are readable by the broker's uid/gid.
 
@@ -772,7 +838,16 @@ class X509Provider(CredentialProvider):
         which only needs the public cert to decide whether it can attempt a
         mint — requires BOTH ``usercert.pem`` and ``userkey.pem``, since
         minting cannot proceed with only the public half.
+
+        Returns False (rather than raising) when *principal* has no POSIX
+        identity at all: this method is used for best-effort status probing
+        (the portal catalog, `/mcp` tools/list credential attempts) that must
+        never crash for a principal without one (issue #148) -- the
+        actionable ``PosixIdentityRequiredError`` instead surfaces from
+        ``issue()``, at the point an x509 credential is actually minted.
         """
+        if principal.unixname is None:
+            return False
         globus_dir = Path(self._settings.home_root) / principal.unixname / ".globus"
         cert_path = globus_dir / "usercert.pem"
         key_path = globus_dir / "userkey.pem"
@@ -798,16 +873,27 @@ class X509Provider(CredentialProvider):
         """Return an x509 proxy reference credential.
 
         If a valid proxy is already cached, returns immediately without
-        touching any backend.  If there is no cached proxy and no passphrase
-        was provided, raises ``NeedsUnlock`` so the caller can guide the user
-        to POST their passphrase to ``/v1/x509/proxy``.
+        touching any backend -- POSIX identity isn't needed just to serve an
+        already-minted credential, so this check comes before the guard
+        below. If there is no cached proxy and *principal* has no POSIX
+        identity at all, raises ``PosixIdentityRequiredError`` naming
+        *target*: minting can never succeed for such a principal, and saying
+        so immediately is clearer than asking for a passphrase first only to
+        fail after it's given. Otherwise, if no passphrase was provided,
+        raises ``NeedsUnlock`` so the caller can guide the user to POST their
+        passphrase to ``/v1/x509/proxy``.
         """
         cached = await self._cache.get(
-            principal.uid, target, min_remaining=min_remaining_seconds
+            principal.subject, target, min_remaining=min_remaining_seconds
         )
         if cached is not None:
-            self._log.debug("x509.issue.cache_hit", uid=principal.uid, target=target)
+            self._log.debug(
+                "x509.issue.cache_hit", subject=principal.subject, target=target
+            )
             return cached
+
+        if principal.uid is None or principal.gid is None or principal.unixname is None:
+            raise PosixIdentityRequiredError(target, settings=self._settings)
 
         if passphrase is None:
             raise NeedsUnlock(
@@ -819,25 +905,27 @@ class X509Provider(CredentialProvider):
         async def _do_mint() -> IssuedCredential:
             meta = await self._mint(principal, passphrase)
             cred = self._build_credential(principal, target, meta)
-            await self._cache.put(principal.uid, target, cred, proxy_meta=meta)
+            await self._cache.put(
+                principal.subject, target, cred, proxy_meta=meta, uid=principal.uid
+            )
             return cred
 
-        # Single-flighted: concurrent misses for this (uid, target) await one
-        # k8s Job / subprocess mint instead of each independently starting
-        # their own real-resource mint (issue #94).
+        # Single-flighted: concurrent misses for this (subject, target) await
+        # one k8s Job / subprocess mint instead of each independently
+        # starting their own real-resource mint (issue #94).
         return await self._cache.get_or_mint(
-            principal.uid, target, min_remaining_seconds, _do_mint
+            principal.subject, target, min_remaining_seconds, _do_mint
         )
 
     async def revoke(self, principal: Principal, target: str) -> None:
         """Clear the cache entry; cache.revoke secure-deletes the proxy file."""
         # Grab the path before revoke() pops the entry, for the audit log only.
-        meta = self._cache.get_proxy_meta(principal.uid, target)
-        await self._cache.revoke(principal.uid, target)
+        meta = self._cache.get_proxy_meta(principal.subject, target)
+        await self._cache.revoke(principal.subject, target)
         if meta is not None:
             self._log.info(
                 "x509.revoked",
-                uid=principal.uid,
+                subject=principal.subject,
                 target=target,
                 proxy_path=meta.proxy_path,
             )

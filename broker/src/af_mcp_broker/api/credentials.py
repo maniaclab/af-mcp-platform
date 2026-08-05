@@ -12,6 +12,7 @@ from af_mcp_broker.credentials import (
     CredentialKind,
     CredentialRegistry,
     NeedsUnlock,
+    PosixIdentityRequiredError,
     X509Provider,
 )
 from af_mcp_broker.identity import Principal, keycloak_dependency
@@ -176,6 +177,23 @@ async def issue_credential(
             detail=f"No credential provider registered for target '{body.target}'",
         ) from exc
 
+    # X509Provider.is_linked() returns a plain False for a principal with no
+    # POSIX identity (safe for best-effort status probing elsewhere -- see
+    # its docstring), which would otherwise fall through to the generic
+    # "not linked" 404 below and lose the more actionable, backend-naming
+    # message issue() itself would raise. Surface that message here too,
+    # before the generic gate, rather than only reaching it via the
+    # POST /v1/x509/proxy route below.
+    if isinstance(provider, X509Provider) and (
+        principal.uid is None or principal.gid is None or principal.unixname is None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(
+                PosixIdentityRequiredError(body.target, settings=provider.settings)
+            ),
+        )
+
     # Gate on linkage BEFORE issue() so an unlinked user gets a clean 404
     # instead of an opaque failure surfacing from inside the provider. Every
     # provider benefits uniformly from this one check rather than each
@@ -203,6 +221,11 @@ async def issue_credential(
                 "unlock_endpoint": exc.unlock_endpoint,
             },
         ) from exc
+    except PosixIdentityRequiredError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
     return _to_response(cred)
 
 
@@ -215,7 +238,7 @@ async def delete_credential(
     request: Request,
     principal: Annotated[Principal, Depends(keycloak_dependency)],
 ) -> None:
-    await _cache(request).revoke_all(principal.uid)
+    await _cache(request).revoke_all(principal.subject)
 
 
 @router.post(
@@ -239,8 +262,13 @@ async def create_proxy(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=str(exc),
         ) from exc
+    except PosixIdentityRequiredError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
 
-    meta = _cache(request).get_proxy_meta(principal.uid, target)
+    meta = _cache(request).get_proxy_meta(principal.subject, target)
     if meta is None:  # pragma: no cover - mint succeeded but nothing cached
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -266,7 +294,7 @@ async def proxy_status(
     target: str | None = None,
 ) -> ProxyCacheStatus:
     resolved = _resolve_x509_target(request, target)
-    meta = _cache(request).get_proxy_meta(principal.uid, resolved)
+    meta = _cache(request).get_proxy_meta(principal.subject, resolved)
     if meta is None:
         return ProxyCacheStatus(cached=False)
     return ProxyCacheStatus(

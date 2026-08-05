@@ -17,7 +17,11 @@ _audit_logger: AuditLogger | None = None
 @dataclass
 class AuditRecord:
     principal_sub: str
-    principal_uid: int
+    # Optional (issue #148): POSIX identity is no longer required of every
+    # principal, but audit records still carry it when present -- operators
+    # want it, and `principal_sub` alone is a stable substitute when it's
+    # absent, not a gap in the record.
+    principal_uid: int | None
     capability: str | None
     target: str
     action: str

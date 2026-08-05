@@ -21,18 +21,29 @@ implementation, backed by Keycloak's Admin REST API:
 
 * ``GET /admin/realms/{realm}/users/{id}`` -- user representation, including
   ``email`` and the ``attributes`` map the `posix` client-scope mappers
-  source `uid`/`gid`/`unixname` from (see docs/auth.md's "Token claims
+  source uid/gid/unixname from (see docs/auth.md's "Token claims
   required by the broker" section -- the *same* underlying profile
   attributes, just read directly instead of via a minted JWT's mapped
   claims). Each attribute value comes back as a list of strings (Keycloak's
   user-attributes are multi-valued by design); this only ever reads the
-  first.
+  first. Which attribute *keys* to read are configurable
+  (``Settings.posix_uid_attribute``/``posix_gid_attribute``/
+  ``posix_unixname_attribute``, default ``uid``/``gid``/``unixname``) --
+  issue #148 -- since a site whose POSIX identity is LDAP-federated may
+  spell them differently (``uidNumber``/``gidNumber`` is common). Absent for
+  a given user, resolve() leaves the corresponding ``PrincipalAttributes``
+  field ``None`` rather than raising -- POSIX identity is optional on every
+  principal (issue #148); only x509 credential minting genuinely needs it,
+  and that requirement is enforced at the point of use in
+  ``credentials/x509.py``, not here.
 * ``GET /admin/realms/{realm}/users/{id}/groups`` -- group representations.
-  Uses each group's ``name`` (not ``path``) so the result matches exactly
+  Uses each group's ``name`` (not ``path``) by default so the result matches
   what the Group Membership mapper puts in a JWT's `groups` claim -- AF
   Keycloak's mapper is configured with "Full group path: OFF" (see
   docs/auth.md), i.e. bare names with no leading ``/``, and the policy
   engine (authorization/) string-matches those bare names.
+  ``Settings.principal_directory_group_full_path`` switches this to
+  ``path`` for a site whose mapper has "Full group path" enabled instead.
 
 Both endpoints require an admin-scoped access token; this class obtains one
 via the `client_credentials` grant against the same OIDC token endpoint
@@ -68,11 +79,18 @@ _ADMIN_TOKEN_REFRESH_BUFFER_SECONDS = 60
 
 @dataclass(frozen=True)
 class PrincipalAttributes:
-    """A principal's current groups/POSIX identity, as resolved right now from the directory -- never cached inside this class itself (see principal_cache.py for the caching layer)."""
+    """A principal's current groups/POSIX identity, as resolved right now from the directory -- never cached inside this class itself (see principal_cache.py for the caching layer).
 
-    uid: int
-    gid: int
-    unixname: str
+    ``uid``/``gid``/``unixname`` are optional (issue #148): a Keycloak user
+    with no POSIX profile attributes configured is not a directory-lookup
+    failure, only a principal with no filesystem identity -- the same
+    "resolve when available, leave unset otherwise" contract `identity.py`'s
+    JWT path already follows.
+    """
+
+    uid: int | None
+    gid: int | None
+    unixname: str | None
     groups: list[str]
     email: str
 
@@ -156,29 +174,31 @@ class KeycloakPrincipalDirectory(PrincipalDirectory):
         user_resp.raise_for_status()
         user = user_resp.json()
 
+        group_key = (
+            "path" if self._settings.principal_directory_group_full_path else "name"
+        )
         groups_resp = await client.get(
             f"{self._admin_base}/users/{principal_id}/groups",
             headers=headers,
             timeout=10.0,
         )
         groups_resp.raise_for_status()
-        groups = [g["name"] for g in groups_resp.json()]
+        groups = [g[group_key] for g in groups_resp.json()]
 
+        # POSIX identity is resolved opportunistically, one attribute at a
+        # time (issue #148) -- a Keycloak user with none of these profile
+        # attributes set is not a directory-lookup failure, only a principal
+        # with no filesystem identity; the point-of-use check for anything
+        # that genuinely needs one lives in credentials/x509.py.
         attributes: dict[str, list[str]] = user.get("attributes") or {}
-        missing = [k for k in ("uid", "gid", "unixname") if not attributes.get(k)]
-        if missing:
-            raise ValueError(
-                f"Keycloak user {principal_id!r} is missing profile attribute(s) "
-                f"{missing} -- cannot resolve POSIX identity for a PAT-"
-                "authenticated request. See docs/auth.md's 'Token claims "
-                "required by the broker' section for the attributes the "
-                "`posix` client scope's mappers source these from."
-            )
+        uid_values = attributes.get(self._settings.posix_uid_attribute)
+        gid_values = attributes.get(self._settings.posix_gid_attribute)
+        unixname_values = attributes.get(self._settings.posix_unixname_attribute)
 
         return PrincipalAttributes(
-            uid=int(attributes["uid"][0]),
-            gid=int(attributes["gid"][0]),
-            unixname=str(attributes["unixname"][0]),
+            uid=int(uid_values[0]) if uid_values else None,
+            gid=int(gid_values[0]) if gid_values else None,
+            unixname=str(unixname_values[0]) if unixname_values else None,
             groups=groups,
             email=str(user.get("email") or ""),
         )

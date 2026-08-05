@@ -58,9 +58,12 @@ class IdentitiesResponse(BaseModel):
 
     subject: str
     email: str
-    unixname: str
-    uid: int
-    gid: int
+    # POSIX identity is optional (issue #148) -- null on the portal's
+    # Identities page for a principal whose account has no filesystem/grid
+    # identity, rather than the request failing outright.
+    unixname: str | None
+    uid: int | None
+    gid: int | None
     groups: list[str]
     providers: list[IdentityProvider]
 
@@ -176,7 +179,7 @@ async def unlink_identity(
         credential_cache = getattr(request.app.state, "credential_cache", None)
         if credential_cache is not None:
             for target in cfg.targets:
-                await credential_cache.revoke(principal.uid, target)
+                await credential_cache.revoke(principal.subject, target)
 
         logger.info(
             "identity_unlink_completed",

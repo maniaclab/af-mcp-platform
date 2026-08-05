@@ -19,7 +19,11 @@ from af_mcp_broker.credentials.oauth21 import (
 from af_mcp_broker.credentials.oidc import OIDCProvider
 from af_mcp_broker.credentials.service import ServiceProvider
 from af_mcp_broker.credentials.vault import VaultTokenStore
-from af_mcp_broker.credentials.x509 import ProxyHarvestError, X509Provider
+from af_mcp_broker.credentials.x509 import (
+    PosixIdentityRequiredError,
+    ProxyHarvestError,
+    X509Provider,
+)
 from af_mcp_broker.vault_kv import VaultError
 
 __all__ = [
@@ -33,6 +37,7 @@ __all__ = [
     "NeedsUnlock",
     "OAuth21Provider",
     "OIDCProvider",
+    "PosixIdentityRequiredError",
     "ProxyHarvestError",
     "ServiceProvider",
     "StoredOAuthCredential",

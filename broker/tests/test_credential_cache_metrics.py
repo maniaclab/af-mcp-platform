@@ -34,7 +34,7 @@ async def test_get_miss_increments_miss_counter_not_hit_counter():
     cache = CredentialCache()
     before_hits, before_misses = _hits(TARGET), _misses(TARGET)
 
-    result = await cache.get(uid=2_001, target=TARGET)
+    result = await cache.get(subject="subject-2001", target=TARGET)
 
     assert result is None
     assert _hits(TARGET) == before_hits
