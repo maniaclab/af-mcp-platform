@@ -279,19 +279,23 @@ class Settings(BaseSettings):
     pat_default_expiry_days: int = 90
 
     # Confidential Keycloak client the broker authenticates as when calling
-    # the Admin REST API to resolve a PAT-authenticated principal's current
+    # the Admin REST API to resolve any authenticated principal's current
     # groups/uid/gid/unixname (principal_directory.py's
     # KeycloakPrincipalDirectory) -- client_credentials grant, requires the
     # realm-management client roles `view-users` and `query-groups` (the
     # narrowest roles that satisfy GET .../users/{id} and
-    # GET .../users/{id}/groups; see docs/auth.md). Both empty (the default)
-    # disables PAT authority resolution: a `mcp_pat_...` bearer on /mcp is
-    # rejected the same way an invalid one is, rather than crashing -- see
-    # app.py's lifespan. Deliberately not required at import time the way
-    # oauth21_client_id etc. are (_validate_oauth21_config) -- unlike those,
-    # there is no identity_providers-shaped signal in this Settings model
-    # that PAT support is "supposed to" be configured, so there is nothing to
-    # validate against; app.py logs a startup warning instead.
+    # GET .../users/{id}/groups; see docs/auth.md). Issue #144 step 3 unified
+    # groups resolution through this account for JWT callers too, not just
+    # PATs -- both empty (the default) is therefore no longer a degraded-but-
+    # working state. app.py's lifespan refuses to start when both are empty
+    # unless the dev bypass (BROKER_DEV_INSECURE_PRINCIPAL) is active, which
+    # short-circuits this account entirely -- see that lifespan's own
+    # comment for the fail-fast reasoning. Deliberately not validated here at
+    # Settings-construction time the way oauth21_client_id etc. are
+    # (_validate_oauth21_config) -- unlike those, this check also depends on
+    # dev_insecure_principal and issuer_is_local, which app.py's lifespan
+    # already needs to evaluate together for the bypass's own startup check,
+    # so doing it there once covers both rather than duplicating the logic.
     keycloak_admin_client_id: str = ""
     keycloak_admin_client_secret: SecretStr = SecretStr("")
 
@@ -356,16 +360,15 @@ class Settings(BaseSettings):
     posix_gid_attribute: str = "gid"
     posix_unixname_attribute: str = "unixname"
 
-    # Whether `principal_directory.py` matches a PAT-authenticated
-    # principal's group membership by Keycloak's group ``path`` (e.g.
-    # ``/atlas/users``) instead of its bare ``name`` (e.g. ``atlas``).
-    # Default False (bare name) matches AF's own Group Membership mapper
-    # convention ("Full group path: OFF", see docs/auth.md) and the JWT
-    # path's `groups` claim shape, which policy.yaml's group_capabilities
-    # string-matches literally. A site whose mapper has "Full group path"
-    # switched ON must set this True too, or every PAT-authenticated
-    # capability lookup silently returns nothing (the group names never
-    # match) even though the equivalent JWT path works fine.
+    # Whether `principal_directory.py` matches an authenticated principal's
+    # group membership by Keycloak's group ``path`` (e.g. ``/atlas/users``)
+    # instead of its bare ``name`` (e.g. ``atlas``). Issue #144 step 3
+    # unified groups resolution through this same directory for every
+    # credential type, so this setting now governs JWT and PAT callers
+    # identically -- there is no longer a separate JWT-side mapper
+    # convention it needs to be kept consistent with (see docs/auth.md's
+    # "Keycloak: Group Membership mapper" section). Default False (bare
+    # name) matches ``policy.yaml``'s ``group_capabilities`` keys directly.
     principal_directory_group_full_path: bool = False
 
     @property

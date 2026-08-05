@@ -22,7 +22,9 @@ AF Credential Broker  (Identity subsystem)
     │  validates JWT signature + expiry + audience (broker is the sole
     │  validator on this path — no ForwardAuth proxy in front of it)
     │  resolves uid/gid from the token's posix claim
-    │  resolves capabilities from the token's groups claim via policy.yaml
+    │  resolves current groups from the PrincipalDirectory (issue #144 step 3
+    │  — NOT from a groups claim; any such claim is ignored), then
+    │  capabilities from those groups via policy.yaml
     ▼
 Credential subsystem
     │
@@ -207,13 +209,16 @@ guessing.
 
 A related, separate setting: `principal_directory_group_full_path`
 (`PRINCIPAL_DIRECTORY_GROUP_FULL_PATH`, default `false`) controls whether
-this same PAT path matches a Keycloak group by its bare `name` (e.g.
-`atlas`) or its full `path` (e.g. `/atlas/users`). The default matches the
-JWT path's Group Membership mapper convention ("Full group path: OFF", see
-below) — a site with that mapper switched **ON** must set this `true` too,
-or every PAT-authenticated capability lookup silently returns nothing (the
-group names never match `policy.yaml`'s `group_capabilities`) even though
-the equivalent JWT path works fine.
+the directory matches a Keycloak group by its bare `name` (e.g. `atlas`) or
+its full `path` (e.g. `/atlas/users`). As of issue #144 step 3 this governs
+group matching for **every** authenticated request, JWT and PAT alike —
+groups resolution is fully unified through the directory, so there is no
+separate "JWT path" convention left to keep in sync with it. Set this
+`true` if your realm's group names, as the Admin REST API returns them,
+need the full path to be unambiguous; the default (`false`, bare name)
+matches `policy.yaml`'s `group_capabilities` keys directly, and is what the
+now-removable Group Membership mapper described below used to produce for
+JWTs when "Full group path" was left OFF.
 
 ---
 
@@ -464,16 +469,26 @@ expired entries, triggering a fresh mint on the next request.
 
 ---
 
-## Keycloak: Group Membership mapper (required)
+## Keycloak: Group Membership mapper (no longer read -- issue #144 step 3)
 
-The broker's authorization gates on a top-level `groups` claim in the access
-token. If Keycloak isn't configured to add it, no user is granted any
-capability and `/v1/catalog` returns an empty list for everyone. This applies
-to the JWT path only -- the separate PAT path's equivalent setting is
-`principal_directory_group_full_path` (see "Configurable POSIX attribute
-names and group-path matching" above), which must be kept consistent with
-this mapper's "Full group path" toggle or PAT-authenticated capability
-lookups silently break while the JWT path keeps working.
+**As of issue #144 step 3, the broker never reads a `groups` claim from any
+token.** Every credential type -- JWT and identity PAT alike -- resolves a
+principal's current groups the same way: from `PrincipalDirectory` (the
+Keycloak Admin REST API lookup below), via the principal cache. If your
+realm has a Group Membership mapper on the `mcp-gateway` client scope purely
+to satisfy this broker, **you may remove it.** The setting that controls how
+the directory matches group names is `principal_directory_group_full_path`
+(see "Configurable POSIX attribute names and group-path matching" above) --
+there is no longer a separate JWT-side mapper convention it needs to stay
+consistent with, because there is no longer a JWT-side source of groups at
+all.
+
+The rest of this section is kept for operators who haven't removed the
+mapper yet, or who are debugging a token minted before doing so -- it no
+longer describes broker behavior.
+
+<details>
+<summary>Historical setup instructions (pre-#144-step-3)</summary>
 
 ### One-time setup
 
@@ -508,11 +523,23 @@ lookups silently break while the JWT path keeps working.
    ATLAS AF's own group names: `atlas`, `cms`, `dune`, `escape`,
    `af-admins`.
 
-### Verify
+### Verify (historical)
 
 Mint a fresh token (via `scripts/mint-token.py`) and confirm the payload
-has a top-level `groups` claim listing your group names as strings.
-Without it, the broker treats the caller as `__authenticated__`-only.
+has a top-level `groups` claim listing your group names as strings. This no
+longer proves anything about what the broker will do with it -- see above.
+
+</details>
+
+### Verify (current)
+
+Group membership now takes effect through Keycloak group assignment alone
+-- there is no token claim to inspect. Assign (or remove) a user from a
+Keycloak group referenced in `group_capabilities` and confirm their
+capabilities change within `principal_cache_refresh_seconds` (default
+~45s; see "Authorization is an attribute of the principal, not the token"
+below) on their next request, regardless of which credential type they
+present.
 
 ---
 
@@ -595,9 +622,13 @@ backends:
     required_capability: __none__     # open to any authenticated user
 ```
 
-Keycloak group membership is resolved once per request from the validated
-token's `groups` claim. There is no group-membership cache in the broker —
-Keycloak is the authoritative source.
+Keycloak group membership is resolved from `PrincipalDirectory` via the
+principal cache (issue #144 step 3) -- not from a token claim, for either
+credential type. Keycloak remains the authoritative source; the cache is a
+stale-while-revalidate layer in front of it (see "Authorization is an
+attribute of the principal, not the token" below), refreshed roughly every
+`principal_cache_refresh_seconds` (default ~45s) rather than on every single
+request.
 
 ---
 
@@ -723,29 +754,62 @@ strictly worse than a JWT that expires in minutes.
 
 ### Authorization is an attribute of the principal, not the token
 
-A JWT is self-contained: it carries `groups`/`posix` claims re-validated on
-every request, so removing someone from a Keycloak group is a real kill
-switch — their next request re-evaluates capabilities from scratch. A PAT
-carries **no** authorization data at all — the registry above stores
-identity and metadata only. Three separate concerns, deliberately kept
-separate in the code:
+**Issue #144 step 3 unified this for every credential type.** Before this
+change, a JWT was self-contained -- it carried `groups`/`posix` claims
+re-validated on every request -- while a PAT (carrying no authorization
+data of its own) always deferred to the principal cache. Two sources of the
+same fact, which could in principle disagree: a user could hold a valid JWT
+whose embedded claim disagreed with what the directory currently said about
+them. As of step 3, `identity.py` never reads a `groups` claim, even when a
+token happens to carry one -- **every** credential type, JWT and identity
+PAT alike, resolves current groups from the principal cache. The token
+answers only "who is this?"; the directory answers "what groups do they
+have?" `posix` (uid/gid/unixname) is unaffected by this change and still
+comes from the JWT's own claim for JWT callers -- see "Token claims
+required by the broker" above -- since POSIX identity is filesystem
+identity, not authorization (issue #148).
 
-- **PAT store** (`token_registry.py`) — "who is this token?"
-- **Principal cache** (`principal_cache.py`) — "what groups/uid does this
+Three separate concerns, deliberately kept separate in the code:
+
+- **PAT store** (`token_registry.py`) — "who is this token?" (PATs only;
+  a JWT's own signature already answers this for JWT callers).
+- **Principal cache** (`principal_cache.py`) — "what groups does this
   user *currently* have?", keyed by **principal id** (the Keycloak `sub`),
-  not by PAT, so multiple PATs belonging to one user share cached
-  authorization state and rotating/revoking a PAT never disturbs it. A
-  group removal still propagates — within one refresh interval (default
-  ~45s, `PRINCIPAL_CACHE_REFRESH_SECONDS`) rather than instantly, since a
-  PAT-authenticated request has no fresh claims of its own to re-derive
-  this from. Stale-while-revalidate: a refresh failure serves the
-  last-known value for up to `PRINCIPAL_CACHE_MAX_STALENESS_SECONDS`
-  (default 6 hours) before failing closed, logging loudly the whole time —
-  a brief Keycloak outage should not instantly lock out every
-  PAT-authenticated caller.
+  not by credential, so multiple PATs (and any number of JWTs) belonging to
+  one user share cached authorization state, and rotating/revoking a PAT
+  never disturbs it. A group removal still propagates — within one refresh
+  interval (default ~45s, `PRINCIPAL_CACHE_REFRESH_SECONDS`) rather than
+  instantly, since neither credential type carries fresh claims of its own
+  to re-derive this from anymore. Stale-while-revalidate: a refresh failure
+  serves the last-known value for up to
+  `PRINCIPAL_CACHE_MAX_STALENESS_SECONDS` (default 6 hours) before failing
+  closed, logging loudly the whole time — a brief Keycloak outage should
+  not instantly lock out every authenticated caller.
 - **Capability engine** (`authorization/`) — unchanged; still gates on
-  `group_capabilities` from whatever groups the principal cache (or a JWT's
-  own claims) currently reports.
+  `group_capabilities` from whatever groups the principal cache currently
+  reports, regardless of which credential type asked.
+
+**Availability regression for JWT callers (issue #144 step 3) -- read this
+before relying on it in production.** A JWT used to be self-contained:
+Keycloak being unreachable never blocked authentication, because the
+token's own signature and claims were the whole answer. That is no longer
+true. A JWT holder whose principal this cache has never resolved before --
+a genuinely new user, or a cold-started replica that has never seen them --
+hit during a Keycloak outage has no last-known value to fall back on and
+**cannot authenticate at all**, receiving a 503 (`identity.
+PrincipalDirectoryUnavailableError`) rather than a 401, specifically so the
+error reads as a platform outage rather than a bad credential. #150's
+persisted cache (below) covers the *restart* case for a principal already
+seen by some replica before the outage; it does nothing for a principal no
+replica has ever resolved. This is a deliberate tradeoff, not an oversight:
+it is what makes group removal a real kill switch for every credential type
+uniformly (the entire point of this unification), and it trades a rare,
+bounded, loudly-logged unavailability window for eliminating the
+JWT-claim/directory disagreement described above. Operators should
+understand this before removing the Group Membership mapper (see above) as
+irreversible without a plan: after removal, there is no fallback path left
+at all if the Keycloak admin service account itself becomes unreachable for
+an extended period.
 
 **Persisted across restarts (issue #144 step 2b).** The principal cache is
 backed by a `PrincipalCacheBackend`, selected via
@@ -774,12 +838,14 @@ reachable system always has a persisted record well inside the staleness
 bound; a Vault read/write failure degrades to the in-memory-only behavior
 of the previous design rather than failing a request — see
 `principal_cache.py`'s module docstring for the full read/write layering
-and the write-amplification arithmetic. Before this, a cold broker restart
-during a Keycloak outage had no last-known value to serve for any
-PAT-authenticated principal and failed closed for them until the directory
-recovered — even though their actual authority hadn't changed.
-JWT-authenticated callers were, and remain, unaffected (self-contained
-tokens).
+and the write-amplification arithmetic. Before this persistence existed, a
+cold broker restart during a Keycloak outage had no last-known value to
+serve for any PAT-authenticated principal and failed closed for them until
+the directory recovered — even though their actual authority hadn't
+changed. This persistence covers the *restart* case for any principal some
+replica had already resolved before the outage started, for both credential
+types now that step 3 unified groups resolution -- but not a principal no
+replica has ever resolved (see the availability regression callout above).
 
 **Data at rest.** A persisted principal-cache record contains that user's
 group memberships and POSIX uid/gid/unixname — the same underlying data
@@ -788,12 +854,12 @@ resident in Vault, alongside the PAT store's own records (see above).
 
 ### Operator setup: the Keycloak admin service account
 
-Resolving a PAT's current groups/uid/gid/unixname means *asking Keycloak*,
-which requires a service account with standing read access to every user's
-profile and group membership — a real, deliberate privilege increase over
-today's broker, which has only ever read claims from a token the user
-themselves presented. Mitigated by scoping the account to the narrowest
-roles that satisfy the two Admin REST API calls
+Resolving any principal's current groups/uid/gid/unixname means *asking
+Keycloak*, which requires a service account with standing read access to
+every user's profile and group membership — a real, deliberate privilege
+increase over the broker's original design, which only ever read claims
+from a token the user themselves presented. Mitigated by scoping the
+account to the narrowest roles that satisfy the two Admin REST API calls
 `principal_directory.KeycloakPrincipalDirectory` makes
 (`GET /admin/realms/{realm}/users/{id}` and
 `GET /admin/realms/{realm}/users/{id}/groups`):
@@ -812,12 +878,26 @@ roles that satisfy the two Admin REST API calls
    before it, this is a confidential-client credential the broker
    authenticates *as*, not a per-user credential.
 
-Both empty (the chart default) is a valid, degraded state: the broker logs
-`keycloak_admin_not_configured` at startup and every `mcp_pat_...` bearer on
-`/mcp` is rejected the same way an invalid one is — there is no
-identity-PAT authority to resolve without this account, but the broker
-still starts and everything else (JWT auth, x509, oauth21-direct) is
-unaffected.
+**This account is now required for all authentication, not only PATs
+(issue #144 step 3).** Before step 3, both empty (the chart default) was a
+valid, degraded state: the broker logged `keycloak_admin_not_configured`
+and only PAT authority resolution was unavailable -- a JWT's own claims were
+enough on their own. That fallback no longer exists. As of step 3, the
+broker's startup (`app.py`'s lifespan) **refuses to start** when
+`KEYCLOAK_ADMIN_CLIENT_ID`/`KEYCLOAK_ADMIN_CLIENT_SECRET` are both empty
+*and* the local-dev bypass (`BROKER_DEV_INSECURE_PRINCIPAL`, which
+short-circuits the directory entirely -- see "Local-development auth
+bypass" in `docs/local-development.md`) is not active. Refusing to start,
+rather than degrading silently as before, follows the same reasoning as the
+`unreachable_capabilities`/`ungated_backends` startup checks elsewhere in
+`app.py`'s lifespan: this is Kubernetes, so a Deployment rollout with a
+failing new pod leaves the previous ReplicaSet serving traffic unaffected --
+a loud startup failure surfaces the misconfiguration as a visible rollout
+failure with zero outage risk, which is strictly better than a broker that
+accepts every request and can authenticate none of them. See the
+availability regression this account being unreachable *after* a successful
+startup introduces for JWT callers specifically, under "Authorization is an
+attribute of the principal, not the token" above.
 
 The Helm chart wires both env vars from `broker.keycloakAdmin.clientId` (a
 plain value — the client id is not a secret) and

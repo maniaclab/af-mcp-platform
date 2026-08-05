@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Annotated, Any
 from urllib.parse import urlparse
 
@@ -15,8 +15,10 @@ from pydantic import SecretStr
 
 from af_mcp_broker.config import Settings, get_settings
 from af_mcp_broker.http import get_http_client
+from af_mcp_broker.principal_cache import PrincipalUnavailableError
 
 if TYPE_CHECKING:
+    from af_mcp_broker.principal_cache import PrincipalCache
     from af_mcp_broker.token_registry import RevokedJtiCache
 
 logger = structlog.get_logger(__name__)
@@ -155,12 +157,21 @@ def _extract_principal(claims: dict[str, Any], raw_token: str) -> Principal:
     of the three keys, is therefore no longer a validation failure: this
     function never raises for that reason, only for genuinely malformed
     claims (handled by the caller's JWT-decode error paths).
+
+    ``groups`` is deliberately NOT read from ``claims`` (issue #144 step 3):
+    a `groups` claim, if the token happens to carry one, is ignored entirely
+    rather than trusted. The token answers only "who is this?" -- `get_principal`
+    answers "what groups do they currently have?" by asking the
+    `PrincipalDirectory` (via the principal cache), the same way it already
+    did for PATs, so the two credential types cannot disagree about a
+    principal's authority. The `groups=[]` here is a placeholder
+    `get_principal` immediately replaces; it is never the value a caller
+    actually sees.
     """
     posix = claims.get("posix") or {}
 
     subject = claims.get("sub", "")
     email = claims.get("email", "")
-    groups: list[str] = claims.get("groups", [])
 
     return Principal(
         subject=subject,
@@ -168,7 +179,7 @@ def _extract_principal(claims: dict[str, Any], raw_token: str) -> Principal:
         uid=int(posix["uid"]) if "uid" in posix else None,
         gid=int(posix["gid"]) if "gid" in posix else None,
         unixname=str(posix["unixname"]) if "unixname" in posix else None,
-        groups=groups,
+        groups=[],
         raw_token=SecretStr(raw_token),
     )
 
@@ -181,9 +192,68 @@ class TokenExpiredError(HTTPException):
     """
 
 
+class PrincipalDirectoryUnavailableError(HTTPException):
+    """Raised by ``get_principal`` (issue #144 step 3) when a validated JWT's current groups cannot be determined because the ``PrincipalDirectory`` has no answer for this subject -- no ``PrincipalCache`` configured at all, or one configured but currently unable to reach the directory with nothing fresh-enough cached to fall back on.
+
+    Deliberately distinct from the plain ``HTTPException(401)`` this module
+    otherwise raises for every JWT-validation failure. Those mean "these
+    credentials are invalid" -- something re-authenticating fixes. This means
+    the opposite: the token's signature, issuer, audience, and expiry all
+    checked out, so the caller unambiguously proved who they are. What
+    failed is the platform's ability to answer "what groups do they have,"
+    which is not something the caller can fix by getting a new token. 503,
+    not 401, and a detail that says so explicitly -- see this module's
+    docstring on the availability regression this introduces for JWT
+    callers, previously self-contained and therefore immune to a Keycloak
+    outage.
+    """
+
+
+# Client-visible detail for PrincipalDirectoryUnavailableError -- deliberately
+# says "platform" and "try again", not anything that reads like a bad
+# credential, so a caller (or their client's error message) can tell this
+# apart from every other 401 this module raises. See that exception's
+# docstring and this module's docstring for the availability regression it
+# names.
+_DIRECTORY_UNAVAILABLE_DETAIL = (
+    "Unable to determine your current group membership right now -- the "
+    "authorization directory is temporarily unavailable. This is a "
+    "platform issue, not a problem with your credentials; please try again "
+    "shortly."
+)
+
+
+async def _resolve_current_groups(
+    principal: Principal, principal_cache: PrincipalCache | None
+) -> Principal:
+    """Replace *principal*'s placeholder (empty) groups with the ``PrincipalDirectory``'s current answer for its subject, via *principal_cache* -- the single point where a validated JWT's authority is resolved (issue #144 step 3; see ``_extract_principal``'s docstring for why the claim itself is never read).
+
+    *principal_cache* being ``None`` means no directory is configured at
+    all -- a startup misconfiguration ``app.py``'s lifespan is meant to
+    refuse to start over (dev bypass aside), reached here only in a test or
+    a future embedding that skips that check. Treated identically to the
+    directory being unreachable: raises ``PrincipalDirectoryUnavailableError``
+    rather than crashing on a ``None`` cache.
+    """
+    if principal_cache is None:
+        raise PrincipalDirectoryUnavailableError(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=_DIRECTORY_UNAVAILABLE_DETAIL,
+        )
+    try:
+        attributes = await principal_cache.get(principal.subject)
+    except PrincipalUnavailableError as exc:
+        raise PrincipalDirectoryUnavailableError(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=_DIRECTORY_UNAVAILABLE_DETAIL,
+        ) from exc
+    return replace(principal, groups=attributes.groups)
+
+
 async def get_principal(
     token: str,
     settings: Settings,
+    principal_cache: PrincipalCache | None,
     revoked_jti_cache: RevokedJtiCache | None = None,
 ) -> Principal:
     """Validate a Bearer token and return the extracted Principal.
@@ -197,6 +267,23 @@ async def get_principal(
     (mcp/middleware/identity_mw.py) can catch it separately to give expiry a
     distinct, actionable message without this function leaking which claim
     failed for every other invalid-token cause (issue #138).
+
+    *principal_cache* answers the second of two independent questions this
+    function resolves (issue #144 step 3, mirroring the split
+    ``pat_auth.resolve_pat_principal`` already uses for PATs): the JWT
+    decode above answers "who is this?" (a signature-verified `sub` claim);
+    *principal_cache* answers "what groups do they currently have?", via the
+    `PrincipalDirectory` it wraps -- never the token's own `groups` claim,
+    which is ignored even when present (see `_extract_principal`'s
+    docstring). This is what makes removing someone from a Keycloak group a
+    real kill switch regardless of which credential type they present,
+    instead of the JWT and PAT paths being able to disagree about it. Raises
+    `PrincipalDirectoryUnavailableError` (503) rather than 401 when that
+    question cannot be answered -- see that exception's docstring for why,
+    and for the availability regression this introduces: a JWT used to be
+    self-contained, so a Keycloak outage never blocked authentication; now a
+    principal this cache has never resolved before, hit during an outage,
+    has no last-known value to fall back on and cannot authenticate at all.
 
     *revoked_jti_cache*, when provided, is consulted against the token's
     `jti` claim (issue #115) -- this is the single choke point both
@@ -237,7 +324,8 @@ async def get_principal(
                 and await revoked_jti_cache.is_revoked(jti)
             ):
                 _raise_revoked(jti)
-            return _extract_principal(claims, token)
+            identity_principal = _extract_principal(claims, token)
+            return await _resolve_current_groups(identity_principal, principal_cache)
     except jwt.ExpiredSignatureError as exc:
         error = exc
         expired = True
@@ -337,7 +425,18 @@ async def keycloak_dependency(
     # case get_principal simply skips the revocation check, same as before
     # issue #115.
     revoked_jti_cache = getattr(request.app.state, "revoked_jti_cache", None)
-    return await get_principal(credentials.credentials, settings, revoked_jti_cache)
+    # Absent (getattr default None) only in a bare app.state; in a properly
+    # started app this is never None here -- app.py's lifespan refuses to
+    # start without either a configured PrincipalDirectory or the dev bypass
+    # (issue #144 step 3), and the bypass check above already returned. A
+    # None cache reaching get_principal is therefore always either a test
+    # double or an actual misconfiguration that slipped past the startup
+    # check; either way get_principal surfaces it as
+    # PrincipalDirectoryUnavailableError rather than crashing.
+    principal_cache = getattr(request.app.state, "principal_cache", None)
+    return await get_principal(
+        credentials.credentials, settings, principal_cache, revoked_jti_cache
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -29,6 +29,14 @@ pixi run broker
 
 Starts uvicorn with `--reload`. API is at <http://localhost:8080/docs>.
 
+> As of issue #144 step 3, plain `pixi run broker` now refuses to start:
+> every credential type (JWT included, not just PATs) resolves its groups
+> from the Keycloak admin service account, so a broker with neither that
+> account nor the bypass below configured can never authenticate anyone —
+> see docs/auth.md's "Operator setup: the Keycloak admin service account"
+> for what changed and why. If you don't have a real Keycloak realm handy,
+> skip straight to `pixi run -e bypass broker` in the next section instead.
+
 **Terminal 2 — portal on :4321:**
 
 ```bash
@@ -94,14 +102,19 @@ environment the whole mint/list/revoke round trip works exactly as-is:
 generates the PAT locally. There's nothing extra to configure for this part.
 
 The minted PAT only authenticates on `/mcp`, though (see docs/auth.md's
-"Where PATs are accepted" — `/v1` stays Keycloak-JWT-only on purpose), and
-resolving its authority there requires `KEYCLOAK_ADMIN_CLIENT_ID` /
-`KEYCLOAK_ADMIN_CLIENT_SECRET` to be set (see docs/auth.md's "Operator
-setup: the Keycloak admin service account"). Without them, a PAT presented
-to `/mcp` is rejected the same way an invalid one is — fine for exercising
-the portal's mint/list/revoke UI, but point those two env vars at a real (or
-locally-run) Keycloak realm if you want to actually connect an MCP client
-with the PAT you just minted.
+"Where PATs are accepted" — `/v1` stays Keycloak-JWT-only on purpose). Note
+that `/mcp`'s auth bypass short-circuits ahead of the PAT/JWT dispatch
+entirely (see `mcp/middleware/identity_mw.py`'s `AsgiAuthMiddleware`), so
+while `BROKER_DEV_INSECURE_PRINCIPAL` stays set, any bearer you present on
+`/mcp` — including the PAT you just minted — is ignored in favor of the dev
+principal. To actually exercise the PAT for real, drop out of the bypass
+(unset `BROKER_DEV_INSECURE_PRINCIPAL`, point `OIDC_ISSUER` at a real realm)
+and set `KEYCLOAK_ADMIN_CLIENT_ID`/`KEYCLOAK_ADMIN_CLIENT_SECRET` (see
+docs/auth.md's "Operator setup: the Keycloak admin service account") — as of
+issue #144 step 3 this is no longer optional outside the bypass: every
+credential type resolves its groups from the directory now, so the broker
+refuses to start without either the bypass or this service account
+configured.
 
 ### Alternative: inject a real token from a live deployment
 

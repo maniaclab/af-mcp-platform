@@ -105,11 +105,20 @@ def policy() -> EntitlementPolicy:
 
 
 @pytest.fixture
-def aggregator_app_url(settings, toy_backend_url, policy):
+def aggregator_app_url(settings, toy_backend_url, policy, static_principal_cache):
     """Builds a real aggregator (build_aggregator, no app.py involved) wired
     to the real toy backend above plus a second auth_type="none" backend
     sharing the same URL, and a CredentialRegistry holding only the fake
-    provider registered for "toy"."""
+    provider registered for "toy".
+
+    Every token in this file's tests shares the same JWT `sub` ("user-123",
+    `make_claims`' default -- only `posix`/`groups` vary per test), so the
+    returned callable exposes ``.directory`` (issue #144 step 3's
+    directory-backed groups resolution) letting a test set
+    ``groups_by_subject["user-123"]`` to whatever entitlement it needs before
+    calling ``aggregator_app_url(provider)``.
+    """
+    principal_cache, directory = static_principal_cache
     registry = BackendRegistry()
     registry.register(
         BackendSpec(
@@ -135,10 +144,17 @@ def aggregator_app_url(settings, toy_backend_url, policy):
     async def _run(provider: _FakeProvider):
         credential_registry = CredentialRegistry()
         credential_registry.register("toy", provider)
-        mcp = build_aggregator(registry, settings, policy, credential_registry)
+        mcp = build_aggregator(
+            registry,
+            settings,
+            policy,
+            credential_registry,
+            principal_cache=principal_cache,
+        )
         async with run_aggregator_async(mcp, path="/mcp") as url:
             yield url
 
+    _run.directory = directory
     return _run
 
 
@@ -153,10 +169,9 @@ async def test_credential_injected_and_inbound_token_not_forwarded(
 ) -> None:
     prime_jwks([sig_key.jwk])
     provider = _FakeProvider()
+    aggregator_app_url.directory.groups_by_subject["user-123"] = ["atlas"]
     inbound_token = sig_key.sign(
-        make_claims(
-            groups=["atlas"], posix={"uid": 501, "gid": 501, "unixname": "u501"}
-        )
+        make_claims(posix={"uid": 501, "gid": 501, "unixname": "u501"})
     )
 
     async for base_url in aggregator_app_url(provider):
@@ -181,13 +196,12 @@ async def test_per_user_credential_isolation(
 ) -> None:
     prime_jwks([sig_key.jwk])
     provider = _FakeProvider()
+    aggregator_app_url.directory.groups_by_subject["user-123"] = ["atlas"]
     alice_token = sig_key.sign(
-        make_claims(
-            groups=["atlas"], posix={"uid": 111, "gid": 111, "unixname": "alice"}
-        )
+        make_claims(posix={"uid": 111, "gid": 111, "unixname": "alice"})
     )
     bob_token = sig_key.sign(
-        make_claims(groups=["atlas"], posix={"uid": 222, "gid": 222, "unixname": "bob"})
+        make_claims(posix={"uid": 222, "gid": 222, "unixname": "bob"})
     )
 
     async for base_url in aggregator_app_url(provider):
@@ -210,7 +224,8 @@ async def test_unauthorized_principal_denied_before_credential_provider_touched(
 ) -> None:
     prime_jwks([sig_key.jwk])
     provider = _FakeProvider()
-    token = sig_key.sign(make_claims(groups=[]))  # no "atlas" -> lacks read_data
+    aggregator_app_url.directory.groups_by_subject["user-123"] = []  # lacks read_data
+    token = sig_key.sign(make_claims())
 
     async for base_url in aggregator_app_url(provider):
         async with _bearer_client(base_url, token) as client:
@@ -232,7 +247,8 @@ async def test_not_linked_surfaces_friendly_error(
 ) -> None:
     prime_jwks([sig_key.jwk])
     provider = _FakeProvider(linked=False)
-    token = sig_key.sign(make_claims(groups=["atlas"]))
+    aggregator_app_url.directory.groups_by_subject["user-123"] = ["atlas"]
+    token = sig_key.sign(make_claims())
 
     async for base_url in aggregator_app_url(provider):
         async with _bearer_client(base_url, token) as client:
@@ -245,7 +261,8 @@ async def test_needs_unlock_surfaces_portal_hint(
 ) -> None:
     prime_jwks([sig_key.jwk])
     provider = _FakeProvider(needs_unlock=True)
-    token = sig_key.sign(make_claims(groups=["atlas"]))
+    aggregator_app_url.directory.groups_by_subject["user-123"] = ["atlas"]
+    token = sig_key.sign(make_claims())
 
     async for base_url in aggregator_app_url(provider):
         async with _bearer_client(base_url, token) as client:
@@ -258,7 +275,7 @@ async def test_auth_type_none_skips_credential_resolution(
 ) -> None:
     prime_jwks([sig_key.jwk])
     provider = _FakeProvider()
-    token = sig_key.sign(make_claims(groups=[]))  # no capability needed for "open"
+    token = sig_key.sign(make_claims())  # no capability needed for "open"
 
     async for base_url in aggregator_app_url(provider):
         async with _bearer_client(base_url, token) as client:

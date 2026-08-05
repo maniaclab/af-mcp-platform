@@ -97,7 +97,7 @@ def _toy_backend_with_failing_tool() -> FastMCP:
 
 
 async def test_upstream_mcp_level_error_passes_through_unchanged(
-    settings: Any, sig_key: Any, prime_jwks: Any
+    settings: Any, sig_key: Any, prime_jwks: Any, static_principal_cache: Any
 ) -> None:
     """When the backend's own tool raises an MCP-level (application) tool
     error, ProxyTool.run() passes the isError CallToolResult through
@@ -105,8 +105,9 @@ async def test_upstream_mcp_level_error_passes_through_unchanged(
     ProxyTool.run(). The aggregator must not intercept or rewrap that
     content: the caller should see exactly the backend's own error text,
     once, not double-wrapped with our own "Error calling tool" framing."""
+    principal_cache, _directory = static_principal_cache
     prime_jwks([sig_key.jwk])
-    token = sig_key.sign(make_claims(groups=[]))
+    token = sig_key.sign(make_claims())
 
     async with run_server_async(_toy_backend_with_failing_tool(), path="/mcp") as url:
         registry = BackendRegistry()
@@ -121,7 +122,13 @@ async def test_upstream_mcp_level_error_passes_through_unchanged(
             )
         )
         policy = EntitlementPolicy()
-        mcp = build_aggregator(registry, settings, policy, CredentialRegistry())
+        mcp = build_aggregator(
+            registry,
+            settings,
+            policy,
+            CredentialRegistry(),
+            principal_cache=principal_cache,
+        )
 
         async with run_aggregator_async(mcp, path="/mcp") as agg_url:
             transport = StreamableHttpTransport(
@@ -147,14 +154,15 @@ def _toy_backend_with_slow_tool() -> FastMCP:
 
 
 async def test_slow_backend_call_times_out_cleanly_instead_of_hanging(
-    settings: Any, sig_key: Any, prime_jwks: Any
+    settings: Any, sig_key: Any, prime_jwks: Any, static_principal_cache: Any
 ) -> None:
     """BackendSpec.timeout_seconds must actually be enforced on the wire, not
     just recorded on the Client -- a backend that never responds within that
     window must fail the call quickly with a clean ToolError, rather than
     the aggregator hanging on it indefinitely."""
+    principal_cache, _directory = static_principal_cache
     prime_jwks([sig_key.jwk])
-    token = sig_key.sign(make_claims(groups=[]))
+    token = sig_key.sign(make_claims())
 
     async with run_server_async(_toy_backend_with_slow_tool(), path="/mcp") as url:
         registry = BackendRegistry()
@@ -170,7 +178,13 @@ async def test_slow_backend_call_times_out_cleanly_instead_of_hanging(
             )
         )
         policy = EntitlementPolicy()
-        mcp = build_aggregator(registry, settings, policy, CredentialRegistry())
+        mcp = build_aggregator(
+            registry,
+            settings,
+            policy,
+            CredentialRegistry(),
+            principal_cache=principal_cache,
+        )
 
         async with run_aggregator_async(mcp, path="/mcp") as agg_url:
             transport = StreamableHttpTransport(

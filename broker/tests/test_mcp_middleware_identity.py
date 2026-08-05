@@ -88,12 +88,15 @@ def _body(messages: list[dict[str, Any]]) -> bytes:
 
 
 async def test_valid_bearer_stashes_principal_and_calls_inner_app(
-    settings, sig_key, prime_jwks
+    settings, sig_key, prime_jwks, static_principal_cache
 ):
+    principal_cache, _directory = static_principal_cache
     prime_jwks([sig_key.jwk])
     token = sig_key.sign(make_claims())
     inner = _InnerApp()
-    middleware = AsgiAuthMiddleware(inner, IdentityMiddleware(settings))
+    middleware = AsgiAuthMiddleware(
+        inner, IdentityMiddleware(settings, principal_cache=principal_cache)
+    )
 
     messages = await _run(middleware, _http_scope({"authorization": f"Bearer {token}"}))
 
@@ -278,8 +281,9 @@ async def test_revoked_jti_rejected_on_mcp_path(settings, sig_key, prime_jwks):
 
 
 async def test_active_jti_allowed_through_mcp_path_with_cache_configured(
-    settings, sig_key, prime_jwks
+    settings, sig_key, prime_jwks, static_principal_cache
 ):
+    principal_cache, _directory = static_principal_cache
     prime_jwks([sig_key.jwk])
     token = sig_key.sign(make_claims(jti="still-active"))
 
@@ -288,7 +292,10 @@ async def test_active_jti_allowed_through_mcp_path_with_cache_configured(
     )
     inner = _InnerApp()
     middleware = AsgiAuthMiddleware(
-        inner, IdentityMiddleware(settings, revoked_jti_cache=cache)
+        inner,
+        IdentityMiddleware(
+            settings, revoked_jti_cache=cache, principal_cache=principal_cache
+        ),
     )
 
     messages = await _run(middleware, _http_scope({"authorization": f"Bearer {token}"}))

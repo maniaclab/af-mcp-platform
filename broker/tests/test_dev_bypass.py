@@ -95,12 +95,43 @@ def test_bypass_disabled_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("BROKER_DEV_INSECURE_PRINCIPAL", raising=False)
     # Unreachable issuer keeps startup JWKS priming a no-op (non-fatal).
     monkeypatch.setenv("OIDC_ISSUER", "https://keycloak.invalid/realms/connect")
+    # Issue #144 step 3: with the bypass disabled, the broker now refuses to
+    # start at all unless a Keycloak admin service account is configured
+    # (see test_no_bypass_and_no_directory_refuses_to_start below for that
+    # check itself) -- configure one here so this test can exercise its own
+    # point (a missing bearer is a real 401) rather than a startup failure.
+    monkeypatch.setenv("KEYCLOAK_ADMIN_CLIENT_ID", "test-admin-client")
+    monkeypatch.setenv("KEYCLOAK_ADMIN_CLIENT_SECRET", "test-admin-secret")
 
     app = _fresh_app()
     with TestClient(app) as client:
         resp = client.get("/v1/identities")
 
     assert resp.status_code == 401, resp.text
+
+
+def test_no_bypass_and_no_directory_refuses_to_start(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Issue #144 step 3: neither the dev bypass nor a Keycloak admin
+    service account configured means the broker can never authenticate
+    anyone (JWT groups resolution now depends on the directory too, not
+    just PATs) -- refuse to start rather than boot into a broker that
+    accepts every request and can satisfy none of them. Same fail-fast
+    reasoning as the other startup checks in app.py's lifespan (issue #125):
+    a Kubernetes rollout with a failing new pod leaves the previous
+    ReplicaSet serving, so this surfaces as a visible rollout failure with
+    zero outage risk."""
+    _bootstrap_env(monkeypatch)
+    monkeypatch.delenv("BROKER_DEV_INSECURE_PRINCIPAL", raising=False)
+    monkeypatch.delenv("KEYCLOAK_ADMIN_CLIENT_ID", raising=False)
+    monkeypatch.delenv("KEYCLOAK_ADMIN_CLIENT_SECRET", raising=False)
+    monkeypatch.setenv("OIDC_ISSUER", "https://keycloak.invalid/realms/connect")
+
+    app = _fresh_app()
+    with pytest.raises(RuntimeError, match="KEYCLOAK_ADMIN_CLIENT_ID"):  # noqa: SIM117
+        with TestClient(app):
+            pass
 
 
 def test_bypass_ignores_real_token(monkeypatch: pytest.MonkeyPatch) -> None:

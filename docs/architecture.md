@@ -131,9 +131,10 @@ Answers: "is this principal allowed to call this tool?"
   user. See `docs/adding-a-backend.md` for the full model.
 - A principal's capabilities come from their Keycloak group memberships via
   `group_capabilities` in `policy.yaml` (shipped in the chart's policy
-  ConfigMap). This requires a Group Membership mapper on the Keycloak client
-  scope so the `groups` claim actually reaches the token — see
-  [docs/auth.md#keycloak-group-membership-mapper-required](auth.md#keycloak-group-membership-mapper-required).
+  ConfigMap). Every credential type resolves those groups from Keycloak's
+  Admin REST API via the `PrincipalDirectory`/principal cache, not from a
+  JWT claim — see
+  [docs/auth.md#authorization-is-an-attribute-of-the-principal-not-the-token](auth.md#authorization-is-an-attribute-of-the-principal-not-the-token).
 - Authorization failures are logged with structured fields (uid, tool, capability)
   and return HTTP 403 to the aggregator.
 

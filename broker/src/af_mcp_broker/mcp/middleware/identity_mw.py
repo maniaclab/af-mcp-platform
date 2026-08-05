@@ -10,6 +10,7 @@ from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 from starlette.responses import JSONResponse
 
 from af_mcp_broker.identity import (
+    PrincipalDirectoryUnavailableError,
     TokenExpiredError,
     build_dev_principal,
     get_principal,
@@ -87,13 +88,25 @@ def _get_authorization_header(scope: Scope) -> str | None:
     return value.decode("latin-1") if value is not None else None
 
 
-async def _send_401(scope: Scope, receive: Receive, send: Send, detail: str) -> None:
+async def _send_error(
+    scope: Scope,
+    receive: Receive,
+    send: Send,
+    status_code: int,
+    detail: str,
+    *,
+    headers: dict[str, str] | None = None,
+) -> None:
     response = JSONResponse(
-        {"detail": detail},
-        status_code=401,
-        headers={"WWW-Authenticate": "Bearer"},
+        {"detail": detail}, status_code=status_code, headers=headers
     )
     await response(scope, receive, send)
+
+
+async def _send_401(scope: Scope, receive: Receive, send: Send, detail: str) -> None:
+    await _send_error(
+        scope, receive, send, 401, detail, headers={"WWW-Authenticate": "Bearer"}
+    )
 
 
 class AsgiAuthMiddleware:
@@ -180,7 +193,9 @@ class AsgiAuthMiddleware:
                         self._identity_mw.pat_last_used_tracker,
                     )
                 else:
-                    principal = await get_principal(token, settings, revoked_jti_cache)
+                    principal = await get_principal(
+                        token, settings, principal_cache, revoked_jti_cache
+                    )
             except TokenExpiredError:
                 # Safe to state explicitly -- expiry alone reveals nothing
                 # about why any *other* token would be rejected.
@@ -192,6 +207,19 @@ class AsgiAuthMiddleware:
                     "Your access token has expired — mint a new one at "
                     f"{portal}/tokens",
                 )
+                return
+            except PrincipalDirectoryUnavailableError as exc:
+                # Distinct from the vague-401 catch-all below (issue #144
+                # step 3): this JWT's signature/issuer/audience/expiry all
+                # verified -- the caller proved who they are. What failed is
+                # the platform's ability to resolve their current groups, a
+                # platform outage, not a bad credential -- see that
+                # exception's docstring. 503 with the actionable detail,
+                # not a vague 401, so a caller can tell the difference.
+                logger.exception(
+                    "mcp_principal_directory_unavailable", error=str(exc.detail)
+                )
+                await _send_error(scope, receive, send, exc.status_code, exc.detail)
                 return
             except HTTPException as exc:
                 logger.warning("mcp_identity_validation_failed", error=str(exc.detail))

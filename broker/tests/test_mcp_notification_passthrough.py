@@ -50,11 +50,12 @@ async def progress_backend_url() -> AsyncIterator[str]:
 
 
 @pytest.fixture
-def aggregator_url(settings, progress_backend_url):
+def aggregator_url(settings, progress_backend_url, static_principal_cache):
     """A real build_aggregator() wired to the progress-reporting backend
     above, auth_type="none" so this test stays focused on notification
     pass-through rather than credential injection (which has its own
     dedicated coverage in test_mcp_credential_injection_integration.py)."""
+    principal_cache, _directory = static_principal_cache
     registry = BackendRegistry()
     registry.register(
         BackendSpec(
@@ -70,7 +71,13 @@ def aggregator_url(settings, progress_backend_url):
     policy = EntitlementPolicy()
 
     async def _run():
-        mcp = build_aggregator(registry, settings, policy, CredentialRegistry())
+        mcp = build_aggregator(
+            registry,
+            settings,
+            policy,
+            CredentialRegistry(),
+            principal_cache=principal_cache,
+        )
         async with run_aggregator_async(mcp, path="/mcp") as url:
             yield url
 
@@ -85,7 +92,7 @@ async def test_backend_progress_notifications_reach_the_aggregators_caller(
     the way through the aggregator to the caller's own progress_handler --
     not just logged locally inside the aggregator process."""
     prime_jwks([sig_key.jwk])
-    token = sig_key.sign(make_claims(groups=[]))
+    token = sig_key.sign(make_claims())
 
     received: list[tuple[float, float | None, str | None]] = []
 
