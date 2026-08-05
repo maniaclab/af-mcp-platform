@@ -190,7 +190,7 @@ function poweredByFor(server: CatalogServer) {
   transition: border-color 150ms;
 }
 .cp__search::placeholder {
-  color: #4b5563;
+  color: var(--color-af-label);
 }
 .cp__search:focus {
   outline: none;
@@ -242,7 +242,7 @@ function poweredByFor(server: CatalogServer) {
 .cp__count {
   font-family: 'IBM Plex Mono', monospace;
   font-size: 0.6875rem;
-  color: #4b5563;
+  color: var(--color-af-label);
   white-space: nowrap;
   margin-left: auto;
 }
@@ -307,7 +307,7 @@ function poweredByFor(server: CatalogServer) {
 
 .cp__error-body {
   font-size: 0.875rem;
-  color: #9ca3af;
+  color: var(--color-af-dim);
 }
 
 .cp__error-hint {
@@ -342,13 +342,13 @@ function poweredByFor(server: CatalogServer) {
   font-family: 'IBM Plex Mono', monospace;
   font-size: 1rem;
   font-weight: 600;
-  color: #4b5563;
+  color: var(--color-af-label);
   margin: 0 0 0.5rem;
 }
 
 .cp__empty-body {
   font-size: 0.875rem;
-  color: var(--color-af-muted);
+  color: var(--color-af-dim);
   margin: 0 0 1.25rem;
   max-width: 32rem;
   margin-inline: auto;

@@ -57,16 +57,21 @@ const mcpEndpoint = 'https://mcp.af.uchicago.edu/mcp';
     </div>
 
     <div class="snippet-group">
-      <h3 class="snippet-heading">Claude Desktop (<code>claude_desktop_config.json</code>)</h3>
-      <pre
-        class="code-block"><code>{`{
-  "mcpServers": {
-    "atlas-af": {
-      "url": "${mcpEndpoint}",
-      "type": "sse"
-    }
-  }
-}`}</code></pre>
+      <h3 class="snippet-heading">Claude (Claude.ai, Claude Desktop)</h3>
+      <ol class="connect-steps">
+        <li>
+          Add a custom connector with just the server URL above — no header, no token needed.
+          <strong>Settings → Connectors → Add custom connector.</strong> The first call opens a
+          browser window to sign in with your AF Keycloak account; Claude stores the resulting
+          credential itself.
+        </li>
+        <li>
+          If your client predates OAuth support, skip the browser step: under
+          <strong>Request headers</strong>, add name <code>Authorization</code>, value
+          <code>Bearer &lt;token&gt;</code>, using a token minted from the
+          <a href="/tokens/" class="connect-steps__link">Tokens page</a>.
+        </li>
+      </ol>
     </div>
 
     <div class="snippet-group">
@@ -311,13 +316,13 @@ curl -H "Authorization: Bearer $AF_TOKEN" \\
     font-weight: 600;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: #4b5563;
+    color: var(--color-af-label);
   }
 
   .hero__user-email {
     font-family: 'IBM Plex Mono', monospace;
     font-size: 0.75rem;
-    color: #9ca3af;
+    color: var(--color-af-dim);
   }
 
   /* ── Endpoint section ─────────────────────────────────────────────── */
@@ -334,7 +339,7 @@ curl -H "Authorization: Bearer $AF_TOKEN" \\
     font-weight: 600;
     letter-spacing: 0.1em;
     text-transform: uppercase;
-    color: #4b5563;
+    color: var(--color-af-label);
     margin: 0;
   }
 
@@ -366,7 +371,7 @@ curl -H "Authorization: Bearer $AF_TOKEN" \\
     font-weight: 600;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: #4b5563;
+    color: var(--color-af-label);
   }
 
   .endpoint-block__copy {
@@ -417,7 +422,7 @@ curl -H "Authorization: Bearer $AF_TOKEN" \\
   }
 
   .snippet-heading code {
-    color: #9ca3af;
+    color: var(--color-af-dim);
     font-size: 0.6875rem;
   }
 
@@ -433,8 +438,29 @@ curl -H "Authorization: Bearer $AF_TOKEN" \\
   .code-block code {
     font-family: 'IBM Plex Mono', monospace;
     font-size: 0.8125rem;
-    color: #9ca3af;
+    color: var(--color-af-dim);
     line-height: 1.7;
+  }
+
+  .connect-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 0.625rem;
+    margin: 0;
+    padding-left: 1.25rem;
+    font-size: 0.875rem;
+    color: var(--color-af-dim);
+    line-height: 1.6;
+  }
+
+  .connect-steps code {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.8125rem;
+    color: var(--color-af-text);
+  }
+
+  .connect-steps__link {
+    color: var(--color-af-teal);
   }
 
   /* ── Responsive ────────────────────────────────────────────────────── */

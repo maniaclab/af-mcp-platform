@@ -68,3 +68,6 @@ charts/*/charts/
 *~
 .DS_Store
 Thumbs.db
+
+# AI Agents / Tooling
+.impeccable/

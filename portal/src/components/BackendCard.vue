@@ -31,16 +31,34 @@ const poweredByLinked = computed(() =>
       </div>
 
       <div class="bc__header-right">
-        <span
-          v-if="server.capability !== '__none__'"
-          class="bc__cap-badge"
-          :title="`Requires capability: ${server.capability}`"
-        >
-          {{ server.capability }}
+        <!-- Badges below use a focusable button + aria-describedby tooltip
+             (same pattern as TokensPage.vue's note icon) rather than a bare
+             `title` attribute -- title-only meant the badge's meaning was
+             invisible on touch and unreliable across screen readers. -->
+        <span v-if="server.capability !== '__none__'" class="bc__badge-wrap">
+          <button
+            type="button"
+            class="bc__cap-badge"
+            :aria-describedby="`bc-cap-${server.name}`"
+          >
+            {{ server.capability }}
+          </button>
+          <span :id="`bc-cap-${server.name}`" class="bc__badge-tooltip" role="tooltip">
+            Requires capability: {{ server.capability }}
+          </span>
         </span>
 
-        <span class="bc__auth-badge" :title="`Credential type: ${server.auth_type}`">
-          {{ server.auth_type }}
+        <span class="bc__badge-wrap">
+          <button
+            type="button"
+            class="bc__auth-badge"
+            :aria-describedby="`bc-auth-${server.name}`"
+          >
+            {{ server.auth_type }}
+          </button>
+          <span :id="`bc-auth-${server.name}`" class="bc__badge-tooltip" role="tooltip">
+            Credential type: {{ server.auth_type }}
+          </span>
         </span>
 
         <span
@@ -52,16 +70,22 @@ const poweredByLinked = computed(() =>
           {{ statusView.label }}
         </span>
 
-        <span
-          class="bc__count"
-          :class="server.action_type === 'state_change' ? 'bc__count--state' : 'bc__count--read'"
-          :title="
-            server.action_type === 'state_change'
-              ? 'Has at least one state-changing tool — use with care'
-              : 'Read-only — no side effects'
-          "
-        >
-          {{ actionLabel }}
+        <span class="bc__badge-wrap">
+          <button
+            type="button"
+            class="bc__count"
+            :class="server.action_type === 'state_change' ? 'bc__count--state' : 'bc__count--read'"
+            :aria-describedby="`bc-count-${server.name}`"
+          >
+            {{ actionLabel }}
+          </button>
+          <span :id="`bc-count-${server.name}`" class="bc__badge-tooltip" role="tooltip">
+            {{
+              server.action_type === 'state_change'
+                ? 'Has at least one state-changing tool — use with care'
+                : 'Read-only — no side effects'
+            }}
+          </span>
         </span>
       </div>
     </div>
@@ -102,11 +126,19 @@ const poweredByLinked = computed(() =>
       </span>
     </div>
 
-    <!-- Tools -->
-    <div class="bc__tools" role="region" :aria-label="`Tools for ${server.name}`">
-      <ToolTable v-if="server.tools.length > 0" :tools="server.tools" />
-      <p v-else class="bc__tools-placeholder">Tool listing coming soon.</p>
-    </div>
+    <!-- Tools -- collapsed by default (a backend can register dozens of
+         tools; the catalog's job is a quick scan of reachable backends, not
+         reading every tool's docstring up front). Same <details> pattern as
+         TokensPage.vue's "Use from the command line" section. -->
+    <details v-if="server.tools.length > 0" class="bc__tools">
+      <summary class="bc__tools-summary">
+        {{ server.tools.length }} {{ server.tools.length === 1 ? 'tool' : 'tools' }}
+      </summary>
+      <div class="bc__tools-body" role="region" :aria-label="`Tools for ${server.name}`">
+        <ToolTable :tools="server.tools" />
+      </div>
+    </details>
+    <p v-else class="bc__tools-placeholder">Tool listing coming soon.</p>
   </div>
 </template>
 
@@ -173,6 +205,46 @@ const poweredByLinked = computed(() =>
   flex-shrink: 0;
 }
 
+/* Badge wrapper + tooltip -- the badge itself is a <button> (focusable,
+ * keyboard-operable) describedby a tooltip span that stays in the DOM at all
+ * times (hidden via opacity/visibility, not display: none) so aria-describedby
+ * reaches it for assistive tech regardless of hover/focus state. Same
+ * pattern as TokensPage.vue's note-icon/note-tooltip. */
+.bc__badge-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.bc__badge-tooltip {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 0.375rem;
+  max-width: 16rem;
+  padding: 0.5rem 0.625rem;
+  background: var(--color-af-void);
+  border: 1px solid var(--color-af-muted);
+  border-radius: 4px;
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  font-size: 0.75rem;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
+  line-height: 1.5;
+  color: var(--color-af-text);
+  white-space: normal;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 120ms;
+  pointer-events: none;
+  z-index: 10;
+}
+.bc__badge-wrap:hover .bc__badge-tooltip,
+.bc__badge-wrap:focus-within .bc__badge-tooltip {
+  opacity: 1;
+  visibility: visible;
+}
+
 .bc__cap-badge {
   font-family: 'IBM Plex Mono', monospace;
   font-size: 0.5625rem;
@@ -184,6 +256,11 @@ const poweredByLinked = computed(() =>
   background: rgb(from var(--color-af-teal) r g b / 0.08);
   color: var(--color-af-teal);
   border: 1px solid rgb(from var(--color-af-teal) r g b / 0.2);
+  cursor: pointer;
+}
+.bc__cap-badge:focus-visible {
+  outline: 2px solid var(--color-af-teal);
+  outline-offset: 1px;
 }
 
 .bc__auth-badge {
@@ -197,6 +274,11 @@ const poweredByLinked = computed(() =>
   background: rgb(from var(--color-af-dim) r g b / 0.08);
   color: var(--color-af-dim);
   border: 1px solid rgb(from var(--color-af-dim) r g b / 0.2);
+  cursor: pointer;
+}
+.bc__auth-badge:focus-visible {
+  outline: 2px solid var(--color-af-teal);
+  outline-offset: 1px;
 }
 
 .bc__count {
@@ -207,6 +289,11 @@ const poweredByLinked = computed(() =>
   text-transform: uppercase;
   padding: 0.1875rem 0.5rem;
   border-radius: 2px;
+  cursor: pointer;
+}
+.bc__count:focus-visible {
+  outline: 2px solid var(--color-af-teal);
+  outline-offset: 1px;
 }
 
 .bc__count--read {
@@ -266,7 +353,7 @@ const poweredByLinked = computed(() =>
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: #4b5563;
+  color: var(--color-af-label);
 }
 
 .bc__powered-by-value {
@@ -350,11 +437,28 @@ const poweredByLinked = computed(() =>
   white-space: nowrap;
 }
 
-/* Tools */
+/* Tools -- collapsed by default via <details>/<summary> */
 .bc__tools {
   border-top: 1px solid var(--color-af-border);
-  padding: 0.25rem 0;
   background: rgb(from var(--color-af-void) r g b / 0.5);
+}
+
+.bc__tools-summary {
+  cursor: pointer;
+  padding: 0.625rem 1rem;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--color-af-dim);
+}
+.bc__tools-summary:focus-visible {
+  outline: 2px solid var(--color-af-teal);
+  outline-offset: -2px;
+}
+
+.bc__tools-body {
+  padding: 0 0 0.25rem;
 }
 
 .bc__tools-placeholder {
@@ -363,6 +467,8 @@ const poweredByLinked = computed(() =>
   font-size: 0.8125rem;
   font-style: italic;
   color: var(--color-af-dim);
+  border-top: 1px solid var(--color-af-border);
+  background: rgb(from var(--color-af-void) r g b / 0.5);
 }
 
 @media (max-width: 640px) {

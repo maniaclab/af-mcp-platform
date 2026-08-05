@@ -22,20 +22,30 @@ defineProps<{
             <code class="tool-table__code">{{ tool.name }}</code>
           </td>
           <td class="tool-table__td tool-table__td--type">
-            <span
-              class="tool-table__badge"
-              :class="
-                tool.action_type === 'state_change'
-                  ? 'tool-table__badge--state'
-                  : 'tool-table__badge--read'
-              "
-              :title="
-                tool.action_type === 'state_change'
-                  ? 'Modifies state — use with care'
-                  : 'Read-only — no side effects'
-              "
-            >
-              {{ tool.action_type === 'state_change' ? 'write' : 'read' }}
+            <!-- Focusable button + aria-describedby tooltip, not a bare
+                 title attribute -- same pattern as BackendCard.vue's badges
+                 and TokensPage.vue's note icon: keyboard-reachable and
+                 always present in the DOM for assistive tech. -->
+            <span class="tool-table__badge-wrap">
+              <button
+                type="button"
+                class="tool-table__badge"
+                :class="
+                  tool.action_type === 'state_change'
+                    ? 'tool-table__badge--state'
+                    : 'tool-table__badge--read'
+                "
+                :aria-describedby="`tt-badge-${tool.name}`"
+              >
+                {{ tool.action_type === 'state_change' ? 'write' : 'read' }}
+              </button>
+              <span :id="`tt-badge-${tool.name}`" class="tool-table__badge-tooltip" role="tooltip">
+                {{
+                  tool.action_type === 'state_change'
+                    ? 'Modifies state — use with care'
+                    : 'Read-only — no side effects'
+                }}
+              </span>
             </span>
           </td>
           <td class="tool-table__td tool-table__td--desc">
@@ -110,8 +120,48 @@ defineProps<{
 }
 
 .tool-table__td--desc {
-  color: #9ca3af;
+  color: var(--color-af-dim);
   line-height: 1.5;
+}
+
+/* Wrapper + tooltip -- the badge is a <button> (focusable, keyboard-operable)
+ * describedby a tooltip span that stays in the DOM at all times (hidden via
+ * opacity/visibility, not display: none) so aria-describedby reaches it for
+ * assistive tech regardless of hover/focus state. Same pattern as
+ * TokensPage.vue's note-icon/note-tooltip and BackendCard.vue's badges. */
+.tool-table__badge-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.tool-table__badge-tooltip {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 0.375rem;
+  max-width: 16rem;
+  padding: 0.5rem 0.625rem;
+  background: var(--color-af-void);
+  border: 1px solid var(--color-af-muted);
+  border-radius: 4px;
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  font-size: 0.75rem;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
+  line-height: 1.5;
+  color: var(--color-af-text);
+  white-space: normal;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 120ms;
+  pointer-events: none;
+  z-index: 10;
+}
+.tool-table__badge-wrap:hover .tool-table__badge-tooltip,
+.tool-table__badge-wrap:focus-within .tool-table__badge-tooltip {
+  opacity: 1;
+  visibility: visible;
 }
 
 .tool-table__badge {
@@ -123,6 +173,11 @@ defineProps<{
   text-transform: uppercase;
   padding: 0.1875rem 0.5rem;
   border-radius: 2px;
+  cursor: pointer;
+}
+.tool-table__badge:focus-visible {
+  outline: 2px solid var(--color-af-teal);
+  outline-offset: 1px;
 }
 
 .tool-table__badge--read {

@@ -429,7 +429,7 @@ const remainingClass = computed(() => {
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: #9ca3af;
+  color: var(--color-af-dim);
 }
 
 .ps__input,
@@ -446,7 +446,7 @@ const remainingClass = computed(() => {
 }
 
 .ps__input::placeholder {
-  color: #4b5563;
+  color: var(--color-af-label);
 }
 .ps__input:focus,
 .ps__select:focus {
@@ -461,7 +461,7 @@ const remainingClass = computed(() => {
 
 .ps__form-hint {
   font-size: 0.6875rem;
-  color: #4b5563;
+  color: var(--color-af-label);
 }
 
 .ps__error {
@@ -580,7 +580,7 @@ const remainingClass = computed(() => {
 
 .ps__modal-body {
   font-size: 0.875rem;
-  color: #9ca3af;
+  color: var(--color-af-dim);
   line-height: 1.6;
   margin: 0 0 1.5rem;
 }

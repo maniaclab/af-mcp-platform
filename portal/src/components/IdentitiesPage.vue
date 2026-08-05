@@ -338,7 +338,7 @@ function handleUnlinked(id: string) {
 }
 .ip__error-body {
   font-size: 0.875rem;
-  color: #9ca3af;
+  color: var(--color-af-dim);
 }
 
 .ip__reload {
@@ -361,12 +361,12 @@ function handleUnlinked(id: string) {
 .ip__empty-title {
   font-family: 'IBM Plex Mono', monospace;
   font-size: 1rem;
-  color: #4b5563;
+  color: var(--color-af-label);
   margin: 0 0 0.5rem;
 }
 .ip__empty-body {
   font-size: 0.875rem;
-  color: var(--color-af-muted);
+  color: var(--color-af-dim);
   margin: 0;
 }
 
@@ -384,7 +384,7 @@ function handleUnlinked(id: string) {
   font-weight: 600;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: #4b5563;
+  color: var(--color-af-label);
   margin: 0 0 0.875rem;
 }
 

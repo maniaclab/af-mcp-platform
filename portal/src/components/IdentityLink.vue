@@ -446,7 +446,7 @@ const glyph = props.id[0]?.toUpperCase() ?? '?';
 
 .il__modal-body {
   font-size: 0.875rem;
-  color: #9ca3af;
+  color: var(--color-af-dim);
   line-height: 1.6;
   margin: 0 0 1.5rem;
 }

@@ -118,7 +118,7 @@ function reload() {
 }
 .psp__error-body {
   font-size: 0.875rem;
-  color: #9ca3af;
+  color: var(--color-af-dim);
 }
 
 .psp__reload {

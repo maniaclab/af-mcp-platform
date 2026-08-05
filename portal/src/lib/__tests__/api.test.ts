@@ -458,6 +458,45 @@ describe('fetchDashboardSummary()', () => {
           ),
         );
       }
+      if (url.includes('/tokens')) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify([
+              {
+                lookup_id: 'a',
+                name: 'active-1',
+                note: null,
+                created_at: '2024-01-01T00:00:00Z',
+                expires_at: null,
+                revoked_at: null,
+                last_used_at: null,
+                capability_grant: null,
+              },
+              {
+                lookup_id: 'b',
+                name: 'active-2',
+                note: null,
+                created_at: '2024-01-01T00:00:00Z',
+                expires_at: null,
+                revoked_at: null,
+                last_used_at: null,
+                capability_grant: null,
+              },
+              {
+                lookup_id: 'c',
+                name: 'revoked-1',
+                note: null,
+                created_at: '2024-01-01T00:00:00Z',
+                expires_at: null,
+                revoked_at: '2024-02-01T00:00:00Z',
+                last_used_at: null,
+                capability_grant: null,
+              },
+            ]),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          ),
+        );
+      }
       return Promise.resolve(
         new Response(JSON.stringify({ cached: false, voms_attributes: [] }), {
           status: 200,
@@ -469,6 +508,7 @@ describe('fetchDashboardSummary()', () => {
     const summary = await fetchDashboardSummary();
     expect(summary.linkedCount).toBe(2);
     expect(summary.serverCount).toBe(2);
+    expect(summary.activeTokenCount).toBe(2);
   });
 });
 

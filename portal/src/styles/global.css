@@ -24,8 +24,9 @@
   --color-af-void: #0a0e1a; /* near-black ground */
   --color-af-surface: #111827; /* elevated surface (cards, panels) */
   --color-af-border: #1f2937; /* structural dividers */
-  --color-af-muted: #374151; /* muted borders and disabled states */
-  --color-af-dim: #6b7280; /* secondary text, labels */
+  --color-af-muted: #374151; /* muted borders and disabled states -- never text, fails contrast */
+  --color-af-dim: #9ca3af; /* secondary text, labels -- 6.99:1 on surface, 7.58:1 on void (WCAG AA) */
+  --color-af-label: #838d99; /* tertiary/label text (eyebrows, uppercase labels) -- 5.27:1 on surface, 5.72:1 on void */
   --color-af-text: #e8ecf0; /* primary text */
   --color-af-teal: #00d4c8; /* Cherenkov accent — primary action */
   --color-af-amber: #f59e0b; /* calorimeter heat — warnings, state-change */

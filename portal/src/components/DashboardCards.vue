@@ -58,13 +58,27 @@ onMounted(async () => {
       </span>
       <a href="/status/" class="dc__link">Manage →</a>
     </div>
+
+    <!-- Tokens card -- the Overview page previously had no card or link
+         pointing at /tokens/ at all, even though it's the page that produces
+         the credential a client without OAuth discovery actually needs. -->
+    <div
+      class="dc__card"
+      :class="!loading && summary && summary.activeTokenCount > 0 ? 'dc__card--ok' : 'dc__card--neutral'"
+    >
+      <span class="dc__label">Bearer tokens</span>
+      <span class="dc__value" :class="{ 'dc__value--loading': loading }">
+        {{ loading ? '—' : `${summary?.activeTokenCount ?? 0} active` }}
+      </span>
+      <a href="/tokens/" class="dc__link">Manage →</a>
+    </div>
   </div>
 </template>
 
 <style scoped>
 .dc {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 1rem;
   margin-bottom: 2.5rem;
 }
@@ -96,7 +110,7 @@ onMounted(async () => {
   font-weight: 600;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: #4b5563;
+  color: var(--color-af-label);
 }
 
 .dc__value {
@@ -108,13 +122,13 @@ onMounted(async () => {
 }
 
 .dc__value--loading {
-  color: var(--color-af-muted);
+  color: var(--color-af-dim);
 }
 
 .dc__link {
   font-family: 'IBM Plex Mono', monospace;
   font-size: 0.6875rem;
-  color: var(--color-af-muted);
+  color: var(--color-af-dim);
   text-decoration: none;
   margin-top: 0.25rem;
   transition: color 150ms;
@@ -122,6 +136,12 @@ onMounted(async () => {
 .dc__card:hover .dc__link,
 .dc__link:focus-visible {
   color: var(--color-af-teal);
+}
+
+@media (max-width: 900px) {
+  .dc {
+    grid-template-columns: repeat(2, 1fr);
+  }
 }
 
 @media (max-width: 640px) {

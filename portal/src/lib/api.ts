@@ -20,6 +20,7 @@
  * the broker doesn't check for a Bearer at all.
  */
 import { getAccessToken, isOidcConfigured, renewAccessToken } from './auth';
+import { tokenStatus } from './tokenDisplay';
 
 // PUBLIC_BROKER_URL MUST include the `/v1` suffix when overridden
 // (e.g. https://mcp.af.uchicago.edu/v1). It replaces the base wholesale, so a
@@ -469,6 +470,7 @@ export interface DashboardSummary {
   linkedCount: number;
   serverCount: number;
   proxyStatus: ProxyStatus;
+  activeTokenCount: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -485,10 +487,11 @@ export async function revokeAllCredentials(): Promise<void> {
 }
 
 export async function fetchDashboardSummary(): Promise<DashboardSummary> {
-  const [identityData, catalog, proxyStatus] = await Promise.allSettled([
+  const [identityData, catalog, proxyStatus, tokens] = await Promise.allSettled([
     fetchIdentities(),
     fetchCatalog(),
     fetchProxyStatus(),
+    listTokens(),
   ]);
 
   const linkedCount =
@@ -501,5 +504,10 @@ export async function fetchDashboardSummary(): Promise<DashboardSummary> {
   const proxy: ProxyStatus =
     proxyStatus.status === 'fulfilled' ? proxyStatus.value : { cached: false, voms_attributes: [] };
 
-  return { linkedCount, serverCount, proxyStatus: proxy };
+  const activeTokenCount =
+    tokens.status === 'fulfilled'
+      ? tokens.value.filter((t) => tokenStatus(t) === 'active').length
+      : 0;
+
+  return { linkedCount, serverCount, proxyStatus: proxy, activeTokenCount };
 }

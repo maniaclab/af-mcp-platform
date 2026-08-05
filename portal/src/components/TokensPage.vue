@@ -229,11 +229,60 @@ async function copyClaudeAddCommand() {
   await copyToClipboard(claudeAddCommand.value, claudeAddCopyLabel);
 }
 
+// "Request headers" value for Claude (Claude.ai, Claude Desktop) clients that
+// predate OAuth discovery -- see docs/connecting-a-client.md's "Claude
+// (Claude.ai, Claude Desktop)" section: Name "Authorization", Value
+// "Bearer <token>", entered in the custom connector's own Request headers
+// field. Same lifetime as claudeAddCommand above -- only ever constructible
+// from `mintedToken`, scrubbed the moment the dialog closes.
+const claudeHeaderValue = computed(() =>
+  mintedToken.value ? `Bearer ${mintedToken.value.token}` : '',
+);
+const claudeHeaderCopyLabel = ref('Copy');
+
+async function copyClaudeHeaderValue() {
+  await copyToClipboard(claudeHeaderValue.value, claudeHeaderCopyLabel);
+}
+
 // ── Revoke ───────────────────────────────────────────────────────────────
 const revokingLookupId = ref<string | null>(null);
 const revokeError = ref<string | null>(null);
 
-async function handleRevoke(lookupId: string) {
+// Revoke-confirm dialog -- same native <dialog> pattern as ProxyStatus.vue's
+// revoke-confirm and IdentityLink.vue's unlink-confirm (real focus trap, ESC
+// to close, inert siblings for free). Token revoke previously fired straight
+// from the row's click handler with no confirmation at all, unlike those two
+// other destructive actions in the app.
+const revokeDialog = ref<HTMLDialogElement | null>(null);
+const revokeTrigger = ref<HTMLButtonElement | null>(null);
+const cancelRevokeBtn = ref<HTMLButtonElement | null>(null);
+const pendingRevoke = ref<{ lookupId: string; name: string } | null>(null);
+
+async function openRevokeConfirm(evt: Event, lookupId: string, name: string) {
+  revokeTrigger.value = evt.currentTarget as HTMLButtonElement;
+  pendingRevoke.value = { lookupId, name };
+  await nextTick();
+  revokeDialog.value?.showModal();
+  // Move focus off the destructive "Revoke" button — start on Cancel.
+  cancelRevokeBtn.value?.focus();
+}
+
+function closeRevokeConfirm() {
+  revokeDialog.value?.close();
+}
+
+// Native <dialog> fires `close` whether it was closed by ESC, form method="dialog",
+// or an explicit .close() call — this is our single place to restore focus.
+function onRevokeDialogClose() {
+  revokeTrigger.value?.focus();
+  revokeTrigger.value = null;
+  pendingRevoke.value = null;
+}
+
+async function handleRevoke() {
+  if (!pendingRevoke.value) return;
+  const { lookupId } = pendingRevoke.value;
+  closeRevokeConfirm();
   revokingLookupId.value = lookupId;
   revokeError.value = null;
   try {
@@ -405,7 +454,7 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
                   type="button"
                   class="tp__btn tp__btn--revoke"
                   :disabled="revokingLookupId === row.lookup_id || tokenStatus(row) !== 'active'"
-                  @click="handleRevoke(row.lookup_id)"
+                  @click="openRevokeConfirm($event, row.lookup_id, row.name)"
                 >
                   {{ revokingLookupId === row.lookup_id ? 'Revoking…' : 'Revoke' }}
                 </button>
@@ -585,6 +634,21 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
           </button>
         </div>
 
+        <div class="tp__form-label tp__claude-add-label">
+          Claude (Claude.ai, Claude Desktop) without OAuth support
+        </div>
+        <div class="tp__token-box">
+          <code class="tp__token-value">{{ claudeHeaderValue }}</code>
+          <button type="button" class="tp__btn tp__btn--copy" @click="copyClaudeHeaderValue">
+            {{ claudeHeaderCopyLabel }}
+          </button>
+        </div>
+        <p class="tp__claude-add-warn">
+          In the custom connector's <strong>Request headers</strong>, add name
+          <code>Authorization</code> and paste the value above. Skip this if your client supports
+          OAuth discovery — add just the server URL instead and it authenticates itself.
+        </p>
+
         <div class="tp__form-label tp__claude-add-label">Register with Claude Code</div>
         <div class="tp__token-box">
           <code class="tp__token-value">{{ claudeAddCommand }}</code>
@@ -624,6 +688,42 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
           <button type="button" class="tp__btn tp__btn--mint" @click="handleDone">Done</button>
         </div>
       </template>
+    </dialog>
+
+    <!--
+      Revoke confirm dialog -- native <dialog> gives a real focus trap (TAB
+      cycles inside), ESC to close, and inert siblings, same pattern as
+      ProxyStatus.vue's revoke-confirm and IdentityLink.vue's unlink-confirm.
+      Focus returns to the row's trigger button in onRevokeDialogClose.
+    -->
+    <dialog
+      ref="revokeDialog"
+      class="tp__modal"
+      aria-labelledby="tp-revoke-title"
+      @close="onRevokeDialogClose"
+    >
+      <h2 id="tp-revoke-title" class="tp__modal-title">Revoke "{{ pendingRevoke?.name }}"?</h2>
+      <p class="tp__modal-body">
+        Any MCP client using this token will stop working immediately. This cannot be undone.
+      </p>
+      <div class="tp__modal-actions">
+        <button
+          ref="cancelRevokeBtn"
+          type="button"
+          class="tp__btn tp__btn--cancel"
+          @click="closeRevokeConfirm"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          class="tp__btn tp__btn--confirm-revoke"
+          :disabled="revokingLookupId !== null"
+          @click="handleRevoke"
+        >
+          {{ revokingLookupId ? 'Revoking…' : 'Revoke' }}
+        </button>
+      </div>
     </dialog>
   </div>
 </template>
@@ -702,7 +802,7 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
 }
 .tp__error-body {
   font-size: 0.875rem;
-  color: #9ca3af;
+  color: var(--color-af-dim);
 }
 .tp__reload {
   font: inherit;
@@ -897,12 +997,12 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
 .tp__empty-title {
   font-family: 'IBM Plex Mono', monospace;
   font-size: 1rem;
-  color: #4b5563;
+  color: var(--color-af-label);
   margin: 0 0 0.5rem;
 }
 .tp__empty-body {
   font-size: 0.875rem;
-  color: var(--color-af-muted);
+  color: var(--color-af-dim);
   margin: 0;
 }
 
@@ -915,7 +1015,7 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
 .tp__gap-note code {
   font-family: 'IBM Plex Mono', monospace;
   font-size: 0.6875rem;
-  color: #9ca3af;
+  color: var(--color-af-dim);
 }
 
 /* "Use from the command line" (issue #122) */
@@ -944,14 +1044,14 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
 }
 .tp__cli-intro {
   font-size: 0.8125rem;
-  color: #9ca3af;
+  color: var(--color-af-dim);
   line-height: 1.6;
   margin: 0;
 }
 .tp__cli-intro code {
   font-family: 'IBM Plex Mono', monospace;
   font-size: 0.75rem;
-  color: #9ca3af;
+  color: var(--color-af-dim);
 }
 .tp__cli-heading {
   font-family: 'IBM Plex Mono', monospace;
@@ -1039,6 +1139,15 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
   background: rgb(from var(--color-af-red) r g b / 0.06);
 }
 
+.tp__btn--confirm-revoke {
+  background: rgb(from var(--color-af-red) r g b / 0.1);
+  color: var(--color-af-red);
+  border-color: rgb(from var(--color-af-red) r g b / 0.3);
+}
+.tp__btn--confirm-revoke:hover {
+  background: rgb(from var(--color-af-red) r g b / 0.18);
+}
+
 .tp__btn--cancel {
   background: transparent;
   color: var(--color-af-dim);
@@ -1087,7 +1196,7 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: #9ca3af;
+  color: var(--color-af-dim);
 }
 
 /* Capability PATs (issue #144 step 4) -- "Restrict capabilities" toggle and
@@ -1186,7 +1295,7 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
 }
 .tp__modal-body {
   font-size: 0.875rem;
-  color: #9ca3af;
+  color: var(--color-af-dim);
   line-height: 1.6;
   margin: 0 0 1.25rem;
 }
@@ -1249,7 +1358,7 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
 .tp__claude-add-warn code {
   font-family: 'IBM Plex Mono', monospace;
   font-size: 0.6875rem;
-  color: #9ca3af;
+  color: var(--color-af-dim);
 }
 
 .tp__token-meta {
@@ -1275,7 +1384,7 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
 }
 .tp__token-meta-row dd {
   margin: 0;
-  color: #9ca3af;
+  color: var(--color-af-dim);
 }
 
 @media (max-width: 640px) {
