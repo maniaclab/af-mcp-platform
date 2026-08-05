@@ -316,6 +316,23 @@ needs it, not duplicated per-backend.
       name: {{ .Values.broker.existingServiceTokenSecret | quote }}
       key: af-service-token
 {{- end }}
+# Keycloak admin service account (issue #144 step 2a) -- resolves an
+# identity-PAT-authenticated request's current groups/uid/gid/unixname via
+# the Admin REST API. Omitted entirely when unset so the broker's pydantic
+# defaults (both empty) apply -- see docs/auth.md's "Operator setup: the
+# Keycloak admin service account" section for the degraded-but-valid
+# behavior that results (every mcp_pat_... bearer on /mcp rejected).
+{{- if .Values.broker.keycloakAdmin.clientId }}
+- name: KEYCLOAK_ADMIN_CLIENT_ID
+  value: {{ .Values.broker.keycloakAdmin.clientId | quote }}
+{{- end }}
+{{- if .Values.broker.keycloakAdmin.existingClientSecretSecret }}
+- name: KEYCLOAK_ADMIN_CLIENT_SECRET
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.broker.keycloakAdmin.existingClientSecretSecret | quote }}
+      key: keycloak-admin-client-secret
+{{- end }}
 # Extra env vars from values (key: value pairs)
 {{- range $key, $val := .Values.broker.env }}
 - name: {{ $key | quote }}

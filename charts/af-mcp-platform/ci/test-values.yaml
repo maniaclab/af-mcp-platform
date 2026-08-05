@@ -59,6 +59,12 @@ broker:
   tokenMint:
     clientId: "example-token-mint-client"
     existingClientSecretSecret: "example-token-mint-client-secret"
+  # Exercises the KEYCLOAK_ADMIN_CLIENT_ID/KEYCLOAK_ADMIN_CLIENT_SECRET
+  # template path in CI (issue #144 step 2a) -- same rationale as tokenMint
+  # above.
+  keycloakAdmin:
+    clientId: "example-keycloak-admin-client"
+    existingClientSecretSecret: "example-keycloak-admin-client-secret"
 
 # Exercises the token-sweep CronJob template path in CI (`helm template`
 # only -- these dummy values don't need a reachable Vault).

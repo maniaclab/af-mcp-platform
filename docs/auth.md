@@ -564,162 +564,192 @@ story is unchanged and remains the default for anyone opening
 It does not cover MCP clients that speak MCP-over-HTTP but can't yet perform
 OAuth discovery — Claude Desktop today. Those clients have no browser session
 to inherit and no way to run the OIDC dance themselves, so they need a static
-Bearer token to put directly in their config's `Authorization` header. The
-portal's `mcp-portal.af.uchicago.edu/tokens` page exists for exactly this:
+credential to put directly in their config's `Authorization` header. The
+portal's `mcp-portal.af.uchicago.edu/tokens` page exists for exactly this,
+and (issue #144 step 2a) it now mints a **broker-issued identity PAT**
+(Personal Access Token) rather than exchanging the caller's Keycloak JWT for
+another JWT:
 
-1. **Mint** — `POST /v1/tokens` performs a Keycloak RFC 8693 token exchange,
-   self-audience (`aud=mcp-gateway`). This is "Path B" above (AF-internal
-   token exchange), not Path A — the token only ever needs to satisfy this
-   broker's own `identity.keycloak_dependency`, so the "atlas-auth.cern.ch
-   rejects this token" caveat for Path B does not apply. **The plain token
-   value is shown exactly once**, in this response — the portal never
-   displays it again, and the broker never persists it: the token registry
-   (below) stores only metadata (`jti`, an optional user-supplied name or a
-   server-generated `mcp-YYYYMMDD-<jti prefix>` default, an optional
-   free-text note, issue/expiry times, revocation state), never anything the
-   token could be reconstructed from. `name` is a unique-per-user identifier,
-   not free text: minting a second token whose name matches an existing
-   *live* one for the same uid (case-insensitive) is rejected with 409. Live
-   means neither revoked nor expired — a name freed up by revocation or
-   natural expiry can be reused, since the dead token can no longer be
-   mistaken for the new one. `note`, unlike `name`, is purely self-descriptive
-   free text (up to 256 chars) that the broker never inspects or acts on — it
-   exists only so the portal's token list can show the caller a reminder of
-   what a token is for.
-2. **List** — `GET /v1/tokens` shows metadata for tokens minted through this
-   endpoint (`source: "manual"`), including ones already revoked (shown with
-   a revoked status rather than removed, so the portal can distinguish
-   active/revoked/expired). Keycloak's admin REST API exposes user sessions
-   and IdP consents, not per-token metadata for RFC 8693 token-exchange
-   output, so tokens issued via the interactive oauth2-proxy flow or a
-   future MCP OAuth flow are not enumerable here — a real gap, documented
-   rather than silently omitted.
-3. **Revoke** — `DELETE /v1/tokens/{jti}` marks the token revoked in the
+1. **Mint** — `POST /v1/tokens` generates a 256-bit random secret and a
+   non-secret `lookup_id`, formatted `mcp_pat_<lookup_id>_<secret>`
+   (`pat.mint_pat`). No Keycloak round trip is involved in minting — the
+   broker is the sole issuer. Only the SHA-256 hash of the secret is ever
+   persisted (`pat.hash_secret`; see that module for why plain SHA-256 is
+   correct for a 256-bit random secret, unlike a slow KDF meant for
+   low-entropy human passwords); the **plain token value is shown exactly
+   once**, in this response — the portal never displays it again, and the
+   broker never persists it. The registry (below) stores only metadata
+   (`lookup_id`, `secret_hash`, the owning principal id, an optional
+   user-supplied name or a server-generated `mcp-YYYYMMDD-<lookup_id
+   prefix>` default, an optional free-text note, created/expiry/last-used
+   times, revocation state) — never anything the token could be
+   reconstructed from, and never any groups/capabilities (see below).
+   `name` is a unique-per-principal identifier, not free text: minting a
+   second token whose name matches an existing *live* one for the same
+   principal (case-insensitive) is rejected with 409. Live means neither
+   revoked nor expired (or never-expiring) — a name freed up by revocation
+   or natural expiry can be reused, since the dead token can no longer be
+   mistaken for the new one. `note`, unlike `name`, is purely
+   self-descriptive free text (up to 256 chars) that the broker never
+   inspects or acts on. Expiry defaults to 90 days
+   (`Settings.pat_default_expiry_days`, `PAT_DEFAULT_EXPIRY_DAYS`);
+   never-expiring is an explicit opt-in (`never_expires: true` in the mint
+   request), logged loudly (`pat_minted_without_expiry`) and never the
+   default.
+2. **List** — `GET /v1/tokens` shows metadata for PATs minted through this
+   endpoint, including ones already revoked (shown with a revoked status
+   rather than removed, so the portal can distinguish active/revoked/
+   expired). Still only covers PATs minted here — a future OAuth bootstrap
+   flow (a later step of issue #144) would mint through the same store, so
+   this gap is expected to close rather than widen.
+3. **Revoke** — `DELETE /v1/tokens/{lookup_id}` marks the PAT revoked in the
    registry. Unlike the mint-rate-limit window (still per-replica, in-memory
    — see the module docstring in `api/tokens.py` for why that's an
    acceptable tradeoff for a soft anti-abuse counter), the registry itself
    is durable and HA-safe: it's backed by the same Vault/OpenBao KV-v2
    pattern `credentials/vault.py`'s `VaultTokenStore` uses (one entry per
-   uid, CAS writes, a flat `revoked-jtis` index), selected via
+   principal, CAS writes, a flat revoked-lookup-ids index), selected via
    `TOKEN_REGISTRY_BACKEND=vault` the same way `TOKEN_STORE_BACKEND` selects
-   the oauth21 token store — so a token minted on one broker replica can be
+   the oauth21 token store — so a PAT minted on one broker replica can be
    listed and revoked from another, and survives a pod restart. Revocation
-   is **enforced**, not cosmetic: `identity.get_principal` — the single
-   choke point both `/v1`'s `keycloak_dependency` and `/mcp`'s
-   `IdentityMiddleware` call — checks every token's `jti` against a
-   `RevokedJtiCache` that refreshes from the registry on a bounded interval
-   (`REVOKED_JTI_CACHE_REFRESH_SECONDS`, default 30s). A revoked token is
-   rejected with 401 everywhere once that interval has elapsed; only jtis
-   the registry actually knows about can be revoked at all, so ordinary
-   Keycloak session tokens are never affected.
-4. **Sweep** (operations) — neither mint nor revoke above ever removes a
-   registry entry, so a Vault-backed registry (`TOKEN_REGISTRY_BACKEND=vault`)
-   accumulates state forever unless something prunes it. A cron-triggered
-   janitor does: `python -m af_mcp_broker.token_sweep`, deployed as the
-   `CronJob` the chart renders when `tokenSweep.enabled: true`
-   (`charts/af-mcp-platform/templates/cronjob-token-sweep.yaml`, default
-   schedule `17 3 * * *`). Each run performs one
-   `TokenRegistryBackend.sweep_expired()` pass: it removes registry entries
-   whose `expires_at` is more than `TOKEN_SWEEP_GRACE_SECONDS` (default 7
-   days, chart value `tokenSweep.graceSeconds`) in the past, and prunes the
-   `revoked-jtis` denylist of any jti that's now expired past that same grace
-   — an expired JWT can never authenticate again regardless of revocation
-   (see `identity.get_principal`), so leaving it in the denylist forever
-   would only make that set grow without bound. The grace window is
-   deliberate, not a cleanup delay: it keeps a just-expired token showing up
-   as "expired" (not simply gone) on the portal's token list for a while
-   before it disappears. `InMemoryTokenRegistryBackend` needs none of this —
-   it already self-sweeps expired records inline on every mint, since it's
-   just an in-process dict with no external TTL of its own — so the CLI
-   refuses to run (exit code 2) unless the registry backend is `vault`.
+   is **enforced**, not cosmetic, on `/mcp` (see "Where PATs are accepted"
+   below); a revoked PAT is rejected with 401 once
+   `REVOKED_JTI_CACHE_REFRESH_SECONDS` (default 30s) has elapsed.
+4. **Sweep** (operations) — unaffected by this change; see
+   `token_sweep.py`/`tokenSweep.*` as before. A never-expiring PAT
+   (`expires_at` unset) is never touched by the sweep — there is no natural
+   expiry to sweep against; it only ever leaves the registry via an explicit
+   revoke.
 
-This is a stopgap. Once MCP OAuth discovery lands and Claude Desktop (or
-whichever client) can drive the flow itself, the manual `/tokens` page
-becomes unnecessary for that client — the interactive and MCP-OAuth paths
-both bypass it already. Until then, both stories coexist: sign in with a
-browser and you never see a token; connect a client that can't do OAuth
-discovery yet and you mint one here.
+### Where PATs are accepted — and where they deliberately are not
 
-### Operator setup: the token-mint client
+**`/mcp` accepts both identity PATs and Keycloak JWTs.**
+`mcp/middleware/identity_mw.py`'s `AsgiAuthMiddleware` recognizes a bearer
+starting with `mcp_pat_` and routes it to `pat_auth.resolve_pat_principal`;
+anything else follows the existing JWT path (`identity.get_principal`)
+unchanged. This is deliberately a *recognition* dispatch, not a cutover —
+both credential types work side by side until issue #144 step 5 flips
+`/mcp` to PAT-only, once an OAuth bootstrap flow gives every client a way to
+obtain a PAT without visiting the portal first.
 
-Step 1 above only works once a Keycloak client exists for the broker to
-authenticate *as* when it performs the exchange on the caller's behalf.
-Nothing in this repo can create that client for you — it's a one-time,
-per-realm Keycloak administrative step:
+**`/v1` remains Keycloak-JWT-only, including `POST /v1/tokens` itself.**
+`keycloak_dependency` is untouched by this design: a PAT is not a valid JWT,
+so it is rejected by ordinary JWT decoding, the same way any other
+non-JWT bearer always has been. This is a deliberate security property, not
+an oversight: if a PAT could authenticate on `/v1`, a PAT could mint further
+PATs — a single leaked credential would become self-renewing, and revocation
+would degrade into whack-a-mole against tokens the leaked one itself
+created (GitHub disallows this by default for the same reason). A PAT is
+therefore always traceable back to an interactive Keycloak login, whether
+initiated from the portal (today) or, in a future step of issue #144, an
+OAuth bootstrap flow that also authenticates via Keycloak first. The portal
+SPA itself is never issued a PAT — it keeps using its short-lived Keycloak
+JWT, since handing a long-lived credential to browser storage would be
+strictly worse than a JWT that expires in minutes.
 
-1. **Clients → Create client**, in the same realm as `oidc.issuer`
-   (`connect`, in the example above).
-2. **Client authentication: On** — this must be a *confidential* client
-   (it authenticates with a `client_secret`, not just a redirect URI),
-   since `_exchange_for_bearer` (`api/tokens.py`) sends it in the token
-   request body.
-3. **Capability config → Standard token exchange: On** — this is
-   Keycloak's V2 token exchange feature; without it the exchange below
-   fails with `unauthorized_client`.
+### Authorization is an attribute of the principal, not the token
+
+A JWT is self-contained: it carries `groups`/`posix` claims re-validated on
+every request, so removing someone from a Keycloak group is a real kill
+switch — their next request re-evaluates capabilities from scratch. A PAT
+carries **no** authorization data at all — the registry above stores
+identity and metadata only. Three separate concerns, deliberately kept
+separate in the code:
+
+- **PAT store** (`token_registry.py`) — "who is this token?"
+- **Principal cache** (`principal_cache.py`) — "what groups/uid does this
+  user *currently* have?", keyed by **principal id** (the Keycloak `sub`),
+  not by PAT, so multiple PATs belonging to one user share cached
+  authorization state and rotating/revoking a PAT never disturbs it. A
+  group removal still propagates — within one refresh interval (default
+  ~45s, `PRINCIPAL_CACHE_REFRESH_SECONDS`) rather than instantly, since a
+  PAT-authenticated request has no fresh claims of its own to re-derive
+  this from. Stale-while-revalidate: a refresh failure serves the
+  last-known value for up to `PRINCIPAL_CACHE_MAX_STALENESS_SECONDS`
+  (default 6 hours) before failing closed, logging loudly the whole time —
+  a brief Keycloak outage should not instantly lock out every
+  PAT-authenticated caller.
+- **Capability engine** (`authorization/`) — unchanged; still gates on
+  `group_capabilities` from whatever groups the principal cache (or a JWT's
+  own claims) currently reports.
+
+**Known limitation of this PR (issue #144 step 2a): the principal cache is
+in-memory only.** A cold broker restart during a Keycloak outage has no
+last-known value to serve for any PAT-authenticated principal, so it fails
+closed for them until the directory recovers — even though their actual
+authority hasn't changed. JWT-authenticated callers are unaffected
+(self-contained tokens). Persisting this cache (in Vault, alongside the PAT
+store) is deliberately deferred to a later step of issue #144.
+
+### Operator setup: the Keycloak admin service account
+
+Resolving a PAT's current groups/uid/gid/unixname means *asking Keycloak*,
+which requires a service account with standing read access to every user's
+profile and group membership — a real, deliberate privilege increase over
+today's broker, which has only ever read claims from a token the user
+themselves presented. Mitigated by scoping the account to the narrowest
+roles that satisfy the two Admin REST API calls
+`principal_directory.KeycloakPrincipalDirectory` makes
+(`GET /admin/realms/{realm}/users/{id}` and
+`GET /admin/realms/{realm}/users/{id}/groups`):
+
+1. **Clients → Create client**, in the same realm as `oidc.issuer`.
+2. **Client authentication: On** — a confidential client authenticating via
+   `client_credentials`, not a public/redirect-based one.
+3. **Service accounts roles: On**, then assign the client's service account
+   these realm-management client roles ONLY: **`view-users`** and
+   **`query-groups`**. Do not grant broader `realm-admin` or `manage-users`
+   — this account only ever needs to read, never write, user/group data.
 4. Note the client's **Client ID** and, from the **Credentials** tab, its
-   **Client secret**. These become `TOKEN_MINT_CLIENT_ID` /
-   `TOKEN_MINT_CLIENT_SECRET` (`_TOKEN_MINT_CLIENT_ID_ENV` /
-   `_TOKEN_MINT_CLIENT_SECRET_ENV` in `api/tokens.py`) — read straight from
-   the environment, not part of the broker's pydantic `Settings`, for the
-   same "operational secret, not general configuration" reason
-   `credentials/service.py`'s `ServiceProvider` keeps `AF_SERVICE_CLIENT_ID`/
-   `AF_SERVICE_CLIENT_SECRET` out of `Settings` too.
+   **Client secret**. These become `KEYCLOAK_ADMIN_CLIENT_ID` /
+   `KEYCLOAK_ADMIN_CLIENT_SECRET` (`Settings.keycloak_admin_client_id`/
+   `keycloak_admin_client_secret`) — like `TOKEN_MINT_CLIENT_ID`/`SECRET`
+   before it, this is a confidential-client credential the broker
+   authenticates *as*, not a per-user credential.
 
-With that client in place, `_exchange_for_bearer` sends Keycloak exactly:
+Both empty (the chart default) is a valid, degraded state: the broker logs
+`keycloak_admin_not_configured` at startup and every `mcp_pat_...` bearer on
+`/mcp` is rejected the same way an invalid one is — there is no
+identity-PAT authority to resolve without this account, but the broker
+still starts and everything else (JWT auth, x509, oauth21-direct) is
+unaffected.
 
-```
-POST https://keycloak-prod.tempest.uchicago.edu/realms/connect/protocol/openid-connect/token
-grant_type=urn:ietf:params:oauth:grant-type:token-exchange
-client_id=<TOKEN_MINT_CLIENT_ID>
-client_secret=<TOKEN_MINT_CLIENT_SECRET>
-subject_token=<the caller's own AF access token>
-subject_token_type=urn:ietf:params:oauth:token-type:access_token
-requested_token_type=urn:ietf:params:oauth:token-type:access_token
-audience=mcp-gateway
-```
-
-`audience` is always `settings.oidc_audience` — the broker's **own**
-audience (`mcp-gateway`, `OIDC_AUDIENCE`), never an external one. This is
-"Path B" from the [Critical Note](#critical-note-keycloak-token-exchange-limitations)
-above: an AF-internal token exchange. It is exactly the kind of exchange
-`atlas-auth.cern.ch` rejects — and that's fine here, on purpose, because
-the resulting token only ever needs to satisfy this broker's own
-`identity.keycloak_dependency`, never an external ATLAS service. Nothing
-about this contradicts the "Standard Token Exchange (V2) is
-internal-to-AF only" constraint above; it's the same constraint, used for
-the one case (the broker authenticating to itself) where "internal-to-AF
-only" is not a limitation at all.
-
-Without `TOKEN_MINT_CLIENT_ID`/`TOKEN_MINT_CLIENT_SECRET` set,
-`POST /v1/tokens` returns `503` (`GET`/`DELETE /v1/tokens` are unaffected —
-listing and revoking work against whatever is already in the registry).
-The Helm chart (`charts/af-mcp-platform`) wires both env vars from
-`broker.tokenMint.clientId` (a plain value — the client id is not a
-secret) and `broker.tokenMint.existingClientSecretSecret` (the name of a
-pre-existing Secret with a `token-mint-client-secret` key), the same
+The Helm chart wires both env vars from `broker.keycloakAdmin.clientId` (a
+plain value — the client id is not a secret) and
+`broker.keycloakAdmin.existingClientSecretSecret` (the name of a
+pre-existing Secret with a `keycloak-admin-client-secret` key), the same
 existing-Secret-by-reference pattern `broker.oauth21.existingStateKeySecret`
-and `broker.existingServiceTokenSecret` already use. Create that Secret as
-a SealedSecret, matching the `broker-state-key` example your `flux_apps`
-deployment repo already has for `broker.oauth21.existingStateKeySecret`:
+and `broker.tokenMint.existingClientSecretSecret` use:
 
 ```bash
-kubectl create secret generic token-mint-client-secret \
+kubectl create secret generic keycloak-admin-client-secret \
   --dry-run=client \
-  --from-literal=token-mint-client-secret='<client secret from the Credentials tab>' \
+  --from-literal=keycloak-admin-client-secret='<client secret from the Credentials tab>' \
   -o yaml \
   | kubeseal --controller-namespace=sealed-secrets --format=yaml \
-  > token-mint-client-secret.sealed.yaml
+  > keycloak-admin-client-secret.sealed.yaml
 ```
 
-Commit `token-mint-client-secret.sealed.yaml` to the cluster's GitOps repo
-alongside the `broker-state-key` SealedSecret, then reference it from the
+Commit `keycloak-admin-client-secret.sealed.yaml` to the cluster's GitOps
+repo alongside the other broker SealedSecrets, then reference it from the
 deploying `HelmRelease`:
 
 ```yaml
 spec:
   values:
     broker:
-      tokenMint:
-        clientId: "mcp-token-mint"
-        existingClientSecretSecret: "token-mint-client-secret"
+      keycloakAdmin:
+        clientId: "mcp-keycloak-admin"
+        existingClientSecretSecret: "keycloak-admin-client-secret"
 ```
+
+### `broker.tokenMint.*` is now unused
+
+The token-mint confidential client and its `TOKEN_MINT_CLIENT_ID`/
+`TOKEN_MINT_CLIENT_SECRET` chart values (`broker.tokenMint.*`) existed only
+to support the RFC 8693 token-exchange design this section replaces;
+`api/tokens.py` no longer performs any Keycloak call to mint a PAT, so
+those values are dead as of this change. Left in the chart rather than
+removed — a later step of issue #144 may repurpose the same "confidential
+client + sealed secret" shape again, and removing/re-adding chart values is
+needless churn for a deployment that already has the Secret in place.
