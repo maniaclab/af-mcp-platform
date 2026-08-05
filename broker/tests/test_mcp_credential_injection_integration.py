@@ -111,12 +111,13 @@ def aggregator_app_url(settings, toy_backend_url, policy, static_principal_cache
     sharing the same URL, and a CredentialRegistry holding only the fake
     provider registered for "toy".
 
-    Every token in this file's tests shares the same JWT `sub` ("user-123",
-    `make_claims`' default -- only `posix`/`groups` vary per test), so the
-    returned callable exposes ``.directory`` (issue #144 step 3's
-    directory-backed groups resolution) letting a test set
-    ``groups_by_subject["user-123"]`` to whatever entitlement it needs before
-    calling ``aggregator_app_url(provider)``.
+    Most tests in this file share the same JWT `sub` ("user-123",
+    `make_claims`' default); the per-user isolation test below is the
+    deliberate exception, using two distinct subjects. The returned callable
+    exposes ``.directory`` (issue #144 steps 3/3b's directory-backed
+    groups/POSIX resolution) letting a test set ``groups_by_subject[sub]``/
+    ``posix_by_subject[sub]`` to whatever identity/entitlement it needs
+    before calling ``aggregator_app_url(provider)``.
     """
     principal_cache, directory = static_principal_cache
     registry = BackendRegistry()
@@ -170,9 +171,14 @@ async def test_credential_injected_and_inbound_token_not_forwarded(
     prime_jwks([sig_key.jwk])
     provider = _FakeProvider()
     aggregator_app_url.directory.groups_by_subject["user-123"] = ["atlas"]
-    inbound_token = sig_key.sign(
-        make_claims(posix={"uid": 501, "gid": 501, "unixname": "u501"})
-    )
+    # POSIX identity now comes from the directory (issue #144 step 3b), not
+    # the JWT's own `posix` claim -- see the fixture docstring above.
+    aggregator_app_url.directory.posix_by_subject["user-123"] = {
+        "uid": 501,
+        "gid": 501,
+        "unixname": "u501",
+    }
+    inbound_token = sig_key.sign(make_claims())
 
     async for base_url in aggregator_app_url(provider):
         async with _bearer_client(base_url, inbound_token) as client:
@@ -194,15 +200,28 @@ async def test_credential_injected_and_inbound_token_not_forwarded(
 async def test_per_user_credential_isolation(
     aggregator_app_url, sig_key, prime_jwks
 ) -> None:
+    """Alice and Bob must be genuinely distinct principals (different `sub`),
+    not just different POSIX identities on a shared subject: since POSIX
+    identity now comes from the directory keyed by subject (issue #144 step
+    3b), a shared subject would resolve to a single, shared uid regardless
+    of what the JWT itself claims -- exactly the disagreement this
+    unification exists to make impossible."""
     prime_jwks([sig_key.jwk])
     provider = _FakeProvider()
-    aggregator_app_url.directory.groups_by_subject["user-123"] = ["atlas"]
-    alice_token = sig_key.sign(
-        make_claims(posix={"uid": 111, "gid": 111, "unixname": "alice"})
-    )
-    bob_token = sig_key.sign(
-        make_claims(posix={"uid": 222, "gid": 222, "unixname": "bob"})
-    )
+    aggregator_app_url.directory.groups_by_subject["user-alice"] = ["atlas"]
+    aggregator_app_url.directory.groups_by_subject["user-bob"] = ["atlas"]
+    aggregator_app_url.directory.posix_by_subject["user-alice"] = {
+        "uid": 111,
+        "gid": 111,
+        "unixname": "alice",
+    }
+    aggregator_app_url.directory.posix_by_subject["user-bob"] = {
+        "uid": 222,
+        "gid": 222,
+        "unixname": "bob",
+    }
+    alice_token = sig_key.sign(make_claims(sub="user-alice"))
+    bob_token = sig_key.sign(make_claims(sub="user-bob"))
 
     async for base_url in aggregator_app_url(provider):
         async with _bearer_client(base_url, alice_token) as client:

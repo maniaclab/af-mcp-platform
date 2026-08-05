@@ -29,13 +29,14 @@ pixi run broker
 
 Starts uvicorn with `--reload`. API is at <http://localhost:8080/docs>.
 
-> As of issue #144 step 3, plain `pixi run broker` now refuses to start:
+> As of issue #144 steps 3/3b, plain `pixi run broker` now refuses to start:
 > every credential type (JWT included, not just PATs) resolves its groups
-> from the Keycloak admin service account, so a broker with neither that
-> account nor the bypass below configured can never authenticate anyone —
-> see docs/auth.md's "Operator setup: the Keycloak admin service account"
-> for what changed and why. If you don't have a real Keycloak realm handy,
-> skip straight to `pixi run -e bypass broker` in the next section instead.
+> and POSIX identity from the Keycloak admin service account, so a broker
+> with neither that account nor the bypass below configured can never
+> authenticate anyone — see docs/auth.md's "Operator setup: the Keycloak
+> admin service account" for what changed and why. If you don't have a real
+> Keycloak realm handy, skip straight to `pixi run -e bypass broker` in the
+> next section instead.
 
 **Terminal 2 — portal on :4321:**
 
@@ -111,10 +112,10 @@ principal. To actually exercise the PAT for real, drop out of the bypass
 (unset `BROKER_DEV_INSECURE_PRINCIPAL`, point `OIDC_ISSUER` at a real realm)
 and set `KEYCLOAK_ADMIN_CLIENT_ID`/`KEYCLOAK_ADMIN_CLIENT_SECRET` (see
 docs/auth.md's "Operator setup: the Keycloak admin service account") — as of
-issue #144 step 3 this is no longer optional outside the bypass: every
-credential type resolves its groups from the directory now, so the broker
-refuses to start without either the bypass or this service account
-configured.
+issue #144 steps 3/3b this is no longer optional outside the bypass: every
+credential type resolves its groups and POSIX identity from the directory
+now, so the broker refuses to start without either the bypass or this
+service account configured.
 
 ### Alternative: inject a real token from a live deployment
 

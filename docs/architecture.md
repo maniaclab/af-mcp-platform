@@ -151,7 +151,7 @@ Two axes define the provider matrix:
 | **x509/VOMS** | Ephemeral k8s Job (NFS subPath mount of `~/.globus`) | N/A — always minted fresh |
 
 The `CredentialCache` (in-process, async-safe) stores minted credentials keyed by
-`(uid, target)` for their lifetime, avoiding redundant minting. See
+`(subject, target)` for their lifetime, avoiding redundant minting. See
 `spikes/credential-isolation/` for the concurrency validation.
 
 Important: Keycloak Standard Token Exchange (V2) is internal-to-AF only. It

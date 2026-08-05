@@ -32,9 +32,6 @@ async def test_get_principal_selects_signing_key_when_listed_second(
 
     principal = await get_principal(token, settings, cache)
 
-    assert principal.uid == 50123
-    assert principal.gid == 5000
-    assert principal.unixname == "auser"
     assert principal.subject == "user-123"
 
 
@@ -61,44 +58,6 @@ async def test_wrong_audience_raises_401(
     with pytest.raises(HTTPException) as exc:
         await get_principal(token, settings, cache)
     assert exc.value.status_code == 401
-
-
-async def test_missing_posix_claim_authenticates_successfully(
-    settings, sig_key, prime_jwks, static_principal_cache
-):
-    """Issue #148: POSIX identity is optional -- a JWT with no `posix` claim
-    at all must authenticate successfully, not 401. This is the change that
-    unblocks the operator's plan to remove the claim from tokens entirely."""
-    cache, _directory = static_principal_cache
-    prime_jwks([sig_key.jwk])
-    claims = make_claims()
-    del claims["posix"]
-    token = sig_key.sign(claims)
-
-    principal = await get_principal(token, settings, cache)
-
-    assert principal.uid is None
-    assert principal.gid is None
-    assert principal.unixname is None
-    assert principal.subject == "user-123"
-
-
-async def test_partial_posix_claim_resolves_available_fields(
-    settings, sig_key, prime_jwks, static_principal_cache
-):
-    """A malformed/partial posix claim (some keys present, some absent) must
-    still authenticate -- issue #148 resolves POSIX identity opportunistically
-    per field rather than all-or-nothing. Regression for bug 4 in spirit: a
-    missing key must never surface as a 500, and now not even as a 401."""
-    cache, _directory = static_principal_cache
-    prime_jwks([sig_key.jwk])
-    token = sig_key.sign(make_claims(posix={"gid": 5000, "unixname": "auser"}))
-
-    principal = await get_principal(token, settings, cache)
-
-    assert principal.uid is None
-    assert principal.gid == 5000
-    assert principal.unixname == "auser"
 
 
 async def test_no_matching_kid_raises_401(
@@ -243,6 +202,131 @@ async def test_jwt_and_pat_for_same_principal_get_identical_capabilities(
 
 
 # ---------------------------------------------------------------------------
+# POSIX unification (issue #144 step 3b) -- every credential type resolves
+# POSIX identity (uid/gid/unixname) from the PrincipalDirectory via the
+# principal cache, completing what step 3 did for groups; the token no
+# longer carries identity data of its own beyond `sub`/`email`.
+# ---------------------------------------------------------------------------
+
+
+async def test_jwt_with_no_posix_claim_resolves_via_directory(
+    settings, sig_key, prime_jwks, static_principal_cache
+):
+    """A JWT that carries no `posix` claim at all must still resolve real
+    POSIX identity -- the directory, not the claim, is the only source now."""
+    cache, directory = static_principal_cache
+    directory.posix_by_subject["user-123"] = {
+        "uid": 60001,
+        "gid": 6000,
+        "unixname": "dirauser",
+    }
+    prime_jwks([sig_key.jwk])
+    claims = make_claims()
+    del claims["posix"]
+    token = sig_key.sign(claims)
+
+    principal = await get_principal(token, settings, cache)
+
+    assert principal.uid == 60001
+    assert principal.gid == 6000
+    assert principal.unixname == "dirauser"
+
+
+async def test_jwt_posix_claim_is_ignored_directory_is_authoritative(
+    settings, sig_key, prime_jwks, static_principal_cache
+):
+    """The crux of issue #144 step 3b: even though this JWT DOES carry a
+    `posix` claim, it must be ignored entirely in favor of the directory's
+    current answer -- mirroring
+    test_jwt_groups_claim_is_ignored_directory_is_authoritative above. This
+    is what makes the four POSIX mappers safe to delete: a still-valid JWT's
+    own claim can no longer keep serving a uid/gid/unixname the directory has
+    since moved on from."""
+    cache, directory = static_principal_cache
+    directory.posix_by_subject["user-123"] = {
+        "uid": 70002,
+        "gid": 7000,
+        "unixname": "realauser",
+    }
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(
+        make_claims(posix={"uid": 50123, "gid": 5000, "unixname": "auser"})
+    )
+
+    principal = await get_principal(token, settings, cache)
+
+    assert principal.uid == 70002
+    assert principal.gid == 7000
+    assert principal.unixname == "realauser"
+    assert principal.uid != 50123
+
+
+async def test_principal_with_no_posix_anywhere_still_authenticates(
+    settings, sig_key, prime_jwks, static_principal_cache
+):
+    """Issue #149's optional-POSIX guarantee must survive the move to the
+    directory: a principal the directory has no POSIX attributes for at all
+    still authenticates successfully, with uid/gid/unixname left None rather
+    than 401ing -- the point-of-use check in credentials/x509.py is the only
+    place that requirement is enforced (see test_x509.py)."""
+    cache, _directory = static_principal_cache
+    prime_jwks([sig_key.jwk])
+    claims = make_claims()
+    del claims["posix"]
+    token = sig_key.sign(claims)
+
+    principal = await get_principal(token, settings, cache)
+
+    assert principal.uid is None
+    assert principal.gid is None
+    assert principal.unixname is None
+    assert principal.subject == "user-123"
+
+
+async def test_jwt_and_pat_for_same_principal_get_identical_posix(
+    settings, sig_key, prime_jwks, static_principal_cache
+):
+    """The POSIX counterpart to test_jwt_and_pat_for_same_principal_get_identical_capabilities:
+    a JWT and an identity PAT for the *same* principal must resolve to the
+    exact same uid/gid/unixname, since both now derive POSIX identity from
+    the same PrincipalCache/PrincipalDirectory rather than a JWT's own claim
+    and a PAT being able to disagree about who one user is on the
+    filesystem."""
+    principal_cache, directory = static_principal_cache
+    directory.posix_by_subject["user-123"] = {
+        "uid": 60001,
+        "gid": 6000,
+        "unixname": "dirauser",
+    }
+
+    prime_jwks([sig_key.jwk])
+    jwt_token = sig_key.sign(make_claims())
+    jwt_principal = await get_principal(jwt_token, settings, principal_cache)
+
+    pat_backend = InMemoryTokenRegistryBackend()
+    plaintext, lookup_id, secret_hash = mint_pat()
+    await pat_backend.add(
+        TokenRecord(
+            lookup_id=lookup_id,
+            principal_id="user-123",
+            secret_hash=secret_hash,
+            name="test-token",
+            created_at=time.time(),
+            expires_at=time.time() + 3600,
+            revoked_at=None,
+            last_used_at=None,
+        )
+    )
+    pat_principal = await resolve_pat_principal(
+        plaintext, settings, pat_backend, principal_cache, LastUsedTracker()
+    )
+
+    assert jwt_principal.uid == pat_principal.uid == 60001
+    assert jwt_principal.gid == pat_principal.gid == 6000
+    assert jwt_principal.unixname == pat_principal.unixname == "dirauser"
+
+
+# ---------------------------------------------------------------------------
 # Revoked-jti enforcement (issue #115) — get_principal is the single choke
 # point both keycloak_dependency (/v1) and IdentityMiddleware (/mcp) call,
 # so testing it here covers both call sites.
@@ -294,7 +378,7 @@ async def test_unrevoked_jti_still_succeeds(
         token, settings, principal_cache, revoked_jti_cache=revoked_cache
     )
 
-    assert principal.uid == 50123
+    assert principal.subject == "user-123"
 
 
 async def test_ordinary_keycloak_session_token_unaffected_by_empty_registry(
@@ -314,7 +398,7 @@ async def test_ordinary_keycloak_session_token_unaffected_by_empty_registry(
         token, settings, principal_cache, revoked_jti_cache=revoked_cache
     )
 
-    assert principal.uid == 50123
+    assert principal.subject == "user-123"
 
 
 async def test_no_revoked_jti_cache_configured_does_not_check_revocation(
@@ -328,7 +412,7 @@ async def test_no_revoked_jti_cache_configured_does_not_check_revocation(
 
     principal = await get_principal(token, settings, principal_cache)
 
-    assert principal.uid == 50123
+    assert principal.subject == "user-123"
 
 
 async def test_token_with_no_jti_claim_is_unaffected_by_revocation_check(
@@ -349,4 +433,4 @@ async def test_token_with_no_jti_claim_is_unaffected_by_revocation_check(
         token, settings, principal_cache, revoked_jti_cache=revoked_cache
     )
 
-    assert principal.uid == 50123
+    assert principal.subject == "user-123"

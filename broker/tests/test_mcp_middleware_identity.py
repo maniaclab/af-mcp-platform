@@ -90,7 +90,8 @@ def _body(messages: list[dict[str, Any]]) -> bytes:
 async def test_valid_bearer_stashes_principal_and_calls_inner_app(
     settings, sig_key, prime_jwks, static_principal_cache
 ):
-    principal_cache, _directory = static_principal_cache
+    principal_cache, directory = static_principal_cache
+    directory.posix_by_subject["user-123"] = {"uid": 50123, "unixname": "auser"}
     prime_jwks([sig_key.jwk])
     token = sig_key.sign(make_claims())
     inner = _InnerApp()
