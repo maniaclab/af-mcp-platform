@@ -66,3 +66,20 @@
   --text-label--letter-spacing: 0.1em;
   --text-label--font-weight: 600;
 }
+
+/*
+ * Tailwind's Preflight (pulled in by the @import above, and living in its
+ * own `@layer base`) resets `margin: 0` on every element via a universal
+ * selector. That also zeroes out the UA stylesheet's `margin: auto` on
+ * `dialog:modal`, which is what centers a <dialog> opened with
+ * showModal() -- so every native <dialog> in the portal (TokensPage.vue's
+ * mint dialog, ProxyStatus.vue's and IdentityLink.vue's revoke/unlink
+ * confirms) rendered pinned to the top-left instead of centered (issue
+ * #152), even though each of them already calls showModal() correctly.
+ * An unlayered rule beats any rule inside a @layer regardless of source
+ * order or specificity, so restoring the margin once here fixes every
+ * instance at the root instead of nudging each dialog's own CSS.
+ */
+dialog:modal {
+  margin: auto;
+}

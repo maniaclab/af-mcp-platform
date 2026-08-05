@@ -39,18 +39,26 @@ export function shortLookupId(lookupId: string): string {
   return lookupId.length <= 8 ? lookupId : `${lookupId.slice(0, 8)}…`;
 }
 
-// Notes can be up to 256 chars (api/tokens.py's _MAX_NOTE_LENGTH) -- too long
-// to show in full inline in the token list's secondary-text cell.
-const NOTE_DISPLAY_MAX_LENGTH = 80;
+// The broker still allows notes up to 256 chars server-side (api/tokens.py's
+// _MAX_NOTE_LENGTH) -- unchanged; shrinking that limit would be an API
+// contract change breaking any existing caller (docs/connecting-a-client.md's
+// curl/Python snippets, CI scripts) with no correctness benefit, now that the
+// note is never squeezed into a fixed-width table cell (issue #152). This
+// constant is a UI-only cap: it's both the mint form's textarea `maxlength`
+// (TokensPage.vue) for newly-minted notes, and truncateNote's default below,
+// which keeps the (i) icon's hover/focus tooltip a modest size even for a
+// note minted before this cap existed (up to the old 256-char ceiling).
+export const NOTE_MAX_LENGTH = 100;
 
 /**
- * Truncates a token's free-text note (issue #116) for the list view. `null`
- * (no note supplied) passes through unchanged. As with `shortLookupId`, the
- * full note is always available via a `title` attribute on the caller's side.
+ * Truncates a token's free-text note (issue #116) for display in the (i)
+ * info icon's hover/focus tooltip (issue #152 -- previously rendered inline
+ * under the token name, which stretched the name column while still
+ * truncating the note). `null` (no note supplied) passes through unchanged.
  */
 export function truncateNote(
   note: string | null,
-  maxLength: number = NOTE_DISPLAY_MAX_LENGTH,
+  maxLength: number = NOTE_MAX_LENGTH,
 ): string | null {
   if (note === null) return null;
   return note.length <= maxLength ? note : `${note.slice(0, maxLength)}…`;
