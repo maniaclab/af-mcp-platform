@@ -306,7 +306,10 @@ async def test_active_jti_allowed_through_mcp_path_with_cache_configured(
 
 async def test_valid_pat_stashes_principal_and_calls_inner_app(settings):
     from af_mcp_broker.pat import mint_pat
-    from af_mcp_broker.principal_cache import PrincipalCache
+    from af_mcp_broker.principal_cache import (
+        InMemoryPrincipalCacheBackend,
+        PrincipalCache,
+    )
     from af_mcp_broker.principal_directory import (
         PrincipalAttributes,
         PrincipalDirectory,
@@ -334,7 +337,11 @@ async def test_valid_pat_stashes_principal_and_calls_inner_app(settings):
         )
     )
     principal_cache = PrincipalCache(
-        _FakeDirectory(), refresh_interval_seconds=1000.0, max_staleness_seconds=3600.0
+        _FakeDirectory(),
+        backend=InMemoryPrincipalCacheBackend(),
+        refresh_interval_seconds=1000.0,
+        max_staleness_seconds=3600.0,
+        heartbeat_interval_seconds=3600.0,
     )
 
     inner = _InnerApp()
@@ -376,7 +383,10 @@ async def test_pat_shaped_bearer_rejected_when_pat_support_not_configured(
 
 
 async def test_malformed_pat_rejected_with_vague_401(settings):
-    from af_mcp_broker.principal_cache import PrincipalCache
+    from af_mcp_broker.principal_cache import (
+        InMemoryPrincipalCacheBackend,
+        PrincipalCache,
+    )
     from af_mcp_broker.principal_directory import (
         PrincipalAttributes,
         PrincipalDirectory,
@@ -388,7 +398,11 @@ async def test_malformed_pat_rejected_with_vague_401(settings):
 
     backend = InMemoryTokenRegistryBackend()
     principal_cache = PrincipalCache(
-        _FakeDirectory(), refresh_interval_seconds=1000.0, max_staleness_seconds=3600.0
+        _FakeDirectory(),
+        backend=InMemoryPrincipalCacheBackend(),
+        refresh_interval_seconds=1000.0,
+        max_staleness_seconds=3600.0,
+        heartbeat_interval_seconds=3600.0,
     )
     inner = _InnerApp()
     middleware = AsgiAuthMiddleware(
@@ -408,7 +422,10 @@ async def test_malformed_pat_rejected_with_vague_401(settings):
 
 async def test_unknown_pat_lookup_id_rejected(settings):
     from af_mcp_broker.pat import mint_pat
-    from af_mcp_broker.principal_cache import PrincipalCache
+    from af_mcp_broker.principal_cache import (
+        InMemoryPrincipalCacheBackend,
+        PrincipalCache,
+    )
     from af_mcp_broker.principal_directory import (
         PrincipalAttributes,
         PrincipalDirectory,
@@ -421,7 +438,11 @@ async def test_unknown_pat_lookup_id_rejected(settings):
     backend = InMemoryTokenRegistryBackend()  # never populated
     plaintext, _, _ = mint_pat()
     principal_cache = PrincipalCache(
-        _FakeDirectory(), refresh_interval_seconds=1000.0, max_staleness_seconds=3600.0
+        _FakeDirectory(),
+        backend=InMemoryPrincipalCacheBackend(),
+        refresh_interval_seconds=1000.0,
+        max_staleness_seconds=3600.0,
+        heartbeat_interval_seconds=3600.0,
     )
     inner = _InnerApp()
     middleware = AsgiAuthMiddleware(
@@ -441,7 +462,10 @@ async def test_unknown_pat_lookup_id_rejected(settings):
 
 async def test_expired_pat_rejected_with_actionable_portal_message(settings):
     from af_mcp_broker.pat import mint_pat
-    from af_mcp_broker.principal_cache import PrincipalCache
+    from af_mcp_broker.principal_cache import (
+        InMemoryPrincipalCacheBackend,
+        PrincipalCache,
+    )
     from af_mcp_broker.principal_directory import (
         PrincipalAttributes,
         PrincipalDirectory,
@@ -467,7 +491,11 @@ async def test_expired_pat_rejected_with_actionable_portal_message(settings):
         )
     )
     principal_cache = PrincipalCache(
-        _FakeDirectory(), refresh_interval_seconds=1000.0, max_staleness_seconds=3600.0
+        _FakeDirectory(),
+        backend=InMemoryPrincipalCacheBackend(),
+        refresh_interval_seconds=1000.0,
+        max_staleness_seconds=3600.0,
+        heartbeat_interval_seconds=3600.0,
     )
     inner = _InnerApp()
     middleware = AsgiAuthMiddleware(

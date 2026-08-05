@@ -17,7 +17,7 @@ from af_mcp_broker.config import Settings
 from af_mcp_broker.identity import TokenExpiredError
 from af_mcp_broker.pat import mint_pat
 from af_mcp_broker.pat_auth import LastUsedTracker, resolve_pat_principal
-from af_mcp_broker.principal_cache import PrincipalCache
+from af_mcp_broker.principal_cache import InMemoryPrincipalCacheBackend, PrincipalCache
 from af_mcp_broker.principal_directory import PrincipalAttributes, PrincipalDirectory
 from af_mcp_broker.token_registry import InMemoryTokenRegistryBackend, TokenRecord
 
@@ -48,7 +48,11 @@ def directory() -> _FakeDirectory:
 @pytest.fixture
 def principal_cache(directory: _FakeDirectory) -> PrincipalCache:
     return PrincipalCache(
-        directory, refresh_interval_seconds=1000.0, max_staleness_seconds=3600.0
+        directory,
+        backend=InMemoryPrincipalCacheBackend(),
+        refresh_interval_seconds=1000.0,
+        max_staleness_seconds=3600.0,
+        heartbeat_interval_seconds=3600.0,
     )
 
 
@@ -221,7 +225,11 @@ async def test_principal_cache_unavailable_maps_to_vague_401(
     see this module's docstring on why it doesn't get a distinct status."""
     directory = _FakeDirectory()  # no responses registered -> resolve() raises KeyError
     principal_cache = PrincipalCache(
-        directory, refresh_interval_seconds=1000.0, max_staleness_seconds=3600.0
+        directory,
+        backend=InMemoryPrincipalCacheBackend(),
+        refresh_interval_seconds=1000.0,
+        max_staleness_seconds=3600.0,
+        heartbeat_interval_seconds=3600.0,
     )
     token = await _mint_and_store(pat_backend, principal_id="kc-sub-1")
 

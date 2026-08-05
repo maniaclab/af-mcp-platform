@@ -47,7 +47,12 @@ from af_mcp_broker.mcp.aggregator import (
     populate_aggregator,
 )
 from af_mcp_broker.mcp.registry import BackendRegistry
-from af_mcp_broker.principal_cache import PrincipalCache
+from af_mcp_broker.principal_cache import (
+    InMemoryPrincipalCacheBackend,
+    PrincipalCache,
+    PrincipalCacheBackend,
+    VaultPrincipalCacheBackend,
+)
 from af_mcp_broker.principal_directory import KeycloakPrincipalDirectory
 from af_mcp_broker.token_registry import (
     InMemoryTokenRegistryBackend,
@@ -239,13 +244,15 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
             x509_targets.append(spec.name)
 
     # --- Vault/OpenBao transport: one VaultKV instance (one K8s auth login
-    # per process) shared by the oauth21 token store and the token registry
-    # below, whichever of the two (or both) is configured to use Vault — see
-    # vault_kv.py's module docstring for the transport/domain split.
+    # per process) shared by the oauth21 token store, the token registry, and
+    # the principal cache below, whichever of the three (or more) is
+    # configured to use Vault — see vault_kv.py's module docstring for the
+    # transport/domain split.
     vault_kv: VaultKV | None = None
     if (
         settings.token_store_backend == "vault"
         or settings.token_registry_backend == "vault"
+        or settings.principal_cache_backend == "vault"
     ):
         vault_kv = VaultKV(
             addr=settings.vault_addr,
@@ -406,10 +413,24 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
             settings.keycloak_admin_client_id,
             settings.keycloak_admin_client_secret.get_secret_value(),
         )
+        # Persistence backend for the cache above (issue #144 step 2b) —
+        # same in-memory/Vault selection shape as token_registry_backend
+        # above, sharing the same vault_kv transport instance.
+        principal_cache_backend: PrincipalCacheBackend
+        if settings.principal_cache_backend == "vault":
+            assert vault_kv is not None  # guaranteed by the check above
+            principal_cache_backend = VaultPrincipalCacheBackend(
+                vault_kv=vault_kv,
+                kv_path_prefix=settings.principal_cache_kv_path_prefix,
+            )
+        else:
+            principal_cache_backend = InMemoryPrincipalCacheBackend()
         principal_cache = PrincipalCache(
             principal_directory,
+            backend=principal_cache_backend,
             refresh_interval_seconds=settings.principal_cache_refresh_seconds,
             max_staleness_seconds=settings.principal_cache_max_staleness_seconds,
+            heartbeat_interval_seconds=settings.principal_cache_heartbeat_seconds,
         )
     else:
         logger.warning(

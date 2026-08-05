@@ -189,7 +189,10 @@ async def test_pat_round_trip_tools_list_and_call(
     credential types now work on /mcp side by side (this test) and neither
     disturbs the other (every JWT-path test above is unmodified)."""
     from af_mcp_broker.pat import mint_pat
-    from af_mcp_broker.principal_cache import PrincipalCache
+    from af_mcp_broker.principal_cache import (
+        InMemoryPrincipalCacheBackend,
+        PrincipalCache,
+    )
     from af_mcp_broker.principal_directory import (
         PrincipalAttributes,
         PrincipalDirectory,
@@ -218,7 +221,11 @@ async def test_pat_round_trip_tools_list_and_call(
         )
     )
     principal_cache = PrincipalCache(
-        _FakeDirectory(), refresh_interval_seconds=1000.0, max_staleness_seconds=3600.0
+        _FakeDirectory(),
+        backend=InMemoryPrincipalCacheBackend(),
+        refresh_interval_seconds=1000.0,
+        max_staleness_seconds=3600.0,
+        heartbeat_interval_seconds=3600.0,
     )
 
     mcp = build_aggregator(

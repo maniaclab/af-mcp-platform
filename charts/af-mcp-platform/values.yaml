@@ -293,6 +293,23 @@ broker:
     # records are stored. Only meaningful when backend="vault".
     kvPathPrefix: "mcp/token-registry"
 
+  # Persists the principal cache (issue #144 step 2b) -- last-known
+  # groups/uid/gid/unixname/email for identity-PAT-authenticated principals
+  # -- so a broker restart during a Keycloak outage doesn't fail closed for
+  # every PAT-authenticated caller the instant a replica comes back up.
+  # "in-memory" is single-replica and lost on restart (fine for dev/testing,
+  # and the pre-existing behavior before this setting existed); "vault"
+  # persists to the same Vault/OpenBao instance as oauth21.tokenStore.vault
+  # above (one shared connection), under a separate kvPathPrefix so all
+  # three Vault-backed stores never collide under the same kvMount. See
+  # docs/auth.md's "Authorization is an attribute of the principal, not the
+  # token" section.
+  principalCache:
+    backend: "in-memory"  # or "vault"
+    # Path prefix under oauth21.tokenStore.vault.kvMount where persisted
+    # principal-cache records are stored. Only meaningful when backend="vault".
+    kvPathPrefix: "mcp/principal-cache"
+
 # ---------------------------------------------------------------------------
 # Token sweep: periodic janitor for the Vault-backed token registry above
 # (broker.tokenRegistry.backend="vault"). Removes registry entries whose

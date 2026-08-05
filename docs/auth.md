@@ -747,13 +747,44 @@ separate in the code:
   `group_capabilities` from whatever groups the principal cache (or a JWT's
   own claims) currently reports.
 
-**Known limitation of this PR (issue #144 step 2a): the principal cache is
-in-memory only.** A cold broker restart during a Keycloak outage has no
-last-known value to serve for any PAT-authenticated principal, so it fails
-closed for them until the directory recovers — even though their actual
-authority hasn't changed. JWT-authenticated callers are unaffected
-(self-contained tokens). Persisting this cache (in Vault, alongside the PAT
-store) is deliberately deferred to a later step of issue #144.
+**Persisted across restarts (issue #144 step 2b).** The principal cache is
+backed by a `PrincipalCacheBackend`, selected via
+`PRINCIPAL_CACHE_BACKEND`/`broker.principalCache.backend` the same way
+`TOKEN_REGISTRY_BACKEND` selects the PAT store's backend — `in_memory`
+(single-replica, lost on restart) or `vault` (the same Vault/OpenBao
+instance the PAT store and oauth21 token store use, under its own
+`broker.principalCache.kvPathPrefix`). Each persisted record carries the
+wall-clock time it was resolved; a cold start (process restart) loads it as
+this replica's initial last-known value, subject to the exact same
+`PRINCIPAL_CACHE_MAX_STALENESS_SECONDS` bound as an in-process refresh
+failure — a record persisted three days ago is not served when the
+staleness bound is six hours, same as any other stale value. A resolve is
+written back to Vault when its attributes actually differ from what's
+currently held (comparing content, not timestamps, so a changed value
+writes immediately) *or* when the last write is older than
+`PRINCIPAL_CACHE_HEARTBEAT_SECONDS` (default 3 hours, comfortably below the
+6-hour staleness bound) — the second condition matters because group
+memberships are typically stable for weeks, and writing on content-diff
+alone would leave a stable principal's persisted record dated from its
+last actual change, defeating the point of persisting at all once that
+date is further in the past than the staleness bound. Together, a
+population of principals whose groups rarely change still writes only once
+per heartbeat, not once per ~45s refresh, while guaranteeing a healthy,
+reachable system always has a persisted record well inside the staleness
+bound; a Vault read/write failure degrades to the in-memory-only behavior
+of the previous design rather than failing a request — see
+`principal_cache.py`'s module docstring for the full read/write layering
+and the write-amplification arithmetic. Before this, a cold broker restart
+during a Keycloak outage had no last-known value to serve for any
+PAT-authenticated principal and failed closed for them until the directory
+recovered — even though their actual authority hadn't changed.
+JWT-authenticated callers were, and remain, unaffected (self-contained
+tokens).
+
+**Data at rest.** A persisted principal-cache record contains that user's
+group memberships and POSIX uid/gid/unixname — the same underlying data
+Keycloak already holds, but (when `PRINCIPAL_CACHE_BACKEND=vault`) now also
+resident in Vault, alongside the PAT store's own records (see above).
 
 ### Operator setup: the Keycloak admin service account
 
