@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "perf-astro": {
+      "source": "tech-leads-club/agent-skills",
+      "sourceType": "github",
+      "skillPath": "packages/skills-catalog/skills/(performance)/perf-astro/SKILL.md",
+      "computedHash": "11b50b27564085d9bff6d558bd4e9f31e5bce3c9a82af4c7203d9a4cd1ff43e4"
+    }
+  }
+}
