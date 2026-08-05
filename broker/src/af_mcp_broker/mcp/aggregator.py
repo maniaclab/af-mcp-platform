@@ -447,9 +447,10 @@ def build_aggregator(
 
 
 def build_asgi_auth_middleware(mcp: FastMCP) -> Middleware:
-    """Return the Starlette middleware spec that enforces identity at the
-    ASGI layer for ``mcp``'s http_app (issue #138/#144 step 1) -- pass this
-    into ``FastMCP.http_app(middleware=[...])`` when mounting.
+    """Return the Starlette middleware spec that enforces identity at the ASGI layer.
+
+    Enforces identity for ``mcp``'s http_app (issue #138/#144 step 1) -- pass
+    this into ``FastMCP.http_app(middleware=[...])`` when mounting.
 
     Must be built from the same FastMCP instance ``build_aggregator()``
     constructed: it shares that instance's IdentityMiddleware (found via

@@ -97,9 +97,10 @@ async def _send_401(scope: Scope, receive: Receive, send: Send, detail: str) -> 
 
 
 class AsgiAuthMiddleware:
-    """Enforces identity at the ASGI layer, in front of the /mcp aggregator's
-    whole http_app -- see the module docstring above for why this has to
-    live here rather than as a FastMCP Middleware.
+    """Enforces identity at the ASGI layer, in front of the /mcp aggregator's whole http_app.
+
+    See the module docstring above for why this has to live here rather
+    than as a FastMCP Middleware.
 
     Reads settings/revoked_jti_cache off *identity_mw* rather than holding
     its own copy: identity_mw's attributes are already the single mutable
