@@ -100,16 +100,20 @@ broker:
   # Create this via SealedSecret externally; the chart does NOT create it.
   existingServiceTokenSecret: ""
 
-  # UNUSED as of issue #144 step 2a: POST /v1/tokens now mints a
-  # broker-issued identity PAT (see `keycloakAdmin` below), which needs no
-  # Keycloak call at all -- this confidential client and its RFC 8693
-  # Standard Token Exchange grant were only ever needed for the design that
-  # replaces. Left in the chart rather than removed -- see docs/auth.md's
-  # "broker.tokenMint.* is now unused" section for why -- a later step of
-  # #144 may repurpose the same "confidential client + sealed secret" shape
-  # again. TOKEN_MINT_CLIENT_ID/TOKEN_MINT_CLIENT_SECRET are still rendered
-  # when set (each omitted when its source value below is empty), but
-  # nothing in the broker reads them anymore.
+  # Confidential Keycloak client the broker authenticates as (authorization_
+  # code grant, PKCE) when it stands in for an MCP client during the OAuth
+  # discovery bootstrap flow (issue #140, api/mcp_oauth.py --
+  # Settings.keycloak_login_client_id/_secret): the broker's own
+  # `/v1/oauth/authorize` redirects the browser to Keycloak using this
+  # client, then exchanges the resulting code at Keycloak's token endpoint to
+  # learn who logged in, before minting a PAT for the MCP client. This is the
+  # same "confidential client + sealed secret" shape issue #144 step 2a's RFC
+  # 8693 token-exchange design originally needed this client for (hence the
+  # `tokenMint` name, kept rather than renamed to avoid an unnecessary
+  # values-key churn) -- that design was replaced by broker-issued identity
+  # PATs and left this client configured-but-unread until this flow
+  # repurposed it, for a different grant type (authorization_code instead of
+  # token-exchange) and without needing Standard Token Exchange permission.
   tokenMint:
     # Client id of the confidential client. Not a secret -- a plain value,
     # like portal.oidc.clientId above. Deliberately a separate client from

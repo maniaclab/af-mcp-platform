@@ -47,6 +47,7 @@ from af_mcp_broker.mcp.aggregator import (
     populate_aggregator,
 )
 from af_mcp_broker.mcp.registry import BackendRegistry
+from af_mcp_broker.mcp_auth_codes import McpAuthCodeStore
 from af_mcp_broker.principal_cache import (
     InMemoryPrincipalCacheBackend,
     PrincipalCache,
@@ -287,7 +288,10 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     identity_provider_configs: dict[str, IdentityProviderConfig] = {}
     oauth21_token_store: InMemoryTokenStore | VaultTokenStore | None = None
     oauth21_state_cipher = None
-    if any(cfg.type == "oauth21-direct" for cfg in settings.identity_providers):
+    has_oauth21_provider = any(
+        cfg.type == "oauth21-direct" for cfg in settings.identity_providers
+    )
+    if has_oauth21_provider:
         if settings.token_store_backend == "vault":
             assert vault_kv is not None  # guaranteed by the check above
             oauth21_token_store = VaultTokenStore(
@@ -296,6 +300,14 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
             )
         else:
             oauth21_token_store = InMemoryTokenStore()
+    # The Fernet cipher is shared by two independent flows that both encrypt
+    # in-flight OAuth 2.1 state (oauth_state.py): backend-account-linking
+    # (oauth21-direct identity_providers, above) and the MCP OAuth discovery
+    # bootstrap flow (issue #140, api/mcp_oauth.py). Either configuring this
+    # cipher on its own -- Settings._validate_oauth21_config/
+    # _validate_mcp_oauth_config already refused to construct `settings`
+    # above if either is configured without broker_state_key.
+    if has_oauth21_provider or settings.keycloak_login_client_id:
         oauth21_state_cipher = Fernet(
             settings.broker_state_key.get_secret_value().encode()
         )
@@ -366,6 +378,15 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # (issue #90): who services each target, reusing the x509_targets and
     # identity_providers config already assembled above.
     target_to_alias = _build_target_to_alias(x509_targets, settings.identity_providers)
+
+    # --- MCP OAuth discovery bootstrap (issue #140): short-lived, single-use
+    # authorization codes minted by the Keycloak-login callback and redeemed
+    # at /v1/oauth/token -- see mcp_auth_codes.py's module docstring for why
+    # this is in-process rather than Vault-backed. Built unconditionally
+    # (like pat_last_used_tracker in identity_mw.py) since it has no external
+    # dependency; api/mcp_oauth.py's routes 503 on their own when
+    # keycloak_login_client_id is unset, so an unused store here is harmless.
+    mcp_auth_code_store = McpAuthCodeStore()
 
     # --- Tokens: durable registry backing the manual bearer-token bootstrap
     # flow (POST/GET/DELETE /v1/tokens, issue #24), Vault/OpenBao-backed for
@@ -519,6 +540,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     application.state.token_registry = token_registry
     application.state.revoked_jti_cache = revoked_jti_cache
     application.state.principal_cache = principal_cache
+    application.state.mcp_auth_code_store = mcp_auth_code_store
 
     # Prime the JWKS cache at startup so the first request does not pay the
     # latency cost of a remote fetch.

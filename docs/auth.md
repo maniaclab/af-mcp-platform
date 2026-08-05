@@ -718,9 +718,10 @@ another JWT:
 2. **List** — `GET /v1/tokens` shows metadata for PATs minted through this
    endpoint, including ones already revoked (shown with a revoked status
    rather than removed, so the portal can distinguish active/revoked/
-   expired). Still only covers PATs minted here — a future OAuth bootstrap
-   flow (a later step of issue #144) would mint through the same store, so
-   this gap is expected to close rather than widen.
+   expired). Also covers PATs minted via the MCP OAuth discovery bootstrap
+   flow below (issue #140) — both mint through the same registry, so a PAT
+   obtained either way shows up here identically, named after the MCP
+   client's own CIMD `client_name` when the bootstrap flow minted it.
 3. **Revoke** — `DELETE /v1/tokens/{lookup_id}` marks the PAT revoked in the
    registry. Unlike the mint-rate-limit window (still per-replica, in-memory
    — see the module docstring in `api/tokens.py` for why that's an
@@ -740,6 +741,73 @@ another JWT:
    expiry to sweep against; it only ever leaves the registry via an explicit
    revoke.
 
+### MCP OAuth discovery + PAT bootstrap (issue #140)
+
+The portal's mint page above still requires a signed-in human to visit it and
+copy-paste a token. Issue #140 adds a second way to obtain a PAT that a
+spec-compliant MCP client drives entirely itself, with no manual step: point
+the client at `mcp.af.uchicago.edu/mcp` with no credential at all, and it
+discovers and completes the login on its own.
+
+The broker becomes an **OAuth-facing authorization endpoint for MCP clients
+that delegates user authentication to Keycloak and issues broker-native PATs
+after successful authentication.** It is emphatically *not* becoming an
+identity provider — no passwords, no MFA, no account lifecycle, no login UI
+of its own; those stay with Keycloak permanently. The returned PAT is not an
+OAuth access token in the security architecture — it is merely *transported*
+in the `access_token` field because that is the shape OAuth clients
+understand (RFC 6749 deliberately does not specify access-token format, which
+is why introspection, RFC 7662, exists at all).
+
+1. **Discovery.** An unauthenticated `/mcp` request now returns a genuine
+   HTTP 401 (issue #138/#144 step 1) carrying
+   `WWW-Authenticate: Bearer resource_metadata="…/.well-known/oauth-protected-resource/mcp"`.
+   That URL, and its un-suffixed root form (both served identically —
+   `api/wellknown.py`), are RFC 9728 protected-resource metadata naming
+   **the broker itself** — not the Keycloak realm — as the authorization
+   server: `{"resource": "https://mcp.af.uchicago.edu/mcp",
+   "authorization_servers": ["https://mcp.af.uchicago.edu"]}`. The broker in
+   turn serves its own RFC 8414 metadata at
+   `/.well-known/oauth-authorization-server`, describing
+   `/v1/oauth/authorize`/`/v1/oauth/token` and advertising
+   `client_id_metadata_document_supported: true`.
+2. **Client registration is CIMD** (Client ID Metadata Documents,
+   `draft-ietf-oauth-client-id-metadata-document`), mirroring rucio-mcp's
+   in-house reference implementation (`rucio_mcp/server.py`/`auth/cimd.py`):
+   an MCP client's `client_id` is an `https://` URL the broker dereferences
+   at authorize time (`cimd_client.py` — SSRF-guarded fetch, self-reference
+   check, port-agnostic loopback `redirect_uri` matching for native/CLI
+   clients that bind an ephemeral port at runtime). No `/register` endpoint,
+   no per-client database. This sidesteps AF Keycloak not advertising CIMD
+   itself (it advertises DCR instead) — irrelevant here, since MCP clients
+   register with the broker, not Keycloak.
+3. **`GET /v1/oauth/authorize`** validates the client's CIMD document and
+   `redirect_uri`, then redirects the browser to Keycloak's own login using
+   the broker's *own* confidential client (see "Operator setup: the MCP
+   OAuth discovery bootstrap login client" above) — PKCE plus a Fernet-
+   encrypted `state` token (`oauth_state.py`'s `McpAuthorizePayload`,
+   sibling to the account-linking flow's `StatePayload`) carrying the MCP
+   client's own pending `redirect_uri`/`state`/PKCE challenge across the
+   round trip, since nothing else survives it.
+4. **`GET /v1/oauth/keycloak-login/callback`** receives Keycloak's redirect
+   back (nonce-cookie CSRF check, same shape as the account-linking flow's
+   callback), exchanges the code at Keycloak's token endpoint, verifies the
+   resulting `id_token`, and mints a short-lived, single-use, in-process
+   authorization code (`mcp_auth_codes.py` — a few seconds' lifetime, not
+   Vault-backed; a broker restart mid-flow just means the MCP client retries
+   from `/authorize`) before redirecting the browser back to the MCP
+   client's own `redirect_uri` with that code and its original `state`.
+5. **`POST /v1/oauth/token`** redeems the code: validates it hasn't been
+   used already, that `client_id`/`redirect_uri` match, and that the
+   presented `code_verifier` hashes to the stored PKCE challenge — only then
+   mints a **new** PAT (never reuses one) via the same registry the portal's
+   `POST /v1/tokens` uses, named after the MCP client's CIMD `client_name`
+   when available (falling back to the usual dated default), and returns it
+   as `{"access_token": "mcp_pat_…", "token_type": "Bearer", "expires_in": …}`.
+
+`/v1` stays Keycloak-JWT-only throughout this flow, exactly as for the
+portal's own mint path — see "Where PATs are accepted" immediately below.
+
 ### Where PATs are accepted — and where they deliberately are not
 
 **`/mcp` accepts both identity PATs and Keycloak JWTs.**
@@ -747,9 +815,11 @@ another JWT:
 starting with `mcp_pat_` and routes it to `pat_auth.resolve_pat_principal`;
 anything else follows the existing JWT path (`identity.get_principal`)
 unchanged. This is deliberately a *recognition* dispatch, not a cutover —
-both credential types work side by side until issue #144 step 5 flips
-`/mcp` to PAT-only, once an OAuth bootstrap flow gives every client a way to
-obtain a PAT without visiting the portal first.
+both credential types work side by side until a future issue #144 step 5
+flips `/mcp` to PAT-only, now that the OAuth discovery bootstrap flow above
+gives every client a way to obtain a PAT without visiting the portal first.
+That cutover is deliberately not part of this change — see issue #144's
+"PAT-only must be the last step, not an early one" resolution.
 
 **`/v1` remains Keycloak-JWT-only, including `POST /v1/tokens` itself.**
 `keycloak_dependency` is untouched by this design: a PAT is not a valid JWT,
@@ -760,11 +830,11 @@ PATs — a single leaked credential would become self-renewing, and revocation
 would degrade into whack-a-mole against tokens the leaked one itself
 created (GitHub disallows this by default for the same reason). A PAT is
 therefore always traceable back to an interactive Keycloak login, whether
-initiated from the portal (today) or, in a future step of issue #144, an
-OAuth bootstrap flow that also authenticates via Keycloak first. The portal
-SPA itself is never issued a PAT — it keeps using its short-lived Keycloak
-JWT, since handing a long-lived credential to browser storage would be
-strictly worse than a JWT that expires in minutes.
+initiated from the portal or from the MCP OAuth discovery bootstrap flow
+above — both authenticate via Keycloak first. The portal SPA itself is
+never issued a PAT — it keeps using its short-lived Keycloak JWT, since
+handing a long-lived credential to browser storage would be strictly worse
+than a JWT that expires in minutes.
 
 ### Authorization is an attribute of the principal, not the token
 
@@ -943,13 +1013,66 @@ spec:
         existingClientSecretSecret: "keycloak-admin-client-secret"
 ```
 
-### `broker.tokenMint.*` is now unused
+### Operator setup: the MCP OAuth discovery bootstrap login client
 
-The token-mint confidential client and its `TOKEN_MINT_CLIENT_ID`/
-`TOKEN_MINT_CLIENT_SECRET` chart values (`broker.tokenMint.*`) existed only
-to support the RFC 8693 token-exchange design this section replaces;
-`api/tokens.py` no longer performs any Keycloak call to mint a PAT, so
-those values are dead as of this change. Left in the chart rather than
-removed — a later step of issue #144 may repurpose the same "confidential
-client + sealed secret" shape again, and removing/re-adding chart values is
-needless churn for a deployment that already has the Secret in place.
+`broker.tokenMint.*`/`TOKEN_MINT_CLIENT_ID`/`TOKEN_MINT_CLIENT_SECRET`
+(`Settings.keycloak_login_client_id`/`keycloak_login_client_secret`) existed
+only to support the RFC 8693 token-exchange design the "broker-issued
+identity PATs" section above replaced, and sat configured-but-unread until
+issue #140 repurposed the identical "confidential client + sealed secret"
+shape for a different grant type: the broker's own `/v1/oauth/authorize`
+(`api/mcp_oauth.py`) authenticates *as* this client when it redirects an MCP
+client's browser through a real Keycloak login on that MCP client's behalf
+(see "MCP OAuth discovery + PAT bootstrap" below for the full flow). Same
+env var names, same chart values, same reasoning as the Keycloak admin
+service account above for why removing/re-adding chart values on every
+design change would be needless churn for a deployment that already has the
+Secret in place.
+
+1. **Clients → Create client**, in the same realm as `oidc.issuer`.
+2. **Client authentication: On** — a confidential client (this leg is
+   server-to-server: the broker itself talks to Keycloak's token endpoint,
+   never a browser), authenticating via `authorization_code`.
+3. **Standard flow: On** (authorization_code); every other flow (implicit,
+   direct access grants, service accounts) **Off** — this client only ever
+   completes one specific redirect-based login, nothing else.
+4. **Valid redirect URIs**: exactly
+   `{broker_public_origin}/v1/oauth/keycloak-login/callback` — the broker's
+   own callback for this leg, not to be confused with the account-linking
+   callback (`/v1/oauth/callback/{alias}`) or any MCP client's own
+   redirect_uri (which Keycloak never sees; that hop is entirely between the
+   broker and the MCP client).
+5. **Advanced → Proof Key for Code Exchange Code Challenge Method: S256** —
+   the broker always sends PKCE on this leg in addition to the client
+   secret, defence in depth rather than a substitute for either.
+6. Note the client's **Client ID** and, from the **Credentials** tab, its
+   **Client secret**. These become `TOKEN_MINT_CLIENT_ID`/
+   `TOKEN_MINT_CLIENT_SECRET`.
+
+The Helm chart wires both env vars from `broker.tokenMint.clientId` (a plain
+value) and `broker.tokenMint.existingClientSecretSecret` (the name of a
+pre-existing Secret with a `token-mint-client-secret` key), the same
+existing-Secret-by-reference pattern used throughout this file:
+
+```bash
+kubectl create secret generic token-mint-client-secret \
+  --dry-run=client \
+  --from-literal=token-mint-client-secret='<client secret from the Credentials tab>' \
+  -o yaml \
+  | kubeseal --controller-namespace=sealed-secrets --format=yaml \
+  > token-mint-client-secret.sealed.yaml
+```
+
+```yaml
+spec:
+  values:
+    broker:
+      tokenMint:
+        clientId: "mcp-login-client"
+        existingClientSecretSecret: "token-mint-client-secret"
+```
+
+Both this client and `broker.publicOrigin`/`BROKER_STATE_KEY` (already
+required for the oauth21-direct linking flow above, and reused here — see
+`Settings._validate_mcp_oauth_config`) must be configured together before
+the discovery endpoints in the next section do anything but 503.

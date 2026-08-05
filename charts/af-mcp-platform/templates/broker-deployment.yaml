@@ -53,16 +53,26 @@ spec:
               protocol: TCP
           env:
             {{- include "af-mcp-platform.broker.env" . | nindent 12 }}
-            # Manual bearer-token mint credentials (TOKEN_MINT_CLIENT_ID/
-            # TOKEN_MINT_CLIENT_SECRET) -- deployment-only, not part of the
-            # shared af-mcp-platform.broker.env template: they exist purely
-            # for the POST /v1/tokens mint path (api/tokens.py), which the
-            # token-sweep CronJob's entrypoint (token_sweep.py) never
-            # imports, and -- like TOKEN_MINT_CLIENT_ID/SECRET themselves --
-            # are deliberately not part of the broker's pydantic Settings,
-            # so there's no Settings() construction requirement pulling
-            # them into the CronJob's env the way oauth21-direct's
-            # identityProviders validation does for the vars above.
+            # Confidential Keycloak client credentials (TOKEN_MINT_CLIENT_ID/
+            # TOKEN_MINT_CLIENT_SECRET) the broker's own /v1/oauth/authorize
+            # authenticates as when it stands in for an MCP client during the
+            # OAuth discovery bootstrap flow (issue #140, api/mcp_oauth.py --
+            # Settings.keycloak_login_client_id/_secret). Deployment-only, not
+            # part of the shared af-mcp-platform.broker.env template: the
+            # token-sweep CronJob's entrypoint (token_sweep.py) never imports
+            # api/mcp_oauth.py, so there's no reason for its pod spec to carry
+            # this credential -- Settings() tolerates it being absent there
+            # (Settings._validate_mcp_oauth_config only requires
+            # broker_state_key/broker_public_origin when this client id is
+            # actually set, same "half-configured must fail loudly, absent is
+            # a valid degraded state" shape as oauth21-direct's validation).
+            # These env var names predate this purpose: issue #144 step 2a
+            # replaced the RFC 8693 token-exchange design that originally
+            # needed a confidential client here, leaving TOKEN_MINT_CLIENT_ID/
+            # SECRET wired but unused until this repurposed them for a
+            # different grant type (authorization_code instead of
+            # token-exchange) rather than adding a second env var pair for
+            # the same "confidential client + sealed secret" shape.
             {{- if .Values.broker.tokenMint.clientId }}
             - name: TOKEN_MINT_CLIENT_ID
               value: {{ .Values.broker.tokenMint.clientId | quote }}

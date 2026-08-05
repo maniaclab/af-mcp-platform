@@ -31,18 +31,32 @@ Before a tool call succeeds, three things have to be true, in order:
 
 Every MCP client presents its own `aud=mcp-gateway` bearer token directly —
 there is no ForwardAuth proxy in front of `/mcp` (see
-[Architecture](architecture.md)). **MCP OAuth discovery (RFC 8414) is not
-implemented yet** (tracked by issue #58 as an explicit non-goal), so no
-client can bootstrap its first token automatically today — mint one at
-[`mcp-portal.af.uchicago.edu/tokens`](https://mcp-portal.af.uchicago.edu/tokens/)
-and paste it into your client's configuration once (see
-[Programmatic client bootstrap](auth.md#programmatic-client-bootstrap) for
-what that page's mint/list/revoke endpoints actually do, including the
-remaining known limitations and how revocation is enforced). The token's
-value is shown exactly once at mint time — if you lose it, revoke it from
-the portal and mint a new one, rather than trying to retrieve it again. The
-mechanism for doing that without the token touching disk or shell history
-is client-specific; see each section below.
+[Architecture](architecture.md)). There are now two ways to get one:
+
+- **OAuth discovery (recommended)** — a client that speaks the MCP
+  authorization spec bootstraps its own credential with no manual step at
+  all. Point it at the server URL with no header/token configured; the
+  first request 401s, the client discovers the broker's own
+  `/v1/oauth/authorize`/`/v1/oauth/token` (RFC 9728 + RFC 8414 metadata,
+  `client_id_metadata_document_supported: true` — see
+  [MCP OAuth discovery + PAT bootstrap](auth.md#mcp-oauth-discovery-pat-bootstrap-issue-140)
+  for the full mechanism), opens your browser to a real Keycloak login, and
+  comes back with a working PAT it stores itself. This is now the default
+  path for any interactive client below that supports it.
+- **A manually minted PAT** — for CI, scripts, and clients that cannot do
+  OAuth (no browser to open, or a client too old to implement the spec).
+  Mint one at
+  [`mcp-portal.af.uchicago.edu/tokens`](https://mcp-portal.af.uchicago.edu/tokens/)
+  and paste it into your client's configuration once (see
+  [Programmatic client bootstrap](auth.md#programmatic-client-bootstrap) for
+  what that page's mint/list/revoke endpoints actually do, including the
+  remaining known limitations and how revocation is enforced). The token's
+  value is shown exactly once at mint time — if you lose it, revoke it from
+  the portal and mint a new one, rather than trying to retrieve it again.
+
+Either way, the resulting PAT behaves identically once you have it — same
+`mcp_pat_…` shape, same `/tokens` list entry, same revocation. The sections
+below say which path each client uses.
 
 ## Minting a token from the command line
 
@@ -77,39 +91,38 @@ known limitations for why.
 
 ## Claude (Claude.ai, Claude Desktop)
 
-Claude's remote-MCP "custom connectors" support a static bearer token via a
-**Request headers** field — this is currently a **beta** feature; if you
-don't see it, ask your Anthropic account team for early access, or use
-Claude Code / the MCP CLI below in the meantime.
+Add a custom connector with just the server URL — no header, no token:
 
 1. Go to **Settings > Connectors > Add custom connector**.
 2. Enter the server URL: `https://mcp.af.uchicago.edu/mcp/` (note the
    trailing slash — see [Errors](#errors-youll-see)).
-3. Open **Request headers**, add a header:
-   - Name: `Authorization`
-   - Value: `Bearer <your-token>` — include the literal word `Bearer` and
-     the space; Claude sends the value exactly as entered, with no scheme
-     prepended.
-   - Mark it **Required**.
-4. Click **Add**, then enable the connector for your conversation via the
+3. Click **Add**, then enable the connector for your conversation via the
    "+" button's Connectors menu.
 
-Claude stores the header value securely and does not display it again.
+The first call triggers OAuth discovery: Claude opens a browser window to
+Keycloak's login, and on success stores the resulting PAT itself — you never
+see or handle the token directly. If your client predates OAuth support (or
+the "custom connectors" feature isn't available to you yet), fall back to a
+static bearer via **Request headers** instead:
+
+- Name: `Authorization`
+- Value: `Bearer <your-token>` — include the literal word `Bearer` and the
+  space; Claude sends the value exactly as entered, with no scheme
+  prepended.
+- Mark it **Required**.
+
+Claude stores either credential securely and does not display it again.
 
 ## Claude Code
 
 ```bash
-claude mcp add --transport http atlas-af https://mcp.af.uchicago.edu/mcp/ \
-  --header "Authorization: Bearer $MCP_BEARER_TOKEN"
+claude mcp add --transport http atlas-af https://mcp.af.uchicago.edu/mcp/
 ```
 
-Read the token into that env var first so it never lands in your shell
-history:
-
-```bash
-read -s -p "Bearer token: " MCP_BEARER_TOKEN
-export MCP_BEARER_TOKEN
-```
+No `--header` needed. The first tool call 401s, Claude Code discovers the
+broker's OAuth metadata, and opens your browser to complete the Keycloak
+login — the PAT it gets back is stored for you, not printed to the
+terminal.
 
 Equivalent JSON (`.mcp.json` for project scope, `~/.claude.json` for user
 scope via `claude mcp add --scope user ...`):
@@ -119,13 +132,22 @@ scope via `claude mcp add --scope user ...`):
   "mcpServers": {
     "atlas-af": {
       "type": "http",
-      "url": "https://mcp.af.uchicago.edu/mcp/",
-      "headers": {
-        "Authorization": "Bearer ${MCP_BEARER_TOKEN}"
-      }
+      "url": "https://mcp.af.uchicago.edu/mcp/"
     }
   }
 }
+```
+
+If you'd rather skip the browser step entirely (e.g. a headless environment
+with no way to open one), mint a PAT from the portal and wire it in as a
+static header instead, the same way as before:
+
+```bash
+read -s -p "Bearer token: " MCP_BEARER_TOKEN
+export MCP_BEARER_TOKEN
+
+claude mcp add --transport http atlas-af https://mcp.af.uchicago.edu/mcp/ \
+  --header "Authorization: Bearer $MCP_BEARER_TOKEN"
 ```
 
 Claude Code expands `${MCP_BEARER_TOKEN}` from the environment at connect
@@ -134,11 +156,16 @@ time — the token itself never needs to be written into the JSON file.
 ## Any other MCP-over-HTTP client
 
 The pattern is the same everywhere: HTTP (or SSE) transport, pointed at
-`https://mcp.af.uchicago.edu/mcp/`, with an `Authorization: Bearer <token>`
-header on every request. This is exactly what `scripts/verify-mcp-flow.py`
-does via the `fastmcp` Python client — read its `--help` and source for a
-minimal working example, or run it directly to sanity-check your own token
-before wiring up a client:
+`https://mcp.af.uchicago.edu/mcp/`. A client built on an MCP SDK with OAuth
+support (e.g. the Python or TypeScript `mcp` SDKs' own client auth helpers)
+needs nothing else configured — it follows the same discovery-then-login
+sequence described above on its own. A client without that support still
+needs an explicit `Authorization: Bearer <token>` header on every request,
+using a PAT minted from the portal or the command line above. This is
+exactly what `scripts/verify-mcp-flow.py` does via the `fastmcp` Python
+client (bearer-header path, not OAuth discovery) — read its `--help` and
+source for a minimal working example, or run it directly to sanity-check
+your own token before wiring up a client:
 
 ```bash
 read -s -p "Bearer token: " MCP_BEARER_TOKEN
