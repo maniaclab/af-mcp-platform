@@ -309,6 +309,35 @@ class Settings(BaseSettings):
     principal_cache_refresh_seconds: float = 45.0
     principal_cache_max_staleness_seconds: float = 6 * 60 * 60.0
 
+    # How often (seconds) a successful refresh that merely *confirms*
+    # unchanged attributes still writes to the persistence backend below,
+    # refreshing the durability of that knowledge -- a pure content-diff
+    # (write only when something changed) would otherwise leave a stable
+    # principal's persisted record weeks old, already past
+    # principal_cache_max_staleness_seconds by the time a restart ever
+    # happens, defeating the point of persisting at all. See
+    # principal_cache.py's module docstring for the full write-amplification
+    # arithmetic. Default (3 hours) is deliberately comfortably below the
+    # default max_staleness_seconds (6 hours, i.e. half of it) so a healthy,
+    # reachable system always has a persisted record well inside the
+    # staleness bound. A *changed* value still persists immediately,
+    # regardless of this interval.
+    principal_cache_heartbeat_seconds: float = 3 * 60 * 60.0
+
+    # Which PrincipalCacheBackend implementation persists the principal
+    # cache above so a cold start doesn't lose every principal's last-known
+    # attributes (issue #144 step 2b). "in_memory" is single-replica and
+    # lost on restart (fine for dev/testing, and the pre-existing behavior
+    # before this setting existed); "vault" persists to the same
+    # Vault/OpenBao instance as token_store_backend/token_registry_backend
+    # above, under a separate kv_path_prefix — see principal_cache.py.
+    principal_cache_backend: Literal["in_memory", "vault"] = "in_memory"
+
+    # KV-v2 path prefix for the persisted principal cache, distinct from
+    # vault_kv_path_prefix/token_registry_kv_path_prefix so all three
+    # Vault-backed stores never collide under the same kv_mount.
+    principal_cache_kv_path_prefix: str = "mcp/principal-cache"
+
     # Keycloak user-profile attribute keys `principal_directory.py`'s
     # KeycloakPrincipalDirectory reads a PAT-authenticated principal's POSIX
     # identity from (Admin REST API `GET .../users/{id}`'s `attributes` map
@@ -436,35 +465,39 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _validate_vault_config(self) -> Settings:
-        """Fail startup loudly when either Vault-backed store is selected but the settings they depend on are not — a half-configured VaultTokenStore/VaultTokenRegistryBackend would otherwise fail at first request instead of at boot (see also app.py's lifespan trial authentication). Both stores share the same Vault connection settings (only their kv_path_prefix differs), so one validator covers either or both being selected."""
+        """Fail startup loudly when any Vault-backed store is selected but the settings they depend on are not — a half-configured VaultTokenStore/VaultTokenRegistryBackend/VaultPrincipalCacheBackend would otherwise fail at first request instead of at boot (see also app.py's lifespan trial authentication). All three stores share the same Vault connection settings (only their kv_path_prefix differs), so one validator covers any or all being selected."""
         if (
             self.token_store_backend != "vault"
             and self.token_registry_backend != "vault"
+            and self.principal_cache_backend != "vault"
         ):
             return self
         if not self.vault_addr:
             log.error(
                 "vault_config_invalid",
                 reason=(
-                    "vault_addr is empty but token_store_backend and/or "
-                    "token_registry_backend is 'vault'"
+                    "vault_addr is empty but token_store_backend, "
+                    "token_registry_backend, and/or principal_cache_backend "
+                    "is 'vault'"
                 ),
             )
             raise ValueError(
-                "vault_addr (VAULT_ADDR) must be set when token_store_backend "
-                "or token_registry_backend is 'vault'."
+                "vault_addr (VAULT_ADDR) must be set when token_store_backend, "
+                "token_registry_backend, or principal_cache_backend is 'vault'."
             )
         if not self.vault_auth_role:
             log.error(
                 "vault_config_invalid",
                 reason=(
-                    "vault_auth_role is empty but token_store_backend and/or "
-                    "token_registry_backend is 'vault'"
+                    "vault_auth_role is empty but token_store_backend, "
+                    "token_registry_backend, and/or principal_cache_backend "
+                    "is 'vault'"
                 ),
             )
             raise ValueError(
                 "vault_auth_role (VAULT_AUTH_ROLE) must be set when "
-                "token_store_backend or token_registry_backend is 'vault'."
+                "token_store_backend, token_registry_backend, or "
+                "principal_cache_backend is 'vault'."
             )
         return self
 

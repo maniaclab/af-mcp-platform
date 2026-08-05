@@ -191,6 +191,35 @@ def test_token_sweep_grace_seconds_defaults_to_seven_days():
 
 
 # ---------------------------------------------------------------------------
+# Vault PrincipalCacheBackend config (issue #144 step 2b) — shares the same
+# vault_addr/vault_auth_role validation as the TokenStore/TokenRegistry
+# backends above.
+# ---------------------------------------------------------------------------
+
+
+def test_vault_config_ok_when_principal_cache_backend_is_in_memory():
+    Settings(principal_cache_backend="in_memory")  # must not raise
+
+
+def test_vault_config_ok_when_principal_cache_backend_vault_and_addr_and_role_set():
+    Settings(
+        principal_cache_backend="vault",
+        vault_addr="https://vault.example",
+        vault_auth_role="af-mcp-broker",
+    )  # must not raise
+
+
+def test_vault_config_raises_when_principal_cache_backend_vault_and_addr_missing():
+    with pytest.raises(ValueError, match="vault_addr"):
+        Settings(principal_cache_backend="vault", vault_auth_role="af-mcp-broker")
+
+
+def test_vault_config_raises_when_principal_cache_backend_vault_and_auth_role_missing():
+    with pytest.raises(ValueError, match="vault_auth_role"):
+        Settings(principal_cache_backend="vault", vault_addr="https://vault.example")
+
+
+# ---------------------------------------------------------------------------
 # /mcp aggregator transport mode (issue #128)
 # ---------------------------------------------------------------------------
 

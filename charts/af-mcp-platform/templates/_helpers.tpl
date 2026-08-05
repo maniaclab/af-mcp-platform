@@ -190,7 +190,7 @@ Deployment (broker-deployment.yaml) and the token-sweep CronJob
 (cronjob-token-sweep.yaml). The sweep CLI (token_sweep.py) builds a Settings
 instance from the environment exactly like app.py's lifespan does, so it
 needs the identical env: the same Vault connection (shared by
-oauth21.tokenStore and tokenRegistry — see config.py's
+oauth21.tokenStore, tokenRegistry, and principalCache — see config.py's
 _validate_vault_config), and the same oauth21-direct identityProviders
 validation requirements (Settings() raises at construction time otherwise).
 Callers pipe this through `nindent` at whatever depth their container's
@@ -280,12 +280,23 @@ Callers pipe this through `nindent` at whatever depth their container's
 - name: TOKEN_REGISTRY_KV_PATH_PREFIX
   value: {{ .Values.broker.tokenRegistry.kvPathPrefix | quote }}
 {{- end }}
+# Principal cache persistence backend (issue #144 step 2b) -- durable
+# storage for identity-PAT-authenticated principals' last-known
+# groups/uid/gid/unixname/email, so a broker restart during a Keycloak
+# outage doesn't fail closed for them. Always set, same visibility
+# rationale as TOKEN_STORE_BACKEND above.
+- name: PRINCIPAL_CACHE_BACKEND
+  value: {{ .Values.broker.principalCache.backend | replace "-" "_" | quote }}
+{{- if .Values.broker.principalCache.kvPathPrefix }}
+- name: PRINCIPAL_CACHE_KV_PATH_PREFIX
+  value: {{ .Values.broker.principalCache.kvPathPrefix | quote }}
+{{- end }}
 {{- /*
-Vault connection settings are shared by both Vault-backed stores above (one
-VaultKV instance, per config.py/app.py) — rendered once whenever either
-needs it, not duplicated per-backend.
+Vault connection settings are shared by all Vault-backed stores above (one
+VaultKV instance, per config.py/app.py) — rendered once whenever any of
+them needs it, not duplicated per-backend.
 */}}
-{{- if or (eq .Values.broker.oauth21.tokenStore.backend "vault") (eq .Values.broker.tokenRegistry.backend "vault") }}
+{{- if or (eq .Values.broker.oauth21.tokenStore.backend "vault") (eq .Values.broker.tokenRegistry.backend "vault") (eq .Values.broker.principalCache.backend "vault") }}
 {{- if .Values.broker.oauth21.tokenStore.vault.addr }}
 - name: VAULT_ADDR
   value: {{ .Values.broker.oauth21.tokenStore.vault.addr | quote }}
