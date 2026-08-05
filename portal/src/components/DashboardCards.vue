@@ -64,7 +64,9 @@ onMounted(async () => {
          the credential a client without OAuth discovery actually needs. -->
     <div
       class="dc__card"
-      :class="!loading && summary && summary.activeTokenCount > 0 ? 'dc__card--ok' : 'dc__card--neutral'"
+      :class="
+        !loading && summary && summary.activeTokenCount > 0 ? 'dc__card--ok' : 'dc__card--neutral'
+      "
     >
       <span class="dc__label">Bearer tokens</span>
       <span class="dc__value" :class="{ 'dc__value--loading': loading }">

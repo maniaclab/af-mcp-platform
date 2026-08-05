@@ -36,11 +36,7 @@ const poweredByLinked = computed(() =>
              `title` attribute -- title-only meant the badge's meaning was
              invisible on touch and unreliable across screen readers. -->
         <span v-if="server.capability !== '__none__'" class="bc__badge-wrap">
-          <button
-            type="button"
-            class="bc__cap-badge"
-            :aria-describedby="`bc-cap-${server.name}`"
-          >
+          <button type="button" class="bc__cap-badge" :aria-describedby="`bc-cap-${server.name}`">
             {{ server.capability }}
           </button>
           <span :id="`bc-cap-${server.name}`" class="bc__badge-tooltip" role="tooltip">
@@ -49,11 +45,7 @@ const poweredByLinked = computed(() =>
         </span>
 
         <span class="bc__badge-wrap">
-          <button
-            type="button"
-            class="bc__auth-badge"
-            :aria-describedby="`bc-auth-${server.name}`"
-          >
+          <button type="button" class="bc__auth-badge" :aria-describedby="`bc-auth-${server.name}`">
             {{ server.auth_type }}
           </button>
           <span :id="`bc-auth-${server.name}`" class="bc__badge-tooltip" role="tooltip">
