@@ -71,3 +71,23 @@ async def main() -> None:
 
 asyncio.run(main())`;
 }
+
+/**
+ * Builds the `claude mcp add` one-liner for registering this broker as an
+ * MCP client, with the just-minted token already substituted (issue #152) --
+ * shown in TokensPage.vue's "Token created" step, next to the raw token's
+ * own copy button.
+ *
+ * This deliberately differs from docs/connecting-a-client.md's Claude Code
+ * section, which reads the bearer from `$MCP_BEARER_TOKEN` (never a literal
+ * token) because that doc is meant to be copy-pasted broadly, well after the
+ * token was minted. Here the token is only ever available in this dialog,
+ * exactly once -- the convenience of one ready-to-run command outweighs the
+ * shell-history exposure for that single paste. TokensPage.vue surfaces a
+ * warning alongside this snippet pointing back at the safer env-var form for
+ * anyone who'd rather avoid it.
+ */
+export function claudeMcpAddSnippet(brokerOrigin: string, token: string): string {
+  const origin = normalizeOrigin(brokerOrigin);
+  return `claude mcp add --transport http atlas-af ${origin}/mcp/ --header "Authorization: Bearer ${token}"`;
+}

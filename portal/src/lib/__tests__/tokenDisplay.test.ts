@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { shortLookupId, tokenStatus, truncateNote } from '../tokenDisplay';
+import { NOTE_MAX_LENGTH, shortLookupId, tokenStatus, truncateNote } from '../tokenDisplay';
 
 describe('tokenStatus', () => {
   const NOW = Date.parse('2026-07-21T12:00:00Z');
@@ -75,15 +75,15 @@ describe('truncateNote', () => {
     expect(truncateNote('for the CI bot')).toBe('for the CI bot');
   });
 
-  it('returns a note at exactly the max length unchanged', () => {
-    const note = 'x'.repeat(80);
+  it('returns a note at exactly the default max length (NOTE_MAX_LENGTH) unchanged', () => {
+    const note = 'x'.repeat(NOTE_MAX_LENGTH);
     expect(truncateNote(note)).toBe(note);
   });
 
-  it('truncates a note longer than the max length with an ellipsis', () => {
-    const note = 'x'.repeat(90);
+  it('truncates a note longer than the default max length with an ellipsis', () => {
+    const note = 'x'.repeat(NOTE_MAX_LENGTH + 10);
     const result = truncateNote(note);
-    expect(result).toBe(`${'x'.repeat(80)}…`);
+    expect(result).toBe(`${'x'.repeat(NOTE_MAX_LENGTH)}…`);
   });
 
   it('accepts a custom max length', () => {

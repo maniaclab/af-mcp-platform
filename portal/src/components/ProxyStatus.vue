@@ -549,8 +549,11 @@ const remainingClass = computed(() => {
   background: rgb(from var(--color-af-red) r g b / 0.18);
 }
 
-/* Modal — the native <dialog> element sits centered via its UA styles; we
- * override the box chrome and add our own ::backdrop with the AF ground tint.
+/* Modal — the native <dialog> element centers itself when opened via
+ * showModal(), via the UA stylesheet's `margin: auto` on `dialog:modal`
+ * (restored in global.css, where Tailwind's Preflight otherwise zeroes it
+ * out -- see the comment there and issue #152). Here we only override the
+ * box chrome and add our own ::backdrop with the AF ground tint.
  */
 .ps__modal {
   background: var(--color-af-surface);

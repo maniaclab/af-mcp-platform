@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { curlMintSnippet, pythonMintAndConnectSnippet } from '../tokenCliSnippets';
+import {
+  claudeMcpAddSnippet,
+  curlMintSnippet,
+  pythonMintAndConnectSnippet,
+} from '../tokenCliSnippets';
 
 describe('curlMintSnippet', () => {
   it('POSTs to <brokerOrigin>/v1/tokens with a Bearer header and a JSON body', () => {
@@ -53,5 +57,27 @@ describe('pythonMintAndConnectSnippet', () => {
     expect(snippet).toContain('"https://mcp.af.uchicago.edu/v1/tokens"');
     expect(snippet).toContain('"https://mcp.af.uchicago.edu/mcp/"');
     expect(snippet).not.toContain('.edu//');
+  });
+});
+
+describe('claudeMcpAddSnippet', () => {
+  it('builds the exact claude mcp add command with the token substituted', () => {
+    const snippet = claudeMcpAddSnippet('https://mcp.af.uchicago.edu', 'mcp_pat_abc123');
+    expect(snippet).toBe(
+      'claude mcp add --transport http atlas-af https://mcp.af.uchicago.edu/mcp/ ' +
+        '--header "Authorization: Bearer mcp_pat_abc123"',
+    );
+  });
+
+  it('strips a trailing slash from brokerOrigin before building the URL', () => {
+    const snippet = claudeMcpAddSnippet('https://mcp.af.uchicago.edu/', 'mcp_pat_abc123');
+    expect(snippet).toContain('atlas-af https://mcp.af.uchicago.edu/mcp/ ');
+    expect(snippet).not.toContain('.edu//mcp/');
+  });
+
+  it('never hardcodes a broker host -- it always reflects the supplied origin', () => {
+    const snippet = claudeMcpAddSnippet('https://mcp.example.org', 'mcp_pat_xyz');
+    expect(snippet).toContain('https://mcp.example.org/mcp/');
+    expect(snippet).not.toContain('mcp.af.uchicago.edu');
   });
 });

@@ -15,8 +15,12 @@
 import { ref, computed, onMounted, nextTick, type Ref } from 'vue';
 import { mintToken, listTokens, revokeToken, SessionExpiredError } from '../lib/api';
 import type { MintedToken, TokenSummary } from '../lib/api';
-import { shortLookupId, tokenStatus, truncateNote } from '../lib/tokenDisplay';
-import { curlMintSnippet, pythonMintAndConnectSnippet } from '../lib/tokenCliSnippets';
+import { NOTE_MAX_LENGTH, shortLookupId, tokenStatus, truncateNote } from '../lib/tokenDisplay';
+import {
+  claudeMcpAddSnippet,
+  curlMintSnippet,
+  pythonMintAndConnectSnippet,
+} from '../lib/tokenCliSnippets';
 import { getBrokerOrigin } from '../lib/auth';
 
 const tokens = ref<TokenSummary[]>([]);
@@ -162,6 +166,21 @@ async function copyPythonSnippet() {
   await copyToClipboard(pythonSnippet.value, pythonCopyLabel);
 }
 
+// "Register as an MCP client" one-liner shown alongside the raw token in
+// the "Token created" step above (issue #152) -- reuses the same
+// brokerOrigin this section resolves. Only ever constructible from
+// `mintedToken`, which onMintDialogClose scrubs the moment the dialog
+// closes -- like the token itself, this is never reconstructable from the
+// list view, since the secret is never retained server-side.
+const claudeAddCommand = computed(() =>
+  mintedToken.value ? claudeMcpAddSnippet(brokerOrigin.value, mintedToken.value.token) : '',
+);
+const claudeAddCopyLabel = ref('Copy');
+
+async function copyClaudeAddCommand() {
+  await copyToClipboard(claudeAddCommand.value, claudeAddCopyLabel);
+}
+
 // ── Revoke ───────────────────────────────────────────────────────────────
 const revokingLookupId = ref<string | null>(null);
 const revokeError = ref<string | null>(null);
@@ -277,9 +296,25 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
           <tbody>
             <tr v-for="row in sortedTokens" :key="row.lookup_id" class="tp__row">
               <td class="tp__td">
-                <div class="tp__td-name">{{ row.name }}</div>
-                <div v-if="row.note" class="tp__td-note" :title="row.note">
-                  {{ truncateNote(row.note) }}
+                <div class="tp__td-name-wrap">
+                  <span class="tp__td-name">{{ row.name }}</span>
+                  <button
+                    v-if="row.note"
+                    type="button"
+                    class="tp__note-icon"
+                    :aria-describedby="`tp-note-${row.lookup_id}`"
+                    aria-label="Show note"
+                  >
+                    <span aria-hidden="true">ⓘ</span>
+                  </button>
+                  <span
+                    v-if="row.note"
+                    :id="`tp-note-${row.lookup_id}`"
+                    class="tp__note-tooltip"
+                    role="tooltip"
+                  >
+                    {{ truncateNote(row.note) }}
+                  </span>
                 </div>
               </td>
               <td class="tp__td tp__td--jti" :title="row.lookup_id">
@@ -418,7 +453,7 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
               v-model="note"
               class="tp__input tp__textarea"
               placeholder="e.g. used by the CI bot for nightly runs"
-              maxlength="256"
+              :maxlength="NOTE_MAX_LENGTH"
               rows="2"
               :disabled="minting"
             ></textarea>
@@ -455,6 +490,20 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
             {{ copyLabel }}
           </button>
         </div>
+
+        <div class="tp__form-label tp__claude-add-label">Register with Claude Code</div>
+        <div class="tp__token-box">
+          <code class="tp__token-value">{{ claudeAddCommand }}</code>
+          <button type="button" class="tp__btn tp__btn--copy" @click="copyClaudeAddCommand">
+            {{ claudeAddCopyLabel }}
+          </button>
+        </div>
+        <p class="tp__claude-add-warn">
+          This command embeds the token above — pasting it into a terminal puts a working credential
+          in your shell history. For the safer pattern (token read into an env var via
+          <code>read -s</code>, never a literal), see the <strong>Claude Code</strong> section of
+          <code>docs/connecting-a-client.md</code>.
+        </p>
 
         <dl class="tp__token-meta">
           <div class="tp__token-meta-row">
@@ -620,14 +669,68 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
   color: var(--color-af-text);
 }
 
-.tp__td-note {
-  margin-top: 0.125rem;
+/* Name cell + (i) note icon (issue #152) -- the tooltip below is
+ * `position: absolute`, so it never participates in table layout the way
+ * the old inline note div did (which stretched this column while still
+ * truncating its own text -- the bug this replaces).
+ */
+.tp__td-name-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.tp__note-icon {
+  display: inline-flex;
+  align-items: center;
+  background: none;
+  border: none;
+  padding: 0;
   font-size: 0.75rem;
+  line-height: 1;
   color: var(--color-af-dim);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 16rem;
+  cursor: help;
+}
+.tp__note-icon:hover,
+.tp__note-icon:focus-visible {
+  color: var(--color-af-teal);
+}
+.tp__note-icon:focus-visible {
+  outline: 2px solid var(--color-af-teal);
+  outline-offset: 2px;
+}
+
+/* Hidden via opacity/visibility, not `display: none` -- aria-describedby
+ * still reaches this content for assistive tech regardless of the visual
+ * hover/focus state below, which is what makes it keyboard-accessible and
+ * not just hover-only. */
+.tp__note-tooltip {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 0.375rem;
+  max-width: 18rem;
+  padding: 0.5rem 0.625rem;
+  background: var(--color-af-void);
+  border: 1px solid var(--color-af-muted);
+  border-radius: 4px;
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--color-af-text);
+  white-space: normal;
+  word-break: break-word;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 120ms;
+  pointer-events: none;
+  z-index: 10;
+}
+.tp__note-icon:hover + .tp__note-tooltip,
+.tp__note-icon:focus-visible + .tp__note-tooltip {
+  opacity: 1;
+  visibility: visible;
 }
 
 .tp__td--jti {
@@ -902,7 +1005,12 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
   opacity: 0.5;
 }
 
-/* Modal */
+/* Modal — the native <dialog> element centers itself when opened via
+ * showModal(), via the UA stylesheet's `margin: auto` on `dialog:modal`
+ * (restored in global.css, where Tailwind's Preflight otherwise zeroes it
+ * out -- see the comment there and issue #152). Here we only override the
+ * box chrome and add our own ::backdrop with the AF ground tint.
+ */
 .tp__modal {
   background: var(--color-af-surface);
   border: 1px solid var(--color-af-muted);
@@ -971,6 +1079,25 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
   word-break: break-all;
   max-height: 8rem;
   overflow-y: auto;
+}
+
+/* "Register with Claude Code" one-liner (issue #152) -- reuses
+ * .tp__token-box/.tp__token-value/.tp__btn--copy for the same copy-target
+ * shape as the raw token above it. */
+.tp__claude-add-label {
+  margin: 0 0 0.375rem;
+}
+
+.tp__claude-add-warn {
+  font-size: 0.75rem;
+  color: var(--color-af-dim);
+  line-height: 1.6;
+  margin: 0 0 1.25rem;
+}
+.tp__claude-add-warn code {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.6875rem;
+  color: #9ca3af;
 }
 
 .tp__token-meta {
