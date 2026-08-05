@@ -90,6 +90,14 @@ from `PrincipalDirectory` (the Keycloak Admin REST API lookup below), via
 the principal cache -- completing what step 3 did for groups. If your
 realm's four POSIX User Attribute mappers on the `posix` client scope exist
 only to satisfy this broker, **you may remove them (and the scope itself).**
+
+**Check first whether anything else in your realm reads the `posix` claim.**
+A Keycloak realm often serves more applications than this broker, and the
+`posix` scope in particular tends to predate it -- the UChicago AF realm
+keeps these mappers precisely because other Connect applications consume
+the claim. Removing them is safe *for the broker* and says nothing about
+your other consumers. Leaving them costs nothing here: the broker simply
+never looks at the claim.
 The settings that control which Keycloak profile attributes the directory
 reads are `posix_uid_attribute`/`posix_gid_attribute`/
 `posix_unixname_attribute` (see "Configurable POSIX attribute names and
@@ -490,7 +498,17 @@ token.** Every credential type -- JWT and identity PAT alike -- resolves a
 principal's current groups the same way: from `PrincipalDirectory` (the
 Keycloak Admin REST API lookup below), via the principal cache. If your
 realm has a Group Membership mapper on the `mcp-gateway` client scope purely
-to satisfy this broker, **you may remove it.** The setting that controls how
+to satisfy this broker, **you may remove it** -- but as with the POSIX
+mappers above, check first that nothing else in your realm reads the
+`groups` claim.
+
+**Remove only the mapper, never the scope.** The `mcp-gateway` client scope
+also carries the **Audience mapper** that puts `mcp-gateway` into a token's
+`aud` claim, which the broker validates on every single request. Deleting
+the scope, or excluding users from it, breaks authentication entirely and in
+a way that is hard to trace -- see "The cascading failure" below.
+
+The setting that controls how
 the directory matches group names is `principal_directory_group_full_path`
 (see "Configurable POSIX attribute names and group-path matching" above) --
 there is no longer a separate JWT-side mapper convention it needs to stay
