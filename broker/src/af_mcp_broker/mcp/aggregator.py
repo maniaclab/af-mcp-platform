@@ -31,11 +31,16 @@ from starlette.middleware import Middleware
 
 from af_mcp_broker.authorization import check_entitlement
 from af_mcp_broker.credentials import CredentialKind, NeedsUnlock
+from af_mcp_broker.mcp.diagnostics import register_diagnostic_tools
 from af_mcp_broker.mcp.middleware.authorization_mw import AuthorizationMiddleware
 from af_mcp_broker.mcp.middleware.entitlement_mw import EntitlementMiddleware
 from af_mcp_broker.mcp.middleware.identity_mw import (
     AsgiAuthMiddleware,
     IdentityMiddleware,
+)
+from af_mcp_broker.mcp.registry import (
+    LIST_IDENTITIES_TOOL_NAME,
+    LIST_MCP_SERVERS_TOOL_NAME,
 )
 
 if TYPE_CHECKING:
@@ -44,8 +49,8 @@ if TYPE_CHECKING:
     from fastmcp.tools.base import Tool
 
     from af_mcp_broker.authorization import EntitlementPolicy
-    from af_mcp_broker.config import Settings
-    from af_mcp_broker.credentials import CredentialRegistry
+    from af_mcp_broker.config import IdentityProviderConfig, Settings
+    from af_mcp_broker.credentials import CredentialProvider, CredentialRegistry
     from af_mcp_broker.identity import Principal
     from af_mcp_broker.mcp.registry import BackendRegistry, BackendSpec
     from af_mcp_broker.principal_cache import PrincipalCache
@@ -334,7 +339,10 @@ def _make_client_factory(
             raise ToolError(
                 f"{type(provider).__name__} not linked. "
                 f"Visit the portal Identities page ({portal}/identities) to "
-                "connect it."
+                "connect it. Call "
+                f"`{LIST_IDENTITIES_TOOL_NAME}` to see which identity "
+                f"provider this backend needs, or `{LIST_MCP_SERVERS_TOOL_NAME}` "
+                "for this backend's current status."
             )
 
         try:
@@ -414,6 +422,9 @@ def build_aggregator(
     revoked_jti_cache: RevokedJtiCache | None = None,
     pat_backend: TokenRegistryBackend | None = None,
     principal_cache: PrincipalCache | None = None,
+    identity_providers: dict[str, CredentialProvider] | None = None,
+    identity_provider_configs: dict[str, IdentityProviderConfig] | None = None,
+    target_to_alias: dict[str, str] | None = None,
 ) -> FastMCP:
     """Construct a fully-wired aggregator FastMCP instance.
 
@@ -423,8 +434,9 @@ def build_aggregator(
     AuthorizationMiddleware third (checks entitlement again for tools/call,
     since a filtered list is not an access-control boundary by itself, and
     audits every invocation) -- then adds one ProxyProvider per backend in
-    ``registry``. Namespacing follows ``BackendSpec.apply_namespace`` --
-    backends whose tools already self-prefix (e.g. rucio-mcp) opt out.
+    ``registry`` plus the broker-native af_* diagnostic tools (issue #153,
+    see mcp/diagnostics.py). Namespacing follows ``BackendSpec.apply_namespace``
+    -- backends whose tools already self-prefix (e.g. rucio-mcp) opt out.
 
     *revoked_jti_cache*/*pat_backend*/*principal_cache* default to None here
     because app.py builds the aggregator eagerly, before the real token
@@ -434,7 +446,10 @@ def build_aggregator(
     *principal_cache* being None means identity PATs are recognized by prefix
     on ``/mcp`` but always rejected (see ``mcp/middleware/identity_mw.py``'s
     ``AsgiAuthMiddleware``) -- a broker with no Keycloak admin service
-    account configured (issue #144 step 2a).
+    account configured (issue #144 step 2a). *identity_providers*/
+    *identity_provider_configs*/*target_to_alias* default to empty for the
+    same eager-build reason -- af_list_identities/af_list_mcp_servers simply
+    report nothing until ``populate_aggregator`` supplies the real ones.
     """
     mcp = FastMCP(name="af-mcp-aggregator")
     mcp.add_middleware(
@@ -443,6 +458,15 @@ def build_aggregator(
     mcp.add_middleware(EntitlementMiddleware(registry, policy))
     mcp.add_middleware(AuthorizationMiddleware(registry, policy))
     _register_backends(mcp, registry, credential_registry, settings, policy)
+    register_diagnostic_tools(
+        mcp,
+        registry,
+        policy,
+        credential_registry,
+        identity_providers or {},
+        identity_provider_configs or {},
+        target_to_alias or {},
+    )
     return mcp
 
 
@@ -472,8 +496,11 @@ def populate_aggregator(
     revoked_jti_cache: RevokedJtiCache | None = None,
     pat_backend: TokenRegistryBackend | None = None,
     principal_cache: PrincipalCache | None = None,
+    identity_providers: dict[str, CredentialProvider] | None = None,
+    identity_provider_configs: dict[str, IdentityProviderConfig] | None = None,
+    target_to_alias: dict[str, str] | None = None,
 ) -> None:
-    """Refresh an aggregator built by ``build_aggregator`` with a freshly loaded registry/settings/policy/credential_registry/revoked_jti_cache/pat_backend/principal_cache.
+    """Refresh an aggregator built by ``build_aggregator`` with a freshly loaded registry/settings/policy/credential_registry/revoked_jti_cache/pat_backend/principal_cache/identity_providers/identity_provider_configs/target_to_alias.
 
     app.py's mount-time constraint means the aggregator's FastMCP instance
     and ASGI app must exist before BACKENDS_FILE/POLICY_FILE/the credential
@@ -483,7 +510,8 @@ def populate_aggregator(
     lifespan entry, including repeated TestClient entries in tests): backend
     providers are replaced wholesale rather than appended to, mirroring how
     BackendRegistry and EntitlementPolicy are themselves rebuilt from scratch
-    on every lifespan entry rather than merged.
+    on every lifespan entry rather than merged -- the af_* diagnostic tools
+    (register_diagnostic_tools) follow the same rebuild-from-scratch pattern.
     """
     identity_mw, entitlement_mw, authorization_mw = _find_middleware(mcp)
     identity_mw.settings = settings
@@ -495,6 +523,15 @@ def populate_aggregator(
     authorization_mw.registry = registry
     authorization_mw.policy = policy
     _register_backends(mcp, registry, credential_registry, settings, policy)
+    register_diagnostic_tools(
+        mcp,
+        registry,
+        policy,
+        credential_registry,
+        identity_providers or {},
+        identity_provider_configs or {},
+        target_to_alias or {},
+    )
 
 
 def _register_backends(
@@ -505,6 +542,16 @@ def _register_backends(
     policy: EntitlementPolicy,
 ) -> None:
     mcp.providers.clear()
+    # mcp.providers.clear() above wipes every provider, including
+    # mcp.local_provider (FastMCP.__init__ adds it there once, at
+    # construction) -- re-add it immediately so the af_* diagnostic tools
+    # (mcp/diagnostics.py's register_diagnostic_tools(), which registers
+    # directly onto that same LocalProvider instance) stay reachable through
+    # dispatch after every build_aggregator()/populate_aggregator() call,
+    # not just the first. Re-adding the same object is safe to repeat on
+    # every call: it carries no per-call state of its own, and the list was
+    # just cleared, so this never produces a duplicate entry.
+    mcp.add_provider(mcp.local_provider)
     for spec in registry.all_backends():
         provider = _ObservableProxyProvider(
             spec.name,

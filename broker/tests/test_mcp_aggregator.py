@@ -34,7 +34,13 @@ from af_mcp_broker.mcp.aggregator import (
 from af_mcp_broker.mcp.middleware.authorization_mw import AuthorizationMiddleware
 from af_mcp_broker.mcp.middleware.entitlement_mw import EntitlementMiddleware
 from af_mcp_broker.mcp.middleware.identity_mw import IdentityMiddleware
-from af_mcp_broker.mcp.registry import BackendRegistry, BackendSpec
+from af_mcp_broker.mcp.registry import (
+    LIST_IDENTITIES_TOOL_NAME,
+    LIST_MCP_SERVERS_TOOL_NAME,
+    WHOAMI_TOOL_NAME,
+    BackendRegistry,
+    BackendSpec,
+)
 
 if TYPE_CHECKING:
     from af_mcp_broker.identity import Principal
@@ -192,6 +198,13 @@ def test_build_aggregator_wires_identity_before_entitlement_before_authorization
     assert identity_index < entitlement_index < authorization_index
 
 
+# _register_backends() re-adds mcp.local_provider (which the af_* diagnostic
+# tools live on -- see mcp/diagnostics.py) right after clearing mcp.providers,
+# so every count below is "one backend provider per registered backend" PLUS
+# that one constant local-provider entry.
+_LOCAL_PROVIDER_COUNT = 1
+
+
 def test_build_aggregator_registers_one_provider_per_backend(settings: Any) -> None:
     registry = BackendRegistry()
     registry.register(_spec(name="a", prefix="a"))
@@ -201,7 +214,26 @@ def test_build_aggregator_registers_one_provider_per_backend(settings: Any) -> N
         registry, settings, EntitlementPolicy(), CredentialRegistry()
     )
 
-    assert len(mcp.providers) == 2
+    assert len(mcp.providers) == 2 + _LOCAL_PROVIDER_COUNT
+
+
+async def test_local_provider_tools_survive_populate_aggregator(settings: Any) -> None:
+    """Regression test: _register_backends() clears mcp.providers wholesale
+    on every call (see its docstring), which would silently drop
+    mcp.local_provider -- and with it every af_* diagnostic tool
+    (mcp/diagnostics.py) -- from dispatch on the very next
+    populate_aggregator() refresh if it weren't re-added. af_whoami is a
+    stand-in for "any locally-registered tool stays reachable."""
+    mcp = build_aggregator(
+        BackendRegistry(), settings, EntitlementPolicy(), CredentialRegistry()
+    )
+    populate_aggregator(
+        mcp, BackendRegistry(), settings, EntitlementPolicy(), CredentialRegistry()
+    )
+
+    tools = await mcp._list_tools()
+
+    assert WHOAMI_TOOL_NAME in {t.name for t in tools}
 
 
 def test_populate_aggregator_replaces_providers_not_appends(settings: Any) -> None:
@@ -210,7 +242,7 @@ def test_populate_aggregator_replaces_providers_not_appends(settings: Any) -> No
     mcp = build_aggregator(
         registry_a, settings, EntitlementPolicy(), CredentialRegistry()
     )
-    assert len(mcp.providers) == 1
+    assert len(mcp.providers) == 1 + _LOCAL_PROVIDER_COUNT
 
     registry_b = BackendRegistry()
     registry_b.register(_spec(name="b", prefix="b"))
@@ -219,7 +251,7 @@ def test_populate_aggregator_replaces_providers_not_appends(settings: Any) -> No
         mcp, registry_b, settings, EntitlementPolicy(), CredentialRegistry()
     )
 
-    assert len(mcp.providers) == 2
+    assert len(mcp.providers) == 2 + _LOCAL_PROVIDER_COUNT
 
 
 def test_populate_aggregator_refreshes_middleware_state(settings: Any) -> None:
@@ -488,8 +520,13 @@ async def test_client_factory_bearer_not_linked_raises_friendly_error(
     registry = CredentialRegistry()
     registry.register(spec.name, provider)
 
-    with pytest.raises(ToolError, match="not linked"):
+    with pytest.raises(ToolError, match="not linked") as excinfo:
         await _make_client_factory(spec, registry, settings, _OPEN_POLICY)()
+
+    # Close the loop (issue #153): a model hitting this error is told which
+    # diagnostic tools to call next rather than having to guess they exist.
+    assert LIST_IDENTITIES_TOOL_NAME in str(excinfo.value)
+    assert LIST_MCP_SERVERS_TOOL_NAME in str(excinfo.value)
 
 
 async def test_client_factory_bearer_needs_unlock_raises_friendly_error(

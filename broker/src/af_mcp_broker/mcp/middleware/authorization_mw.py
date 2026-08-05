@@ -15,6 +15,7 @@ from af_mcp_broker.authorization import (
     check_entitlement,
     get_action_type,
 )
+from af_mcp_broker.mcp.registry import DIAGNOSTIC_TOOL_NAMES
 
 if TYPE_CHECKING:
     import mcp.types as mt
@@ -85,6 +86,20 @@ class AuthorizationMiddleware(Middleware):
             # without writing an audit record for a principal we don't have
             # (mirrors entitlement_mw's identical defensive branch).
             raise AuthorizationError("No authenticated principal for this tool call")
+
+        if tool_name in DIAGNOSTIC_TOOL_NAMES:
+            # af_* diagnostic tools (issue #153) bypass entitlement
+            # checking, credential minting, and per-backend audit/metrics
+            # entirely: they need no capability, touch no backend, and
+            # ProxyProvider never enters this call path for them at all
+            # (they're registered directly on the aggregator -- see
+            # mcp/diagnostics.py). They must keep answering precisely when
+            # a backend or its credential provider is broken, so gating
+            # them behind the same machinery that call is meant to explain
+            # would be circular. No registered backend can claim this
+            # prefix (BackendRegistry.register() refuses it), so this can't
+            # be used to route a real backend's tool around authorization.
+            return await call_next(context)
 
         backend = self.registry.get_by_tool_prefix(tool_name)
         request_id = str(uuid.uuid4())

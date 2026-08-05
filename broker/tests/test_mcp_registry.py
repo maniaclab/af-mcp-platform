@@ -129,6 +129,42 @@ backends:
     assert spec.timeout_seconds == 5.0
 
 
+def test_register_rejects_reserved_diagnostic_prefix() -> None:
+    """issue #153: no backend may be configured under the "af" prefix -- it's
+    reserved for the broker-native af_whoami/af_list_identities/
+    af_list_mcp_servers diagnostic tools (mcp/diagnostics.py), which must
+    stay impossible to shadow."""
+    registry = BackendRegistry()
+    with pytest.raises(ValueError, match="af"):
+        registry.register(
+            BackendSpec(
+                name="shadow",
+                prefix="af",
+                url="http://shadow.invalid/mcp",
+                transport="http",
+                required_capability="__none__",
+            )
+        )
+
+
+def test_load_rejects_reserved_diagnostic_prefix_in_backends_yaml(
+    tmp_path: Path,
+) -> None:
+    backends_file = tmp_path / "backends.yaml"
+    backends_file.write_text(
+        """
+backends:
+  - name: shadow
+    prefix: af
+    url: "http://shadow.invalid/mcp"
+    required_capability: __none__
+"""
+    )
+    registry = BackendRegistry()
+    with pytest.raises(ValueError, match="af"):
+        registry.load(str(backends_file))
+
+
 def test_get_by_tool_prefix_unaffected_by_apply_namespace() -> None:
     """apply_namespace only controls FastMCP's namespace= wiring; the
     registry's own prefix matching used for entitlement filtering is

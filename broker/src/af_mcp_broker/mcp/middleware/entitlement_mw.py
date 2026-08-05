@@ -6,6 +6,7 @@ import structlog
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 
 from af_mcp_broker.authorization import EntitlementPolicy, get_principal_capabilities
+from af_mcp_broker.mcp.registry import DIAGNOSTIC_TOOL_NAMES
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -53,6 +54,17 @@ class EntitlementMiddleware(Middleware):
         return [tool for tool in tools if self._tool_is_allowed(tool, principal_caps)]
 
     def _tool_is_allowed(self, tool: Tool, principal_caps: set[str]) -> bool:
+        if tool.name in DIAGNOSTIC_TOOL_NAMES:
+            # af_* diagnostic tools (issue #153) describe the broker's own
+            # state (identity linkage, backend availability, the caller's
+            # own capabilities) and need no capability -- they must stay
+            # visible to every authenticated caller regardless of
+            # entitlements, precisely because they're how a caller
+            # self-diagnoses a missing/denied tool elsewhere. No registered
+            # backend can ever claim this prefix (BackendRegistry.register()
+            # refuses it), so this can't be used to smuggle a real backend's
+            # tool past the capability check below.
+            return True
         backend = self.registry.get_by_tool_prefix(tool.name)
         if backend is None:
             return False  # unknown prefix: deny by default (fail-closed)

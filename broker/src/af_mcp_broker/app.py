@@ -466,8 +466,9 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # (built eagerly at module scope below, since the aggregator must be
     # mountable before Settings()/BackendRegistry() are known — see the
     # comment above `_mcp_aggregator`). Push the registry/policy/settings/
-    # credential_registry/revoked_jti_cache just loaded above into it now
-    # that they're real.
+    # credential_registry/revoked_jti_cache/identity providers just loaded
+    # above into it now that they're real -- the last three feed the af_*
+    # diagnostic tools (issue #153).
     populate_aggregator(
         _mcp_aggregator,
         backend_registry,
@@ -477,6 +478,9 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         revoked_jti_cache,
         pat_backend=token_registry_backend,
         principal_cache=principal_cache,
+        identity_providers=identity_providers,
+        identity_provider_configs=identity_provider_configs,
+        target_to_alias=target_to_alias,
     )
 
     # --- Audit: without init the module drops every record. Honor AUDIT_LOG_FILE.
