@@ -312,6 +312,29 @@ export async function fetchCatalog(): Promise<CatalogResponse> {
 }
 
 // ---------------------------------------------------------------------------
+// Capabilities — GET /v1/capabilities. Lists the caller's CURRENT capability
+// grants (broker/src/af_mcp_broker/api/capabilities.py's get_capabilities()).
+// TokensPage.vue's mint dialog uses this to offer a capability PAT's optional
+// scope as checkboxes over exactly what the caller holds right now (issue
+// #144 step 4) -- never a static, potentially-stale list.
+// ---------------------------------------------------------------------------
+
+export interface CapabilityGrant {
+  capability: string;
+  targets: string[];
+  action_types: ActionType[];
+}
+
+export interface CapabilitiesResponse {
+  subject: string;
+  grants: CapabilityGrant[];
+}
+
+export async function fetchCapabilities(): Promise<CapabilitiesResponse> {
+  return apiFetch<CapabilitiesResponse>('/capabilities');
+}
+
+// ---------------------------------------------------------------------------
 // X.509 proxy — GET/POST/DELETE /v1/x509/proxy
 // ---------------------------------------------------------------------------
 
@@ -374,7 +397,11 @@ export async function revokeProxy(): Promise<void> {
  * case-insensitively -- a collision is a 409 (see mintToken's caller). `note`
  * is optional, free-text, purely self-descriptive, and absent (`null`)
  * unless supplied. `expires_at` is `null` for a never-expiring PAT
- * (`neverExpires: true` in the mint request). */
+ * (`neverExpires: true` in the mint request). `capability_grant` is `null`
+ * for an ordinary identity PAT (this token's authority is always the
+ * caller's CURRENT capabilities), or the sorted list of capability names a
+ * capability PAT is scoped to at most (issue #144 step 4) -- see
+ * tokenDisplay.ts's capabilityGrantLabel(). */
 export interface MintedToken {
   token: string;
   lookup_id: string;
@@ -382,6 +409,7 @@ export interface MintedToken {
   expires_at: string | null;
   name: string;
   note: string | null;
+  capability_grant: string[] | null;
 }
 
 /** GET /v1/tokens row — no `token` field, by design. `revoked_at` is null
@@ -390,7 +418,8 @@ export interface MintedToken {
  * revoked/active/expired status; see tokenDisplay.ts's tokenStatus().
  * `last_used_at` is null until the PAT has authenticated at least one
  * request on /mcp (throttled server-side -- see token_registry.py -- so it
- * updates at most once every few minutes, not on every call). */
+ * updates at most once every few minutes, not on every call). See
+ * MintedToken.capability_grant for the meaning of that field here too. */
 export interface TokenSummary {
   lookup_id: string;
   name: string;
@@ -399,6 +428,7 @@ export interface TokenSummary {
   expires_at: string | null;
   revoked_at: string | null;
   last_used_at: string | null;
+  capability_grant: string[] | null;
 }
 
 export async function mintToken(
@@ -406,6 +436,7 @@ export async function mintToken(
   note?: string,
   expiresInDays?: number,
   neverExpires?: boolean,
+  capabilities?: string[],
 ): Promise<MintedToken> {
   return apiFetch<MintedToken>('/tokens', {
     method: 'POST',
@@ -414,6 +445,7 @@ export async function mintToken(
       ...(note ? { note } : {}),
       ...(expiresInDays !== undefined ? { expires_in_days: expiresInDays } : {}),
       ...(neverExpires ? { never_expires: true } : {}),
+      ...(capabilities !== undefined ? { capabilities } : {}),
     }),
   });
 }

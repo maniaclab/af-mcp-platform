@@ -10,11 +10,17 @@ secret hash + owning principal" -- see ``TokenRecord`` below.
 
 This is the **PAT store** in #144's three-concern split (PAT store /
 principal cache / capability engine): it answers "who is this token?" --
-identity and metadata only. It carries no groups, no capabilities, no
-authorization data whatsoever -- that is deliberately the principal cache's
-job (``principal_cache.py``), keyed by principal id rather than by token, so
+identity and metadata only. It carries no groups and no authorization data
+whatsoever -- that is deliberately the principal cache's job
+(``principal_cache.py``), keyed by principal id rather than by token, so
 rotating or revoking a PAT never disturbs a user's cached authorization and
-group changes propagate once per user rather than once per token.
+group changes propagate once per user rather than once per token. The one
+deliberate exception (issue #144 step 4) is ``TokenRecord.capability_grant``:
+an optional, static *restriction* a capability PAT carries on top of that --
+never a source of authority by itself, and never consulted instead of the
+principal cache's current groups. See that field's docstring and
+``pat_auth._resolve_authority``/``authorization.get_principal_capabilities``
+for where and how it's applied.
 
 ``TokenRegistryBackend`` is the storage contract two implementations satisfy:
 
@@ -139,11 +145,24 @@ class TokenRecord:
     this record exists solely so the broker can validate a presented PAT and
     the portal can list/revoke what a principal has minted.
 
-    Carries no groups, no capabilities, no authorization data of any kind --
-    see this module's docstring on the PAT-store/principal-cache split.
-    ``principal_id`` is the Keycloak ``sub`` claim; POSIX uid/gid/groups are
-    resolved fresh at validation time from ``principal_cache.py``, never
-    read off this record.
+    Carries no groups and no authorization data of any kind -- see this
+    module's docstring on the PAT-store/principal-cache split. ``principal_id``
+    is the Keycloak ``sub`` claim; POSIX uid/gid/groups are resolved fresh at
+    validation time from ``principal_cache.py``, never read off this record.
+
+    ``capability_grant`` is the one deliberate exception (issue #144 step 4):
+    ``None`` for an identity PAT (today's default, and every PAT minted
+    before this field existed), or an explicit, immutable set of capability
+    names for a **capability PAT**. It is a RESTRICTION on top of the
+    principal's current capabilities, never a substitute for them --
+    ``pat_auth._resolve_authority`` copies it onto the resulting
+    ``Principal`` unchanged, and ``authorization.get_principal_capabilities``
+    intersects it with whatever the principal's *current* groups grant. A
+    record whose ``capability_grant`` happens to name a capability the
+    principal doesn't currently hold (e.g. because they lost a group after
+    this PAT was minted, or -- for a test -- because the record was
+    constructed directly) is not a data-integrity problem: the intersection
+    at request time simply never grants it, regardless of how it got here.
     """
 
     lookup_id: str
@@ -157,6 +176,10 @@ class TokenRecord:
     # Free-text, user-supplied, purely self-descriptive -- never consumed by
     # the broker itself (issue #116). None when the caller didn't supply one.
     note: str | None = None
+    # See this dataclass's docstring. None (the default) for every identity
+    # PAT; a capability PAT's grant otherwise -- see also Principal
+    # .capability_grant and get_principal_capabilities.
+    capability_grant: frozenset[str] | None = None
 
 
 def _collides(existing: TokenRecord, candidate: TokenRecord, now: float) -> bool:
@@ -413,6 +436,16 @@ def _record_to_fields(record: TokenRecord) -> dict[str, Any]:
         "revoked_at": record.revoked_at,
         "last_used_at": record.last_used_at,
         "note": record.note,
+        # Sorted for a stable on-disk representation (set/frozenset iteration
+        # order is not guaranteed) -- None (identity PAT) stored as None, not
+        # an empty list, so _record_from_fields can distinguish "no grant at
+        # all" from "a grant of zero capabilities" (the latter never arises
+        # from mint_token today, but the round trip should still be exact).
+        "capability_grant": (
+            sorted(record.capability_grant)
+            if record.capability_grant is not None
+            else None
+        ),
     }
 
 
@@ -439,6 +472,11 @@ def _record_from_fields(fields: dict[str, Any]) -> TokenRecord:
             else None
         ),
         note=fields.get("note"),
+        capability_grant=(
+            frozenset(fields["capability_grant"])
+            if fields.get("capability_grant") is not None
+            else None
+        ),
     )
 
 

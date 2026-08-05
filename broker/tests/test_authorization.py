@@ -70,6 +70,80 @@ def test_omitted_capability_is_allowed(
     assert allow, reason
 
 
+# ---------------------------------------------------------------------------
+# Capability PATs (issue #144 step 4): Principal.capability_grant is a
+# RESTRICTION intersected with the group-derived set above, never a
+# substitute for it -- see get_principal_capabilities's docstring.
+# ---------------------------------------------------------------------------
+
+
+def test_capability_grant_intersects_with_group_derived_capabilities(
+    policy: EntitlementPolicy, make_principal: Callable[..., object]
+) -> None:
+    """A capability PAT scoped to a subset of the owner's group-derived
+    capabilities is narrowed to exactly that subset."""
+    principal = make_principal(
+        groups=["atlas"], capability_grant=frozenset({"read_data"})
+    )
+    caps = get_principal_capabilities(principal, policy)
+    assert caps == {"read_data"}
+
+
+def test_capability_grant_cannot_exceed_group_derived_capabilities(
+    policy: EntitlementPolicy, make_principal: Callable[..., object]
+) -> None:
+    """A grant naming a capability the owner's CURRENT groups don't grant
+    must never widen the effective set -- intersection, not union. This
+    proves enforcement doesn't trust the grant's contents, independent of
+    whether mint-time validation ever ran (it's exercised directly here via
+    make_principal, not through the mint endpoint)."""
+    principal = make_principal(
+        groups=[], capability_grant=frozenset({"read_data", "admin"})
+    )
+    caps = get_principal_capabilities(principal, policy)
+    # __authenticated__ grants read_metadata/read_monitoring; neither
+    # read_data nor admin is in the group-derived set for an empty groups
+    # list, so both are dropped by the intersection regardless of the grant.
+    assert caps == set()
+
+
+def test_identity_pat_capability_grant_none_behaves_exactly_as_before(
+    policy: EntitlementPolicy, make_principal: Callable[..., object]
+) -> None:
+    """capability_grant=None (every JWT, every identity PAT) must skip the
+    intersection entirely, not intersect with an empty set."""
+    principal = make_principal(groups=["atlas"], capability_grant=None)
+    caps = get_principal_capabilities(principal, policy)
+    assert caps == {
+        "read_data",
+        "read_metadata",
+        "read_monitoring",
+        "read_gitlab",
+        "submit_jobs",
+        "manage_jobs",
+        "launch_compute",
+        "manage_jupyter",
+        "manage_gitlab",
+    }
+
+
+def test_losing_a_group_shrinks_a_capability_pats_effective_set(
+    policy: EntitlementPolicy, make_principal: Callable[..., object]
+) -> None:
+    """The property the whole design turns on: a capability PAT's grant is
+    re-intersected against CURRENT groups on every call, so removing the
+    owner from the group that used to grant a capability kills that
+    capability for the PAT too -- not just for fresh JWTs."""
+    grant = frozenset({"read_data", "submit_jobs"})
+    still_in_group = make_principal(groups=["atlas"], capability_grant=grant)
+    assert get_principal_capabilities(still_in_group, policy) == grant
+
+    removed_from_group = make_principal(groups=[], capability_grant=grant)
+    # __authenticated__ grants neither read_data nor submit_jobs, so the
+    # intersection is now empty -- the grant itself never changed.
+    assert get_principal_capabilities(removed_from_group, policy) == set()
+
+
 def test_action_type_resolution(policy: EntitlementPolicy) -> None:
     # panda submit_* is a state_change override.
     assert (

@@ -208,6 +208,48 @@ async def test_diagnostic_tool_call_bypasses_backend_lookup_and_audit(
     assert captured_audits == []
 
 
+async def test_unentitled_call_denied_audit_carries_no_capability_grant_when_not_a_capability_pat(
+    registry, policy, make_principal, captured_audits
+) -> None:
+    """The common case (a JWT, or an identity PAT -- capability_grant=None)
+    must not fabricate a grant in the audit record."""
+    mw = AuthorizationMiddleware(registry, policy)
+    principal = make_principal(groups=[])
+    context = _call_tool_context("rucio_list_dids", {}, principal)
+    call_next = _CallNextRecorder()
+
+    with pytest.raises(AuthorizationError):
+        await mw.on_call_tool(context, call_next)
+
+    assert captured_audits[0].principal_capability_grant is None
+
+
+async def test_denied_call_audit_carries_the_scoped_pats_capability_grant(
+    registry, policy, make_principal, captured_audits
+) -> None:
+    """Issue #144 step 4: a denied call from a capability PAT must record
+    that PAT's effective capability_grant in the audit line, so an admin can
+    tell "the principal doesn't hold read_data at all" apart from "the
+    principal holds it, but this PAT is scoped away from it" -- the whole
+    point of this field (see AuditRecord.principal_capability_grant's
+    docstring)."""
+    mw = AuthorizationMiddleware(registry, policy)
+    # In the "atlas" group (which read_data below would normally grant), but
+    # this particular PAT is scoped to submit_jobs only -- read_data is
+    # denied even though the principal's groups would otherwise allow it.
+    principal = make_principal(
+        groups=["atlas"], capability_grant=frozenset({"submit_jobs"})
+    )
+    context = _call_tool_context("rucio_list_dids", {}, principal)
+    call_next = _CallNextRecorder()
+
+    with pytest.raises(AuthorizationError):
+        await mw.on_call_tool(context, call_next)
+
+    assert captured_audits[0].outcome == "denied"
+    assert captured_audits[0].principal_capability_grant == ["submit_jobs"]
+
+
 async def test_unknown_tool_prefix_denied(
     registry, policy, make_principal, captured_audits
 ) -> None:

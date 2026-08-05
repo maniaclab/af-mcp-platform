@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { NOTE_MAX_LENGTH, shortLookupId, tokenStatus, truncateNote } from '../tokenDisplay';
+import {
+  NOTE_MAX_LENGTH,
+  capabilityGrantLabel,
+  shortLookupId,
+  tokenStatus,
+  truncateNote,
+} from '../tokenDisplay';
 
 describe('tokenStatus', () => {
   const NOW = Date.parse('2026-07-21T12:00:00Z');
@@ -88,5 +94,23 @@ describe('truncateNote', () => {
 
   it('accepts a custom max length', () => {
     expect(truncateNote('abcdefghij', 5)).toBe('abcde…');
+  });
+});
+
+describe('capabilityGrantLabel', () => {
+  it('describes an identity PAT (null grant) as full account access', () => {
+    expect(capabilityGrantLabel(null)).toBe('Full account access');
+  });
+
+  it('describes a capability PAT scoped to one capability', () => {
+    expect(capabilityGrantLabel(['read_data'])).toBe('read_data');
+  });
+
+  it('sorts multiple capabilities for a stable display order', () => {
+    expect(capabilityGrantLabel(['submit_jobs', 'read_data'])).toBe('read_data, submit_jobs');
+  });
+
+  it('describes an empty (but non-null) grant distinctly from an identity PAT', () => {
+    expect(capabilityGrantLabel([])).toBe('No capabilities');
   });
 });

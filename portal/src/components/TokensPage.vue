@@ -13,9 +13,21 @@
  * always comes from GET /v1/tokens, which never echoes a token value.
  */
 import { ref, computed, onMounted, nextTick, type Ref } from 'vue';
-import { mintToken, listTokens, revokeToken, SessionExpiredError } from '../lib/api';
+import {
+  mintToken,
+  listTokens,
+  revokeToken,
+  fetchCapabilities,
+  SessionExpiredError,
+} from '../lib/api';
 import type { MintedToken, TokenSummary } from '../lib/api';
-import { NOTE_MAX_LENGTH, shortLookupId, tokenStatus, truncateNote } from '../lib/tokenDisplay';
+import {
+  NOTE_MAX_LENGTH,
+  capabilityGrantLabel,
+  shortLookupId,
+  tokenStatus,
+  truncateNote,
+} from '../lib/tokenDisplay';
 import {
   claudeMcpAddSnippet,
   curlMintSnippet,
@@ -71,6 +83,39 @@ const mintError = ref<string | null>(null);
 const mintedToken = ref<MintedToken | null>(null);
 const copyLabel = ref('Copy');
 
+// ── Capability PATs (issue #144 step 4) ─────────────────────────────────
+// `availableCapabilities` is the caller's CURRENT capabilities (GET
+// /v1/capabilities), fetched once on mount -- never a static list, since
+// the whole point of a capability PAT is that it can only ever narrow what
+// its owner already holds *right now*. `restrictCapabilities` is the mint
+// form's opt-in: unchecked (the default) mints an ordinary identity PAT,
+// exactly as before this field existed; checked reveals the checkbox list
+// below and mints a capability PAT scoped to whatever's selected.
+const availableCapabilities = ref<string[]>([]);
+const restrictCapabilities = ref(false);
+const selectedCapabilities = ref<Set<string>>(new Set());
+
+onMounted(async () => {
+  try {
+    const { grants } = await fetchCapabilities();
+    availableCapabilities.value = grants.map((g) => g.capability).sort();
+  } catch {
+    // Best-effort: if this fails, the mint dialog simply offers no
+    // capability restriction (identity PATs remain fully mintable, which
+    // is the more important path to keep working) rather than blocking
+    // the page load or the dialog itself over a secondary feature.
+    availableCapabilities.value = [];
+  }
+});
+
+function toggleSelectedCapability(capability: string, checked: boolean) {
+  if (checked) {
+    selectedCapabilities.value.add(capability);
+  } else {
+    selectedCapabilities.value.delete(capability);
+  }
+}
+
 async function openMintDialog(evt: Event) {
   mintTrigger.value = evt.currentTarget as HTMLButtonElement;
   mintedToken.value = null;
@@ -79,6 +124,8 @@ async function openMintDialog(evt: Event) {
   note.value = '';
   expiryOption.value = '90';
   copyLabel.value = 'Copy';
+  restrictCapabilities.value = false;
+  selectedCapabilities.value = new Set();
   await nextTick();
   mintDialog.value?.showModal();
 }
@@ -102,6 +149,7 @@ async function handleMint(evt: Event) {
       note.value.trim() || undefined,
       neverExpires ? undefined : Number(expiryOption.value),
       neverExpires,
+      restrictCapabilities.value ? [...selectedCapabilities.value] : undefined,
     );
   } catch (err) {
     // Includes the 409 duplicate-name case (api/tokens.py's DuplicateNameError)
@@ -283,6 +331,7 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
           <thead>
             <tr>
               <th scope="col" class="tp__th">Name</th>
+              <th scope="col" class="tp__th">Scope</th>
               <th scope="col" class="tp__th">Token ID</th>
               <th scope="col" class="tp__th">Created</th>
               <th scope="col" class="tp__th">Expires</th>
@@ -316,6 +365,13 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
                     {{ truncateNote(row.note) }}
                   </span>
                 </div>
+              </td>
+              <td
+                class="tp__td tp__td--scope"
+                :class="{ 'tp__td--scope-identity': row.capability_grant === null }"
+                :title="capabilityGrantLabel(row.capability_grant)"
+              >
+                {{ capabilityGrantLabel(row.capability_grant) }}
               </td>
               <td class="tp__td tp__td--jti" :title="row.lookup_id">
                 {{ shortLookupId(row.lookup_id) }}
@@ -459,6 +515,44 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
             ></textarea>
           </div>
 
+          <!-- Capability PATs (issue #144 step 4): optional restriction below
+               the caller's own CURRENT capabilities. Hidden entirely when
+               availableCapabilities is empty (e.g. the /v1/capabilities fetch
+               failed) -- an identity PAT remains mintable regardless. -->
+          <div v-if="availableCapabilities.length > 0" class="tp__form-group">
+            <label class="tp__checkbox-row">
+              <input
+                v-model="restrictCapabilities"
+                type="checkbox"
+                class="tp__checkbox"
+                :disabled="minting"
+              />
+              <span class="tp__form-label tp__checkbox-label"
+                >Restrict capabilities (optional)</span
+              >
+            </label>
+            <p class="tp__scope-hint">
+              Unchecked mints a token with your full account access, exactly as before. Checked
+              scopes the token to at most the capabilities selected below — least privilege for CI
+              or scripts.
+            </p>
+            <fieldset v-if="restrictCapabilities" class="tp__scope-fieldset">
+              <legend class="sr-only">Capabilities to grant</legend>
+              <label v-for="cap in availableCapabilities" :key="cap" class="tp__checkbox-row">
+                <input
+                  type="checkbox"
+                  class="tp__checkbox"
+                  :checked="selectedCapabilities.has(cap)"
+                  :disabled="minting"
+                  @change="
+                    toggleSelectedCapability(cap, ($event.target as HTMLInputElement).checked)
+                  "
+                />
+                <span class="tp__scope-cap-name">{{ cap }}</span>
+              </label>
+            </fieldset>
+          </div>
+
           <div v-if="mintError" class="tp__error" role="alert">{{ mintError }}</div>
 
           <div class="tp__modal-actions">
@@ -513,6 +607,10 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
           <div v-if="mintedToken.note" class="tp__token-meta-row">
             <dt>Note</dt>
             <dd>{{ mintedToken.note }}</dd>
+          </div>
+          <div class="tp__token-meta-row">
+            <dt>Scope</dt>
+            <dd>{{ capabilityGrantLabel(mintedToken.capability_grant) }}</dd>
           </div>
           <div class="tp__token-meta-row">
             <dt>Expires</dt>
@@ -741,6 +839,21 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
 
 .tp__td--expired {
   color: var(--color-af-red);
+}
+
+/* Scope column (issue #144 step 4) -- a capability PAT's grant is
+ * comma-joined plain text (capabilityGrantLabel), truncated by the column's
+ * own max-width with the full value always available via `title`. An
+ * identity PAT's "Full account access" is dimmed relative to a named grant,
+ * the same visual weight tp__td--jti already uses for secondary detail. */
+.tp__td--scope {
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tp__td--scope-identity {
+  color: var(--color-af-dim);
 }
 
 .tp__td--action {
@@ -975,6 +1088,45 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: #9ca3af;
+}
+
+/* Capability PATs (issue #144 step 4) -- "Restrict capabilities" toggle and
+ * the checkbox list it reveals. */
+.tp__checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+}
+.tp__checkbox {
+  accent-color: var(--color-af-teal);
+  width: 1rem;
+  height: 1rem;
+  flex-shrink: 0;
+}
+.tp__checkbox-label {
+  text-transform: none;
+  letter-spacing: 0.02em;
+}
+.tp__scope-hint {
+  font-size: 0.75rem;
+  color: var(--color-af-dim);
+  line-height: 1.5;
+  margin: 0.375rem 0 0;
+}
+.tp__scope-fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 0.625rem 0 0;
+  padding: 0.75rem;
+  border: 1px solid var(--color-af-muted);
+  border-radius: 4px;
+}
+.tp__scope-cap-name {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.8125rem;
+  color: var(--color-af-text);
 }
 
 .tp__input,

@@ -10,6 +10,7 @@ import {
   APIError,
   SessionExpiredError,
   clearIdentitiesCache,
+  fetchCapabilities,
   fetchDashboardSummary,
   fetchIdentities,
   fetchOAuth21AuthorizeUrl,
@@ -471,6 +472,23 @@ describe('fetchDashboardSummary()', () => {
   });
 });
 
+describe('capabilities client (issue #144 step 4: capability PATs)', () => {
+  it('fetchCapabilities returns the parsed grants', async () => {
+    globalThis.fetch = mockJson(200, {
+      subject: 'sub-abc',
+      grants: [
+        { capability: 'read_data', targets: ['rucio'], action_types: ['read'] },
+        { capability: 'submit_jobs', targets: ['panda'], action_types: ['state_change'] },
+      ],
+    });
+
+    const result = await fetchCapabilities();
+
+    expect(result.subject).toBe('sub-abc');
+    expect(result.grants.map((g) => g.capability)).toEqual(['read_data', 'submit_jobs']);
+  });
+});
+
 describe('tokens client (issue #144 step 2a: broker-issued identity PAT)', () => {
   it('mintToken posts name and returns the one-shot token', async () => {
     const fetchMock = mockJson(200, {
@@ -553,6 +571,7 @@ describe('tokens client (issue #144 step 2a: broker-issued identity PAT)', () =>
         expires_at: '2026-10-19T00:00:00+00:00',
         revoked_at: null,
         last_used_at: null,
+        capability_grant: null,
       },
     ]);
 
@@ -560,7 +579,66 @@ describe('tokens client (issue #144 step 2a: broker-issued identity PAT)', () =>
     expect(rows).toHaveLength(1);
     expect(rows[0].revoked_at).toBeNull();
     expect(rows[0].last_used_at).toBeNull();
+    expect(rows[0].capability_grant).toBeNull();
     expect(rows[0]).not.toHaveProperty('token');
+  });
+
+  it("listTokens surfaces a capability PAT row's scoped capability_grant", async () => {
+    globalThis.fetch = mockJson(200, [
+      {
+        lookup_id: 'lookup-scoped',
+        name: 'ci-bot',
+        note: null,
+        created_at: '2026-07-21T00:00:00+00:00',
+        expires_at: '2026-10-19T00:00:00+00:00',
+        revoked_at: null,
+        last_used_at: null,
+        capability_grant: ['read_data', 'submit_jobs'],
+      },
+    ]);
+
+    const rows = await listTokens();
+    expect(rows[0].capability_grant).toEqual(['read_data', 'submit_jobs']);
+  });
+
+  it('mintToken passes capabilities through and returns the resulting capability_grant', async () => {
+    const fetchMock = mockJson(200, {
+      token: 't',
+      lookup_id: 'lookup-5',
+      created_at: '2026-07-21T00:00:00+00:00',
+      expires_at: '2026-10-19T00:00:00+00:00',
+      name: 'ci-bot',
+      note: null,
+      capability_grant: ['read_data'],
+    });
+    globalThis.fetch = fetchMock;
+
+    const result = await mintToken('ci-bot', undefined, undefined, undefined, ['read_data']);
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect(JSON.parse(init.body as string)).toEqual({
+      name: 'ci-bot',
+      capabilities: ['read_data'],
+    });
+    expect(result.capability_grant).toEqual(['read_data']);
+  });
+
+  it('mintToken omits capabilities when not provided', async () => {
+    const fetchMock = mockJson(200, {
+      token: 't',
+      lookup_id: 'lookup-6',
+      created_at: '2026-07-21T00:00:00+00:00',
+      expires_at: '2026-10-19T00:00:00+00:00',
+      name: 'x',
+      note: null,
+      capability_grant: null,
+    });
+    globalThis.fetch = fetchMock;
+
+    await mintToken('x');
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect(JSON.parse(init.body as string)).toEqual({ name: 'x' });
   });
 
   it('revokeToken DELETEs the lookup_id-scoped path', async () => {

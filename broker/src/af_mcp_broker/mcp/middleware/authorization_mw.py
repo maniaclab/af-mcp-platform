@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     import mcp.types as mt
     from fastmcp.tools.base import ToolResult
 
+    from af_mcp_broker.identity import Principal
     from af_mcp_broker.mcp.registry import BackendRegistry
 
 logger = structlog.get_logger(__name__)
@@ -44,6 +45,13 @@ logger = structlog.get_logger(__name__)
 # authorize(), api/credentials.py's issue_credential()) remain the canonical
 # logic; this middleware and the client_factory call the same in-process
 # functions/classes those routes call, rather than looping back over HTTP.
+
+
+def _capability_grant_field(principal: Principal) -> list[str] | None:
+    """Sorted ``AuditRecord.principal_capability_grant`` value for *principal* -- see that field's docstring for why a denied call needs this to tell "lacks it entirely" apart from "PAT is scoped away from it" (issue #144 step 4)."""
+    if principal.capability_grant is None:
+        return None
+    return sorted(principal.capability_grant)
 
 
 def _record_invocation(backend_name: str, tool_name: str, action_type: str) -> None:
@@ -124,6 +132,7 @@ class AuthorizationMiddleware(Middleware):
                     request_id=request_id,
                     outcome="denied",
                     error=f"no backend registered for tool '{tool_name}'",
+                    principal_capability_grant=_capability_grant_field(principal),
                 )
             )
             raise AuthorizationError(f"No backend registered for tool '{tool_name}'")
@@ -157,6 +166,7 @@ class AuthorizationMiddleware(Middleware):
                     mcp_backend=backend.name,
                     outcome="denied",
                     error=reason,
+                    principal_capability_grant=_capability_grant_field(principal),
                 )
             )
             raise AuthorizationError(f"Authorization denied: {reason}")
@@ -198,6 +208,7 @@ class AuthorizationMiddleware(Middleware):
                     mcp_backend=backend.name,
                     outcome="error",
                     error=str(exc),
+                    principal_capability_grant=_capability_grant_field(principal),
                 )
             )
             raise
@@ -216,6 +227,7 @@ class AuthorizationMiddleware(Middleware):
                 request_id=request_id,
                 mcp_backend=backend.name,
                 outcome="success",
+                principal_capability_grant=_capability_grant_field(principal),
             )
         )
         return result

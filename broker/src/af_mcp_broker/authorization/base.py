@@ -68,6 +68,24 @@ def get_principal_capabilities(
     principal: Principal,
     policy: EntitlementPolicy,
 ) -> set[str]:
+    """Return the capabilities *principal* currently holds.
+
+    Derived from ``principal.groups`` exactly as before capability PATs
+    existed (issue #144 step 4). The one addition is the final
+    ``capability_grant`` intersection below: ``None`` for a JWT or an
+    identity PAT (the overwhelming majority), in which case this returns
+    exactly what it always has. For a **capability PAT**,
+    ``principal.capability_grant`` is an explicit RESTRICTION, not a
+    substitute for the group-derived set above -- intersecting means a
+    grant can never hand out more than the group-derived set already
+    allows, however it got into the grant (see ``Principal
+    .capability_grant`` and ``token_registry.TokenRecord.capability_grant``
+    for why that must hold even if a record is somehow constructed with an
+    over-broad grant), and it means losing a group shrinks a capability
+    PAT's effective set on the very next call, exactly like it already does
+    for every other credential -- there is no separate code path for a
+    capability PAT to go stale in.
+    """
     caps: set[str] = set()
     # Any authenticated user gets __authenticated__ caps
     for cap in policy.group_capabilities.get("__authenticated__", []):
@@ -75,6 +93,8 @@ def get_principal_capabilities(
     for group in principal.groups:
         for cap in policy.group_capabilities.get(group, []):
             caps.add(cap)
+    if principal.capability_grant is not None:
+        caps &= principal.capability_grant
     return caps
 
 
