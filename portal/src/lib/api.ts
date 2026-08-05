@@ -361,53 +361,59 @@ export async function revokeProxy(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Tokens — POST/GET/DELETE /v1/tokens (manual Bearer bootstrap, issue #24;
-// Vault-backed registry + enforced revocation, issue #115)
+// Tokens — POST/GET/DELETE /v1/tokens. Mints a broker-issued identity PAT
+// (issue #144 step 2a) -- see docs/auth.md's "Programmatic client bootstrap"
+// section. Replaces the RFC 8693 token-exchange design (issue #24/#115):
+// `lookup_id` replaces `jti`, `created_at` replaces `issued_at`, `expires_at`
+// is nullable (a never-expiring PAT), and `last_used_at` is now populated.
 // ---------------------------------------------------------------------------
 
-/** Where a listed token came from. Today the broker only ever reports
- * `manual` — see docs/auth.md for why auto-flow tokens aren't listed yet. */
-export type TokenSource = 'manual' | 'mcp-oauth' | 'oauth2-proxy';
-
 /** POST /v1/tokens response. `token` is present ONLY here — the broker never
- * returns a previously-minted token's value again. `name` is unique per uid
- * among live (non-revoked, non-expired) tokens, case-insensitively -- a
- * collision is a 409 (see mintToken's caller). `note` is optional, free-text,
- * purely self-descriptive, and absent (`null`) unless supplied. */
+ * returns a previously-minted token's value again. `name` is unique per
+ * principal among live (non-revoked, unexpired-or-never-expiring) tokens,
+ * case-insensitively -- a collision is a 409 (see mintToken's caller). `note`
+ * is optional, free-text, purely self-descriptive, and absent (`null`)
+ * unless supplied. `expires_at` is `null` for a never-expiring PAT
+ * (`neverExpires: true` in the mint request). */
 export interface MintedToken {
   token: string;
-  jti: string;
-  issued_at: string;
-  expires_at: string;
+  lookup_id: string;
+  created_at: string;
+  expires_at: string | null;
   name: string;
   note: string | null;
 }
 
 /** GET /v1/tokens row — no `token` field, by design. `revoked_at` is null
- * until DELETE /v1/tokens/{jti} is called -- revoked rows stay listed
+ * until DELETE /v1/tokens/{lookup_id} is called -- revoked rows stay listed
  * (rather than disappearing, as PR #28 did) so the portal can show a
- * revoked/active/expired status; see tokenDisplay.ts's tokenStatus(). */
+ * revoked/active/expired status; see tokenDisplay.ts's tokenStatus().
+ * `last_used_at` is null until the PAT has authenticated at least one
+ * request on /mcp (throttled server-side -- see token_registry.py -- so it
+ * updates at most once every few minutes, not on every call). */
 export interface TokenSummary {
-  jti: string;
+  lookup_id: string;
   name: string;
   note: string | null;
-  issued_at: string;
-  expires_at: string;
+  created_at: string;
+  expires_at: string | null;
   revoked_at: string | null;
-  source: TokenSource;
+  last_used_at: string | null;
 }
 
 export async function mintToken(
-  ttlSeconds: number,
   name?: string,
   note?: string,
+  expiresInDays?: number,
+  neverExpires?: boolean,
 ): Promise<MintedToken> {
   return apiFetch<MintedToken>('/tokens', {
     method: 'POST',
     body: JSON.stringify({
-      ttl_seconds: ttlSeconds,
       ...(name ? { name } : {}),
       ...(note ? { note } : {}),
+      ...(expiresInDays !== undefined ? { expires_in_days: expiresInDays } : {}),
+      ...(neverExpires ? { never_expires: true } : {}),
     }),
   });
 }
@@ -416,10 +422,11 @@ export async function listTokens(): Promise<TokenSummary[]> {
   return apiFetch<TokenSummary[]>('/tokens');
 }
 
-export async function revokeToken(jti: string): Promise<void> {
-  await apiFetch<{ jti: string; revoked: boolean }>(`/tokens/${encodeURIComponent(jti)}`, {
-    method: 'DELETE',
-  });
+export async function revokeToken(lookupId: string): Promise<void> {
+  await apiFetch<{ lookup_id: string; revoked: boolean }>(
+    `/tokens/${encodeURIComponent(lookupId)}`,
+    { method: 'DELETE' },
+  );
 }
 
 // ---------------------------------------------------------------------------
