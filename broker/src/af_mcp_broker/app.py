@@ -392,17 +392,32 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         refresh_interval_seconds=settings.revoked_jti_cache_refresh_seconds,
     )
 
-    # --- Principal cache (issue #144 step 2a): resolves a PAT-authenticated
-    # request's *current* groups/uid/gid/unixname/email from Keycloak, since
-    # (unlike a JWT) a PAT carries none of that itself -- see
-    # principal_cache.py and principal_directory.py's module docstrings.
-    # Both empty (the default) is a valid, degraded state: a `mcp_pat_...`
-    # bearer on /mcp is rejected the same way an invalid one is (see
-    # mcp/middleware/identity_mw.py), rather than the broker refusing to
-    # start -- there's no existing config elsewhere that signals PAT support
-    # is "supposed to" work the way an oauth21-direct identity_providers
-    # entry does for BROKER_STATE_KEY, so there's nothing to fail loudly
-    # against at startup.
+    # --- Principal cache (issue #144 steps 2a/3): resolves every
+    # authenticated request's *current* groups/uid/gid/unixname/email from
+    # Keycloak. Originally built only for PATs (opaque bearers carrying none
+    # of that themselves); step 3 made the JWT path defer to it too, so the
+    # token answers only "who is this?" and the directory alone answers
+    # "what groups do they have?" -- see identity.py's module docstring
+    # (`_resolve_current_groups`) and principal_cache.py/principal_directory.py's
+    # module docstrings for the mechanism.
+    #
+    # Both empty used to be a valid, degraded state (PAT-only): the broker
+    # still started, and only a `mcp_pat_...` bearer on /mcp was rejected.
+    # That is no longer true -- since step 3 removed the JWT path's
+    # claims-based fallback, this account is now load-bearing for ALL
+    # authentication, not just PATs. The dev bypass (BROKER_DEV_INSECURE_PRINCIPAL)
+    # is the one exception: it short-circuits identity.keycloak_dependency/
+    # mcp's AsgiAuthMiddleware before either ever reaches the directory (see
+    # build_dev_principal), so it needs no directory at all. Neither
+    # configured is therefore a genuine misconfiguration, not a degraded
+    # mode -- refuse to start rather than boot a broker that can never
+    # authenticate anyone. Same reasoning as the unreachable_capabilities
+    # check above (issue #125): this is Kubernetes, so a Deployment rollout
+    # with a failing new pod leaves the previous ReplicaSet serving traffic
+    # unaffected -- a startup RuntimeError surfaces the misconfiguration as
+    # a visible rollout failure with zero outage risk, which is strictly
+    # better than a broker that accepts every request and then 503s all of
+    # them.
     principal_cache: PrincipalCache | None = None
     if (
         settings.keycloak_admin_client_id
@@ -432,16 +447,19 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
             max_staleness_seconds=settings.principal_cache_max_staleness_seconds,
             heartbeat_interval_seconds=settings.principal_cache_heartbeat_seconds,
         )
-    else:
-        logger.warning(
-            "keycloak_admin_not_configured",
-            message=(
-                "KEYCLOAK_ADMIN_CLIENT_ID/KEYCLOAK_ADMIN_CLIENT_SECRET are "
-                "unset -- identity PATs (issue #144) cannot be authenticated "
-                "on /mcp; every mcp_pat_... bearer will be rejected as an "
-                "invalid token. See docs/auth.md."
-            ),
+    elif not application.state.dev_bypass_active:
+        msg = (
+            "KEYCLOAK_ADMIN_CLIENT_ID/KEYCLOAK_ADMIN_CLIENT_SECRET are unset "
+            "and BROKER_DEV_INSECURE_PRINCIPAL is not active. As of issue "
+            "#144 step 3, every authenticated request (JWT or PAT) resolves "
+            "its current groups from the PrincipalDirectory, so the broker "
+            "cannot authenticate anyone without this service account. "
+            "Configure the Keycloak admin service account (see "
+            "docs/auth.md's 'Operator setup: the Keycloak admin service "
+            "account'), or set BROKER_DEV_INSECURE_PRINCIPAL for local "
+            "development (see docs/local-development.md)."
         )
+        raise RuntimeError(msg)
 
     # --- MCP aggregator: the FastMCP instance and its ASGI app already exist
     # (built eagerly at module scope below, since the aggregator must be

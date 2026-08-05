@@ -96,9 +96,19 @@ def registry(open_backend_url: str) -> BackendRegistry:
 
 @pytest.fixture
 async def aggregator_url(
-    settings: Any, policy: EntitlementPolicy, registry: BackendRegistry
+    settings: Any,
+    policy: EntitlementPolicy,
+    registry: BackendRegistry,
+    static_principal_cache: Any,
 ) -> AsyncIterator[str]:
-    mcp = build_aggregator(registry, settings, policy, CredentialRegistry())
+    principal_cache, _directory = static_principal_cache
+    mcp = build_aggregator(
+        registry,
+        settings,
+        policy,
+        CredentialRegistry(),
+        principal_cache=principal_cache,
+    )
     async with run_aggregator_async(mcp, path="/mcp") as url:
         yield url
 

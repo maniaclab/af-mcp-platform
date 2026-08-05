@@ -94,6 +94,29 @@ def dead_backend_url() -> str:
     return f"http://127.0.0.1:{port}/mcp"
 
 
+# Test-controlled: maps a principal id (a JWT's `sub`) to the groups
+# _fake_directory_resolve below returns for it (issue #144 step 3 --
+# real groups resolution now goes through KeycloakPrincipalDirectory, so
+# these aggregator-plumbing tests, which care about namespacing/entitlement-
+# filtering/header-forwarding rather than the groups-unification mechanism
+# itself (that's covered by test_identity.py), need a directory double they
+# can point at whatever groups a given test wants for "user-123" (the
+# `make_claims()` default subject) without a real Keycloak.
+_TEST_PRINCIPAL_GROUPS: dict[str, list[str]] = {}
+
+
+async def _fake_directory_resolve(self: Any, principal_id: str) -> Any:
+    from af_mcp_broker.principal_directory import PrincipalAttributes
+
+    return PrincipalAttributes(
+        uid=None,
+        gid=None,
+        unixname=None,
+        groups=list(_TEST_PRINCIPAL_GROUPS.get(principal_id, [])),
+        email="",
+    )
+
+
 @pytest.fixture
 def running_broker(
     monkeypatch: pytest.MonkeyPatch,
@@ -151,6 +174,18 @@ group_capabilities:
     monkeypatch.setenv("OIDC_AUDIENCE", AUDIENCE)
     monkeypatch.setenv("METRICS_PORT", "0")
     monkeypatch.delenv("BROKER_DEV_INSECURE_PRINCIPAL", raising=False)
+    # Issue #144 step 3: the broker now refuses to start without a
+    # configured Keycloak admin service account (dev bypass aside) --
+    # KeycloakPrincipalDirectory.resolve is patched below (test-only) rather
+    # than hit a real Keycloak, so these fake credentials are only here to
+    # satisfy that startup check.
+    monkeypatch.setenv("KEYCLOAK_ADMIN_CLIENT_ID", "test-admin-client")
+    monkeypatch.setenv("KEYCLOAK_ADMIN_CLIENT_SECRET", "test-admin-secret")
+    monkeypatch.setattr(
+        "af_mcp_broker.principal_directory.KeycloakPrincipalDirectory.resolve",
+        _fake_directory_resolve,
+    )
+    _TEST_PRINCIPAL_GROUPS.clear()
     get_settings.cache_clear()
     prime_jwks([sig_key.jwk])
 
@@ -174,7 +209,8 @@ async def _list_tool_names(mcp_url: str, token: str) -> set[str]:
 async def test_entitled_principal_sees_namespaced_and_selfprefixed_tools(
     running_broker, sig_key
 ):
-    token = sig_key.sign(make_claims(groups=["atlas"]))
+    token = sig_key.sign(make_claims())
+    _TEST_PRINCIPAL_GROUPS["user-123"] = ["atlas"]
 
     async with _run_asgi_app(running_broker) as base_url:
         names = await _list_tool_names(base_url, token)
@@ -190,7 +226,8 @@ async def test_entitled_principal_sees_namespaced_and_selfprefixed_tools(
 
 
 async def test_unentitled_principal_does_not_see_gated_tools(running_broker, sig_key):
-    token = sig_key.sign(make_claims(groups=[]))
+    token = sig_key.sign(make_claims())
+    _TEST_PRINCIPAL_GROUPS["user-123"] = []
 
     async with _run_asgi_app(running_broker) as base_url:
         names = await _list_tool_names(base_url, token)
@@ -218,7 +255,8 @@ async def test_missing_bearer_rejected(running_broker):
 
 
 async def test_tool_call_round_trips_to_backend(running_broker, sig_key):
-    token = sig_key.sign(make_claims(groups=["atlas"]))
+    token = sig_key.sign(make_claims())
+    _TEST_PRINCIPAL_GROUPS["user-123"] = ["atlas"]
 
     async with (
         _run_asgi_app(running_broker) as base_url,
@@ -232,7 +270,8 @@ async def test_tool_call_round_trips_to_backend(running_broker, sig_key):
 async def test_authorization_header_not_forwarded_to_backend(running_broker, sig_key):
     """The core security property of PR A's client_factory: the caller's
     inbound Authorization header must never reach a backend."""
-    token = sig_key.sign(make_claims(groups=["atlas"]))
+    token = sig_key.sign(make_claims())
+    _TEST_PRINCIPAL_GROUPS["user-123"] = ["atlas"]
 
     async with (
         _run_asgi_app(running_broker) as base_url,

@@ -873,6 +873,11 @@ def _bootstrap_no_override_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("BACKENDS_FILE", str(SHIPPED_BACKENDS))
     monkeypatch.setenv("METRICS_PORT", "0")
     monkeypatch.setenv("OIDC_ISSUER", EXPECTED_STATE_ISSUER)
+    # Issue #144 step 3: the broker refuses to start without a configured
+    # Keycloak admin service account (dev bypass aside) -- these tests boot
+    # the real app with no dependency override, so it must actually start.
+    monkeypatch.setenv("KEYCLOAK_ADMIN_CLIENT_ID", "test-admin-client")
+    monkeypatch.setenv("KEYCLOAK_ADMIN_CLIENT_SECRET", "test-admin-secret")
 
 
 def _fresh_app() -> Any:

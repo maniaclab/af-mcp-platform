@@ -203,7 +203,15 @@ async def aggregator_url(
     secure_backend_url: str,
     open_backend_url: str,
     dead_backend_url: str,
+    static_principal_cache: Any,
 ) -> AsyncIterator[str]:
+    # Every token minted via _token_for below shares the same JWT `sub`
+    # ("user-123", make_claims' default) and always claimed "atlas" -- now
+    # that groups come from the directory (issue #144 step 3), give that
+    # same subject "atlas" there too so this file's entitlement expectations
+    # are unaffected by where the fact comes from.
+    principal_cache, directory = static_principal_cache
+    directory.groups_by_subject["user-123"] = ["atlas"]
     registry = BackendRegistry()
     registry.register(
         BackendSpec(
@@ -242,7 +250,9 @@ async def aggregator_url(
         "dead", fake_provider
     )  # mints fine; connection still fails
 
-    mcp = build_aggregator(registry, settings, policy, credential_registry)
+    mcp = build_aggregator(
+        registry, settings, policy, credential_registry, principal_cache=principal_cache
+    )
     async with run_aggregator_async(mcp, path="/mcp") as url:
         yield url
 
@@ -254,9 +264,10 @@ def _bearer_client(url: str, token: str) -> Client:
 
 
 def _token_for(uid: int, gid: int, unixname: str) -> Any:
-    return make_claims(
-        groups=["atlas"], posix={"uid": uid, "gid": gid, "unixname": unixname}
-    )
+    # groups no longer travels via the claim (issue #144 step 3) -- the
+    # aggregator_url fixture above sets the matching entitlement directly on
+    # the test-controlled directory.
+    return make_claims(posix={"uid": uid, "gid": gid, "unixname": unixname})
 
 
 async def test_linked_entitled_principal_sees_auth_gated_tools(
@@ -443,6 +454,7 @@ async def test_replica_split_session_continuity(
     sig_key: Any,
     prime_jwks: Any,
     stateless: bool,
+    static_principal_cache: Any,
 ) -> None:
     """Issue #128: a stateful aggregator (mcp_stateless_http=False, the
     fastmcp/mcp SDK default) pins a streamable-HTTP session to whichever pod
@@ -464,6 +476,7 @@ async def test_replica_split_session_continuity(
     that session id) -- proving this test would actually have caught #128
     before the fix, not just exercising a codepath that always passes.
     """
+    principal_cache, _directory = static_principal_cache
     prime_jwks([sig_key.jwk])
     token = sig_key.sign(_token_for(111, 111, "alice"))
 
@@ -481,7 +494,13 @@ async def test_replica_split_session_continuity(
     credential_registry = CredentialRegistry()
 
     def _replica() -> Any:
-        mcp = build_aggregator(registry, settings, policy, credential_registry)
+        mcp = build_aggregator(
+            registry,
+            settings,
+            policy,
+            credential_registry,
+            principal_cache=principal_cache,
+        )
         return mcp.http_app(
             path="/mcp",
             stateless_http=stateless,

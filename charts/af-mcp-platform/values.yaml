@@ -122,16 +122,18 @@ broker:
     existingClientSecretSecret: ""
 
   # Confidential Keycloak client the broker authenticates as (client_credentials
-  # grant) to call the Admin REST API and resolve an identity-PAT-authenticated
-  # request's *current* groups/uid/gid/unixname (issue #144 step 2a) -- see
+  # grant) to call the Admin REST API and resolve an authenticated principal's
+  # *current* groups/uid/gid/unixname (issue #144 steps 2a/3) -- see
   # docs/auth.md's "Operator setup: the Keycloak admin service account"
   # section for the Keycloak-side setup (realm-management roles `view-users`
   # + `query-groups` ONLY -- a deliberate, narrowly-scoped privilege
   # increase, not a footnote). KEYCLOAK_ADMIN_CLIENT_ID/
   # KEYCLOAK_ADMIN_CLIENT_SECRET are each omitted when their source value
-  # below is empty; left unset entirely, every `mcp_pat_...` bearer on /mcp
-  # is rejected the same way an invalid one is -- the correct degraded
-  # behavior for a deployment that doesn't need identity PATs yet.
+  # below is empty. As of issue #144 step 3 this is REQUIRED for every
+  # deployment (JWT auth included, not just identity PATs): the broker
+  # refuses to start with both unset, since the local-dev bypass this would
+  # otherwise degrade to is never set via chart values (see the broker
+  # section's own dev-bypass warning, if any, and docs/local-development.md).
   keycloakAdmin:
     # Client id of the confidential client. Not a secret -- a plain value.
     # Deliberately a separate client from tokenMint/oidc above -- same

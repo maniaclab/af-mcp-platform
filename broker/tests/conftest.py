@@ -172,6 +172,58 @@ def policy():
 
 
 @pytest.fixture
+def static_principal_cache() -> tuple[Any, Any]:
+    """A real ``PrincipalCache`` in front of a test-controlled ``PrincipalDirectory``, for tests exercising the directory-backed groups resolution (issue #144 step 3) without a real Keycloak.
+
+    Returns ``(cache, directory)``. Set ``directory.groups_by_subject[sub]``
+    to control what the cache resolves for a given principal, or add a
+    subject to ``directory.unavailable_subjects`` to simulate an outage (the
+    directory raises instead of resolving). ``directory.resolve_calls``
+    records every principal id actually looked up, for tests asserting the
+    directory was (or wasn't) consulted. Generous refresh/staleness bounds
+    keep a test's own repeated ``get()`` calls from ever re-hitting the
+    directory or falling back to a stale value unless the test wants that
+    specifically.
+    """
+    from af_mcp_broker.principal_cache import (
+        InMemoryPrincipalCacheBackend,
+        PrincipalCache,
+    )
+    from af_mcp_broker.principal_directory import (
+        PrincipalAttributes,
+        PrincipalDirectory,
+    )
+
+    class _StaticDirectory(PrincipalDirectory):
+        def __init__(self) -> None:
+            self.groups_by_subject: dict[str, list[str]] = {}
+            self.resolve_calls: list[str] = []
+            self.unavailable_subjects: set[str] = set()
+
+        async def resolve(self, principal_id: str) -> PrincipalAttributes:
+            self.resolve_calls.append(principal_id)
+            if principal_id in self.unavailable_subjects:
+                raise RuntimeError(f"directory unavailable for {principal_id!r} (test)")
+            return PrincipalAttributes(
+                uid=None,
+                gid=None,
+                unixname=None,
+                groups=list(self.groups_by_subject.get(principal_id, [])),
+                email="",
+            )
+
+    directory = _StaticDirectory()
+    cache = PrincipalCache(
+        directory,
+        backend=InMemoryPrincipalCacheBackend(),
+        refresh_interval_seconds=1000.0,
+        max_staleness_seconds=3600.0,
+        heartbeat_interval_seconds=3600.0,
+    )
+    return cache, directory
+
+
+@pytest.fixture
 def make_principal() -> Callable[..., object]:
     from af_mcp_broker.identity import Principal
 
@@ -214,6 +266,15 @@ def app_client_factory(
     # Ephemeral metrics port so test runs never collide on 9090.
     monkeypatch.setenv("METRICS_PORT", "0")
     monkeypatch.setenv("IDENTITY_PROVIDERS", json.dumps(_DEFAULT_IDENTITY_PROVIDERS))
+    # Issue #144 step 3: app.py's lifespan now refuses to start without a
+    # configured Keycloak admin service account (dev bypass aside) --
+    # KeycloakPrincipalDirectory only derives an admin-API base URL from
+    # OIDC_ISSUER at construction time (no network call), so fake
+    # credentials are enough to satisfy the startup check here. Every route
+    # test in this module overrides keycloak_dependency anyway, so the
+    # directory this stands up is never actually queried.
+    monkeypatch.setenv("KEYCLOAK_ADMIN_CLIENT_ID", "test-admin-client")
+    monkeypatch.setenv("KEYCLOAK_ADMIN_CLIENT_SECRET", "test-admin-secret")
 
     # X509Provider.is_linked() checks for a real usercert.pem/userkey.pem pair
     # under HOME_ROOT/<unixname>/.globus/ — pre-create that pair for the

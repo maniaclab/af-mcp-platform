@@ -378,6 +378,10 @@ def _bootstrap_oauth21_vault_env(
     monkeypatch.setenv("VAULT_ADDR", ADDR)
     monkeypatch.setenv("VAULT_AUTH_ROLE", AUTH_ROLE)
     monkeypatch.setenv("VAULT_SA_TOKEN_PATH", str(sa_token_path))
+    # Issue #144 step 3: the broker refuses to start without a configured
+    # Keycloak admin service account (dev bypass aside).
+    monkeypatch.setenv("KEYCLOAK_ADMIN_CLIENT_ID", "test-admin-client")
+    monkeypatch.setenv("KEYCLOAK_ADMIN_CLIENT_SECRET", "test-admin-secret")
 
 
 def _fresh_app() -> Any:

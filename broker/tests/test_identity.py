@@ -6,12 +6,19 @@ import pytest
 from conftest import make_claims
 from fastapi import HTTPException
 
-from af_mcp_broker.identity import get_principal
-from af_mcp_broker.token_registry import InMemoryTokenRegistryBackend, RevokedJtiCache
+from af_mcp_broker.authorization import get_principal_capabilities
+from af_mcp_broker.identity import PrincipalDirectoryUnavailableError, get_principal
+from af_mcp_broker.pat import mint_pat
+from af_mcp_broker.pat_auth import LastUsedTracker, resolve_pat_principal
+from af_mcp_broker.token_registry import (
+    InMemoryTokenRegistryBackend,
+    RevokedJtiCache,
+    TokenRecord,
+)
 
 
 async def test_get_principal_selects_signing_key_when_listed_second(
-    settings, sig_key, enc_key, prime_jwks
+    settings, sig_key, enc_key, prime_jwks, static_principal_cache
 ):
     """Regression for JWKS key selection (bug 1).
 
@@ -19,10 +26,11 @@ async def test_get_principal_selects_signing_key_when_listed_second(
     code decoded keys in list order and treated the first signature mismatch as
     fatal, so auth failed. Selecting by the token's ``kid`` must succeed.
     """
+    cache, _directory = static_principal_cache
     prime_jwks([enc_key.jwk, sig_key.jwk])
     token = sig_key.sign(make_claims())
 
-    principal = await get_principal(token, settings)
+    principal = await get_principal(token, settings, cache)
 
     assert principal.uid == 50123
     assert principal.gid == 5000
@@ -30,37 +38,44 @@ async def test_get_principal_selects_signing_key_when_listed_second(
     assert principal.subject == "user-123"
 
 
-async def test_expired_token_raises_401(settings, sig_key, prime_jwks):
+async def test_expired_token_raises_401(
+    settings, sig_key, prime_jwks, static_principal_cache
+):
+    cache, _directory = static_principal_cache
     prime_jwks([sig_key.jwk])
     now = int(time.time())
     token = sig_key.sign(make_claims(iat=now - 600, exp=now - 300))
 
     with pytest.raises(HTTPException) as exc:
-        await get_principal(token, settings)
+        await get_principal(token, settings, cache)
     assert exc.value.status_code == 401
 
 
-async def test_wrong_audience_raises_401(settings, sig_key, prime_jwks):
+async def test_wrong_audience_raises_401(
+    settings, sig_key, prime_jwks, static_principal_cache
+):
+    cache, _directory = static_principal_cache
     prime_jwks([sig_key.jwk])
     token = sig_key.sign(make_claims(aud="some-other-service"))
 
     with pytest.raises(HTTPException) as exc:
-        await get_principal(token, settings)
+        await get_principal(token, settings, cache)
     assert exc.value.status_code == 401
 
 
 async def test_missing_posix_claim_authenticates_successfully(
-    settings, sig_key, prime_jwks
+    settings, sig_key, prime_jwks, static_principal_cache
 ):
     """Issue #148: POSIX identity is optional -- a JWT with no `posix` claim
     at all must authenticate successfully, not 401. This is the change that
     unblocks the operator's plan to remove the claim from tokens entirely."""
+    cache, _directory = static_principal_cache
     prime_jwks([sig_key.jwk])
     claims = make_claims()
     del claims["posix"]
     token = sig_key.sign(claims)
 
-    principal = await get_principal(token, settings)
+    principal = await get_principal(token, settings, cache)
 
     assert principal.uid is None
     assert principal.gid is None
@@ -69,30 +84,162 @@ async def test_missing_posix_claim_authenticates_successfully(
 
 
 async def test_partial_posix_claim_resolves_available_fields(
-    settings, sig_key, prime_jwks
+    settings, sig_key, prime_jwks, static_principal_cache
 ):
     """A malformed/partial posix claim (some keys present, some absent) must
     still authenticate -- issue #148 resolves POSIX identity opportunistically
     per field rather than all-or-nothing. Regression for bug 4 in spirit: a
     missing key must never surface as a 500, and now not even as a 401."""
+    cache, _directory = static_principal_cache
     prime_jwks([sig_key.jwk])
     token = sig_key.sign(make_claims(posix={"gid": 5000, "unixname": "auser"}))
 
-    principal = await get_principal(token, settings)
+    principal = await get_principal(token, settings, cache)
 
     assert principal.uid is None
     assert principal.gid == 5000
     assert principal.unixname == "auser"
 
 
-async def test_no_matching_kid_raises_401(settings, sig_key, enc_key, prime_jwks):
+async def test_no_matching_kid_raises_401(
+    settings, sig_key, enc_key, prime_jwks, static_principal_cache
+):
     """A token whose kid is absent from the JWKS is rejected, not accepted."""
+    cache, _directory = static_principal_cache
     prime_jwks([enc_key.jwk])  # signing key not published
     token = sig_key.sign(make_claims())
 
     with pytest.raises(HTTPException) as exc:
-        await get_principal(token, settings)
+        await get_principal(token, settings, cache)
     assert exc.value.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Groups unification (issue #144 step 3) -- every credential type resolves
+# groups from the PrincipalDirectory via the principal cache; the token no
+# longer carries authorization data of its own, only identity.
+# ---------------------------------------------------------------------------
+
+
+async def test_jwt_with_no_groups_claim_resolves_via_directory(
+    settings, sig_key, prime_jwks, static_principal_cache
+):
+    """A JWT that carries no `groups` claim at all must still resolve real
+    capabilities -- the directory, not the claim, is the only source now."""
+    cache, directory = static_principal_cache
+    directory.groups_by_subject["user-123"] = ["atlas"]
+    prime_jwks([sig_key.jwk])
+    claims = make_claims()
+    del claims["groups"]
+    token = sig_key.sign(claims)
+
+    principal = await get_principal(token, settings, cache)
+
+    assert principal.groups == ["atlas"]
+
+
+async def test_jwt_groups_claim_is_ignored_directory_is_authoritative(
+    settings, sig_key, prime_jwks, static_principal_cache
+):
+    """The crux of issue #144 step 3: even though this JWT DOES carry a
+    `groups` claim, it must be ignored entirely in favor of the directory's
+    current answer. This is what makes removing someone from a Keycloak group
+    a real kill switch regardless of which credential type they present --
+    before this change, a still-valid JWT's own claim would have kept working
+    right up until it expired."""
+    cache, directory = static_principal_cache
+    directory.groups_by_subject["user-123"] = ["af-admins"]
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims(groups=["atlas", "totally-different-group"]))
+
+    principal = await get_principal(token, settings, cache)
+
+    assert principal.groups == ["af-admins"]
+    assert principal.groups != ["atlas", "totally-different-group"]
+
+
+async def test_cold_cache_directory_outage_raises_actionable_error(
+    settings, sig_key, prime_jwks, static_principal_cache
+):
+    """Availability regression (issue #144 step 3): a JWT used to be
+    self-contained, so a Keycloak outage never blocked authentication. Now
+    groups always come from the directory, so a principal this cache has
+    never resolved before, hit while the directory is unreachable, has no
+    last-known value to fall back on and cannot authenticate at all. The
+    resulting error must tell the caller this is a platform outage, not a
+    problem with their credentials -- distinct from the vague 401 every
+    other validation failure raises."""
+    cache, directory = static_principal_cache
+    directory.unavailable_subjects.add("user-123")
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+
+    with pytest.raises(PrincipalDirectoryUnavailableError) as exc:
+        await get_principal(token, settings, cache)
+
+    assert exc.value.status_code == 503
+    detail = str(exc.value.detail).lower()
+    assert "unavailable" in detail or "outage" in detail
+    assert "invalid" not in detail  # must not read like a bad-credential 401
+
+
+async def test_get_principal_without_a_configured_directory_raises_actionable_error(
+    settings, sig_key, prime_jwks
+):
+    """No PrincipalCache configured at all (principal_cache=None) is a
+    startup misconfiguration app.py's lifespan is meant to prevent -- but if
+    it's ever reached anyway (e.g. a test, or a future embedding that skips
+    the fail-fast check), it must fail the same actionable way an outage
+    does, not crash with an AttributeError on a None cache."""
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+
+    with pytest.raises(PrincipalDirectoryUnavailableError) as exc:
+        await get_principal(token, settings, None)
+
+    assert exc.value.status_code == 503
+
+
+async def test_jwt_and_pat_for_same_principal_get_identical_capabilities(
+    settings, sig_key, prime_jwks, static_principal_cache, policy
+):
+    """The whole point of unifying groups resolution through the directory
+    (issue #144 step 3): a JWT and an identity PAT for the *same* principal
+    must resolve to the exact same capability set, since both now derive
+    their groups from the same PrincipalCache/PrincipalDirectory rather than
+    a JWT and a PAT being able to disagree about what one user can do."""
+    principal_cache, directory = static_principal_cache
+    directory.groups_by_subject["user-123"] = ["atlas"]
+
+    prime_jwks([sig_key.jwk])
+    jwt_token = sig_key.sign(make_claims())
+    jwt_principal = await get_principal(jwt_token, settings, principal_cache)
+
+    pat_backend = InMemoryTokenRegistryBackend()
+    plaintext, lookup_id, secret_hash = mint_pat()
+    await pat_backend.add(
+        TokenRecord(
+            lookup_id=lookup_id,
+            principal_id="user-123",
+            secret_hash=secret_hash,
+            name="test-token",
+            created_at=time.time(),
+            expires_at=time.time() + 3600,
+            revoked_at=None,
+            last_used_at=None,
+        )
+    )
+    pat_principal = await resolve_pat_principal(
+        plaintext, settings, pat_backend, principal_cache, LastUsedTracker()
+    )
+
+    assert jwt_principal.groups == pat_principal.groups == ["atlas"]
+    assert get_principal_capabilities(
+        jwt_principal, policy
+    ) == get_principal_capabilities(pat_principal, policy)
+    assert get_principal_capabilities(
+        jwt_principal, policy
+    )  # non-empty: a real assertion
 
 
 # ---------------------------------------------------------------------------
@@ -102,7 +249,10 @@ async def test_no_matching_kid_raises_401(settings, sig_key, enc_key, prime_jwks
 # ---------------------------------------------------------------------------
 
 
-async def test_revoked_jti_raises_401(settings, sig_key, prime_jwks):
+async def test_revoked_jti_raises_401(
+    settings, sig_key, prime_jwks, static_principal_cache
+):
+    principal_cache, _directory = static_principal_cache
     prime_jwks([sig_key.jwk])
     token = sig_key.sign(make_claims(jti="revoked-jti-1"))
     backend = InMemoryTokenRegistryBackend()
@@ -121,68 +271,82 @@ async def test_revoked_jti_raises_401(settings, sig_key, prime_jwks):
         )
     )
     await backend.revoke("user-123", "revoked-jti-1", revoked_at=time.time())
-    cache = RevokedJtiCache(backend, refresh_interval_seconds=30.0)
+    revoked_cache = RevokedJtiCache(backend, refresh_interval_seconds=30.0)
 
     with pytest.raises(HTTPException) as exc:
-        await get_principal(token, settings, revoked_jti_cache=cache)
+        await get_principal(
+            token, settings, principal_cache, revoked_jti_cache=revoked_cache
+        )
     assert exc.value.status_code == 401
 
 
-async def test_unrevoked_jti_still_succeeds(settings, sig_key, prime_jwks):
+async def test_unrevoked_jti_still_succeeds(
+    settings, sig_key, prime_jwks, static_principal_cache
+):
+    principal_cache, _directory = static_principal_cache
     prime_jwks([sig_key.jwk])
     token = sig_key.sign(make_claims(jti="an-active-jti"))
-    cache = RevokedJtiCache(
+    revoked_cache = RevokedJtiCache(
         InMemoryTokenRegistryBackend(), refresh_interval_seconds=30.0
     )
 
-    principal = await get_principal(token, settings, revoked_jti_cache=cache)
+    principal = await get_principal(
+        token, settings, principal_cache, revoked_jti_cache=revoked_cache
+    )
 
     assert principal.uid == 50123
 
 
 async def test_ordinary_keycloak_session_token_unaffected_by_empty_registry(
-    settings, sig_key, prime_jwks
+    settings, sig_key, prime_jwks, static_principal_cache
 ):
     """A regular Keycloak-issued session token's jti was never minted through
     the manual-token registry at all -- it must never be rejected just
     because a RevokedJtiCache is wired in."""
+    principal_cache, _directory = static_principal_cache
     prime_jwks([sig_key.jwk])
     token = sig_key.sign(make_claims(jti="regular-keycloak-session-jti"))
-    cache = RevokedJtiCache(
+    revoked_cache = RevokedJtiCache(
         InMemoryTokenRegistryBackend(), refresh_interval_seconds=30.0
     )
 
-    principal = await get_principal(token, settings, revoked_jti_cache=cache)
+    principal = await get_principal(
+        token, settings, principal_cache, revoked_jti_cache=revoked_cache
+    )
 
     assert principal.uid == 50123
 
 
 async def test_no_revoked_jti_cache_configured_does_not_check_revocation(
-    settings, sig_key, prime_jwks
+    settings, sig_key, prime_jwks, static_principal_cache
 ):
     """revoked_jti_cache defaults to None -- e.g. a broker with no token
     registry configured -- and validation must proceed exactly as before."""
+    principal_cache, _directory = static_principal_cache
     prime_jwks([sig_key.jwk])
     token = sig_key.sign(make_claims(jti="whatever"))
 
-    principal = await get_principal(token, settings)
+    principal = await get_principal(token, settings, principal_cache)
 
     assert principal.uid == 50123
 
 
 async def test_token_with_no_jti_claim_is_unaffected_by_revocation_check(
-    settings, sig_key, prime_jwks
+    settings, sig_key, prime_jwks, static_principal_cache
 ):
     """Some tokens may not carry a jti at all -- revocation can never apply
     to them, so the check must be skipped rather than erroring."""
+    principal_cache, _directory = static_principal_cache
     prime_jwks([sig_key.jwk])
     claims = make_claims()
     assert "jti" not in claims
     token = sig_key.sign(claims)
-    cache = RevokedJtiCache(
+    revoked_cache = RevokedJtiCache(
         InMemoryTokenRegistryBackend(), refresh_interval_seconds=30.0
     )
 
-    principal = await get_principal(token, settings, revoked_jti_cache=cache)
+    principal = await get_principal(
+        token, settings, principal_cache, revoked_jti_cache=revoked_cache
+    )
 
     assert principal.uid == 50123
