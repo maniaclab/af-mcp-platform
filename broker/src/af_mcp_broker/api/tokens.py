@@ -192,34 +192,43 @@ class TokenRegistry:
 
     Delegates durable metadata storage to a ``TokenRegistryBackend`` (in-
     memory or Vault/OpenBao -- see token_registry.py, chosen by
-    ``settings.token_registry_backend``); keeps the per-uid mint-rate-limit
-    window in-process regardless of backend (see the constant above for why
-    that's a deliberate, documented tradeoff rather than an oversight).
+    ``settings.token_registry_backend``); keeps the per-principal mint-rate-
+    limit window in-process regardless of backend (see the constant above
+    for why that's a deliberate, documented tradeoff rather than an
+    oversight).
+
+    Keyed by ``principal.subject``, not ``principal.uid`` -- issue #148 made
+    POSIX identity optional, and this endpoint only requires a Keycloak JWT
+    (see this module's docstring), so its callers commonly have no uid at
+    all. Keying this limiter by uid would mean every such principal shares
+    one rate-limit bucket, letting one heavy minter lock out every other
+    POSIX-less caller; subject is always present and unique per principal.
     """
 
     def __init__(self, backend: TokenRegistryBackend) -> None:
         self._backend = backend
-        self._rate: dict[int, _RateWindow] = {}
+        self._rate: dict[str, _RateWindow] = {}
         self._log = structlog.get_logger(__name__).bind(component="TokenRegistry")
 
-    def check_mint_rate_limit(self, uid: int) -> None:
-        """Raise RateLimitError if *uid* has hit the per-hour mint cap."""
+    def check_mint_rate_limit(self, subject: str) -> None:
+        """Raise RateLimitError if *subject* has hit the per-hour mint cap."""
         now = time.monotonic()
-        window = self._rate.get(uid)
+        window = self._rate.get(subject)
         if window is None or (now - window.window_start) > _MINT_RATE_WINDOW_SECONDS:
             return
         if window.count >= _MAX_MINTS_PER_HOUR:
             remaining = int(_MINT_RATE_WINDOW_SECONDS - (now - window.window_start))
             raise RateLimitError(
-                f"Too many tokens minted for uid={uid}. Try again in {remaining}s."
+                f"Too many tokens minted for subject={subject!r}. "
+                f"Try again in {remaining}s."
             )
 
-    def record_mint(self, uid: int) -> None:
+    def record_mint(self, subject: str) -> None:
         now = time.monotonic()
-        window = self._rate.get(uid)
+        window = self._rate.get(subject)
         if window is None or (now - window.window_start) > _MINT_RATE_WINDOW_SECONDS:
             window = _RateWindow(count=0, window_start=now)
-            self._rate[uid] = window
+            self._rate[subject] = window
         window.count += 1
 
     async def put(self, record: TokenRecord) -> None:
@@ -312,7 +321,7 @@ async def mint_token(
     """
     registry = _registry(request)
     try:
-        registry.check_mint_rate_limit(principal.uid)
+        registry.check_mint_rate_limit(principal.subject)
     except RateLimitError as exc:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=str(exc)
@@ -360,7 +369,7 @@ async def mint_token(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail=str(exc)
         ) from exc
-    registry.record_mint(principal.uid)
+    registry.record_mint(principal.subject)
 
     # Log lookup_id-only — never the token itself.
     await _audit(

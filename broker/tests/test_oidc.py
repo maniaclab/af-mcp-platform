@@ -15,13 +15,19 @@ from af_mcp_broker.identity import Principal
 REAL_TOKEN = "real-af-access-token-value"
 
 
-def _principal() -> Principal:
+def _principal(
+    *,
+    subject: str = "user-123",
+    uid: int | None = 50123,
+    gid: int | None = 5000,
+    unixname: str | None = "auser",
+) -> Principal:
     return Principal(
-        subject="user-123",
+        subject=subject,
         email="user@example.org",
-        uid=50123,
-        gid=5000,
-        unixname="auser",
+        uid=uid,
+        gid=gid,
+        unixname=unixname,
         groups=["af-atlas-users"],
         raw_token=SecretStr(REAL_TOKEN),
     )
@@ -159,7 +165,7 @@ async def test_is_linked_reprobes_after_ttl_expires(monkeypatch):
 
     assert await provider.is_linked(principal) is True
     # Force the cached entry to look stale without sleeping in the test.
-    cached = provider._link_cache[principal.uid]
+    cached = provider._link_cache[principal.subject]
     cached.checked_at -= oidc._LINK_CACHE_TTL_SECONDS + 1
 
     assert await provider.is_linked(principal) is True
@@ -233,3 +239,53 @@ async def test_issue_different_targets_do_not_serialize(monkeypatch):
 
     assert len(entered) == 2
     assert {r.target for r in results} == {"rucio", "opendata"}
+
+
+# ---------------------------------------------------------------------------
+# Cache isolation without POSIX identity (issue #148)
+# ---------------------------------------------------------------------------
+
+
+class _PerCallTokenClient:
+    """Fake httpx client returning a distinct access_token per call, so a
+    cache-key collision (two principals sharing one cached credential) shows
+    up as an assertion failure rather than silently passing."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def get(self, url: str, headers: dict[str, str], **kwargs: Any):
+        self.calls += 1
+        return _FakeResponseWithToken(f"token-{self.calls}")
+
+
+class _FakeResponseWithToken:
+    status_code = 200
+
+    def __init__(self, token: str) -> None:
+        self._token = token
+
+    def raise_for_status(self) -> None:
+        pass
+
+    def json(self) -> dict[str, Any]:
+        return {"access_token": self._token, "expires_in": 3600}
+
+
+async def test_issue_does_not_collide_for_two_posix_less_principals(monkeypatch):
+    """Two different principals with no POSIX identity (both uid=None) must
+    never share a cached credential -- the CredentialCache key is
+    principal.subject, not uid, precisely so this can't happen (issue #148).
+    """
+    client = _PerCallTokenClient()
+    monkeypatch.setattr(oidc, "get_http_client", lambda: client)
+
+    provider = _make_provider()
+    alice = _principal(subject="alice", uid=None, gid=None, unixname=None)
+    bob = _principal(subject="bob", uid=None, gid=None, unixname=None)
+
+    alice_cred = await provider.issue(alice, "rucio")
+    bob_cred = await provider.issue(bob, "rucio")
+
+    assert client.calls == 2
+    assert alice_cred.payload["access_token"] != bob_cred.payload["access_token"]

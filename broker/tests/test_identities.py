@@ -66,6 +66,31 @@ def _by_id(body: dict) -> dict[str, dict]:
 
 
 # ---------------------------------------------------------------------------
+# POSIX identity is optional (issue #148)
+# ---------------------------------------------------------------------------
+
+
+def test_get_identities_succeeds_with_no_posix_identity(
+    app_client: tuple[TestClient, dict], make_principal: Callable[..., object]
+) -> None:
+    """A principal with no POSIX identity (e.g. a bearer-only user once the
+    operator drops the JWT `posix` claim) must still get a working GET
+    /v1/identities response, with uid/gid/unixname simply null."""
+    client, state = app_client
+    state["principal"] = make_principal(
+        groups=["atlas"], uid=None, gid=None, unixname=None
+    )
+
+    resp = client.get("/v1/identities", headers=_AUTH)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["uid"] is None
+    assert body["gid"] is None
+    assert body["unixname"] is None
+
+
+# ---------------------------------------------------------------------------
 # keycloak-brokered providers
 # ---------------------------------------------------------------------------
 
@@ -322,17 +347,17 @@ def test_unlink_known_oauth21_alias_purges_credential_cache(
     _configure_oauth21_env(monkeypatch)
 
     with app_client_factory() as (client, state):
-        uid = state["principal"].uid
+        subject = state["principal"].subject
         cache = broker_app.state.credential_cache
-        asyncio.run(cache.put(uid, ALIAS, "fake-cached-credential"))
-        assert asyncio.run(cache.get(uid, ALIAS)) is not None
+        asyncio.run(cache.put(subject, ALIAS, "fake-cached-credential"))
+        assert asyncio.run(cache.get(subject, ALIAS)) is not None
 
         resp = client.delete(f"/v1/identities/link/{ALIAS}", headers=_AUTH)
 
         assert resp.status_code == 204, resp.text
         # get() itself would raise on a rate-limited miss -- read the entry
         # dict directly to assert absence without tripping that.
-        assert (uid, ALIAS) not in cache._entries
+        assert (subject, ALIAS) not in cache._entries
 
 
 def test_unlink_oauth21_alias_returns_204_even_when_nothing_was_stored(

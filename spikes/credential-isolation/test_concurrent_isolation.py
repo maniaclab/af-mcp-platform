@@ -147,13 +147,18 @@ async def test_rate_limit_triggers_after_max_failed_unlocks() -> None:
 
 @pytest.mark.anyio
 async def test_successful_put_resets_rate_limit_counter() -> None:
-    """A successful ``put`` clears the failed-unlock counter for that uid.
+    """A successful ``put(..., uid=...)`` clears the failed-unlock counter
+    for that uid.
 
     Documented behaviour of the real cache: legitimate re-authentication after
     a run of genuine failed unlocks must not carry forward stale attempts.
     Without this, a user who eventually supplies the correct passphrase would
     still be one attempt away from lockout on their very next (unrelated)
-    failure.
+    failure. ``uid`` is keyword-only and opt-in (issue #148) -- the cache's
+    credential-storage key is ``subject``, since POSIX identity (and
+    therefore uid) is optional on a principal in general; only
+    X509Provider, which requires one, ever passes it. See
+    ``CredentialCache``'s class docstring for the full reasoning.
     """
     cache = CredentialCache()
     uid = 77_777
@@ -163,7 +168,7 @@ async def test_successful_put_resets_rate_limit_counter() -> None:
         cache.record_failed_unlock(uid)
 
     # A successful put must clear the counter.
-    await cache.put(uid, TARGET, _make_credential(uid))
+    await cache.put(str(uid), TARGET, _make_credential(uid), uid=uid)
 
     # If the counter had persisted, this single failure would be the sixth
     # and trip the limiter immediately.

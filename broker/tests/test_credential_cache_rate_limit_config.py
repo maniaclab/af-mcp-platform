@@ -129,18 +129,42 @@ def test_check_unlock_rate_limit_carries_retry_after_seconds():
     assert 0 <= excinfo.value.retry_after_seconds <= 30
 
 
-async def test_failed_unlock_counter_resets_on_put():
-    """A successful ``put()`` resets the failed-unlock counter: otherwise a
-    lockout could persist across a legitimate re-authentication."""
+async def test_failed_unlock_counter_resets_on_put_when_uid_given():
+    """A successful ``put(..., uid=...)`` resets that uid's failed-unlock
+    counter: otherwise a lockout could persist across a legitimate
+    re-authentication. ``uid`` is keyword-only and opt-in (issue #148) --
+    only X509Provider ever passes it; see CredentialCache's class docstring
+    for why the credential-storage key (``subject``, the positional first
+    arg below) and the uid-keyed rate limiter are deliberately separate."""
     cache = CredentialCache(max_failed_unlocks=2, unlock_window_seconds=60)
     uid = 22_222
+    subject = "subject-22222"
 
     cache.record_failed_unlock(uid)  # 1 of 2 allowed failures
 
-    await cache.put(uid, TARGET, "some-cred")
+    await cache.put(subject, TARGET, "some-cred", uid=uid)
 
     # Counter reset by put() -- two more failures are allowed before tripping.
     cache.record_failed_unlock(uid)
+    cache.record_failed_unlock(uid)
+    with pytest.raises(RateLimitError):
+        cache.record_failed_unlock(uid)
+
+
+async def test_put_without_uid_does_not_reset_rate_limit():
+    """A ``put()`` with no ``uid`` (every provider except X509Provider) must
+    not reset any uid's failed-unlock counter -- issue #148 deliberately
+    decoupled the credential-storage cache (keyed by subject, since uid may
+    not exist) from the uid-keyed passphrase rate limiter."""
+    cache = CredentialCache(max_failed_unlocks=2, unlock_window_seconds=60)
+    uid = 33_333
+    subject = "subject-33333"
+
+    cache.record_failed_unlock(uid)  # 1 of 2 allowed failures
+
+    await cache.put(subject, TARGET, "some-cred")  # no uid= passed
+
+    # Counter NOT reset -- one more failure trips the limit, not two.
     cache.record_failed_unlock(uid)
     with pytest.raises(RateLimitError):
         cache.record_failed_unlock(uid)

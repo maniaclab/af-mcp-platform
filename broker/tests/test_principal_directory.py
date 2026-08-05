@@ -142,17 +142,106 @@ async def test_resolve_unknown_user_raises_principal_not_found(
         await directory.resolve("no-such-user")
 
 
-async def test_resolve_raises_on_missing_posix_attributes(
+async def test_resolve_leaves_missing_posix_attributes_none(
     settings: Settings, fake_admin: _FakeKeycloakAdmin
 ) -> None:
+    """Issue #148: a Keycloak user with no POSIX profile attributes must
+    resolve successfully -- not raise -- with the missing fields left None.
+    This is what lets a PAT for such a user authenticate at all."""
     fake_admin.users["user-123"] = {
         "attributes": {"uid": ["1"]}
     }  # gid/unixname missing
     fake_admin.groups["user-123"] = []
 
     directory = _directory(settings)
-    with pytest.raises(ValueError, match="missing profile attribute"):
-        await directory.resolve("user-123")
+    attrs = await directory.resolve("user-123")
+
+    assert attrs.uid == 1
+    assert attrs.gid is None
+    assert attrs.unixname is None
+
+
+async def test_resolve_all_posix_attributes_absent(
+    settings: Settings, fake_admin: _FakeKeycloakAdmin
+) -> None:
+    """A Keycloak user with no POSIX attributes at all (not even a partial
+    set) resolves successfully with every POSIX field None."""
+    fake_admin.users["user-123"] = {"attributes": {}}
+    fake_admin.groups["user-123"] = []
+
+    directory = _directory(settings)
+    attrs = await directory.resolve("user-123")
+
+    assert attrs.uid is None
+    assert attrs.gid is None
+    assert attrs.unixname is None
+
+
+async def test_resolve_uses_configured_attribute_names(
+    fake_admin: _FakeKeycloakAdmin,
+) -> None:
+    """Issue #148: a facility whose POSIX identity is LDAP-federated under
+    different profile attribute names (the common spelling is
+    uidNumber/gidNumber) must be able to point the directory at those
+    instead of AF's own uid/gid/unixname convention."""
+    settings = Settings(
+        oidc_issuer=ISSUER,
+        posix_uid_attribute="uidNumber",
+        posix_gid_attribute="gidNumber",
+        posix_unixname_attribute="cn",
+    )
+    fake_admin.users["user-123"] = {
+        "attributes": {
+            "uidNumber": ["50123"],
+            "gidNumber": ["5000"],
+            "cn": ["auser"],
+            # AF's own default-named attributes are present too, to prove
+            # the configured names -- not the defaults -- are what's read.
+            "uid": ["1"],
+            "gid": ["1"],
+            "unixname": ["someone-else"],
+        }
+    }
+    fake_admin.groups["user-123"] = []
+
+    directory = _directory(settings)
+    attrs = await directory.resolve("user-123")
+
+    assert attrs.uid == 50123
+    assert attrs.gid == 5000
+    assert attrs.unixname == "auser"
+
+
+async def test_resolve_defaults_to_af_attribute_names(
+    settings: Settings, fake_admin: _FakeKeycloakAdmin
+) -> None:
+    """Settings() without overrides reproduces the old hardcoded uid/gid/unixname behavior."""
+    assert settings.posix_uid_attribute == "uid"
+    assert settings.posix_gid_attribute == "gid"
+    assert settings.posix_unixname_attribute == "unixname"
+
+
+async def test_resolve_respects_group_full_path_setting(
+    fake_admin: _FakeKeycloakAdmin,
+) -> None:
+    """A site whose Group Membership mapper has 'Full group path' ON must be
+    able to make this directory match `path` instead of `name` -- otherwise
+    every PAT-authenticated capability lookup silently returns nothing even
+    though the equivalent JWT path works fine (issue #148)."""
+    settings = Settings(oidc_issuer=ISSUER, principal_directory_group_full_path=True)
+    fake_admin.users["user-123"] = {
+        "attributes": {"uid": ["1"], "gid": ["1"], "unixname": ["u"]},
+    }
+    fake_admin.groups["user-123"] = [{"name": "atlas", "path": "/atlas/users"}]
+
+    directory = _directory(settings)
+    attrs = await directory.resolve("user-123")
+
+    assert attrs.groups == ["/atlas/users"]
+
+
+async def test_group_full_path_defaults_to_false(settings: Settings) -> None:
+    assert settings.principal_directory_group_full_path is False
 
 
 async def test_resolve_defaults_email_to_empty_string_when_absent(

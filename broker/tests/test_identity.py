@@ -49,25 +49,40 @@ async def test_wrong_audience_raises_401(settings, sig_key, prime_jwks):
     assert exc.value.status_code == 401
 
 
-async def test_missing_posix_claim_raises_401(settings, sig_key, prime_jwks):
+async def test_missing_posix_claim_authenticates_successfully(
+    settings, sig_key, prime_jwks
+):
+    """Issue #148: POSIX identity is optional -- a JWT with no `posix` claim
+    at all must authenticate successfully, not 401. This is the change that
+    unblocks the operator's plan to remove the claim from tokens entirely."""
     prime_jwks([sig_key.jwk])
     claims = make_claims()
     del claims["posix"]
     token = sig_key.sign(claims)
 
-    with pytest.raises(HTTPException) as exc:
-        await get_principal(token, settings)
-    assert exc.value.status_code == 401
+    principal = await get_principal(token, settings)
+
+    assert principal.uid is None
+    assert principal.gid is None
+    assert principal.unixname is None
+    assert principal.subject == "user-123"
 
 
-async def test_posix_missing_uid_raises_401(settings, sig_key, prime_jwks):
-    """Regression for bug 4 — a malformed posix claim must be 401, not 500."""
+async def test_partial_posix_claim_resolves_available_fields(
+    settings, sig_key, prime_jwks
+):
+    """A malformed/partial posix claim (some keys present, some absent) must
+    still authenticate -- issue #148 resolves POSIX identity opportunistically
+    per field rather than all-or-nothing. Regression for bug 4 in spirit: a
+    missing key must never surface as a 500, and now not even as a 401."""
     prime_jwks([sig_key.jwk])
     token = sig_key.sign(make_claims(posix={"gid": 5000, "unixname": "auser"}))
 
-    with pytest.raises(HTTPException) as exc:
-        await get_principal(token, settings)
-    assert exc.value.status_code == 401
+    principal = await get_principal(token, settings)
+
+    assert principal.uid is None
+    assert principal.gid == 5000
+    assert principal.unixname == "auser"
 
 
 async def test_no_matching_kid_raises_401(settings, sig_key, enc_key, prime_jwks):

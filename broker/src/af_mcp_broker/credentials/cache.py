@@ -72,9 +72,37 @@ class _FailedUnlockRecord:
 class CredentialCache:
     """Per-principal in-memory credential cache.
 
-    Keyed by ``(uid: int, target: str)`` — the numeric UID is authoritative.
-    Subject strings are not used as cache keys because they can be spoofed or
-    rotated; UIDs are assigned by the provisioning system and are stable.
+    Keyed by ``(subject: str, target: str)`` -- ``principal.subject`` (issue
+    #148). Used to be keyed by numeric uid on the reasoning that "subject
+    strings can be spoofed or rotated; uids are provisioning-assigned and
+    stable" -- but issue #148 made ``Principal.uid`` optional (most
+    principals never touch a filesystem and have no POSIX identity at all),
+    and this cache is shared by every credential provider (X509Provider,
+    OIDCProvider, ...), including ones with no POSIX-identity need of their
+    own. Keying by uid in that world means every principal without one
+    collides on the same ``(None, target)`` slot -- a real credential-
+    isolation bug, not a hypothetical one, since one principal's cached
+    bearer token would then be handed to another. ``subject`` is always
+    present (a validated JWT's `sub` claim, or a PAT's stored owner id) and
+    is exactly as unspoofable as uid ever was -- both are read from a
+    source already authenticated before either field is ever consulted --
+    so it is the one identifier every caller of this cache can rely on.
+    Using one consistent key across every provider also keeps
+    ``revoke_all()``/``get_proxy_meta()`` correct: they are called by uid-
+    agnostic code (``DELETE /v1/credential``, the identities-unlink route)
+    that must reach every provider's entries for a principal, not just
+    whichever provider happens to still key by whatever this class used
+    internally.
+
+    ``record_failed_unlock``/``check_unlock_rate_limit`` below are the one
+    exception: they remain keyed by ``uid: int``, not subject. Only
+    ``X509Provider`` ever calls them (passphrase brute-force protection for
+    a specific ``~/.globus``), and X509Provider requires POSIX identity to
+    be present before it calls anything past this point (see
+    ``credentials.x509.PosixIdentityRequiredError``) -- unlike the
+    credential-storage methods above, there is no cross-provider sharing
+    to keep consistent, so there is no reason to key this half by anything
+    other than the uid the rate limit is conceptually protecting.
 
     Thread-safety: all public methods are coroutine-safe because asyncio is
     single-threaded within a single event loop.  Do not share this instance
@@ -97,18 +125,19 @@ class CredentialCache:
         max_failed_unlocks: int = 5,
         unlock_window_seconds: int = 15 * 60,
     ) -> None:
-        # (uid, target) -> _CacheEntry
-        self._entries: dict[tuple[int, str], _CacheEntry] = {}
-        # uid -> _FailedUnlockRecord (for rate-limiting missed lookups)
+        # (subject, target) -> _CacheEntry
+        self._entries: dict[tuple[str, str], _CacheEntry] = {}
+        # uid -> _FailedUnlockRecord (for rate-limiting missed lookups) --
+        # deliberately still uid-keyed, see this class's docstring.
         self._failed_unlocks: dict[int, _FailedUnlockRecord] = defaultdict(
             _FailedUnlockRecord
         )
-        # (uid, target) -> asyncio.Lock, single-flighting concurrent mints for
-        # the same key (see get_or_mint()). Never cleaned up, same as
-        # _failed_unlocks above -- the key space is bounded by real
-        # authenticated uids and configured backend targets, not
+        # (subject, target) -> asyncio.Lock, single-flighting concurrent
+        # mints for the same key (see get_or_mint()). Never cleaned up, same
+        # as _failed_unlocks above -- the key space is bounded by real
+        # authenticated principals and configured backend targets, not
         # attacker-controlled, so leaving idle Locks around is harmless.
-        self._mint_locks: dict[tuple[int, str], asyncio.Lock] = defaultdict(
+        self._mint_locks: dict[tuple[str, str], asyncio.Lock] = defaultdict(
             asyncio.Lock
         )
         self._max_failed_unlocks = max_failed_unlocks
@@ -144,7 +173,7 @@ class CredentialCache:
         """Seconds until *entry* expires (may be negative)."""
         return entry.expires_at - time.time()
 
-    def _lookup(self, uid: int, target: str, min_remaining: int) -> Any | None:
+    def _lookup(self, subject: str, target: str, min_remaining: int) -> Any | None:
         """Return a cached value if still valid, else None -- no metrics.
 
         The actual entry-freshness check, shared by ``get()`` (which records
@@ -153,13 +182,13 @@ class CredentialCache:
         for what is, from a caller's point of view, still the same single
         cache probe -- see ``get_or_mint()``'s docstring).
         """
-        key = (uid, target)
+        key = (subject, target)
         entry = self._entries.get(key)
         if entry is None or self.remaining_seconds(entry) < min_remaining:
             if entry is not None:
                 self._log.debug(
                     "credential_cache.miss_expired",
-                    uid=uid,
+                    subject=subject,
                     target=target,
                     remaining=self.remaining_seconds(entry),
                 )
@@ -168,7 +197,7 @@ class CredentialCache:
 
     async def get(
         self,
-        uid: int,
+        subject: str,
         target: str,
         min_remaining: int = 300,
     ) -> Any | None:
@@ -179,7 +208,7 @@ class CredentialCache:
         expire before it can use it.
 
         A plain miss (nothing cached, or a stale entry) does *not* count
-        against *uid*'s unlock rate limit — only an actual failed unlock
+        against any unlock rate limit — only an actual failed unlock
         attempt does (see ``record_failed_unlock``). Counting misses here
         made every ordinary "not cached yet" probe indistinguishable from a
         bad passphrase attempt, so a handful of routine retries could lock a
@@ -191,7 +220,7 @@ class CredentialCache:
         internal re-check calls ``_lookup()`` directly instead of this
         method, precisely so it doesn't double-count the same logical probe.
         """
-        value = self._lookup(uid, target, min_remaining)
+        value = self._lookup(subject, target, min_remaining)
         if value is None:
             metrics.credential_cache_misses_total.labels(target=target).inc()
         else:
@@ -200,12 +229,12 @@ class CredentialCache:
 
     async def get_or_mint(
         self,
-        uid: int,
+        subject: str,
         target: str,
         min_remaining: int,
         mint: Callable[[], Awaitable[Any]],
     ) -> Any:
-        """Single-flight a mint for *(uid, target)*.
+        """Single-flight a mint for *(subject, target)*.
 
         Concurrent callers that each independently miss the cache for the
         same key would otherwise each repeat *mint* — an expensive, real
@@ -225,51 +254,60 @@ class CredentialCache:
         Prometheus sample for the same logical probe the caller's own
         ``get()`` call already counted.
         """
-        async with self._mint_locks[(uid, target)]:
-            cached = self._lookup(uid, target, min_remaining)
+        async with self._mint_locks[(subject, target)]:
+            cached = self._lookup(subject, target, min_remaining)
             if cached is not None:
                 return cached
             return await mint()
 
     async def put(
         self,
-        uid: int,
+        subject: str,
         target: str,
         cred: Any,
         *,
         expires_at: float | None = None,
         proxy_meta: ProxyMeta | None = None,
+        uid: int | None = None,
     ) -> None:
         """Store *cred* in the cache.
 
         *expires_at* is epoch seconds (UTC). When omitted a default TTL of
         ``_DEFAULT_TTL_SECONDS`` is applied.  Pass ``proxy_meta`` for x509
         credentials so ``revoke()`` can zero-overwrite the proxy file.
+
+        *uid*, when given, resets that uid's failed-unlock counter -- a
+        successful put means a legitimate re-authentication (e.g. a correct
+        passphrase) just happened, so it shouldn't count towards a future
+        lockout. Only ``X509Provider`` ever passes this (the one caller with
+        an unlock rate limit to reset); every other provider omits it, since
+        a bearer-token refresh has no passphrase rate limit to reset in the
+        first place, and `principal.uid` may not even exist for its caller
+        (issue #148).
         """
         if expires_at is None:
             expires_at = time.time() + _DEFAULT_TTL_SECONDS
-        key = (uid, target)
+        key = (subject, target)
         self._entries[key] = _CacheEntry(
             credential=cred, expires_at=expires_at, proxy_meta=proxy_meta
         )
-        # A successful put resets the failed-lookup counter for this uid so
-        # that legitimate re-authentication after expiry isn't penalised.
-        self._failed_unlocks.pop(uid, None)
+        if uid is not None:
+            self._failed_unlocks.pop(uid, None)
         self._log.debug(
             "credential_cache.put",
-            uid=uid,
+            subject=subject,
             target=target,
             expires_at=expires_at,
         )
 
-    async def revoke(self, uid: int, target: str) -> None:
+    async def revoke(self, subject: str, target: str) -> None:
         """Revoke a single cached credential.
 
         For x509 credentials, zero-overwrites and unlinks the proxy file on
         the broker's tmpfs before removing the cache entry.  This prevents
         the proxy from being read by another process even briefly after revoke.
         """
-        key = (uid, target)
+        key = (subject, target)
         entry = self._entries.pop(key, None)
         if entry is None:
             return
@@ -282,21 +320,23 @@ class CredentialCache:
         )
         self._log.info(
             "credential_cache.revoked",
-            uid=uid,
+            subject=subject,
             target=target,
             cred_class=cred_class,
         )
 
-    async def revoke_all(self, uid: int) -> None:
-        """Revoke all cached credentials for *uid* — call on logout."""
-        targets = [t for (u, t) in list(self._entries) if u == uid]
+    async def revoke_all(self, subject: str) -> None:
+        """Revoke all cached credentials for *subject* — call on logout."""
+        targets = [t for (s, t) in list(self._entries) if s == subject]
         for target in targets:
-            await self.revoke(uid, target)
-        self._log.info("credential_cache.revoked_all", uid=uid, count=len(targets))
+            await self.revoke(subject, target)
+        self._log.info(
+            "credential_cache.revoked_all", subject=subject, count=len(targets)
+        )
 
-    def get_proxy_meta(self, uid: int, target: str) -> ProxyMeta | None:
+    def get_proxy_meta(self, subject: str, target: str) -> ProxyMeta | None:
         """Return the ProxyMeta for a cached x509 credential, or None."""
-        entry = self._entries.get((uid, target))
+        entry = self._entries.get((subject, target))
         if entry is None:
             return None
         return entry.proxy_meta

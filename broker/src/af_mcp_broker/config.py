@@ -309,6 +309,36 @@ class Settings(BaseSettings):
     principal_cache_refresh_seconds: float = 45.0
     principal_cache_max_staleness_seconds: float = 6 * 60 * 60.0
 
+    # Keycloak user-profile attribute keys `principal_directory.py`'s
+    # KeycloakPrincipalDirectory reads a PAT-authenticated principal's POSIX
+    # identity from (Admin REST API `GET .../users/{id}`'s `attributes` map
+    # -- issue #148). Defaults match AF's own profile attribute names; a
+    # facility whose POSIX identity is LDAP-federated under different names
+    # (the common spelling is `uidNumber`/`gidNumber`) overrides these rather
+    # than the broker hardcoding AF's convention -- same reasoning as #125's
+    # group_capabilities. Unlike these, the JWT path (`identity.py`'s
+    # `_extract_principal`) is NOT affected by this setting: a token's
+    # `posix.uid`/`posix.gid`/`posix.unixname` claim shape is fixed by
+    # convention (Keycloak's User Attribute mappers already normalize
+    # whatever the underlying profile attribute is named into that shape),
+    # so only the PAT path, which reads the Admin REST API directly with no
+    # mapper in between, needs to know the real attribute name.
+    posix_uid_attribute: str = "uid"
+    posix_gid_attribute: str = "gid"
+    posix_unixname_attribute: str = "unixname"
+
+    # Whether `principal_directory.py` matches a PAT-authenticated
+    # principal's group membership by Keycloak's group ``path`` (e.g.
+    # ``/atlas/users``) instead of its bare ``name`` (e.g. ``atlas``).
+    # Default False (bare name) matches AF's own Group Membership mapper
+    # convention ("Full group path: OFF", see docs/auth.md) and the JWT
+    # path's `groups` claim shape, which policy.yaml's group_capabilities
+    # string-matches literally. A site whose mapper has "Full group path"
+    # switched ON must set this True too, or every PAT-authenticated
+    # capability lookup silently returns nothing (the group names never
+    # match) even though the equivalent JWT path works fine.
+    principal_directory_group_full_path: bool = False
+
     @property
     def oauth21_effective_state_issuer(self) -> str:
         """``oauth21_state_issuer`` if set, else ``oidc_issuer``.

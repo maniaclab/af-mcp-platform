@@ -30,7 +30,7 @@ log = structlog.get_logger(__name__)
 _DEFAULT_OIDC_TARGETS: frozenset[str] = frozenset({"rucio", "opendata", "af-internal"})
 
 # is_linked() probes Keycloak's stored-brokered-token endpoint, which is a
-# real network round-trip; cache the result per uid for this many seconds so
+# real network round-trip; cache the result per subject for this many seconds so
 # a burst of calls for the same user (e.g. the aggregator checking several
 # tool calls in quick succession) costs one Keycloak request rather than one
 # per call. 60s is a defensible middle ground: short enough that a user who
@@ -79,7 +79,7 @@ class OIDCProvider(CredentialProvider):
         self._cache = cache
         self._alias = alias
         self._targets = targets
-        self._link_cache: dict[int, _LinkStatus] = {}
+        self._link_cache: dict[str, _LinkStatus] = {}
         self._log = structlog.get_logger(__name__).bind(
             provider="OIDCProvider", alias=alias
         )
@@ -92,16 +92,19 @@ class OIDCProvider(CredentialProvider):
         brokered token (the user completed IdP linking). Any other outcome —
         a 4xx/5xx response or an unreachable Keycloak — is treated as "not
         linked", since a credential broker should fail closed rather than
-        assume linkage it cannot verify. Results are cached per uid for
+        assume linkage it cannot verify. Results are cached per subject for
         ``_LINK_CACHE_TTL_SECONDS`` seconds (see module docstring comment).
+        Keyed by ``principal.subject``, not ``principal.uid`` -- OIDCProvider
+        has no genuine need for a POSIX identity (issue #148), and uid may
+        not exist for its caller at all; subject is always present.
         """
         now = time.monotonic()
-        cached = self._link_cache.get(principal.uid)
+        cached = self._link_cache.get(principal.subject)
         if cached is not None and (now - cached.checked_at) <= _LINK_CACHE_TTL_SECONDS:
             return cached.linked
 
         linked = await self._probe_linked(principal)
-        self._link_cache[principal.uid] = _LinkStatus(linked=linked, checked_at=now)
+        self._link_cache[principal.subject] = _LinkStatus(linked=linked, checked_at=now)
         return linked
 
     async def _probe_linked(self, principal: Principal) -> bool:
@@ -148,16 +151,18 @@ class OIDCProvider(CredentialProvider):
         """
         self._log.debug(
             "oidc.issue.start",
-            uid=principal.uid,
+            subject=principal.subject,
             target=target,
         )
 
         # Cache hit — avoid a round-trip to Keycloak
         cached = await self._cache.get(
-            principal.uid, target, min_remaining=min_remaining_seconds
+            principal.subject, target, min_remaining=min_remaining_seconds
         )
         if cached is not None:
-            self._log.debug("oidc.issue.cache_hit", uid=principal.uid, target=target)
+            self._log.debug(
+                "oidc.issue.cache_hit", subject=principal.subject, target=target
+            )
             return cached
 
         async def _do_fetch() -> IssuedCredential:
@@ -178,21 +183,21 @@ class OIDCProvider(CredentialProvider):
                 execution_model=self.execution_model,
             )
 
-            await self._cache.put(principal.uid, target, cred)
+            await self._cache.put(principal.subject, target, cred)
             self._log.info(
                 "oidc.issue.success",
-                uid=principal.uid,
+                subject=principal.subject,
                 target=target,
                 audit_id=audit_id,
                 expires_at=expires_at,
             )
             return cred
 
-        # Single-flighted: concurrent misses for this (uid, target) await one
-        # brokered-token fetch instead of each independently hitting Keycloak
-        # (issue #94).
+        # Single-flighted: concurrent misses for this (subject, target) await
+        # one brokered-token fetch instead of each independently hitting
+        # Keycloak (issue #94).
         return await self._cache.get_or_mint(
-            principal.uid, target, min_remaining_seconds, _do_fetch
+            principal.subject, target, min_remaining_seconds, _do_fetch
         )
 
     async def _fetch_brokered_token(self, principal: Principal) -> tuple[str, float]:
