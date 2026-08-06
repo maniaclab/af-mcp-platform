@@ -35,6 +35,24 @@ broker:
       issuer: "https://rucio-mcp.example.com"
       displayName: "Rucio (example)"
       enables: "Example Rucio operations via rucio-mcp"
+    # Exercises the broker-issued identityProviders branch (issue #162,
+    # including the targetOptions -> target_options conversion) so a broken
+    # IDENTITY_PROVIDERS render is caught by `helm template`.
+    - type: broker-issued
+      alias: af-native-example
+      targets: ["condor-token-service-example"]
+      targetOptions:
+        condor-token-service-example:
+          includePosix: true
+      displayName: "AF-native services (example)"
+      enables: "Example HTCondor token issuance via condor-token-service"
+  # Exercises the AF Broker Identity Token env/volume template paths (issue
+  # #162) in CI. The named Secrets only need to exist for a real deployment,
+  # not for `helm lint`/`helm template`.
+  identityToken:
+    existingSigningKeySecret: "example-identity-token-signing-key"
+    existingAdditionalPublicKeysSecret: "example-identity-token-public-keys"
+    ttlSeconds: "600"
   oauth21:
     existingStateKeySecret: "example-broker-state-key"
     # Exercises the Vault-backend template path in CI (`helm template` only

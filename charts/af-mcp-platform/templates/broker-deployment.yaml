@@ -84,6 +84,31 @@ spec:
                   name: {{ .Values.broker.tokenMint.existingClientSecretSecret | quote }}
                   key: token-mint-client-secret
             {{- end }}
+            # AF Broker Identity Token signing key (issue #162) — mounted
+            # from broker.identityToken.existingSigningKeySecret below and
+            # pointed at via a file-path env var (never an inline env
+            # value). Deployment-only, not part of the shared
+            # af-mcp-platform.broker.env template: the token-sweep CronJob
+            # never mints identity tokens, and the mounts these paths refer
+            # to only exist on this pod spec. The broker's own startup
+            # check refuses to boot when identityProviders has a
+            # broker-issued entry and this is unset.
+            {{- if .Values.broker.identityToken.existingSigningKeySecret }}
+            - name: BROKER_SIGNING_KEY_FILE
+              value: "/etc/af-mcp/identity-token/signing-key.pem"
+            {{- end }}
+            {{- if .Values.broker.identityToken.existingAdditionalPublicKeysSecret }}
+            - name: BROKER_ADDITIONAL_PUBLIC_KEYS_DIR
+              value: "/etc/af-mcp/identity-token-public-keys"
+            {{- end }}
+            {{- if .Values.broker.identityToken.issuer }}
+            - name: BROKER_TOKEN_ISSUER
+              value: {{ .Values.broker.identityToken.issuer | quote }}
+            {{- end }}
+            {{- if .Values.broker.identityToken.ttlSeconds }}
+            - name: BROKER_TOKEN_TTL_SECONDS
+              value: {{ .Values.broker.identityToken.ttlSeconds | quote }}
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /v1/healthz
@@ -120,6 +145,16 @@ spec:
             - name: proxy-tmpfs
               mountPath: {{ .Values.broker.tmpfsProxy.mountPath | quote }}
             {{- end }}
+            {{- if .Values.broker.identityToken.existingSigningKeySecret }}
+            - name: identity-token-signing-key
+              mountPath: /etc/af-mcp/identity-token
+              readOnly: true
+            {{- end }}
+            {{- if .Values.broker.identityToken.existingAdditionalPublicKeysSecret }}
+            - name: identity-token-public-keys
+              mountPath: /etc/af-mcp/identity-token-public-keys
+              readOnly: true
+            {{- end }}
       volumes:
         - name: policy
           configMap:
@@ -152,4 +187,14 @@ spec:
           emptyDir:
             medium: Memory
             sizeLimit: {{ .Values.broker.tmpfsProxy.sizeLimit | quote }}
+        {{- end }}
+        {{- if .Values.broker.identityToken.existingSigningKeySecret }}
+        - name: identity-token-signing-key
+          secret:
+            secretName: {{ .Values.broker.identityToken.existingSigningKeySecret | quote }}
+        {{- end }}
+        {{- if .Values.broker.identityToken.existingAdditionalPublicKeysSecret }}
+        - name: identity-token-public-keys
+          secret:
+            secretName: {{ .Values.broker.identityToken.existingAdditionalPublicKeysSecret | quote }}
         {{- end }}

@@ -250,6 +250,48 @@ broker:
   #   scope: "openid profile email"
   #   displayName: "Rucio (ATLAS)"
   #   enables: "ATLAS Rucio operations via rucio-mcp"
+  # - type: broker-issued
+  #   alias: af-native
+  #   displayName: "AF-native services"
+  #   enables: "HTCondor and other AF-internal services"
+  #   targets: ["condor-token-service"]
+  #   # Per-target options; a target absent here gets the defaults
+  #   # (audience = target name, no POSIX claims).
+  #   targetOptions:
+  #     condor-token-service:
+  #       includePosix: true
+
+  # AF Broker Identity Token (issue #162) — the broker's own RS256 signing
+  # key for the short-TTL identity-assertion JWTs it mints for AF-native
+  # backends (identityProviders type: broker-issued above). Downstream
+  # consumers — condor-token-service (maniaclab/condor-token-service,
+  # verifying aud=condor-token-service) and future AF-native backends like
+  # jupyter-mcp — verify these tokens against the broker's own JWKS at
+  # https://<ingress.mcpHost>/.well-known/jwks.json; no Keycloak is in this
+  # path. Required (the broker refuses to start otherwise) whenever
+  # identityProviders has a broker-issued entry. See docs/auth.md's
+  # "AF Broker Identity Token" section for the token format and the key
+  # rotation procedure.
+  identityToken:
+    # Name of a pre-existing Secret providing the RS256 private key PEM.
+    # The Secret must contain a key named `signing-key.pem` (generate with
+    # `openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048`).
+    # Create via SealedSecret externally; the chart does NOT create it.
+    existingSigningKeySecret: ""
+    # Optional pre-existing Secret of ADDITIONAL public key PEMs published
+    # in the JWKS alongside the active key, for rotation overlap: publish
+    # the successor key here before switching signing to it, and keep the
+    # retiring key here until every token it signed has expired. Every
+    # Secret key named `*.pem` is published; other names are ignored.
+    existingAdditionalPublicKeysSecret: ""
+    # `iss` claim minted into every token. Empty means "use
+    # broker.publicOrigin" (the natural default, since consumers fetch the
+    # JWKS from that origin).
+    issuer: ""
+    # Token TTL in seconds. Empty means the broker default (600). Keep it
+    # comfortably above the credential layer's 300s min-remaining floor —
+    # see the broker's BROKER_TOKEN_TTL_SECONDS comment.
+    ttlSeconds: ""
 
   # OAuth 2.1 credential-brokering infrastructure shared by every
   # oauth21-direct entry in identityProviders above.
