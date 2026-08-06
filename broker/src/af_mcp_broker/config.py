@@ -107,7 +107,7 @@ class BrokerIssuedProviderConfig(BaseModel):
 
     @model_validator(mode="after")
     def _validate_target_options_keys(self) -> BrokerIssuedProviderConfig:
-        """A ``target_options`` key naming a target absent from ``targets`` is a typo that would otherwise silently apply to nothing — fail construction loudly instead."""
+        """Reject ``target_options`` keys naming targets absent from ``targets`` — such a typo would otherwise silently apply to nothing."""
         unknown = sorted(set(self.target_options) - set(self.targets))
         if unknown:
             raise ValueError(

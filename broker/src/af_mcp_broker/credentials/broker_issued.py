@@ -169,7 +169,7 @@ class BrokerTokenIssuer:
         return token, expires_at
 
     def jwks(self) -> dict[str, Any]:
-        """The RFC 7517 JWKS document: the active key's public half plus any additional rotation keys."""
+        """Return the RFC 7517 JWKS document: the active key's public half plus any additional rotation keys."""
         return self._jwks
 
 
