@@ -241,3 +241,100 @@ def test_mcp_replica_count_defaults_to_none():
 def test_mcp_replica_count_env_var_still_works(monkeypatch):
     monkeypatch.setenv("MCP_REPLICA_COUNT", "3")
     assert Settings().mcp_replica_count == 3
+
+
+# ---------------------------------------------------------------------------
+# broker-issued identity providers (issue #162) — the AF Broker Identity
+# Token's config surface: discriminated-union parsing, per-target options,
+# and the signing-key / issuer / TTL settings the issuer core reads.
+# ---------------------------------------------------------------------------
+
+_BROKER_ISSUED_ENTRY = {
+    "type": "broker-issued",
+    "alias": "af-native",
+    "targets": ["condor-token-service", "jupyter-mcp"],
+    "target_options": {
+        "condor-token-service": {"include_posix": True},
+        "jupyter-mcp": {"audience": "jupyter"},
+    },
+}
+
+
+def test_identity_providers_broker_issued_parses():
+    settings = Settings(identity_providers=[_BROKER_ISSUED_ENTRY])
+
+    (cfg,) = settings.identity_providers
+    assert cfg.type == "broker-issued"
+    assert cfg.alias == "af-native"
+    assert cfg.targets == ["condor-token-service", "jupyter-mcp"]
+    assert cfg.target_options["condor-token-service"].include_posix is True
+    assert cfg.target_options["condor-token-service"].audience == ""
+    assert cfg.target_options["jupyter-mcp"].audience == "jupyter"
+    assert cfg.target_options["jupyter-mcp"].include_posix is False
+
+
+def test_identity_providers_broker_issued_target_options_default_empty():
+    settings = Settings(
+        identity_providers=[
+            {"type": "broker-issued", "alias": "af-native", "targets": ["condor-mcp"]}
+        ]
+    )
+
+    (cfg,) = settings.identity_providers
+    assert cfg.target_options == {}
+
+
+def test_identity_providers_broker_issued_rejects_options_for_unknown_target():
+    """A target_options key naming a target absent from `targets` is a typo
+    that would otherwise silently apply to nothing -- fail construction
+    loudly instead."""
+    with pytest.raises(ValueError, match="target_options"):
+        Settings(
+            identity_providers=[
+                {
+                    "type": "broker-issued",
+                    "alias": "af-native",
+                    "targets": ["condor-mcp"],
+                    "target_options": {"condor-mpc": {"include_posix": True}},
+                }
+            ]
+        )
+
+
+def test_identity_providers_broker_issued_needs_no_oauth21_settings():
+    # Unlike oauth21-direct, a broker-issued entry has no dependent
+    # broker_state_key/oauth21_client_id/broker_public_origin requirement at
+    # Settings level -- the signing-key check lives in app.py's lifespan,
+    # where the key file is actually loaded.
+    Settings(identity_providers=[_BROKER_ISSUED_ENTRY])  # must not raise
+
+
+def test_broker_token_ttl_defaults_to_600():
+    # 600 = 2x the credential layer's default min-remaining floor (300s) --
+    # see the Settings field comment for why a TTL at or below that floor
+    # would defeat the CredentialCache entirely.
+    assert Settings().broker_token_ttl_seconds == 600
+
+
+def test_broker_token_ttl_rejects_nonpositive():
+    with pytest.raises(ValueError, match="broker_token_ttl_seconds"):
+        Settings(broker_token_ttl_seconds=0)
+
+
+def test_broker_token_effective_issuer_falls_back_to_public_origin():
+    settings = Settings(broker_public_origin="https://mcp.example.com")
+    assert settings.broker_token_effective_issuer == "https://mcp.example.com"
+
+
+def test_broker_token_effective_issuer_prefers_explicit_setting():
+    settings = Settings(
+        broker_public_origin="https://mcp.example.com",
+        broker_token_issuer="https://issuer.example.com",
+    )
+    assert settings.broker_token_effective_issuer == "https://issuer.example.com"
+
+
+def test_broker_signing_key_file_defaults_to_unset():
+    settings = Settings()
+    assert settings.broker_signing_key_file == ""
+    assert settings.broker_additional_public_keys_dir == ""
