@@ -118,10 +118,34 @@ class BrokerIssuedProviderConfig(BaseModel):
         return self
 
 
+class CondorTokenProviderConfig(BaseModel):
+    """An AF-native credential source for HTCondor IDTOKENs (``CondorTokenProvider``, issue #169): the broker mints an AF Broker Identity Token with ``aud=audience`` plus POSIX claims and exchanges it at condor-token-service's ``POST /v1/token`` — see docs/auth.md's "CondorTokenProvider" section.
+
+    ``service_url`` is the base URL of the condor-token-service deployment
+    (no path — the provider appends ``/v1/token``). ``audience`` is the exact
+    ``aud`` claim the service verifies; the default matches the service's own
+    default and should only change if a deployment renames itself.
+    """
+
+    type: Literal["condor-token"] = "condor-token"
+    alias: str
+    targets: list[str] = Field(default_factory=list)
+    service_url: AnyHttpUrl
+    audience: str = "condor-token-service"
+
+    # Portal-facing metadata for GET /v1/identities. Optional so a minimal
+    # provider config still parses; an operator who leaves these blank just
+    # gets an empty label/description on the Identities page until they fill
+    # them in.
+    display_name: str = ""
+    enables: str = ""
+
+
 IdentityProviderConfig = Annotated[
     KeycloakBrokeredProviderConfig
     | OAuth21DirectProviderConfig
-    | BrokerIssuedProviderConfig,
+    | BrokerIssuedProviderConfig
+    | CondorTokenProviderConfig,
     Field(discriminator="type"),
 ]
 

@@ -172,9 +172,7 @@ async def test_issue_presented_broker_token_has_condor_audience_and_posix_claims
     configured audience, with the principal's POSIX claims -- the
     condor-token-service contract."""
     provider, _ = provider_factory()
-    principal = make_principal(
-        subject="sub-abc", uid=50123, gid=5000, unixname="auser"
-    )
+    principal = make_principal(subject="sub-abc", uid=50123, gid=5000, unixname="auser")
 
     await provider.issue(principal, "condor-mcp")
 

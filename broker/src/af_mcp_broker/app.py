@@ -30,6 +30,7 @@ from af_mcp_broker.authorization import EntitlementPolicy, load_policy
 from af_mcp_broker.config import Settings
 from af_mcp_broker.credentials import (
     BrokerIssuedProvider,
+    CondorTokenProvider,
     CredentialCache,
     CredentialRegistry,
     InMemoryTokenStore,
@@ -315,27 +316,29 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         )
 
     # --- AF Broker Identity Token issuer (issue #162): the broker's own
-    # RS256 signing key for the identity-assertion JWTs BrokerIssuedProvider
-    # mints for AF-native backends. None when the feature is unconfigured
-    # entirely (no BROKER_SIGNING_KEY_FILE -- a valid local-dev state);
-    # load_broker_token_issuer itself raises RuntimeError on an unreadable/
-    # invalid key or a missing issuer URL. The fail-closed check below is the
-    # remaining gap: a broker-issued identity_providers entry (and therefore
-    # every backend resolving to it) with no signing key configured at all
-    # must refuse to boot rather than fail at first request -- same rollout-
-    # failure-over-silent-breakage reasoning as unreachable_capabilities
-    # above.
+    # RS256 signing key for the identity-assertion JWTs the native providers
+    # (BrokerIssuedProvider, and CondorTokenProvider's service exchange --
+    # issue #169) mint for AF-native backends. None when the feature is
+    # unconfigured entirely (no BROKER_SIGNING_KEY_FILE -- a valid local-dev
+    # state); load_broker_token_issuer itself raises RuntimeError on an
+    # unreadable/invalid key or a missing issuer URL. The fail-closed check
+    # below is the remaining gap: a native identity_providers entry (and
+    # therefore every backend resolving to it) with no signing key configured
+    # at all must refuse to boot rather than fail at first request -- same
+    # rollout-failure-over-silent-breakage reasoning as
+    # unreachable_capabilities above.
     broker_token_issuer = load_broker_token_issuer(settings)
     if broker_token_issuer is None and any(
-        cfg.type == "broker-issued" for cfg in settings.identity_providers
+        cfg.type in ("broker-issued", "condor-token")
+        for cfg in settings.identity_providers
     ):
         msg = (
-            "identity_providers contains a broker-issued entry but "
-            "BROKER_SIGNING_KEY_FILE is not set, so the broker cannot sign "
-            "AF Broker Identity Tokens for its targets. Mount the RS256 "
-            "signing key (chart: broker.identityToken."
-            "existingSigningKeySecret) or remove the broker-issued entry -- "
-            "see docs/auth.md's 'AF Broker Identity Token' section."
+            "identity_providers contains a broker-issued or condor-token "
+            "entry but BROKER_SIGNING_KEY_FILE is not set, so the broker "
+            "cannot sign AF Broker Identity Tokens for its targets. Mount "
+            "the RS256 signing key (chart: broker.identityToken."
+            "existingSigningKeySecret) or remove the entry -- see "
+            "docs/auth.md's 'AF Broker Identity Token' section."
         )
         raise RuntimeError(msg)
 
@@ -356,6 +359,16 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
                 alias=cfg.alias,
                 targets=frozenset(cfg.targets),
                 target_options=cfg.target_options,
+            )
+        elif cfg.type == "condor-token":
+            assert broker_token_issuer is not None  # guaranteed by the check above
+            provider = CondorTokenProvider(
+                issuer=broker_token_issuer,
+                cache=credential_cache,
+                alias=cfg.alias,
+                targets=frozenset(cfg.targets),
+                service_url=str(cfg.service_url),
+                audience=cfg.audience,
             )
         else:
             assert oauth21_token_store is not None  # guaranteed by the check above
