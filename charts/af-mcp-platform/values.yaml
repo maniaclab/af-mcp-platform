@@ -267,7 +267,7 @@ broker:
   #   targets: ["condor-mcp"]
   #   # Base URL of the condor-token-service deployment (the broker appends
   #   # /v1/token). audience defaults to "condor-token-service".
-  #   serviceUrl: "http://condor-token-service.af-mcp.svc:8080"
+  #   serviceUrl: "http://condor-token-service.condor-token.svc.cluster.local:8080"
 
   # AF Broker Identity Token (issue #162) — the broker's own RS256 signing
   # key for the short-TTL identity-assertion JWTs it mints for AF-native
