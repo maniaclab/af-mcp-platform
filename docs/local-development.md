@@ -117,6 +117,27 @@ credential type resolves its groups and POSIX identity from the directory
 now, so the broker refuses to start without either the bypass or this
 service account configured.
 
+### Testing broker-issued identity tokens locally
+
+The AF Broker Identity Token (issue #162, see docs/auth.md's "AF Broker
+Identity Token" section) needs an RS256 signing key on disk. Generate a
+throwaway one — never commit it, and never auto-generate keys in
+production paths (production keys arrive as SealedSecrets):
+
+```bash
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \
+  -out /tmp/broker-signing-key.pem
+export BROKER_SIGNING_KEY_FILE=/tmp/broker-signing-key.pem
+# the minted `iss` claim; either of these works locally
+export BROKER_TOKEN_ISSUER=http://localhost:8080
+```
+
+With a `broker-issued` entry in `IDENTITY_PROVIDERS` targeting one of your
+backends, `POST /v1/credential` mints a token you can check against the
+broker's own JWKS at <http://localhost:8080/.well-known/jwks.json>. Without
+the key configured, the broker still boots (the endpoint answers 503) —
+unless a `broker-issued` entry exists, in which case it refuses to start.
+
 ### Alternative: inject a real token from a live deployment
 
 If you'd rather not run the bypass, copy a real bearer — e.g. from
