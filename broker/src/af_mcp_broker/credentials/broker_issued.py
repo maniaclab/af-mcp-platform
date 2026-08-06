@@ -130,10 +130,6 @@ class BrokerTokenIssuer:
             keys.append(_public_jwk(public_key))
         self._jwks: dict[str, Any] = {"keys": keys}
 
-    @property
-    def issuer(self) -> str:
-        return self._issuer
-
     def mint(
         self,
         subject: str,
