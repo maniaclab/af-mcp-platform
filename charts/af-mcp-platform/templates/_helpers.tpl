@@ -140,8 +140,9 @@ JSON-serialized IDENTITY_PROVIDERS env var value, converting
 field names `IdentityProviderConfig` (broker/src/af_mcp_broker/config.py)
 parses from JSON. Every entry carries alias/type/targets/displayName/enables;
 oauth21-direct entries additionally carry the endpoint/issuer/scope fields,
-and broker-issued entries their per-target audience/includePosix options
-(issue #162).
+broker-issued entries their per-target audience/includePosix options
+(issue #162), and condor-token entries their serviceUrl/audience
+(issue #169).
 */}}
 {{- define "af-mcp-platform.identityProviders" -}}
 {{- $providers := list -}}
@@ -173,6 +174,16 @@ and broker-issued entries their per-target audience/includePosix options
       "display_name" (.displayName | default "")
       "enables" (.enables | default "")
       "target_options" $targetOptions
+    ) -}}
+{{- else if eq .type "condor-token" -}}
+{{- $providers = append $providers (dict
+      "type" .type
+      "alias" .alias
+      "targets" (.targets | default (list))
+      "display_name" (.displayName | default "")
+      "enables" (.enables | default "")
+      "service_url" .serviceUrl
+      "audience" (.audience | default "condor-token-service")
     ) -}}
 {{- else -}}
 {{- $providers = append $providers (dict

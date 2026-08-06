@@ -338,3 +338,49 @@ def test_broker_signing_key_file_defaults_to_unset():
     settings = Settings()
     assert settings.broker_signing_key_file == ""
     assert settings.broker_additional_public_keys_dir == ""
+
+
+# ---------------------------------------------------------------------------
+# condor-token identity providers (issue #169) — CondorTokenProvider's config
+# surface: discriminated-union parsing, the required service URL, and the
+# audience default.
+# ---------------------------------------------------------------------------
+
+_CONDOR_TOKEN_ENTRY = {
+    "type": "condor-token",
+    "alias": "condor",
+    "targets": ["condor-mcp"],
+    "service_url": "http://condor-token-service.af-mcp.svc:8080",
+}
+
+
+def test_identity_providers_condor_token_parses():
+    settings = Settings(identity_providers=[_CONDOR_TOKEN_ENTRY])
+
+    (cfg,) = settings.identity_providers
+    assert cfg.type == "condor-token"
+    assert cfg.alias == "condor"
+    assert cfg.targets == ["condor-mcp"]
+    assert str(cfg.service_url).rstrip("/") == (
+        "http://condor-token-service.af-mcp.svc:8080"
+    )
+    assert cfg.audience == "condor-token-service"
+
+
+def test_identity_providers_condor_token_requires_service_url():
+    """A condor-token entry without a service URL is unusable -- fail
+    construction loudly instead of failing at first request."""
+    entry = {k: v for k, v in _CONDOR_TOKEN_ENTRY.items() if k != "service_url"}
+    with pytest.raises(ValueError, match="service_url"):
+        Settings(identity_providers=[entry])
+
+
+def test_identity_providers_condor_token_audience_is_overridable():
+    settings = Settings(
+        identity_providers=[
+            {**_CONDOR_TOKEN_ENTRY, "audience": "condor-token-service-dev"}
+        ]
+    )
+
+    (cfg,) = settings.identity_providers
+    assert cfg.audience == "condor-token-service-dev"

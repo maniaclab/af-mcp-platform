@@ -14,6 +14,7 @@ from af_mcp_broker.credentials.broker_issued import (
     load_broker_token_issuer,
 )
 from af_mcp_broker.credentials.cache import CredentialCache
+from af_mcp_broker.credentials.condor import CondorTokenProvider
 from af_mcp_broker.credentials.oauth21 import (
     InMemoryTokenStore,
     OAuth21Provider,
@@ -34,6 +35,7 @@ from af_mcp_broker.vault_kv import VaultError
 __all__ = [
     "BrokerIssuedProvider",
     "BrokerTokenIssuer",
+    "CondorTokenProvider",
     "CredentialCache",
     "CredentialKind",
     "CredentialProvider",

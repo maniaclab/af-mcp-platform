@@ -229,6 +229,52 @@ The overlap property (a token signed by the retiring key verifies against
 a JWKS whose active key is the successor) is regression-tested in
 `broker/tests/test_broker_issued.py`.
 
+### CondorTokenProvider: HTCondor IDTOKENs (issue #169)
+
+HTCondor IDTOKENS are signed with the pool password — a **symmetric** key
+that can mint tokens for any identity in the pool, so it never leaves
+Condor infrastructure and never enters the broker. `CondorTokenProvider`
+(`credentials/condor.py`) is the second native provider and the identity
+token's first end-to-end use: it mints an AF Broker Identity Token with
+`aud=condor-token-service` and the principal's `uid`/`gid`/`unixname`
+claims, exchanges it at condor-token-service's `POST /v1/token` (which
+runs `condor_token_create -identity <unixname>@af.uchicago.edu` next to
+the pool key), and caches the returned IDTOKEN in the `CredentialCache`
+keyed `(subject, target)` with TTL = the service's `expires_at`. Delivery
+to condor-mcp is the existing aggregator `bearer` branch — no aggregator
+changes.
+
+Configuration is one `identity_providers` entry of type `condor-token`
+with a required `service_url` (the service's base URL — the provider
+appends `/v1/token`) and an `audience` defaulting to
+`condor-token-service`:
+
+```yaml
+broker:
+  identityProviders:
+    - type: condor-token
+      alias: condor
+      displayName: "HTCondor"
+      targets: ["condor-mcp"]
+      serviceUrl: http://condor-token-service.af-mcp.svc:8080
+```
+
+The same fail-closed rule applies as for `broker-issued`: a
+`condor-token` entry with no signing key configured refuses to boot,
+since the provider cannot mint the identity token it exchanges. POSIX
+identity is required unconditionally (not per-target config — an IDTOKEN
+*is* a unix-account credential): a principal without one gets an
+actionable 404 naming the backend at issue time. Service failures surface
+generically — a 429 passes through with its `Retry-After`; everything
+else (the service rejecting the broker's token, minting failure,
+unreachable) maps to a 502 whose detail never carries the service's
+response body. IDTOKENS are not server-side revocable; `revoke()` drops
+the cache entry and the short lifetime is the actual revocation bound. If
+HTCondor is later configured to trust the broker's JWKS directly
+(SCITOKENS issuer config), only this provider's implementation changes —
+the `CredentialProvider` contract, condor-mcp, and the registry wiring
+are untouched.
+
 ---
 
 ## Keycloak: POSIX User Attribute mappers (no longer read -- issue #144 step 3b)

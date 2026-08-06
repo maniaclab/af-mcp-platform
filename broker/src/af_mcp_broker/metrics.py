@@ -88,3 +88,12 @@ broker_identity_tokens_issued_total = Counter(
     "see module docstring.",
     ["target"],
 )
+
+condor_tokens_issued_total = Counter(
+    "af_mcp_condor_tokens_issued_total",
+    "HTCondor IDTOKENs actually obtained from condor-token-service (issue "
+    "#169) -- cache hits are not counted (see credential_cache_hits_total). "
+    "`target` is the configured backend target set, not user input; no "
+    "identity label -- see module docstring.",
+    ["target"],
+)
