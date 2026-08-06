@@ -56,9 +56,7 @@ def _make_rsa_key() -> rsa.RSAPrivateKey:
 
 
 def _private_pem(key: rsa.RSAPrivateKey) -> bytes:
-    return key.private_bytes(
-        Encoding.PEM, PrivateFormat.PKCS8, NoEncryption()
-    )
+    return key.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption())
 
 
 def _public_pem(key: rsa.RSAPrivateKey) -> bytes:
@@ -203,9 +201,7 @@ def test_mint_respects_configured_ttl(rsa_key: rsa.RSAPrivateKey) -> None:
 
 
 def test_kid_is_the_rfc7638_thumbprint(rsa_key: rsa.RSAPrivateKey) -> None:
-    issuer = BrokerTokenIssuer(
-        private_key_pem=_private_pem(rsa_key), issuer=ISSUER_URL
-    )
+    issuer = BrokerTokenIssuer(private_key_pem=_private_pem(rsa_key), issuer=ISSUER_URL)
 
     assert issuer.kid == _rfc7638_thumbprint(rsa_key)
 
@@ -285,9 +281,7 @@ def test_minted_token_verifies_like_a_consumer_would(
 ) -> None:
     token, _ = issuer.mint("user-123", "condor-token-service")
 
-    claims = verify_against_jwks(
-        token, issuer.jwks(), audience="condor-token-service"
-    )
+    claims = verify_against_jwks(token, issuer.jwks(), audience="condor-token-service")
     assert claims["sub"] == "user-123"
 
 

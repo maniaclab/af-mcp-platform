@@ -8,6 +8,11 @@ from af_mcp_broker.credentials.base import (
     IssuedCredential,
     NeedsUnlock,
 )
+from af_mcp_broker.credentials.broker_issued import (
+    BrokerIssuedProvider,
+    BrokerTokenIssuer,
+    load_broker_token_issuer,
+)
 from af_mcp_broker.credentials.cache import CredentialCache
 from af_mcp_broker.credentials.oauth21 import (
     InMemoryTokenStore,
@@ -27,6 +32,8 @@ from af_mcp_broker.credentials.x509 import (
 from af_mcp_broker.vault_kv import VaultError
 
 __all__ = [
+    "BrokerIssuedProvider",
+    "BrokerTokenIssuer",
     "CredentialCache",
     "CredentialKind",
     "CredentialProvider",
@@ -46,4 +53,5 @@ __all__ = [
     "VaultTokenStore",
     "VersionConflict",
     "X509Provider",
+    "load_broker_token_issuer",
 ]

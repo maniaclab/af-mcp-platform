@@ -79,3 +79,12 @@ x509_proxy_mints_total = Counter(
     "af_mcp_x509_proxy_mints_total",
     "Successful x509/VOMS proxy mints. No labels -- see module docstring.",
 )
+
+broker_identity_tokens_issued_total = Counter(
+    "af_mcp_broker_identity_tokens_issued_total",
+    "AF Broker Identity Tokens actually minted (issue #162) -- cache hits "
+    "are not counted (see credential_cache_hits_total). `target` is the "
+    "configured backend target set, not user input; no identity label -- "
+    "see module docstring.",
+    ["target"],
+)
