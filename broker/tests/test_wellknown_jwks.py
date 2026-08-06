@@ -26,9 +26,7 @@ if TYPE_CHECKING:
     import pytest
 
 
-def _configure_signing_key(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> Any:
+def _configure_signing_key(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Any:
     key = _make_rsa_key()
     key_file = tmp_path / "signing-key.pem"
     key_file.write_bytes(_private_pem(key))

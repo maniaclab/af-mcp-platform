@@ -75,9 +75,7 @@ def broker_issued_env(
         backends_file = tmp_path / "backends.yaml"
         backends_file.write_text(_BACKENDS_YAML)
         monkeypatch.setenv("BACKENDS_FILE", str(backends_file))
-        monkeypatch.setenv(
-            "IDENTITY_PROVIDERS", json.dumps(_BROKER_ISSUED_PROVIDERS)
-        )
+        monkeypatch.setenv("IDENTITY_PROVIDERS", json.dumps(_BROKER_ISSUED_PROVIDERS))
         monkeypatch.setenv("BROKER_PUBLIC_ORIGIN", "https://mcp.example.com")
         if with_signing_key:
             key_file = tmp_path / "signing-key.pem"
@@ -100,9 +98,7 @@ def test_broker_issued_provider_registered_from_config(
     with app_client_factory() as (client, _):
         state = client.app.state
         assert state.broker_token_issuer is not None
-        assert isinstance(
-            state.identity_providers["af-native"], BrokerIssuedProvider
-        )
+        assert isinstance(state.identity_providers["af-native"], BrokerIssuedProvider)
         provider = asyncio.run(
             state.credential_registry.resolve("condor-token-service")
         )
