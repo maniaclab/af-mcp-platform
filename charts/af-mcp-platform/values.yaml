@@ -94,6 +94,15 @@ broker:
   # below).
   oidc:
     audience: "mcp-gateway"
+    # Overrides where the broker fetches JWKS from, independent of the
+    # top-level `oidc.issuer` used for `iss` claim validation. Leave empty
+    # to derive it from `oidc.issuer` (`{issuer}/protocol/openid-connect/certs`,
+    # the standard OIDC layout) — the common case. Set this when the issuer
+    # is only reachable by its externally-advertised hostname (e.g. it's
+    # also embedded in minted tokens' `iss`) but the broker itself runs
+    # in the same cluster and should reach it via cluster-local DNS
+    # instead of hairpinning back out through the public ingress.
+    jwksUri: ""
 
   # Name of a pre-existing Secret providing the AF service token.
   # The Secret must contain a key named `af-service-token`.

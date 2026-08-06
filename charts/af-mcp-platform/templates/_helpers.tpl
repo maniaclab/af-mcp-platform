@@ -233,6 +233,12 @@ Callers pipe this through `nindent` at whatever depth their container's
   value: {{ .Values.oidc.issuer | quote }}
 - name: OIDC_AUDIENCE
   value: {{ .Values.broker.oidc.audience | quote }}
+# Omitted when empty so the broker derives it from OIDC_ISSUER instead
+# (see broker.oidc.jwksUri comment in values.yaml).
+{{- if .Values.broker.oidc.jwksUri }}
+- name: OIDC_JWKS_URI
+  value: {{ .Values.broker.oidc.jwksUri | quote }}
+{{- end }}
 # Home directory root (broker constructs per-user paths from this)
 - name: HOME_ROOT
   value: {{ .Values.broker.homeDir.homeRoot | quote }}

@@ -29,6 +29,29 @@ def test_env_var_is_case_insensitive(monkeypatch):
     assert Settings().oidc_audience == "lowercase-aud"
 
 
+def test_oidc_jwks_uri_explicit_override_is_not_derived(monkeypatch):
+    """An explicit OIDC_JWKS_URI must win over the issuer-derived default.
+
+    Lets a deployment validate `iss` against the externally-advertised
+    issuer while fetching JWKS via an internal URL (e.g. same-cluster
+    Keycloak reached over cluster-local DNS instead of hairpinning back
+    through the public ingress).
+    """
+    get_settings.cache_clear()
+    monkeypatch.setenv("OIDC_ISSUER", "https://kc.example/realms/foo")
+    monkeypatch.setenv(
+        "OIDC_JWKS_URI",
+        "http://keycloak.internal.svc.cluster.local:8080/realms/foo/protocol/openid-connect/certs",
+    )
+
+    settings = get_settings()
+    assert (
+        settings.oidc_jwks_uri
+        == "http://keycloak.internal.svc.cluster.local:8080/realms/foo/protocol/openid-connect/certs"
+    )
+    get_settings.cache_clear()
+
+
 # ---------------------------------------------------------------------------
 # identity_providers (issue #66 PR4) — discriminated-union parsing +
 # oauth21-direct dependent-settings validation
