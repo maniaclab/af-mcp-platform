@@ -34,7 +34,10 @@ spec:
     # used when the broker acts as a *client* of a backend AS) plus the RFC
     # 9728 protected-resource metadata (both the root and /mcp-suffixed
     # forms an MCP client tries) and RFC 8414 authorization-server metadata
-    # naming the broker itself as the authorization server for MCP clients.
+    # naming the broker itself as the authorization server for MCP clients,
+    # plus /.well-known/jwks.json (issue #162: the AF Broker Identity Token
+    # issuer's public keys, fetched by AF-native backends like
+    # condor-token-service to verify broker-signed identity assertions).
     # Everything else under /.well-known hits nginx's default HTML 404 --
     # exactly the confusing failure reported in #140 before these existed.
     - host: {{ .Values.ingress.mcpHost | quote }}
@@ -76,6 +79,13 @@ spec:
                 port:
                   name: http
           - path: /.well-known/oauth-authorization-server
+            pathType: Exact
+            backend:
+              service:
+                name: {{ include "af-mcp-platform.broker.fullname" . }}
+                port:
+                  name: http
+          - path: /.well-known/jwks.json
             pathType: Exact
             backend:
               service:

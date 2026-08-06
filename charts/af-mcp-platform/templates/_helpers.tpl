@@ -139,7 +139,9 @@ JSON-serialized IDENTITY_PROVIDERS env var value, converting
 `broker.identityProviders`' camelCase chart-value keys into the snake_case
 field names `IdentityProviderConfig` (broker/src/af_mcp_broker/config.py)
 parses from JSON. Every entry carries alias/type/targets/displayName/enables;
-oauth21-direct entries additionally carry the endpoint/issuer/scope fields.
+oauth21-direct entries additionally carry the endpoint/issuer/scope fields,
+and broker-issued entries their per-target audience/includePosix options
+(issue #162).
 */}}
 {{- define "af-mcp-platform.identityProviders" -}}
 {{- $providers := list -}}
@@ -155,6 +157,22 @@ oauth21-direct entries additionally carry the endpoint/issuer/scope fields.
       "token_endpoint" .tokenEndpoint
       "issuer" .issuer
       "scope" (.scope | default "openid profile email")
+    ) -}}
+{{- else if eq .type "broker-issued" -}}
+{{- $targetOptions := dict -}}
+{{- range $target, $opts := (.targetOptions | default (dict)) -}}
+{{- $_ := set $targetOptions $target (dict
+      "audience" ($opts.audience | default "")
+      "include_posix" ($opts.includePosix | default false)
+    ) -}}
+{{- end -}}
+{{- $providers = append $providers (dict
+      "type" .type
+      "alias" .alias
+      "targets" (.targets | default (list))
+      "display_name" (.displayName | default "")
+      "enables" (.enables | default "")
+      "target_options" $targetOptions
     ) -}}
 {{- else -}}
 {{- $providers = append $providers (dict

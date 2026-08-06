@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import cast
+from typing import Any, cast
 
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict
@@ -174,3 +174,43 @@ async def get_authorization_server_metadata(
         token_endpoint_auth_methods_supported=["none"],
         client_id_metadata_document_supported=True,
     )
+
+
+# ---------------------------------------------------------------------------
+# Broker JWKS (issue #162): the AF Broker Identity Token issuer's public
+# keys, so AF-native backends (condor-token-service, future jupyter-mcp)
+# verify broker-signed identity assertions locally with a standard library --
+# and services like HTCondor can trust the broker as a token issuer directly
+# via their native token auth, with no Keycloak in the path. See
+# docs/auth.md's "AF Broker Identity Token" section.
+# ---------------------------------------------------------------------------
+
+
+class JwksResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    keys: list[dict[str, Any]]
+
+
+@router.get(
+    "/.well-known/jwks.json",
+    response_model=JwksResponse,
+    summary="AF Broker Identity Token issuer JWKS",
+)
+async def get_broker_jwks(request: Request) -> JwksResponse:
+    """Serve the broker's own signing keys' public halves (RFC 7517).
+
+    Unauthenticated by design, like every other well-known document here --
+    a backend must be able to fetch this before it trusts any token at all.
+    Public material only: the issuer core builds the document exclusively
+    from public keys (see ``credentials/broker_issued.py``). 503 when no
+    signing key is configured, the same degraded shape as the discovery
+    metadata above.
+    """
+    issuer = getattr(request.app.state, "broker_token_issuer", None)
+    if issuer is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Broker identity-token issuer is not configured",
+        )
+    return JwksResponse(**issuer.jwks())

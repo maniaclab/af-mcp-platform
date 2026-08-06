@@ -70,8 +70,58 @@ class OAuth21DirectProviderConfig(BaseModel):
     enables: str = ""
 
 
+class BrokerIssuedTargetOptions(BaseModel):
+    """Per-target options for a ``broker-issued`` identity provider entry.
+
+    ``audience`` is the exact ``aud`` claim minted into the AF Broker
+    Identity Token for this target; empty means "use the target/backend name
+    itself", which is the right default for every AF-native backend (the
+    consumer MUST reject tokens whose ``aud`` is not exactly itself — issue
+    #162). ``include_posix`` opts this target's tokens into the optional
+    ``uid``/``gid``/``unixname`` claims, resolved from the directory-backed
+    Principal — declare it only for backends that genuinely need a POSIX
+    identity (same point-of-use reasoning as issue #148).
+    """
+
+    audience: str = ""
+    include_posix: bool = False
+
+
+class BrokerIssuedProviderConfig(BaseModel):
+    """An AF-native credential source: the broker itself signs short-TTL identity-assertion JWTs (``BrokerIssuedProvider``, issue #162) — no linking, no external identity system, the broker is authoritative. See docs/auth.md's "AF Broker Identity Token" section."""
+
+    type: Literal["broker-issued"] = "broker-issued"
+    alias: str
+    targets: list[str] = Field(default_factory=list)
+
+    # Per-target options keyed by target name; a target absent from this map
+    # gets the defaults (audience = target name, no POSIX claims).
+    target_options: dict[str, BrokerIssuedTargetOptions] = Field(default_factory=dict)
+
+    # Portal-facing metadata for GET /v1/identities. Optional so a minimal
+    # provider config still parses; an operator who leaves these blank just
+    # gets an empty label/description on the Identities page until they fill
+    # them in.
+    display_name: str = ""
+    enables: str = ""
+
+    @model_validator(mode="after")
+    def _validate_target_options_keys(self) -> BrokerIssuedProviderConfig:
+        """Reject ``target_options`` keys naming targets absent from ``targets`` — such a typo would otherwise silently apply to nothing."""
+        unknown = sorted(set(self.target_options) - set(self.targets))
+        if unknown:
+            raise ValueError(
+                f"target_options names targets not in this provider's "
+                f"targets list: {unknown}. Fix the typo or add them to "
+                "targets."
+            )
+        return self
+
+
 IdentityProviderConfig = Annotated[
-    KeycloakBrokeredProviderConfig | OAuth21DirectProviderConfig,
+    KeycloakBrokeredProviderConfig
+    | OAuth21DirectProviderConfig
+    | BrokerIssuedProviderConfig,
     Field(discriminator="type"),
 ]
 
@@ -394,6 +444,53 @@ class Settings(BaseSettings):
     # name) matches ``policy.yaml``'s ``group_capabilities`` keys directly.
     principal_directory_group_full_path: bool = False
 
+    # --- AF Broker Identity Token (issue #162): the broker's own RS256
+    # signing key for the short-TTL identity-assertion JWTs
+    # BrokerIssuedProvider mints for AF-native backends (identityProviders
+    # type "broker-issued"). Filesystem path to the private key PEM,
+    # mounted from a Secret in the chart (broker.identityToken.
+    # existingSigningKeySecret) -- same "secret material comes from a
+    # mounted file, never an inline env value" shape as
+    # AF_SERVICE_TOKEN_FILE. Empty means the feature is unconfigured: valid
+    # for local dev, but app.py's lifespan refuses to start when a
+    # broker-issued identityProviders entry exists without it (fail-closed,
+    # like the unreachable_capabilities/ungated_backends checks).
+    broker_signing_key_file: str = ""
+
+    # Directory of ADDITIONAL public key PEMs (files named *.pem) published
+    # in /.well-known/jwks.json alongside the active signing key, so a new
+    # key can be published before first use and the old one retired after an
+    # overlap window -- see docs/auth.md's key-rotation procedure. Public
+    # material only; the private half of a retiring key never needs to be
+    # here.
+    broker_additional_public_keys_dir: str = ""
+
+    # `iss` claim minted into every AF Broker Identity Token. Empty means
+    # "use broker_public_origin" -- resolved at read time via
+    # `broker_token_effective_issuer` (same shape as
+    # `oauth21_effective_state_issuer`), which is the natural default since
+    # consumers verify against {origin}/.well-known/jwks.json.
+    broker_token_issuer: str = ""
+
+    # Lifetime (seconds) of each minted AF Broker Identity Token. The
+    # default is deliberately 2x the credential layer's default
+    # min-remaining floor (`issue(min_remaining_seconds=300)`, see
+    # credentials/base.py): CredentialCache only serves an entry with at
+    # least that many seconds left, so a TTL at or below the floor would
+    # make every issue() a cache miss and a fresh mint -- functionally fine
+    # but defeating the cache entirely. Keep this comfortably above 300.
+    broker_token_ttl_seconds: int = 600
+
+    @property
+    def broker_token_effective_issuer(self) -> str:
+        """``broker_token_issuer`` if set, else ``broker_public_origin``.
+
+        Computed at read time (like ``oauth21_effective_state_issuer``) so it
+        always reflects the current value of either field rather than a value
+        frozen at construction time.
+        """
+        return self.broker_token_issuer or self.broker_public_origin
+
     @property
     def oauth21_effective_state_issuer(self) -> str:
         """``oauth21_state_issuer`` if set, else ``oidc_issuer``.
@@ -403,6 +500,17 @@ class Settings(BaseSettings):
         either field rather than a value frozen at construction time.
         """
         return self.oauth21_state_issuer or self.oidc_issuer
+
+    @field_validator("broker_token_ttl_seconds")
+    @classmethod
+    def _validate_broker_token_ttl(cls, value: int, info: ValidationInfo) -> int:
+        if value < 1:
+            raise ValueError(
+                f"{info.field_name} must be >= 1; see the field comment for "
+                "why it should also stay comfortably above the credential "
+                "layer's 300s min-remaining floor."
+            )
+        return value
 
     @field_validator(
         "credential_unlock_max_failures", "credential_unlock_window_seconds"

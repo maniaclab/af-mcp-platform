@@ -29,6 +29,7 @@ from af_mcp_broker.audit.logger import init_audit_logger
 from af_mcp_broker.authorization import EntitlementPolicy, load_policy
 from af_mcp_broker.config import Settings
 from af_mcp_broker.credentials import (
+    BrokerIssuedProvider,
     CredentialCache,
     CredentialRegistry,
     InMemoryTokenStore,
@@ -36,6 +37,7 @@ from af_mcp_broker.credentials import (
     OIDCProvider,
     VaultTokenStore,
     X509Provider,
+    load_broker_token_issuer,
 )
 from af_mcp_broker.credentials.cache import RateLimitError
 from af_mcp_broker.http import aclose_http_client
@@ -312,6 +314,31 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
             settings.broker_state_key.get_secret_value().encode()
         )
 
+    # --- AF Broker Identity Token issuer (issue #162): the broker's own
+    # RS256 signing key for the identity-assertion JWTs BrokerIssuedProvider
+    # mints for AF-native backends. None when the feature is unconfigured
+    # entirely (no BROKER_SIGNING_KEY_FILE -- a valid local-dev state);
+    # load_broker_token_issuer itself raises RuntimeError on an unreadable/
+    # invalid key or a missing issuer URL. The fail-closed check below is the
+    # remaining gap: a broker-issued identity_providers entry (and therefore
+    # every backend resolving to it) with no signing key configured at all
+    # must refuse to boot rather than fail at first request -- same rollout-
+    # failure-over-silent-breakage reasoning as unreachable_capabilities
+    # above.
+    broker_token_issuer = load_broker_token_issuer(settings)
+    if broker_token_issuer is None and any(
+        cfg.type == "broker-issued" for cfg in settings.identity_providers
+    ):
+        msg = (
+            "identity_providers contains a broker-issued entry but "
+            "BROKER_SIGNING_KEY_FILE is not set, so the broker cannot sign "
+            "AF Broker Identity Tokens for its targets. Mount the RS256 "
+            "signing key (chart: broker.identityToken."
+            "existingSigningKeySecret) or remove the broker-issued entry -- "
+            "see docs/auth.md's 'AF Broker Identity Token' section."
+        )
+        raise RuntimeError(msg)
+
     for cfg in settings.identity_providers:
         provider: CredentialProvider
         if cfg.type == "keycloak-brokered":
@@ -320,6 +347,15 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
                 credential_cache,
                 alias=cfg.alias,
                 targets=frozenset(cfg.targets),
+            )
+        elif cfg.type == "broker-issued":
+            assert broker_token_issuer is not None  # guaranteed by the check above
+            provider = BrokerIssuedProvider(
+                issuer=broker_token_issuer,
+                cache=credential_cache,
+                alias=cfg.alias,
+                targets=frozenset(cfg.targets),
+                target_options=cfg.target_options,
             )
         else:
             assert oauth21_token_store is not None  # guaranteed by the check above
@@ -541,6 +577,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     application.state.revoked_jti_cache = revoked_jti_cache
     application.state.principal_cache = principal_cache
     application.state.mcp_auth_code_store = mcp_auth_code_store
+    application.state.broker_token_issuer = broker_token_issuer
 
     # Prime the JWKS cache at startup so the first request does not pay the
     # latency cost of a remote fetch.

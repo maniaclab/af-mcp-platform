@@ -79,6 +79,156 @@ OIDC IdP to Keycloak — this is the path for rucio-mcp. See
 [Rucio: Per-Site Setup](rucio-per-site-setup.md) for the concrete, deployed
 `oauth21-direct` configuration rucio-mcp uses, one entry per Rucio site.
 
+A third `identity_providers` type, `broker-issued`, is deliberately **not**
+in the table above: it links nothing, because there is no external identity
+to link. It is the native half of the two-class doctrine below.
+
+---
+
+## AF Broker Identity Token (issue #162)
+
+### Two classes of backends: federated vs AF-native
+
+Every backend the broker fronts falls into one of two classes, and the
+credential story is different for each:
+
+**External identity systems** (Rucio, ATLAS IAM — anything whose source of
+truth is not AF) are *federation* problems. They require account linking
+and a federated credential: OAuth 2.1 (`oauth21-direct`), a brokered OIDC
+token (`keycloak-brokered`), or an x509/VOMS proxy. This is the provider
+set documented above, unchanged.
+
+**AF-native services** (condor-token-service, future jupyter-mcp,
+condor-mcp, and every future internal backend) are the opposite: AF is the
+source of truth. No federation occurs, no linking, no exchange — **the
+broker is authoritative.** The key architectural fact: *there is no trust
+boundary crossed by involving Keycloak in this path.* Round-tripping
+through Keycloak per call to re-encode facts the broker already resolved
+from the directory (subject, POSIX identity) is an availability and latency
+cost with no trust gain. The broker is already the authorization decision
+point; having AF-native services trust broker-issued identity assertions
+**preserves** that trust boundary rather than expanding it.
+
+In the provider hierarchy:
+
+```
+CredentialProvider (ABC — contract unchanged)
+├── federated providers      # linking + external credential
+│     OAuth21Provider, OIDCProvider (brokered), X509Provider
+└── native providers         # broker-authoritative, no linking
+      BrokerIssuedProvider   # credentials/broker_issued.py
+```
+
+Because there is no linking step, an AF-native backend shows `available`
+on the catalog from day one — `is_linked()` is unconditionally true, no
+portal action exists or is needed, and `GET /v1/identities` lists the
+provider as always linked with no `link_url`.
+
+### The token format — an internal protocol
+
+Broker-issued JWTs are **identity assertions, nothing more** (SPIFFE-style:
+documented once, every AF-native backend consumes the same format; future
+backends — slurm-mcp, k8s-mcp, cvmfs-mcp — never invent a new
+authentication story). RS256, signed by the broker's own key, TTL
+`BROKER_TOKEN_TTL_SECONDS` (default 600 s — deliberately 2× the credential
+cache's 300 s min-remaining floor, so cached tokens are actually servable;
+a TTL at or below that floor makes every call a fresh mint).
+
+| Claim      | Required | Value |
+|------------|----------|-------|
+| `iss`      | yes      | The broker issuer URL — `BROKER_TOKEN_ISSUER`, defaulting to `BROKER_PUBLIC_ORIGIN` |
+| `sub`      | yes      | The principal's subject (Keycloak `sub`) |
+| `aud`      | yes      | The exact backend name (or the entry's configured `audience` override) — consumers **MUST reject** tokens whose `aud` is not exactly themselves |
+| `exp` / `iat` | yes   | Mint time and mint time + TTL |
+| `jti`      | yes      | Unique per token (uuid4) |
+| `uid` / `gid` / `unixname` | optional | POSIX identity from the directory-backed `Principal` (the same source x509 minting uses — never a token claim), included **only** for targets whose config sets `include_posix` |
+
+**Deliberately absent: capabilities, groups, or any authorization claim.**
+Authorization is an attribute of the principal, decided per-call by the
+broker's entitlement check — it must never migrate into tokens (see
+"Authorization is an attribute of the principal, not the token" below; the
+same reasoning). If a backend is ever written to test `token.capabilities`,
+this design has failed. Backends use the token to answer "who is this and
+did the broker send them," nothing else.
+
+Consumers verify against the broker's JWKS at
+`GET /.well-known/jwks.json` (public, unauthenticated, served next to the
+other well-known documents and routed by the same ingress) with any
+standard JWT library: select the key by the token header's `kid`, then
+check signature, `iss`, `aud`, and `exp`. `kid` is the RFC 7638 JWK
+thumbprint of the key, so it is stable across replicas and restarts with
+no coordination. This also lets services like HTCondor trust the broker as
+a token issuer directly via their native token auth (SCITOKENS issuer
+config) — no Keycloak in the path.
+
+**First consumer: condor-token-service**
+([maniaclab/condor-token-service](https://github.com/maniaclab/condor-token-service)),
+verifying `aud=condor-token-service` against this JWKS.
+
+### Configuration
+
+One `identity_providers` entry (chart: `broker.identityProviders`) of type
+`broker-issued`, plus the signing key:
+
+```yaml
+broker:
+  identityProviders:
+    - type: broker-issued
+      alias: af-native
+      displayName: "AF-native services"
+      targets: ["condor-token-service"]
+      targetOptions:
+        condor-token-service:
+          includePosix: true    # this backend needs uid/gid/unixname
+  identityToken:
+    existingSigningKeySecret: af-mcp-identity-token-signing-key
+```
+
+The Secret must carry the RS256 private key PEM under the key name
+`signing-key.pem`; the chart mounts it read-only and points
+`BROKER_SIGNING_KEY_FILE` at it. **Fail-closed:** a `broker-issued` entry
+with no signing key configured refuses to boot (a startup `RuntimeError`,
+consistent with the `unreachable_capabilities`/`ungated_backends` checks)
+rather than failing at first request; a broker with neither configured
+boots cleanly with the feature absent (`/.well-known/jwks.json` answers
+503). A target with `include_posix` whose caller has no POSIX identity
+gets an actionable 404 naming the backend at issue time — the same
+point-of-use requirement as x509's `PosixIdentityRequiredError`.
+
+Generate a key for local development (never commit one, never auto-generate
+in production paths — production keys arrive as SealedSecrets like every
+other broker secret):
+
+```bash
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \
+  -out /tmp/broker-signing-key.pem
+export BROKER_SIGNING_KEY_FILE=/tmp/broker-signing-key.pem
+```
+
+### Key rotation
+
+Rotation is publish-before-use with an overlap window, entirely through the
+JWKS — consumers never hardcode a key:
+
+1. **Publish the successor.** Generate the new keypair; add its *public*
+   PEM (a `*.pem` key in the Secret named by
+   `broker.identityToken.existingAdditionalPublicKeysSecret`, mounted at
+   `BROKER_ADDITIONAL_PUBLIC_KEYS_DIR`). The JWKS now serves both keys;
+   nothing signs with the new one yet.
+2. **Switch signing.** Replace the signing-key Secret's `signing-key.pem`
+   with the new private key, and move the *old* key's public PEM into the
+   additional-public-keys Secret. Roll the Deployment. New tokens carry the
+   new `kid`; tokens signed by the old key keep verifying because its
+   public half is still published.
+3. **Retire the old key.** After at least one full token TTL (default
+   600 s — in practice wait longer, e.g. a day, to absorb clock skew and
+   consumer JWKS caches), remove the old public PEM from the
+   additional-public-keys Secret and roll again.
+
+The overlap property (a token signed by the retiring key verifies against
+a JWKS whose active key is the successor) is regression-tested in
+`broker/tests/test_broker_issued.py`.
+
 ---
 
 ## Keycloak: POSIX User Attribute mappers (no longer read -- issue #144 step 3b)

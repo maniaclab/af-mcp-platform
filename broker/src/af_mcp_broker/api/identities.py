@@ -23,8 +23,11 @@ router = APIRouter(prefix="/identities", tags=["identities"])
 
 # "keycloak-brokered" — Keycloak's stored-broker-token pattern (OIDCProvider);
 # "oauth21-direct" — the broker acting as a direct OAuth 2.1 client
-# (OAuth21Provider).
-ProviderType = Literal["keycloak-brokered", "oauth21-direct"]
+# (OAuth21Provider); "broker-issued" — the broker signing its own AF Broker
+# Identity Tokens for AF-native backends (BrokerIssuedProvider, issue #162).
+# A broker-issued entry is always `linked` with no `link_url`: the broker is
+# authoritative, there is no linking step and no portal action.
+ProviderType = Literal["keycloak-brokered", "oauth21-direct", "broker-issued"]
 
 
 class IdentityProvider(BaseModel):
