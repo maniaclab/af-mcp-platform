@@ -285,8 +285,10 @@ broker:
     # Secret key named `*.pem` is published; other names are ignored.
     existingAdditionalPublicKeysSecret: ""
     # `iss` claim minted into every token. Empty means "use
-    # broker.publicOrigin" (the natural default, since consumers fetch the
-    # JWKS from that origin).
+    # broker.publicOrigin" — check that value before relying on the
+    # fallback: at AF, publicOrigin is the PORTAL origin while consumers
+    # verify iss against the mcp origin serving the JWKS, so this must be
+    # set explicitly (e.g. "https://mcp.af.uchicago.edu").
     issuer: ""
     # Token TTL in seconds. Empty means the broker default (600). Keep it
     # comfortably above the credential layer's 300s min-remaining floor —
