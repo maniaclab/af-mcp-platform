@@ -148,12 +148,13 @@ def _require_keycloak_login_configured(settings: Settings) -> None:
 
 
 def _keycloak_authorization_endpoint(settings: Settings) -> str:
-    """Keycloak's standard OIDC authorization endpoint, derived the same way ``config.py`` derives ``oidc_jwks_uri`` from ``oidc_issuer`` -- Keycloak's ``/protocol/openid-connect/*`` paths are a fixed convention already relied on elsewhere in this codebase, not something discovered per deployment."""
+    """Keycloak's standard OIDC authorization endpoint -- Keycloak's ``/protocol/openid-connect/*`` paths are a fixed convention already relied on elsewhere in this codebase, not something discovered per deployment. Front-channel (a browser redirect), so it stays on ``oidc_issuer``, never ``oidc_backchannel_url``."""
     return f"{settings.oidc_issuer.rstrip('/')}/protocol/openid-connect/auth"
 
 
 def _keycloak_token_endpoint(settings: Settings) -> str:
-    return f"{settings.oidc_issuer.rstrip('/')}/protocol/openid-connect/token"
+    """Back-channel (the broker POSTs the code exchange itself), so it follows ``oidc_backchannel_url`` -- unlike the authorization endpoint above."""
+    return f"{settings.oidc_backchannel_url.rstrip('/')}/protocol/openid-connect/token"
 
 
 def _keycloak_login_redirect_uri(settings: Settings) -> str:

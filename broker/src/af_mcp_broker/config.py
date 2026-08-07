@@ -168,8 +168,14 @@ class Settings(BaseSettings):
     # OIDC configuration
     oidc_issuer: str = "https://keycloak-prod.tempest.uchicago.edu/realms/connect"
     oidc_audience: str = "mcp-gateway"
-    # Derived from oidc_issuer when not set explicitly.
-    oidc_jwks_uri: str = ""
+    # Optional realm URL for server-to-server (back-channel) Keycloak calls
+    # -- JWKS, token endpoint, Admin REST API, brokered-token fetch. Set it
+    # when the issuer is only reachable by its externally-advertised hostname
+    # (it's embedded in tokens' `iss`) but the broker runs in the same
+    # cluster and should reach Keycloak via cluster-local DNS instead of
+    # hairpinning back out through the public ingress. Empty (the common
+    # case) means back-channel calls use oidc_issuer directly.
+    oidc_internal_url: str = ""
 
     # Filesystem
     home_root: str = "/data/homes"
@@ -519,11 +525,27 @@ class Settings(BaseSettings):
     def oauth21_effective_state_issuer(self) -> str:
         """``oauth21_state_issuer`` if set, else ``oidc_issuer``.
 
-        Computed at read time (unlike ``oidc_jwks_uri``, which is derived once
-        in ``_derive_jwks_uri``) so it always reflects the current value of
-        either field rather than a value frozen at construction time.
+        Computed at read time (like ``oidc_backchannel_url``) so it always
+        reflects the current value of either field rather than a value frozen
+        at construction time.
         """
         return self.oauth21_state_issuer or self.oidc_issuer
+
+    @property
+    def oidc_backchannel_url(self) -> str:
+        """Realm URL for server-to-server Keycloak calls.
+
+        ``oidc_internal_url`` if set, else ``oidc_issuer``. Every back-channel
+        call (JWKS, token endpoint, Admin REST API, brokered-token fetch) must
+        build its URL from this; ``oidc_issuer`` itself is reserved for token
+        identity -- `iss` validation and anything embedded in minted tokens.
+        """
+        return self.oidc_internal_url or self.oidc_issuer
+
+    @property
+    def oidc_jwks_uri(self) -> str:
+        """JWKS endpoint at the standard OIDC discovery path."""
+        return f"{self.oidc_backchannel_url.rstrip('/')}/protocol/openid-connect/certs"
 
     @field_validator("broker_token_ttl_seconds")
     @classmethod
@@ -548,15 +570,6 @@ class Settings(BaseSettings):
                 "its purpose as a brute-force defence."
             )
         return value
-
-    @model_validator(mode="after")
-    def _derive_jwks_uri(self) -> Settings:
-        if not self.oidc_jwks_uri:
-            # Standard OIDC discovery path
-            self.oidc_jwks_uri = (
-                f"{self.oidc_issuer.rstrip('/')}/protocol/openid-connect/certs"
-            )
-        return self
 
     @model_validator(mode="after")
     def _validate_oauth21_config(self) -> Settings:

@@ -24,6 +24,11 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 from cryptography.fernet import Fernet
 
+from af_mcp_broker.api.mcp_oauth import (
+    _keycloak_authorization_endpoint,
+    _keycloak_token_endpoint,
+)
+from af_mcp_broker.config import Settings
 from af_mcp_broker.mcp_auth_codes import McpAuthCodeRecord, McpAuthCodeStore
 from af_mcp_broker.oauth_state import build_mcp_authorize_state, generate_pkce_pair
 
@@ -525,3 +530,21 @@ def test_token_rejects_reused_code() -> None:
     )
     assert store.consume(code) is not None
     assert store.consume(code) is None
+
+
+def test_keycloak_endpoints_split_front_and_back_channel() -> None:
+    """With oidc_internal_url set, the code-for-token exchange (a server-side
+    POST from the broker) must go to the internal URL, while the
+    authorization endpoint (a browser redirect) must stay on the
+    externally-advertised issuer."""
+    internal = "http://keycloak.svc.test:8080/realms/connect"
+    settings = Settings(oidc_issuer=ISSUER, oidc_internal_url=internal)
+
+    assert (
+        _keycloak_token_endpoint(settings)
+        == f"{internal}/protocol/openid-connect/token"
+    )
+    assert (
+        _keycloak_authorization_endpoint(settings)
+        == f"{ISSUER}/protocol/openid-connect/auth"
+    )

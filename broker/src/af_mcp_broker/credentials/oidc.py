@@ -87,7 +87,7 @@ class OIDCProvider(CredentialProvider):
     async def is_linked(self, principal: Principal) -> bool:
         """Return True if Keycloak holds a brokered ATLAS IAM token for *principal*.
 
-        Probes ``GET {oidc_issuer}/broker/{alias}/token`` with the
+        Probes ``GET {oidc_backchannel_url}/broker/{alias}/token`` with the
         principal's own bearer token: HTTP 200 means Keycloak has a stored
         brokered token (the user completed IdP linking). Any other outcome —
         a 4xx/5xx response or an unreachable Keycloak — is treated as "not
@@ -108,9 +108,7 @@ class OIDCProvider(CredentialProvider):
         return linked
 
     async def _probe_linked(self, principal: Principal) -> bool:
-        broker_token_url = (
-            f"{self._settings.oidc_issuer.rstrip('/')}/broker/{self._alias}/token"
-        )
+        broker_token_url = f"{self._settings.oidc_backchannel_url.rstrip('/')}/broker/{self._alias}/token"
         headers = {"Authorization": f"Bearer {principal.raw_token.get_secret_value()}"}
         try:
             resp = await get_http_client().head(
@@ -208,9 +206,7 @@ class OIDCProvider(CredentialProvider):
         Raises HTTPException on 401 (session expired) and 404 (no stored
         token — user must re-link).
         """
-        broker_token_url = (
-            f"{self._settings.oidc_issuer.rstrip('/')}/broker/{self._alias}/token"
-        )
+        broker_token_url = f"{self._settings.oidc_backchannel_url.rstrip('/')}/broker/{self._alias}/token"
 
         resp = await get_http_client().get(
             broker_token_url,

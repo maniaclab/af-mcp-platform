@@ -29,27 +29,48 @@ def test_env_var_is_case_insensitive(monkeypatch):
     assert Settings().oidc_audience == "lowercase-aud"
 
 
-def test_oidc_jwks_uri_explicit_override_is_not_derived(monkeypatch):
-    """An explicit OIDC_JWKS_URI must win over the issuer-derived default.
+def test_oidc_backchannel_url_falls_back_to_issuer():
+    """Without oidc_internal_url, back-channel calls go to the issuer."""
+    settings = Settings(oidc_issuer="https://kc.example/realms/foo")
+    assert settings.oidc_backchannel_url == "https://kc.example/realms/foo"
+
+
+def test_oidc_backchannel_url_prefers_internal_url(monkeypatch):
+    """OIDC_INTERNAL_URL redirects every server-to-server Keycloak call.
 
     Lets a deployment validate `iss` against the externally-advertised
-    issuer while fetching JWKS via an internal URL (e.g. same-cluster
-    Keycloak reached over cluster-local DNS instead of hairpinning back
-    through the public ingress).
+    issuer while reaching Keycloak (JWKS, token endpoint, Admin REST API,
+    brokered-token fetch) via an internal URL (e.g. same-cluster Keycloak
+    reached over cluster-local DNS instead of hairpinning back through the
+    public ingress).
     """
     get_settings.cache_clear()
     monkeypatch.setenv("OIDC_ISSUER", "https://kc.example/realms/foo")
     monkeypatch.setenv(
-        "OIDC_JWKS_URI",
-        "http://keycloak.internal.svc.cluster.local:8080/realms/foo/protocol/openid-connect/certs",
+        "OIDC_INTERNAL_URL",
+        "http://keycloak.internal.svc.cluster.local:8080/realms/foo",
     )
 
     settings = get_settings()
     assert (
-        settings.oidc_jwks_uri
-        == "http://keycloak.internal.svc.cluster.local:8080/realms/foo/protocol/openid-connect/certs"
+        settings.oidc_backchannel_url
+        == "http://keycloak.internal.svc.cluster.local:8080/realms/foo"
     )
+    # iss validation must keep using the external issuer.
+    assert settings.oidc_issuer == "https://kc.example/realms/foo"
     get_settings.cache_clear()
+
+
+def test_oidc_jwks_uri_derived_from_internal_url():
+    """JWKS derivation follows the back-channel URL, not the issuer."""
+    settings = Settings(
+        oidc_issuer="https://kc.example/realms/foo",
+        oidc_internal_url="http://keycloak.internal.svc.cluster.local:8080/realms/foo",
+    )
+    assert settings.oidc_jwks_uri == (
+        "http://keycloak.internal.svc.cluster.local:8080/realms/foo"
+        "/protocol/openid-connect/certs"
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -28,7 +28,6 @@ from af_mcp_broker.mcp.aggregator import build_asgi_auth_middleware
 
 ISSUER = "https://keycloak.test/realms/connect"
 AUDIENCE = "mcp-gateway"
-JWKS_URI = "https://keycloak.test/realms/connect/protocol/openid-connect/certs"
 
 # Point tests at the YAML files that actually ship with the broker so the
 # entitlement decisions exercised here match production config.
@@ -95,7 +94,6 @@ def settings() -> Settings:
     return Settings(
         oidc_issuer=ISSUER,
         oidc_audience=AUDIENCE,
-        oidc_jwks_uri=JWKS_URI,
     )
 
 
