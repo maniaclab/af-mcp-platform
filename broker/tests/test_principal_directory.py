@@ -37,6 +37,7 @@ class _FakeResponse:
 class _FakeKeycloakAdmin:
     def __init__(self) -> None:
         self.token_calls: list[dict[str, Any]] = []
+        self.token_urls: list[str] = []
         self.get_calls: list[str] = []
         self.token_expires_in = 3600
         self.users: dict[str, dict[str, Any]] = {}
@@ -45,6 +46,7 @@ class _FakeKeycloakAdmin:
     async def post(self, url: str, *, data: dict[str, Any], **kwargs: Any):
         assert data["grant_type"] == "client_credentials"
         self.token_calls.append(data)
+        self.token_urls.append(url)
         return _FakeResponse(
             200,
             {"access_token": "fake-admin-token", "expires_in": self.token_expires_in},
@@ -91,6 +93,27 @@ def test_admin_base_url_derivation() -> None:
 def test_admin_base_url_rejects_issuer_without_realms_segment() -> None:
     with pytest.raises(ValueError, match="realms"):
         _admin_base_url("https://kc.example.com/not-a-realm-path")
+
+
+async def test_backchannel_calls_use_internal_url_when_set(
+    fake_admin: _FakeKeycloakAdmin,
+) -> None:
+    """oidc_internal_url must redirect BOTH the admin-token grant and the
+    Admin REST API queries; oidc_issuer stays the external identity only."""
+    internal = "http://keycloak.svc.test:8080/realms/connect"
+    fake_admin.users["user-123"] = {
+        "attributes": {"uid": ["1"], "gid": ["1"], "unixname": ["u"]},
+    }
+    fake_admin.groups["user-123"] = []
+
+    directory = _directory(Settings(oidc_issuer=ISSUER, oidc_internal_url=internal))
+    await directory.resolve("user-123")
+
+    assert fake_admin.token_urls == [f"{internal}/protocol/openid-connect/token"]
+    admin_base = "http://keycloak.svc.test:8080/admin/realms/connect"
+    assert fake_admin.get_calls
+    for url in fake_admin.get_calls:
+        assert url.startswith(f"{admin_base}/users/")
 
 
 async def test_resolve_returns_attributes_and_groups(

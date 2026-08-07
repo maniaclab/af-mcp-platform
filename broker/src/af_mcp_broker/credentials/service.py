@@ -174,9 +174,7 @@ class ServiceProvider(CredentialProvider):
                 "AF_SERVICE_CLIENT_SECRET."
             )
 
-        token_endpoint = (
-            f"{self._settings.oidc_issuer.rstrip('/')}/protocol/openid-connect/token"
-        )
+        token_endpoint = f"{self._settings.oidc_backchannel_url.rstrip('/')}/protocol/openid-connect/token"
         resp = await get_http_client().post(
             token_endpoint,
             data={

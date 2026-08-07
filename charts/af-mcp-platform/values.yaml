@@ -94,15 +94,17 @@ broker:
   # below).
   oidc:
     audience: "mcp-gateway"
-    # Overrides where the broker fetches JWKS from, independent of the
-    # top-level `oidc.issuer` used for `iss` claim validation. Leave empty
-    # to derive it from `oidc.issuer` (`{issuer}/protocol/openid-connect/certs`,
-    # the standard OIDC layout) — the common case. Set this when the issuer
-    # is only reachable by its externally-advertised hostname (e.g. it's
-    # also embedded in minted tokens' `iss`) but the broker itself runs
-    # in the same cluster and should reach it via cluster-local DNS
-    # instead of hairpinning back out through the public ingress.
-    jwksUri: ""
+    # Realm URL for the broker's server-to-server (back-channel) Keycloak
+    # calls — JWKS, token endpoint, Admin REST API, brokered-token fetch —
+    # independent of the top-level `oidc.issuer` used for `iss` claim
+    # validation and browser-facing redirects. Leave empty to use
+    # `oidc.issuer` for everything — the common case. Set this when the
+    # issuer is only reachable by its externally-advertised hostname (it's
+    # embedded in minted tokens' `iss`) but the broker itself runs in the
+    # same cluster and should reach Keycloak via cluster-local DNS instead
+    # of hairpinning back out through the public ingress (e.g.
+    # `http://keycloak-prod.keycloak.svc.cluster.local:8080/realms/connect`).
+    internalUrl: ""
 
   # Name of a pre-existing Secret providing the AF service token.
   # The Secret must contain a key named `af-service-token`.

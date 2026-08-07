@@ -72,6 +72,34 @@ async def test_fetch_brokered_token_sends_real_token(monkeypatch):
     assert "*" not in auth
 
 
+async def test_fetch_brokered_token_uses_internal_url_when_set(monkeypatch):
+    """The stored-brokered-token fetch is a server-side call and must follow
+    oidc_internal_url, not the externally-advertised issuer."""
+    captured_urls: list[str] = []
+
+    class _UrlCapturingClient:
+        async def get(
+            self, url: str, headers: dict[str, str], **kwargs: Any
+        ) -> _FakeResponse:
+            captured_urls.append(url)
+            return _FakeResponse()
+
+    monkeypatch.setattr(oidc, "get_http_client", _UrlCapturingClient)
+
+    internal = "http://keycloak.svc.test:8080/realms/connect"
+    provider = oidc.OIDCProvider(
+        settings=Settings(
+            oidc_issuer="https://keycloak.test/realms/connect",
+            oidc_internal_url=internal,
+        ),
+        cache=CredentialCache(),
+        alias="atlas-oidc",
+    )
+    await provider._fetch_brokered_token(_principal())
+
+    assert captured_urls == [f"{internal}/broker/atlas-oidc/token"]
+
+
 # ---------------------------------------------------------------------------
 # is_linked()
 # ---------------------------------------------------------------------------

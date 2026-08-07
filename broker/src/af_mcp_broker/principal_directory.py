@@ -124,20 +124,20 @@ class PrincipalDirectory(ABC):
         """
 
 
-def _admin_base_url(issuer: str) -> str:
-    """Derive the Keycloak Admin REST API base from an OIDC issuer URL.
+def _admin_base_url(realm_url: str) -> str:
+    """Derive the Keycloak Admin REST API base from a realm URL.
 
     ``{server}/realms/{realm}`` -> ``{server}/admin/realms/{realm}`` -- the
-    standard Keycloak layout; both the issuer and the admin API live under
+    standard Keycloak layout; both the realm and the admin API live under
     the same server, differing only in this path segment.
     """
     marker = "/realms/"
-    if marker not in issuer:
+    if marker not in realm_url:
         raise ValueError(
-            f"oidc_issuer {issuer!r} does not contain {marker!r} -- cannot "
+            f"realm URL {realm_url!r} does not contain {marker!r} -- cannot "
             "derive the Keycloak Admin REST API base URL from it."
         )
-    return issuer.replace(marker, "/admin/realms/", 1)
+    return realm_url.replace(marker, "/admin/realms/", 1)
 
 
 class KeycloakPrincipalDirectory(PrincipalDirectory):
@@ -152,7 +152,7 @@ class KeycloakPrincipalDirectory(PrincipalDirectory):
         self._settings = settings
         self._admin_client_id = admin_client_id
         self._admin_client_secret = admin_client_secret
-        self._admin_base = _admin_base_url(settings.oidc_issuer)
+        self._admin_base = _admin_base_url(settings.oidc_backchannel_url)
         self._log = structlog.get_logger(__name__).bind(
             component="KeycloakPrincipalDirectory"
         )
@@ -225,9 +225,7 @@ class KeycloakPrincipalDirectory(PrincipalDirectory):
             return self._admin_token
 
     async def _refresh_admin_token(self) -> tuple[str, float]:
-        token_endpoint = (
-            f"{self._settings.oidc_issuer.rstrip('/')}/protocol/openid-connect/token"
-        )
+        token_endpoint = f"{self._settings.oidc_backchannel_url.rstrip('/')}/protocol/openid-connect/token"
         resp = await get_http_client().post(
             token_endpoint,
             data={
