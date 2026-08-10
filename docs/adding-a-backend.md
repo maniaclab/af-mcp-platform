@@ -106,7 +106,13 @@ requires an identity provider configured for this backend's `name` (see
 "not linked" error otherwise. Set `auth_type: none` explicitly if the
 backend authorizes itself some other way (e.g. a platform k8s service
 account) and needs no per-user credential forwarded at all. `auth_type: x509`
-is not yet deliverable over `/mcp` (see `mcp/aggregator.py`'s `TODO(#58)`).
+marks a backend whose per-user credential is a VOMS proxy (e.g. ami-mcp):
+the aggregator injects an AF Broker Identity Token (`aud` = the backend
+name) and the backend redeems the caller's cached proxy itself via
+`POST /v1/credentials/x509/redeem` (issue #112) — this requires the broker
+signing key to be mounted (`broker.identityToken.existingSigningKeySecret`),
+and the backend to run in a mode that verifies broker JWTs and redeems
+proxies (ami-mcp's `--auth broker`, via the `af-credentials` library).
 For a `bearer` backend, the aggregator also attempts a best-effort per-user
 credential mint during `tools/list` (not only `tools/call`), so a backend
 whose own MCP endpoint requires auth just to list tools (e.g. rucio-mcp)
