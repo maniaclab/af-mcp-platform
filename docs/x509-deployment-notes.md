@@ -3,7 +3,8 @@
 What an operator (the flux_apps side) needs in place for an x509 backend —
 ami-mcp is the first — to work end-to-end over `/mcp`. Code references:
 `mcp/aggregator.py`'s x509 branch, `api/credentials.py`'s redeem endpoint,
-and the [af-credentials](../libs/af-credentials/) client library.
+and the [af-credentials](https://github.com/maniaclab/af-credentials) client
+library (its own repository and PyPI package).
 
 ## The chain
 
