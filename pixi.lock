@@ -6754,7 +6754,7 @@ packages:
 - pypi: libs/af-credentials
   name: af-credentials
   requires_dist:
-  - httpx2>=2.7.0,<3
+  - httpx2>=2.5.0,<3
   - pyjwt[crypto]>=2.8
   - mcp>=2.0.0,<3 ; extra == 'mcp'
-  requires_python: '>=3.12'
+  requires_python: '>=3.10'
