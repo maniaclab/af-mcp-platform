@@ -129,6 +129,15 @@ class BrokerTokenIssuer:
                 )
             keys.append(_public_jwk(public_key))
         self._jwks: dict[str, Any] = {"keys": keys}
+        # Public halves for verify(): the active key plus rotation overlap
+        # keys, so a token signed just before a rotation stays verifiable.
+        self._verification_keys = [private_key.public_key()] + [
+            key
+            for pem in additional_public_key_pems
+            if isinstance(
+                key := serialization.load_pem_public_key(pem), rsa.RSAPublicKey
+            )
+        ]
 
     def mint(
         self,
@@ -167,6 +176,31 @@ class BrokerTokenIssuer:
             claims, self._private_key, algorithm="RS256", headers={"kid": self.kid}
         )
         return token, expires_at
+
+    def verify(self, token: str) -> dict[str, Any] | None:
+        """Verify a token this broker issued; return its claims or None.
+
+        Checks signature (active key, then rotation overlap keys), ``iss``,
+        and ``exp``. Deliberately does NOT check ``aud`` — audience policy
+        belongs to the consuming endpoint (e.g. the x509 redeem endpoint
+        requires ``aud`` to be a configured x509 target); verify() only
+        proves the token is authentically ours and current.
+        """
+        for public_key in self._verification_keys:
+            try:
+                claims: dict[str, Any] = jwt.decode(
+                    token,
+                    public_key,
+                    algorithms=["RS256"],
+                    issuer=self._issuer,
+                    options={"verify_aud": False},
+                )
+            except jwt.InvalidSignatureError:
+                continue  # try the next rotation key
+            except jwt.InvalidTokenError:
+                return None  # authentic-looking but invalid (expired, iss, ...)
+            return claims
+        return None
 
     def jwks(self) -> dict[str, Any]:
         """Return the RFC 7517 JWKS document: the active key's public half plus any additional rotation keys."""

@@ -578,3 +578,69 @@ async def test_provider_mint_increments_issued_counter(
     await provider.issue(make_principal(subject="sub-abc"), "condor-token-service")
 
     assert counter._value.get() == before + 1
+
+
+# ---------------------------------------------------------------------------
+# BrokerTokenIssuer: verify (the redeem endpoint's auth check, issue #112)
+# ---------------------------------------------------------------------------
+
+
+def test_verify_roundtrips_minted_token(issuer: BrokerTokenIssuer) -> None:
+    token, _ = issuer.mint("sub-abc", "ami", uid=1000, gid=1000, unixname="kratsg")
+
+    claims = issuer.verify(token)
+
+    assert claims is not None
+    assert claims["sub"] == "sub-abc"
+    assert claims["aud"] == "ami"
+    assert claims["unixname"] == "kratsg"
+
+
+def test_verify_rejects_garbage(issuer: BrokerTokenIssuer) -> None:
+    assert issuer.verify("not-a-jwt") is None
+
+
+def test_verify_rejects_expired(rsa_key: rsa.RSAPrivateKey) -> None:
+    short_issuer = BrokerTokenIssuer(
+        private_key_pem=_private_pem(rsa_key),
+        issuer=ISSUER_URL,
+        ttl_seconds=-10,
+    )
+    token, _ = short_issuer.mint("sub-abc", "ami")
+
+    assert short_issuer.verify(token) is None
+
+
+def test_verify_rejects_foreign_issuer(
+    issuer: BrokerTokenIssuer, rsa_key: rsa.RSAPrivateKey
+) -> None:
+    other = BrokerTokenIssuer(
+        private_key_pem=_private_pem(rsa_key),
+        issuer="https://evil.example",
+        ttl_seconds=600,
+    )
+    token, _ = other.mint("sub-abc", "ami")
+
+    assert issuer.verify(token) is None
+
+
+def test_verify_rejects_foreign_key(issuer: BrokerTokenIssuer) -> None:
+    other_key = _make_rsa_key()
+    other = BrokerTokenIssuer(
+        private_key_pem=_private_pem(other_key),
+        issuer=ISSUER_URL,
+        ttl_seconds=600,
+    )
+    token, _ = other.mint("sub-abc", "ami")
+
+    assert issuer.verify(token) is None
+
+
+def test_verify_does_not_check_audience(issuer: BrokerTokenIssuer) -> None:
+    """Audience policy belongs to the endpoint (aud must be an x509 target); verify only proves authenticity."""
+    token, _ = issuer.mint("sub-abc", "some-other-backend")
+
+    claims = issuer.verify(token)
+
+    assert claims is not None
+    assert claims["aud"] == "some-other-backend"
