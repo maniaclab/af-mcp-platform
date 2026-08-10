@@ -25,6 +25,43 @@ pyyaml = ">=6.0"
 # Editable install triggers hatch-vcs to generate _version.py from git tags.
 af-mcp-broker = {path = "broker/", editable = true}
 
+# ---------------------------------------------------------------------------
+# af-credentials (libs/af-credentials/) — the backend-side client for
+# verifying AF Broker Identity Tokens and redeeming brokered x509/VOMS
+# proxies (issue #112). Kept as its own feature/environment, separate from
+# `broker`, because it is meant to be consumed by *other* MCP backends
+# (ami-mcp, later rucio-mcp) and must not pull in fastapi/k8s/broker code —
+# only pyjwt[crypto] and httpx2 at runtime, mcp>=2 optionally via the [mcp]
+# extra.
+# ---------------------------------------------------------------------------
+[feature.credentials.dependencies]
+pyjwt = ">=2.8"
+cryptography = ">=42"
+httpx2 = ">=2.7.0,<3"
+
+[feature.credentials.pypi-dependencies]
+# Editable install triggers hatch-vcs to generate _version.py from git tags,
+# same as af-mcp-broker above.
+#
+# Deliberately WITHOUT the `[mcp]` extra: af-credentials declares
+# `mcp>=2.0.0,<3` for that extra (see libs/af-credentials/pyproject.toml),
+# but this workspace's conda-pypi solve already pins `mcp==1.28.1`
+# (transitively, via the broker feature's `fastmcp>=2.0`) and pixi cannot
+# solve two different major versions of the same PyPI package into one
+# solve-group. The `dev` environment below still includes the `broker`
+# feature, so `mcp` 1.28.1 is present anyway -- af_credentials.mcp's tests
+# run for real against it via `pytest.importorskip("mcp")` rather than being
+# skipped, even though that is not literally the `[mcp]` extra's declared
+# range. Revisit (drop this workaround, add the extra back) once an `mcp`
+# 2.x release exists for both sides to agree on.
+af-credentials = {path = "libs/af-credentials", editable = true}
+
+[feature.credentials.tasks]
+lint-credentials = { cmd = "ruff check libs/af-credentials && ruff format --check libs/af-credentials", description = "Ruff lint + format check for af-credentials" }
+fmt-credentials = { cmd = "ruff format libs/af-credentials && ruff check --fix libs/af-credentials", description = "Format and auto-fix af-credentials source" }
+typecheck-credentials = { cmd = "mypy --strict libs/af-credentials/src", description = "Type-check af-credentials source (strict)" }
+test-credentials = { cmd = "pytest libs/af-credentials/tests -v", description = "af-credentials unit tests" }
+
 [feature.dev.dependencies]
 pytest = ">=8.0"
 pytest-asyncio = ">=0.23"
@@ -79,11 +116,11 @@ lint = { cmd = "ruff check broker && ruff format --check broker", description = 
 fmt = { cmd = "ruff format broker && ruff check --fix broker", description = "Format and auto-fix broker source" }
 typecheck = { cmd = "mypy broker/src", description = "Type-check broker source" }
 pre-commit = { cmd = "pre-commit run --all-files", description = "Run pre-commit hooks on all files" }
-lint-all = { depends-on = ["lint", "typecheck", "pre-commit"], description = "Everything the CI lint job runs" }
+lint-all = { depends-on = ["lint", "lint-credentials", "typecheck", "typecheck-credentials", "pre-commit"], description = "Everything the CI lint job runs" }
 test = { cmd = "pytest broker/ -v", description = "Broker unit tests" }
 test-spikes = { cmd = "pytest spikes/ -v", description = "Spike validation tests" }
-test-all = { cmd = "pytest broker/ spikes/ -v --cov=af_mcp_broker --cov-report=xml --cov-report=term-missing", description = "All tests with coverage" }
-check = { depends-on = ["lint", "typecheck", "test"], description = "Quick check: lint + typecheck + broker tests" }
+test-all = { cmd = "pytest broker/ spikes/ libs/af-credentials/tests -v --cov=af_mcp_broker --cov=af_credentials --cov-report=xml --cov-report=term-missing", description = "All tests with coverage" }
+check = { depends-on = ["lint", "lint-credentials", "typecheck", "typecheck-credentials", "test", "test-credentials"], description = "Quick check: lint + typecheck + broker + af-credentials tests" }
 check-all = { depends-on = ["lint-all", "test-all"], description = "Full check: all linting + all tests with coverage" }
 
 # ---------------------------------------------------------------------------
@@ -98,7 +135,8 @@ OIDC_ISSUER = "http://localhost:8081/realms/dev"
 
 [environments]
 broker = {features = ["broker"], solve-group = "default"}
-dev = {features = ["broker", "dev"], solve-group = "default"}
+credentials = {features = ["credentials"], solve-group = "default"}
+dev = {features = ["broker", "dev", "credentials"], solve-group = "default"}
 portal = {features = ["portal"], no-default-feature = true}
 bypass = {features = ["broker", "bypass"], solve-group = "default"}
 docs = {features = ["docs"], solve-group = "default"}

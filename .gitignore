@@ -1,5 +1,6 @@
 # setuptools_scm / hatch-vcs
 broker/src/*/_version.py
+libs/*/src/*/_version.py
 
 # Pixi / Python
 .pixi/
