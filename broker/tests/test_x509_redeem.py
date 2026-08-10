@@ -213,3 +213,24 @@ class TestRedeem:
         assert releases[0]["principal_sub"] == "sub-abc"
         assert releases[0]["target"] == "ami"
         assert releases[0]["outcome"] == "success"
+
+
+class TestKeylessBoot:
+    def test_x509_backend_without_signing_key_boots_and_503s_redeem(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path, app_client_factory
+    ) -> None:
+        """Keyless boot stays possible (the shipped backends.yaml has always
+        declared an x509 backend), but the redeem endpoint answers 503 until
+        the signing key is mounted -- enforcement at point of use, with a
+        loud startup warning (see app.py's x509_backends_without_signing_key)."""
+        backends_file = tmp_path / "backends.yaml"
+        backends_file.write_text(_BACKENDS_YAML)
+        monkeypatch.setenv("BACKENDS_FILE", str(backends_file))
+        monkeypatch.setenv("IDENTITY_PROVIDERS", "[]")
+        monkeypatch.delenv("BROKER_SIGNING_KEY_FILE", raising=False)
+
+        with app_client_factory() as (client, _):
+            resp = client.post(
+                _REDEEM, json={}, headers={"Authorization": "Bearer whatever"}
+            )
+        assert resp.status_code == 503

@@ -51,6 +51,7 @@ if TYPE_CHECKING:
     from af_mcp_broker.authorization import EntitlementPolicy
     from af_mcp_broker.config import IdentityProviderConfig, Settings
     from af_mcp_broker.credentials import CredentialProvider, CredentialRegistry
+    from af_mcp_broker.credentials.broker_issued import BrokerTokenIssuer
     from af_mcp_broker.identity import Principal
     from af_mcp_broker.mcp.registry import BackendRegistry, BackendSpec
     from af_mcp_broker.principal_cache import PrincipalCache
@@ -177,6 +178,8 @@ def _make_client_factory(
     credential_registry: CredentialRegistry,
     settings: Settings,
     policy: EntitlementPolicy,
+    *,
+    broker_token_issuer: BrokerTokenIssuer | None = None,
 ) -> ClientFactoryT:
     """Build a ProxyProvider client_factory for one backend.
 
@@ -194,10 +197,11 @@ def _make_client_factory(
     ``auth_type`` selects the branch:
       - "none": no credential is resolved at all; the backend needs no
         per-user credential (e.g. it authorizes via a platform k8s SA).
-      - "x509": no per-call delivery mechanism exists yet -- x509/VOMS
-        proxies are consumed server-side from an NFS-mounted home
-        directory (see docs/auth.md), not injected as a request header.
-        TODO(#58): define one if/when an x509 backend needs /mcp access.
+      - "x509": inject an AF Broker Identity Token (aud = this backend);
+        the backend redeems the caller's VOMS proxy server-side via
+        POST /v1/credentials/x509/redeem (issue #112's "backend calls
+        back" wire format). The proxy PEM itself never transits the
+        aggregator.
       - "bearer" (default): resolves the caller's Principal from the
         current request context, mints a credential in-process the same
         way ``POST /v1/credential`` does (api/credentials.py's
@@ -270,12 +274,45 @@ def _make_client_factory(
         async def _x509_factory() -> Client:
             ctx = get_context()
             if await ctx.get_state("authorized_call_target") != spec.name:
-                return _build_client(spec, transport_cls)
-            raise ToolError(
-                f"Backend '{spec.name}' requires an x509/VOMS proxy credential. "
-                "x509 proxies are consumed server-side from an NFS-mounted home "
-                "directory and are not yet deliverable over /mcp tool calls. "
-                "TODO(#58): define a per-call x509 delivery mechanism."
+                # tools/list (or a stale-cache refresh): best-effort identity
+                # header, mirroring the bearer branch -- but minting is a
+                # local signature, so there is no network to fail and no
+                # skip_reason machinery to thread through.
+                principal = await ctx.get_state("principal")
+                if principal is None or broker_token_issuer is None:
+                    return _build_client(spec, transport_cls)
+                allowed, _reason = check_entitlement(
+                    principal, spec.required_capability, spec.name, policy
+                )
+                if not allowed:
+                    return _build_client(spec, transport_cls)
+                token, _ = broker_token_issuer.mint(principal.subject, spec.name)
+                await ctx.set_state(
+                    f"__list_credential_status__:{spec.name}",
+                    (True, None),
+                    serializable=False,
+                )
+                return _build_client(
+                    spec, transport_cls, headers={"Authorization": f"Bearer {token}"}
+                )
+
+            principal = await ctx.get_state("principal")
+            if principal is None:
+                raise ToolError(
+                    "No authenticated principal available for this tool call"
+                )
+            if broker_token_issuer is None:
+                raise ToolError(
+                    f"Backend '{spec.name}' is an x509 backend, which needs the "
+                    "broker to sign AF Broker Identity Tokens, but no signing key "
+                    "is configured (chart: broker.identityToken."
+                    "existingSigningKeySecret)."
+                )
+            # Identity assertion only (sub/aud): the backend redeems the proxy
+            # with this token; it has no use for POSIX claims.
+            token, _ = broker_token_issuer.mint(principal.subject, spec.name)
+            return _build_client(
+                spec, transport_cls, headers={"Authorization": f"Bearer {token}"}
             )
 
         return _x509_factory
@@ -425,6 +462,7 @@ def build_aggregator(
     identity_providers: dict[str, CredentialProvider] | None = None,
     identity_provider_configs: dict[str, IdentityProviderConfig] | None = None,
     target_to_alias: dict[str, str] | None = None,
+    broker_token_issuer: BrokerTokenIssuer | None = None,
 ) -> FastMCP:
     """Construct a fully-wired aggregator FastMCP instance.
 
@@ -457,7 +495,14 @@ def build_aggregator(
     )
     mcp.add_middleware(EntitlementMiddleware(registry, policy))
     mcp.add_middleware(AuthorizationMiddleware(registry, policy))
-    _register_backends(mcp, registry, credential_registry, settings, policy)
+    _register_backends(
+        mcp,
+        registry,
+        credential_registry,
+        settings,
+        policy,
+        broker_token_issuer=broker_token_issuer,
+    )
     register_diagnostic_tools(
         mcp,
         registry,
@@ -499,6 +544,7 @@ def populate_aggregator(
     identity_providers: dict[str, CredentialProvider] | None = None,
     identity_provider_configs: dict[str, IdentityProviderConfig] | None = None,
     target_to_alias: dict[str, str] | None = None,
+    broker_token_issuer: BrokerTokenIssuer | None = None,
 ) -> None:
     """Refresh an aggregator built by ``build_aggregator`` with a freshly loaded registry/settings/policy/credential_registry/revoked_jti_cache/pat_backend/principal_cache/identity_providers/identity_provider_configs/target_to_alias.
 
@@ -522,7 +568,14 @@ def populate_aggregator(
     entitlement_mw.policy = policy
     authorization_mw.registry = registry
     authorization_mw.policy = policy
-    _register_backends(mcp, registry, credential_registry, settings, policy)
+    _register_backends(
+        mcp,
+        registry,
+        credential_registry,
+        settings,
+        policy,
+        broker_token_issuer=broker_token_issuer,
+    )
     register_diagnostic_tools(
         mcp,
         registry,
@@ -540,6 +593,8 @@ def _register_backends(
     credential_registry: CredentialRegistry,
     settings: Settings,
     policy: EntitlementPolicy,
+    *,
+    broker_token_issuer: BrokerTokenIssuer | None = None,
 ) -> None:
     mcp.providers.clear()
     # mcp.providers.clear() above wipes every provider, including
@@ -556,7 +611,11 @@ def _register_backends(
         provider = _ObservableProxyProvider(
             spec.name,
             client_factory=_make_client_factory(
-                spec, credential_registry, settings, policy
+                spec,
+                credential_registry,
+                settings,
+                policy,
+                broker_token_issuer=broker_token_issuer,
             ),
             registry=registry,
             cache_ttl=spec.tools_cache_ttl,

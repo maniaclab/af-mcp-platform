@@ -413,13 +413,13 @@ def test_client_factory_none_auth_type_never_touches_credential_registry(
     assert "Authorization" not in client.transport.headers
 
 
-async def test_client_factory_x509_auth_type_raises_clear_tool_error(
+async def test_client_factory_x509_call_without_principal_raises(
     settings: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _patch_context(monkeypatch, None)
     spec = _spec(auth_type="x509")
     factory = _make_client_factory(spec, CredentialRegistry(), settings, _OPEN_POLICY)
-    with pytest.raises(ToolError, match="x509"):
+    with pytest.raises(ToolError, match="principal"):
         await factory()
 
 
@@ -688,3 +688,76 @@ async def test_observable_proxy_provider_records_list_failure_on_registry(
         await provider._list_tools()
 
     assert registry.recent_list_failure("example") == "unavailable"
+
+
+# ---------------------------------------------------------------------------
+# x509 branch: broker-issued identity JWT injection (issue #112)
+# ---------------------------------------------------------------------------
+
+
+def _make_issuer():
+    from test_broker_issued import _make_rsa_key, _private_pem
+
+    from af_mcp_broker.credentials.broker_issued import BrokerTokenIssuer
+
+    return BrokerTokenIssuer(
+        private_key_pem=_private_pem(_make_rsa_key()),
+        issuer="https://mcp.example.com",
+        ttl_seconds=600,
+    )
+
+
+async def test_client_factory_x509_injects_broker_identity_jwt(
+    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_context(monkeypatch, make_principal(subject="sub-abc"))
+    issuer = _make_issuer()
+    spec = _spec(auth_type="x509")
+
+    client = await _make_client_factory(
+        spec, CredentialRegistry(), settings, _OPEN_POLICY, broker_token_issuer=issuer
+    )()
+
+    auth = client.transport.headers["Authorization"]
+    assert auth.startswith("Bearer ")
+    claims = issuer.verify(auth.removeprefix("Bearer "))
+    assert claims is not None
+    assert claims["sub"] == "sub-abc"
+    assert claims["aud"] == "example"
+
+
+async def test_client_factory_x509_without_issuer_is_toolerror(
+    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_context(monkeypatch, make_principal(subject="sub-abc"))
+    spec = _spec(auth_type="x509")
+
+    with pytest.raises(ToolError, match="signing key"):
+        await _make_client_factory(spec, CredentialRegistry(), settings, _OPEN_POLICY)()
+
+
+async def test_client_factory_x509_list_time_injects_header_best_effort(
+    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_context(monkeypatch, make_principal(subject="sub-abc"), active_backend=None)
+    issuer = _make_issuer()
+    spec = _spec(auth_type="x509")
+
+    client = await _make_client_factory(
+        spec, CredentialRegistry(), settings, _OPEN_POLICY, broker_token_issuer=issuer
+    )()
+
+    assert client.transport.headers["Authorization"].startswith("Bearer ")
+
+
+async def test_client_factory_x509_list_time_without_issuer_connects_bare(
+    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_context(monkeypatch, make_principal(subject="sub-abc"), active_backend=None)
+    spec = _spec(auth_type="x509")
+
+    client = await _make_client_factory(
+        spec, CredentialRegistry(), settings, _OPEN_POLICY
+    )()
+
+    assert "Authorization" not in client.transport.headers
