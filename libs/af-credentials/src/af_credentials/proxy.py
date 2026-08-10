@@ -27,7 +27,7 @@ import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
 
 import httpx2
 
@@ -95,7 +95,7 @@ class ProxyHandle:
             self.path.unlink(missing_ok=True)
             self._closed = True
 
-    def __enter__(self) -> ProxyHandle:
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(
