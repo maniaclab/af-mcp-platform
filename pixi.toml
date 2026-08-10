@@ -119,7 +119,17 @@ pre-commit = { cmd = "pre-commit run --all-files", description = "Run pre-commit
 lint-all = { depends-on = ["lint", "lint-credentials", "typecheck", "typecheck-credentials", "pre-commit"], description = "Everything the CI lint job runs" }
 test = { cmd = "pytest broker/ -v", description = "Broker unit tests" }
 test-spikes = { cmd = "pytest spikes/ -v", description = "Spike validation tests" }
-test-all = { cmd = "pytest broker/ spikes/ libs/af-credentials/tests -v --cov=af_mcp_broker --cov=af_credentials --cov-report=xml --cov-report=term-missing", description = "All tests with coverage" }
+# Two separate `pytest` invocations, not one combined `pytest broker/
+# spikes/ libs/af-credentials/tests` command: broker/tests/*.py uses bare
+# `from conftest import ...` (matching af-credentials's own tests/conftest.py
+# convention below), and pytest's default import mode has no package
+# boundaries between test directories -- every conftest.py in one combined
+# session competes for the single top-level module name `conftest`,
+# so whichever one pytest happens to import last silently wins for every
+# such bare import, breaking the others. Keeping af-credentials in its own
+# `pytest` process (like `test-credentials` does standalone) sidesteps this
+# entirely.
+test-all = { cmd = "pytest broker/ spikes/ -v --cov=af_mcp_broker --cov-report=xml --cov-report=term-missing && pytest libs/af-credentials/tests -v --cov=af_credentials --cov-report=term-missing", description = "All tests with coverage" }
 check = { depends-on = ["lint", "lint-credentials", "typecheck", "typecheck-credentials", "test", "test-credentials"], description = "Quick check: lint + typecheck + broker + af-credentials tests" }
 check-all = { depends-on = ["lint-all", "test-all"], description = "Full check: all linting + all tests with coverage" }
 
