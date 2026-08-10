@@ -27,7 +27,7 @@ import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any
 
 import httpx2
 
@@ -62,6 +62,18 @@ class ProxyRedeemError(Exception):
         self.detail = detail
 
 
+def _parse_iso8601(value: str) -> datetime:
+    """Parse an ISO-8601 timestamp, accepting a trailing Z on Python 3.10.
+
+    ``datetime.fromisoformat`` only learned the ``Z`` suffix in 3.11; the
+    broker emits ``+00:00`` offsets today, but a UTC designator from another
+    issuer must not break the oldest supported interpreter.
+    """
+    if value.endswith("Z"):
+        value = value[:-1] + "+00:00"
+    return datetime.fromisoformat(value)
+
+
 @dataclass
 class ProxyHandle:
     """A materialized x509/VOMS proxy on disk.
@@ -83,7 +95,7 @@ class ProxyHandle:
             self.path.unlink(missing_ok=True)
             self._closed = True
 
-    def __enter__(self) -> Self:
+    def __enter__(self) -> ProxyHandle:
         return self
 
     def __exit__(
@@ -146,7 +158,7 @@ class ProxyClient:
         return ProxyHandle(
             path=path,
             dn=data["dn"],
-            expires_at=datetime.fromisoformat(data["expires_at"]),
+            expires_at=_parse_iso8601(data["expires_at"]),
         )
 
     async def pem_bytes(self, bearer: str) -> bytes:
