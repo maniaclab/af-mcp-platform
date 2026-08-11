@@ -533,6 +533,13 @@ class Settings(BaseSettings):
     voms_token_service_voms: str = "atlas"
     voms_token_service_valid: str = "192:00"
 
+    # KV-v2 path prefix for the per-subject x509 link/proxy records
+    # ({prefix}/{subject}/x509 -- see credentials/x509_vault.py), distinct
+    # from vault_kv_path_prefix/token_registry_kv_path_prefix/
+    # principal_cache_kv_path_prefix so all four Vault-backed stores never
+    # collide under the same kv_mount.
+    x509_kv_path_prefix: str = "mcp/x509"
+
     @property
     def broker_token_effective_issuer(self) -> str:
         """``broker_token_issuer`` if set, else ``broker_public_origin``.
