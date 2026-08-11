@@ -721,11 +721,12 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _validate_vault_config(self) -> Settings:
-        """Fail startup loudly when any Vault-backed store is selected but the settings they depend on are not — a half-configured VaultTokenStore/VaultTokenRegistryBackend/VaultPrincipalCacheBackend would otherwise fail at first request instead of at boot (see also app.py's lifespan trial authentication). All three stores share the same Vault connection settings (only their kv_path_prefix differs), so one validator covers any or all being selected."""
+        """Fail startup loudly when any Vault-backed store is selected but the settings they depend on are not — a half-configured VaultTokenStore/VaultTokenRegistryBackend/VaultPrincipalCacheBackend/VaultX509Store would otherwise fail at first request instead of at boot (see also app.py's lifespan trial authentication). All four stores share the same Vault connection settings (only their kv_path_prefix differs), so one validator covers any or all being selected. voms_token_service_url implies the x509 store: in service mode proxies and passphrases persist in Vault, there is no in-memory fallback."""
         if (
             self.token_store_backend != "vault"
             and self.token_registry_backend != "vault"
             and self.principal_cache_backend != "vault"
+            and not self.voms_token_service_url
         ):
             return self
         if not self.vault_addr:
@@ -734,12 +735,13 @@ class Settings(BaseSettings):
                 reason=(
                     "vault_addr is empty but token_store_backend, "
                     "token_registry_backend, and/or principal_cache_backend "
-                    "is 'vault'"
+                    "is 'vault', or voms_token_service_url is set"
                 ),
             )
             raise ValueError(
                 "vault_addr (VAULT_ADDR) must be set when token_store_backend, "
-                "token_registry_backend, or principal_cache_backend is 'vault'."
+                "token_registry_backend, or principal_cache_backend is 'vault' "
+                "or voms_token_service_url is set."
             )
         if not self.vault_auth_role:
             log.error(
@@ -747,13 +749,14 @@ class Settings(BaseSettings):
                 reason=(
                     "vault_auth_role is empty but token_store_backend, "
                     "token_registry_backend, and/or principal_cache_backend "
-                    "is 'vault'"
+                    "is 'vault', or voms_token_service_url is set"
                 ),
             )
             raise ValueError(
                 "vault_auth_role (VAULT_AUTH_ROLE) must be set when "
                 "token_store_backend, token_registry_backend, or "
-                "principal_cache_backend is 'vault'."
+                "principal_cache_backend is 'vault' or "
+                "voms_token_service_url is set."
             )
         return self
 

@@ -168,7 +168,9 @@ def _to_response(cred: _IssuedCredential) -> IssuedCredential:
     }
     if cred.kind == CredentialKind.BEARER:
         return IssuedCredential(token=cred.payload.get("access_token"), **common)
-    if cred.kind == CredentialKind.X509_PROXY_REF:
+    if cred.kind in (CredentialKind.X509_PROXY_REF, CredentialKind.X509_PROXY_REDEEM):
+        # proxy_path is absent for the redeem kind — the PEM lives in Vault
+        # and backends fetch it via POST /v1/credentials/x509/redeem.
         return IssuedCredential(
             proxy_handle=cred.payload.get("proxy_handle"),
             proxy_path=cred.payload.get("proxy_path"),
@@ -424,7 +426,9 @@ async def redeem_x509_proxy(request: Request) -> ProxyRedeemResponse:
     cache: CredentialCache = _cache(request)
     meta = cache.get_proxy_meta(subject, audience)
     now = time.time()
-    if meta is None or meta.not_after <= now:
+    # proxy_path is None for Vault-persisted proxies (voms-token-service
+    # mode), which have no local file to read — treat as absent here.
+    if meta is None or meta.not_after <= now or meta.proxy_path is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=_REDEEM_MINT_HINT
         )

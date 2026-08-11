@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import structlog
+from pydantic import SecretStr
 
 from af_mcp_broker import metrics
 from af_mcp_broker.credentials.base import (
@@ -24,12 +25,19 @@ from af_mcp_broker.credentials.base import (
     NeedsUnlock,
 )
 from af_mcp_broker.credentials.cache import ProxyMeta
+from af_mcp_broker.credentials.voms_service import VomsServiceBadPassphraseError
+from af_mcp_broker.credentials.x509_vault import StoredX509Credential
 
 if TYPE_CHECKING:
     from pydantic import SecretBytes
 
     from af_mcp_broker.config import Settings
     from af_mcp_broker.credentials.cache import CredentialCache
+    from af_mcp_broker.credentials.voms_service import (
+        MintedProxy,
+        VomsTokenServiceClient,
+    )
+    from af_mcp_broker.credentials.x509_vault import VaultX509Store
     from af_mcp_broker.identity import Principal
 
 log = structlog.get_logger(__name__)
@@ -780,19 +788,32 @@ def _parse_proxy_pem(proxy_pem: bytes) -> tuple[str, list[str], float]:
 class X509Provider(CredentialProvider):
     """Issues delegated x509 proxy credentials.
 
-    The proxy file is stored on the broker's tmpfs (``/run/broker/proxies/{uid}/proxy.pem``)
-    and never transmitted to the LLM or client.  Downstream tools that need the
-    proxy receive the path via ``payload["proxy_path"]`` and read it directly from
-    the shared filesystem.
+    Two mint paths coexist behind one feature flag
+    (``Settings.voms_token_service_url``; see ``uses_voms_service``):
 
-    Passphrase rules:
-    - Never logged, never persisted, never stored in the cache.
-    - The working copy is held in a bytearray and zeroed in memory immediately
-      after transmission to the minting backend (the SecretBytes original is
-      owned by pydantic).
-    - Rate-limited per uid; see ``Settings.credential_unlock_max_failures`` and
-      ``Settings.credential_unlock_window_seconds`` for the defaults
-      (5 attempts / 15 minutes).
+    * **Legacy (k8s Job / local dev)** — the proxy file is stored on the
+      broker's tmpfs (``/run/broker/proxies/{uid}/proxy.pem``) and never
+      transmitted to the LLM or client. Downstream tools that need the proxy
+      receive the path via ``payload["proxy_path"]`` and read it directly
+      from the shared filesystem. Passphrases are never persisted.
+    * **voms-token-service** — minting is delegated to the service (the only
+      component that mounts user homes), and both the proxy and the Globus
+      passphrase persist in Vault (``VaultX509Store``, issue #112's
+      custodianship model): the passphrase enables hands-free renewal when
+      the stored proxy nears expiry, with a bad-passphrase failure on
+      renewal unlinking the identity so the portal prompts a re-link.
+      Backends fetch the PEM via ``POST /v1/credentials/x509/redeem``
+      (``CredentialKind.X509_PROXY_REDEEM``) — no local file exists.
+
+    Passphrase rules (both paths):
+    - Never logged, never stored in the in-memory cache; persisted only in
+      Vault, only in service mode, as the deliberate custodianship choice.
+    - Working copies are zeroed (legacy path) or revealed only at the HTTP
+      call boundary (service path — see voms_service.py's module docstring).
+    - Rate-limited per uid; see ``Settings.credential_unlock_max_failures``
+      and ``Settings.credential_unlock_window_seconds`` for the defaults
+      (5 attempts / 15 minutes). Only genuine bad-passphrase failures count;
+      infra failures never do.
     """
 
     cred_class: ClassVar[str] = "user_x509"
@@ -806,18 +827,38 @@ class X509Provider(CredentialProvider):
         targets: frozenset[str] = _DEFAULT_X509_TARGETS,
         voms: str = "atlas",
         valid_hours: str = _DEFAULT_PROXY_VALID_HOURS,
+        voms_client: VomsTokenServiceClient | None = None,
+        vault_store: VaultX509Store | None = None,
     ) -> None:
         self._settings = settings
         self._cache = cache
         self._targets = targets
         self._voms = voms
         self._valid_hours = valid_hours
+        # Service mode requires both halves: the client to mint with and the
+        # store to persist in. app.py wires both together (or neither).
+        self._voms_client = voms_client
+        self._vault_store = vault_store
         # If no backends are provided, default to HomeDirVomsBackend.
         # RCauthBackend is a future slot — add to this list when implemented.
         self.backends: list[X509Backend] = backends or [
             HomeDirVomsBackend(settings=settings)
         ]
         self._log = structlog.get_logger(__name__).bind(provider="X509Provider")
+
+    @property
+    def uses_voms_service(self) -> bool:
+        """Whether this provider mints via voms-token-service and persists in Vault (True) or via the legacy k8s-Job/local path (False)."""
+        return self._voms_client is not None and self._vault_store is not None
+
+    @property
+    def vault_store(self) -> VaultX509Store | None:
+        """The Vault-backed link/proxy store, or None in legacy mode.
+
+        Exposed so ``api/credentials.py``'s redeem endpoint can tell which
+        mode is active and serve/renew the Vault-stored proxy accordingly.
+        """
+        return self._vault_store
 
     @property
     def settings(self) -> Settings:
@@ -831,8 +872,15 @@ class X509Provider(CredentialProvider):
         return self._settings
 
     async def is_linked(self, principal: Principal) -> bool:
-        """Return True when both halves of *principal*'s ``~/.globus`` certificate pair exist and are readable by the broker's uid/gid.
+        """Return True when *principal* can mint a proxy without re-entering anything.
 
+        In voms-token-service mode: True when Vault holds a complete link
+        record (passphrase + POSIX identity) for the subject — the
+        filesystem is never consulted, since minting happens in the
+        service's pod, not the broker's.
+
+        In legacy mode: True when both halves of *principal*'s ``~/.globus``
+        certificate pair exist and are readable by the broker's uid/gid.
         Mirrors the path construction ``HomeDirVomsBackend`` uses to locate
         the user's home directory, but — unlike ``HomeDirVomsBackend.available()``,
         which only needs the public cert to decide whether it can attempt a
@@ -846,6 +894,9 @@ class X509Provider(CredentialProvider):
         actionable ``PosixIdentityRequiredError`` instead surfaces from
         ``issue()``, at the point an x509 credential is actually minted.
         """
+        if self.uses_voms_service:
+            assert self._vault_store is not None  # uses_voms_service checked
+            return await self._vault_store.get_link(principal.subject) is not None
         if principal.unixname is None:
             return False
         globus_dir = Path(self._settings.home_root) / principal.unixname / ".globus"
@@ -886,11 +937,24 @@ class X509Provider(CredentialProvider):
         cached = await self._cache.get(
             principal.subject, target, min_remaining=min_remaining_seconds
         )
-        if cached is not None:
+        # In service mode an EXPLICIT passphrase is a linking act (the user
+        # may have just changed their Globus password): it must reach the
+        # service and update the stored passphrase, never short-circuit on a
+        # still-valid cached credential. Legacy mode keeps its historical
+        # cache-first behavior — nothing is persisted there, so there is no
+        # stored passphrase a short-circuit could leave stale.
+        if cached is not None and not (
+            self.uses_voms_service and passphrase is not None
+        ):
             self._log.debug(
                 "x509.issue.cache_hit", subject=principal.subject, target=target
             )
             return cached
+
+        if self.uses_voms_service:
+            return await self._issue_via_service(
+                principal, target, min_remaining_seconds, passphrase
+            )
 
         if principal.uid is None or principal.gid is None or principal.unixname is None:
             raise PosixIdentityRequiredError(target, settings=self._settings)
@@ -918,10 +982,20 @@ class X509Provider(CredentialProvider):
         )
 
     async def revoke(self, principal: Principal, target: str) -> None:
-        """Clear the cache entry; cache.revoke secure-deletes the proxy file."""
+        """Clear the cache entry; cache.revoke secure-deletes the proxy file.
+
+        In voms-token-service mode the Vault-stored proxy is cleared too, so
+        the redeem endpoint stops serving it — but the LINK (passphrase)
+        stays: burning a proxy must not unlink the identity, the next
+        issue() simply renews hands-free. Unlinking is a separate,
+        deliberate act (a bad-passphrase renewal, or a portal unlink).
+        """
         # Grab the path before revoke() pops the entry, for the audit log only.
         meta = self._cache.get_proxy_meta(principal.subject, target)
         await self._cache.revoke(principal.subject, target)
+        if self.uses_voms_service:
+            assert self._vault_store is not None  # uses_voms_service checked
+            await self._vault_store.clear_proxy(principal.subject)
         if meta is not None:
             self._log.info(
                 "x509.revoked",
@@ -929,6 +1003,262 @@ class X509Provider(CredentialProvider):
                 target=target,
                 proxy_path=meta.proxy_path,
             )
+
+    # ------------------------------------------------------------------
+    # voms-token-service mode (issue #112 follow-up)
+    # ------------------------------------------------------------------
+
+    async def _issue_via_service(
+        self,
+        principal: Principal,
+        target: str,
+        min_remaining_seconds: int,
+        passphrase: SecretBytes | None,
+    ) -> IssuedCredential:
+        """Serve the Vault-stored proxy, or mint via voms-token-service.
+
+        Three paths, in order:
+
+        1. A stored proxy with enough validity left is served directly.
+           POSIX identity isn't needed just to serve an already-minted
+           credential — same rule as the legacy path's cache hit. (Skipped
+           when a passphrase was explicitly given: that is a linking act,
+           see ``issue()``.)
+        2. A passphrase was given (the portal unlock/link flow): mint via
+           the service, then persist BOTH the passphrase (the link enabling
+           hands-free renewal) and the proxy in Vault.
+        3. No passphrase: renew hands-free with the stored link, or raise
+           ``NeedsUnlock`` when there is none.
+        """
+        assert self._vault_store is not None  # uses_voms_service checked by caller
+        store = self._vault_store
+
+        if passphrase is None:
+            served = await self._serve_stored_proxy(
+                principal, target, min_remaining_seconds
+            )
+            if served is not None:
+                return served
+
+            link = await store.get_link(principal.subject)
+            if link is None:
+                # An unlinked principal with no POSIX identity can never
+                # complete a link — say that instead of asking for a
+                # passphrase (same ordering as the legacy path).
+                if (
+                    principal.uid is None
+                    or principal.gid is None
+                    or principal.unixname is None
+                ):
+                    raise PosixIdentityRequiredError(target, settings=self._settings)
+                raise NeedsUnlock(
+                    target=target,
+                    reason="not_linked",
+                    unlock_endpoint="/v1/x509/proxy",
+                )
+
+            async def _do_renew() -> IssuedCredential:
+                # Re-check under the single-flight lock: another caller may
+                # have completed a renewal while this one waited.
+                served = await self._serve_stored_proxy(
+                    principal, target, min_remaining_seconds
+                )
+                if served is not None:
+                    return served
+                record = await self.renew_from_stored_link(principal.subject, target)
+                return await self._cache_stored_record(principal, target, record)
+
+            return await self._cache.get_or_mint(
+                principal.subject, target, min_remaining_seconds, _do_renew
+            )
+
+        # Link/unlock flow: an explicit passphrase always reaches the
+        # service — deliberately NOT deduped through get_or_mint, whose
+        # cache re-check would swallow a re-link (the whole point is storing
+        # a possibly-new passphrase). Link POSTs are one-off portal acts,
+        # not the thundering-herd renewal path single-flighted above.
+        if principal.uid is None or principal.gid is None or principal.unixname is None:
+            raise PosixIdentityRequiredError(target, settings=self._settings)
+        return await self._link_and_mint(principal, target, passphrase)
+
+    async def _serve_stored_proxy(
+        self, principal: Principal, target: str, min_remaining_seconds: int
+    ) -> IssuedCredential | None:
+        """Return a credential for the Vault-stored proxy if one with at least *min_remaining_seconds* of validity exists, else None."""
+        assert self._vault_store is not None  # uses_voms_service checked by caller
+        record = await self._vault_store.get_proxy(
+            principal.subject, min_remaining=min_remaining_seconds
+        )
+        if record is None:
+            return None
+        self._log.debug(
+            "x509.issue.vault_hit", subject=principal.subject, target=target
+        )
+        return await self._cache_stored_record(principal, target, record)
+
+    async def _link_and_mint(
+        self, principal: Principal, target: str, passphrase: SecretBytes
+    ) -> IssuedCredential:
+        """Mint via voms-token-service with a user-supplied passphrase, then persist the link and the proxy in Vault.
+
+        A bad passphrase counts against the unlock rate limiter (the user
+        typed it); an infra failure does not. Nothing is persisted on any
+        failure.
+        """
+        assert self._voms_client is not None  # uses_voms_service checked by caller
+        assert self._vault_store is not None
+        # _issue_via_service already rejected a POSIX-less principal; these
+        # narrow the types for mypy, mirroring HomeDirVomsBackend.mint().
+        assert principal.uid is not None
+        assert principal.gid is not None
+        assert principal.unixname is not None
+
+        self._cache.check_unlock_rate_limit(principal.uid)
+        # The service speaks JSON, so the passphrase crosses as str;
+        # SecretStr keeps it out of repr/logs (see voms_service.py).
+        passphrase_str = SecretStr(passphrase.get_secret_value().decode())
+        try:
+            minted = await self._voms_client.mint(
+                subject=principal.subject,
+                unixname=principal.unixname,
+                uid=principal.uid,
+                gid=principal.gid,
+                passphrase=passphrase_str,
+            )
+        except VomsServiceBadPassphraseError:
+            self._cache.record_failed_unlock(principal.uid)
+            raise
+
+        await self._vault_store.store_link(
+            principal.subject,
+            passphrase=passphrase_str,
+            unixname=principal.unixname,
+            uid=principal.uid,
+            gid=principal.gid,
+        )
+        record = await self._store_minted_proxy(principal.subject, minted)
+        self._log.info(
+            "x509.linked",
+            subject=principal.subject,
+            target=target,
+            dn=minted.dn,
+            not_after=minted.not_after,
+        )
+        return await self._cache_stored_record(principal, target, record)
+
+    async def renew_from_stored_link(
+        self, subject: str, target: str
+    ) -> StoredX509Credential:
+        """Mint a fresh proxy with *subject*'s Vault-stored passphrase and persist it — the hands-free renewal step.
+
+        Public (also called by the redeem endpoint's renewal path, which
+        holds only a broker-token subject, not a live ``Principal``).
+
+        Raises:
+            NeedsUnlock: no link is stored, or the stored passphrase was
+                rejected — in which case the identity is UNLINKED first (the
+                user changed their Globus password; the stored passphrase is
+                dead weight) so the portal prompts a re-link. A stored-
+                passphrase failure is not a user brute-force attempt, so it
+                does not count against the unlock rate limiter.
+            VomsServiceMintError: the service failed for an infra reason —
+                the link is kept and nothing is unlinked.
+
+        """
+        assert self._voms_client is not None  # uses_voms_service checked by caller
+        assert self._vault_store is not None
+        link = await self._vault_store.get_link(subject)
+        if link is None:
+            raise NeedsUnlock(
+                target=target, reason="not_linked", unlock_endpoint="/v1/x509/proxy"
+            )
+        # get_link() guarantees the link half is complete; narrow for mypy.
+        assert link.passphrase is not None
+        assert link.unixname is not None
+        assert link.uid is not None
+        assert link.gid is not None
+        try:
+            minted = await self._voms_client.mint(
+                subject=subject,
+                unixname=link.unixname,
+                uid=link.uid,
+                gid=link.gid,
+                passphrase=link.passphrase,
+            )
+        except VomsServiceBadPassphraseError as exc:
+            await self._vault_store.delete(subject)
+            self._log.info("x509.unlinked_stored_passphrase_rejected", subject=subject)
+            raise NeedsUnlock(
+                target=target,
+                reason="stored_passphrase_rejected",
+                unlock_endpoint="/v1/x509/proxy",
+            ) from exc
+        return await self._store_minted_proxy(subject, minted)
+
+    async def _store_minted_proxy(
+        self, subject: str, minted: MintedProxy
+    ) -> StoredX509Credential:
+        """Persist *minted* in Vault and return it as a stored record."""
+        assert self._vault_store is not None  # uses_voms_service checked by caller
+        await self._vault_store.store_proxy(
+            subject,
+            pem=minted.pem,
+            dn=minted.dn,
+            voms_attributes=minted.voms_attributes,
+            not_after=minted.not_after,
+        )
+        # Same choke point role as _store_proxy_and_parse on the legacy
+        # path: every successful service mint counts exactly once.
+        metrics.x509_proxy_mints_total.inc()
+        self._log.info(
+            "x509.proxy_minted",
+            subject=subject,
+            dn=minted.dn,
+            not_after=minted.not_after,
+            source="voms_token_service",
+        )
+        return StoredX509Credential(
+            proxy_pem=SecretStr(minted.pem),
+            dn=minted.dn,
+            voms_attributes=list(minted.voms_attributes),
+            not_after=minted.not_after,
+        )
+
+    async def _cache_stored_record(
+        self, principal: Principal, target: str, record: StoredX509Credential
+    ) -> IssuedCredential:
+        """Build the redeem-kind credential for *record* and cache it in memory.
+
+        ``uid`` is passed to ``cache.put`` only on link/renewal mints via
+        the caller's principal — but a successful put after ANY correct-
+        passphrase mint legitimately resets the failed-unlock counter, and
+        serving an already-stored proxy involves no passphrase at all, so
+        passing the principal's uid unconditionally is harmless: the
+        counter only ever holds entries for genuine failures.
+        """
+        assert record.not_after is not None  # only called with a proxy present
+        meta = ProxyMeta(
+            dn=record.dn or "",
+            voms_attributes=list(record.voms_attributes),
+            not_after=record.not_after,
+            proxy_path=None,
+        )
+        cred = self._build_credential(
+            principal,
+            target,
+            meta,
+            kind=CredentialKind.X509_PROXY_REDEEM,
+            source="voms_token_service",
+        )
+        await self._cache.put(
+            principal.subject,
+            target,
+            cred,
+            expires_at=record.not_after,
+            proxy_meta=meta,
+            uid=principal.uid,
+        )
+        return cred
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -960,21 +1290,31 @@ class X509Provider(CredentialProvider):
         principal: Principal,
         target: str,
         meta: ProxyMeta,
+        kind: CredentialKind = CredentialKind.X509_PROXY_REF,
+        source: str | None = None,
     ) -> IssuedCredential:
         proxy_handle = f"px_{principal.uid}_{uuid.uuid4().hex[:8]}"
         audit_id = uuid.uuid4().hex
-        return IssuedCredential(
-            cred_class=self.cred_class,
-            target=target,
-            kind=CredentialKind.X509_PROXY_REF,
-            expires_at=meta.not_after,
-            payload={
+        if kind == CredentialKind.X509_PROXY_REDEEM:
+            # No local file exists — the backend fetches the PEM from Vault
+            # via POST /v1/credentials/x509/redeem.
+            payload: dict = {"proxy_handle": proxy_handle, "delivery": "redeem"}
+        else:
+            payload = {
                 "proxy_handle": proxy_handle,
                 "proxy_path": meta.proxy_path,
                 "delivery": "direct",
-            },
+            }
+        return IssuedCredential(
+            cred_class=self.cred_class,
+            target=target,
+            kind=kind,
+            expires_at=meta.not_after,
+            payload=payload,
             audit_id=audit_id,
-            source=self._resolve_backend_name(principal),
+            source=(
+                source if source is not None else self._resolve_backend_name(principal)
+            ),
             execution_model=self.execution_model,
         )
 

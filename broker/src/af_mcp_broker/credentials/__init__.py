@@ -25,11 +25,17 @@ from af_mcp_broker.credentials.oauth21 import (
 from af_mcp_broker.credentials.oidc import OIDCProvider
 from af_mcp_broker.credentials.service import ServiceProvider
 from af_mcp_broker.credentials.vault import VaultTokenStore
+from af_mcp_broker.credentials.voms_service import (
+    VomsServiceBadPassphraseError,
+    VomsServiceMintError,
+    VomsTokenServiceClient,
+)
 from af_mcp_broker.credentials.x509 import (
     PosixIdentityRequiredError,
     ProxyHarvestError,
     X509Provider,
 )
+from af_mcp_broker.credentials.x509_vault import StoredX509Credential, VaultX509Store
 from af_mcp_broker.vault_kv import VaultError
 
 __all__ = [
@@ -50,10 +56,15 @@ __all__ = [
     "ProxyHarvestError",
     "ServiceProvider",
     "StoredOAuthCredential",
+    "StoredX509Credential",
     "TokenStore",
     "VaultError",
     "VaultTokenStore",
+    "VaultX509Store",
     "VersionConflict",
+    "VomsServiceBadPassphraseError",
+    "VomsServiceMintError",
+    "VomsTokenServiceClient",
     "X509Provider",
     "load_broker_token_issuer",
 ]

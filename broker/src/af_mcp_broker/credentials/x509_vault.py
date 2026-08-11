@@ -170,6 +170,29 @@ class VaultX509Store:
             return None
         return record
 
+    async def clear_proxy(self, subject: str) -> None:
+        """Remove *subject*'s stored proxy while keeping the link half.
+
+        Proxy revocation must not unlink the identity: the passphrase stays
+        so the next issue() renews hands-free. A subject with no record at
+        all is a no-op.
+        """
+        if await self._read(subject) is None:
+            return
+
+        def _clear(current: StoredX509Credential | None) -> StoredX509Credential:
+            base = current if current is not None else StoredX509Credential()
+            return base.model_copy(
+                update={
+                    "proxy_pem": None,
+                    "dn": None,
+                    "voms_attributes": [],
+                    "not_after": None,
+                }
+            )
+
+        await self._write_cas_retry(subject, _clear)
+
     async def delete(self, subject: str) -> None:
         """Unlink *subject*: destroy the record — passphrase, proxy, and all KV-v2 version history."""
         await self._vault_kv.delete_metadata(self._path(subject))

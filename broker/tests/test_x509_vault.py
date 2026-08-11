@@ -283,6 +283,25 @@ class TestProxy:
         assert await store.get_link(SUBJECT) is None
 
 
+class TestClearProxy:
+    async def test_clear_proxy_removes_proxy_but_keeps_the_link(self, store) -> None:
+        """Proxy revocation (DELETE /v1/x509/proxy) must not unlink the
+        identity — the passphrase stays so the next issue() renews
+        hands-free."""
+        await _link(store)
+        await _store_proxy(store)
+        await store.clear_proxy(SUBJECT)
+        assert await store.get_proxy(SUBJECT) is None
+        link = await store.get_link(SUBJECT)
+        assert link is not None
+        assert link.passphrase is not None
+        assert link.passphrase.get_secret_value() == "hunter2-passphrase"
+
+    async def test_clear_proxy_when_nothing_stored_is_a_noop(self, store) -> None:
+        await store.clear_proxy(SUBJECT)  # must not raise
+        assert await store.get_link(SUBJECT) is None
+
+
 # ---------------------------------------------------------------------------
 # delete (unlink)
 # ---------------------------------------------------------------------------
