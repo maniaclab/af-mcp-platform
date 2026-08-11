@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import time
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, SecretBytes, SecretStr
 
+from af_mcp_broker.audit.logger import AuditRecord, write_audit
 from af_mcp_broker.credentials import (
     CredentialCache,
     CredentialKind,
@@ -19,6 +22,8 @@ from af_mcp_broker.identity import Principal, keycloak_dependency
 
 if TYPE_CHECKING:
     from af_mcp_broker.credentials.base import IssuedCredential as _IssuedCredential
+
+log = structlog.get_logger(__name__)
 
 router = APIRouter(tags=["credentials"])
 
@@ -80,6 +85,25 @@ class ProxyCacheStatus(BaseModel):
     voms_attributes: list[str] = []
     expires_at: str | None = None
     remaining_seconds: int | None = None
+
+
+class ProxyRedeemResponse(BaseModel):
+    """The one response that carries proxy PEM material out of the broker.
+
+    Served only by ``POST /credentials/x509/redeem`` to callers presenting a
+    valid AF Broker Identity Token whose ``aud`` is a configured x509 target
+    — the deliberate, audited exception to the portal-facing rule that the
+    PEM never leaves the broker (issue #112's "backend calls back" wire
+    format; consumed by ``af_credentials.proxy.ProxyClient``).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    pem: str
+    dn: str
+    voms_attributes: list[str]
+    expires_at: str  # ISO-8601
+    remaining_seconds: int
 
 
 # ---------------------------------------------------------------------------
@@ -324,3 +348,121 @@ async def delete_proxy(
         targets = getattr(request.app.state, "x509_targets", [])
     for tgt in targets:
         await provider.revoke(principal, tgt)
+
+
+_REDEEM_MINT_HINT = (
+    "No valid x509/VOMS proxy is cached for this account — "
+    "mint one at the AF portal and retry."
+)
+
+
+@router.post(
+    "/credentials/x509/redeem",
+    response_model=ProxyRedeemResponse,
+    summary="Redeem the caller's cached x509 proxy (backend-facing)",
+)
+async def redeem_x509_proxy(request: Request) -> ProxyRedeemResponse:
+    """Release the caller's cached VOMS proxy PEM to an x509 backend.
+
+    Authenticated by an AF Broker Identity Token (NOT a Keycloak token): the
+    broker verifies its own RS256 signature and requires ``aud`` to be a
+    configured x509 target. The path is deliberately under ``/credentials/``
+    rather than ``/x509/`` to match the wire contract af-credentials codes
+    against (``POST /v1/credentials/x509/redeem``).
+
+    This is the one deliberate exception to "the PEM never leaves the
+    broker": scoped to authenticated backend targets, released once per
+    request over in-cluster TLS, and audited as a distinct credential-release
+    event. Backends must never persist the PEM (see docs/auth.md).
+    """
+    issuer = getattr(request.app.state, "broker_token_issuer", None)
+    if issuer is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Broker identity tokens are not configured",
+        )
+
+    auth = request.headers.get("authorization", "")
+    if not auth.lower().startswith("bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing Bearer token in Authorization header",
+        )
+    claims = issuer.verify(auth[7:].strip())
+    if claims is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired broker identity token",
+        )
+
+    subject: str = claims["sub"]
+    audience: str = claims["aud"]
+    request_id = claims.get("jti", "")
+
+    x509_targets: list[str] = getattr(request.app.state, "x509_targets", [])
+    if audience not in x509_targets:
+        await write_audit(
+            AuditRecord(
+                principal_sub=subject,
+                principal_uid=claims.get("uid"),
+                capability=None,
+                target=audience,
+                action="x509_proxy_release",
+                action_type="read",
+                args_summary="redeem denied: audience is not an x509 target",
+                timestamp=time.time(),
+                request_id=request_id,
+                outcome="denied",
+                error=f"audience {audience!r} is not a configured x509 target",
+            )
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Audience {audience!r} is not a configured x509 target",
+        )
+
+    cache: CredentialCache = _cache(request)
+    meta = cache.get_proxy_meta(subject, audience)
+    now = time.time()
+    if meta is None or meta.not_after <= now:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=_REDEEM_MINT_HINT
+        )
+
+    try:
+        pem = Path(meta.proxy_path).read_text()
+    except OSError:
+        # Cached metadata without its file is an inconsistency (e.g. tmpfs
+        # cleared); from the caller's perspective the proxy is simply gone.
+        log.warning(
+            "x509_redeem.proxy_file_missing",
+            subject=subject,
+            target=audience,
+            proxy_path=meta.proxy_path,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=_REDEEM_MINT_HINT
+        ) from None
+
+    await write_audit(
+        AuditRecord(
+            principal_sub=subject,
+            principal_uid=claims.get("uid"),
+            capability=None,
+            target=audience,
+            action="x509_proxy_release",
+            action_type="read",
+            args_summary=f"proxy released to backend {audience!r}",
+            timestamp=now,
+            request_id=request_id,
+            outcome="success",
+        )
+    )
+
+    return ProxyRedeemResponse(
+        pem=pem,
+        dn=meta.dn,
+        voms_attributes=list(meta.voms_attributes),
+        expires_at=_iso(meta.not_after),
+        remaining_seconds=max(0, int(meta.not_after - now)),
+    )

@@ -448,8 +448,10 @@ the simplest correct thing. The extraction path if it becomes necessary:
    for `auth_type: "bearer"` backends, in-process against the same provider
    code `POST /v1/credential` calls — cache hit or a fresh mint (token
    exchange or x509 mint Job) either way. `auth_type: "none"` backends skip
-   this step; `auth_type: "x509"` isn't yet deliverable over `/mcp` (see
-   `mcp/aggregator.py`'s `TODO(#58)`).
+   this step; `auth_type: "x509"` backends get an AF Broker Identity Token
+   (`aud` = the backend) minted locally by the broker's own signing key, and
+   redeem the caller's VOMS proxy server-side via
+   `POST /v1/credentials/x509/redeem` (issue #112).
 5. The aggregator forwards the call to the target backend MCP server with
    the minted credential injected as `Authorization: Bearer <token>` — the
    caller's own inbound bearer is never forwarded.

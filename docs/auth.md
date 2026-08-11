@@ -42,14 +42,23 @@ Credential subsystem
     │       audience=<af-internal-service>
     │       *** THIS TOKEN IS NOT ACCEPTED BY atlas-auth.cern.ch ***
     │
-    └── Path C: x509/VOMS proxy (for grid jobs, SRM, FTS)
-            Ephemeral k8s Job mounts ~/.globus/{usercert,userkey}.pem
-            via NFS subPath, runs voms-proxy-init, returns proxy
-            (see spikes/nfs-subpath/ for validation)
+    └── Path C: x509/VOMS proxy (for AMI, grid jobs, SRM, FTS)
+            Minted on portal unlock (user passphrase; the ephemeral-Job
+            NFS-subPath path today, voms-token-service once it lands) and
+            cached broker-side. An x509 backend (auth_type: x509) is
+            called over /mcp with an AF Broker Identity Token (aud = the
+            backend) and redeems the caller's proxy itself via
+            POST /v1/credentials/x509/redeem — issue #112's
+            "backend calls back" wire format. The redeem response is the
+            ONE deliberate exception to "the PEM never leaves the broker":
+            scoped to authenticated backend targets, released once per
+            request over in-cluster TLS, audited as a distinct
+            x509_proxy_release event, and never persisted backend-side
+            (per-call temp file, deleted when the AMI call finishes).
     │
     ▼
-Backend MCP server  (receives brokered credential in the Authorization header
-                     or as a file-mount via a shared emptyDir)
+Backend MCP server  (receives the brokered credential in the Authorization
+                     header; x509 backends redeem their proxy server-side)
 ```
 
 ---

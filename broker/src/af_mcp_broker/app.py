@@ -342,6 +342,25 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         )
         raise RuntimeError(msg)
 
+    # x509 backends need the signing key too (issue #112): the aggregator
+    # injects a broker-issued identity JWT for auth_type: x509 targets, and
+    # the redeem endpoint verifies it. This is deliberately a loud startup
+    # WARNING rather than the fail-closed RuntimeError above: the shipped
+    # backends.yaml has always declared an x509 backend (ami), so refusing to
+    # boot would break existing keyless deployments that never call it. The
+    # enforcement stays at the point of use -- the aggregator's x509 factory
+    # raises an actionable ToolError and the redeem endpoint answers 503.
+    if broker_token_issuer is None and x509_targets:
+        logger.warning(
+            "x509_backends_without_signing_key",
+            x509_targets=x509_targets,
+            hint=(
+                "BROKER_SIGNING_KEY_FILE is not set; x509 backends cannot be "
+                "called over /mcp until the RS256 signing key is mounted "
+                "(chart: broker.identityToken.existingSigningKeySecret)."
+            ),
+        )
+
     for cfg in settings.identity_providers:
         provider: CredentialProvider
         if cfg.type == "keycloak-brokered":
