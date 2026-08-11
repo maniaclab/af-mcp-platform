@@ -511,6 +511,28 @@ class Settings(BaseSettings):
     # but defeating the cache entirely. Keep this comfortably above 300.
     broker_token_ttl_seconds: int = 600
 
+    # --- voms-token-service (issue #112 follow-up): base URL of the
+    # deployment X509Provider mints VOMS proxies at (no path -- the client
+    # appends /v1/mint), replacing the ephemeral-Job NFS-subPath mint path.
+    # Empty means the feature is off: the legacy k8s-Job/local-dev path
+    # keeps serving, exactly as before. When set, minted proxies (and the
+    # Globus passphrase enabling hands-free renewal) persist in Vault/OpenBao
+    # instead of tmpfs, so the Vault connection settings above are required
+    # too (enforced by `_validate_vault_config`).
+    voms_token_service_url: str = ""
+
+    # The `aud` claim minted into the AF Broker Identity Token each mint
+    # call carries; must match the service's EXPECTED_AUDIENCE. The default
+    # matches the service's own default and should only change if a
+    # deployment renames itself (same shape as CondorTokenProviderConfig).
+    voms_token_service_audience: str = "voms-token-service"
+
+    # Defaults forwarded in every mint request's `voms`/`valid` fields --
+    # the VOMS attribute set and proxy validity (HH:MM) voms-proxy-init is
+    # invoked with. These match the service's own DEFAULT_VOMS/DEFAULT_VALID.
+    voms_token_service_voms: str = "atlas"
+    voms_token_service_valid: str = "192:00"
+
     @property
     def broker_token_effective_issuer(self) -> str:
         """``broker_token_issuer`` if set, else ``broker_public_origin``.
