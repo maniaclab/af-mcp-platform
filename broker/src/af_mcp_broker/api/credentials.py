@@ -16,6 +16,8 @@ from af_mcp_broker.credentials import (
     CredentialRegistry,
     NeedsUnlock,
     PosixIdentityRequiredError,
+    VomsServiceBadPassphraseError,
+    VomsServiceMintError,
     X509Provider,
 )
 from af_mcp_broker.identity import Principal, keycloak_dependency
@@ -293,6 +295,20 @@ async def create_proxy(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(exc),
         ) from exc
+    # voms-token-service mode only (the legacy path raises plain ValueError,
+    # deliberately left to the generic handler so its behavior is unchanged):
+    # a bad passphrase is the caller's 400 to fix; a service infra failure is
+    # a 502 that must not read as "wrong passphrase".
+    except VomsServiceBadPassphraseError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except VomsServiceMintError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Proxy minting is temporarily unavailable — retry later.",
+        ) from exc
 
     meta = _cache(request).get_proxy_meta(principal.subject, target)
     if meta is None:  # pragma: no cover - mint succeeded but nothing cached
@@ -356,6 +372,129 @@ _REDEEM_MINT_HINT = (
     "No valid x509/VOMS proxy is cached for this account — "
     "mint one at the AF portal and retry."
 )
+
+_REDEEM_RELINK_HINT = (
+    "The stored Globus passphrase was rejected (changed password?) — the "
+    "x509 identity has been unlinked. Re-link it at the AF portal and retry."
+)
+
+
+def _release_audit(
+    *,
+    subject: str,
+    uid: Any,
+    audience: str,
+    request_id: str,
+    outcome: str,
+    args_summary: str,
+    error: str | None = None,
+) -> AuditRecord:
+    """One ``x509_proxy_release`` audit record — shared by the legacy and Vault redeem paths so every release (and every failed renewal) is shaped identically."""
+    return AuditRecord(
+        principal_sub=subject,
+        principal_uid=uid,
+        capability=None,
+        target=audience,
+        action="x509_proxy_release",
+        action_type="read",
+        args_summary=args_summary,
+        timestamp=time.time(),
+        request_id=request_id,
+        outcome=outcome,
+        error=error,
+    )
+
+
+async def _redeem_from_vault(
+    provider: X509Provider,
+    *,
+    subject: str,
+    audience: str,
+    uid: Any,
+    request_id: str,
+) -> ProxyRedeemResponse:
+    """Serve the Vault-stored proxy, renewing hands-free when it has expired.
+
+    The voms-token-service-mode half of ``redeem_x509_proxy``: Vault is
+    authoritative (a leftover tmpfs-cached proxy from before the feature
+    flip is never consulted). An expired proxy with a stored passphrase is
+    re-minted via ``X509Provider.renew_from_stored_link``; a bad-passphrase
+    failure there has already UNLINKED the identity, so the 404 tells the
+    user to re-link rather than merely re-mint. Failed renewals write
+    ``outcome="error"`` audit records; infra failures keep the link and
+    surface as 502.
+    """
+    store = provider.vault_store
+    assert store is not None  # uses_voms_service checked by the caller
+    record = await store.get_proxy(subject)
+    renewed = False
+    if record is None:
+        try:
+            record = await provider.renew_from_stored_link(subject, audience)
+        except NeedsUnlock as exc:
+            if exc.reason == "not_linked":
+                # Same actionable 404 as "nothing cached" on the legacy path.
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail=_REDEEM_MINT_HINT
+                ) from exc
+            await write_audit(
+                _release_audit(
+                    subject=subject,
+                    uid=uid,
+                    audience=audience,
+                    request_id=request_id,
+                    outcome="error",
+                    args_summary="hands-free renewal failed: stored passphrase rejected; identity unlinked",
+                    error="stored Globus passphrase rejected by voms-token-service",
+                )
+            )
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=_REDEEM_RELINK_HINT
+            ) from exc
+        except VomsServiceMintError as exc:
+            await write_audit(
+                _release_audit(
+                    subject=subject,
+                    uid=uid,
+                    audience=audience,
+                    request_id=request_id,
+                    outcome="error",
+                    args_summary="hands-free renewal failed: voms-token-service unavailable",
+                    error=str(exc),
+                )
+            )
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Proxy renewal is temporarily unavailable — retry later.",
+            ) from exc
+        renewed = True
+
+    # renew_from_stored_link/get_proxy only return records with a proxy.
+    assert record.proxy_pem is not None
+    assert record.not_after is not None
+
+    await write_audit(
+        _release_audit(
+            subject=subject,
+            uid=uid,
+            audience=audience,
+            request_id=request_id,
+            outcome="success",
+            args_summary=(
+                f"proxy renewed hands-free and released to backend {audience!r}"
+                if renewed
+                else f"proxy released to backend {audience!r}"
+            ),
+        )
+    )
+    now = time.time()
+    return ProxyRedeemResponse(
+        pem=record.proxy_pem.get_secret_value(),
+        dn=record.dn or "",
+        voms_attributes=list(record.voms_attributes),
+        expires_at=_iso(record.not_after),
+        remaining_seconds=max(0, int(record.not_after - now)),
+    )
 
 
 @router.post(
@@ -423,6 +562,19 @@ async def redeem_x509_proxy(request: Request) -> ProxyRedeemResponse:
             detail=f"Audience {audience!r} is not a configured x509 target",
         )
 
+    # voms-token-service mode: Vault is authoritative — serve the stored
+    # proxy, renewing hands-free with the stored passphrase when it has
+    # expired (issue #112's Vault-backed linking).
+    provider = getattr(request.app.state, "x509_provider", None)
+    if provider is not None and provider.uses_voms_service:
+        return await _redeem_from_vault(
+            provider,
+            subject=subject,
+            audience=audience,
+            uid=claims.get("uid"),
+            request_id=request_id,
+        )
+
     cache: CredentialCache = _cache(request)
     meta = cache.get_proxy_meta(subject, audience)
     now = time.time()
@@ -449,17 +601,13 @@ async def redeem_x509_proxy(request: Request) -> ProxyRedeemResponse:
         ) from None
 
     await write_audit(
-        AuditRecord(
-            principal_sub=subject,
-            principal_uid=claims.get("uid"),
-            capability=None,
-            target=audience,
-            action="x509_proxy_release",
-            action_type="read",
-            args_summary=f"proxy released to backend {audience!r}",
-            timestamp=now,
+        _release_audit(
+            subject=subject,
+            uid=claims.get("uid"),
+            audience=audience,
             request_id=request_id,
             outcome="success",
+            args_summary=f"proxy released to backend {audience!r}",
         )
     )
 
