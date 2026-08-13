@@ -10,15 +10,15 @@ jobs:
     name: Helm lint + template + ct lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0  # chart-testing needs full history to detect changed charts
 
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
           version: "3.19.5"
 
-      - uses: helm/chart-testing-action@v2.8.0
+      - uses: helm/chart-testing-action@6ec842c01de15ebb84c8627d2744a0c2f2755c9f # v2.8.0
 
       # portal.oidc.* and portal.brokerOrigin are `required` (no safe
       # cross-institution default, see values.yaml) — ci/test-values.yaml
