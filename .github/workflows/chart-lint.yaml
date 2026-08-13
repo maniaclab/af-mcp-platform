@@ -5,14 +5,23 @@ on:
     paths:
       - "charts/**"
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
 jobs:
   chart-lint:
     name: Helm lint + template + ct lint
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0  # chart-testing needs full history to detect changed charts
+          persist-credentials: false
 
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
@@ -35,4 +44,6 @@ jobs:
             --set image.portal.tag=sha-test
 
       - name: ct lint
-        run: ct lint --target-branch ${{ github.event.repository.default_branch }} --check-version-increment=false
+        run: ct lint --target-branch "$DEFAULT_BRANCH" --check-version-increment=false
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
