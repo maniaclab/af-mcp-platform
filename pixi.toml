@@ -3,6 +3,7 @@ name = "af-mcp-platform"
 version = "0.0.27"
 channels = ["conda-forge"]
 platforms = ["linux-64", "osx-arm64", "osx-64"]
+exclude-newer = "7d"
 
 [dependencies]
 python = ">=3.12,<3.13"
