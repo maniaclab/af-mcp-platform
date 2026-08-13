@@ -2,7 +2,7 @@ exclude: ^.agents/|.claude
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v6.0.0
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # frozen: v6.0.0
     hooks:
       - id: trailing-whitespace
       - id: end-of-file-fixer
@@ -11,6 +11,13 @@ repos:
         exclude: ^charts/
       - id: check-added-large-files
       - id: check-merge-conflict
+
+  - repo: https://github.com/zizmorcore/zizmor-pre-commit
+    rev: 451b56af716f9f0d0c2b816503a3fd0cf8b036fa  # frozen: v1.29.0
+    hooks:
+      - id: zizmor
+        files: "^\\.github"
+        args: [--persona=pedantic]
 
   # ruff and mypy are run via `pixi run lint`/`pixi run typecheck` in CI (see
   # ci.yaml), which pin versions in pixi.toml — that's the single source of
