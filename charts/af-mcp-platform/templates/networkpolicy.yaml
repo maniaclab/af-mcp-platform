@@ -53,7 +53,7 @@ spec:
         - protocol: TCP
           port: 53
 
-    # Keycloak (keycloak-prod.tempest.uchicago.edu) and ATLAS IAM
+    # Keycloak (auth.af.uchicago.edu) and ATLAS IAM
     # (atlas-auth.cern.ch) — OIDC token validation and credential delegation.
     # The CIDR below covers both services; if your cluster has egress-policy
     # enforcement via FQDN you can tighten this further.
