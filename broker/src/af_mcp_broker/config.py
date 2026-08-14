@@ -166,7 +166,7 @@ class Settings(BaseSettings):
         super().__init__(**data)
 
     # OIDC configuration
-    oidc_issuer: str = "https://keycloak-prod.tempest.uchicago.edu/realms/connect"
+    oidc_issuer: str = "https://auth.af.uchicago.edu/realms/connect"
     oidc_audience: str = "mcp-gateway"
     # Optional realm URL for server-to-server (back-channel) Keycloak calls
     # -- JWKS, token endpoint, Admin REST API, brokered-token fetch. Set it

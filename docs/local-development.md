@@ -162,7 +162,7 @@ locally (never commit real values):
 ```json
 {
   "oidc": {
-    "issuer": "https://keycloak-prod.tempest.uchicago.edu/realms/connect",
+    "issuer": "https://auth.af.uchicago.edu/realms/connect",
     "clientId": "mcp-portal",
     "scope": "openid profile email mcp-gateway"
   },

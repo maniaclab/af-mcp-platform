@@ -540,7 +540,7 @@ Key points:
 When the broker calls Keycloak's token exchange endpoint on behalf of a principal,
 the resulting token has:
 
-- Issuer: `https://keycloak-prod.tempest.uchicago.edu/realms/connect`
+- Issuer: `https://auth.af.uchicago.edu/realms/connect`
 - Audience: whatever `audience` was requested (an AF-internal service)
 
 `atlas-auth.cern.ch` (the CERN IAM instance that issues tokens for Rucio, PanDA,
@@ -551,7 +551,7 @@ by federation partners it has explicitly configured.
 that Keycloak holds after the principal has linked their CERN account:
 
 ```
-GET https://keycloak-prod.tempest.uchicago.edu/realms/connect/broker/atlas-oidc/token
+GET https://auth.af.uchicago.edu/realms/connect/broker/atlas-oidc/token
 Authorization: Bearer <af-token>
 ```
 

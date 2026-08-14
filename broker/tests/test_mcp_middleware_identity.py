@@ -216,7 +216,7 @@ async def test_dev_bypass_refuses_non_local_issuer(settings):
             "dev_insecure_principal": json.dumps(
                 {"uid": 1000, "gid": 1000, "unixname": "devuser"}
             ),
-            "oidc_issuer": "https://keycloak-prod.tempest.uchicago.edu/realms/connect",
+            "oidc_issuer": "https://auth.af.uchicago.edu/realms/connect",
         }
     )
     inner = _InnerApp()

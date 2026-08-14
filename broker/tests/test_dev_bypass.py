@@ -81,11 +81,11 @@ def test_bypass_refuses_to_start_with_real_issuer(
     monkeypatch.setenv("BROKER_DEV_INSECURE_PRINCIPAL", DEV_PRINCIPAL_JSON)
     monkeypatch.setenv(
         "OIDC_ISSUER",
-        "https://keycloak-prod.tempest.uchicago.edu/realms/connect",
+        "https://auth.af.uchicago.edu/realms/connect",
     )
 
     app = _fresh_app()
-    with pytest.raises(RuntimeError, match=r"keycloak-prod\.tempest\.uchicago\.edu"):  # noqa: SIM117
+    with pytest.raises(RuntimeError, match=r"auth\.af\.uchicago\.edu"):  # noqa: SIM117
         with TestClient(app):
             pass
 
