@@ -121,8 +121,18 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
 /** "keycloak-brokered" — Keycloak's stored-broker-token pattern; "oauth21-direct"
  * — the broker acting as a direct OAuth 2.1 client. The portal never needs
  * to branch display logic on this — it's carried through mainly so
- * IdentityLink.vue knows which linking mechanism `link_url` belongs to. */
-export type ProviderType = 'keycloak-brokered' | 'oauth21-direct';
+ * IdentityLink.vue knows which linking mechanism `link_url` belongs to.
+ * "x509" is the synthetic grid-certificate entry the broker appends when any
+ * backend authenticates with a VOMS proxy (see api/identities.py); it links
+ * via `link_mechanism: "passphrase"` below, never a `link_url`. */
+export type ProviderType = 'keycloak-brokered' | 'oauth21-direct' | 'x509';
+
+/** How a linking flow starts: "redirect" — a browser navigation (the
+ * keycloak-brokered client-side flow or an oauth21-direct `link_url`);
+ * "passphrase" — an in-portal form that POSTs the user's Globus passphrase
+ * to /v1/x509/proxy (X509IdentityCard.vue); "none" — no linking step exists
+ * (broker-authoritative AF-native entries). */
+export type LinkMechanism = 'redirect' | 'passphrase' | 'none';
 
 export interface IdentityProvider {
   /** Portal-facing stable identifier (e.g. "atlas-iam", or an OAuth 2.1 provider's alias). */
@@ -134,6 +144,10 @@ export interface IdentityProvider {
   linked: boolean;
   /** URL to navigate the browser to in order to link this provider, or null if linking isn't possible right now. */
   link_url: string | null;
+  link_mechanism: LinkMechanism;
+  /** Expiry (ISO-8601) of the caller's cached x509/VOMS proxy — only ever set
+   * on the synthetic "x509" entry, and null there too when nothing is cached. */
+  proxy_expires_at?: string | null;
 }
 
 export interface IdentitiesResponse {

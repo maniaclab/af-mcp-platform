@@ -27,6 +27,7 @@ function makeProvider(overrides: Partial<IdentityProvider> = {}): IdentityProvid
     enables: 'VOMS proxy generation and grid certificate credential brokering',
     linked: true,
     link_url: null,
+    link_mechanism: 'redirect',
     ...overrides,
   };
 }

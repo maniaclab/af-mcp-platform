@@ -7,6 +7,7 @@ import {
   SessionExpiredError,
   type CatalogServer,
   type IdentityProvider,
+  type ProxyMetadata,
 } from '../lib/api';
 import { groupServersByAlias } from '../lib/catalog';
 import {
@@ -16,6 +17,7 @@ import {
   resolveLinkedErrorBanner,
 } from '../lib/linkedBanner';
 import IdentityLink from './IdentityLink.vue';
+import X509IdentityCard from './X509IdentityCard.vue';
 
 const providers = ref<IdentityProvider[]>([]);
 const loading = ref(true);
@@ -120,6 +122,18 @@ function handleUnlinked(id: string) {
   if (provider) provider.linked = false;
   clearIdentitiesCache();
 }
+
+// Called on X509IdentityCard's `linked` event, once POST /v1/x509/proxy has
+// already succeeded — same reflect-locally-and-drop-cache pattern as
+// handleUnlinked above. The mint response carries the fresh proxy expiry.
+function handleX509Linked(id: string, meta: ProxyMetadata) {
+  const provider = providers.value.find((p) => p.id === id);
+  if (provider) {
+    provider.linked = true;
+    provider.proxy_expires_at = meta.expires_at;
+  }
+  clearIdentitiesCache();
+}
 </script>
 
 <template>
@@ -175,20 +189,31 @@ function handleUnlinked(id: string) {
     </div>
 
     <template v-else>
-      <!-- Identity list — one flat list, rendered uniformly regardless of
-           linking mechanism (keycloak-brokered or oauth21-direct). -->
+      <!-- Identity list — one flat list. Redirect-mechanism providers
+           (keycloak-brokered, oauth21-direct) render uniformly via
+           IdentityLink; the passphrase-mechanism x509 entry gets its own
+           card with the in-page passphrase form. -->
       <div v-if="providers.length > 0" class="ip__list">
-        <IdentityLink
-          v-for="p in providers"
-          :key="p.id"
-          :id="p.id"
-          :type="p.type"
-          :linked="p.linked"
-          :display_name="p.display_name"
-          :enables="p.enables"
-          :link_url="p.link_url"
-          @unlinked="handleUnlinked(p.id)"
-        />
+        <template v-for="p in providers" :key="p.id">
+          <X509IdentityCard
+            v-if="p.link_mechanism === 'passphrase'"
+            :linked="p.linked"
+            :display_name="p.display_name"
+            :enables="p.enables"
+            :proxy_expires_at="p.proxy_expires_at"
+            @linked="handleX509Linked(p.id, $event)"
+          />
+          <IdentityLink
+            v-else
+            :id="p.id"
+            :type="p.type"
+            :linked="p.linked"
+            :display_name="p.display_name"
+            :enables="p.enables"
+            :link_url="p.link_url"
+            @unlinked="handleUnlinked(p.id)"
+          />
+        </template>
       </div>
 
       <!-- No providers returned at all -->
