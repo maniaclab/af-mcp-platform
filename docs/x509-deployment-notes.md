@@ -138,11 +138,17 @@ this prefix, nothing broader.
 - **Revoke** (`DELETE /v1/x509/proxy`): clears the stored proxy but keeps
   the link — the next issue renews hands-free. Unlinking is only ever the
   bad-passphrase path above (or a future portal unlink action).
-- Portal note: `GET /v1/identities` only lists `identity_providers`
-  entries, and x509 is wired per-backend (`auth_type: x509`), not as an
-  identity provider — so the Identities page does not yet show x509 linked
-  state, even though `X509Provider.is_linked()` now answers it from Vault.
-  Surfacing an x509 row there is a portal/API follow-up.
+- **Portal visibility**: x509 is wired per-backend (`auth_type: x509`),
+  not as an `identity_providers` entry, so `GET /v1/identities` appends one
+  synthetic entry (id `x509`, matching the `credential_provider` alias
+  `/v1/catalog` reports for x509 targets) whenever any x509 target is
+  configured: `linked` from `X509Provider.is_linked()` (Vault in service
+  mode, the `~/.globus` heuristic in legacy mode),
+  `link_mechanism: "passphrase"` (no `link_url` — linking is the in-portal
+  passphrase form, not a redirect), and `proxy_expires_at` from the cached
+  proxy metadata. The Identities page renders it as its own card whose
+  Link/Re-link action POSTs to `/v1/x509/proxy`, surfacing the 400/429/502
+  taxonomy above inline.
 
 ### What changed vs the tmpfs/Job era
 
