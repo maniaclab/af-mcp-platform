@@ -43,13 +43,32 @@ Credential subsystem
     │       *** THIS TOKEN IS NOT ACCEPTED BY atlas-auth.cern.ch ***
     │
     └── Path C: x509/VOMS proxy (for AMI, grid jobs, SRM, FTS)
-            Minted on portal unlock (user passphrase; the ephemeral-Job
-            NFS-subPath path today, voms-token-service once it lands) and
-            cached broker-side. An x509 backend (auth_type: x509) is
-            called over /mcp with an AF Broker Identity Token (aud = the
-            backend) and redeems the caller's proxy itself via
+            Linked once at the portal (user passphrase). Two mint paths
+            coexist behind VOMS_TOKEN_SERVICE_URL:
+
+            • voms-token-service (URL set): the broker asks
+              voms-token-service — the only component that mounts user
+              homes — to run voms-proxy-init with the passphrase, then
+              persists BOTH the proxy and the Globus passphrase in
+              Vault/OpenBao (the issue #112 custodianship decision). The
+              stored passphrase enables HANDS-FREE RENEWAL: an expired
+              stored proxy is re-minted on the user's behalf with no
+              interaction. If that re-mint fails on a bad passphrase
+              (the user changed their Globus password), the identity is
+              unlinked and the portal prompts a re-link.
+
+            • legacy ephemeral-Job NFS-subPath path (URL unset): minted
+              per unlock into the broker's tmpfs, nothing persisted —
+              exactly the pre-voms-token-service behavior.
+
+            An x509 backend (auth_type: x509) is called over /mcp with
+            an AF Broker Identity Token (aud = the backend) and redeems
+            the caller's proxy itself via
             POST /v1/credentials/x509/redeem — issue #112's
-            "backend calls back" wire format. The redeem response is the
+            "backend calls back" wire format. In voms-token-service mode
+            redeem serves the Vault-stored proxy, renewing it hands-free
+            in the same request when expired (failed renewals write
+            outcome=error audit records). The redeem response is the
             ONE deliberate exception to "the PEM never leaves the broker":
             scoped to authenticated backend targets, released once per
             request over in-cluster TLS, audited as a distinct
@@ -688,7 +707,7 @@ and the scope's audience together.
 | AF access token (portal SPA) | 5 minutes | `oidc-client-ts` silent renew via refresh_token grant (see [Portal auth](#portal-auth-oidc-public-client)) |
 | AF access token (other MCP clients) | 5 minutes | Client-specific — e.g. Claude Desktop's own OAuth flow (not yet implemented) |
 | ATLAS IAM token (brokered) | 1 hour | Broker re-fetches from Keycloak on cache miss |
-| x509 VOMS proxy | 12–96 hours (configurable) | Re-mint Job triggered when cache entry expires |
+| x509 VOMS proxy | 12–192 hours (configurable) | voms-token-service mode: hands-free re-mint with the Vault-stored passphrase when the stored proxy expires. Legacy mode: re-mint Job on the next portal unlock |
 
 The `CredentialCache` stores each credential with its `expires_at` timestamp.
 A background janitor coroutine sweeps the cache every 60 seconds and evicts

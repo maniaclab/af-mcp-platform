@@ -3,20 +3,29 @@
 What an operator (the flux_apps side) needs in place for an x509 backend —
 ami-mcp is the first — to work end-to-end over `/mcp`. Code references:
 `mcp/aggregator.py`'s x509 branch, `api/credentials.py`'s redeem endpoint,
-and the [af-credentials](https://github.com/maniaclab/af-credentials) client
+`credentials/voms_service.py` + `credentials/x509_vault.py` (the
+voms-token-service mint path), and the
+[af-credentials](https://github.com/maniaclab/af-credentials) client
 library (its own repository and PyPI package).
 
 ## The chain
 
 ```
-user (portal unlock, passphrase)
-  → broker mints VOMS proxy (X509Provider) and caches it
+user (portal LINK, one-time passphrase entry)
+  → broker mints VOMS proxy via voms-token-service
+  → broker stores passphrase + proxy in Vault/OpenBao (VaultX509Store)
 LLM client → mcp.af.uchicago.edu /mcp
   → aggregator mints AF Broker Identity Token (aud=ami) per call
   → ami-mcp verifies it against the broker JWKS (af-credentials)
   → ami-mcp redeems the proxy: POST /v1/credentials/x509/redeem
+      (expired? broker re-mints hands-free with the stored passphrase)
   → ami-mcp runs the AMI call with the proxy, deletes it immediately
 ```
+
+With `VOMS_TOKEN_SERVICE_URL` unset the pre-existing chain applies instead:
+the portal unlock mints via an ephemeral k8s Job that NFS-subPath-mounts the
+user's home, the proxy lives in the broker's tmpfs, and nothing is
+persisted — every expiry needs a fresh portal unlock.
 
 ## Broker side (this chart)
 
@@ -40,12 +49,12 @@ LLM client → mcp.af.uchicago.edu /mcp
          required_capability: read_metadata   # or as policy dictates
    ```
 
-3. **Proxy minting prerequisites** — unchanged from the existing X509Provider
-   story: the minting path needs the users' home directories (the
-   `af-user-homes` PVC, which does not exist on the AF yet) or, once it
-   lands, the voms-token-service (see below). Until minting works, redeem
-   returns the actionable 404 and ami-mcp surfaces "mint one at the AF
-   portal".
+3. **Proxy minting prerequisites** — either the voms-token-service path
+   (preferred; see below) or the legacy Job path's requirement of the users'
+   home directories on the broker (the `af-user-homes` PVC, which does not
+   exist on the AF yet — the service path removes this need from the broker
+   entirely). Until minting works, redeem returns the actionable 404 and
+   ami-mcp surfaces "mint one at the AF portal".
 
 ## ami-mcp side (backend deployment)
 
@@ -71,19 +80,80 @@ stamps differs from the URL ami-mcp reaches it at in-cluster.)
   atlas-ami.cern.ch:443; the broker needs egress to ami-mcp:8000 (already
   covered by `networkPolicy.broker.backendPorts`).
 
-## voms-token-service (once adopted — replaces the ephemeral-Job mint path)
+## voms-token-service mode (replaces the ephemeral-Job mint path)
 
-Scaffolded separately (repo shape mirrors condor-token-service). Flux entries
-mirror `flux_apps/af/mcp-platform/`'s condor-token-service set:
+The service lives in its own repository
+([maniaclab/voms-token-service](https://github.com/maniaclab/voms-token-service);
+repo shape mirrors condor-token-service). Flux entries mirror
+`flux_apps/af/mcp-platform/`'s condor-token-service set:
 
 - Deployment + Service from `charts/voms-token-service`; the **homes PVC
   mounts on this pod only** (read-only), never on the broker.
-- Values: `brokerJwksUrl`, `brokerIssuer`, audience `voms-token-service`.
+- Service values: `brokerJwksUrl`, `brokerIssuer`, audience
+  `voms-token-service`, `HOME_ROOT` (the `.globus` parent directory root on
+  the mounted PVC — configurable, default `/home`).
 - NetworkPolicy: broker → voms-token-service egress only; the service needs
-  no egress beyond VOMS servers.
-- Broker settings gain the service URL when the X509Provider switches its
-  mint path over (follow-up to this PR; proxies then persist in
-  OpenBao/Vault instead of tmpfs, removing the broker's NFS needs entirely).
+  no egress beyond VOMS servers (plus the broker JWKS endpoint).
+
+### Broker settings (env / chart values)
+
+| Setting | Meaning |
+| --- | --- |
+| `VOMS_TOKEN_SERVICE_URL` | Base URL of the service (no path). **Unset = legacy Job path**, exactly the pre-service behavior. |
+| `VOMS_TOKEN_SERVICE_AUDIENCE` | `aud` minted into the mint call's AF Broker Identity Token; must match the service's `EXPECTED_AUDIENCE` (default `voms-token-service`). |
+| `VOMS_TOKEN_SERVICE_VOMS` / `VOMS_TOKEN_SERVICE_VALID` | `voms`/`valid` forwarded on every mint (defaults `atlas` / `192:00`). |
+| `X509_KV_PATH_PREFIX` | KV-v2 path prefix for the per-subject records (default `mcp/x509`). |
+| `VAULT_ADDR`, `VAULT_AUTH_MOUNT`, `VAULT_AUTH_ROLE`, `VAULT_KV_MOUNT`, `VAULT_SA_TOKEN_PATH` | The same shared Vault connection the other Vault-backed stores use. **Required** when the service URL is set (startup validation refuses a half-configured broker). |
+| `BROKER_SIGNING_KEY_FILE` | Also **required** when the service URL is set — the mint call is authenticated by a broker-signed identity token (fail-closed at boot). |
+
+### Vault paths + policy
+
+One KV-v2 record per subject at
+`{VAULT_KV_MOUNT}/data/{X509_KV_PATH_PREFIX}/{subject}/x509` holding the
+Globus passphrase, the POSIX identity captured at link time, and the current
+proxy PEM with its expiry. The broker's Vault policy needs, on
+`{X509_KV_PATH_PREFIX}/*`: `create`+`update` on `data/` (CAS writes),
+`read` on `data/`, and `delete` on `metadata/` (unlink destroys all
+versions). This prefix is deliberately distinct from
+`VAULT_KV_PATH_PREFIX`/`TOKEN_REGISTRY_KV_PATH_PREFIX`/
+`PRINCIPAL_CACHE_KV_PATH_PREFIX` so the four stores never collide, and it
+holds the platform's most sensitive material — scope the policy to exactly
+this prefix, nothing broader.
+
+### The link / re-link UX
+
+- **Link (once)**: the user enters their Globus passphrase at the portal
+  (`POST /v1/x509/proxy`, the pre-existing unlock endpoint). The broker
+  mints via the service and stores passphrase + proxy in Vault. A bad
+  passphrase is a 400 (and burns the unlock rate-limit budget, as before);
+  a service outage is a 502 (and does not).
+- **Hands-free renewal**: any consumer hitting an expired stored proxy —
+  `issue()` on the `/v1` surface, or the redeem endpoint mid-tool-call —
+  triggers a re-mint with the stored passphrase; the user does nothing.
+- **Re-link**: if a hands-free re-mint fails on a bad passphrase (the user
+  changed their Globus password), the record is deleted (unlink) and the
+  user is prompted — redeem answers 404 "re-link at the AF portal",
+  `is_linked()` flips to false. Entering the new passphrase at the portal
+  re-links.
+- **Revoke** (`DELETE /v1/x509/proxy`): clears the stored proxy but keeps
+  the link — the next issue renews hands-free. Unlinking is only ever the
+  bad-passphrase path above (or a future portal unlink action).
+- Portal note: `GET /v1/identities` only lists `identity_providers`
+  entries, and x509 is wired per-backend (`auth_type: x509`), not as an
+  identity provider — so the Identities page does not yet show x509 linked
+  state, even though `X509Provider.is_linked()` now answers it from Vault.
+  Surfacing an x509 row there is a portal/API follow-up.
+
+### What changed vs the tmpfs/Job era
+
+| | tmpfs/Job (legacy, URL unset) | voms-token-service + Vault |
+| --- | --- | --- |
+| Mint | ephemeral k8s Job, NFS-subPath mount of the user's home **on the broker's cluster config** | HTTP call to voms-token-service (only IT mounts homes) |
+| Proxy storage | broker tmpfs (`PROXY_DIR`), lost on restart | Vault KV-v2, shared across replicas and restarts |
+| Passphrase | never persisted; re-entered at every expiry | persisted in Vault (the issue #112 custodianship decision) for hands-free renewal |
+| Expiry | proxy silently unusable until the user unlocks again | renewed hands-free; user only re-enters on a changed Globus password |
+| Credential kind | `x509_proxy_ref` (`proxy_path` on the broker filesystem) | `x509_proxy_redeem` (no local file; backends redeem the PEM) |
+| Broker POSIX/NFS needs | homes PVC + per-uid Job plumbing | none (POSIX identity is captured at link time and asserted to the service) |
 
 ## Verification
 

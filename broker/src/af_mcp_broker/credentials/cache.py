@@ -42,16 +42,21 @@ class RateLimitError(Exception):
 
 @dataclass
 class ProxyMeta:
-    """Metadata for a live x509 proxy stored on the broker's tmpfs.
+    """Metadata for a live x509 proxy.
 
-    The proxy file itself is stored at *proxy_path*; this struct carries the
-    parsed attributes so callers can check validity without reading the file.
+    For the legacy mint path the proxy file itself is stored at
+    *proxy_path*; this struct carries the parsed attributes so callers can
+    check validity without reading the file. In voms-token-service mode the
+    PEM persists in Vault instead of any local file, so *proxy_path* is
+    None.
     """
 
     dn: str
     voms_attributes: list[str]  # e.g. ["/atlas/Role=production", "/atlas"]
     not_after: float  # epoch seconds (UTC) — proxy expiry
-    proxy_path: str  # absolute path inside broker's tmpfs, e.g. /run/broker/proxies/{uid}/proxy.pem
+    # Absolute path inside broker's tmpfs, e.g.
+    # /run/broker/proxies/{uid}/proxy.pem; None when the PEM lives in Vault.
+    proxy_path: str | None = None
 
 
 @dataclass
@@ -311,7 +316,9 @@ class CredentialCache:
         entry = self._entries.pop(key, None)
         if entry is None:
             return
-        if entry.proxy_meta is not None:
+        # proxy_path is None for Vault-persisted proxies (no local file to
+        # delete; X509Provider.revoke clears the Vault copy itself).
+        if entry.proxy_meta is not None and entry.proxy_meta.proxy_path is not None:
             await _secure_delete_proxy(entry.proxy_meta.proxy_path)
         cred_class = (
             entry.credential.cred_class

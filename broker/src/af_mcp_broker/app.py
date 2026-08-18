@@ -37,6 +37,8 @@ from af_mcp_broker.credentials import (
     OAuth21Provider,
     OIDCProvider,
     VaultTokenStore,
+    VaultX509Store,
+    VomsTokenServiceClient,
     X509Provider,
     load_broker_token_issuer,
 )
@@ -231,32 +233,23 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     )
     credential_cache.start_janitor()
 
-    x509_provider = X509Provider(settings, credential_cache)
     credential_registry = CredentialRegistry()
 
-    # Map each x509-auth backend target to X509Provider (voms-proxy minted
-    # from the user's ~/.globus cert). `bearer`-auth backends' credential
-    # provider now comes from `identity_providers`' per-entry `targets` list
-    # (see below), not a blanket auth_type == "bearer" match against a single
-    # OIDCProvider — this lets different backends bind to different
-    # keycloak-brokered/oauth21-direct aliases. `none` requires no user
-    # credential, so no provider is registered.
-    x509_targets: list[str] = []
-    for spec in backends:
-        if spec.auth_type == "x509":
-            credential_registry.register(spec.name, x509_provider)
-            x509_targets.append(spec.name)
-
     # --- Vault/OpenBao transport: one VaultKV instance (one K8s auth login
-    # per process) shared by the oauth21 token store, the token registry, and
-    # the principal cache below, whichever of the three (or more) is
-    # configured to use Vault — see vault_kv.py's module docstring for the
-    # transport/domain split.
+    # per process) shared by the oauth21 token store, the token registry,
+    # the principal cache, and the x509 link/proxy store below, whichever of
+    # the four (or more) is configured to use Vault — see vault_kv.py's
+    # module docstring for the transport/domain split.
+    # voms_token_service_url implies the x509 store: in service mode proxies
+    # and passphrases persist in Vault (Settings._validate_vault_config
+    # already refused to construct `settings` without the connection
+    # settings).
     vault_kv: VaultKV | None = None
     if (
         settings.token_store_backend == "vault"
         or settings.token_registry_backend == "vault"
         or settings.principal_cache_backend == "vault"
+        or settings.voms_token_service_url
     ):
         vault_kv = VaultKV(
             addr=settings.vault_addr,
@@ -341,6 +334,65 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
             "docs/auth.md's 'AF Broker Identity Token' section."
         )
         raise RuntimeError(msg)
+
+    # --- x509: mint path selection (issue #112 follow-up). When
+    # voms_token_service_url is set, X509Provider mints via voms-token-service
+    # (the only component that mounts user homes) and persists both the proxy
+    # and the link (Globus passphrase for hands-free renewal) in Vault;
+    # otherwise the legacy k8s-Job/local-dev path serves, exactly as before.
+    # The service exchange is authenticated by broker-signed identity tokens,
+    # so a service URL with no signing key is fail-closed at boot — same
+    # rollout-failure-over-silent-breakage reasoning as the broker-issued
+    # check above.
+    voms_service_client: VomsTokenServiceClient | None = None
+    x509_vault_store: VaultX509Store | None = None
+    if settings.voms_token_service_url:
+        if broker_token_issuer is None:
+            msg = (
+                "VOMS_TOKEN_SERVICE_URL is set but BROKER_SIGNING_KEY_FILE is "
+                "not, so the broker cannot sign the AF Broker Identity Tokens "
+                "voms-token-service authenticates mint calls with. Mount the "
+                "RS256 signing key (chart: broker.identityToken."
+                "existingSigningKeySecret) or unset VOMS_TOKEN_SERVICE_URL."
+            )
+            raise RuntimeError(msg)
+        assert vault_kv is not None  # guaranteed by the vault block above
+        voms_service_client = VomsTokenServiceClient(
+            issuer=broker_token_issuer,
+            service_url=settings.voms_token_service_url,
+            audience=settings.voms_token_service_audience,
+            voms=settings.voms_token_service_voms,
+            valid=settings.voms_token_service_valid,
+        )
+        x509_vault_store = VaultX509Store(
+            vault_kv=vault_kv, kv_path_prefix=settings.x509_kv_path_prefix
+        )
+        logger.info(
+            "x509_voms_service_mode",
+            service_url=settings.voms_token_service_url,
+            kv_path_prefix=settings.x509_kv_path_prefix,
+        )
+
+    x509_provider = X509Provider(
+        settings,
+        credential_cache,
+        voms_client=voms_service_client,
+        vault_store=x509_vault_store,
+    )
+
+    # Map each x509-auth backend target to X509Provider (voms-proxy minted
+    # from the user's ~/.globus cert, or via voms-token-service when
+    # configured). `bearer`-auth backends' credential provider comes from
+    # `identity_providers`' per-entry `targets` list (see below), not a
+    # blanket auth_type == "bearer" match against a single OIDCProvider —
+    # this lets different backends bind to different keycloak-brokered/
+    # oauth21-direct aliases. `none` requires no user credential, so no
+    # provider is registered.
+    x509_targets: list[str] = []
+    for spec in backends:
+        if spec.auth_type == "x509":
+            credential_registry.register(spec.name, x509_provider)
+            x509_targets.append(spec.name)
 
     # x509 backends need the signing key too (issue #112): the aggregator
     # injects a broker-issued identity JWT for auth_type: x509 targets, and

@@ -511,6 +511,35 @@ class Settings(BaseSettings):
     # but defeating the cache entirely. Keep this comfortably above 300.
     broker_token_ttl_seconds: int = 600
 
+    # --- voms-token-service (issue #112 follow-up): base URL of the
+    # deployment X509Provider mints VOMS proxies at (no path -- the client
+    # appends /v1/mint), replacing the ephemeral-Job NFS-subPath mint path.
+    # Empty means the feature is off: the legacy k8s-Job/local-dev path
+    # keeps serving, exactly as before. When set, minted proxies (and the
+    # Globus passphrase enabling hands-free renewal) persist in Vault/OpenBao
+    # instead of tmpfs, so the Vault connection settings above are required
+    # too (enforced by `_validate_vault_config`).
+    voms_token_service_url: str = ""
+
+    # The `aud` claim minted into the AF Broker Identity Token each mint
+    # call carries; must match the service's EXPECTED_AUDIENCE. The default
+    # matches the service's own default and should only change if a
+    # deployment renames itself (same shape as CondorTokenProviderConfig).
+    voms_token_service_audience: str = "voms-token-service"
+
+    # Defaults forwarded in every mint request's `voms`/`valid` fields --
+    # the VOMS attribute set and proxy validity (HH:MM) voms-proxy-init is
+    # invoked with. These match the service's own DEFAULT_VOMS/DEFAULT_VALID.
+    voms_token_service_voms: str = "atlas"
+    voms_token_service_valid: str = "192:00"
+
+    # KV-v2 path prefix for the per-subject x509 link/proxy records
+    # ({prefix}/{subject}/x509 -- see credentials/x509_vault.py), distinct
+    # from vault_kv_path_prefix/token_registry_kv_path_prefix/
+    # principal_cache_kv_path_prefix so all four Vault-backed stores never
+    # collide under the same kv_mount.
+    x509_kv_path_prefix: str = "mcp/x509"
+
     @property
     def broker_token_effective_issuer(self) -> str:
         """``broker_token_issuer`` if set, else ``broker_public_origin``.
@@ -692,11 +721,12 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _validate_vault_config(self) -> Settings:
-        """Fail startup loudly when any Vault-backed store is selected but the settings they depend on are not — a half-configured VaultTokenStore/VaultTokenRegistryBackend/VaultPrincipalCacheBackend would otherwise fail at first request instead of at boot (see also app.py's lifespan trial authentication). All three stores share the same Vault connection settings (only their kv_path_prefix differs), so one validator covers any or all being selected."""
+        """Fail startup loudly when any Vault-backed store is selected but the settings they depend on are not — a half-configured VaultTokenStore/VaultTokenRegistryBackend/VaultPrincipalCacheBackend/VaultX509Store would otherwise fail at first request instead of at boot (see also app.py's lifespan trial authentication). All four stores share the same Vault connection settings (only their kv_path_prefix differs), so one validator covers any or all being selected. voms_token_service_url implies the x509 store: in service mode proxies and passphrases persist in Vault, there is no in-memory fallback."""
         if (
             self.token_store_backend != "vault"
             and self.token_registry_backend != "vault"
             and self.principal_cache_backend != "vault"
+            and not self.voms_token_service_url
         ):
             return self
         if not self.vault_addr:
@@ -705,12 +735,13 @@ class Settings(BaseSettings):
                 reason=(
                     "vault_addr is empty but token_store_backend, "
                     "token_registry_backend, and/or principal_cache_backend "
-                    "is 'vault'"
+                    "is 'vault', or voms_token_service_url is set"
                 ),
             )
             raise ValueError(
                 "vault_addr (VAULT_ADDR) must be set when token_store_backend, "
-                "token_registry_backend, or principal_cache_backend is 'vault'."
+                "token_registry_backend, or principal_cache_backend is 'vault' "
+                "or voms_token_service_url is set."
             )
         if not self.vault_auth_role:
             log.error(
@@ -718,13 +749,14 @@ class Settings(BaseSettings):
                 reason=(
                     "vault_auth_role is empty but token_store_backend, "
                     "token_registry_backend, and/or principal_cache_backend "
-                    "is 'vault'"
+                    "is 'vault', or voms_token_service_url is set"
                 ),
             )
             raise ValueError(
                 "vault_auth_role (VAULT_AUTH_ROLE) must be set when "
                 "token_store_backend, token_registry_backend, or "
-                "principal_cache_backend is 'vault'."
+                "principal_cache_backend is 'vault' or "
+                "voms_token_service_url is set."
             )
         return self
 

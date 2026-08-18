@@ -18,7 +18,13 @@ log = structlog.get_logger(__name__)
 
 class CredentialKind(StrEnum):
     BEARER = "bearer"
+    # A proxy on the broker's own filesystem, referenced by path (the legacy
+    # k8s-Job mint path).
     X509_PROXY_REF = "x509_proxy_ref"
+    # A deliverable proxy persisted in Vault (issue #112 roadmap step 2's
+    # "deliverable proxy vs local file path" distinction): no local path —
+    # the backend redeems the PEM via POST /v1/credentials/x509/redeem.
+    X509_PROXY_REDEEM = "x509_proxy_redeem"
     NONE = "none"
 
 
@@ -42,7 +48,8 @@ class IssuedCredential:
     kind: CredentialKind
     expires_at: float  # epoch seconds (UTC)
     # bearer: {"access_token": ..., "token_type": "Bearer"}
-    # x509:   {"proxy_handle": ..., "proxy_path": ..., "delivery": "direct"}
+    # x509 (proxy_ref):    {"proxy_handle": ..., "proxy_path": ..., "delivery": "direct"}
+    # x509 (proxy_redeem): {"proxy_handle": ..., "delivery": "redeem"}
     # service:{"access_token": ..., "on_behalf_of": ..., "token_type": "Bearer"}
     payload: dict
     audit_id: str
