@@ -3,10 +3,13 @@
 ``providers`` reflects whatever ``identity_providers`` entries are
 configured, in config order, uniform across both linking mechanisms:
 Keycloak's stored-broker-token pattern (``OIDCProvider``) and the broker's
-own direct OAuth 2.1 client (``OAuth21Provider``). These tests exercise
-building that list: probing ``is_linked()`` so the response reflects reality
-rather than a JWT claim that may be absent, ``link_url`` shape for both
-provider types (always null for keycloak-brokered — issue #66 PR4), and
+own direct OAuth 2.1 client (``OAuth21Provider``) — plus one synthetic
+"x509" entry appended when any backend is wired with ``auth_type: x509``
+(x509 has no ``identity_providers`` config; see the x509 section below).
+These tests exercise building that list: probing ``is_linked()`` so the
+response reflects reality rather than a JWT claim that may be absent,
+``link_url`` shape for both provider types (always null for
+keycloak-brokered — issue #66 PR4), ``link_mechanism`` per type, and
 config-order preservation.
 """
 
@@ -14,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, urlparse
@@ -281,7 +285,253 @@ def test_providers_order_matches_identity_providers_config_order(
 
     assert resp.status_code == 200, resp.text
     ids = [p["id"] for p in resp.json()["providers"]]
-    assert ids == ["z-oauth21-provider", "a-keycloak-provider"]
+    # The synthetic "x509" entry (the shipped backends.yaml wires "ami" with
+    # auth_type: x509) always trails the configured entries.
+    assert ids == ["z-oauth21-provider", "a-keycloak-provider", "x509"]
+
+
+# ---------------------------------------------------------------------------
+# link_mechanism — how the portal starts a linking flow for each entry
+# ---------------------------------------------------------------------------
+
+
+def test_keycloak_brokered_link_mechanism_is_redirect(
+    app_client: tuple[TestClient, dict],
+) -> None:
+    client, _ = app_client
+    resp = client.get("/v1/identities", headers=_AUTH)
+
+    assert resp.status_code == 200, resp.text
+    entry = _by_id(resp.json())[DEFAULT_KEYCLOAK_ALIAS]
+    assert entry["link_mechanism"] == "redirect"
+
+
+def test_oauth21_link_mechanism_is_redirect(
+    monkeypatch: pytest.MonkeyPatch, app_client_factory: Callable[..., object]
+) -> None:
+    _configure_oauth21_env(monkeypatch)
+
+    with app_client_factory() as (client, _state):
+        resp = client.get("/v1/identities", headers=_AUTH)
+
+    assert resp.status_code == 200, resp.text
+    entry = _by_id(resp.json())[ALIAS]
+    assert entry["link_mechanism"] == "redirect"
+
+
+def test_broker_issued_link_mechanism_is_none(
+    monkeypatch: pytest.MonkeyPatch,
+    app_client_factory: Callable[..., object],
+    tmp_path,
+) -> None:
+    """AF-native entries have no linking step at all — the broker is
+    authoritative, so there is no portal action to start."""
+    from test_broker_issued import _make_rsa_key, _private_pem
+
+    key_file = tmp_path / "signing-key.pem"
+    key_file.write_bytes(_private_pem(_make_rsa_key()))
+    monkeypatch.setenv("BROKER_SIGNING_KEY_FILE", str(key_file))
+    monkeypatch.setenv("BROKER_PUBLIC_ORIGIN", "https://mcp.example.com")
+    monkeypatch.setenv(
+        "IDENTITY_PROVIDERS",
+        json.dumps(
+            [
+                {
+                    "type": "broker-issued",
+                    "alias": "af-native",
+                    "targets": ["af-internal"],
+                }
+            ]
+        ),
+    )
+
+    with app_client_factory() as (client, _state):
+        resp = client.get("/v1/identities", headers=_AUTH)
+
+    assert resp.status_code == 200, resp.text
+    entry = _by_id(resp.json())["af-native"]
+    assert entry["link_mechanism"] == "none"
+
+
+# ---------------------------------------------------------------------------
+# The synthetic "x509" entry — surfaced whenever any backend is wired with
+# auth_type: x509 (the shipped backends.yaml's "ami"). One entry regardless
+# of how many x509 targets exist: a single X509Provider (one Vault link
+# record / one ~/.globus pair per subject) services all of them, and its id
+# "x509" matches the synthetic credential_provider alias /v1/catalog reports
+# (app.py's _build_target_to_alias), which the portal joins on.
+# ---------------------------------------------------------------------------
+
+_NO_X509_BACKENDS_YAML = """
+backends:
+  - name: docs
+    prefix: docs
+    url: "http://docs-mcp.af.svc.cluster.local/mcp"
+    transport: http
+    required_capability: __none__
+    display_name: Docs
+    description: Search and browse Analysis Facility documentation.
+    auth_type: none
+"""
+
+
+def test_x509_entry_present_with_x509_backend(
+    app_client: tuple[TestClient, dict],
+) -> None:
+    """The shipped backends.yaml wires "ami" with auth_type: x509, so the
+    default app must list the synthetic entry with the passphrase mechanism
+    and no link_url (x509 links via an in-portal passphrase form, not a
+    redirect)."""
+    client, _ = app_client
+    resp = client.get("/v1/identities", headers=_AUTH)
+
+    assert resp.status_code == 200, resp.text
+    entry = _by_id(resp.json())["x509"]
+    assert entry["type"] == "x509"
+    assert entry["link_mechanism"] == "passphrase"
+    assert entry["link_url"] is None
+    assert entry["display_name"]
+    assert entry["enables"]
+
+
+def test_x509_entry_absent_without_x509_backends(
+    monkeypatch: pytest.MonkeyPatch,
+    app_client_factory: Callable[..., object],
+    tmp_path,
+) -> None:
+    backends_file = tmp_path / "backends.yaml"
+    backends_file.write_text(_NO_X509_BACKENDS_YAML)
+    monkeypatch.setenv("BACKENDS_FILE", str(backends_file))
+
+    with app_client_factory() as (client, _state):
+        resp = client.get("/v1/identities", headers=_AUTH)
+
+    assert resp.status_code == 200, resp.text
+    assert "x509" not in _by_id(resp.json())
+
+
+def test_x509_entry_appended_after_configured_providers(
+    app_client: tuple[TestClient, dict],
+) -> None:
+    """The synthetic entry has no config-order slot of its own — it always
+    trails the operator-configured identity_providers entries."""
+    client, _ = app_client
+    resp = client.get("/v1/identities", headers=_AUTH)
+
+    assert resp.status_code == 200, resp.text
+    ids = [p["id"] for p in resp.json()["providers"]]
+    assert ids == [DEFAULT_KEYCLOAK_ALIAS, "x509"]
+
+
+def test_x509_linked_true_legacy_mode(
+    app_client: tuple[TestClient, dict],
+) -> None:
+    """Legacy (no voms-token-service) mode: linked reflects the ~/.globus
+    cert-pair heuristic — the app_client fixture pre-creates the pair for
+    the default principal's unixname."""
+    client, _ = app_client
+    resp = client.get("/v1/identities", headers=_AUTH)
+
+    assert resp.status_code == 200, resp.text
+    assert _by_id(resp.json())["x509"]["linked"] is True
+
+
+def test_x509_linked_false_legacy_mode_without_cert_pair(
+    app_client: tuple[TestClient, dict], make_principal: Callable[..., object]
+) -> None:
+    client, state = app_client
+    state["principal"] = make_principal(groups=["atlas"], unixname="no-globus-here")
+
+    resp = client.get("/v1/identities", headers=_AUTH)
+
+    assert resp.status_code == 200, resp.text
+    assert _by_id(resp.json())["x509"]["linked"] is False
+
+
+def test_x509_linked_reflects_vault_link_in_service_mode(
+    app_client: tuple[TestClient, dict],
+) -> None:
+    """voms-token-service mode: linked comes from the Vault link record, not
+    the filesystem — the pre-created ~/.globus pair must NOT count, and
+    storing a link must flip the flag."""
+    from test_x509_service_mode import FakeVomsClient, FakeX509Store
+
+    client, state = app_client
+    store = FakeX509Store()
+    provider = client.app.state.x509_provider
+    provider._vault_store = store
+    provider._voms_client = FakeVomsClient()
+    assert provider.uses_voms_service is True
+
+    resp = client.get("/v1/identities", headers=_AUTH)
+    assert resp.status_code == 200, resp.text
+    assert _by_id(resp.json())["x509"]["linked"] is False
+
+    subject = state["principal"].subject
+    asyncio.run(
+        store.store_link(
+            subject,
+            passphrase=SecretStr("hunter2"),
+            unixname="tuser",
+            uid=1000,
+            gid=1000,
+        )
+    )
+
+    resp = client.get("/v1/identities", headers=_AUTH)
+    assert resp.status_code == 200, resp.text
+    assert _by_id(resp.json())["x509"]["linked"] is True
+
+
+def test_x509_proxy_expires_at_null_when_nothing_cached(
+    app_client: tuple[TestClient, dict],
+) -> None:
+    client, _ = app_client
+    resp = client.get("/v1/identities", headers=_AUTH)
+
+    assert resp.status_code == 200, resp.text
+    assert _by_id(resp.json())["x509"]["proxy_expires_at"] is None
+
+
+def test_x509_proxy_expires_at_reflects_cached_proxy(
+    app_client: tuple[TestClient, dict],
+) -> None:
+    """proxy_expires_at comes from the same in-memory ProxyMeta the
+    GET /v1/x509/proxy/status endpoint serves — cheap, no Vault round trip."""
+    from af_mcp_broker.credentials.cache import ProxyMeta
+
+    client, state = app_client
+    subject = state["principal"].subject
+    not_after = time.time() + 3600.0
+    meta = ProxyMeta(
+        dn="/DC=ch/DC=cern/CN=Test User",
+        voms_attributes=["/atlas"],
+        not_after=not_after,
+    )
+    asyncio.run(
+        client.app.state.credential_cache.put(
+            subject, "ami", {"proxy_handle": subject}, proxy_meta=meta
+        )
+    )
+
+    resp = client.get("/v1/identities", headers=_AUTH)
+
+    assert resp.status_code == 200, resp.text
+    expires_at = _by_id(resp.json())["x509"]["proxy_expires_at"]
+    assert expires_at is not None
+    parsed = datetime.fromisoformat(expires_at)
+    assert parsed.timestamp() == pytest.approx(not_after, abs=1.0)
+
+
+def test_non_x509_entries_have_null_proxy_expires_at(
+    app_client: tuple[TestClient, dict],
+) -> None:
+    client, _ = app_client
+    resp = client.get("/v1/identities", headers=_AUTH)
+
+    assert resp.status_code == 200, resp.text
+    entry = _by_id(resp.json())[DEFAULT_KEYCLOAK_ALIAS]
+    assert entry["proxy_expires_at"] is None
 
 
 # ---------------------------------------------------------------------------
