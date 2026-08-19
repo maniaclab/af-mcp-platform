@@ -71,3 +71,66 @@ export function formatProxyExpiry(iso: string | null | undefined): string | null
     timeZoneName: 'short',
   });
 }
+
+/**
+ * One-line custody description for a linked x509 entry, from the identities
+ * response's `x509_link_mode` (+ `proxy_expires_at`): "auto-renew" links
+ * renew hands-free from the vault-stored passphrase; "until-expiry" links
+ * (the user declined passphrase custody) last exactly as long as the proxy.
+ * Null when there is no mode — unlinked, a legacy entry, or a non-x509 row —
+ * so the card simply omits the line.
+ */
+export function x509LinkModeLabel(
+  mode: 'auto-renew' | 'until-expiry' | null | undefined,
+  proxyExpiresAt: string | null | undefined,
+): string | null {
+  if (mode === 'auto-renew') {
+    return 'Auto-renews — passphrase stored encrypted in the AF vault';
+  }
+  if (mode === 'until-expiry') {
+    const expiry = formatProxyExpiry(proxyExpiresAt);
+    return expiry
+      ? `Valid until ${expiry} — re-link after expiry`
+      : 'Valid until proxy expiry — re-link after expiry';
+  }
+  return null;
+}
+
+/** Friendly names for voms-token-service's known preflight check ids; an
+ * unknown id passes through so new service-side checks still render. */
+const PREFLIGHT_CHECK_LABELS: Record<string, string> = {
+  globus_dir: '.globus directory',
+  usercert: 'Certificate (usercert.pem)',
+  userkey: 'Private key (userkey.pem)',
+};
+
+export function preflightCheckLabel(name: string): string {
+  return PREFLIGHT_CHECK_LABELS[name] ?? name;
+}
+
+/**
+ * User-facing message for a failed GET /v1/x509/preflight fetch.
+ *
+ * The endpoint's contract (broker api/credentials.py::x509_preflight): 501 —
+ * the facility's x509 entry mints via the legacy path, so there is no
+ * voms-token-service to ask (a permanent state, not a retryable one); 502 —
+ * the service is unreachable right now. The broker's own `detail` is
+ * preferred when present.
+ */
+export function x509PreflightErrorMessage(err: unknown): string {
+  if (err instanceof SessionExpiredError) {
+    return 'Session expired — reload the page to re-authenticate.';
+  }
+  if (err instanceof APIError) {
+    const detail = apiErrorDetail(err);
+    if (detail) return detail;
+    if (err.status === 501) {
+      return 'The certificate checklist is not available on this facility.';
+    }
+    if (err.status === 502) {
+      return 'The certificate checklist is temporarily unavailable — try again later.';
+    }
+  }
+  if (err instanceof Error && err.message) return err.message;
+  return 'Could not load the certificate checklist. Try again.';
+}

@@ -6,7 +6,13 @@
  */
 import { describe, expect, it } from 'vitest';
 import { APIError, SessionExpiredError } from '../api';
-import { formatProxyExpiry, x509LinkErrorMessage } from '../x509Identity';
+import {
+  formatProxyExpiry,
+  preflightCheckLabel,
+  x509LinkErrorMessage,
+  x509LinkModeLabel,
+  x509PreflightErrorMessage,
+} from '../x509Identity';
 
 describe('x509LinkErrorMessage', () => {
   it('surfaces the broker detail on a 400 bad passphrase', () => {
@@ -79,5 +85,74 @@ describe('formatProxyExpiry', () => {
 
   it('returns null for an unparseable timestamp rather than "Invalid Date"', () => {
     expect(formatProxyExpiry('not-a-date')).toBeNull();
+  });
+});
+
+describe('x509LinkModeLabel', () => {
+  it('describes auto-renew custody', () => {
+    const label = x509LinkModeLabel('auto-renew', null);
+    expect(label).toMatch(/auto-renew/i);
+    expect(label).toMatch(/vault/i);
+  });
+
+  it('describes until-expiry custody with the formatted expiry', () => {
+    const label = x509LinkModeLabel('until-expiry', '2026-08-18T21:30:00+00:00');
+    expect(label).toMatch(/valid until/i);
+    expect(label).toContain('Aug');
+    expect(label).toMatch(/re-link/i);
+  });
+
+  it('still describes until-expiry when the expiry is absent or unparseable', () => {
+    for (const expiry of [null, undefined, 'not-a-date']) {
+      const label = x509LinkModeLabel('until-expiry', expiry);
+      expect(label).toMatch(/valid until/i);
+      expect(label).not.toContain('Invalid Date');
+    }
+  });
+
+  it('returns null when there is no mode (unlinked, legacy, non-x509)', () => {
+    expect(x509LinkModeLabel(null, null)).toBeNull();
+    expect(x509LinkModeLabel(undefined, '2026-08-18T21:30:00+00:00')).toBeNull();
+  });
+});
+
+describe('preflightCheckLabel', () => {
+  it('maps the known check names to friendly labels', () => {
+    expect(preflightCheckLabel('globus_dir')).toBe('.globus directory');
+    expect(preflightCheckLabel('usercert')).toBe('Certificate (usercert.pem)');
+    expect(preflightCheckLabel('userkey')).toBe('Private key (userkey.pem)');
+  });
+
+  it('passes unknown names through so new service checks still render', () => {
+    expect(preflightCheckLabel('crl_freshness')).toBe('crl_freshness');
+  });
+});
+
+describe('x509PreflightErrorMessage', () => {
+  it('lets SessionExpiredError read as a session problem', () => {
+    expect(x509PreflightErrorMessage(new SessionExpiredError())).toMatch(/session/i);
+  });
+
+  it('maps 501 (legacy entry) to a not-available-here message', () => {
+    const err = new APIError(501, 'Not Implemented', '');
+    expect(x509PreflightErrorMessage(err)).toMatch(/not available/i);
+  });
+
+  it('maps 502 to a retry-later message', () => {
+    const err = new APIError(502, 'Bad Gateway', '');
+    expect(x509PreflightErrorMessage(err)).toMatch(/temporarily unavailable/i);
+  });
+
+  it('prefers the broker detail when present', () => {
+    const err = new APIError(
+      501,
+      'Not Implemented',
+      JSON.stringify({ detail: 'The x509 entry mints via the legacy path.' }),
+    );
+    expect(x509PreflightErrorMessage(err)).toContain('legacy path');
+  });
+
+  it('falls back to a generic message for anything else', () => {
+    expect(x509PreflightErrorMessage('nope')).toMatch(/could not/i);
   });
 });

@@ -145,9 +145,15 @@ export interface IdentityProvider {
   /** URL to navigate the browser to in order to link this provider, or null if linking isn't possible right now. */
   link_url: string | null;
   link_mechanism: LinkMechanism;
-  /** Expiry (ISO-8601) of the caller's cached x509/VOMS proxy — only ever set
-   * on the synthetic "x509" entry, and null there too when nothing is cached. */
+  /** Expiry (ISO-8601) of the caller's x509/VOMS proxy — only ever set on an
+   * "x509" entry, and null there too when no valid proxy is stored. */
   proxy_expires_at?: string | null;
+  /** Custody mode of an x509 entry's link: "auto-renew" — the passphrase is
+   * stored in the AF vault and proxies re-mint hands-free; "until-expiry" —
+   * only the proxy is stored (the user declined passphrase custody), so the
+   * link lasts exactly as long as proxy_expires_at. Null when not linked, on
+   * legacy x509 entries, and on every non-x509 entry. */
+  x509_link_mode?: 'auto-renew' | 'until-expiry' | null;
 }
 
 export interface IdentitiesResponse {
@@ -378,7 +384,10 @@ export async function fetchProxyStatus(): Promise<ProxyStatus> {
  * Request a new x509 proxy.
  *
  * `valid` is an "HH:MM" lifetime (e.g. "12:00"); `voms` is the VO name with no
- * leading slash (e.g. "atlas").
+ * leading slash (e.g. "atlas"). `remember` is the custody consent: true (the
+ * default) stores the passphrase encrypted in the AF vault for hands-free
+ * renewal; false means the proxy works for its validity window and the user
+ * re-links after it expires.
  *
  * IMPORTANT: The caller MUST clear the passphrase from Vue state immediately
  * after this call returns — regardless of success or failure.
@@ -387,15 +396,51 @@ export async function requestProxy(
   passphrase: string,
   valid: string = '12:00',
   voms: string = 'atlas',
+  remember: boolean = true,
 ): Promise<ProxyMetadata> {
   return apiFetch<ProxyMetadata>('/x509/proxy', {
     method: 'POST',
-    body: JSON.stringify({ passphrase, valid, voms }),
+    body: JSON.stringify({ passphrase, valid, voms, remember }),
   });
 }
 
 export async function revokeProxy(): Promise<void> {
   return apiFetch<void>('/x509/proxy', { method: 'DELETE' });
+}
+
+// ---------------------------------------------------------------------------
+// X.509 preflight — GET /v1/x509/preflight (the Grid Certificates checklist)
+// ---------------------------------------------------------------------------
+
+/** One row of the checklist — voms-token-service's contract, proxied through
+ * the broker verbatim. `mode`/`readable_by_service` are absent on checks they
+ * don't apply to (the .globus directory row); `detail` carries the actionable
+ * fix (e.g. the chmod 400 command) when `ok` is false. */
+export interface X509PreflightCheck {
+  name: string;
+  path: string;
+  exists: boolean;
+  mode?: string | null;
+  readable_by_service?: boolean | null;
+  ok: boolean;
+  detail?: string | null;
+}
+
+export interface X509Preflight {
+  unixname: string;
+  root: string;
+  ok: boolean;
+  checks: X509PreflightCheck[];
+}
+
+/**
+ * Fetches the caller's grid-certificate readiness checklist. Errors the
+ * caller should expect: 501 — the facility's x509 entry mints via the legacy
+ * path (no voms-token-service to ask); 502 — the service is unreachable.
+ * See x509Identity.ts's x509PreflightErrorMessage for the display mapping.
+ */
+export async function fetchX509Preflight(): Promise<X509Preflight> {
+  return apiFetch<X509Preflight>('/x509/preflight');
 }
 
 // ---------------------------------------------------------------------------
