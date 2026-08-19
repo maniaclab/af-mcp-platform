@@ -181,7 +181,7 @@ async def _build_providers(
 async def _build_x509_entry(
     request: Request, principal: Principal
 ) -> IdentityProvider | None:
-    """The synthetic "x509" entry, or None when no backend uses auth_type: x509.
+    """Return the synthetic "x509" entry, or None when no backend uses auth_type: x509.
 
     x509 is wired per-backend (``auth_type: x509`` in backends.yaml), not as
     an ``identity_providers`` entry, so it has no config-driven row of its
