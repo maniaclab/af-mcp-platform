@@ -59,10 +59,13 @@ _STATUS_DETAILS: dict[str, str] = {
 
 
 class BackendTool(BaseModel):
-    """One tool as a caller sees it through /mcp: the (namespace-applied)
-    name, its description, and the same read/state_change action type real
-    enforcement resolves -- never the full input schema (the payload stays
-    light; schemas belong to the MCP client, not the catalog)."""
+    """One tool as a caller sees it through /mcp.
+
+    Carries the (namespace-applied) name, the description, and the same
+    read/state_change action type real enforcement resolves -- never the
+    full input schema (the payload stays light; schemas belong to the MCP
+    client, not the catalog).
+    """
 
     model_config = ConfigDict(frozen=True)
 
@@ -72,9 +75,11 @@ class BackendTool(BaseModel):
 
 
 class BackendToolsResponse(BaseModel):
-    """A backend never vanishes from this endpoint for credential reasons --
+    """A backend never vanishes from this endpoint for credential reasons.
+
     ``status``/``status_detail`` say why ``tools`` is empty instead (same
-    issue #123 philosophy as GET /v1/catalog's per-server status)."""
+    issue #123 philosophy as GET /v1/catalog's per-server status).
+    """
 
     model_config = ConfigDict(frozen=True)
 
@@ -167,10 +172,13 @@ async def get_backend_tools(
     request: Request,
     principal: Annotated[Principal, Depends(keycloak_dependency)],
 ) -> BackendToolsResponse:
-    """Enumerate *backend*'s tools using the aggregator's own list-time
-    credential logic (aggregator.resolve_list_time_credential /
-    fetch_backend_tool_listing), so what the portal shows always matches
-    what a tools/list through /mcp would return for this caller."""
+    """Enumerate *backend*'s tools as the caller would see them via /mcp.
+
+    Uses the aggregator's own list-time credential logic
+    (aggregator.resolve_list_time_credential / fetch_backend_tool_listing),
+    so what the portal shows always matches what a tools/list through /mcp
+    would return for this caller.
+    """
     registry = _get_registry(request)
     spec = registry.get(backend)
     if spec is None:

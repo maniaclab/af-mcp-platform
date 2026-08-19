@@ -162,7 +162,9 @@ def _iter_leaf_exceptions(exc: BaseException) -> Iterator[BaseException]:
 def _classify_failure(
     exc: Exception, *, injected: bool, skip_reason: str | None
 ) -> str:
-    """Decision core shared by ``_classify_list_failure`` (the /mcp listing
+    """Classify failure decision for api access.
+
+    Decision core shared by ``_classify_list_failure`` (the /mcp listing
     path) and ``fetch_backend_tool_listing`` (the /v1 per-backend tool
     listing), so the two can never disagree on what a failure means.
 
@@ -240,8 +242,7 @@ async def fetch_backend_tool_listing(
     headers: dict[str, str] | None,
     skip_reason: str | None,
 ) -> tuple[str, list[tuple[str, str]]]:
-    """Connect to *spec* once and list its tools, for the /v1 per-backend
-    tool listing (api/catalog_tools.py).
+    """Connect to *spec* once and list its tools.
 
     *headers*/*skip_reason* come from ``resolve_list_time_credential``.
     Returns ``(status, tools)``: status is "ok" or a ``_classify_failure``
