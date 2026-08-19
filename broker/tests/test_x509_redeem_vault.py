@@ -263,3 +263,74 @@ class TestUnlockEndpointServiceMode:
         assert body["remaining_seconds"] > 0
         # The link persisted: sub-abc is the app_client principal's subject.
         assert store.records["sub-abc"].passphrase is not None
+
+
+# ---------------------------------------------------------------------------
+# remember=false custody (issue: custody consent toggle)
+# ---------------------------------------------------------------------------
+
+
+async def _seed_unremembered_link(
+    store: FakeX509Store, subject: str = "sub-abc"
+) -> None:
+    await store.store_link(
+        subject,
+        passphrase=None,
+        unixname="tuser",
+        uid=1000,
+        gid=1000,
+    )
+
+
+class TestRedeemUntilExpiry:
+    async def test_valid_proxy_without_passphrase_is_served(self, service_app) -> None:
+        """remember=false custody: redemption works exactly like the
+        remembered mode for as long as the proxy is valid."""
+        client, store, voms_client, _ = service_app
+        await _seed_unremembered_link(store)
+        await _seed_proxy(store)
+
+        resp = _redeem(client, _mint_token(client))
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["pem"] == _PEM
+        assert voms_client.calls == []
+
+    async def test_expired_proxy_without_passphrase_is_404_without_unlinking(
+        self, service_app
+    ) -> None:
+        """The expiry transition: no stored passphrase means no hands-free
+        renewal — the existing re-link-at-the-portal 404 surfaces, and the
+        record is NOT deleted eagerly (unlinking stays a deliberate act)."""
+        client, store, voms_client, _ = service_app
+        await _seed_unremembered_link(store)
+        await _seed_proxy(store, remaining=-10.0)
+
+        resp = _redeem(client, _mint_token(client))
+
+        assert resp.status_code == 404
+        assert "portal" in resp.json()["detail"]
+        assert voms_client.calls == []  # renewal never attempted
+        assert store.deleted == []
+        assert "sub-abc" in store.records
+
+
+class TestUnlockEndpointCustodyConsent:
+    def test_remember_false_stores_proxy_but_not_passphrase(self, service_app) -> None:
+        client, store, _, _ = service_app
+
+        resp = client.post(_UNLOCK, json={"passphrase": "hunter2", "remember": False})
+
+        assert resp.status_code == 201, resp.text
+        record = store.records["sub-abc"]
+        assert record.passphrase is None
+        assert record.proxy_pem is not None
+
+    def test_remember_defaults_to_true_on_the_wire(self, service_app) -> None:
+        """Omitting the field preserves the pre-toggle behavior exactly."""
+        client, store, _, _ = service_app
+
+        resp = client.post(_UNLOCK, json={"passphrase": "hunter2"})
+
+        assert resp.status_code == 201, resp.text
+        assert store.records["sub-abc"].passphrase is not None

@@ -630,6 +630,155 @@ def test_non_x509_entries_have_null_proxy_expires_at(
 
 
 # ---------------------------------------------------------------------------
+# x509_link_mode: custody mode surfaced per entry (consent toggle follow-up)
+# ---------------------------------------------------------------------------
+
+
+def _flip_to_service_mode(client: TestClient):
+    """Flip the app's default legacy x509 provider into service mode with the in-memory fakes (same pattern as the service-mode linked test above)."""
+    from test_x509_service_mode import FakeVomsClient, FakeX509Store
+
+    store = FakeX509Store()
+    provider = client.app.state.x509_provider
+    provider._vault_store = store
+    provider._voms_client = FakeVomsClient()
+    assert provider.uses_voms_service is True
+    return store
+
+
+def _seed_service_record(
+    store,
+    subject: str,
+    *,
+    passphrase: str | None,
+    proxy_remaining: float | None,
+) -> float | None:
+    asyncio.run(
+        store.store_link(
+            subject,
+            passphrase=SecretStr(passphrase) if passphrase is not None else None,
+            unixname="tuser",
+            uid=1000,
+            gid=1000,
+        )
+    )
+    if proxy_remaining is None:
+        return None
+    not_after = time.time() + proxy_remaining
+    asyncio.run(
+        store.store_proxy(
+            subject,
+            pem="FAKE PEM",
+            dn="/DC=ch/DC=cern/CN=Test User",
+            voms_attributes=["/atlas"],
+            not_after=not_after,
+        )
+    )
+    return not_after
+
+
+class TestX509LinkMode:
+    def test_null_in_legacy_mode(self, app_client: tuple[TestClient, dict]) -> None:
+        """Legacy (filesystem) linkage has no custody concept."""
+        client, _ = app_client
+        resp = client.get("/v1/identities", headers=_AUTH)
+
+        assert resp.status_code == 200, resp.text
+        entry = _by_id(resp.json())["x509"]
+        assert entry["linked"] is True  # conftest pre-creates the cert pair
+        assert entry["x509_link_mode"] is None
+
+    def test_null_on_non_x509_entries(
+        self, app_client: tuple[TestClient, dict]
+    ) -> None:
+        client, _ = app_client
+        resp = client.get("/v1/identities", headers=_AUTH)
+
+        assert resp.status_code == 200, resp.text
+        assert _by_id(resp.json())[DEFAULT_KEYCLOAK_ALIAS]["x509_link_mode"] is None
+
+    def test_auto_renew_with_valid_proxy(
+        self, app_client: tuple[TestClient, dict]
+    ) -> None:
+        client, state = app_client
+        store = _flip_to_service_mode(client)
+        not_after = _seed_service_record(
+            store,
+            state["principal"].subject,
+            passphrase="hunter2",
+            proxy_remaining=3600,
+        )
+
+        resp = client.get("/v1/identities", headers=_AUTH)
+
+        assert resp.status_code == 200, resp.text
+        entry = _by_id(resp.json())["x509"]
+        assert entry["linked"] is True
+        assert entry["x509_link_mode"] == "auto-renew"
+        # Vault is authoritative for the expiry in service mode — the
+        # in-memory ProxyMeta cache is empty here, and that must not matter.
+        assert entry["proxy_expires_at"] is not None
+        parsed = datetime.fromisoformat(entry["proxy_expires_at"])
+        assert parsed.timestamp() == pytest.approx(not_after, abs=1.0)
+
+    def test_auto_renew_survives_proxy_expiry(
+        self, app_client: tuple[TestClient, dict]
+    ) -> None:
+        """linked-with-renewal must read as linked even with no valid proxy
+        — the next issue() renews hands-free."""
+        client, state = app_client
+        store = _flip_to_service_mode(client)
+        _seed_service_record(
+            store, state["principal"].subject, passphrase="hunter2", proxy_remaining=-10
+        )
+
+        resp = client.get("/v1/identities", headers=_AUTH)
+
+        assert resp.status_code == 200, resp.text
+        entry = _by_id(resp.json())["x509"]
+        assert entry["linked"] is True
+        assert entry["x509_link_mode"] == "auto-renew"
+        assert entry["proxy_expires_at"] is None
+
+    def test_until_expiry_with_valid_proxy(
+        self, app_client: tuple[TestClient, dict]
+    ) -> None:
+        client, state = app_client
+        store = _flip_to_service_mode(client)
+        not_after = _seed_service_record(
+            store, state["principal"].subject, passphrase=None, proxy_remaining=3600
+        )
+
+        resp = client.get("/v1/identities", headers=_AUTH)
+
+        assert resp.status_code == 200, resp.text
+        entry = _by_id(resp.json())["x509"]
+        assert entry["linked"] is True
+        assert entry["x509_link_mode"] == "until-expiry"
+        parsed = datetime.fromisoformat(entry["proxy_expires_at"])
+        assert parsed.timestamp() == pytest.approx(not_after, abs=1.0)
+
+    def test_until_expiry_reads_unlinked_after_expiry(
+        self, app_client: tuple[TestClient, dict]
+    ) -> None:
+        """The bounded consequence of remember=false: after the proxy
+        lapses the entry reads as not linked, prompting a re-link."""
+        client, state = app_client
+        store = _flip_to_service_mode(client)
+        _seed_service_record(
+            store, state["principal"].subject, passphrase=None, proxy_remaining=-10
+        )
+
+        resp = client.get("/v1/identities", headers=_AUTH)
+
+        assert resp.status_code == 200, resp.text
+        entry = _by_id(resp.json())["x509"]
+        assert entry["linked"] is False
+        assert entry["x509_link_mode"] is None
+        assert entry["proxy_expires_at"] is None
+
+
+# ---------------------------------------------------------------------------
 # DELETE /v1/identities/link/{provider}
 # ---------------------------------------------------------------------------
 

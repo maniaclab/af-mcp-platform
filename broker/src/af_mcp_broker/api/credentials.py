@@ -67,6 +67,12 @@ class ProxyRequest(BaseModel):
     voms: str = "atlas"
     # Which x509 target to mint for; defaults to the first configured x509 target.
     target: str | None = None
+    # Custody consent (service mode): True — store the passphrase in Vault
+    # for hands-free renewal (the pre-toggle behavior, and the default so
+    # existing callers are unchanged); False — mint and store the proxy but
+    # never persist the passphrase, so the link lasts exactly the proxy's
+    # validity window. Legacy mode never persists a passphrase either way.
+    remember: bool = True
 
 
 class ProxyMetadata(BaseModel):
@@ -300,7 +306,9 @@ async def create_proxy(
     provider = await _x509_provider(request, target)
     passphrase = SecretBytes(body.passphrase.get_secret_value().encode())
     try:
-        await provider.issue(principal, target, passphrase=passphrase)
+        await provider.issue(
+            principal, target, passphrase=passphrase, remember=body.remember
+        )
     except PermissionError as exc:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
