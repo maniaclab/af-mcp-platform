@@ -149,8 +149,9 @@ def test_catalog_server_carries_display_metadata(
     app_client: tuple[TestClient, dict], make_principal: Callable[..., object]
 ) -> None:
     """Each server exposes display_name/description/auth_type from
-    backends.yaml plus an (initially empty) tools placeholder — see #58 for
-    populating it once the /mcp aggregator can enumerate real subtools."""
+    backends.yaml. Per-server tool enumeration is deliberately NOT part of
+    the catalog payload — it lives at GET /v1/catalog/{backend}/tools (see
+    test_catalog_tools.py), fetched on demand per backend."""
     client, state = app_client
     state["principal"] = make_principal(groups=["atlas"])
     resp = client.get("/v1/catalog", headers=_AUTH)
@@ -161,7 +162,7 @@ def test_catalog_server_carries_display_metadata(
     assert rucio["description"]
     assert rucio["auth_type"] == "bearer"
     assert rucio["capability"] == "read_data"
-    assert rucio["tools"] == []
+    assert "tools" not in rucio
 
 
 def test_catalog_credential_provider_reflects_target_to_alias(

@@ -105,10 +105,10 @@ class AuthorizeResponse(BaseModel):
 class CatalogServer(BaseModel):
     """One registered MCP server, including ones the caller can't currently use -- ``status``/``status_detail`` say why instead of the caller silently never seeing the entry (issue #123).
 
-    ``tools`` is an empty placeholder until the /mcp aggregator can enumerate
-    real subtools per server (issue #58); it exists now so the portal's
-    per-server tool listing has a stable field to render once populated,
-    rather than needing a second response-shape change later.
+    Per-server tool enumeration deliberately does NOT live here: the catalog
+    stays a single cheap request, and the portal fetches one server's tools
+    on demand via GET /v1/catalog/{backend}/tools (api/catalog_tools.py),
+    which fans out to that backend alone.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -128,7 +128,6 @@ class CatalogServer(BaseModel):
     # misconfigured) -- a correlation id the caller can quote in a ticket so
     # an admin can grep the audit log for it. None otherwise.
     correlation_id: str | None
-    tools: list[Any] = []
 
 
 class CatalogResponse(BaseModel):
@@ -408,7 +407,6 @@ async def get_catalog(
                 status=status,
                 status_detail=status_detail,
                 correlation_id=correlation_id,
-                tools=[],
             )
         )
     return CatalogResponse(servers=servers)

@@ -1,0 +1,219 @@
+from __future__ import annotations
+
+# GET /v1/catalog/{backend}/tools -- the portal's per-backend tool listing
+# (the fetch-on-expand companion to GET /v1/catalog). Lives in its own module
+# rather than api/capabilities.py because it imports mcp/aggregator.py's
+# list-time helpers, and capabilities.py importing the aggregator would be a
+# straight import cycle (aggregator -> mcp/diagnostics -> capabilities).
+import time
+from typing import TYPE_CHECKING, Annotated, Literal
+
+import structlog
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, ConfigDict
+
+from af_mcp_broker.api.capabilities import (
+    _get_credential_registry,
+    _get_policy,
+    _get_registry,
+)
+from af_mcp_broker.authorization import check_entitlement, get_action_type
+from af_mcp_broker.identity import Principal, keycloak_dependency
+from af_mcp_broker.mcp.aggregator import (
+    fetch_backend_tool_listing,
+    resolve_list_time_credential,
+)
+
+if TYPE_CHECKING:
+    from af_mcp_broker.authorization import EntitlementPolicy
+    from af_mcp_broker.mcp.registry import BackendSpec
+
+logger = structlog.get_logger(__name__)
+
+router = APIRouter(tags=["capabilities"])
+
+# The status vocabulary matches aggregator.py's _classify_failure one-to-one
+# (plus "ok" and the locally-derived "capability_required"), so a portal
+# status and an `aggregator.backend_list_failed` log line for the same
+# backend always speak the same language. Sentences are short, human, and
+# internals-free -- portal-facing, so unlike capabilities.py's
+# _STATUS_DETAILS they never name the af_* diagnostic tools.
+ToolListingStatus = Literal[
+    "ok",
+    "not_linked",
+    "unauthorized",
+    "unavailable",
+    "capability_required",
+]
+
+_STATUS_DETAILS: dict[str, str] = {
+    "ok": "Tools listed.",
+    "not_linked": "Link your identity to see this backend's tools.",
+    "unauthorized": "Your linked credential was rejected. Re-link your identity.",
+    "unavailable": "Temporarily unavailable. Try again shortly.",
+    "capability_required": (
+        "Your account doesn't have the access this backend requires. "
+        "Contact the AF admins."
+    ),
+}
+
+
+class BackendTool(BaseModel):
+    """One tool as a caller sees it through /mcp: the (namespace-applied)
+    name, its description, and the same read/state_change action type real
+    enforcement resolves -- never the full input schema (the payload stays
+    light; schemas belong to the MCP client, not the catalog)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    description: str
+    action_type: Literal["read", "state_change"]
+
+
+class BackendToolsResponse(BaseModel):
+    """A backend never vanishes from this endpoint for credential reasons --
+    ``status``/``status_detail`` say why ``tools`` is empty instead (same
+    issue #123 philosophy as GET /v1/catalog's per-server status)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    display_name: str
+    description: str
+    status: ToolListingStatus
+    status_detail: str
+    tools: list[BackendTool]
+
+
+class ToolListingCache:
+    """In-process TTL cache of successful tool listings, keyed by backend.
+
+    Tool schemas aren't user-specific (the same cross-user assumption
+    fastmcp's ProxyProvider component cache already relies on -- see
+    aggregator.py's _make_client_factory docstring; that cache itself can't
+    be reused here because its client factories require an in-flight MCP
+    request context), so one process-wide entry per backend is safe. The TTL
+    is the backend's own ``tools_cache_ttl`` -- the same operator knob that
+    governs the ProxyProvider cache, and 0 disables caching here too.
+    Per-caller decisions (entitlement, linkage) are re-evaluated on every
+    request; only the network fan-out is skipped. Each broker replica keeps
+    its own copy -- acceptable divergence for a tool *catalog* (worst case a
+    just-redeployed backend's new tool appears on one replica up to one TTL
+    before another), unlike per-caller status data which is never cached.
+    """
+
+    def __init__(self) -> None:
+        # backend name -> (monotonic fetch time, [(tool name, description)])
+        self._entries: dict[str, tuple[float, list[tuple[str, str]]]] = {}
+
+    def get(self, backend: str, ttl: float) -> list[tuple[str, str]] | None:
+        if ttl <= 0:
+            return None
+        entry = self._entries.get(backend)
+        if entry is None:
+            return None
+        fetched_at, tools = entry
+        if time.monotonic() - fetched_at > ttl:
+            return None
+        return tools
+
+    def put(self, backend: str, tools: list[tuple[str, str]]) -> None:
+        self._entries[backend] = (time.monotonic(), tools)
+
+
+def _get_cache(request: Request) -> ToolListingCache:
+    # Lazily created on first use -- app.py's lifespan doesn't need to know
+    # about it, and a fresh app (tests included) just starts cold.
+    cache = getattr(request.app.state, "tool_listing_cache", None)
+    if cache is None:
+        cache = ToolListingCache()
+        request.app.state.tool_listing_cache = cache
+    return cache
+
+
+def _respond(
+    spec: BackendSpec,
+    status: str,
+    tools: list[tuple[str, str]],
+    policy: EntitlementPolicy,
+) -> BackendToolsResponse:
+    return BackendToolsResponse(
+        name=spec.name,
+        display_name=spec.display_name or spec.name,
+        description=spec.description,
+        status=status,  # type: ignore[arg-type]
+        status_detail=_STATUS_DETAILS[status],
+        tools=[
+            BackendTool(
+                name=name,
+                description=description,
+                action_type=get_action_type(  # type: ignore[arg-type]
+                    spec.name, name, spec.required_capability, policy
+                ),
+            )
+            for name, description in tools
+        ],
+    )
+
+
+@router.get(
+    "/catalog/{backend}/tools",
+    response_model=BackendToolsResponse,
+    summary="List one backend's tools as the caller would see them via /mcp",
+)
+async def get_backend_tools(
+    backend: str,
+    request: Request,
+    principal: Annotated[Principal, Depends(keycloak_dependency)],
+) -> BackendToolsResponse:
+    """Enumerate *backend*'s tools using the aggregator's own list-time
+    credential logic (aggregator.resolve_list_time_credential /
+    fetch_backend_tool_listing), so what the portal shows always matches
+    what a tools/list through /mcp would return for this caller."""
+    registry = _get_registry(request)
+    spec = registry.get(backend)
+    if spec is None:
+        raise HTTPException(
+            status_code=404, detail=f"backend '{backend}' is not registered"
+        )
+    policy = _get_policy(request)
+
+    # Same capability gate the aggregator's factories (and /v1/catalog's
+    # status derivation) apply before any credential work -- derived locally,
+    # never by probing the backend.
+    allowed, _reason = check_entitlement(
+        principal, spec.required_capability, spec.name, policy
+    )
+    if not allowed:
+        return _respond(spec, "capability_required", [], policy)
+
+    credential_registry = _get_credential_registry(request)
+    broker_token_issuer = getattr(request.app.state, "broker_token_issuer", None)
+    headers, skip_reason = await resolve_list_time_credential(
+        spec, credential_registry, principal, broker_token_issuer
+    )
+
+    # The cache only ever short-circuits a caller whose credential
+    # resolution succeeded (skip_reason None) -- a degraded caller
+    # (not linked, provider unavailable) always goes to the live attempt so
+    # their status reflects *their* credential state, never another
+    # caller's cached success.
+    cache = _get_cache(request)
+    if skip_reason is None:
+        cached = cache.get(spec.name, spec.tools_cache_ttl)
+        if cached is not None:
+            return _respond(spec, "ok", cached, policy)
+
+    status, tools = await fetch_backend_tool_listing(spec, headers, skip_reason)
+    if status == "ok":
+        if skip_reason is None:
+            cache.put(spec.name, tools)
+    else:
+        logger.info(
+            "catalog.tools_list_failed",
+            subject=principal.subject,
+            target=spec.name,
+            status=status,
+        )
+    return _respond(spec, status, tools, policy)

@@ -196,10 +196,9 @@ Whatever you choose, the deployed tool names are what callers actually see
 via `tools/list` on `/mcp` — confirm the names you expect show up there (see
 Verification below) rather than assuming from the config alone. `GET
 /v1/catalog` and the portal's Catalog page show the backend itself (name,
-capability, auth type) but not its individual tool names yet:
-`CatalogServer.tools` is an empty placeholder until issue #58 lands per-tool
-enumeration over `/v1`, and the portal renders "Tool listing coming soon."
-in its place.
+capability, auth type); the individual tool names live one level down at
+`GET /v1/catalog/{backend}/tools`, which the portal fetches when a server
+card's Tools section is expanded.
 
 ---
 
@@ -311,11 +310,10 @@ kubectl exec -n af-mcp deploy/af-mcp-broker -- \
   curl -s http://localhost:8080/v1/catalog | jq '.servers[] | select(.name=="my-new-backend")'
 ```
 
-`/v1/catalog` reports one entry per backend, not per tool —
-`CatalogServer.tools` is an empty placeholder until issue #58 lands per-tool
-enumeration there. To confirm the actual tool names callers will see
-(namespaced per `apply_namespace` above), talk to the aggregator's MCP
-protocol surface directly:
+`/v1/catalog` reports one entry per backend, not per tool — per-tool
+enumeration lives at `GET /v1/catalog/{backend}/tools` (namespaced the same
+way `/mcp` namespaces them). To confirm the actual tool names callers will
+see end-to-end, talk to the aggregator's MCP protocol surface directly:
 
 ```bash
 read -s -p "Bearer token: " MCP_BEARER_TOKEN
