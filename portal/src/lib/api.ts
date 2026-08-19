@@ -322,8 +322,6 @@ export interface CatalogServer {
    * misconfigured) -- quote it in a ticket so an admin can grep the audit
    * log. Null otherwise. */
   correlation_id: string | null;
-  /** Empty placeholder until #58 lands per-tool enumeration. */
-  tools: CatalogTool[];
 }
 
 export interface CatalogResponse {
@@ -347,11 +345,7 @@ export async function fetchCatalog(): Promise<CatalogResponse> {
  * say why `tools` is empty instead (same issue #123 philosophy as the
  * catalog's per-server status). */
 export type ToolListingStatus =
-  | 'ok'
-  | 'not_linked'
-  | 'unauthorized'
-  | 'unavailable'
-  | 'capability_required';
+  'ok' | 'not_linked' | 'unauthorized' | 'unavailable' | 'capability_required';
 
 export interface ServerToolsResponse {
   name: string;
