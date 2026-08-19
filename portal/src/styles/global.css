@@ -74,8 +74,8 @@
  * selector. That also zeroes out the UA stylesheet's `margin: auto` on
  * `dialog:modal`, which is what centers a <dialog> opened with
  * showModal() -- so every native <dialog> in the portal (TokensPage.vue's
- * mint dialog, ProxyStatus.vue's and IdentityLink.vue's revoke/unlink
- * confirms) rendered pinned to the top-left instead of centered (issue
+ * mint dialog, IdentityLink.vue's unlink confirm) rendered pinned to the
+ * top-left instead of centered (issue
  * #152), even though each of them already calls showModal() correctly.
  * An unlayered rule beats any rule inside a @layer regardless of source
  * order or specificity, so restoring the margin once here fixes every

@@ -48,6 +48,10 @@ export default defineConfig({
     },
   },
   output: 'static',
+  // The x509 credential status+link UI moved onto the Identities page card
+  // (its single home) — keep old /status/ bookmarks working. Static output
+  // turns this into a meta-refresh page at /status/index.html.
+  redirects: { '/status': '/identities/' },
   server: { port: 4321 },
   security: {
     csp: {

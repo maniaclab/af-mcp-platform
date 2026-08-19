@@ -66,7 +66,7 @@ function reload() {
 
 // ── Mint dialog ──────────────────────────────────────────────────────────
 // Native <dialog> gives a real focus trap, ESC to close, and inert siblings
-// for free (see ProxyStatus.vue for the same pattern).
+// for free (see IdentityLink.vue for the same pattern).
 const mintDialog = ref<HTMLDialogElement | null>(null);
 const mintTrigger = ref<HTMLButtonElement | null>(null);
 
@@ -248,7 +248,7 @@ async function copyClaudeHeaderValue() {
 const revokingLookupId = ref<string | null>(null);
 const revokeError = ref<string | null>(null);
 
-// Revoke-confirm dialog -- same native <dialog> pattern as ProxyStatus.vue's
+// Revoke-confirm dialog -- same native <dialog> pattern as IdentityLink.vue's
 // revoke-confirm and IdentityLink.vue's unlink-confirm (real focus trap, ESC
 // to close, inert siblings for free). Token revoke previously fired straight
 // from the row's click handler with no confirmation at all, unlike those two
@@ -693,7 +693,7 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
     <!--
       Revoke confirm dialog -- native <dialog> gives a real focus trap (TAB
       cycles inside), ESC to close, and inert siblings, same pattern as
-      ProxyStatus.vue's revoke-confirm and IdentityLink.vue's unlink-confirm.
+      IdentityLink.vue's unlink-confirm.
       Focus returns to the row's trigger button in onRevokeDialogClose.
     -->
     <dialog
@@ -1088,7 +1088,7 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
   margin: 0;
 }
 
-/* Buttons (shared shape with ProxyStatus.vue / IdentityLink.vue) */
+/* Buttons (shared shape with IdentityLink.vue) */
 .tp__btn {
   display: inline-flex;
   align-items: center;

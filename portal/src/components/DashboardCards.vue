@@ -52,11 +52,11 @@ onMounted(async () => {
       class="dc__card"
       :class="!loading && summary?.proxyStatus.cached ? 'dc__card--ok' : 'dc__card--neutral'"
     >
-      <span class="dc__label">AMI proxy</span>
+      <span class="dc__label">VOMS proxy</span>
       <span class="dc__value" :class="{ 'dc__value--loading': loading }">
         {{ loading ? '—' : summary?.proxyStatus.cached ? 'Active' : 'No proxy' }}
       </span>
-      <a href="/status/" class="dc__link">Manage →</a>
+      <a href="/identities/" class="dc__link">Manage →</a>
     </div>
 
     <!-- Tokens card -- the Overview page previously had no card or link

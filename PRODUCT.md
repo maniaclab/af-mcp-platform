@@ -52,12 +52,13 @@ URL without multiplying the number of places a client must trust with credential
   own Bearer, no oauth2-proxy) and `mcp-portal.af.uchicago.edu` (the portal SPA, its
   own OIDC login; oauth2-proxy fronts only its HTML — `/v1` and `/mcp` bypass it on
   both hosts).
-- The portal has five real screens today: Overview (`/`, dashboard + MCP endpoint
+- The portal has four real screens today: Overview (`/`, dashboard + MCP endpoint
   connection snippets), MCP Servers catalog (`/catalog`, backends/tools reachable by
   the signed-in account), Identities (`/identities`, link external CERN/ATLAS
-  accounts), AMI Proxy (`/status`, on-demand x509/VOMS proxy generation and status),
-  and Tokens (`/tokens`, mint/revoke static bearer tokens for OAuth-discovery-less
-  clients like Claude Desktop).
+  accounts plus the x509 grid-certificate card — VOMS proxy linking, custody
+  consent, preflight checklist, and proxy status; the old `/status` route
+  redirects here), and Tokens (`/tokens`, mint/revoke static bearer tokens for
+  OAuth-discovery-less clients like Claude Desktop).
 - Users reach the portal from a browser to do setup/bootstrapping tasks (link an
   identity, mint a token, check proxy status); the actual day-to-day work (dataset
   queries, job submission) happens inside their MCP client, not in the portal.

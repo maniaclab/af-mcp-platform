@@ -42,12 +42,24 @@ describe('resolvePoweredBy', () => {
     });
   });
 
-  it('reports "x509" pointing at the proxy status page', () => {
-    expect(resolvePoweredBy('x509', [])).toEqual({
-      kind: 'x509',
-      label: 'x509 grid proxy',
-      linked: null,
-      linkHref: '/status/',
+  it('resolves an x509 entry through the providers list like any other alias', () => {
+    // Since #182 x509 is an ordinary identity_providers entry — its alias
+    // resolves against the providers list, linkage tracked, pointing at the
+    // Identities page (the single home for x509 credential UX).
+    const providers = [
+      makeProvider({
+        id: 'x509',
+        type: 'x509',
+        display_name: 'Grid certificate (x509)',
+        link_mechanism: 'passphrase',
+        linked: true,
+      }),
+    ];
+    expect(resolvePoweredBy('x509', providers)).toEqual({
+      kind: 'identity',
+      label: 'Grid certificate (x509)',
+      linked: true,
+      linkHref: '/identities/',
     });
   });
 
@@ -96,9 +108,18 @@ describe('groupServersByAlias', () => {
     expect(grouped.get('rucio-mcp-atlas')?.map((s) => s.name)).toEqual(['gitlab']);
   });
 
-  it('omits x509-serviced and credential-less servers -- neither is an identity_providers row', () => {
+  it('groups x509-serviced servers too -- x509 is an ordinary identity_providers row', () => {
     const servers = [
       makeServer({ name: 'ami', credential_provider: 'x509' }),
+      makeServer({ name: 'rucio', credential_provider: 'atlas-oidc' }),
+    ];
+    const grouped = groupServersByAlias(servers);
+    expect([...grouped.keys()]).toEqual(['x509', 'atlas-oidc']);
+    expect(grouped.get('x509')?.map((s) => s.name)).toEqual(['ami']);
+  });
+
+  it('omits credential-less servers -- no identity_providers row to attach to', () => {
+    const servers = [
       makeServer({ name: 'docs', credential_provider: null }),
       makeServer({ name: 'rucio', credential_provider: 'atlas-oidc' }),
     ];

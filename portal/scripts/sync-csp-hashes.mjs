@@ -83,6 +83,21 @@ export function extractDeclaredHashes(html, sourceLabel) {
 }
 
 /**
+ * True for the one page shape allowed to ship WITHOUT a CSP meta tag: an
+ * Astro-generated redirect stub (config `redirects` entries — e.g. the
+ * retired /status/ route). Astro's security.csp never fires for those, and
+ * they carry no inline <script>/<style> whatsoever, so there is nothing a
+ * hash could cover. Any page with inline content but no CSP meta tag is
+ * still a hard build error (extractDeclaredHashes throws).
+ */
+export function isCspExemptStub(html) {
+  const dom = new JSDOM(html);
+  const doc = dom.window.document;
+  if (doc.querySelector(CSP_META_SELECTOR)) return false;
+  return doc.querySelector('script:not([src])') === null && doc.querySelector('style') === null;
+}
+
+/**
  * Re-hashes every literal inline <script> (no `src`) and <style> element in
  * `html` and returns the ones whose hash isn't present in `declared`. An
  * empty return value means every inline script/style in the page is
@@ -167,6 +182,10 @@ async function main() {
     const fileUrl = new URL(relativePath, distDir);
     const html = readFileSync(fileUrl, 'utf8');
     const sourceLabel = `dist/${relativePath}`;
+
+    // Astro's redirect stubs (config `redirects`) ship no CSP meta tag and
+    // no inline content — nothing to collect or verify for them.
+    if (isCspExemptStub(html)) continue;
 
     const declared = extractDeclaredHashes(html, sourceLabel);
     for (const h of declared.scriptSrc) scriptHashes.add(h);

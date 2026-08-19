@@ -27,16 +27,11 @@ export function navBadges(summary: DashboardSummary | null): NavBadge[] {
     tone: n > 0 ? 'ok' : 'neutral',
   });
 
-  const badges = [
+  // No /status/ badge: the proxy page was retired into the Identities
+  // card, whose linked count already reflects the x509 entry.
+  return [
     count('/catalog/', summary.serverCount),
     count('/identities/', summary.linkedCount),
     count('/tokens/', summary.activeTokenCount),
   ];
-
-  // The proxy has no meaningful count — badge it only when one is active.
-  if (summary.proxyStatus.cached) {
-    badges.push({ href: '/status/', text: 'active', tone: 'ok' });
-  }
-
-  return badges;
 }

@@ -11,14 +11,12 @@ import type { CatalogServer, IdentityProvider } from './api';
 
 /** What a server card's "Powered by" affordance should show. */
 export interface PoweredBy {
-  /** "identity" -- a keycloak-brokered/oauth21-direct identity_providers
-   *  entry; "x509" -- the synthetic x509 alias (proxy status page, not an
-   *  identity_providers entry); "none" -- auth_type "none", no user
-   *  credential required at all. */
-  kind: 'identity' | 'x509' | 'none';
+  /** "identity" -- an identity_providers entry (x509 included: since #182
+   *  it is an ordinary entry whose alias appears in the providers list);
+   *  "none" -- auth_type "none", no user credential required at all. */
+  kind: 'identity' | 'none';
   label: string;
-  /** null when there is no linked/unlinked concept ("none" and "x509"
-   *  aren't tracked the way identity_providers linkage is). */
+  /** null when there is no linked/unlinked concept ("none"). */
   linked: boolean | null;
   /** Where the card's affordance should link to, or null when there's
    *  nothing to link to ("none"). */
@@ -32,9 +30,6 @@ export function resolvePoweredBy(
   if (credentialProvider === null) {
     return { kind: 'none', label: 'No credential required', linked: null, linkHref: null };
   }
-  if (credentialProvider === 'x509') {
-    return { kind: 'x509', label: 'x509 grid proxy', linked: null, linkHref: '/status/' };
-  }
   const provider = providers.find((p) => p.id === credentialProvider);
   return {
     kind: 'identity',
@@ -46,15 +41,16 @@ export function resolvePoweredBy(
 
 /**
  * Groups catalog servers by the identity alias that services them, for the
- * Identities page's "What each identity unlocks" grid. x509-serviced and
- * credential-less ("none") servers are omitted -- neither corresponds to an
- * identity_providers row the grid renders.
+ * Identities page's "What each identity unlocks" grid. Credential-less
+ * ("none") servers are omitted -- there is no identity_providers row to
+ * attach them to. x509-serviced servers group like any other: since #182
+ * their alias is a real identity_providers entry rendered on that page.
  */
 export function groupServersByAlias(servers: CatalogServer[]): Map<string, CatalogServer[]> {
   const grouped = new Map<string, CatalogServer[]>();
   for (const server of servers) {
     const alias = server.credential_provider;
-    if (alias === null || alias === 'x509') continue;
+    if (alias === null) continue;
     const existing = grouped.get(alias);
     if (existing) {
       existing.push(server);
