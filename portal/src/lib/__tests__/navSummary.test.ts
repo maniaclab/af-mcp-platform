@@ -27,20 +27,24 @@ describe('navBadges', () => {
     expect(navBadges(null)).toEqual([]);
   });
 
-  it('maps a healthy summary to count badges plus an active proxy badge', () => {
+  it('maps a healthy summary to count badges', () => {
     const badges = navBadges(healthy);
     expect(badges).toContainEqual({ href: '/catalog/', text: '3', tone: 'ok' });
     expect(badges).toContainEqual({ href: '/identities/', text: '2', tone: 'ok' });
     expect(badges).toContainEqual({ href: '/tokens/', text: '4', tone: 'ok' });
-    expect(badges).toContainEqual({ href: '/status/', text: 'active', tone: 'ok' });
   });
 
-  it('renders zero counts as neutral and omits the proxy badge when no proxy is cached', () => {
+  it('renders zero counts as neutral', () => {
     const badges = navBadges(empty);
     expect(badges).toContainEqual({ href: '/catalog/', text: '0', tone: 'neutral' });
     expect(badges).toContainEqual({ href: '/identities/', text: '0', tone: 'neutral' });
     expect(badges).toContainEqual({ href: '/tokens/', text: '0', tone: 'neutral' });
-    expect(badges.find((b) => b.href === '/status/')).toBeUndefined();
+  });
+
+  it('never emits a /status/ badge -- the page was retired into Identities', () => {
+    for (const summary of [healthy, empty]) {
+      expect(navBadges(summary).find((b) => b.href === '/status/')).toBeUndefined();
+    }
   });
 
   it('produces one badge per nav item at most', () => {

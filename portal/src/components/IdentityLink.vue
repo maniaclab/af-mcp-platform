@@ -34,7 +34,7 @@ const canLink = props.type === 'keycloak-brokered' || !!props.link_url;
 const canUnlink = props.type === 'oauth21-direct';
 
 // Unlink-confirm dialog uses the native <dialog> element (showModal()), same
-// pattern as ProxyStatus.vue's revoke-confirm dialog — real focus trap, ESC
+// pattern as TokensPage.vue's revoke-confirm dialog — real focus trap, ESC
 // to close, inert siblings for free. We only need to remember the trigger so
 // focus can return to it on close.
 const unlinkDialog = ref<HTMLDialogElement | null>(null);
@@ -169,7 +169,7 @@ const glyph = props.id[0]?.toUpperCase() ?? '?';
     <!--
       Native <dialog> gives us a real focus trap (TAB cycles inside), ESC to
       close, and inert siblings, all handled by the platform — same pattern
-      as ProxyStatus.vue's revoke-confirm dialog. We restore focus to the
+      as TokensPage.vue's revoke-confirm dialog. We restore focus to the
       trigger button in onUnlinkDialogClose.
     -->
     <dialog
@@ -381,7 +381,7 @@ const glyph = props.id[0]?.toUpperCase() ?? '?';
 }
 
 /* Unlink: a destructive action — quiet by default, red on hover, matching
-   ProxyStatus.vue's ps__btn--revoke treatment. */
+   TokensPage.vue's revoke treatment. */
 .il__btn--unlink {
   background: transparent;
   color: var(--color-af-dim);
@@ -419,7 +419,7 @@ const glyph = props.id[0]?.toUpperCase() ?? '?';
  * (restored in global.css, where Tailwind's Preflight otherwise zeroes it
  * out -- see the comment there and issue #152). Here we only override the
  * box chrome and add our own ::backdrop with the AF ground tint (same
- * treatment as ProxyStatus.vue's revoke-confirm modal).
+ * treatment as TokensPage.vue's revoke-confirm modal).
  */
 .il__modal {
   background: var(--color-af-surface);

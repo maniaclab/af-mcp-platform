@@ -10,8 +10,9 @@ import subprocess
 import time
 import uuid
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 
 import structlog
 from pydantic import SecretStr
@@ -785,6 +786,27 @@ def _parse_proxy_pem(proxy_pem: bytes) -> tuple[str, list[str], float]:
 # ------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class X509LinkStatus:
+    """How an x509 identity is linked, for surfaces that render custody.
+
+    ``mode`` distinguishes the two service-mode custody choices (issue
+    #112's follow-up consent toggle): ``"auto-renew"`` — a passphrase is
+    stored, proxies re-mint hands-free; ``"until-expiry"`` — only the proxy
+    is stored (the user declined passphrase custody), so the link lasts
+    exactly as long as the proxy does. ``None`` when not linked, and in
+    legacy mode, where linkage is a filesystem fact with no custody concept.
+
+    ``proxy_not_after`` is the expiry (epoch seconds) of the currently-valid
+    stored proxy, or None when no valid proxy is stored — including the
+    auto-renew case where the proxy has lapsed but the link survives.
+    """
+
+    linked: bool
+    mode: Literal["auto-renew", "until-expiry"] | None
+    proxy_not_after: float | None
+
+
 class X509Provider(CredentialProvider):
     """Issues delegated x509 proxy credentials.
 
@@ -853,6 +875,16 @@ class X509Provider(CredentialProvider):
         return self._voms_client is not None and self._vault_store is not None
 
     @property
+    def voms_client(self) -> VomsTokenServiceClient | None:
+        """The voms-token-service client, or None in legacy mode.
+
+        Exposed so ``api/credentials.py``'s preflight route can proxy the
+        service's credential-readiness checklist through the same
+        authenticated client the mint path uses.
+        """
+        return self._voms_client
+
+    @property
     def vault_store(self) -> VaultX509Store | None:
         """The Vault-backed link/proxy store, or None in legacy mode.
 
@@ -873,20 +905,17 @@ class X509Provider(CredentialProvider):
         return self._settings
 
     async def is_linked(self, principal: Principal) -> bool:
-        """Return True when *principal* can mint a proxy without re-entering anything.
+        """Return True when the x509 identity currently works without re-entering anything.
 
-        In voms-token-service mode: True when Vault holds a complete link
-        record (passphrase + POSIX identity) for the subject — the
+        In voms-token-service mode this covers BOTH custody choices (see
+        ``link_status``): a stored passphrase (auto-renew — proxies re-mint
+        hands-free) or a still-valid stored proxy with no passphrase
+        (until-expiry — the link lasts exactly as long as the proxy). The
         filesystem is never consulted, since minting happens in the
         service's pod, not the broker's.
 
         In legacy mode: True when both halves of *principal*'s ``~/.globus``
         certificate pair exist and are readable by the broker's uid/gid.
-        Mirrors the path construction ``HomeDirVomsBackend`` uses to locate
-        the user's home directory, but — unlike ``HomeDirVomsBackend.available()``,
-        which only needs the public cert to decide whether it can attempt a
-        mint — requires BOTH ``usercert.pem`` and ``userkey.pem``, since
-        minting cannot proceed with only the public half.
 
         Returns False (rather than raising) when *principal* has no POSIX
         identity at all: this method is used for best-effort status probing
@@ -895,9 +924,55 @@ class X509Provider(CredentialProvider):
         actionable ``PosixIdentityRequiredError`` instead surfaces from
         ``issue()``, at the point an x509 credential is actually minted.
         """
+        return (await self.link_status(principal)).linked
+
+    async def link_status(self, principal: Principal) -> X509LinkStatus:
+        """Return *principal*'s linkage plus its custody mode and proxy expiry.
+
+        The single source ``is_linked`` and ``/v1/identities`` both read:
+        in voms-token-service mode one Vault read decides linked-with-renewal
+        (passphrase stored), linked-until-expiry (valid proxy, no
+        passphrase), or unlinked — an expired proxy with no passphrase reads
+        as UNLINKED, which is the bounded consequence remember=false users
+        consented to. Legacy mode reports the filesystem fact with no
+        custody mode or expiry.
+        """
         if self.uses_voms_service:
             assert self._vault_store is not None  # uses_voms_service checked
-            return await self._vault_store.get_link(principal.subject) is not None
+            record = await self._vault_store.get(principal.subject)
+            if record is None:
+                return X509LinkStatus(linked=False, mode=None, proxy_not_after=None)
+            proxy_valid = (
+                record.proxy_pem is not None
+                and record.not_after is not None
+                and record.not_after > time.time()
+            )
+            if record.has_link:
+                return X509LinkStatus(
+                    linked=True,
+                    mode="auto-renew",
+                    proxy_not_after=record.not_after if proxy_valid else None,
+                )
+            if proxy_valid:
+                return X509LinkStatus(
+                    linked=True, mode="until-expiry", proxy_not_after=record.not_after
+                )
+            return X509LinkStatus(linked=False, mode=None, proxy_not_after=None)
+        return X509LinkStatus(
+            linked=await self._legacy_is_linked(principal),
+            mode=None,
+            proxy_not_after=None,
+        )
+
+    async def _legacy_is_linked(self, principal: Principal) -> bool:
+        """Return the legacy-mode linkage check: both halves of ``~/.globus`` readable.
+
+        Mirrors the path construction ``HomeDirVomsBackend`` uses to locate
+        the user's home directory, but — unlike ``HomeDirVomsBackend.available()``,
+        which only needs the public cert to decide whether it can attempt a
+        mint — requires BOTH ``usercert.pem`` and ``userkey.pem``, since
+        minting cannot proceed with only the public half.
+        """
         if principal.unixname is None:
             return False
         globus_dir = Path(self._settings.home_root) / principal.unixname / ".globus"
@@ -921,6 +996,7 @@ class X509Provider(CredentialProvider):
         target: str,
         min_remaining_seconds: int = 300,
         passphrase: SecretBytes | None = None,
+        remember: bool = True,
     ) -> IssuedCredential:
         """Return an x509 proxy reference credential.
 
@@ -934,6 +1010,14 @@ class X509Provider(CredentialProvider):
         fail after it's given. Otherwise, if no passphrase was provided,
         raises ``NeedsUnlock`` so the caller can guide the user to POST their
         passphrase to ``/v1/x509/proxy``.
+
+        ``remember`` is the custody consent captured alongside an explicit
+        *passphrase* (service mode only — legacy mode never persists a
+        passphrase, so it has nothing to remember): False mints and stores
+        the proxy but NOT the passphrase, making the link last exactly the
+        proxy's validity window (see ``link_status``). Meaningless without a
+        passphrase, and True (the hands-free-renewal default) preserves the
+        pre-existing behavior.
         """
         cached = await self._cache.get(
             principal.subject, target, min_remaining=min_remaining_seconds
@@ -954,7 +1038,7 @@ class X509Provider(CredentialProvider):
 
         if self.uses_voms_service:
             return await self._issue_via_service(
-                principal, target, min_remaining_seconds, passphrase
+                principal, target, min_remaining_seconds, passphrase, remember
             )
 
         if principal.uid is None or principal.gid is None or principal.unixname is None:
@@ -1015,6 +1099,7 @@ class X509Provider(CredentialProvider):
         target: str,
         min_remaining_seconds: int,
         passphrase: SecretBytes | None,
+        remember: bool = True,
     ) -> IssuedCredential:
         """Serve the Vault-stored proxy, or mint via voms-token-service.
 
@@ -1080,7 +1165,7 @@ class X509Provider(CredentialProvider):
         # not the thundering-herd renewal path single-flighted above.
         if principal.uid is None or principal.gid is None or principal.unixname is None:
             raise PosixIdentityRequiredError(target, settings=self._settings)
-        return await self._link_and_mint(principal, target, passphrase)
+        return await self._link_and_mint(principal, target, passphrase, remember)
 
     async def _serve_stored_proxy(
         self, principal: Principal, target: str, min_remaining_seconds: int
@@ -1098,9 +1183,18 @@ class X509Provider(CredentialProvider):
         return await self._cache_stored_record(principal, target, record)
 
     async def _link_and_mint(
-        self, principal: Principal, target: str, passphrase: SecretBytes
+        self,
+        principal: Principal,
+        target: str,
+        passphrase: SecretBytes,
+        remember: bool = True,
     ) -> IssuedCredential:
         """Mint via voms-token-service with a user-supplied passphrase, then persist the link and the proxy in Vault.
+
+        *remember* is the custody consent: True stores the passphrase (the
+        link enabling hands-free renewal); False stores only the POSIX
+        identity alongside the proxy — the passphrase is used once for this
+        mint and never persisted.
 
         A bad passphrase counts against the unlock rate limiter (the user
         typed it); an infra failure does not. Nothing is persisted on any
@@ -1132,7 +1226,7 @@ class X509Provider(CredentialProvider):
 
         await self._vault_store.store_link(
             principal.subject,
-            passphrase=passphrase_str,
+            passphrase=passphrase_str if remember else None,
             unixname=principal.unixname,
             uid=principal.uid,
             gid=principal.gid,

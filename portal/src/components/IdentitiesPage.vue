@@ -125,12 +125,30 @@ function handleUnlinked(id: string) {
 
 // Called on X509IdentityCard's `linked` event, once POST /v1/x509/proxy has
 // already succeeded — same reflect-locally-and-drop-cache pattern as
-// handleUnlinked above. The mint response carries the fresh proxy expiry.
-function handleX509Linked(id: string, meta: ProxyMetadata) {
+// handleUnlinked above. The mint response carries the fresh proxy expiry;
+// the custody mode follows the remember choice the user just made.
+function handleX509Linked(id: string, meta: ProxyMetadata, remember: boolean) {
   const provider = providers.value.find((p) => p.id === id);
   if (provider) {
     provider.linked = true;
     provider.proxy_expires_at = meta.expires_at;
+    provider.x509_link_mode = remember ? 'auto-renew' : 'until-expiry';
+  }
+  clearIdentitiesCache();
+}
+
+// Called on X509IdentityCard's `revoked` event, once DELETE /v1/x509/proxy
+// has already succeeded. Revoking burns the proxy but never unlinks an
+// auto-renew identity (the stored passphrase re-mints hands-free); an
+// until-expiry link had ONLY the proxy, so it reads as unlinked now.
+function handleX509Revoked(id: string) {
+  const provider = providers.value.find((p) => p.id === id);
+  if (provider) {
+    provider.proxy_expires_at = null;
+    if (provider.x509_link_mode === 'until-expiry') {
+      provider.linked = false;
+      provider.x509_link_mode = null;
+    }
   }
   clearIdentitiesCache();
 }
@@ -201,7 +219,9 @@ function handleX509Linked(id: string, meta: ProxyMetadata) {
             :display_name="p.display_name"
             :enables="p.enables"
             :proxy_expires_at="p.proxy_expires_at"
-            @linked="handleX509Linked(p.id, $event)"
+            :x509_link_mode="p.x509_link_mode"
+            @linked="(meta, remember) => handleX509Linked(p.id, meta, remember)"
+            @revoked="handleX509Revoked(p.id)"
           />
           <IdentityLink
             v-else

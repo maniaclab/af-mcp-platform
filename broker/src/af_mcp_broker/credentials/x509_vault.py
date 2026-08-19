@@ -100,23 +100,44 @@ class VaultX509Store:
         self,
         subject: str,
         *,
-        passphrase: SecretStr,
+        passphrase: SecretStr | None,
         unixname: str,
         uid: int,
         gid: int,
     ) -> None:
         """Record *subject*'s Globus passphrase and POSIX identity.
 
+        ``passphrase=None`` is the remember=false custody mode (the user
+        declined passphrase storage at link time): the record carries only
+        the POSIX identity, so hands-free renewal paths — which key off
+        ``get_link`` — never fire, and the identity reads as linked only
+        while the stored proxy is valid (see ``X509Provider.link_status``).
+
         Writes a fresh record: a (re-)link means a possibly-new passphrase
-        (the user changed their Globus password), so any previously stored
-        proxy — which may no longer be re-mintable — does not survive it.
-        The caller stores the freshly-minted proxy right after via
+        (the user changed their Globus password) or a deliberate custody
+        change, so neither any previously stored proxy — which may no
+        longer be re-mintable — nor a previously stored passphrase survives
+        it. The caller stores the freshly-minted proxy right after via
         ``store_proxy``.
         """
         record = StoredX509Credential(
             passphrase=passphrase, unixname=unixname, uid=uid, gid=gid
         )
         await self._write_cas_retry(subject, lambda _current: record)
+
+    async def get(self, subject: str) -> StoredX509Credential | None:
+        """Return *subject*'s record whatever its halves hold, or None.
+
+        ``get_link``/``get_proxy`` each answer for one half; ``link_status``
+        needs the whole record in one read to tell linked-with-renewal
+        (passphrase stored) from linked-until-expiry (valid proxy, no
+        passphrase) from unlinked.
+        """
+        got = await self._read(subject)
+        if got is None:
+            return None
+        record, _version = got
+        return record
 
     async def get_link(self, subject: str) -> StoredX509Credential | None:
         """Return the record when its link half is complete (passphrase + POSIX identity), else None."""

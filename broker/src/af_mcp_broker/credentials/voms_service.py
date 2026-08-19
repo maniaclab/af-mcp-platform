@@ -31,7 +31,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import httpx
 import structlog
@@ -53,6 +53,16 @@ class VomsServiceMintError(RuntimeError):
     against the unlock rate limiter, the same distinction the legacy mint
     path's ``ProxyHarvestError`` draws. The message never carries the
     service's response body (it may reference VOMS hostnames or paths).
+    """
+
+
+class VomsServicePreflightError(RuntimeError):
+    """Raised when the credential-readiness checklist could not be fetched (service unreachable, timeout, or any non-200 answer).
+
+    Purely an availability signal — the preflight endpoint never signals a
+    bad passphrase (it takes none), so there is no per-status branching to
+    do. The message never carries the service's response body (it may
+    reference home-directory paths).
     """
 
 
@@ -109,9 +119,10 @@ class VomsTokenServiceClient:
     ) -> None:
         self._issuer = issuer
         # AnyHttpUrl normalizes a bare origin to a trailing-slash form;
-        # strip it so the endpoint join below never produces "//v1/mint"
+        # strip it so the endpoint joins below never produce "//v1/..."
         # (same guard as condor.py).
-        self._mint_endpoint = f"{service_url.rstrip('/')}/v1/mint"
+        self._base_url = service_url.rstrip("/")
+        self._mint_endpoint = f"{self._base_url}/v1/mint"
         self._audience = audience
         self._voms = voms
         self._valid = valid
@@ -196,3 +207,48 @@ class VomsTokenServiceClient:
             voms_attributes=list(data["voms_attributes"]),
             not_after=expires_dt.timestamp(),
         )
+
+    async def preflight(self, *, subject: str, unixname: str) -> dict[str, Any]:
+        """Fetch *unixname*'s credential-readiness checklist (``GET /v1/preflight/{unixname}``) on behalf of *subject*.
+
+        The body is returned verbatim as parsed JSON — the broker's own
+        preflight route passes it straight through to the portal, so this
+        client deliberately does not model the checklist shape (the service
+        README owns that contract).
+
+        Raises:
+            VomsServicePreflightError: the service was unreachable, timed
+                out, or answered anything but 200 (the endpoint is always
+                200 once authenticated — per-check failures are data in the
+                body, not HTTP errors).
+
+        """
+        broker_token, _ = self._issuer.mint(subject, self._audience)
+        try:
+            resp = await self._http().get(
+                f"{self._base_url}/v1/preflight/{unixname}",
+                headers={"Authorization": f"Bearer {broker_token}"},
+                timeout=15.0,
+            )
+        except httpx.HTTPError as exc:
+            self._log.warning(
+                "voms_service.preflight.unreachable", subject=subject, error=str(exc)
+            )
+            raise VomsServicePreflightError(
+                "voms-token-service could not be reached."
+            ) from exc
+
+        if resp.status_code != httpx.codes.OK:
+            # Status code only — the response body may carry service
+            # internals (home-directory paths) and must reach neither the
+            # log nor the caller.
+            self._log.warning(
+                "voms_service.preflight.failed",
+                subject=subject,
+                upstream_status=resp.status_code,
+            )
+            raise VomsServicePreflightError(
+                f"voms-token-service preflight failed (status {resp.status_code})."
+            )
+        result: dict[str, Any] = resp.json()
+        return result

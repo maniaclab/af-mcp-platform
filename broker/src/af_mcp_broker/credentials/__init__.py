@@ -28,6 +28,7 @@ from af_mcp_broker.credentials.vault import VaultTokenStore
 from af_mcp_broker.credentials.voms_service import (
     VomsServiceBadPassphraseError,
     VomsServiceMintError,
+    VomsServicePreflightError,
     VomsTokenServiceClient,
 )
 from af_mcp_broker.credentials.x509 import (
@@ -64,6 +65,7 @@ __all__ = [
     "VersionConflict",
     "VomsServiceBadPassphraseError",
     "VomsServiceMintError",
+    "VomsServicePreflightError",
     "VomsTokenServiceClient",
     "X509Provider",
     "load_broker_token_issuer",

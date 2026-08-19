@@ -56,7 +56,7 @@ class FakeX509Store:
         self,
         subject: str,
         *,
-        passphrase: SecretStr,
+        passphrase: SecretStr | None,
         unixname: str,
         uid: int,
         gid: int,
@@ -70,6 +70,9 @@ class FakeX509Store:
         if record is None or not record.has_link:
             return None
         return record
+
+    async def get(self, subject: str) -> StoredX509Credential | None:
+        return self.records.get(subject)
 
     async def store_proxy(
         self,
@@ -626,3 +629,209 @@ class TestToResponse:
         assert response.proxy_handle == cred.payload["proxy_handle"]
         assert response.proxy_path is None
         assert response.token is None
+
+
+# ---------------------------------------------------------------------------
+# voms_client exposure (the /v1/x509/preflight route proxies through it)
+# ---------------------------------------------------------------------------
+
+
+class TestVomsClientProperty:
+    async def test_exposed_in_service_mode(self) -> None:
+        provider, voms_client, _, _ = _make_provider()
+        assert provider.voms_client is voms_client
+
+    async def test_none_in_legacy_mode(self) -> None:
+        from types import SimpleNamespace as _NS
+
+        legacy = X509Provider(
+            settings=_NS(  # type: ignore[arg-type]
+                posix_uid_attribute="uid",
+                posix_gid_attribute="gid",
+                posix_unixname_attribute="unixname",
+            ),
+            cache=CredentialCache(),
+            backends=[],
+        )
+        assert legacy.voms_client is None
+
+
+# ---------------------------------------------------------------------------
+# Custody consent (remember=false): proxy persists, passphrase does not
+# ---------------------------------------------------------------------------
+
+
+class TestCustodyConsent:
+    async def test_remember_false_stores_proxy_but_not_passphrase(self) -> None:
+        provider, voms_client, store, _ = _make_provider()
+
+        await provider.issue(
+            _principal("auser"),
+            "ami",
+            passphrase=SecretBytes(b"hunter2"),
+            remember=False,
+        )
+
+        assert len(voms_client.calls) == 1
+        record = store.records["user-123"]
+        assert record.passphrase is None
+        assert record.unixname == "auser"
+        assert record.proxy_pem is not None
+        # Renewal paths key off get_link — this record must never feed one.
+        assert await store.get_link("user-123") is None
+
+    async def test_remember_defaults_to_true(self) -> None:
+        provider, _, store, _ = _make_provider()
+
+        await provider.issue(
+            _principal("auser"), "ami", passphrase=SecretBytes(b"hunter2")
+        )
+
+        link = await store.get_link("user-123")
+        assert link is not None
+        assert link.passphrase is not None
+
+    async def test_remember_false_bad_passphrase_still_counts_against_limiter(
+        self,
+    ) -> None:
+        provider, _, store, cache = _make_provider(
+            voms_client=FakeVomsClient(VomsServiceBadPassphraseError())
+        )
+
+        with pytest.raises(VomsServiceBadPassphraseError):
+            await provider.issue(
+                _principal("auser"),
+                "ami",
+                passphrase=SecretBytes(b"wrong"),
+                remember=False,
+            )
+
+        assert 50123 in cache._failed_unlocks
+        assert store.records == {}
+
+    async def test_remember_false_expired_proxy_needs_unlock_without_unlinking(
+        self,
+    ) -> None:
+        """The bounded consequence the user consented to: after expiry the
+        next issue() prompts a re-link — but the record is NOT deleted
+        eagerly (unlinking stays a deliberate act). Simulated with a mint
+        whose proxy is already past expiry, so the in-memory cache and the
+        Vault record lapse together the way they do in real time."""
+        voms_client = FakeVomsClient(_minted(remaining=-10))
+        provider, _, store, _ = _make_provider(voms_client=voms_client)
+        principal = _principal("auser")
+        await provider.issue(
+            principal, "ami", passphrase=SecretBytes(b"hunter2"), remember=False
+        )
+
+        with pytest.raises(NeedsUnlock) as excinfo:
+            await provider.issue(principal, "ami")
+
+        assert excinfo.value.reason == "not_linked"
+        assert len(voms_client.calls) == 1  # no renewal attempt
+        assert store.deleted == []
+        assert "user-123" in store.records
+
+
+# ---------------------------------------------------------------------------
+# link_status / is_linked across custody modes
+# ---------------------------------------------------------------------------
+
+
+class TestLinkStatus:
+    async def test_auto_renew_while_proxy_valid(self) -> None:
+        provider, _, store, _ = _make_provider()
+        principal = _principal("auser")
+        await provider.issue(principal, "ami", passphrase=SecretBytes(b"hunter2"))
+
+        status = await provider.link_status(principal)
+
+        assert status.linked is True
+        assert status.mode == "auto-renew"
+        record = store.records["user-123"]
+        assert status.proxy_not_after == record.not_after
+        assert await provider.is_linked(principal) is True
+
+    async def test_auto_renew_survives_proxy_expiry(self) -> None:
+        """A stored passphrase keeps the identity linked across proxy
+        expiry — the next issue() renews hands-free."""
+        provider, _, store, _ = _make_provider()
+        principal = _principal("auser")
+        await provider.issue(principal, "ami", passphrase=SecretBytes(b"hunter2"))
+        store.records["user-123"] = store.records["user-123"].model_copy(
+            update={"not_after": time.time() - 10}
+        )
+
+        status = await provider.link_status(principal)
+
+        assert status.linked is True
+        assert status.mode == "auto-renew"
+        assert status.proxy_not_after is None  # no currently-valid proxy
+        assert await provider.is_linked(principal) is True
+
+    async def test_until_expiry_while_proxy_valid(self) -> None:
+        provider, _, store, _ = _make_provider()
+        principal = _principal("auser")
+        await provider.issue(
+            principal, "ami", passphrase=SecretBytes(b"hunter2"), remember=False
+        )
+
+        status = await provider.link_status(principal)
+
+        assert status.linked is True
+        assert status.mode == "until-expiry"
+        record = store.records["user-123"]
+        assert status.proxy_not_after == record.not_after
+        assert await provider.is_linked(principal) is True
+
+    async def test_until_expiry_reads_unlinked_after_expiry(self) -> None:
+        provider, _, store, _ = _make_provider()
+        principal = _principal("auser")
+        await provider.issue(
+            principal, "ami", passphrase=SecretBytes(b"hunter2"), remember=False
+        )
+        store.records["user-123"] = store.records["user-123"].model_copy(
+            update={"not_after": time.time() - 10}
+        )
+
+        status = await provider.link_status(principal)
+
+        assert status.linked is False
+        assert status.mode is None
+        assert status.proxy_not_after is None
+        assert await provider.is_linked(principal) is False
+
+    async def test_unlinked_when_nothing_stored(self) -> None:
+        provider, _, _, _ = _make_provider()
+
+        status = await provider.link_status(_principal("auser"))
+
+        assert status.linked is False
+        assert status.mode is None
+        assert status.proxy_not_after is None
+
+    async def test_legacy_mode_reports_no_mode(self, tmp_path) -> None:
+        """Legacy (filesystem) linkage has no custody concept: linked comes
+        from the ~/.globus pair, mode/expiry stay None."""
+        from types import SimpleNamespace as _NS
+
+        globus = tmp_path / "auser" / ".globus"
+        globus.mkdir(parents=True)
+        (globus / "usercert.pem").write_text("fake-cert")
+        (globus / "userkey.pem").write_text("fake-key")
+        provider = X509Provider(
+            settings=_NS(  # type: ignore[arg-type]
+                home_root=str(tmp_path),
+                posix_uid_attribute="uid",
+                posix_gid_attribute="gid",
+                posix_unixname_attribute="unixname",
+            ),
+            cache=CredentialCache(),
+            backends=[],
+        )
+
+        status = await provider.link_status(_principal("auser"))
+
+        assert status.linked is True
+        assert status.mode is None
+        assert status.proxy_not_after is None

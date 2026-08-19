@@ -375,3 +375,70 @@ class TestSettings:
             settings.token_registry_kv_path_prefix,
             settings.principal_cache_kv_path_prefix,
         }
+
+
+# ---------------------------------------------------------------------------
+# Custody modes (remember=false): proxy persists, passphrase does not
+# ---------------------------------------------------------------------------
+
+
+class TestCustodyMode:
+    async def _link_until_expiry(self, store: VaultX509Store) -> None:
+        await store.store_link(
+            SUBJECT, passphrase=None, unixname="auser", uid=50123, gid=5000
+        )
+
+    async def test_store_link_without_passphrase_stores_posix_only(
+        self, store, fake_vault
+    ) -> None:
+        await self._link_until_expiry(store)
+        stored = fake_vault.entries[f"{SUBJECT}/x509"]["data"]
+        assert stored["passphrase"] is None
+        assert stored["unixname"] == "auser"
+        assert stored["uid"] == 50123
+
+    async def test_get_link_returns_none_without_a_stored_passphrase(
+        self, store
+    ) -> None:
+        """Renewal paths key off get_link — without a passphrase there is
+        nothing to renew with, so the record must not read as a link."""
+        await self._link_until_expiry(store)
+        assert await store.get_link(SUBJECT) is None
+
+    async def test_get_returns_none_when_nothing_stored(self, store) -> None:
+        assert await store.get(SUBJECT) is None
+
+    async def test_get_returns_the_record_regardless_of_halves(self, store) -> None:
+        """link_status derives linked-until-expiry from the whole record in
+        one read — get() must serve it even when get_link/get_proxy would
+        both answer None."""
+        await self._link_until_expiry(store)
+        record = await store.get(SUBJECT)
+        assert record is not None
+        assert record.passphrase is None
+        assert record.unixname == "auser"
+        assert record.proxy_pem is None
+
+    async def test_proxy_after_unremembered_link_round_trips(self, store) -> None:
+        await self._link_until_expiry(store)
+        await _store_proxy(store)
+        record = await store.get_proxy(SUBJECT)
+        assert record is not None
+        assert record.passphrase is None
+        assert record.proxy_pem is not None
+        assert record.proxy_pem.get_secret_value() == _PEM
+
+    async def test_unremembered_relink_clears_a_previously_stored_passphrase(
+        self, store
+    ) -> None:
+        """Re-linking with remember=false is a custody downgrade the user
+        chose: the previously stored passphrase must not survive it."""
+        await _link(store)
+        await _store_proxy(store)
+        await self._link_until_expiry(store)
+        record = await store.get(SUBJECT)
+        assert record is not None
+        assert record.passphrase is None
+        # store_link semantics are unchanged: a (re-)link never keeps the
+        # previous proxy either.
+        assert record.proxy_pem is None

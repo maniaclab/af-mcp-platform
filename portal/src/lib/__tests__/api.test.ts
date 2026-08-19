@@ -15,7 +15,9 @@ import {
   fetchIdentities,
   fetchOAuth21AuthorizeUrl,
   fetchProxyStatus,
+  fetchX509Preflight,
   listTokens,
+  requestProxy,
   mintToken,
   revokeAllCredentials,
   revokeToken,
@@ -722,5 +724,59 @@ describe('tokens client (issue #144 step 2a: broker-issued identity PAT)', () =>
   it('mintToken maps a 401 to SessionExpiredError', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue(new Response('', { status: 401 }));
     await expect(mintToken()).rejects.toBeInstanceOf(SessionExpiredError);
+  });
+});
+
+describe('requestProxy() custody consent', () => {
+  it('sends remember: true by default (hands-free renewal preserved)', async () => {
+    globalThis.fetch = mockJson(201, {
+      dn: '/CN=x',
+      voms_attributes: [],
+      expires_at: '2026-08-27T00:00:00+00:00',
+      remaining_seconds: 100,
+    });
+    await requestProxy('hunter2');
+    const [, init] = vi.mocked(globalThis.fetch).mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toMatchObject({
+      passphrase: 'hunter2',
+      remember: true,
+    });
+  });
+
+  it('sends remember: false when the user unchecks the consent box', async () => {
+    globalThis.fetch = mockJson(201, {
+      dn: '/CN=x',
+      voms_attributes: [],
+      expires_at: '2026-08-27T00:00:00+00:00',
+      remaining_seconds: 100,
+    });
+    await requestProxy('hunter2', '12:00', 'atlas', false);
+    const [, init] = vi.mocked(globalThis.fetch).mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toMatchObject({ remember: false });
+  });
+});
+
+describe('fetchX509Preflight()', () => {
+  it('GETs /x509/preflight and returns the checklist verbatim', async () => {
+    const body = {
+      unixname: 'auser',
+      root: '/home/auser/.globus',
+      ok: false,
+      checks: [
+        {
+          name: 'userkey',
+          path: '/home/auser/.globus/userkey.pem',
+          exists: true,
+          mode: '0644',
+          readable_by_service: true,
+          ok: false,
+          detail: 'run: chmod 400 ~/.globus/userkey.pem',
+        },
+      ],
+    };
+    globalThis.fetch = mockJson(200, body);
+    await expect(fetchX509Preflight()).resolves.toEqual(body);
+    const [url] = vi.mocked(globalThis.fetch).mock.calls[0] as [string, RequestInit];
+    expect(url).toContain('/x509/preflight');
   });
 });

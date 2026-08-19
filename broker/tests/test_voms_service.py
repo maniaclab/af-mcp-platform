@@ -27,6 +27,7 @@ from af_mcp_broker.credentials.voms_service import (
     MintedProxy,
     VomsServiceBadPassphraseError,
     VomsServiceMintError,
+    VomsServicePreflightError,
     VomsTokenServiceClient,
 )
 
@@ -234,3 +235,91 @@ class TestMintFailures:
         with pytest.raises((VomsServiceBadPassphraseError, VomsServiceMintError)) as e:
             await _mint(client)
         assert "hunter2-passphrase" not in str(e.value)
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/preflight/{unixname} (the portal's "Grid Certificates" checklist)
+# ---------------------------------------------------------------------------
+
+_PREFLIGHT_RESPONSE = {
+    "unixname": "auser",
+    "root": "/home/auser/.globus",
+    "ok": False,
+    "checks": [
+        {
+            "name": "globus_dir",
+            "path": "/home/auser/.globus",
+            "exists": True,
+            "ok": True,
+            "detail": None,
+        },
+        {
+            "name": "userkey",
+            "path": "/home/auser/.globus/userkey.pem",
+            "exists": True,
+            "mode": "0644",
+            "readable_by_service": True,
+            "ok": False,
+            "detail": (
+                "userkey.pem must not be group/other-accessible (found 0644); "
+                "run: chmod 400 ~/.globus/userkey.pem"
+            ),
+        },
+    ],
+}
+
+
+class TestPreflight:
+    async def test_gets_v1_preflight_for_the_unixname(self, make_client) -> None:
+        client, requests = make_client(httpx.Response(200, json=_PREFLIGHT_RESPONSE))
+        await client.preflight(subject="user-123", unixname="auser")
+        assert len(requests) == 1
+        assert requests[0].method == "GET"
+        assert str(requests[0].url) == f"{_SERVICE_URL}/v1/preflight/auser"
+
+    async def test_bearer_token_is_broker_issued_with_service_audience(
+        self, make_client, issuer: BrokerTokenIssuer
+    ) -> None:
+        client, requests = make_client(httpx.Response(200, json=_PREFLIGHT_RESPONSE))
+        await client.preflight(subject="user-123", unixname="auser")
+        claims = issuer.verify(
+            requests[0].headers["authorization"].removeprefix("Bearer ")
+        )
+        assert claims is not None
+        assert claims["sub"] == "user-123"
+        assert claims["aud"] == "voms-token-service"
+
+    async def test_response_body_is_passed_through_verbatim(self, make_client) -> None:
+        client, _ = make_client(httpx.Response(200, json=_PREFLIGHT_RESPONSE))
+        body = await client.preflight(subject="user-123", unixname="auser")
+        assert body == _PREFLIGHT_RESPONSE
+
+    @pytest.mark.parametrize("status_code", [401, 403, 422, 500, 503])
+    async def test_error_status_raises_preflight_error(
+        self, make_client, status_code: int
+    ) -> None:
+        client, _ = make_client(
+            httpx.Response(status_code, json={"detail": "internals"})
+        )
+        with pytest.raises(VomsServicePreflightError):
+            await client.preflight(subject="user-123", unixname="auser")
+
+    async def test_connection_error_raises_preflight_error(self, make_client) -> None:
+        client, _ = make_client(httpx.ConnectError("connection refused"))
+        with pytest.raises(VomsServicePreflightError):
+            await client.preflight(subject="user-123", unixname="auser")
+
+    async def test_timeout_raises_preflight_error(self, make_client) -> None:
+        client, _ = make_client(httpx.ReadTimeout("timed out"))
+        with pytest.raises(VomsServicePreflightError):
+            await client.preflight(subject="user-123", unixname="auser")
+
+    async def test_error_message_never_carries_the_response_body(
+        self, make_client
+    ) -> None:
+        client, _ = make_client(
+            httpx.Response(500, text="/home/auser internals leaked")
+        )
+        with pytest.raises(VomsServicePreflightError) as e:
+            await client.preflight(subject="user-123", unixname="auser")
+        assert "/home/auser" not in str(e.value)

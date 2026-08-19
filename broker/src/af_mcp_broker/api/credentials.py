@@ -18,6 +18,7 @@ from af_mcp_broker.credentials import (
     PosixIdentityRequiredError,
     VomsServiceBadPassphraseError,
     VomsServiceMintError,
+    VomsServicePreflightError,
     X509Provider,
 )
 from af_mcp_broker.identity import Principal, keycloak_dependency
@@ -66,6 +67,12 @@ class ProxyRequest(BaseModel):
     voms: str = "atlas"
     # Which x509 target to mint for; defaults to the first configured x509 target.
     target: str | None = None
+    # Custody consent (service mode): True — store the passphrase in Vault
+    # for hands-free renewal (the pre-toggle behavior, and the default so
+    # existing callers are unchanged); False — mint and store the proxy but
+    # never persist the passphrase, so the link lasts exactly the proxy's
+    # validity window. Legacy mode never persists a passphrase either way.
+    remember: bool = True
 
 
 class ProxyMetadata(BaseModel):
@@ -299,7 +306,9 @@ async def create_proxy(
     provider = await _x509_provider(request, target)
     passphrase = SecretBytes(body.passphrase.get_secret_value().encode())
     try:
-        await provider.issue(principal, target, passphrase=passphrase)
+        await provider.issue(
+            principal, target, passphrase=passphrase, remember=body.remember
+        )
     except PermissionError as exc:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -338,6 +347,62 @@ async def create_proxy(
         expires_at=_iso(meta.not_after),
         remaining_seconds=max(0, int(meta.not_after - time.time())),
     )
+
+
+@router.get(
+    "/x509/preflight",
+    summary="Grid-certificate readiness checklist",
+)
+async def x509_preflight(
+    request: Request,
+    principal: Annotated[Principal, Depends(keycloak_dependency)],
+    target: str | None = None,
+) -> dict[str, Any]:
+    """Proxy voms-token-service's ``GET /v1/preflight/{unixname}`` for the caller.
+
+    Answers "is this user's Globus credential in a state where minting could
+    possibly work?" without performing a mint — the portal's x509 card
+    renders the per-check table (exists/mode/readable + actionable detail)
+    straight from the body, which is passed through verbatim: the checklist
+    shape is voms-token-service's contract, not the broker's.
+
+    Resolved per target like every other /v1/x509 route, since each x509
+    ``identity_providers`` entry may point at its own service. A legacy
+    entry (no ``service_url``) has no service to ask — 501; an unreachable
+    or erroring service is a 502.
+    """
+    resolved = _resolve_x509_target(request, target)
+    provider = await _x509_provider(request, resolved)
+    if principal.unixname is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(
+                PosixIdentityRequiredError(resolved, settings=provider.settings)
+            ),
+        )
+    voms_client = provider.voms_client
+    if voms_client is None:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail=(
+                f"The x509 entry servicing {resolved!r} mints via the legacy "
+                "in-cluster Job path (no service_url configured), so there "
+                "is no voms-token-service to ask for a credential-readiness "
+                "checklist."
+            ),
+        )
+    try:
+        return await voms_client.preflight(
+            subject=principal.subject, unixname=principal.unixname
+        )
+    except VomsServicePreflightError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=(
+                "The grid-certificate checklist is temporarily unavailable "
+                "— retry later."
+            ),
+        ) from exc
 
 
 @router.get(

@@ -8,6 +8,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict
 
+from af_mcp_broker.credentials import X509Provider
 from af_mcp_broker.identity import Principal, keycloak_dependency
 
 if TYPE_CHECKING:
@@ -84,11 +85,20 @@ class IdentityProvider(BaseModel):
     linked: bool
     link_url: str | None
     link_mechanism: LinkMechanism
-    # Expiry (ISO-8601) of the caller's cached x509/VOMS proxy — populated
-    # only on "x509" entries, from the same in-memory ProxyMeta
-    # GET /v1/x509/proxy/status serves (cheap; no Vault round trip). Null on
-    # every other entry, and on an x509 entry when nothing is cached.
+    # Expiry (ISO-8601) of the caller's x509/VOMS proxy — populated only on
+    # "x509" entries. In voms-token-service mode the Vault record is
+    # authoritative (the same probe that decides `linked`); legacy mode
+    # falls back to the in-memory ProxyMeta GET /v1/x509/proxy/status serves.
+    # Null on every other entry, and on an x509 entry with no valid proxy.
     proxy_expires_at: str | None = None
+    # Custody mode of an x509 entry's link (X509Provider.link_status):
+    # "auto-renew" — the Globus passphrase is stored in Vault, proxies
+    # re-mint hands-free; "until-expiry" — only the proxy is stored (the
+    # user declined passphrase custody at link time), so the link lasts
+    # exactly as long as proxy_expires_at. Null when not linked, on legacy
+    # x509 entries (filesystem linkage has no custody concept), and on
+    # every non-x509 entry.
+    x509_link_mode: Literal["auto-renew", "until-expiry"] | None = None
 
 
 class IdentitiesResponse(BaseModel):
@@ -152,16 +162,39 @@ async def _build_providers(
         link_url = (
             _oauth21_link_url(request, alias) if cfg.type == "oauth21-direct" else None
         )
+        if isinstance(provider, X509Provider):
+            # One probe answers linked + custody mode + expiry together. In
+            # service mode the Vault record is authoritative for the expiry;
+            # legacy mode reports no proxy_not_after, so fall back to the
+            # in-memory ProxyMeta GET /v1/x509/proxy/status serves.
+            x509_status = await provider.link_status(principal)
+            linked = x509_status.linked
+            x509_link_mode = x509_status.mode
+            if x509_status.proxy_not_after is not None:
+                proxy_expires_at = datetime.fromtimestamp(
+                    x509_status.proxy_not_after, tz=UTC
+                ).isoformat()
+            elif provider.uses_voms_service:
+                # Vault answered "no valid proxy" — a stale in-memory meta
+                # must not override the authoritative store.
+                proxy_expires_at = None
+            else:
+                proxy_expires_at = _x509_proxy_expires_at(request, principal, cfg)
+        else:
+            linked = await provider.is_linked(principal)
+            x509_link_mode = None
+            proxy_expires_at = None
         providers.append(
             IdentityProvider(
                 id=alias,
                 type=cfg.type,
                 display_name=cfg.display_name,
                 enables=cfg.enables,
-                linked=await provider.is_linked(principal),
+                linked=linked,
                 link_url=link_url,
                 link_mechanism=_LINK_MECHANISM_BY_TYPE[cfg.type],
-                proxy_expires_at=_x509_proxy_expires_at(request, principal, cfg),
+                proxy_expires_at=proxy_expires_at,
+                x509_link_mode=x509_link_mode,
             )
         )
 
