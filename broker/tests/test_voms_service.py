@@ -179,6 +179,19 @@ class TestMintResponse:
         minted = await _mint(client)
         assert minted.not_after == pytest.approx(_EXPECTED_NOT_AFTER)
 
+    async def test_nickname_is_parsed_when_present(self, make_client) -> None:
+        response = dict(_MINT_RESPONSE, nickname="jdoe")
+        client, _ = make_client(httpx.Response(200, json=response))
+        minted = await _mint(client)
+        assert minted.nickname == "jdoe"
+
+    async def test_nickname_defaults_to_none_when_absent(self, make_client) -> None:
+        """A voms-token-service that hasn't shipped the nickname field yet
+        must not make mint() raise a KeyError."""
+        client, _ = make_client()  # _MINT_RESPONSE carries no "nickname" key
+        minted = await _mint(client)
+        assert minted.nickname is None
+
 
 class TestMintFailures:
     async def test_400_is_bad_passphrase(self, make_client) -> None:

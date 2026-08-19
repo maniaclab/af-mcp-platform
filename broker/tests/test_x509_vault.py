@@ -162,7 +162,11 @@ async def _link(store: VaultX509Store, subject: str = SUBJECT) -> None:
 
 
 async def _store_proxy(
-    store: VaultX509Store, subject: str = SUBJECT, *, remaining: float = 3600.0
+    store: VaultX509Store,
+    subject: str = SUBJECT,
+    *,
+    remaining: float = 3600.0,
+    nickname: str | None = None,
 ) -> float:
     not_after = time.time() + remaining
     await store.store_proxy(
@@ -171,6 +175,7 @@ async def _store_proxy(
         dn=_DN,
         voms_attributes=_VOMS_ATTRS,
         not_after=not_after,
+        nickname=nickname,
     )
     return not_after
 
@@ -281,6 +286,22 @@ class TestProxy:
         await _store_proxy(store, subject="someone-else")
         assert await store.get_proxy(SUBJECT) is None
         assert await store.get_link(SUBJECT) is None
+
+    async def test_store_proxy_roundtrips_nickname(self, store) -> None:
+        await _link(store)
+        await _store_proxy(store, nickname="jdoe")
+        record = await store.get_proxy(SUBJECT)
+        assert record is not None
+        assert record.nickname == "jdoe"
+
+    async def test_store_proxy_nickname_defaults_to_none(self, store) -> None:
+        """A voms-token-service that hasn't shipped nicknames yet must not
+        make store_proxy() raise or leave nickname unset."""
+        await _link(store)
+        await _store_proxy(store)
+        record = await store.get_proxy(SUBJECT)
+        assert record is not None
+        assert record.nickname is None
 
 
 class TestClearProxy:

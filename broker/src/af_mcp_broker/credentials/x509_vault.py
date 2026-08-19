@@ -11,8 +11,8 @@ renew a VOMS proxy with no user interaction:
   captured at link time because renewal paths (the redeem endpoint's
   hands-free re-mint) hold only a broker-token subject, not a live
   ``Principal``;
-* the current **proxy PEM** and its dn/voms_attributes/not_after, served on
-  redeem until it nears expiry.
+* the current **proxy PEM** and its dn/voms_attributes/not_after/nickname,
+  served on redeem until it nears expiry.
 
 One KV-v2 record per subject at ``{kv_path_prefix}/{subject}/x509``, over
 the shared ``VaultKV`` transport — this module owns the path layout, the
@@ -62,6 +62,10 @@ class StoredX509Credential(BaseModel):
     dn: str | None = None
     voms_attributes: list[str] = Field(default_factory=list)
     not_after: float | None = None  # epoch seconds (UTC)
+    # VOMS nickname attribute (issue #191) — the subject's CERN/Rucio
+    # account, which AF unixnames do not match. None when the minting
+    # voms-token-service hasn't shipped it yet.
+    nickname: str | None = None
 
     @property
     def has_link(self) -> bool:
@@ -155,6 +159,7 @@ class VaultX509Store:
         dn: str,
         voms_attributes: list[str],
         not_after: float,
+        nickname: str | None = None,
     ) -> None:
         """Merge a freshly-minted proxy into *subject*'s record, preserving the link half."""
 
@@ -166,6 +171,7 @@ class VaultX509Store:
                     "dn": dn,
                     "voms_attributes": list(voms_attributes),
                     "not_after": not_after,
+                    "nickname": nickname,
                 }
             )
 

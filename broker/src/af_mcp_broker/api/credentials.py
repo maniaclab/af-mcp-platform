@@ -113,6 +113,12 @@ class ProxyRedeemResponse(BaseModel):
     voms_attributes: list[str]
     expires_at: str  # ISO-8601
     remaining_seconds: int
+    # VOMS nickname attribute (issue #191) — the subject's CERN/Rucio
+    # account, which AF unixnames do not match; consumed by
+    # af_credentials.proxy.ProxyClient so backends (e.g. rucio-mcp) have a
+    # source of truth other than account=None. None on the legacy
+    # (non-Vault) redeem path, which has no such field to plumb it through.
+    nickname: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -601,6 +607,7 @@ async def _redeem_from_vault(
         voms_attributes=list(record.voms_attributes),
         expires_at=_iso(record.not_after),
         remaining_seconds=max(0, int(record.not_after - now)),
+        nickname=record.nickname,
     )
 
 

@@ -86,13 +86,17 @@ class MintedProxy:
     """A proxy minted by voms-token-service, with its parsed metadata.
 
     ``not_after`` is epoch seconds (UTC), converted from the service's
-    ISO-8601 ``expires_at``.
+    ISO-8601 ``expires_at``. ``nickname`` is the VOMS ``nickname`` attribute
+    (issue #191) — the subject's CERN/Rucio account, which AF unixnames do
+    not match; optional because a voms-token-service deployment that hasn't
+    shipped it yet omits the key entirely.
     """
 
     pem: str
     dn: str
     voms_attributes: list[str]
     not_after: float
+    nickname: str | None = None
 
 
 class VomsTokenServiceClient:
@@ -206,6 +210,9 @@ class VomsTokenServiceClient:
             dn=data["dn"],
             voms_attributes=list(data["voms_attributes"]),
             not_after=expires_dt.timestamp(),
+            # Optional key — a voms-token-service deployment that hasn't
+            # shipped issue #191's nickname field yet must not KeyError here.
+            nickname=data.get("nickname"),
         )
 
     async def preflight(self, *, subject: str, unixname: str) -> dict[str, Any]:

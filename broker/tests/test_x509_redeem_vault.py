@@ -100,7 +100,11 @@ async def _seed_link(store: FakeX509Store, subject: str = "sub-abc") -> None:
 
 
 async def _seed_proxy(
-    store: FakeX509Store, subject: str = "sub-abc", *, remaining: float = 3600.0
+    store: FakeX509Store,
+    subject: str = "sub-abc",
+    *,
+    remaining: float = 3600.0,
+    nickname: str | None = None,
 ) -> float:
     not_after = time.time() + remaining
     await store.store_proxy(
@@ -109,6 +113,7 @@ async def _seed_proxy(
         dn=_DN,
         voms_attributes=_VOMS_ATTRS,
         not_after=not_after,
+        nickname=nickname,
     )
     return not_after
 
@@ -149,6 +154,33 @@ class TestRedeemVaultServe:
         assert releases[0]["outcome"] == "success"
         assert releases[0]["principal_sub"] == "sub-abc"
         assert releases[0]["target"] == "ami"
+
+    async def test_stored_nickname_is_included_in_the_response(
+        self, service_app
+    ) -> None:
+        """issue #191: the VOMS nickname (the redeeming backend's source of
+        the CERN/Rucio account, which AF unixnames don't match) rides
+        alongside the proxy PEM."""
+        client, store, _, _ = service_app
+        await _seed_link(store)
+        await _seed_proxy(store, nickname="jdoe")
+
+        resp = _redeem(client, _mint_token(client))
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["nickname"] == "jdoe"
+
+    async def test_missing_nickname_serves_as_none(self, service_app) -> None:
+        """A record stored before voms-token-service shipped nicknames must
+        still redeem successfully, with nickname simply absent."""
+        client, store, _, _ = service_app
+        await _seed_link(store)
+        await _seed_proxy(store)
+
+        resp = _redeem(client, _mint_token(client))
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["nickname"] is None
 
     def test_vault_mode_ignores_the_in_memory_cache(
         self, service_app, tmp_path: Path
