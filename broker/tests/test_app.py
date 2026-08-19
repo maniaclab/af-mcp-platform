@@ -13,6 +13,7 @@ from af_mcp_broker.app import _build_target_to_alias
 from af_mcp_broker.config import (
     KeycloakBrokeredProviderConfig,
     OAuth21DirectProviderConfig,
+    X509ProviderConfig,
 )
 
 if TYPE_CHECKING:
@@ -22,10 +23,13 @@ if TYPE_CHECKING:
 
 def test_build_target_to_alias_covers_all_auth_shapes() -> None:
     """target_to_alias (issue #90) joins backend targets to whichever
-    credential provider services them: x509 targets get the synthetic
-    "x509" alias, keycloak-brokered/oauth21-direct targets get their
-    configured alias, and auth_type "none" targets (e.g. "docs") are simply
-    absent — no user credential is needed for them.
+    credential provider services them, uniformly from the effective
+    `identity_providers` configs: x509 targets get their entry's alias
+    (previously a hardcoded synthetic "x509" string — the lifespan now
+    synthesizes a real entry when none is configured, so this helper no
+    longer special-cases x509 at all), keycloak-brokered/oauth21-direct
+    targets get their configured alias, and auth_type "none" targets
+    (e.g. "docs") are simply absent — no user credential is needed for them.
     """
     identity_providers_cfgs = [
         KeycloakBrokeredProviderConfig(alias="atlas-oidc", targets=["rucio"]),
@@ -36,12 +40,10 @@ def test_build_target_to_alias_covers_all_auth_shapes() -> None:
             token_endpoint="https://backend-as.example/token",
             issuer="https://backend-as.example",
         ),
+        X509ProviderConfig(alias="x509", targets=["ami"]),
     ]
 
-    mapping = _build_target_to_alias(
-        x509_targets=["ami"],
-        identity_providers_cfgs=identity_providers_cfgs,
-    )
+    mapping = _build_target_to_alias(identity_providers_cfgs)
 
     assert mapping == {
         "rucio": "atlas-oidc",
@@ -49,6 +51,16 @@ def test_build_target_to_alias_covers_all_auth_shapes() -> None:
         "ami": "x509",
     }
     assert "docs" not in mapping
+
+
+def test_build_target_to_alias_uses_the_real_x509_entry_alias() -> None:
+    """An operator-chosen x509 alias flows through to /v1/catalog's
+    credential_provider — nothing hardcodes the "x509" string anymore."""
+    mapping = _build_target_to_alias(
+        [X509ProviderConfig(alias="grid-cert-atlas", targets=["ami", "panda"])]
+    )
+
+    assert mapping == {"ami": "grid-cert-atlas", "panda": "grid-cert-atlas"}
 
 
 # ---------------------------------------------------------------------------

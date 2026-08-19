@@ -428,3 +428,100 @@ def test_identity_providers_condor_token_audience_is_overridable():
 
     (cfg,) = settings.identity_providers
     assert cfg.audience == "condor-token-service-dev"
+
+
+# ---------------------------------------------------------------------------
+# x509 identity providers — X509Provider's config surface, replacing the
+# global VOMS_TOKEN_SERVICE_URL special case (which crash-looped a broker
+# whose operator intuitively wrote an identityProviders entry for the voms
+# service: `union_tag_invalid`, no such type existed). Discriminated-union
+# parsing, the voms/valid defaults, and the Vault-connection coupling.
+# ---------------------------------------------------------------------------
+
+_X509_ENTRY = {
+    "type": "x509",
+    "alias": "x509",
+    "targets": ["ami"],
+    "service_url": "http://voms-token-service.af-mcp.svc:8080",
+}
+
+_VAULT_ENV = {"vault_addr": "https://vault.example", "vault_auth_role": "broker"}
+
+
+def test_identity_providers_x509_parses():
+    settings = Settings(identity_providers=[_X509_ENTRY], **_VAULT_ENV)
+
+    (cfg,) = settings.identity_providers
+    assert cfg.type == "x509"
+    assert cfg.alias == "x509"
+    assert cfg.targets == ["ami"]
+    assert str(cfg.service_url).rstrip("/") == (
+        "http://voms-token-service.af-mcp.svc:8080"
+    )
+    # Defaults mirror the deprecated global VOMS_TOKEN_SERVICE_* settings.
+    assert cfg.voms == "atlas"
+    assert cfg.valid == "192:00"
+    assert cfg.audience == "voms-token-service"
+
+
+def test_identity_providers_x509_voms_and_valid_are_overridable():
+    settings = Settings(
+        identity_providers=[{**_X509_ENTRY, "voms": "dune", "valid": "24:00"}],
+        **_VAULT_ENV,
+    )
+
+    (cfg,) = settings.identity_providers
+    assert cfg.voms == "dune"
+    assert cfg.valid == "24:00"
+
+
+def test_identity_providers_multiple_x509_entries_are_expressible():
+    """Two entries with different service URLs/VOs — a functional gain over
+    the single global env var, which could only ever describe one service."""
+    settings = Settings(
+        identity_providers=[
+            _X509_ENTRY,
+            {
+                "type": "x509",
+                "alias": "x509-dune",
+                "targets": ["dune-mcp"],
+                "service_url": "http://voms-token-service-dune.af-mcp.svc:8080",
+                "voms": "dune",
+            },
+        ],
+        **_VAULT_ENV,
+    )
+
+    atlas, dune = settings.identity_providers
+    assert atlas.voms == "atlas"
+    assert dune.voms == "dune"
+    assert str(atlas.service_url) != str(dune.service_url)
+
+
+def test_identity_providers_x509_service_url_defaults_to_none():
+    """No service_url selects the legacy k8s-Job/local-dev mint path — the
+    same semantics as an empty VOMS_TOKEN_SERVICE_URL, and the shape app.py
+    synthesizes for x509 backends with no explicit entry."""
+    entry = {k: v for k, v in _X509_ENTRY.items() if k != "service_url"}
+    settings = Settings(identity_providers=[entry])
+
+    (cfg,) = settings.identity_providers
+    assert cfg.service_url is None
+
+
+def test_vault_config_required_by_x509_entry_with_service_url():
+    """voms-token-service mode persists proxies and passphrases in Vault
+    (there is no in-memory fallback), so an x509 entry with a service_url
+    implies the x509 store — same coupling _validate_vault_config already
+    enforces for the deprecated global voms_token_service_url."""
+    with pytest.raises(ValueError, match="vault_addr"):
+        Settings(identity_providers=[_X509_ENTRY])
+    with pytest.raises(ValueError, match="vault_auth_role"):
+        Settings(identity_providers=[_X509_ENTRY], vault_addr="https://vault.example")
+
+
+def test_vault_config_not_required_by_legacy_x509_entry():
+    """A legacy-mode entry (no service_url) mints via the k8s-Job/local path
+    and touches no Vault store — the connection settings stay optional."""
+    entry = {k: v for k, v in _X509_ENTRY.items() if k != "service_url"}
+    Settings(identity_providers=[entry])  # must not raise

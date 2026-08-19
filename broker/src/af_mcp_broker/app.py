@@ -18,7 +18,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import JSONResponse, Response
 from fastmcp.utilities.lifespan import combine_lifespans
-from pydantic import ValidationError
+from pydantic import AnyHttpUrl, ValidationError
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from af_mcp_broker._version import version as __version__
@@ -27,7 +27,7 @@ from af_mcp_broker.api.tokens import TokenRegistry
 from af_mcp_broker.api.wellknown import router as wellknown_router
 from af_mcp_broker.audit.logger import init_audit_logger
 from af_mcp_broker.authorization import EntitlementPolicy, load_policy
-from af_mcp_broker.config import Settings
+from af_mcp_broker.config import Settings, X509ProviderConfig
 from af_mcp_broker.credentials import (
     BrokerIssuedProvider,
     CondorTokenProvider,
@@ -72,17 +72,136 @@ logger = structlog.get_logger(__name__)
 
 
 def _build_target_to_alias(
-    x509_targets: list[str],
     identity_providers_cfgs: Iterable[IdentityProviderConfig],
 ) -> dict[str, str]:
-    """Reverse map from backend target name to the credential-provider alias that services it, surfaced on /v1/catalog as ``credential_provider`` (issue #90). x509 targets get the synthetic "x509" alias (there is no per-entry ``identity_providers`` config for x509 — see the x509_targets loop in ``lifespan``); keycloak-brokered/oauth21-direct targets get their configured alias. Targets with ``auth_type: none`` need no user credential and are simply absent from the mapping."""
+    """Reverse map from backend target name to the credential-provider alias that services it, surfaced on /v1/catalog as ``credential_provider`` (issue #90). Every target gets its entry's configured alias — x509 targets included, since x509 is now an ordinary ``identity_providers`` type (``lifespan`` synthesizes an entry for x509 backends with no explicit one, so the mapping never needs a hardcoded synthetic alias). Targets with ``auth_type: none`` need no user credential and are simply absent from the mapping."""
     target_to_alias: dict[str, str] = {}
-    for target in x509_targets:
-        target_to_alias[target] = "x509"
     for cfg in identity_providers_cfgs:
         for target in cfg.targets:
             target_to_alias[target] = cfg.alias
     return target_to_alias
+
+
+# Metadata for the x509 entry `_effective_identity_provider_configs`
+# synthesizes when none is configured — keeps the pre-existing portal-facing
+# label/description (and the "x509" alias /v1/catalog historically reported
+# for x509 targets, which the portal's catalog join keys on).
+_X509_SYNTHESIZED_ALIAS = "x509"
+_X509_SYNTHESIZED_DISPLAY_NAME = "Grid certificate (x509)"
+_X509_SYNTHESIZED_ENABLES = (
+    "VOMS proxy minting for x509-authenticated backends from your grid certificate"
+)
+
+
+def _effective_identity_provider_configs(
+    settings: Settings,
+    x509_backend_names: list[str],
+) -> list[IdentityProviderConfig]:
+    """The `identity_providers` list the lifespan actually wires: the configured entries, plus a synthesized x509 entry when x509 backends exist with no explicit one.
+
+    Synthesis rules (in precedence order):
+
+    * Explicit ``type: "x509"`` entries are authoritative. The deprecated
+      global ``voms_token_service_url`` is then ignored, with a warning.
+    * ``voms_token_service_url`` set with no explicit entry synthesizes an
+      equivalent service-mode entry (alias "x509", targets = every
+      ``auth_type: x509`` backend, service settings from the deprecated
+      globals) so existing deployments keep working unchanged through one
+      release — with a loud deprecation warning pointing at the new config.
+    * Neither, but x509 backends exist: synthesize a legacy-mode entry
+      (``service_url`` None — the k8s-Job/local-dev mint path) so the
+      registry/catalog/identities surfaces stay populated without any
+      synthetic-alias special case downstream. Legacy mode is supported,
+      not deprecated — no warning.
+    """
+    configs = list(settings.identity_providers)
+    if any(cfg.type == "x509" for cfg in configs):
+        if settings.voms_token_service_url:
+            logger.warning(
+                "voms_token_service_url_ignored",
+                hint=(
+                    "VOMS_TOKEN_SERVICE_URL is set but identity_providers "
+                    "already contains an x509 entry; the explicit entries "
+                    "win and the env var is ignored. Remove "
+                    "VOMS_TOKEN_SERVICE_URL from the deployment."
+                ),
+            )
+        return configs
+    if not x509_backend_names:
+        return configs
+    if settings.voms_token_service_url:
+        logger.warning(
+            "voms_token_service_url_deprecated",
+            hint=(
+                "VOMS_TOKEN_SERVICE_URL is deprecated: declare an "
+                "identity_providers entry of type 'x509' instead (chart: "
+                "broker.identityProviders), whose per-entry service_url/"
+                "voms/valid/audience replace the VOMS_TOKEN_SERVICE_* "
+                "globals. An equivalent entry has been synthesized for "
+                "this release."
+            ),
+            synthesized_alias=_X509_SYNTHESIZED_ALIAS,
+            targets=x509_backend_names,
+        )
+        configs.append(
+            X509ProviderConfig(
+                alias=_X509_SYNTHESIZED_ALIAS,
+                targets=list(x509_backend_names),
+                service_url=AnyHttpUrl(settings.voms_token_service_url),
+                voms=settings.voms_token_service_voms,
+                valid=settings.voms_token_service_valid,
+                audience=settings.voms_token_service_audience,
+                display_name=_X509_SYNTHESIZED_DISPLAY_NAME,
+                enables=_X509_SYNTHESIZED_ENABLES,
+            )
+        )
+    else:
+        configs.append(
+            X509ProviderConfig(
+                alias=_X509_SYNTHESIZED_ALIAS,
+                targets=list(x509_backend_names),
+                display_name=_X509_SYNTHESIZED_DISPLAY_NAME,
+                enables=_X509_SYNTHESIZED_ENABLES,
+            )
+        )
+    return configs
+
+
+def _validate_x509_provider_targets(
+    identity_providers_cfgs: Iterable[IdentityProviderConfig],
+    x509_backend_names: set[str],
+) -> None:
+    """Fail-closed drift protection between ``auth_type: x509`` backends and explicit x509 ``identity_providers`` entries (both directions) — same reasoning as issue #60's required_capability consolidation: a mismatch is a typo or a stale backends.yaml, and a startup RuntimeError surfaces it as a visible rollout failure with zero outage risk.
+
+    Only explicit entries participate: entry-less deployments (where
+    ``_effective_identity_provider_configs`` synthesizes an entry covering
+    every x509 backend by construction) validate trivially.
+    """
+    x509_cfgs = [cfg for cfg in identity_providers_cfgs if cfg.type == "x509"]
+    if not x509_cfgs:
+        return
+    covered = {target for cfg in x509_cfgs for target in cfg.targets}
+    uncovered = sorted(x509_backend_names - covered)
+    if uncovered:
+        msg = (
+            "The following auth_type: x509 backends are not targeted by any "
+            f"x509 identity_providers entry: {uncovered}. They would have no "
+            "credential provider (and no catalog credential_provider alias) "
+            "at all. Add them to an x509 entry's targets, or change their "
+            "auth_type."
+        )
+        raise RuntimeError(msg)
+    not_x509 = sorted(covered - x509_backend_names)
+    if not_x509:
+        msg = (
+            "The following x509 identity_providers targets are not "
+            f"auth_type: x509 backends: {not_x509}. The aggregator only "
+            "injects the identity JWT (and the redeem endpoint only accepts "
+            "the audience) for auth_type: x509 backends, so the entry would "
+            "silently do nothing for them. Fix the typo, set the backend's "
+            "auth_type to x509 in backends.yaml, or remove the target."
+        )
+        raise RuntimeError(msg)
 
 
 def _open_audit_output(dest: str) -> TextIO:
@@ -226,6 +345,26 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         )
         raise RuntimeError(msg)
 
+    # --- x509 backends and the effective identity-provider config list:
+    # x509 is an ordinary `identity_providers` type; when x509 backends
+    # exist with no explicit entry, one is synthesized (service-mode from
+    # the deprecated VOMS_TOKEN_SERVICE_URL, legacy-mode otherwise) so
+    # every surface downstream — provider registration, /v1/catalog's
+    # credential_provider alias, /v1/identities — works from real entries
+    # with no synthetic special case. Explicit entries are drift-checked
+    # against `auth_type: x509` backends, both directions, fail-closed.
+    x509_targets: list[str] = [
+        spec.name for spec in backends if spec.auth_type == "x509"
+    ]
+    identity_provider_cfg_list = _effective_identity_provider_configs(
+        settings, x509_targets
+    )
+    _validate_x509_provider_targets(settings.identity_providers, set(x509_targets))
+    has_service_mode_x509_cfg = any(
+        cfg.type == "x509" and cfg.service_url is not None
+        for cfg in identity_provider_cfg_list
+    )
+
     # --- Credential subsystem: cache + janitor + provider registry.
     credential_cache = CredentialCache(
         max_failed_unlocks=settings.credential_unlock_max_failures,
@@ -240,8 +379,8 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # the principal cache, and the x509 link/proxy store below, whichever of
     # the four (or more) is configured to use Vault — see vault_kv.py's
     # module docstring for the transport/domain split.
-    # voms_token_service_url implies the x509 store: in service mode proxies
-    # and passphrases persist in Vault (Settings._validate_vault_config
+    # A service-mode x509 entry implies the x509 store: in service mode
+    # proxies and passphrases persist in Vault (Settings._validate_vault_config
     # already refused to construct `settings` without the connection
     # settings).
     vault_kv: VaultKV | None = None
@@ -249,7 +388,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         settings.token_store_backend == "vault"
         or settings.token_registry_backend == "vault"
         or settings.principal_cache_backend == "vault"
-        or settings.voms_token_service_url
+        or has_service_mode_x509_cfg
     ):
         vault_kv = VaultKV(
             addr=settings.vault_addr,
@@ -335,85 +474,71 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         )
         raise RuntimeError(msg)
 
-    # --- x509: mint path selection (issue #112 follow-up). When
-    # voms_token_service_url is set, X509Provider mints via voms-token-service
-    # (the only component that mounts user homes) and persists both the proxy
-    # and the link (Globus passphrase for hands-free renewal) in Vault;
-    # otherwise the legacy k8s-Job/local-dev path serves, exactly as before.
-    # The service exchange is authenticated by broker-signed identity tokens,
-    # so a service URL with no signing key is fail-closed at boot — same
-    # rollout-failure-over-silent-breakage reasoning as the broker-issued
-    # check above.
-    voms_service_client: VomsTokenServiceClient | None = None
-    x509_vault_store: VaultX509Store | None = None
-    if settings.voms_token_service_url:
-        if broker_token_issuer is None:
+    # --- x509 signing-key requirements. The aggregator injects a
+    # broker-issued identity JWT for auth_type: x509 targets, the redeem
+    # endpoint verifies it, and in service mode every voms-token-service
+    # mint call is authenticated the same way — so an x509 entry needs the
+    # signing key. An explicit entry (or a service-mode one, including the
+    # entry the deprecated VOMS_TOKEN_SERVICE_URL synthesizes) is
+    # fail-closed at boot without it — same rollout-failure-over-silent-
+    # breakage reasoning as the broker-issued/condor-token check above. The
+    # entry-less legacy state keeps the pre-existing loud WARNING instead:
+    # the shipped backends.yaml has always declared an x509 backend (ami),
+    # so refusing to boot would break existing keyless deployments that
+    # never call it; enforcement then stays at the point of use — the
+    # aggregator's x509 factory raises an actionable ToolError and the
+    # redeem endpoint answers 503.
+    if broker_token_issuer is None:
+        if (
+            any(cfg.type == "x509" for cfg in settings.identity_providers)
+            or has_service_mode_x509_cfg
+        ):
             msg = (
-                "VOMS_TOKEN_SERVICE_URL is set but BROKER_SIGNING_KEY_FILE is "
-                "not, so the broker cannot sign the AF Broker Identity Tokens "
+                "identity_providers contains an x509 entry (or the deprecated "
+                "VOMS_TOKEN_SERVICE_URL synthesized one) but "
+                "BROKER_SIGNING_KEY_FILE is not set, so the broker cannot "
+                "sign the AF Broker Identity Tokens the aggregator injects "
+                "for x509 targets, the redeem endpoint verifies, and "
                 "voms-token-service authenticates mint calls with. Mount the "
                 "RS256 signing key (chart: broker.identityToken."
-                "existingSigningKeySecret) or unset VOMS_TOKEN_SERVICE_URL."
+                "existingSigningKeySecret) or remove the entry."
             )
             raise RuntimeError(msg)
+        if x509_targets:
+            logger.warning(
+                "x509_backends_without_signing_key",
+                x509_targets=x509_targets,
+                hint=(
+                    "BROKER_SIGNING_KEY_FILE is not set; x509 backends cannot "
+                    "be called over /mcp until the RS256 signing key is "
+                    "mounted (chart: broker.identityToken."
+                    "existingSigningKeySecret)."
+                ),
+            )
+
+    # --- x509 Vault link/proxy store, shared by every service-mode entry:
+    # one KV record per subject regardless of how many entries exist (issue
+    # #112's custodianship model — the link is per user, not per service).
+    x509_vault_store: VaultX509Store | None = None
+    if has_service_mode_x509_cfg:
         assert vault_kv is not None  # guaranteed by the vault block above
-        voms_service_client = VomsTokenServiceClient(
-            issuer=broker_token_issuer,
-            service_url=settings.voms_token_service_url,
-            audience=settings.voms_token_service_audience,
-            voms=settings.voms_token_service_voms,
-            valid=settings.voms_token_service_valid,
-        )
         x509_vault_store = VaultX509Store(
             vault_kv=vault_kv, kv_path_prefix=settings.x509_kv_path_prefix
         )
         logger.info(
             "x509_voms_service_mode",
-            service_url=settings.voms_token_service_url,
             kv_path_prefix=settings.x509_kv_path_prefix,
         )
 
-    x509_provider = X509Provider(
-        settings,
-        credential_cache,
-        voms_client=voms_service_client,
-        vault_store=x509_vault_store,
-    )
-
-    # Map each x509-auth backend target to X509Provider (voms-proxy minted
-    # from the user's ~/.globus cert, or via voms-token-service when
-    # configured). `bearer`-auth backends' credential provider comes from
-    # `identity_providers`' per-entry `targets` list (see below), not a
-    # blanket auth_type == "bearer" match against a single OIDCProvider —
-    # this lets different backends bind to different keycloak-brokered/
-    # oauth21-direct aliases. `none` requires no user credential, so no
-    # provider is registered.
-    x509_targets: list[str] = []
-    for spec in backends:
-        if spec.auth_type == "x509":
-            credential_registry.register(spec.name, x509_provider)
-            x509_targets.append(spec.name)
-
-    # x509 backends need the signing key too (issue #112): the aggregator
-    # injects a broker-issued identity JWT for auth_type: x509 targets, and
-    # the redeem endpoint verifies it. This is deliberately a loud startup
-    # WARNING rather than the fail-closed RuntimeError above: the shipped
-    # backends.yaml has always declared an x509 backend (ami), so refusing to
-    # boot would break existing keyless deployments that never call it. The
-    # enforcement stays at the point of use -- the aggregator's x509 factory
-    # raises an actionable ToolError and the redeem endpoint answers 503.
-    if broker_token_issuer is None and x509_targets:
-        logger.warning(
-            "x509_backends_without_signing_key",
-            x509_targets=x509_targets,
-            hint=(
-                "BROKER_SIGNING_KEY_FILE is not set; x509 backends cannot be "
-                "called over /mcp until the RS256 signing key is mounted "
-                "(chart: broker.identityToken.existingSigningKeySecret)."
-            ),
-        )
-
-    for cfg in settings.identity_providers:
+    # One CredentialProvider per effective entry, registered for the entry's
+    # targets below — x509 included (voms-proxy minted from the user's
+    # ~/.globus cert in legacy mode, or via the entry's voms-token-service
+    # when a service_url is configured). `bearer`-auth backends' credential
+    # provider comes from `identity_providers`' per-entry `targets` list,
+    # not a blanket auth_type match — this lets different backends bind to
+    # different aliases. `none` requires no user credential, so no provider
+    # is registered.
+    for cfg in identity_provider_cfg_list:
         provider: CredentialProvider
         if cfg.type == "keycloak-brokered":
             provider = OIDCProvider(
@@ -441,6 +566,34 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
                 service_url=str(cfg.service_url),
                 audience=cfg.audience,
             )
+        elif cfg.type == "x509":
+            if cfg.service_url is not None:
+                # voms-token-service mode: mint at the entry's service (the
+                # only component that mounts user homes) and persist both the
+                # proxy and the link (Globus passphrase for hands-free
+                # renewal) in Vault (issue #112 follow-up).
+                assert broker_token_issuer is not None  # guaranteed by the check above
+                assert x509_vault_store is not None  # built above for service mode
+                provider = X509Provider(
+                    settings,
+                    credential_cache,
+                    targets=frozenset(cfg.targets),
+                    voms_client=VomsTokenServiceClient(
+                        issuer=broker_token_issuer,
+                        service_url=str(cfg.service_url),
+                        audience=cfg.audience,
+                        voms=cfg.voms,
+                        valid=cfg.valid,
+                    ),
+                    vault_store=x509_vault_store,
+                )
+            else:
+                # Legacy k8s-Job/local-dev mint path, exactly as before.
+                provider = X509Provider(
+                    settings,
+                    credential_cache,
+                    targets=frozenset(cfg.targets),
+                )
         else:
             assert oauth21_token_store is not None  # guaranteed by the check above
             provider = OAuth21Provider(
@@ -495,9 +648,20 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         raise RuntimeError(msg)
 
     # --- Identity<->backend join for /v1/catalog's credential_provider field
-    # (issue #90): who services each target, reusing the x509_targets and
-    # identity_providers config already assembled above.
-    target_to_alias = _build_target_to_alias(x509_targets, settings.identity_providers)
+    # (issue #90): who services each target, from the same effective config
+    # list the providers above were wired from — x509 targets get their real
+    # entry's alias, no synthetic string.
+    target_to_alias = _build_target_to_alias(identity_provider_cfg_list)
+
+    # The default X509Provider api/credentials.py's /v1/x509/* routes fall
+    # back to when no explicit target is given: the provider servicing the
+    # first x509 backend (matching _resolve_x509_target's default), or None
+    # when no x509 backend exists at all.
+    x509_provider: X509Provider | None = None
+    if x509_targets:
+        resolved = await credential_registry.resolve(x509_targets[0])
+        assert isinstance(resolved, X509Provider)  # registered above
+        x509_provider = resolved
 
     # --- MCP OAuth discovery bootstrap (issue #140): short-lived, single-use
     # authorization codes minted by the Keycloak-login callback and redeemed

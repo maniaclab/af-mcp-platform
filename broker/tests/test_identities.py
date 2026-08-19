@@ -3,13 +3,15 @@
 ``providers`` reflects whatever ``identity_providers`` entries are
 configured, in config order, uniform across both linking mechanisms:
 Keycloak's stored-broker-token pattern (``OIDCProvider``) and the broker's
-own direct OAuth 2.1 client (``OAuth21Provider``) — plus one synthetic
-"x509" entry appended when any backend is wired with ``auth_type: x509``
-(x509 has no ``identity_providers`` config; see the x509 section below).
-These tests exercise building that list: probing ``is_linked()`` so the
-response reflects reality rather than a JWT claim that may be absent,
-``link_url`` shape for both provider types (always null for
-keycloak-brokered — issue #66 PR4), ``link_mechanism`` per type, and
+own direct OAuth 2.1 client (``OAuth21Provider``). x509 is an ordinary
+entry too: when backends are wired with ``auth_type: x509`` and no explicit
+entry exists, app.py synthesizes one (alias "x509", appended after the
+configured entries), so the x509 row is registry-sourced like every other
+— the response shape is unchanged from the former synthetic-entry era (see
+the x509 section below). These tests exercise building that list: probing
+``is_linked()`` so the response reflects reality rather than a JWT claim
+that may be absent, ``link_url`` shape for both provider types (always null
+for keycloak-brokered — issue #66 PR4), ``link_mechanism`` per type, and
 config-order preservation.
 """
 
@@ -285,8 +287,9 @@ def test_providers_order_matches_identity_providers_config_order(
 
     assert resp.status_code == 200, resp.text
     ids = [p["id"] for p in resp.json()["providers"]]
-    # The synthetic "x509" entry (the shipped backends.yaml wires "ami" with
-    # auth_type: x509) always trails the configured entries.
+    # The synthesized "x509" entry (the shipped backends.yaml wires "ami"
+    # with auth_type: x509 and no explicit x509 entry is configured, so
+    # app.py appends one) always trails the configured entries.
     assert ids == ["z-oauth21-provider", "a-keycloak-provider", "x509"]
 
 
@@ -354,12 +357,13 @@ def test_broker_issued_link_mechanism_is_none(
 
 
 # ---------------------------------------------------------------------------
-# The synthetic "x509" entry — surfaced whenever any backend is wired with
-# auth_type: x509 (the shipped backends.yaml's "ami"). One entry regardless
-# of how many x509 targets exist: a single X509Provider (one Vault link
-# record / one ~/.globus pair per subject) services all of them, and its id
-# "x509" matches the synthetic credential_provider alias /v1/catalog reports
-# (app.py's _build_target_to_alias), which the portal joins on.
+# The x509 entry — registry-sourced like every other row (the synthetic-entry
+# path was removed when x509 became a first-class identity_providers type):
+# with no explicit entry configured, app.py synthesizes one covering every
+# auth_type: x509 backend (the shipped backends.yaml's "ami"), keeping the
+# pre-existing response shape — id "x509" matching the credential_provider
+# alias /v1/catalog reports (app.py's _build_target_to_alias), which the
+# portal joins on.
 # ---------------------------------------------------------------------------
 
 _NO_X509_BACKENDS_YAML = """
@@ -413,7 +417,7 @@ def test_x509_entry_absent_without_x509_backends(
 def test_x509_entry_appended_after_configured_providers(
     app_client: tuple[TestClient, dict],
 ) -> None:
-    """The synthetic entry has no config-order slot of its own — it always
+    """The synthesized entry has no config-order slot of its own — it always
     trails the operator-configured identity_providers entries."""
     client, _ = app_client
     resp = client.get("/v1/identities", headers=_AUTH)
@@ -421,6 +425,55 @@ def test_x509_entry_appended_after_configured_providers(
     assert resp.status_code == 200, resp.text
     ids = [p["id"] for p in resp.json()["providers"]]
     assert ids == [DEFAULT_KEYCLOAK_ALIAS, "x509"]
+
+
+def test_explicit_x509_entry_renders_from_its_config(
+    monkeypatch: pytest.MonkeyPatch,
+    app_client_factory: Callable[..., object],
+    tmp_path,
+) -> None:
+    """An operator-written x509 entry is an ordinary registry row: its own
+    alias/display_name/enables, the passphrase mechanism, no link_url — no
+    synthetic fallback involved (here a legacy-mode entry, service_url
+    omitted, so no Vault/voms-token-service deployment is needed to boot;
+    the signing key is still required — explicit entries are fail-closed
+    without it, see app.py's lifespan)."""
+    from test_broker_issued import _make_rsa_key, _private_pem
+
+    key_file = tmp_path / "signing-key.pem"
+    key_file.write_bytes(_private_pem(_make_rsa_key()))
+    monkeypatch.setenv("BROKER_SIGNING_KEY_FILE", str(key_file))
+    monkeypatch.setenv("BROKER_PUBLIC_ORIGIN", "https://mcp.example.com")
+    monkeypatch.setenv(
+        "IDENTITY_PROVIDERS",
+        json.dumps(
+            [
+                {
+                    "type": "x509",
+                    "alias": "grid-cert-atlas",
+                    "display_name": "ATLAS grid certificate",
+                    "enables": "VOMS proxies for AMI",
+                    "targets": ["ami"],
+                }
+            ]
+        ),
+    )
+
+    with app_client_factory() as (client, _state):
+        resp = client.get("/v1/identities", headers=_AUTH)
+
+    assert resp.status_code == 200, resp.text
+    by_id = _by_id(resp.json())
+    assert "x509" not in by_id  # no synthesized entry alongside the real one
+    entry = by_id["grid-cert-atlas"]
+    assert entry["type"] == "x509"
+    assert entry["display_name"] == "ATLAS grid certificate"
+    assert entry["enables"] == "VOMS proxies for AMI"
+    assert entry["link_mechanism"] == "passphrase"
+    assert entry["link_url"] is None
+    # The ~/.globus pair app_client_factory pre-creates makes the default
+    # principal linked in legacy mode — same probe as the alias "x509" case.
+    assert entry["linked"] is True
 
 
 def test_x509_linked_true_legacy_mode(
