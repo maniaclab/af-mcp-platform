@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import time
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 import pytest
@@ -334,3 +335,68 @@ class TestUnlockEndpointCustodyConsent:
 
         assert resp.status_code == 201, resp.text
         assert store.records["sub-abc"].passphrase is not None
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/x509/proxy/status in service mode: Vault-authoritative
+# ---------------------------------------------------------------------------
+
+_STATUS = "/v1/x509/proxy/status"
+
+
+class TestProxyStatusServiceMode:
+    async def test_answers_from_vault_when_in_memory_cache_is_empty(
+        self, service_app
+    ) -> None:
+        """The round-robin production symptom: only the replica that minted
+        holds an in-memory ProxyMeta, so a replica with an empty cache used
+        to answer cached=false while the proxy was alive and well in Vault.
+        Service mode must answer from the store, same rule as
+        /v1/identities' proxy_expires_at (#183) and the redeem path."""
+        client, store, _, _ = service_app
+        await _seed_link(store)
+        not_after = await _seed_proxy(store)
+
+        resp = client.get(_STATUS)
+
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["cached"] is True
+        assert body["dn"] == _DN
+        assert body["voms_attributes"] == _VOMS_ATTRS
+        parsed = datetime.fromisoformat(body["expires_at"])
+        assert parsed.timestamp() == pytest.approx(not_after, abs=1.0)
+        assert 3500 < body["remaining_seconds"] <= 3600
+
+    def test_no_proxy_when_vault_holds_no_record(self, service_app) -> None:
+        client, _, _, _ = service_app
+
+        resp = client.get(_STATUS)
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["cached"] is False
+
+    async def test_expired_vault_proxy_reads_as_no_proxy(self, service_app) -> None:
+        client, store, _, _ = service_app
+        await _seed_link(store)
+        await _seed_proxy(store, remaining=-10.0)
+
+        resp = client.get(_STATUS)
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["cached"] is False
+
+    def test_vault_mode_ignores_a_stale_in_memory_meta(
+        self, service_app, tmp_path: Path
+    ) -> None:
+        """The mirror-image divergence: a leftover in-memory ProxyMeta on
+        THIS replica must not report a proxy Vault no longer holds."""
+        from test_x509_redeem import _seed_proxy as seed_legacy_cache_proxy
+
+        client, _, _, _ = service_app
+        seed_legacy_cache_proxy(client, tmp_path, subject="sub-abc")
+
+        resp = client.get(_STATUS)
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["cached"] is False

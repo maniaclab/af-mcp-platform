@@ -415,7 +415,34 @@ async def proxy_status(
     principal: Annotated[Principal, Depends(keycloak_dependency)],
     target: str | None = None,
 ) -> ProxyCacheStatus:
+    """Report whether the caller holds a live VOMS proxy for *target*.
+
+    In voms-token-service mode Vault is authoritative — the same rule the
+    redeem path and ``/v1/identities``' ``proxy_expires_at`` already follow:
+    the in-memory ProxyMeta only exists on the replica that minted, so
+    answering from it made this endpoint's answer vary per replica behind
+    round-robin (the portal's active/no-proxy ping-pong). An expired Vault
+    proxy reads as absent (``get_proxy`` is expiry-aware). Legacy mode keeps
+    the in-memory answer — the tmpfs proxy file is per-replica by design
+    there.
+    """
     resolved = _resolve_x509_target(request, target)
+    provider = await _x509_provider(request, resolved)
+    if provider.uses_voms_service:
+        store = provider.vault_store
+        assert store is not None  # uses_voms_service checked
+        record = await store.get_proxy(principal.subject)
+        if record is None:
+            return ProxyCacheStatus(cached=False)
+        # get_proxy only returns records with a proxy; narrow for mypy.
+        assert record.not_after is not None
+        return ProxyCacheStatus(
+            cached=True,
+            dn=record.dn,
+            voms_attributes=list(record.voms_attributes),
+            expires_at=_iso(record.not_after),
+            remaining_seconds=max(0, int(record.not_after - time.time())),
+        )
     meta = _cache(request).get_proxy_meta(principal.subject, resolved)
     if meta is None:
         return ProxyCacheStatus(cached=False)

@@ -116,34 +116,54 @@ async function handleSubmit() {
   }
 }
 
+// Per-accordion toggle sequence numbers. Every toggle (either direction)
+// bumps its counter, and a fetch may only apply its result while the
+// counter still matches the value captured at that fetch's own expand —
+// a response landing after a collapse (or after a newer expand) is
+// discarded. Without this, a slow /v1/x509/proxy/status response landing
+// right after a collapse click rewrote the chip at every toggle, one fetch
+// behind the clicks — the deployed active/no-proxy ping-pong.
+let preflightSeq = 0;
+let proxySeq = 0;
+
 async function togglePreflight() {
   preflightOpen.value = !preflightOpen.value;
+  preflightSeq += 1;
   if (!preflightOpen.value) return;
+  const seq = preflightSeq;
   preflightLoading.value = true;
   preflightError.value = null;
   try {
-    preflight.value = await fetchX509Preflight();
+    const result = await fetchX509Preflight();
+    if (seq !== preflightSeq) return; // collapsed or re-expanded since
+    preflight.value = result;
   } catch (err) {
+    if (seq !== preflightSeq) return;
     preflight.value = null;
     preflightError.value = x509PreflightErrorMessage(err);
   } finally {
-    preflightLoading.value = false;
+    if (seq === preflightSeq) preflightLoading.value = false;
   }
 }
 
 async function toggleProxyDetails() {
   proxyOpen.value = !proxyOpen.value;
   revokeArmed.value = false;
+  proxySeq += 1;
   if (!proxyOpen.value) return;
+  const seq = proxySeq;
   proxyLoading.value = true;
   proxyError.value = null;
   try {
-    proxyStatus.value = await fetchProxyStatus();
+    const status = await fetchProxyStatus();
+    if (seq !== proxySeq) return; // collapsed or re-expanded since
+    proxyStatus.value = status;
   } catch (err) {
+    if (seq !== proxySeq) return;
     proxyStatus.value = null;
     proxyError.value = err instanceof Error ? err.message : 'Could not load proxy status.';
   } finally {
-    proxyLoading.value = false;
+    if (seq === proxySeq) proxyLoading.value = false;
   }
 }
 
