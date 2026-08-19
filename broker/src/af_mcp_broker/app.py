@@ -700,6 +700,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         identity_providers=identity_providers,
         identity_provider_configs=identity_provider_configs,
         target_to_alias=target_to_alias,
+        broker_token_issuer=broker_token_issuer,
     )
 
     # --- Audit: without init the module drops every record. Honor AUDIT_LOG_FILE.
