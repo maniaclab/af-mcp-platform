@@ -56,8 +56,8 @@ URL without multiplying the number of places a client must trust with credential
   connection snippets), MCP Servers catalog (`/catalog`, backends/tools reachable by
   the signed-in account), Identities (`/identities`, link external CERN/ATLAS
   accounts plus the x509 grid-certificate card — VOMS proxy linking, custody
-  consent, preflight checklist, and proxy status; the old `/status` route
-  redirects here), and Tokens (`/tokens`, mint/revoke static bearer tokens for
+  consent, preflight checklist, and proxy status; the old `/status` route is
+  gone), and Tokens (`/tokens`, mint/revoke static bearer tokens for
   OAuth-discovery-less clients like Claude Desktop).
 - Users reach the portal from a browser to do setup/bootstrapping tasks (link an
   identity, mint a token, check proxy status); the actual day-to-day work (dataset

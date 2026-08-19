@@ -4,7 +4,6 @@ import { describe, expect, it } from 'vitest';
 import {
   extractDeclaredHashes,
   findUnaccountedInline,
-  isCspExemptStub,
   patchTemplate,
   renderDirectiveValue,
 } from '../sync-csp-hashes.mjs';
@@ -34,32 +33,6 @@ describe('extractDeclaredHashes', () => {
     expect(() => extractDeclaredHashes(html, 'test.html')).toThrow(
       /missing a script-src or style-src/,
     );
-  });
-});
-
-describe('isCspExemptStub', () => {
-  it('exempts an Astro-generated redirect stub (no CSP meta, no inline content)', () => {
-    // The literal shape `astro build` emits for a config `redirects` entry.
-    const stub =
-      '<!doctype html><title>Redirecting to: /identities/</title>' +
-      '<meta http-equiv="refresh" content="0;url=/identities/">' +
-      '<meta name="robots" content="noindex"><link rel="canonical" href="/identities/">' +
-      '<body><a href="/identities/">Redirecting</a></body>';
-    expect(isCspExemptStub(stub)).toBe(true);
-  });
-
-  it('does not exempt a page that carries a CSP meta tag', () => {
-    expect(isCspExemptStub(page("script-src 'self'; style-src 'self';", ''))).toBe(false);
-  });
-
-  it('does not exempt a CSP-less page with an inline script', () => {
-    const html = '<!doctype html><body><script>alert(1)</scr' + 'ipt></body>';
-    expect(isCspExemptStub(html)).toBe(false);
-  });
-
-  it('does not exempt a CSP-less page with an inline style', () => {
-    const html = '<!doctype html><head><style>body{}</style></head><body></body>';
-    expect(isCspExemptStub(html)).toBe(false);
   });
 });
 
