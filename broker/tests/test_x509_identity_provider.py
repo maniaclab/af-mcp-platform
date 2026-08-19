@@ -7,21 +7,25 @@ the Identities row a synthetic entry. Normalizing it into an
 `X509ProviderConfig` entry (type "x509") removes those special cases while
 keeping the wire behavior — backend-side proxy redemption — unchanged.
 
+**Breaking change**: `VOMS_TOKEN_SERVICE_URL` (and its `_AUDIENCE`/`_VOMS`/
+`_VALID` companions) have been removed entirely, along with the synthesis
+that once covered an entry-less `auth_type: x509` backend. Every such
+backend now needs an explicit `identity_providers` entry, full stop — there
+is no fallback.
+
 Covered here:
 
-* `_effective_identity_provider_configs` — the synthesis rules: explicit
-  entries pass through (and win over the deprecated env var, with a
-  warning); the env var alone synthesizes an equivalent service-mode entry
-  (deprecation warning); x509 backends with neither synthesize a legacy-mode
-  entry so the registry/catalog/identities surfaces stay populated.
-* `_validate_x509_provider_targets` — the fail-closed boot check for
-  drift between `auth_type: x509` backends and explicit entry targets
-  (both directions), same reasoning as issue #60's required_capability
-  consolidation.
+* `_validate_x509_provider_targets` — the fail-closed boot check for drift
+  between `auth_type: x509` backends and explicit entry targets, now
+  UNIVERSAL (both directions, including the zero-entries case): a
+  `auth_type: x509` backend with no covering entry refuses to boot the same
+  as one covered by the wrong entry — same reasoning as issue #60's
+  required_capability consolidation.
 * Full-boot wiring — per-entry service_url/voms/valid/audience reaching
   VomsTokenServiceClient, multiple entries resolving to distinct providers,
-  and the explicit-entry signing-key requirement (fail-closed, mirroring
-  the broker-issued/condor-token check).
+  the service-mode signing-key requirement (fail-closed, mirroring the
+  broker-issued/condor-token check), and the keyless-legacy-entry carve-out
+  (warning, not error).
 """
 
 from __future__ import annotations
@@ -32,13 +36,9 @@ import pytest
 from test_broker_issued import _make_rsa_key, _private_pem
 
 import af_mcp_broker.app as app_module
-from af_mcp_broker.app import (
-    _effective_identity_provider_configs,
-    _validate_x509_provider_targets,
-)
+from af_mcp_broker.app import _validate_x509_provider_targets
 from af_mcp_broker.config import (
     KeycloakBrokeredProviderConfig,
-    Settings,
     X509ProviderConfig,
 )
 from af_mcp_broker.credentials import X509Provider
@@ -72,17 +72,6 @@ def _x509_entry(**overrides: Any) -> dict[str, Any]:
     return entry
 
 
-def _settings(**overrides: Any) -> Settings:
-    # Vault connection settings satisfy _validate_vault_config whenever a
-    # service-mode entry (or the deprecated env var) is present.
-    defaults: dict[str, Any] = {
-        "vault_addr": "https://vault.example",
-        "vault_auth_role": "af-mcp-broker",
-    }
-    defaults.update(overrides)
-    return Settings(**defaults)
-
-
 @pytest.fixture
 def warning_events(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict]]:
     """Capture app_module.logger.warning events (configure_logging rewrites
@@ -100,130 +89,10 @@ def warning_events(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict]]:
 
 
 # ---------------------------------------------------------------------------
-# _effective_identity_provider_configs — synthesis rules
-# ---------------------------------------------------------------------------
-
-
-class TestEffectiveConfigs:
-    def test_explicit_entries_pass_through_unchanged(
-        self, warning_events: list[tuple[str, dict]]
-    ) -> None:
-        settings = _settings(identity_providers=[_x509_entry()])
-
-        configs = _effective_identity_provider_configs(settings, ["ami"])
-
-        assert configs == settings.identity_providers
-        assert not warning_events
-
-    def test_explicit_entries_win_over_the_deprecated_env_var(
-        self, warning_events: list[tuple[str, dict]]
-    ) -> None:
-        """When both are set the explicit entries are authoritative and the
-        env var is ignored, loudly."""
-        settings = _settings(
-            identity_providers=[_x509_entry()],
-            voms_token_service_url="http://somewhere-else.invalid:8000",
-        )
-
-        configs = _effective_identity_provider_configs(settings, ["ami"])
-
-        assert configs == settings.identity_providers
-        assert any(
-            event == "voms_token_service_url_ignored" for event, _ in warning_events
-        )
-
-    def test_env_var_synthesizes_an_equivalent_service_mode_entry(
-        self, warning_events: list[tuple[str, dict]]
-    ) -> None:
-        """Deprecation path: VOMS_TOKEN_SERVICE_URL with no x509 entry keeps
-        existing deployments working unchanged through one release — a
-        synthesized entry (alias "x509", targets = every auth_type-x509
-        backend) carrying the global service settings, plus a loud warning
-        pointing at the new config."""
-        settings = _settings(
-            voms_token_service_url=_SERVICE_URL,
-            voms_token_service_voms="dune",
-            voms_token_service_valid="24:00",
-            voms_token_service_audience="voms-token-service-dev",
-        )
-
-        configs = _effective_identity_provider_configs(settings, ["ami", "panda"])
-
-        (cfg,) = configs
-        assert isinstance(cfg, X509ProviderConfig)
-        assert cfg.alias == "x509"
-        assert cfg.targets == ["ami", "panda"]
-        assert str(cfg.service_url).rstrip("/") == _SERVICE_URL
-        assert cfg.voms == "dune"
-        assert cfg.valid == "24:00"
-        assert cfg.audience == "voms-token-service-dev"
-        # Portal-facing metadata is filled so the Identities row keeps its
-        # pre-existing label/description.
-        assert cfg.display_name
-        assert cfg.enables
-        assert any(
-            event == "voms_token_service_url_deprecated" for event, _ in warning_events
-        )
-
-    def test_x509_backends_with_no_config_synthesize_a_legacy_entry(
-        self, warning_events: list[tuple[str, dict]]
-    ) -> None:
-        """Legacy k8s-Job/local-dev mode (no entry, no env var) stays a
-        working, entry-less default: the lifespan synthesizes a legacy-mode
-        entry (service_url None) so the registry/catalog/identities surfaces
-        stay populated without any synthetic-alias special case downstream."""
-        settings = Settings()
-
-        configs = _effective_identity_provider_configs(settings, ["ami"])
-
-        (cfg,) = configs
-        assert isinstance(cfg, X509ProviderConfig)
-        assert cfg.alias == "x509"
-        assert cfg.targets == ["ami"]
-        assert cfg.service_url is None
-        assert cfg.display_name
-        assert cfg.enables
-        # Legacy mode is supported, not deprecated -- no warning.
-        assert not warning_events
-
-    def test_no_x509_backends_and_no_env_var_synthesizes_nothing(self) -> None:
-        settings = Settings(
-            identity_providers=[
-                {
-                    "type": "keycloak-brokered",
-                    "alias": "atlas-oidc",
-                    "targets": ["rucio"],
-                }
-            ]
-        )
-
-        configs = _effective_identity_provider_configs(settings, [])
-
-        assert configs == settings.identity_providers
-
-    def test_synthesized_entry_is_appended_after_configured_entries(self) -> None:
-        """The synthesized entry has no config-order slot of its own — it
-        always trails the operator-configured entries, preserving the
-        pre-existing /v1/identities ordering."""
-        settings = Settings(
-            identity_providers=[
-                {
-                    "type": "keycloak-brokered",
-                    "alias": "atlas-oidc",
-                    "targets": ["rucio"],
-                }
-            ]
-        )
-
-        configs = _effective_identity_provider_configs(settings, ["ami"])
-
-        assert [cfg.alias for cfg in configs] == ["atlas-oidc", "x509"]
-
-
-# ---------------------------------------------------------------------------
 # _validate_x509_provider_targets — fail-closed drift protection between
-# `auth_type: x509` backends and explicit entry targets (all four quadrants;
-# same reasoning as issue #60's required_capability consolidation).
+# `auth_type: x509` backends and explicit entry targets. Universal: there is
+# no synthesized-entry escape hatch, so the zero-entries case is one more
+# quadrant of the same check, not a separate "validates trivially" path.
 # ---------------------------------------------------------------------------
 
 
@@ -251,10 +120,15 @@ class TestValidateTargets:
         with pytest.raises(RuntimeError, match="rucio"):
             _validate_x509_provider_targets(cfgs, {"ami"})
 
-    def test_no_explicit_entries_validates_nothing(self) -> None:
-        """Entry-less deployments (legacy/env-var synthesis covers every
-        x509 backend by construction) must keep booting."""
-        _validate_x509_provider_targets([], {"ami"})  # must not raise
+    def test_no_explicit_entries_and_x509_backends_refuses_to_start(self) -> None:
+        """There is no synthesized fallback: an entry-less deployment with an
+        auth_type: x509 backend refuses to boot naming it, exactly like a
+        backend covered by the wrong entry."""
+        with pytest.raises(RuntimeError, match="ami"):
+            _validate_x509_provider_targets([], {"ami"})
+
+    def test_no_explicit_entries_and_no_x509_backends_validates_nothing(self) -> None:
+        _validate_x509_provider_targets([], set())  # must not raise
 
     def test_error_is_not_raised_for_non_x509_config_types(self) -> None:
         """Only x509 entries participate — a keycloak-brokered entry naming
@@ -347,9 +221,8 @@ class TestBootWiring:
         tmp_path: Path,
         app_client_factory: Callable[..., Any],
     ) -> None:
-        """An entry without service_url selects the legacy mint path — same
-        semantics as an empty VOMS_TOKEN_SERVICE_URL — under an operator-
-        chosen alias."""
+        """An entry without service_url selects the legacy mint path — under
+        an operator-chosen alias."""
         _set_backends(monkeypatch, tmp_path)
         _set_identity_providers(
             monkeypatch, [_x509_entry(alias="grid-cert", service_url=None)]
@@ -413,27 +286,6 @@ class TestBootWiring:
                 "dune-mcp": "x509-dune",
             }
 
-    def test_deprecated_env_var_still_boots_with_a_warning(
-        self,
-        signing_key_env: None,
-        vault_stub_env: None,
-        warning_events: list[tuple[str, dict]],
-        monkeypatch: pytest.MonkeyPatch,
-        tmp_path: Path,
-        app_client_factory: Callable[..., Any],
-    ) -> None:
-        _set_backends(monkeypatch, tmp_path)
-        monkeypatch.setenv("VOMS_TOKEN_SERVICE_URL", _SERVICE_URL)
-
-        with app_client_factory() as (client, _):
-            provider = client.app.state.x509_provider
-            assert provider.uses_voms_service is True
-            assert client.app.state.target_to_alias["ami"] == "x509"
-
-        assert any(
-            event == "voms_token_service_url_deprecated" for event, _ in warning_events
-        )
-
 
 class TestBootValidation:
     def test_uncovered_x509_backend_refuses_to_start(
@@ -477,7 +329,7 @@ class TestBootValidation:
         with pytest.raises(RuntimeError, match="not-a-backend"), app_client_factory():
             pass  # pragma: no cover - boot must fail before yielding
 
-    def test_explicit_entry_without_signing_key_refuses_to_start(
+    def test_explicit_service_entry_without_signing_key_refuses_to_start(
         self,
         vault_stub_env: None,
         monkeypatch: pytest.MonkeyPatch,
@@ -485,12 +337,12 @@ class TestBootValidation:
         app_client_factory: Callable[..., Any],
     ) -> None:
         """The aggregator injects broker-signed identity JWTs for x509
-        targets and the redeem endpoint verifies them, so an explicit entry
-        requires the signing key — fail-closed, mirroring the broker-issued/
-        condor-token check. (Entry-less legacy deployments keep the
-        pre-existing loud warning instead: the shipped backends.yaml has
-        always declared an x509 backend, so refusing to boot would break
-        existing keyless deployments that never call it.)"""
+        targets and the redeem endpoint verifies them, and in service mode
+        voms-token-service mint calls are authenticated the same way -- so a
+        service-mode entry (``service_url`` set) requires the signing key —
+        fail-closed, mirroring the broker-issued/condor-token check. (A
+        keyless LEGACY entry — ``service_url`` None — keeps the pre-existing
+        loud warning instead of failing; see the test below.)"""
         monkeypatch.delenv("BROKER_SIGNING_KEY_FILE", raising=False)
         _set_backends(monkeypatch, tmp_path)
         _set_identity_providers(monkeypatch, [_x509_entry()])
@@ -501,15 +353,36 @@ class TestBootValidation:
         ):
             pass  # pragma: no cover - boot must fail before yielding
 
-    def test_entry_less_legacy_mode_still_warns_instead_of_failing(
+    def test_no_explicit_entries_with_x509_backends_refuses_to_start(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        app_client_factory: Callable[..., Any],
+    ) -> None:
+        """There is no synthesized fallback: an entry-less deployment with an
+        ``auth_type: x509`` backend refuses to boot naming it -- an operator
+        must declare an explicit entry, even a bare legacy one, for every
+        such backend."""
+        _set_backends(monkeypatch, tmp_path)
+        _set_identity_providers(monkeypatch, [])
+
+        with pytest.raises(RuntimeError, match="ami"), app_client_factory():
+            pass  # pragma: no cover - boot must fail before yielding
+
+    def test_explicit_legacy_entry_without_signing_key_warns_instead_of_failing(
         self,
         warning_events: list[tuple[str, dict]],
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
         app_client_factory: Callable[..., Any],
     ) -> None:
+        """A keyless legacy entry (``service_url`` None) still boots -- it
+        mints via the k8s-Job/local-dev path, which needs no broker-signed
+        token -- with a loud warning that x509 backends can't be called over
+        /mcp until the signing key is mounted."""
         monkeypatch.delenv("BROKER_SIGNING_KEY_FILE", raising=False)
         _set_backends(monkeypatch, tmp_path)
+        _set_identity_providers(monkeypatch, [_x509_entry(service_url=None)])
 
         with app_client_factory():
             pass

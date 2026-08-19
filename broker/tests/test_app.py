@@ -23,13 +23,13 @@ if TYPE_CHECKING:
 
 def test_build_target_to_alias_covers_all_auth_shapes() -> None:
     """target_to_alias (issue #90) joins backend targets to whichever
-    credential provider services them, uniformly from the effective
-    `identity_providers` configs: x509 targets get their entry's alias
-    (previously a hardcoded synthetic "x509" string — the lifespan now
-    synthesizes a real entry when none is configured, so this helper no
-    longer special-cases x509 at all), keycloak-brokered/oauth21-direct
-    targets get their configured alias, and auth_type "none" targets
-    (e.g. "docs") are simply absent — no user credential is needed for them.
+    credential provider services them, uniformly from the configured
+    `identity_providers` list: x509 targets get their entry's alias
+    (previously a hardcoded synthetic "x509" string — every auth_type: x509
+    backend now needs an explicit entry, so this helper no longer
+    special-cases x509 at all), keycloak-brokered/oauth21-direct targets get
+    their configured alias, and auth_type "none" targets (e.g. "docs") are
+    simply absent — no user credential is needed for them.
     """
     identity_providers_cfgs = [
         KeycloakBrokeredProviderConfig(alias="atlas-oidc", targets=["rucio"]),
@@ -84,10 +84,9 @@ def test_omitted_capability_with_credential_provider_starts_cleanly(
 ) -> None:
     """Omitting required_capability is allowed as long as the credential
     layer actually gates the backend. Here that's via ``auth_type: x509``,
-    which the lifespan auto-registers into credential_registry for every
-    x509 backend regardless of `identity_providers` config -- so this
-    backend has a real gate (a mintable credential) even without a declared
-    capability.
+    gated by conftest's default `identity_providers` entry (alias "x509",
+    targets ["ami"]) -- so this backend has a real gate (a mintable
+    credential) even without a declared capability.
     """
     monkeypatch.setenv(
         "BACKENDS_FILE",
@@ -131,6 +130,12 @@ def test_omitted_capability_without_credential_provider_refuses_to_start(
             "    auth_type: bearer\n",
         ),
     )
+    # This backends.yaml has no auth_type: x509 backend at all, so drop
+    # conftest's default x509 entry (targets ["ami"], absent here) -- an
+    # x509 entry targeting a nonexistent backend would trip the OTHER
+    # direction of the coverage check before we ever reach the assertion
+    # this test cares about.
+    monkeypatch.setenv("IDENTITY_PROVIDERS", "[]")
 
     with pytest.raises(RuntimeError, match="mystery"):  # noqa: SIM117
         with app_client_factory():

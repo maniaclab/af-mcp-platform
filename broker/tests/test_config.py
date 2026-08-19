@@ -458,7 +458,8 @@ def test_identity_providers_x509_parses():
     assert str(cfg.service_url).rstrip("/") == (
         "http://voms-token-service.af-mcp.svc:8080"
     )
-    # Defaults mirror the deprecated global VOMS_TOKEN_SERVICE_* settings.
+    # Defaults match the voms-token-service contract (its own
+    # DEFAULT_VOMS/DEFAULT_VALID/EXPECTED_AUDIENCE).
     assert cfg.voms == "atlas"
     assert cfg.valid == "192:00"
     assert cfg.audience == "voms-token-service"
@@ -499,9 +500,7 @@ def test_identity_providers_multiple_x509_entries_are_expressible():
 
 
 def test_identity_providers_x509_service_url_defaults_to_none():
-    """No service_url selects the legacy k8s-Job/local-dev mint path — the
-    same semantics as an empty VOMS_TOKEN_SERVICE_URL, and the shape app.py
-    synthesizes for x509 backends with no explicit entry."""
+    """No service_url selects the legacy k8s-Job/local-dev mint path."""
     entry = {k: v for k, v in _X509_ENTRY.items() if k != "service_url"}
     settings = Settings(identity_providers=[entry])
 
@@ -512,8 +511,7 @@ def test_identity_providers_x509_service_url_defaults_to_none():
 def test_vault_config_required_by_x509_entry_with_service_url():
     """voms-token-service mode persists proxies and passphrases in Vault
     (there is no in-memory fallback), so an x509 entry with a service_url
-    implies the x509 store — same coupling _validate_vault_config already
-    enforces for the deprecated global voms_token_service_url."""
+    implies the x509 store."""
     with pytest.raises(ValueError, match="vault_addr"):
         Settings(identity_providers=[_X509_ENTRY])
     with pytest.raises(ValueError, match="vault_auth_role"):

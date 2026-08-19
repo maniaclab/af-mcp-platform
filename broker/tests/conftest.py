@@ -40,9 +40,14 @@ SHIPPED_BACKENDS = _SRC / "mcp" / "backends.yaml"
 # targets, so `bearer`-auth backends (e.g. "rucio" in SHIPPED_BACKENDS) still
 # resolve to an OIDCProvider instance the way they did before issue #66 PR4
 # replaced the single `oidc_idp_alias`-derived singleton with per-entry
-# `identity_providers` config. Tests that care about a specific
-# `identity_providers` shape (test_identities.py, test_oauth21*.py,
-# test_wellknown_cimd.py) override IDENTITY_PROVIDERS themselves.
+# `identity_providers` config; plus a legacy-mode x509 entry (no
+# `service_url`) covering SHIPPED_BACKENDS' "ami" — every `auth_type: x509`
+# backend must be covered by an explicit entry or the broker refuses to
+# start (app.py's `_validate_x509_provider_targets`), so this fixture
+# supplies the minimal one the shipped backends.yaml needs. Tests that care
+# about a specific `identity_providers` shape (test_identities.py,
+# test_oauth21*.py, test_wellknown_cimd.py) override IDENTITY_PROVIDERS
+# themselves.
 _DEFAULT_IDENTITY_PROVIDERS = [
     {
         "type": "keycloak-brokered",
@@ -50,7 +55,17 @@ _DEFAULT_IDENTITY_PROVIDERS = [
         "display_name": "ATLAS IAM",
         "enables": "VOMS proxy generation and grid certificate credential brokering",
         "targets": ["rucio", "opendata", "af-internal"],
-    }
+    },
+    {
+        "type": "x509",
+        "alias": "x509",
+        "display_name": "Grid certificate (x509)",
+        "enables": (
+            "VOMS proxy minting for x509-authenticated backends from your "
+            "grid certificate"
+        ),
+        "targets": ["ami"],
+    },
 ]
 
 

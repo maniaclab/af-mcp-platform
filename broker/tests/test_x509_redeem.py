@@ -30,7 +30,9 @@ _REDEEM = "/v1/credentials/x509/redeem"
 
 # ami is an x509 backend (auth_type: x509): that single flag drives portal
 # minting (X509Provider registration), aggregator identity-JWT injection, and
-# this endpoint's audience gate. No identity_providers entry is needed.
+# this endpoint's audience gate. An explicit identity_providers entry
+# covering it is required too (conftest's app_client_factory default
+# supplies one; the broker refuses to start otherwise).
 _BACKENDS_YAML = (
     "backends:\n"
     "  - name: ami\n"
@@ -219,14 +221,18 @@ class TestKeylessBoot:
     def test_x509_backend_without_signing_key_boots_and_503s_redeem(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path, app_client_factory
     ) -> None:
-        """Keyless boot stays possible (the shipped backends.yaml has always
-        declared an x509 backend), but the redeem endpoint answers 503 until
-        the signing key is mounted -- enforcement at point of use, with a
-        loud startup warning (see app.py's x509_backends_without_signing_key)."""
+        """Keyless boot stays possible with an explicit LEGACY entry
+        (service_url omitted -- an entry is still required, there is no
+        synthesized fallback), but the redeem endpoint answers 503 until the
+        signing key is mounted -- enforcement at point of use, with a loud
+        startup warning (see app.py's x509_backends_without_signing_key)."""
         backends_file = tmp_path / "backends.yaml"
         backends_file.write_text(_BACKENDS_YAML)
         monkeypatch.setenv("BACKENDS_FILE", str(backends_file))
-        monkeypatch.setenv("IDENTITY_PROVIDERS", "[]")
+        monkeypatch.setenv(
+            "IDENTITY_PROVIDERS",
+            json.dumps([{"type": "x509", "alias": "x509", "targets": ["ami"]}]),
+        )
         monkeypatch.delenv("BROKER_SIGNING_KEY_FILE", raising=False)
 
         with app_client_factory() as (client, _):

@@ -508,7 +508,15 @@ def test_catalog_credential_provider_oauth21_direct(
                     "authorization_endpoint": "https://backend-as.example/authorize",
                     "token_endpoint": "https://backend-as.example/token",
                     "issuer": "https://backend-as.example",
-                }
+                },
+                # This override replaces conftest's default entirely, but
+                # the shipped backends.yaml's "ami" (auth_type: x509) still
+                # needs an explicit entry or the broker refuses to start.
+                {
+                    "type": "x509",
+                    "alias": "x509",
+                    "targets": ["ami"],
+                },
             ]
         ),
     )

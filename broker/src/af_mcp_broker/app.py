@@ -18,7 +18,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import JSONResponse, Response
 from fastmcp.utilities.lifespan import combine_lifespans
-from pydantic import AnyHttpUrl, ValidationError
+from pydantic import ValidationError
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from af_mcp_broker._version import version as __version__
@@ -27,7 +27,7 @@ from af_mcp_broker.api.tokens import TokenRegistry
 from af_mcp_broker.api.wellknown import router as wellknown_router
 from af_mcp_broker.audit.logger import init_audit_logger
 from af_mcp_broker.authorization import EntitlementPolicy, load_policy
-from af_mcp_broker.config import Settings, X509ProviderConfig
+from af_mcp_broker.config import Settings
 from af_mcp_broker.credentials import (
     BrokerIssuedProvider,
     CondorTokenProvider,
@@ -74,7 +74,7 @@ logger = structlog.get_logger(__name__)
 def _build_target_to_alias(
     identity_providers_cfgs: Iterable[IdentityProviderConfig],
 ) -> dict[str, str]:
-    """Reverse map from backend target name to the credential-provider alias that services it, surfaced on /v1/catalog as ``credential_provider`` (issue #90). Every target gets its entry's configured alias — x509 targets included, since x509 is now an ordinary ``identity_providers`` type (``lifespan`` synthesizes an entry for x509 backends with no explicit one, so the mapping never needs a hardcoded synthetic alias). Targets with ``auth_type: none`` need no user credential and are simply absent from the mapping."""
+    """Reverse map from backend target name to the credential-provider alias that services it, surfaced on /v1/catalog as ``credential_provider`` (issue #90). Every target gets its entry's configured alias — x509 targets included, since x509 is an ordinary ``identity_providers`` type: every ``auth_type: x509`` backend must be covered by an explicit entry (``_validate_x509_provider_targets`` refuses to boot otherwise), so this helper never needs a hardcoded synthetic alias. Targets with ``auth_type: none`` need no user credential and are simply absent from the mapping."""
     target_to_alias: dict[str, str] = {}
     for cfg in identity_providers_cfgs:
         for target in cfg.targets:
@@ -82,104 +82,19 @@ def _build_target_to_alias(
     return target_to_alias
 
 
-# Metadata for the x509 entry `_effective_identity_provider_configs`
-# synthesizes when none is configured — keeps the pre-existing portal-facing
-# label/description (and the "x509" alias /v1/catalog historically reported
-# for x509 targets, which the portal's catalog join keys on).
-_X509_SYNTHESIZED_ALIAS = "x509"
-_X509_SYNTHESIZED_DISPLAY_NAME = "Grid certificate (x509)"
-_X509_SYNTHESIZED_ENABLES = (
-    "VOMS proxy minting for x509-authenticated backends from your grid certificate"
-)
-
-
-def _effective_identity_provider_configs(
-    settings: Settings,
-    x509_backend_names: list[str],
-) -> list[IdentityProviderConfig]:
-    """The `identity_providers` list the lifespan actually wires: the configured entries, plus a synthesized x509 entry when x509 backends exist with no explicit one.
-
-    Synthesis rules (in precedence order):
-
-    * Explicit ``type: "x509"`` entries are authoritative. The deprecated
-      global ``voms_token_service_url`` is then ignored, with a warning.
-    * ``voms_token_service_url`` set with no explicit entry synthesizes an
-      equivalent service-mode entry (alias "x509", targets = every
-      ``auth_type: x509`` backend, service settings from the deprecated
-      globals) so existing deployments keep working unchanged through one
-      release — with a loud deprecation warning pointing at the new config.
-    * Neither, but x509 backends exist: synthesize a legacy-mode entry
-      (``service_url`` None — the k8s-Job/local-dev mint path) so the
-      registry/catalog/identities surfaces stay populated without any
-      synthetic-alias special case downstream. Legacy mode is supported,
-      not deprecated — no warning.
-    """
-    configs = list(settings.identity_providers)
-    if any(cfg.type == "x509" for cfg in configs):
-        if settings.voms_token_service_url:
-            logger.warning(
-                "voms_token_service_url_ignored",
-                hint=(
-                    "VOMS_TOKEN_SERVICE_URL is set but identity_providers "
-                    "already contains an x509 entry; the explicit entries "
-                    "win and the env var is ignored. Remove "
-                    "VOMS_TOKEN_SERVICE_URL from the deployment."
-                ),
-            )
-        return configs
-    if not x509_backend_names:
-        return configs
-    if settings.voms_token_service_url:
-        logger.warning(
-            "voms_token_service_url_deprecated",
-            hint=(
-                "VOMS_TOKEN_SERVICE_URL is deprecated: declare an "
-                "identity_providers entry of type 'x509' instead (chart: "
-                "broker.identityProviders), whose per-entry service_url/"
-                "voms/valid/audience replace the VOMS_TOKEN_SERVICE_* "
-                "globals. An equivalent entry has been synthesized for "
-                "this release."
-            ),
-            synthesized_alias=_X509_SYNTHESIZED_ALIAS,
-            targets=x509_backend_names,
-        )
-        configs.append(
-            X509ProviderConfig(
-                alias=_X509_SYNTHESIZED_ALIAS,
-                targets=list(x509_backend_names),
-                service_url=AnyHttpUrl(settings.voms_token_service_url),
-                voms=settings.voms_token_service_voms,
-                valid=settings.voms_token_service_valid,
-                audience=settings.voms_token_service_audience,
-                display_name=_X509_SYNTHESIZED_DISPLAY_NAME,
-                enables=_X509_SYNTHESIZED_ENABLES,
-            )
-        )
-    else:
-        configs.append(
-            X509ProviderConfig(
-                alias=_X509_SYNTHESIZED_ALIAS,
-                targets=list(x509_backend_names),
-                display_name=_X509_SYNTHESIZED_DISPLAY_NAME,
-                enables=_X509_SYNTHESIZED_ENABLES,
-            )
-        )
-    return configs
-
-
 def _validate_x509_provider_targets(
     identity_providers_cfgs: Iterable[IdentityProviderConfig],
     x509_backend_names: set[str],
 ) -> None:
-    """Fail-closed drift protection between ``auth_type: x509`` backends and explicit x509 ``identity_providers`` entries (both directions) — same reasoning as issue #60's required_capability consolidation: a mismatch is a typo or a stale backends.yaml, and a startup RuntimeError surfaces it as a visible rollout failure with zero outage risk.
+    """Fail-closed drift protection between ``auth_type: x509`` backends and explicit x509 ``identity_providers`` entries (both directions) — same reasoning as issue #60's required_capability consolidation: a mismatch is a typo, a stale backends.yaml, or a missing entry, and a startup RuntimeError surfaces it as a visible rollout failure with zero outage risk.
 
-    Only explicit entries participate: entry-less deployments (where
-    ``_effective_identity_provider_configs`` synthesizes an entry covering
-    every x509 backend by construction) validate trivially.
+    Universal: there is no synthesized-entry escape hatch. Every
+    ``auth_type: x509`` backend must be named in some explicit entry's
+    ``targets``, including deployments with zero x509 entries at all — an
+    x509 backend with no covering entry refuses to boot naming it, the same
+    as one covered by the wrong entry.
     """
     x509_cfgs = [cfg for cfg in identity_providers_cfgs if cfg.type == "x509"]
-    if not x509_cfgs:
-        return
     covered = {target for cfg in x509_cfgs for target in cfg.targets}
     uncovered = sorted(x509_backend_names - covered)
     if uncovered:
@@ -187,8 +102,13 @@ def _validate_x509_provider_targets(
             "The following auth_type: x509 backends are not targeted by any "
             f"x509 identity_providers entry: {uncovered}. They would have no "
             "credential provider (and no catalog credential_provider alias) "
-            "at all. Add them to an x509 entry's targets, or change their "
-            "auth_type."
+            "at all. Add an entry covering them, e.g.:\n"
+            "  - type: x509\n"
+            "    alias: x509\n"
+            f"    targets: {uncovered}\n"
+            "(add service_url/voms/valid/audience for voms-token-service "
+            "mode, or omit service_url for the legacy k8s-Job/local-dev "
+            "mint path), or change their auth_type."
         )
         raise RuntimeError(msg)
     not_x509 = sorted(covered - x509_backend_names)
@@ -345,20 +265,17 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         )
         raise RuntimeError(msg)
 
-    # --- x509 backends and the effective identity-provider config list:
-    # x509 is an ordinary `identity_providers` type; when x509 backends
-    # exist with no explicit entry, one is synthesized (service-mode from
-    # the deprecated VOMS_TOKEN_SERVICE_URL, legacy-mode otherwise) so
-    # every surface downstream — provider registration, /v1/catalog's
-    # credential_provider alias, /v1/identities — works from real entries
-    # with no synthetic special case. Explicit entries are drift-checked
-    # against `auth_type: x509` backends, both directions, fail-closed.
+    # --- x509 backends and the identity-provider config list: x509 is an
+    # ordinary `identity_providers` type with no synthesized fallback --
+    # every `auth_type: x509` backend must be covered by an explicit entry,
+    # drift-checked both directions, fail-closed (_validate_x509_provider_
+    # targets). Every surface downstream — provider registration,
+    # /v1/catalog's credential_provider alias, /v1/identities — works from
+    # these real, operator-declared entries.
     x509_targets: list[str] = [
         spec.name for spec in backends if spec.auth_type == "x509"
     ]
-    identity_provider_cfg_list = _effective_identity_provider_configs(
-        settings, x509_targets
-    )
+    identity_provider_cfg_list = list(settings.identity_providers)
     _validate_x509_provider_targets(settings.identity_providers, set(x509_targets))
     has_service_mode_x509_cfg = any(
         cfg.type == "x509" and cfg.service_url is not None
@@ -477,31 +394,28 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # --- x509 signing-key requirements. The aggregator injects a
     # broker-issued identity JWT for auth_type: x509 targets, the redeem
     # endpoint verifies it, and in service mode every voms-token-service
-    # mint call is authenticated the same way — so an x509 entry needs the
-    # signing key. An explicit entry (or a service-mode one, including the
-    # entry the deprecated VOMS_TOKEN_SERVICE_URL synthesizes) is
-    # fail-closed at boot without it — same rollout-failure-over-silent-
-    # breakage reasoning as the broker-issued/condor-token check above. The
-    # entry-less legacy state keeps the pre-existing loud WARNING instead:
-    # the shipped backends.yaml has always declared an x509 backend (ami),
-    # so refusing to boot would break existing keyless deployments that
-    # never call it; enforcement then stays at the point of use — the
-    # aggregator's x509 factory raises an actionable ToolError and the
-    # redeem endpoint answers 503.
+    # mint call is authenticated the same way — so a service-mode entry
+    # (``service_url`` set) needs the signing key and is fail-closed at boot
+    # without it — same rollout-failure-over-silent-breakage reasoning as
+    # the broker-issued/condor-token check above. A legacy-mode entry
+    # (``service_url`` None — every x509 backend still needs one covering
+    # it, see ``_validate_x509_provider_targets`` above) keeps the
+    # pre-existing loud WARNING instead: the shipped backends.yaml has
+    # always declared an x509 backend (ami), so refusing to boot would break
+    # existing keyless deployments that never call it; enforcement then
+    # stays at the point of use — the aggregator's x509 factory raises an
+    # actionable ToolError and the redeem endpoint answers 503.
     if broker_token_issuer is None:
-        if (
-            any(cfg.type == "x509" for cfg in settings.identity_providers)
-            or has_service_mode_x509_cfg
-        ):
+        if has_service_mode_x509_cfg:
             msg = (
-                "identity_providers contains an x509 entry (or the deprecated "
-                "VOMS_TOKEN_SERVICE_URL synthesized one) but "
-                "BROKER_SIGNING_KEY_FILE is not set, so the broker cannot "
-                "sign the AF Broker Identity Tokens the aggregator injects "
-                "for x509 targets, the redeem endpoint verifies, and "
-                "voms-token-service authenticates mint calls with. Mount the "
-                "RS256 signing key (chart: broker.identityToken."
-                "existingSigningKeySecret) or remove the entry."
+                "identity_providers contains an x509 entry with a "
+                "service_url but BROKER_SIGNING_KEY_FILE is not set, so the "
+                "broker cannot sign the AF Broker Identity Tokens the "
+                "aggregator injects for x509 targets, the redeem endpoint "
+                "verifies, and voms-token-service authenticates mint calls "
+                "with. Mount the RS256 signing key (chart: broker."
+                "identityToken.existingSigningKeySecret) or remove "
+                "service_url from the entry."
             )
             raise RuntimeError(msg)
         if x509_targets:
@@ -530,7 +444,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
             kv_path_prefix=settings.x509_kv_path_prefix,
         )
 
-    # One CredentialProvider per effective entry, registered for the entry's
+    # One CredentialProvider per configured entry, registered for the entry's
     # targets below — x509 included (voms-proxy minted from the user's
     # ~/.globus cert in legacy mode, or via the entry's voms-token-service
     # when a service_url is configured). `bearer`-auth backends' credential

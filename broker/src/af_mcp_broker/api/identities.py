@@ -31,8 +31,9 @@ router = APIRouter(prefix="/identities", tags=["identities"])
 # condor-token) are always `linked` with no `link_url`: the broker is
 # authoritative, there is no linking step and no portal action.
 # "x509" — X509Provider (grid certificate / VOMS proxy), an ordinary
-# `identity_providers` entry (app.py synthesizes one when x509 backends
-# exist with no explicit entry, so this row is always registry-sourced).
+# `identity_providers` entry: every `auth_type: x509` backend must be
+# covered by an explicit entry (app.py's lifespan refuses to start
+# otherwise), so this row is always registry-sourced.
 ProviderType = Literal[
     "keycloak-brokered", "oauth21-direct", "broker-issued", "condor-token", "x509"
 ]
