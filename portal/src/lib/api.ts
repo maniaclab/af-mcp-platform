@@ -288,8 +288,10 @@ export type ActionType = 'read' | 'state_change';
 
 export type AuthType = 'bearer' | 'x509' | 'none';
 
-/** Placeholder shape for CatalogServer.tools -- always empty until the /mcp
- * aggregator can enumerate real subtools (issue #58). */
+/** One tool as the caller would see it through /mcp: the (namespace-applied)
+ * name, its description, and the same read/state_change resolution real
+ * enforcement uses. Never the full input schema -- the payload stays light.
+ * Returned by GET /v1/catalog/{backend}/tools (fetchServerTools below). */
 export interface CatalogTool {
   name: string;
   description: string;
@@ -330,6 +332,41 @@ export interface CatalogResponse {
 
 export async function fetchCatalog(): Promise<CatalogResponse> {
   return apiFetch<CatalogResponse>('/catalog');
+}
+
+// ---------------------------------------------------------------------------
+// Per-backend tool listing — GET /v1/catalog/{backend}/tools. Fetched on
+// expand by BackendCard.vue's Tools accordion, one backend at a time -- the
+// catalog itself stays a single cheap request and the broker only fans out
+// to the backend the user actually opened.
+// ---------------------------------------------------------------------------
+
+/** Mirrors broker/src/af_mcp_broker/api/catalog_tools.py's ToolListingStatus:
+ * "ok" plus the aggregator's own tools/list failure classification. A
+ * backend never vanishes for credential reasons -- `status`/`status_detail`
+ * say why `tools` is empty instead (same issue #123 philosophy as the
+ * catalog's per-server status). */
+export type ToolListingStatus =
+  | 'ok'
+  | 'not_linked'
+  | 'unauthorized'
+  | 'unavailable'
+  | 'capability_required';
+
+export interface ServerToolsResponse {
+  name: string;
+  display_name: string;
+  description: string;
+  status: ToolListingStatus;
+  /** Short, human, internals-free sentence -- same contract as the
+   * catalog's status_detail. */
+  status_detail: string;
+  /** Empty whenever status is not "ok". */
+  tools: CatalogTool[];
+}
+
+export async function fetchServerTools(name: string): Promise<ServerToolsResponse> {
+  return apiFetch<ServerToolsResponse>(`/catalog/${encodeURIComponent(name)}/tools`);
 }
 
 // ---------------------------------------------------------------------------

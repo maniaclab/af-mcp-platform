@@ -15,6 +15,7 @@ import {
   fetchIdentities,
   fetchOAuth21AuthorizeUrl,
   fetchProxyStatus,
+  fetchServerTools,
   fetchX509Preflight,
   listTokens,
   requestProxy,
@@ -778,5 +779,36 @@ describe('fetchX509Preflight()', () => {
     await expect(fetchX509Preflight()).resolves.toEqual(body);
     const [url] = vi.mocked(globalThis.fetch).mock.calls[0] as [string, RequestInit];
     expect(url).toContain('/x509/preflight');
+  });
+});
+
+describe('fetchServerTools()', () => {
+  it('GETs the per-backend tools path and returns the listing verbatim', async () => {
+    const body = {
+      name: 'rucio',
+      display_name: 'Rucio',
+      description: 'ATLAS data management',
+      status: 'ok',
+      status_detail: 'Tools listed.',
+      tools: [{ name: 'rucio_list_dids', description: 'List DIDs.', action_type: 'read' }],
+    };
+    globalThis.fetch = mockJson(200, body);
+    await expect(fetchServerTools('rucio')).resolves.toEqual(body);
+    const [url] = vi.mocked(globalThis.fetch).mock.calls[0] as [string, RequestInit];
+    expect(url).toContain('/catalog/rucio/tools');
+  });
+
+  it('URL-encodes the backend name', async () => {
+    globalThis.fetch = mockJson(200, {
+      name: 'a/b',
+      display_name: 'A/B',
+      description: '',
+      status: 'unavailable',
+      status_detail: 'Temporarily unavailable. Try again shortly.',
+      tools: [],
+    });
+    await fetchServerTools('a/b');
+    const [url] = vi.mocked(globalThis.fetch).mock.calls[0] as [string, RequestInit];
+    expect(url).toContain('/catalog/a%2Fb/tools');
   });
 });
