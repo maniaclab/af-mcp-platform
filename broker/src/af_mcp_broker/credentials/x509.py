@@ -965,7 +965,7 @@ class X509Provider(CredentialProvider):
         )
 
     async def _legacy_is_linked(self, principal: Principal) -> bool:
-        """The legacy-mode linkage check: both halves of ``~/.globus`` readable.
+        """Return the legacy-mode linkage check: both halves of ``~/.globus`` readable.
 
         Mirrors the path construction ``HomeDirVomsBackend`` uses to locate
         the user's home directory, but — unlike ``HomeDirVomsBackend.available()``,
