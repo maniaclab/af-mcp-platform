@@ -788,8 +788,9 @@ def _parse_proxy_pem(proxy_pem: bytes) -> tuple[str, list[str], float]:
 class X509Provider(CredentialProvider):
     """Issues delegated x509 proxy credentials.
 
-    Two mint paths coexist behind one feature flag
-    (``Settings.voms_token_service_url``; see ``uses_voms_service``):
+    Two mint paths coexist behind whether the entry that constructed this
+    provider has a ``service_url`` (``X509ProviderConfig.service_url``; see
+    ``uses_voms_service``):
 
     * **Legacy (k8s Job / local dev)** — the proxy file is stored on the
       broker's tmpfs (``/run/broker/proxies/{uid}/proxy.pem``) and never

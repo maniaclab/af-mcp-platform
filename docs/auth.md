@@ -44,9 +44,10 @@ Credential subsystem
     │
     └── Path C: x509/VOMS proxy (for AMI, grid jobs, SRM, FTS)
             Linked once at the portal (user passphrase). Two mint paths
-            coexist behind VOMS_TOKEN_SERVICE_URL:
+            coexist behind the x509 identity_providers entry's
+            `service_url` (see the x509 row below):
 
-            • voms-token-service (URL set): the broker asks
+            • voms-token-service (service_url set): the broker asks
               voms-token-service — the only component that mounts user
               homes — to run voms-proxy-init with the passphrase, then
               persists BOTH the proxy and the Globus passphrase in
@@ -57,9 +58,9 @@ Credential subsystem
               (the user changed their Globus password), the identity is
               unlinked and the portal prompts a re-link.
 
-            • legacy ephemeral-Job NFS-subPath path (URL unset): minted
-              per unlock into the broker's tmpfs, nothing persisted —
-              exactly the pre-voms-token-service behavior.
+            • legacy ephemeral-Job NFS-subPath path (service_url unset):
+              minted per unlock into the broker's tmpfs, nothing
+              persisted — exactly the pre-voms-token-service behavior.
 
             An x509 backend (auth_type: x509) is called over /mcp with
             an AF Broker Identity Token (aud = the backend) and redeems
@@ -84,20 +85,22 @@ Backend MCP server  (receives the brokered credential in the Authorization
 
 ## Identity provider types
 
-The broker links a user's account to an external identity two ways, declared
-side by side in `Settings.identity_providers` (env `IDENTITY_PROVIDERS`,
-chart `broker.identityProviders`). Both authenticate the principal via
-Keycloak first (the chain above) — they differ only in *how the backend
-token is obtained and stored* once that's done:
+The broker links a user's account to an external identity three ways,
+declared side by side in `Settings.identity_providers` (env
+`IDENTITY_PROVIDERS`, chart `broker.identityProviders`). All authenticate
+the principal via Keycloak first (the chain above) — they differ only in
+*how the backend credential is obtained, stored, and delivered* once that's
+done:
 
-| | `keycloak-brokered` | `oauth21-direct` |
-|---|---|---|
-| Handled by | `OIDCProvider` | `OAuth21Provider` |
-| Backend token source | Keycloak's stored-broker-token pattern — the user links via `kc_action=LINK_IDP`, Keycloak stores the resulting token internally | The broker itself is an OAuth 2.1 client to the backend's own authorization server (PKCE + CIMD `client_id`, see `docs/architecture.md#client-id-metadata-document-cimd`) |
-| Broker retrieves it via | `GET /realms/<realm>/broker/<alias>/token` | `TokenStore.get(sub, alias)`, refreshing on demand near expiry |
-| Token persistence | Keycloak (broker holds no copy) | The broker's own `TokenStore` (in-memory or Vault-backed — see PR3) |
-| Requires backend to be | An OIDC-compatible IdP Keycloak can broker to | An OAuth 2.1 authorization server (no OIDC discovery needed) |
-| Portal `link_url` | Always `null` — the portal re-runs its own client-side `startIdpLink()` flow | Full URL to the broker's own `/v1/oauth/authorize/{alias}` |
+| | `keycloak-brokered` | `oauth21-direct` | `x509` |
+|---|---|---|---|
+| Handled by | `OIDCProvider` | `OAuth21Provider` | `X509Provider` |
+| Backend credential source | Keycloak's stored-broker-token pattern — the user links via `kc_action=LINK_IDP`, Keycloak stores the resulting token internally | The broker itself is an OAuth 2.1 client to the backend's own authorization server (PKCE + CIMD `client_id`, see `docs/architecture.md#client-id-metadata-document-cimd`) | A VOMS proxy minted from the user's grid certificate — the user enters their Globus passphrase once at the portal; with a `service_url`, voms-token-service mints and Vault persists (hands-free renewal); without one, the legacy ephemeral-Job path mints into tmpfs |
+| Broker retrieves it via | `GET /realms/<realm>/broker/<alias>/token` | `TokenStore.get(sub, alias)`, refreshing on demand near expiry | `VaultX509Store.get_proxy(sub)`, re-minting hands-free with the stored passphrase when expired (service mode) |
+| Credential persistence | Keycloak (broker holds no copy) | The broker's own `TokenStore` (in-memory or Vault-backed — see PR3) | Vault KV-v2 (service mode) / broker tmpfs (legacy) |
+| Delivery to the backend | `Authorization: Bearer` header injected by the aggregator | `Authorization: Bearer` header injected by the aggregator | **Backend-side redemption, not header injection**: the aggregator injects only an AF Broker Identity Token (`aud` = the backend), and the backend redeems the proxy PEM itself via `POST /v1/credentials/x509/redeem` — issue #112's "backend calls back" wire format, chosen so proxy material never transits the aggregator |
+| Requires backend to be | An OIDC-compatible IdP Keycloak can broker to | An OAuth 2.1 authorization server (no OIDC discovery needed) | An MCP server that verifies broker JWTs and redeems proxies (ami-mcp's `--auth broker`, via `af-credentials`), marked `auth_type: x509` in `backends.yaml` |
+| Portal `link_url` | Always `null` — the portal re-runs its own client-side `startIdpLink()` flow | Full URL to the broker's own `/v1/oauth/authorize/{alias}` | Always `null` — `link_mechanism: "passphrase"`, an in-portal form POSTing the Globus passphrase to `/v1/x509/proxy` |
 
 Use `keycloak-brokered` when the backend is (or can be registered as) an
 OIDC identity provider Keycloak already understands — this is the path for
@@ -106,22 +109,40 @@ ATLAS IAM (`atlas-oidc`). Use `oauth21-direct` when the backend is an OAuth
 OIDC IdP to Keycloak — this is the path for rucio-mcp. See
 [Rucio: Per-Site Setup](rucio-per-site-setup.md) for the concrete, deployed
 `oauth21-direct` configuration rucio-mcp uses, one entry per Rucio site.
+Use `x509` for backends whose real credential is a VOMS proxy (ami-mcp) —
+see [x509 deployment notes](x509-deployment-notes.md) for the deployed
+configuration.
 
-A third `identity_providers` type, `broker-issued`, is deliberately **not**
+A fourth `identity_providers` type, `broker-issued`, is deliberately **not**
 in the table above: it links nothing, because there is no external identity
 to link. It is the native half of the two-class doctrine below.
 
-x509 is not an `identity_providers` type at all — it is wired per-backend
-(`auth_type: x509` in `backends.yaml`). `GET /v1/identities` still surfaces
-it: one synthetic entry (id `x509`, the same synthetic alias `/v1/catalog`
-reports as those targets' `credential_provider`) is appended after the
-configured entries whenever any x509 target exists, with `linked` probed
-from `X509Provider.is_linked()` and `proxy_expires_at` from the cached
-proxy metadata. Every entry also carries `link_mechanism`, which tells the
-portal how a linking flow starts: `"redirect"` (both table columns above),
-`"passphrase"` (x509 — an in-portal form POSTing the Globus passphrase to
-`/v1/x509/proxy`; there is no URL to redirect to, so `link_url` stays
-null), or `"none"` (the AF-native types below, which have no linking step).
+An `x509` entry carries one extra coupling the other types don't: each of
+its targets must also be marked `auth_type: x509` in `backends.yaml` — that
+flag is what drives the aggregator's identity-JWT injection branch and the
+redeem endpoint's audience gate. The broker refuses to start when the two
+drift in either direction (an x509 backend no entry targets, or an entry
+targeting a non-x509 backend) — **there is no synthesized fallback**: every
+`auth_type: x509` backend must be covered by an explicit entry, even a bare
+legacy one (`service_url` omitted). A service-mode entry (`service_url`
+set) also requires the broker signing key — the same fail-closed reasoning
+as the broker-issued/condor-token checks; a keyless legacy entry instead
+gets a loud startup warning, since the shipped `backends.yaml` has always
+declared an x509 backend. Multiple x509 entries with different
+voms-token-service URLs/VOs are supported.
+
+**Breaking change:** the global `VOMS_TOKEN_SERVICE_URL` env var (and its
+`VOMS_TOKEN_SERVICE_AUDIENCE`/`_VOMS`/`_VALID` companions) has been removed
+entirely — declare an `identity_providers` entry of type `x509` instead
+(see [x509 deployment notes](x509-deployment-notes.md)).
+
+`GET /v1/identities` surfaces each entry like any other, with `linked`
+probed from `X509Provider.is_linked()` and `proxy_expires_at` from the
+cached proxy metadata. Every entry also carries `link_mechanism`, which
+tells the portal how a linking flow starts: `"redirect"`
+(keycloak-brokered, oauth21-direct), `"passphrase"` (x509 — there is no URL
+to redirect to, so `link_url` stays null), or `"none"` (the AF-native types
+below, which have no linking step).
 
 ---
 

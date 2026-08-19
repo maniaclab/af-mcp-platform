@@ -30,12 +30,21 @@ def _write_empty_backends(tmp_path: Path) -> str:
     return str(path)
 
 
+def _use_empty_backends(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Point BACKENDS_FILE at an empty backends list, and drop conftest's
+    default x509 identity_providers entry (targets ["ami"]) along with it —
+    an x509 entry naming a nonexistent backend would trip the broker's
+    coverage check the other way (an entry targeting a non-x509 backend)."""
+    monkeypatch.setenv("BACKENDS_FILE", _write_empty_backends(tmp_path))
+    monkeypatch.setenv("IDENTITY_PROVIDERS", "[]")
+
+
 def test_readyz_ok_with_empty_backends(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     app_client_factory: Callable[..., Any],
 ) -> None:
-    monkeypatch.setenv("BACKENDS_FILE", _write_empty_backends(tmp_path))
+    _use_empty_backends(monkeypatch, tmp_path)
     monkeypatch.setattr("af_mcp_broker.api.health.get_jwks", _ok_jwks)
 
     with app_client_factory() as (client, _):
@@ -80,7 +89,7 @@ def test_readyz_body_reports_backends_count_zero(
     tmp_path: Path,
     app_client_factory: Callable[..., Any],
 ) -> None:
-    monkeypatch.setenv("BACKENDS_FILE", _write_empty_backends(tmp_path))
+    _use_empty_backends(monkeypatch, tmp_path)
     monkeypatch.setattr("af_mcp_broker.api.health.get_jwks", _ok_jwks)
 
     with app_client_factory() as (client, _):
@@ -104,7 +113,7 @@ def test_startup_warns_on_no_backends(
     lifespan, which would otherwise swallow pytest's caplog handler, so this
     asserts directly against the app module's logger call instead.
     """
-    monkeypatch.setenv("BACKENDS_FILE", _write_empty_backends(tmp_path))
+    _use_empty_backends(monkeypatch, tmp_path)
 
     from af_mcp_broker import app as app_module
 

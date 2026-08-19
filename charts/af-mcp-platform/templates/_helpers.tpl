@@ -141,8 +141,11 @@ field names `IdentityProviderConfig` (broker/src/af_mcp_broker/config.py)
 parses from JSON. Every entry carries alias/type/targets/displayName/enables;
 oauth21-direct entries additionally carry the endpoint/issuer/scope fields,
 broker-issued entries their per-target audience/includePosix options
-(issue #162), and condor-token entries their serviceUrl/audience
-(issue #169).
+(issue #162), condor-token entries their serviceUrl/audience (issue #169),
+and x509 entries their serviceUrl/voms/valid/audience (serviceUrl omitted =
+the legacy k8s-Job mint path; replaces the removed global
+broker.env.VOMS_TOKEN_SERVICE_URL -- every auth_type: x509 backend now
+needs an explicit entry, there is no synthesized fallback).
 */}}
 {{- define "af-mcp-platform.identityProviders" -}}
 {{- $providers := list -}}
@@ -184,6 +187,18 @@ broker-issued entries their per-target audience/includePosix options
       "enables" (.enables | default "")
       "service_url" .serviceUrl
       "audience" (.audience | default "condor-token-service")
+    ) -}}
+{{- else if eq .type "x509" -}}
+{{- $providers = append $providers (dict
+      "type" .type
+      "alias" .alias
+      "targets" (.targets | default (list))
+      "display_name" (.displayName | default "")
+      "enables" (.enables | default "")
+      "service_url" (.serviceUrl | default nil)
+      "voms" (.voms | default "atlas")
+      "valid" (.valid | default "192:00")
+      "audience" (.audience | default "voms-token-service")
     ) -}}
 {{- else -}}
 {{- $providers = append $providers (dict

@@ -36,6 +36,13 @@ def _bootstrap_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("POLICY_FILE", str(SHIPPED_POLICY))
     monkeypatch.setenv("BACKENDS_FILE", str(SHIPPED_BACKENDS))
     monkeypatch.setenv("METRICS_PORT", "0")
+    # The shipped backends.yaml wires "ami" with auth_type: x509, which
+    # needs an explicit identity_providers entry covering it or the broker
+    # refuses to start (there is no synthesized fallback).
+    monkeypatch.setenv(
+        "IDENTITY_PROVIDERS",
+        json.dumps([{"type": "x509", "alias": "x509", "targets": ["ami"]}]),
+    )
 
 
 def _clear_settings_cache() -> None:

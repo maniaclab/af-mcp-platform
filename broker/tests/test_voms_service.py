@@ -22,7 +22,6 @@ import pytest
 from pydantic import SecretStr
 from test_broker_issued import _make_rsa_key, _private_pem
 
-from af_mcp_broker.config import Settings
 from af_mcp_broker.credentials.broker_issued import BrokerTokenIssuer
 from af_mcp_broker.credentials.voms_service import (
     MintedProxy,
@@ -235,15 +234,3 @@ class TestMintFailures:
         with pytest.raises((VomsServiceBadPassphraseError, VomsServiceMintError)) as e:
             await _mint(client)
         assert "hunter2-passphrase" not in str(e.value)
-
-
-class TestSettings:
-    def test_feature_is_off_by_default(self) -> None:
-        settings = Settings()
-        assert settings.voms_token_service_url == ""
-
-    def test_defaults_match_the_service_contract(self) -> None:
-        settings = Settings()
-        assert settings.voms_token_service_audience == "voms-token-service"
-        assert settings.voms_token_service_voms == "atlas"
-        assert settings.voms_token_service_valid == "192:00"

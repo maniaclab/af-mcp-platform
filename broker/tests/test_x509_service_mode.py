@@ -21,7 +21,10 @@ from __future__ import annotations
 import asyncio
 import time
 from types import SimpleNamespace
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 import pytest
 from pydantic import SecretBytes, SecretStr
@@ -510,64 +513,63 @@ class TestRevoke:
 
 
 # ---------------------------------------------------------------------------
-# Settings validation and app wiring
+# App wiring (Settings validation for the service-mode Vault coupling lives
+# in test_config.py's test_vault_config_required_by_x509_entry_with_service_url)
 # ---------------------------------------------------------------------------
-
-
-class TestSettingsValidation:
-    def test_voms_service_requires_vault(self) -> None:
-        """Proxies and passphrases persist in Vault in service mode, so a
-        service URL without Vault connection settings must fail at boot."""
-        from af_mcp_broker.config import Settings
-
-        with pytest.raises(ValueError, match="vault_addr"):
-            Settings(voms_token_service_url="http://voms-token-service:8000")
-
-    def test_voms_service_requires_vault_role(self) -> None:
-        from af_mcp_broker.config import Settings
-
-        with pytest.raises(ValueError, match="vault_auth_role"):
-            Settings(
-                voms_token_service_url="http://voms-token-service:8000",
-                vault_addr="https://vault.example",
-            )
-
-    def test_voms_service_with_vault_configured_is_valid(self) -> None:
-        from af_mcp_broker.config import Settings
-
-        settings = Settings(
-            voms_token_service_url="http://voms-token-service:8000",
-            vault_addr="https://vault.example",
-            vault_auth_role="af-mcp-broker",
-        )
-        assert settings.voms_token_service_url == "http://voms-token-service:8000"
 
 
 class TestAppWiring:
     @pytest.fixture
-    def voms_service_env(self, monkeypatch: pytest.MonkeyPatch):
-        """Point the app at a voms-token-service + Vault without either existing: Vault's startup trial auth is stubbed out."""
+    def voms_service_env(self, monkeypatch: pytest.MonkeyPatch) -> Callable[[], None]:
+        """Returns a callable that points the app at an explicit service-mode x509 entry + Vault without either existing (Vault's startup trial auth is stubbed out).
+
+        A callable, applied from inside the test body -- not a plain
+        fixture -- so its ``monkeypatch.setenv("IDENTITY_PROVIDERS", ...)``
+        is guaranteed to run after ``app_client_factory``'s own (fixture
+        setup order between two same-scoped, non-dependent fixtures is
+        unspecified, and app_client_factory sets a default
+        IDENTITY_PROVIDERS unconditionally). The shipped backends.yaml
+        already declares "ami" as ``auth_type: x509``, so this entry
+        (targeting "ami") satisfies the broker's coverage check with no
+        need to override BACKENDS_FILE.
+        """
+        import json
+
         from af_mcp_broker.vault_kv import VaultKV
 
         async def _fake_authenticate(self) -> str:
             return "vault-test-token"
 
-        monkeypatch.setattr(VaultKV, "_authenticate", _fake_authenticate)
-        monkeypatch.setenv(
-            "VOMS_TOKEN_SERVICE_URL", "http://voms-token-service.invalid:8000"
-        )
-        monkeypatch.setenv("VAULT_ADDR", "https://vault.invalid")
-        monkeypatch.setenv("VAULT_AUTH_ROLE", "af-mcp-broker")
+        def _apply() -> None:
+            monkeypatch.setattr(VaultKV, "_authenticate", _fake_authenticate)
+            monkeypatch.setenv(
+                "IDENTITY_PROVIDERS",
+                json.dumps(
+                    [
+                        {
+                            "type": "x509",
+                            "alias": "x509",
+                            "targets": ["ami"],
+                            "service_url": "http://voms-token-service.invalid:8000",
+                        }
+                    ]
+                ),
+            )
+            monkeypatch.setenv("VAULT_ADDR", "https://vault.invalid")
+            monkeypatch.setenv("VAULT_AUTH_ROLE", "af-mcp-broker")
+
+        return _apply
 
     def test_boot_fails_without_signing_key(
         self,
-        voms_service_env,
+        voms_service_env: Callable[[], None],
         monkeypatch: pytest.MonkeyPatch,
         app_client_factory,
     ) -> None:
         """Minting at the service needs broker-signed identity tokens: a
         service URL with no signing key is fail-closed at boot (same
         reasoning as the broker-issued provider check)."""
+        voms_service_env()
         monkeypatch.delenv("BROKER_SIGNING_KEY_FILE", raising=False)
         with (
             pytest.raises(RuntimeError, match="BROKER_SIGNING_KEY_FILE"),
@@ -577,13 +579,14 @@ class TestAppWiring:
 
     def test_boot_wires_service_mode(
         self,
-        voms_service_env,
+        voms_service_env: Callable[[], None],
         monkeypatch: pytest.MonkeyPatch,
         tmp_path,
         app_client_factory,
     ) -> None:
         from test_broker_issued import _make_rsa_key, _private_pem
 
+        voms_service_env()
         key_file = tmp_path / "signing-key.pem"
         key_file.write_bytes(_private_pem(_make_rsa_key()))
         monkeypatch.setenv("BROKER_SIGNING_KEY_FILE", str(key_file))

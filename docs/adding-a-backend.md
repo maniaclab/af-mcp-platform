@@ -60,7 +60,38 @@ the portal's Identities page — no separate mapping to keep in sync.
         enables: "Access to my-new-backend on your behalf"
   ```
 
-See `docs/auth.md#identity-provider-types` for how the two types differ.
+- **`type: x509`** — use this when the backend's real credential is a VOMS
+  proxy (e.g. ami-mcp). Unlike the two types above, delivery is
+  **backend-side redemption, not header injection**: the aggregator injects
+  only an AF Broker Identity Token, and the backend redeems the caller's
+  proxy itself via `POST /v1/credentials/x509/redeem` (issue #112's wire
+  format — proxy PEM material never transits the aggregator). The backend
+  must also be marked `auth_type: x509` in the aggregator backend list
+  (Step 1); the broker refuses to start when the entry's `targets` and the
+  `auth_type: x509` backends drift in either direction — including when a
+  backend has no explicit entry at all, since there is no synthesized
+  fallback. With `serviceUrl` set it also requires the broker signing key
+  (`broker.identityToken.existingSigningKeySecret`) and the shared Vault
+  connection (`broker.oauth21.tokenStore.vault`) — omit `serviceUrl` for the
+  legacy ephemeral-Job mint path (signing key omitted there just warns).
+  **Breaking change:** this entry replaces the removed global
+  `broker.env.VOMS_TOKEN_SERVICE_URL` — see
+  [x509 deployment notes](x509-deployment-notes.md).
+
+  ```yaml
+  broker:
+    identityProviders:
+      - type: x509
+        alias: x509
+        targets: ["my-x509-backend"]
+        serviceUrl: "http://voms-token-service.voms-token.svc.cluster.local:8080"
+        voms: "atlas"       # optional, default "atlas"
+        valid: "192:00"     # optional, default "192:00"
+        displayName: "Grid certificate (x509)"
+        enables: "VOMS proxy minting for x509-authenticated backends"
+  ```
+
+See `docs/auth.md#identity-provider-types` for how the types differ.
 
 ### Migrating from the pre-unification chart values
 
@@ -112,7 +143,10 @@ name) and the backend redeems the caller's cached proxy itself via
 `POST /v1/credentials/x509/redeem` (issue #112) — this requires the broker
 signing key to be mounted (`broker.identityToken.existingSigningKeySecret`),
 and the backend to run in a mode that verifies broker JWTs and redeems
-proxies (ami-mcp's `--auth broker`, via the `af-credentials` library).
+proxies (ami-mcp's `--auth broker`, via the `af-credentials` library). The new backend's `name` must be added to some `identityProviders` entry's
+`targets` — every `auth_type: x509` backend needs an explicit entry
+covering it, or the broker refuses to start naming it (there is no
+synthesized fallback; see "Adding a new Identity Provider" above).
 For a `bearer` backend, the aggregator also attempts a best-effort per-user
 credential mint during `tools/list` (not only `tools/call`), so a backend
 whose own MCP endpoint requires auth just to list tools (e.g. rucio-mcp)

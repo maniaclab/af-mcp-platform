@@ -168,7 +168,17 @@ def _configure_oauth21_env(monkeypatch: pytest.MonkeyPatch, fernet_key: str) -> 
                     "scope": "openid profile",
                     "display_name": "Rucio (ATLAS)",
                     "enables": "ATLAS Rucio operations via rucio-mcp",
-                }
+                },
+                # This override replaces conftest's default entirely (or,
+                # for tests that boot the app directly via _fresh_app, is
+                # the only IDENTITY_PROVIDERS source at all) -- either way,
+                # the shipped backends.yaml's "ami" (auth_type: x509) still
+                # needs an explicit entry or the broker refuses to start.
+                {
+                    "type": "x509",
+                    "alias": "x509",
+                    "targets": ["ami"],
+                },
             ]
         ),
     )

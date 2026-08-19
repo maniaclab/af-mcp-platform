@@ -370,7 +370,15 @@ def _bootstrap_oauth21_vault_env(
                     "authorization_endpoint": "https://backend-as.example/authorize",
                     "token_endpoint": "https://backend-as.example/token",
                     "issuer": "https://backend-as.example",
-                }
+                },
+                # The shipped backends.yaml's "ami" (auth_type: x509) needs
+                # an explicit entry covering it or the broker refuses to
+                # start (there is no synthesized fallback).
+                {
+                    "type": "x509",
+                    "alias": "x509",
+                    "targets": ["ami"],
+                },
             ]
         ),
     )

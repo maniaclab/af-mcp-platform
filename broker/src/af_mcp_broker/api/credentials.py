@@ -137,12 +137,27 @@ def _cache(request: Request) -> CredentialCache:
     return cache
 
 
-def _x509_provider(request: Request) -> X509Provider:
-    provider = getattr(request.app.state, "x509_provider", None)
-    if provider is None:
+async def _x509_provider(request: Request, target: str) -> X509Provider:
+    """Resolve the ``X509Provider`` registered for *target*.
+
+    Per-target resolution (not a single app-wide default) because each
+    x509 ``identity_providers`` entry constructs its own provider — with
+    its own voms-token-service URL/VO in service mode — and the /v1 x509
+    surfaces must mint/serve via the entry that actually services the
+    requested target.
+    """
+    registry = _registry(request)
+    try:
+        provider = await registry.resolve(target)
+    except KeyError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="No x509 credential provider is configured",
+            detail=f"No x509 credential provider is configured for '{target}'",
+        ) from exc
+    if not isinstance(provider, X509Provider):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Target '{target}' is not an x509 target",
         )
     return provider
 
@@ -280,8 +295,8 @@ async def create_proxy(
     request: Request,
     principal: Annotated[Principal, Depends(keycloak_dependency)],
 ) -> ProxyMetadata:
-    provider = _x509_provider(request)
     target = _resolve_x509_target(request, body.target)
+    provider = await _x509_provider(request, target)
     passphrase = SecretBytes(body.passphrase.get_secret_value().encode())
     try:
         await provider.issue(principal, target, passphrase=passphrase)
@@ -358,13 +373,13 @@ async def delete_proxy(
     principal: Annotated[Principal, Depends(keycloak_dependency)],
     target: str | None = None,
 ) -> None:
-    provider = _x509_provider(request)
     targets: list[str]
     if target is not None:
         targets = [target]
     else:
         targets = getattr(request.app.state, "x509_targets", [])
     for tgt in targets:
+        provider = await _x509_provider(request, tgt)
         await provider.revoke(principal, tgt)
 
 
@@ -564,9 +579,12 @@ async def redeem_x509_proxy(request: Request) -> ProxyRedeemResponse:
 
     # voms-token-service mode: Vault is authoritative — serve the stored
     # proxy, renewing hands-free with the stored passphrase when it has
-    # expired (issue #112's Vault-backed linking).
-    provider = getattr(request.app.state, "x509_provider", None)
-    if provider is not None and provider.uses_voms_service:
+    # expired (issue #112's Vault-backed linking). Resolved per audience:
+    # each x509 identity_providers entry has its own provider (and possibly
+    # its own voms-token-service), so the redeeming backend's target picks
+    # the mode and the mint path.
+    provider = await _x509_provider(request, audience)
+    if provider.uses_voms_service:
         return await _redeem_from_vault(
             provider,
             subject=subject,
