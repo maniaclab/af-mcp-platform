@@ -17,7 +17,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-import pytest
 from test_x509_service_mode import FakeX509Store
 
 from af_mcp_broker.credentials.voms_service import VomsServicePreflightError
@@ -26,6 +25,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
+    import pytest
     from fastapi.testclient import TestClient
 
 _AUTH = {"Authorization": "Bearer test"}
