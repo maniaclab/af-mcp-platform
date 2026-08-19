@@ -626,3 +626,28 @@ class TestToResponse:
         assert response.proxy_handle == cred.payload["proxy_handle"]
         assert response.proxy_path is None
         assert response.token is None
+
+
+# ---------------------------------------------------------------------------
+# voms_client exposure (the /v1/x509/preflight route proxies through it)
+# ---------------------------------------------------------------------------
+
+
+class TestVomsClientProperty:
+    async def test_exposed_in_service_mode(self) -> None:
+        provider, voms_client, _, _ = _make_provider()
+        assert provider.voms_client is voms_client
+
+    async def test_none_in_legacy_mode(self) -> None:
+        from types import SimpleNamespace as _NS
+
+        legacy = X509Provider(
+            settings=_NS(  # type: ignore[arg-type]
+                posix_uid_attribute="uid",
+                posix_gid_attribute="gid",
+                posix_unixname_attribute="unixname",
+            ),
+            cache=CredentialCache(),
+            backends=[],
+        )
+        assert legacy.voms_client is None

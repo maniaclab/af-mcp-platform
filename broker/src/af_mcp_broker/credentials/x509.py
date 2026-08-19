@@ -853,6 +853,16 @@ class X509Provider(CredentialProvider):
         return self._voms_client is not None and self._vault_store is not None
 
     @property
+    def voms_client(self) -> VomsTokenServiceClient | None:
+        """The voms-token-service client, or None in legacy mode.
+
+        Exposed so ``api/credentials.py``'s preflight route can proxy the
+        service's credential-readiness checklist through the same
+        authenticated client the mint path uses.
+        """
+        return self._voms_client
+
+    @property
     def vault_store(self) -> VaultX509Store | None:
         """The Vault-backed link/proxy store, or None in legacy mode.
 
