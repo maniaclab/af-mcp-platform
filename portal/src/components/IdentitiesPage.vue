@@ -213,26 +213,38 @@ function handleX509Revoked(id: string) {
            card with the in-page passphrase form. -->
       <div v-if="providers.length > 0" class="ip__list">
         <template v-for="p in providers" :key="p.id">
-          <X509IdentityCard
-            v-if="p.link_mechanism === 'passphrase'"
-            :linked="p.linked"
-            :display_name="p.display_name"
-            :enables="p.enables"
-            :proxy_expires_at="p.proxy_expires_at"
-            :x509_link_mode="p.x509_link_mode"
-            @linked="(meta, remember) => handleX509Linked(p.id, meta, remember)"
-            @revoked="handleX509Revoked(p.id)"
-          />
-          <IdentityLink
-            v-else
-            :id="p.id"
-            :type="p.type"
-            :linked="p.linked"
-            :display_name="p.display_name"
-            :enables="p.enables"
-            :link_url="p.link_url"
-            @unlinked="handleUnlinked(p.id)"
-          />
+          <!--
+            Stable per-provider anchor -- af_link_identity (and the broker's
+            not-linked ToolError) deep-link to
+            `{portal_url}/identities#identity-card-{id}`. Wraps whichever
+            card component renders rather than putting the id on the
+            component itself: IdentityLink already declares its own `id`
+            prop with a different meaning (the provider alias passed
+            through to startIdpLink() and its dialog's aria ids), so
+            reusing it for the DOM anchor would collide.
+          -->
+          <div :id="`identity-card-${p.id}`" class="ip__card-anchor">
+            <X509IdentityCard
+              v-if="p.link_mechanism === 'passphrase'"
+              :linked="p.linked"
+              :display_name="p.display_name"
+              :enables="p.enables"
+              :proxy_expires_at="p.proxy_expires_at"
+              :x509_link_mode="p.x509_link_mode"
+              @linked="(meta, remember) => handleX509Linked(p.id, meta, remember)"
+              @revoked="handleX509Revoked(p.id)"
+            />
+            <IdentityLink
+              v-else
+              :id="p.id"
+              :type="p.type"
+              :linked="p.linked"
+              :display_name="p.display_name"
+              :enables="p.enables"
+              :link_url="p.link_url"
+              @unlinked="handleUnlinked(p.id)"
+            />
+          </div>
         </template>
       </div>
 
@@ -332,6 +344,14 @@ function handleX509Revoked(id: string) {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+}
+
+/* Anchor wrapper for a `#identity-card-{id}` deep link (af_link_identity,
+   and the broker's not-linked ToolError) -- scroll-margin-top keeps the
+   card clear of Base.astro's sticky .af-topbar (56px tall) when the
+   browser scrolls a hash target into view. */
+.ip__card-anchor {
+  scroll-margin-top: 72px;
 }
 
 /* Loading */
