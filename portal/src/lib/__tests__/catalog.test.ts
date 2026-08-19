@@ -14,7 +14,6 @@ function makeServer(overrides: Partial<CatalogServer> = {}): CatalogServer {
     status: 'available',
     status_detail: 'Available.',
     correlation_id: null,
-    tools: [],
     ...overrides,
   };
 }

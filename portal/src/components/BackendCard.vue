@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed } from 'vue';
-import type { CatalogServer } from '../lib/api';
+import { computed, ref } from 'vue';
+import { fetchServerTools } from '../lib/api';
+import type { CatalogServer, ServerToolsResponse } from '../lib/api';
 import type { PoweredBy } from '../lib/catalog';
 import { resolveBackendStatus, resolvePoweredByLinked } from '../lib/backendStatus';
+import { resolveToolListing, toolCountLabel } from '../lib/serverTools';
 import ToolTable from './ToolTable.vue';
 
 const props = defineProps<{
@@ -18,6 +20,45 @@ const statusView = computed(() => resolveBackendStatus(props.server));
 const poweredByLinked = computed(() =>
   resolvePoweredByLinked(props.server.status, props.poweredBy.linked),
 );
+
+// Tools accordion — fetched on expand, never on page load: the catalog's
+// job is a quick scan of reachable backends, and each listing fans the
+// broker out to that one backend.
+const toolsOpen = ref(false);
+const toolsLoading = ref(false);
+const toolsError = ref<string | null>(null);
+const toolListing = ref<ServerToolsResponse | null>(null);
+const toolsView = computed(() =>
+  toolListing.value ? resolveToolListing(toolListing.value) : null,
+);
+
+// Toggle sequence number guard — same contract as X509IdentityCard.vue's
+// accordions (PR #185): every toggle (either direction) bumps the counter,
+// and a fetch may only apply its result while the counter still matches the
+// value captured at that fetch's own expand. A response landing after a
+// collapse (or after a newer expand) is discarded, so a slow response can
+// never rewrite the section one fetch behind the clicks.
+let toolsSeq = 0;
+
+async function toggleTools() {
+  toolsOpen.value = !toolsOpen.value;
+  toolsSeq += 1;
+  if (!toolsOpen.value) return;
+  const seq = toolsSeq;
+  toolsLoading.value = true;
+  toolsError.value = null;
+  try {
+    const result = await fetchServerTools(props.server.name);
+    if (seq !== toolsSeq) return; // collapsed or re-expanded since
+    toolListing.value = result;
+  } catch (err) {
+    if (seq !== toolsSeq) return;
+    toolListing.value = null;
+    toolsError.value = err instanceof Error ? err.message : 'Could not load tools.';
+  } finally {
+    if (seq === toolsSeq) toolsLoading.value = false;
+  }
+}
 </script>
 
 <template>
@@ -120,17 +161,51 @@ const poweredByLinked = computed(() =>
 
     <!-- Tools -- collapsed by default (a backend can register dozens of
          tools; the catalog's job is a quick scan of reachable backends, not
-         reading every tool's docstring up front). Same <details> pattern as
-         TokensPage.vue's "Use from the command line" section. -->
-    <details v-if="server.tools.length > 0" class="bc__tools">
-      <summary class="bc__tools-summary">
-        {{ server.tools.length }} {{ server.tools.length === 1 ? 'tool' : 'tools' }}
-      </summary>
-      <div class="bc__tools-body" role="region" :aria-label="`Tools for ${server.name}`">
-        <ToolTable :tools="server.tools" />
+         reading every tool's docstring up front) and fetched on expand from
+         GET /v1/catalog/{backend}/tools. Toggle-button accordion with the
+         same stale-response sequence guard as X509IdentityCard.vue's
+         sections. -->
+    <div class="bc__tools">
+      <button
+        type="button"
+        class="bc__tools-toggle"
+        :aria-expanded="toolsOpen"
+        @click="toggleTools"
+      >
+        <span class="bc__tools-chevron" :class="{ 'bc__tools-chevron--open': toolsOpen }"
+          >&#9656;</span
+        >
+        <span>Tools</span>
+        <span v-if="toolsView && toolsView.kind !== 'blocked'" class="bc__tools-count">
+          {{ toolCountLabel(toolsView.kind === 'tools' ? toolsView.tools.length : 0) }}
+        </span>
+      </button>
+
+      <div
+        v-if="toolsOpen"
+        class="bc__tools-body"
+        role="region"
+        :aria-label="`Tools for ${server.name}`"
+      >
+        <p v-if="toolsLoading" class="bc__tools-note" aria-live="polite">Loading tools…</p>
+        <div v-else-if="toolsError" class="bc__tools-error" role="alert">{{ toolsError }}</div>
+        <template v-else-if="toolsView">
+          <ToolTable v-if="toolsView.kind === 'tools'" :tools="toolsView.tools" />
+          <p v-else-if="toolsView.kind === 'empty'" class="bc__tools-note">
+            {{ toolsView.message }}
+          </p>
+          <!-- Blocked (not_linked/unauthorized/unavailable/capability_
+               required): the broker's own status_detail sentence, plus a
+               CTA to the Identities page when linking is the fix. -->
+          <p v-else class="bc__tools-note">
+            {{ toolsView.message }}
+            <a v-if="toolsView.cta" :href="toolsView.cta.href" class="bc__tools-cta">
+              {{ toolsView.cta.label }} →
+            </a>
+          </p>
+        </template>
       </div>
-    </details>
-    <p v-else class="bc__tools-placeholder">Tool listing coming soon.</p>
+    </div>
   </div>
 </template>
 
@@ -429,38 +504,92 @@ const poweredByLinked = computed(() =>
   white-space: nowrap;
 }
 
-/* Tools -- collapsed by default via <details>/<summary> */
+/* Tools -- collapsed by default; toggle-button accordion (same grammar as
+ * X509IdentityCard.vue's .xc__section-toggle) so expand state lives in Vue,
+ * where the fetch-on-expand sequence guard needs it. */
 .bc__tools {
   border-top: 1px solid var(--color-af-border);
   background: rgb(from var(--color-af-void) r g b / 0.5);
 }
 
-.bc__tools-summary {
+.bc__tools-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  background: none;
+  border: none;
   cursor: pointer;
   padding: 0.625rem 1rem;
   font-family: 'IBM Plex Mono', monospace;
   font-size: 0.6875rem;
   font-weight: 600;
   letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--color-af-dim);
 }
-.bc__tools-summary:focus-visible {
+.bc__tools-toggle:hover {
+  color: var(--color-af-text);
+}
+.bc__tools-toggle:focus-visible {
   outline: 2px solid var(--color-af-teal);
   outline-offset: -2px;
+}
+
+.bc__tools-chevron {
+  display: inline-block;
+  transition: rotate 120ms;
+}
+.bc__tools-chevron--open {
+  rotate: 90deg;
+}
+@media (prefers-reduced-motion: reduce) {
+  .bc__tools-chevron {
+    transition: none;
+  }
+}
+
+.bc__tools-count {
+  font-size: 0.5625rem;
+  padding: 0.125rem 0.375rem;
+  border-radius: 2px;
+  border: 1px solid rgb(from var(--color-af-teal) r g b / 0.2);
+  background: rgb(from var(--color-af-teal) r g b / 0.08);
+  color: var(--color-af-teal);
+  text-transform: none;
+  letter-spacing: 0.04em;
 }
 
 .bc__tools-body {
   padding: 0 0 0.25rem;
 }
 
-.bc__tools-placeholder {
+.bc__tools-note {
   margin: 0;
-  padding: 0.75rem 1rem;
+  padding: 0.25rem 1rem 0.75rem;
   font-size: 0.8125rem;
-  font-style: italic;
   color: var(--color-af-dim);
-  border-top: 1px solid var(--color-af-border);
-  background: rgb(from var(--color-af-void) r g b / 0.5);
+}
+
+.bc__tools-cta {
+  color: var(--color-af-teal);
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.bc__tools-cta:hover {
+  text-decoration: underline;
+}
+
+.bc__tools-error {
+  margin: 0.25rem 1rem 0.75rem;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.75rem;
+  color: var(--color-af-red);
+  padding: 0.5rem 0.75rem;
+  border: 1px solid rgb(from var(--color-af-red) r g b / 0.25);
+  border-radius: 3px;
+  background: rgb(from var(--color-af-red) r g b / 0.06);
 }
 
 @media (max-width: 640px) {

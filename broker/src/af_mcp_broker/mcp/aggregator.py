@@ -44,7 +44,7 @@ from af_mcp_broker.mcp.registry import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterator, Sequence
 
     from fastmcp.tools.base import Tool
 
@@ -143,34 +143,126 @@ async def _resolve_list_time_headers(
     return headers, None
 
 
+def _iter_leaf_exceptions(exc: BaseException) -> Iterator[BaseException]:
+    """Yield *exc* itself, or its leaves when it is an ``ExceptionGroup``.
+
+    A transport failure inside fastmcp's client (which runs its I/O in anyio
+    task groups) can surface wrapped in a ``BaseExceptionGroup`` rather than
+    as the raw ``httpx`` exception -- classification below must look through
+    that wrapping or an injected-credential 401 would misclassify as
+    "unavailable".
+    """
+    if isinstance(exc, BaseExceptionGroup):
+        for sub in exc.exceptions:
+            yield from _iter_leaf_exceptions(sub)
+    else:
+        yield exc
+
+
+def _classify_failure(
+    exc: Exception, *, injected: bool, skip_reason: str | None
+) -> str:
+    """Classify failure decision for api access.
+
+    Decision core shared by ``_classify_list_failure`` (the /mcp listing
+    path) and ``fetch_backend_tool_listing`` (the /v1 per-backend tool
+    listing), so the two can never disagree on what a failure means.
+
+    If a credential mint was deliberately skipped (``skip_reason`` set),
+    that's the precise reason regardless of what the resulting
+    uncredentialed connection raised. Otherwise, a raw upstream 401 is only
+    "unauthorized" -- meaning the stored credential itself was rejected,
+    bad/expired, the caller should re-link -- when a credential actually was
+    injected for this attempt; a 401 with nothing injected (e.g. a
+    "none"/"x509" backend unexpectedly requiring auth), a connection
+    refusal, a timeout, or any other error all fall back to "unavailable",
+    an operational/config problem rather than a "go re-link" prompt.
+    """
+    if not injected and skip_reason is not None:
+        return skip_reason
+    if injected and any(
+        isinstance(leaf, httpx.HTTPStatusError) and leaf.response.status_code == 401
+        for leaf in _iter_leaf_exceptions(exc)
+    ):
+        return "unauthorized"
+    return "unavailable"
+
+
 async def _classify_list_failure(exc: Exception, backend_name: str) -> tuple[str, str]:
     """Classify a ``_list_tools()`` failure for structured logging.
 
     Consults the per-backend request-scoped state ``_bearer_factory``'s
     list-time branch records (keyed per backend since one ``tools/list``
-    request fans out to every backend concurrently): if a credential mint
-    was deliberately skipped (``skip_reason`` set), that's the precise
-    reason regardless of what the resulting uncredentialed connection
-    raised. Otherwise, a raw upstream 401 is only "unauthorized" -- meaning
-    the stored credential itself was rejected, bad/expired, the caller
-    should re-link -- when a credential actually was injected for this
-    attempt; a 401 with nothing injected (e.g. a "none"/"x509" backend
-    unexpectedly requiring auth), a connection refusal, a timeout, or any
-    other error all fall back to "unavailable", an operational/config
-    problem rather than a "go re-link" prompt.
+    request fans out to every backend concurrently), then applies
+    ``_classify_failure``'s shared decision core.
     """
     ctx = get_context()
     status = await ctx.get_state(f"__list_credential_status__:{backend_name}")
     injected, skip_reason = status if status is not None else (False, None)
-    if not injected and skip_reason is not None:
-        return skip_reason, str(exc)
-    if (
-        injected
-        and isinstance(exc, httpx.HTTPStatusError)
-        and exc.response.status_code == 401
-    ):
-        return "unauthorized", str(exc)
-    return "unavailable", str(exc)
+    return _classify_failure(exc, injected=injected, skip_reason=skip_reason), str(exc)
+
+
+async def resolve_list_time_credential(
+    spec: BackendSpec,
+    credential_registry: CredentialRegistry,
+    principal: Principal,
+    broker_token_issuer: BrokerTokenIssuer | None = None,
+) -> tuple[dict[str, str] | None, str | None]:
+    """Best-effort list-time credential headers for *spec*, any auth_type.
+
+    The /v1 per-backend tool listing's (api/catalog_tools.py) entry point
+    into the exact same list-time credential logic the aggregator's client
+    factories use, so the portal's tool listing can never disagree with what
+    a tools/list through /mcp would have injected:
+
+    - "none": no per-user credential concept at all -> ``({}, None)``.
+    - "x509": a locally-signed AF Broker Identity Token, mirroring
+      ``_x509_factory``'s list-time branch; with no issuer configured the
+      connection proceeds bare (``(None, None)``), same as the aggregator.
+    - "bearer": ``_resolve_list_time_headers`` (the issue #121 best-effort
+      mint), unchanged -- ``skip_reason`` ("not_linked" | "unavailable")
+      is set whenever no credential could be attached.
+
+    Callers must gate on ``check_entitlement`` first, exactly like the
+    aggregator's factories do -- a caller who could never pass the
+    capability check shouldn't trigger a mint attempt at all.
+    """
+    if spec.auth_type == "none":
+        return {}, None
+    if spec.auth_type == "x509":
+        if broker_token_issuer is None:
+            return None, None
+        token, _ = broker_token_issuer.mint(principal.subject, spec.name)
+        return {"Authorization": f"Bearer {token}"}, None
+    return await _resolve_list_time_headers(spec, credential_registry, principal)
+
+
+async def fetch_backend_tool_listing(
+    spec: BackendSpec,
+    headers: dict[str, str] | None,
+    skip_reason: str | None,
+) -> tuple[str, list[tuple[str, str]]]:
+    """Connect to *spec* once and list its tools.
+
+    *headers*/*skip_reason* come from ``resolve_list_time_credential``.
+    Returns ``(status, tools)``: status is "ok" or a ``_classify_failure``
+    reason ("not_linked" | "unauthorized" | "unavailable"), and tools are
+    ``(name, description)`` pairs with ``BackendSpec.apply_namespace``
+    already applied -- the names a caller actually sees through /mcp.
+    Deliberately built on ``_build_client`` (same transport choice, per-call
+    timeout, and notification handlers as the aggregator's own factories)
+    rather than a second HTTP code path.
+    """
+    transport_cls = SSETransport if spec.transport == "sse" else StreamableHttpTransport
+    client = _build_client(spec, transport_cls, headers=headers)
+    try:
+        async with client:
+            tools = await client.list_tools()
+    except Exception as exc:  # noqa: BLE001
+        reason = _classify_failure(exc, injected=bool(headers), skip_reason=skip_reason)
+        return reason, []
+    prefix = f"{spec.prefix}_" if spec.apply_namespace else ""
+    return "ok", [(f"{prefix}{tool.name}", tool.description or "") for tool in tools]
 
 
 def _make_client_factory(
