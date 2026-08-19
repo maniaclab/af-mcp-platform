@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Annotated, Literal
 from urllib.parse import urlencode
 
@@ -29,9 +30,37 @@ router = APIRouter(prefix="/identities", tags=["identities"])
 # (CondorTokenProvider, issue #169). The native entries (broker-issued,
 # condor-token) are always `linked` with no `link_url`: the broker is
 # authoritative, there is no linking step and no portal action.
+# "x509" — the synthetic entry for X509Provider (grid certificate / VOMS
+# proxy), appended whenever any backend is wired with `auth_type: x509`;
+# x509 has no `identity_providers` config of its own (issue #112 follow-up).
 ProviderType = Literal[
-    "keycloak-brokered", "oauth21-direct", "broker-issued", "condor-token"
+    "keycloak-brokered", "oauth21-direct", "broker-issued", "condor-token", "x509"
 ]
+
+# How the portal starts a linking flow for an entry: "redirect" — a browser
+# navigation (keycloak-brokered's client-side startIdpLink() flow, or
+# oauth21-direct's `link_url`); "passphrase" — an in-portal form that POSTs
+# the user's Globus passphrase to /v1/x509/proxy (x509 only — there is no
+# URL to redirect to, so this is deliberately a distinct mechanism rather
+# than an overloaded `link_url`); "none" — no linking step exists
+# (broker-issued, condor-token: the broker is authoritative).
+LinkMechanism = Literal["redirect", "passphrase", "none"]
+
+_LINK_MECHANISM_BY_TYPE: dict[str, LinkMechanism] = {
+    "keycloak-brokered": "redirect",
+    "oauth21-direct": "redirect",
+    "broker-issued": "none",
+    "condor-token": "none",
+}
+
+# The synthetic x509 entry's id doubles as the credential-provider alias
+# /v1/catalog reports for x509 targets (app.py's _build_target_to_alias) —
+# the portal joins catalog servers to identity rows on it.
+_X509_ALIAS = "x509"
+_X509_DISPLAY_NAME = "Grid certificate (x509)"
+_X509_ENABLES = (
+    "VOMS proxy minting for x509-authenticated backends from your grid certificate"
+)
 
 
 class IdentityProvider(BaseModel):
@@ -47,6 +76,9 @@ class IdentityProvider(BaseModel):
     broker-built URL can't complete it — see docs/auth.md). An
     ``oauth21-direct`` entry carries a full URL to the broker's own
     ``/v1/oauth/authorize/{alias}``, which the portal navigates to directly.
+    The synthetic ``x509`` entry carries no ``link_url`` either — its
+    ``link_mechanism`` is ``"passphrase"``: the portal renders an in-page
+    form that POSTs the user's Globus passphrase to ``/v1/x509/proxy``.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -58,6 +90,12 @@ class IdentityProvider(BaseModel):
     enables: str
     linked: bool
     link_url: str | None
+    link_mechanism: LinkMechanism
+    # Expiry (ISO-8601) of the caller's cached x509/VOMS proxy — populated
+    # only on the synthetic "x509" entry, from the same in-memory ProxyMeta
+    # GET /v1/x509/proxy/status serves (cheap; no Vault round trip). Null on
+    # every other entry, and on the x509 entry when nothing is cached.
+    proxy_expires_at: str | None = None
 
 
 class IdentitiesResponse(BaseModel):
@@ -129,10 +167,60 @@ async def _build_providers(
                 enables=cfg.enables,
                 linked=await provider.is_linked(principal),
                 link_url=link_url,
+                link_mechanism=_LINK_MECHANISM_BY_TYPE[cfg.type],
             )
         )
 
+    x509_entry = await _build_x509_entry(request, principal)
+    if x509_entry is not None:
+        providers.append(x509_entry)
+
     return providers
+
+
+async def _build_x509_entry(
+    request: Request, principal: Principal
+) -> IdentityProvider | None:
+    """Return the synthetic "x509" entry, or None when no backend uses auth_type: x509.
+
+    x509 is wired per-backend (``auth_type: x509`` in backends.yaml), not as
+    an ``identity_providers`` entry, so it has no config-driven row of its
+    own — this builds ONE synthetic entry regardless of how many x509
+    targets exist: a single ``X509Provider`` (one Vault link record in
+    voms-token-service mode, one ``~/.globus`` pair in legacy mode) services
+    all of them, and per-target rows would always show identical state. The
+    id mirrors the synthetic ``credential_provider`` alias /v1/catalog
+    reports for x509 targets (``app.py``'s ``_build_target_to_alias``), so
+    the portal's catalog join works unchanged.
+
+    ``proxy_expires_at`` is read from the in-memory ``ProxyMeta`` of the
+    FIRST x509 target — the same default ``GET /v1/x509/proxy/status``
+    resolves to — so it stays a cheap in-process lookup.
+    """
+    x509_provider = getattr(request.app.state, "x509_provider", None)
+    x509_targets: list[str] = getattr(request.app.state, "x509_targets", [])
+    if x509_provider is None or not x509_targets:
+        return None
+
+    proxy_expires_at: str | None = None
+    credential_cache = getattr(request.app.state, "credential_cache", None)
+    if credential_cache is not None:
+        meta = credential_cache.get_proxy_meta(principal.subject, x509_targets[0])
+        if meta is not None:
+            proxy_expires_at = datetime.fromtimestamp(
+                meta.not_after, tz=UTC
+            ).isoformat()
+
+    return IdentityProvider(
+        id=_X509_ALIAS,
+        type="x509",
+        display_name=_X509_DISPLAY_NAME,
+        enables=_X509_ENABLES,
+        linked=await x509_provider.is_linked(principal),
+        link_url=None,
+        link_mechanism="passphrase",
+        proxy_expires_at=proxy_expires_at,
+    )
 
 
 # ---------------------------------------------------------------------------

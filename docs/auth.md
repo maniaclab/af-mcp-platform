@@ -111,6 +111,18 @@ A third `identity_providers` type, `broker-issued`, is deliberately **not**
 in the table above: it links nothing, because there is no external identity
 to link. It is the native half of the two-class doctrine below.
 
+x509 is not an `identity_providers` type at all — it is wired per-backend
+(`auth_type: x509` in `backends.yaml`). `GET /v1/identities` still surfaces
+it: one synthetic entry (id `x509`, the same synthetic alias `/v1/catalog`
+reports as those targets' `credential_provider`) is appended after the
+configured entries whenever any x509 target exists, with `linked` probed
+from `X509Provider.is_linked()` and `proxy_expires_at` from the cached
+proxy metadata. Every entry also carries `link_mechanism`, which tells the
+portal how a linking flow starts: `"redirect"` (both table columns above),
+`"passphrase"` (x509 — an in-portal form POSTing the Globus passphrase to
+`/v1/x509/proxy`; there is no URL to redirect to, so `link_url` stays
+null), or `"none"` (the AF-native types below, which have no linking step).
+
 ---
 
 ## AF Broker Identity Token (issue #162)
@@ -150,7 +162,8 @@ CredentialProvider (ABC — contract unchanged)
 Because there is no linking step, an AF-native backend shows `available`
 on the catalog from day one — `is_linked()` is unconditionally true, no
 portal action exists or is needed, and `GET /v1/identities` lists the
-provider as always linked with no `link_url`.
+provider as always linked with no `link_url` and
+`link_mechanism: "none"`.
 
 ### The token format — an internal protocol
 

@@ -204,8 +204,10 @@ there is no separate id-to-alias mapping. `app.py`'s lifespan builds one
 `app.state.identity_providers`, and registers each entry's `targets` with the
 `CredentialRegistry` the same way regardless of provider type. The identities
 API (`api/identities.py`) iterates this dict — in the same order the entries
-were configured — to build `GET /v1/identities`'s `providers` list, with no
-hardcoded provider set of its own.
+were configured — to build `GET /v1/identities`'s `providers` list. The one
+addition outside this dict is the synthetic `x509` entry appended after the
+configured entries whenever any backend is wired with `auth_type: x509`
+(x509 has no `identity_providers` config — see `docs/auth.md`).
 
 #### Linkage detection is per-provider
 

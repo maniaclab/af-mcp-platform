@@ -168,13 +168,30 @@ describe('api client', () => {
           enables: 'VOMS proxy generation',
           linked: true,
           link_url: null,
+          link_mechanism: 'redirect',
+          proxy_expires_at: null,
+        },
+        {
+          id: 'x509',
+          type: 'x509',
+          display_name: 'Grid certificate (x509)',
+          enables: 'VOMS proxy minting for x509-authenticated backends',
+          linked: true,
+          link_url: null,
+          link_mechanism: 'passphrase',
+          proxy_expires_at: '2026-08-18T21:30:00+00:00',
         },
       ],
     });
     const result = await fetchIdentities();
     expect(result.email).toBe('e');
-    expect(result.providers).toHaveLength(1);
+    expect(result.providers).toHaveLength(2);
     expect(result.providers[0]).toMatchObject({ id: 'atlas-iam', linked: true });
+    expect(result.providers[1]).toMatchObject({
+      id: 'x509',
+      link_mechanism: 'passphrase',
+      proxy_expires_at: '2026-08-18T21:30:00+00:00',
+    });
   });
 
   it('raises APIError with the response body on non-2xx', async () => {
