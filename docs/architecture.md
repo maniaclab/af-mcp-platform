@@ -197,17 +197,20 @@ discriminated union on `type`:
   the OIDC issuer's realm (e.g. `atlas-oidc`).
 - `oauth21-direct` — the broker acting as a direct OAuth 2.1 client (see
   CIMD above), handled by `OAuth21Provider`.
+- `x509` — VOMS proxies from the user's grid certificate, handled by
+  `X509Provider`; delivered by backend-side redemption rather than header
+  injection (see `docs/auth.md`'s identity-provider-types table).
 
 An entry's `alias` doubles as the portal-facing id on `GET /v1/identities` —
 there is no separate id-to-alias mapping. `app.py`'s lifespan builds one
 `CredentialProvider` instance per entry, keyed by alias, on
 `app.state.identity_providers`, and registers each entry's `targets` with the
-`CredentialRegistry` the same way regardless of provider type. The identities
-API (`api/identities.py`) iterates this dict — in the same order the entries
-were configured — to build `GET /v1/identities`'s `providers` list. The one
-addition outside this dict is the synthetic `x509` entry appended after the
-configured entries whenever any backend is wired with `auth_type: x509`
-(x509 has no `identity_providers` config — see `docs/auth.md`).
+`CredentialRegistry` the same way regardless of provider type — `x509`
+entries included: when backends are wired with `auth_type: x509` and no
+explicit x509 entry exists, the lifespan synthesizes one covering them all
+(see `docs/auth.md`). The identities API (`api/identities.py`) iterates this
+dict — in the same order the entries were configured, a synthesized x509
+entry last — to build `GET /v1/identities`'s `providers` list.
 
 #### Linkage detection is per-provider
 

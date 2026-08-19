@@ -22,7 +22,8 @@ LLM client → mcp.af.uchicago.edu /mcp
   → ami-mcp runs the AMI call with the proxy, deletes it immediately
 ```
 
-With `VOMS_TOKEN_SERVICE_URL` unset the pre-existing chain applies instead:
+With no `serviceUrl` on the x509 identity-provider entry (and the deprecated
+`VOMS_TOKEN_SERVICE_URL` unset) the pre-existing chain applies instead:
 the portal unlock mints via an ephemeral k8s Job that NFS-subPath-mounts the
 user's home, the proxy lives in the broker's tmpfs, and nothing is
 persisted — every expiry needs a fresh portal unlock.
@@ -30,14 +31,15 @@ persisted — every expiry needs a fresh portal unlock.
 ## Broker side (this chart)
 
 1. **Signing key** — `broker.identityToken.existingSigningKeySecret` must be
-   set (same key the broker-issued / condor-token providers use). A keyless
+   set (same key the broker-issued / condor-token providers use). Required
+   at boot whenever an x509 `identityProviders` entry is configured; with
+   only entry-less `auth_type: x509` backends (legacy deployments) the
    broker still boots but logs `x509_backends_without_signing_key` at
    startup, fails x509 tool calls with an actionable error, and answers 503
    on redeem.
 2. **Backend entry** — `aggregator.backends` gets ami with
-   `auth_type: x509`. That single flag drives portal minting (X509Provider
-   registration), aggregator identity-JWT injection, and the redeem
-   endpoint's audience gate. No `identity_providers` entry is needed.
+   `auth_type: x509`. That flag drives aggregator identity-JWT injection
+   and the redeem endpoint's audience gate.
 
    ```yaml
    aggregator:
@@ -49,7 +51,33 @@ persisted — every expiry needs a fresh portal unlock.
          required_capability: read_metadata   # or as policy dictates
    ```
 
-3. **Proxy minting prerequisites** — either the voms-token-service path
+3. **Identity-provider entry** — `broker.identityProviders` gets a
+   `type: x509` entry targeting the backend. The broker refuses to start
+   when an `auth_type: x509` backend and the x509 entries' `targets` drift
+   in either direction. With no explicit entry at all, the broker
+   synthesizes one covering every x509 backend (legacy-mode, or
+   service-mode from the deprecated env var — see the migration note
+   below), so pre-existing deployments keep booting unchanged.
+
+   ```yaml
+   broker:
+     identityProviders:
+       - type: x509
+         alias: x509
+         displayName: "Grid certificate (x509)"
+         enables: "VOMS proxy minting for x509-authenticated backends"
+         targets: ["ami"]
+         # voms-token-service mode; omit serviceUrl for the legacy Job path.
+         serviceUrl: "http://voms-token-service.<namespace>.svc.cluster.local:8080"
+         voms: "atlas"      # optional, default
+         valid: "192:00"    # optional, default
+   ```
+
+   Multiple entries with different `serviceUrl`/`voms` values are supported
+   (e.g. a second VO minting at its own voms-token-service) — a functional
+   gain over the single global env var this replaces.
+
+4. **Proxy minting prerequisites** — either the voms-token-service path
    (preferred; see below) or the legacy Job path's requirement of the users'
    home directories on the broker (the `af-user-homes` PVC, which does not
    exist on the AF yet — the service path removes this need from the broker
@@ -95,16 +123,37 @@ repo shape mirrors condor-token-service). Flux entries mirror
 - NetworkPolicy: broker → voms-token-service egress only; the service needs
   no egress beyond VOMS servers (plus the broker JWKS endpoint).
 
-### Broker settings (env / chart values)
+### Broker settings (per x509 identityProviders entry / chart values)
 
 | Setting | Meaning |
 | --- | --- |
-| `VOMS_TOKEN_SERVICE_URL` | Base URL of the service (no path). **Unset = legacy Job path**, exactly the pre-service behavior. |
-| `VOMS_TOKEN_SERVICE_AUDIENCE` | `aud` minted into the mint call's AF Broker Identity Token; must match the service's `EXPECTED_AUDIENCE` (default `voms-token-service`). |
-| `VOMS_TOKEN_SERVICE_VOMS` / `VOMS_TOKEN_SERVICE_VALID` | `voms`/`valid` forwarded on every mint (defaults `atlas` / `192:00`). |
-| `X509_KV_PATH_PREFIX` | KV-v2 path prefix for the per-subject records (default `mcp/x509`). |
-| `VAULT_ADDR`, `VAULT_AUTH_MOUNT`, `VAULT_AUTH_ROLE`, `VAULT_KV_MOUNT`, `VAULT_SA_TOKEN_PATH` | The same shared Vault connection the other Vault-backed stores use. **Required** when the service URL is set (startup validation refuses a half-configured broker). |
-| `BROKER_SIGNING_KEY_FILE` | Also **required** when the service URL is set — the mint call is authenticated by a broker-signed identity token (fail-closed at boot). |
+| entry `serviceUrl` | Base URL of the service (no path). **Omitted = legacy Job path**, exactly the pre-service behavior. |
+| entry `audience` | `aud` minted into the mint call's AF Broker Identity Token; must match the service's `EXPECTED_AUDIENCE` (default `voms-token-service`). |
+| entry `voms` / `valid` | `voms`/`valid` forwarded on every mint (defaults `atlas` / `192:00`). |
+| `X509_KV_PATH_PREFIX` | KV-v2 path prefix for the per-subject records (default `mcp/x509`), shared by every service-mode entry — one link record per user, not per service. |
+| `VAULT_ADDR`, `VAULT_AUTH_MOUNT`, `VAULT_AUTH_ROLE`, `VAULT_KV_MOUNT`, `VAULT_SA_TOKEN_PATH` | The same shared Vault connection the other Vault-backed stores use (chart: `broker.oauth21.tokenStore.vault`). **Required** when any entry has a `serviceUrl` (startup validation refuses a half-configured broker). |
+| `BROKER_SIGNING_KEY_FILE` | **Required** whenever an x509 entry is configured — the aggregator's identity JWTs, the redeem endpoint, and the mint call are all authenticated by broker-signed identity tokens (fail-closed at boot). |
+
+#### Migration from `broker.env.VOMS_TOKEN_SERVICE_URL` (deprecated)
+
+The global env vars (`VOMS_TOKEN_SERVICE_URL`, `VOMS_TOKEN_SERVICE_AUDIENCE`,
+`VOMS_TOKEN_SERVICE_VOMS`, `VOMS_TOKEN_SERVICE_VALID`, previously set via
+`broker.env` in the HelmRelease) are deprecated in favor of the per-entry
+fields above. For one release the broker keeps honoring the env var: when it
+is set and no x509 entry exists, an equivalent entry is synthesized (alias
+`x509`, targets = every `auth_type: x509` backend) and a
+`voms_token_service_url_deprecated` warning is logged; when both are set,
+the explicit entries win and the env var is ignored with a
+`voms_token_service_url_ignored` warning. To migrate, replace
+
+```yaml
+broker:
+  env:
+    VOMS_TOKEN_SERVICE_URL: "http://voms-token-service.<namespace>.svc.cluster.local:8080"
+```
+
+with the `identityProviders` entry shown in "Broker side" step 3 above, then
+remove the env var from `broker.env`.
 
 ### Vault paths + policy
 
@@ -138,21 +187,20 @@ this prefix, nothing broader.
 - **Revoke** (`DELETE /v1/x509/proxy`): clears the stored proxy but keeps
   the link — the next issue renews hands-free. Unlinking is only ever the
   bad-passphrase path above (or a future portal unlink action).
-- **Portal visibility**: x509 is wired per-backend (`auth_type: x509`),
-  not as an `identity_providers` entry, so `GET /v1/identities` appends one
-  synthetic entry (id `x509`, matching the `credential_provider` alias
-  `/v1/catalog` reports for x509 targets) whenever any x509 target is
-  configured: `linked` from `X509Provider.is_linked()` (Vault in service
-  mode, the `~/.globus` heuristic in legacy mode),
-  `link_mechanism: "passphrase"` (no `link_url` — linking is the in-portal
-  passphrase form, not a redirect), and `proxy_expires_at` from the cached
-  proxy metadata. The Identities page renders it as its own card whose
-  Link/Re-link action POSTs to `/v1/x509/proxy`, surfacing the 400/429/502
-  taxonomy above inline.
+- **Portal visibility**: each x509 `identity_providers` entry is an
+  ordinary row on `GET /v1/identities` (its `alias` matching the
+  `credential_provider` alias `/v1/catalog` reports for its targets):
+  `linked` from `X509Provider.is_linked()` (Vault in service mode, the
+  `~/.globus` heuristic in legacy mode), `link_mechanism: "passphrase"`
+  (no `link_url` — linking is the in-portal passphrase form, not a
+  redirect), and `proxy_expires_at` from the cached proxy metadata. The
+  Identities page renders it as its own card whose Link/Re-link action
+  POSTs to `/v1/x509/proxy`, surfacing the 400/429/502 taxonomy above
+  inline.
 
 ### What changed vs the tmpfs/Job era
 
-| | tmpfs/Job (legacy, URL unset) | voms-token-service + Vault |
+| | tmpfs/Job (legacy, no serviceUrl) | voms-token-service + Vault |
 | --- | --- | --- |
 | Mint | ephemeral k8s Job, NFS-subPath mount of the user's home **on the broker's cluster config** | HTTP call to voms-token-service (only IT mounts homes) |
 | Proxy storage | broker tmpfs (`PROXY_DIR`), lost on restart | Vault KV-v2, shared across replicas and restarts |
