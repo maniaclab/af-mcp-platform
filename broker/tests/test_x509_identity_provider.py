@@ -517,3 +517,110 @@ class TestBootValidation:
         assert any(
             event == "x509_backends_without_signing_key" for event, _ in warning_events
         )
+
+
+# ---------------------------------------------------------------------------
+# Per-target provider resolution on the /v1 x509 surfaces: with multiple
+# entries, the unlock and redeem endpoints must use the provider registered
+# for the *requested* target, not a single app-wide default.
+# ---------------------------------------------------------------------------
+
+
+_TWO_ENTRY_BACKENDS_YAML = _X509_BACKENDS_YAML + (
+    "  - name: dune-mcp\n"
+    "    prefix: dune\n"
+    "    url: http://dune-mcp.invalid/mcp\n"
+    "    auth_type: x509\n"
+    "    required_capability: read_data\n"
+)
+
+
+class TestPerTargetResolution:
+    @pytest.fixture
+    def two_entry_app(
+        self,
+        signing_key_env: None,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        app_client_factory: Callable[..., Any],
+    ):
+        """Boot with two legacy-mode x509 entries (no Vault needed at boot),
+        then flip the SECOND entry's provider into service mode with fakes —
+        the first stays legacy, so any endpoint that wrongly falls back to
+        the default provider takes the wrong mint/redeem path."""
+        import asyncio
+
+        from test_x509_service_mode import FakeVomsClient, FakeX509Store
+
+        _set_backends(monkeypatch, tmp_path, _TWO_ENTRY_BACKENDS_YAML)
+        _set_identity_providers(
+            monkeypatch,
+            [
+                _x509_entry(service_url=None),
+                _x509_entry(alias="x509-dune", targets=["dune-mcp"], service_url=None),
+            ],
+        )
+        with app_client_factory() as (client, state):
+            registry = client.app.state.credential_registry
+            dune_provider = asyncio.run(registry.resolve("dune-mcp"))
+            store = FakeX509Store()
+            dune_provider._vault_store = store
+            dune_provider._voms_client = FakeVomsClient()
+            assert dune_provider.uses_voms_service is True
+            # The default provider (first x509 target, "ami") stays legacy.
+            assert client.app.state.x509_provider.uses_voms_service is False
+            yield client, store, state
+
+    def test_redeem_resolves_the_target_entry_provider(self, two_entry_app) -> None:
+        """Redeeming aud=dune-mcp must consult the dune entry's Vault store,
+        not the default (legacy) provider's tmpfs path."""
+        import asyncio
+        import time as _time
+
+        from pydantic import SecretStr
+        from test_x509_service_mode import _PEM
+
+        client, store, _state = two_entry_app
+        subject = "sub-abc"
+        asyncio.run(
+            store.store_link(
+                subject,
+                passphrase=SecretStr("stored"),
+                unixname="tuser",
+                uid=1000,
+                gid=1000,
+            )
+        )
+        asyncio.run(
+            store.store_proxy(
+                subject,
+                pem=_PEM,
+                dn="/DC=ch/DC=cern/CN=Test User",
+                voms_attributes=["/dune"],
+                not_after=_time.time() + 3600.0,
+            )
+        )
+        token, _ = client.app.state.broker_token_issuer.mint(subject, "dune-mcp")
+
+        resp = client.post(
+            "/v1/credentials/x509/redeem",
+            json={},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["pem"] == _PEM
+
+    def test_unlock_resolves_the_target_entry_provider(self, two_entry_app) -> None:
+        """POST /v1/x509/proxy with an explicit target mints via that
+        target's entry (the dune fakes), storing the link in its store."""
+        client, store, state = two_entry_app
+
+        resp = client.post(
+            "/v1/x509/proxy",
+            json={"passphrase": "hunter2", "target": "dune-mcp"},
+        )
+
+        assert resp.status_code == 201, resp.text
+        subject = state["principal"].subject
+        assert subject in store.records
