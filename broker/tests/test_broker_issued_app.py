@@ -28,7 +28,9 @@ from test_broker_issued import (
     _private_pem,
     verify_against_jwks,
 )
+from test_mcp_aggregator import _FakeFastMCPContext
 
+import af_mcp_broker.app as app_module
 from af_mcp_broker.authorization import EntitlementPolicy
 from af_mcp_broker.config import BrokerIssuedTargetOptions
 from af_mcp_broker.credentials import (
@@ -37,6 +39,7 @@ from af_mcp_broker.credentials import (
     CredentialCache,
     CredentialRegistry,
 )
+from af_mcp_broker.mcp import aggregator as aggregator_module
 from af_mcp_broker.mcp.aggregator import build_aggregator
 from af_mcp_broker.mcp.registry import BackendRegistry, BackendSpec
 
@@ -288,3 +291,69 @@ def test_identities_lists_broker_issued_provider_as_linked(
     assert row["type"] == "broker-issued"
     assert row["linked"] is True
     assert row["link_url"] is None
+
+
+# ---------------------------------------------------------------------------
+# Lifespan -> aggregator wiring: app.py builds the aggregator eagerly, before
+# the signing key is loaded, so the lifespan's populate_aggregator() call is
+# the only way the real issuer can reach the x509 client factories (issue
+# #112's injection path). If it never arrives, every `auth_type: x509`
+# backend connects with no Authorization header at list time (the backend
+# 401s and is dropped as "unavailable") and an authorized tools/call raises a
+# ToolError claiming no signing key is configured -- even though
+# app.state.broker_token_issuer loaded fine and the /v1 redeem endpoint uses
+# it happily.
+# ---------------------------------------------------------------------------
+
+
+def _find_backend_provider(mcp: FastMCP, backend_name: str) -> Any:
+    """Fish one backend's _ObservableProxyProvider out of the aggregator.
+
+    Namespaced providers sit behind fastmcp's ``_WrappedProvider`` (its
+    ``_inner`` attribute holds ours) -- private internals, same caveat as
+    ``_ObservableProxyProvider``'s docstring: re-check on a fastmcp bump.
+    """
+    for provider in mcp.providers:
+        inner = getattr(provider, "_inner", provider)
+        if (
+            isinstance(inner, aggregator_module._ObservableProxyProvider)
+            and inner._backend_name == backend_name
+        ):
+            return inner
+    raise AssertionError(f"no provider registered for backend {backend_name!r}")
+
+
+def test_lifespan_threads_issuer_into_x509_client_factory(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    app_client_factory: Any,
+    make_principal: Any,
+) -> None:
+    """The x509 client factory the lifespan wires up must mint with the same
+    issuer the lifespan loaded onto ``app.state.broker_token_issuer``."""
+    key_file = tmp_path / "signing-key.pem"
+    key_file.write_bytes(_private_pem(_make_rsa_key()))
+    monkeypatch.setenv("BROKER_SIGNING_KEY_FILE", str(key_file))
+    monkeypatch.setenv("BROKER_PUBLIC_ORIGIN", "https://mcp.example.com")
+
+    with app_client_factory() as (client, _):
+        issuer = client.app.state.broker_token_issuer
+        assert issuer is not None
+        # SHIPPED_BACKENDS' "ami" is its auth_type: x509 entry.
+        ami_provider = _find_backend_provider(app_module._mcp_aggregator, "ami")
+        # A list-time invocation (no authorized_call_target) by an entitled
+        # principal: the factory attaches the identity header best-effort --
+        # exactly the connection that goes out bare and 401s in production
+        # when the issuer never reaches the aggregator.
+        ctx = _FakeFastMCPContext(
+            make_principal(subject="sub-abc", groups=["atlas"]), None
+        )
+        monkeypatch.setattr(aggregator_module, "get_context", lambda: ctx)
+        backend_client = asyncio.run(ami_provider.client_factory())
+
+    auth = backend_client.transport.headers.get("Authorization")
+    assert auth is not None, "x509 list-time connection carried no identity token"
+    claims = issuer.verify(auth.removeprefix("Bearer "))
+    assert claims is not None
+    assert claims["sub"] == "sub-abc"
+    assert claims["aud"] == "ami"
