@@ -47,8 +47,8 @@ broker:
       displayName: "AF-native services (example)"
       enables: "Example HTCondor token issuance via condor-token-service"
     # Exercises the x509 identityProviders branch (first-class x509 entries,
-    # replacing broker.env.VOMS_TOKEN_SERVICE_URL) so a broken
-    # IDENTITY_PROVIDERS render is caught by `helm template`.
+    # replacing the removed global broker.env.VOMS_TOKEN_SERVICE_URL) so a
+    # broken IDENTITY_PROVIDERS render is caught by `helm template`.
     - type: x509
       alias: x509-example
       targets: ["ami-example"]

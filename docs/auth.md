@@ -45,8 +45,7 @@ Credential subsystem
     └── Path C: x509/VOMS proxy (for AMI, grid jobs, SRM, FTS)
             Linked once at the portal (user passphrase). Two mint paths
             coexist behind the x509 identity_providers entry's
-            `service_url` (formerly the global VOMS_TOKEN_SERVICE_URL,
-            deprecated — see the x509 row below):
+            `service_url` (see the x509 row below):
 
             • voms-token-service (service_url set): the broker asks
               voms-token-service — the only component that mounts user
@@ -123,15 +122,20 @@ its targets must also be marked `auth_type: x509` in `backends.yaml` — that
 flag is what drives the aggregator's identity-JWT injection branch and the
 redeem endpoint's audience gate. The broker refuses to start when the two
 drift in either direction (an x509 backend no entry targets, or an entry
-targeting a non-x509 backend), and an explicit entry also requires the
-broker signing key — the same fail-closed reasoning as the broker-issued/
-condor-token checks. When x509 backends exist with **no** explicit entry,
-the broker synthesizes one (alias `x509`, targets = every x509 backend):
-legacy-mode by default, or service-mode from the deprecated
-`VOMS_TOKEN_SERVICE_URL` env var, which keeps working through one release
-with a loud deprecation warning (explicit entries win when both are set).
-Multiple x509 entries with different voms-token-service URLs/VOs are
-supported — something the single global env var could never express.
+targeting a non-x509 backend) — **there is no synthesized fallback**: every
+`auth_type: x509` backend must be covered by an explicit entry, even a bare
+legacy one (`service_url` omitted). A service-mode entry (`service_url`
+set) also requires the broker signing key — the same fail-closed reasoning
+as the broker-issued/condor-token checks; a keyless legacy entry instead
+gets a loud startup warning, since the shipped `backends.yaml` has always
+declared an x509 backend. Multiple x509 entries with different
+voms-token-service URLs/VOs are supported.
+
+**Breaking change:** the global `VOMS_TOKEN_SERVICE_URL` env var (and its
+`VOMS_TOKEN_SERVICE_AUDIENCE`/`_VOMS`/`_VALID` companions) has been removed
+entirely — declare an `identity_providers` entry of type `x509` instead
+(see [x509 deployment notes](x509-deployment-notes.md)).
+
 `GET /v1/identities` surfaces each entry like any other, with `linked`
 probed from `X509Provider.is_linked()` and `proxy_expires_at` from the
 cached proxy metadata. Every entry also carries `link_mechanism`, which

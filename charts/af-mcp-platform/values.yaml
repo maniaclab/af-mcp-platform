@@ -285,16 +285,18 @@ broker:
   #   enables: "VOMS proxy minting for x509-authenticated backends"
   #   # Every backend wired with auth_type: x509 in aggregator.backends must
   #   # be covered by an x509 entry's targets (and vice versa) — the broker
-  #   # refuses to start on a mismatch. Requires
-  #   # broker.identityToken.existingSigningKeySecret.
+  #   # refuses to start on a mismatch, including the entry-less case (no
+  #   # synthesized fallback). Requires
+  #   # broker.identityToken.existingSigningKeySecret when serviceUrl (below)
+  #   # is set; a keyless legacy entry (serviceUrl omitted) only warns.
   #   targets: ["ami"]
   #   # Base URL of the voms-token-service deployment (the broker appends
   #   # /v1/mint); requires the shared Vault connection
   #   # (broker.oauth21.tokenStore.vault). Omit serviceUrl for the legacy
-  #   # ephemeral-Job mint path. Replaces broker.env.VOMS_TOKEN_SERVICE_URL
-  #   # (deprecated: still honored, synthesizing an equivalent entry, for
-  #   # one release). Multiple x509 entries with different serviceUrl/voms
-  #   # are supported — something the single env var could never express.
+  #   # ephemeral-Job mint path. Replaces the removed global
+  #   # broker.env.VOMS_TOKEN_SERVICE_URL (breaking change — the env var is
+  #   # no longer read). Multiple x509 entries with different
+  #   # serviceUrl/voms are supported.
   #   serviceUrl: "http://voms-token-service.voms-token.svc.cluster.local:8080"
   #   # VOMS attribute set and proxy validity (HH:MM) forwarded on every
   #   # mint; audience must match the service's EXPECTED_AUDIENCE.

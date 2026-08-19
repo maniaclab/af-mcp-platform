@@ -22,21 +22,25 @@ LLM client → mcp.af.uchicago.edu /mcp
   → ami-mcp runs the AMI call with the proxy, deletes it immediately
 ```
 
-With no `serviceUrl` on the x509 identity-provider entry (and the deprecated
-`VOMS_TOKEN_SERVICE_URL` unset) the pre-existing chain applies instead:
-the portal unlock mints via an ephemeral k8s Job that NFS-subPath-mounts the
-user's home, the proxy lives in the broker's tmpfs, and nothing is
-persisted — every expiry needs a fresh portal unlock.
+With no `serviceUrl` on the x509 identity-provider entry, the pre-existing
+chain applies instead: the portal unlock mints via an ephemeral k8s Job
+that NFS-subPath-mounts the user's home, the proxy lives in the broker's
+tmpfs, and nothing is persisted — every expiry needs a fresh portal unlock.
+
+**Breaking change:** the global `broker.env.VOMS_TOKEN_SERVICE_URL` (and
+its `_AUDIENCE`/`_VOMS`/`_VALID` companions) has been removed entirely.
+There is no synthesized fallback for an entry-less `auth_type: x509`
+backend either — every such backend now needs an explicit
+`identityProviders` entry (step 3 below), even a bare legacy one.
 
 ## Broker side (this chart)
 
 1. **Signing key** — `broker.identityToken.existingSigningKeySecret` must be
    set (same key the broker-issued / condor-token providers use). Required
-   at boot whenever an x509 `identityProviders` entry is configured; with
-   only entry-less `auth_type: x509` backends (legacy deployments) the
-   broker still boots but logs `x509_backends_without_signing_key` at
-   startup, fails x509 tool calls with an actionable error, and answers 503
-   on redeem.
+   at boot whenever an x509 entry has `serviceUrl` set; a keyless LEGACY
+   entry (`serviceUrl` omitted) still boots but logs
+   `x509_backends_without_signing_key` at startup, fails x509 tool calls
+   with an actionable error, and answers 503 on redeem.
 2. **Backend entry** — `aggregator.backends` gets ami with
    `auth_type: x509`. That flag drives aggregator identity-JWT injection
    and the redeem endpoint's audience gate.
@@ -54,10 +58,8 @@ persisted — every expiry needs a fresh portal unlock.
 3. **Identity-provider entry** — `broker.identityProviders` gets a
    `type: x509` entry targeting the backend. The broker refuses to start
    when an `auth_type: x509` backend and the x509 entries' `targets` drift
-   in either direction. With no explicit entry at all, the broker
-   synthesizes one covering every x509 backend (legacy-mode, or
-   service-mode from the deprecated env var — see the migration note
-   below), so pre-existing deployments keep booting unchanged.
+   in either direction, including the entry-less case — there is no
+   synthesized fallback, so every x509 backend needs an explicit entry.
 
    ```yaml
    broker:
@@ -74,8 +76,7 @@ persisted — every expiry needs a fresh portal unlock.
    ```
 
    Multiple entries with different `serviceUrl`/`voms` values are supported
-   (e.g. a second VO minting at its own voms-token-service) — a functional
-   gain over the single global env var this replaces.
+   (e.g. a second VO minting at its own voms-token-service).
 
 4. **Proxy minting prerequisites** — either the voms-token-service path
    (preferred; see below) or the legacy Job path's requirement of the users'
@@ -132,19 +133,14 @@ repo shape mirrors condor-token-service). Flux entries mirror
 | entry `voms` / `valid` | `voms`/`valid` forwarded on every mint (defaults `atlas` / `192:00`). |
 | `X509_KV_PATH_PREFIX` | KV-v2 path prefix for the per-subject records (default `mcp/x509`), shared by every service-mode entry — one link record per user, not per service. |
 | `VAULT_ADDR`, `VAULT_AUTH_MOUNT`, `VAULT_AUTH_ROLE`, `VAULT_KV_MOUNT`, `VAULT_SA_TOKEN_PATH` | The same shared Vault connection the other Vault-backed stores use (chart: `broker.oauth21.tokenStore.vault`). **Required** when any entry has a `serviceUrl` (startup validation refuses a half-configured broker). |
-| `BROKER_SIGNING_KEY_FILE` | **Required** whenever an x509 entry is configured — the aggregator's identity JWTs, the redeem endpoint, and the mint call are all authenticated by broker-signed identity tokens (fail-closed at boot). |
+| `BROKER_SIGNING_KEY_FILE` | **Required** whenever an x509 entry has `serviceUrl` set — the aggregator's identity JWTs, the redeem endpoint, and the mint call are all authenticated by broker-signed identity tokens (fail-closed at boot). A keyless legacy entry (`serviceUrl` omitted) only warns. |
 
-#### Migration from `broker.env.VOMS_TOKEN_SERVICE_URL` (deprecated)
+#### Breaking change: `broker.env.VOMS_TOKEN_SERVICE_URL` removed
 
 The global env vars (`VOMS_TOKEN_SERVICE_URL`, `VOMS_TOKEN_SERVICE_AUDIENCE`,
 `VOMS_TOKEN_SERVICE_VOMS`, `VOMS_TOKEN_SERVICE_VALID`, previously set via
-`broker.env` in the HelmRelease) are deprecated in favor of the per-entry
-fields above. For one release the broker keeps honoring the env var: when it
-is set and no x509 entry exists, an equivalent entry is synthesized (alias
-`x509`, targets = every `auth_type: x509` backend) and a
-`voms_token_service_url_deprecated` warning is logged; when both are set,
-the explicit entries win and the env var is ignored with a
-`voms_token_service_url_ignored` warning. To migrate, replace
+`broker.env` in the HelmRelease) are no longer read by the broker at all —
+declare the per-entry fields above instead. Replace
 
 ```yaml
 broker:
@@ -153,7 +149,9 @@ broker:
 ```
 
 with the `identityProviders` entry shown in "Broker side" step 3 above, then
-remove the env var from `broker.env`.
+remove the env var from `broker.env`. There is no transition period: an
+`auth_type: x509` backend with no explicit `identityProviders` entry
+refuses to boot.
 
 ### Vault paths + policy
 

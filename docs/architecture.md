@@ -206,11 +206,11 @@ there is no separate id-to-alias mapping. `app.py`'s lifespan builds one
 `CredentialProvider` instance per entry, keyed by alias, on
 `app.state.identity_providers`, and registers each entry's `targets` with the
 `CredentialRegistry` the same way regardless of provider type — `x509`
-entries included: when backends are wired with `auth_type: x509` and no
-explicit x509 entry exists, the lifespan synthesizes one covering them all
-(see `docs/auth.md`). The identities API (`api/identities.py`) iterates this
-dict — in the same order the entries were configured, a synthesized x509
-entry last — to build `GET /v1/identities`'s `providers` list.
+entries included: every backend wired with `auth_type: x509` must be
+covered by an explicit `x509` entry, or the lifespan refuses to start
+(there is no synthesized fallback — see `docs/auth.md`). The identities API
+(`api/identities.py`) iterates this dict — in the same order the entries
+were configured — to build `GET /v1/identities`'s `providers` list.
 
 #### Linkage detection is per-provider
 

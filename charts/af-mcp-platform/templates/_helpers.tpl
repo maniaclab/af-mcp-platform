@@ -143,7 +143,9 @@ oauth21-direct entries additionally carry the endpoint/issuer/scope fields,
 broker-issued entries their per-target audience/includePosix options
 (issue #162), condor-token entries their serviceUrl/audience (issue #169),
 and x509 entries their serviceUrl/voms/valid/audience (serviceUrl omitted =
-the legacy k8s-Job mint path; replaces broker.env.VOMS_TOKEN_SERVICE_URL).
+the legacy k8s-Job mint path; replaces the removed global
+broker.env.VOMS_TOKEN_SERVICE_URL -- every auth_type: x509 backend now
+needs an explicit entry, there is no synthesized fallback).
 */}}
 {{- define "af-mcp-platform.identityProviders" -}}
 {{- $providers := list -}}
