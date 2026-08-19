@@ -2,8 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import yaml  # type: ignore[import-untyped]
+
+if TYPE_CHECKING:
+    from af_mcp_broker.config import Settings
 
 # Reserved for the broker-native diagnostic tools registered directly on the
 # aggregator (mcp/diagnostics.py, issue #153): af_whoami, af_list_identities,
@@ -24,9 +28,32 @@ RESERVED_PREFIX = "af"
 WHOAMI_TOOL_NAME = f"{RESERVED_PREFIX}_whoami"
 LIST_IDENTITIES_TOOL_NAME = f"{RESERVED_PREFIX}_list_identities"
 LIST_MCP_SERVERS_TOOL_NAME = f"{RESERVED_PREFIX}_list_mcp_servers"
+LINK_IDENTITY_TOOL_NAME = f"{RESERVED_PREFIX}_link_identity"
 DIAGNOSTIC_TOOL_NAMES = frozenset(
-    {WHOAMI_TOOL_NAME, LIST_IDENTITIES_TOOL_NAME, LIST_MCP_SERVERS_TOOL_NAME}
+    {
+        WHOAMI_TOOL_NAME,
+        LIST_IDENTITIES_TOOL_NAME,
+        LIST_MCP_SERVERS_TOOL_NAME,
+        LINK_IDENTITY_TOOL_NAME,
+    }
 )
+
+
+def identity_provider_url(settings: Settings, alias: str) -> str:
+    """The portal Identities page's deep link for one identity-provider alias.
+
+    Shared by the not-linked ``ToolError`` aggregator.py's ``_bearer_factory``/
+    ``_x509_factory`` raise and ``af_link_identity`` (mcp/diagnostics.py) so
+    the URL format can never drift between "here's why you're blocked" and
+    "here's the link you asked for" (stage 1 of the elicitation/link-identity
+    design -- see the af-mcp-platform issue tracker). Lives here rather than
+    in aggregator.py or diagnostics.py because both of those modules already
+    import from this one, and diagnostics.py is itself imported by
+    aggregator.py -- a shared helper in either of them would risk an import
+    cycle the other way.
+    """
+    portal = settings.portal_url.rstrip("/")
+    return f"{portal}/identities#identity-card-{alias}"
 
 
 @dataclass

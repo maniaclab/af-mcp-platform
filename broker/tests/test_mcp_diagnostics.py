@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
+import pytest
 from conftest import make_claims, run_aggregator_async
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
+from fastmcp.exceptions import ToolError
 
 from af_mcp_broker.authorization import EntitlementPolicy
 from af_mcp_broker.config import KeycloakBrokeredProviderConfig
@@ -16,11 +18,13 @@ from af_mcp_broker.credentials import (
 )
 from af_mcp_broker.mcp.aggregator import build_aggregator
 from af_mcp_broker.mcp.registry import (
+    LINK_IDENTITY_TOOL_NAME,
     LIST_IDENTITIES_TOOL_NAME,
     LIST_MCP_SERVERS_TOOL_NAME,
     WHOAMI_TOOL_NAME,
     BackendRegistry,
     BackendSpec,
+    identity_provider_url,
 )
 
 if TYPE_CHECKING:
@@ -134,6 +138,100 @@ async def test_af_list_identities_reflects_linkage_per_provider(
     }
     assert rows["unlinked-idp"]["linked"] is False
     assert rows["unlinked-idp"]["enables"] == "GitLab access"
+
+
+async def test_af_link_identity_returns_portal_url_and_linked_status(
+    settings: Any, sig_key: Any, prime_jwks: Any, static_principal_cache: Any
+) -> None:
+    """af_link_identity (stage 1 of the elicitation/link-identity design)
+    returns the exact portal deep link af_list_identities' `linked: false`
+    should send the caller to, plus the provider's current linkage status
+    (informational -- re-linking an already-linked provider, e.g. to rotate
+    an x509 passphrase, is a valid call too)."""
+    principal_cache, directory = static_principal_cache
+    directory.groups_by_subject["user-123"] = []
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+
+    identity_providers = {
+        "linked-idp": _FakeIdentityProvider(linked=True),
+        "unlinked-idp": _FakeIdentityProvider(linked=False),
+    }
+    identity_provider_configs = {
+        "linked-idp": _idp_config("Linked IdP", "VOMS proxy generation"),
+        "unlinked-idp": _idp_config("Unlinked IdP", "GitLab access"),
+    }
+
+    mcp = build_aggregator(
+        BackendRegistry(),
+        settings,
+        EntitlementPolicy(),
+        CredentialRegistry(),
+        principal_cache=principal_cache,
+        identity_providers=identity_providers,
+        identity_provider_configs=identity_provider_configs,
+    )
+
+    async with run_aggregator_async(mcp, path="/mcp") as agg_url:
+        transport = StreamableHttpTransport(
+            agg_url, headers={"Authorization": f"Bearer {token}"}
+        )
+        async with Client(transport) as client:
+            linked_result = await client.call_tool(
+                LINK_IDENTITY_TOOL_NAME, {"provider": "linked-idp"}
+            )
+            unlinked_result = await client.call_tool(
+                LINK_IDENTITY_TOOL_NAME, {"provider": "unlinked-idp"}
+            )
+
+    assert linked_result.structured_content == {
+        "id": "linked-idp",
+        "display_name": "Linked IdP",
+        "url": identity_provider_url(settings, "linked-idp"),
+        "already_linked": True,
+    }
+    assert unlinked_result.structured_content == {
+        "id": "unlinked-idp",
+        "display_name": "Unlinked IdP",
+        "url": identity_provider_url(settings, "unlinked-idp"),
+        "already_linked": False,
+    }
+
+
+async def test_af_link_identity_unknown_provider_raises_tool_error(
+    settings: Any, sig_key: Any, prime_jwks: Any, static_principal_cache: Any
+) -> None:
+    principal_cache, directory = static_principal_cache
+    directory.groups_by_subject["user-123"] = []
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+
+    identity_providers = {"linked-idp": _FakeIdentityProvider(linked=True)}
+    identity_provider_configs = {"linked-idp": _idp_config("Linked IdP", "Some access")}
+
+    mcp = build_aggregator(
+        BackendRegistry(),
+        settings,
+        EntitlementPolicy(),
+        CredentialRegistry(),
+        principal_cache=principal_cache,
+        identity_providers=identity_providers,
+        identity_provider_configs=identity_provider_configs,
+    )
+
+    async with run_aggregator_async(mcp, path="/mcp") as agg_url:
+        transport = StreamableHttpTransport(
+            agg_url, headers={"Authorization": f"Bearer {token}"}
+        )
+        async with Client(transport) as client:
+            with pytest.raises(ToolError) as excinfo:
+                await client.call_tool(
+                    LINK_IDENTITY_TOOL_NAME, {"provider": "no-such-provider"}
+                )
+
+    assert "no-such-provider" in str(excinfo.value)
+    assert "linked-idp" in str(excinfo.value)
+    assert LIST_IDENTITIES_TOOL_NAME in str(excinfo.value)
 
 
 async def test_af_list_mcp_servers_reuses_backend_status_and_identity_join(
@@ -257,6 +355,7 @@ async def test_diagnostic_tools_visible_to_principal_with_no_capabilities(
         WHOAMI_TOOL_NAME,
         LIST_IDENTITIES_TOOL_NAME,
         LIST_MCP_SERVERS_TOOL_NAME,
+        LINK_IDENTITY_TOOL_NAME,
     } <= names
     # The capability-gated backend's own tool is correctly still hidden --
     # proves the af_* visibility above is a deliberate bypass, not a broken

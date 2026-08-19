@@ -39,8 +39,10 @@ from af_mcp_broker.mcp.middleware.identity_mw import (
     IdentityMiddleware,
 )
 from af_mcp_broker.mcp.registry import (
+    LINK_IDENTITY_TOOL_NAME,
     LIST_IDENTITIES_TOOL_NAME,
     LIST_MCP_SERVERS_TOOL_NAME,
+    identity_provider_url,
 )
 
 if TYPE_CHECKING:
@@ -265,6 +267,42 @@ async def fetch_backend_tool_listing(
     return "ok", [(f"{prefix}{tool.name}", tool.description or "") for tool in tools]
 
 
+def _not_linked_error(
+    provider: CredentialProvider, settings: Settings, alias: str | None
+) -> ToolError:
+    """Build the "identity not linked" ``ToolError``, shared by ``_bearer_factory``
+    and ``_x509_factory`` so the message text -- and the portal deep link it
+    names -- can never drift between the two ``auth_type`` branches (stage 1
+    of the elicitation/link-identity design: today's LLM clients already
+    relay a URL from a tool error reliably, so this is deliberately plain
+    text rather than an MCP elicitation request).
+
+    *alias* is the identity-provider alias servicing this backend
+    (``target_to_alias.get(spec.name)``), used to deep-link straight to that
+    provider's card via ``identity_provider_url`` -- the same URL
+    ``af_link_identity`` (mcp/diagnostics.py) returns. Falls back to the bare
+    Identities page (and omits the ``provider=`` argument from the
+    ``af_link_identity`` hint) when no alias is known -- shouldn't happen
+    for a backend that resolved a credential provider at all, but keeps
+    this defensive rather than raising a second, more confusing error over
+    a missing join entry.
+    """
+    if alias is None:
+        portal = settings.portal_url.rstrip("/")
+        url = f"{portal}/identities"
+        link_hint = f"`{LINK_IDENTITY_TOOL_NAME}`"
+    else:
+        url = identity_provider_url(settings, alias)
+        link_hint = f'`{LINK_IDENTITY_TOOL_NAME}` (provider="{alias}")'
+    return ToolError(
+        f"{type(provider).__name__} not linked. Visit {url} to connect it, "
+        f"or call {link_hint} to get this link. Call "
+        f"`{LIST_IDENTITIES_TOOL_NAME}` to see which identity provider this "
+        f"backend needs, or `{LIST_MCP_SERVERS_TOOL_NAME}` for this "
+        "backend's current status."
+    )
+
+
 def _make_client_factory(
     spec: BackendSpec,
     credential_registry: CredentialRegistry,
@@ -272,6 +310,7 @@ def _make_client_factory(
     policy: EntitlementPolicy,
     *,
     broker_token_issuer: BrokerTokenIssuer | None = None,
+    target_to_alias: dict[str, str] | None = None,
 ) -> ClientFactoryT:
     """Build a ProxyProvider client_factory for one backend.
 
@@ -293,7 +332,10 @@ def _make_client_factory(
         the backend redeems the caller's VOMS proxy server-side via
         POST /v1/credentials/x509/redeem (issue #112's "backend calls
         back" wire format). The proxy PEM itself never transits the
-        aggregator.
+        aggregator. Gated on ``credential_registry``'s linkage the same way
+        as "bearer" below (see ``_not_linked_error``) before any token is
+        minted -- ``target_to_alias`` supplies the alias used to build that
+        error's portal deep link.
       - "bearer" (default): resolves the caller's Principal from the
         current request context, mints a credential in-process the same
         way ``POST /v1/credential`` does (api/credentials.py's
@@ -400,6 +442,22 @@ def _make_client_factory(
                     "is configured (chart: broker.identityToken."
                     "existingSigningKeySecret)."
                 )
+
+            try:
+                provider = await credential_registry.resolve(spec.name)
+            except KeyError as exc:
+                raise ToolError(str(exc)) from exc
+
+            # Same linkage gate _bearer_factory applies BEFORE minting --
+            # without it an unlinked caller got a broker identity token
+            # unconditionally, and the failure only ever surfaced as
+            # whatever generic error the backend's own redeem call happened
+            # to produce (e.g. a bare 404 from POST /v1/credentials/x509/
+            # redeem), never a "go link your identity" message.
+            if not await provider.is_linked(principal):
+                alias = (target_to_alias or {}).get(spec.name)
+                raise _not_linked_error(provider, settings, alias)
+
             # Identity assertion only (sub/aud): the backend redeems the proxy
             # with this token; it has no use for POSIX claims.
             token, _ = broker_token_issuer.mint(principal.subject, spec.name)
@@ -464,15 +522,8 @@ def _make_client_factory(
         # error instead of an opaque failure surfacing from inside the
         # provider -- mirrors api/credentials.py's issue_credential() check.
         if not await provider.is_linked(principal):
-            portal = settings.portal_url.rstrip("/")
-            raise ToolError(
-                f"{type(provider).__name__} not linked. "
-                f"Visit the portal Identities page ({portal}/identities) to "
-                "connect it. Call "
-                f"`{LIST_IDENTITIES_TOOL_NAME}` to see which identity "
-                f"provider this backend needs, or `{LIST_MCP_SERVERS_TOOL_NAME}` "
-                "for this backend's current status."
-            )
+            alias = (target_to_alias or {}).get(spec.name)
+            raise _not_linked_error(provider, settings, alias)
 
         try:
             cred = await provider.issue(principal, spec.name)
@@ -594,6 +645,7 @@ def build_aggregator(
         settings,
         policy,
         broker_token_issuer=broker_token_issuer,
+        target_to_alias=target_to_alias,
     )
     register_diagnostic_tools(
         mcp,
@@ -603,6 +655,7 @@ def build_aggregator(
         identity_providers or {},
         identity_provider_configs or {},
         target_to_alias or {},
+        settings,
     )
     return mcp
 
@@ -667,6 +720,7 @@ def populate_aggregator(
         settings,
         policy,
         broker_token_issuer=broker_token_issuer,
+        target_to_alias=target_to_alias,
     )
     register_diagnostic_tools(
         mcp,
@@ -676,6 +730,7 @@ def populate_aggregator(
         identity_providers or {},
         identity_provider_configs or {},
         target_to_alias or {},
+        settings,
     )
 
 
@@ -687,6 +742,7 @@ def _register_backends(
     policy: EntitlementPolicy,
     *,
     broker_token_issuer: BrokerTokenIssuer | None = None,
+    target_to_alias: dict[str, str] | None = None,
 ) -> None:
     mcp.providers.clear()
     # mcp.providers.clear() above wipes every provider, including
@@ -708,6 +764,7 @@ def _register_backends(
                 settings,
                 policy,
                 broker_token_issuer=broker_token_issuer,
+                target_to_alias=target_to_alias,
             ),
             registry=registry,
             cache_ttl=spec.tools_cache_ttl,

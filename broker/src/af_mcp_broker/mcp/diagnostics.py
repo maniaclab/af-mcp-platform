@@ -10,16 +10,18 @@ from pydantic import BaseModel, ConfigDict
 from af_mcp_broker.api.capabilities import BackendStatus, _backend_status
 from af_mcp_broker.authorization import get_principal_capabilities
 from af_mcp_broker.mcp.registry import (
+    LINK_IDENTITY_TOOL_NAME,
     LIST_IDENTITIES_TOOL_NAME,
     LIST_MCP_SERVERS_TOOL_NAME,
     WHOAMI_TOOL_NAME,
+    identity_provider_url,
 )
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
 
     from af_mcp_broker.authorization import EntitlementPolicy
-    from af_mcp_broker.config import IdentityProviderConfig
+    from af_mcp_broker.config import IdentityProviderConfig, Settings
     from af_mcp_broker.credentials import CredentialProvider, CredentialRegistry
     from af_mcp_broker.identity import Principal
     from af_mcp_broker.mcp.registry import BackendRegistry
@@ -73,6 +75,17 @@ class DiagnosticIdentityProvider(BaseModel):
     linked: bool
 
 
+class LinkIdentityResult(BaseModel):
+    """The portal deep link for one identity provider -- af_link_identity's return value."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    display_name: str
+    url: str
+    already_linked: bool
+
+
 class DiagnosticMcpServer(BaseModel):
     """One configured MCP backend's tool prefix, identity, and availability -- af_list_mcp_servers' per-backend row."""
 
@@ -113,6 +126,7 @@ def register_diagnostic_tools(
     identity_providers: dict[str, CredentialProvider],
     identity_provider_configs: dict[str, IdentityProviderConfig],
     target_to_alias: dict[str, str],
+    settings: Settings,
 ) -> None:
     """(Re)register the af_* diagnostic tools on *mcp*, bound to the given state.
 
@@ -131,6 +145,7 @@ def register_diagnostic_tools(
         WHOAMI_TOOL_NAME,
         LIST_IDENTITIES_TOOL_NAME,
         LIST_MCP_SERVERS_TOOL_NAME,
+        LINK_IDENTITY_TOOL_NAME,
     ):
         with contextlib.suppress(KeyError):
             mcp.local_provider.remove_tool(name)
@@ -177,6 +192,35 @@ def register_diagnostic_tools(
                 )
             )
         return providers
+
+    @mcp.tool(name=LINK_IDENTITY_TOOL_NAME)
+    async def _link_identity(provider: str) -> LinkIdentityResult:
+        """Return the portal URL to link (or re-link) one identity provider.
+
+        Call this after a tool call fails with a "not linked" error, or
+        after `af_list_identities` shows `linked: false` for a provider a
+        backend needs, to get the exact link to hand the user. `provider`
+        is the identity-provider alias -- the same `id` field
+        `af_list_identities` returns. Calling this for an already-linked
+        provider is fine too (e.g. to get the link again so the user can
+        re-link and rotate a passphrase); `already_linked` just reports the
+        current state, it never blocks the call.
+        """
+        principal = await _require_principal()
+        if provider not in identity_providers:
+            valid = sorted(identity_providers)
+            raise ToolError(
+                f"Unknown identity provider {provider!r}. Valid providers: "
+                f"{valid}. Call `{LIST_IDENTITIES_TOOL_NAME}` first to see "
+                "the configured providers and their aliases."
+            )
+        cfg = identity_provider_configs[provider]
+        return LinkIdentityResult(
+            id=provider,
+            display_name=cfg.display_name,
+            url=identity_provider_url(settings, provider),
+            already_linked=await identity_providers[provider].is_linked(principal),
+        )
 
     @mcp.tool(name=LIST_MCP_SERVERS_TOOL_NAME)
     async def _list_mcp_servers() -> list[DiagnosticMcpServer]:
