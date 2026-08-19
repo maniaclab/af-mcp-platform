@@ -279,6 +279,28 @@ broker:
   #   # Base URL of the condor-token-service deployment (the broker appends
   #   # /v1/token). audience defaults to "condor-token-service".
   #   serviceUrl: "http://condor-token-service.condor-token.svc.cluster.local:8080"
+  # - type: x509
+  #   alias: x509
+  #   displayName: "Grid certificate (x509)"
+  #   enables: "VOMS proxy minting for x509-authenticated backends"
+  #   # Every backend wired with auth_type: x509 in aggregator.backends must
+  #   # be covered by an x509 entry's targets (and vice versa) — the broker
+  #   # refuses to start on a mismatch. Requires
+  #   # broker.identityToken.existingSigningKeySecret.
+  #   targets: ["ami"]
+  #   # Base URL of the voms-token-service deployment (the broker appends
+  #   # /v1/mint); requires the shared Vault connection
+  #   # (broker.oauth21.tokenStore.vault). Omit serviceUrl for the legacy
+  #   # ephemeral-Job mint path. Replaces broker.env.VOMS_TOKEN_SERVICE_URL
+  #   # (deprecated: still honored, synthesizing an equivalent entry, for
+  #   # one release). Multiple x509 entries with different serviceUrl/voms
+  #   # are supported — something the single env var could never express.
+  #   serviceUrl: "http://voms-token-service.voms-token.svc.cluster.local:8080"
+  #   # VOMS attribute set and proxy validity (HH:MM) forwarded on every
+  #   # mint; audience must match the service's EXPECTED_AUDIENCE.
+  #   voms: "atlas"
+  #   valid: "192:00"
+  #   audience: "voms-token-service"
 
   # AF Broker Identity Token (issue #162) — the broker's own RS256 signing
   # key for the short-TTL identity-assertion JWTs it mints for AF-native
