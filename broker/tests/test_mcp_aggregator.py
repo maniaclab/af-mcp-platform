@@ -713,9 +713,15 @@ async def test_client_factory_x509_injects_broker_identity_jwt(
     _patch_context(monkeypatch, make_principal(subject="sub-abc"))
     issuer = _make_issuer()
     spec = _spec(auth_type="x509")
+    # A linked provider registered for this target -- the not-linked gate
+    # added below (mirroring _bearer_factory's) now runs before minting, so
+    # an authorized-call test that only cares about JWT injection needs a
+    # linked provider on record for the resolve()/is_linked() check to pass.
+    registry = CredentialRegistry()
+    registry.register(spec.name, _FakeProvider(linked=True))
 
     client = await _make_client_factory(
-        spec, CredentialRegistry(), settings, _OPEN_POLICY, broker_token_issuer=issuer
+        spec, registry, settings, _OPEN_POLICY, broker_token_issuer=issuer
     )()
 
     auth = client.transport.headers["Authorization"]
@@ -734,6 +740,60 @@ async def test_client_factory_x509_without_issuer_is_toolerror(
 
     with pytest.raises(ToolError, match="signing key"):
         await _make_client_factory(spec, CredentialRegistry(), settings, _OPEN_POLICY)()
+
+
+async def test_client_factory_x509_not_linked_raises_friendly_error(
+    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The x509 branch gets the same not-linked gate _bearer_factory already
+    has (before this fix it minted a broker identity token unconditionally
+    and let the backend's own redeem call 404 instead) -- an unlinked x509
+    caller must be told to link, at the broker, before any token is minted."""
+    _patch_context(monkeypatch, make_principal(subject="sub-abc"))
+    issuer = _make_issuer()
+    spec = _spec(auth_type="x509")
+    provider = _FakeProvider(linked=False)
+    registry = CredentialRegistry()
+    registry.register(spec.name, provider)
+
+    with pytest.raises(ToolError, match="not linked") as excinfo:
+        await _make_client_factory(
+            spec, registry, settings, _OPEN_POLICY, broker_token_issuer=issuer
+        )()
+
+    # Same close-the-loop requirement as the bearer branch's not-linked
+    # error (issue #153) -- and now also names af_link_identity so the
+    # caller doesn't have to guess it exists.
+    assert LIST_IDENTITIES_TOOL_NAME in str(excinfo.value)
+    assert LIST_MCP_SERVERS_TOOL_NAME in str(excinfo.value)
+    assert "af_link_identity" in str(excinfo.value)
+
+
+async def test_client_factory_x509_not_linked_names_portal_deep_link(
+    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The not-linked error's portal URL deep-links straight to this
+    provider's card (point 4 of the design), using target_to_alias's
+    backend-name -> identity-provider-alias join -- the same URL format
+    af_link_identity itself returns."""
+    _patch_context(monkeypatch, make_principal(subject="sub-abc"))
+    issuer = _make_issuer()
+    spec = _spec(auth_type="x509")
+    registry = CredentialRegistry()
+    registry.register(spec.name, _FakeProvider(linked=False))
+
+    with pytest.raises(ToolError) as excinfo:
+        await _make_client_factory(
+            spec,
+            registry,
+            settings,
+            _OPEN_POLICY,
+            broker_token_issuer=issuer,
+            target_to_alias={spec.name: "x509"},
+        )()
+
+    portal = settings.portal_url.rstrip("/")
+    assert f"{portal}/identities#identity-card-x509" in str(excinfo.value)
 
 
 async def test_client_factory_x509_list_time_injects_header_best_effort(
