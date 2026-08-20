@@ -77,9 +77,13 @@ _HINTS: dict[str, str] = {
         "Your Keycloak groups don't grant the capability this backend "
         "requires. Check `GET /v1/capabilities` for what you currently have."
     ),
-    "requires an x509/VOMS proxy credential": (
-        "x509 backends are not yet callable via /mcp -- see docs/auth.md "
-        "and issue #58's TODO. This is a known gap, not a bug."
+    "requires an x509/VOMS proxy, which needs a POSIX": (
+        "x509 backends are callable via /mcp (issue #112), but this "
+        "account has no POSIX/grid identity for the legacy ephemeral-Job "
+        "mint path. If a voms-token-service identity_providers entry "
+        "covers this backend, that path doesn't need POSIX at all -- see "
+        "docs/x509-deployment-notes.md. Otherwise contact your Analysis "
+        "Facility operator to request a grid identity."
     ),
     "No backend registered for tool": (
         "The tool name doesn't match any configured backend's prefix. "
