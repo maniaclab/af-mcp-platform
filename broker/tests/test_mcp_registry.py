@@ -78,7 +78,7 @@ def test_shipped_backends_rucio_apply_namespace_false() -> None:
 
 
 @pytest.mark.parametrize(
-    "name", ["ami", "atlasopenmagic", "jupyter-control", "monitoring", "docs"]
+    "name", ["ami", "atlasopenmagic", "af-jupyterlab-mcp", "monitoring", "docs"]
 )
 def test_shipped_backends_others_apply_namespace_true(name: str) -> None:
     registry = BackendRegistry()
@@ -86,6 +86,16 @@ def test_shipped_backends_others_apply_namespace_true(name: str) -> None:
     spec = registry.get(name)
     assert spec is not None
     assert spec.apply_namespace is True
+
+
+def test_shipped_backends_af_filesystem_mcp_apply_namespace_false() -> None:
+    """af-filesystem-mcp's tools are already self-prefixed (fs_list, fs_stat,
+    fs_read, fs_grep, ...); namespacing again would produce fs_fs_*."""
+    registry = BackendRegistry()
+    registry.load(str(SHIPPED_BACKENDS))
+    fs = registry.get("af-filesystem-mcp")
+    assert fs is not None
+    assert fs.apply_namespace is False
 
 
 def test_backend_spec_timeout_seconds_defaults_to_30() -> None:
