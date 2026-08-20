@@ -27,6 +27,9 @@ CAPABILITIES: dict[str, Capability] = {
     "read_gitlab": Capability(
         "read_gitlab", "read", "Browse GitLab repos, issues, MRs, and pipelines"
     ),
+    "read_files": Capability(
+        "read_files", "read", "Browse and read files in a POSIX home directory"
+    ),
     "submit_jobs": Capability("submit_jobs", "state_change", "Submit compute jobs"),
     "manage_jobs": Capability(
         "manage_jobs", "state_change", "Cancel or modify compute jobs"
