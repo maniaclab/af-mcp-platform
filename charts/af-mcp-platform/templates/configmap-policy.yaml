@@ -29,11 +29,11 @@ data:
     {{- else }}
       # UChicago ATLAS AF default -- see the comment above before relying on
       # this for any other site.
-      atlas: [read_data, read_metadata, read_monitoring, read_gitlab, submit_jobs, manage_jobs, launch_compute, manage_jupyter, manage_gitlab]
-      cms: [read_data, read_metadata, read_monitoring, submit_jobs, manage_jobs, launch_compute]
-      dune: [read_data, read_metadata, submit_jobs, manage_jobs, launch_compute]
-      escape: [read_data, read_metadata]
-      af-admins: [read_data, read_metadata, read_monitoring, read_gitlab, submit_jobs, manage_jobs, launch_compute, manage_jupyter, manage_gitlab, manage_data, admin]
+      atlas: [read_data, read_metadata, read_monitoring, read_gitlab, submit_jobs, manage_jobs, launch_compute, manage_jupyter, manage_gitlab, read_files]
+      cms: [read_data, read_metadata, read_monitoring, submit_jobs, manage_jobs, launch_compute, read_files]
+      dune: [read_data, read_metadata, submit_jobs, manage_jobs, launch_compute, read_files]
+      escape: [read_data, read_metadata, read_files]
+      af-admins: [read_data, read_metadata, read_monitoring, read_gitlab, submit_jobs, manage_jobs, launch_compute, manage_jupyter, manage_gitlab, manage_data, admin, read_files]
       # Any authenticated user (no group membership required) -- the one
       # entry that isn't site-specific.
       __authenticated__: [read_metadata, read_monitoring]
@@ -66,6 +66,7 @@ data:
         "retry_*": state_change
         "close_*": state_change
         "delete_*": state_change
-      jupyter-control:
-        "*": state_change
+      af-jupyterlab-mcp:
+        "create_*": state_change
+        "delete_*": state_change
     {{- end }}

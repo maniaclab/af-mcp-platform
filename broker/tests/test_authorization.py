@@ -124,6 +124,7 @@ def test_identity_pat_capability_grant_none_behaves_exactly_as_before(
         "launch_compute",
         "manage_jupyter",
         "manage_gitlab",
+        "read_files",
     }
 
 
