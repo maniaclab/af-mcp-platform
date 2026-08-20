@@ -21,12 +21,14 @@ from fastmcp.client import Client
 from fastmcp.client.transports import SSETransport, StreamableHttpTransport
 from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_context
+from fastmcp.server.elicitation import AcceptedElicitation
 from fastmcp.server.providers.proxy import (
     ClientFactoryT,
     ProxyProvider,
     default_proxy_log_handler,
     default_proxy_progress_handler,
 )
+from mcp.types import ClientCapabilities, ElicitationCapability
 from starlette.middleware import Middleware
 
 from af_mcp_broker.authorization import check_entitlement
@@ -48,6 +50,7 @@ from af_mcp_broker.mcp.registry import (
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
 
+    from fastmcp import Context
     from fastmcp.tools.base import Tool
 
     from af_mcp_broker.authorization import EntitlementPolicy
@@ -267,33 +270,68 @@ async def fetch_backend_tool_listing(
     return "ok", [(f"{prefix}{tool.name}", tool.description or "") for tool in tools]
 
 
+def _identity_link_url(settings: Settings, alias: str | None) -> str:
+    """Build the portal deep link for linking one identity provider.
+
+    Shared by ``_not_linked_error`` (the plain-text hint) and
+    ``_require_linked`` (the elicitation message below) so the URL can never
+    drift between the two. Falls back to the bare Identities page when
+    *alias* is ``None`` -- shouldn't happen for a backend that resolved a
+    credential provider at all, but keeps this defensive rather than raising
+    a second, more confusing error over a missing join entry.
+    """
+    if alias is None:
+        portal = settings.portal_url.rstrip("/")
+        return f"{portal}/identities"
+    return identity_provider_url(settings, alias)
+
+
+def _identity_display_name(
+    provider: CredentialProvider,
+    alias: str | None,
+    identity_provider_configs: dict[str, IdentityProviderConfig] | None,
+) -> str:
+    """Best human-readable name for the identity a not-linked caller needs to connect.
+
+    Prefers the configured ``IdentityProviderConfig.display_name`` (the same
+    text ``af_list_identities``/``af_link_identity`` show), keyed by *alias*
+    (``target_to_alias.get(spec.name)``); falls back to the credential
+    provider's class name -- the same fallback ``_not_linked_error`` already
+    used -- when no alias is known, no config was supplied, or the
+    configured provider left ``display_name`` blank.
+    """
+    if alias is not None and identity_provider_configs is not None:
+        cfg = identity_provider_configs.get(alias)
+        if cfg is not None and cfg.display_name:
+            return cfg.display_name
+    return type(provider).__name__
+
+
 def _not_linked_error(
     provider: CredentialProvider, settings: Settings, alias: str | None
 ) -> ToolError:
     """Build the "identity not linked" ``ToolError``.
 
-    Shared by ``_bearer_factory`` and ``_x509_factory`` so the message text
-    -- and the portal deep link it names -- can never drift between the two
-    ``auth_type`` branches (stage 1 of the elicitation/link-identity design:
-    today's LLM clients already relay a URL from a tool error reliably, so
-    this is deliberately plain text rather than an MCP elicitation request).
+    Shared by ``_bearer_factory`` and ``_x509_factory`` (via
+    ``_require_linked``) so the message text -- and the portal deep link it
+    names -- can never drift between the two ``auth_type`` branches (stage 1
+    of the elicitation/link-identity design: today's LLM clients already
+    relay a URL from a tool error reliably, so this is deliberately plain
+    text). Stage 2a (``_require_linked`` below) now tries a real MCP
+    elicitation first and falls back to this exact error when that isn't
+    possible or the caller doesn't complete it.
 
     *alias* is the identity-provider alias servicing this backend
     (``target_to_alias.get(spec.name)``), used to deep-link straight to that
-    provider's card via ``identity_provider_url`` -- the same URL
+    provider's card via ``_identity_link_url`` -- the same URL
     ``af_link_identity`` (mcp/diagnostics.py) returns. Falls back to the bare
     Identities page (and omits the ``provider=`` argument from the
-    ``af_link_identity`` hint) when no alias is known -- shouldn't happen
-    for a backend that resolved a credential provider at all, but keeps
-    this defensive rather than raising a second, more confusing error over
-    a missing join entry.
+    ``af_link_identity`` hint) when no alias is known.
     """
+    url = _identity_link_url(settings, alias)
     if alias is None:
-        portal = settings.portal_url.rstrip("/")
-        url = f"{portal}/identities"
         link_hint = f"`{LINK_IDENTITY_TOOL_NAME}`"
     else:
-        url = identity_provider_url(settings, alias)
         link_hint = f'`{LINK_IDENTITY_TOOL_NAME}` (provider="{alias}")'
     return ToolError(
         f"{type(provider).__name__} not linked. Visit {url} to connect it, "
@@ -301,6 +339,119 @@ def _not_linked_error(
         f"`{LIST_IDENTITIES_TOOL_NAME}` to see which identity provider this "
         f"backend needs, or `{LIST_MCP_SERVERS_TOOL_NAME}` for this "
         "backend's current status."
+    )
+
+
+def _client_supports_elicitation(ctx: Context) -> bool:
+    """Best-effort check of whether the connected client declared elicitation support.
+
+    Mirrors the ``ClientCapabilities``-based introspection fastmcp's own
+    sampling code uses (``fastmcp.server.sampling.run.determine_handler_mode``)
+    to decide whether to even attempt a client round trip:
+    ``ctx.session.check_client_capability(...)`` inspects the
+    ``ClientCapabilities`` the client declared at MCP initialize time, so a
+    client that never declared elicitation support can be skipped before
+    ever calling ``ctx.elicit()`` -- a round trip such a client would just
+    error on anyway. Note this only confirms the client declared *some*
+    elicitation mode: the MCP spec's ``ElicitationCapability`` further
+    distinguishes "form" vs "url" mode, and ``check_client_capability``
+    (as pinned, fastmcp 3.4.4) does not drill into that distinction -- a
+    client that declared only URL-mode support (issue #194, not implemented
+    here) still passes this check. ``_require_linked``'s own ``except``
+    around the ``elicit()`` call is what actually catches that case, so this
+    function is purely an optimization to skip a doomed round trip, never
+    the sole safety net.
+
+    Returns True (attempt elicitation) if the session or its client params
+    aren't available for any reason, for the same "never the sole safety
+    net" reason.
+    """
+    try:
+        return ctx.session.check_client_capability(
+            ClientCapabilities(elicitation=ElicitationCapability())
+        )
+    except Exception:  # noqa: BLE001 -- purely an optimization, see docstring
+        return True
+
+
+# The two elicitation response options _require_linked offers a not-linked
+# caller, kept as module constants so tests can assert against the exact
+# strings without duplicating them.
+_ELICIT_RETRY_OPTION = "I've linked it — try again"
+_ELICIT_CANCEL_OPTION = "Cancel"
+
+
+async def _require_linked(
+    provider: CredentialProvider,
+    principal: Principal,
+    spec: BackendSpec,
+    settings: Settings,
+    target_to_alias: dict[str, str] | None,
+    identity_provider_configs: dict[str, IdentityProviderConfig] | None = None,
+) -> None:
+    """Gate a call on *principal* having linked *provider*, trying a real elicitation before giving up.
+
+    Shared by ``_bearer_factory`` and ``_x509_factory`` -- stage 2a of the
+    elicitation/link-identity design (following stage 1's plain-text
+    ``_not_linked_error``). Returns normally (proceed) if already linked --
+    the common case, and the only path that doesn't need a request context
+    at all. Otherwise, tries one form-mode ``ctx.elicit()`` round trip
+    asking the caller to link then retry, before falling back to stage 1's
+    plain ``ToolError``. There is no URL-mode elicitation in the pinned
+    fastmcp version (3.4.4) -- no way to have the client auto-open the
+    portal link for the caller -- so this is deliberately form-mode only;
+    true URL-mode elicitation is tracked separately (issue #194).
+
+    Never surfaces anything other than stage 1's ``ToolError`` or the
+    distinct "still not linked" one below: a client that doesn't declare
+    elicitation support (``_client_supports_elicitation``), or whose
+    ``elicit()`` call raises for any reason (declined transport, protocol
+    mismatch, anything), falls back to exactly stage 1's error rather than
+    a worse or different one. Exactly one elicitation attempt is made --
+    a caller who accepts but is still not linked afterward is told so, not
+    re-elicited.
+    """
+    if await provider.is_linked(principal):
+        return
+
+    alias = (target_to_alias or {}).get(spec.name)
+    not_linked = _not_linked_error(provider, settings, alias)
+
+    ctx = get_context()
+    if not _client_supports_elicitation(ctx):
+        raise not_linked
+
+    display_name = _identity_display_name(provider, alias, identity_provider_configs)
+    url = _identity_link_url(settings, alias)
+    try:
+        result = await ctx.elicit(
+            f"You need to link {display_name} before I can do this. Visit "
+            f"{url} to link it, then let me know when you're done.",
+            [_ELICIT_RETRY_OPTION, _ELICIT_CANCEL_OPTION],  # type: ignore[arg-type]
+            # mypy 2.3.0 misresolves fastmcp 3.4.4's Context.elicit overloads
+            # for a plain list[str] (it picks the response_type=None-only
+            # overload regardless of the argument's actual type -- reproduced
+            # with a minimal repro outside this codebase, so this is a
+            # library/mypy interaction, not a real type error); the select
+            # (list[str]) overload's runtime behavior is exercised directly
+            # by this module's tests.
+        )
+    except Exception:  # noqa: BLE001 -- fall back to stage 1, see docstring
+        raise not_linked from None
+
+    if (
+        not isinstance(result, AcceptedElicitation)
+        or result.data != _ELICIT_RETRY_OPTION
+    ):
+        # Declined, cancelled, or (defensively) accepted with the "Cancel"
+        # option -- one attempt only, no re-elicit loop.
+        raise not_linked
+
+    if await provider.is_linked(principal):
+        return
+
+    raise ToolError(
+        f"{display_name} still not linked. Visit {url} to connect it, then try again."
     )
 
 
@@ -312,6 +463,7 @@ def _make_client_factory(
     *,
     broker_token_issuer: BrokerTokenIssuer | None = None,
     target_to_alias: dict[str, str] | None = None,
+    identity_provider_configs: dict[str, IdentityProviderConfig] | None = None,
 ) -> ClientFactoryT:
     """Build a ProxyProvider client_factory for one backend.
 
@@ -454,10 +606,17 @@ def _make_client_factory(
             # unconditionally, and the failure only ever surfaced as
             # whatever generic error the backend's own redeem call happened
             # to produce (e.g. a bare 404 from POST /v1/credentials/x509/
-            # redeem), never a "go link your identity" message.
-            if not await provider.is_linked(principal):
-                alias = (target_to_alias or {}).get(spec.name)
-                raise _not_linked_error(provider, settings, alias)
+            # redeem), never a "go link your identity" message. Now also
+            # tries a real elicitation before giving up -- see
+            # _require_linked's docstring.
+            await _require_linked(
+                provider,
+                principal,
+                spec,
+                settings,
+                target_to_alias,
+                identity_provider_configs,
+            )
 
             # Identity assertion only (sub/aud): the backend redeems the proxy
             # with this token; it has no use for POSIX claims.
@@ -522,9 +681,16 @@ def _make_client_factory(
         # Gate on linkage BEFORE issue() so an unlinked user gets a clean
         # error instead of an opaque failure surfacing from inside the
         # provider -- mirrors api/credentials.py's issue_credential() check.
-        if not await provider.is_linked(principal):
-            alias = (target_to_alias or {}).get(spec.name)
-            raise _not_linked_error(provider, settings, alias)
+        # Now also tries a real elicitation before giving up -- see
+        # _require_linked's docstring.
+        await _require_linked(
+            provider,
+            principal,
+            spec,
+            settings,
+            target_to_alias,
+            identity_provider_configs,
+        )
 
         try:
             cred = await provider.issue(principal, spec.name)
@@ -647,6 +813,7 @@ def build_aggregator(
         policy,
         broker_token_issuer=broker_token_issuer,
         target_to_alias=target_to_alias,
+        identity_provider_configs=identity_provider_configs,
     )
     register_diagnostic_tools(
         mcp,
@@ -722,6 +889,7 @@ def populate_aggregator(
         policy,
         broker_token_issuer=broker_token_issuer,
         target_to_alias=target_to_alias,
+        identity_provider_configs=identity_provider_configs,
     )
     register_diagnostic_tools(
         mcp,
@@ -744,6 +912,7 @@ def _register_backends(
     *,
     broker_token_issuer: BrokerTokenIssuer | None = None,
     target_to_alias: dict[str, str] | None = None,
+    identity_provider_configs: dict[str, IdentityProviderConfig] | None = None,
 ) -> None:
     mcp.providers.clear()
     # mcp.providers.clear() above wipes every provider, including
@@ -766,6 +935,7 @@ def _register_backends(
                 policy,
                 broker_token_issuer=broker_token_issuer,
                 target_to_alias=target_to_alias,
+                identity_provider_configs=identity_provider_configs,
             ),
             registry=registry,
             cache_ttl=spec.tools_cache_ttl,
