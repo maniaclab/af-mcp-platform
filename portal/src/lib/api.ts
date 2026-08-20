@@ -397,6 +397,7 @@ export interface ProxyStatus {
   voms_attributes: string[];
   expires_at?: string | null;
   remaining_seconds?: number | null;
+  nickname?: string | null;
 }
 
 /** POST /v1/x509/proxy response (PEM is never returned). */

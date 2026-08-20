@@ -400,6 +400,33 @@ class TestProxyStatusServiceMode:
         assert parsed.timestamp() == pytest.approx(not_after, abs=1.0)
         assert 3500 < body["remaining_seconds"] <= 3600
 
+    async def test_stored_nickname_is_included_in_the_response(
+        self, service_app
+    ) -> None:
+        """issue #191: the portal surfaces the same VOMS nickname the
+        redeem path already carries, so a user can visually confirm it was
+        parsed correctly."""
+        client, store, _, _ = service_app
+        await _seed_link(store)
+        await _seed_proxy(store, nickname="jdoe")
+
+        resp = client.get(_STATUS)
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["nickname"] == "jdoe"
+
+    async def test_missing_nickname_serves_as_none(self, service_app) -> None:
+        """A record stored before voms-token-service shipped nicknames must
+        still report status successfully, with nickname simply absent."""
+        client, store, _, _ = service_app
+        await _seed_link(store)
+        await _seed_proxy(store)
+
+        resp = client.get(_STATUS)
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["nickname"] is None
+
     def test_no_proxy_when_vault_holds_no_record(self, service_app) -> None:
         client, _, _, _ = service_app
 
