@@ -63,8 +63,12 @@ class StoredX509Credential(BaseModel):
     voms_attributes: list[str] = Field(default_factory=list)
     not_after: float | None = None  # epoch seconds (UTC)
     # VOMS nickname attribute (issue #191) — the subject's CERN/Rucio
-    # account, which AF unixnames do not match. None when the minting
-    # voms-token-service hasn't shipped it yet.
+    # account, which AF unixnames do not match. The default here is the
+    # record-shape kind of optional (no proxy has been minted into this
+    # record yet), not wire-contract skew — a stored value's own None means
+    # the mint genuinely returned a null (VOMS attribute extraction failed
+    # for this user), which model_copy(update=...) in store_proxy() always
+    # writes explicitly.
     nickname: str | None = None
 
     @property
@@ -159,9 +163,14 @@ class VaultX509Store:
         dn: str,
         voms_attributes: list[str],
         not_after: float,
-        nickname: str | None = None,
+        nickname: str | None,
     ) -> None:
-        """Merge a freshly-minted proxy into *subject*'s record, preserving the link half."""
+        """Merge a freshly-minted proxy into *subject*'s record, preserving the link half.
+
+        ``nickname`` has no default (unlike the model field it feeds): the
+        one production caller, ``X509Provider._store_minted_proxy``, always
+        has a ``MintedProxy.nickname`` to pass, present or genuinely null.
+        """
 
         def _merge(current: StoredX509Credential | None) -> StoredX509Credential:
             base = current if current is not None else StoredX509Credential()

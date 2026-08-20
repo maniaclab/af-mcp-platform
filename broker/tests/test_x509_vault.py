@@ -294,11 +294,12 @@ class TestProxy:
         assert record is not None
         assert record.nickname == "jdoe"
 
-    async def test_store_proxy_nickname_defaults_to_none(self, store) -> None:
-        """A voms-token-service that hasn't shipped nicknames yet must not
-        make store_proxy() raise or leave nickname unset."""
+    async def test_store_proxy_null_nickname_round_trips(self, store) -> None:
+        """A present-but-null nickname (VOMS attribute extraction failed for
+        a real user) is a legitimate value the record must preserve, not a
+        compat concern."""
         await _link(store)
-        await _store_proxy(store)
+        await _store_proxy(store, nickname=None)
         record = await store.get_proxy(SUBJECT)
         assert record is not None
         assert record.nickname is None
