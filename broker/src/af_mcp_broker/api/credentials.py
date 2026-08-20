@@ -94,6 +94,12 @@ class ProxyCacheStatus(BaseModel):
     voms_attributes: list[str] = []
     expires_at: str | None = None
     remaining_seconds: int | None = None
+    # VOMS nickname attribute (issue #191) — same field/gap as
+    # ProxyRedeemResponse.nickname: populated in voms-token-service
+    # (Vault-backed) mode, None on the legacy cache path (ProxyMeta has no
+    # such field). Lets the portal show the resolved CERN/Rucio account for
+    # the user to visually confirm.
+    nickname: str | None = None
 
 
 class ProxyRedeemResponse(BaseModel):
@@ -448,6 +454,7 @@ async def proxy_status(
             voms_attributes=list(record.voms_attributes),
             expires_at=_iso(record.not_after),
             remaining_seconds=max(0, int(record.not_after - time.time())),
+            nickname=record.nickname,
         )
     meta = _cache(request).get_proxy_meta(principal.subject, resolved)
     if meta is None:

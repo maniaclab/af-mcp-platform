@@ -417,16 +417,9 @@ function formatRemaining(seconds?: number | null): string {
                 ({{ formatRemaining(proxyStatus.remaining_seconds) }})
               </span>
             </div>
-            <div
-              v-if="proxyStatus.voms_attributes && proxyStatus.voms_attributes.length > 0"
-              class="xc__field"
-            >
-              <span class="xc__label">VOMS attributes</span>
-              <div class="xc__voms-list">
-                <code v-for="attr in proxyStatus.voms_attributes" :key="attr" class="xc__voms-attr">
-                  {{ attr }}
-                </code>
-              </div>
+            <div v-if="proxyStatus.nickname" class="xc__field">
+              <span class="xc__label">CERN account</span>
+              <code class="xc__path">{{ proxyStatus.nickname }}</code>
             </div>
             <div class="xc__field">
               <button

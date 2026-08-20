@@ -93,6 +93,43 @@ describe('VOMS proxy details accordion', () => {
     expect(wrapper.text()).toContain('Subject DN');
   });
 
+  it('shows the resolved CERN account when the broker reports a nickname', async () => {
+    const d1 = deferred<ProxyStatus>();
+    vi.mocked(fetchProxyStatus).mockReturnValueOnce(d1.promise);
+    const wrapper = mountCard();
+
+    await toggles(wrapper).proxyToggle.trigger('click'); // expand
+    d1.resolve({ ...ACTIVE, nickname: 'jdoe' });
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('CERN account');
+    expect(wrapper.text()).toContain('jdoe');
+  });
+
+  it('omits the CERN account row when no nickname is reported', async () => {
+    const d1 = deferred<ProxyStatus>();
+    vi.mocked(fetchProxyStatus).mockReturnValueOnce(d1.promise);
+    const wrapper = mountCard();
+
+    await toggles(wrapper).proxyToggle.trigger('click'); // expand
+    d1.resolve(ACTIVE); // no nickname field
+    await flushPromises();
+
+    expect(wrapper.text()).not.toContain('CERN account');
+  });
+
+  it('never renders a VOMS attributes row (unparsed placeholder, not user-facing)', async () => {
+    const d1 = deferred<ProxyStatus>();
+    vi.mocked(fetchProxyStatus).mockReturnValueOnce(d1.promise);
+    const wrapper = mountCard();
+
+    await toggles(wrapper).proxyToggle.trigger('click'); // expand
+    d1.resolve(ACTIVE);
+    await flushPromises();
+
+    expect(wrapper.text()).not.toContain('VOMS attributes');
+  });
+
   it('discards a response that lands after the accordion collapsed', async () => {
     const d1 = deferred<ProxyStatus>();
     vi.mocked(fetchProxyStatus).mockReturnValueOnce(d1.promise);

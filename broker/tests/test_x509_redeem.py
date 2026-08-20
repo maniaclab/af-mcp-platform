@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from fastapi.testclient import TestClient
 
 _REDEEM = "/v1/credentials/x509/redeem"
+_STATUS = "/v1/x509/proxy/status"
 
 # ami is an x509 backend (auth_type: x509): that single flag drives portal
 # minting (X509Provider registration), aggregator identity-JWT injection, and
@@ -231,6 +232,19 @@ class TestRedeem:
             resp = client.post(
                 _REDEEM, json={}, headers={"Authorization": f"Bearer {token}"}
             )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["nickname"] is None
+
+    def test_status_legacy_path_has_no_nickname(
+        self, x509_redeem_env, app_client_factory, tmp_path: Path
+    ) -> None:
+        """Same known gap as above, for GET /v1/x509/proxy/status (the
+        endpoint the portal polls): the legacy ProxyMeta cache carries no
+        nickname field."""
+        x509_redeem_env()
+        with app_client_factory() as (client, _):
+            _seed_proxy(client, tmp_path, subject="sub-abc")
+            resp = client.get(_STATUS)
         assert resp.status_code == 200, resp.text
         assert resp.json()["nickname"] is None
 
