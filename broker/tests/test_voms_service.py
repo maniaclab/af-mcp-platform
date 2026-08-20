@@ -42,6 +42,10 @@ _MINT_RESPONSE = {
     "dn": "/DC=ch/DC=cern/CN=Test User",
     "voms_attributes": ["/atlas/Role=NULL", "/atlas"],
     "expires_at": "2030-06-15T12:00:00+00:00",
+    # Required key (issue #191) -- Giordon owns the deploy of both this
+    # broker and voms-token-service, so every canned response here must
+    # carry it, same as pem/dn/voms_attributes/expires_at.
+    "nickname": "jdoe",
 }
 _EXPECTED_NOT_AFTER = datetime(2030, 6, 15, 12, 0, 0, tzinfo=UTC).timestamp()
 
@@ -171,6 +175,7 @@ class TestMintResponse:
         assert minted.dn == _MINT_RESPONSE["dn"]
         assert minted.voms_attributes == _MINT_RESPONSE["voms_attributes"]
         assert minted.not_after == pytest.approx(_EXPECTED_NOT_AFTER)
+        assert minted.nickname == _MINT_RESPONSE["nickname"]
 
     async def test_naive_expires_at_is_interpreted_as_utc(self, make_client) -> None:
         response = dict(_MINT_RESPONSE)
@@ -178,6 +183,31 @@ class TestMintResponse:
         client, _ = make_client(httpx.Response(200, json=response))
         minted = await _mint(client)
         assert minted.not_after == pytest.approx(_EXPECTED_NOT_AFTER)
+
+    async def test_nickname_is_surfaced_when_present(self, make_client) -> None:
+        client, _ = make_client()  # _MINT_RESPONSE carries nickname="jdoe"
+        minted = await _mint(client)
+        assert minted.nickname == "jdoe"
+
+    async def test_null_nickname_is_a_legitimate_value(self, make_client) -> None:
+        """A present-but-null nickname (VOMS attribute extraction failed for
+        a real user) is data, not a compat concern -- it must round-trip,
+        not raise."""
+        response = dict(_MINT_RESPONSE, nickname=None)
+        client, _ = make_client(httpx.Response(200, json=response))
+        minted = await _mint(client)
+        assert minted.nickname is None
+
+    async def test_missing_nickname_key_raises(self, make_client) -> None:
+        """Giordon owns the deploy of both this broker and voms-token-service
+        (issue #191), so there is no scenario where a deployed service omits
+        the key -- an absent key is a service bug to surface loudly, not
+        skew to tolerate."""
+        response = dict(_MINT_RESPONSE)
+        del response["nickname"]
+        client, _ = make_client(httpx.Response(200, json=response))
+        with pytest.raises(KeyError):
+            await _mint(client)
 
 
 class TestMintFailures:

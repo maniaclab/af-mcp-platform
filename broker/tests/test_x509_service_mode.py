@@ -82,6 +82,7 @@ class FakeX509Store:
         dn: str,
         voms_attributes: list[str],
         not_after: float,
+        nickname: str | None = None,
     ) -> None:
         base = self.records.get(subject, StoredX509Credential())
         self.records[subject] = base.model_copy(
@@ -90,6 +91,7 @@ class FakeX509Store:
                 "dn": dn,
                 "voms_attributes": list(voms_attributes),
                 "not_after": not_after,
+                "nickname": nickname,
             }
         )
 
@@ -144,12 +146,13 @@ class FakeVomsClient:
         return self.outcome
 
 
-def _minted(remaining: float = 3600.0) -> MintedProxy:
+def _minted(remaining: float = 3600.0, nickname: str | None = None) -> MintedProxy:
     return MintedProxy(
         pem=_PEM,
         dn=_DN,
         voms_attributes=list(_VOMS_ATTRS),
         not_after=time.time() + remaining,
+        nickname=nickname,
     )
 
 
@@ -247,6 +250,21 @@ class TestLinkFlow:
         assert cred.payload["delivery"] == "redeem"
         assert "proxy_path" not in cred.payload
         assert cred.source == "voms_token_service"
+
+    async def test_stores_the_nickname_from_the_minted_proxy(self) -> None:
+        """voms-token-service's nickname (issue #191 — the user's CERN/Rucio
+        account, distinct from their AF unixname) must survive into the
+        Vault record so the redeem endpoint can serve it downstream."""
+        provider, _, store, _ = _make_provider(
+            voms_client=FakeVomsClient(_minted(nickname="jdoe"))
+        )
+        principal = _principal("auser")
+
+        await provider.issue(principal, "ami", passphrase=SecretBytes(b"hunter2"))
+
+        record = await store.get_proxy("user-123")
+        assert record is not None
+        assert record.nickname == "jdoe"
 
     async def test_bad_passphrase_counts_against_rate_limiter_and_stores_nothing(
         self,
@@ -428,6 +446,25 @@ class TestStoredProxyAndRenewal:
         assert record.proxy_pem is not None
         assert record.proxy_pem.get_secret_value() == _PEM
         assert cred.kind == CredentialKind.X509_PROXY_REDEEM
+
+    async def test_hands_free_renewal_stores_the_renewed_nickname(self) -> None:
+        provider, _, store, _ = _make_provider(
+            voms_client=FakeVomsClient(_minted(nickname="jdoe"))
+        )
+        await _seed_link(store)
+        await store.store_proxy(
+            "user-123",
+            pem="OLD PEM",
+            dn=_DN,
+            voms_attributes=_VOMS_ATTRS,
+            not_after=time.time() - 10,
+        )
+
+        await provider.issue(_principal("auser"), "ami")
+
+        record = await store.get_proxy("user-123")
+        assert record is not None
+        assert record.nickname == "jdoe"
 
     async def test_renewal_bad_passphrase_unlinks_and_raises_needs_unlock(
         self,

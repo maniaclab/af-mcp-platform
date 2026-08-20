@@ -86,13 +86,21 @@ class MintedProxy:
     """A proxy minted by voms-token-service, with its parsed metadata.
 
     ``not_after`` is epoch seconds (UTC), converted from the service's
-    ISO-8601 ``expires_at``.
+    ISO-8601 ``expires_at``. ``nickname`` is the VOMS ``nickname`` attribute
+    (issue #191) — the subject's CERN/Rucio account, which AF unixnames do
+    not match. Typed ``str | None`` because a genuinely null nickname (VOMS
+    attribute extraction failing for a real user) is a legitimate value —
+    but the *key* is always present: Giordon owns the deploy of both the
+    broker and voms-token-service, so there is no scenario where an older
+    service omits it, and this dataclass carries no default for that reason
+    (see ``mint()``, which reads it with ``data["nickname"]``, not ``.get``).
     """
 
     pem: str
     dn: str
     voms_attributes: list[str]
     not_after: float
+    nickname: str | None
 
 
 class VomsTokenServiceClient:
@@ -206,6 +214,11 @@ class VomsTokenServiceClient:
             dn=data["dn"],
             voms_attributes=list(data["voms_attributes"]),
             not_after=expires_dt.timestamp(),
+            # Required key (issue #191) — Giordon owns the deploy of both
+            # this broker and voms-token-service, so a missing key is a
+            # service bug to surface loudly (KeyError), not skew to
+            # tolerate. A present-but-null value stays legitimate.
+            nickname=data["nickname"],
         )
 
     async def preflight(self, *, subject: str, unixname: str) -> dict[str, Any]:

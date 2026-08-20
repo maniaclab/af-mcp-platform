@@ -1301,6 +1301,7 @@ class X509Provider(CredentialProvider):
             dn=minted.dn,
             voms_attributes=minted.voms_attributes,
             not_after=minted.not_after,
+            nickname=minted.nickname,
         )
         # Same choke point role as _store_proxy_and_parse on the legacy
         # path: every successful service mint counts exactly once.
@@ -1317,6 +1318,7 @@ class X509Provider(CredentialProvider):
             dn=minted.dn,
             voms_attributes=list(minted.voms_attributes),
             not_after=minted.not_after,
+            nickname=minted.nickname,
         )
 
     async def _cache_stored_record(

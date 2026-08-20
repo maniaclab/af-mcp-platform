@@ -216,6 +216,24 @@ class TestRedeem:
         assert releases[0]["target"] == "ami"
         assert releases[0]["outcome"] == "success"
 
+    def test_legacy_path_has_no_nickname(
+        self, x509_redeem_env, app_client_factory, tmp_path: Path
+    ) -> None:
+        """Known gap (issue #191): the legacy k8s-Job/local-dev mint path
+        stores proxy metadata in ``ProxyMeta`` (cache.py), which carries no
+        nickname field — plumbing one through would mean broadening that
+        cache schema, which is out of scope here. Vault-backed
+        (voms-token-service) mode does carry it; see test_x509_redeem_vault.py."""
+        x509_redeem_env()
+        with app_client_factory() as (client, _):
+            _seed_proxy(client, tmp_path, subject="sub-abc")
+            token = _mint(client)
+            resp = client.post(
+                _REDEEM, json={}, headers={"Authorization": f"Bearer {token}"}
+            )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["nickname"] is None
+
 
 class TestKeylessBoot:
     def test_x509_backend_without_signing_key_boots_and_503s_redeem(
