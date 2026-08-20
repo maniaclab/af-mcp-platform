@@ -270,12 +270,13 @@ async def fetch_backend_tool_listing(
 def _not_linked_error(
     provider: CredentialProvider, settings: Settings, alias: str | None
 ) -> ToolError:
-    """Build the "identity not linked" ``ToolError``, shared by ``_bearer_factory``
-    and ``_x509_factory`` so the message text -- and the portal deep link it
-    names -- can never drift between the two ``auth_type`` branches (stage 1
-    of the elicitation/link-identity design: today's LLM clients already
-    relay a URL from a tool error reliably, so this is deliberately plain
-    text rather than an MCP elicitation request).
+    """Build the "identity not linked" ``ToolError``.
+
+    Shared by ``_bearer_factory`` and ``_x509_factory`` so the message text
+    -- and the portal deep link it names -- can never drift between the two
+    ``auth_type`` branches (stage 1 of the elicitation/link-identity design:
+    today's LLM clients already relay a URL from a tool error reliably, so
+    this is deliberately plain text rather than an MCP elicitation request).
 
     *alias* is the identity-provider alias servicing this backend
     (``target_to_alias.get(spec.name)``), used to deep-link straight to that

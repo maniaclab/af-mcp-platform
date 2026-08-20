@@ -40,7 +40,7 @@ DIAGNOSTIC_TOOL_NAMES = frozenset(
 
 
 def identity_provider_url(settings: Settings, alias: str) -> str:
-    """The portal Identities page's deep link for one identity-provider alias.
+    """Build the portal Identities page's deep link for one identity-provider alias.
 
     Shared by the not-linked ``ToolError`` aggregator.py's ``_bearer_factory``/
     ``_x509_factory`` raise and ``af_link_identity`` (mcp/diagnostics.py) so
