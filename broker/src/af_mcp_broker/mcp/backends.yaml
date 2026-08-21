@@ -42,7 +42,7 @@ backends:
     auth_type: none
 
   - name: af-jupyterlab-mcp
-    prefix: jupyterlab
+    prefix: jlab
     url: "http://af-jupyterlab-mcp.mcp.svc.cluster.local:80/mcp"
     transport: http
     required_capability: manage_jupyter
