@@ -1,5 +1,37 @@
 # Authentication & Credential Chain
 
+## Overview
+
+Every caller — the portal, Claude Desktop, `curl`, any future MCP client — authenticates to
+AF Keycloak on its own and hands the broker a credential: either a short-lived Keycloak-issued
+JWT, or a broker-issued PAT obtained through one of the flows below. From there, one fact
+explains almost everything else in this document: **the broker never trusts anything a token
+claims about what its holder is allowed to do** — no `groups` claim, no `posix` claim, nothing.
+It re-resolves the caller's groups, POSIX identity, and (from those) capabilities live from
+Keycloak's own directory on every request (see
+[Authorization is an attribute of the principal, not the token](#authorization-is-an-attribute-of-the-principal-not-the-token)).
+A JWT and a PAT differ only in *how* the broker learns "who is this caller" — both defer to the
+same live lookup for "what are they allowed to do."
+
+That design choice is also the source of most of the surprising-until-you-trace-it behavior
+operators run into. A few common questions, and where to read the answer:
+
+| If you're wondering... | Read |
+|---|---|
+| How does a browser or CLI get its first token at all? | [Portal auth (OIDC public client)](#portal-auth-oidc-public-client) |
+| Why did an audience (`mcp-gateway`, `broker`, ...) appear or vanish from someone's token when their group membership changed? | [Client scope Scope tab: a filter, not a grant](#client-scope-scope-tab-a-filter-not-a-grant) |
+| How does an MCP client (Claude Desktop, Claude Code) get a credential without a human visiting the portal? | [MCP OAuth discovery + PAT bootstrap](#mcp-oauth-discovery-pat-bootstrap-issue-140) |
+| Why can't a leaked PAT just mint itself a replacement? | [Where PATs are accepted — and where they deliberately are not](#where-pats-are-accepted--and-where-they-deliberately-are-not) |
+| Why doesn't removing someone from a Keycloak group take effect instantly everywhere? | [Authorization is an attribute of the principal, not the token](#authorization-is-an-attribute-of-the-principal-not-the-token) |
+| Which Keycloak clients/roles/scopes do I need to create, and why so many? | [Keycloak operator setup reference](#keycloak-operator-setup-reference) |
+| Why does Rucio/PanDA/AMI reject a token the broker minted? | [Critical Note: Keycloak Token Exchange Limitations](#critical-note-keycloak-token-exchange-limitations) |
+
+The rest of this document reads narrative-first — what happens when someone uses the system —
+followed by an operator-facing Keycloak configuration reference: what you actually click
+through in the Keycloak admin console to make the narrative true.
+
+---
+
 ## Full Auth Chain
 
 Every caller of the broker — the portal SPA, Claude Desktop, `curl`, any
@@ -146,362 +178,6 @@ below, which have no linking step).
 
 ---
 
-## AF Broker Identity Token (issue #162)
-
-### Two classes of backends: federated vs AF-native
-
-Every backend the broker fronts falls into one of two classes, and the
-credential story is different for each:
-
-**External identity systems** (Rucio, ATLAS IAM — anything whose source of
-truth is not AF) are *federation* problems. They require account linking
-and a federated credential: OAuth 2.1 (`oauth21-direct`), a brokered OIDC
-token (`keycloak-brokered`), or an x509/VOMS proxy. This is the provider
-set documented above, unchanged.
-
-**AF-native services** (condor-token-service, future jupyter-mcp,
-condor-mcp, and every future internal backend) are the opposite: AF is the
-source of truth. No federation occurs, no linking, no exchange — **the
-broker is authoritative.** The key architectural fact: *there is no trust
-boundary crossed by involving Keycloak in this path.* Round-tripping
-through Keycloak per call to re-encode facts the broker already resolved
-from the directory (subject, POSIX identity) is an availability and latency
-cost with no trust gain. The broker is already the authorization decision
-point; having AF-native services trust broker-issued identity assertions
-**preserves** that trust boundary rather than expanding it.
-
-In the provider hierarchy:
-
-```
-CredentialProvider (ABC — contract unchanged)
-├── federated providers      # linking + external credential
-│     OAuth21Provider, OIDCProvider (brokered), X509Provider
-└── native providers         # broker-authoritative, no linking
-      BrokerIssuedProvider   # credentials/broker_issued.py
-```
-
-Because there is no linking step, an AF-native backend shows `available`
-on the catalog from day one — `is_linked()` is unconditionally true, no
-portal action exists or is needed, and `GET /v1/identities` lists the
-provider as always linked with no `link_url` and
-`link_mechanism: "none"`.
-
-### The token format — an internal protocol
-
-Broker-issued JWTs are **identity assertions, nothing more** (SPIFFE-style:
-documented once, every AF-native backend consumes the same format; future
-backends — slurm-mcp, k8s-mcp, cvmfs-mcp — never invent a new
-authentication story). RS256, signed by the broker's own key, TTL
-`BROKER_TOKEN_TTL_SECONDS` (default 600 s — deliberately 2× the credential
-cache's 300 s min-remaining floor, so cached tokens are actually servable;
-a TTL at or below that floor makes every call a fresh mint).
-
-| Claim      | Required | Value |
-|------------|----------|-------|
-| `iss`      | yes      | The broker issuer URL — `BROKER_TOKEN_ISSUER`, defaulting to `BROKER_PUBLIC_ORIGIN` |
-| `sub`      | yes      | The principal's subject (Keycloak `sub`) |
-| `aud`      | yes      | The exact backend name (or the entry's configured `audience` override) — consumers **MUST reject** tokens whose `aud` is not exactly themselves |
-| `exp` / `iat` | yes   | Mint time and mint time + TTL |
-| `jti`      | yes      | Unique per token (uuid4) |
-| `uid` / `gid` / `unixname` | optional | POSIX identity from the directory-backed `Principal` (the same source x509 minting uses — never a token claim), included **only** for targets whose config sets `include_posix` |
-
-**Deliberately absent: capabilities, groups, or any authorization claim.**
-Authorization is an attribute of the principal, decided per-call by the
-broker's entitlement check — it must never migrate into tokens (see
-"Authorization is an attribute of the principal, not the token" below; the
-same reasoning). If a backend is ever written to test `token.capabilities`,
-this design has failed. Backends use the token to answer "who is this and
-did the broker send them," nothing else.
-
-Consumers verify against the broker's JWKS at
-`GET /.well-known/jwks.json` (public, unauthenticated, served next to the
-other well-known documents and routed by the same ingress) with any
-standard JWT library: select the key by the token header's `kid`, then
-check signature, `iss`, `aud`, and `exp`. `kid` is the RFC 7638 JWK
-thumbprint of the key, so it is stable across replicas and restarts with
-no coordination. This also lets services like HTCondor trust the broker as
-a token issuer directly via their native token auth (SCITOKENS issuer
-config) — no Keycloak in the path.
-
-**First consumer: condor-token-service**
-([maniaclab/condor-token-service](https://github.com/maniaclab/condor-token-service)),
-verifying `aud=condor-token-service` against this JWKS.
-
-### Configuration
-
-One `identity_providers` entry (chart: `broker.identityProviders`) of type
-`broker-issued`, plus the signing key:
-
-```yaml
-broker:
-  identityProviders:
-    - type: broker-issued
-      alias: af-native
-      displayName: "AF-native services"
-      targets: ["condor-token-service"]
-      targetOptions:
-        condor-token-service:
-          includePosix: true    # this backend needs uid/gid/unixname
-  identityToken:
-    existingSigningKeySecret: af-mcp-identity-token-signing-key
-```
-
-The Secret must carry the RS256 private key PEM under the key name
-`signing-key.pem`; the chart mounts it read-only and points
-`BROKER_SIGNING_KEY_FILE` at it. **Fail-closed:** a `broker-issued` entry
-with no signing key configured refuses to boot (a startup `RuntimeError`,
-consistent with the `unreachable_capabilities`/`ungated_backends` checks)
-rather than failing at first request; a broker with neither configured
-boots cleanly with the feature absent (`/.well-known/jwks.json` answers
-503). A target with `include_posix` whose caller has no POSIX identity
-gets an actionable 404 naming the backend at issue time — the same
-point-of-use requirement as x509's `PosixIdentityRequiredError`.
-
-Generate a key for local development (never commit one, never auto-generate
-in production paths — production keys arrive as SealedSecrets like every
-other broker secret):
-
-```bash
-openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \
-  -out /tmp/broker-signing-key.pem
-export BROKER_SIGNING_KEY_FILE=/tmp/broker-signing-key.pem
-```
-
-### Key rotation
-
-Rotation is publish-before-use with an overlap window, entirely through the
-JWKS — consumers never hardcode a key:
-
-1. **Publish the successor.** Generate the new keypair; add its *public*
-   PEM (a `*.pem` key in the Secret named by
-   `broker.identityToken.existingAdditionalPublicKeysSecret`, mounted at
-   `BROKER_ADDITIONAL_PUBLIC_KEYS_DIR`). The JWKS now serves both keys;
-   nothing signs with the new one yet.
-2. **Switch signing.** Replace the signing-key Secret's `signing-key.pem`
-   with the new private key, and move the *old* key's public PEM into the
-   additional-public-keys Secret. Roll the Deployment. New tokens carry the
-   new `kid`; tokens signed by the old key keep verifying because its
-   public half is still published.
-3. **Retire the old key.** After at least one full token TTL (default
-   600 s — in practice wait longer, e.g. a day, to absorb clock skew and
-   consumer JWKS caches), remove the old public PEM from the
-   additional-public-keys Secret and roll again.
-
-The overlap property (a token signed by the retiring key verifies against
-a JWKS whose active key is the successor) is regression-tested in
-`broker/tests/test_broker_issued.py`.
-
-### CondorTokenProvider: HTCondor IDTOKENs (issue #169)
-
-HTCondor IDTOKENS are signed with the pool password — a **symmetric** key
-that can mint tokens for any identity in the pool, so it never leaves
-Condor infrastructure and never enters the broker. `CondorTokenProvider`
-(`credentials/condor.py`) is the second native provider and the identity
-token's first end-to-end use: it mints an AF Broker Identity Token with
-`aud=condor-token-service` and the principal's `uid`/`gid`/`unixname`
-claims, exchanges it at condor-token-service's `POST /v1/token` (which
-runs `condor_token_create -identity <unixname>@af.uchicago.edu` next to
-the pool key), and caches the returned IDTOKEN in the `CredentialCache`
-keyed `(subject, target)` with TTL = the service's `expires_at`. Delivery
-to condor-mcp is the existing aggregator `bearer` branch — no aggregator
-changes.
-
-Configuration is one `identity_providers` entry of type `condor-token`
-with a required `service_url` (the service's base URL — the provider
-appends `/v1/token`) and an `audience` defaulting to
-`condor-token-service`:
-
-```yaml
-broker:
-  identityProviders:
-    - type: condor-token
-      alias: condor
-      displayName: "HTCondor"
-      targets: ["condor-mcp"]
-      serviceUrl: http://condor-token-service.af-mcp.svc:8080
-```
-
-The same fail-closed rule applies as for `broker-issued`: a
-`condor-token` entry with no signing key configured refuses to boot,
-since the provider cannot mint the identity token it exchanges. POSIX
-identity is required unconditionally (not per-target config — an IDTOKEN
-*is* a unix-account credential): a principal without one gets an
-actionable 404 naming the backend at issue time. Service failures surface
-generically — a 429 passes through with its `Retry-After`; everything
-else (the service rejecting the broker's token, minting failure,
-unreachable) maps to a 502 whose detail never carries the service's
-response body. IDTOKENS are not server-side revocable; `revoke()` drops
-the cache entry and the short lifetime is the actual revocation bound. If
-HTCondor is later configured to trust the broker's JWKS directly
-(SCITOKENS issuer config), only this provider's implementation changes —
-the `CredentialProvider` contract, condor-mcp, and the registry wiring
-are untouched.
-
----
-
-## Keycloak: POSIX User Attribute mappers (no longer read -- issue #144 step 3b)
-
-**As of issue #144 step 3b, the broker never reads a `posix` claim from any
-token.** Every credential type -- JWT and identity PAT alike -- resolves a
-principal's current POSIX identity (`uid`/`gid`/`unixname`) the same way:
-from `PrincipalDirectory` (the Keycloak Admin REST API lookup below), via
-the principal cache -- completing what step 3 did for groups. If your
-realm's four POSIX User Attribute mappers on the `posix` client scope exist
-only to satisfy this broker, **you may remove them (and the scope itself).**
-
-**Check first whether anything else in your realm reads the `posix` claim.**
-A Keycloak realm often serves more applications than this broker, and the
-`posix` scope in particular tends to predate it -- the UChicago AF realm
-keeps these mappers precisely because other Connect applications consume
-the claim. Removing them is safe *for the broker* and says nothing about
-your other consumers. Leaving them costs nothing here: the broker simply
-never looks at the claim.
-The settings that control which Keycloak profile attributes the directory
-reads are `posix_uid_attribute`/`posix_gid_attribute`/
-`posix_unixname_attribute` (see "Configurable POSIX attribute names and
-group-path matching" below) -- there is no longer a separate JWT-side mapper
-convention they need to stay consistent with, because there is no longer a
-JWT-side source of POSIX identity at all.
-
-**POSIX identity remains optional (issue #148).** The broker still requires
-no POSIX attributes to authenticate a request: a principal the directory has
-no `uid`/`gid`/`unixname` for still authenticates successfully, with those
-fields simply left `None` on the resulting `Principal`. Only x509/VOMS proxy
-minting (`credentials/x509.py`) genuinely needs a POSIX identity — the mint
-Job's NFS home subPath and `runAsUser`/`runAsGroup` all require real
-uid/gid/unixname values — and that requirement is enforced at that one point
-of use: a principal with no POSIX identity who reaches an x509-backed target
-gets a clear, actionable error naming the backend ("this backend needs a
-grid identity your account doesn't have") rather than being refused at the
-door for an unrelated backend. Everything else that used to read
-`principal.uid` (cache keys, audit fields, log context) uses
-`principal.subject` instead, which every principal has.
-
-The rest of this section is kept for operators who haven't removed the
-mappers yet, or who are debugging a token minted before doing so -- it no
-longer describes broker behavior.
-
-<details>
-<summary>Historical setup instructions (pre-#144-step-3b)</summary>
-
-The claim shape, when present, was:
-
-```json
-{
-  "posix": {
-    "uid": 33155,
-    "gid": 33155,
-    "unixname": "kratsg"
-  }
-}
-```
-
-**How Keycloak provided it (AF's implementation, for context).** AF Keycloak
-has a realm-level client scope named `posix`. Inside that scope, four User
-Attribute protocol mappers copy `uid`, `gid`, `unixname` (and optionally
-`unixname-v2`) from each user's Keycloak profile attributes into the token
-under the `posix.*` namespace. Those profile attributes are themselves
-populated by upstream identity brokering (CERN → ATLAS IAM → Keycloak) or LDAP
-sync, depending on the deployment. The `posix` client scope had to be
-assigned to every OAuth client that needed to obtain broker-ready tokens
-(e.g. `mcp-portal`) — either as a Default scope (auto-included in every
-token) or an Optional scope (the client must explicitly request
-`scope=posix`).
-
-**Common footgun:** each of the four User Attribute mappers has the same
-two-name-field shape as the Group Membership mapper above — **Name** (an
-internal identifier) and **Token Claim Name** (the key that actually
-appears in the JWT payload). Leaving Token Claim Name blank produces an
-inert mapper: no `posix.uid` (or `.gid` / `.unixname` / `.unixname-v2`)
-claim ever appears in the token, silently. Token Claim Name **must** be
-set explicitly, using the dotted path that nests it under `posix`
-(`posix.uid`, `posix.gid`, `posix.unixname`, ...) to match the claim shape
-above. Verify via Client Scopes → `posix` → **Evaluate** tab — select the
-target user and client, and the Generated Access Token panel shows exactly
-what each mapper actually contributed.
-
-**Non-Keycloak IdPs.** `posix` as a client-scope name is a Keycloak-side
-convention, not a broker requirement. Any OIDC IdP — Dex, Zitadel, Auth0, Ory
-Hydra, etc. — could satisfy the broker as long as the decoded access token
-had a top-level `posix` claim in the shape above. How that claim got
-populated was IdP-specific: some use scopes and mappers the same way
-Keycloak does, others use custom claims, hooks, or rules.
-
-Mint a fresh token (via `scripts/mint-token.py`) and confirm the payload has
-a top-level `posix` claim listing `uid`/`gid`/`unixname`. This no longer
-proves anything about what the broker will do with it -- see above.
-
-</details>
-
-### Verify (current)
-
-POSIX identity now takes effect through Keycloak profile-attribute
-assignment alone -- there is no token claim to inspect (any lingering
-`posix` claim in a token is ignored). Set (or change) a user's
-`posix_uid_attribute`/`posix_gid_attribute`/`posix_unixname_attribute`
-profile attributes in Keycloak and confirm the broker-resolved
-uid/gid/unixname changes within `principal_cache_refresh_seconds` (default
-~45s; see "Authorization is an attribute of the principal, not the token"
-below) on their next request, regardless of which credential type they
-present.
-
-**Finding your real Keycloak attribute keys (issue #148).** The directory's
-configurable attribute names (`Settings.posix_uid_attribute`/
-`posix_gid_attribute`/`posix_unixname_attribute`, below) refer to a
-Keycloak profile attribute — an operator needs the real key, not the
-display label the admin console shows by default:
-
-- **Realm settings → User profile → Attributes** lists every profile
-  attribute with its key shown alongside its display label — the trap is
-  that the *label* (e.g. "Unix UID") is what's visually prominent, while the
-  *key* (e.g. `uidNumber`) is what the settings below actually need.
-- **Client Scopes → `posix` → Mappers** (if the mappers haven't been removed
-  yet), for each of the four mappers, shows its source **User Attribute** —
-  a convenient cross-check, since it names the same profile attribute the
-  directory itself reads.
-
-## Configurable POSIX attribute names and group-path matching (issue #148)
-
-`principal_directory.py`'s `KeycloakPrincipalDirectory` reads a principal's
-POSIX identity directly from Keycloak's Admin REST API, bypassing the JWT
-mapper layer entirely — so, as of issue #144 step 3b, this is the *only*
-path (JWT and PAT alike; see above), and it needs to know the *real* profile
-attribute key, not whatever a mapper used to normalize it to. Three
-settings, all defaulting to AF's own convention:
-
-| Setting | Env var | Default |
-|---|---|---|
-| `posix_uid_attribute` | `POSIX_UID_ATTRIBUTE` | `uid` |
-| `posix_gid_attribute` | `POSIX_GID_ATTRIBUTE` | `gid` |
-| `posix_unixname_attribute` | `POSIX_UNIXNAME_ATTRIBUTE` | `unixname` |
-
-A facility whose POSIX identity is LDAP-federated under different names —
-the common spelling is `uidNumber`/`gidNumber` — overrides these
-(`broker.posixAttributes.*` in the chart) rather than the broker hardcoding
-AF's own convention, the same reasoning as `entitlements.group_capabilities`
-(see "Group-to-Capability Mapping Example" above). When none of the
-configured keys are present for a given user, the corresponding
-`PrincipalAttributes` field is simply left `None` — not an error — and the
-actionable error an x509-backed target eventually raises for that principal
-names exactly which keys it looked for, so the operator's first diagnostic
-step is checking those keys against the real attribute names above, not
-guessing.
-
-A related, separate setting: `principal_directory_group_full_path`
-(`PRINCIPAL_DIRECTORY_GROUP_FULL_PATH`, default `false`) controls whether
-the directory matches a Keycloak group by its bare `name` (e.g. `atlas`) or
-its full `path` (e.g. `/atlas/users`). As of issue #144 step 3 this governs
-group matching for **every** authenticated request, JWT and PAT alike —
-groups resolution is fully unified through the directory, so there is no
-separate "JWT path" convention left to keep in sync with it. Set this
-`true` if your realm's group names, as the Admin REST API returns them,
-need the full path to be unambiguous; the default (`false`, bare name)
-matches `policy.yaml`'s `group_capabilities` keys directly, and is what the
-now-removable Group Membership mapper described below used to produce for
-JWTs when "Full group path" was left OFF.
-
----
-
 ## Portal auth (OIDC public client)
 
 The portal (`mcp-portal.af.uchicago.edu`) is a static Astro/Vue SPA — there's
@@ -642,309 +318,299 @@ for the other providers.
 
 ---
 
-## Required Keycloak role: `broker`'s `read-token`
+## Authorization is an attribute of the principal, not the token
 
-Retrieving a stored external-IdP token via
-`GET /realms/<realm>/broker/<alias>/token` (the call `credentials/oidc.py`
-makes for the ATLAS IAM path above) requires the caller's access token to
-grant the **`read-token`** client role from Keycloak's built-in **`broker`**
-client. Without it, Keycloak returns:
+**Issue #144 steps 3 and 3b unified this for every credential type.** Before
+this change, a JWT was self-contained -- it carried `groups`/`posix` claims
+re-validated on every request -- while a PAT (carrying no authorization or
+identity data of its own) always deferred to the principal cache. Two
+sources of the same facts, which could in principle disagree: a user could
+hold a valid JWT whose embedded claims disagreed with what the directory
+currently said about them. As of step 3, `identity.py` never reads a
+`groups` claim, even when a token happens to carry one -- **every**
+credential type, JWT and identity PAT alike, resolves current groups from
+the principal cache. As of step 3b, the same is true for `posix`
+(uid/gid/unixname) -- see "Keycloak: POSIX User Attribute mappers" below.
+The token answers only "who is this?"; the directory answers "what groups/
+POSIX identity do they have?" POSIX identity remains optional on every
+principal regardless of source (issue #148) -- only x509 credential minting
+genuinely needs it, enforced at that point of use.
+
+Three separate concerns, deliberately kept separate in the code:
+
+- **PAT store** (`token_registry.py`) — "who is this token?" (PATs only;
+  a JWT's own signature already answers this for JWT callers).
+- **Principal cache** (`principal_cache.py`) — "what groups/POSIX identity
+  does this user *currently* have?", keyed by **principal id** (the
+  Keycloak `sub`), not by credential, so multiple PATs (and any number of
+  JWTs) belonging to one user share cached state, and rotating/revoking a
+  PAT never disturbs it. A group removal still propagates — within one refresh
+  interval (default ~45s, `PRINCIPAL_CACHE_REFRESH_SECONDS`) rather than
+  instantly, since neither credential type carries fresh claims of its own
+  to re-derive this from anymore. Stale-while-revalidate: a refresh failure
+  serves the last-known value for up to
+  `PRINCIPAL_CACHE_MAX_STALENESS_SECONDS` (default 6 hours) before failing
+  closed, logging loudly the whole time — a brief Keycloak outage should
+  not instantly lock out every authenticated caller.
+- **Capability engine** (`authorization/`) — unchanged; still gates on
+  `group_capabilities` from whatever groups the principal cache currently
+  reports, regardless of which credential type asked.
+
+**Availability regression for JWT callers (issue #144 steps 3/3b) -- read
+this before relying on it in production.** A JWT used to be self-contained:
+Keycloak being unreachable never blocked authentication, because the
+token's own signature and claims were the whole answer. That is no longer
+true. A JWT holder whose principal this cache has never resolved before --
+a genuinely new user, or a cold-started replica that has never seen them --
+hit during a Keycloak outage has no last-known value to fall back on and
+**cannot authenticate at all**, receiving a 503 (`identity.
+PrincipalDirectoryUnavailableError`) rather than a 401, specifically so the
+error reads as a platform outage rather than a bad credential. #150's
+persisted cache (below) covers the *restart* case for a principal already
+seen by some replica before the outage; it does nothing for a principal no
+replica has ever resolved. This is a deliberate tradeoff, not an oversight:
+it is what makes group removal a real kill switch for every credential type
+uniformly (the entire point of this unification), and it trades a rare,
+bounded, loudly-logged unavailability window for eliminating the
+JWT-claim/directory disagreement described above. Operators should
+understand this before removing the Group Membership mapper or the four
+POSIX User Attribute mappers (see below, both) as irreversible without a
+plan: after removal, there is no fallback path left at all if the Keycloak
+admin service account itself becomes unreachable for an extended period.
+
+**Persisted across restarts (issue #144 step 2b).** The principal cache is
+backed by a `PrincipalCacheBackend`, selected via
+`PRINCIPAL_CACHE_BACKEND`/`broker.principalCache.backend` the same way
+`TOKEN_REGISTRY_BACKEND` selects the PAT store's backend — `in_memory`
+(single-replica, lost on restart) or `vault` (the same Vault/OpenBao
+instance the PAT store and oauth21 token store use, under its own
+`broker.principalCache.kvPathPrefix`). Each persisted record carries the
+wall-clock time it was resolved; a cold start (process restart) loads it as
+this replica's initial last-known value, subject to the exact same
+`PRINCIPAL_CACHE_MAX_STALENESS_SECONDS` bound as an in-process refresh
+failure — a record persisted three days ago is not served when the
+staleness bound is six hours, same as any other stale value. A resolve is
+written back to Vault when its attributes actually differ from what's
+currently held (comparing content, not timestamps, so a changed value
+writes immediately) *or* when the last write is older than
+`PRINCIPAL_CACHE_HEARTBEAT_SECONDS` (default 3 hours, comfortably below the
+6-hour staleness bound) — the second condition matters because group
+memberships are typically stable for weeks, and writing on content-diff
+alone would leave a stable principal's persisted record dated from its
+last actual change, defeating the point of persisting at all once that
+date is further in the past than the staleness bound. Together, a
+population of principals whose groups rarely change still writes only once
+per heartbeat, not once per ~45s refresh, while guaranteeing a healthy,
+reachable system always has a persisted record well inside the staleness
+bound; a Vault read/write failure degrades to the in-memory-only behavior
+of the previous design rather than failing a request — see
+`principal_cache.py`'s module docstring for the full read/write layering
+and the write-amplification arithmetic. Before this persistence existed, a
+cold broker restart during a Keycloak outage had no last-known value to
+serve for any PAT-authenticated principal and failed closed for them until
+the directory recovered — even though their actual authority hadn't
+changed. This persistence covers the *restart* case for any principal some
+replica had already resolved before the outage started, for both credential
+types now that step 3 unified groups resolution -- but not a principal no
+replica has ever resolved (see the availability regression callout above).
+
+**Data at rest.** A persisted principal-cache record contains that user's
+group memberships and POSIX uid/gid/unixname — the same underlying data
+Keycloak already holds, but (when `PRINCIPAL_CACHE_BACKEND=vault`) now also
+resident in Vault, alongside the PAT store's own records (see above).
+
+---
+
+## AF Broker Identity Token (issue #162)
+
+### Two classes of backends: federated vs AF-native
+
+Every backend the broker fronts falls into one of two classes, and the
+credential story is different for each:
+
+**External identity systems** (Rucio, ATLAS IAM — anything whose source of
+truth is not AF) are *federation* problems. They require account linking
+and a federated credential: OAuth 2.1 (`oauth21-direct`), a brokered OIDC
+token (`keycloak-brokered`), or an x509/VOMS proxy. This is the provider
+set documented above, unchanged.
+
+**AF-native services** (condor-token-service, future jupyter-mcp,
+condor-mcp, and every future internal backend) are the opposite: AF is the
+source of truth. No federation occurs, no linking, no exchange — **the
+broker is authoritative.** The key architectural fact: *there is no trust
+boundary crossed by involving Keycloak in this path.* Round-tripping
+through Keycloak per call to re-encode facts the broker already resolved
+from the directory (subject, POSIX identity) is an availability and latency
+cost with no trust gain. The broker is already the authorization decision
+point; having AF-native services trust broker-issued identity assertions
+**preserves** that trust boundary rather than expanding it.
+
+In the provider hierarchy:
 
 ```
-HTTP 403
-{"errorMessage":"Client [<client_id>] not authorized to retrieve tokens from identity provider [<alias>]."}
+CredentialProvider (ABC — contract unchanged)
+├── federated providers      # linking + external credential
+│     OAuth21Provider, OIDCProvider (brokered), X509Provider
+└── native providers         # broker-authoritative, no linking
+      BrokerIssuedProvider   # credentials/broker_issued.py
 ```
 
-This is **in addition to**, not instead of, "Store Tokens: ON" and "Stored
-Tokens Readable: ON" on the IdP config (Identity Providers → `atlas-oidc` →
-Settings). Both the IdP flags and the role are required; either one missing
-produces the same 403.
+Because there is no linking step, an AF-native backend shows `available`
+on the catalog from day one — `is_linked()` is unconditionally true, no
+portal action exists or is needed, and `GET /v1/identities` lists the
+provider as always linked with no `link_url` and
+`link_mechanism: "none"`.
 
-**Why it's easy to miss:** it's a Keycloak-specific authorization check, not
-part of the OAuth 2.0 or OIDC standard. The admin UI doesn't surface it when
-you flip "Store Tokens" on an IdP — that toggle lives under Identity
-Providers, while the role lives under Clients → `broker`, with no cross-link
-between the two screens. Keycloak's own "Retrieving External IdP Tokens"
-docs mention the role, but not prominently enough to catch before you hit
-the 403 above.
+### The token format — an internal protocol
 
-**What `broker` is:** a built-in client that ships with every Keycloak
-realm — not created by anything in this repo. Its purpose is precisely to
-hang roles like `read-token` off of, for this exact permission model.
+Broker-issued JWTs are **identity assertions, nothing more** (SPIFFE-style:
+documented once, every AF-native backend consumes the same format; future
+backends — slurm-mcp, k8s-mcp, cvmfs-mcp — never invent a new
+authentication story). RS256, signed by the broker's own key, TTL
+`BROKER_TOKEN_TTL_SECONDS` (default 600 s — deliberately 2× the credential
+cache's 300 s min-remaining floor, so cached tokens are actually servable;
+a TTL at or below that floor makes every call a fresh mint).
 
-**Ways to grant it:**
+| Claim      | Required | Value |
+|------------|----------|-------|
+| `iss`      | yes      | The broker issuer URL — `BROKER_TOKEN_ISSUER`, defaulting to `BROKER_PUBLIC_ORIGIN` |
+| `sub`      | yes      | The principal's subject (Keycloak `sub`) |
+| `aud`      | yes      | The exact backend name (or the entry's configured `audience` override) — consumers **MUST reject** tokens whose `aud` is not exactly themselves |
+| `exp` / `iat` | yes   | Mint time and mint time + TTL |
+| `jti`      | yes      | Unique per token (uuid4) |
+| `uid` / `gid` / `unixname` | optional | POSIX identity from the directory-backed `Principal` (the same source x509 minting uses — never a token claim), included **only** for targets whose config sets `include_posix` |
 
-- **Per-user** — Users → find the user → Role Mapping → Assign role →
-  filter by clients: `broker` → check `read-token`. Simple; doesn't scale.
-- **At production scale** — a client scope's Scope tab is *not* a grant
-  mechanism, despite looking like one. See the next section for why, and
-  for the two mechanisms that actually grant the role to many users.
+**Deliberately absent: capabilities, groups, or any authorization claim.**
+Authorization is an attribute of the principal, decided per-call by the
+broker's entitlement check — it must never migrate into tokens (see
+"Authorization is an attribute of the principal, not the token" above; the
+same reasoning). If a backend is ever written to test `token.capabilities`,
+this design has failed. Backends use the token to answer "who is this and
+did the broker send them," nothing else.
 
-**Verifying:** decode the caller's access token and confirm `read-token`
-appears in `resource_access.broker.roles`. `credentials/oidc.py` is the
-only code path in this repo that exercises `/broker/<alias>/token` — grep
-there if you need to trace how the broker consumes the resulting token.
+Consumers verify against the broker's JWKS at
+`GET /.well-known/jwks.json` (public, unauthenticated, served next to the
+other well-known documents and routed by the same ingress) with any
+standard JWT library: select the key by the token header's `kid`, then
+check signature, `iss`, `aud`, and `exp`. `kid` is the RFC 7638 JWK
+thumbprint of the key, so it is stable across replicas and restarts with
+no coordination. This also lets services like HTCondor trust the broker as
+a token issuer directly via their native token auth (SCITOKENS issuer
+config) — no Keycloak in the path.
 
----
+**First consumer: condor-token-service**
+([maniaclab/condor-token-service](https://github.com/maniaclab/condor-token-service)),
+verifying `aud=condor-token-service` against this JWKS.
 
-## Client scope Scope tab: a filter, not a grant
+### Configuration
 
-A client scope's **Scope** tab looks like a place to grant `read-token` to
-everyone who gets that scope. It isn't — Keycloak's own admin UI says so,
-in the info banner on that tab:
-
-> If there is no role scope mapping defined, each user is permitted to use
-> this client scope. If there are role scope mappings defined, the user must
-> be a member of at least one of the roles.
-
-Populating the Scope tab **restricts** the scope to users who already hold
-one of the listed roles; it does not grant the role to anyone. Add
-`read-token` there without users already having it some other way, and
-Keycloak silently excludes every user from the scope.
-
-**The cascading failure:** a scope's audience mapper — the thing that puts
-`mcp-gateway` (or whatever audience a backend expects) into the token's
-`aud` claim — only fires for users who actually get the scope. Excluded
-from the scope means excluded from the mapper too, so minted tokens are
-missing the audience entirely, not just the role. If a decoded token's
-`aud` doesn't contain the audience you expected, suspect this before
-anything else in the credential path.
-
-**How to actually grant `read-token` at scale:**
-
-- **Realm default role** — Realm settings → Realm roles →
-  `default-roles-<realm>` → Associated roles → assign `read-token`. Every
-  user in the realm gets it transitively, with no per-user or per-group
-  admin. Right for a realm dedicated to one purpose (e.g. an AF-only realm).
-- **Group membership** — Groups → new group → add users → the group's Role
-  Mapping tab → assign `read-token`. Users in the group get the role,
-  users outside don't. Right for a realm serving multiple purposes, where
-  only some users should get broker-token access.
-
-Once one of those actually grants the role, the Scope tab becomes optional
-belt-and-suspenders — it can additionally restrict which users obtain a
-given scope — but it is never itself where the grant happens.
-
-**AF's setup:** the `connect` realm has a `default-roles-connect` composite,
-but we grant `read-token` via group membership instead of adding it there,
-since `connect` serves more than just the AF. The `mcp-gateway` scope's
-Scope tab also lists `read-token`, purely as a second filter: group
-membership is what actually grants the role, and users get both the role
-and the scope's audience together.
-
----
-
-## Token Lifetime and Refresh
-
-| Credential type | Typical lifetime | Refresh strategy |
-|---|---|---|
-| AF access token (portal SPA) | 5 minutes | `oidc-client-ts` silent renew via refresh_token grant (see [Portal auth](#portal-auth-oidc-public-client)) |
-| AF access token (other MCP clients) | 5 minutes | Client-specific — e.g. Claude Desktop's own OAuth flow (not yet implemented) |
-| ATLAS IAM token (brokered) | 1 hour | Broker re-fetches from Keycloak on cache miss |
-| x509 VOMS proxy | 12–192 hours (configurable) | voms-token-service mode: hands-free re-mint with the Vault-stored passphrase when the stored proxy expires. Legacy mode: re-mint Job on the next portal unlock |
-
-The `CredentialCache` stores each credential with its `expires_at` timestamp.
-A background janitor coroutine sweeps the cache every 60 seconds and evicts
-expired entries, triggering a fresh mint on the next request.
-
----
-
-## Keycloak: Group Membership mapper (no longer read -- issue #144 step 3)
-
-**As of issue #144 step 3, the broker never reads a `groups` claim from any
-token.** Every credential type -- JWT and identity PAT alike -- resolves a
-principal's current groups the same way: from `PrincipalDirectory` (the
-Keycloak Admin REST API lookup below), via the principal cache. If your
-realm has a Group Membership mapper on the `mcp-gateway` client scope purely
-to satisfy this broker, **you may remove it** -- but as with the POSIX
-mappers above, check first that nothing else in your realm reads the
-`groups` claim.
-
-**Remove only the mapper, never the scope.** The `mcp-gateway` client scope
-also carries the **Audience mapper** that puts `mcp-gateway` into a token's
-`aud` claim, which the broker validates on every single request. Deleting
-the scope, or excluding users from it, breaks authentication entirely and in
-a way that is hard to trace -- see "The cascading failure" below.
-
-The setting that controls how
-the directory matches group names is `principal_directory_group_full_path`
-(see "Configurable POSIX attribute names and group-path matching" above) --
-there is no longer a separate JWT-side mapper convention it needs to stay
-consistent with, because there is no longer a JWT-side source of groups at
-all.
-
-The rest of this section is kept for operators who haven't removed the
-mapper yet, or who are debugging a token minted before doing so -- it no
-longer describes broker behavior.
-
-<details>
-<summary>Historical setup instructions (pre-#144-step-3)</summary>
-
-### One-time setup
-
-1. **Add a Group Membership mapper to the `mcp-gateway` client scope**
-   (or your equivalent scope):
-   - Admin → Client Scopes → `mcp-gateway` → Mappers → Add mapper → **Group Membership**
-   - Name: `groups`
-   - Token Claim Name: `groups`
-   - Full group path: **OFF** (the broker string-matches literal group
-     names; a leading `/` would prevent every policy match)
-   - Add to ID token: OFF
-   - Add to access token: **ON**
-   - Add to userinfo: OFF
-
-   **Common footgun:** the mapper form has two similarly-named fields —
-   **Name** (an internal identifier for the mapper itself) and **Token
-   Claim Name** (the key that actually appears in the JWT payload). Both
-   look optional. Set `Name: groups` and leave Token Claim Name blank, and
-   the mapper is inert: no `groups` claim ever appears in the token,
-   silently — no error, no warning, nothing to notice until you decode a
-   minted token. Token Claim Name **must** be set to `groups` explicitly.
-   Verify via Client Scopes → `mcp-gateway` → **Evaluate** tab — select the
-   target user and the `mcp-portal` client, and the Generated Access Token
-   panel shows exactly what the mapper actually contributed.
-
-2. **Create the groups you reference in `group_capabilities`** and
-   assign users to them. Group names are entirely up to you — the chart
-   ships no site-specific default, so pick names that match your own
-   Keycloak realm (see the worked example below). The broker's own
-   dev-only fallback policy (`broker/src/af_mcp_broker/authorization/
-   policy.yaml`, used when no `POLICY_FILE` is configured) mirrors the
-   ATLAS AF's own group names: `atlas`, `cms`, `dune`, `escape`,
-   `af-admins`.
-
-### Verify (historical)
-
-Mint a fresh token (via `scripts/mint-token.py`) and confirm the payload
-has a top-level `groups` claim listing your group names as strings. This no
-longer proves anything about what the broker will do with it -- see above.
-
-</details>
-
-### Verify (current)
-
-Group membership now takes effect through Keycloak group assignment alone
--- there is no token claim to inspect. Assign (or remove) a user from a
-Keycloak group referenced in `group_capabilities` and confirm their
-capabilities change within `principal_cache_refresh_seconds` (default
-~45s; see "Authorization is an attribute of the principal, not the token"
-below) on their next request, regardless of which credential type they
-present.
-
----
-
-## Group-to-Capability Mapping Example
-
-The chart ships the UChicago ATLAS AF's own `group_capabilities` mapping as
-its default (below) — a convenience for that one deployment and a template
-for what an overlay looks like, **not** a generic default. Group names come
-from the deployer's own Keycloak realm, so a same-named group in a
-different realm could mean something else entirely: any analysis facility
-other than the UChicago AF **must** override `entitlements.group_capabilities`
-in its `HelmRelease` overlay with its own group names (see the non-ATLAS
-worked example below), or every backend whose `required_capability` isn't
-`__none__` becomes unreachable by everyone. The broker's startup check (see
-`app.py`'s lifespan) walks every backend's `required_capability` and
-**refuses to start** if no group grants it, naming both the backend and the
-capability — a Kubernetes rollout failure with zero outage (the previous
-ReplicaSet keeps serving) is far more visible than a config that silently
-deploys broken.
-
-This is the ATLAS AF's own mapping, the chart default, copyable as a
-starting point if you're deploying for that AF or want a similar shape:
+One `identity_providers` entry (chart: `broker.identityProviders`) of type
+`broker-issued`, plus the signing key:
 
 ```yaml
-group_capabilities:
-  # Full ATLAS analysis + compute + GitLab access.
-  atlas: [read_data, read_metadata, read_monitoring, read_gitlab, submit_jobs, manage_jobs, launch_compute, manage_jupyter, manage_gitlab, read_files]
-  # Analysis + compute access, no GitLab/Jupyter management.
-  cms: [read_data, read_metadata, read_monitoring, submit_jobs, manage_jobs, launch_compute, read_files]
-  # Analysis + compute access, no monitoring dashboards.
-  dune: [read_data, read_metadata, submit_jobs, manage_jobs, launch_compute, read_files]
-  # Read-only data + metadata access.
-  escape: [read_data, read_metadata, read_files]
-  # Full access plus data management and platform administration.
-  af-admins: [read_data, read_metadata, read_monitoring, read_gitlab, submit_jobs, manage_jobs, launch_compute, manage_jupyter, manage_gitlab, manage_data, admin, read_files]
-  # Any authenticated user (no group membership required)
-  __authenticated__: [read_metadata, read_monitoring]
+broker:
+  identityProviders:
+    - type: broker-issued
+      alias: af-native
+      displayName: "AF-native services"
+      targets: ["condor-token-service"]
+      targetOptions:
+        condor-token-service:
+          includePosix: true    # this backend needs uid/gid/unixname
+  identityToken:
+    existingSigningKeySecret: af-mcp-identity-token-signing-key
 ```
 
-### Worked example: a non-ATLAS site
+The Secret must carry the RS256 private key PEM under the key name
+`signing-key.pem`; the chart mounts it read-only and points
+`BROKER_SIGNING_KEY_FILE` at it. **Fail-closed:** a `broker-issued` entry
+with no signing key configured refuses to boot (a startup `RuntimeError`,
+consistent with the `unreachable_capabilities`/`ungated_backends` checks)
+rather than failing at first request; a broker with neither configured
+boots cleanly with the feature absent (`/.well-known/jwks.json` answers
+503). A target with `include_posix` whose caller has no POSIX identity
+gets an actionable 404 naming the backend at issue time — the same
+point-of-use requirement as x509's `PosixIdentityRequiredError`.
 
-If you are running this chart for a facility other than the UChicago ATLAS
-AF, override `entitlements.group_capabilities` entirely — the group names
-on the left must match Keycloak group names in *your* realm exactly (see
-"Create the groups you reference in `group_capabilities`" above); reusing
-`atlas`/`cms`/`dune`/`escape`/`af-admins` only makes sense if your realm
-happens to define groups with those same names. For example, a facility
-whose Keycloak realm defines `myexperiment-users` and
-`myexperiment-admins` groups instead might set:
+Generate a key for local development (never commit one, never auto-generate
+in production paths — production keys arrive as SealedSecrets like every
+other broker secret):
+
+```bash
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \
+  -out /tmp/broker-signing-key.pem
+export BROKER_SIGNING_KEY_FILE=/tmp/broker-signing-key.pem
+```
+
+### Key rotation
+
+Rotation is publish-before-use with an overlap window, entirely through the
+JWKS — consumers never hardcode a key:
+
+1. **Publish the successor.** Generate the new keypair; add its *public*
+   PEM (a `*.pem` key in the Secret named by
+   `broker.identityToken.existingAdditionalPublicKeysSecret`, mounted at
+   `BROKER_ADDITIONAL_PUBLIC_KEYS_DIR`). The JWKS now serves both keys;
+   nothing signs with the new one yet.
+2. **Switch signing.** Replace the signing-key Secret's `signing-key.pem`
+   with the new private key, and move the *old* key's public PEM into the
+   additional-public-keys Secret. Roll the Deployment. New tokens carry the
+   new `kid`; tokens signed by the old key keep verifying because its
+   public half is still published.
+3. **Retire the old key.** After at least one full token TTL (default
+   600 s — in practice wait longer, e.g. a day, to absorb clock skew and
+   consumer JWKS caches), remove the old public PEM from the
+   additional-public-keys Secret and roll again.
+
+The overlap property (a token signed by the retiring key verifies against
+a JWKS whose active key is the successor) is regression-tested in
+`broker/tests/test_broker_issued.py`.
+
+### CondorTokenProvider: HTCondor IDTOKENs (issue #169)
+
+HTCondor IDTOKENS are signed with the pool password — a **symmetric** key
+that can mint tokens for any identity in the pool, so it never leaves
+Condor infrastructure and never enters the broker. `CondorTokenProvider`
+(`credentials/condor.py`) is the second native provider and the identity
+token's first end-to-end use: it mints an AF Broker Identity Token with
+`aud=condor-token-service` and the principal's `uid`/`gid`/`unixname`
+claims, exchanges it at condor-token-service's `POST /v1/token` (which
+runs `condor_token_create -identity <unixname>@af.uchicago.edu` next to
+the pool key), and caches the returned IDTOKEN in the `CredentialCache`
+keyed `(subject, target)` with TTL = the service's `expires_at`. Delivery
+to condor-mcp is the existing aggregator `bearer` branch — no aggregator
+changes.
+
+Configuration is one `identity_providers` entry of type `condor-token`
+with a required `service_url` (the service's base URL — the provider
+appends `/v1/token`) and an `audience` defaulting to
+`condor-token-service`:
 
 ```yaml
-group_capabilities:
-  # Ordinary analysts: read data/metadata, submit jobs.
-  myexperiment-users: [read_data, read_metadata, submit_jobs]
-  # Full access plus data management and platform administration.
-  myexperiment-admins: [read_data, read_metadata, read_monitoring, submit_jobs, manage_jobs, manage_data, admin]
-  # Any authenticated user (no group membership required)
-  __authenticated__: [read_metadata]
+broker:
+  identityProviders:
+    - type: condor-token
+      alias: condor
+      displayName: "HTCondor"
+      targets: ["condor-mcp"]
+      serviceUrl: http://condor-token-service.af-mcp.svc:8080
 ```
 
-The capability names on the right (`read_data`, `submit_jobs`, ...) are not
-site-specific — they're the fixed vocabulary this policy engine understands
-(see `CAPABILITIES` in `broker/src/af_mcp_broker/authorization/base.py`),
-matched against whatever `required_capability` values your `backends.yaml`
-declares.
-
-Which capability a backend target requires is declared alongside the
-backend itself, in `backends.yaml`'s `required_capability` field, not in
-`policy.yaml` (see `docs/adding-a-backend.md`):
-
-```yaml
-backends:
-  - name: rucio
-    required_capability: read_data
-  - name: ami
-    required_capability: read_metadata
-  - name: panda
-    required_capability: submit_jobs
-  - name: docs
-    required_capability: __none__     # open to any authenticated user
-```
-
-Keycloak group membership is resolved from `PrincipalDirectory` via the
-principal cache (issue #144 step 3) -- not from a token claim, for either
-credential type. Keycloak remains the authoritative source; the cache is a
-stale-while-revalidate layer in front of it (see "Authorization is an
-attribute of the principal, not the token" below), refreshed roughly every
-`principal_cache_refresh_seconds` (default ~45s) rather than on every single
-request.
-
----
-
-## Auth-edge decision
-
-The shared oauth2-proxy (`provider = "keycloak-oidc"`, v7.6.0) validates a
-Bearer's `aud` claim against its own `client_id`, not the broker's
-audience — so mcpHost's ForwardAuth gate 302'd every Bearer request,
-including Claude Desktop's, instead of letting it reach the broker's own
-JWT validator:
-
-```
-$ curl -sS -o /dev/null -w "HTTP %{http_code}\nLocation: %{redirect_url}\n" https://mcp.af.uchicago.edu/mcp/
-HTTP 302
-Location: https://oauth2-proxy.af.uchicago.edu/oauth2/sign_in?rd=%2Fmcp%2F
-```
-
-Phase A (`ingress-mcp.yaml` / `ingress-portal.yaml` split) removed the
-oauth2-proxy annotations from mcpHost so the broker validates Bearers
-itself there. Phase B (this doc's [Portal auth](#portal-auth-oidc-public-client)
-section) carries the same fix to portalHost: `/v1` and `/mcp` move to a
-separate `ingress-portal-api.yaml` with no oauth2-proxy annotations, and the
-portal SPA obtains its own `aud=mcp-gateway` Bearer instead of relying on a
-cookie oauth2-proxy never actually forwarded as a header anyway. oauth2-proxy
-remains in front of portalHost's `/` rule (`ingress-portal.yaml`) purely to
-gate the HTML/static assets.
+The same fail-closed rule applies as for `broker-issued`: a
+`condor-token` entry with no signing key configured refuses to boot,
+since the provider cannot mint the identity token it exchanges. POSIX
+identity is required unconditionally (not per-target config — an IDTOKEN
+*is* a unix-account credential): a principal without one gets an
+actionable 404 naming the backend at issue time. Service failures surface
+generically — a 429 passes through with its `Retry-After`; everything
+else (the service rejecting the broker's token, minting failure,
+unreachable) maps to a 502 whose detail never carries the service's
+response body. IDTOKENS are not server-side revocable; `revoke()` drops
+the cache entry and the short lifetime is the actual revocation bound. If
+HTCondor is later configured to trust the broker's JWKS directly
+(SCITOKENS issuer config), only this provider's implementation changes —
+the `CredentialProvider` contract, condor-mcp, and the registry wiring
+are untouched.
 
 ---
 
@@ -1060,7 +726,7 @@ is why introspection, RFC 7662, exists at all).
 3. **`GET /v1/oauth/authorize`** validates the client's CIMD document and
    `redirect_uri`, then redirects the browser to Keycloak's own login using
    the broker's *own* confidential client (see "Operator setup: the MCP
-   OAuth discovery bootstrap login client" above) — PKCE plus a Fernet-
+   OAuth discovery bootstrap login client" below) — PKCE plus a Fernet-
    encrypted `state` token (`oauth_state.py`'s `McpAuthorizePayload`,
    sibling to the account-linking flow's `StatePayload`) carrying the MCP
    client's own pending `redirect_uri`/`state`/PKCE challenge across the
@@ -1111,107 +777,6 @@ above — both authenticate via Keycloak first. The portal SPA itself is
 never issued a PAT — it keeps using its short-lived Keycloak JWT, since
 handing a long-lived credential to browser storage would be strictly worse
 than a JWT that expires in minutes.
-
-### Authorization is an attribute of the principal, not the token
-
-**Issue #144 steps 3 and 3b unified this for every credential type.** Before
-this change, a JWT was self-contained -- it carried `groups`/`posix` claims
-re-validated on every request -- while a PAT (carrying no authorization or
-identity data of its own) always deferred to the principal cache. Two
-sources of the same facts, which could in principle disagree: a user could
-hold a valid JWT whose embedded claims disagreed with what the directory
-currently said about them. As of step 3, `identity.py` never reads a
-`groups` claim, even when a token happens to carry one -- **every**
-credential type, JWT and identity PAT alike, resolves current groups from
-the principal cache. As of step 3b, the same is true for `posix`
-(uid/gid/unixname) -- see "Keycloak: POSIX User Attribute mappers" above.
-The token answers only "who is this?"; the directory answers "what groups/
-POSIX identity do they have?" POSIX identity remains optional on every
-principal regardless of source (issue #148) -- only x509 credential minting
-genuinely needs it, enforced at that point of use.
-
-Three separate concerns, deliberately kept separate in the code:
-
-- **PAT store** (`token_registry.py`) — "who is this token?" (PATs only;
-  a JWT's own signature already answers this for JWT callers).
-- **Principal cache** (`principal_cache.py`) — "what groups/POSIX identity
-  does this user *currently* have?", keyed by **principal id** (the
-  Keycloak `sub`), not by credential, so multiple PATs (and any number of
-  JWTs) belonging to one user share cached state, and rotating/revoking a
-  PAT never disturbs it. A group removal still propagates — within one refresh
-  interval (default ~45s, `PRINCIPAL_CACHE_REFRESH_SECONDS`) rather than
-  instantly, since neither credential type carries fresh claims of its own
-  to re-derive this from anymore. Stale-while-revalidate: a refresh failure
-  serves the last-known value for up to
-  `PRINCIPAL_CACHE_MAX_STALENESS_SECONDS` (default 6 hours) before failing
-  closed, logging loudly the whole time — a brief Keycloak outage should
-  not instantly lock out every authenticated caller.
-- **Capability engine** (`authorization/`) — unchanged; still gates on
-  `group_capabilities` from whatever groups the principal cache currently
-  reports, regardless of which credential type asked.
-
-**Availability regression for JWT callers (issue #144 steps 3/3b) -- read
-this before relying on it in production.** A JWT used to be self-contained:
-Keycloak being unreachable never blocked authentication, because the
-token's own signature and claims were the whole answer. That is no longer
-true. A JWT holder whose principal this cache has never resolved before --
-a genuinely new user, or a cold-started replica that has never seen them --
-hit during a Keycloak outage has no last-known value to fall back on and
-**cannot authenticate at all**, receiving a 503 (`identity.
-PrincipalDirectoryUnavailableError`) rather than a 401, specifically so the
-error reads as a platform outage rather than a bad credential. #150's
-persisted cache (below) covers the *restart* case for a principal already
-seen by some replica before the outage; it does nothing for a principal no
-replica has ever resolved. This is a deliberate tradeoff, not an oversight:
-it is what makes group removal a real kill switch for every credential type
-uniformly (the entire point of this unification), and it trades a rare,
-bounded, loudly-logged unavailability window for eliminating the
-JWT-claim/directory disagreement described above. Operators should
-understand this before removing the Group Membership mapper or the four
-POSIX User Attribute mappers (see above, both) as irreversible without a
-plan: after removal, there is no fallback path left at all if the Keycloak
-admin service account itself becomes unreachable for an extended period.
-
-**Persisted across restarts (issue #144 step 2b).** The principal cache is
-backed by a `PrincipalCacheBackend`, selected via
-`PRINCIPAL_CACHE_BACKEND`/`broker.principalCache.backend` the same way
-`TOKEN_REGISTRY_BACKEND` selects the PAT store's backend — `in_memory`
-(single-replica, lost on restart) or `vault` (the same Vault/OpenBao
-instance the PAT store and oauth21 token store use, under its own
-`broker.principalCache.kvPathPrefix`). Each persisted record carries the
-wall-clock time it was resolved; a cold start (process restart) loads it as
-this replica's initial last-known value, subject to the exact same
-`PRINCIPAL_CACHE_MAX_STALENESS_SECONDS` bound as an in-process refresh
-failure — a record persisted three days ago is not served when the
-staleness bound is six hours, same as any other stale value. A resolve is
-written back to Vault when its attributes actually differ from what's
-currently held (comparing content, not timestamps, so a changed value
-writes immediately) *or* when the last write is older than
-`PRINCIPAL_CACHE_HEARTBEAT_SECONDS` (default 3 hours, comfortably below the
-6-hour staleness bound) — the second condition matters because group
-memberships are typically stable for weeks, and writing on content-diff
-alone would leave a stable principal's persisted record dated from its
-last actual change, defeating the point of persisting at all once that
-date is further in the past than the staleness bound. Together, a
-population of principals whose groups rarely change still writes only once
-per heartbeat, not once per ~45s refresh, while guaranteeing a healthy,
-reachable system always has a persisted record well inside the staleness
-bound; a Vault read/write failure degrades to the in-memory-only behavior
-of the previous design rather than failing a request — see
-`principal_cache.py`'s module docstring for the full read/write layering
-and the write-amplification arithmetic. Before this persistence existed, a
-cold broker restart during a Keycloak outage had no last-known value to
-serve for any PAT-authenticated principal and failed closed for them until
-the directory recovered — even though their actual authority hadn't
-changed. This persistence covers the *restart* case for any principal some
-replica had already resolved before the outage started, for both credential
-types now that step 3 unified groups resolution -- but not a principal no
-replica has ever resolved (see the availability regression callout above).
-
-**Data at rest.** A persisted principal-cache record contains that user's
-group memberships and POSIX uid/gid/unixname — the same underlying data
-Keycloak already holds, but (when `PRINCIPAL_CACHE_BACKEND=vault`) now also
-resident in Vault, alongside the PAT store's own records (see above).
 
 ### Capability PATs (issue #144 step 4)
 
@@ -1304,6 +869,31 @@ this particular PAT is scoped away from it" (the grant is a non-`null` list
 that omits the denied capability) — two very different remediation stories
 that a bare denial reason can't distinguish on its own.
 
+---
+
+## Token Lifetime and Refresh
+
+| Credential type | Typical lifetime | Refresh strategy |
+|---|---|---|
+| AF access token (portal SPA) | 5 minutes | `oidc-client-ts` silent renew via refresh_token grant (see [Portal auth](#portal-auth-oidc-public-client)) |
+| AF access token (other MCP clients) | 5 minutes | Client-specific — e.g. Claude Desktop's own OAuth flow (not yet implemented) |
+| ATLAS IAM token (brokered) | 1 hour | Broker re-fetches from Keycloak on cache miss |
+| x509 VOMS proxy | 12–192 hours (configurable) | voms-token-service mode: hands-free re-mint with the Vault-stored passphrase when the stored proxy expires. Legacy mode: re-mint Job on the next portal unlock |
+
+The `CredentialCache` stores each credential with its `expires_at` timestamp.
+A background janitor coroutine sweeps the cache every 60 seconds and evicts
+expired entries, triggering a fresh mint on the next request.
+
+---
+
+## Keycloak operator setup reference
+
+Everything below is Keycloak-side configuration the broker depends on but never manages
+itself — clients, roles, client-scope role restrictions, and group-to-role assignments. Read
+this section together when standing up a new realm or debugging why a token doesn't carry
+what you expected; the sections above it describe what the broker does at runtime once this
+configuration already exists.
+
 ### Operator setup: the Keycloak admin service account
 
 Resolving any principal's current groups/uid/gid/unixname means *asking
@@ -1390,7 +980,7 @@ issue #140 repurposed the identical "confidential client + sealed secret"
 shape for a different grant type: the broker's own `/v1/oauth/authorize`
 (`api/mcp_oauth.py`) authenticates *as* this client when it redirects an MCP
 client's browser through a real Keycloak login on that MCP client's behalf
-(see "MCP OAuth discovery + PAT bootstrap" below for the full flow). Same
+(see "MCP OAuth discovery + PAT bootstrap" above for the full flow). Same
 env var names, same chart values, same reasoning as the Keycloak admin
 service account above for why removing/re-adding chart values on every
 design change would be needless churn for a deployment that already has the
@@ -1443,3 +1033,477 @@ Both this client and `broker.publicOrigin`/`BROKER_STATE_KEY` (already
 required for the oauth21-direct linking flow above, and reused here — see
 `Settings._validate_mcp_oauth_config`) must be configured together before
 the discovery endpoints in the next section do anything but 503.
+
+### Required Keycloak role: `broker`'s `read-token`
+
+Retrieving a stored external-IdP token via
+`GET /realms/<realm>/broker/<alias>/token` (the call `credentials/oidc.py`
+makes for the ATLAS IAM path above) requires the caller's access token to
+grant the **`read-token`** client role from Keycloak's built-in **`broker`**
+client. Without it, Keycloak returns:
+
+```
+HTTP 403
+{"errorMessage":"Client [<client_id>] not authorized to retrieve tokens from identity provider [<alias>]."}
+```
+
+This is **in addition to**, not instead of, "Store Tokens: ON" and "Stored
+Tokens Readable: ON" on the IdP config (Identity Providers → `atlas-oidc` →
+Settings). Both the IdP flags and the role are required; either one missing
+produces the same 403.
+
+**Why it's easy to miss:** it's a Keycloak-specific authorization check, not
+part of the OAuth 2.0 or OIDC standard. The admin UI doesn't surface it when
+you flip "Store Tokens" on an IdP — that toggle lives under Identity
+Providers, while the role lives under Clients → `broker`, with no cross-link
+between the two screens. Keycloak's own "Retrieving External IdP Tokens"
+docs mention the role, but not prominently enough to catch before you hit
+the 403 above.
+
+**What `broker` is:** a built-in client that ships with every Keycloak
+realm — not created by anything in this repo. Its purpose is precisely to
+hang roles like `read-token` off of, for this exact permission model.
+
+**Ways to grant it:**
+
+- **Per-user** — Users → find the user → Role Mapping → Assign role →
+  filter by clients: `broker` → check `read-token`. Simple; doesn't scale.
+- **At production scale** — a client scope's Scope tab is *not* a grant
+  mechanism, despite looking like one. See the next section for why, and
+  for the two mechanisms that actually grant the role to many users.
+
+**Verifying:** decode the caller's access token and confirm `read-token`
+appears in `resource_access.broker.roles`. `credentials/oidc.py` is the
+only code path in this repo that exercises `/broker/<alias>/token` — grep
+there if you need to trace how the broker consumes the resulting token.
+
+### Client scope Scope tab: a filter, not a grant
+
+A client scope's **Scope** tab looks like a place to grant `read-token` to
+everyone who gets that scope. It isn't — Keycloak's own admin UI says so,
+in the info banner on that tab:
+
+> If there is no role scope mapping defined, each user is permitted to use
+> this client scope. If there are role scope mappings defined, the user must
+> be a member of at least one of the roles.
+
+Populating the Scope tab **restricts** the scope to users who already hold
+one of the listed roles; it does not grant the role to anyone. Add
+`read-token` there without users already having it some other way, and
+Keycloak silently excludes every user from the scope.
+
+**The cascading failure:** a scope's audience mapper — the thing that puts
+`mcp-gateway` (or whatever audience a backend expects) into the token's
+`aud` claim — only fires for users who actually get the scope. Excluded
+from the scope means excluded from the mapper too, so minted tokens are
+missing the audience entirely, not just the role. If a decoded token's
+`aud` doesn't contain the audience you expected, suspect this before
+anything else in the credential path.
+
+**How to actually grant `read-token` at scale:**
+
+- **Realm default role** — Realm settings → Realm roles →
+  `default-roles-<realm>` → Associated roles → assign `read-token`. Every
+  user in the realm gets it transitively, with no per-user or per-group
+  admin. Right for a realm dedicated to one purpose (e.g. an AF-only realm).
+- **Group membership** — Groups → new group → add users → the group's Role
+  Mapping tab → assign `read-token`. Users in the group get the role,
+  users outside don't. Right for a realm serving multiple purposes, where
+  only some users should get broker-token access.
+
+Once one of those actually grants the role, the Scope tab becomes optional
+belt-and-suspenders — it can additionally restrict which users obtain a
+given scope — but it is never itself where the grant happens.
+
+**AF's setup:** the `connect` realm has a `default-roles-connect` composite,
+but we grant `read-token` via group membership instead of adding it there,
+since `connect` serves more than just the AF. The `mcp-gateway` scope's
+Scope tab also lists `read-token`, purely as a second filter: group
+membership is what actually grants the role, and users get both the role
+and the scope's audience together.
+**Worked example: tracing why removing someone from a group makes `mcp-gateway` — and `broker` — disappear from their token's `aud`.**
+
+Put together, the group → role → scope-gate chain above plus one more built-in Keycloak
+mechanism explains a specific, easy-to-observe symptom: a user in a group that grants
+`read-token` has both `mcp-gateway` and `broker` in their token's `aud`, and removing them
+from the group makes both vanish together — even though only one of the two has an explicit
+Audience mapper behind it.
+
+1. Group membership grants the `broker` client's `read-token` role (its Role Mapping tab, as
+   above).
+2. At token-mint time, Keycloak checks whether the user actually qualifies for each scope the
+   client requests. `mcp-gateway` is a Default scope on `mcp-portal`, but its own Scope tab
+   restricts it to holders of `read-token` — satisfied, so the scope (and the custom Audience
+   mapper on it that writes `mcp-gateway` into `aud`) is included.
+3. Independently, holding `read-token` also puts a `broker: {"roles": ["read-token"]}` entry
+   into the token's `resource_access` claim — that's just Keycloak recording which client
+   roles this token's holder has. The realm's built-in `roles` client scope (assigned as a
+   Default scope to every client) ships a mapper called **Audience Resolve**: unconditionally,
+   for every client that has an entry in `resource_access`, it adds that client's ID to `aud`.
+   This does not consult `mcp-gateway`'s Scope tab at all — it fires purely off
+   `resource_access` containing a `broker` entry.
+
+Remove the user from the group: step 1 no longer holds, so step 2's Scope-tab check fails
+(`mcp-gateway` and its mapper are dropped) and step 3 has no `broker` entry in
+`resource_access` for Audience Resolve to act on either. Both audience entries disappear in
+the same token, which is why it looks like a single on/off switch even though two independent
+mappers produced the two entries. None of this is broker-side logic — `identity.py`'s
+`keycloak_dependency` only ever checks that `aud` *contains* `mcp-gateway`; an extra `broker`
+entry is inert to the broker and safe to ignore.
+
+### Configurable POSIX attribute names and group-path matching (issue #148)
+
+`principal_directory.py`'s `KeycloakPrincipalDirectory` reads a principal's
+POSIX identity directly from Keycloak's Admin REST API, bypassing the JWT
+mapper layer entirely — so, as of issue #144 step 3b, this is the *only*
+path (JWT and PAT alike; see above), and it needs to know the *real* profile
+attribute key, not whatever a mapper used to normalize it to. Three
+settings, all defaulting to AF's own convention:
+
+| Setting | Env var | Default |
+|---|---|---|
+| `posix_uid_attribute` | `POSIX_UID_ATTRIBUTE` | `uid` |
+| `posix_gid_attribute` | `POSIX_GID_ATTRIBUTE` | `gid` |
+| `posix_unixname_attribute` | `POSIX_UNIXNAME_ATTRIBUTE` | `unixname` |
+
+A facility whose POSIX identity is LDAP-federated under different names —
+the common spelling is `uidNumber`/`gidNumber` — overrides these
+(`broker.posixAttributes.*` in the chart) rather than the broker hardcoding
+AF's own convention, the same reasoning as `entitlements.group_capabilities`
+(see "Group-to-Capability Mapping Example" below). When none of the
+configured keys are present for a given user, the corresponding
+`PrincipalAttributes` field is simply left `None` — not an error — and the
+actionable error an x509-backed target eventually raises for that principal
+names exactly which keys it looked for, so the operator's first diagnostic
+step is checking those keys against the real attribute names above, not
+guessing.
+
+A related, separate setting: `principal_directory_group_full_path`
+(`PRINCIPAL_DIRECTORY_GROUP_FULL_PATH`, default `false`) controls whether
+the directory matches a Keycloak group by its bare `name` (e.g. `atlas`) or
+its full `path` (e.g. `/atlas/users`). As of issue #144 step 3 this governs
+group matching for **every** authenticated request, JWT and PAT alike —
+groups resolution is fully unified through the directory, so there is no
+separate "JWT path" convention left to keep in sync with it. Set this
+`true` if your realm's group names, as the Admin REST API returns them,
+need the full path to be unambiguous; the default (`false`, bare name)
+matches `policy.yaml`'s `group_capabilities` keys directly, and is what the
+now-removable Group Membership mapper described below used to produce for
+JWTs when "Full group path" was left OFF.
+
+### Group-to-Capability Mapping Example
+
+The chart ships the UChicago ATLAS AF's own `group_capabilities` mapping as
+its default (below) — a convenience for that one deployment and a template
+for what an overlay looks like, **not** a generic default. Group names come
+from the deployer's own Keycloak realm, so a same-named group in a
+different realm could mean something else entirely: any analysis facility
+other than the UChicago AF **must** override `entitlements.group_capabilities`
+in its `HelmRelease` overlay with its own group names (see the non-ATLAS
+worked example below), or every backend whose `required_capability` isn't
+`__none__` becomes unreachable by everyone. The broker's startup check (see
+`app.py`'s lifespan) walks every backend's `required_capability` and
+**refuses to start** if no group grants it, naming both the backend and the
+capability — a Kubernetes rollout failure with zero outage (the previous
+ReplicaSet keeps serving) is far more visible than a config that silently
+deploys broken.
+
+This is the ATLAS AF's own mapping, the chart default, copyable as a
+starting point if you're deploying for that AF or want a similar shape:
+
+```yaml
+group_capabilities:
+  # Full ATLAS analysis + compute + GitLab access.
+  atlas: [read_data, read_metadata, read_monitoring, read_gitlab, submit_jobs, manage_jobs, launch_compute, manage_jupyter, manage_gitlab, read_files]
+  # Analysis + compute access, no GitLab/Jupyter management.
+  cms: [read_data, read_metadata, read_monitoring, submit_jobs, manage_jobs, launch_compute, read_files]
+  # Analysis + compute access, no monitoring dashboards.
+  dune: [read_data, read_metadata, submit_jobs, manage_jobs, launch_compute, read_files]
+  # Read-only data + metadata access.
+  escape: [read_data, read_metadata, read_files]
+  # Full access plus data management and platform administration.
+  af-admins: [read_data, read_metadata, read_monitoring, read_gitlab, submit_jobs, manage_jobs, launch_compute, manage_jupyter, manage_gitlab, manage_data, admin, read_files]
+  # Any authenticated user (no group membership required)
+  __authenticated__: [read_metadata, read_monitoring]
+```
+
+#### Worked example: a non-ATLAS site
+
+If you are running this chart for a facility other than the UChicago ATLAS
+AF, override `entitlements.group_capabilities` entirely — the group names
+on the left must match Keycloak group names in *your* realm exactly (see
+"Create the groups you reference in `group_capabilities`" above); reusing
+`atlas`/`cms`/`dune`/`escape`/`af-admins` only makes sense if your realm
+happens to define groups with those same names. For example, a facility
+whose Keycloak realm defines `myexperiment-users` and
+`myexperiment-admins` groups instead might set:
+
+```yaml
+group_capabilities:
+  # Ordinary analysts: read data/metadata, submit jobs.
+  myexperiment-users: [read_data, read_metadata, submit_jobs]
+  # Full access plus data management and platform administration.
+  myexperiment-admins: [read_data, read_metadata, read_monitoring, submit_jobs, manage_jobs, manage_data, admin]
+  # Any authenticated user (no group membership required)
+  __authenticated__: [read_metadata]
+```
+
+The capability names on the right (`read_data`, `submit_jobs`, ...) are not
+site-specific — they're the fixed vocabulary this policy engine understands
+(see `CAPABILITIES` in `broker/src/af_mcp_broker/authorization/base.py`),
+matched against whatever `required_capability` values your `backends.yaml`
+declares.
+
+Which capability a backend target requires is declared alongside the
+backend itself, in `backends.yaml`'s `required_capability` field, not in
+`policy.yaml` (see `docs/adding-a-backend.md`):
+
+```yaml
+backends:
+  - name: rucio
+    required_capability: read_data
+  - name: ami
+    required_capability: read_metadata
+  - name: panda
+    required_capability: submit_jobs
+  - name: docs
+    required_capability: __none__     # open to any authenticated user
+```
+
+Keycloak group membership is resolved from `PrincipalDirectory` via the
+principal cache (issue #144 step 3) -- not from a token claim, for either
+credential type. Keycloak remains the authoritative source; the cache is a
+stale-while-revalidate layer in front of it (see "Authorization is an
+attribute of the principal, not the token" above), refreshed roughly every
+`principal_cache_refresh_seconds` (default ~45s) rather than on every single
+request.
+
+### Keycloak: POSIX User Attribute mappers (no longer read -- issue #144 step 3b)
+
+**As of issue #144 step 3b, the broker never reads a `posix` claim from any
+token.** Every credential type -- JWT and identity PAT alike -- resolves a
+principal's current POSIX identity (`uid`/`gid`/`unixname`) the same way:
+from `PrincipalDirectory` (the Keycloak Admin REST API lookup above), via
+the principal cache -- completing what step 3 did for groups. If your
+realm's four POSIX User Attribute mappers on the `posix` client scope exist
+only to satisfy this broker, **you may remove them (and the scope itself).**
+
+**Check first whether anything else in your realm reads the `posix` claim.**
+A Keycloak realm often serves more applications than this broker, and the
+`posix` scope in particular tends to predate it -- the UChicago AF realm
+keeps these mappers precisely because other Connect applications consume
+the claim. Removing them is safe *for the broker* and says nothing about
+your other consumers. Leaving them costs nothing here: the broker simply
+never looks at the claim.
+The settings that control which Keycloak profile attributes the directory
+reads are `posix_uid_attribute`/`posix_gid_attribute`/
+`posix_unixname_attribute` (see "Configurable POSIX attribute names and
+group-path matching" above) -- there is no longer a separate JWT-side mapper
+convention they need to stay consistent with, because there is no longer a
+JWT-side source of POSIX identity at all.
+
+**POSIX identity remains optional (issue #148).** The broker still requires
+no POSIX attributes to authenticate a request: a principal the directory has
+no `uid`/`gid`/`unixname` for still authenticates successfully, with those
+fields simply left `None` on the resulting `Principal`. Only x509/VOMS proxy
+minting (`credentials/x509.py`) genuinely needs a POSIX identity — the mint
+Job's NFS home subPath and `runAsUser`/`runAsGroup` all require real
+uid/gid/unixname values — and that requirement is enforced at that one point
+of use: a principal with no POSIX identity who reaches an x509-backed target
+gets a clear, actionable error naming the backend ("this backend needs a
+grid identity your account doesn't have") rather than being refused at the
+door for an unrelated backend. Everything else that used to read
+`principal.uid` (cache keys, audit fields, log context) uses
+`principal.subject` instead, which every principal has.
+
+The rest of this section is kept for operators who haven't removed the
+mappers yet, or who are debugging a token minted before doing so -- it no
+longer describes broker behavior.
+
+<details>
+<summary>Historical setup instructions (pre-#144-step-3b)</summary>
+
+The claim shape, when present, was:
+
+```json
+{
+  "posix": {
+    "uid": 33155,
+    "gid": 33155,
+    "unixname": "kratsg"
+  }
+}
+```
+
+**How Keycloak provided it (AF's implementation, for context).** AF Keycloak
+has a realm-level client scope named `posix`. Inside that scope, four User
+Attribute protocol mappers copy `uid`, `gid`, `unixname` (and optionally
+`unixname-v2`) from each user's Keycloak profile attributes into the token
+under the `posix.*` namespace. Those profile attributes are themselves
+populated by upstream identity brokering (CERN → ATLAS IAM → Keycloak) or LDAP
+sync, depending on the deployment. The `posix` client scope had to be
+assigned to every OAuth client that needed to obtain broker-ready tokens
+(e.g. `mcp-portal`) — either as a Default scope (auto-included in every
+token) or an Optional scope (the client must explicitly request
+`scope=posix`).
+
+**Common footgun:** each of the four User Attribute mappers has the same
+two-name-field shape as the Group Membership mapper above — **Name** (an
+internal identifier) and **Token Claim Name** (the key that actually
+appears in the JWT payload). Leaving Token Claim Name blank produces an
+inert mapper: no `posix.uid` (or `.gid` / `.unixname` / `.unixname-v2`)
+claim ever appears in the token, silently. Token Claim Name **must** be
+set explicitly, using the dotted path that nests it under `posix`
+(`posix.uid`, `posix.gid`, `posix.unixname`, ...) to match the claim shape
+above. Verify via Client Scopes → `posix` → **Evaluate** tab — select the
+target user and client, and the Generated Access Token panel shows exactly
+what each mapper actually contributed.
+
+**Non-Keycloak IdPs.** `posix` as a client-scope name is a Keycloak-side
+convention, not a broker requirement. Any OIDC IdP — Dex, Zitadel, Auth0, Ory
+Hydra, etc. — could satisfy the broker as long as the decoded access token
+had a top-level `posix` claim in the shape above. How that claim got
+populated was IdP-specific: some use scopes and mappers the same way
+Keycloak does, others use custom claims, hooks, or rules.
+
+Mint a fresh token (via `scripts/mint-token.py`) and confirm the payload has
+a top-level `posix` claim listing `uid`/`gid`/`unixname`. This no longer
+proves anything about what the broker will do with it -- see above.
+
+</details>
+
+#### Verify (current)
+
+POSIX identity now takes effect through Keycloak profile-attribute
+assignment alone -- there is no token claim to inspect (any lingering
+`posix` claim in a token is ignored). Set (or change) a user's
+`posix_uid_attribute`/`posix_gid_attribute`/`posix_unixname_attribute`
+profile attributes in Keycloak and confirm the broker-resolved
+uid/gid/unixname changes within `principal_cache_refresh_seconds` (default
+~45s; see "Authorization is an attribute of the principal, not the token"
+above) on their next request, regardless of which credential type they
+present.
+
+**Finding your real Keycloak attribute keys (issue #148).** The directory's
+configurable attribute names (`Settings.posix_uid_attribute`/
+`posix_gid_attribute`/`posix_unixname_attribute`, below) refer to a
+Keycloak profile attribute — an operator needs the real key, not the
+display label the admin console shows by default:
+
+- **Realm settings → User profile → Attributes** lists every profile
+  attribute with its key shown alongside its display label — the trap is
+  that the *label* (e.g. "Unix UID") is what's visually prominent, while the
+  *key* (e.g. `uidNumber`) is what the settings below actually need.
+- **Client Scopes → `posix` → Mappers** (if the mappers haven't been removed
+  yet), for each of the four mappers, shows its source **User Attribute** —
+  a convenient cross-check, since it names the same profile attribute the
+  directory itself reads.
+
+### Keycloak: Group Membership mapper (no longer read -- issue #144 step 3)
+
+**As of issue #144 step 3, the broker never reads a `groups` claim from any
+token.** Every credential type -- JWT and identity PAT alike -- resolves a
+principal's current groups the same way: from `PrincipalDirectory` (the
+Keycloak Admin REST API lookup above), via the principal cache. If your
+realm has a Group Membership mapper on the `mcp-gateway` client scope purely
+to satisfy this broker, **you may remove it** -- but as with the POSIX
+mappers above, check first that nothing else in your realm reads the
+`groups` claim.
+
+**Remove only the mapper, never the scope.** The `mcp-gateway` client scope
+also carries the **Audience mapper** that puts `mcp-gateway` into a token's
+`aud` claim, which the broker validates on every single request. Deleting
+the scope, or excluding users from it, breaks authentication entirely and in
+a way that is hard to trace -- see "The cascading failure" above.
+
+The setting that controls how
+the directory matches group names is `principal_directory_group_full_path`
+(see "Configurable POSIX attribute names and group-path matching" above) --
+there is no longer a separate JWT-side mapper convention it needs to stay
+consistent with, because there is no longer a JWT-side source of groups at
+all.
+
+The rest of this section is kept for operators who haven't removed the
+mapper yet, or who are debugging a token minted before doing so -- it no
+longer describes broker behavior.
+
+<details>
+<summary>Historical setup instructions (pre-#144-step-3)</summary>
+
+#### One-time setup
+
+1. **Add a Group Membership mapper to the `mcp-gateway` client scope**
+   (or your equivalent scope):
+   - Admin → Client Scopes → `mcp-gateway` → Mappers → Add mapper → **Group Membership**
+   - Name: `groups`
+   - Token Claim Name: `groups`
+   - Full group path: **OFF** (the broker string-matches literal group
+     names; a leading `/` would prevent every policy match)
+   - Add to ID token: OFF
+   - Add to access token: **ON**
+   - Add to userinfo: OFF
+
+   **Common footgun:** the mapper form has two similarly-named fields —
+   **Name** (an internal identifier for the mapper itself) and **Token
+   Claim Name** (the key that actually appears in the JWT payload). Both
+   look optional. Set `Name: groups` and leave Token Claim Name blank, and
+   the mapper is inert: no `groups` claim ever appears in the token,
+   silently — no error, no warning, nothing to notice until you decode a
+   minted token. Token Claim Name **must** be set to `groups` explicitly.
+   Verify via Client Scopes → `mcp-gateway` → **Evaluate** tab — select the
+   target user and the `mcp-portal` client, and the Generated Access Token
+   panel shows exactly what the mapper actually contributed.
+
+2. **Create the groups you reference in `group_capabilities`** and
+   assign users to them. Group names are entirely up to you — the chart
+   ships no site-specific default, so pick names that match your own
+   Keycloak realm (see the worked example below). The broker's own
+   dev-only fallback policy (`broker/src/af_mcp_broker/authorization/
+   policy.yaml`, used when no `POLICY_FILE` is configured) mirrors the
+   ATLAS AF's own group names: `atlas`, `cms`, `dune`, `escape`,
+   `af-admins`.
+
+#### Verify (historical)
+
+Mint a fresh token (via `scripts/mint-token.py`) and confirm the payload
+has a top-level `groups` claim listing your group names as strings. This no
+longer proves anything about what the broker will do with it -- see above.
+
+</details>
+
+#### Verify (current)
+
+Group membership now takes effect through Keycloak group assignment alone
+-- there is no token claim to inspect. Assign (or remove) a user from a
+Keycloak group referenced in `group_capabilities` and confirm their
+capabilities change within `principal_cache_refresh_seconds` (default
+~45s; see "Authorization is an attribute of the principal, not the token"
+above) on their next request, regardless of which credential type they
+present.
+
+---
+
+## Auth-edge decision
+
+The shared oauth2-proxy (`provider = "keycloak-oidc"`, v7.6.0) validates a
+Bearer's `aud` claim against its own `client_id`, not the broker's
+audience — so mcpHost's ForwardAuth gate 302'd every Bearer request,
+including Claude Desktop's, instead of letting it reach the broker's own
+JWT validator:
+
+```
+$ curl -sS -o /dev/null -w "HTTP %{http_code}\nLocation: %{redirect_url}\n" https://mcp.af.uchicago.edu/mcp/
+HTTP 302
+Location: https://oauth2-proxy.af.uchicago.edu/oauth2/sign_in?rd=%2Fmcp%2F
+```
+
+Phase A (`ingress-mcp.yaml` / `ingress-portal.yaml` split) removed the
+oauth2-proxy annotations from mcpHost so the broker validates Bearers
+itself there. Phase B (this doc's [Portal auth](#portal-auth-oidc-public-client)
+section) carries the same fix to portalHost: `/v1` and `/mcp` move to a
+separate `ingress-portal-api.yaml` with no oauth2-proxy annotations, and the
+portal SPA obtains its own `aud=mcp-gateway` Bearer instead of relying on a
+cookie oauth2-proxy never actually forwarded as a header anyway. oauth2-proxy
+remains in front of portalHost's `/` rule (`ingress-portal.yaml`) purely to
+gate the HTML/static assets.
+
