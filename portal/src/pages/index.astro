@@ -694,6 +694,23 @@ import PublicBase from '../layouts/PublicBase.astro';
   .diagram__node.is-pulse-denied {
     border-color: var(--color-af-red);
     box-shadow: 0 0 16px 2px rgb(from var(--color-af-red) r g b / 0.3);
+    animation: diagram-denied-buzz 160ms ease-in-out 3;
+  }
+
+  @keyframes diagram-denied-buzz {
+    0%,
+    100% {
+      box-shadow: 0 0 16px 2px rgb(from var(--color-af-red) r g b / 0.3);
+    }
+    50% {
+      box-shadow: 0 0 24px 4px rgb(from var(--color-af-red) r g b / 0.65);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .diagram__node.is-pulse-denied {
+      animation: none;
+    }
   }
 
   .diagram__node--client {

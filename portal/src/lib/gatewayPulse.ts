@@ -79,7 +79,11 @@ const TIME = {
   tagResolveHold: 0.18,
   creditHold: 0.35,
   arrivalHold: 0.45,
-  deniedGap: 0.15,
+  // Long enough for the DENIED_CLASS's 3x160ms CSS buzz animation
+  // (index.astro's diagram-denied-buzz keyframe) to finish playing before
+  // the class is removed and the pulse starts back toward the AI
+  // Assistant box.
+  deniedGap: 0.55,
 };
 
 // Every position below is read fresh (via these, called from GSAP's
@@ -320,16 +324,12 @@ function buildCycleTimeline(cycle: Cycle, refs: Refs): gsap.core.Timeline {
       t,
     );
     t += TIME.travelLong;
-    tl.call(
-      () => {
-        client.classList.add(ACTIVE_CLASS);
-        setTagState(client, '');
-      },
-      undefined,
-      t,
-    );
-    tl.to(dot, { opacity: 0, duration: TIME.dotFade }, t);
-    t += TIME.dotFade + 0.1;
+    // Glow on, but no fade here -- the dot stays visible and continues
+    // straight on into the shared "response completes the loop" leg below,
+    // which is what actually clears this glow and the spinner, right as
+    // the pulse starts moving again.
+    tl.call(() => client.classList.add(ACTIVE_CLASS), undefined, t);
+    t += 0.35;
   } else {
     // Authorized -- broker mints a credential (a round trip to the
     // credential box, alias for x509/condor-token/etc.), then the pulse
@@ -479,32 +479,33 @@ function buildCycleTimeline(cycle: Cycle, refs: Refs): gsap.core.Timeline {
       t += TIME.travelShort;
       // No highlight on this last leg -- gateway and AI Assistant are just
       // being passed through on the way back, too briefly for a light-up
-      // to read as anything but a flicker. The spinner still clears below;
-      // that state change (not a glow) is what marks "response received."
+      // to read as anything but a flicker. The dot stays visible and
+      // continues straight into the shared "response completes the loop"
+      // leg below, rather than fading out and back in at AI Assistant.
       tl.to(
         dot,
         { y: () => bottomY(client, rect()), duration: TIME.travelLong, ease: 'power1.inOut' },
         t,
       );
       t += TIME.travelLong;
-      tl.call(() => setTagState(client, ''), undefined, t);
-      tl.to(dot, { opacity: 0, duration: TIME.dotFade }, t);
-      t += TIME.dotFade + 0.1;
     }
   }
 
-  // -- the response completes the loop: a dot carries it from the AI
-  // Assistant box back to the chat log -- its arrival there is what
-  // causes the final line to appear, mirroring the request's trip out at
-  // the start of this cycle. --
+  // -- the response completes the loop: the same dot continues straight
+  // through the AI Assistant box on to the chat log -- no fade in between,
+  // so the pulse never stops moving. The spinner (and, for the denied
+  // cycle, the border glow) clear right as this leg begins, so "waiting"
+  // visibly ends the instant the pulse starts moving again, not before.
+  // Arriving at the chat log is what causes the final line to appear,
+  // mirroring the request's trip out at the start of this cycle.
   tl.call(
-    () => gsap.set(dot, { x: () => centerX(client, rect()), y: () => centerY(client, rect()) }),
+    () => {
+      setTagState(client, '');
+      client.classList.remove(ACTIVE_CLASS);
+    },
     undefined,
     t,
   );
-  tl.to(dot, { opacity: 1, duration: TIME.dotFade }, t);
-  t += TIME.dotFade;
-  tl.call(() => client.classList.remove(ACTIVE_CLASS), undefined, t);
   tl.to(
     dot,
     {
