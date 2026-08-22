@@ -467,48 +467,61 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
       <!-- Empty state -->
       <div v-else class="tp__empty">
         <p class="tp__empty-title">No tokens yet</p>
-        <p class="tp__empty-body">Mint one above to bootstrap a programmatic MCP client.</p>
+        <p class="tp__empty-body">
+          Mint one above to connect a client, like Claude Desktop, that can't sign in with a browser
+          on its own.
+        </p>
       </div>
 
       <p class="tp__gap-note">
-        This list only shows tokens minted here. Keycloak doesn't yet expose per-token metadata for
-        interactive sign-in (oauth2-proxy) sessions or a future MCP OAuth flow, so those aren't
-        listed — see <code>docs/auth.md</code>.
+        This list only shows PATs created through this page or automatically when you connect an MCP
+        client — see
+        <a
+          href="https://maniaclab.github.io/af-mcp-platform/auth/"
+          target="_blank"
+          rel="noopener noreferrer"
+          >Authentication</a
+        >
+        for the full credential model.
       </p>
 
-      <!-- issue #122: copy-paste snippets for minting/using a token outside the browser -->
-      <details class="tp__cli">
-        <summary class="tp__cli-summary">Use from the command line</summary>
-        <div class="tp__cli-body">
-          <p class="tp__cli-intro">
-            Mint and use a broker token without the browser — for testing, scripts, or CI. See
-            <code>docs/connecting-a-client.md</code> for the full client setup guide.
-          </p>
+      <!-- issue #122: copy-paste snippets for minting/using a token outside the browser.
+           Shown by default, not collapsed -- a returning user setting up a script or CI
+           job needs these on first glance, not behind a click. -->
+      <div class="tp__cli">
+        <h2 class="tp__cli-heading tp__cli-heading--top">Use from the command line</h2>
+        <p class="tp__cli-intro">
+          Mint and use a PAT without opening a browser — handy for scripts or CI. See
+          <a
+            href="https://maniaclab.github.io/af-mcp-platform/connecting-a-client/"
+            target="_blank"
+            rel="noopener noreferrer"
+            >Connecting a Client</a
+          >
+          for the full setup guide.
+        </p>
 
-          <h3 class="tp__cli-heading">1. Mint a token with curl</h3>
-          <div class="tp__cli-snippet">
-            <pre class="tp__cli-pre"><code>{{ curlSnippet }}</code></pre>
-            <button type="button" class="tp__btn tp__btn--copy" @click="copyCurlSnippet">
-              {{ curlCopyLabel }}
-            </button>
-          </div>
-
-          <h3 class="tp__cli-heading">2. Mint and connect from Python</h3>
-          <div class="tp__cli-snippet">
-            <pre class="tp__cli-pre"><code>{{ pythonSnippet }}</code></pre>
-            <button type="button" class="tp__btn tp__btn--copy" @click="copyPythonSnippet">
-              {{ pythonCopyLabel }}
-            </button>
-          </div>
-
-          <p class="tp__cli-note">
-            Tokens minted this way appear in the list above with their name, expiry, and a
-            <strong>Revoke</strong> action. Tokens obtained directly from Keycloak (e.g. a local
-            PKCE script) will not — the broker never saw them minted, so it has nothing to list or
-            revoke.
-          </p>
+        <h3 class="tp__cli-heading">1. Mint a token with curl</h3>
+        <div class="tp__cli-snippet">
+          <pre class="tp__cli-pre"><code>{{ curlSnippet }}</code></pre>
+          <button type="button" class="tp__btn tp__btn--copy" @click="copyCurlSnippet">
+            {{ curlCopyLabel }}
+          </button>
         </div>
-      </details>
+
+        <h3 class="tp__cli-heading">2. Mint and connect from Python</h3>
+        <div class="tp__cli-snippet">
+          <pre class="tp__cli-pre"><code>{{ pythonSnippet }}</code></pre>
+          <button type="button" class="tp__btn tp__btn--copy" @click="copyPythonSnippet">
+            {{ pythonCopyLabel }}
+          </button>
+        </div>
+
+        <p class="tp__cli-note">
+          A PAT minted this way appears in the list above like any other, with a name, expiry, and a
+          <strong>Revoke</strong> action.
+        </p>
+      </div>
     </template>
 
     <!-- Mint dialog -->
@@ -521,8 +534,9 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
       <template v-if="!mintedToken">
         <h2 id="tp-modal-title" class="tp__modal-title">Mint a new token</h2>
         <p class="tp__modal-body">
-          Creates a static Bearer token for pasting into an MCP client config (e.g. Claude Desktop).
-          It will be shown exactly once.
+          Creates a Personal Access Token (PAT) — a long-lived credential you paste into an MCP
+          client's config (e.g. Claude Desktop) that can't sign in with a browser on its own. It
+          will be shown exactly once, so copy it before closing this dialog.
         </p>
 
         <form class="tp__form" @submit.prevent="handleMint" novalidate>
@@ -733,6 +747,10 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
+  /* Matches tokens.astro's .page-subtitle max-width -- without this the
+     table stretched to the full content column while the intro text above
+     it stayed narrow, reading as oversized and full of dead space. */
+  max-width: 52rem;
 }
 
 .sr-only {
@@ -1012,35 +1030,26 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
   line-height: 1.6;
   margin: 0;
 }
-.tp__gap-note code {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.6875rem;
-  color: var(--color-af-dim);
+.tp__gap-note a {
+  color: var(--color-af-teal);
 }
 
 /* "Use from the command line" (issue #122) */
 .tp__cli {
   border: 1px solid var(--color-af-border);
   border-radius: 4px;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
 }
-.tp__cli-summary {
-  cursor: pointer;
-  padding: 0.75rem 1rem;
+.tp__cli-heading--top {
   font-family: 'IBM Plex Mono', monospace;
   font-size: 0.75rem;
   font-weight: 600;
   letter-spacing: 0.04em;
   color: var(--color-af-text);
-}
-.tp__cli-summary:focus-visible {
-  outline: 2px solid var(--color-af-teal);
-  outline-offset: -2px;
-}
-.tp__cli-body {
-  padding: 0 1rem 1.25rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
+  margin: 0;
 }
 .tp__cli-intro {
   font-size: 0.8125rem;
@@ -1048,10 +1057,8 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
   line-height: 1.6;
   margin: 0;
 }
-.tp__cli-intro code {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.75rem;
-  color: var(--color-af-dim);
+.tp__cli-intro a {
+  color: var(--color-af-teal);
 }
 .tp__cli-heading {
   font-family: 'IBM Plex Mono', monospace;
