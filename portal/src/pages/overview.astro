@@ -24,8 +24,11 @@ import DashboardCards from '../components/DashboardCards.vue';
       <div class="hero__eyebrow">ATLAS Analysis Facility</div>
       <h1 class="hero__title">MCP Platform</h1>
       <p class="hero__sub">
-        Model Context Protocol broker for ATLAS computing — connecting your AI assistant to Rucio,
-        AMI, and the analysis grid.
+        A <a href="https://modelcontextprotocol.io/" target="_blank" rel="noopener noreferrer"
+          >Model Context Protocol</a
+        >
+        gateway for ATLAS computing — connecting your AI assistant to Rucio, AMI, and the analysis grid,
+        without ever handing it your credentials.
       </p>
 
       <div class="hero__user" data-af-user-holder hidden>
@@ -42,8 +45,9 @@ import DashboardCards from '../components/DashboardCards.vue';
   <section class="endpoint-section" aria-label="MCP endpoint">
     <h2 class="section-heading">Connect to this endpoint</h2>
     <p class="section-body">
-      Add this server URL to Claude Desktop, Gemini Advanced, or any MCP-compatible client. The
-      broker authenticates with your AF Keycloak token automatically.
+      Add this server URL to Claude Desktop, Gemini Advanced, or any MCP-compatible client. Your
+      account signs in automatically the first time you connect — you never paste a credential by
+      hand unless your client can't open a browser (see below).
     </p>
 
     <div class="endpoint-block">
@@ -63,22 +67,40 @@ import DashboardCards from '../components/DashboardCards.vue';
     <div class="snippet-group">
       <h3 class="snippet-heading">Claude (Claude.ai, Claude Desktop)</h3>
       <ol class="connect-steps">
-        <li>
-          Add a custom connector with just the server URL above — no header, no token needed.
-          <strong>Settings → Connectors → Add custom connector.</strong> The first call opens a browser
-          window to sign in with your AF Keycloak account; Claude stores the resulting credential itself.
+        <li class="connect-steps__step">
+          <span class="connect-steps__num" aria-hidden="true">1</span>
+          <span class="connect-steps__text">
+            Add a custom connector with just the server URL above — no header, no token needed:
+            <strong>Settings → Connectors → Add custom connector.</strong>
+          </span>
         </li>
-        <li>
-          If your client predates OAuth support, skip the browser step: under
-          <strong>Request headers</strong>, add name <code>Authorization</code>, value
-          <code>Bearer &lt;token&gt;</code>, using a token minted from the
-          <a href="/tokens/" class="connect-steps__link">Tokens page</a>.
+        <li class="connect-steps__step">
+          <span class="connect-steps__num" aria-hidden="true">2</span>
+          <span class="connect-steps__text">
+            The first call opens a browser window to sign in with your account. Claude stores the
+            resulting credential itself — you won't see it again.
+          </span>
+        </li>
+        <li class="connect-steps__step">
+          <span class="connect-steps__num" aria-hidden="true">3</span>
+          <span class="connect-steps__text">
+            If your client can't open a browser, skip that step: mint a Personal Access Token (PAT)
+            from the <a href="/tokens/" class="connect-steps__link">Tokens page</a> instead, then under
+            <strong>Request headers</strong> add name <code>Authorization</code>, value <code
+              >Bearer &lt;your PAT&gt;</code
+            >.
+          </span>
         </li>
       </ol>
     </div>
 
     <div class="snippet-group">
-      <h3 class="snippet-heading">curl / httpx</h3>
+      <h3 class="snippet-heading">curl</h3>
+      <p class="snippet-note">
+        Mint a Personal Access Token (PAT) from the
+        <a href="/tokens/" class="connect-steps__link">Tokens page</a> first, then paste it in place of
+        <code>&lt;your PAT&gt;</code> below.
+      </p>
       <pre class="code-block"><code id="curl-snippet" /></pre>
     </div>
   </section>
@@ -237,7 +259,9 @@ import DashboardCards from '../components/DashboardCards.vue';
   import { getBrokerOrigin } from '../lib/auth';
 
   (async () => {
-    const endpoint = `${await getBrokerOrigin()}/mcp`;
+    // Trailing slash matters: some MCP clients don't follow the redirect a
+    // bare /mcp gets from Starlette's Mount (see docs/connecting-a-client.md).
+    const endpoint = `${await getBrokerOrigin()}/mcp/`;
 
     const urlEl = document.getElementById('mcp-endpoint-url');
     if (urlEl) urlEl.textContent = endpoint;
@@ -247,9 +271,8 @@ import DashboardCards from '../components/DashboardCards.vue';
 
     const curlEl = document.getElementById('curl-snippet');
     if (curlEl) {
-      curlEl.textContent = `# Authenticate via your AF Keycloak token
-export AF_TOKEN="$(cat ~/.af_token)"
-curl -H "Authorization: Bearer $AF_TOKEN" \\
+      curlEl.textContent = `export MCP_PAT="<your PAT>"
+curl -H "Authorization: Bearer $MCP_PAT" \\
      ${endpoint}`;
     }
   })();
@@ -330,6 +353,10 @@ curl -H "Authorization: Bearer $AF_TOKEN" \\
     max-width: 38rem;
     line-height: 1.6;
     margin: 0 0 1rem;
+  }
+
+  .hero__sub a {
+    color: var(--color-af-teal);
   }
 
   .hero__user {
@@ -475,10 +502,40 @@ curl -H "Authorization: Bearer $AF_TOKEN" \\
     flex-direction: column;
     gap: 0.625rem;
     margin: 0;
-    padding-left: 1.25rem;
+    padding: 0;
+    list-style: none;
     font-size: 0.875rem;
     color: var(--color-af-dim);
     line-height: 1.6;
+  }
+
+  .connect-steps__step {
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+    padding: 0.75rem 0.875rem;
+    border: 1px solid var(--color-af-border);
+    border-radius: 4px;
+    background: var(--color-af-surface);
+  }
+
+  .connect-steps__num {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.375rem;
+    height: 1.375rem;
+    border-radius: 50%;
+    background: rgb(from var(--color-af-teal) r g b / 0.12);
+    color: var(--color-af-teal);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.6875rem;
+    font-weight: 700;
+  }
+
+  .connect-steps__text {
+    flex: 1;
   }
 
   .connect-steps code {
@@ -489,6 +546,19 @@ curl -H "Authorization: Bearer $AF_TOKEN" \\
 
   .connect-steps__link {
     color: var(--color-af-teal);
+  }
+
+  .snippet-note {
+    margin: 0;
+    font-size: 0.8125rem;
+    color: var(--color-af-dim);
+    line-height: 1.5;
+  }
+
+  .snippet-note code {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.75rem;
+    color: var(--color-af-text);
   }
 
   /* ── Responsive ────────────────────────────────────────────────────── */
