@@ -27,11 +27,12 @@ chain applies instead: the portal unlock mints via an ephemeral k8s Job
 that NFS-subPath-mounts the user's home, the proxy lives in the broker's
 tmpfs, and nothing is persisted — every expiry needs a fresh portal unlock.
 
-**Breaking change:** the global `broker.env.VOMS_TOKEN_SERVICE_URL` (and
-its `_AUDIENCE`/`_VOMS`/`_VALID` companions) has been removed entirely.
-There is no synthesized fallback for an entry-less `auth_type: x509`
-backend either — every such backend now needs an explicit
-`identityProviders` entry (step 3 below), even a bare legacy one.
+The global `broker.env.VOMS_TOKEN_SERVICE_URL` (and its
+`_AUDIENCE`/`_VOMS`/`_VALID` companions) is not read at all — there is no
+synthesized fallback for an entry-less `auth_type: x509` backend either,
+so every such backend needs an explicit `identityProviders` entry (step 3
+below), even a bare legacy one. See "Migrating off
+`broker.env.VOMS_TOKEN_SERVICE_URL`" below if a deployment still sets it.
 
 ## Broker side (this chart)
 
@@ -135,7 +136,7 @@ repo shape mirrors condor-token-service). Flux entries mirror
 | `VAULT_ADDR`, `VAULT_AUTH_MOUNT`, `VAULT_AUTH_ROLE`, `VAULT_KV_MOUNT`, `VAULT_SA_TOKEN_PATH` | The same shared Vault connection the other Vault-backed stores use (chart: `broker.oauth21.tokenStore.vault`). **Required** when any entry has a `serviceUrl` (startup validation refuses a half-configured broker). |
 | `BROKER_SIGNING_KEY_FILE` | **Required** whenever an x509 entry has `serviceUrl` set — the aggregator's identity JWTs, the redeem endpoint, and the mint call are all authenticated by broker-signed identity tokens (fail-closed at boot). A keyless legacy entry (`serviceUrl` omitted) only warns. |
 
-#### Breaking change: `broker.env.VOMS_TOKEN_SERVICE_URL` removed
+#### Migrating off `broker.env.VOMS_TOKEN_SERVICE_URL`
 
 The global env vars (`VOMS_TOKEN_SERVICE_URL`, `VOMS_TOKEN_SERVICE_AUDIENCE`,
 `VOMS_TOKEN_SERVICE_VOMS`, `VOMS_TOKEN_SERVICE_VALID`, previously set via

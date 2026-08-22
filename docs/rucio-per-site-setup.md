@@ -3,10 +3,8 @@
 rucio-mcp fronts more than one Rucio VO/instance (ATLAS, ESCAPE, ...), and
 each site is its own OAuth 2.1 authorization surface — rucio-mcp acts as an
 OAuth 2.1 AS proxy per site, not one shared AS for all of them. This page is
-the operator procedure for wiring up one additional site, as it has actually
-been deployed, not the Keycloak-IdP-per-site design originally proposed for
-this (see [Superseded design](#superseded-design-a-keycloak-idp-per-site)
-below).
+the operator procedure for wiring up one additional site, using the
+`oauth21-direct` identity-provider type (see below).
 
 Each site is both an [Adding a Backend](adding-a-backend.md) case (a new
 `aggregator.backends` entry) and an identity-provider case (a new
@@ -24,9 +22,9 @@ the broker acts as a direct OAuth 2.1 client to each site's authorize/token
 endpoints, identifying itself via its own CIMD document
 (`GET /.well-known/cimd`) instead of registering per site through Dynamic
 Client Registration. **No Keycloak Identity Provider is created for rucio-mcp
-at all** — that's the one departure from an earlier design for this that's
-worth calling out explicitly, since it's easy to assume otherwise (see
-[Superseded design](#superseded-design-a-keycloak-idp-per-site)).
+at all** — an earlier design ([#62](https://github.com/maniaclab/af-mcp-platform/issues/62))
+proposed one per site, but it was never built; `oauth21-direct` is what
+shipped.
 
 This is a different shape from the `atlas-oidc` `keycloak-brokered` provider
 that services PanDA and AMI: that one *is* a Keycloak Identity Provider (the
@@ -187,21 +185,6 @@ The result callers actually see is double-prefixed tool names —
 unambiguous. This isn't a per-site config knob; it falls directly out of
 `apply_namespace`'s default once more than one self-prefixed backend is
 configured, and applies equally to a third or fourth site.
-
-## Superseded design: a Keycloak IdP per site
-
-An earlier design for this (issue
-[#62](https://github.com/maniaclab/af-mcp-platform/issues/62)) proposed
-registering each Rucio site as a Keycloak Identity Provider — `type: OpenID
-Connect v1.0`, alias `rucio-<site>`, "Store Tokens" / "Stored Tokens
-Readable" both on, Keycloak holding the resulting session token against the
-user's federated identity. **That is not what shipped.** The
-`oauth21-direct` provider type (this page) replaced it: the broker talks to
-each site directly as an OAuth 2.1 client via its own CIMD document, with no
-Keycloak IdP, no "Store/Read Tokens" flags, and no `read-token` client role
-anywhere in the rucio-mcp path. If you find older design notes describing
-the Keycloak-IdP-per-site approach, they predate this page and no longer
-reflect what's deployed.
 
 ## See also
 

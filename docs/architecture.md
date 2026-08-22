@@ -8,20 +8,25 @@ ensure that tool calls are authenticated, authorized, and executed with the righ
 per-user credentials — without ever handing raw secrets to the LLM or requiring
 backends to implement their own auth plumbing.
 
-Two distinct client identities obtain tokens for the same audience
-(`aud=mcp-gateway`) against AF Keycloak, then hit the broker the same way:
+Two distinct client identities authenticate against the same Keycloak realm,
+then hit the broker the same way, but end up with different credential shapes:
 
 ```
 mcp-portal              MCP-client identities
-(portal SPA;        (Claude Desktop et al. — placeholder for
- Code+PKCE)           a future MCP-client identity; not yet implemented)
+(portal SPA;         (Claude Desktop, Claude Code, et al. — bootstrap a
+ Code+PKCE)            broker-issued PAT instead; see docs/auth.md#mcp-
+                       oauth-discovery-pat-bootstrap-issue-140)
+     │                          │
+     ▼                          ▼
+AF Keycloak OIDC          Broker's own /v1/oauth/authorize,
+(operator-configured        which itself logs in against the
+ realm) issues an            same Keycloak realm on the client's
+ aud=mcp-gateway token       behalf, then mints a PAT (mcp_pat_…)
      │                          │
      └──────────┬───────────────┘
                  ▼
-       AF Keycloak OIDC (connect realm)
-                 │  issues aud=mcp-gateway access token
-                 ▼
-       Bearer sent directly by the client
+       Bearer sent directly by the client — a raw Keycloak JWT for
+       the portal, a broker-issued PAT for most MCP clients
 ```
 
 ```
@@ -147,7 +152,7 @@ Two axes define the provider matrix:
 
 | | **Short-lived mint** | **Stored brokered token** |
 |---|---|---|
-| **IAM-based** | Keycloak token exchange (AF-internal only) | `GET /realms/connect/broker/atlas-oidc/token` → ATLAS IAM token |
+| **IAM-based** | Keycloak token exchange (AF-internal only) | `GET /realms/<realm>/broker/<alias>/token` → ATLAS IAM token |
 | **x509/VOMS** | Ephemeral k8s Job (NFS subPath mount of `~/.globus`) | N/A — always minted fresh |
 
 The `CredentialCache` (in-process, async-safe) stores minted credentials keyed by
@@ -156,7 +161,7 @@ The `CredentialCache` (in-process, async-safe) stores minted credentials keyed b
 
 Important: Keycloak Standard Token Exchange (V2) is internal-to-AF only. It
 **cannot** mint a token that `atlas-auth.cern.ch` will accept. Use the stored
-brokered token path via `GET /realms/connect/broker/atlas-oidc/token` for any
+brokered token path via `GET /realms/<realm>/broker/<alias>/token` for any
 credential that must be accepted by external ATLAS services (Rucio, PanDA, AMI).
 
 #### Client ID Metadata Document (CIMD)
@@ -221,7 +226,7 @@ whichever system actually holds it and cannot be represented uniformly as a
 JWT claim:
 
 - `OIDCProvider` probes Keycloak's stored-brokered-token endpoint
-  (`GET /realms/connect/broker/<alias>/token`) with the principal's own
+  (`GET /realms/<realm>/broker/<alias>/token`) with the principal's own
   bearer token; HTTP 200 means linked. The result is cached per uid for a
   short TTL to avoid a Keycloak round-trip on every call.
 - `OAuth21Provider` checks the `TokenStore` for a non-expired stored token
@@ -405,7 +410,8 @@ remain the canonical authorization/credential logic either way.
 
 ### Reserved paths on the portal host
 
-The portal (`mcp-portal.af.uchicago.edu`) is a static Astro build; its API
+The portal host (the chart's `portalHost`, e.g. `mcp-portal.af.uchicago.edu`
+for the UChicago AF deployment) is a static Astro build; its API
 client fetches `/v1/*` same-origin. A dedicated `ingress-portal-api.yaml`
 Ingress object (same host, no oauth2-proxy annotations) routes `/v1` and
 `/mcp` to the broker Service, ahead of `ingress-portal.yaml`'s `/`
@@ -438,9 +444,11 @@ the simplest correct thing. The extraction path if it becomes necessary:
 
 ## Full Data Flow for a Tool Call
 
-1. LLM sends `tools/call` MCP message over HTTPS to `mcp.af.uchicago.edu`,
-   with its own `aud=mcp-gateway` Bearer (see [docs/auth.md](auth.md) for how
-   each client identity obtains one).
+1. LLM sends `tools/call` MCP message over HTTPS to the broker's MCP host
+   (the chart's `mcpHost`, e.g. `mcp.af.uchicago.edu` for the UChicago AF
+   deployment), with its own Bearer — a raw `aud=mcp-gateway` Keycloak JWT,
+   or (most MCP clients) a broker-issued PAT (see [docs/auth.md](auth.md)
+   for how each client identity obtains one).
 2. `IdentityMiddleware` validates the Bearer directly (no ForwardAuth proxy
    in this path), the same way `identity.get_principal()` does for `/v1`,
    and resolves the `Principal`.

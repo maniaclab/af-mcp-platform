@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A credential-brokered MCP (Model Context Protocol) gateway for the UChicago ATLAS Analysis Facility. LLM clients hit one endpoint (`mcp.af.uchicago.edu`); the broker authenticates them against AF Keycloak, checks authorization, brokers per-user credentials (ATLAS IAM tokens, x509/VOMS proxies), and forwards tool calls to backend MCP servers (rucio-mcp, panda-mcp, ami-mcp, ...). LLM clients never hold raw credentials.
+A credential-brokered MCP (Model Context Protocol) gateway for an analysis facility. LLM clients hit one broker endpoint; the broker authenticates them against the facility's Keycloak, checks authorization, brokers per-user credentials (IAM tokens, x509/VOMS proxies), and forwards tool calls to backend MCP servers (rucio-mcp, panda-mcp, ami-mcp, ...). LLM clients never hold raw credentials. The reference deployment is UChicago's ATLAS Analysis Facility (`mcp.af.uchicago.edu`); other facilities deploy the same chart with their own Keycloak realm, policy, and backend registry.
 
 ## Commands
 

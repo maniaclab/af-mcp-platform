@@ -29,14 +29,14 @@ pixi run broker
 
 Starts uvicorn with `--reload`. API is at <http://localhost:8080/docs>.
 
-> As of issue #144 steps 3/3b, plain `pixi run broker` now refuses to start:
-> every credential type (JWT included, not just PATs) resolves its groups
-> and POSIX identity from the Keycloak admin service account, so a broker
-> with neither that account nor the bypass below configured can never
+> Plain `pixi run broker` refuses to start unless a Keycloak admin service
+> account is configured: every credential type (JWT included, not just
+> PATs) resolves its groups and POSIX identity from that account, so a
+> broker with neither it nor the bypass below configured can never
 > authenticate anyone — see docs/auth.md's "Operator setup: the Keycloak
-> admin service account" for what changed and why. If you don't have a real
-> Keycloak realm handy, skip straight to `pixi run -e bypass broker` in the
-> next section instead.
+> admin service account" for details. If you don't have a real Keycloak
+> realm handy, skip straight to `pixi run -e bypass broker` in the next
+> section instead.
 
 **Terminal 2 — portal on :4321:**
 
@@ -111,11 +111,10 @@ while `BROKER_DEV_INSECURE_PRINCIPAL` stays set, any bearer you present on
 principal. To actually exercise the PAT for real, drop out of the bypass
 (unset `BROKER_DEV_INSECURE_PRINCIPAL`, point `OIDC_ISSUER` at a real realm)
 and set `KEYCLOAK_ADMIN_CLIENT_ID`/`KEYCLOAK_ADMIN_CLIENT_SECRET` (see
-docs/auth.md's "Operator setup: the Keycloak admin service account") — as of
-issue #144 steps 3/3b this is no longer optional outside the bypass: every
-credential type resolves its groups and POSIX identity from the directory
-now, so the broker refuses to start without either the bypass or this
-service account configured.
+docs/auth.md's "Operator setup: the Keycloak admin service account") — every
+credential type resolves its groups and POSIX identity from the directory,
+so the broker refuses to start without either the bypass or this service
+account configured (see the note under "Terminal 1" above).
 
 ### Testing broker-issued identity tokens locally
 
@@ -156,8 +155,9 @@ for extended UI work.
 The checked-in `portal/public/config.json` ships with an empty `oidc.issuer`,
 so by default `astro dev` skips OIDC entirely (see the bypass workflow
 above — that's the normal path for UI work). To exercise the real
-Authorization Code + PKCE flow against AF Keycloak instead, edit that file
-locally (never commit real values):
+Authorization Code + PKCE flow against a real Keycloak realm instead, edit
+that file locally with your facility's own values (never commit real
+values). UChicago's ATLAS AF, for example, uses:
 
 ```json
 {
@@ -170,12 +170,14 @@ locally (never commit real values):
 }
 ```
 
-`http://localhost:4321/callback` is already a registered redirect URI on the
-`mcp-portal` client, so this works without any Keycloak-side changes. You'll still need a broker that accepts the resulting token —
-either a real `OIDC_ISSUER`/`OIDC_AUDIENCE` pointed at the same
-realm, or continue using the bypass broker (it ignores the Bearer either
-way, so this is only useful for exercising the portal's own OIDC code path,
-not an end-to-end auth check).
+`http://localhost:4321/callback` is already a registered redirect URI on
+that deployment's `mcp-portal` client — a different deployment needs its
+own client with `http://localhost:4321/callback` registered as an allowed
+redirect URI before this works. You'll still need a broker that accepts the
+resulting token — either a real `OIDC_ISSUER`/`OIDC_AUDIENCE` pointed at the
+same realm, or continue using the bypass broker (it ignores the Bearer
+either way, so this is only useful for exercising the portal's own OIDC
+code path, not an end-to-end auth check).
 
 ## Talking to a broker on a different port
 
