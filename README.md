@@ -109,4 +109,4 @@ pixi run -e dev fmt
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE).
