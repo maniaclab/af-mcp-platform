@@ -243,7 +243,7 @@ async def _mint_bootstrap_pat(
         expires_at=expires_at,
         revoked_at=None,
         last_used_at=None,
-        note="Minted via MCP OAuth discovery bootstrap (issue #140).",
+        note="Created automatically when you connected an MCP client.",
     )
     try:
         await registry.put(record)
