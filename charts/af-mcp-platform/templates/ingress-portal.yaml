@@ -1,12 +1,18 @@
 {{- if .Values.ingress.enabled }}
-# This Ingress carries oauth2-proxy annotations because portalHost serves
-# browser-facing HTML and needs the ForwardAuth session gate. It ONLY serves
-# `/` (the portal's static assets) — /v1 and /mcp on this host are routed by
-# ingress-portal-api.yaml instead, deliberately WITHOUT oauth2-proxy in front,
-# because the portal SPA is its own OAuth public client (Authorization Code +
-# PKCE) and sends the broker its own `aud=mcp-gateway` Bearer directly; the
-# broker validates it the same way it validates any other caller's token. See
-# #42 for the full design.
+# This Ingress is the portalHost catch-all and is deliberately WITHOUT
+# oauth2-proxy annotations: `/` serves the public landing page (no session
+# required — see portal/src/pages/index.astro), plus the static assets
+# (/_astro, /fonts) every portal page loads, including the authenticated ones
+# gated by ingress-portal-authenticated.yaml. Those assets are static
+# JS/CSS/font bundles, not user data, so serving them without the ForwardAuth
+# gate discloses nothing — nginx's longest-prefix matching still sends
+# /overview, /catalog, /identities, /tokens, and /callback to that other
+# Ingress first. /v1 and /mcp on this host are routed by ingress-portal-api.yaml
+# instead, deliberately WITHOUT oauth2-proxy in front, because the portal SPA
+# is its own OAuth public client (Authorization Code + PKCE) and sends the
+# broker its own `aud=mcp-gateway` Bearer directly; the broker validates it
+# the same way it validates any other caller's token. See #42 for the full
+# design.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -14,15 +20,6 @@ metadata:
   labels:
     {{- include "af-mcp-platform.labels" . | nindent 4 }}
   annotations:
-    nginx.ingress.kubernetes.io/auth-url: {{ .Values.oauth2Proxy.forwardAuthUrl | quote }}
-    # rd= must be a full URL, not just a path: oauth2-proxy treats a bare-path
-    # rd as same-host and redirects back to its own host after login, which
-    # 404s for anything requested on mcpHost or portalHost. $scheme://$best_http_host
-    # supplies the origin so oauth2-proxy redirects back to the requesting
-    # subdomain instead — allowed because whitelist_domains = [".af.uchicago.edu"]
-    # in the shared oauth2-proxy config covers both hosts.
-    nginx.ingress.kubernetes.io/auth-signin: {{ printf "%s?rd=$scheme://$best_http_host$escaped_request_uri" .Values.oauth2Proxy.signInUrl | quote }}
-    nginx.ingress.kubernetes.io/auth-response-headers: "Authorization,X-Auth-Request-User,X-Auth-Request-Email,X-Auth-Request-Groups"
     {{- with .Values.ingress.annotations }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
@@ -38,8 +35,10 @@ spec:
   {{- end }}
   rules:
     # Portal host — everything falls through to the portal Service here.
-    # ingress-portal-api.yaml routes /v1/* and /mcp/* to the broker on this
-    # same host, ahead of this rule via nginx's longest-prefix matching.
+    # ingress-portal-api.yaml routes /v1/* and /mcp/* to the broker, and
+    # ingress-portal-authenticated.yaml routes the authenticated app pages
+    # through oauth2-proxy first, both on this same host and both ahead of
+    # this rule via nginx's longest-prefix matching.
     #
     # IMPORTANT: any new portal page route MUST NOT start with /v1/ or /mcp/ —
     # those prefixes are reserved for the broker and would be silently

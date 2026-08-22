@@ -238,11 +238,14 @@ Key points:
   `connect-src`, not `frame-src`). `api.ts` calls it automatically on an
   expired token or an unexpected 401 before giving up and surfacing
   "session expired."
-- **oauth2-proxy's role shrank to HTML-gating.** It still fronts the portal
-  host so an anonymous browser can't fetch the static assets, but it is no
-  longer in the request path for `/v1/*` or `/mcp/*` on either host — see
-  `charts/af-mcp-platform/templates/ingress-portal.yaml` (HTML, oauth2-proxy)
-  vs. `ingress-portal-api.yaml` (`/v1` + `/mcp`, no oauth2-proxy, same host).
+- **oauth2-proxy's role shrank to gating the authenticated pages.** It fronts
+  the portal's authenticated pages (`/overview`, `/catalog`, `/identities`,
+  `/tokens`, `/callback` — see `ingress-portal-authenticated.yaml`), but not
+  the public landing page at `/` or the static assets every portal page
+  loads, both served by `ingress-portal.yaml`'s `/` catch-all with no
+  oauth2-proxy annotations. It is also no longer in the request path for
+  `/v1/*` or `/mcp/*` on either host — see `ingress-portal-api.yaml` (`/v1` +
+  `/mcp`, no oauth2-proxy, same host).
   Because oauth2-proxy's SSO cookie and the portal's own Keycloak session
   share the same realm and browser, step (2) above is normally silent — a
   user who's already visited any `.af.uchicago.edu` page doesn't see a
@@ -1418,5 +1421,7 @@ section) carries the same fix to portalHost: `/v1` and `/mcp` move to a
 separate `ingress-portal-api.yaml` with no oauth2-proxy annotations, and the
 portal SPA obtains its own `aud=mcp-gateway` Bearer instead of relying on a
 cookie oauth2-proxy never actually forwarded as a header anyway. oauth2-proxy
-remains in front of portalHost's `/` rule (`ingress-portal.yaml`) purely to
-gate the HTML/static assets.
+remains in front of the portal's authenticated pages
+(`ingress-portal-authenticated.yaml`) — see [Portal
+auth](#portal-auth-oidc-public-client) above for why the public landing page
+and shared static assets are carved out of that gate.

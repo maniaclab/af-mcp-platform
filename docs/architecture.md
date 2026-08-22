@@ -53,9 +53,11 @@ Backend MCP server  (rucio-mcp, ami-mcp, panda-mcp, …)
 LLM client / Portal SPA
 ```
 
-oauth2-proxy still exists, but only in front of the portal's HTML/static
-assets (`ingress-portal.yaml`) — it is not in the request path for `/v1/*`
-or `/mcp/*` on either host (`ingress-mcp.yaml` for mcpHost,
+oauth2-proxy still exists, but only in front of the portal's authenticated
+pages (`ingress-portal-authenticated.yaml`) — the public landing page and
+the static assets every portal page loads are served without it
+(`ingress-portal.yaml`'s `/` catch-all), and it is not in the request path
+for `/v1/*` or `/mcp/*` on either host (`ingress-mcp.yaml` for mcpHost,
 `ingress-portal-api.yaml` for portalHost). Every caller obtains its own
 `aud=mcp-gateway` token and presents it directly; the broker's validator is
 identical regardless of which client identity issued the token. See

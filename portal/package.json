@@ -4,7 +4,7 @@
   "version": "0.0.37",
   "scripts": {
     "dev": "astro dev",
-    "build": "astro build && node scripts/sync-csp-hashes.mjs",
+    "build": "astro build && node scripts/sync-csp-hashes.mjs && node scripts/check-protected-routes.mjs",
     "preview": "astro preview",
     "check": "astro check",
     "lint": "eslint .",
