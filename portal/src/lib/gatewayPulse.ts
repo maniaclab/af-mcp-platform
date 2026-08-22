@@ -318,9 +318,12 @@ function buildCycleTimeline(cycle: Cycle, refs: Refs): gsap.core.Timeline {
     tl.to(dot, { opacity: 1, duration: TIME.dotFade }, t);
     t += TIME.dotFade;
     tl.call(() => gateway.classList.remove(DENIED_CLASS), undefined, t);
+    // Targets centerY, not bottomY -- the incoming chat->AI Assistant leg
+    // (above) already arrives at centerY, and this return trip should
+    // land on that same horizontal line rather than a lower one.
     tl.to(
       dot,
-      { y: () => bottomY(client, rect()), duration: TIME.travelLong, ease: 'power1.inOut' },
+      { y: () => centerY(client, rect()), duration: TIME.travelLong, ease: 'power1.inOut' },
       t,
     );
     t += TIME.travelLong;
@@ -480,9 +483,11 @@ function buildCycleTimeline(cycle: Cycle, refs: Refs): gsap.core.Timeline {
       // to read as anything but a flicker. The dot stays visible and
       // continues straight into the shared "response completes the loop"
       // leg below, rather than fading out and back in at AI Assistant.
+      // Targets centerY, not bottomY -- see the denied cycle's identical
+      // comment above.
       tl.to(
         dot,
-        { y: () => bottomY(client, rect()), duration: TIME.travelLong, ease: 'power1.inOut' },
+        { y: () => centerY(client, rect()), duration: TIME.travelLong, ease: 'power1.inOut' },
         t,
       );
       t += TIME.travelLong;
