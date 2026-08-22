@@ -1,9 +1,12 @@
 # Connecting a Client
 
-How to point an MCP client at `https://mcp.af.uchicago.edu/mcp` and get real
-AF tools (Rucio, AMI, ...) inside it. This page covers the client side; see
-[Architecture](architecture.md) for how the broker itself authenticates,
-authorizes, and brokers credentials for every call, and
+How to point an MCP client at an AF broker and get real AF tools (Rucio,
+AMI, ...) inside it. Examples below use the UChicago ATLAS AF's deployment
+(`https://mcp.af.uchicago.edu/mcp`) as the concrete worked example —
+connecting to another facility's deployment follows the same flow against
+that facility's own broker hostname and Keycloak realm. This page covers the
+client side; see [Architecture](architecture.md) for how the broker itself
+authenticates, authorizes, and brokers credentials for every call, and
 [Authentication](auth.md) for the full credential chain.
 
 ## Prerequisites

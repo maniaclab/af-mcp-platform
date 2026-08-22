@@ -8,11 +8,15 @@ web
 
 ## Users
 
-The ~800 physics users of the UChicago ATLAS Analysis Facility (AF). They are the sole
-audience for the portal (`mcp-portal.af.uchicago.edu`) as well as the broker itself
-(`mcp.af.uchicago.edu`) — self-service only. There is no separate operator/admin role
-inside the portal UI; operators manage `policy.yaml` / `backends.yaml` outside the portal,
-via config PRs to the repo (see `docs/adding-a-backend.md`), not through any UI surface.
+Each deployment's own signed-in physics users — the portal and broker are self-service
+only, with no separate operator/admin role inside the portal UI; operators manage
+`policy.yaml` / `backends.yaml` outside the portal, via config PRs to the repo (see
+`docs/adding-a-backend.md`), not through any UI surface.
+
+The reference deployment is UChicago's ATLAS Analysis Facility (AF): ~800 physics users,
+who are the sole audience for its portal (`mcp-portal.af.uchicago.edu`) and its broker
+(`mcp.af.uchicago.edu`). Other facilities deploying this platform have their own user
+population and hostnames for the same two surfaces.
 
 Their job when using the portal: link external identities (CERN/ATLAS IAM via OIDC), mint
 an on-demand x509/VOMS proxy for grid access, generate/revoke bearer tokens for MCP clients
@@ -27,13 +31,14 @@ themselves.
 
 ## Product Purpose
 
-A credential-brokered MCP (Model Context Protocol) gateway: one endpoint
-(`mcp.af.uchicago.edu`) that authenticates a caller against AF Keycloak, brokers
-per-user credentials to downstream ATLAS systems, and aggregates every registered
-backend MCP server behind that single URL. Success means an AF user's MCP client
-(Claude Desktop, Gemini, etc.) can call Rucio/AMI/PanDA/etc. tools directly, with the
-broker handling auth, authorization, and credential minting transparently and
-auditably — the user never sees or holds a raw x509/IAM credential.
+A credential-brokered MCP (Model Context Protocol) gateway: one endpoint per
+deployment (the reference deployment's is `mcp.af.uchicago.edu`) that authenticates a
+caller against that facility's Keycloak, brokers per-user credentials to downstream
+ATLAS systems, and aggregates every registered backend MCP server behind that single
+URL. Success means a facility's user's MCP client (Claude Desktop, Gemini, etc.) can
+call Rucio/AMI/PanDA/etc. tools directly, with the broker handling auth, authorization,
+and credential minting transparently and auditably — the user never sees or holds a
+raw x509/IAM credential.
 
 ## Positioning
 
@@ -48,10 +53,10 @@ URL without multiplying the number of places a client must trust with credential
 
 ## Operating Context
 
-- Two hosts: `mcp.af.uchicago.edu` (MCP-over-HTTP for any client, broker validates its
-  own Bearer, no oauth2-proxy) and `mcp-portal.af.uchicago.edu` (the portal SPA, its
-  own OIDC login; oauth2-proxy fronts only its HTML — `/v1` and `/mcp` bypass it on
-  both hosts).
+- Two hosts per deployment: one for MCP-over-HTTP (any client, broker validates its own
+  Bearer, no oauth2-proxy) and one for the portal SPA (its own OIDC login; oauth2-proxy
+  fronts only its HTML — `/v1` and `/mcp` bypass it on both hosts). The reference
+  deployment's are `mcp.af.uchicago.edu` and `mcp-portal.af.uchicago.edu`.
 - The portal has four real screens today: Overview (`/`, dashboard + MCP endpoint
   connection snippets), MCP Servers catalog (`/catalog`, backends/tools reachable by
   the signed-in account), Identities (`/identities`, link external CERN/ATLAS
@@ -89,8 +94,9 @@ URL without multiplying the number of places a client must trust with credential
 ## Evidence on Hand
 
 None yet. No collected user feedback, support-channel data, or usage metrics exist
-from the ~800 AF users. Future design work must not invent testimonials, satisfaction
-claims, or usage numbers to fill this gap.
+from the reference deployment's ~800 AF users, or from any other deployment. Future
+design work must not invent testimonials, satisfaction claims, or usage numbers to
+fill this gap.
 
 ## Product Principles
 

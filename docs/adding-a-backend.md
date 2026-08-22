@@ -74,7 +74,7 @@ the portal's Identities page — no separate mapping to keep in sync.
   (`broker.identityToken.existingSigningKeySecret`) and the shared Vault
   connection (`broker.oauth21.tokenStore.vault`) — omit `serviceUrl` for the
   legacy ephemeral-Job mint path (signing key omitted there just warns).
-  **Breaking change:** this entry replaces the removed global
+  This entry replaces the removed global
   `broker.env.VOMS_TOKEN_SERVICE_URL` — see
   [x509 deployment notes](x509-deployment-notes.md).
 
@@ -206,11 +206,9 @@ card's Tools section is expanded.
 
 `required_capability` in `backends.yaml` (Step 1 above) is the **sole**
 declaration of what a backend target requires — the backend registry, not
-`policy.yaml`, is authoritative here (see issue #60; `policy.yaml` used to
-carry a parallel `target_capabilities` section that had to be kept in sync
-by hand, and drifting out of sync silently broke authorization in
-production). `policy.yaml`'s only remaining job is mapping capabilities to
-Keycloak groups via `group_capabilities` (Step 3 below).
+`policy.yaml`, is authoritative here (see issue #60). `policy.yaml`'s only
+remaining job is mapping capabilities to Keycloak groups via
+`group_capabilities` (Step 3 below).
 
 `required_capability` has three forms:
 

@@ -21,7 +21,7 @@ operators run into. A few common questions, and where to read the answer:
 | How does a browser or CLI get its first token at all? | [Portal auth (OIDC public client)](#portal-auth-oidc-public-client) |
 | Why did an audience (`mcp-gateway`, `broker`, ...) appear or vanish from someone's token when their group membership changed? | [Client scope Scope tab: a filter, not a grant](#client-scope-scope-tab-a-filter-not-a-grant) |
 | How does an MCP client (Claude Desktop, Claude Code) get a credential without a human visiting the portal? | [MCP OAuth discovery + PAT bootstrap](#mcp-oauth-discovery-pat-bootstrap-issue-140) |
-| Why can't a leaked PAT just mint itself a replacement? | [Where PATs are accepted — and where they deliberately are not](#where-pats-are-accepted--and-where-they-deliberately-are-not) |
+| Why can't a leaked PAT just mint itself a replacement? | [Where PATs are accepted — and where they deliberately are not](#where-pats-are-accepted-and-where-they-deliberately-are-not) |
 | Why doesn't removing someone from a Keycloak group take effect instantly everywhere? | [Authorization is an attribute of the principal, not the token](#authorization-is-an-attribute-of-the-principal-not-the-token) |
 | Which Keycloak clients/roles/scopes do I need to create, and why so many? | [Keycloak operator setup reference](#keycloak-operator-setup-reference) |
 | Why does Rucio/PanDA/AMI reject a token the broker minted? | [Critical Note: Keycloak Token Exchange Limitations](#critical-note-keycloak-token-exchange-limitations) |
@@ -163,10 +163,10 @@ gets a loud startup warning, since the shipped `backends.yaml` has always
 declared an x509 backend. Multiple x509 entries with different
 voms-token-service URLs/VOs are supported.
 
-**Breaking change:** the global `VOMS_TOKEN_SERVICE_URL` env var (and its
-`VOMS_TOKEN_SERVICE_AUDIENCE`/`_VOMS`/`_VALID` companions) has been removed
-entirely — declare an `identity_providers` entry of type `x509` instead
-(see [x509 deployment notes](x509-deployment-notes.md)).
+The global `VOMS_TOKEN_SERVICE_URL` env var (and its
+`VOMS_TOKEN_SERVICE_AUDIENCE`/`_VOMS`/`_VALID` companions) is removed —
+declare an `identity_providers` entry of type `x509` instead (see
+[x509 deployment notes](x509-deployment-notes.md)).
 
 `GET /v1/identities` surfaces each entry like any other, with `linked`
 probed from `X509Provider.is_linked()` and `proxy_expires_at` from the
@@ -876,7 +876,7 @@ that a bare denial reason can't distinguish on its own.
 | Credential type | Typical lifetime | Refresh strategy |
 |---|---|---|
 | AF access token (portal SPA) | 5 minutes | `oidc-client-ts` silent renew via refresh_token grant (see [Portal auth](#portal-auth-oidc-public-client)) |
-| AF access token (other MCP clients) | 5 minutes | Client-specific — e.g. Claude Desktop's own OAuth flow (not yet implemented) |
+| Broker-issued PAT (most MCP clients) | 90 days by default, or never-expiring by explicit opt-in | Not refreshed — revoke and re-mint (manually, or via [MCP OAuth discovery](#mcp-oauth-discovery-pat-bootstrap-issue-140) again) |
 | ATLAS IAM token (brokered) | 1 hour | Broker re-fetches from Keycloak on cache miss |
 | x509 VOMS proxy | 12–192 hours (configurable) | voms-token-service mode: hands-free re-mint with the Vault-stored passphrase when the stored proxy expires. Legacy mode: re-mint Job on the next portal unlock |
 
@@ -1278,7 +1278,7 @@ attribute of the principal, not the token" above), refreshed roughly every
 `principal_cache_refresh_seconds` (default ~45s) rather than on every single
 request.
 
-### Keycloak: POSIX User Attribute mappers (no longer read -- issue #144 step 3b)
+### Keycloak: POSIX User Attribute mappers
 
 **As of issue #144 step 3b, the broker never reads a `posix` claim from any
 token.** Every credential type -- JWT and identity PAT alike -- resolves a
@@ -1316,61 +1316,10 @@ door for an unrelated backend. Everything else that used to read
 `principal.uid` (cache keys, audit fields, log context) uses
 `principal.subject` instead, which every principal has.
 
-The rest of this section is kept for operators who haven't removed the
-mappers yet, or who are debugging a token minted before doing so -- it no
-longer describes broker behavior.
-
-<details>
-<summary>Historical setup instructions (pre-#144-step-3b)</summary>
-
-The claim shape, when present, was:
-
-```json
-{
-  "posix": {
-    "uid": 33155,
-    "gid": 33155,
-    "unixname": "kratsg"
-  }
-}
-```
-
-**How Keycloak provided it (AF's implementation, for context).** AF Keycloak
-has a realm-level client scope named `posix`. Inside that scope, four User
-Attribute protocol mappers copy `uid`, `gid`, `unixname` (and optionally
-`unixname-v2`) from each user's Keycloak profile attributes into the token
-under the `posix.*` namespace. Those profile attributes are themselves
-populated by upstream identity brokering (CERN → ATLAS IAM → Keycloak) or LDAP
-sync, depending on the deployment. The `posix` client scope had to be
-assigned to every OAuth client that needed to obtain broker-ready tokens
-(e.g. `mcp-portal`) — either as a Default scope (auto-included in every
-token) or an Optional scope (the client must explicitly request
-`scope=posix`).
-
-**Common footgun:** each of the four User Attribute mappers has the same
-two-name-field shape as the Group Membership mapper above — **Name** (an
-internal identifier) and **Token Claim Name** (the key that actually
-appears in the JWT payload). Leaving Token Claim Name blank produces an
-inert mapper: no `posix.uid` (or `.gid` / `.unixname` / `.unixname-v2`)
-claim ever appears in the token, silently. Token Claim Name **must** be
-set explicitly, using the dotted path that nests it under `posix`
-(`posix.uid`, `posix.gid`, `posix.unixname`, ...) to match the claim shape
-above. Verify via Client Scopes → `posix` → **Evaluate** tab — select the
-target user and client, and the Generated Access Token panel shows exactly
-what each mapper actually contributed.
-
-**Non-Keycloak IdPs.** `posix` as a client-scope name is a Keycloak-side
-convention, not a broker requirement. Any OIDC IdP — Dex, Zitadel, Auth0, Ory
-Hydra, etc. — could satisfy the broker as long as the decoded access token
-had a top-level `posix` claim in the shape above. How that claim got
-populated was IdP-specific: some use scopes and mappers the same way
-Keycloak does, others use custom claims, hooks, or rules.
-
-Mint a fresh token (via `scripts/mint-token.py`) and confirm the payload has
-a top-level `posix` claim listing `uid`/`gid`/`unixname`. This no longer
-proves anything about what the broker will do with it -- see above.
-
-</details>
+If your realm still has the four legacy POSIX User Attribute mappers on a
+`posix` client scope, they're inert now — the broker never reads the
+`posix` claim they used to produce — safe to leave in place or remove
+independently of the steps above.
 
 #### Verify (current)
 
@@ -1399,7 +1348,7 @@ display label the admin console shows by default:
   a convenient cross-check, since it names the same profile attribute the
   directory itself reads.
 
-### Keycloak: Group Membership mapper (no longer read -- issue #144 step 3)
+### Keycloak: Group Membership mapper
 
 **As of issue #144 step 3, the broker never reads a `groups` claim from any
 token.** Every credential type -- JWT and identity PAT alike -- resolves a
@@ -1423,53 +1372,18 @@ there is no longer a separate JWT-side mapper convention it needs to stay
 consistent with, because there is no longer a JWT-side source of groups at
 all.
 
-The rest of this section is kept for operators who haven't removed the
-mapper yet, or who are debugging a token minted before doing so -- it no
-longer describes broker behavior.
+**Create the groups you reference in `group_capabilities`** and assign
+users to them. Group names are entirely up to you — the chart ships no
+site-specific default, so pick names that match your own Keycloak realm
+(see the worked example below). The broker's own dev-only fallback policy
+(`broker/src/af_mcp_broker/authorization/policy.yaml`, used when no
+`POLICY_FILE` is configured) mirrors the ATLAS AF's own group names:
+`atlas`, `cms`, `dune`, `escape`, `af-admins`.
 
-<details>
-<summary>Historical setup instructions (pre-#144-step-3)</summary>
-
-#### One-time setup
-
-1. **Add a Group Membership mapper to the `mcp-gateway` client scope**
-   (or your equivalent scope):
-   - Admin → Client Scopes → `mcp-gateway` → Mappers → Add mapper → **Group Membership**
-   - Name: `groups`
-   - Token Claim Name: `groups`
-   - Full group path: **OFF** (the broker string-matches literal group
-     names; a leading `/` would prevent every policy match)
-   - Add to ID token: OFF
-   - Add to access token: **ON**
-   - Add to userinfo: OFF
-
-   **Common footgun:** the mapper form has two similarly-named fields —
-   **Name** (an internal identifier for the mapper itself) and **Token
-   Claim Name** (the key that actually appears in the JWT payload). Both
-   look optional. Set `Name: groups` and leave Token Claim Name blank, and
-   the mapper is inert: no `groups` claim ever appears in the token,
-   silently — no error, no warning, nothing to notice until you decode a
-   minted token. Token Claim Name **must** be set to `groups` explicitly.
-   Verify via Client Scopes → `mcp-gateway` → **Evaluate** tab — select the
-   target user and the `mcp-portal` client, and the Generated Access Token
-   panel shows exactly what the mapper actually contributed.
-
-2. **Create the groups you reference in `group_capabilities`** and
-   assign users to them. Group names are entirely up to you — the chart
-   ships no site-specific default, so pick names that match your own
-   Keycloak realm (see the worked example below). The broker's own
-   dev-only fallback policy (`broker/src/af_mcp_broker/authorization/
-   policy.yaml`, used when no `POLICY_FILE` is configured) mirrors the
-   ATLAS AF's own group names: `atlas`, `cms`, `dune`, `escape`,
-   `af-admins`.
-
-#### Verify (historical)
-
-Mint a fresh token (via `scripts/mint-token.py`) and confirm the payload
-has a top-level `groups` claim listing your group names as strings. This no
-longer proves anything about what the broker will do with it -- see above.
-
-</details>
+If your realm still has a legacy Group Membership mapper on the
+`mcp-gateway` client scope, it's inert now — the broker never reads the
+`groups` claim it used to produce — safe to leave in place or remove
+independently of the steps above.
 
 #### Verify (current)
 
