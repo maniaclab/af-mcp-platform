@@ -245,13 +245,11 @@ function buildCycleTimeline(cycle: Cycle, refs: Refs): gsap.core.Timeline {
     t,
   );
   tl.to(dot, { opacity: 0, duration: TIME.dotFade }, t);
-  t += TIME.dotFade + 0.55;
-  // The spinner (unlike the border glow) deliberately keeps running past
-  // this point -- it means "waiting on a response from MCP," which stays
-  // true through the tool_call line, the gateway checks, and the backend
-  // round trip below, and only resolves once the pulse actually returns.
-  tl.call(() => client.classList.remove(ACTIVE_CLASS), undefined, t);
-  t += 0.25;
+  // Both the spinner and the border glow deliberately keep going past this
+  // point -- the box is still "occupied" while the assistant is deciding
+  // what to do (through the tool_call line below), and only clear once the
+  // pulse actually departs toward the gateway, later on.
+  t += TIME.dotFade + 0.55 + 0.25;
 
   // -- chat: the assistant's resulting tool call --
   tl.call(() => (chatLines[1].text.textContent = cycle.aiCallText), undefined, t);
@@ -264,29 +262,22 @@ function buildCycleTimeline(cycle: Cycle, refs: Refs): gsap.core.Timeline {
 
   // -- the call actually reaching the gateway: AI Assistant -> Gateway --
   tl.call(
-    () => {
-      gsap.set(dot, { x: () => centerX(client, rect()), y: () => bottomY(client, rect()) });
-      client.classList.add(ACTIVE_CLASS);
-    },
+    () => gsap.set(dot, { x: () => centerX(client, rect()), y: () => bottomY(client, rect()) }),
     undefined,
     t,
   );
   tl.to(dot, { opacity: 1, duration: TIME.dotFade }, t);
   t += TIME.dotFade;
+  // The box stays lit until this exact moment -- the pulse is now actually
+  // leaving it -- rather than clearing only once the dot lands elsewhere.
+  tl.call(() => client.classList.remove(ACTIVE_CLASS), undefined, t);
   tl.to(
     dot,
     { y: () => topY(gateway, rect()), duration: TIME.travelLong, ease: 'power1.inOut' },
     t,
   );
   t += TIME.travelLong;
-  tl.call(
-    () => {
-      client.classList.remove(ACTIVE_CLASS);
-      gateway.classList.add(ACTIVE_CLASS);
-    },
-    undefined,
-    t,
-  );
+  tl.call(() => gateway.classList.add(ACTIVE_CLASS), undefined, t);
   tl.to(dot, { opacity: 0, duration: TIME.dotFade }, t);
   t += TIME.dotFade + 0.1;
 
@@ -322,6 +313,7 @@ function buildCycleTimeline(cycle: Cycle, refs: Refs): gsap.core.Timeline {
     );
     tl.to(dot, { opacity: 1, duration: TIME.dotFade }, t);
     t += TIME.dotFade;
+    tl.call(() => gateway.classList.remove(DENIED_CLASS), undefined, t);
     tl.to(
       dot,
       { y: () => bottomY(client, rect()), duration: TIME.travelLong, ease: 'power1.inOut' },
@@ -330,7 +322,6 @@ function buildCycleTimeline(cycle: Cycle, refs: Refs): gsap.core.Timeline {
     t += TIME.travelLong;
     tl.call(
       () => {
-        gateway.classList.remove(DENIED_CLASS);
         client.classList.add(ACTIVE_CLASS);
         setTagState(client, '');
       },
@@ -400,6 +391,7 @@ function buildCycleTimeline(cycle: Cycle, refs: Refs): gsap.core.Timeline {
     );
     tl.to(dot, { opacity: 1, duration: TIME.dotFade }, t);
     t += TIME.dotFade;
+    tl.call(() => credential.classList.remove(ACTIVE_CLASS), undefined, t);
     tl.to(
       dot,
       {
@@ -411,14 +403,7 @@ function buildCycleTimeline(cycle: Cycle, refs: Refs): gsap.core.Timeline {
       t,
     );
     t += TIME.travelMed;
-    tl.call(
-      () => {
-        credential.classList.remove(ACTIVE_CLASS);
-        setTagState(brokerEl, 'ok');
-      },
-      undefined,
-      t,
-    );
+    tl.call(() => setTagState(brokerEl, 'ok'), undefined, t);
     tl.to(dot, { opacity: 0, duration: TIME.dotFade }, t);
     tl.to(credential, { opacity: 0, duration: 0.3 }, t);
     t += 0.3;
@@ -433,6 +418,7 @@ function buildCycleTimeline(cycle: Cycle, refs: Refs): gsap.core.Timeline {
       );
       tl.to(dot, { opacity: 1, duration: TIME.dotFade }, t);
       t += TIME.dotFade;
+      tl.call(() => gateway.classList.remove(ACTIVE_CLASS), undefined, t);
       tl.to(
         dot,
         { y: () => topY(fanout, rect()), duration: TIME.travelShort, ease: 'power1.inOut' },
@@ -493,6 +479,7 @@ function buildCycleTimeline(cycle: Cycle, refs: Refs): gsap.core.Timeline {
       t += TIME.travelShort;
       tl.call(() => gateway.classList.add(ACTIVE_CLASS), undefined, t);
       t += 0.15;
+      tl.call(() => gateway.classList.remove(ACTIVE_CLASS), undefined, t);
       tl.to(
         dot,
         { y: () => bottomY(client, rect()), duration: TIME.travelLong, ease: 'power1.inOut' },
@@ -501,7 +488,6 @@ function buildCycleTimeline(cycle: Cycle, refs: Refs): gsap.core.Timeline {
       t += TIME.travelLong;
       tl.call(
         () => {
-          gateway.classList.remove(ACTIVE_CLASS);
           client.classList.add(ACTIVE_CLASS);
           setTagState(client, '');
         },
@@ -517,7 +503,6 @@ function buildCycleTimeline(cycle: Cycle, refs: Refs): gsap.core.Timeline {
   // Assistant box back to the chat log -- its arrival there is what
   // causes the final line to appear, mirroring the request's trip out at
   // the start of this cycle. --
-  tl.call(() => client.classList.remove(ACTIVE_CLASS), undefined, t);
   tl.call(
     () => gsap.set(dot, { x: () => centerX(client, rect()), y: () => centerY(client, rect()) }),
     undefined,
@@ -525,6 +510,7 @@ function buildCycleTimeline(cycle: Cycle, refs: Refs): gsap.core.Timeline {
   );
   tl.to(dot, { opacity: 1, duration: TIME.dotFade }, t);
   t += TIME.dotFade;
+  tl.call(() => client.classList.remove(ACTIVE_CLASS), undefined, t);
   tl.to(
     dot,
     {
