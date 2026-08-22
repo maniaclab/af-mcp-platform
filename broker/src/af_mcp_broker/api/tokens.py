@@ -19,8 +19,9 @@ self-renewing, and revocation would degrade into whack-a-mole against
 tokens the leaked one itself created (GitHub disallows this by default for
 the same reason). A PAT is therefore always traceable back to an
 interactive Keycloak login -- whether initiated from the portal (this
-endpoint) or, in a future step of issue #144, an OAuth bootstrap flow that
-also authenticates via Keycloak first. See ``pat_auth.py``'s module
+endpoint) or the OAuth discovery bootstrap flow (``api/mcp_oauth.py``,
+issue #140), which also authenticates via Keycloak first. See
+``pat_auth.py``'s module
 docstring for where PATs *are* accepted (``/mcp``, via
 ``mcp/middleware/identity_mw.py``'s ``AsgiAuthMiddleware``).
 
@@ -35,9 +36,12 @@ authority is always re-resolved fresh at validation time from
 Design notes / known limitations (see the PR description for the full
 writeup — these are real gaps, not oversights):
 
-* Listing only covers tokens minted through this endpoint. A future OAuth
-  bootstrap flow (issue #144, later step) would mint through the same PAT
-  store, so this gap is expected to close rather than widen.
+* Listing covers every PAT minted for the principal regardless of mint
+  path -- both this endpoint and the OAuth discovery bootstrap flow
+  (``api/mcp_oauth.py``'s ``_mint_bootstrap_pat``) mint through the same
+  ``TokenRegistry.put()`` primitives, keyed by the same ``principal_id``,
+  and ``TokenRegistryBackend.list_for_principal()`` has no mint-source
+  filter.
 * ``name`` is a unique-per-principal identifier, not free text (issue #116,
   carried forward): minting a second token whose name matches an existing
   *live* one for the same principal (case-insensitive) is rejected with 409.
@@ -458,9 +462,12 @@ async def list_tokens(
 ) -> list[TokenSummary]:
     """List PATs the caller owns.
 
-    Only covers PATs minted via POST /v1/tokens -- see this module's
-    docstring. Revoked rows stay listed (``revoked_at`` set) rather than
-    disappearing, so the portal can show a revoked/active/expired status.
+    Covers every PAT minted for the caller regardless of mint path --
+    both ``POST /v1/tokens`` and the OAuth discovery bootstrap flow mint
+    through the same ``TokenRegistry``, keyed by the same principal id (see
+    this module's docstring). Revoked rows stay listed (``revoked_at`` set)
+    rather than disappearing, so the portal can show a revoked/active/expired
+    status.
     """
     registry = _registry(request)
     rows = await registry.list_for_principal(principal.subject)

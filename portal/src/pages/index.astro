@@ -7,7 +7,12 @@ import DashboardCards from '../components/DashboardCards.vue';
 
 // Identity is filled client-side (see Base.astro) — the greeting element is
 // tagged data-af-identity and stays hidden until GET /v1/identities resolves.
-const mcpEndpoint = 'https://mcp.af.uchicago.edu/mcp';
+//
+// The MCP endpoint URL below is likewise filled client-side (see the
+// "Fill MCP endpoint" script) from getBrokerOrigin() (../lib/auth) rather
+// than baked in here — this frontmatter only runs at build time, so a
+// hardcoded URL here would show every deployment its own host or a
+// different, wrong one.
 ---
 
 <Base title="Overview">
@@ -48,12 +53,11 @@ const mcpEndpoint = 'https://mcp.af.uchicago.edu/mcp';
           id="copy-btn"
           class="endpoint-block__copy"
           aria-label="Copy endpoint URL to clipboard"
-          data-url={mcpEndpoint}
         >
           Copy
         </button>
       </div>
-      <code class="endpoint-block__url">{mcpEndpoint}</code>
+      <code class="endpoint-block__url" id="mcp-endpoint-url"></code>
     </div>
 
     <div class="snippet-group">
@@ -75,11 +79,7 @@ const mcpEndpoint = 'https://mcp.af.uchicago.edu/mcp';
 
     <div class="snippet-group">
       <h3 class="snippet-heading">curl / httpx</h3>
-      <pre
-        class="code-block"><code>{`# Authenticate via your AF Keycloak token
-export AF_TOKEN="$(cat ~/.af_token)"
-curl -H "Authorization: Bearer $AF_TOKEN" \\
-     ${mcpEndpoint}`}</code></pre>
+      <pre class="code-block"><code id="curl-snippet" /></pre>
     </div>
   </section>
 </Base>
@@ -223,6 +223,35 @@ curl -H "Authorization: Bearer $AF_TOKEN" \\
         cancelAnimationFrame(animId);
       }
     });
+  })();
+</script>
+
+<!-- ── Fill MCP endpoint ─────────────────────────────────────────────── -->
+<!--
+  The endpoint URL depends on a runtime fetch (getBrokerOrigin() reads
+  /config.json), so it can't be a build-time Astro frontmatter constant —
+  it's filled here on mount instead, the same way Base.astro's inline
+  script fills [data-af-identity] from GET /v1/identities.
+-->
+<script>
+  import { getBrokerOrigin } from '../lib/auth';
+
+  (async () => {
+    const endpoint = `${await getBrokerOrigin()}/mcp`;
+
+    const urlEl = document.getElementById('mcp-endpoint-url');
+    if (urlEl) urlEl.textContent = endpoint;
+
+    const btn = document.getElementById('copy-btn') as HTMLButtonElement | null;
+    if (btn) btn.dataset.url = endpoint;
+
+    const curlEl = document.getElementById('curl-snippet');
+    if (curlEl) {
+      curlEl.textContent = `# Authenticate via your AF Keycloak token
+export AF_TOKEN="$(cat ~/.af_token)"
+curl -H "Authorization: Bearer $AF_TOKEN" \\
+     ${endpoint}`;
+    }
   })();
 </script>
 

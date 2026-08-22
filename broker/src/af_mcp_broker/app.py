@@ -818,7 +818,7 @@ app = FastAPI(
     title="AF MCP Broker",
     version=__version__,
     description=(
-        "Credential-brokered MCP gateway for the UChicago ATLAS Analysis Facility. "
+        "Credential-brokered MCP gateway for an ATLAS Analysis Facility. "
         "Provides Identity, Authorization, Credentialing, and Audit subsystems."
     ),
     lifespan=combine_lifespans(lifespan, _mcp_aggregator_app.lifespan),
