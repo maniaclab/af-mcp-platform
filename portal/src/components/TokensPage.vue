@@ -381,10 +381,10 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
             <tr>
               <th scope="col" class="tp__th">Name</th>
               <th scope="col" class="tp__th">Scope</th>
-              <th scope="col" class="tp__th">Token ID</th>
-              <th scope="col" class="tp__th">Created</th>
+              <th scope="col" class="tp__th tp__th--secondary">Token ID</th>
+              <th scope="col" class="tp__th tp__th--secondary">Created</th>
               <th scope="col" class="tp__th">Expires</th>
-              <th scope="col" class="tp__th">Last used</th>
+              <th scope="col" class="tp__th tp__th--secondary">Last used</th>
               <th scope="col" class="tp__th">Status</th>
               <th scope="col" class="tp__th tp__th--action">
                 <span class="sr-only">Actions</span>
@@ -422,10 +422,10 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
               >
                 {{ capabilityGrantLabel(row.capability_grant) }}
               </td>
-              <td class="tp__td tp__td--jti" :title="row.lookup_id">
+              <td class="tp__td tp__td--jti tp__td--secondary" :title="row.lookup_id">
                 {{ shortLookupId(row.lookup_id) }}
               </td>
-              <td class="tp__td" :title="formatAbsolute(row.created_at)">
+              <td class="tp__td tp__td--secondary" :title="formatAbsolute(row.created_at)">
                 {{ formatAbsolute(row.created_at) }}
               </td>
               <td
@@ -439,7 +439,7 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
                 </template>
               </td>
               <td
-                class="tp__td"
+                class="tp__td tp__td--secondary"
                 :title="row.last_used_at ? formatAbsolute(row.last_used_at) : 'Never used'"
               >
                 {{ row.last_used_at ? formatRelative(row.last_used_at) : 'Never' }}
@@ -833,14 +833,31 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
 }
 
 /* Table */
+/* width: fit-content (not the block default of stretching to fill .tp's
+   full 52rem) -- with few short-content columns the boxed border otherwise
+   stretched well past the actual table content, reading as a mostly-empty
+   box rather than a compact list.
+   overflow-y: hidden, set explicitly rather than left to its default --
+   overflow-x: auto alone makes overflow-y compute to 'auto' too, and each
+   row's (invisible, opacity:0/visibility:hidden) .tp__note-tooltip is
+   `position: absolute`, which doesn't affect this box's own auto-height
+   but DOES count toward its *scrollable overflow* once it's a scroll
+   container -- which is what was inflating this box well past its actual
+   rows. Tradeoff: a note tooltip on one of the last rows, if shown, can
+   no longer float past this box's own bottom edge -- an acceptable cost
+   for a hover-only affordance, versus a table that reads as mostly empty
+   space by default. */
 .tp__table {
+  width: fit-content;
+  max-width: 100%;
+  height: fit-content;
   overflow-x: auto;
+  overflow-y: hidden;
   border: 1px solid var(--color-af-border);
   border-radius: 4px;
 }
 
 .tp__table-el {
-  width: 100%;
   border-collapse: collapse;
   font-family: 'IBM Plex Sans', system-ui, sans-serif;
   font-size: 0.8125rem;
@@ -1401,6 +1418,15 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
   .tp__toolbar .tp__btn {
     width: 100%;
     justify-content: center;
+  }
+  /* Hide the columns that matter least for a quick glance or a revoke
+     decision -- same hide-secondary-columns-not-horizontal-scroll pattern
+     BackendCard.vue already uses. Name/Scope identify the token, Expires/
+     Status are what you'd act on; Token ID/Created/Last used are dropped
+     rather than forcing horizontal scroll for them. */
+  .tp__th--secondary,
+  .tp__td--secondary {
+    display: none;
   }
 }
 </style>
