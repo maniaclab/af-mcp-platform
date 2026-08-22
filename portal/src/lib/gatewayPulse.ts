@@ -477,23 +477,17 @@ function buildCycleTimeline(cycle: Cycle, refs: Refs): gsap.core.Timeline {
         t,
       );
       t += TIME.travelShort;
-      tl.call(() => gateway.classList.add(ACTIVE_CLASS), undefined, t);
-      t += 0.15;
-      tl.call(() => gateway.classList.remove(ACTIVE_CLASS), undefined, t);
+      // No highlight on this last leg -- gateway and AI Assistant are just
+      // being passed through on the way back, too briefly for a light-up
+      // to read as anything but a flicker. The spinner still clears below;
+      // that state change (not a glow) is what marks "response received."
       tl.to(
         dot,
         { y: () => bottomY(client, rect()), duration: TIME.travelLong, ease: 'power1.inOut' },
         t,
       );
       t += TIME.travelLong;
-      tl.call(
-        () => {
-          client.classList.add(ACTIVE_CLASS);
-          setTagState(client, '');
-        },
-        undefined,
-        t,
-      );
+      tl.call(() => setTagState(client, ''), undefined, t);
       tl.to(dot, { opacity: 0, duration: TIME.dotFade }, t);
       t += TIME.dotFade + 0.1;
     }
