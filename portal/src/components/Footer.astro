@@ -1,0 +1,61 @@
+---
+/**
+ * Footer.astro — shared site footer, used by both Base.astro (the
+ * authenticated app shell) and PublicBase.astro (the unauthenticated
+ * landing page) so the two layouts don't each carry their own copy.
+ */
+const appVersion = import.meta.env.PUBLIC_APP_VERSION || 'dev';
+---
+
+<footer class="af-footer" aria-label="Site footer">
+  <span class="af-footer__text">ATLAS Analysis Facility · MCP Platform</span>
+  <span class="af-footer__version">v{appVersion}</span>
+  <a href="https://atlas.cern" class="af-footer__link" target="_blank" rel="noopener noreferrer">
+    atlas.cern
+  </a>
+  <a
+    href="https://giordonstark.com/"
+    class="af-footer__link"
+    target="_blank"
+    rel="noopener noreferrer"
+  >
+    © Giordon Stark
+  </a>
+</footer>
+
+<style>
+  .af-footer {
+    border-top: 1px solid var(--color-af-border);
+    padding: 0 2rem;
+    height: 48px;
+    display: flex;
+    align-items: center;
+    gap: 2rem;
+  }
+
+  .af-footer__text {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.6875rem;
+    color: var(--color-af-dim);
+    letter-spacing: 0.04em;
+  }
+
+  .af-footer__link {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.6875rem;
+    color: var(--color-af-dim);
+    letter-spacing: 0.04em;
+    text-decoration: none;
+  }
+  .af-footer__link:hover {
+    color: var(--color-af-teal);
+  }
+
+  .af-footer__version {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.625rem;
+    color: var(--color-af-dim);
+    letter-spacing: 0.04em;
+    opacity: 0.6;
+  }
+</style>
