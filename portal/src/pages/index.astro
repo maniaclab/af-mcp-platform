@@ -11,103 +11,95 @@
 import PublicBase from '../layouts/PublicBase.astro';
 ---
 
-<PublicBase title="AF MCP Platform">
+<PublicBase title="AI access to your facility, without the credentials">
   <!-- ── Hero: particle track canvas + pitch ─────────────────────────── -->
   <section class="hero" aria-label="AF MCP Platform">
     <canvas id="track-canvas" class="hero__canvas" aria-hidden="true"></canvas>
 
     <div class="hero__content">
       <div class="hero__eyebrow">Credential-brokered MCP gateway</div>
-      <h1 class="hero__title">MCP Platform</h1>
+      <h1 class="hero__title">Give AI access to your analysis facility.</h1>
       <p class="hero__sub">
-        Connect an AI assistant to your analysis facility's computing — dataset lookup, job
-        submission, notebooks, and more — through the open
-        <a href="https://modelcontextprotocol.io/" target="_blank" rel="noopener noreferrer"
-          >Model Context Protocol</a
-        >, without ever handing that assistant a raw credential.
+        Securely connect AI assistants to datasets, compute, notebooks, and analysis tools through
+        <a href="https://modelcontextprotocol.io/" target="_blank" rel="noopener noreferrer">MCP</a>
+        — while keeping credentials under your control.
       </p>
 
       <div class="hero__cta">
         <a href="/overview/" class="hero__cta-primary">Sign in →</a>
-        <a
-          href="https://github.com/maniaclab/af-mcp-platform"
-          class="hero__cta-secondary"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          View on GitHub
-        </a>
+        <a href="#benefits" class="hero__cta-secondary">Explore the platform →</a>
       </div>
     </div>
   </section>
 
   <!-- ── What it does ──────────────────────────────────────────────────── -->
-  <section class="benefits" aria-label="What this platform does">
-    <div class="benefit">
-      <svg
-        class="benefit__icon"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="1.5"
-        aria-hidden="true"
-      >
-        <path d="M12 3l7 3v5.2c0 4.3-2.9 8.2-7 9.8-4.1-1.6-7-5.5-7-9.8V6l7-3z"></path>
-      </svg>
-      <h2 class="benefit__title">Credentials never leave the broker</h2>
-      <p class="benefit__desc">
-        Your AI assistant never holds a raw grid certificate or IAM token. The broker mints
-        short-lived, per-call credentials behind the scenes and hands the assistant only a result.
-      </p>
-    </div>
+  <section id="benefits" class="benefits" aria-label="What this platform does">
+    <h2 class="benefits__heading">One gateway. Your entire facility.</h2>
 
-    <div class="benefit">
-      <svg
-        class="benefit__icon"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="1.5"
-        aria-hidden="true"
-      >
-        <path d="M4 4.5h16v6.5H4z"></path><path d="M4 13h16v6.5H4z"></path><path d="M7.5 7.75h.01"
-        ></path><path d="M7.5 16.25h.01"></path>
-      </svg>
-      <h2 class="benefit__title">Add a backend, not a deployment</h2>
-      <p class="benefit__desc">
-        Registering a new MCP server is a config entry, not a code change — the platform grows to
-        cover any number of computing tools behind one endpoint.
-      </p>
-    </div>
+    <div class="benefit-grid">
+      <div class="benefit">
+        <svg
+          class="benefit__icon"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.5"
+          aria-hidden="true"
+        >
+          <path d="M12 3l7 3v5.2c0 4.3-2.9 8.2-7 9.8-4.1-1.6-7-5.5-7-9.8V6l7-3z"></path>
+        </svg>
+        <h3 class="benefit__title">Credentials stay behind the broker</h3>
+        <p class="benefit__desc">
+          Short-lived, per-call credentials. Raw tokens and certificates never reach the AI
+          assistant.
+        </p>
+      </div>
 
-    <div class="benefit">
-      <svg
-        class="benefit__icon"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="1.5"
-        aria-hidden="true"
-      >
-        <path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z"></path><path d="M8.5 12.5l2.5 2.5 4.5-5"
-        ></path>
-      </svg>
-      <h2 class="benefit__title">Every call is authorized and audited</h2>
-      <p class="benefit__desc">
-        Group-based capabilities decide what you can reach; every tool invocation is checked and
-        logged before it reaches a backend.
-      </p>
+      <div class="benefit">
+        <svg
+          class="benefit__icon"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.5"
+          aria-hidden="true"
+        >
+          <path d="M4 4.5h16v6.5H4z"></path><path d="M4 13h16v6.5H4z"></path><path d="M7.5 7.75h.01"
+          ></path><path d="M7.5 16.25h.01"></path>
+        </svg>
+        <h3 class="benefit__title">Add tools, not complexity</h3>
+        <p class="benefit__desc">
+          Plug in MCP backends through configuration. Give users one endpoint for datasets, jobs,
+          notebooks, storage, and more.
+        </p>
+      </div>
+
+      <div class="benefit">
+        <svg
+          class="benefit__icon"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.5"
+          aria-hidden="true"
+        >
+          <path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z"></path><path d="M8.5 12.5l2.5 2.5 4.5-5"
+          ></path>
+        </svg>
+        <h3 class="benefit__title">Authorize every call</h3>
+        <p class="benefit__desc">
+          Group-based access controls and audit logging put policy around every tool invocation.
+        </p>
+      </div>
     </div>
   </section>
 
   <!-- ── Ecosystem proof ───────────────────────────────────────────────── -->
   <section class="proof" aria-label="Deployed today">
-    <h2 class="proof__heading">A real, working deployment</h2>
+    <h2 class="proof__heading">Already running at UChicago</h2>
     <p class="proof__body">
-      This is the reference deployment for the UChicago ATLAS Analysis Facility — not a demo. Rucio
-      and AMI dataset tools, HTCondor job submission, JupyterLab management, and grid filesystem
-      access all run behind it today, each backed by its own independently-maintained MCP server and
-      credential service. Any facility can deploy the same broker + portal chart with its own mix.
+      This isn't a demo. The UChicago ATLAS Analysis Facility uses MCP Platform today to securely
+      expose Rucio, AMI, HTCondor, JupyterLab, and grid filesystem access to AI-powered workflows.
     </p>
     <a
       href="https://maniaclab.github.io/af-mcp-platform/ecosystem/"
@@ -115,13 +107,16 @@ import PublicBase from '../layouts/PublicBase.astro';
       target="_blank"
       rel="noopener noreferrer"
     >
-      See what's deployed →
+      See the deployed ecosystem →
     </a>
   </section>
 
   <!-- ── Final CTA ─────────────────────────────────────────────────────── -->
   <section class="final-cta" aria-label="Get started">
-    <h2 class="final-cta__heading">Ready to connect your AI assistant?</h2>
+    <h2 class="final-cta__heading">Ready to put AI to work?</h2>
+    <p class="final-cta__sub">
+      Connect your assistant to your facility — without giving it your credentials.
+    </p>
     <a href="/overview/" class="hero__cta-primary">Sign in →</a>
   </section>
 </PublicBase>
@@ -368,23 +363,37 @@ import PublicBase from '../layouts/PublicBase.astro';
 
   /* ── Benefits ──────────────────────────────────────────────────────── */
   .benefits {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 1.5rem;
     max-width: 68rem;
     margin: 0 auto;
-    padding: 3rem 2rem;
+    padding: 3.5rem 2rem;
+  }
+
+  .benefits__heading {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 1.375rem;
+    font-weight: 600;
+    color: var(--color-af-text);
+    text-align: center;
+    margin: 0 0 2.5rem;
+  }
+
+  .benefit-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 2rem;
   }
 
   .benefit {
     display: flex;
     flex-direction: column;
-    gap: 0.625rem;
+    align-items: center;
+    text-align: center;
+    gap: 0.75rem;
   }
 
   .benefit__icon {
-    width: 22px;
-    height: 22px;
+    width: 40px;
+    height: 40px;
     color: var(--color-af-teal);
   }
 
@@ -401,6 +410,7 @@ import PublicBase from '../layouts/PublicBase.astro';
     color: var(--color-af-dim);
     line-height: 1.6;
     margin: 0;
+    max-width: 20rem;
   }
 
   /* ── Proof ─────────────────────────────────────────────────────────── */
@@ -456,9 +466,16 @@ import PublicBase from '../layouts/PublicBase.astro';
     text-align: center;
   }
 
+  .final-cta__sub {
+    font-size: 0.9375rem;
+    color: var(--color-af-dim);
+    margin: -0.75rem 0 0;
+    text-align: center;
+  }
+
   /* ── Responsive ────────────────────────────────────────────────────── */
   @media (max-width: 900px) {
-    .benefits {
+    .benefit-grid {
       grid-template-columns: 1fr;
     }
   }
