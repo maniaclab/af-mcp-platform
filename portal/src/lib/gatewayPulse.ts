@@ -324,12 +324,10 @@ function buildCycleTimeline(cycle: Cycle, refs: Refs): gsap.core.Timeline {
       t,
     );
     t += TIME.travelLong;
-    // Glow on, but no fade here -- the dot stays visible and continues
-    // straight on into the shared "response completes the loop" leg below,
-    // which is what actually clears this glow and the spinner, right as
-    // the pulse starts moving again.
-    tl.call(() => client.classList.add(ACTIVE_CLASS), undefined, t);
-    t += 0.35;
+    // No highlight here either -- same reasoning as the authorized cycles'
+    // final leg (see below): the dot stays visible and continues straight
+    // on into the shared "response completes the loop" leg, which is what
+    // clears the spinner, right as the pulse starts moving again.
   } else {
     // Authorized -- broker mints a credential (a round trip to the
     // credential box, alias for x509/condor-token/etc.), then the pulse
@@ -493,19 +491,9 @@ function buildCycleTimeline(cycle: Cycle, refs: Refs): gsap.core.Timeline {
 
   // -- the response completes the loop: the same dot continues straight
   // through the AI Assistant box on to the chat log -- no fade in between,
-  // so the pulse never stops moving. The spinner (and, for the denied
-  // cycle, the border glow) clear right as this leg begins, so "waiting"
-  // visibly ends the instant the pulse starts moving again, not before.
-  // Arriving at the chat log is what causes the final line to appear,
-  // mirroring the request's trip out at the start of this cycle.
-  tl.call(
-    () => {
-      setTagState(client, '');
-      client.classList.remove(ACTIVE_CLASS);
-    },
-    undefined,
-    t,
-  );
+  // so the pulse never stops moving. Arriving at the chat log is what
+  // causes the final line to appear, mirroring the request's trip out at
+  // the start of this cycle.
   tl.to(
     dot,
     {
@@ -515,6 +503,21 @@ function buildCycleTimeline(cycle: Cycle, refs: Refs): gsap.core.Timeline {
       ease: 'power1.inOut',
     },
     t,
+  );
+  // The spinner (and, for the denied cycle, the border glow) clear a beat
+  // into that motion rather than at the exact same instant it starts --
+  // removing the class is instantaneous, but the eased tween's own motion
+  // ramps up gently, so clearing at t=0 of the tween reads as "cleared on
+  // arrival, while still sitting in AI Assistant" for the first rendered
+  // frame or two. Clearing after the pulse has visibly started moving
+  // reads unambiguously as "cleared because it's leaving."
+  tl.call(
+    () => {
+      setTagState(client, '');
+      client.classList.remove(ACTIVE_CLASS);
+    },
+    undefined,
+    t + 0.12,
   );
   t += TIME.travelMed;
   tl.to(dot, { opacity: 0, duration: TIME.dotFade }, t);
