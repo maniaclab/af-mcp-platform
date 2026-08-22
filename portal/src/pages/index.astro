@@ -40,7 +40,22 @@ import PublicBase from '../layouts/PublicBase.astro';
 
     <div class="benefits-layout">
       <div class="diagram" aria-label="How AI assistants reach the facility" data-pulse-diagram>
-        <div class="diagram__node diagram__node--client" data-pulse-node="client">AI Assistant</div>
+        <div class="diagram__node diagram__node--client" data-pulse-node="client">
+          AI Assistant
+          <span class="diagram__tag-icon" data-tag-icon aria-hidden="true">
+            <span class="diagram__tag-spinner"></span>
+            <svg class="diagram__tag-check" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              ><path
+                d="M5 13l4 4L19 7"
+                stroke-width="3"
+                stroke-linecap="round"
+                stroke-linejoin="round"></path></svg
+            >
+            <svg class="diagram__tag-x" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              ><path d="M6 6l12 12M18 6L6 18" stroke-width="3" stroke-linecap="round"></path></svg
+            >
+          </span>
+        </div>
 
         <div class="diagram__link">
           <span class="diagram__link-label">MCP</span>
@@ -652,6 +667,9 @@ import PublicBase from '../layouts/PublicBase.astro';
   }
 
   .diagram__node--client {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4375rem;
     color: var(--color-af-dim);
   }
 

@@ -104,6 +104,10 @@ function bottomY(el: Element, containerRect: DOMRect): number {
   return el.getBoundingClientRect().bottom - containerRect.top;
 }
 
+function leftX(el: Element, containerRect: DOMRect): number {
+  return el.getBoundingClientRect().left - containerRect.left;
+}
+
 function setTagState(el: HTMLElement, state: TagState): void {
   if (state) {
     el.dataset.state = state;
@@ -204,7 +208,53 @@ function buildCycleTimeline(cycle: Cycle, refs: Refs): gsap.core.Timeline {
     { height: 'auto', opacity: 1, duration: TIME.chatReveal, ease: 'power2.out' },
     t,
   );
-  t += TIME.chatReveal + TIME.chatHoldLong;
+  t += TIME.chatReveal + TIME.chatHoldShort;
+
+  // -- a small dot carries the request from the chat log to the AI
+  // Assistant box, which then "thinks" (spinner) before it decides on a
+  // tool call -- a beat between the user's message landing and the
+  // assistant's response appearing. --
+  tl.call(
+    () =>
+      gsap.set(dot, {
+        x: () => leftX(chatLines[0].wrapper, rect()),
+        y: () => centerY(chatLines[0].wrapper, rect()),
+      }),
+    undefined,
+    t,
+  );
+  tl.to(dot, { opacity: 1, duration: TIME.dotFade }, t);
+  t += TIME.dotFade;
+  tl.to(
+    dot,
+    {
+      x: () => centerX(client, rect()),
+      y: () => centerY(client, rect()),
+      duration: TIME.travelMed,
+      ease: 'power1.inOut',
+    },
+    t,
+  );
+  t += TIME.travelMed;
+  tl.call(
+    () => {
+      client.classList.add(ACTIVE_CLASS);
+      setTagState(client, 'checking');
+    },
+    undefined,
+    t,
+  );
+  tl.to(dot, { opacity: 0, duration: TIME.dotFade }, t);
+  t += TIME.dotFade + 0.55;
+  tl.call(
+    () => {
+      setTagState(client, '');
+      client.classList.remove(ACTIVE_CLASS);
+    },
+    undefined,
+    t,
+  );
+  t += 0.25;
 
   // -- chat: the assistant's resulting tool call --
   tl.call(() => (chatLines[1].text.textContent = cycle.aiCallText), undefined, t);
