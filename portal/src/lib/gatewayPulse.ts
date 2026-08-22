@@ -1,11 +1,12 @@
 /**
  * gatewayPulse.ts — the public landing page's one explanatory motion moment
- * for the "how it works" diagram: a small light travels AI Assistant -> MCP
- * Gateway -> a backend (Rucio), lighting up each box in turn, preceded by a
- * "user" / "tool call" exchange near the AI Assistant node. Purely
- * illustrative (every element it touches is aria-hidden) -- the diagram's
- * own labels already carry the real content; this just makes the request
- * flow legible at a glance.
+ * for the "how it works" diagram. A small light travels AI Assistant -> MCP
+ * Gateway -> a backend, lighting up boxes and gateway checks as it passes,
+ * alongside a small growing "chat log" beside the AI Assistant box. Three
+ * scripted cycles run back to back and then repeat: two successful calls
+ * (Rucio, HTCondor) and one denied at policy. Purely illustrative (every
+ * element it touches is aria-hidden) -- the diagram's own labels already
+ * carry the real content; this just makes the request flow legible.
  *
  * Gated the same way as the Overview hero's particle-track canvas: skipped
  * entirely under prefers-reduced-motion (this loop is decoration on top of
@@ -20,14 +21,79 @@ import { ScrollTrigger } from 'gsap/ScrollTrigger';
 gsap.registerPlugin(ScrollTrigger);
 
 const ACTIVE_CLASS = 'is-pulse-active';
+const DENIED_CLASS = 'is-pulse-denied';
 
-// Every position below is read fresh (via these functions, called from
-// GSAP's function-based tween values) at the moment each tween starts --
-// including every `repeat` iteration -- so a resize between loops is
-// picked up automatically without a separate resize listener.
+type TagState = '' | 'checking' | 'ok' | 'fail';
+type TagKey = 'auth' | 'policy' | 'audit' | 'broker';
+type TargetKey = 'rucio' | 'htcondor';
+
+interface Cycle {
+  userText: string;
+  aiCallText: string;
+  aiResultText: string;
+  tagOutcomes: Record<'auth' | 'policy' | 'audit', TagState>;
+  credentialLabel: string | null;
+  target: TargetKey | null;
+}
+
+const CYCLES: Cycle[] = [
+  {
+    userText: 'find me a dataset',
+    aiCallText: 'tool_call(rucio_list_dataset)',
+    aiResultText: 'Found 3 datasets...',
+    tagOutcomes: { auth: 'ok', policy: 'ok', audit: 'ok' },
+    credentialLabel: 'x509',
+    target: 'rucio',
+  },
+  {
+    userText: 'launch a batch job',
+    aiCallText: 'tool_call(condor_submit_job)',
+    aiResultText: 'Launched job 293813.0',
+    tagOutcomes: { auth: 'ok', policy: 'ok', audit: 'ok' },
+    credentialLabel: 'condor-token',
+    target: 'htcondor',
+  },
+  {
+    userText: 'Delete my /data datasets',
+    aiCallText: 'tool_call(fs_delete_dir)',
+    aiResultText: 'I am not authorized...',
+    tagOutcomes: { auth: 'ok', policy: 'fail', audit: 'fail' },
+    credentialLabel: null,
+    target: null,
+  },
+];
+
+// Timing constants (seconds) -- named so the sequence below reads as a
+// storyboard rather than a wall of magic numbers.
+const TIME = {
+  chatReveal: 0.3,
+  chatHoldShort: 0.55,
+  chatHoldLong: 0.7,
+  chatHoldFinal: 0.9,
+  chatCollapse: 0.4,
+  dotFade: 0.15,
+  travelShort: 0.3,
+  travelMed: 0.4,
+  travelLong: 0.55,
+  tagCheck: 0.22,
+  tagResolveHold: 0.18,
+  creditHold: 0.35,
+  arrivalHold: 0.45,
+  deniedGap: 0.15,
+};
+
+// Every position below is read fresh (via these, called from GSAP's
+// function-based tween values) at the moment each tween starts -- including
+// every `repeat` iteration -- so a resize between loops is picked up
+// automatically without a separate resize listener.
 function centerX(el: Element, containerRect: DOMRect): number {
   const r = el.getBoundingClientRect();
   return r.left + r.width / 2 - containerRect.left;
+}
+
+function centerY(el: Element, containerRect: DOMRect): number {
+  const r = el.getBoundingClientRect();
+  return r.top + r.height / 2 - containerRect.top;
 }
 
 function topY(el: Element, containerRect: DOMRect): number {
@@ -36,6 +102,396 @@ function topY(el: Element, containerRect: DOMRect): number {
 
 function bottomY(el: Element, containerRect: DOMRect): number {
   return el.getBoundingClientRect().bottom - containerRect.top;
+}
+
+function setTagState(el: HTMLElement, state: TagState): void {
+  if (state) {
+    el.dataset.state = state;
+  } else {
+    delete el.dataset.state;
+  }
+}
+
+interface ChatLine {
+  wrapper: HTMLElement;
+  text: HTMLElement;
+}
+
+interface Refs {
+  root: HTMLElement;
+  client: HTMLElement;
+  gateway: HTMLElement;
+  fanout: HTMLElement;
+  credential: HTMLElement;
+  credentialLabel: HTMLElement;
+  dot: HTMLElement;
+  tags: Record<TagKey, HTMLElement>;
+  leaves: Record<TargetKey, HTMLElement>;
+  chatLines: [ChatLine, ChatLine, ChatLine];
+}
+
+function resolveRefs(root: HTMLElement): Refs | null {
+  const client = root.querySelector<HTMLElement>('[data-pulse-node="client"]');
+  const gateway = root.querySelector<HTMLElement>('[data-pulse-node="gateway"]');
+  const fanout = root.querySelector<HTMLElement>('.diagram__fanout');
+  const credential = root.querySelector<HTMLElement>('[data-pulse-node="credential"]');
+  const credentialLabel = root.querySelector<HTMLElement>('[data-credential-label]');
+  const dot = root.querySelector<HTMLElement>('[data-pulse-dot]');
+  const rucio = root.querySelector<HTMLElement>('[data-pulse-node="rucio"]');
+  const htcondor = root.querySelector<HTMLElement>('[data-pulse-node="htcondor"]');
+
+  const tagKeys: TagKey[] = ['auth', 'policy', 'audit', 'broker'];
+  const tags = {} as Record<TagKey, HTMLElement>;
+  for (const key of tagKeys) {
+    const el = root.querySelector<HTMLElement>(`[data-gateway-tag="${key}"]`);
+    if (!el) return null;
+    tags[key] = el;
+  }
+
+  const chatLineEls = root.querySelectorAll<HTMLElement>('[data-chat-line]');
+  if (chatLineEls.length !== 3) return null;
+  const chatLines = Array.from(chatLineEls).map((wrapper) => {
+    const text = wrapper.querySelector<HTMLElement>('[data-chat-text]');
+    return text ? { wrapper, text } : null;
+  });
+  if (chatLines.some((l) => l === null)) return null;
+
+  if (
+    !client ||
+    !gateway ||
+    !fanout ||
+    !credential ||
+    !credentialLabel ||
+    !dot ||
+    !rucio ||
+    !htcondor
+  ) {
+    return null;
+  }
+
+  return {
+    root,
+    client,
+    gateway,
+    fanout,
+    credential,
+    credentialLabel,
+    dot,
+    tags,
+    leaves: { rucio, htcondor },
+    chatLines: chatLines as [ChatLine, ChatLine, ChatLine],
+  };
+}
+
+/** Builds one cycle's fully-scripted timeline. Every position is a function
+ * re-evaluated at play time, so this is safe to build once and let a parent
+ * timeline repeat indefinitely. */
+function buildCycleTimeline(cycle: Cycle, refs: Refs): gsap.core.Timeline {
+  const tl = gsap.timeline();
+  const rect = () => refs.root.getBoundingClientRect();
+  const { client, gateway, fanout, credential, credentialLabel, dot, tags, chatLines } = refs;
+  let t = 0;
+
+  // -- chat: user's request --
+  // Text is set inside a .call() rather than assigned directly here --
+  // buildCycleTimeline() runs for all three cycles up front (see the
+  // `for` loop below), and the three cycles share the same DOM elements,
+  // so a direct assignment here would have the last cycle built silently
+  // overwrite the first two before anything ever plays.
+  tl.call(() => (chatLines[0].text.textContent = cycle.userText), undefined, t);
+  tl.to(
+    chatLines[0].wrapper,
+    { height: 'auto', opacity: 1, duration: TIME.chatReveal, ease: 'power2.out' },
+    t,
+  );
+  t += TIME.chatReveal + TIME.chatHoldLong;
+
+  // -- chat: the assistant's resulting tool call --
+  tl.call(() => (chatLines[1].text.textContent = cycle.aiCallText), undefined, t);
+  tl.to(
+    chatLines[1].wrapper,
+    { height: 'auto', opacity: 1, duration: TIME.chatReveal, ease: 'power2.out' },
+    t,
+  );
+  t += TIME.chatReveal + TIME.chatHoldShort;
+
+  // -- the call actually reaching the gateway: AI Assistant -> Gateway --
+  tl.call(
+    () => {
+      gsap.set(dot, { x: () => centerX(client, rect()), y: () => bottomY(client, rect()) });
+      client.classList.add(ACTIVE_CLASS);
+    },
+    undefined,
+    t,
+  );
+  tl.to(dot, { opacity: 1, duration: TIME.dotFade }, t);
+  t += TIME.dotFade;
+  tl.to(
+    dot,
+    { y: () => topY(gateway, rect()), duration: TIME.travelLong, ease: 'power1.inOut' },
+    t,
+  );
+  t += TIME.travelLong;
+  tl.call(
+    () => {
+      client.classList.remove(ACTIVE_CLASS);
+      gateway.classList.add(ACTIVE_CLASS);
+    },
+    undefined,
+    t,
+  );
+  tl.to(dot, { opacity: 0, duration: TIME.dotFade }, t);
+  t += TIME.dotFade + 0.1;
+
+  // -- gateway checks: auth, policy, audit, in order --
+  let denied = false;
+  for (const key of ['auth', 'policy', 'audit'] as const) {
+    const outcome = cycle.tagOutcomes[key];
+    const el = tags[key];
+    tl.call(() => setTagState(el, 'checking'), undefined, t);
+    t += TIME.tagCheck;
+    tl.call(() => setTagState(el, outcome), undefined, t);
+    t += TIME.tagResolveHold;
+    if (outcome === 'fail') denied = true;
+  }
+
+  if (denied) {
+    // Rejected before ever reaching a backend -- the gateway flags red and
+    // the pulse simply returns to the AI Assistant.
+    tl.call(
+      () => {
+        gateway.classList.remove(ACTIVE_CLASS);
+        gateway.classList.add(DENIED_CLASS);
+      },
+      undefined,
+      t,
+    );
+    t += TIME.deniedGap;
+
+    tl.call(
+      () => gsap.set(dot, { x: () => centerX(gateway, rect()), y: () => topY(gateway, rect()) }),
+      undefined,
+      t,
+    );
+    tl.to(dot, { opacity: 1, duration: TIME.dotFade }, t);
+    t += TIME.dotFade;
+    tl.to(
+      dot,
+      { y: () => bottomY(client, rect()), duration: TIME.travelLong, ease: 'power1.inOut' },
+      t,
+    );
+    t += TIME.travelLong;
+    tl.call(
+      () => {
+        gateway.classList.remove(DENIED_CLASS);
+        client.classList.add(ACTIVE_CLASS);
+      },
+      undefined,
+      t,
+    );
+    tl.to(dot, { opacity: 0, duration: TIME.dotFade }, t);
+    t += TIME.dotFade + 0.1;
+  } else {
+    // Authorized -- broker mints a credential (a round trip to the
+    // credential box, alias for x509/condor-token/etc.), then the pulse
+    // continues on to the target backend.
+    const brokerEl = tags.broker;
+    tl.call(() => setTagState(brokerEl, 'checking'), undefined, t);
+    t += 0.15;
+
+    tl.call(
+      () => {
+        credentialLabel.textContent = cycle.credentialLabel ?? '';
+        const gw = gateway.getBoundingClientRect();
+        const r = rect();
+        gsap.set(credential, {
+          x: gw.right - r.left + 20,
+          y: gw.top - r.top + gw.height / 2 - credential.offsetHeight / 2,
+        });
+      },
+      undefined,
+      t,
+    );
+    tl.to(credential, { opacity: 1, duration: 0.2 }, t);
+    t += 0.2;
+
+    tl.call(
+      () =>
+        gsap.set(dot, {
+          x: () => centerX(gateway, rect()) + gateway.offsetWidth / 2,
+          y: () => centerY(gateway, rect()),
+        }),
+      undefined,
+      t,
+    );
+    tl.to(dot, { opacity: 1, duration: TIME.dotFade }, t);
+    t += TIME.dotFade;
+    tl.to(
+      dot,
+      {
+        x: () => centerX(credential, rect()),
+        y: () => centerY(credential, rect()),
+        duration: TIME.travelMed,
+        ease: 'power1.inOut',
+      },
+      t,
+    );
+    t += TIME.travelMed;
+    tl.call(() => credential.classList.add(ACTIVE_CLASS), undefined, t);
+    tl.to(dot, { opacity: 0, duration: TIME.dotFade }, t);
+    t += TIME.dotFade + TIME.creditHold;
+
+    tl.call(
+      () =>
+        gsap.set(dot, {
+          x: () => centerX(credential, rect()),
+          y: () => centerY(credential, rect()),
+        }),
+      undefined,
+      t,
+    );
+    tl.to(dot, { opacity: 1, duration: TIME.dotFade }, t);
+    t += TIME.dotFade;
+    tl.to(
+      dot,
+      {
+        x: () => centerX(gateway, rect()) + gateway.offsetWidth / 2,
+        y: () => centerY(gateway, rect()),
+        duration: TIME.travelMed,
+        ease: 'power1.inOut',
+      },
+      t,
+    );
+    t += TIME.travelMed;
+    tl.call(
+      () => {
+        credential.classList.remove(ACTIVE_CLASS);
+        setTagState(brokerEl, 'ok');
+      },
+      undefined,
+      t,
+    );
+    tl.to(dot, { opacity: 0, duration: TIME.dotFade }, t);
+    tl.to(credential, { opacity: 0, duration: 0.3 }, t);
+    t += 0.3;
+
+    const target = cycle.target ? refs.leaves[cycle.target] : null;
+    if (target) {
+      tl.call(
+        () =>
+          gsap.set(dot, { x: () => centerX(gateway, rect()), y: () => bottomY(gateway, rect()) }),
+        undefined,
+        t,
+      );
+      tl.to(dot, { opacity: 1, duration: TIME.dotFade }, t);
+      t += TIME.dotFade;
+      tl.to(
+        dot,
+        { y: () => topY(fanout, rect()), duration: TIME.travelShort, ease: 'power1.inOut' },
+        t,
+      );
+      t += TIME.travelShort;
+      tl.to(
+        dot,
+        { x: () => centerX(target, rect()), duration: TIME.travelMed, ease: 'power1.inOut' },
+        t,
+      );
+      t += TIME.travelMed;
+      tl.to(
+        dot,
+        { y: () => topY(target, rect()), duration: TIME.travelShort, ease: 'power1.inOut' },
+        t,
+      );
+      t += TIME.travelShort;
+      tl.call(
+        () => {
+          target.classList.add(ACTIVE_CLASS);
+          setTagState(target, 'checking');
+        },
+        undefined,
+        t,
+      );
+      tl.to(dot, { opacity: 0, duration: TIME.dotFade }, t);
+      t += TIME.dotFade + 0.3;
+      tl.call(() => setTagState(target, 'ok'), undefined, t);
+      t += TIME.arrivalHold;
+
+      // -- the return trip: target -> bus -> gateway -> AI Assistant --
+      tl.call(
+        () => gsap.set(dot, { x: () => centerX(target, rect()), y: () => topY(target, rect()) }),
+        undefined,
+        t,
+      );
+      tl.to(dot, { opacity: 1, duration: TIME.dotFade }, t);
+      t += TIME.dotFade;
+      tl.call(() => target.classList.remove(ACTIVE_CLASS), undefined, t);
+      tl.to(
+        dot,
+        { y: () => topY(fanout, rect()), duration: TIME.travelShort, ease: 'power1.inOut' },
+        t,
+      );
+      t += TIME.travelShort;
+      tl.to(
+        dot,
+        { x: () => centerX(gateway, rect()), duration: TIME.travelMed, ease: 'power1.inOut' },
+        t,
+      );
+      t += TIME.travelMed;
+      tl.to(
+        dot,
+        { y: () => bottomY(gateway, rect()), duration: TIME.travelShort, ease: 'power1.inOut' },
+        t,
+      );
+      t += TIME.travelShort;
+      tl.call(() => gateway.classList.add(ACTIVE_CLASS), undefined, t);
+      t += 0.15;
+      tl.to(
+        dot,
+        { y: () => bottomY(client, rect()), duration: TIME.travelLong, ease: 'power1.inOut' },
+        t,
+      );
+      t += TIME.travelLong;
+      tl.call(
+        () => {
+          gateway.classList.remove(ACTIVE_CLASS);
+          client.classList.add(ACTIVE_CLASS);
+        },
+        undefined,
+        t,
+      );
+      tl.to(dot, { opacity: 0, duration: TIME.dotFade }, t);
+      t += TIME.dotFade + 0.1;
+    }
+  }
+
+  // -- chat: the assistant's final answer --
+  tl.call(() => (chatLines[2].text.textContent = cycle.aiResultText), undefined, t);
+  tl.to(
+    chatLines[2].wrapper,
+    { height: 'auto', opacity: 1, duration: TIME.chatReveal, ease: 'power2.out' },
+    t,
+  );
+  t += TIME.chatReveal + TIME.chatHoldFinal;
+
+  // -- reset: fade the chat log and clear every highlight/tag for the next cycle --
+  tl.call(() => client.classList.remove(ACTIVE_CLASS), undefined, t);
+  tl.to(
+    chatLines.map((l) => l.wrapper),
+    { height: 0, opacity: 0, duration: TIME.chatCollapse, ease: 'power2.in' },
+    t,
+  );
+  tl.call(
+    () => {
+      setTagState(tags.auth, '');
+      setTagState(tags.policy, '');
+      setTagState(tags.audit, '');
+      setTagState(tags.broker, '');
+      if (cycle.target) setTagState(refs.leaves[cycle.target], '');
+    },
+    undefined,
+    t,
+  );
+  return tl;
 }
 
 /**
@@ -49,62 +505,26 @@ export function initGatewayPulse(root: HTMLElement): () => void {
     return () => {};
   }
 
-  const client = root.querySelector<HTMLElement>('[data-pulse-node="client"]');
-  const gateway = root.querySelector<HTMLElement>('[data-pulse-node="gateway"]');
-  const rucio = root.querySelector<HTMLElement>('[data-pulse-node="rucio"]');
-  const fanout = root.querySelector<HTMLElement>('.diagram__fanout');
-  const dot = root.querySelector<HTMLElement>('[data-pulse-dot]');
-  const userCallout = root.querySelector<HTMLElement>('[data-pulse-callout="user"]');
-  const toolCallout = root.querySelector<HTMLElement>('[data-pulse-callout="tool"]');
+  const refs = resolveRefs(root);
+  if (!refs) return () => {};
 
-  if (!client || !gateway || !rucio || !fanout || !dot || !userCallout || !toolCallout) {
-    return () => {};
+  const master = gsap.timeline({ repeat: -1, repeatDelay: 1.3, paused: true });
+  for (const cycle of CYCLES) {
+    master.add(buildCycleTimeline(cycle, refs));
   }
-
-  const rect = () => root.getBoundingClientRect();
-  const calloutX = () => centerX(client, rect()) + client.offsetWidth / 2 + 16;
-
-  const tl = gsap.timeline({ repeat: -1, repeatDelay: 1.2, paused: true });
-
-  // "user: find me a dataset" -> "tool call: rucio_list_dataset", both
-  // anchored beside the AI Assistant box -- the tool call is the assistant
-  // deciding to act; the pulse below is that call actually reaching the
-  // gateway and the backend.
-  tl.set([userCallout, toolCallout], { x: calloutX, y: () => topY(client, rect()) })
-    .to(userCallout, { opacity: 1, duration: 0.3, ease: 'power2.out' })
-    .to(userCallout, { opacity: 0, duration: 0.25, ease: 'power2.in' }, '+=0.8')
-    .to(toolCallout, { opacity: 1, duration: 0.25, ease: 'power2.out' }, '<')
-    .to(toolCallout, { opacity: 0, duration: 0.25, ease: 'power2.in' }, '+=0.8')
-    .call(() => client.classList.add(ACTIVE_CLASS))
-    .set(dot, { x: () => centerX(client, rect()), y: () => bottomY(client, rect()) })
-    .to(dot, { opacity: 1, duration: 0.2 })
-    .to(dot, { y: () => topY(gateway, rect()), duration: 0.6, ease: 'power1.inOut' })
-    .call(() => {
-      client.classList.remove(ACTIVE_CLASS);
-      gateway.classList.add(ACTIVE_CLASS);
-    })
-    .to(dot, { y: () => topY(fanout, rect()), duration: 0.35, ease: 'power1.inOut' }, '+=0.2')
-    .to(dot, { x: () => centerX(rucio, rect()), duration: 0.45, ease: 'power1.inOut' })
-    .to(dot, { y: () => topY(rucio, rect()), duration: 0.35, ease: 'power1.inOut' })
-    .call(() => {
-      gateway.classList.remove(ACTIVE_CLASS);
-      rucio.classList.add(ACTIVE_CLASS);
-    })
-    .to(dot, { opacity: 0, duration: 0.4, ease: 'power2.in' }, '+=0.6')
-    .call(() => rucio.classList.remove(ACTIVE_CLASS));
 
   const trigger = ScrollTrigger.create({
     trigger: root,
     start: 'top 85%',
     end: 'bottom 15%',
-    onEnter: () => tl.play(),
-    onEnterBack: () => tl.play(),
-    onLeave: () => tl.pause(),
-    onLeaveBack: () => tl.pause(),
+    onEnter: () => master.play(),
+    onEnterBack: () => master.play(),
+    onLeave: () => master.pause(),
+    onLeaveBack: () => master.pause(),
   });
 
   return function cleanup(): void {
-    tl.kill();
+    master.kill();
     trigger.kill();
   };
 }
