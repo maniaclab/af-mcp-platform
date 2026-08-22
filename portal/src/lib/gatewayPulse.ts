@@ -64,26 +64,34 @@ const CYCLES: Cycle[] = [
 ];
 
 // Timing constants (seconds) -- named so the sequence below reads as a
-// storyboard rather than a wall of magic numbers.
+// storyboard rather than a wall of magic numbers. Grouped by the beat they
+// belong to, in roughly the order that beat first appears in a cycle.
 const TIME = {
-  chatReveal: 0.3,
-  chatHoldShort: 0.55,
-  chatHoldLong: 0.7,
-  chatHoldFinal: 1.9,
-  chatCollapse: 0.4,
-  dotFade: 0.15,
-  travelShort: 0.3,
-  travelMed: 0.4,
-  travelLong: 0.55,
-  tagCheck: 0.22,
-  tagResolveHold: 0.18,
-  creditHold: 0.35,
-  arrivalHold: 0.45,
-  // Long enough for the DENIED_CLASS's 3x160ms CSS buzz animation
-  // (index.astro's diagram-denied-buzz keyframe) to finish playing before
-  // the class is removed and the pulse starts back toward the AI
-  // Assistant box.
-  deniedGap: 0.55,
+  // Chat log
+  chatReveal: 0.3, // a line's own height/opacity reveal
+  chatHoldShort: 0.55, // pause after the USER line, and after the tool_call line
+  chatHoldFinal: 1.9, // pause after the final result line, before the reset
+  chatCollapse: 0.4, // the whole log folding away at the reset
+  thinkHold: 0.8, // "AI is deciding" -- between arriving at AI Assistant and the tool_call line appearing
+  clearOffset: 0.12, // how far into the final return leg the spinner/glow actually clears (see buildCycleTimeline's last section)
+
+  // The pulse dot
+  dotFade: 0.15, // its own appear/vanish fade
+  travelShort: 0.3, // a short hop (e.g. gateway <-> the fanout bus)
+  travelMed: 0.4, // a medium hop (e.g. across the bus to a leaf's x, or to/from the credential box)
+  travelLong: 0.55, // the long hop between AI Assistant and the gateway
+  settleGap: 0.1, // a brief beat after a vanish, before the next phase begins
+
+  // Gateway tag checks (auth/policy/audit) and the credential round trip
+  tagCheck: 0.22, // a tag's own spinner duration
+  tagResolveHold: 0.18, // pause after a tag resolves, before the next one starts checking
+  deniedGap: 0.55, // long enough for DENIED_CLASS's 3x160ms CSS buzz (index.astro's diagram-denied-buzz keyframe) to finish before it's removed
+  brokerCheckDelay: 0.15, // pause after Broker starts spinning, before the credential box appears
+  credentialAppear: 0.2, // the credential box's own fade-in
+  creditHold: 0.35, // "minting" pause once the pulse arrives at the credential box
+  credentialVanish: 0.3, // the credential box's own fade-out, once the broker check resolves
+  targetCheckHold: 0.3, // a backend's own spinner duration before it resolves to ok
+  arrivalHold: 0.45, // pause after a backend resolves to ok, before the return trip starts
 };
 
 // Every position below is read fresh (via these, called from GSAP's
@@ -110,6 +118,10 @@ function bottomY(el: Element, containerRect: DOMRect): number {
 
 function leftX(el: Element, containerRect: DOMRect): number {
   return el.getBoundingClientRect().left - containerRect.left;
+}
+
+function rightX(el: Element, containerRect: DOMRect): number {
+  return el.getBoundingClientRect().right - containerRect.left;
 }
 
 function setTagState(el: HTMLElement, state: TagState): void {
@@ -191,306 +203,272 @@ function resolveRefs(root: HTMLElement): Refs | null {
   };
 }
 
+/**
+ * A tiny position-tracking wrapper around a GSAP timeline. Every method
+ * schedules its animation at the sequencer's own time cursor and advances
+ * that cursor by the animation's duration, so a cycle's script below reads
+ * as a plain top-to-bottom list of "then this happens" beats instead of a
+ * hand-maintained `t += ...` after every single call -- the actual source
+ * of a couple of real timing bugs caught by hand while this animation was
+ * first built. `.time` is only needed for the one case (the final return
+ * leg's delayed clear) where something must happen partway *into* an
+ * animation rather than at its start or end.
+ */
+class Sequencer {
+  private t = 0;
+
+  constructor(private readonly tl: gsap.core.Timeline) {}
+
+  get time(): number {
+    return this.t;
+  }
+
+  /** Runs `fn` at the current time; doesn't advance the cursor. */
+  mark(fn: () => void): this {
+    this.tl.call(fn, undefined, this.t);
+    return this;
+  }
+
+  /** Runs `fn` `offset` seconds into whatever's currently scheduled, without moving the cursor. */
+  markAt(fn: () => void, offset: number): this {
+    this.tl.call(fn, undefined, this.t + offset);
+    return this;
+  }
+
+  /** Advances the cursor with nothing scheduled -- a pure hold. */
+  wait(duration: number): this {
+    this.t += duration;
+    return this;
+  }
+
+  /** A generic tween at the current time, advancing the cursor by `duration`. */
+  tween(target: gsap.TweenTarget, vars: gsap.TweenVars, duration: number): this {
+    this.tl.to(target, { ...vars, duration }, this.t);
+    this.t += duration;
+    return this;
+  }
+
+  /** Same as `tween`, but leaves the cursor where it was -- for the one
+   * place two independent tweens (of differing duration) need to start
+   * together, where the caller advances the cursor itself afterward. */
+  tweenConcurrent(target: gsap.TweenTarget, vars: gsap.TweenVars, duration: number): this {
+    this.tl.to(target, { ...vars, duration }, this.t);
+    return this;
+  }
+
+  /** The pulse dot's x/y travel -- every dot movement in this file uses the same ease. */
+  moveTo(el: HTMLElement, vars: { x?: () => number; y?: () => number }, duration: number): this {
+    return this.tween(el, { ...vars, ease: 'power1.inOut' }, duration);
+  }
+
+  /** Instantly repositions `el` (while invisible) then fades it in over `TIME.dotFade`. */
+  appear(el: HTMLElement, x: () => number, y: () => number): this {
+    this.mark(() => gsap.set(el, { x, y }));
+    return this.tween(el, { opacity: 1 }, TIME.dotFade);
+  }
+
+  /** Fades `el` out in place over `TIME.dotFade`. */
+  vanish(el: HTMLElement): this {
+    return this.tween(el, { opacity: 0 }, TIME.dotFade);
+  }
+
+  /** The shared "spinner, then resolve" beat used by every gateway tag and backend check. */
+  checkTag(el: HTMLElement, outcome: TagState): this {
+    return this.mark(() => setTagState(el, 'checking'))
+      .wait(TIME.tagCheck)
+      .mark(() => setTagState(el, outcome))
+      .wait(TIME.tagResolveHold);
+  }
+}
+
 /** Builds one cycle's fully-scripted timeline. Every position is a function
  * re-evaluated at play time, so this is safe to build once and let a parent
  * timeline repeat indefinitely. */
 function buildCycleTimeline(cycle: Cycle, refs: Refs): gsap.core.Timeline {
   const tl = gsap.timeline();
+  const seq = new Sequencer(tl);
   const rect = () => refs.root.getBoundingClientRect();
   const { client, gateway, fanout, credential, credentialLabel, dot, tags, chatLines } = refs;
-  let t = 0;
+
+  // Text is set inside a .call() rather than assigned directly here --
+  // buildCycleTimeline() runs for all three cycles up front (see the loop
+  // in initGatewayPulse), and the three cycles share the same DOM
+  // elements, so a direct assignment here would have the last cycle built
+  // silently overwrite the first two's text before anything ever played.
+  function revealChatLine(index: 0 | 1 | 2, text: string): void {
+    seq.mark(() => (chatLines[index].text.textContent = text));
+    seq.tween(
+      chatLines[index].wrapper,
+      { height: 'auto', opacity: 1, ease: 'power2.out' },
+      TIME.chatReveal,
+    );
+  }
 
   // -- chat: user's request --
-  // Text is set inside a .call() rather than assigned directly here --
-  // buildCycleTimeline() runs for all three cycles up front (see the
-  // `for` loop below), and the three cycles share the same DOM elements,
-  // so a direct assignment here would have the last cycle built silently
-  // overwrite the first two before anything ever plays.
-  tl.call(() => (chatLines[0].text.textContent = cycle.userText), undefined, t);
-  tl.to(
-    chatLines[0].wrapper,
-    { height: 'auto', opacity: 1, duration: TIME.chatReveal, ease: 'power2.out' },
-    t,
-  );
-  t += TIME.chatReveal + TIME.chatHoldShort;
+  revealChatLine(0, cycle.userText);
+  seq.wait(TIME.chatHoldShort);
 
   // -- a small dot carries the request from the chat log to the AI
   // Assistant box, which then "thinks" (spinner) before it decides on a
   // tool call -- a beat between the user's message landing and the
-  // assistant's response appearing. --
-  tl.call(
-    () =>
-      gsap.set(dot, {
-        x: () => leftX(chatLines[0].wrapper, rect()),
-        y: () => centerY(chatLines[0].wrapper, rect()),
-      }),
-    undefined,
-    t,
-  );
-  tl.to(dot, { opacity: 1, duration: TIME.dotFade }, t);
-  t += TIME.dotFade;
-  tl.to(
+  // assistant's response appearing. Both the spinner and the border glow
+  // deliberately keep going past this beat -- the box is still "occupied"
+  // through the tool_call line below, and only clear once the pulse
+  // actually departs toward the gateway, much later. --
+  seq.appear(
     dot,
-    {
-      x: () => centerX(client, rect()),
-      y: () => centerY(client, rect()),
-      duration: TIME.travelMed,
-      ease: 'power1.inOut',
-    },
-    t,
+    () => leftX(chatLines[0].wrapper, rect()),
+    () => centerY(chatLines[0].wrapper, rect()),
   );
-  t += TIME.travelMed;
-  tl.call(
-    () => {
-      client.classList.add(ACTIVE_CLASS);
-      setTagState(client, 'checking');
-    },
-    undefined,
-    t,
+  seq.moveTo(
+    dot,
+    { x: () => centerX(client, rect()), y: () => centerY(client, rect()) },
+    TIME.travelMed,
   );
-  tl.to(dot, { opacity: 0, duration: TIME.dotFade }, t);
-  // Both the spinner and the border glow deliberately keep going past this
-  // point -- the box is still "occupied" while the assistant is deciding
-  // what to do (through the tool_call line below), and only clear once the
-  // pulse actually departs toward the gateway, later on.
-  t += TIME.dotFade + 0.55 + 0.25;
+  seq.mark(() => {
+    client.classList.add(ACTIVE_CLASS);
+    setTagState(client, 'checking');
+  });
+  seq.vanish(dot);
+  seq.wait(TIME.thinkHold);
 
   // -- chat: the assistant's resulting tool call --
-  tl.call(() => (chatLines[1].text.textContent = cycle.aiCallText), undefined, t);
-  tl.to(
-    chatLines[1].wrapper,
-    { height: 'auto', opacity: 1, duration: TIME.chatReveal, ease: 'power2.out' },
-    t,
-  );
-  t += TIME.chatReveal + TIME.chatHoldShort;
+  revealChatLine(1, cycle.aiCallText);
+  seq.wait(TIME.chatHoldShort);
 
   // -- the call actually reaching the gateway: AI Assistant -> Gateway --
-  tl.call(
-    () => gsap.set(dot, { x: () => centerX(client, rect()), y: () => bottomY(client, rect()) }),
-    undefined,
-    t,
+  seq.appear(
+    dot,
+    () => centerX(client, rect()),
+    () => bottomY(client, rect()),
   );
-  tl.to(dot, { opacity: 1, duration: TIME.dotFade }, t);
-  t += TIME.dotFade;
   // The box stays lit until this exact moment -- the pulse is now actually
   // leaving it -- rather than clearing only once the dot lands elsewhere.
-  tl.call(() => client.classList.remove(ACTIVE_CLASS), undefined, t);
-  tl.to(
-    dot,
-    { y: () => topY(gateway, rect()), duration: TIME.travelLong, ease: 'power1.inOut' },
-    t,
-  );
-  t += TIME.travelLong;
-  tl.call(() => gateway.classList.add(ACTIVE_CLASS), undefined, t);
-  tl.to(dot, { opacity: 0, duration: TIME.dotFade }, t);
-  t += TIME.dotFade + 0.1;
+  seq.mark(() => client.classList.remove(ACTIVE_CLASS));
+  seq.moveTo(dot, { y: () => topY(gateway, rect()) }, TIME.travelLong);
+  seq.mark(() => gateway.classList.add(ACTIVE_CLASS));
+  seq.vanish(dot);
+  seq.wait(TIME.settleGap);
 
   // -- gateway checks: auth, policy, audit, in order --
   let denied = false;
   for (const key of ['auth', 'policy', 'audit'] as const) {
     const outcome = cycle.tagOutcomes[key];
-    const el = tags[key];
-    tl.call(() => setTagState(el, 'checking'), undefined, t);
-    t += TIME.tagCheck;
-    tl.call(() => setTagState(el, outcome), undefined, t);
-    t += TIME.tagResolveHold;
+    seq.checkTag(tags[key], outcome);
     if (outcome === 'fail') denied = true;
   }
 
   if (denied) {
-    // Rejected before ever reaching a backend -- the gateway flags red and
-    // the pulse simply returns to the AI Assistant.
-    tl.call(
-      () => {
-        gateway.classList.remove(ACTIVE_CLASS);
-        gateway.classList.add(DENIED_CLASS);
-      },
-      undefined,
-      t,
+    // Rejected before ever reaching a backend -- the gateway buzzes red
+    // and the pulse simply returns to the AI Assistant, with no highlight
+    // there either (same reasoning as the authorized cycles' final leg,
+    // below): it's just passing through on the way back.
+    seq.mark(() => {
+      gateway.classList.remove(ACTIVE_CLASS);
+      gateway.classList.add(DENIED_CLASS);
+    });
+    seq.wait(TIME.deniedGap);
+    seq.appear(
+      dot,
+      () => centerX(gateway, rect()),
+      () => topY(gateway, rect()),
     );
-    t += TIME.deniedGap;
-
-    tl.call(
-      () => gsap.set(dot, { x: () => centerX(gateway, rect()), y: () => topY(gateway, rect()) }),
-      undefined,
-      t,
-    );
-    tl.to(dot, { opacity: 1, duration: TIME.dotFade }, t);
-    t += TIME.dotFade;
-    tl.call(() => gateway.classList.remove(DENIED_CLASS), undefined, t);
+    seq.mark(() => gateway.classList.remove(DENIED_CLASS));
     // Targets centerY, not bottomY -- the incoming chat->AI Assistant leg
     // (above) already arrives at centerY, and this return trip should
     // land on that same horizontal line rather than a lower one.
-    tl.to(
-      dot,
-      { y: () => centerY(client, rect()), duration: TIME.travelLong, ease: 'power1.inOut' },
-      t,
-    );
-    t += TIME.travelLong;
-    // No highlight here either -- same reasoning as the authorized cycles'
-    // final leg (see below): the dot stays visible and continues straight
-    // on into the shared "response completes the loop" leg, which is what
-    // clears the spinner, right as the pulse starts moving again.
+    seq.moveTo(dot, { y: () => centerY(client, rect()) }, TIME.travelLong);
   } else {
     // Authorized -- broker mints a credential (a round trip to the
     // credential box, alias for x509/condor-token/etc.), then the pulse
     // continues on to the target backend.
     const brokerEl = tags.broker;
-    tl.call(() => setTagState(brokerEl, 'checking'), undefined, t);
-    t += 0.15;
+    seq.mark(() => setTagState(brokerEl, 'checking'));
+    seq.wait(TIME.brokerCheckDelay);
 
-    tl.call(
-      () => {
-        credentialLabel.textContent = cycle.credentialLabel ?? '';
-        const gw = gateway.getBoundingClientRect();
-        const r = rect();
-        gsap.set(credential, {
-          x: gw.right - r.left + 20,
-          y: gw.top - r.top + gw.height / 2 - credential.offsetHeight / 2,
-        });
-      },
-      undefined,
-      t,
-    );
-    tl.to(credential, { opacity: 1, duration: 0.2 }, t);
-    t += 0.2;
+    seq.mark(() => {
+      credentialLabel.textContent = cycle.credentialLabel ?? '';
+      const gw = gateway.getBoundingClientRect();
+      const r = rect();
+      gsap.set(credential, {
+        x: gw.right - r.left + 20,
+        y: gw.top - r.top + gw.height / 2 - credential.offsetHeight / 2,
+      });
+    });
+    seq.tween(credential, { opacity: 1 }, TIME.credentialAppear);
 
-    tl.call(
-      () =>
-        gsap.set(dot, {
-          x: () => centerX(gateway, rect()) + gateway.offsetWidth / 2,
-          y: () => centerY(gateway, rect()),
-        }),
-      undefined,
-      t,
-    );
-    tl.to(dot, { opacity: 1, duration: TIME.dotFade }, t);
-    t += TIME.dotFade;
-    tl.to(
+    // -- gateway <-> credential round trip --
+    seq.appear(
       dot,
-      {
-        x: () => centerX(credential, rect()),
-        y: () => centerY(credential, rect()),
-        duration: TIME.travelMed,
-        ease: 'power1.inOut',
-      },
-      t,
+      () => rightX(gateway, rect()),
+      () => centerY(gateway, rect()),
     );
-    t += TIME.travelMed;
-    tl.call(() => credential.classList.add(ACTIVE_CLASS), undefined, t);
-    tl.to(dot, { opacity: 0, duration: TIME.dotFade }, t);
-    t += TIME.dotFade + TIME.creditHold;
-
-    tl.call(
-      () =>
-        gsap.set(dot, {
-          x: () => centerX(credential, rect()),
-          y: () => centerY(credential, rect()),
-        }),
-      undefined,
-      t,
-    );
-    tl.to(dot, { opacity: 1, duration: TIME.dotFade }, t);
-    t += TIME.dotFade;
-    tl.call(() => credential.classList.remove(ACTIVE_CLASS), undefined, t);
-    tl.to(
+    seq.moveTo(
       dot,
-      {
-        x: () => centerX(gateway, rect()) + gateway.offsetWidth / 2,
-        y: () => centerY(gateway, rect()),
-        duration: TIME.travelMed,
-        ease: 'power1.inOut',
-      },
-      t,
+      { x: () => centerX(credential, rect()), y: () => centerY(credential, rect()) },
+      TIME.travelMed,
     );
-    t += TIME.travelMed;
-    tl.call(() => setTagState(brokerEl, 'ok'), undefined, t);
-    tl.to(dot, { opacity: 0, duration: TIME.dotFade }, t);
-    tl.to(credential, { opacity: 0, duration: 0.3 }, t);
-    t += 0.3;
+    seq.mark(() => credential.classList.add(ACTIVE_CLASS));
+    seq.vanish(dot);
+    seq.wait(TIME.creditHold);
+
+    seq.appear(
+      dot,
+      () => centerX(credential, rect()),
+      () => centerY(credential, rect()),
+    );
+    seq.mark(() => credential.classList.remove(ACTIVE_CLASS));
+    seq.moveTo(
+      dot,
+      { x: () => rightX(gateway, rect()), y: () => centerY(gateway, rect()) },
+      TIME.travelMed,
+    );
+    seq.mark(() => setTagState(brokerEl, 'ok'));
+    // Both fades start together (the dot arriving back, the credential box
+    // itself disappearing) -- tweenConcurrent leaves the cursor where it
+    // was so the following advancing tween sets the pace for both.
+    seq.tweenConcurrent(dot, { opacity: 0 }, TIME.dotFade);
+    seq.tween(credential, { opacity: 0 }, TIME.credentialVanish);
 
     const target = cycle.target ? refs.leaves[cycle.target] : null;
     if (target) {
-      tl.call(
-        () =>
-          gsap.set(dot, { x: () => centerX(gateway, rect()), y: () => bottomY(gateway, rect()) }),
-        undefined,
-        t,
-      );
-      tl.to(dot, { opacity: 1, duration: TIME.dotFade }, t);
-      t += TIME.dotFade;
-      tl.call(() => gateway.classList.remove(ACTIVE_CLASS), undefined, t);
-      tl.to(
+      // -- gateway -> bus -> target --
+      seq.appear(
         dot,
-        { y: () => topY(fanout, rect()), duration: TIME.travelShort, ease: 'power1.inOut' },
-        t,
+        () => centerX(gateway, rect()),
+        () => bottomY(gateway, rect()),
       );
-      t += TIME.travelShort;
-      tl.to(
-        dot,
-        { x: () => centerX(target, rect()), duration: TIME.travelMed, ease: 'power1.inOut' },
-        t,
-      );
-      t += TIME.travelMed;
-      tl.to(
-        dot,
-        { y: () => topY(target, rect()), duration: TIME.travelShort, ease: 'power1.inOut' },
-        t,
-      );
-      t += TIME.travelShort;
-      tl.call(
-        () => {
-          target.classList.add(ACTIVE_CLASS);
-          setTagState(target, 'checking');
-        },
-        undefined,
-        t,
-      );
-      tl.to(dot, { opacity: 0, duration: TIME.dotFade }, t);
-      t += TIME.dotFade + 0.3;
-      tl.call(() => setTagState(target, 'ok'), undefined, t);
-      t += TIME.arrivalHold;
+      seq.mark(() => gateway.classList.remove(ACTIVE_CLASS));
+      seq.moveTo(dot, { y: () => topY(fanout, rect()) }, TIME.travelShort);
+      seq.moveTo(dot, { x: () => centerX(target, rect()) }, TIME.travelMed);
+      seq.moveTo(dot, { y: () => topY(target, rect()) }, TIME.travelShort);
+      seq.mark(() => {
+        target.classList.add(ACTIVE_CLASS);
+        setTagState(target, 'checking');
+      });
+      seq.vanish(dot);
+      seq.wait(TIME.targetCheckHold);
+      seq.mark(() => setTagState(target, 'ok'));
+      seq.wait(TIME.arrivalHold);
 
       // -- the return trip: target -> bus -> gateway -> AI Assistant --
-      tl.call(
-        () => gsap.set(dot, { x: () => centerX(target, rect()), y: () => topY(target, rect()) }),
-        undefined,
-        t,
-      );
-      tl.to(dot, { opacity: 1, duration: TIME.dotFade }, t);
-      t += TIME.dotFade;
-      tl.call(() => target.classList.remove(ACTIVE_CLASS), undefined, t);
-      tl.to(
-        dot,
-        { y: () => topY(fanout, rect()), duration: TIME.travelShort, ease: 'power1.inOut' },
-        t,
-      );
-      t += TIME.travelShort;
-      tl.to(
-        dot,
-        { x: () => centerX(gateway, rect()), duration: TIME.travelMed, ease: 'power1.inOut' },
-        t,
-      );
-      t += TIME.travelMed;
-      tl.to(
-        dot,
-        { y: () => bottomY(gateway, rect()), duration: TIME.travelShort, ease: 'power1.inOut' },
-        t,
-      );
-      t += TIME.travelShort;
-      // No highlight on this last leg -- gateway and AI Assistant are just
+      // No highlight on gateway or AI Assistant here -- both are just
       // being passed through on the way back, too briefly for a light-up
-      // to read as anything but a flicker. The dot stays visible and
-      // continues straight into the shared "response completes the loop"
-      // leg below, rather than fading out and back in at AI Assistant.
-      // Targets centerY, not bottomY -- see the denied cycle's identical
-      // comment above.
-      tl.to(
+      // to read as anything but a flicker. The dot stays visible the
+      // whole way and continues straight into the shared "response
+      // completes the loop" leg below, rather than fading out and back in
+      // at AI Assistant. Targets centerY, not bottomY -- see the denied
+      // cycle's identical comment above.
+      seq.appear(
         dot,
-        { y: () => centerY(client, rect()), duration: TIME.travelLong, ease: 'power1.inOut' },
-        t,
+        () => centerX(target, rect()),
+        () => topY(target, rect()),
       );
-      t += TIME.travelLong;
+      seq.mark(() => target.classList.remove(ACTIVE_CLASS));
+      seq.moveTo(dot, { y: () => topY(fanout, rect()) }, TIME.travelShort);
+      seq.moveTo(dot, { x: () => centerX(gateway, rect()) }, TIME.travelMed);
+      seq.moveTo(dot, { y: () => bottomY(gateway, rect()) }, TIME.travelShort);
+      seq.moveTo(dot, { y: () => centerY(client, rect()) }, TIME.travelLong);
     }
   }
 
@@ -499,62 +477,48 @@ function buildCycleTimeline(cycle: Cycle, refs: Refs): gsap.core.Timeline {
   // so the pulse never stops moving. Arriving at the chat log is what
   // causes the final line to appear, mirroring the request's trip out at
   // the start of this cycle.
-  tl.to(
+  //
+  // The spinner (and, for the denied cycle, the border glow) clear a beat
+  // *into* this leg's motion rather than at its exact start -- removing a
+  // class is instantaneous, but the eased tween ramps up gently, so
+  // clearing at the very start reads as "cleared on arrival, while still
+  // sitting in AI Assistant" for the first rendered frame or two.
+  // Clearing after the pulse has visibly started moving reads
+  // unambiguously as "cleared because it's leaving."
+  seq.markAt(() => {
+    setTagState(client, '');
+    client.classList.remove(ACTIVE_CLASS);
+  }, TIME.clearOffset);
+  seq.moveTo(
     dot,
     {
       x: () => leftX(chatLines[2].wrapper, rect()),
       y: () => centerY(chatLines[2].wrapper, rect()),
-      duration: TIME.travelMed,
-      ease: 'power1.inOut',
     },
-    t,
+    TIME.travelMed,
   );
-  // The spinner (and, for the denied cycle, the border glow) clear a beat
-  // into that motion rather than at the exact same instant it starts --
-  // removing the class is instantaneous, but the eased tween's own motion
-  // ramps up gently, so clearing at t=0 of the tween reads as "cleared on
-  // arrival, while still sitting in AI Assistant" for the first rendered
-  // frame or two. Clearing after the pulse has visibly started moving
-  // reads unambiguously as "cleared because it's leaving."
-  tl.call(
-    () => {
-      setTagState(client, '');
-      client.classList.remove(ACTIVE_CLASS);
-    },
-    undefined,
-    t + 0.12,
-  );
-  t += TIME.travelMed;
-  tl.to(dot, { opacity: 0, duration: TIME.dotFade }, t);
-  t += TIME.dotFade + 0.1;
+  seq.vanish(dot);
+  seq.wait(TIME.settleGap);
 
   // -- chat: the assistant's final answer --
-  tl.call(() => (chatLines[2].text.textContent = cycle.aiResultText), undefined, t);
-  tl.to(
-    chatLines[2].wrapper,
-    { height: 'auto', opacity: 1, duration: TIME.chatReveal, ease: 'power2.out' },
-    t,
-  );
-  t += TIME.chatReveal + TIME.chatHoldFinal;
+  revealChatLine(2, cycle.aiResultText);
+  seq.wait(TIME.chatHoldFinal);
 
   // -- reset: fade the chat log and clear every highlight/tag for the next cycle --
-  tl.call(() => client.classList.remove(ACTIVE_CLASS), undefined, t);
-  tl.to(
+  seq.mark(() => client.classList.remove(ACTIVE_CLASS));
+  seq.tween(
     chatLines.map((l) => l.wrapper),
-    { height: 0, opacity: 0, duration: TIME.chatCollapse, ease: 'power2.in' },
-    t,
+    { height: 0, opacity: 0, ease: 'power2.in' },
+    TIME.chatCollapse,
   );
-  tl.call(
-    () => {
-      setTagState(tags.auth, '');
-      setTagState(tags.policy, '');
-      setTagState(tags.audit, '');
-      setTagState(tags.broker, '');
-      if (cycle.target) setTagState(refs.leaves[cycle.target], '');
-    },
-    undefined,
-    t,
-  );
+  seq.mark(() => {
+    setTagState(tags.auth, '');
+    setTagState(tags.policy, '');
+    setTagState(tags.audit, '');
+    setTagState(tags.broker, '');
+    if (cycle.target) setTagState(refs.leaves[cycle.target], '');
+  });
+
   return tl;
 }
 
