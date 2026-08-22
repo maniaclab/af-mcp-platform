@@ -66,9 +66,26 @@ async function toggleTools() {
     <!-- Header row -->
     <div class="bc__header">
       <div class="bc__header-left">
-        <span class="bc__prefix">{{ server.name }}</span>
         <span class="bc__name">{{ server.display_name }}</span>
-        <span class="bc__desc">{{ server.description }}</span>
+        <!-- The technical prefix (what tool names are actually namespaced
+             under, e.g. rucio_list_dids) is only shown separately when it's
+             not already identical to the display name above -- a backend
+             with no configured display_name would otherwise show the same
+             string twice, once in each style. -->
+        <span v-if="server.name !== server.display_name" class="bc__prefix">{{ server.name }}</span>
+        <span v-if="server.description" class="bc__badge-wrap">
+          <button
+            type="button"
+            class="bc__info-icon"
+            :aria-describedby="`bc-desc-${server.name}`"
+            aria-label="About this backend"
+          >
+            <span aria-hidden="true">ⓘ</span>
+          </button>
+          <span :id="`bc-desc-${server.name}`" class="bc__badge-tooltip" role="tooltip">
+            {{ server.description }}
+          </span>
+        </span>
       </div>
 
       <div class="bc__header-right">
@@ -256,13 +273,24 @@ async function toggleTools() {
   white-space: nowrap;
 }
 
-.bc__desc {
-  font-family: 'IBM Plex Sans', system-ui, sans-serif;
-  font-size: 0.8125rem;
+.bc__info-icon {
+  display: inline-flex;
+  align-items: center;
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 0.875rem;
+  line-height: 1;
   color: var(--color-af-dim);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  cursor: help;
+}
+.bc__info-icon:hover,
+.bc__info-icon:focus-visible {
+  color: var(--color-af-teal);
+}
+.bc__info-icon:focus-visible {
+  outline: 2px solid var(--color-af-teal);
+  outline-offset: 2px;
 }
 
 .bc__header-right {
@@ -562,6 +590,11 @@ async function toggleTools() {
 
 .bc__tools-body {
   padding: 0 0 0.25rem;
+  /* A backend can register dozens of tools -- without a cap here, expanding
+     one pushes every card below it down the page indefinitely. Scrolling
+     within the card keeps the rest of the catalog in place. */
+  max-height: 26rem;
+  overflow-y: auto;
 }
 
 .bc__tools-note {
@@ -593,9 +626,6 @@ async function toggleTools() {
 }
 
 @media (max-width: 640px) {
-  .bc__desc {
-    display: none;
-  }
   .bc__cap-badge {
     display: none;
   }
