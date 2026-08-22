@@ -28,6 +28,7 @@ nav = [
   { "Home" = "index.md" },
   { "Architecture" = "architecture.md" },
   { "Authentication" = "auth.md" },
+  { "Ecosystem" = "ecosystem.md" },
   { "Adding a Backend" = "adding-a-backend.md" },
   { "Rucio: Per-Site Setup" = "rucio-per-site-setup.md" },
   { "Connecting a Client" = "connecting-a-client.md" },
