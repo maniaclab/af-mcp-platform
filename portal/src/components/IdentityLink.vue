@@ -9,6 +9,8 @@ const props = defineProps<{
   linked: boolean;
   display_name: string;
   enables: string;
+  /** Comma-joined display names of catalog backends this identity's credential powers, empty if none. */
+  powers?: string;
   link_url: string | null;
 }>();
 
@@ -122,6 +124,7 @@ const glyph = props.id[0]?.toUpperCase() ?? '?';
       </div>
 
       <p class="il__desc">{{ enables }}</p>
+      <p v-if="powers" class="il__powers"><span class="il__powers-label">Powers:</span> {{ powers }}</p>
 
       <div v-if="error" class="il__error" role="alert">{{ error }}</div>
     </div>
@@ -291,6 +294,22 @@ const glyph = props.id[0]?.toUpperCase() ?? '?';
   color: var(--color-af-dim);
   margin: 0;
   line-height: 1.5;
+}
+
+.il__powers {
+  font-size: 0.75rem;
+  color: var(--color-af-dim);
+  margin: 0.375rem 0 0;
+  line-height: 1.5;
+}
+
+.il__powers-label {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-af-label);
 }
 
 .il__error {

@@ -45,6 +45,8 @@ const props = defineProps<{
   linked: boolean;
   display_name: string;
   enables: string;
+  /** Comma-joined display names of catalog backends this identity's credential powers, empty if none. */
+  powers?: string;
   proxy_expires_at?: string | null;
   x509_link_mode?: 'auto-renew' | 'until-expiry' | null;
 }>();
@@ -207,6 +209,7 @@ function formatRemaining(seconds?: number | null): string {
       </div>
 
       <p class="xc__desc">{{ enables }}</p>
+      <p v-if="powers" class="xc__powers"><span class="xc__powers-label">Powers:</span> {{ powers }}</p>
 
       <!-- Custody line: which mode the link is in. Falls back to the plain
            expiry line for a legacy-mode link, which has no custody concept. -->
@@ -536,6 +539,22 @@ function formatRemaining(seconds?: number | null): string {
   color: var(--color-af-dim);
   margin: 0;
   line-height: 1.5;
+}
+
+.xc__powers {
+  font-size: 0.75rem;
+  color: var(--color-af-dim);
+  margin: 0.375rem 0 0;
+  line-height: 1.5;
+}
+
+.xc__powers-label {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-af-label);
 }
 
 .xc__expiry {
