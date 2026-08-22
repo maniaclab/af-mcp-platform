@@ -423,5 +423,4 @@ function handleX509Revoked(id: string) {
   color: var(--color-af-dim);
   margin: 0;
 }
-
 </style>

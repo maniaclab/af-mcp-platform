@@ -124,7 +124,9 @@ const glyph = props.id[0]?.toUpperCase() ?? '?';
       </div>
 
       <p class="il__desc">{{ enables }}</p>
-      <p v-if="powers" class="il__powers"><span class="il__powers-label">Powers:</span> {{ powers }}</p>
+      <p v-if="powers" class="il__powers">
+        <span class="il__powers-label">Powers:</span> {{ powers }}
+      </p>
 
       <div v-if="error" class="il__error" role="alert">{{ error }}</div>
     </div>

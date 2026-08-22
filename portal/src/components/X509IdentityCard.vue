@@ -209,7 +209,9 @@ function formatRemaining(seconds?: number | null): string {
       </div>
 
       <p class="xc__desc">{{ enables }}</p>
-      <p v-if="powers" class="xc__powers"><span class="xc__powers-label">Powers:</span> {{ powers }}</p>
+      <p v-if="powers" class="xc__powers">
+        <span class="xc__powers-label">Powers:</span> {{ powers }}
+      </p>
 
       <!-- Custody line: which mode the link is in. Falls back to the plain
            expiry line for a legacy-mode link, which has no custody concept. -->
