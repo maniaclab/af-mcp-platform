@@ -72,9 +72,7 @@ async function toggleTools() {
              not already identical to the display name above -- a backend
              with no configured display_name would otherwise show the same
              string twice, once in each style. -->
-        <span v-if="server.name !== server.display_name" class="bc__prefix">{{
-          server.name
-        }}</span>
+        <span v-if="server.name !== server.display_name" class="bc__prefix">{{ server.name }}</span>
         <span v-if="server.description" class="bc__badge-wrap">
           <button
             type="button"

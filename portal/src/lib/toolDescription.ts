@@ -84,8 +84,8 @@ function dedentJoin(lines: string[]): string {
 
 export function parseToolDescription(raw: string): ParsedToolDescription {
   const lines = raw.split('\n');
-  const headerIdx = lines.findIndex((l) =>
-    (SECTION_HEADERS as readonly string[]).includes(l.trim()) && leadingSpaces(l) === 0,
+  const headerIdx = lines.findIndex(
+    (l) => (SECTION_HEADERS as readonly string[]).includes(l.trim()) && leadingSpaces(l) === 0,
   );
 
   if (headerIdx === -1) {
@@ -102,7 +102,10 @@ export function parseToolDescription(raw: string): ParsedToolDescription {
     const sectionStart = i + 1;
     let sectionEnd = lines.length;
     for (let j = sectionStart; j < lines.length; j++) {
-      if ((SECTION_HEADERS as readonly string[]).includes(lines[j].trim()) && leadingSpaces(lines[j]) === 0) {
+      if (
+        (SECTION_HEADERS as readonly string[]).includes(lines[j].trim()) &&
+        leadingSpaces(lines[j]) === 0
+      ) {
         sectionEnd = j;
         break;
       }
