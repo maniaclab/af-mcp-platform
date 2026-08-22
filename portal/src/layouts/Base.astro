@@ -156,13 +156,15 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
       }
 
       .af-sidebar__group-label {
-        /* --text-label from the @theme type scale (0.6875rem / 600 / 0.1em) */
+        /* --text-label from the @theme type scale (0.6875rem / 600 / 0.1em) --
+           af-dim rather than af-label: this is a nav wayfinding cue read at a
+           glance, so it gets the stronger of the two secondary-text tokens. */
         font-family: 'IBM Plex Mono', monospace;
         font-size: 0.6875rem;
         font-weight: 600;
         letter-spacing: 0.1em;
         text-transform: uppercase;
-        color: var(--color-af-label);
+        color: var(--color-af-dim);
         padding: 0 0.75rem;
         margin: 0 0 0.375rem;
       }

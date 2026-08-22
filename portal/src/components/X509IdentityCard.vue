@@ -45,6 +45,8 @@ const props = defineProps<{
   linked: boolean;
   display_name: string;
   enables: string;
+  /** Display names of catalog backends this identity's credential powers, empty/absent if none. */
+  powers?: string[];
   proxy_expires_at?: string | null;
   x509_link_mode?: 'auto-renew' | 'until-expiry' | null;
 }>();
@@ -207,6 +209,10 @@ function formatRemaining(seconds?: number | null): string {
       </div>
 
       <p class="xc__desc">{{ enables }}</p>
+      <div v-if="powers && powers.length" class="xc__powers">
+        <span class="xc__powers-label">Powers</span>
+        <span v-for="power in powers" :key="power" class="xc__power-chip">{{ power }}</span>
+      </div>
 
       <!-- Custody line: which mode the link is in. Falls back to the plain
            expiry line for a legacy-mode link, which has no custody concept. -->
@@ -453,10 +459,10 @@ function formatRemaining(seconds?: number | null): string {
 <style scoped>
 .xc {
   display: grid;
-  grid-template-columns: 2.5rem 1fr auto;
+  grid-template-columns: 2.5rem 1fr minmax(8.5rem, auto);
   gap: 1rem;
   align-items: start;
-  padding: 1.25rem;
+  padding: 1rem;
   border: 1px solid var(--color-af-border);
   border-radius: 4px;
   background: var(--color-af-surface);
@@ -520,9 +526,9 @@ function formatRemaining(seconds?: number | null): string {
 }
 
 .xc__status--linked {
-  background: rgb(from var(--color-af-green) r g b / 0.12);
-  color: var(--color-af-green);
-  border: 1px solid rgb(from var(--color-af-green) r g b / 0.25);
+  background: rgb(from var(--color-af-green) r g b / 0.16);
+  color: color-mix(in srgb, var(--color-af-green) 70%, var(--color-af-dim));
+  border: 1px solid rgb(from var(--color-af-green) r g b / 0.22);
 }
 
 .xc__status--unlinked {
@@ -538,6 +544,33 @@ function formatRemaining(seconds?: number | null): string {
   line-height: 1.5;
 }
 
+.xc__powers {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  margin: 0.375rem 0 0;
+}
+
+.xc__powers-label {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-af-label);
+}
+
+.xc__power-chip {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.6875rem;
+  color: var(--color-af-teal);
+  background: rgb(from var(--color-af-teal) r g b / 0.08);
+  border: 1px solid rgb(from var(--color-af-teal) r g b / 0.18);
+  padding: 0.1875rem 0.5rem;
+  border-radius: 2px;
+}
+
 .xc__expiry {
   font-family: 'IBM Plex Mono', monospace;
   font-size: 0.6875rem;
@@ -545,11 +578,15 @@ function formatRemaining(seconds?: number | null): string {
   margin: 0;
 }
 
+/* Fixed min-width matching the .xc grid's third column, and left-aligned --
+ * same reasoning as IdentityLink.vue's .il__actions, so this card's Link/
+ * Re-link button lands at the same x position as every IdentityLink card's
+ * action column. */
 .xc__actions {
   flex-shrink: 0;
   padding-top: 0.125rem;
-  max-width: 18rem;
-  text-align: right;
+  min-width: 8.5rem;
+  text-align: left;
 }
 
 /* Same centering fix as IdentityLink's .il--linked .il__actions — the linked
@@ -652,7 +689,7 @@ function formatRemaining(seconds?: number | null): string {
 .xc__section {
   grid-column: 1 / -1;
   border-top: 1px solid var(--color-af-border);
-  padding-top: 0.625rem;
+  padding-top: 0.5rem;
 }
 
 .xc__section-toggle {

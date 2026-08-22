@@ -37,6 +37,13 @@ function serversForAlias(id: string): CatalogServer[] {
   return serversByAlias.value.get(id) ?? [];
 }
 
+/** Display names of the catalog backends this identity's credential powers,
+ * rendered as capability chips -- empty array (not shown by IdentityLink/
+ * X509IdentityCard) if none. */
+function powersForAlias(id: string): string[] {
+  return serversForAlias(id).map((s) => s.display_name);
+}
+
 // Set by a `?linked=<id>` landing (see broker/src/af_mcp_broker/api/oauth21.py's
 // `callback` route) — the display_name of the just-linked provider, or null
 // if `linked` was absent or didn't match a real provider (see
@@ -229,6 +236,7 @@ function handleX509Revoked(id: string) {
               :linked="p.linked"
               :display_name="p.display_name"
               :enables="p.enables"
+              :powers="powersForAlias(p.id)"
               :proxy_expires_at="p.proxy_expires_at"
               :x509_link_mode="p.x509_link_mode"
               @linked="(meta, remember) => handleX509Linked(p.id, meta, remember)"
@@ -241,6 +249,7 @@ function handleX509Revoked(id: string) {
               :linked="p.linked"
               :display_name="p.display_name"
               :enables="p.enables"
+              :powers="powersForAlias(p.id)"
               :link_url="p.link_url"
               @unlinked="handleUnlinked(p.id)"
             />
@@ -254,27 +263,6 @@ function handleX509Revoked(id: string) {
         <p class="ip__empty-body">
           Contact your facility administrator to enable external identity providers.
         </p>
-      </div>
-
-      <!-- What each provider unlocks -->
-      <div v-if="providers.length > 0" class="ip__explainer">
-        <h2 class="ip__explainer-title">What each identity unlocks</h2>
-        <div class="ip__explainer-grid">
-          <div v-for="p in providers" :key="p.id" class="ip__explainer-row">
-            <span class="ip__explainer-provider">{{ p.id }}</span>
-            <span class="ip__explainer-desc">
-              {{ p.enables }}
-              <span v-if="serversForAlias(p.id).length > 0" class="ip__explainer-servers">
-                Powers:
-                {{
-                  serversForAlias(p.id)
-                    .map((s) => s.display_name)
-                    .join(', ')
-                }}
-              </span>
-            </span>
-          </div>
-        </div>
       </div>
     </template>
   </div>
@@ -433,55 +421,5 @@ function handleX509Revoked(id: string) {
   font-size: 0.875rem;
   color: var(--color-af-dim);
   margin: 0;
-}
-
-/* Explainer */
-.ip__explainer {
-  padding: 1.25rem;
-  border: 1px solid var(--color-af-border);
-  border-radius: 4px;
-  background: rgb(from var(--color-af-surface) r g b / 0.5);
-}
-
-.ip__explainer-title {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.625rem;
-  font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--color-af-label);
-  margin: 0 0 0.875rem;
-}
-
-.ip__explainer-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.ip__explainer-row {
-  display: grid;
-  grid-template-columns: 8rem 1fr;
-  gap: 1rem;
-  align-items: baseline;
-}
-
-.ip__explainer-provider {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.75rem;
-  color: var(--color-af-teal);
-}
-
-.ip__explainer-desc {
-  font-size: 0.8125rem;
-  color: var(--color-af-dim);
-}
-
-.ip__explainer-servers {
-  display: block;
-  margin-top: 0.25rem;
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.6875rem;
-  color: var(--color-af-teal);
 }
 </style>
