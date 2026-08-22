@@ -27,8 +27,8 @@ import DashboardCards from '../components/DashboardCards.vue';
         A <a href="https://modelcontextprotocol.io/" target="_blank" rel="noopener noreferrer"
           >Model Context Protocol</a
         >
-        gateway for ATLAS computing — connecting your AI assistant to Rucio, AMI, and the analysis
-        grid, without ever handing it your credentials.
+        gateway for ATLAS computing — connecting your AI assistant to Rucio, AMI, and the analysis grid,
+        without ever handing it your credentials.
       </p>
 
       <div class="hero__user" data-af-user-holder hidden>
@@ -46,8 +46,8 @@ import DashboardCards from '../components/DashboardCards.vue';
     <h2 class="section-heading">Connect to this endpoint</h2>
     <p class="section-body">
       Add this server URL to Claude Desktop, Gemini Advanced, or any MCP-compatible client. Your
-      account signs in automatically the first time you connect — you never paste a credential
-      by hand unless your client can't open a browser (see below).
+      account signs in automatically the first time you connect — you never paste a credential by
+      hand unless your client can't open a browser (see below).
     </p>
 
     <div class="endpoint-block">
@@ -84,10 +84,11 @@ import DashboardCards from '../components/DashboardCards.vue';
         <li class="connect-steps__step">
           <span class="connect-steps__num" aria-hidden="true">3</span>
           <span class="connect-steps__text">
-            If your client can't open a browser, skip that step: mint a Personal Access Token
-            (PAT) from the <a href="/tokens/" class="connect-steps__link">Tokens page</a> instead,
-            then under <strong>Request headers</strong> add name <code>Authorization</code>,
-            value <code>Bearer &lt;your PAT&gt;</code>.
+            If your client can't open a browser, skip that step: mint a Personal Access Token (PAT)
+            from the <a href="/tokens/" class="connect-steps__link">Tokens page</a> instead, then under
+            <strong>Request headers</strong> add name <code>Authorization</code>, value <code
+              >Bearer &lt;your PAT&gt;</code
+            >.
           </span>
         </li>
       </ol>
@@ -97,8 +98,8 @@ import DashboardCards from '../components/DashboardCards.vue';
       <h3 class="snippet-heading">curl</h3>
       <p class="snippet-note">
         Mint a Personal Access Token (PAT) from the
-        <a href="/tokens/" class="connect-steps__link">Tokens page</a> first, then paste it in
-        place of <code>&lt;your PAT&gt;</code> below.
+        <a href="/tokens/" class="connect-steps__link">Tokens page</a> first, then paste it in place of
+        <code>&lt;your PAT&gt;</code> below.
       </p>
       <pre class="code-block"><code id="curl-snippet" /></pre>
     </div>

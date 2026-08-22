@@ -31,7 +31,14 @@ onMounted(async () => {
   <div class="dc" role="region" aria-label="Get started">
     <!-- MCP Servers -->
     <div class="dc__card">
-      <svg class="dc__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+      <svg
+        class="dc__icon"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.5"
+        aria-hidden="true"
+      >
         <path d="M4 4.5h16v6.5H4z" />
         <path d="M4 13h16v6.5H4z" />
         <path d="M7.5 7.75h.01" />
@@ -50,14 +57,21 @@ onMounted(async () => {
 
     <!-- Identities -->
     <div class="dc__card">
-      <svg class="dc__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+      <svg
+        class="dc__icon"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.5"
+        aria-hidden="true"
+      >
         <path d="M12 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z" />
         <path d="M4.5 20.5a7.5 7.5 0 0 1 15 0" />
       </svg>
       <span class="dc__label">Identities</span>
       <p class="dc__desc">
-        The external accounts — your CERN/ATLAS login, your grid certificate — this platform uses
-        to act on your behalf, without ever handing your AI assistant a raw credential.
+        The external accounts — your CERN/ATLAS login, your grid certificate — this platform uses to
+        act on your behalf, without ever handing your AI assistant a raw credential.
       </p>
       <span class="dc__status" :class="{ 'dc__status--loading': loading }">
         <template v-if="loading">Loading…</template>
@@ -71,15 +85,22 @@ onMounted(async () => {
 
     <!-- Tokens -->
     <div class="dc__card">
-      <svg class="dc__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+      <svg
+        class="dc__icon"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.5"
+        aria-hidden="true"
+      >
         <path d="M8 15.5m-3.5 0a3.5 3.5 0 1 0 7 0 3.5 3.5 0 1 0-7 0" />
         <path d="M10.8 13 19.5 4.3" />
         <path d="M16.2 7.6l2.2 2.2" />
       </svg>
       <span class="dc__label">Tokens</span>
       <p class="dc__desc">
-        A Personal Access Token (PAT) is what lets a client that can't sign in with a browser on
-        its own — like Claude Desktop — connect on your behalf.
+        A Personal Access Token (PAT) is what lets a client that can't sign in with a browser on its
+        own — like Claude Desktop — connect on your behalf.
       </p>
       <span class="dc__status" :class="{ 'dc__status--loading': loading }">
         {{ loading ? 'Loading…' : `${summary?.activeTokenCount ?? 0} active` }}
