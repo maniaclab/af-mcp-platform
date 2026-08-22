@@ -1,113 +1,95 @@
 <script setup lang="ts">
+import { computed } from 'vue';
 import type { CatalogTool } from '../lib/api';
+import { parseToolDescription } from '../lib/toolDescription';
 
-defineProps<{
+const props = defineProps<{
   tools: CatalogTool[];
 }>();
+
+// Parsed once per render, not once per template interpolation -- v-for can't
+// bind a per-iteration computed value the way a plain script-side map can.
+const rows = computed(() =>
+  props.tools.map((tool) => ({ tool, parsed: parseToolDescription(tool.description) })),
+);
 </script>
 
 <template>
-  <div class="tool-table" role="region" aria-label="Tool listing">
-    <table class="tool-table__table" aria-label="Available tools">
-      <thead>
-        <tr>
-          <th scope="col" class="tool-table__th">Tool name</th>
-          <th scope="col" class="tool-table__th tool-table__th--type">Type</th>
-          <th scope="col" class="tool-table__th tool-table__th--desc">Description</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="tool in tools" :key="tool.name" class="tool-table__row">
-          <td class="tool-table__td tool-table__td--name">
-            <code class="tool-table__code">{{ tool.name }}</code>
-          </td>
-          <td class="tool-table__td tool-table__td--type">
-            <!-- Focusable button + aria-describedby tooltip, not a bare
-                 title attribute -- same pattern as BackendCard.vue's badges
-                 and TokensPage.vue's note icon: keyboard-reachable and
-                 always present in the DOM for assistive tech. -->
-            <span class="tool-table__badge-wrap">
-              <button
-                type="button"
-                class="tool-table__badge"
-                :class="
-                  tool.action_type === 'state_change'
-                    ? 'tool-table__badge--state'
-                    : 'tool-table__badge--read'
-                "
-                :aria-describedby="`tt-badge-${tool.name}`"
-              >
-                {{ tool.action_type === 'state_change' ? 'write' : 'read' }}
-              </button>
-              <span :id="`tt-badge-${tool.name}`" class="tool-table__badge-tooltip" role="tooltip">
-                {{
-                  tool.action_type === 'state_change'
-                    ? 'Modifies state — use with care'
-                    : 'Read-only — no side effects'
-                }}
-              </span>
-            </span>
-          </td>
-          <td class="tool-table__td tool-table__td--desc">
-            {{ tool.description }}
-          </td>
-        </tr>
-      </tbody>
-    </table>
+  <!--
+    A list of tool rows, not a table -- a table forced the description
+    column into one wide, unbroken cell (a docstring's own newlines were
+    collapsed by default `white-space`, and a single long, unbreakable
+    example string like a full dataset name could force the whole table
+    into horizontal scroll). Each tool's own vertical block avoids both:
+    it wraps normally at any width, and only ever grows downward.
+  -->
+  <div class="tool-table" role="list" aria-label="Available tools">
+    <div v-for="{ tool, parsed } in rows" :key="tool.name" class="tool-table__row" role="listitem">
+      <div class="tool-table__row-header">
+        <code class="tool-table__code">{{ tool.name }}</code>
+        <!-- Focusable button + aria-describedby tooltip, not a bare title
+             attribute -- same pattern as BackendCard.vue's badges and
+             TokensPage.vue's note icon: keyboard-reachable and always
+             present in the DOM for assistive tech. -->
+        <span class="tool-table__badge-wrap">
+          <button
+            type="button"
+            class="tool-table__badge"
+            :class="
+              tool.action_type === 'state_change'
+                ? 'tool-table__badge--state'
+                : 'tool-table__badge--read'
+            "
+            :aria-describedby="`tt-badge-${tool.name}`"
+          >
+            {{ tool.action_type === 'state_change' ? 'write' : 'read' }}
+          </button>
+          <span :id="`tt-badge-${tool.name}`" class="tool-table__badge-tooltip" role="tooltip">
+            {{
+              tool.action_type === 'state_change'
+                ? 'Modifies state — use with care'
+                : 'Read-only — no side effects'
+            }}
+          </span>
+        </span>
+      </div>
+
+      <p class="tool-table__summary">{{ parsed.summary }}</p>
+
+      <dl v-if="parsed.args.length > 0" class="tool-table__args">
+        <div v-for="arg in parsed.args" :key="arg.name" class="tool-table__arg-row">
+          <dt class="tool-table__arg-name">{{ arg.name }}</dt>
+          <dd class="tool-table__arg-desc">{{ arg.desc }}</dd>
+        </div>
+      </dl>
+
+      <p v-if="parsed.returns" class="tool-table__returns">
+        <span class="tool-table__returns-label">Returns:</span>
+        {{ parsed.returns }}
+      </p>
+    </div>
   </div>
 </template>
 
 <style scoped>
 .tool-table {
-  overflow-x: auto;
-}
-
-.tool-table__table {
-  width: 100%;
-  border-collapse: collapse;
-  font-family: 'IBM Plex Sans', system-ui, sans-serif;
-  font-size: 0.8125rem;
-}
-
-.tool-table__th {
-  text-align: left;
-  padding: 0.5rem 0.75rem;
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.625rem;
-  font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--color-af-dim);
-  border-bottom: 1px solid var(--color-af-border);
-  white-space: nowrap;
-}
-
-.tool-table__th--type {
-  width: 5rem;
-}
-.tool-table__th--desc {
-  width: auto;
+  display: flex;
+  flex-direction: column;
 }
 
 .tool-table__row {
+  padding: 0.75rem 1rem;
   border-bottom: 1px solid var(--color-af-border);
-  transition: background 120ms;
-}
-.tool-table__row:hover {
-  background: rgba(255, 255, 255, 0.025);
 }
 .tool-table__row:last-child {
   border-bottom: none;
 }
 
-.tool-table__td {
-  padding: 0.625rem 0.75rem;
-  vertical-align: top;
-  color: var(--color-af-text);
-}
-
-.tool-table__td--name {
-  white-space: nowrap;
+.tool-table__row-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.375rem;
 }
 
 .tool-table__code {
@@ -119,9 +101,63 @@ defineProps<{
   border-radius: 2px;
 }
 
-.tool-table__td--desc {
+.tool-table__summary {
+  margin: 0;
+  color: var(--color-af-dim);
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  /* Preserves the docstring's own paragraph breaks and indented example
+     blocks as authored, rather than collapsing them into one run-on line. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.tool-table__args {
+  margin: 0.625rem 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+
+.tool-table__arg-row {
+  display: grid;
+  grid-template-columns: minmax(6rem, max-content) 1fr;
+  gap: 0.75rem;
+  align-items: baseline;
+}
+
+.tool-table__arg-name {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.75rem;
+  color: var(--color-af-text);
+}
+
+.tool-table__arg-desc {
+  margin: 0;
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  font-size: 0.8125rem;
   color: var(--color-af-dim);
   line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.tool-table__returns {
+  margin: 0.625rem 0 0;
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  font-size: 0.8125rem;
+  color: var(--color-af-dim);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.tool-table__returns-label {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-af-label);
 }
 
 /* Wrapper + tooltip -- the badge is a <button> (focusable, keyboard-operable)
