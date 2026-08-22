@@ -87,19 +87,21 @@ void of a collision event display and the Cherenkov radiation track
 spectrum" — the near-black void, the teal Cherenkov accent, and the amber
 calorimeter-heat warning color are the palette's actual justification, not
 retrofitted names. IBM Plex Mono carries every heading and label, IBM Plex
-Sans carries body copy, and the one animated flourish anywhere in the app —
-the Overview page's particle-track canvas — is deliberately singular and
-physically motivated (golden-angle track spacing, quadratic-Bezier
+Sans carries body copy. Two moments of motion exist in the whole app, both
+deliberate and both gated on `prefers-reduced-motion`: the Overview page's
+particle-track canvas (golden-angle track spacing, quadratic-Bezier
 "magnetic curvature," teal-for-Cherenkov/amber-for-calorimeter color
-assignment), with `prefers-reduced-motion` handled correctly and a code
-comment calling it out as "the aesthetic risk." Depth comes from borders and
-flat surface layering, almost never shadows — this is a console you read at
-a glance, not a card catalog you browse.
+assignment, called out in its own code comment as "the aesthetic risk"),
+and the public landing page's gateway-pulse diagram animation (a light
+travels AI Assistant → Gateway → a backend, illustrating the credential-
+brokering request flow the diagram already draws statically). Depth comes
+from borders and flat surface layering, almost never shadows — this is a
+console you read at a glance, not a card catalog you browse.
 
 **Key Characteristics:**
 - Near-black void ground, elevated surfaces one step lighter, borders (not shadows) doing the depth work
 - IBM Plex Mono for every heading, label, and piece of identifying data (hostnames, tool names, token IDs); IBM Plex Sans for body prose
-- Exactly one deliberate motion moment (the Overview hero canvas); everything else is still
+- Exactly two deliberate motion moments (the Overview hero canvas, the public landing page's gateway-pulse diagram); everything else is still
 - Uppercase, letter-spaced mono labels as the "instrument panel" signature (section headings, badges, eyebrows)
 - Teal is the only accent used for primary action; amber is reserved for "this changes state, use with care"; red is reserved for destructive/error
 
@@ -149,15 +151,16 @@ A near-monochrome void-and-surface base with exactly two accent colors, each wit
 
 ## Layout
 
-Content lives in bounded-width columns (the Overview endpoint section caps at `52rem`) inside a persistent app shell (`Base.astro`): a top bar, a left-hand nav with capability badges, and a page-level `<main>`. Cards and panels use generous internal padding (`0.875rem`–`1.75rem`) with tight spacing between related elements and a clear gap before a new section — headings get more space above than below. Responsive behavior collapses at `640px` (mobile): hero height drops, heading sizes step down, and `BackendCard.vue` hides secondary description/badge text below that width. The Tokens table is a known exception with no responsive column-hiding yet — a fix in progress, not the pattern to replicate.
+Content lives in bounded-width columns (the Overview endpoint section caps at `52rem`) inside a persistent app shell (`Base.astro`): a top bar, a left-hand nav with capability badges, and a page-level `<main>`. Cards and panels use generous internal padding (`0.875rem`–`1.75rem`) with tight spacing between related elements and a clear gap before a new section — headings get more space above than below. Responsive behavior collapses at `640px` (mobile): hero height drops, heading sizes step down, `BackendCard.vue` hides secondary description/badge text below that width, and the Tokens table hides its Token ID/Created/Last used columns below that width rather than forcing horizontal scroll (the same pattern, applied last).
 
 ## Elevation & Depth
 
-Flat by default. Depth comes from layering (void → surface → border), not shadows — the app has exactly two real `box-shadow` uses in the entire codebase: a soft directional shadow on a slide-in panel, and a teal focus-ring glow. Everything else reads as flat surfaces separated by 1px borders (`af-border` for structure, `af-muted` for less emphasis).
+Flat by default. Depth comes from layering (void → surface → border), not shadows — the app has three real `box-shadow` uses in the entire codebase: a soft directional shadow on a slide-in panel, a teal focus-ring glow, and the gateway-pulse diagram's box-highlight glow. Everything else reads as flat surfaces separated by 1px borders (`af-border` for structure, `af-muted` for less emphasis).
 
 ### Shadow Vocabulary
 - **Focus ring** (`box-shadow: 0 0 0 2px rgb(from var(--color-af-teal) r g b / 0.1–0.15)`): keyboard focus and active-input glow, always teal, always a ring not a blur.
 - **Panel shadow** (`box-shadow: 4px 0 24px rgb(0 0 0 / 0.4)`): the one directional shadow, for a surface that overlays the page (e.g. a slide-out).
+- **Pulse highlight glow** (`box-shadow: 0 0 16px 2px rgb(from var(--color-af-teal) r g b / 0.3)`): the gateway-pulse animation's box highlight, teal, toggled via a CSS-transitioned class rather than a JS-driven tween.
 
 ### Named Rules
 **The Borders-Not-Shadows Rule.** Reach for a 1px border (`af-border` or `af-muted`) to separate surfaces before reaching for a shadow. A shadow appears only for the two cases above — focus state, or a surface that's actually floating above the page.
@@ -199,7 +202,10 @@ Small, consistent radii — never fully rounded except true pills. Real observed
 - Native `<dialog>` with `showModal()` for every destructive/high-stakes confirmation (proxy revoke, identity unlink) — real focus trap, ESC-to-close, inert background, focus restored to the trigger on close. `margin: auto` is restored once, unlayered, in `global.css` to counter Tailwind Preflight's reset (issue #152) rather than patched per-dialog.
 
 ### Particle-track canvas (signature component)
-The Overview page's hero: a sparse radial event display, golden-angle-spaced curved tracks (quadratic Bezier for "magnetic curvature"), teal/amber/white palette matching Cherenkov/EM-calorimeter physics, `prefers-reduced-motion` respected (renders one static frame instead of animating). This is the app's one deliberate visual flourish — do not add a second animated element anywhere else without removing this rule from Do's and Don'ts first.
+The Overview page's hero: a sparse radial event display, golden-angle-spaced curved tracks (quadratic Bezier for "magnetic curvature"), teal/amber/white palette matching Cherenkov/EM-calorimeter physics, `prefers-reduced-motion` respected (renders one static frame instead of animating).
+
+### Gateway pulse animation (public landing page)
+The public landing page's "how it works" diagram (AI Assistant → Gateway → backend) gets its own motion moment: a small light (GSAP timeline, `gatewayPulse.ts`) travels the diagram's connector lines, briefly highlighting each box (teal border + glow, via a CSS-transitioned `is-pulse-active` class) as it passes, paired with two small aria-hidden callouts ("user: find me a dataset" → "tool call: rucio_list_dataset") anchored beside the AI Assistant node. Skipped entirely under `prefers-reduced-motion` (the diagram is already complete and legible without it), and played only while on screen (GSAP ScrollTrigger play/pause on enter/leave) rather than running continuously off-screen.
 
 ## Do's and Don'ts
 
@@ -212,7 +218,7 @@ The Overview page's hero: a sparse radial event display, golden-angle-spaced cur
 
 ### Don't:
 - **Don't** use `af-muted` (`#374151`) as a text color anywhere — it's a border/disabled token and fails contrast.
-- **Don't** add a second animated flourish. The particle-track canvas is the app's one deliberate motion moment.
+- **Don't** add a third animated flourish. The particle-track canvas (Overview) and the gateway-pulse diagram (public landing page) are the app's two deliberate, `prefers-reduced-motion`-gated motion moments — a third needs the same bar: physically/functionally motivated, not decoration.
 - **Don't** explain a badge's meaning only through a hover `title` attribute — it's invisible on touch and unreliable on screen readers.
 - **Don't** reach for a drop shadow as a default card treatment — this system is flat-by-default.
 - **Don't** introduce a second display/heading typeface. Mono is the console's whole identity.

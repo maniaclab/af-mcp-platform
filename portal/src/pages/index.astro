@@ -39,30 +39,209 @@ import PublicBase from '../layouts/PublicBase.astro';
     <h2 class="benefits__heading">One gateway. Your entire facility.</h2>
 
     <div class="benefits-layout">
-      <div class="diagram" aria-label="How AI assistants reach the facility">
-        <div class="diagram__node diagram__node--client">AI Assistant</div>
+      <div class="diagram" aria-label="How AI assistants reach the facility" data-pulse-diagram>
+        <div class="diagram__node diagram__node--client" data-pulse-node="client">
+          AI Assistant
+          <span class="diagram__tag-icon" data-tag-icon aria-hidden="true">
+            <span class="diagram__tag-spinner"></span>
+            <svg class="diagram__tag-check" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              ><path
+                d="M5 13l4 4L19 7"
+                stroke-width="3"
+                stroke-linecap="round"
+                stroke-linejoin="round"></path></svg
+            >
+            <svg class="diagram__tag-x" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              ><path d="M6 6l12 12M18 6L6 18" stroke-width="3" stroke-linecap="round"></path></svg
+            >
+          </span>
+        </div>
 
         <div class="diagram__link">
           <span class="diagram__link-label">MCP</span>
         </div>
 
-        <div class="diagram__node diagram__node--gateway">
+        <div class="diagram__node diagram__node--gateway" data-pulse-node="gateway">
           <span class="diagram__gateway-name">MCP Gateway</span>
           <div class="diagram__gateway-tags">
-            <span>Auth</span>
-            <span>Policy</span>
-            <span>Audit</span>
-            <span>Broker</span>
+            <span class="diagram__tag" data-gateway-tag="auth">
+              Auth
+              <span class="diagram__tag-icon" data-tag-icon aria-hidden="true">
+                <span class="diagram__tag-spinner"></span>
+                <svg
+                  class="diagram__tag-check"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  ><path
+                    d="M5 13l4 4L19 7"
+                    stroke-width="3"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"></path></svg
+                >
+                <svg class="diagram__tag-x" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  ><path d="M6 6l12 12M18 6L6 18" stroke-width="3" stroke-linecap="round"
+                  ></path></svg
+                >
+              </span>
+            </span>
+            <span class="diagram__tag" data-gateway-tag="policy">
+              Policy
+              <span class="diagram__tag-icon" data-tag-icon aria-hidden="true">
+                <span class="diagram__tag-spinner"></span>
+                <svg
+                  class="diagram__tag-check"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  ><path
+                    d="M5 13l4 4L19 7"
+                    stroke-width="3"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"></path></svg
+                >
+                <svg class="diagram__tag-x" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  ><path d="M6 6l12 12M18 6L6 18" stroke-width="3" stroke-linecap="round"
+                  ></path></svg
+                >
+              </span>
+            </span>
+            <span class="diagram__tag" data-gateway-tag="audit">
+              Audit
+              <span class="diagram__tag-icon" data-tag-icon aria-hidden="true">
+                <span class="diagram__tag-spinner"></span>
+                <svg
+                  class="diagram__tag-check"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  ><path
+                    d="M5 13l4 4L19 7"
+                    stroke-width="3"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"></path></svg
+                >
+                <svg class="diagram__tag-x" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  ><path d="M6 6l12 12M18 6L6 18" stroke-width="3" stroke-linecap="round"
+                  ></path></svg
+                >
+              </span>
+            </span>
+            <span class="diagram__tag" data-gateway-tag="broker">
+              Broker
+              <span class="diagram__tag-icon" data-tag-icon aria-hidden="true">
+                <span class="diagram__tag-spinner"></span>
+                <svg
+                  class="diagram__tag-check"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  ><path
+                    d="M5 13l4 4L19 7"
+                    stroke-width="3"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"></path></svg
+                >
+                <svg class="diagram__tag-x" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  ><path d="M6 6l12 12M18 6L6 18" stroke-width="3" stroke-linecap="round"
+                  ></path></svg
+                >
+              </span>
+            </span>
           </div>
         </div>
 
         <div class="diagram__stem" aria-hidden="true"></div>
 
         <div class="diagram__fanout">
-          <div class="diagram__branch">Rucio</div>
-          <div class="diagram__branch">HTCondor</div>
-          <div class="diagram__branch">Jupyter</div>
-          <div class="diagram__branch">Storage</div>
+          <div class="diagram__branch" data-pulse-node="rucio">
+            Rucio
+            <span class="diagram__tag-icon" data-tag-icon aria-hidden="true">
+              <span class="diagram__tag-spinner"></span>
+              <svg class="diagram__tag-check" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                ><path
+                  d="M5 13l4 4L19 7"
+                  stroke-width="3"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"></path></svg
+              >
+              <svg class="diagram__tag-x" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                ><path d="M6 6l12 12M18 6L6 18" stroke-width="3" stroke-linecap="round"></path></svg
+              >
+            </span>
+          </div>
+          <div class="diagram__branch" data-pulse-node="htcondor">
+            HTCondor
+            <span class="diagram__tag-icon" data-tag-icon aria-hidden="true">
+              <span class="diagram__tag-spinner"></span>
+              <svg class="diagram__tag-check" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                ><path
+                  d="M5 13l4 4L19 7"
+                  stroke-width="3"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"></path></svg
+              >
+              <svg class="diagram__tag-x" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                ><path d="M6 6l12 12M18 6L6 18" stroke-width="3" stroke-linecap="round"></path></svg
+              >
+            </span>
+          </div>
+          <div class="diagram__branch">
+            Jupyter
+            <span class="diagram__tag-icon" data-tag-icon aria-hidden="true">
+              <span class="diagram__tag-spinner"></span>
+              <svg class="diagram__tag-check" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                ><path
+                  d="M5 13l4 4L19 7"
+                  stroke-width="3"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"></path></svg
+              >
+              <svg class="diagram__tag-x" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                ><path d="M6 6l12 12M18 6L6 18" stroke-width="3" stroke-linecap="round"></path></svg
+              >
+            </span>
+          </div>
+          <div class="diagram__branch">
+            Storage
+            <span class="diagram__tag-icon" data-tag-icon aria-hidden="true">
+              <span class="diagram__tag-spinner"></span>
+              <svg class="diagram__tag-check" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                ><path
+                  d="M5 13l4 4L19 7"
+                  stroke-width="3"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"></path></svg
+              >
+              <svg class="diagram__tag-x" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                ><path d="M6 6l12 12M18 6L6 18" stroke-width="3" stroke-linecap="round"></path></svg
+              >
+            </span>
+          </div>
+        </div>
+
+        <!-- Decorative -- the "how it works" motion moment (gatewayPulse.ts). -->
+        <div class="diagram__pulse" data-pulse-dot aria-hidden="true"></div>
+        <div
+          class="diagram__node diagram__node--credential"
+          data-pulse-node="credential"
+          aria-hidden="true"
+        >
+          <span data-credential-label>x509</span>
+        </div>
+        <div class="diagram__chat" data-pulse-chat aria-hidden="true">
+          <div class="diagram__chat-line" data-chat-line="0">
+            <span class="diagram__chat-role">user</span>
+            <span class="diagram__chat-text" data-chat-text></span>
+          </div>
+          <div class="diagram__chat-line" data-chat-line="1">
+            <span class="diagram__chat-role">ai</span>
+            <span class="diagram__chat-text" data-chat-text></span>
+          </div>
+          <div class="diagram__chat-line" data-chat-line="2">
+            <span class="diagram__chat-role">ai</span>
+            <span class="diagram__chat-text" data-chat-text></span>
+          </div>
         </div>
       </div>
 
@@ -304,6 +483,17 @@ import PublicBase from '../layouts/PublicBase.astro';
   })();
 </script>
 
+<!-- ── Gateway pulse (the "how it works" diagram's motion moment) ─────── -->
+<script>
+  import { initGatewayPulse } from '../lib/gatewayPulse';
+
+  const diagram = document.querySelector<HTMLElement>('[data-pulse-diagram]');
+  if (diagram) {
+    const cleanup = initGatewayPulse(diagram);
+    window.addEventListener('beforeunload', cleanup, { once: true });
+  }
+</script>
+
 <style>
   /* ── Hero ──────────────────────────────────────────────────────────── */
   .hero {
@@ -465,7 +655,11 @@ import PublicBase from '../layouts/PublicBase.astro';
   }
 
   /* ── Architecture diagram ─────────────────────────────────────────── */
+  /* position: relative -- anchors the pulse dot and callouts (gatewayPulse.ts),
+     which are positioned in JS via getBoundingClientRect() math relative to
+     this element's own box. */
   .diagram {
+    position: relative;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -480,9 +674,49 @@ import PublicBase from '../layouts/PublicBase.astro';
     border: 1px solid var(--color-af-border);
     border-radius: 4px;
     padding: 0.625rem 1.5rem;
+    transition:
+      border-color 200ms,
+      box-shadow 200ms;
+  }
+
+  /* Toggled by gatewayPulse.ts as the light passes through each box --
+     declarative CSS transition rather than a JS-driven tween, since it's
+     just a binary highlight/unhighlight. */
+  .diagram__node.is-pulse-active,
+  .diagram__branch.is-pulse-active {
+    border-color: var(--color-af-teal);
+    box-shadow: 0 0 16px 2px rgb(from var(--color-af-teal) r g b / 0.3);
+  }
+
+  /* The denied-request cycle's gateway state -- swapped in for
+     is-pulse-active once Policy/Audit fail, swapped back out before the
+     dot returns to the AI Assistant box. */
+  .diagram__node.is-pulse-denied {
+    border-color: var(--color-af-red);
+    box-shadow: 0 0 16px 2px rgb(from var(--color-af-red) r g b / 0.3);
+    animation: diagram-denied-buzz 160ms ease-in-out 3;
+  }
+
+  @keyframes diagram-denied-buzz {
+    0%,
+    100% {
+      box-shadow: 0 0 16px 2px rgb(from var(--color-af-red) r g b / 0.3);
+    }
+    50% {
+      box-shadow: 0 0 24px 4px rgb(from var(--color-af-red) r g b / 0.65);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .diagram__node.is-pulse-denied {
+      animation: none;
+    }
   }
 
   .diagram__node--client {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4375rem;
     color: var(--color-af-dim);
   }
 
@@ -508,7 +742,10 @@ import PublicBase from '../layouts/PublicBase.astro';
     gap: 0.5rem;
   }
 
-  .diagram__gateway-tags span {
+  .diagram__tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3125rem;
     font-family: 'IBM Plex Mono', monospace;
     font-size: 0.625rem;
     font-weight: 600;
@@ -518,6 +755,69 @@ import PublicBase from '../layouts/PublicBase.astro';
     border: 1px solid var(--color-af-border);
     border-radius: 2px;
     padding: 0.1875rem 0.5rem;
+  }
+
+  /* Status slot shared by the four gateway tags and the Rucio/HTCondor
+     leaf boxes -- three pre-rendered states (spinner/check/x), toggled via
+     the parent's data-state attribute rather than swapping DOM/innerHTML,
+     so gatewayPulse.ts only ever sets one attribute per state change. The
+     spinner reuses this app's established loading-spinner construct
+     (a bordered circle, one side recolored, rotated) rather than a glyph --
+     DESIGN.md bans unicode/emoji standing in for icons. */
+  .diagram__tag-icon {
+    position: relative;
+    display: inline-block;
+    width: 11px;
+    height: 11px;
+    flex-shrink: 0;
+  }
+
+  .diagram__tag-spinner,
+  .diagram__tag-check,
+  .diagram__tag-x {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    transition: opacity 150ms;
+  }
+
+  .diagram__tag-spinner {
+    border: 1.5px solid var(--color-af-border);
+    border-top-color: var(--color-af-teal);
+    border-radius: 50%;
+  }
+
+  .diagram__tag-check {
+    color: var(--color-af-green);
+  }
+
+  .diagram__tag-x {
+    color: var(--color-af-red);
+  }
+
+  [data-state='checking'] .diagram__tag-spinner {
+    opacity: 1;
+    animation: diagram-tag-spin 550ms linear infinite;
+  }
+
+  [data-state='ok'] .diagram__tag-check {
+    opacity: 1;
+  }
+
+  [data-state='fail'] .diagram__tag-x {
+    opacity: 1;
+  }
+
+  @keyframes diagram-tag-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .diagram__tag-spinner {
+      animation: none;
+    }
   }
 
   .diagram__link {
@@ -562,6 +862,9 @@ import PublicBase from '../layouts/PublicBase.astro';
 
   .diagram__branch {
     position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4375rem;
     font-family: 'IBM Plex Mono', monospace;
     font-size: 0.75rem;
     color: var(--color-af-text);
@@ -569,6 +872,9 @@ import PublicBase from '../layouts/PublicBase.astro';
     border: 1px solid var(--color-af-border);
     border-radius: 4px;
     padding: 0.5rem 1rem;
+    transition:
+      border-color 200ms,
+      box-shadow 200ms;
   }
 
   .diagram__branch::before {
@@ -579,6 +885,79 @@ import PublicBase from '../layouts/PublicBase.astro';
     width: 1px;
     height: 1.5rem;
     background: var(--color-af-border);
+  }
+
+  /* Decorative pulse dot + callouts (gatewayPulse.ts) -- positioned via JS
+     with GSAP's x/y (transform, not top/left, so moving them never
+     triggers layout), hidden by default so a script failure or
+     prefers-reduced-motion leaves the diagram exactly as it already reads
+     without either. */
+  .diagram__pulse {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 8px;
+    height: 8px;
+    margin: -4px;
+    border-radius: 50%;
+    background: var(--color-af-teal);
+    box-shadow: 0 0 10px 2px rgb(from var(--color-af-teal) r g b / 0.7);
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  /* The credential box (x509 / condor-token) -- reuses .diagram__node's
+     look, positioned via JS once per cycle (gsap.set, not a continuous
+     tween) beside the gateway box; only two of this session's three
+     cycles ever light it up. */
+  .diagram__node--credential {
+    position: absolute;
+    top: 0;
+    left: 0;
+    font-size: 0.6875rem;
+    padding: 0.5rem 0.875rem;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  /* The growing "chat log" beside the AI Assistant box -- one to three
+     lines revealed in sequence and held on screen for the rest of the
+     cycle, then collapsed together at the reset. height: 0 -> 'auto'
+     (not max-height) is what lets GSAP measure and animate each line's
+     real content height. */
+  .diagram__chat {
+    position: absolute;
+    top: 0;
+    right: -40px;
+    display: flex;
+    flex-direction: column;
+    width: 15rem;
+    pointer-events: none;
+  }
+
+  .diagram__chat-line {
+    display: flex;
+    align-items: baseline;
+    gap: 0.375rem;
+    height: 0;
+    overflow: hidden;
+    opacity: 0;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.6875rem;
+    padding: 0 0.5rem;
+    border-left: 1px solid var(--color-af-border);
+  }
+
+  .diagram__chat-role {
+    flex-shrink: 0;
+    color: var(--color-af-teal);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 600;
+  }
+
+  .diagram__chat-text {
+    color: var(--color-af-dim);
   }
 
   /* ── Proof ─────────────────────────────────────────────────────────── */
@@ -673,6 +1052,14 @@ import PublicBase from '../layouts/PublicBase.astro';
     .diagram__fanout {
       flex-direction: column;
       gap: 1.25rem;
+    }
+    /* The chat log and credential box assume horizontal room beside the
+       diagram's centerline that a single narrow column doesn't have -- the
+       pulse dot and box/tag highlights alone still read fine without
+       them. */
+    .diagram__chat,
+    .diagram__node--credential {
+      display: none;
     }
   }
 </style>
