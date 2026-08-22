@@ -254,8 +254,10 @@ export async function getAccessToken(): Promise<string | null> {
 
 /**
  * Completes the Authorization Code exchange after Keycloak redirects back to
- * /callback. Returns the return path stashed by login(), defaulting to '/'
- * for a callback reached some other way (e.g. a stale bookmark).
+ * /callback. Returns the return path stashed by login(), defaulting to
+ * '/overview/' (the authenticated dashboard, not the public '/' landing
+ * page, which never triggers a login) for a callback reached some other way
+ * (e.g. a stale bookmark).
  */
 export async function handleCallback(): Promise<string> {
   const manager = await getUserManager();
@@ -264,5 +266,5 @@ export async function handleCallback(): Promise<string> {
   }
   const user = await manager.signinRedirectCallback();
   const state = user.state as AuthState | undefined;
-  return state?.returnUrl || '/';
+  return state?.returnUrl || '/overview/';
 }

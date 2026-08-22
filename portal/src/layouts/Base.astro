@@ -15,6 +15,8 @@
  * viewports the sidebar becomes an off-canvas drawer toggled from the topbar.
  */
 import '../styles/global.css';
+import Fonts from '../components/Fonts.astro';
+import Footer from '../components/Footer.astro';
 
 interface Props {
   title?: string;
@@ -30,7 +32,7 @@ const navGroups: {
 }[] = [
   {
     label: null,
-    items: [{ href: '/', label: 'Overview', icon: 'home', badge: false }],
+    items: [{ href: '/overview/', label: 'Overview', icon: 'home', badge: false }],
   },
   {
     label: 'Access',
@@ -60,12 +62,6 @@ const icons: Record<string, string[]> = {
 };
 
 const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
-
-// Inlined at build time from the PUBLIC_APP_VERSION build-arg (see
-// Containerfile.portal); falls back to 'dev' for local `astro dev` and for
-// a container built without the build-arg (ARG still sets ENV to an empty
-// string in that case, so `||` is required here — `??` would not catch it).
-const appVersion = import.meta.env.PUBLIC_APP_VERSION || 'dev';
 ---
 
 <!doctype html>
@@ -75,62 +71,7 @@ const appVersion = import.meta.env.PUBLIC_APP_VERSION || 'dev';
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title} — AF MCP Platform</title>
 
-    <style>
-      /* -----------------------------------------------------------------------
-       IBM Plex — self-hosted so the strict CSP (default-src 'self') can serve
-       them without allowing fonts.googleapis.com / fonts.gstatic.com.
-       woff2 files live in portal/public/fonts/.
-    ----------------------------------------------------------------------- */
-      @font-face {
-        font-family: 'IBM Plex Sans';
-        font-style: normal;
-        font-weight: 400;
-        font-display: swap;
-        src: url('/fonts/ibm-plex-sans-latin-400-normal.woff2') format('woff2');
-      }
-      @font-face {
-        font-family: 'IBM Plex Sans';
-        font-style: normal;
-        font-weight: 500;
-        font-display: swap;
-        src: url('/fonts/ibm-plex-sans-latin-500-normal.woff2') format('woff2');
-      }
-      @font-face {
-        font-family: 'IBM Plex Sans';
-        font-style: normal;
-        font-weight: 600;
-        font-display: swap;
-        src: url('/fonts/ibm-plex-sans-latin-600-normal.woff2') format('woff2');
-      }
-      @font-face {
-        font-family: 'IBM Plex Mono';
-        font-style: normal;
-        font-weight: 400;
-        font-display: swap;
-        src: url('/fonts/ibm-plex-mono-latin-400-normal.woff2') format('woff2');
-      }
-      @font-face {
-        font-family: 'IBM Plex Mono';
-        font-style: normal;
-        font-weight: 500;
-        font-display: swap;
-        src: url('/fonts/ibm-plex-mono-latin-500-normal.woff2') format('woff2');
-      }
-      @font-face {
-        font-family: 'IBM Plex Mono';
-        font-style: normal;
-        font-weight: 600;
-        font-display: swap;
-        src: url('/fonts/ibm-plex-mono-latin-600-normal.woff2') format('woff2');
-      }
-      @font-face {
-        font-family: 'IBM Plex Mono';
-        font-style: normal;
-        font-weight: 700;
-        font-display: swap;
-        src: url('/fonts/ibm-plex-mono-latin-700-normal.woff2') format('woff2');
-      }
-    </style>
+    <Fonts />
 
     <style>
       /* -----------------------------------------------------------------------
@@ -405,42 +346,6 @@ const appVersion = import.meta.env.PUBLIC_APP_VERSION || 'dev';
         width: 100%;
       }
 
-      /* Footer --------------------------------------------------------------- */
-      .af-footer {
-        border-top: 1px solid var(--color-af-border);
-        padding: 0 2rem;
-        height: 48px;
-        display: flex;
-        align-items: center;
-        gap: 2rem;
-      }
-
-      .af-footer__text {
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 0.6875rem;
-        color: var(--color-af-dim);
-        letter-spacing: 0.04em;
-      }
-
-      .af-footer__link {
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 0.6875rem;
-        color: var(--color-af-dim);
-        letter-spacing: 0.04em;
-        text-decoration: none;
-      }
-      .af-footer__link:hover {
-        color: var(--color-af-teal);
-      }
-
-      .af-footer__version {
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 0.625rem;
-        color: var(--color-af-dim);
-        letter-spacing: 0.04em;
-        opacity: 0.6;
-      }
-
       /* Responsive ----------------------------------------------------------- */
       @media (max-width: 900px) {
         .af-sidebar {
@@ -572,7 +477,7 @@ const appVersion = import.meta.env.PUBLIC_APP_VERSION || 'dev';
 
     <div class="af-shell">
       <aside class="af-sidebar" id="af-sidebar">
-        <a href="/" class="af-sidebar__logo" aria-label="AF MCP Platform home">
+        <a href="/overview/" class="af-sidebar__logo" aria-label="AF MCP Platform home">
           AF&nbsp;/&nbsp;MCP
         </a>
 
@@ -583,10 +488,7 @@ const appVersion = import.meta.env.PUBLIC_APP_VERSION || 'dev';
                 {group.label && <p class="af-sidebar__group-label">{group.label}</p>}
                 <ul class="af-sidebar__list" role="list">
                   {group.items.map(({ href, label, icon, badge }) => {
-                    const isActive =
-                      href === '/'
-                        ? currentPath === '/'
-                        : currentPath.startsWith(href.replace(/\/$/, ''));
+                    const isActive = currentPath.startsWith(href.replace(/\/$/, ''));
                     return (
                       <li>
                         <a
@@ -647,7 +549,7 @@ const appVersion = import.meta.env.PUBLIC_APP_VERSION || 'dev';
             </svg>
           </button>
 
-          <a href="/" class="af-topbar__logo" aria-label="AF MCP Platform home">
+          <a href="/overview/" class="af-topbar__logo" aria-label="AF MCP Platform home">
             AF&nbsp;/&nbsp;MCP
           </a>
 
@@ -664,26 +566,7 @@ const appVersion = import.meta.env.PUBLIC_APP_VERSION || 'dev';
           <slot />
         </main>
 
-        <footer class="af-footer" aria-label="Site footer">
-          <span class="af-footer__text">ATLAS Analysis Facility · MCP Platform</span>
-          <span class="af-footer__version">v{appVersion}</span>
-          <a
-            href="https://atlas.cern"
-            class="af-footer__link"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            atlas.cern
-          </a>
-          <a
-            href="https://giordonstark.com/"
-            class="af-footer__link"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            © Giordon Stark
-          </a>
-        </footer>
+        <Footer />
       </div>
     </div>
 

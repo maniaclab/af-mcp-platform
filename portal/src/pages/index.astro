@@ -2,94 +2,140 @@
 // Reserved paths: /v1/* and /mcp/* are routed to the broker on this host
 // (see docs/architecture.md, "Reserved paths on the portal host"). New
 // portal pages must not use those prefixes.
-import Base from '../layouts/Base.astro';
-import DashboardCards from '../components/DashboardCards.vue';
-
-// Identity is filled client-side (see Base.astro) — the greeting element is
-// tagged data-af-identity and stays hidden until GET /v1/identities resolves.
 //
-// The MCP endpoint URL below is likewise filled client-side (see the
-// "Fill MCP endpoint" script) from getBrokerOrigin() (../lib/auth) rather
-// than baked in here — this frontmatter only runs at build time, so a
-// hardcoded URL here would show every deployment its own host or a
-// different, wrong one.
+// This page is deliberately public: it uses PublicBase.astro, not Base.astro,
+// so it renders with no Keycloak session and no app-shell chrome. The
+// authenticated dashboard (identical hero, live status, connect
+// instructions) lives at /overview/ -- see Base.astro's nav and
+// portal/src/pages/overview.astro.
+import PublicBase from '../layouts/PublicBase.astro';
 ---
 
-<Base title="Overview">
-  <!-- ── Hero: particle track canvas + identity ────────────────────────── -->
-  <section class="hero" aria-label="Platform overview">
+<PublicBase title="AF MCP Platform">
+  <!-- ── Hero: particle track canvas + pitch ─────────────────────────── -->
+  <section class="hero" aria-label="AF MCP Platform">
     <canvas id="track-canvas" class="hero__canvas" aria-hidden="true"></canvas>
 
     <div class="hero__content">
-      <div class="hero__eyebrow">ATLAS Analysis Facility</div>
+      <div class="hero__eyebrow">Credential-brokered MCP gateway</div>
       <h1 class="hero__title">MCP Platform</h1>
       <p class="hero__sub">
-        Model Context Protocol broker for ATLAS computing — connecting your AI assistant to Rucio,
-        AMI, and the analysis grid.
+        Connect an AI assistant to your analysis facility's computing — dataset lookup, job
+        submission, notebooks, and more — through the open
+        <a href="https://modelcontextprotocol.io/" target="_blank" rel="noopener noreferrer"
+          >Model Context Protocol</a
+        >, without ever handing that assistant a raw credential.
       </p>
 
-      <div class="hero__user" data-af-user-holder hidden>
-        <span class="hero__user-label">Signed in as</span>
-        <span class="hero__user-email" data-af-identity></span>
-      </div>
-    </div>
-  </section>
-
-  <!-- ── Status cards (Vue island — fetches live data) ─────────────────── -->
-  <DashboardCards client:load />
-
-  <!-- ── MCP endpoint ──────────────────────────────────────────────────── -->
-  <section class="endpoint-section" aria-label="MCP endpoint">
-    <h2 class="section-heading">Connect to this endpoint</h2>
-    <p class="section-body">
-      Add this server URL to Claude Desktop, Gemini Advanced, or any MCP-compatible client. The
-      broker authenticates with your AF Keycloak token automatically.
-    </p>
-
-    <div class="endpoint-block">
-      <div class="endpoint-block__header">
-        <span class="endpoint-block__label">MCP server URL</span>
-        <button
-          id="copy-btn"
-          class="endpoint-block__copy"
-          aria-label="Copy endpoint URL to clipboard"
+      <div class="hero__cta">
+        <a href="/overview/" class="hero__cta-primary">Sign in →</a>
+        <a
+          href="https://github.com/maniaclab/af-mcp-platform"
+          class="hero__cta-secondary"
+          target="_blank"
+          rel="noopener noreferrer"
         >
-          Copy
-        </button>
+          View on GitHub
+        </a>
       </div>
-      <code class="endpoint-block__url" id="mcp-endpoint-url"></code>
-    </div>
-
-    <div class="snippet-group">
-      <h3 class="snippet-heading">Claude (Claude.ai, Claude Desktop)</h3>
-      <ol class="connect-steps">
-        <li>
-          Add a custom connector with just the server URL above — no header, no token needed.
-          <strong>Settings → Connectors → Add custom connector.</strong> The first call opens a browser
-          window to sign in with your AF Keycloak account; Claude stores the resulting credential itself.
-        </li>
-        <li>
-          If your client predates OAuth support, skip the browser step: under
-          <strong>Request headers</strong>, add name <code>Authorization</code>, value
-          <code>Bearer &lt;token&gt;</code>, using a token minted from the
-          <a href="/tokens/" class="connect-steps__link">Tokens page</a>.
-        </li>
-      </ol>
-    </div>
-
-    <div class="snippet-group">
-      <h3 class="snippet-heading">curl / httpx</h3>
-      <pre class="code-block"><code id="curl-snippet" /></pre>
     </div>
   </section>
-</Base>
+
+  <!-- ── What it does ──────────────────────────────────────────────────── -->
+  <section class="benefits" aria-label="What this platform does">
+    <div class="benefit">
+      <svg
+        class="benefit__icon"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.5"
+        aria-hidden="true"
+      >
+        <path d="M12 3l7 3v5.2c0 4.3-2.9 8.2-7 9.8-4.1-1.6-7-5.5-7-9.8V6l7-3z" />
+      </svg>
+      <h2 class="benefit__title">Credentials never leave the broker</h2>
+      <p class="benefit__desc">
+        Your AI assistant never holds a raw grid certificate or IAM token. The broker mints
+        short-lived, per-call credentials behind the scenes and hands the assistant only a
+        result.
+      </p>
+    </div>
+
+    <div class="benefit">
+      <svg
+        class="benefit__icon"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.5"
+        aria-hidden="true"
+      >
+        <path d="M4 4.5h16v6.5H4z" /><path d="M4 13h16v6.5H4z" /><path d="M7.5 7.75h.01" /><path
+          d="M7.5 16.25h.01"
+        />
+      </svg>
+      <h2 class="benefit__title">Add a backend, not a deployment</h2>
+      <p class="benefit__desc">
+        Registering a new MCP server is a config entry, not a code change — the platform grows to
+        cover any number of computing tools behind one endpoint.
+      </p>
+    </div>
+
+    <div class="benefit">
+      <svg
+        class="benefit__icon"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.5"
+        aria-hidden="true"
+      >
+        <path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z" /><path d="M8.5 12.5l2.5 2.5 4.5-5" />
+      </svg>
+      <h2 class="benefit__title">Every call is authorized and audited</h2>
+      <p class="benefit__desc">
+        Group-based capabilities decide what you can reach; every tool invocation is checked and
+        logged before it reaches a backend.
+      </p>
+    </div>
+  </section>
+
+  <!-- ── Ecosystem proof ───────────────────────────────────────────────── -->
+  <section class="proof" aria-label="Deployed today">
+    <h2 class="proof__heading">A real, working deployment</h2>
+    <p class="proof__body">
+      This is the reference deployment for the UChicago ATLAS Analysis Facility — not a demo.
+      Rucio and AMI dataset tools, HTCondor job submission, JupyterLab management, and grid
+      filesystem access all run behind it today, each backed by its own independently-maintained
+      MCP server and credential service. Any facility can deploy the same broker + portal chart
+      with its own mix.
+    </p>
+    <a
+      href="https://maniaclab.github.io/af-mcp-platform/ecosystem/"
+      class="proof__link"
+      target="_blank"
+      rel="noopener noreferrer"
+    >
+      See what's deployed →
+    </a>
+  </section>
+
+  <!-- ── Final CTA ─────────────────────────────────────────────────────── -->
+  <section class="final-cta" aria-label="Get started">
+    <h2 class="final-cta__heading">Ready to connect your AI assistant?</h2>
+    <a href="/overview/" class="hero__cta-primary">Sign in →</a>
+  </section>
+</PublicBase>
 
 <!-- ── Canvas particle track (the aesthetic risk) ─────────────────────── -->
 <!--
   A sparse radial event display: a handful of curved tracks originating from
   a central vertex, using quadratic Bezier curves to simulate magnetic
   curvature — the same visualization ATLAS physicists read every day.
-  One orchestrated moment; the rest of the page is quiet.
+  One orchestrated moment; the rest of the page is quiet. Deliberately
+  duplicated from overview.astro rather than shared, to keep this page's
+  addition scoped to this file alone -- see the PR description for why.
 -->
 <script>
   (function () {
@@ -226,67 +272,17 @@ import DashboardCards from '../components/DashboardCards.vue';
   })();
 </script>
 
-<!-- ── Fill MCP endpoint ─────────────────────────────────────────────── -->
-<!--
-  The endpoint URL depends on a runtime fetch (getBrokerOrigin() reads
-  /config.json), so it can't be a build-time Astro frontmatter constant —
-  it's filled here on mount instead, the same way Base.astro's inline
-  script fills [data-af-identity] from GET /v1/identities.
--->
-<script>
-  import { getBrokerOrigin } from '../lib/auth';
-
-  (async () => {
-    const endpoint = `${await getBrokerOrigin()}/mcp`;
-
-    const urlEl = document.getElementById('mcp-endpoint-url');
-    if (urlEl) urlEl.textContent = endpoint;
-
-    const btn = document.getElementById('copy-btn') as HTMLButtonElement | null;
-    if (btn) btn.dataset.url = endpoint;
-
-    const curlEl = document.getElementById('curl-snippet');
-    if (curlEl) {
-      curlEl.textContent = `# Authenticate via your AF Keycloak token
-export AF_TOKEN="$(cat ~/.af_token)"
-curl -H "Authorization: Bearer $AF_TOKEN" \\
-     ${endpoint}`;
-    }
-  })();
-</script>
-
-<!-- ── Copy button ───────────────────────────────────────────────────── -->
-<script>
-  const btn = document.getElementById('copy-btn') as HTMLButtonElement | null;
-  if (btn) {
-    btn.addEventListener('click', async () => {
-      const url = btn.dataset.url;
-      if (!url) return;
-      try {
-        await navigator.clipboard.writeText(url);
-        btn.textContent = 'Copied';
-        setTimeout(() => {
-          btn.textContent = 'Copy';
-        }, 2000);
-      } catch {
-        btn.textContent = 'Copy';
-      }
-    });
-  }
-</script>
-
 <style>
   /* ── Hero ──────────────────────────────────────────────────────────── */
   .hero {
     position: relative;
-    height: 220px;
+    min-height: 320px;
     overflow: hidden;
-    border-radius: 4px;
-    border: 1px solid var(--color-af-border);
+    border-bottom: 1px solid var(--color-af-border);
     background: var(--color-af-void);
-    margin-bottom: 2rem;
     display: flex;
     align-items: center;
+    padding: 0 2rem;
   }
 
   .hero__canvas {
@@ -300,207 +296,187 @@ curl -H "Authorization: Bearer $AF_TOKEN" \\
   .hero__content {
     position: relative;
     z-index: 1;
-    padding: 2rem 2.5rem;
+    max-width: 42rem;
+    margin: 0 auto;
+    padding: 3rem 0;
   }
 
   .hero__eyebrow {
     font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.625rem;
+    font-size: 0.6875rem;
     font-weight: 600;
     letter-spacing: 0.12em;
     text-transform: uppercase;
     color: var(--color-af-teal);
-    margin-bottom: 0.5rem;
+    margin-bottom: 0.75rem;
   }
 
   .hero__title {
     font-family: 'IBM Plex Mono', monospace;
-    font-size: 2.25rem;
+    font-size: 3rem;
     font-weight: 700;
     letter-spacing: 0.03em;
     color: var(--color-af-text);
-    line-height: 1.1;
-    margin: 0 0 0.625rem;
+    line-height: 1.05;
+    margin: 0 0 1rem;
   }
 
   .hero__sub {
     font-family: 'IBM Plex Sans', system-ui, sans-serif;
-    font-size: 0.9375rem;
+    font-size: 1rem;
     color: var(--color-af-dim);
-    max-width: 38rem;
-    line-height: 1.6;
-    margin: 0 0 1rem;
+    line-height: 1.65;
+    margin: 0 0 1.75rem;
   }
 
-  .hero__user {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-
-  .hero__user-label {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.625rem;
-    font-weight: 600;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--color-af-label);
-  }
-
-  .hero__user-email {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.75rem;
-    color: var(--color-af-dim);
-  }
-
-  /* ── Endpoint section ─────────────────────────────────────────────── */
-  .endpoint-section {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-    max-width: 52rem;
-  }
-
-  .section-heading {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.625rem;
-    font-weight: 600;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: var(--color-af-label);
-    margin: 0;
-  }
-
-  .section-body {
-    font-size: 0.9375rem;
-    color: var(--color-af-dim);
-    line-height: 1.6;
-    margin: 0;
-  }
-
-  .endpoint-block {
-    border: 1px solid var(--color-af-border);
-    border-radius: 4px;
-    overflow: hidden;
-  }
-
-  .endpoint-block__header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0.5rem 0.875rem;
-    background: var(--color-af-surface);
-    border-bottom: 1px solid var(--color-af-border);
-  }
-
-  .endpoint-block__label {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.5625rem;
-    font-weight: 600;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--color-af-label);
-  }
-
-  .endpoint-block__copy {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.625rem;
-    font-weight: 600;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+  .hero__sub a {
     color: var(--color-af-teal);
-    background: transparent;
-    border: 1px solid rgb(from var(--color-af-teal) r g b / 0.2);
-    border-radius: 2px;
-    padding: 0.25rem 0.625rem;
-    cursor: pointer;
-    transition: background 150ms;
-  }
-  .endpoint-block__copy:hover {
-    background: rgb(from var(--color-af-teal) r g b / 0.08);
-  }
-  .endpoint-block__copy:focus-visible {
-    outline: 2px solid var(--color-af-teal);
-    outline-offset: 2px;
   }
 
-  .endpoint-block__url {
-    display: block;
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.875rem;
-    color: var(--color-af-text);
-    padding: 0.875rem;
-    background: var(--color-af-void);
-    word-break: break-all;
-  }
-
-  /* Snippets */
-  .snippet-group {
+  .hero__cta {
     display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
+    align-items: center;
+    gap: 1.25rem;
   }
 
-  .snippet-heading {
+  .hero__cta-primary {
     font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.6875rem;
+    font-size: 0.8125rem;
     font-weight: 600;
-    color: var(--color-af-dim);
-    margin: 0;
-  }
-
-  .snippet-heading code {
-    color: var(--color-af-dim);
-    font-size: 0.6875rem;
-  }
-
-  .code-block {
-    background: var(--color-af-void);
-    border: 1px solid var(--color-af-border);
+    letter-spacing: 0.04em;
+    color: var(--color-af-void);
+    background: var(--color-af-teal);
+    padding: 0.625rem 1.25rem;
     border-radius: 4px;
-    padding: 0.875rem 1rem;
-    overflow-x: auto;
-    margin: 0;
+    text-decoration: none;
+    transition: opacity 150ms;
+  }
+  .hero__cta-primary:hover,
+  .hero__cta-primary:focus-visible {
+    opacity: 0.85;
   }
 
-  .code-block code {
+  .hero__cta-secondary {
     font-family: 'IBM Plex Mono', monospace;
     font-size: 0.8125rem;
     color: var(--color-af-dim);
-    line-height: 1.7;
+    text-decoration: none;
+    transition: color 150ms;
+  }
+  .hero__cta-secondary:hover,
+  .hero__cta-secondary:focus-visible {
+    color: var(--color-af-teal);
   }
 
-  .connect-steps {
+  /* ── Benefits ──────────────────────────────────────────────────────── */
+  .benefits {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.5rem;
+    max-width: 68rem;
+    margin: 0 auto;
+    padding: 3rem 2rem;
+  }
+
+  .benefit {
     display: flex;
     flex-direction: column;
     gap: 0.625rem;
-    margin: 0;
-    padding-left: 1.25rem;
-    font-size: 0.875rem;
-    color: var(--color-af-dim);
-    line-height: 1.6;
   }
 
-  .connect-steps code {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.8125rem;
-    color: var(--color-af-text);
-  }
-
-  .connect-steps__link {
+  .benefit__icon {
+    width: 22px;
+    height: 22px;
     color: var(--color-af-teal);
   }
 
+  .benefit__title {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--color-af-text);
+    margin: 0;
+  }
+
+  .benefit__desc {
+    font-size: 0.875rem;
+    color: var(--color-af-dim);
+    line-height: 1.6;
+    margin: 0;
+  }
+
+  /* ── Proof ─────────────────────────────────────────────────────────── */
+  .proof {
+    max-width: 42rem;
+    margin: 0 auto;
+    padding: 2rem 2rem 3rem;
+    text-align: center;
+  }
+
+  .proof__heading {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: var(--color-af-text);
+    margin: 0 0 0.75rem;
+  }
+
+  .proof__body {
+    font-size: 0.9375rem;
+    color: var(--color-af-dim);
+    line-height: 1.65;
+    margin: 0 0 1rem;
+  }
+
+  .proof__link {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.8125rem;
+    color: var(--color-af-teal);
+    text-decoration: none;
+  }
+  .proof__link:hover,
+  .proof__link:focus-visible {
+    text-decoration: underline;
+  }
+
+  /* ── Final CTA ─────────────────────────────────────────────────────── */
+  .final-cta {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1.25rem;
+    padding: 3rem 2rem 4rem;
+    border-top: 1px solid var(--color-af-border);
+  }
+
+  .final-cta__heading {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 1.375rem;
+    font-weight: 600;
+    color: var(--color-af-text);
+    margin: 0;
+    text-align: center;
+  }
+
   /* ── Responsive ────────────────────────────────────────────────────── */
+  @media (max-width: 900px) {
+    .benefits {
+      grid-template-columns: 1fr;
+    }
+  }
+
   @media (max-width: 640px) {
     .hero {
-      height: 180px;
+      min-height: 260px;
+      padding: 0 1.5rem;
     }
     .hero__title {
-      font-size: 1.5rem;
+      font-size: 2rem;
     }
-    .hero__content {
-      padding: 1.5rem;
+    .hero__cta {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.75rem;
     }
   }
 </style>
