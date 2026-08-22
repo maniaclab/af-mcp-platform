@@ -199,7 +199,9 @@ class Settings(BaseSettings):
     def __init__(self, **data: Any) -> None:
         super().__init__(**data)
 
-    # OIDC configuration
+    # OIDC configuration. The default below is the reference deployment's
+    # (UChicago AF) realm URL, not a canonical value -- every deployment
+    # overrides it via OIDC_ISSUER.
     oidc_issuer: str = "https://auth.af.uchicago.edu/realms/connect"
     oidc_audience: str = "mcp-gateway"
     # Optional realm URL for server-to-server (back-channel) Keycloak calls
@@ -231,6 +233,9 @@ class Settings(BaseSettings):
     metrics_port: int = 9090
 
     # User-facing portal, used in unlock hints and identity-linking redirects.
+    # The default below is the reference deployment's (UChicago AF) portal
+    # hostname, not a canonical value -- every deployment overrides it via
+    # PORTAL_URL.
     portal_url: str = "https://mcp-portal.af.uchicago.edu"
 
     # /mcp aggregator transport mode (issue #128). Streamable-HTTP sessions
