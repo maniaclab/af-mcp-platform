@@ -125,7 +125,7 @@ const glyph = props.id[0]?.toUpperCase() ?? '?';
 
       <p class="il__desc">{{ enables }}</p>
       <div v-if="powers && powers.length" class="il__powers">
-        <span class="il__powers-label">Capabilities</span>
+        <span class="il__powers-label">Powers</span>
         <span v-for="power in powers" :key="power" class="il__power-chip">{{ power }}</span>
       </div>
 

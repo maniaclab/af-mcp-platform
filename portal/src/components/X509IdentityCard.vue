@@ -210,7 +210,7 @@ function formatRemaining(seconds?: number | null): string {
 
       <p class="xc__desc">{{ enables }}</p>
       <div v-if="powers && powers.length" class="xc__powers">
-        <span class="xc__powers-label">Capabilities</span>
+        <span class="xc__powers-label">Powers</span>
         <span v-for="power in powers" :key="power" class="xc__power-chip">{{ power }}</span>
       </div>
 
