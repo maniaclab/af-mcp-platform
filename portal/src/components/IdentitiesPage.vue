@@ -37,12 +37,11 @@ function serversForAlias(id: string): CatalogServer[] {
   return serversByAlias.value.get(id) ?? [];
 }
 
-/** Comma-joined display names of the catalog backends this identity's credential
- * powers -- empty string (not shown by IdentityLink/X509IdentityCard) if none. */
-function powersLabel(id: string): string {
-  return serversForAlias(id)
-    .map((s) => s.display_name)
-    .join(', ');
+/** Display names of the catalog backends this identity's credential powers,
+ * rendered as capability chips -- empty array (not shown by IdentityLink/
+ * X509IdentityCard) if none. */
+function powersForAlias(id: string): string[] {
+  return serversForAlias(id).map((s) => s.display_name);
 }
 
 // Set by a `?linked=<id>` landing (see broker/src/af_mcp_broker/api/oauth21.py's
@@ -237,7 +236,7 @@ function handleX509Revoked(id: string) {
               :linked="p.linked"
               :display_name="p.display_name"
               :enables="p.enables"
-              :powers="powersLabel(p.id)"
+              :powers="powersForAlias(p.id)"
               :proxy_expires_at="p.proxy_expires_at"
               :x509_link_mode="p.x509_link_mode"
               @linked="(meta, remember) => handleX509Linked(p.id, meta, remember)"
@@ -250,7 +249,7 @@ function handleX509Revoked(id: string) {
               :linked="p.linked"
               :display_name="p.display_name"
               :enables="p.enables"
-              :powers="powersLabel(p.id)"
+              :powers="powersForAlias(p.id)"
               :link_url="p.link_url"
               @unlinked="handleUnlinked(p.id)"
             />

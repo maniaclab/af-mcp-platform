@@ -9,8 +9,8 @@ const props = defineProps<{
   linked: boolean;
   display_name: string;
   enables: string;
-  /** Comma-joined display names of catalog backends this identity's credential powers, empty if none. */
-  powers?: string;
+  /** Display names of catalog backends this identity's credential powers, empty/absent if none. */
+  powers?: string[];
   link_url: string | null;
 }>();
 
@@ -124,9 +124,10 @@ const glyph = props.id[0]?.toUpperCase() ?? '?';
       </div>
 
       <p class="il__desc">{{ enables }}</p>
-      <p v-if="powers" class="il__powers">
-        <span class="il__powers-label">Powers:</span> {{ powers }}
-      </p>
+      <div v-if="powers && powers.length" class="il__powers">
+        <span class="il__powers-label">Capabilities</span>
+        <span v-for="power in powers" :key="power" class="il__power-chip">{{ power }}</span>
+      </div>
 
       <div v-if="error" class="il__error" role="alert">{{ error }}</div>
     </div>
@@ -213,10 +214,10 @@ const glyph = props.id[0]?.toUpperCase() ?? '?';
 <style scoped>
 .il {
   display: grid;
-  grid-template-columns: 2.5rem 1fr auto;
+  grid-template-columns: 2.5rem 1fr minmax(8.5rem, auto);
   gap: 1rem;
   align-items: start;
-  padding: 1.25rem;
+  padding: 1rem;
   border: 1px solid var(--color-af-border);
   border-radius: 4px;
   background: var(--color-af-surface);
@@ -280,9 +281,9 @@ const glyph = props.id[0]?.toUpperCase() ?? '?';
 }
 
 .il__status--linked {
-  background: rgb(from var(--color-af-green) r g b / 0.12);
-  color: var(--color-af-green);
-  border: 1px solid rgb(from var(--color-af-green) r g b / 0.25);
+  background: rgb(from var(--color-af-green) r g b / 0.16);
+  color: color-mix(in srgb, var(--color-af-green) 70%, var(--color-af-dim));
+  border: 1px solid rgb(from var(--color-af-green) r g b / 0.22);
 }
 
 .il__status--unlinked {
@@ -299,10 +300,11 @@ const glyph = props.id[0]?.toUpperCase() ?? '?';
 }
 
 .il__powers {
-  font-size: 0.75rem;
-  color: var(--color-af-dim);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.375rem;
   margin: 0.375rem 0 0;
-  line-height: 1.5;
 }
 
 .il__powers-label {
@@ -314,6 +316,16 @@ const glyph = props.id[0]?.toUpperCase() ?? '?';
   color: var(--color-af-label);
 }
 
+.il__power-chip {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.6875rem;
+  color: var(--color-af-teal);
+  background: rgb(from var(--color-af-teal) r g b / 0.08);
+  border: 1px solid rgb(from var(--color-af-teal) r g b / 0.18);
+  padding: 0.1875rem 0.5rem;
+  border-radius: 2px;
+}
+
 .il__error {
   font-family: 'IBM Plex Mono', monospace;
   font-size: 0.75rem;
@@ -321,19 +333,27 @@ const glyph = props.id[0]?.toUpperCase() ?? '?';
   margin-top: 0.25rem;
 }
 
+/*
+ * Fixed min-width (matching the .il grid's third column) rather than a max
+ * — Reconnect must land at the same x position whether or not Unlink also
+ * renders next to it, so the action area's left edge can't shrink to fit
+ * a single button.
+ */
 .il__actions {
   flex-shrink: 0;
   padding-top: 0.125rem;
-  max-width: 18rem;
-  text-align: right;
+  min-width: 8.5rem;
+  text-align: left;
 }
 
+/* Reconnect (primary maintenance action) always first/top; Unlink
+ * (secondary/destructive) always second -- stacked, not packed to an edge,
+ * so Reconnect's position never shifts based on whether Unlink is shown. */
 .il__linked-actions {
   display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  flex-wrap: wrap;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.375rem;
 }
 
 /*
