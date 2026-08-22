@@ -468,15 +468,18 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
       <div v-else class="tp__empty">
         <p class="tp__empty-title">No tokens yet</p>
         <p class="tp__empty-body">
-          Mint one above to connect a client, like Claude Desktop, that can't sign in with a
-          browser on its own.
+          Mint one above to connect a client, like Claude Desktop, that can't sign in with a browser
+          on its own.
         </p>
       </div>
 
       <p class="tp__gap-note">
-        This list only shows PATs created through this page or automatically when you connect an
-        MCP client — see
-        <a href="https://maniaclab.github.io/af-mcp-platform/auth/" target="_blank" rel="noopener noreferrer"
+        This list only shows PATs created through this page or automatically when you connect an MCP
+        client — see
+        <a
+          href="https://maniaclab.github.io/af-mcp-platform/auth/"
+          target="_blank"
+          rel="noopener noreferrer"
           >Authentication</a
         >
         for the full credential model.
@@ -515,8 +518,8 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
         </div>
 
         <p class="tp__cli-note">
-          A PAT minted this way appears in the list above like any other, with a name, expiry,
-          and a <strong>Revoke</strong> action.
+          A PAT minted this way appears in the list above like any other, with a name, expiry, and a
+          <strong>Revoke</strong> action.
         </p>
       </div>
     </template>
@@ -532,8 +535,8 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
         <h2 id="tp-modal-title" class="tp__modal-title">Mint a new token</h2>
         <p class="tp__modal-body">
           Creates a Personal Access Token (PAT) — a long-lived credential you paste into an MCP
-          client's config (e.g. Claude Desktop) that can't sign in with a browser on its own.
-          It will be shown exactly once, so copy it before closing this dialog.
+          client's config (e.g. Claude Desktop) that can't sign in with a browser on its own. It
+          will be shown exactly once, so copy it before closing this dialog.
         </p>
 
         <form class="tp__form" @submit.prevent="handleMint" novalidate>
