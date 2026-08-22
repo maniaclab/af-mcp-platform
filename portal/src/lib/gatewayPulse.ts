@@ -513,6 +513,32 @@ function buildCycleTimeline(cycle: Cycle, refs: Refs): gsap.core.Timeline {
     }
   }
 
+  // -- the response completes the loop: a dot carries it from the AI
+  // Assistant box back to the chat log -- its arrival there is what
+  // causes the final line to appear, mirroring the request's trip out at
+  // the start of this cycle. --
+  tl.call(() => client.classList.remove(ACTIVE_CLASS), undefined, t);
+  tl.call(
+    () => gsap.set(dot, { x: () => centerX(client, rect()), y: () => centerY(client, rect()) }),
+    undefined,
+    t,
+  );
+  tl.to(dot, { opacity: 1, duration: TIME.dotFade }, t);
+  t += TIME.dotFade;
+  tl.to(
+    dot,
+    {
+      x: () => leftX(chatLines[2].wrapper, rect()),
+      y: () => centerY(chatLines[2].wrapper, rect()),
+      duration: TIME.travelMed,
+      ease: 'power1.inOut',
+    },
+    t,
+  );
+  t += TIME.travelMed;
+  tl.to(dot, { opacity: 0, duration: TIME.dotFade }, t);
+  t += TIME.dotFade + 0.1;
+
   // -- chat: the assistant's final answer --
   tl.call(() => (chatLines[2].text.textContent = cycle.aiResultText), undefined, t);
   tl.to(
