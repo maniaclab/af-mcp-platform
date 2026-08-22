@@ -246,14 +246,11 @@ function buildCycleTimeline(cycle: Cycle, refs: Refs): gsap.core.Timeline {
   );
   tl.to(dot, { opacity: 0, duration: TIME.dotFade }, t);
   t += TIME.dotFade + 0.55;
-  tl.call(
-    () => {
-      setTagState(client, '');
-      client.classList.remove(ACTIVE_CLASS);
-    },
-    undefined,
-    t,
-  );
+  // The spinner (unlike the border glow) deliberately keeps running past
+  // this point -- it means "waiting on a response from MCP," which stays
+  // true through the tool_call line, the gateway checks, and the backend
+  // round trip below, and only resolves once the pulse actually returns.
+  tl.call(() => client.classList.remove(ACTIVE_CLASS), undefined, t);
   t += 0.25;
 
   // -- chat: the assistant's resulting tool call --
@@ -335,6 +332,7 @@ function buildCycleTimeline(cycle: Cycle, refs: Refs): gsap.core.Timeline {
       () => {
         gateway.classList.remove(DENIED_CLASS);
         client.classList.add(ACTIVE_CLASS);
+        setTagState(client, '');
       },
       undefined,
       t,
@@ -505,6 +503,7 @@ function buildCycleTimeline(cycle: Cycle, refs: Refs): gsap.core.Timeline {
         () => {
           gateway.classList.remove(ACTIVE_CLASS);
           client.classList.add(ACTIVE_CLASS);
+          setTagState(client, '');
         },
         undefined,
         t,
