@@ -3,6 +3,11 @@ WORKDIR /app
 COPY portal/package.json portal/package-lock.json* ./
 RUN npm install
 COPY portal/ ./
+# check-protected-routes.mjs (run by `npm run build` below) reads this file
+# via a `../../charts/...` traversal from portal/scripts/, matching its path
+# in the repo -- copied to the same relative location here since this stage
+# otherwise only has the portal/ subtree.
+COPY charts/af-mcp-platform/templates/ingress-portal-authenticated.yaml /charts/af-mcp-platform/templates/ingress-portal-authenticated.yaml
 
 # Astro inlines PUBLIC_* env vars into the client bundle at build time via
 # import.meta.env — falls back to the 'dev' string in Base.astro when unset

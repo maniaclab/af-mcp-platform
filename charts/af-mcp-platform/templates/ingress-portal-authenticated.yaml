@@ -1,0 +1,53 @@
+{{- if .Values.ingress.enabled }}
+# This Ingress carries the oauth2-proxy ForwardAuth gate for the portal pages
+# that need a session: everything under Base.astro (see its docstring) except
+# the public landing page at `/`, which uses PublicBase.astro instead and is
+# served by ingress-portal.yaml's catch-all without this gate. Listed
+# explicitly rather than gating `/` itself, because `/` also has to serve
+# that public page and the static assets (/_astro, /fonts) every portal page
+# loads. nginx's longest-prefix matching routes requests here ahead of
+# ingress-portal.yaml's `/` catch-all.
+#
+# IMPORTANT: add any new authenticated page route (one importing Base.astro,
+# not PublicBase.astro) to the path list below, or it falls through to the
+# public catch-all and skips the ForwardAuth gate.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "af-mcp-platform.fullname" . }}-portal-authenticated
+  labels:
+    {{- include "af-mcp-platform.labels" . | nindent 4 }}
+  annotations:
+    nginx.ingress.kubernetes.io/auth-url: {{ .Values.oauth2Proxy.forwardAuthUrl | quote }}
+    # rd= must be a full URL, not just a path: oauth2-proxy treats a bare-path
+    # rd as same-host and redirects back to its own host after login, which
+    # 404s for anything requested on mcpHost or portalHost. $scheme://$best_http_host
+    # supplies the origin so oauth2-proxy redirects back to the requesting
+    # subdomain instead — allowed because whitelist_domains = [".af.uchicago.edu"]
+    # in the shared oauth2-proxy config covers both hosts.
+    nginx.ingress.kubernetes.io/auth-signin: {{ printf "%s?rd=$scheme://$best_http_host$escaped_request_uri" .Values.oauth2Proxy.signInUrl | quote }}
+    nginx.ingress.kubernetes.io/auth-response-headers: "Authorization,X-Auth-Request-User,X-Auth-Request-Email,X-Auth-Request-Groups"
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className | quote }}
+  {{- end }}
+  # No `tls:` block here — nginx-ingress consolidates certs per host across
+  # Ingress objects sharing that host, and ingress-portal.yaml already
+  # declares the TLS secret for portalHost.
+  rules:
+    - host: {{ .Values.ingress.portalHost | quote }}
+      http:
+        paths:
+          {{- range list "/overview" "/catalog" "/identities" "/tokens" "/callback" }}
+          - path: {{ . }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "af-mcp-platform.portal.fullname" $ }}
+                port:
+                  name: http
+          {{- end }}
+{{- end }}
