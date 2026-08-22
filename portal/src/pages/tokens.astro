@@ -5,18 +5,17 @@ import TokensPage from '../components/TokensPage.vue';
 
 <Base title="Tokens">
   <div class="page-header">
-    <h1 class="page-title">Bearer tokens</h1>
+    <h1 class="page-title">Personal Access Tokens</h1>
     <p class="page-subtitle">
-      Interactive sign-in doesn't need this page — oauth2-proxy handles browser sessions
-      transparently. This page is for bootstrapping <strong>programmatic</strong> MCP clients (like Claude
-      Desktop) that don't yet support OAuth discovery: mint a static Bearer token here, paste it into
-      the client's config, and revoke it whenever you're done with it.
+      A Personal Access Token (PAT) is a long-lived credential you paste into an MCP client that
+      can't sign in with a browser on its own — most clients don't need this page, since they can
+      sign in themselves the first time you connect them. Mint one here, paste it into the
+      client's config, and revoke it whenever you're done with it.
     </p>
     <p class="page-subtitle page-subtitle--scope">
-      These tokens only grant access to <strong>this broker</strong> — they are not the credentials backend
-      services like Rucio or your CERN account use. For those, see the <a href="/identities/"
-        >Identities page</a
-      >.
+      A PAT only grants access to this MCP platform — it's not the same as your identities with
+      Rucio, CERN, or other backend systems. For those, see the
+      <a href="/identities/">Identities page</a>.
     </p>
   </div>
 
