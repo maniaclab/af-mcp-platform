@@ -39,7 +39,7 @@ interface Cycle {
 const CYCLES: Cycle[] = [
   {
     userText: 'find me a dataset',
-    aiCallText: 'tool_call(rucio_list_dataset)',
+    aiCallText: 'tool_call(rucio_list_dsids)',
     aiResultText: 'Found 3 datasets...',
     tagOutcomes: { auth: 'ok', policy: 'ok', audit: 'ok' },
     credentialLabel: 'x509',
@@ -69,7 +69,7 @@ const TIME = {
   chatReveal: 0.3,
   chatHoldShort: 0.55,
   chatHoldLong: 0.7,
-  chatHoldFinal: 0.9,
+  chatHoldFinal: 1.9,
   chatCollapse: 0.4,
   dotFade: 0.15,
   travelShort: 0.3,
