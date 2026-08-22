@@ -1506,4 +1506,3 @@ portal SPA obtains its own `aud=mcp-gateway` Bearer instead of relying on a
 cookie oauth2-proxy never actually forwarded as a header anyway. oauth2-proxy
 remains in front of portalHost's `/` rule (`ingress-portal.yaml`) purely to
 gate the HTML/static assets.
-
