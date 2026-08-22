@@ -39,14 +39,14 @@ import PublicBase from '../layouts/PublicBase.astro';
     <h2 class="benefits__heading">One gateway. Your entire facility.</h2>
 
     <div class="benefits-layout">
-      <div class="diagram" aria-label="How AI assistants reach the facility">
-        <div class="diagram__node diagram__node--client">AI Assistant</div>
+      <div class="diagram" aria-label="How AI assistants reach the facility" data-pulse-diagram>
+        <div class="diagram__node diagram__node--client" data-pulse-node="client">AI Assistant</div>
 
         <div class="diagram__link">
           <span class="diagram__link-label">MCP</span>
         </div>
 
-        <div class="diagram__node diagram__node--gateway">
+        <div class="diagram__node diagram__node--gateway" data-pulse-node="gateway">
           <span class="diagram__gateway-name">MCP Gateway</span>
           <div class="diagram__gateway-tags">
             <span>Auth</span>
@@ -59,10 +59,21 @@ import PublicBase from '../layouts/PublicBase.astro';
         <div class="diagram__stem" aria-hidden="true"></div>
 
         <div class="diagram__fanout">
-          <div class="diagram__branch">Rucio</div>
+          <div class="diagram__branch" data-pulse-node="rucio">Rucio</div>
           <div class="diagram__branch">HTCondor</div>
           <div class="diagram__branch">Jupyter</div>
           <div class="diagram__branch">Storage</div>
+        </div>
+
+        <!-- Decorative -- the "how it works" motion moment (gatewayPulse.ts). -->
+        <div class="diagram__pulse" data-pulse-dot aria-hidden="true"></div>
+        <div class="diagram__callout" data-pulse-callout="user" aria-hidden="true">
+          <span class="diagram__callout-prefix">user</span>
+          <span class="diagram__callout-text">find me a dataset</span>
+        </div>
+        <div class="diagram__callout" data-pulse-callout="tool" aria-hidden="true">
+          <span class="diagram__callout-prefix">tool call</span>
+          <span class="diagram__callout-text">rucio_list_dataset</span>
         </div>
       </div>
 
@@ -304,6 +315,17 @@ import PublicBase from '../layouts/PublicBase.astro';
   })();
 </script>
 
+<!-- ── Gateway pulse (the "how it works" diagram's motion moment) ─────── -->
+<script>
+  import { initGatewayPulse } from '../lib/gatewayPulse';
+
+  const diagram = document.querySelector<HTMLElement>('[data-pulse-diagram]');
+  if (diagram) {
+    const cleanup = initGatewayPulse(diagram);
+    window.addEventListener('beforeunload', cleanup, { once: true });
+  }
+</script>
+
 <style>
   /* ── Hero ──────────────────────────────────────────────────────────── */
   .hero {
@@ -465,7 +487,11 @@ import PublicBase from '../layouts/PublicBase.astro';
   }
 
   /* ── Architecture diagram ─────────────────────────────────────────── */
+  /* position: relative -- anchors the pulse dot and callouts (gatewayPulse.ts),
+     which are positioned in JS via getBoundingClientRect() math relative to
+     this element's own box. */
   .diagram {
+    position: relative;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -480,6 +506,18 @@ import PublicBase from '../layouts/PublicBase.astro';
     border: 1px solid var(--color-af-border);
     border-radius: 4px;
     padding: 0.625rem 1.5rem;
+    transition:
+      border-color 200ms,
+      box-shadow 200ms;
+  }
+
+  /* Toggled by gatewayPulse.ts as the light passes through each box --
+     declarative CSS transition rather than a JS-driven tween, since it's
+     just a binary highlight/unhighlight. */
+  .diagram__node.is-pulse-active,
+  .diagram__branch.is-pulse-active {
+    border-color: var(--color-af-teal);
+    box-shadow: 0 0 16px 2px rgb(from var(--color-af-teal) r g b / 0.3);
   }
 
   .diagram__node--client {
@@ -569,6 +607,9 @@ import PublicBase from '../layouts/PublicBase.astro';
     border: 1px solid var(--color-af-border);
     border-radius: 4px;
     padding: 0.5rem 1rem;
+    transition:
+      border-color 200ms,
+      box-shadow 200ms;
   }
 
   .diagram__branch::before {
@@ -579,6 +620,54 @@ import PublicBase from '../layouts/PublicBase.astro';
     width: 1px;
     height: 1.5rem;
     background: var(--color-af-border);
+  }
+
+  /* Decorative pulse dot + callouts (gatewayPulse.ts) -- positioned via JS
+     with GSAP's x/y (transform, not top/left, so moving them never
+     triggers layout), hidden by default so a script failure or
+     prefers-reduced-motion leaves the diagram exactly as it already reads
+     without either. */
+  .diagram__pulse {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 8px;
+    height: 8px;
+    margin: -4px;
+    border-radius: 50%;
+    background: var(--color-af-teal);
+    box-shadow: 0 0 10px 2px rgb(from var(--color-af-teal) r g b / 0.7);
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .diagram__callout {
+    position: absolute;
+    top: 0;
+    left: 0;
+    display: flex;
+    align-items: baseline;
+    gap: 0.375rem;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.6875rem;
+    white-space: nowrap;
+    padding: 0.25rem 0.5rem;
+    border: 1px solid var(--color-af-border);
+    border-radius: 2px;
+    background: var(--color-af-surface);
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .diagram__callout-prefix {
+    color: var(--color-af-teal);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 600;
+  }
+
+  .diagram__callout-text {
+    color: var(--color-af-dim);
   }
 
   /* ── Proof ─────────────────────────────────────────────────────────── */
@@ -673,6 +762,12 @@ import PublicBase from '../layouts/PublicBase.astro';
     .diagram__fanout {
       flex-direction: column;
       gap: 1.25rem;
+    }
+    /* The callouts assume horizontal room beside the AI Assistant box that
+       a single narrow column doesn't have -- the pulse dot and box
+       highlights alone still read fine without them. */
+    .diagram__callout {
+      display: none;
     }
   }
 </style>
