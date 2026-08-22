@@ -52,8 +52,8 @@ import PublicBase from '../layouts/PublicBase.astro';
         </svg>
         <h3 class="benefit__title">Credentials stay behind the broker</h3>
         <p class="benefit__desc">
-          Short-lived, per-call credentials. Raw tokens and certificates never reach the AI
-          assistant.
+          Short-lived credentials are issued per call. Raw tokens and certificates never reach the
+          AI assistant.
         </p>
       </div>
 
@@ -71,7 +71,7 @@ import PublicBase from '../layouts/PublicBase.astro';
         </svg>
         <h3 class="benefit__title">Add tools, not complexity</h3>
         <p class="benefit__desc">
-          Plug in MCP backends through configuration. Give users one endpoint for datasets, jobs,
+          Add MCP backends through configuration. Give users one endpoint for datasets, jobs,
           notebooks, storage, and more.
         </p>
       </div>
@@ -90,8 +90,38 @@ import PublicBase from '../layouts/PublicBase.astro';
         </svg>
         <h3 class="benefit__title">Authorize every call</h3>
         <p class="benefit__desc">
-          Group-based access controls and audit logging put policy around every tool invocation.
+          Group-based access controls and audit logging govern every tool invocation.
         </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── How it works ─────────────────────────────────────────────────── -->
+  <section class="architecture" aria-label="How AI assistants reach the facility">
+    <div class="diagram">
+      <div class="diagram__node diagram__node--client">AI Assistant</div>
+
+      <div class="diagram__link">
+        <span class="diagram__link-label">MCP</span>
+      </div>
+
+      <div class="diagram__node diagram__node--gateway">
+        <span class="diagram__gateway-name">MCP Gateway</span>
+        <div class="diagram__gateway-tags">
+          <span>Auth</span>
+          <span>Policy</span>
+          <span>Audit</span>
+          <span>Broker</span>
+        </div>
+      </div>
+
+      <div class="diagram__stem" aria-hidden="true"></div>
+
+      <div class="diagram__fanout">
+        <div class="diagram__branch">Rucio</div>
+        <div class="diagram__branch">HTCondor</div>
+        <div class="diagram__branch">Jupyter</div>
+        <div class="diagram__branch">Storage</div>
       </div>
     </div>
   </section>
@@ -99,9 +129,10 @@ import PublicBase from '../layouts/PublicBase.astro';
   <!-- ── Ecosystem proof ───────────────────────────────────────────────── -->
   <section class="proof" aria-label="Deployed today">
     <h2 class="proof__heading">Already running at UChicago</h2>
+    <p class="proof__lead">This isn't a demo. It's running at UChicago.</p>
     <p class="proof__body">
-      This isn't a demo. The UChicago ATLAS Analysis Facility uses MCP Platform today to securely
-      expose Rucio, AMI, HTCondor, JupyterLab, and filesystem access to AI-powered workflows.
+      The UChicago ATLAS Analysis Facility uses MCP Platform today to securely expose Rucio, AMI,
+      HTCondor, JupyterLab, and filesystem access to AI-powered workflows.
     </p>
     <a
       href="https://maniaclab.github.io/af-mcp-platform/ecosystem/"
@@ -115,9 +146,10 @@ import PublicBase from '../layouts/PublicBase.astro';
 
   <!-- ── Final CTA ─────────────────────────────────────────────────────── -->
   <section class="final-cta" aria-label="Get started">
-    <h2 class="final-cta__heading">Ready to put AI to work?</h2>
+    <h2 class="final-cta__heading">Bring AI to your analysis facility.</h2>
     <p class="final-cta__sub">
-      Connect your assistant to your facility, without giving it your credentials.
+      Connect your assistant to datasets, compute, notebooks, and tools, without giving it your
+      credentials.
     </p>
     <a href="/overview/" class="hero__cta-primary">Sign in →</a>
   </section>
@@ -415,6 +447,129 @@ import PublicBase from '../layouts/PublicBase.astro';
     max-width: 20rem;
   }
 
+  /* ── Architecture diagram ─────────────────────────────────────────── */
+  .architecture {
+    max-width: 68rem;
+    margin: 0 auto;
+    padding: 0 2rem 4rem;
+  }
+
+  .diagram {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .diagram__node {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.8125rem;
+    color: var(--color-af-text);
+    background: var(--color-af-surface);
+    border: 1px solid var(--color-af-border);
+    border-radius: 4px;
+    padding: 0.625rem 1.5rem;
+  }
+
+  .diagram__node--client {
+    color: var(--color-af-dim);
+  }
+
+  .diagram__node--gateway {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.625rem;
+    padding: 1rem 2rem;
+    border-color: var(--color-af-teal);
+  }
+
+  .diagram__gateway-name {
+    font-weight: 700;
+    font-size: 0.9375rem;
+    letter-spacing: 0.02em;
+  }
+
+  .diagram__gateway-tags {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.5rem;
+  }
+
+  .diagram__gateway-tags span {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.625rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-af-label);
+    border: 1px solid var(--color-af-border);
+    border-radius: 2px;
+    padding: 0.1875rem 0.5rem;
+  }
+
+  .diagram__link {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.5rem 0;
+  }
+
+  .diagram__link::before,
+  .diagram__link::after {
+    content: '';
+    width: 1px;
+    height: 0.875rem;
+    background: var(--color-af-border);
+  }
+
+  .diagram__link-label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.625rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-af-teal);
+  }
+
+  .diagram__stem {
+    width: 1px;
+    height: 1.5rem;
+    background: var(--color-af-border);
+  }
+
+  .diagram__fanout {
+    display: flex;
+    justify-content: center;
+    gap: 2rem;
+    width: 100%;
+    max-width: 44rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--color-af-border);
+  }
+
+  .diagram__branch {
+    position: relative;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.75rem;
+    color: var(--color-af-text);
+    background: var(--color-af-surface);
+    border: 1px solid var(--color-af-border);
+    border-radius: 4px;
+    padding: 0.5rem 1rem;
+  }
+
+  .diagram__branch::before {
+    content: '';
+    position: absolute;
+    top: -1.5rem;
+    left: 50%;
+    width: 1px;
+    height: 1.5rem;
+    background: var(--color-af-border);
+  }
+
   /* ── Proof ─────────────────────────────────────────────────────────── */
   .proof {
     max-width: 42rem;
@@ -429,6 +584,14 @@ import PublicBase from '../layouts/PublicBase.astro';
     font-weight: 600;
     color: var(--color-af-text);
     margin: 0 0 0.75rem;
+  }
+
+  .proof__lead {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--color-af-text);
+    margin: 0 0 0.5rem;
   }
 
   .proof__body {
@@ -494,6 +657,10 @@ import PublicBase from '../layouts/PublicBase.astro';
       flex-direction: column;
       align-items: flex-start;
       gap: 0.75rem;
+    }
+    .diagram__fanout {
+      flex-direction: column;
+      gap: 1.25rem;
     }
   }
 </style>
