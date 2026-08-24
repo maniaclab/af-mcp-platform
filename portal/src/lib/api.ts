@@ -52,6 +52,26 @@ export class SessionExpiredError extends Error {
 }
 
 /**
+ * Thrown when a 401 means "your account isn't authorized for this
+ * platform" (the broker's identity.py::TokenAudienceError, carrying a
+ * `detail.error === "insufficient_scope"` body) rather than a stale
+ * session. Distinct from SessionExpiredError because reload/re-auth can't
+ * fix it — it's permanent until an administrator grants the missing token
+ * audience (see docs/auth.md's "cascading failure" section). `correlationId`
+ * is the id to quote when contacting them, the same convention
+ * `backendStatus.ts` already uses for `capability_required`.
+ */
+export class AccessDeniedError extends Error {
+  constructor(
+    message: string,
+    public readonly correlationId: string | null,
+  ) {
+    super(message);
+    this.name = 'AccessDeniedError';
+  }
+}
+
+/**
  * Every SessionExpiredError, from whichever call site below, invalidates the
  * identities cache — a session expiring means the next fetchIdentities()
  * must go back to the broker rather than serve stale cached data through a
@@ -60,6 +80,28 @@ export class SessionExpiredError extends Error {
 function throwSessionExpired(): never {
   clearIdentitiesCache();
   throw new SessionExpiredError();
+}
+
+/**
+ * Called with a final, still-401 *res* that authFetch is about to give up
+ * on — distinguishes AccessDeniedError from a plain stale session by
+ * reading the body once. Any shape other than the broker's structured
+ * `insufficient_scope` detail (including an unparseable/empty body, the
+ * common case for an actually expired token) falls through to the existing
+ * SessionExpiredError handling — no behavior change for genuine expiry.
+ */
+async function throwForUnauthorized(res: Response): Promise<never> {
+  const body: { detail?: unknown } | null = await res.json().catch(() => null);
+  const detail = body?.detail;
+  if (
+    detail &&
+    typeof detail === 'object' &&
+    (detail as { error?: unknown }).error === 'insufficient_scope'
+  ) {
+    const { message, correlation_id } = detail as { message: string; correlation_id?: string };
+    throw new AccessDeniedError(message, correlation_id ?? null);
+  }
+  throwSessionExpired();
 }
 
 /**
@@ -97,7 +139,7 @@ async function authFetch(url: string, init?: RequestInit): Promise<Response> {
       res = await doFetch(renewed);
     }
     if (res.status === 401) {
-      throwSessionExpired();
+      await throwForUnauthorized(res);
     }
   }
   return res;

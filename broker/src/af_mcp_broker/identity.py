@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+import uuid
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Annotated, Any
 from urllib.parse import urlparse
@@ -199,6 +200,29 @@ class TokenExpiredError(HTTPException):
     """
 
 
+class TokenAudienceError(HTTPException):
+    """HTTPException subclass raised when a token is missing the expected audience.
+
+    Raised when the token's signature, issuer, and expiry all check out but
+    it lacks the audience ``settings.oidc_audience`` expects. Distinct from
+    the plain ``HTTPException(401)`` this module otherwise raises for every
+    other JWT-validation failure, for the same reason ``TokenExpiredError``
+    is distinct (see that class's docstring): a missing audience reveals
+    nothing about why any *other* token would be rejected, so it's safe to
+    state explicitly. Unlike an expired token, though, this is not fixable
+    by re-authenticating -- Keycloak only includes ``mcp-gateway`` in a
+    token's ``aud`` for users whose group membership grants the scope's
+    gating role (see docs/auth.md's "cascading failure" section), so every
+    token this user mints is missing it until an administrator changes
+    their group membership. ``detail`` is a dict, not a plain string,
+    carrying a stable ``error`` discriminator (RFC 6750's
+    ``insufficient_scope``) plus a ``correlation_id`` the caller can quote
+    when contacting an administrator -- the same pattern
+    ``api/capabilities.py``'s ``_backend_status`` already uses for
+    ``capability_required``/``misconfigured``.
+    """
+
+
 class PrincipalDirectoryUnavailableError(HTTPException):
     """Raised by ``get_principal`` (issue #144 steps 3 and 3b) when a validated JWT's current groups/POSIX identity cannot be determined because the ``PrincipalDirectory`` has no answer for this subject -- no ``PrincipalCache`` configured at all, or one configured but currently unable to reach the directory with nothing fresh-enough cached to fall back on.
 
@@ -311,6 +335,7 @@ async def get_principal(
 
     error: Exception | str | None = None
     expired = False
+    wrong_audience = False
     try:
         # Select the signing key by the token's `kid`. A JWKS commonly carries
         # more than one key (e.g. Keycloak publishes both a signature and an
@@ -346,6 +371,13 @@ async def get_principal(
         error = exc
         expired = True
         logger.info("jwt_expired", subject=_peek_sub(token))
+    except jwt.InvalidAudienceError as exc:
+        # Caught ahead of the broader InvalidTokenError below -- it's a
+        # subclass, so ordering matters. Everything else about the token
+        # checked out; only the audience is wrong/missing, which is a
+        # distinct, admin-actionable failure (see TokenAudienceError).
+        error = exc
+        wrong_audience = True
     except jwt.InvalidTokenError as exc:
         error = exc
     except (ValueError, KeyError) as exc:
@@ -355,6 +387,26 @@ async def get_principal(
         "jwt_validation_failed",
         error=str(error) if error else "no matching key",
     )
+    if wrong_audience:
+        correlation_id = uuid.uuid4().hex
+        logger.warning(
+            "jwt_audience_mismatch",
+            subject=_peek_sub(token),
+            correlation_id=correlation_id,
+        )
+        raise TokenAudienceError(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "error": "insufficient_scope",
+                "message": (
+                    "Your account is not authorized to use this platform "
+                    "yet. Contact your AF administrators and quote this "
+                    f"ID: {correlation_id}"
+                ),
+                "correlation_id": correlation_id,
+            },
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     exc_cls = TokenExpiredError if expired else HTTPException
     raise exc_cls(
         status_code=status.HTTP_401_UNAUTHORIZED,

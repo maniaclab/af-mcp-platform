@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import {
+  AccessDeniedError,
   clearIdentitiesCache,
   fetchCatalog,
   fetchIdentities,
@@ -23,6 +24,7 @@ const providers = ref<IdentityProvider[]>([]);
 const loading = ref(true);
 const error = ref<string | null>(null);
 const sessionExpired = ref(false);
+const accessDenied = ref<AccessDeniedError | null>(null);
 
 // Which servers each identity feeds, for the "What each identity unlocks"
 // grid below — joined client-side from the catalog's credential_provider
@@ -100,7 +102,9 @@ onMounted(async () => {
       linkedErrorBannerTimer = setTimeout(dismissLinkedErrorBanner, 5000);
     }
   } catch (err) {
-    if (err instanceof SessionExpiredError) {
+    if (err instanceof AccessDeniedError) {
+      accessDenied.value = err;
+    } else if (err instanceof SessionExpiredError) {
       sessionExpired.value = true;
     } else {
       error.value = err instanceof Error ? err.message : 'Could not load identity status.';
@@ -205,6 +209,15 @@ function handleX509Revoked(id: string) {
         <button type="button" class="ip__reload" @click="reload">Reload</button>
         to re-authenticate.
       </span>
+    </div>
+
+    <!-- Access denied: a valid, unexpired credential that's missing the
+         audience needed to use this platform -- a reload can't fix it, only
+         an administrator granting access can (see identity.py's
+         TokenAudienceError). -->
+    <div v-else-if="accessDenied" class="ip__error" role="alert">
+      <span class="ip__error-title">Access not yet granted</span>
+      <span class="ip__error-body">{{ accessDenied.message }}</span>
     </div>
 
     <!-- Error -->
