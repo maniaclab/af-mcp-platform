@@ -7,7 +7,11 @@ from conftest import make_claims
 from fastapi import HTTPException
 
 from af_mcp_broker.authorization import get_principal_capabilities
-from af_mcp_broker.identity import PrincipalDirectoryUnavailableError, get_principal
+from af_mcp_broker.identity import (
+    PrincipalDirectoryUnavailableError,
+    TokenAudienceError,
+    get_principal,
+)
 from af_mcp_broker.pat import mint_pat
 from af_mcp_broker.pat_auth import LastUsedTracker, resolve_pat_principal
 from af_mcp_broker.token_registry import (
@@ -58,6 +62,30 @@ async def test_wrong_audience_raises_401(
     with pytest.raises(HTTPException) as exc:
         await get_principal(token, settings, cache)
     assert exc.value.status_code == 401
+
+
+async def test_wrong_audience_raises_token_audience_error_with_correlation_id(
+    settings, sig_key, prime_jwks, static_principal_cache
+):
+    """A structurally valid token missing the expected audience is not the
+    same failure as an expired/malformed one -- it's permanent until an
+    admin grants the audience via group membership (docs/auth.md's
+    "cascading failure" section), so it gets its own exception type and a
+    correlation_id the caller can quote, mirroring capability_required in
+    api/capabilities.py::_backend_status (see
+    docs/plans/2026-08-24-audience-mismatch-error-ui-design.md)."""
+    cache, _directory = static_principal_cache
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims(aud="some-other-service"))
+
+    with pytest.raises(TokenAudienceError) as exc:
+        await get_principal(token, settings, cache)
+
+    assert exc.value.status_code == 401
+    assert exc.value.detail["error"] == "insufficient_scope"
+    correlation_id = exc.value.detail["correlation_id"]
+    assert correlation_id
+    assert correlation_id in exc.value.detail["message"]
 
 
 async def test_no_matching_kid_raises_401(
