@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
-import { fetchCatalog, fetchIdentities, SessionExpiredError } from '../lib/api';
+import { AccessDeniedError, fetchCatalog, fetchIdentities, SessionExpiredError } from '../lib/api';
 import type { CatalogServer, IdentityProvider } from '../lib/api';
 import { resolvePoweredBy } from '../lib/catalog';
 import BackendCard from './BackendCard.vue';
@@ -10,6 +10,7 @@ const providers = ref<IdentityProvider[]>([]);
 const loading = ref(true);
 const error = ref<string | null>(null);
 const sessionExpired = ref(false);
+const accessDenied = ref<AccessDeniedError | null>(null);
 const filter = ref<'all' | 'read' | 'state_change'>('all');
 const search = ref('');
 
@@ -19,7 +20,9 @@ onMounted(async () => {
     servers.value = catalog.servers;
     providers.value = identities.providers;
   } catch (err) {
-    if (err instanceof SessionExpiredError) {
+    if (err instanceof AccessDeniedError) {
+      accessDenied.value = err;
+    } else if (err instanceof SessionExpiredError) {
       sessionExpired.value = true;
     } else {
       error.value =
@@ -99,7 +102,11 @@ function poweredByFor(server: CatalogServer) {
         </button>
       </div>
 
-      <span v-if="!loading && !error && !sessionExpired" class="cp__count" aria-live="polite">
+      <span
+        v-if="!loading && !error && !sessionExpired && !accessDenied"
+        class="cp__count"
+        aria-live="polite"
+      >
         {{ filteredServers.length }} server{{ filteredServers.length !== 1 ? 's' : '' }}
       </span>
     </div>
@@ -118,6 +125,15 @@ function poweredByFor(server: CatalogServer) {
         <button type="button" class="cp__reload" @click="reload">Reload</button>
         to re-authenticate.
       </span>
+    </div>
+
+    <!-- Access denied: a valid, unexpired credential that's missing the
+         audience needed to use this platform -- a reload can't fix it, only
+         an administrator granting access can (see identity.py's
+         TokenAudienceError). -->
+    <div v-else-if="accessDenied" class="cp__error" role="alert">
+      <span class="cp__error-title">Access not yet granted</span>
+      <span class="cp__error-body">{{ accessDenied.message }}</span>
     </div>
 
     <!-- Error -->

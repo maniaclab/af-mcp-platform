@@ -8,6 +8,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   APIError,
+  AccessDeniedError,
   SessionExpiredError,
   clearIdentitiesCache,
   fetchCapabilities,
@@ -71,11 +72,13 @@ function mockJson(status: number, body: unknown) {
 }
 
 describe('api client', () => {
-  it('exports the two error classes distinctly', () => {
+  it('exports the error classes distinctly', () => {
     expect(new APIError(500, 'boom', 'x')).toBeInstanceOf(Error);
     expect(new SessionExpiredError()).toBeInstanceOf(Error);
+    expect(new AccessDeniedError('denied', 'abc123')).toBeInstanceOf(Error);
     // Different classes so callers can discriminate with instanceof.
     expect(new SessionExpiredError()).not.toBeInstanceOf(APIError);
+    expect(new AccessDeniedError('denied', 'abc123')).not.toBeInstanceOf(SessionExpiredError);
   });
 
   it('sends the access token as a Bearer header', async () => {
@@ -153,6 +156,31 @@ describe('api client', () => {
     globalThis.fetch = vi.fn().mockResolvedValue(new Response('', { status: 401 }));
     await expect(fetchIdentities()).rejects.toBeInstanceOf(SessionExpiredError);
     expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('throws AccessDeniedError (not SessionExpiredError) when the 401 carries an insufficient_scope detail', async () => {
+    // The broker sends this shape (identity.py's TokenAudienceError) when a
+    // token is validly signed but missing the expected audience — a
+    // permanent, admin-only fix, not a stale session, so it must not be
+    // presented as one.
+    vi.mocked(auth.renewAccessToken).mockResolvedValue(null);
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          detail: {
+            error: 'insufficient_scope',
+            message: 'Your account is not authorized yet. Quote this ID: abc123',
+            correlation_id: 'abc123',
+          },
+        }),
+        { status: 401, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+    const rejection = await fetchIdentities().catch((e) => e);
+    expect(rejection).toBeInstanceOf(AccessDeniedError);
+    expect(rejection).not.toBeInstanceOf(SessionExpiredError);
+    expect(rejection.message).toBe('Your account is not authorized yet. Quote this ID: abc123');
+    expect(rejection.correlationId).toBe('abc123');
   });
 
   it('returns the parsed body on 200', async () => {

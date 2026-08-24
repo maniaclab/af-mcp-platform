@@ -14,6 +14,7 @@
  */
 import { ref, computed, onMounted, nextTick, type Ref } from 'vue';
 import {
+  AccessDeniedError,
   mintToken,
   listTokens,
   revokeToken,
@@ -39,6 +40,7 @@ const tokens = ref<TokenSummary[]>([]);
 const loading = ref(true);
 const error = ref<string | null>(null);
 const sessionExpired = ref(false);
+const accessDenied = ref<AccessDeniedError | null>(null);
 
 const sortedTokens = computed(() =>
   [...tokens.value].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at)),
@@ -48,7 +50,9 @@ async function loadTokens() {
   try {
     tokens.value = await listTokens();
   } catch (err) {
-    if (err instanceof SessionExpiredError) {
+    if (err instanceof AccessDeniedError) {
+      accessDenied.value = err;
+    } else if (err instanceof SessionExpiredError) {
       sessionExpired.value = true;
     } else {
       error.value = err instanceof Error ? err.message : 'Could not load tokens.';
@@ -355,6 +359,15 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
         <button type="button" class="tp__reload" @click="reload">Reload</button>
         to re-authenticate.
       </span>
+    </div>
+
+    <!-- Access denied: a valid, unexpired credential that's missing the
+         audience needed to use this platform -- a reload can't fix it, only
+         an administrator granting access can (see identity.py's
+         TokenAudienceError). -->
+    <div v-else-if="accessDenied" class="tp__error" role="alert">
+      <span class="tp__error-title">Access not yet granted</span>
+      <span class="tp__error-body">{{ accessDenied.message }}</span>
     </div>
 
     <!-- Error -->
