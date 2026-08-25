@@ -46,7 +46,7 @@ Monorepo layout:
 
 ### Broker structure
 
-One FastAPI process serves two surfaces: the FastMCP aggregator mounted at `/mcp` (speaks MCP-over-HTTP to LLM clients) and the `/v1` HTTP API. **`/v1` is the platform boundary** — the aggregator translates MCP calls into `/v1` calls, and everything behind `/v1` (aggregator choice, backends, credential providers) is swappable implementation detail.
+One FastAPI process serves two surfaces: the FastMCP aggregator mounted at `/mcp` (speaks MCP-over-HTTP to LLM clients) and the `/v1` HTTP API. **`/v1` is the platform boundary** — the aggregator translates MCP calls into `/v1` calls, and everything behind `/v1` (aggregator choice, services, credential providers) is swappable implementation detail.
 
 Four subsystems, each a package under `broker/src/af_mcp_broker/`:
 
@@ -57,7 +57,7 @@ Four subsystems, each a package under `broker/src/af_mcp_broker/`:
 
 Configuration is file + env driven: `POLICY_FILE` and `SERVICES_FILE` (defaults under `/etc/af-mcp/`) are loaded at startup into `app.state` (see `app.py` lifespan); missing files degrade gracefully for local dev. Settings are pydantic-settings env vars in `config.py`.
 
-### Adding a backend requires no code
+### Adding a service requires no code
 
 `ServiceRegistry` (`mcp/registry.py`) is driven by `services.yaml`; tools route to services by name prefix (`<prefix>_toolname`). The full operator procedure is config-only — see `docs/adding-a-service.md`.
 
