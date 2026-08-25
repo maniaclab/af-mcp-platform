@@ -65,18 +65,18 @@ export function truncateNote(
 }
 
 /**
- * Display label for a token row's `capability_grant` (issue #144 step 4).
+ * Display label for a token row's `permission_grant` (issue #144 step 4).
  *
  * `null` means an ordinary identity PAT -- its authority is always the
- * caller's CURRENT capabilities, re-derived fresh on every request, so
+ * caller's CURRENT permissions, re-derived fresh on every request, so
  * "full account access" is the accurate description rather than "no
- * capabilities": there is no restriction narrowing it below that. A
- * non-null (possibly empty) array means a capability PAT scoped to at
- * most those capability names -- sorted for a stable, comparison-friendly
+ * permissions": there is no restriction narrowing it below that. A
+ * non-null (possibly empty) array means a permission PAT scoped to at
+ * most those permission names -- sorted for a stable, comparison-friendly
  * display regardless of what order the broker happened to return them in.
  */
-export function capabilityGrantLabel(capabilityGrant: string[] | null): string {
-  if (capabilityGrant === null) return 'Full account access';
-  if (capabilityGrant.length === 0) return 'No capabilities';
-  return [...capabilityGrant].sort().join(', ');
+export function permissionGrantLabel(permissionGrant: string[] | null): string {
+  if (permissionGrant === null) return 'Full account access';
+  if (permissionGrant.length === 0) return 'No permissions';
+  return [...permissionGrant].sort().join(', ');
 }

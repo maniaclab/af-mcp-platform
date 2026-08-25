@@ -20,7 +20,7 @@ Covered here:
   UNIVERSAL (both directions, including the zero-entries case): a
   `auth_type: x509` backend with no covering entry refuses to boot the same
   as one covered by the wrong entry — same reasoning as issue #60's
-  required_capability consolidation.
+  required_permission consolidation.
 * Full-boot wiring — per-entry service_url/voms/valid/audience reaching
   VomsTokenServiceClient, multiple entries resolving to distinct providers,
   the service-mode signing-key requirement (fail-closed, mirroring the
@@ -55,7 +55,7 @@ _X509_BACKENDS_YAML = (
     "    prefix: ami\n"
     "    url: http://ami-mcp.invalid/mcp\n"
     "    auth_type: x509\n"
-    "    required_capability: read_data\n"
+    "    required_permission: read_data\n"
 )
 
 
@@ -254,7 +254,7 @@ class TestBootWiring:
                 "    prefix: dune\n"
                 "    url: http://dune-mcp.invalid/mcp\n"
                 "    auth_type: x509\n"
-                "    required_capability: read_data\n"
+                "    required_permission: read_data\n"
             ),
         )
         _set_identity_providers(
@@ -305,7 +305,7 @@ class TestBootValidation:
                 "    prefix: panda\n"
                 "    url: http://panda-mcp.invalid/mcp\n"
                 "    auth_type: x509\n"
-                "    required_capability: read_data\n"
+                "    required_permission: read_data\n"
             ),
         )
         _set_identity_providers(monkeypatch, [_x509_entry(targets=["ami"])])
@@ -404,7 +404,7 @@ _TWO_ENTRY_BACKENDS_YAML = _X509_BACKENDS_YAML + (
     "    prefix: dune\n"
     "    url: http://dune-mcp.invalid/mcp\n"
     "    auth_type: x509\n"
-    "    required_capability: read_data\n"
+    "    required_permission: read_data\n"
 )
 
 

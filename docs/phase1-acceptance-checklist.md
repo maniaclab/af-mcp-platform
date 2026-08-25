@@ -26,7 +26,7 @@ JWTs — no mocked HTTP calls) and don't need a live check beyond the
 | FastMCP aggregator mounted at `/mcp`, replacing the placeholder `FastAPI()` | `test_mcp_aggregator.py`, `test_mcp_aggregator_integration.py` |
 | Services registered from `services.yaml` with no code change | `test_mcp_registry.py` |
 | Bearer validated on every MCP request (`initialize`, `tools/list`, `tools/call`) via the same `identity.get_principal()` `/v1` uses | `test_mcp_middleware_identity.py` |
-| `tools/list` filtered to capabilities the caller's Keycloak groups grant | `test_mcp_middleware_entitlement.py` |
+| `tools/list` filtered to permissions the caller's Keycloak groups grant | `test_mcp_middleware_entitlement.py` |
 | `tools/call` re-checks entitlement before any credential is minted; denial never reaches the credential provider | `test_mcp_middleware_authorization.py` |
 | Per-user credential injected for `auth_type: bearer` backends, mirroring `POST /v1/credential` | `test_mcp_credential_injection_integration.py` |
 | Two different principals get two different, isolated minted credentials | `test_mcp_credential_injection_integration.py::test_per_user_credential_isolation` |

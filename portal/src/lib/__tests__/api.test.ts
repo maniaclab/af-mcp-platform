@@ -11,7 +11,7 @@ import {
   AccessDeniedError,
   SessionExpiredError,
   clearIdentitiesCache,
-  fetchCapabilities,
+  fetchPermissions,
   fetchDashboardSummary,
   fetchIdentities,
   fetchOAuth21AuthorizeUrl,
@@ -484,7 +484,7 @@ describe('fetchDashboardSummary()', () => {
                   name: 'rucio',
                   display_name: 'Rucio',
                   description: 'ATLAS distributed data management',
-                  capability: 'read_data',
+                  permission: 'read_data',
                   auth_type: 'bearer',
                   action_type: 'read',
                   credential_provider: 'atlas-iam',
@@ -494,7 +494,7 @@ describe('fetchDashboardSummary()', () => {
                   name: 'docs',
                   display_name: 'Docs',
                   description: 'Facility documentation',
-                  capability: '__none__',
+                  permission: '__none__',
                   auth_type: 'none',
                   action_type: 'read',
                   credential_provider: null,
@@ -518,7 +518,7 @@ describe('fetchDashboardSummary()', () => {
                 expires_at: null,
                 revoked_at: null,
                 last_used_at: null,
-                capability_grant: null,
+                permission_grant: null,
               },
               {
                 lookup_id: 'b',
@@ -528,7 +528,7 @@ describe('fetchDashboardSummary()', () => {
                 expires_at: null,
                 revoked_at: null,
                 last_used_at: null,
-                capability_grant: null,
+                permission_grant: null,
               },
               {
                 lookup_id: 'c',
@@ -538,7 +538,7 @@ describe('fetchDashboardSummary()', () => {
                 expires_at: null,
                 revoked_at: '2024-02-01T00:00:00Z',
                 last_used_at: null,
-                capability_grant: null,
+                permission_grant: null,
               },
             ]),
             { status: 200, headers: { 'Content-Type': 'application/json' } },
@@ -560,20 +560,20 @@ describe('fetchDashboardSummary()', () => {
   });
 });
 
-describe('capabilities client (issue #144 step 4: capability PATs)', () => {
-  it('fetchCapabilities returns the parsed grants', async () => {
+describe('permissions client (issue #144 step 4: permission PATs)', () => {
+  it('fetchPermissions returns the parsed grants', async () => {
     globalThis.fetch = mockJson(200, {
       subject: 'sub-abc',
       grants: [
-        { capability: 'read_data', targets: ['rucio'], action_types: ['read'] },
-        { capability: 'submit_jobs', targets: ['panda'], action_types: ['state_change'] },
+        { permission: 'read_data', targets: ['rucio'], action_types: ['read'] },
+        { permission: 'submit_jobs', targets: ['panda'], action_types: ['state_change'] },
       ],
     });
 
-    const result = await fetchCapabilities();
+    const result = await fetchPermissions();
 
     expect(result.subject).toBe('sub-abc');
-    expect(result.grants.map((g) => g.capability)).toEqual(['read_data', 'submit_jobs']);
+    expect(result.grants.map((g) => g.permission)).toEqual(['read_data', 'submit_jobs']);
   });
 });
 
@@ -659,7 +659,7 @@ describe('tokens client (issue #144 step 2a: broker-issued identity PAT)', () =>
         expires_at: '2026-10-19T00:00:00+00:00',
         revoked_at: null,
         last_used_at: null,
-        capability_grant: null,
+        permission_grant: null,
       },
     ]);
 
@@ -667,11 +667,11 @@ describe('tokens client (issue #144 step 2a: broker-issued identity PAT)', () =>
     expect(rows).toHaveLength(1);
     expect(rows[0].revoked_at).toBeNull();
     expect(rows[0].last_used_at).toBeNull();
-    expect(rows[0].capability_grant).toBeNull();
+    expect(rows[0].permission_grant).toBeNull();
     expect(rows[0]).not.toHaveProperty('token');
   });
 
-  it("listTokens surfaces a capability PAT row's scoped capability_grant", async () => {
+  it("listTokens surfaces a permission PAT row's scoped permission_grant", async () => {
     globalThis.fetch = mockJson(200, [
       {
         lookup_id: 'lookup-scoped',
@@ -681,15 +681,15 @@ describe('tokens client (issue #144 step 2a: broker-issued identity PAT)', () =>
         expires_at: '2026-10-19T00:00:00+00:00',
         revoked_at: null,
         last_used_at: null,
-        capability_grant: ['read_data', 'submit_jobs'],
+        permission_grant: ['read_data', 'submit_jobs'],
       },
     ]);
 
     const rows = await listTokens();
-    expect(rows[0].capability_grant).toEqual(['read_data', 'submit_jobs']);
+    expect(rows[0].permission_grant).toEqual(['read_data', 'submit_jobs']);
   });
 
-  it('mintToken passes capabilities through and returns the resulting capability_grant', async () => {
+  it('mintToken passes permissions through and returns the resulting permission_grant', async () => {
     const fetchMock = mockJson(200, {
       token: 't',
       lookup_id: 'lookup-5',
@@ -697,7 +697,7 @@ describe('tokens client (issue #144 step 2a: broker-issued identity PAT)', () =>
       expires_at: '2026-10-19T00:00:00+00:00',
       name: 'ci-bot',
       note: null,
-      capability_grant: ['read_data'],
+      permission_grant: ['read_data'],
     });
     globalThis.fetch = fetchMock;
 
@@ -706,12 +706,12 @@ describe('tokens client (issue #144 step 2a: broker-issued identity PAT)', () =>
     const [, init] = fetchMock.mock.calls[0];
     expect(JSON.parse(init.body as string)).toEqual({
       name: 'ci-bot',
-      capabilities: ['read_data'],
+      permissions: ['read_data'],
     });
-    expect(result.capability_grant).toEqual(['read_data']);
+    expect(result.permission_grant).toEqual(['read_data']);
   });
 
-  it('mintToken omits capabilities when not provided', async () => {
+  it('mintToken omits permissions when not provided', async () => {
     const fetchMock = mockJson(200, {
       token: 't',
       lookup_id: 'lookup-6',
@@ -719,7 +719,7 @@ describe('tokens client (issue #144 step 2a: broker-issued identity PAT)', () =>
       expires_at: '2026-10-19T00:00:00+00:00',
       name: 'x',
       note: null,
-      capability_grant: null,
+      permission_grant: null,
     });
     globalThis.fetch = fetchMock;
 

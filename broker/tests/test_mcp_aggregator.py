@@ -60,7 +60,7 @@ def _spec(**overrides: Any) -> ServiceSpec:
         "prefix": "example",
         "url": "http://example.invalid/mcp",
         "transport": "http",
-        "required_capability": "__none__",
+        "required_permission": "__none__",
     }
     defaults.update(overrides)
     return ServiceSpec(**defaults)
@@ -69,8 +69,8 @@ def _spec(**overrides: Any) -> ServiceSpec:
 # Every direct _make_client_factory() call below cares about credential
 # resolution, not entitlement -- _bearer_factory's list-time branch (see
 # aggregator.py) now also gates on check_entitlement(), but that check takes
-# the required capability straight from the spec (ServiceSpec.
-# required_capability, see issue #60) rather than looking it up in
+# the required permission straight from the spec (ServiceSpec.
+# required_permission, see issue #60) rather than looking it up in
 # policy.yaml, and _spec()'s default of "__none__" already keeps the gate a
 # no-op here -- so an empty policy is sufficient.
 _OPEN_POLICY = EntitlementPolicy()
@@ -347,7 +347,7 @@ def test_populate_aggregator_refreshes_middleware_state(settings: Any) -> None:
 
     new_registry = ServiceRegistry()
     new_registry.register(_spec(name="a", prefix="a"))
-    new_policy = EntitlementPolicy(group_capabilities={"atlas": ["read_data"]})
+    new_policy = EntitlementPolicy(group_permissions={"atlas": ["read_data"]})
     new_settings = settings.model_copy(update={"oidc_audience": "something-else"})
 
     populate_aggregator(
@@ -702,10 +702,10 @@ async def test_client_factory_bearer_list_time_mints_when_entitled_and_linked(
     """The actual fix for issue #121: a tools/list-time connection for a
     linked, entitled caller now carries a minted credential, not just an
     authorized tools/call."""
-    policy = EntitlementPolicy(group_capabilities={"atlas": ["read_data"]})
+    policy = EntitlementPolicy(group_permissions={"atlas": ["read_data"]})
     principal = make_principal(groups=["atlas"])
     ctx = _patch_context(monkeypatch, principal, active_backend=None)
-    spec = _spec(auth_type="bearer", required_capability="read_data")
+    spec = _spec(auth_type="bearer", required_permission="read_data")
     provider = _FakeProvider(token="minted-for-list")
     registry = CredentialRegistry()
     registry.register(spec.name, provider)
@@ -720,15 +720,15 @@ async def test_client_factory_bearer_list_time_mints_when_entitled_and_linked(
 async def test_client_factory_bearer_list_time_skips_mint_when_not_entitled(
     settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A caller who lacks the backend's required_capability shouldn't trigger
+    """A caller who lacks the backend's required_permission shouldn't trigger
     a mint attempt during a listing at all -- EntitlementMiddleware already
     hides this backend's tools from such a caller's own tools/list response,
     so minting would just be wasted work (proven with an empty issue_calls
     list on a provider that WOULD otherwise happily mint)."""
-    policy = EntitlementPolicy(group_capabilities={"atlas": ["read_data"]})
+    policy = EntitlementPolicy(group_permissions={"atlas": ["read_data"]})
     principal = make_principal(groups=[])  # lacks read_data
     _patch_context(monkeypatch, principal, active_backend=None)
-    spec = _spec(auth_type="bearer", required_capability="read_data")
+    spec = _spec(auth_type="bearer", required_permission="read_data")
     provider = _FakeProvider()
     registry = CredentialRegistry()
     registry.register(spec.name, provider)
@@ -950,7 +950,7 @@ async def test_require_linked_returns_without_context_when_already_linked(
     await _require_linked(provider, make_principal(), spec, settings, None)
 
 
-async def test_require_linked_skips_elicit_when_client_lacks_capability(
+async def test_require_linked_skips_elicit_when_client_lacks_permission(
     settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A client that never declared elicitation support in its

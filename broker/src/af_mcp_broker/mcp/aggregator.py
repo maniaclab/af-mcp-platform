@@ -230,7 +230,7 @@ async def resolve_list_time_credential(
 
     Callers must gate on ``check_entitlement`` first, exactly like the
     aggregator's factories do -- a caller who could never pass the
-    capability check shouldn't trigger a mint attempt at all.
+    permission check shouldn't trigger a mint attempt at all.
     """
     if spec.auth_type == "none":
         return {}, None
@@ -519,7 +519,7 @@ def _make_client_factory(
     becomes permanently invisible to every caller, with no user-facing
     error at all. Resolved by attempting a *best-effort* mint during a
     listing too, gated on the caller actually having the service's
-    ``required_capability`` (``check_entitlement``, the same check
+    ``required_permission`` (``check_entitlement``, the same check
     ``AuthorizationMiddleware`` uses) -- the in-process ``CredentialCache``
     already makes repeat mints for the same ``(uid, target)`` cheap, so
     "wasteful" no longer applies. A failure to mint (no linked identity, no
@@ -569,7 +569,7 @@ def _make_client_factory(
                 if principal is None or broker_token_issuer is None:
                     return _build_client(spec, transport_cls)
                 allowed, _reason = check_entitlement(
-                    principal, spec.required_capability, spec.name, policy
+                    principal, spec.required_permission, spec.name, policy
                 )
                 if not allowed:
                     return _build_client(spec, transport_cls)
@@ -642,14 +642,14 @@ def _make_client_factory(
                 # no principal to mint a credential for either way.
                 return _build_client(spec, transport_cls)
 
-            # Same capability gate AuthorizationMiddleware applies to an
+            # Same permission gate AuthorizationMiddleware applies to an
             # actual call -- a caller who could never pass it shouldn't
             # trigger a mint attempt at all; EntitlementMiddleware already
             # hides this service's tools from such a caller's own tools/list
             # response, so this is just avoiding wasted work, not a security
             # boundary of its own.
             allowed, _reason = check_entitlement(
-                principal, spec.required_capability, spec.name, policy
+                principal, spec.required_permission, spec.name, policy
             )
             if not allowed:
                 return _build_client(spec, transport_cls)

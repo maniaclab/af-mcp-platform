@@ -177,13 +177,13 @@ class _FakeListProvider(CredentialProvider):
 
 @pytest.fixture
 def policy() -> EntitlementPolicy:
-    # required_capability for each target ("secure"/"open"/"dead") is
+    # required_permission for each target ("secure"/"open"/"dead") is
     # declared on that target's ServiceSpec in the aggregator_url fixture
     # below -- the registry is authoritative for that, not EntitlementPolicy
     # (see check_entitlement's docstring). This policy only needs to say
-    # which capabilities the "atlas" group grants.
+    # which permissions the "atlas" group grants.
     return EntitlementPolicy(
-        group_capabilities={"atlas": ["read_data"], "__authenticated__": []},
+        group_permissions={"atlas": ["read_data"], "__authenticated__": []},
     )
 
 
@@ -228,7 +228,7 @@ async def aggregator_url(
             prefix="secure",
             url=secure_backend_url,
             transport="http",
-            required_capability="read_data",
+            required_permission="read_data",
             auth_type="bearer",
         )
     )
@@ -238,7 +238,7 @@ async def aggregator_url(
             prefix="open",
             url=open_backend_url,
             transport="http",
-            required_capability="__none__",
+            required_permission="__none__",
             auth_type="none",
         )
     )
@@ -248,7 +248,7 @@ async def aggregator_url(
             prefix="dead",
             url=dead_backend_url,
             transport="http",
-            required_capability="read_data",
+            required_permission="read_data",
             auth_type="bearer",
         )
     )
@@ -302,7 +302,7 @@ def _token_for(uid: int, gid: int, unixname: str) -> Any:
 async def test_linked_entitled_principal_sees_auth_gated_tools(
     aggregator_url: str, sig_key: Any, prime_jwks: Any
 ) -> None:
-    """(a) With a linked identity and the required capability, tools/list
+    """(a) With a linked identity and the required permission, tools/list
     through /mcp returns the auth-gated backend's namespaced tools -- the
     core issue #121 fix."""
     prime_jwks([sig_key.jwk])
@@ -356,7 +356,7 @@ async def test_dead_backend_does_not_break_other_backends_listing(
     aggregator_url: str, sig_key: Any, prime_jwks: Any
 ) -> None:
     """(c) A genuinely-down backend (connection refused) still doesn't break
-    listing for the other backends, even though it required a capability
+    listing for the other backends, even though it required a permission
     this principal has (so a mint is attempted and does succeed -- the
     failure is purely the connection itself)."""
     prime_jwks([sig_key.jwk])
@@ -516,7 +516,7 @@ async def test_replica_split_session_continuity(
             prefix="open",
             url=open_backend_url,
             transport="http",
-            required_capability="__none__",
+            required_permission="__none__",
             auth_type="none",
         )
     )

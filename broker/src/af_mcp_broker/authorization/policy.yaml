@@ -1,11 +1,11 @@
 # Local-dev fallback policy, dev-only -- not shipped by the Helm chart (see
 # charts/af-mcp-platform/templates/configmap-policy.yaml, which ships no
-# site-specific group_capabilities default). Group names are site-specific;
+# site-specific group_permissions default). Group names are site-specific;
 # these ATLAS AF ones only make sense against the AF's own Keycloak realm.
-# Operators deploying via the chart should set entitlements.group_capabilities
-# in their overlay instead -- see docs/auth.md's "Group-to-Capability Mapping
+# Operators deploying via the chart should set entitlements.group_permissions
+# in their overlay instead -- see docs/auth.md's "Group-to-Permission Mapping
 # Example" for a copyable worked example.
-group_capabilities:
+group_permissions:
   atlas: [read_data, read_metadata, read_monitoring, submit_jobs, manage_jobs, launch_compute, manage_jupyter, read_files]
   cms: [read_data, read_metadata, read_monitoring, submit_jobs, manage_jobs, launch_compute, read_files]
   dune: [read_data, read_metadata, submit_jobs, manage_jobs, launch_compute, read_files]
@@ -14,10 +14,10 @@ group_capabilities:
   # Any authenticated user (no group membership required)
   __authenticated__: [read_metadata, read_monitoring]
 
-# Which capability is required to use each service target is declared by
-# `required_capability` in services.yaml, not here -- services.yaml is the
+# Which permission is required to use each service target is declared by
+# `required_permission` in services.yaml, not here -- services.yaml is the
 # sole source of truth for that mapping (see issue #60; this file used to
-# carry a parallel `target_capabilities` section that could silently drift
+# carry a parallel `target_permissions` section that could silently drift
 # out of sync with services.yaml).
 
 # Action type overrides per service (tool glob pattern -> action type).

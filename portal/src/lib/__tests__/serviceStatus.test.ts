@@ -34,9 +34,9 @@ describe('resolveServiceStatus', () => {
     expect(view.correlationId).toBeNull();
   });
 
-  it('reports "capability_required" as warning severity with no CTA but a correlation id', () => {
+  it('reports "permission_required" as warning severity with no CTA but a correlation id', () => {
     const view = resolveServiceStatus(
-      statusFields('capability_required', { correlation_id: 'abc123' }),
+      statusFields('permission_required', { correlation_id: 'abc123' }),
     );
     expect(view.severity).toBe('warning');
     expect(view.cta).toBeNull();
@@ -59,7 +59,7 @@ describe('resolveServiceStatus', () => {
 
   it('always carries the broker-supplied status_detail sentence through verbatim', () => {
     const view = resolveServiceStatus(
-      statusFields('capability_required', { status_detail: "Your account doesn't have access." }),
+      statusFields('permission_required', { status_detail: "Your account doesn't have access." }),
     );
     expect(view.detail).toBe("Your account doesn't have access.");
   });
@@ -80,7 +80,7 @@ describe('resolvePoweredByLinked', () => {
   it('passes the raw linked flag through for every other status', () => {
     expect(resolvePoweredByLinked('available', true)).toBe(true);
     expect(resolvePoweredByLinked('available', false)).toBe(false);
-    expect(resolvePoweredByLinked('capability_required', true)).toBe(true);
+    expect(resolvePoweredByLinked('permission_required', true)).toBe(true);
     expect(resolvePoweredByLinked('unavailable', true)).toBe(true);
     expect(resolvePoweredByLinked('misconfigured', false)).toBe(false);
   });

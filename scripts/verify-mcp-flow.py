@@ -18,7 +18,7 @@ Steps:
     1. Connect (MCP initialize handshake).
     2. tools/list -- prints every visible tool, grouped by inferred service
        prefix. What's visible reflects entitlement filtering: a principal
-       only sees tools for services its Keycloak groups grant a capability
+       only sees tools for services its Keycloak groups grant a permission
        for (see docs/architecture.md's Authorization subsystem).
     3. (optional, --call) tools/call one real tool against a real service.
 
@@ -74,8 +74,8 @@ _HINTS: dict[str, str] = {
         "URL in the error above."
     ),
     "Authorization denied": (
-        "Your Keycloak groups don't grant the capability this service "
-        "requires. Check `GET /v1/capabilities` for what you currently have."
+        "Your Keycloak groups don't grant the permission this service "
+        "requires. Check `GET /v1/permissions` for what you currently have."
     ),
     "requires an x509/VOMS proxy, which needs a POSIX": (
         "x509 services are callable via /mcp (issue #112), but this "

@@ -100,7 +100,7 @@ class _FakeProvider(CredentialProvider):
 @pytest.fixture
 def policy() -> EntitlementPolicy:
     return EntitlementPolicy(
-        group_capabilities={"atlas": ["read_data"], "__authenticated__": []},
+        group_permissions={"atlas": ["read_data"], "__authenticated__": []},
     )
 
 
@@ -127,7 +127,7 @@ def aggregator_app_url(settings, toy_backend_url, policy, static_principal_cache
             prefix="toy",
             url=toy_backend_url,
             transport="http",
-            required_capability="read_data",
+            required_permission="read_data",
             auth_type="bearer",
         )
     )
@@ -137,7 +137,7 @@ def aggregator_app_url(settings, toy_backend_url, policy, static_principal_cache
             prefix="open",
             url=toy_backend_url,
             transport="http",
-            required_capability="__none__",
+            required_permission="__none__",
             auth_type="none",
         )
     )
@@ -294,7 +294,7 @@ async def test_auth_type_none_skips_credential_resolution(
 ) -> None:
     prime_jwks([sig_key.jwk])
     provider = _FakeProvider()
-    token = sig_key.sign(make_claims())  # no capability needed for "open"
+    token = sig_key.sign(make_claims())  # no permission needed for "open"
 
     async for base_url in aggregator_app_url(provider):
         async with _bearer_client(base_url, token) as client:

@@ -7,7 +7,7 @@ function makeServer(overrides: Partial<CatalogServer> = {}): CatalogServer {
     name: 'rucio',
     display_name: 'Rucio',
     description: 'ATLAS distributed data management',
-    capability: 'read_data',
+    permission: 'read_data',
     auth_type: 'bearer',
     action_type: 'read',
     credential_provider: 'atlas-oidc',

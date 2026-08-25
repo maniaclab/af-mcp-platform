@@ -215,7 +215,7 @@ class ServiceProvider(CredentialProvider):
             record = AuditRecord(
                 principal_sub=principal.subject,
                 principal_uid=principal.uid,
-                capability=self.cred_class,
+                permission=self.cred_class,
                 target=target,
                 action="credential.issued",
                 action_type="state_change",

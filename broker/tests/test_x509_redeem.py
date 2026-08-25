@@ -40,7 +40,7 @@ _BACKENDS_YAML = (
     "    prefix: ami\n"
     "    url: http://ami-mcp.invalid/mcp\n"
     "    auth_type: x509\n"
-    "    required_capability: read_data\n"
+    "    required_permission: read_data\n"
 )
 
 

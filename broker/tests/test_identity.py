@@ -6,7 +6,7 @@ import pytest
 from conftest import make_claims
 from fastapi import HTTPException
 
-from af_mcp_broker.authorization import get_principal_capabilities
+from af_mcp_broker.authorization import get_principal_permissions
 from af_mcp_broker.identity import (
     PrincipalDirectoryUnavailableError,
     TokenAudienceError,
@@ -71,8 +71,8 @@ async def test_wrong_audience_raises_token_audience_error_with_correlation_id(
     same failure as an expired/malformed one -- it's permanent until an
     admin grants the audience via group membership (docs/auth.md's
     "cascading failure" section), so it gets its own exception type and a
-    correlation_id the caller can quote, mirroring capability_required in
-    api/capabilities.py::_service_status (see
+    correlation_id the caller can quote, mirroring permission_required in
+    api/permissions.py::_service_status (see
     docs/plans/2026-08-24-audience-mismatch-error-ui-design.md)."""
     cache, _directory = static_principal_cache
     prime_jwks([sig_key.jwk])
@@ -112,7 +112,7 @@ async def test_jwt_with_no_groups_claim_resolves_via_directory(
     settings, sig_key, prime_jwks, static_principal_cache
 ):
     """A JWT that carries no `groups` claim at all must still resolve real
-    capabilities -- the directory, not the claim, is the only source now."""
+    permissions -- the directory, not the claim, is the only source now."""
     cache, directory = static_principal_cache
     directory.groups_by_subject["user-123"] = ["atlas"]
     prime_jwks([sig_key.jwk])
@@ -187,12 +187,12 @@ async def test_get_principal_without_a_configured_directory_raises_actionable_er
     assert exc.value.status_code == 503
 
 
-async def test_jwt_and_pat_for_same_principal_get_identical_capabilities(
+async def test_jwt_and_pat_for_same_principal_get_identical_permissions(
     settings, sig_key, prime_jwks, static_principal_cache, policy
 ):
     """The whole point of unifying groups resolution through the directory
     (issue #144 step 3): a JWT and an identity PAT for the *same* principal
-    must resolve to the exact same capability set, since both now derive
+    must resolve to the exact same permission set, since both now derive
     their groups from the same PrincipalCache/PrincipalDirectory rather than
     a JWT and a PAT being able to disagree about what one user can do."""
     principal_cache, directory = static_principal_cache
@@ -221,10 +221,10 @@ async def test_jwt_and_pat_for_same_principal_get_identical_capabilities(
     )
 
     assert jwt_principal.groups == pat_principal.groups == ["atlas"]
-    assert get_principal_capabilities(
+    assert get_principal_permissions(
         jwt_principal, policy
-    ) == get_principal_capabilities(pat_principal, policy)
-    assert get_principal_capabilities(
+    ) == get_principal_permissions(pat_principal, policy)
+    assert get_principal_permissions(
         jwt_principal, policy
     )  # non-empty: a real assertion
 
@@ -314,7 +314,7 @@ async def test_principal_with_no_posix_anywhere_still_authenticates(
 async def test_jwt_and_pat_for_same_principal_get_identical_posix(
     settings, sig_key, prime_jwks, static_principal_cache
 ):
-    """The POSIX counterpart to test_jwt_and_pat_for_same_principal_get_identical_capabilities:
+    """The POSIX counterpart to test_jwt_and_pat_for_same_principal_get_identical_permissions:
     a JWT and an identity PAT for the *same* principal must resolve to the
     exact same uid/gid/unixname, since both now derive POSIX identity from
     the same PrincipalCache/PrincipalDirectory rather than a JWT's own claim

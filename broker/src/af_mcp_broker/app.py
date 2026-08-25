@@ -86,7 +86,7 @@ def _validate_x509_provider_targets(
     identity_providers_cfgs: Iterable[IdentityProviderConfig],
     x509_service_names: set[str],
 ) -> None:
-    """Fail-closed drift protection between ``auth_type: x509`` services and explicit x509 ``identity_providers`` entries (both directions) — same reasoning as issue #60's required_capability consolidation: a mismatch is a typo, a stale services.yaml, or a missing entry, and a startup RuntimeError surfaces it as a visible rollout failure with zero outage risk.
+    """Fail-closed drift protection between ``auth_type: x509`` services and explicit x509 ``identity_providers`` entries (both directions) — same reasoning as issue #60's required_permission consolidation: a mismatch is a typo, a stale services.yaml, or a missing entry, and a startup RuntimeError surfaces it as a visible rollout failure with zero outage risk.
 
     Universal: there is no synthesized-entry escape hatch. Every
     ``auth_type: x509`` service must be named in some explicit entry's
@@ -204,17 +204,17 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     except FileNotFoundError:
         logger.warning("policy_file_not_found", path=settings.policy_file)
         entitlement_policy = EntitlementPolicy()
-    # Observability for issue #125: the effective group -> capability mapping
+    # Observability for issue #125: the effective group -> permission mapping
     # is otherwise implicit (chart default vs. operator override vs. dev-only
     # fallback all merge into the same in-memory EntitlementPolicy), so an
     # operator reading pod logs has no other way to see which policy is
-    # actually live. Group/capability names only -- no tokens or secrets ever
+    # actually live. Group/permission names only -- no tokens or secrets ever
     # pass through here.
     logger.info(
-        "policy.group_capabilities_loaded",
-        group_capabilities={
+        "policy.group_permissions_loaded",
+        group_permissions={
             group: sorted(caps)
-            for group, caps in sorted(entitlement_policy.group_capabilities.items())
+            for group, caps in sorted(entitlement_policy.group_permissions.items())
         },
     )
 
@@ -233,11 +233,11 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     if not services:
         logger.warning("no_services_configured")
 
-    # A service's required_capability that no group in group_capabilities
+    # A service's required_permission that no group in group_permissions
     # grants makes that service unusable by every principal -- e.g. the
     # operator never wrote a policy for it (a chart-rendered policy.yaml
     # with a stale key name the broker doesn't read, issue #59) or typo'd
-    # the capability name. This is a hard startup failure, not a log line:
+    # the permission name. This is a hard startup failure, not a log line:
     # this is Kubernetes, so a Deployment rollout with a failing new pod
     # leaves the previous ReplicaSet serving traffic unaffected -- refusing
     # to start surfaces the misconfiguration as a visible rollout failure /
@@ -245,23 +245,23 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # better than a log line an operator has to be watching for. (Distinct
     # from the fail-closed check below, which guards against a service with
     # *no* gate at all -- this one guards against a gate nobody can pass.)
-    granted_capabilities = {
-        cap for caps in entitlement_policy.group_capabilities.values() for cap in caps
+    granted_permissions = {
+        cap for caps in entitlement_policy.group_permissions.values() for cap in caps
     }
-    unreachable_capabilities: list[tuple[str, str]] = []
+    unreachable_permissions: list[tuple[str, str]] = []
     for spec in services:
-        if spec.required_capability in (None, "__none__"):
+        if spec.required_permission in (None, "__none__"):
             continue
-        if spec.required_capability not in granted_capabilities:
-            unreachable_capabilities.append((spec.name, spec.required_capability))
-    if unreachable_capabilities:
+        if spec.required_permission not in granted_permissions:
+            unreachable_permissions.append((spec.name, spec.required_permission))
+    if unreachable_permissions:
         msg = (
-            "The following services require a capability that no group in "
-            "group_capabilities grants, so they are unreachable by every "
-            "principal (a forgotten policy entry or a typo'd capability "
-            f"name): {sorted(unreachable_capabilities)}. Set "
-            "entitlements.group_capabilities (chart) / policy.yaml (local "
-            "dev) so at least one group grants each missing capability."
+            "The following services require a permission that no group in "
+            "group_permissions grants, so they are unreachable by every "
+            "principal (a forgotten policy entry or a typo'd permission "
+            f"name): {sorted(unreachable_permissions)}. Set "
+            "entitlements.group_permissions (chart) / policy.yaml (local "
+            "dev) so at least one group grants each missing permission."
         )
         raise RuntimeError(msg)
 
@@ -375,7 +375,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # therefore every service resolving to it) with no signing key configured
     # at all must refuse to boot rather than fail at first request -- same
     # rollout-failure-over-silent-breakage reasoning as
-    # unreachable_capabilities above.
+    # unreachable_permissions above.
     broker_token_issuer = load_broker_token_issuer(settings)
     if broker_token_issuer is None and any(
         cfg.type in ("broker-issued", "condor-token")
@@ -529,7 +529,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
             credential_registry.register(target, provider)
 
     # --- Fail-closed check (issue #60): a service that omits
-    # `required_capability` in services.yaml relies on the credential layer
+    # `required_permission` in services.yaml relies on the credential layer
     # as its sole authorization gate -- the user must have a linked identity
     # / mintable credential for that target. If credential_registry can't
     # resolve a provider for it either (e.g. `auth_type: bearer` with no
@@ -542,7 +542,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # wired up for this specific target.
     ungated_services: list[str] = []
     for spec in services:
-        if spec.required_capability is not None:
+        if spec.required_permission is not None:
             continue
         try:
             await credential_registry.resolve(spec.name)
@@ -550,11 +550,11 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
             ungated_services.append(spec.name)
     if ungated_services:
         msg = (
-            "The following services omit `required_capability` in "
+            "The following services omit `required_permission` in "
             "services.yaml and have no credential provider resolving for "
             "their target, so there is no authorization gate at all "
-            f"(neither a declared capability nor a mintable credential): "
-            f"{sorted(ungated_services)}. Either declare `required_capability` "
+            f"(neither a declared permission nor a mintable credential): "
+            f"{sorted(ungated_services)}. Either declare `required_permission` "
             "(or `__none__` to explicitly open it to any authenticated user), "
             "or configure a credential provider (identity_providers / x509) "
             "targeting this service."
@@ -631,7 +631,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # build_dev_principal), so it needs no directory at all. Neither
     # configured is therefore a genuine misconfiguration, not a degraded
     # mode -- refuse to start rather than boot a broker that can never
-    # authenticate anyone. Same reasoning as the unreachable_capabilities
+    # authenticate anyone. Same reasoning as the unreachable_permissions
     # check above (issue #125): this is Kubernetes, so a Deployment rollout
     # with a failing new pod leaves the previous ReplicaSet serving traffic
     # unaffected -- a startup RuntimeError surfaces the misconfiguration as

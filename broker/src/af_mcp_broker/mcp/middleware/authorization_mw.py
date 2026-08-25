@@ -41,17 +41,17 @@ logger = structlog.get_logger(__name__)
 #
 # Supersedes the old HTTP-loopback broker_mw.py: that module re-validated the
 # same JWT per call over /v1/authorize and /v1/credential even when
-# co-located with the broker. The /v1 route bodies (api/capabilities.py's
+# co-located with the broker. The /v1 route bodies (api/permissions.py's
 # authorize(), api/credentials.py's issue_credential()) remain the canonical
 # logic; this middleware and the client_factory call the same in-process
 # functions/classes those routes call, rather than looping back over HTTP.
 
 
-def _capability_grant_field(principal: Principal) -> list[str] | None:
-    """Sorted ``AuditRecord.principal_capability_grant`` value for *principal* -- see that field's docstring for why a denied call needs this to tell "lacks it entirely" apart from "PAT is scoped away from it" (issue #144 step 4)."""
-    if principal.capability_grant is None:
+def _permission_grant_field(principal: Principal) -> list[str] | None:
+    """Sorted ``AuditRecord.principal_permission_grant`` value for *principal* -- see that field's docstring for why a denied call needs this to tell "lacks it entirely" apart from "PAT is scoped away from it" (issue #144 step 4)."""
+    if principal.permission_grant is None:
         return None
-    return sorted(principal.capability_grant)
+    return sorted(principal.permission_grant)
 
 
 def _record_invocation(service_name: str, tool_name: str, action_type: str) -> None:
@@ -98,7 +98,7 @@ class AuthorizationMiddleware(Middleware):
         if tool_name in DIAGNOSTIC_TOOL_NAMES:
             # af_* diagnostic tools (issue #153) bypass entitlement
             # checking, credential minting, and per-service audit/metrics
-            # entirely: they need no capability, touch no service, and
+            # entirely: they need no permission, touch no service, and
             # ProxyProvider never enters this call path for them at all
             # (they're registered directly on the aggregator -- see
             # mcp/diagnostics.py). They must keep answering precisely when
@@ -123,7 +123,7 @@ class AuthorizationMiddleware(Middleware):
                 AuditRecord(
                     principal_sub=principal.subject,
                     principal_uid=principal.uid,
-                    capability="__unmapped__",
+                    permission="__unmapped__",
                     target=tool_name,
                     action=tool_name,
                     action_type="read",
@@ -132,16 +132,16 @@ class AuthorizationMiddleware(Middleware):
                     request_id=request_id,
                     outcome="denied",
                     error=f"no service registered for tool '{tool_name}'",
-                    principal_capability_grant=_capability_grant_field(principal),
+                    principal_permission_grant=_permission_grant_field(principal),
                 )
             )
             raise AuthorizationError(f"No service registered for tool '{tool_name}'")
 
         action_type = get_action_type(
-            service.name, tool_name, service.required_capability, self.policy
+            service.name, tool_name, service.required_permission, self.policy
         )
         allow, reason = check_entitlement(
-            principal, service.required_capability, service.name, self.policy
+            principal, service.required_permission, service.name, self.policy
         )
         if not allow:
             # A denial is still an attempted invocation for the coarse
@@ -156,7 +156,7 @@ class AuthorizationMiddleware(Middleware):
                 AuditRecord(
                     principal_sub=principal.subject,
                     principal_uid=principal.uid,
-                    capability=service.required_capability,
+                    permission=service.required_permission,
                     target=service.name,
                     action=tool_name,
                     action_type=action_type,
@@ -166,7 +166,7 @@ class AuthorizationMiddleware(Middleware):
                     mcp_service=service.name,
                     outcome="denied",
                     error=reason,
-                    principal_capability_grant=_capability_grant_field(principal),
+                    principal_permission_grant=_permission_grant_field(principal),
                 )
             )
             raise AuthorizationError(f"Authorization denied: {reason}")
@@ -198,7 +198,7 @@ class AuthorizationMiddleware(Middleware):
                 AuditRecord(
                     principal_sub=principal.subject,
                     principal_uid=principal.uid,
-                    capability=service.required_capability,
+                    permission=service.required_permission,
                     target=service.name,
                     action=tool_name,
                     action_type=action_type,
@@ -208,7 +208,7 @@ class AuthorizationMiddleware(Middleware):
                     mcp_service=service.name,
                     outcome="error",
                     error=str(exc),
-                    principal_capability_grant=_capability_grant_field(principal),
+                    principal_permission_grant=_permission_grant_field(principal),
                 )
             )
             raise
@@ -218,7 +218,7 @@ class AuthorizationMiddleware(Middleware):
             AuditRecord(
                 principal_sub=principal.subject,
                 principal_uid=principal.uid,
-                capability=service.required_capability,
+                permission=service.required_permission,
                 target=service.name,
                 action=tool_name,
                 action_type=action_type,
@@ -227,7 +227,7 @@ class AuthorizationMiddleware(Middleware):
                 request_id=request_id,
                 mcp_service=service.name,
                 outcome="success",
-                principal_capability_grant=_capability_grant_field(principal),
+                principal_permission_grant=_permission_grant_field(principal),
             )
         )
         return result

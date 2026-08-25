@@ -7,8 +7,8 @@ from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_context
 from pydantic import BaseModel, ConfigDict
 
-from af_mcp_broker.api.capabilities import ServiceStatus, _service_status
-from af_mcp_broker.authorization import get_principal_capabilities
+from af_mcp_broker.api.permissions import ServiceStatus, _service_status
+from af_mcp_broker.authorization import get_principal_permissions
 from af_mcp_broker.mcp.registry import (
     LINK_IDENTITY_TOOL_NAME,
     LIST_IDENTITIES_TOOL_NAME,
@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 #      aggregated MCP server (itself just another service) could be the very
 #      thing that is down.
 #   2. They describe the broker's own in-process state (identity linkage,
-#      per-service availability, the caller's own capabilities) rather than
+#      per-service availability, the caller's own permissions) rather than
 #      proxying to anything, so they need no credential and no ProxyProvider
 #      at all -- calling register_diagnostic_tools() below adds them as
 #      ordinary local tools, never a provider.
@@ -45,9 +45,9 @@ if TYPE_CHECKING:
 # caller regardless of entitlements, bypassing ProxyProvider's whole call
 # path entirely.
 #
-# Reuses rather than reimplements: af_list_mcp_servers calls api/capabilities.py's
+# Reuses rather than reimplements: af_list_mcp_servers calls api/permissions.py's
 # _service_status() (issue #123's per-service status derivation, same
-# "available"/"link_required"/"capability_required"/"unavailable"/
+# "available"/"link_required"/"permission_required"/"unavailable"/
 # "misconfigured" taxonomy and canned sentences /v1/catalog already returns),
 # and both af_list_identities/af_list_mcp_servers read the identity<->service
 # join (target_to_alias) issue #90 added for /v1/catalog's credential_provider
@@ -61,7 +61,7 @@ class WhoamiResult(BaseModel):
 
     subject: str
     groups: list[str]
-    capabilities: list[str]
+    permissions: list[str]
 
 
 class DiagnosticIdentityProvider(BaseModel):
@@ -152,21 +152,21 @@ def register_diagnostic_tools(
 
     @mcp.tool(name=WHOAMI_TOOL_NAME)
     async def _whoami() -> WhoamiResult:
-        """Return the caller's own subject, groups, and effective capabilities.
+        """Return the caller's own subject, groups, and effective permissions.
 
-        Call this when a tool call fails with a capability/permission error
-        (e.g. "requires capability '...'") to see exactly which groups and
-        capabilities the caller currently holds, so you can tell them
+        Call this when a tool call fails with a permission/permission error
+        (e.g. "requires permission '...'") to see exactly which groups and
+        permissions the caller currently holds, so you can tell them
         whether the fix is a missing group membership or something else.
-        Needs no capability of its own and never contacts a service, so it
+        Needs no permission of its own and never contacts a service, so it
         always answers even when every other service is down.
         """
         principal = await _require_principal()
-        caps = get_principal_capabilities(principal, policy)
+        caps = get_principal_permissions(principal, policy)
         return WhoamiResult(
             subject=principal.subject,
             groups=sorted(principal.groups),
-            capabilities=sorted(caps),
+            permissions=sorted(caps),
         )
 
     @mcp.tool(name=LIST_IDENTITIES_TOOL_NAME)
@@ -177,7 +177,7 @@ def register_diagnostic_tools(
         a service's tools are missing or non-functional and you need to
         find out which identity provider it depends on and whether this
         caller has connected it yet (link it from the portal's Identities
-        page). Needs no capability of its own and never contacts a service.
+        page). Needs no permission of its own and never contacts a service.
         """
         principal = await _require_principal()
         providers: list[DiagnosticIdentityProvider] = []
@@ -230,13 +230,13 @@ def register_diagnostic_tools(
         or a tool call fails for a reason that isn't obviously a bad
         argument, to see each service's tool-name prefix, which identity
         provider (if any) it needs, and a short reason if it's unavailable
-        (linking required, capability required, temporarily down, or
-        misconfigured). Needs no capability of its own and never contacts a
+        (linking required, permission required, temporarily down, or
+        misconfigured). Needs no permission of its own and never contacts a
         service -- the status reported is the broker's own last-known state,
         the same data the portal's Catalog page shows.
         """
         principal = await _require_principal()
-        caps = get_principal_capabilities(principal, policy)
+        caps = get_principal_permissions(principal, policy)
         servers: list[DiagnosticMcpServer] = []
         for spec in registry.all_services():
             status, status_detail, _correlation_id = await _service_status(

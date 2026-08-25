@@ -2,7 +2,7 @@
  * catalog.ts — pure client-side joins between /v1/catalog's
  * `credential_provider` field and /v1/identities' provider list (issue #90).
  * There is no broker endpoint for this join -- it is built here from data
- * both the MCP Servers and Identities pages already fetch.
+ * both the Services and Identities pages already fetch.
  *
  * Kept as plain data-in/data-out functions (no DOM/fetch access) so they're
  * trivially unit-testable, same pattern as lib/linkedBanner.ts.

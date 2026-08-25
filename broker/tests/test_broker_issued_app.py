@@ -64,7 +64,7 @@ _BACKENDS_YAML = (
     "    prefix: condor\n"
     "    url: http://condor-token-service.invalid/mcp\n"
     "    auth_type: bearer\n"
-    "    required_capability: read_data\n"
+    "    required_permission: read_data\n"
 )
 
 
@@ -113,7 +113,7 @@ def test_broker_issued_provider_registered_from_config(
 def test_broker_issued_entry_without_signing_key_refuses_to_start(
     broker_issued_env, app_client_factory
 ) -> None:
-    """Fail-closed, like unreachable_capabilities/ungated_services: a
+    """Fail-closed, like unreachable_permissions/ungated_services: a
     backend wired to broker-issued with no signing key configured would
     otherwise fail at first request instead of at boot."""
     broker_issued_env(with_signing_key=False)
@@ -226,7 +226,7 @@ async def test_aggregator_injects_broker_identity_token(
             prefix="toy",
             url=toy_backend_url,
             transport="http",
-            required_capability="read_data",
+            required_permission="read_data",
             auth_type="bearer",
         )
     )
@@ -242,7 +242,7 @@ async def test_aggregator_injects_broker_identity_token(
     )
     credential_registry = CredentialRegistry()
     credential_registry.register("toy", provider)
-    policy = EntitlementPolicy(group_capabilities={"atlas": ["read_data"]})
+    policy = EntitlementPolicy(group_permissions={"atlas": ["read_data"]})
     mcp = build_aggregator(
         registry,
         settings,

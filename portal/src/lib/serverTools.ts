@@ -18,7 +18,7 @@ export type ToolListingView =
   /** Any non-"ok" status — the broker's own status_detail sentence, plus a
    *  CTA to the Identities page only when linking/re-linking is the
    *  user-actionable fix (not_linked/unauthorized). unavailable is
-   *  wait-and-retry and capability_required is admin-actionable — no link. */
+   *  wait-and-retry and permission_required is admin-actionable — no link. */
   | { kind: 'blocked'; message: string; cta: StatusCta | null };
 
 const CTA_BY_STATUS: Partial<Record<ServerToolsResponse['status'], StatusCta>> = {

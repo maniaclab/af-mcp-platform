@@ -174,7 +174,7 @@ class _FakeProvider(CredentialProvider):
 @pytest.fixture
 def policy() -> EntitlementPolicy:
     return EntitlementPolicy(
-        group_capabilities={"atlas": ["read_data"], "__authenticated__": []},
+        group_permissions={"atlas": ["read_data"], "__authenticated__": []},
     )
 
 
@@ -182,7 +182,7 @@ def _spec(name: str, url: str, **overrides: Any) -> ServiceSpec:
     defaults: dict[str, Any] = {
         "prefix": name,
         "transport": "http",
-        "required_capability": "__none__",
+        "required_permission": "__none__",
         "auth_type": "none",
         "description": f"The {name} backend.",
         "display_name": name.title(),
@@ -309,7 +309,7 @@ async def test_action_type_reflects_policy_tool_overrides(
     overrides real enforcement uses -- keyed by the namespaced name, exactly
     as AuthorizationMiddleware sees an invocation."""
     policy = EntitlementPolicy(
-        group_capabilities={"__authenticated__": []},
+        group_permissions={"__authenticated__": []},
         target_action_types={"open": {"open_submit": "state_change"}},
     )
     registry = ServiceRegistry()
@@ -329,12 +329,12 @@ async def test_action_type_reflects_policy_tool_overrides(
 # ---------------------------------------------------------------------------
 
 
-async def test_capability_required_without_contacting_backend(
+async def test_permission_required_without_contacting_backend(
     policy: EntitlementPolicy,
     make_principal: Callable[..., Any],
     dead_backend_url: str,
 ) -> None:
-    """A caller lacking the required capability gets "capability_required"
+    """A caller lacking the required permission gets "permission_required"
     -- derived locally, before any connection attempt (the dead URL proves
     no probe happened: it would classify "unavailable" instead)."""
     registry = ServiceRegistry()
@@ -342,7 +342,7 @@ async def test_capability_required_without_contacting_backend(
         _spec(
             "secure",
             dead_backend_url,
-            required_capability="read_data",
+            required_permission="read_data",
             auth_type="bearer",
         )
     )
@@ -352,7 +352,7 @@ async def test_capability_required_without_contacting_backend(
     resp = await _get_tools(app, "secure")
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["status"] == "capability_required"
+    assert body["status"] == "permission_required"
     assert body["status_detail"]
     assert body["tools"] == []
 
@@ -367,7 +367,7 @@ async def test_not_linked_status_for_unlinked_caller(
         _spec(
             "secure",
             secure_backend_url,
-            required_capability="read_data",
+            required_permission="read_data",
             auth_type="bearer",
         )
     )
@@ -399,7 +399,7 @@ async def test_linked_caller_lists_auth_gated_tools(
         _spec(
             "secure",
             secure_backend_url,
-            required_capability="read_data",
+            required_permission="read_data",
             auth_type="bearer",
         )
     )
@@ -428,7 +428,7 @@ async def test_unauthorized_when_injected_credential_is_rejected(
         _spec(
             "secure",
             secure_backend_url,
-            required_capability="read_data",
+            required_permission="read_data",
             auth_type="bearer",
         )
     )
@@ -452,7 +452,7 @@ async def test_unavailable_when_backend_is_down(
         _spec(
             "dead",
             dead_backend_url,
-            required_capability="read_data",
+            required_permission="read_data",
             auth_type="bearer",
         )
     )
@@ -485,7 +485,7 @@ async def test_x509_backend_lists_with_broker_identity_token(
         _spec(
             "secure",
             secure_backend_url,
-            required_capability="read_data",
+            required_permission="read_data",
             auth_type="x509",
         )
     )
@@ -602,7 +602,7 @@ async def test_cache_never_masks_a_degraded_callers_status(
         _spec(
             "secure",
             secure_backend_url,
-            required_capability="read_data",
+            required_permission="read_data",
             auth_type="bearer",
         )
     )

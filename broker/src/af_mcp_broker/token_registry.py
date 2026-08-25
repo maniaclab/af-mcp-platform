@@ -9,17 +9,17 @@ Keycloak JWT's jti + who it was exchanged for" to "a PAT's lookup_id +
 secret hash + owning principal" -- see ``TokenRecord`` below.
 
 This is the **PAT store** in #144's three-concern split (PAT store /
-principal cache / capability engine): it answers "who is this token?" --
+principal cache / permission engine): it answers "who is this token?" --
 identity and metadata only. It carries no groups and no authorization data
 whatsoever -- that is deliberately the principal cache's job
 (``principal_cache.py``), keyed by principal id rather than by token, so
 rotating or revoking a PAT never disturbs a user's cached authorization and
 group changes propagate once per user rather than once per token. The one
-deliberate exception (issue #144 step 4) is ``TokenRecord.capability_grant``:
-an optional, static *restriction* a capability PAT carries on top of that --
+deliberate exception (issue #144 step 4) is ``TokenRecord.permission_grant``:
+an optional, static *restriction* a permission PAT carries on top of that --
 never a source of authority by itself, and never consulted instead of the
 principal cache's current groups. See that field's docstring and
-``pat_auth._resolve_authority``/``authorization.get_principal_capabilities``
+``pat_auth._resolve_authority``/``authorization.get_principal_permissions``
 for where and how it's applied.
 
 ``TokenRegistryBackend`` is the storage contract two implementations satisfy:
@@ -150,15 +150,15 @@ class TokenRecord:
     is the Keycloak ``sub`` claim; POSIX uid/gid/groups are resolved fresh at
     validation time from ``principal_cache.py``, never read off this record.
 
-    ``capability_grant`` is the one deliberate exception (issue #144 step 4):
+    ``permission_grant`` is the one deliberate exception (issue #144 step 4):
     ``None`` for an identity PAT (today's default, and every PAT minted
-    before this field existed), or an explicit, immutable set of capability
-    names for a **capability PAT**. It is a RESTRICTION on top of the
-    principal's current capabilities, never a substitute for them --
+    before this field existed), or an explicit, immutable set of permission
+    names for a **permission PAT**. It is a RESTRICTION on top of the
+    principal's current permissions, never a substitute for them --
     ``pat_auth._resolve_authority`` copies it onto the resulting
-    ``Principal`` unchanged, and ``authorization.get_principal_capabilities``
+    ``Principal`` unchanged, and ``authorization.get_principal_permissions``
     intersects it with whatever the principal's *current* groups grant. A
-    record whose ``capability_grant`` happens to name a capability the
+    record whose ``permission_grant`` happens to name a permission the
     principal doesn't currently hold (e.g. because they lost a group after
     this PAT was minted, or -- for a test -- because the record was
     constructed directly) is not a data-integrity problem: the intersection
@@ -177,9 +177,9 @@ class TokenRecord:
     # the broker itself (issue #116). None when the caller didn't supply one.
     note: str | None = None
     # See this dataclass's docstring. None (the default) for every identity
-    # PAT; a capability PAT's grant otherwise -- see also Principal
-    # .capability_grant and get_principal_capabilities.
-    capability_grant: frozenset[str] | None = None
+    # PAT; a permission PAT's grant otherwise -- see also Principal
+    # .permission_grant and get_principal_permissions.
+    permission_grant: frozenset[str] | None = None
 
 
 def _collides(existing: TokenRecord, candidate: TokenRecord, now: float) -> bool:
@@ -439,14 +439,37 @@ def _record_to_fields(record: TokenRecord) -> dict[str, Any]:
         # Sorted for a stable on-disk representation (set/frozenset iteration
         # order is not guaranteed) -- None (identity PAT) stored as None, not
         # an empty list, so _record_from_fields can distinguish "no grant at
-        # all" from "a grant of zero capabilities" (the latter never arises
+        # all" from "a grant of zero permissions" (the latter never arises
         # from mint_token today, but the round trip should still be exact).
-        "capability_grant": (
-            sorted(record.capability_grant)
-            if record.capability_grant is not None
+        "permission_grant": (
+            sorted(record.permission_grant)
+            if record.permission_grant is not None
             else None
         ),
     }
+
+
+def _decode_permission_grant(fields: dict[str, Any]) -> frozenset[str] | None:
+    """Decode ``permission_grant`` from raw KV *fields*, failing CLOSED on unmigrated records.
+
+    A record written before the capability->permission rename still keys its
+    grant ``capability_grant``. If that legacy key holds a non-null grant and
+    no ``permission_grant`` is present, the record is an unmigrated *scoped*
+    PAT: decoding it as None would silently widen the restriction to
+    "unrestricted", so it decodes as frozenset() (deny-all) until the
+    one-time migration (scripts/migrate-pat-capability-grant.py) rewrites
+    the key. A legacy ``capability_grant: null`` (an unscoped identity PAT)
+    decodes as None exactly as before -- nothing to widen.
+    """
+    if fields.get("permission_grant") is not None:
+        return frozenset(fields["permission_grant"])
+    if fields.get("capability_grant") is not None:
+        log.warning(
+            "token_registry.unmigrated_grant_denied",
+            lookup_id=fields.get("lookup_id"),
+        )
+        return frozenset()
+    return None
 
 
 def _record_from_fields(fields: dict[str, Any]) -> TokenRecord:
@@ -472,11 +495,7 @@ def _record_from_fields(fields: dict[str, Any]) -> TokenRecord:
             else None
         ),
         note=fields.get("note"),
-        capability_grant=(
-            frozenset(fields["capability_grant"])
-            if fields.get("capability_grant") is not None
-            else None
-        ),
+        permission_grant=_decode_permission_grant(fields),
     )
 
 

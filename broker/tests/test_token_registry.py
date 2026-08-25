@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 import pytest
+import structlog
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -28,6 +29,7 @@ from af_mcp_broker.token_registry import (
     TokenRecord,
     TokenRegistryBackend,
     VaultTokenRegistryBackend,
+    _record_from_fields,
 )
 from af_mcp_broker.vault_kv import VaultKV
 
@@ -323,41 +325,105 @@ async def test_add_note_absent_by_default(backend: TokenRegistryBackend) -> None
 
 
 # ---------------------------------------------------------------------------
-# capability_grant (issue #144 step 4) -- round-trips across both backends,
+# permission_grant (issue #144 step 4) -- round-trips across both backends,
 # including the Vault (de)serialization path where a frozenset must survive
 # a trip through JSON-shaped fields (_record_to_fields/_record_from_fields).
 # ---------------------------------------------------------------------------
 
 
-async def test_add_stores_and_returns_capability_grant(
+async def test_add_stores_and_returns_permission_grant(
     backend: TokenRegistryBackend,
 ) -> None:
     await backend.add(
         _make_record(
             lookup_id="lookup-1",
             principal_id="p1",
-            capability_grant=frozenset({"read_data", "submit_jobs"}),
+            permission_grant=frozenset({"read_data", "submit_jobs"}),
         )
     )
 
     rows = await backend.list_for_principal("p1")
 
     assert len(rows) == 1
-    assert rows[0].capability_grant == frozenset({"read_data", "submit_jobs"})
+    assert rows[0].permission_grant == frozenset({"read_data", "submit_jobs"})
 
 
-async def test_add_capability_grant_absent_by_default(
+async def test_add_permission_grant_absent_by_default(
     backend: TokenRegistryBackend,
 ) -> None:
     """An identity PAT (the default, and every PAT minted before this field
-    existed) round-trips with capability_grant=None -- never an empty set,
-    which authorization.get_principal_capabilities treats differently (see
+    existed) round-trips with permission_grant=None -- never an empty set,
+    which authorization.get_principal_permissions treats differently (see
     that function's docstring: None skips the intersection entirely)."""
     await backend.add(_make_record(lookup_id="lookup-1", principal_id="p1"))
 
     rows = await backend.list_for_principal("p1")
 
-    assert rows[0].capability_grant is None
+    assert rows[0].permission_grant is None
+
+
+# ---------------------------------------------------------------------------
+# Legacy on-disk records from before the capability->permission rename. A
+# scoped record still keyed ``capability_grant`` must fail CLOSED: decoding
+# it as None would silently widen a restricted PAT to unrestricted, so the
+# guard decodes it as a deny-all frozenset() until the one-time migration
+# (scripts/migrate-pat-capability-grant.py) rewrites the key.
+# ---------------------------------------------------------------------------
+
+
+def _legacy_fields(**overrides: Any) -> dict[str, Any]:
+    fields: dict[str, Any] = {
+        "lookup_id": "lookup-legacy",
+        "principal_id": "kc-subject-1",
+        "secret_hash": "deadbeef",
+        "name": "pre-rename-pat",
+        "created_at": 1000.0,
+        "expires_at": None,
+        "revoked_at": None,
+        "last_used_at": None,
+        "note": None,
+    }
+    fields.update(overrides)
+    return fields
+
+
+def test_record_from_fields_unmigrated_scoped_grant_is_deny_all() -> None:
+    """A non-null legacy ``capability_grant`` with no ``permission_grant``
+    decodes as frozenset() (deny-all) -- NEVER None, which would mean
+    unrestricted -- and warns so operators notice the unmigrated record."""
+    fields = _legacy_fields(capability_grant=["read_data", "submit_jobs"])
+
+    with structlog.testing.capture_logs() as logs:
+        record = _record_from_fields(fields)
+
+    assert record.permission_grant == frozenset()
+    assert any(
+        entry["event"] == "token_registry.unmigrated_grant_denied"
+        and entry["lookup_id"] == "lookup-legacy"
+        for entry in logs
+    )
+
+
+def test_record_from_fields_legacy_null_grant_stays_unscoped() -> None:
+    """A legacy ``capability_grant: null`` (an unscoped identity PAT) decodes
+    as None exactly as before the rename -- no restriction, no warning."""
+    fields = _legacy_fields(capability_grant=None)
+
+    with structlog.testing.capture_logs() as logs:
+        record = _record_from_fields(fields)
+
+    assert record.permission_grant is None
+    assert logs == []
+
+
+def test_record_from_fields_migrated_record_decodes_normally() -> None:
+    fields = _legacy_fields(permission_grant=["read_data"])
+
+    with structlog.testing.capture_logs() as logs:
+        record = _record_from_fields(fields)
+
+    assert record.permission_grant == frozenset({"read_data"})
+    assert logs == []
 
 
 # ---------------------------------------------------------------------------

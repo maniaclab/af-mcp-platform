@@ -71,7 +71,7 @@ def registry() -> ServiceRegistry:
             prefix="rucio",
             url="http://rucio.invalid/mcp",
             transport="http",
-            required_capability="read_data",
+            required_permission="read_data",
             apply_namespace=False,
         )
     )
@@ -81,7 +81,7 @@ def registry() -> ServiceRegistry:
             prefix="docs",
             url="http://docs.invalid/mcp",
             transport="http",
-            required_capability="__none__",
+            required_permission="__none__",
         )
     )
     reg.register(
@@ -90,7 +90,7 @@ def registry() -> ServiceRegistry:
             prefix="credentialed",
             url="http://credentialed.invalid/mcp",
             transport="http",
-            # Omitted required_capability -- the credential layer is the
+            # Omitted required_permission -- the credential layer is the
             # gate instead (issue #60).
         )
     )
@@ -100,7 +100,7 @@ def registry() -> ServiceRegistry:
 @pytest.fixture
 def policy() -> EntitlementPolicy:
     return EntitlementPolicy(
-        group_capabilities={"atlas": ["read_data"], "__authenticated__": []},
+        group_permissions={"atlas": ["read_data"], "__authenticated__": []},
         target_action_types={"rucio": {"rucio_list_dids": "read"}},
     )
 
@@ -151,7 +151,7 @@ async def test_entitled_call_proceeds_and_audits_success(
     record = captured_audits[0]
     assert record.outcome == "success"
     assert record.error is None
-    assert record.capability == "read_data"
+    assert record.permission == "read_data"
     assert record.target == "rucio"
     assert record.action == "rucio_list_dids"
     assert record.action_type == "read"
@@ -192,8 +192,8 @@ async def test_diagnostic_tool_call_bypasses_backend_lookup_and_audit(
     call_next directly -- no backend lookup (there is none to look up: no
     registered backend can claim this prefix, see registry.py), no
     entitlement check, no credential minting, and no audit/metrics record,
-    since it never touches a backend and needs no capability. A principal
-    with no groups at all (so no capabilities) proves this isn't gated on
+    since it never touches a backend and needs no permission. A principal
+    with no groups at all (so no permissions) proves this isn't gated on
     entitlement the way every other tool here is."""
     mw = AuthorizationMiddleware(registry, policy)
     principal = make_principal(groups=[])
@@ -208,10 +208,10 @@ async def test_diagnostic_tool_call_bypasses_backend_lookup_and_audit(
     assert captured_audits == []
 
 
-async def test_unentitled_call_denied_audit_carries_no_capability_grant_when_not_a_capability_pat(
+async def test_unentitled_call_denied_audit_carries_no_permission_grant_when_not_a_permission_pat(
     registry, policy, make_principal, captured_audits
 ) -> None:
-    """The common case (a JWT, or an identity PAT -- capability_grant=None)
+    """The common case (a JWT, or an identity PAT -- permission_grant=None)
     must not fabricate a grant in the audit record."""
     mw = AuthorizationMiddleware(registry, policy)
     principal = make_principal(groups=[])
@@ -221,24 +221,24 @@ async def test_unentitled_call_denied_audit_carries_no_capability_grant_when_not
     with pytest.raises(AuthorizationError):
         await mw.on_call_tool(context, call_next)
 
-    assert captured_audits[0].principal_capability_grant is None
+    assert captured_audits[0].principal_permission_grant is None
 
 
-async def test_denied_call_audit_carries_the_scoped_pats_capability_grant(
+async def test_denied_call_audit_carries_the_scoped_pats_permission_grant(
     registry, policy, make_principal, captured_audits
 ) -> None:
-    """Issue #144 step 4: a denied call from a capability PAT must record
-    that PAT's effective capability_grant in the audit line, so an admin can
+    """Issue #144 step 4: a denied call from a permission PAT must record
+    that PAT's effective permission_grant in the audit line, so an admin can
     tell "the principal doesn't hold read_data at all" apart from "the
     principal holds it, but this PAT is scoped away from it" -- the whole
-    point of this field (see AuditRecord.principal_capability_grant's
+    point of this field (see AuditRecord.principal_permission_grant's
     docstring)."""
     mw = AuthorizationMiddleware(registry, policy)
     # In the "atlas" group (which read_data below would normally grant), but
     # this particular PAT is scoped to submit_jobs only -- read_data is
     # denied even though the principal's groups would otherwise allow it.
     principal = make_principal(
-        groups=["atlas"], capability_grant=frozenset({"submit_jobs"})
+        groups=["atlas"], permission_grant=frozenset({"submit_jobs"})
     )
     context = _call_tool_context("rucio_list_dids", {}, principal)
     call_next = _CallNextRecorder()
@@ -247,7 +247,7 @@ async def test_denied_call_audit_carries_the_scoped_pats_capability_grant(
         await mw.on_call_tool(context, call_next)
 
     assert captured_audits[0].outcome == "denied"
-    assert captured_audits[0].principal_capability_grant == ["submit_jobs"]
+    assert captured_audits[0].principal_permission_grant == ["submit_jobs"]
 
 
 async def test_unknown_tool_prefix_denied(
@@ -266,7 +266,7 @@ async def test_unknown_tool_prefix_denied(
     assert captured_audits[0].outcome == "denied"
 
 
-async def test_open_target_requires_no_capability(
+async def test_open_target_requires_no_permission(
     registry, policy, make_principal, captured_audits
 ) -> None:
     mw = AuthorizationMiddleware(registry, policy)
@@ -281,10 +281,10 @@ async def test_open_target_requires_no_capability(
     assert captured_audits[0].outcome == "success"
 
 
-async def test_omitted_capability_target_requires_no_capability(
+async def test_omitted_permission_target_requires_no_permission(
     registry, policy, make_principal, captured_audits
 ) -> None:
-    """A backend that omits required_capability has no capability gate --
+    """A backend that omits required_permission has no permission gate --
     the credential layer gates it instead (issue #60) -- so any
     authenticated principal, regardless of groups, must pass this check."""
     mw = AuthorizationMiddleware(registry, policy)

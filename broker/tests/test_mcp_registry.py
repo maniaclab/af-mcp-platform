@@ -25,7 +25,7 @@ def test_backend_spec_apply_namespace_defaults_true() -> None:
         prefix="example",
         url="http://example.invalid/mcp",
         transport="http",
-        required_capability="__none__",
+        required_permission="__none__",
     )
     assert spec.apply_namespace is True
 
@@ -38,7 +38,7 @@ services:
   - name: example
     prefix: example
     url: "http://example.invalid/mcp"
-    required_capability: __none__
+    required_permission: __none__
 """
     )
     registry = ServiceRegistry()
@@ -56,7 +56,7 @@ services:
   - name: example
     prefix: example
     url: "http://example.invalid/mcp"
-    required_capability: __none__
+    required_permission: __none__
     apply_namespace: false
 """
     )
@@ -104,7 +104,7 @@ def test_backend_spec_timeout_seconds_defaults_to_30() -> None:
         prefix="example",
         url="http://example.invalid/mcp",
         transport="http",
-        required_capability="__none__",
+        required_permission="__none__",
     )
     assert spec.timeout_seconds == 30.0
 
@@ -117,7 +117,7 @@ services:
   - name: example
     prefix: example
     url: "http://example.invalid/mcp"
-    required_capability: __none__
+    required_permission: __none__
 """
     )
     registry = ServiceRegistry()
@@ -135,7 +135,7 @@ services:
   - name: example
     prefix: example
     url: "http://example.invalid/mcp"
-    required_capability: __none__
+    required_permission: __none__
     timeout_seconds: 5
 """
     )
@@ -159,7 +159,7 @@ def test_register_rejects_reserved_diagnostic_prefix() -> None:
                 prefix="af",
                 url="http://shadow.invalid/mcp",
                 transport="http",
-                required_capability="__none__",
+                required_permission="__none__",
             )
         )
 
@@ -174,7 +174,7 @@ services:
   - name: shadow
     prefix: af
     url: "http://shadow.invalid/mcp"
-    required_capability: __none__
+    required_permission: __none__
 """
     )
     registry = ServiceRegistry()
@@ -193,7 +193,7 @@ def test_get_by_tool_prefix_unaffected_by_apply_namespace() -> None:
             prefix="rucio",
             url="http://rucio.invalid/mcp",
             transport="http",
-            required_capability="read_data",
+            required_permission="read_data",
             apply_namespace=False,
         )
     )

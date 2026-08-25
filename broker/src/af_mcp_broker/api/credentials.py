@@ -513,7 +513,7 @@ def _release_audit(
     return AuditRecord(
         principal_sub=subject,
         principal_uid=uid,
-        capability=None,
+        permission=None,
         target=audience,
         action="x509_proxy_release",
         action_type="read",
@@ -667,7 +667,7 @@ async def redeem_x509_proxy(request: Request) -> ProxyRedeemResponse:
             AuditRecord(
                 principal_sub=subject,
                 principal_uid=claims.get("uid"),
-                capability=None,
+                permission=None,
                 target=audience,
                 action="x509_proxy_release",
                 action_type="read",

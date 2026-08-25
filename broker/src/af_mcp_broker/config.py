@@ -491,7 +491,7 @@ class Settings(BaseSettings):
     # facility whose POSIX identity is LDAP-federated under different names
     # (the common spelling is `uidNumber`/`gidNumber`) overrides these rather
     # than the broker hardcoding AF's convention -- same reasoning as #125's
-    # group_capabilities. Unlike these, the JWT path (`identity.py`'s
+    # group_permissions. Unlike these, the JWT path (`identity.py`'s
     # `_extract_principal`) is NOT affected by this setting: a token's
     # `posix.uid`/`posix.gid`/`posix.unixname` claim shape is fixed by
     # convention (Keycloak's User Attribute mappers already normalize
@@ -510,7 +510,7 @@ class Settings(BaseSettings):
     # identically -- there is no longer a separate JWT-side mapper
     # convention it needs to be kept consistent with (see docs/auth.md's
     # "Keycloak: Group Membership mapper" section). Default False (bare
-    # name) matches ``policy.yaml``'s ``group_capabilities`` keys directly.
+    # name) matches ``policy.yaml``'s ``group_permissions`` keys directly.
     principal_directory_group_full_path: bool = False
 
     # --- AF Broker Identity Token (issue #162): the broker's own RS256
@@ -523,7 +523,7 @@ class Settings(BaseSettings):
     # AF_SERVICE_TOKEN_FILE. Empty means the feature is unconfigured: valid
     # for local dev, but app.py's lifespan refuses to start when a
     # broker-issued identityProviders entry exists without it (fail-closed,
-    # like the unreachable_capabilities/ungated_services checks).
+    # like the unreachable_permissions/ungated_services checks).
     broker_signing_key_file: str = ""
 
     # Directory of ADDITIONAL public key PEMs (files named *.pem) published

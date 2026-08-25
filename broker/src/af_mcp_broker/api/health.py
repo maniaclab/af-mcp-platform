@@ -51,7 +51,7 @@ async def readyz(
     """Return 200 as long as JWKS is reachable.
 
     An empty service list is a valid degraded state — /v1/identities,
-    /v1/capabilities, and /v1/x509/proxy don't need any service configured
+    /v1/permissions, and /v1/x509/proxy don't need any service configured
     (issue #29) — so services_loaded/services_count are informational only
     and never gate the HTTP status.
     """

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 # GET /v1/catalog/{service}/tools -- the portal's per-service tool listing
 # (the fetch-on-expand companion to GET /v1/catalog). Lives in its own module
-# rather than api/capabilities.py because it imports mcp/aggregator.py's
-# list-time helpers, and capabilities.py importing the aggregator would be a
-# straight import cycle (aggregator -> mcp/diagnostics -> capabilities).
+# rather than api/permissions.py because it imports mcp/aggregator.py's
+# list-time helpers, and permissions.py importing the aggregator would be a
+# straight import cycle (aggregator -> mcp/diagnostics -> permissions).
 import time
 from typing import TYPE_CHECKING, Annotated, Literal
 
@@ -12,7 +12,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict
 
-from af_mcp_broker.api.capabilities import (
+from af_mcp_broker.api.permissions import (
     _get_credential_registry,
     _get_policy,
     _get_registry,
@@ -30,20 +30,20 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
-router = APIRouter(tags=["capabilities"])
+router = APIRouter(tags=["permissions"])
 
 # The status vocabulary matches aggregator.py's _classify_failure one-to-one
-# (plus "ok" and the locally-derived "capability_required"), so a portal
+# (plus "ok" and the locally-derived "permission_required"), so a portal
 # status and an `aggregator.service_list_failed` log line for the same
 # service always speak the same language. Sentences are short, human, and
-# internals-free -- portal-facing, so unlike capabilities.py's
+# internals-free -- portal-facing, so unlike permissions.py's
 # _STATUS_DETAILS they never name the af_* diagnostic tools.
 ToolListingStatus = Literal[
     "ok",
     "not_linked",
     "unauthorized",
     "unavailable",
-    "capability_required",
+    "permission_required",
 ]
 
 _STATUS_DETAILS: dict[str, str] = {
@@ -51,7 +51,7 @@ _STATUS_DETAILS: dict[str, str] = {
     "not_linked": "Link your identity to see this service's methods.",
     "unauthorized": "Your linked credential was rejected. Re-link your identity.",
     "unavailable": "Temporarily unavailable. Try again shortly.",
-    "capability_required": (
+    "permission_required": (
         "Your account doesn't have the access this service requires. "
         "Contact the AF admins."
     ),
@@ -154,7 +154,7 @@ def _respond(
                 name=name,
                 description=description,
                 action_type=get_action_type(  # type: ignore[arg-type]
-                    spec.name, name, spec.required_capability, policy
+                    spec.name, name, spec.required_permission, policy
                 ),
             )
             for name, description in tools
@@ -187,14 +187,14 @@ async def get_service_tools(
         )
     policy = _get_policy(request)
 
-    # Same capability gate the aggregator's factories (and /v1/catalog's
+    # Same permission gate the aggregator's factories (and /v1/catalog's
     # status derivation) apply before any credential work -- derived locally,
     # never by probing the service.
     allowed, _reason = check_entitlement(
-        principal, spec.required_capability, spec.name, policy
+        principal, spec.required_permission, spec.name, policy
     )
     if not allowed:
-        return _respond(spec, "capability_required", [], policy)
+        return _respond(spec, "permission_required", [], policy)
 
     credential_registry = _get_credential_registry(request)
     broker_token_issuer = getattr(request.app.state, "broker_token_issuer", None)

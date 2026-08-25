@@ -39,7 +39,7 @@ FastMCP Aggregator (mounted at /mcp)
     │  in this path — see docs/auth.md
     ▼
     │  EntitlementMiddleware (tools/list) / AuthorizationMiddleware
-    │  (tools/call) — capability check in-process against the same
+    │  (tools/call) — permission check in-process against the same
     │  functions POST /v1/authorize calls; AuthorizationMiddleware
     │  also writes the audit record for every call
     ▼
@@ -120,20 +120,21 @@ exposes are **Methods**.
 |---|---|---|
 | service (registry entry, `services.yaml`) | Service | A packaged interface to one backend system — an MCP server. |
 | tool (MCP wire term) | Method | "tool" remains correct in code and on the MCP wire; it is what the MCP protocol calls a Method. |
-| capability (permission string, `policy.yaml` / `GET /v1/capabilities`) | **no Elwood equivalent — NOT an Elwood Capability** | An Elwood Capability is a named agent role owning Services. Call the platform's permission strings "permissions" in cross-project prose. |
+| permission (permission string, `policy.yaml` / `GET /v1/permissions`) | **no Elwood equivalent — NOT an Elwood Capability** | An Elwood Capability is a named agent role owning Services. The platform's permission strings were called "capabilities" before the rename; "permission" is now the term everywhere. |
 | broker | Gateway / Orchestration-Platform boundary | The user-facing entry point; the multi-agent orchestration layer sits above this platform. |
 | LLM client | Reasoning Engine + Agent (client side) | "Agent" (Elwood) is the running implementation of a Capability — never a generic word for LLM clients. |
 
-**Three things called "capability"** — do not conflate them:
+**Things still called "capability"** — the platform's permission strings
+used to be a third sense of this word, but are renamed to **permission**,
+resolving that collision. What remains:
 
-1. **This repo's capability** — a permission string granted to Keycloak
-   groups via `policy.yaml` and served by `GET /v1/capabilities`.
-2. **An Elwood Capability** — a named agent role that owns Services.
-3. **The VOMS FQAN `/Capability=NULL` field** — fixed WLCG grid vocabulary
-   that appears in x509/VOMS proxy log lines, unrelated to either of the
-   above.
+1. **An Elwood Capability** — a named agent role that owns Services.
+2. **The VOMS FQAN `/Capability=NULL` field** — fixed WLCG grid vocabulary
+   that appears in x509/VOMS proxy log lines, unrelated to the above.
 
-Everywhere else in these docs, "capability" means sense (1).
+In these docs, "permission" means the platform's permission strings;
+"capability" only ever means one of the two senses above (or the MCP
+protocol's own client capabilities).
 
 ---
 
@@ -185,8 +186,8 @@ The broker's effective privilege depends on configuration:
 - **Registered services.** Each service's tier is declared where it is
   deployed (the GitOps repo, per above). On the platform side, a service's
   registry entry expresses its posture through `auth_type` (what credential
-  the aggregator injects) and `required_capability` (who may call it).
-  `required_capability: __none__` — open to any authenticated user — is
+  the aggregator injects) and `required_permission` (who may call it).
+  `required_permission: __none__` — open to any authenticated user — is
   only appropriate for user-tier read-only services.
 
 ---
@@ -210,22 +211,22 @@ Extracts and validates the AF principal from the incoming request.
 Answers: "is this principal allowed to call this tool?"
 
 - Policy is declarative YAML (`policy.yaml`) — no code change needed to add a
-  capability.
-- Each backend target's required capability is declared by
-  `required_capability` in `services.yaml` (e.g., rucio requires `read_data`,
+  permission.
+- Each backend target's required permission is declared by
+  `required_permission` in `services.yaml` (e.g., rucio requires `read_data`,
   condor-mcp requires `submit_jobs`) — services.yaml is the sole source of truth
   for that mapping; `policy.yaml` doesn't enumerate targets. It's optional:
   omit it and the credential layer becomes the gate instead (the broker
   refuses to start if that would leave the backend with no gate at all), or
   set it to `__none__` to explicitly open the backend to any authenticated
   user. See `docs/adding-a-service.md` for the full model.
-- A principal's capabilities come from their Keycloak group memberships via
-  `group_capabilities` in `policy.yaml` (shipped in the chart's policy
+- A principal's permissions come from their Keycloak group memberships via
+  `group_permissions` in `policy.yaml` (shipped in the chart's policy
   ConfigMap). Every credential type resolves those groups from Keycloak's
   Admin REST API via the `PrincipalDirectory`/principal cache, not from a
   JWT claim — see
   [docs/auth.md#authorization-is-an-attribute-of-the-principal-not-the-token](auth.md#authorization-is-an-attribute-of-the-principal-not-the-token).
-- Authorization failures are logged with structured fields (uid, tool, capability)
+- Authorization failures are logged with structured fields (uid, tool, permission)
   and return HTTP 403 to the aggregator.
 
 ### 3. Credentialing
@@ -418,7 +419,7 @@ in `docs/auth.md` for `token_sweep.py` and the `tokenSweep` CronJob.
 Structured log (structlog + JSON) of every tool invocation, including:
 - principal uid and Keycloak subject
 - tool name and backend
-- authorization decision (allow / deny) and capability checked
+- authorization decision (allow / deny) and permission checked
 - credential provider used
 - response status and latency
 - request ID (propagated in `X-Request-ID` header)
@@ -472,7 +473,7 @@ Key endpoints:
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/v1/identities` | Caller identity, linked accounts, linkable providers |
-| `GET` | `/v1/capabilities` | Caller's granted capabilities |
+| `GET` | `/v1/permissions` | Caller's granted permissions |
 | `POST` | `/v1/authorize` | Check one entitlement (used by the aggregator per call) |
 | `GET` | `/v1/catalog` | Tools visible to the caller after entitlement filtering |
 | `POST` | `/v1/credential` | Issue or return a cached credential for a target |
@@ -538,8 +539,8 @@ the simplest correct thing. The extraction path if it becomes necessary:
    in this path), the same way `identity.get_principal()` does for `/v1`,
    and resolves the `Principal`.
 3. `AuthorizationMiddleware` maps the tool name to a backend by prefix and
-   checks `principal`'s capabilities against that backend's
-   `required_capability`, in-process against the same function
+   checks `principal`'s permissions against that backend's
+   `required_permission`, in-process against the same function
    `POST /v1/authorize` calls. Deny → a clean MCP error, audited as
    `"denied"`, and the call never reaches credential resolution.
 4. `mcp/aggregator.py`'s `client_factory` resolves the caller's credential

@@ -65,7 +65,7 @@ def test_build_target_to_alias_uses_the_real_x509_entry_alias() -> None:
 
 # ---------------------------------------------------------------------------
 # Fail-closed startup validation (issue #60): a backend that omits
-# `required_capability` relies on the credential layer as its sole
+# `required_permission` relies on the credential layer as its sole
 # authorization gate. If no credential provider resolves for its target
 # either, there is no gate at all -- the broker must refuse to start.
 # ---------------------------------------------------------------------------
@@ -77,16 +77,16 @@ def _write_services(tmp_path: Path, text: str) -> str:
     return str(path)
 
 
-def test_omitted_capability_with_credential_provider_starts_cleanly(
+def test_omitted_permission_with_credential_provider_starts_cleanly(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     app_client_factory: Callable[..., Any],
 ) -> None:
-    """Omitting required_capability is allowed as long as the credential
+    """Omitting required_permission is allowed as long as the credential
     layer actually gates the backend. Here that's via ``auth_type: x509``,
     gated by conftest's default `identity_providers` entry (alias "x509",
     targets ["ami"]) -- so this backend has a real gate (a mintable
-    credential) even without a declared capability.
+    credential) even without a declared permission.
     """
     monkeypatch.setenv(
         "SERVICES_FILE",
@@ -106,15 +106,15 @@ def test_omitted_capability_with_credential_provider_starts_cleanly(
     assert resp.status_code == 200, resp.text
 
 
-def test_omitted_capability_without_credential_provider_refuses_to_start(
+def test_omitted_permission_without_credential_provider_refuses_to_start(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     app_client_factory: Callable[..., Any],
 ) -> None:
-    """A backend that omits required_capability AND has no credential
+    """A backend that omits required_permission AND has no credential
     provider resolving for its target (here: `auth_type: bearer`, the
     default, with no `identity_providers` entry naming it) has no
-    authorization gate at all -- neither a declared capability nor a
+    authorization gate at all -- neither a declared permission nor a
     mintable credential. The broker must refuse to start naming the
     offending backend rather than silently exposing it to any authenticated
     caller.
@@ -147,7 +147,7 @@ def test_omitted_capability_without_credential_provider_refuses_to_start(
 # only pins a session safely with more than one replica if something in
 # front of the broker (e.g. client-IP-hash ingress affinity) provides it,
 # which the broker itself cannot see -- so this can only warn, never refuse
-# to start (unlike the fail-closed capability check above).
+# to start (unlike the fail-closed permission check above).
 # ---------------------------------------------------------------------------
 
 

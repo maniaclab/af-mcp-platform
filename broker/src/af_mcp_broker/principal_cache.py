@@ -1,7 +1,7 @@
 """In-process, per-principal cache of current authorization attributes, persisted to survive a restart (issue #144 steps 2a/2b).
 
 This is the **principal cache** in #144's three-concern split (PAT store /
-principal cache / capability engine): it answers "what groups/uid does this
+principal cache / permission engine): it answers "what groups/uid does this
 user currently have?" -- keyed by **principal id**, not by PAT, so multiple
 PATs belonging to one user share cached state, a group change propagates
 once per user rather than once per token, and rotating or revoking a PAT

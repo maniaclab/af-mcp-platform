@@ -15,7 +15,7 @@ cost with no trust gain.
 The token is an identity assertion, nothing more: ``iss``/``sub``/``aud``/
 ``exp``/``iat``/``jti``, plus ``uid``/``gid``/``unixname`` only for targets
 whose config declares they need POSIX identity. Deliberately absent:
-capabilities, groups, or any authorization claim -- authorization is an
+permissions, groups, or any authorization claim -- authorization is an
 attribute of the principal, decided per-call by the broker's entitlement
 check, and must never migrate into tokens. Consumers verify against the
 broker's own JWKS (``GET /.well-known/jwks.json``, api/wellknown.py) with a
@@ -153,7 +153,7 @@ class BrokerTokenIssuer:
         Returns ``(token, expires_at_epoch)``. The claim set is EXACTLY
         ``iss``/``sub``/``aud``/``exp``/``iat``/``jti``, plus
         ``uid``/``gid``/``unixname`` when passed (the caller gates those on
-        per-target config) -- never a capability, group, or any other
+        per-target config) -- never a permission, group, or any other
         authorization claim (issue #162).
         """
         now = int(time.time())

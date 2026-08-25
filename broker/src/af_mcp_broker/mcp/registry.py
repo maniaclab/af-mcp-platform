@@ -19,10 +19,10 @@ if TYPE_CHECKING:
 #
 # These names live here rather than in mcp/diagnostics.py itself so that
 # EntitlementMiddleware/AuthorizationMiddleware (which need DIAGNOSTIC_TOOL_NAMES
-# to bypass entitlement/authorization for these tools) and api/capabilities.py
+# to bypass entitlement/authorization for these tools) and api/permissions.py
 # (which names them in a status_detail sentence -- see _STATUS_DETAILS) can
 # both import them without either importing mcp/diagnostics.py itself, which
-# in turn imports api/capabilities.py's _service_status -- that would be a
+# in turn imports api/permissions.py's _service_status -- that would be a
 # straight import cycle.
 RESERVED_PREFIX = "af"
 WHOAMI_TOOL_NAME = f"{RESERVED_PREFIX}_whoami"
@@ -62,15 +62,15 @@ class ServiceSpec:
     prefix: str
     url: str
     transport: str  # "http" | "sse"
-    # The capability a caller must hold to invoke this service's tools:
-    #   - a capability name (e.g. "read_data") -> gated on that capability.
+    # The permission a caller must hold to invoke this service's tools:
+    #   - a permission name (e.g. "read_data") -> gated on that permission.
     #   - "__none__" -> open to any authenticated user (deliberate opt-in).
-    #   - None (omitted) -> no capability gate; the credential layer is the
+    #   - None (omitted) -> no permission gate; the credential layer is the
     #     gate instead (the caller must have a linked identity / mintable
     #     credential for this target). app.py's lifespan refuses to start if
     #     a service omits this AND has no resolvable credential provider,
     #     since that would mean no gate at all -- see issue #60.
-    required_capability: str | None = None
+    required_permission: str | None = None
     auth_type: str = "bearer"  # "bearer" | "x509" | "none"
     description: str = ""
     display_name: str = ""
@@ -119,7 +119,7 @@ class ServiceRegistry:
                 prefix=entry.get("prefix", entry["name"]),
                 url=entry["url"],
                 transport=entry.get("transport", "http"),
-                required_capability=entry.get("required_capability"),
+                required_permission=entry.get("required_permission"),
                 auth_type=entry.get("auth_type", "bearer"),
                 description=entry.get("description", ""),
                 display_name=entry.get("display_name", ""),

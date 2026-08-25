@@ -3,13 +3,13 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from af_mcp_broker.api import (
-    capabilities,
     catalog_tools,
     credentials,
     health,
     identities,
     mcp_oauth,
     oauth21,
+    permissions,
     tokens,
 )
 
@@ -19,7 +19,7 @@ router = APIRouter(prefix="/v1")
 
 router.include_router(health.router)
 router.include_router(identities.router)
-router.include_router(capabilities.router)
+router.include_router(permissions.router)
 router.include_router(catalog_tools.router)
 router.include_router(credentials.router)
 router.include_router(oauth21.router)

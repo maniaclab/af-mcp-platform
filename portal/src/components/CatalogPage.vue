@@ -57,7 +57,7 @@ const filteredServers = computed<CatalogServer[]>(() => {
         s.name.toLowerCase().includes(q) ||
         s.display_name.toLowerCase().includes(q) ||
         s.description.toLowerCase().includes(q) ||
-        s.capability.toLowerCase().includes(q),
+        s.permission.toLowerCase().includes(q),
     );
   }
 
@@ -74,14 +74,14 @@ function poweredByFor(server: CatalogServer) {
     <!-- Toolbar -->
     <div class="cp__toolbar" role="toolbar" aria-label="Catalog filters">
       <div class="cp__search-wrap">
-        <label for="catalog-search" class="sr-only">Search MCP servers</label>
+        <label for="catalog-search" class="sr-only">Search services</label>
         <input
           id="catalog-search"
           v-model="search"
           type="search"
           class="cp__search"
-          placeholder="Search servers, descriptions, capabilities…"
-          aria-label="Search MCP servers"
+          placeholder="Search servers, descriptions, permissions…"
+          aria-label="Search services"
         />
       </div>
 
@@ -112,9 +112,9 @@ function poweredByFor(server: CatalogServer) {
     </div>
 
     <!-- Loading -->
-    <div v-if="loading" class="cp__loading" aria-live="polite" aria-label="Loading MCP servers">
+    <div v-if="loading" class="cp__loading" aria-live="polite" aria-label="Loading services">
       <span class="cp__spinner" aria-hidden="true"></span>
-      <span>Loading MCP servers…</span>
+      <span>Loading services…</span>
     </div>
 
     <!-- Session expired -->
@@ -138,7 +138,7 @@ function poweredByFor(server: CatalogServer) {
 
     <!-- Error -->
     <div v-else-if="error" class="cp__error" role="alert">
-      <span class="cp__error-title">MCP servers unavailable</span>
+      <span class="cp__error-title">Services unavailable</span>
       <span class="cp__error-body">{{ error }}</span>
       <span class="cp__error-hint">
         Make sure your ATLAS IAM and CERN identities are linked on the
@@ -148,9 +148,9 @@ function poweredByFor(server: CatalogServer) {
 
     <!-- Empty (no servers at all) -->
     <div v-else-if="servers.length === 0" class="cp__empty">
-      <p class="cp__empty-title">No MCP servers available</p>
+      <p class="cp__empty-title">No services available</p>
       <p class="cp__empty-body">
-        Your account doesn't have any granted capabilities yet. Link your external identities to
+        Your account doesn't have any granted permissions yet. Link your external identities to
         unlock access.
       </p>
       <a href="/identities/" class="cp__empty-cta">Link identities →</a>
@@ -160,13 +160,13 @@ function poweredByFor(server: CatalogServer) {
     <div v-else-if="filteredServers.length === 0" class="cp__empty">
       <p class="cp__empty-title">No matches</p>
       <p class="cp__empty-body">
-        No MCP servers match "{{ search }}" with the current filter. Try a different search term or
+        No services match "{{ search }}" with the current filter. Try a different search term or
         clear the filter.
       </p>
     </div>
 
     <!-- Server list -->
-    <div v-else class="cp__list" role="list" aria-label="Available MCP servers">
+    <div v-else class="cp__list" role="list" aria-label="Available services">
       <div v-for="server in filteredServers" :key="server.name" role="listitem">
         <ServiceCard :server="server" :powered-by="poweredByFor(server)" />
       </div>

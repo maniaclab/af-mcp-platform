@@ -46,13 +46,16 @@ portal/nginx.conf.generated
 *.key
 
 # Local-only operator helper scripts (e.g. mint-token.py) — not versioned for now.
-# `scripts/*` (not `scripts/`) so the exception below can re-include one file --
+# `scripts/*` (not `scripts/`) so the exceptions below can re-include files --
 # git cannot un-ignore a path whose parent directory is itself excluded.
 scripts/*
 # Exception: verify-mcp-flow.py is a real PR deliverable (issue #58 Part D) --
 # a runnable /mcp end-to-end check meant for any operator to check out and
 # run, not a personal local-only helper like the rest of scripts/.
 !scripts/verify-mcp-flow.py
+# Exception: the one-time PAT grant migration (capability -> permission) every
+# deployment must be able to run via kubectl exec -- see docs/auth.md.
+!scripts/migrate-pat-capability-grant.py
 
 # Helm — packed charts and downloaded dependencies
 charts/*/charts/

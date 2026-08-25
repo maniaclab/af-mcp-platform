@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   NOTE_MAX_LENGTH,
-  capabilityGrantLabel,
+  permissionGrantLabel,
   shortLookupId,
   tokenStatus,
   truncateNote,
@@ -97,20 +97,20 @@ describe('truncateNote', () => {
   });
 });
 
-describe('capabilityGrantLabel', () => {
+describe('permissionGrantLabel', () => {
   it('describes an identity PAT (null grant) as full account access', () => {
-    expect(capabilityGrantLabel(null)).toBe('Full account access');
+    expect(permissionGrantLabel(null)).toBe('Full account access');
   });
 
-  it('describes a capability PAT scoped to one capability', () => {
-    expect(capabilityGrantLabel(['read_data'])).toBe('read_data');
+  it('describes a permission PAT scoped to one permission', () => {
+    expect(permissionGrantLabel(['read_data'])).toBe('read_data');
   });
 
-  it('sorts multiple capabilities for a stable display order', () => {
-    expect(capabilityGrantLabel(['submit_jobs', 'read_data'])).toBe('read_data, submit_jobs');
+  it('sorts multiple permissions for a stable display order', () => {
+    expect(permissionGrantLabel(['submit_jobs', 'read_data'])).toBe('read_data, submit_jobs');
   });
 
   it('describes an empty (but non-null) grant distinctly from an identity PAT', () => {
-    expect(capabilityGrantLabel([])).toBe('No capabilities');
+    expect(permissionGrantLabel([])).toBe('No permissions');
   });
 });

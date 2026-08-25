@@ -64,7 +64,7 @@ broker subsystems and the `/v1` contract, and
   procedure for wiring up an additional Rucio VO/site behind rucio-mcp.
 - [Connecting a Client](connecting-a-client.md) — end-user setup for Claude,
   Claude Code, and any other MCP-over-HTTP client, plus the exact error
-  strings you'll see if a prerequisite (capability, linked identity) is
+  strings you'll see if a prerequisite (permission, linked identity) is
   missing.
 - [Phase 1 Acceptance Checklist](phase1-acceptance-checklist.md) — what's
   verified by automated tests vs. what still needs a live-deploy check.

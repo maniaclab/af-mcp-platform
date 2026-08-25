@@ -63,7 +63,7 @@ def aggregator_url(settings, progress_backend_url, static_principal_cache):
             prefix="progress",
             url=progress_backend_url,
             transport="http",
-            required_capability="__none__",
+            required_permission="__none__",
             auth_type="none",
         )
     )

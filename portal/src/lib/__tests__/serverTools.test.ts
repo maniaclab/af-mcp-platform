@@ -75,9 +75,9 @@ describe('resolveToolListing', () => {
     });
   });
 
-  it('renders capability_required as a plain message with no call to action', () => {
+  it('renders permission_required as a plain message with no call to action', () => {
     const view = resolveToolListing(
-      listing({ status: 'capability_required', status_detail: 'Contact the AF admins.' }),
+      listing({ status: 'permission_required', status_detail: 'Contact the AF admins.' }),
     );
     expect(view).toEqual({
       kind: 'blocked',

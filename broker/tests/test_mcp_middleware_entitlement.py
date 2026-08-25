@@ -40,7 +40,7 @@ def registry() -> ServiceRegistry:
             prefix="rucio",
             url="http://rucio.invalid/mcp",
             transport="http",
-            required_capability="read_data",
+            required_permission="read_data",
             apply_namespace=False,
         )
     )
@@ -50,7 +50,7 @@ def registry() -> ServiceRegistry:
             prefix="docs",
             url="http://docs.invalid/mcp",
             transport="http",
-            required_capability="__none__",
+            required_permission="__none__",
         )
     )
     reg.register(
@@ -59,7 +59,7 @@ def registry() -> ServiceRegistry:
             prefix="credentialed",
             url="http://credentialed.invalid/mcp",
             transport="http",
-            # Omitted required_capability -- the credential layer is the
+            # Omitted required_permission -- the credential layer is the
             # gate instead (issue #60); entitlement filtering itself must
             # not hide this tool from anyone.
         )
@@ -70,7 +70,7 @@ def registry() -> ServiceRegistry:
 @pytest.fixture
 def policy() -> EntitlementPolicy:
     return EntitlementPolicy(
-        group_capabilities={"atlas": ["read_data"], "__authenticated__": []},
+        group_permissions={"atlas": ["read_data"], "__authenticated__": []},
     )
 
 
@@ -107,10 +107,10 @@ async def test_unentitled_principal_only_sees_open_tools(
     assert {t.name for t in result} == {"docs_search"}
 
 
-async def test_unentitled_principal_sees_omitted_capability_tools_too(
+async def test_unentitled_principal_sees_omitted_permission_tools_too(
     registry, policy, make_principal
 ):
-    """A backend that omits required_capability has no capability gate --
+    """A backend that omits required_permission has no permission gate --
     the credential layer gates it instead (issue #60) -- so entitlement
     filtering must not hide it even from a principal with no groups."""
     mw = EntitlementMiddleware(registry, policy)
@@ -137,13 +137,13 @@ async def test_tool_with_unknown_prefix_is_denied(registry, policy, make_princip
 
 
 @pytest.mark.parametrize("tool_name", sorted(DIAGNOSTIC_TOOL_NAMES))
-async def test_diagnostic_tool_visible_to_principal_with_no_capabilities(
+async def test_diagnostic_tool_visible_to_principal_with_no_permissions(
     registry, policy, make_principal, tool_name
 ):
     """Requirement (issue #153): the af_* diagnostic tools must stay visible
     regardless of entitlements -- unlike every other tool here, they need no
-    capability and no registered backend at all, so a principal with zero
-    group memberships (zero capabilities) must still see them, exactly as if
+    permission and no registered backend at all, so a principal with zero
+    group memberships (zero permissions) must still see them, exactly as if
     they were fully entitled."""
     mw = EntitlementMiddleware(registry, policy)
     principal = make_principal(groups=[])
@@ -153,7 +153,7 @@ async def test_diagnostic_tool_visible_to_principal_with_no_capabilities(
     result = await mw.on_list_tools(context, _call_next_factory(tools))
 
     assert tool_name in {t.name for t in result}
-    # The capability-gated tool alongside it is still correctly hidden --
+    # The permission-gated tool alongside it is still correctly hidden --
     # proves this is a deliberate, narrow bypass, not a broken filter.
     assert "rucio_list_dids" not in {t.name for t in result}
 

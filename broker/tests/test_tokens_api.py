@@ -33,7 +33,7 @@ def _mint(
     note: str | None = None,
     expires_in_days: int | None = None,
     never_expires: bool = False,
-    capabilities: list[str] | None = None,
+    permissions: list[str] | None = None,
 ):
     body: dict = {}
     if name is not None:
@@ -44,8 +44,8 @@ def _mint(
         body["expires_in_days"] = expires_in_days
     if never_expires:
         body["never_expires"] = True
-    if capabilities is not None:
-        body["capabilities"] = capabilities
+    if permissions is not None:
+        body["permissions"] = permissions
     return client.post("/v1/tokens", json=body, headers=_AUTH)
 
 
@@ -220,47 +220,47 @@ def test_mint_rejects_note_above_max_length(
 
 
 # ---------------------------------------------------------------------------
-# Capability PATs (issue #144 step 4). app_client_factory's default principal
+# Permission PATs (issue #144 step 4). app_client_factory's default principal
 # is in the "atlas" group, which the shipped policy.yaml maps to read_data,
 # read_metadata, read_monitoring, submit_jobs, manage_jobs, launch_compute,
 # manage_jupyter, read_files -- but never "admin" (that's af-admins only).
 # ---------------------------------------------------------------------------
 
 
-def test_mint_without_capabilities_returns_none_capability_grant(
+def test_mint_without_permissions_returns_none_permission_grant(
     app_client: tuple[TestClient, dict],
 ) -> None:
-    """Omitting `capabilities` (the default) mints an ordinary identity PAT
-    -- capability_grant must be None, not an empty list, both in the mint
+    """Omitting `permissions` (the default) mints an ordinary identity PAT
+    -- permission_grant must be None, not an empty list, both in the mint
     response and the subsequent list."""
     client, _ = app_client
     mint_resp = _mint(client, name="claude-desktop")
     assert mint_resp.status_code == 200, mint_resp.text
-    assert mint_resp.json()["capability_grant"] is None
+    assert mint_resp.json()["permission_grant"] is None
 
     listed = client.get("/v1/tokens", headers=_AUTH)
-    assert listed.json()[0]["capability_grant"] is None
+    assert listed.json()[0]["permission_grant"] is None
 
 
-def test_mint_with_capabilities_subset_of_current_succeeds(
+def test_mint_with_permissions_subset_of_current_succeeds(
     app_client: tuple[TestClient, dict],
 ) -> None:
     client, _ = app_client
-    mint_resp = _mint(client, name="ci-bot", capabilities=["read_data", "submit_jobs"])
+    mint_resp = _mint(client, name="ci-bot", permissions=["read_data", "submit_jobs"])
     assert mint_resp.status_code == 200, mint_resp.text
-    assert sorted(mint_resp.json()["capability_grant"]) == ["read_data", "submit_jobs"]
+    assert sorted(mint_resp.json()["permission_grant"]) == ["read_data", "submit_jobs"]
 
     listed = client.get("/v1/tokens", headers=_AUTH)
-    assert sorted(listed.json()[0]["capability_grant"]) == ["read_data", "submit_jobs"]
+    assert sorted(listed.json()[0]["permission_grant"]) == ["read_data", "submit_jobs"]
 
 
-def test_mint_rejects_capability_the_caller_does_not_currently_hold(
+def test_mint_rejects_permission_the_caller_does_not_currently_hold(
     app_client: tuple[TestClient, dict],
 ) -> None:
-    """ "admin" is not among atlas's group_capabilities -- requesting it must
+    """ "admin" is not among atlas's group_permissions -- requesting it must
     fail with a clear error naming it, and mint nothing at all."""
     client, _ = app_client
-    resp = _mint(client, name="over-broad", capabilities=["read_data", "admin"])
+    resp = _mint(client, name="over-broad", permissions=["read_data", "admin"])
     assert resp.status_code == 400, resp.text
     assert "admin" in resp.json()["detail"]
     # "read_data" is legitimately held -- it must not be named as offending.
@@ -270,16 +270,16 @@ def test_mint_rejects_capability_the_caller_does_not_currently_hold(
     assert listed.json() == []
 
 
-def test_mint_empty_capabilities_list_mints_a_capability_pat_with_no_capabilities(
+def test_mint_empty_permissions_list_mints_a_permission_pat_with_no_permissions(
     app_client: tuple[TestClient, dict],
 ) -> None:
-    """`capabilities: []` is a deliberate, if unusual, opt-in -- distinct
+    """`permissions: []` is a deliberate, if unusual, opt-in -- distinct
     from omitting the field entirely -- and must round-trip as an empty
     list, not None."""
     client, _ = app_client
-    mint_resp = _mint(client, name="no-op-token", capabilities=[])
+    mint_resp = _mint(client, name="no-op-token", permissions=[])
     assert mint_resp.status_code == 200, mint_resp.text
-    assert mint_resp.json()["capability_grant"] == []
+    assert mint_resp.json()["permission_grant"] == []
 
 
 def test_mint_rate_limit_11th_call_429(app_client: tuple[TestClient, dict]) -> None:

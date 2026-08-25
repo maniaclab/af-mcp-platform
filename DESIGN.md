@@ -151,7 +151,7 @@ A near-monochrome void-and-surface base with exactly two accent colors, each wit
 
 ## Layout
 
-Content lives in bounded-width columns (the Overview endpoint section caps at `52rem`) inside a persistent app shell (`Base.astro`): a top bar, a left-hand nav with capability badges, and a page-level `<main>`. Cards and panels use generous internal padding (`0.875rem`–`1.75rem`) with tight spacing between related elements and a clear gap before a new section — headings get more space above than below. Responsive behavior collapses at `640px` (mobile): hero height drops, heading sizes step down, `BackendCard.vue` hides secondary description/badge text below that width, and the Tokens table hides its Token ID/Created/Last used columns below that width rather than forcing horizontal scroll (the same pattern, applied last).
+Content lives in bounded-width columns (the Overview endpoint section caps at `52rem`) inside a persistent app shell (`Base.astro`): a top bar, a left-hand nav with permission badges, and a page-level `<main>`. Cards and panels use generous internal padding (`0.875rem`–`1.75rem`) with tight spacing between related elements and a clear gap before a new section — headings get more space above than below. Responsive behavior collapses at `640px` (mobile): hero height drops, heading sizes step down, `BackendCard.vue` hides secondary description/badge text below that width, and the Tokens table hides its Token ID/Created/Last used columns below that width rather than forcing horizontal scroll (the same pattern, applied last).
 
 ## Elevation & Depth
 
@@ -196,7 +196,7 @@ Small, consistent radii — never fully rounded except true pills. Real observed
 - **Responsive:** hide secondary columns below `640px` rather than forcing horizontal scroll — the pattern `BackendCard.vue` already uses; the Tokens table is the one place this isn't yet applied.
 
 ### Navigation
-- Persistent left-hand nav in `Base.astro` with capability-driven badges next to each destination; mono labels, teal for the active item.
+- Persistent left-hand nav in `Base.astro` with permission-driven badges next to each destination; mono labels, teal for the active item.
 
 ### Dialogs
 - Native `<dialog>` with `showModal()` for every destructive/high-stakes confirmation (proxy revoke, identity unlink) — real focus trap, ESC-to-close, inert background, focus restored to the trigger on close. `margin: auto` is restored once, unlayered, in `global.css` to counter Tailwind Preflight's reset (issue #152) rather than patched per-dialog.

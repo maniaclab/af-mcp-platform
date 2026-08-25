@@ -22,7 +22,7 @@ class AuditRecord:
     # want it, and `principal_sub` alone is a stable substitute when it's
     # absent, not a gap in the record.
     principal_uid: int | None
-    capability: str | None
+    permission: str | None
     target: str
     action: str
     action_type: str  # "read" | "state_change"
@@ -37,17 +37,17 @@ class AuditRecord:
     # failure, rather than only ever recording successes.
     outcome: str = "success"
     error: str | None = None
-    # Sorted list of capability names, or None -- the calling PAT's
-    # Principal.capability_grant, if it has one (issue #144 step 4). None
+    # Sorted list of permission names, or None -- the calling PAT's
+    # Principal.permission_grant, if it has one (issue #144 step 4). None
     # covers both "not a PAT" and "an identity PAT with no restriction",
     # which is deliberate: this field exists so an admin reading a *denied*
-    # record can tell "the principal doesn't hold this capability at all"
+    # record can tell "the principal doesn't hold this permission at all"
     # (None here, denied anyway) apart from "the principal holds it, but
     # this particular PAT is scoped away from it" (named here, and absent
     # from the effective set that denied the call) -- see
-    # authorization.get_principal_capabilities for the intersection this
+    # authorization.get_principal_permissions for the intersection this
     # reflects.
-    principal_capability_grant: list[str] | None = None
+    principal_permission_grant: list[str] | None = None
 
 
 class AuditLogger:

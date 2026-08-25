@@ -75,7 +75,7 @@ async def open_backend_url() -> AsyncIterator[str]:
 
 @pytest.fixture
 def policy() -> EntitlementPolicy:
-    return EntitlementPolicy(group_capabilities={"__authenticated__": []})
+    return EntitlementPolicy(group_permissions={"__authenticated__": []})
 
 
 @pytest.fixture
@@ -87,7 +87,7 @@ def registry(open_backend_url: str) -> ServiceRegistry:
             prefix="open",
             url=open_backend_url,
             transport="http",
-            required_capability="__none__",
+            required_permission="__none__",
             auth_type="none",
         )
     )

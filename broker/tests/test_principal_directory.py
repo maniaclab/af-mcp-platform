@@ -145,7 +145,7 @@ async def test_resolve_uses_group_name_not_path(
     """AF Keycloak's Group Membership mapper is configured with 'Full group
     path: OFF' (docs/auth.md), so JWTs carry bare group names -- this
     directory must match that shape exactly, or policy.yaml's
-    group_capabilities lookups would silently never match for PAT callers."""
+    group_permissions lookups would silently never match for PAT callers."""
     fake_admin.users["user-123"] = {
         "attributes": {"uid": ["1"], "gid": ["1"], "unixname": ["u"]},
     }
@@ -249,7 +249,7 @@ async def test_resolve_respects_group_full_path_setting(
 ) -> None:
     """A site whose Group Membership mapper has 'Full group path' ON must be
     able to make this directory match `path` instead of `name` -- otherwise
-    every PAT-authenticated capability lookup silently returns nothing even
+    every PAT-authenticated permission lookup silently returns nothing even
     though the equivalent JWT path works fine (issue #148)."""
     settings = Settings(oidc_issuer=ISSUER, principal_directory_group_full_path=True)
     fake_admin.users["user-123"] = {
