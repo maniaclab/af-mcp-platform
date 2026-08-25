@@ -483,7 +483,7 @@ entitlements:
   #   my-experiment-users: [read_data, read_metadata, submit_jobs]
   target_action_types: {}
   # target_action_types:
-  #   panda:
+  #   condor-mcp:
   #     "submit_*": state_change
 
 # ---------------------------------------------------------------------------

@@ -190,7 +190,7 @@ backend's prefix, e.g. `rucio_whoami`.
 
 ## Diagnosing tool problems yourself
 
-The broker exposes three tools directly on the aggregator, named with the
+The broker exposes four tools directly on the aggregator, named with the
 reserved `af_` prefix so a backend can never shadow them (see
 [Architecture](architecture.md)). They need no capability and stay visible
 and callable for every authenticated caller no matter what's broken
@@ -202,6 +202,7 @@ call fails, without needing anything else to be working first.
 | `af_whoami` | A call fails with a capability/permission error, to see your own subject, groups, and effective capabilities. |
 | `af_list_identities` | A call fails with a "not linked" error, or a backend's tools are missing/non-functional, to see which identity provider it needs and whether you've linked it. |
 | `af_list_mcp_servers` | An expected tool is missing from `tools/list`, or a call fails for a reason that isn't an obviously bad argument — lists every backend, its tool prefix, the identity provider it depends on, and a short reason if it's unavailable. |
+| `af_link_identity` | A call fails with a "not linked" error, or `af_list_identities` shows `linked: false` for a provider a backend needs — returns the exact portal URL to visit to link (or re-link) that identity provider. |
 
 An MCP client that lets you invoke tools directly (or an LLM using the
 broker through you) can call these the same way as any other tool — no

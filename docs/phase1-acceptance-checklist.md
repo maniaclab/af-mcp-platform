@@ -85,6 +85,8 @@ test can stand in for. Use `scripts/verify-mcp-flow.py` against
 - MCP OAuth discovery (RFC 8414) for clients to bootstrap their first
   token without the portal — explicitly deferred (issue #58's non-goals),
   pending the portal's `/tokens` page (#24), itself pending OpenBao (#2).
+  (Both have since shipped: the portal's `/tokens` page exists, and issue
+  #140 delivered the OAuth discovery flow.)
 - x509 backends (`ami`) callable via `/mcp` — no per-call delivery
   mechanism defined yet for a credential that's consumed server-side from
   an NFS-mounted home directory; tracked as a TODO in `mcp/aggregator.py`,

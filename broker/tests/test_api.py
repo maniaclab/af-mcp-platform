@@ -9,25 +9,27 @@ from cryptography.fernet import Fernet
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
     from fastapi.testclient import TestClient
 
 _AUTH = {"Authorization": "Bearer test"}
 
 
-def _register_panda_service(client: TestClient) -> None:
-    """panda isn't in the shipped services.yaml -- register it directly on
-    the booted app's registry the same way test_catalog_action_type_reflects_
-    target_action_type_overrides does for gitlab, so /v1/authorize (which now
-    derives the required capability from the registry, not the request body
-    -- issue #60) has a real backend to look up."""
+def _register_condor_service(client: TestClient) -> None:
+    """condor-mcp (production's HTCondor backend name) isn't in the shipped
+    services.yaml -- register it directly on the booted app's registry the
+    same way test_catalog_action_type_reflects_target_action_type_overrides
+    does for its own backend, so /v1/authorize (which now derives the
+    required capability from the registry, not the request body -- issue
+    #60) has a real backend to look up."""
     from af_mcp_broker.mcp.registry import ServiceSpec
 
     client.app.state.service_registry.register(
         ServiceSpec(
-            name="panda",
-            prefix="panda",
-            url="http://panda-mcp.mcp.svc.cluster.local/mcp",
+            name="condor-mcp",
+            prefix="condor",
+            url="http://condor-mcp.mcp.svc.cluster.local/mcp",
             transport="http",
             required_capability="submit_jobs",
             auth_type="none",
@@ -48,15 +50,15 @@ def test_authorize_atlas_rucio_allow(app_client: tuple[TestClient, dict]) -> Non
     assert body["action_type"] == "read"
 
 
-def test_authorize_panda_submit_state_change(
+def test_authorize_condor_submit_state_change(
     app_client: tuple[TestClient, dict], make_principal: Callable[..., object]
 ) -> None:
     client, state = app_client
     state["principal"] = make_principal(groups=["atlas"])
-    _register_panda_service(client)
+    _register_condor_service(client)
     resp = client.post(
         "/v1/authorize",
-        json={"target": "panda", "action": "submit_task"},
+        json={"target": "condor-mcp", "action": "submit_job"},
         headers=_AUTH,
     )
     assert resp.status_code == 200, resp.text
@@ -65,15 +67,15 @@ def test_authorize_panda_submit_state_change(
     assert body["action_type"] == "state_change"
 
 
-def test_authorize_no_groups_denied_panda(
+def test_authorize_no_groups_denied_condor(
     app_client: tuple[TestClient, dict], make_principal: Callable[..., object]
 ) -> None:
     client, state = app_client
     state["principal"] = make_principal(groups=[])
-    _register_panda_service(client)
+    _register_condor_service(client)
     resp = client.post(
         "/v1/authorize",
-        json={"target": "panda", "action": "submit_task"},
+        json={"target": "condor-mcp", "action": "submit_job"},
         headers=_AUTH,
     )
     assert resp.status_code == 200, resp.text
@@ -141,8 +143,9 @@ def test_catalog_reflects_capabilities(
     assert servers["ami"]["status"] == "available"
     assert "rucio" in servers
     assert servers["rucio"]["status"] == "capability_required"
-    # panda isn't in the shipped services.yaml at all -- absent regardless.
-    assert "panda" not in servers
+    # condor-mcp isn't in the shipped services.yaml at all -- absent
+    # regardless.
+    assert "condor-mcp" not in servers
 
 
 def test_catalog_server_carries_display_metadata(
@@ -306,7 +309,7 @@ def test_catalog_status_misconfigured_when_no_credential_provider_resolves(
     genuine platform misconfiguration, not a transient failure -- flagged
     "misconfigured" with a correlation id. (app.py's startup check normally
     refuses to boot with this config at all; registering it directly on an
-    already-booted registry, as other tests here do for "panda"/"gitlab",
+    already-booted registry, as other tests here do for "condor-mcp",
     exercises the defensive path.)"""
     from af_mcp_broker.app import app
     from af_mcp_broker.mcp.registry import ServiceSpec
@@ -460,34 +463,49 @@ def test_catalog_status_never_leaks_urls_or_upstream_errors(
 
 
 def test_catalog_action_type_reflects_target_action_type_overrides(
-    app_client: tuple[TestClient, dict], make_principal: Callable[..., object]
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    app_client_factory: Callable[..., object],
+    make_principal: Callable[..., object],
 ) -> None:
     """A backend whose capability defaults to "read" but whose
     target_action_types glob overrides include a "state_change" pattern
-    (e.g. the shipped policy.yaml's gitlab entry) must report the
-    server-level badge as "state_change" — the rollup rule for issue #89:
-    any state-changing tool taints the whole server's badge until #58 lands
-    per-tool enumeration.
+    must report the server-level badge as "state_change" — the rollup rule
+    for issue #89: any state-changing tool taints the whole server's badge
+    until #58 lands per-tool enumeration. No shipped service pairs a
+    read-typed capability with a state_change glob, so this test writes its
+    own policy (still granting every capability the shipped services.yaml
+    requires, or startup refuses — issue #125).
     """
     from af_mcp_broker.app import app
     from af_mcp_broker.mcp.registry import ServiceSpec
 
-    client, state = app_client
-    state["principal"] = make_principal(groups=["atlas"])
-    app.state.service_registry.register(
-        ServiceSpec(
-            name="gitlab",
-            prefix="gitlab",
-            url="http://gitlab-mcp.mcp.svc.cluster.local/mcp",
-            transport="http",
-            required_capability="read_gitlab",
-            auth_type="bearer",
-        )
+    policy_path = tmp_path / "policy.yaml"
+    policy_path.write_text(
+        "group_capabilities:\n"
+        "  atlas: [read_data, read_metadata, read_monitoring, manage_jupyter, read_files]\n"
+        "target_action_types:\n"
+        "  logbook:\n"
+        '    "create_*": state_change\n'
     )
-    resp = client.get("/v1/catalog", headers=_AUTH)
+    monkeypatch.setenv("POLICY_FILE", str(policy_path))
+
+    with app_client_factory() as (client, state):
+        state["principal"] = make_principal(groups=["atlas"])
+        app.state.service_registry.register(
+            ServiceSpec(
+                name="logbook",
+                prefix="logbook",
+                url="http://logbook-mcp.mcp.svc.cluster.local/mcp",
+                transport="http",
+                required_capability="read_monitoring",
+                auth_type="none",
+            )
+        )
+        resp = client.get("/v1/catalog", headers=_AUTH)
     assert resp.status_code == 200, resp.text
     servers = {s["name"]: s for s in resp.json()["servers"]}
-    assert servers["gitlab"]["action_type"] == "state_change"
+    assert servers["logbook"]["action_type"] == "state_change"
 
 
 def test_catalog_credential_provider_oauth21_direct(
