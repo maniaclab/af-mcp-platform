@@ -75,8 +75,8 @@ URL without multiplying the number of places a client must trust with credential
 - Identity: broker accepts a Keycloak JWT (`Authorization: Bearer`) or a
   broker-issued PAT (`mcp_pat_…`, `/mcp` only). Groups/POSIX uid/gid come from a
   directory-backed `PrincipalCache`, never from token claims.
-- Authorization: declarative `policy.yaml` maps groups to capabilities; each
-  service's required capability is defined once, in `services.yaml` (the
+- Authorization: declarative `policy.yaml` maps groups to permissions; each
+  service's required permission is defined once, in `services.yaml` (the
   authoritative registry).
 - Credentials: provider classes behind `CredentialProvider` (oidc, oauth21, x509,
   service); minted credentials are cached in-process by `(subject, target)` with

@@ -7,7 +7,7 @@ AF Keycloak on its own and hands the broker a credential: either a short-lived K
 JWT, or a broker-issued PAT obtained through one of the flows below. From there, one fact
 explains almost everything else in this document: **the broker never trusts anything a token
 claims about what its holder is allowed to do** — no `groups` claim, no `posix` claim, nothing.
-It re-resolves the caller's groups, POSIX identity, and (from those) capabilities live from
+It re-resolves the caller's groups, POSIX identity, and (from those) permissions live from
 Keycloak's own directory on every request (see
 [Authorization is an attribute of the principal, not the token](#authorization-is-an-attribute-of-the-principal-not-the-token)).
 A JWT and a PAT differ only in *how* the broker learns "who is this caller" — both defer to the
@@ -55,7 +55,7 @@ AF Credential Broker  (Identity subsystem)
     │  validator on this path — no ForwardAuth proxy in front of it)
     │  resolves current groups and POSIX uid/gid/unixname from the
     │  PrincipalDirectory (issue #144 steps 3/3b — NOT from groups/posix
-    │  claims; any such claims are ignored), then capabilities from those
+    │  claims; any such claims are ignored), then permissions from those
     │  groups via policy.yaml
     ▼
 Credential subsystem
@@ -355,8 +355,8 @@ Three separate concerns, deliberately kept separate in the code:
   `PRINCIPAL_CACHE_MAX_STALENESS_SECONDS` (default 6 hours) before failing
   closed, logging loudly the whole time — a brief Keycloak outage should
   not instantly lock out every authenticated caller.
-- **Capability engine** (`authorization/`) — unchanged; still gates on
-  `group_capabilities` from whatever groups the principal cache currently
+- **Permission engine** (`authorization/`) — unchanged; still gates on
+  `group_permissions` from whatever groups the principal cache currently
   reports, regardless of which credential type asked.
 
 **Availability regression for JWT callers (issue #144 steps 3/3b) -- read
@@ -483,11 +483,11 @@ a TTL at or below that floor makes every call a fresh mint).
 | `jti`      | yes      | Unique per token (uuid4) |
 | `uid` / `gid` / `unixname` | optional | POSIX identity from the directory-backed `Principal` (the same source x509 minting uses — never a token claim), included **only** for targets whose config sets `include_posix` |
 
-**Deliberately absent: capabilities, groups, or any authorization claim.**
+**Deliberately absent: permissions, groups, or any authorization claim.**
 Authorization is an attribute of the principal, decided per-call by the
 broker's entitlement check — it must never migrate into tokens (see
 "Authorization is an attribute of the principal, not the token" above; the
-same reasoning). If a backend is ever written to test `token.capabilities`,
+same reasoning). If a backend is ever written to test `token.permissions`,
 this design has failed. Backends use the token to answer "who is this and
 did the broker send them," nothing else.
 
@@ -528,7 +528,7 @@ The Secret must carry the RS256 private key PEM under the key name
 `signing-key.pem`; the chart mounts it read-only and points
 `BROKER_SIGNING_KEY_FILE` at it. **Fail-closed:** a `broker-issued` entry
 with no signing key configured refuses to boot (a startup `RuntimeError`,
-consistent with the `unreachable_capabilities`/`ungated_backends` checks)
+consistent with the `unreachable_permissions`/`ungated_backends` checks)
 rather than failing at first request; a broker with neither configured
 boots cleanly with the feature absent (`/.well-known/jwks.json` answers
 503). A target with `include_posix` whose caller has no POSIX identity
@@ -647,7 +647,7 @@ another JWT:
    user-supplied name or a server-generated `mcp-YYYYMMDD-<lookup_id
    prefix>` default, an optional free-text note, created/expiry/last-used
    times, revocation state) — never anything the token could be
-   reconstructed from, and never any groups/capabilities (see below).
+   reconstructed from, and never any groups/permissions (see below).
    `name` is a unique-per-principal identifier, not free text: minting a
    second token whose name matches an existing *live* one for the same
    principal (case-insensitive) is rejected with 409. Live means neither
@@ -781,13 +781,13 @@ never issued a PAT — it keeps using its short-lived Keycloak JWT, since
 handing a long-lived credential to browser storage would be strictly worse
 than a JWT that expires in minutes.
 
-### Capability PATs (issue #144 step 4)
+### Permission PATs (issue #144 step 4)
 
 Every PAT described above is an **identity PAT**: it says "I am this user",
-and its authority is always the caller's current capabilities, derived
+and its authority is always the caller's current permissions, derived
 fresh from the principal cache's groups on every request — exactly as if
-the caller had presented a Keycloak JWT. A **capability PAT** additionally
-carries an explicit grant: a fixed set of capability names, chosen at mint
+the caller had presented a Keycloak JWT. A **permission PAT** additionally
+carries an explicit grant: a fixed set of permission names, chosen at mint
 time, for least-privilege automation credentials (a CI job that only ever
 needs `read_data` has no business holding a token that can also mint x509
 proxies or submit jobs, even though its owner can).
@@ -797,80 +797,110 @@ one binding refinement worth over-stating, because the naive design (the
 grant supplies authority *instead of* deferring to the principal cache) is
 wrong and must not be reintroduced:
 
-> effective capabilities = the principal's *current* capabilities ∩ the
+> effective permissions = the principal's *current* permissions ∩ the
 > grant
 
-Concretely, `authorization.get_principal_capabilities` computes the same
-group-derived capability set it always has — unchanged for a JWT or an
-identity PAT — and, only when `Principal.capability_grant` is not `None`,
+Concretely, `authorization.get_principal_permissions` computes the same
+group-derived permission set it always has — unchanged for a JWT or an
+identity PAT — and, only when `Principal.permission_grant` is not `None`,
 intersects that set with the grant before returning it. Two consequences
 fall out of intersecting rather than substituting:
 
 1. **The kill switch survives.** If a grant conferred authority
-   independently of the principal cache, minting a capability PAT with
+   independently of the principal cache, minting a permission PAT with
    `read_data` and later being removed from the ATLAS group would leave
    that PAT fully functional — reintroducing exactly the staleness problem
    snapshotting groups into a PAT was rejected for (see "Open design gap"
    in issue #144). Intersecting means removing a Keycloak group still kills
    every credential the user holds, of any type, within one principal-cache
-   refresh interval — a capability PAT included.
+   refresh interval — a permission PAT included.
 2. **Escalation is structurally impossible, not merely validated against.**
-   A user cannot mint (or otherwise come to hold) a capability PAT granting
+   A user cannot mint (or otherwise come to hold) a permission PAT granting
    more than they currently hold, because the intersection can never exceed
    the group-derived set above, regardless of what the grant itself
-   contains. `POST /v1/tokens`' `capabilities` field is still validated as a
-   subset of the caller's capabilities at mint time (`MintTokenRequest
-   .capabilities`, `api/tokens.py`) — but purely for a clear, immediate
-   error naming the offending capabilities. That check is advisory only and
+   contains. `POST /v1/tokens`' `permissions` field is still validated as a
+   subset of the caller's permissions at mint time (`MintTokenRequest
+   .permissions`, `api/tokens.py`) — but purely for a clear, immediate
+   error naming the offending permissions. That check is advisory only and
    is never the only thing standing between a caller and extra access:
    enforcement is the intersection above, on every request, and does not
    consult whether mint-time validation ever ran.
 
-Semantics, stated plainly: *this token may use at most these capabilities,
-and only while its owner still currently holds them.* A capability PAT is
+Semantics, stated plainly: *this token may use at most these permissions,
+and only while its owner still currently holds them.* A permission PAT is
 an identity PAT plus a narrowing filter — it still requires the same
 principal-cache lookup an identity PAT does (see "Authorization is an
-attribute of the principal, not the token" above); a capability PAT is not
+attribute of the principal, not the token" above); a permission PAT is not
 a way to avoid that dependency, because the kill switch it preserves is
 exactly what that lookup provides.
 
-**Minting one.** `POST /v1/tokens` accepts an optional `capabilities` field
-— a list of capability names. Omitted (`None`, the default) mints an
+**Minting one.** `POST /v1/tokens` accepts an optional `permissions` field
+— a list of permission names. Omitted (`None`, the default) mints an
 ordinary identity PAT, unchanged from every PAT minted before this field
 existed. A non-`None` value (including `[]`, a token scoped to nothing)
-mints a capability PAT; the response's and every subsequent `GET
-/v1/tokens` row's `capability_grant` field is `null` for an identity PAT or
-the sorted list of granted capability names otherwise. The portal's mint
-dialog (`TokensPage.vue`) offers this as an opt-in "Restrict capabilities"
-checkbox that, when checked, lists the caller's *current* capabilities
-(`GET /v1/capabilities`) as choices — never a static or cached list, since
+mints a permission PAT; the response's and every subsequent `GET
+/v1/tokens` row's `permission_grant` field is `null` for an identity PAT or
+the sorted list of granted permission names otherwise. The portal's mint
+dialog (`TokensPage.vue`) offers this as an opt-in "Restrict permissions"
+checkbox that, when checked, lists the caller's *current* permissions
+(`GET /v1/permissions`) as choices — never a static or cached list, since
 a stale choice list would misrepresent what the resulting grant could
 possibly enforce. The token list shows each row's scope via
-`tokenDisplay.ts`'s `capabilityGrantLabel()`: "Full account access" for an
-identity PAT, or the comma-joined capability names for a capability PAT.
+`tokenDisplay.ts`'s `permissionGrantLabel()`: "Full account access" for an
+identity PAT, or the comma-joined permission names for a permission PAT.
 
 **When to prefer one.** An identity PAT remains the right default for a
 human's own interactive tooling (Claude Desktop, a personal script) — its
 authority tracks whatever the human is currently entitled to, with no
-extra bookkeeping. A capability PAT is the better choice for **CI and
+extra bookkeeping. A permission PAT is the better choice for **CI and
 long-lived automation** specifically because it is least-privilege: a
 credential checked into a pipeline or left running unattended should hold
-only the capability it actually exercises, so that a leak exposes the
+only the permission it actually exercises, so that a leak exposes the
 narrowest possible blast radius — and because the grant can never exceed
 what its owner (the human or service account that minted it) currently
 holds, rotating that owner's group membership continues to bound every
-capability PAT they've ever minted, not just their own interactive access.
+permission PAT they've ever minted, not just their own interactive access.
 
 **Audit.** A denied tool call's audit record (`AuditRecord
-.principal_capability_grant`, written by `mcp/middleware/authorization_mw
-.py`) carries the calling PAT's effective capability grant when it has
+.principal_permission_grant`, written by `mcp/middleware/authorization_mw
+.py`) carries the calling PAT's effective permission grant when it has
 one — `null` for a JWT or an identity PAT. This is what lets an admin
-reading a denial tell "the principal doesn't hold this capability at all"
-(grant is `null`, or the capability is missing from a non-`null` grant that
+reading a denial tell "the principal doesn't hold this permission at all"
+(grant is `null`, or the permission is missing from a non-`null` grant that
 still wouldn't have covered it) apart from "the principal holds it, but
 this particular PAT is scoped away from it" (the grant is a non-`null` list
-that omits the denied capability) — two very different remediation stories
+that omits the denied permission) — two very different remediation stories
 that a bare denial reason can't distinguish on its own.
+
+### Migrating existing PATs (capability → permission rename)
+
+PAT records stored before the capability → permission rename keep their
+grant under the old `capability_grant` key. The broker's decoder fails
+**closed** on such a record: an unmigrated *scoped* PAT is treated as
+granting nothing (deny-all, with a `token_registry.unmigrated_grant_denied`
+warning naming the `lookup_id`) rather than decoding as unrestricted, and
+an unmigrated *unscoped* identity PAT (`capability_grant: null`) keeps
+working unchanged. So the safe rollout ordering is **deploy the renamed
+broker first, then migrate** — in the window between the two, scoped PATs
+are denied, never widened.
+
+Run the one-time migration inside a broker pod (which already carries the
+Vault/OpenBao environment):
+
+```bash
+# Dry run (the default): reports every record it would rewrite, writes nothing.
+kubectl exec deploy/af-mcp-platform-broker -- \
+    python /app/scripts/migrate-pat-capability-grant.py
+
+# Execute. Idempotent: already-migrated records are counted and skipped.
+kubectl exec deploy/af-mcp-platform-broker -- \
+    python /app/scripts/migrate-pat-capability-grant.py --apply
+```
+
+The final summary counts migrated / already-migrated / unscoped-null /
+skipped-unknown records; a record carrying BOTH keys or an unrecognizable
+grant shape is reported and left untouched (nonzero exit) for a human to
+inspect.
 
 ---
 
@@ -934,7 +964,7 @@ broker's startup (`app.py`'s lifespan) **refuses to start** when
 short-circuits the directory entirely -- see "Local-development auth
 bypass" in `docs/local-development.md`) is not active. Refusing to start,
 rather than degrading silently as before, follows the same reasoning as the
-`unreachable_capabilities`/`ungated_backends` startup checks elsewhere in
+`unreachable_permissions`/`ungated_backends` startup checks elsewhere in
 `app.py`'s lifespan: this is Kubernetes, so a Deployment rollout with a
 failing new pod leaves the previous ReplicaSet serving traffic unaffected --
 a loud startup failure surfaces the misconfiguration as a visible rollout
@@ -1172,8 +1202,8 @@ settings, all defaulting to AF's own convention:
 A facility whose POSIX identity is LDAP-federated under different names —
 the common spelling is `uidNumber`/`gidNumber` — overrides these
 (`broker.posixAttributes.*` in the chart) rather than the broker hardcoding
-AF's own convention, the same reasoning as `entitlements.group_capabilities`
-(see "Group-to-Capability Mapping Example" below). When none of the
+AF's own convention, the same reasoning as `entitlements.group_permissions`
+(see "Group-to-Permission Mapping Example" below). When none of the
 configured keys are present for a given user, the corresponding
 `PrincipalAttributes` field is simply left `None` — not an error — and the
 actionable error an x509-backed target eventually raises for that principal
@@ -1190,24 +1220,24 @@ groups resolution is fully unified through the directory, so there is no
 separate "JWT path" convention left to keep in sync with it. Set this
 `true` if your realm's group names, as the Admin REST API returns them,
 need the full path to be unambiguous; the default (`false`, bare name)
-matches `policy.yaml`'s `group_capabilities` keys directly, and is what the
+matches `policy.yaml`'s `group_permissions` keys directly, and is what the
 now-removable Group Membership mapper described below used to produce for
 JWTs when "Full group path" was left OFF.
 
-### Group-to-Capability Mapping Example
+### Group-to-Permission Mapping Example
 
-The chart ships the UChicago ATLAS AF's own `group_capabilities` mapping as
+The chart ships the UChicago ATLAS AF's own `group_permissions` mapping as
 its default (below) — a convenience for that one deployment and a template
 for what an overlay looks like, **not** a generic default. Group names come
 from the deployer's own Keycloak realm, so a same-named group in a
 different realm could mean something else entirely: any analysis facility
-other than the UChicago AF **must** override `entitlements.group_capabilities`
+other than the UChicago AF **must** override `entitlements.group_permissions`
 in its `HelmRelease` overlay with its own group names (see the non-ATLAS
-worked example below), or every backend whose `required_capability` isn't
+worked example below), or every backend whose `required_permission` isn't
 `__none__` becomes unreachable by everyone. The broker's startup check (see
-`app.py`'s lifespan) walks every backend's `required_capability` and
+`app.py`'s lifespan) walks every backend's `required_permission` and
 **refuses to start** if no group grants it, naming both the backend and the
-capability — a Kubernetes rollout failure with zero outage (the previous
+permission — a Kubernetes rollout failure with zero outage (the previous
 ReplicaSet keeps serving) is far more visible than a config that silently
 deploys broken.
 
@@ -1215,7 +1245,7 @@ This is the ATLAS AF's own mapping, the chart default, copyable as a
 starting point if you're deploying for that AF or want a similar shape:
 
 ```yaml
-group_capabilities:
+group_permissions:
   # Full ATLAS analysis + compute access.
   atlas: [read_data, read_metadata, read_monitoring, submit_jobs, manage_jobs, launch_compute, manage_jupyter, read_files]
   # Analysis + compute access, no Jupyter management.
@@ -1233,16 +1263,16 @@ group_capabilities:
 #### Worked example: a non-ATLAS site
 
 If you are running this chart for a facility other than the UChicago ATLAS
-AF, override `entitlements.group_capabilities` entirely — the group names
+AF, override `entitlements.group_permissions` entirely — the group names
 on the left must match Keycloak group names in *your* realm exactly (see
-"Create the groups you reference in `group_capabilities`" above); reusing
+"Create the groups you reference in `group_permissions`" above); reusing
 `atlas`/`cms`/`dune`/`escape`/`af-admins` only makes sense if your realm
 happens to define groups with those same names. For example, a facility
 whose Keycloak realm defines `myexperiment-users` and
 `myexperiment-admins` groups instead might set:
 
 ```yaml
-group_capabilities:
+group_permissions:
   # Ordinary analysts: read data/metadata, submit jobs.
   myexperiment-users: [read_data, read_metadata, submit_jobs]
   # Full access plus data management and platform administration.
@@ -1251,26 +1281,26 @@ group_capabilities:
   __authenticated__: [read_metadata]
 ```
 
-The capability names on the right (`read_data`, `submit_jobs`, ...) are not
+The permission names on the right (`read_data`, `submit_jobs`, ...) are not
 site-specific — they're the fixed vocabulary this policy engine understands
-(see `CAPABILITIES` in `broker/src/af_mcp_broker/authorization/base.py`),
-matched against whatever `required_capability` values your `services.yaml`
+(see `PERMISSIONS` in `broker/src/af_mcp_broker/authorization/base.py`),
+matched against whatever `required_permission` values your `services.yaml`
 declares.
 
-Which capability a backend target requires is declared alongside the
-service itself, in `services.yaml`'s `required_capability` field, not in
+Which permission a backend target requires is declared alongside the
+service itself, in `services.yaml`'s `required_permission` field, not in
 `policy.yaml` (see `docs/adding-a-service.md`):
 
 ```yaml
 backends:
   - name: rucio
-    required_capability: read_data
+    required_permission: read_data
   - name: ami
-    required_capability: read_metadata
+    required_permission: read_metadata
   - name: condor-mcp
-    required_capability: submit_jobs
+    required_permission: submit_jobs
   - name: docs
-    required_capability: __none__     # open to any authenticated user
+    required_permission: __none__     # open to any authenticated user
 ```
 
 Keycloak group membership is resolved from `PrincipalDirectory` via the
@@ -1375,7 +1405,7 @@ there is no longer a separate JWT-side mapper convention it needs to stay
 consistent with, because there is no longer a JWT-side source of groups at
 all.
 
-**Create the groups you reference in `group_capabilities`** and assign
+**Create the groups you reference in `group_permissions`** and assign
 users to them. Group names are entirely up to you — the chart ships no
 site-specific default, so pick names that match your own Keycloak realm
 (see the worked example below). The broker's own dev-only fallback policy
@@ -1392,8 +1422,8 @@ independently of the steps above.
 
 Group membership now takes effect through Keycloak group assignment alone
 -- there is no token claim to inspect. Assign (or remove) a user from a
-Keycloak group referenced in `group_capabilities` and confirm their
-capabilities change within `principal_cache_refresh_seconds` (default
+Keycloak group referenced in `group_permissions` and confirm their
+permissions change within `principal_cache_refresh_seconds` (default
 ~45s; see "Authorization is an attribute of the principal, not the token"
 above) on their next request, regardless of which credential type they
 present.

@@ -16,10 +16,10 @@ Before a tool call succeeds, three things have to be true, in order:
 1. **You have an AF account** that can obtain an `aud=mcp-gateway` access
    token from AF Keycloak's `connect` realm. This is the same login the
    portal (`mcp-portal.af.uchicago.edu`) uses.
-2. **Your Keycloak group membership grants the capability the tool's
-   backend requires** (e.g. Rucio tools require `read_data`). Capabilities
+2. **Your Keycloak group membership grants the permission the tool's
+   backend requires** (e.g. Rucio tools require `read_data`). Permissions
    come from the `groups` claim on your token via `policy.yaml`'s
-   `group_capabilities` — see [Authorization](architecture.md#2-authorization).
+   `group_permissions` — see [Authorization](architecture.md#2-authorization).
    Missing this means the tool is invisible in `tools/list`, not just
    denied at call time (see [Errors](#errors-youll-see) below).
 3. **For backends that need your own credential** (`auth_type: bearer` in
@@ -27,7 +27,7 @@ Before a tool call succeeds, three things have to be true, in order:
    identity provider from the portal's Identities page**
    (`mcp-portal.af.uchicago.edu/identities/`). Without this, the tool is
    visible in `tools/list` (entitlement filtering only checks the
-   capability, not linkage) but fails at call time with a "not linked"
+   permission, not linkage) but fails at call time with a "not linked"
    error.
 
 ## Getting a bearer token
@@ -179,7 +179,7 @@ pixi run -e dev python scripts/verify-mcp-flow.py
 ## What tools you should expect to see
 
 `tools/list` is entitlement-filtered: you only see tools for backends whose
-`required_capability` your Keycloak groups grant (see
+`required_permission` your Keycloak groups grant (see
 [Authorization](architecture.md#2-authorization)). Tool names are
 namespaced by backend prefix (`<prefix>_<toolname>`), except where a
 backend already self-prefixes its own tools (rucio-mcp ships
@@ -192,14 +192,14 @@ backend's prefix, e.g. `rucio_whoami`.
 
 The broker exposes four tools directly on the aggregator, named with the
 reserved `af_` prefix so a backend can never shadow them (see
-[Architecture](architecture.md)). They need no capability and stay visible
+[Architecture](architecture.md)). They need no permission and stay visible
 and callable for every authenticated caller no matter what's broken
 elsewhere — that's the point: they answer "why" when a tool is missing or a
 call fails, without needing anything else to be working first.
 
 | Tool | Call it when |
 |---|---|
-| `af_whoami` | A call fails with a capability/permission error, to see your own subject, groups, and effective capabilities. |
+| `af_whoami` | A call fails with a permission error, to see your own subject, groups, and effective permissions. |
 | `af_list_identities` | A call fails with a "not linked" error, or a backend's tools are missing/non-functional, to see which identity provider it needs and whether you've linked it. |
 | `af_list_mcp_servers` | An expected tool is missing from `tools/list`, or a call fails for a reason that isn't an obviously bad argument — lists every backend, its tool prefix, the identity provider it depends on, and a short reason if it's unavailable. |
 | `af_link_identity` | A call fails with a "not linked" error, or `af_list_identities` shows `linked: false` for a provider a backend needs — returns the exact portal URL to visit to link (or re-link) that identity provider. |
@@ -219,7 +219,7 @@ errors to you will show one of these verbatim:
 |---|---|
 | No `Authorization` header sent at all | `Missing Authorization: Bearer <token> header` |
 | Token invalid, expired, or wrong audience | `Invalid or expired token` |
-| Tool call denied (capability missing) | `Authorization denied: principal lacks capability '<cap>'. Granted capabilities: [...]` |
+| Tool call denied (permission missing) | `Authorization denied: principal lacks permission '<cap>'. Granted permissions: [...]` |
 | Tool name doesn't match any backend | `No backend registered for tool '<name>'` |
 | Bearer backend, not linked | `<ProviderClassName> not linked. Visit the portal Identities page to connect it. Call af_list_identities to see which identity provider this backend needs, or af_list_mcp_servers for this backend's current status.` (e.g. `OAuth21Provider not linked...` for rucio-mcp-escape) |
 | x509 backend needs unlock | `Credential unlock required. Visit the portal: <portal-url>/v1/x509/proxy` |
@@ -227,11 +227,11 @@ errors to you will show one of these verbatim:
 | x509 backend, no proxy minted yet | The backend's own tool error surfaces the redeem 404: `No valid x509/VOMS proxy is cached for this account — mint one at the AF portal and retry.` |
 | Backend unreachable / times out | A clean MCP tool error naming the failure, never a raw traceback or the backend's HTTP body |
 
-A tool you lack the capability for won't appear in `tools/list` at all
+A tool you lack the permission for won't appear in `tools/list` at all
 (entitlement filtering, not an error) — it isn't visible-but-denied the way
 the "not linked" case is. If a tool you expect is missing, call
 `af_list_mcp_servers` (see [above](#diagnosing-tool-problems-yourself)) or
-check `GET /v1/capabilities` on the broker (or the portal's Catalog page)
+check `GET /v1/permissions` on the broker (or the portal's Catalog page)
 before assuming your token is broken.
 
 **Trailing slash**: point clients at `/mcp/` (trailing slash). Whether a

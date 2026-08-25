@@ -86,7 +86,7 @@ aggregator:
       prefix: rucio-<site>
       url: "http://rucio-mcp.<namespace>.svc.cluster.local:80/site/<site>"
       transport: http
-      required_capability: read_data
+      required_permission: read_data
       auth_type: bearer
 ```
 
@@ -98,13 +98,13 @@ tell the sites' tools apart; `url` is the in-cluster Service address rather
 than the public hostname used for the authorize/token endpoints above, since
 tool calls stay inside the cluster.
 
-`required_capability: read_data` is the same capability across every site —
+`required_permission: read_data` is the same permission across every site —
 reuse it (see [adding-a-service.md's Step
-2](adding-a-service.md#step-2-pick-or-reuse-a-capability-for-the-service)),
+2](adding-a-service.md#step-2-pick-or-reuse-a-permission-for-the-service)),
 no new `policy.yaml` entry needed as long as the groups you want to grant
 Rucio access already map to `read_data` (the built-in default does, for
 `atlas`, `cms`, `dune`, `escape` — see
-[auth.md's Group-to-Capability Mapping Example](auth.md#group-to-capability-mapping-example)).
+[auth.md's Group-to-Permission Mapping Example](auth.md#group-to-permission-mapping-example)).
 
 ### Why `broker.publicOrigin` must be the portal's origin
 
@@ -166,7 +166,7 @@ register against in the first place.
    `rucio-mcp-atlas` is now linked.
 
 From here, a tool call against a rucio-mcp-backed tool the caller's
-capabilities allow (`read_data`) has the broker fetch (and refresh, near
+permissions allow (`read_data`) has the broker fetch (and refresh, near
 expiry) this stored token and forward it as the tool call's bearer
 credential — the same `auth_type: bearer` path any other backend uses.
 

@@ -53,7 +53,7 @@ below), even a bare legacy one. See "Migrating off
          prefix: ami
          url: http://ami-mcp.<namespace>.svc.cluster.local:8000/mcp
          auth_type: x509
-         required_capability: read_metadata   # or as policy dictates
+         required_permission: read_metadata   # or as policy dictates
    ```
 
 3. **Identity-provider entry** — `broker.identityProviders` gets a

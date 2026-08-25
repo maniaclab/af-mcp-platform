@@ -120,18 +120,18 @@ values:
       # existing services omitted for brevity
       - name: my-new-service
         url: http://my-new-service.af-mcp-backends.svc.cluster.local:8000/mcp
-        required_capability: my-new-service:use
+        required_permission: my-new-service:use
         timeout_seconds: 30
         auth_type: none  # or "bearer" (default) / "x509" -- see below
         tools_cache_ttl: 300  # seconds; see below
 ```
 
-`required_capability` is the capability string the broker's Authorization
+`required_permission` is the permission string the broker's Authorization
 subsystem will check before forwarding any tool call to this service.
 When adding a service, also state its trust tier (Elwood v5 / Shannon:
 user-tier, service-tier, or infrastructure-tier) in its deployment
-manifests in the GitOps repo, and choose `required_capability` accordingly
-— see docs/architecture.md "Trust tiers". `required_capability: __none__`
+manifests in the GitOps repo, and choose `required_permission` accordingly
+— see docs/architecture.md "Trust tiers". `required_permission: __none__`
 (open to any authenticated user) is only appropriate for user-tier
 read-only services.
 
@@ -202,7 +202,7 @@ Whatever you choose, the deployed tool names are what callers actually see
 via `tools/list` on `/mcp` — confirm the names you expect show up there (see
 Verification below) rather than assuming from the config alone. `GET
 /v1/catalog` and the portal's Catalog page show the service itself (name,
-capability, auth type); the individual tool names live one level down at
+permission, auth type); the individual tool names live one level down at
 `GET /v1/catalog/{service}/tools`, which the portal fetches when a server
 card's Tools section is expanded.
 
@@ -217,54 +217,54 @@ exists.
 
 ---
 
-## Step 2 — Pick (or reuse) a capability for the service
+## Step 2 — Pick (or reuse) a permission for the service
 
-`required_capability` in `services.yaml` (Step 1 above) is the **sole**
+`required_permission` in `services.yaml` (Step 1 above) is the **sole**
 declaration of what a service target requires — the service registry, not
 `policy.yaml`, is authoritative here (see issue #60). `policy.yaml`'s only
-remaining job is mapping capabilities to Keycloak groups via
-`group_capabilities` (Step 3 below).
+remaining job is mapping permissions to Keycloak groups via
+`group_permissions` (Step 3 below).
 
-`required_capability` has three forms:
+`required_permission` has three forms:
 
-- **A capability name** (e.g. `read_data`) — the caller must hold that
-  capability, granted via `group_capabilities`.
-- **`__none__`** — open to any authenticated user; no capability needed.
+- **A permission name** (e.g. `read_data`) — the caller must hold that
+  permission, granted via `group_permissions`.
+- **`__none__`** — open to any authenticated user; no permission needed.
   Use this only as a deliberate, explicit opt-in.
-- **Omitted entirely** — no capability gate; the credential layer becomes
+- **Omitted entirely** — no permission gate; the credential layer becomes
   the gate instead (the caller must have a linked identity / mintable
   credential for this target, which is itself the authorization). The
-  broker **refuses to start** if a service omits `required_capability` and
+  broker **refuses to start** if a service omits `required_permission` and
   no credential provider resolves for its target either (e.g. `auth_type:
   bearer` with no `identity_providers` entry naming it, or `auth_type: none`
   with nothing registered) — that combination would mean the service has no
-  gate at all, neither a capability nor a credential requirement.
+  gate at all, neither a permission nor a credential requirement.
 
-If an existing capability already covers the new service (e.g. a generic
+If an existing permission already covers the new service (e.g. a generic
 `read_metadata` that several services already require), reuse it and skip to
 Step 4 — no policy change needed. Only continue to Step 3 if you're
-introducing a genuinely new capability name.
+introducing a genuinely new permission name.
 
 ---
 
-## Step 3 — Map the capability to Keycloak groups (if new)
+## Step 3 — Map the permission to Keycloak groups (if new)
 
-If you added a new capability in Step 2, map it to one or more AF Keycloak groups
+If you added a new permission in Step 2, map it to one or more AF Keycloak groups
 in the HelmRelease values:
 
 ```yaml
 values:
   entitlements:
-    group_capabilities:
+    group_permissions:
       # existing mappings omitted
       af-my-new-service-users:
         - my-new-service:use
 ```
 
 Principals in the `af-my-new-service-users` Keycloak group will be granted
-`my-new-service:use`. If you forget this step (or typo the capability name),
-the broker **refuses to start**, naming both the service and the capability
-it can't reach — see docs/auth.md's "Group-to-Capability Mapping Example".
+`my-new-service:use`. If you forget this step (or typo the permission name),
+the broker **refuses to start**, naming both the service and the permission
+it can't reach — see docs/auth.md's "Group-to-Permission Mapping Example".
 
 ---
 
