@@ -386,6 +386,33 @@ async def test_success_records_duration_and_observes_histogram(
     )
 
 
+async def test_success_records_result_bytes_and_tokens(
+    registry, policy, make_principal, captured_audits, monkeypatch
+) -> None:
+    """The success path measures the result via audit.measure and records
+    both fields; the measurement sees the very ToolResult call_next returned."""
+    mw = AuthorizationMiddleware(registry, policy)
+    principal = make_principal(groups=["atlas"])
+    context = _call_tool_context("rucio_list_dids", {"scope": "foo"}, principal)
+    fake_result = ToolResult(content=[mt.TextContent(type="text", text="hello")])
+    call_next = _CallNextRecorder(result=fake_result)
+
+    measured: list[Any] = []
+
+    def _fake_measure(result: Any) -> tuple[int | None, int | None]:
+        measured.append(result)
+        return (5, 2)
+
+    monkeypatch.setattr(authorization_mw, "measure_tool_result", _fake_measure)
+
+    await mw.on_call_tool(context, call_next)
+
+    assert measured == [fake_result]
+    record = captured_audits[0]
+    assert record.result_bytes == 5
+    assert record.result_tokens_est == 2
+
+
 async def test_call_next_failure_records_duration_but_no_result_fields(
     registry, policy, make_principal, captured_audits
 ) -> None:

@@ -10,6 +10,7 @@ from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 
 from af_mcp_broker import metrics
 from af_mcp_broker.audit import AuditRecord, write_audit
+from af_mcp_broker.audit.measure import measure_tool_result
 from af_mcp_broker.authorization import (
     EntitlementPolicy,
     check_entitlement,
@@ -224,6 +225,11 @@ class AuthorizationMiddleware(Middleware):
             )
             raise
         duration = time.perf_counter() - started
+        # An estimate of the result's context-injection cost, not wire size
+        # -- see measure_tool_result's docstring for exactly what is
+        # serialized and counted. Success path only: an error produced no
+        # result to measure.
+        result_bytes, result_tokens_est = measure_tool_result(result)
 
         _record_invocation(service.name, tool_name, action_type)
         metrics.tool_duration_seconds.labels(
@@ -244,6 +250,8 @@ class AuthorizationMiddleware(Middleware):
                 outcome="success",
                 principal_permission_grant=_permission_grant_field(principal),
                 duration_ms=duration * 1000.0,
+                result_bytes=result_bytes,
+                result_tokens_est=result_tokens_est,
             )
         )
         return result

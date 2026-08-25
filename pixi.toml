@@ -21,6 +21,7 @@ fastmcp = ">=3.4.4,<4"
 prometheus-fastapi-instrumentator = ">=7.0"
 kubernetes_asyncio = ">=30.0"
 pyyaml = ">=6.0"
+tiktoken = ">=0.14.0,<0.15"
 
 [feature.broker.pypi-dependencies]
 # Editable install triggers hatch-vcs to generate _version.py from git tags.
