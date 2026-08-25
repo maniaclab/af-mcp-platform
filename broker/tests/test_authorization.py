@@ -38,14 +38,14 @@ def test_authenticated_only_gets_read_metadata(
     assert allow, reason
 
 
-def test_no_groups_denied_panda(
+def test_no_groups_denied_rucio(
     policy: EntitlementPolicy, make_principal: Callable[..., object]
 ) -> None:
     principal = make_principal(groups=[])
-    # panda requires submit_jobs, which __authenticated__ does not grant.
-    allow, reason = check_entitlement(principal, "submit_jobs", "panda", policy)
+    # rucio requires read_data, which __authenticated__ does not grant.
+    allow, reason = check_entitlement(principal, "read_data", "rucio", policy)
     assert not allow
-    assert "submit_jobs" in reason
+    assert "read_data" in reason
 
 
 def test_open_sentinel_requires_no_capability(
@@ -118,12 +118,10 @@ def test_identity_pat_capability_grant_none_behaves_exactly_as_before(
         "read_data",
         "read_metadata",
         "read_monitoring",
-        "read_gitlab",
         "submit_jobs",
         "manage_jobs",
         "launch_compute",
         "manage_jupyter",
-        "manage_gitlab",
         "read_files",
     }
 
@@ -146,14 +144,24 @@ def test_losing_a_group_shrinks_a_capability_pats_effective_set(
 
 
 def test_action_type_resolution(policy: EntitlementPolicy) -> None:
-    # panda submit_* is a state_change override.
+    # af-jupyterlab-mcp create_* is a state_change override. The glob must
+    # win regardless of the capability's own action type, so pass a
+    # read-typed capability here to prove it's the override deciding (the
+    # target's real capability, manage_jupyter, is itself state_change,
+    # which couldn't tell the override apart from the fallback).
     assert (
-        get_action_type("panda", "submit_job", "submit_jobs", policy) == "state_change"
+        get_action_type(
+            "af-jupyterlab-mcp", "create_jupyter_server", "read_files", policy
+        )
+        == "state_change"
     )
     # A non-override tool falls back to the capability's action type
-    # (panda's declared capability is submit_jobs -> state_change).
+    # (af-jupyterlab-mcp's declared capability is manage_jupyter -> state_change).
     assert (
-        get_action_type("panda", "list_jobs", "submit_jobs", policy) == "state_change"
+        get_action_type(
+            "af-jupyterlab-mcp", "list_jupyter_servers", "manage_jupyter", policy
+        )
+        == "state_change"
     )
     # rucio -> read_data -> read.
     assert get_action_type("rucio", "list_dids", "read_data", policy) == "read"

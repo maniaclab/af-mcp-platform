@@ -222,9 +222,8 @@ def test_mint_rejects_note_above_max_length(
 # ---------------------------------------------------------------------------
 # Capability PATs (issue #144 step 4). app_client_factory's default principal
 # is in the "atlas" group, which the shipped policy.yaml maps to read_data,
-# read_metadata, read_monitoring, read_gitlab, submit_jobs, manage_jobs,
-# launch_compute, manage_jupyter, manage_gitlab, read_files -- but never
-# "admin" (that's af-admins only).
+# read_metadata, read_monitoring, submit_jobs, manage_jobs, launch_compute,
+# manage_jupyter, read_files -- but never "admin" (that's af-admins only).
 # ---------------------------------------------------------------------------
 
 
