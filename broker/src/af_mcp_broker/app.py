@@ -713,7 +713,8 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # --- Metering: success/error audit records are measured and written by a
     # background worker (audit/pipeline.py) so tool calls never wait on
     # measurement or audit I/O; without init the helper degrades to inline.
-    init_metering_pipeline()
+    # The transport is the MeteringBackend selected by METERING_BACKEND.
+    await init_metering_pipeline(settings)
 
     # --- Metrics: /metrics lives on its own port (chart NetworkPolicy allows
     # Prometheus only there), served by prometheus_client's thread so the

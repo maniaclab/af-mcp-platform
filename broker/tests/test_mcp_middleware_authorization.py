@@ -660,7 +660,7 @@ async def test_success_audit_flows_through_metering_pipeline(
     measurement the worker performed."""
     buffer = io.StringIO()
     init_audit_logger(buffer)
-    init_metering_pipeline()
+    await init_metering_pipeline()
     try:
         mw = AuthorizationMiddleware(registry, policy)
         principal = make_principal(groups=["atlas"])
@@ -704,7 +704,7 @@ async def test_denied_audit_written_inline_not_via_pipeline(
     no drain required."""
     buffer = io.StringIO()
     init_audit_logger(buffer)
-    init_metering_pipeline()
+    await init_metering_pipeline()
     try:
         mw = AuthorizationMiddleware(registry, policy)
         principal = make_principal(groups=[])

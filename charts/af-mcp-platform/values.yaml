@@ -410,6 +410,15 @@ broker:
     # principal-cache records are stored. Only meaningful when backend="vault".
     kvPathPrefix: "mcp/principal-cache"
 
+  # Transport carrying success/error audit records from the tool-call hot
+  # path to the metering worker that measures and writes them (broker
+  # audit/pipeline.py). Only "in-process" (a bounded in-process queue plus a
+  # background worker) exists today; the broker fails closed at startup on
+  # any unknown value, so never set a backend before its implementation
+  # ships. Metering is best-effort; audit records are authoritative.
+  metering:
+    backend: "in-process"
+
 # ---------------------------------------------------------------------------
 # Token sweep: periodic janitor for the Vault-backed token registry above
 # (broker.tokenRegistry.backend="vault"). Removes registry entries whose

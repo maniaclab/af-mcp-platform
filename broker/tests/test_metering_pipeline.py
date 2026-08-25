@@ -30,7 +30,8 @@ from prometheus_client import REGISTRY
 from af_mcp_broker.audit import AuditRecord, measure, pipeline
 from af_mcp_broker.audit.logger import init_audit_logger
 from af_mcp_broker.audit.pipeline import (
-    MeteringPipeline,
+    InProcessMeteringBackend,
+    MeteringBackend,
     aclose_metering_pipeline,
     init_metering_pipeline,
     submit_metered_audit,
@@ -87,7 +88,7 @@ async def test_worker_measures_result_and_writes_the_line() -> None:
     handed-over ToolResult before writing the audit line."""
     buffer = io.StringIO()
     init_audit_logger(buffer)
-    init_metering_pipeline()
+    await init_metering_pipeline()
 
     result = ToolResult(content=[mt.TextContent(type="text", text="hellohello")])
     await submit_metered_audit(_record(), result)
@@ -107,7 +108,7 @@ async def test_submit_returns_before_the_line_is_written(
     audit write is still gated, and the line lands once the gate opens."""
     buffer = io.StringIO()
     init_audit_logger(buffer)
-    init_metering_pipeline()
+    await init_metering_pipeline()
 
     gate = asyncio.Event()
     real_write_audit = pipeline.write_audit
@@ -137,7 +138,7 @@ async def test_overflow_writes_inline_unmeasured_and_drops_nothing() -> None:
     init_audit_logger(buffer)
     # Tiny queue, worker deliberately not started yet: the queue can only
     # fill up, so the second submit overflows deterministically.
-    p = MeteringPipeline(maxsize=1)
+    p = InProcessMeteringBackend(maxsize=1)
 
     before = _overflow_count()
     await p.submit(_record(request_id="queued"), None)
@@ -152,7 +153,7 @@ async def test_overflow_writes_inline_unmeasured_and_drops_nothing() -> None:
     assert _overflow_count() == before + 1
 
     # The queued record was not dropped either: the worker still writes it.
-    p.start()
+    await p.start()
     await p.aclose()
     assert {line["request_id"] for line in _lines(buffer)} == {"queued", "overflowed"}
 
@@ -160,8 +161,8 @@ async def test_overflow_writes_inline_unmeasured_and_drops_nothing() -> None:
 async def test_aclose_drains_everything_already_enqueued() -> None:
     buffer = io.StringIO()
     init_audit_logger(buffer)
-    p = MeteringPipeline(maxsize=10)
-    p.start()
+    p = InProcessMeteringBackend(maxsize=10)
+    await p.start()
 
     for i in range(5):
         await p.submit(_record(request_id=f"req-{i}"), None)
@@ -179,8 +180,8 @@ async def test_worker_survives_measurement_failure(
     audit line, and the worker goes on to process the next item."""
     buffer = io.StringIO()
     init_audit_logger(buffer)
-    p = MeteringPipeline()
-    p.start()
+    p = InProcessMeteringBackend()
+    await p.start()
 
     def _boom(result: Any) -> tuple[int | None, int | None]:
         raise RuntimeError("poisoned result")
@@ -205,8 +206,8 @@ async def test_worker_survives_audit_write_failure(
     never die, and the next item is still processed."""
     buffer = io.StringIO()
     init_audit_logger(buffer)
-    p = MeteringPipeline()
-    p.start()
+    p = InProcessMeteringBackend()
+    await p.start()
 
     real_write_audit = pipeline.write_audit
 
@@ -237,3 +238,23 @@ async def test_uninitialized_helper_measures_and_writes_inline() -> None:
     (line,) = _lines(buffer)
     assert line["result_bytes"] == len(b"hellohello")
     assert line["result_tokens_est"] == 2
+
+
+# ---------------------------------------------------------------------------
+# MeteringBackend seam -- the transport is a config-selected implementation
+# behind an ABC, so a distributed backend can be added without touching the
+# hot path. Only "in_process" exists today.
+# ---------------------------------------------------------------------------
+
+
+def test_in_process_backend_satisfies_the_abc() -> None:
+    assert issubclass(InProcessMeteringBackend, MeteringBackend)
+    assert isinstance(InProcessMeteringBackend(), MeteringBackend)
+
+
+async def test_init_builds_the_backend_selected_by_settings() -> None:
+    """init_metering_pipeline dispatches on settings.metering_backend and
+    starts the backend it built."""
+    backend = await init_metering_pipeline(Settings(metering_backend="in_process"))
+    assert isinstance(backend, InProcessMeteringBackend)
+    assert backend.is_running

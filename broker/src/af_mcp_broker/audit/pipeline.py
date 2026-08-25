@@ -17,10 +17,17 @@ acceptable, a lost audit line is not -- counted by
 at all (unit tests, local dev), the module-level helper degrades to
 measuring and writing synchronously, exactly the pre-pipeline behavior
 (mirrors ``write_audit``'s graceful not-initialized fallback).
+
+Metering is best-effort; audit records are authoritative.
+
+The transport between the hot path and the worker is a config-selected
+``MeteringBackend`` (``METERING_BACKEND`` -> ``settings.metering_backend``);
+only ``in_process`` exists today -- see the ABC's docstring.
 """
 
 from __future__ import annotations
 
+import abc
 import asyncio
 from typing import TYPE_CHECKING, Any
 
@@ -29,8 +36,11 @@ import structlog
 from af_mcp_broker import metrics
 from af_mcp_broker.audit.logger import AuditRecord, write_audit
 from af_mcp_broker.audit.measure import measure_tool_result
+from af_mcp_broker.config import Settings, get_settings
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from fastmcp.tools.base import ToolResult
 
 logger = structlog.get_logger(__name__)
@@ -45,7 +55,7 @@ QUEUE_MAXSIZE = 10_000
 # half-processed item.
 _SENTINEL: Any = object()
 
-_pipeline: MeteringPipeline | None = None
+_pipeline: MeteringBackend | None = None
 
 
 def _measure_into(record: AuditRecord, result: ToolResult | None) -> None:
@@ -66,7 +76,37 @@ def _measure_into(record: AuditRecord, result: ToolResult | None) -> None:
         )
 
 
-class MeteringPipeline:
+class MeteringBackend(abc.ABC):
+    """How ``(record, result)`` pairs travel from the hot path to the worker.
+
+    This ABC is the deliberate extension point for distributed transports --
+    e.g. a future taskiq-backed backend whose worker runs in its own
+    Deployment, selected by ``settings.metering_backend``. Design caveat for
+    any out-of-process backend: it must serialize the result payload at
+    submit time, because the worker no longer shares the broker's memory --
+    the in-process backend passes an object reference across its queue,
+    which is exactly why it is the default and only backend today.
+    """
+
+    @property
+    @abc.abstractmethod
+    def is_running(self) -> bool:
+        """Whether the backend is currently able to accept submissions."""
+
+    @abc.abstractmethod
+    async def start(self) -> None:
+        """Begin processing submitted records."""
+
+    @abc.abstractmethod
+    async def aclose(self) -> None:
+        """Drain every already-submitted record, then stop."""
+
+    @abc.abstractmethod
+    async def submit(self, record: AuditRecord, result: ToolResult | None) -> None:
+        """Hand a record (and its measurable result, if any) to the worker."""
+
+
+class InProcessMeteringBackend(MeteringBackend):
     """Bounded queue + background worker measuring and writing audit records."""
 
     def __init__(self, maxsize: int = QUEUE_MAXSIZE) -> None:
@@ -78,7 +118,7 @@ class MeteringPipeline:
     def is_running(self) -> bool:
         return self._worker is not None and not self._worker.done()
 
-    def start(self) -> None:
+    async def start(self) -> None:
         self._worker = asyncio.create_task(self._run(), name="metering-pipeline")
 
     async def aclose(self) -> None:
@@ -122,11 +162,27 @@ class MeteringPipeline:
                 )
 
 
-def init_metering_pipeline(maxsize: int = QUEUE_MAXSIZE) -> MeteringPipeline:
-    """Create, start, and install the process-wide pipeline (app.py lifespan)."""
+# Maps ``settings.metering_backend`` values to backend factories. Adding a
+# distributed backend later (e.g. "taskiq") is one entry here plus widening
+# the config Literal alongside the implementation -- see MeteringBackend's
+# docstring. config.py's Literal already rejects values with no entry here,
+# so a KeyError below means the Literal and this table drifted apart.
+_BACKEND_FACTORIES: dict[str, Callable[[], MeteringBackend]] = {
+    "in_process": InProcessMeteringBackend,
+}
+
+
+async def init_metering_pipeline(settings: Settings | None = None) -> MeteringBackend:
+    """Create, start, and install the process-wide backend (app.py lifespan).
+
+    The implementation is selected by ``settings.metering_backend``; with no
+    Settings passed (tests), the process-wide ``get_settings()`` is used.
+    """
     global _pipeline
-    _pipeline = MeteringPipeline(maxsize=maxsize)
-    _pipeline.start()
+    if settings is None:
+        settings = get_settings()
+    _pipeline = _BACKEND_FACTORIES[settings.metering_backend]()
+    await _pipeline.start()
     return _pipeline
 
 

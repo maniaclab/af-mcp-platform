@@ -341,6 +341,13 @@ Callers pipe this through `nindent` at whatever depth their container's
 - name: PRINCIPAL_CACHE_KV_PATH_PREFIX
   value: {{ .Values.broker.principalCache.kvPathPrefix | quote }}
 {{- end }}
+# Metering pipeline backend (audit/pipeline.py) -- transport for
+# success/error audit records between the tool-call hot path and the
+# worker that measures and writes them. Only "in-process" exists today;
+# the broker fails closed at startup on any unknown value. Always set,
+# same visibility rationale as TOKEN_STORE_BACKEND above.
+- name: METERING_BACKEND
+  value: {{ .Values.broker.metering.backend | replace "-" "_" | quote }}
 {{- /*
 Vault connection settings are shared by all Vault-backed stores above (one
 VaultKV instance, per config.py/app.py) — rendered once whenever any of
