@@ -38,13 +38,11 @@ mcp.af.uchicago.edu                     mcp-portal.af.uchicago.edu
 │  • Identity  • AuthZ  • Credential  • Audit  │
 └──────────────────────────────────────────────┘
         │
-        ├── rucio-mcp        (dataset / file catalog)
+        ├── rucio-mcp        (dataset / file catalog; ATLAS + ESCAPE)
         ├── ami-mcp          (ATLAS metadata interface)
-        ├── openmagic        (theory / MC generator tools)
-        ├── panda-mcp        (PanDA job submission/status)
         ├── condor-mcp       (HTCondor local cluster)
-        ├── gitlab-mcp       (ATLAS GitLab API)
-        ├── jupyter-control  (kernel / notebook management)
+        ├── jupyterlab-mcp   (JupyterLab server / notebook management)
+        ├── filesystem-mcp   (read-only AF filesystem access)
         └── …                (Nth backend — no code change)
 ```
 
@@ -80,10 +78,12 @@ Claude, Claude Code, and other MCP-over-HTTP clients (the
 [top-level README](https://github.com/maniaclab/af-mcp-platform#quick-start-for-atlas-af-users)
 has a short version). Every client presents its own `aud=mcp-gateway` bearer
 token directly to the broker; the portal obtains its own automatically via
-OIDC, but MCP clients currently require pasting a token obtained from the
-portal into their configuration once — MCP OAuth discovery isn't
-implemented yet. The [Authentication](auth.md) page walks through every hop
-of the credential chain.
+OIDC, and MCP clients bootstrap theirs via MCP OAuth discovery against the
+broker's own OAuth endpoints — the recommended path (issue #140). Pasting a
+static token minted from the portal's `/tokens` page remains the fallback
+for clients that can't run the discovery flow. The
+[Authentication](auth.md) page walks through every hop of the credential
+chain.
 
 ## Repository
 

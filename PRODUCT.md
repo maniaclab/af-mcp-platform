@@ -67,8 +67,8 @@ URL without multiplying the number of places a client must trust with credential
 - Users reach the portal from a browser to do setup/bootstrapping tasks (link an
   identity, mint a token, check proxy status); the actual day-to-day work (dataset
   queries, job submission) happens inside their MCP client, not in the portal.
-- Backend MCP servers in the aggregator today or planned: rucio-mcp, ami-mcp,
-  openmagic, panda-mcp, condor-mcp, gitlab-mcp, jupyter-control.
+- Backend MCP servers in the aggregator today: rucio-mcp (ATLAS + ESCAPE),
+  ami-mcp, condor-mcp, jupyterlab-mcp, filesystem-mcp; planned: panda-mcp.
 
 ## Capabilities and Constraints
 

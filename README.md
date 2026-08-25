@@ -22,13 +22,11 @@ mcp.af.uchicago.edu                     mcp-portal.af.uchicago.edu
 │  • Identity  • AuthZ  • Credential  • Audit  │
 └──────────────────────────────────────────────┘
         │
-        ├── rucio-mcp        (dataset / file catalog)
+        ├── rucio-mcp        (dataset / file catalog; ATLAS + ESCAPE)
         ├── ami-mcp           (ATLAS metadata interface)
-        ├── openmagic         (theory / MC generator tools)
-        ├── panda-mcp         (PanDA job submission/status)
         ├── condor-mcp        (HTCondor local cluster)
-        ├── gitlab-mcp        (ATLAS GitLab API)
-        ├── jupyter-control   (kernel / notebook management)
+        ├── jupyterlab-mcp    (JupyterLab server / notebook management)
+        ├── filesystem-mcp    (read-only AF filesystem access)
         └── ...               (Nth backend — no code change)
 ```
 

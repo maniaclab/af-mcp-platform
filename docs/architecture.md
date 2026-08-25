@@ -47,7 +47,7 @@ FastMCP Aggregator (mounted at /mcp)
     │  caller's credential in-process via the same provider code
     │  POST /v1/credential calls (rucio token, x509 proxy, IAM token, …)
     ▼
-Backend MCP server  (rucio-mcp, ami-mcp, panda-mcp, …)
+Backend MCP server  (rucio-mcp, ami-mcp, condor-mcp, …)
     │  result / error
     ▼  (back up the chain)
 LLM client / Portal SPA
@@ -213,7 +213,7 @@ Answers: "is this principal allowed to call this tool?"
   capability.
 - Each backend target's required capability is declared by
   `required_capability` in `services.yaml` (e.g., rucio requires `read_data`,
-  panda requires `submit_jobs`) — services.yaml is the sole source of truth
+  condor-mcp requires `submit_jobs`) — services.yaml is the sole source of truth
   for that mapping; `policy.yaml` doesn't enumerate targets. It's optional:
   omit it and the credential layer becomes the gate instead (the broker
   refuses to start if that would leave the backend with no gate at all), or
