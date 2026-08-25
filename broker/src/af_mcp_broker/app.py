@@ -70,6 +70,7 @@ from af_mcp_broker.token_registry import (
     TokenRegistryBackend,
     VaultTokenRegistryBackend,
 )
+from af_mcp_broker.usage import aclose_usage_store, init_usage_store
 from af_mcp_broker.vault_kv import VaultKV
 
 logger = structlog.get_logger(__name__)
@@ -710,6 +711,11 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # --- Audit: without init the module drops every record. Honor AUDIT_LOG_FILE.
     audit_output = _open_audit_output(settings.audit_log_file)
     init_audit_logger(audit_output)
+    # --- Usage: per-user usage accounting (usage/, PR C) consuming the
+    # success/error tool-call records the pipeline below writes -- started
+    # BEFORE the pipeline so no record the worker processes can miss the
+    # store. The backend is selected by USAGE_STORE_BACKEND.
+    usage_store = await init_usage_store(settings)
     # --- Metering: success/error audit records are measured and written by a
     # background worker (audit/pipeline.py) so tool calls never wait on
     # measurement or audit I/O; without init the helper degrades to inline.
@@ -750,6 +756,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     application.state.principal_cache = principal_cache
     application.state.mcp_auth_code_store = mcp_auth_code_store
     application.state.broker_token_issuer = broker_token_issuer
+    application.state.usage_store = usage_store
 
     # Prime the JWKS cache at startup so the first request does not pay the
     # latency cost of a remote fetch.
@@ -779,6 +786,9 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # and writing) so audit lines aren't lost on a graceful stop -- and it
     # must run before the audit output below is closed.
     await aclose_metering_pipeline()
+    # The usage store closes only after the pipeline drain above -- drained
+    # records are still being accounted right up to the last audit write.
+    await aclose_usage_store()
     if metrics_server is not None:
         metrics_server.shutdown()
         metrics_server.server_close()

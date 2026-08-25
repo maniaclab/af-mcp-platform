@@ -20,6 +20,10 @@ measuring and writing synchronously, exactly the pre-pipeline behavior
 
 Metering is best-effort; audit records are authoritative.
 
+After every audit write (worker, overflow, and fallback paths alike) the
+record is also handed to the usage store (``usage/`` -- PR C) via
+``record_usage``, which filters non-usage records itself and never raises.
+
 The transport between the hot path and the worker is a config-selected
 ``MeteringBackend`` (``METERING_BACKEND`` -> ``settings.metering_backend``);
 only ``in_process`` exists today -- see the ABC's docstring.
@@ -38,6 +42,7 @@ from af_mcp_broker import metrics
 from af_mcp_broker.audit.logger import AuditRecord, write_audit
 from af_mcp_broker.audit.measure import measure_tool_result
 from af_mcp_broker.config import Settings, get_settings
+from af_mcp_broker.usage import record_usage
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -152,6 +157,10 @@ class InProcessMeteringBackend(MeteringBackend):
                 # measurement -- the line goes out incomplete, not late.
                 metrics.metering_records_missing_measurements_total.inc()
             await write_audit(record)
+            # The inline-written record is usage too (PR C) -- record_usage
+            # never raises, filters non-usage records itself, and must only
+            # ever run AFTER the audit write above.
+            await record_usage(record)
 
     async def _run(self) -> None:
         while True:
@@ -175,6 +184,11 @@ class InProcessMeteringBackend(MeteringBackend):
                 )
             else:
                 metrics.metering_worker_processed_total.inc()
+            # Usage accounting (PR C) runs strictly AFTER the audit write --
+            # audit records are authoritative, usage is best-effort.
+            # record_usage never raises (store failures are logged and
+            # counted inside it) and filters non-usage records itself.
+            await record_usage(record)
 
 
 # Maps ``settings.metering_backend`` values to backend factories. Adding a
@@ -221,5 +235,8 @@ async def submit_metered_audit(record: AuditRecord, result: ToolResult | None) -
     if _pipeline is None or not _pipeline.is_running:
         _measure_into(record, result)
         await write_audit(record)
+        # Same post-write usage accounting the worker performs (PR C) --
+        # the fallback path must not be a gap in anyone's usage.
+        await record_usage(record)
         return
     await _pipeline.submit(record, result)
