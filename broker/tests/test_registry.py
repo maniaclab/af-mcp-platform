@@ -106,3 +106,20 @@ def test_recent_list_failure_reflects_last_recorded_reason() -> None:
     assert registry.recent_list_failure("rucio") == "unauthorized"
     registry.record_list_failure("rucio", "unavailable")
     assert registry.recent_list_failure("rucio") == "unavailable"
+
+
+def test_clear_list_failure_removes_a_recorded_reason() -> None:
+    """clear_list_failure() is how a successful tools/list (aggregator.py's
+    _ObservableProxyProvider) un-records a stale failure once a backend
+    recovers -- without it, recent_list_failure() would report a backend
+    "unavailable" forever after a single transient blip."""
+    registry = BackendRegistry()
+    registry.record_list_failure("rucio", "unavailable")
+    registry.clear_list_failure("rucio")
+    assert registry.recent_list_failure("rucio") is None
+
+
+def test_clear_list_failure_is_a_noop_when_nothing_was_recorded() -> None:
+    registry = BackendRegistry()
+    registry.clear_list_failure("rucio")  # must not raise
+    assert registry.recent_list_failure("rucio") is None
