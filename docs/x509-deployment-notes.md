@@ -42,7 +42,7 @@ below), even a bare legacy one. See "Migrating off
    entry (`serviceUrl` omitted) still boots but logs
    `x509_backends_without_signing_key` at startup, fails x509 tool calls
    with an actionable error, and answers 503 on redeem.
-2. **Backend entry** — `aggregator.backends` gets ami with
+2. **Service entry** — `aggregator.services` gets ami with
    `auth_type: x509`. That flag drives aggregator identity-JWT injection
    and the redeem endpoint's audience gate.
 
@@ -108,7 +108,7 @@ stamps differs from the URL ami-mcp reaches it at in-cluster.)
   `ca-policy-lcg`).
 - NetworkPolicy: ami-mcp needs egress to the broker (redeem + JWKS) and to
   atlas-ami.cern.ch:443; the broker needs egress to ami-mcp:8000 (already
-  covered by `networkPolicy.broker.backendPorts`).
+  covered by `networkPolicy.broker.servicePorts`).
 
 ## voms-token-service mode (replaces the ephemeral-Job mint path)
 

@@ -6,8 +6,8 @@ OAuth 2.1 AS proxy per site, not one shared AS for all of them. This page is
 the operator procedure for wiring up one additional site, using the
 `oauth21-direct` identity-provider type (see below).
 
-Each site is both an [Adding a Backend](adding-a-backend.md) case (a new
-`aggregator.backends` entry) and an identity-provider case (a new
+Each site is both an [Adding a Service](adding-a-service.md) case (a new
+`aggregator.services` entry) and an identity-provider case (a new
 `broker.identityProviders` entry) — this page is the concrete, two-site
 worked example; read those two pages first for what each field means in
 general.
@@ -75,9 +75,9 @@ broker:
 `alias` and the single entry in `targets` both follow `rucio-mcp-<site>` —
 this is convention, not a requirement, but it's what the deployed config
 uses and keeps the identity-provider alias, its target, and the matching
-`aggregator.backends` entry (below) trivially traceable to each other.
+`aggregator.services` entry (below) trivially traceable to each other.
 
-**2. `aggregator.backends` — a matching backend entry.**
+**2. `aggregator.services` — a matching service entry.**
 
 ```yaml
 aggregator:
@@ -91,7 +91,7 @@ aggregator:
 ```
 
 `name` must match the `targets` entry above — that's how
-`CredentialRegistry` (see [adding-a-backend.md](adding-a-backend.md)) knows
+`CredentialRegistry` (see [adding-a-service.md](adding-a-service.md)) knows
 which identity provider services this backend's credential. `prefix` is
 distinct per site (`rucio-atlas`, `rucio-escape`, ...) so the aggregator can
 tell the sites' tools apart; `url` is the in-cluster Service address rather
@@ -99,8 +99,8 @@ than the public hostname used for the authorize/token endpoints above, since
 tool calls stay inside the cluster.
 
 `required_capability: read_data` is the same capability across every site —
-reuse it (see [adding-a-backend.md's Step
-2](adding-a-backend.md#step-2-pick-or-reuse-a-capability-for-the-backend)),
+reuse it (see [adding-a-service.md's Step
+2](adding-a-service.md#step-2-pick-or-reuse-a-capability-for-the-service)),
 no new `policy.yaml` entry needed as long as the groups you want to grant
 Rucio access already map to `read_data` (the built-in default does, for
 `atlas`, `cms`, `dune`, `escape` — see
@@ -174,11 +174,11 @@ credential — the same `auth_type: bearer` path any other backend uses.
 
 rucio-mcp's tools are already self-prefixed at the source (`rucio_whoami`,
 `rucio_list_dids`, ...). With two sites configured, each as its own
-`aggregator.backends` entry, `apply_namespace` is left at its default
+`aggregator.services` entry, `apply_namespace` is left at its default
 (`true`) rather than set to `false` — a single un-namespaced `rucio_*` mount
 would be ambiguous once a second site can advertise the same tool names (see
-[adding-a-backend.md's `apply_namespace`
-section](adding-a-backend.md#apply_namespace-tool-naming) for the full
+[adding-a-service.md's `apply_namespace`
+section](adding-a-service.md#apply_namespace-tool-naming) for the full
 tradeoff and why `false` only stays safe for exactly one rucio-mcp backend).
 The result callers actually see is double-prefixed tool names —
 `rucio-atlas_rucio_whoami`, `rucio-escape_rucio_whoami` — ugly, but
@@ -188,7 +188,7 @@ configured, and applies equally to a third or fourth site.
 
 ## See also
 
-- [Adding a Backend](adding-a-backend.md) — the general, backend-agnostic
+- [Adding a Service](adding-a-service.md) — the general, service-agnostic
   procedure this page is a worked example of.
 - [Authentication](auth.md#identity-provider-types) — `keycloak-brokered` vs
   `oauth21-direct` in general, and why `atlas-oidc` (PanDA, AMI) uses the

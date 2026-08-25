@@ -2,7 +2,7 @@
 
 The AF MCP Platform is a credential-brokered [Model Context Protocol](https://modelcontextprotocol.io/) gateway that any ATLAS analysis facility can deploy: it authenticates callers against the facility's Keycloak, brokers per-user credentials to downstream systems (Rucio, PanDA, AMI, ATLAS GitLab, Jupyter, HTCondor, and more), and aggregates all registered MCP backends behind one URL. LLM clients never hold raw x509/IAM credentials — the broker is the strategic platform boundary, and all tool invocations pass through an authorization and audit layer before reaching any backend.
 
-The reference deployment is the [UChicago ATLAS Analysis Facility](https://af.uchicago.edu/), which runs this platform at `mcp.af.uchicago.edu` for its ~800 physics users. The examples below (hostnames, realm names, group mappings) are that deployment's own configuration, not platform requirements — see [docs/adding-a-backend.md](docs/adding-a-backend.md) and [docs/auth.md](docs/auth.md) for what's configurable per deployment.
+The reference deployment is the [UChicago ATLAS Analysis Facility](https://af.uchicago.edu/), which runs this platform at `mcp.af.uchicago.edu` for its ~800 physics users. The examples below (hostnames, realm names, group mappings) are that deployment's own configuration, not platform requirements — see [docs/adding-a-service.md](docs/adding-a-service.md) and [docs/auth.md](docs/auth.md) for what's configurable per deployment.
 
 ## Architecture
 

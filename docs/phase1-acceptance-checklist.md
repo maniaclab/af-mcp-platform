@@ -24,7 +24,7 @@ JWTs — no mocked HTTP calls) and don't need a live check beyond the
 | Item | Test coverage |
 |---|---|
 | FastMCP aggregator mounted at `/mcp`, replacing the placeholder `FastAPI()` | `test_mcp_aggregator.py`, `test_mcp_aggregator_integration.py` |
-| Backends registered from `backends.yaml` with no code change | `test_mcp_registry.py` |
+| Services registered from `services.yaml` with no code change | `test_mcp_registry.py` |
 | Bearer validated on every MCP request (`initialize`, `tools/list`, `tools/call`) via the same `identity.get_principal()` `/v1` uses | `test_mcp_middleware_identity.py` |
 | `tools/list` filtered to capabilities the caller's Keycloak groups grant | `test_mcp_middleware_entitlement.py` |
 | `tools/call` re-checks entitlement before any credential is minted; denial never reaches the credential provider | `test_mcp_middleware_authorization.py` |
@@ -51,7 +51,7 @@ test can stand in for. Use `scripts/verify-mcp-flow.py` against
       still green after this PR lands — regression check, not new scope.
 - [ ] `scripts/verify-mcp-flow.py` (no `--call`) against the live broker
       with a real bearer: connects, and `tools/list` shows the expected
-      Rucio tools namespaced per `backends.yaml` (`apply_namespace: false`
+      Rucio tools namespaced per `services.yaml` (`apply_namespace: false`
       for rucio, so `rucio_whoami`/`rucio_list_dids`/... not
       `rucio_rucio_*`).
 - [ ] `scripts/verify-mcp-flow.py --call rucio_whoami --args-json '{}'`
