@@ -66,14 +66,14 @@ def _idp_config(display_name: str, enables: str) -> KeycloakBrokeredProviderConf
     )
 
 
-async def test_af_whoami_returns_subject_groups_and_capabilities(
+async def test_af_whoami_returns_subject_groups_and_permissions(
     settings: Any, sig_key: Any, prime_jwks: Any, static_principal_cache: Any
 ) -> None:
     principal_cache, directory = static_principal_cache
     directory.groups_by_subject["user-123"] = ["atlas"]
     prime_jwks([sig_key.jwk])
     token = sig_key.sign(make_claims())
-    policy = EntitlementPolicy(group_capabilities={"atlas": ["read_data"]})
+    policy = EntitlementPolicy(group_permissions={"atlas": ["read_data"]})
 
     mcp = build_aggregator(
         ServiceRegistry(),
@@ -92,7 +92,7 @@ async def test_af_whoami_returns_subject_groups_and_capabilities(
 
     assert result.structured_content["subject"] == "user-123"
     assert result.structured_content["groups"] == ["atlas"]
-    assert result.structured_content["capabilities"] == ["read_data"]
+    assert result.structured_content["permissions"] == ["read_data"]
 
 
 async def test_af_list_identities_reflects_linkage_per_provider(
@@ -237,7 +237,7 @@ async def test_af_link_identity_unknown_provider_raises_tool_error(
 async def test_af_list_mcp_servers_reuses_service_status_and_identity_join(
     settings: Any, sig_key: Any, prime_jwks: Any, static_principal_cache: Any
 ) -> None:
-    """Reuses api/capabilities.py's _service_status() (issue #123) and the
+    """Reuses api/permissions.py's _service_status() (issue #123) and the
     target_to_alias identity<->backend join (issue #90) rather than
     reimplementing either -- this asserts the same statuses/joins /v1/catalog
     would report for the identical setup, through the MCP tool instead."""
@@ -253,7 +253,7 @@ async def test_af_list_mcp_servers_reuses_service_status_and_identity_join(
             prefix="open",
             url="http://open.invalid/mcp",
             transport="http",
-            required_capability="__none__",
+            required_permission="__none__",
             auth_type="none",
             display_name="Open Backend",
         )
@@ -264,7 +264,7 @@ async def test_af_list_mcp_servers_reuses_service_status_and_identity_join(
             prefix="gated",
             url="http://gated.invalid/mcp",
             transport="http",
-            required_capability="read_data",
+            required_permission="read_data",
             auth_type="none",
             display_name="Gated Backend",
         )
@@ -275,7 +275,7 @@ async def test_af_list_mcp_servers_reuses_service_status_and_identity_join(
             prefix="needslink",
             url="http://needslink.invalid/mcp",
             transport="http",
-            required_capability="__none__",
+            required_permission="__none__",
             auth_type="bearer",
             display_name="Needs Link Backend",
         )
@@ -288,7 +288,7 @@ async def test_af_list_mcp_servers_reuses_service_status_and_identity_join(
     mcp = build_aggregator(
         registry,
         settings,
-        EntitlementPolicy(group_capabilities={"atlas": ["read_data"]}),
+        EntitlementPolicy(group_permissions={"atlas": ["read_data"]}),
         credential_registry,
         principal_cache=principal_cache,
         target_to_alias=target_to_alias,
@@ -305,17 +305,17 @@ async def test_af_list_mcp_servers_reuses_service_status_and_identity_join(
     assert rows["open"]["status"] == "available"
     assert rows["open"]["prefix"] == "open"
     assert rows["open"]["credential_provider"] is None
-    assert rows["gated"]["status"] == "capability_required"
+    assert rows["gated"]["status"] == "permission_required"
     assert rows["needs-link"]["status"] == "link_required"
     assert rows["needs-link"]["credential_provider"] == "unlinked-idp"
 
 
-async def test_diagnostic_tools_visible_to_principal_with_no_capabilities(
+async def test_diagnostic_tools_visible_to_principal_with_no_permissions(
     settings: Any, sig_key: Any, prime_jwks: Any, static_principal_cache: Any
 ) -> None:
     """Requirement: the af_* tools must be visible regardless of entitlements
-    -- a principal with zero group memberships (so zero capabilities) still
-    sees all three, even while a capability-gated backend's own tools stay
+    -- a principal with zero group memberships (so zero permissions) still
+    sees all three, even while a permission-gated backend's own tools stay
     hidden (proving this isn't just "entitlement filtering is broken")."""
     principal_cache, directory = static_principal_cache
     directory.groups_by_subject["user-123"] = []
@@ -329,11 +329,11 @@ async def test_diagnostic_tools_visible_to_principal_with_no_capabilities(
             prefix="gated",
             url="http://gated.invalid/mcp",
             transport="http",
-            required_capability="read_data",
+            required_permission="read_data",
             auth_type="none",
         )
     )
-    policy = EntitlementPolicy(group_capabilities={"atlas": ["read_data"]})
+    policy = EntitlementPolicy(group_permissions={"atlas": ["read_data"]})
 
     mcp = build_aggregator(
         registry,
@@ -357,7 +357,7 @@ async def test_diagnostic_tools_visible_to_principal_with_no_capabilities(
         LIST_MCP_SERVERS_TOOL_NAME,
         LINK_IDENTITY_TOOL_NAME,
     } <= names
-    # The capability-gated backend's own tool is correctly still hidden --
+    # The permission-gated backend's own tool is correctly still hidden --
     # proves the af_* visibility above is a deliberate bypass, not a broken
     # entitlement filter that would let everything through.
     assert not any(n.startswith("gated_") for n in names)
@@ -371,7 +371,7 @@ async def test_no_diagnostic_tool_response_contains_a_url(
     generic "go to the portal" instruction lives in the *static* tool
     description / the pre-existing not-linked ToolError, never in this
     per-call structured data (see mcp/diagnostics.py's module docstring and
-    api/capabilities.py's canned status_detail sentences, which this reuses)."""
+    api/permissions.py's canned status_detail sentences, which this reuses)."""
     principal_cache, directory = static_principal_cache
     directory.groups_by_subject["user-123"] = []
     prime_jwks([sig_key.jwk])
@@ -384,7 +384,7 @@ async def test_no_diagnostic_tool_response_contains_a_url(
             prefix="needslink",
             url="http://internal.svc.cluster.local/mcp",
             transport="http",
-            required_capability="__none__",
+            required_permission="__none__",
             auth_type="bearer",
         )
     )

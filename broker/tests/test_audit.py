@@ -14,7 +14,7 @@ async def test_write_audit_emits_json_line() -> None:
     record = AuditRecord(
         principal_sub="sub-abc",
         principal_uid=1000,
-        capability="submit_jobs",
+        permission="submit_jobs",
         target="panda",
         action="submit_task",
         action_type="state_change",
@@ -44,7 +44,7 @@ async def test_write_audit_records_denied_outcome_and_error() -> None:
     record = AuditRecord(
         principal_sub="sub-abc",
         principal_uid=1000,
-        capability="submit_jobs",
+        permission="submit_jobs",
         target="panda",
         action="submit_task",
         action_type="state_change",
@@ -52,10 +52,10 @@ async def test_write_audit_records_denied_outcome_and_error() -> None:
         timestamp=1234.5,
         request_id="req-1",
         outcome="denied",
-        error="principal lacks capability 'submit_jobs'",
+        error="principal lacks permission 'submit_jobs'",
     )
     await write_audit(record)
 
     line = json.loads(buffer.getvalue().strip())
     assert line["outcome"] == "denied"
-    assert line["error"] == "principal lacks capability 'submit_jobs'"
+    assert line["error"] == "principal lacks permission 'submit_jobs'"

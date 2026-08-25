@@ -130,15 +130,15 @@ class Principal:
     stored owner id), so it -- not uid -- is the identifier incidental
     consumers (cache keys, audit fields, log context) should use.
 
-    ``capability_grant`` (issue #144 step 4) is ``None`` for every JWT and
+    ``permission_grant`` (issue #144 step 4) is ``None`` for every JWT and
     every identity PAT -- the overwhelming majority of principals -- and is
-    only ever set for a **capability PAT**: an explicit set of capability
-    names copied from ``token_registry.TokenRecord.capability_grant`` by
+    only ever set for a **permission PAT**: an explicit set of permission
+    names copied from ``token_registry.TokenRecord.permission_grant`` by
     ``pat_auth._resolve_authority``. It is a RESTRICTION, never a source of
-    authority: ``authorization.get_principal_capabilities`` intersects it
-    with whatever capabilities the principal's *current* groups already
+    authority: ``authorization.get_principal_permissions`` intersects it
+    with whatever permissions the principal's *current* groups already
     grant, rather than substituting for that computation. Intersecting
-    (not substituting) is what keeps a capability PAT killable by a group
+    (not substituting) is what keeps a permission PAT killable by a group
     removal exactly like every other credential, and what makes it
     structurally impossible for a grant to hand out more than the principal
     currently holds, however it got into the record -- see that function's
@@ -154,7 +154,7 @@ class Principal:
     # Keep the raw token for downstream credential flows; SecretStr prevents
     # accidental logging.
     raw_token: SecretStr = field(compare=False, repr=False)
-    capability_grant: frozenset[str] | None = None
+    permission_grant: frozenset[str] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -218,8 +218,8 @@ class TokenAudienceError(HTTPException):
     carrying a stable ``error`` discriminator (RFC 6750's
     ``insufficient_scope``) plus a ``correlation_id`` the caller can quote
     when contacting an administrator -- the same pattern
-    ``api/capabilities.py``'s ``_service_status`` already uses for
-    ``capability_required``/``misconfigured``.
+    ``api/permissions.py``'s ``_service_status`` already uses for
+    ``permission_required``/``misconfigured``.
     """
 
 

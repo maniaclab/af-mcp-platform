@@ -61,7 +61,7 @@ async def test_dead_backend_call_surfaces_as_clean_tool_error_not_a_traceback(
         prefix="dead",
         url=dead_url,
         transport="http",
-        required_capability="__none__",
+        required_permission="__none__",
         auth_type="none",
     )
     factory = _make_client_factory(
@@ -117,7 +117,7 @@ async def test_upstream_mcp_level_error_passes_through_unchanged(
                 prefix="toy",
                 url=url,
                 transport="http",
-                required_capability="__none__",
+                required_permission="__none__",
                 auth_type="none",
             )
         )
@@ -172,7 +172,7 @@ async def test_slow_backend_call_times_out_cleanly_instead_of_hanging(
                 prefix="slow",
                 url=url,
                 transport="http",
-                required_capability="__none__",
+                required_permission="__none__",
                 auth_type="none",
                 timeout_seconds=0.2,
             )

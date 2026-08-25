@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 import structlog
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 
-from af_mcp_broker.authorization import EntitlementPolicy, get_principal_capabilities
+from af_mcp_broker.authorization import EntitlementPolicy, get_principal_permissions
 from af_mcp_broker.mcp.registry import DIAGNOSTIC_TOOL_NAMES
 
 if TYPE_CHECKING:
@@ -18,9 +18,9 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
-# on_list_tools middleware: filters the tool list to capabilities the
+# on_list_tools middleware: filters the tool list to permissions the
 # Principal (stored by identity_mw, which must be registered first so it
-# runs outermost) actually has. Services whose required_capability the
+# runs outermost) actually has. Services whose required_permission the
 # Principal lacks are hidden entirely, as are tools that don't map to any
 # known service.
 
@@ -50,30 +50,30 @@ class EntitlementMiddleware(Middleware):
             # rather than leak the unfiltered tool list if it somehow didn't.
             return []
 
-        principal_caps = get_principal_capabilities(principal, self.policy)
+        principal_caps = get_principal_permissions(principal, self.policy)
         return [tool for tool in tools if self._tool_is_allowed(tool, principal_caps)]
 
     def _tool_is_allowed(self, tool: Tool, principal_caps: set[str]) -> bool:
         if tool.name in DIAGNOSTIC_TOOL_NAMES:
             # af_* diagnostic tools (issue #153) describe the broker's own
             # state (identity linkage, service availability, the caller's
-            # own capabilities) and need no capability -- they must stay
+            # own permissions) and need no permission -- they must stay
             # visible to every authenticated caller regardless of
             # entitlements, precisely because they're how a caller
             # self-diagnoses a missing/denied tool elsewhere. No registered
             # service can ever claim this prefix (ServiceRegistry.register()
             # refuses it), so this can't be used to smuggle a real service's
-            # tool past the capability check below.
+            # tool past the permission check below.
             return True
         service = self.registry.get_by_tool_prefix(tool.name)
         if service is None:
             return False  # unknown prefix: deny by default (fail-closed)
         if (
-            service.required_capability is None
-            or service.required_capability == "__none__"
+            service.required_permission is None
+            or service.required_permission == "__none__"
         ):
             # Omitted -> the credential layer is the gate (see app.py's
             # startup validation); "__none__" -> open to any authenticated
-            # user. Either way, no capability check gates this tool's listing.
+            # user. Either way, no permission check gates this tool's listing.
             return True
-        return service.required_capability in principal_caps
+        return service.required_permission in principal_caps

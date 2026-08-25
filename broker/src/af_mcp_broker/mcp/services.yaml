@@ -5,7 +5,7 @@ services:
     prefix: rucio
     url: "http://rucio-mcp.mcp.svc.cluster.local:80/site/atlas"
     transport: http
-    required_capability: read_data
+    required_permission: read_data
     display_name: Rucio
     description: ATLAS distributed data management — browse and query datasets, files, and replicas.
     # OIDCProvider returns the stored IAM-brokered token.
@@ -25,7 +25,7 @@ services:
     prefix: ami
     url: "https://ami.cern.ch/mcp"
     transport: http
-    required_capability: read_metadata
+    required_permission: read_metadata
     display_name: AMI
     description: ATLAS Metadata Interface — dataset provenance and metadata catalogs.
     # X509Provider mints a voms-proxy via the user's home-dir cert.
@@ -35,7 +35,7 @@ services:
     prefix: openmagic
     url: "http://atlasopenmagic-mcp.mcp.svc.cluster.local/mcp"
     transport: http
-    required_capability: read_metadata
+    required_permission: read_metadata
     display_name: ATLAS Open Data
     description: Metadata and access helpers for ATLAS Open Data releases.
     # ServiceProvider: on_behalf with AF service credential.
@@ -45,7 +45,7 @@ services:
     prefix: jlab
     url: "http://af-jupyterlab-mcp.mcp.svc.cluster.local:80/mcp"
     transport: http
-    required_capability: manage_jupyter
+    required_permission: manage_jupyter
     display_name: JupyterLab
     description: Start, stop, and configure JupyterLab notebook servers on the Analysis Facility.
     # Authorization via broker-issued identity JWT (aud=af-jupyterlab-mcp); no shared secret.
@@ -57,7 +57,7 @@ services:
     apply_namespace: false
     url: "http://af-filesystem-mcp.mcp.svc.cluster.local:80/mcp"
     transport: http
-    required_capability: read_files
+    required_permission: read_files
     display_name: Filesystem
     description: Browse and read files in your Analysis Facility home directory.
     # af-filesystem-mcp's tools are already self-prefixed (fs_list, fs_stat,
@@ -69,7 +69,7 @@ services:
     prefix: monitoring
     url: "http://grafana.prom.svc.cluster.local:3000/mcp"
     transport: http
-    required_capability: read_monitoring
+    required_permission: read_monitoring
     display_name: Monitoring
     description: Grafana dashboards and metrics for facility monitoring.
     auth_type: none
@@ -78,7 +78,7 @@ services:
     prefix: docs
     url: "http://docs-mcp.af.svc.cluster.local/mcp"
     transport: http
-    required_capability: __none__
+    required_permission: __none__
     display_name: Docs
     description: Search and browse Analysis Facility documentation.
     auth_type: none

@@ -45,7 +45,7 @@ if TYPE_CHECKING:
 ISSUER_URL = "https://mcp.example.com"
 
 # The documented claim set (issue #162) -- identity assertion, nothing more.
-# Tests assert EXACT equality against these: any extra claim (a capability,
+# Tests assert EXACT equality against these: any extra claim (a permission,
 # a group, anything) is a design failure, not an additive change.
 _BASE_CLAIMS = frozenset({"iss", "sub", "aud", "exp", "iat", "jti"})
 _POSIX_CLAIMS = _BASE_CLAIMS | {"uid", "gid", "unixname"}
@@ -129,8 +129,8 @@ def test_mint_claim_set_is_exactly_the_documented_set(
 
 
 def test_mint_never_carries_authorization_claims(issuer: BrokerTokenIssuer) -> None:
-    """Deliberately absent: capabilities, groups, or any authorization claim
-    (issue #162 -- if a backend is ever written to test token.capabilities,
+    """Deliberately absent: permissions, groups, or any authorization claim
+    (issue #162 -- if a backend is ever written to test token.permissions,
     this design has failed). Redundant with the exact-set assertion above,
     but named so a future 'just add the groups claim' change trips a test
     that says why not."""
@@ -139,7 +139,7 @@ def test_mint_never_carries_authorization_claims(issuer: BrokerTokenIssuer) -> N
     )
     claims = jwt.decode(token, options={"verify_signature": False})
 
-    assert "capabilities" not in claims
+    assert "permissions" not in claims
     assert "groups" not in claims
     assert "scope" not in claims
 

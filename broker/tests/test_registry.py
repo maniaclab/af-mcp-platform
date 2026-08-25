@@ -23,7 +23,7 @@ def test_backend_spec_description_and_display_name_default_to_empty() -> None:
         prefix="rucio",
         url="http://rucio-mcp/mcp",
         transport="http",
-        required_capability="read_data",
+        required_permission="read_data",
     )
     assert spec.description == ""
     assert spec.display_name == ""
@@ -38,7 +38,7 @@ def test_registry_load_reads_description_and_display_name_from_yaml(
         "  - name: rucio\n"
         "    prefix: rucio\n"
         "    url: http://rucio-mcp/mcp\n"
-        "    required_capability: read_data\n"
+        "    required_permission: read_data\n"
         "    display_name: Rucio\n"
         "    description: ATLAS distributed data management\n"
     )
@@ -60,8 +60,8 @@ def test_shipped_backends_carry_display_name_and_description() -> None:
         assert spec.description, f"{spec.name} is missing description"
 
 
-def test_backend_spec_required_capability_defaults_to_none() -> None:
-    """Omitted required_capability means "no capability gate; the credential
+def test_backend_spec_required_permission_defaults_to_none() -> None:
+    """Omitted required_permission means "no permission gate; the credential
     layer is the gate instead" (issue #60) -- distinct from the "__none__"
     sentinel, which is an explicit open-access opt-in."""
     spec = ServiceSpec(
@@ -70,11 +70,11 @@ def test_backend_spec_required_capability_defaults_to_none() -> None:
         url="http://rucio-mcp/mcp",
         transport="http",
     )
-    assert spec.required_capability is None
+    assert spec.required_permission is None
 
 
-def test_registry_load_omitted_required_capability_is_none(tmp_path: Path) -> None:
-    """services.yaml entries that omit required_capability must load as None,
+def test_registry_load_omitted_required_permission_is_none(tmp_path: Path) -> None:
+    """services.yaml entries that omit required_permission must load as None,
     not silently default to "__none__" (open access) -- that would collapse
     the "credential layer is the gate" case into the "no gate at all" case."""
     backends_yaml = tmp_path / "services.yaml"
@@ -85,7 +85,7 @@ def test_registry_load_omitted_required_capability_is_none(tmp_path: Path) -> No
     registry.load(str(backends_yaml))
     spec = registry.get("rucio")
     assert spec is not None
-    assert spec.required_capability is None
+    assert spec.required_permission is None
 
 
 def test_recent_list_failure_absent_by_default() -> None:

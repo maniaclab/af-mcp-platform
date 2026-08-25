@@ -172,7 +172,7 @@ class TestPreflightRoute:
             "    prefix: rucio\n"
             "    url: http://rucio-mcp.invalid/mcp\n"
             "    auth_type: bearer\n"
-            "    required_capability: read_data\n"
+            "    required_permission: read_data\n"
         )
         monkeypatch.setenv("SERVICES_FILE", str(services_file))
         monkeypatch.setenv("IDENTITY_PROVIDERS", "[]")

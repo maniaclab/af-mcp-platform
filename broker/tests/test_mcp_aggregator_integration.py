@@ -142,27 +142,27 @@ services:
     prefix: toy
     url: "{toy_backend_url}"
     transport: http
-    required_capability: read_data
+    required_permission: read_data
     auth_type: none
   - name: selfpfx
     prefix: selfpfx
     url: "{selfpfx_backend_url}"
     transport: http
-    required_capability: __none__
+    required_permission: __none__
     apply_namespace: false
     auth_type: none
   - name: dead
     prefix: dead
     url: "{dead_backend_url}"
     transport: http
-    required_capability: __none__
+    required_permission: __none__
     auth_type: none
 """
     )
     policy_file = tmp_path / "policy.yaml"
     policy_file.write_text(
         """
-group_capabilities:
+group_permissions:
   atlas: [read_data]
   __authenticated__: []
 """
@@ -232,7 +232,7 @@ async def test_unentitled_principal_does_not_see_gated_tools(running_broker, sig
     async with _run_asgi_app(running_broker) as base_url:
         names = await _list_tool_names(base_url, token)
 
-    # No read_data capability -> toy's tools (required_capability=read_data)
+    # No read_data permission -> toy's tools (required_permission=read_data)
     # are filtered out, but the open selfpfx tool is still visible.
     assert "toy_echo" not in names
     assert "toy_seen_headers" not in names

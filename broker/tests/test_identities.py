@@ -397,7 +397,7 @@ services:
     prefix: docs
     url: "http://docs-mcp.af.svc.cluster.local/mcp"
     transport: http
-    required_capability: __none__
+    required_permission: __none__
     display_name: Docs
     description: Search and browse Analysis Facility documentation.
     auth_type: none

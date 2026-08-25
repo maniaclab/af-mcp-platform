@@ -21,7 +21,7 @@ def _register_condor_service(client: TestClient) -> None:
     services.yaml -- register it directly on the booted app's registry the
     same way test_catalog_action_type_reflects_target_action_type_overrides
     does for its own backend, so /v1/authorize (which now derives the
-    required capability from the registry, not the request body -- issue
+    required permission from the registry, not the request body -- issue
     #60) has a real backend to look up."""
     from af_mcp_broker.mcp.registry import ServiceSpec
 
@@ -31,7 +31,7 @@ def _register_condor_service(client: TestClient) -> None:
             prefix="condor",
             url="http://condor-mcp.mcp.svc.cluster.local/mcp",
             transport="http",
-            required_capability="submit_jobs",
+            required_permission="submit_jobs",
             auth_type="none",
         )
     )
@@ -86,7 +86,7 @@ def test_authorize_unregistered_target_denied_without_leaking_internals(
     app_client: tuple[TestClient, dict],
 ) -> None:
     """A target absent from the backend registry must be denied cleanly --
-    and the response must not be confused with a capability-based denial."""
+    and the response must not be confused with a permission-based denial."""
     client, _ = app_client
     resp = client.post(
         "/v1/authorize",
@@ -99,12 +99,12 @@ def test_authorize_unregistered_target_denied_without_leaking_internals(
     assert "no-such-target" in body["reason"]
 
 
-def test_authorize_ignores_client_supplied_capability(
+def test_authorize_ignores_client_supplied_permission(
     app_client: tuple[TestClient, dict], make_principal: Callable[..., object]
 ) -> None:
-    """The required capability is derived server-side from the registry
+    """The required permission is derived server-side from the registry
     (rucio -> read_data), not trusted from the request body -- a caller
-    claiming an unrelated/higher capability for the same target must not
+    claiming an unrelated/higher permission for the same target must not
     change the outcome (issue #60)."""
     client, state = app_client
     state["principal"] = make_principal(groups=[])
@@ -113,18 +113,18 @@ def test_authorize_ignores_client_supplied_capability(
         json={
             "target": "rucio",
             "action": "rucio_list_dids",
-            "capability": "admin",
+            "permission": "admin",
         },
         headers=_AUTH,
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
     # __authenticated__ (no groups) lacks read_data -> denied, regardless of
-    # the bogus "admin" capability the request body claimed.
+    # the bogus "admin" permission the request body claimed.
     assert body["allow"] is False
 
 
-def test_catalog_reflects_capabilities(
+def test_catalog_reflects_permissions(
     app_client: tuple[TestClient, dict], make_principal: Callable[..., object]
 ) -> None:
     client, state = app_client
@@ -134,15 +134,15 @@ def test_catalog_reflects_capabilities(
     servers = {s["name"]: s for s in resp.json()["servers"]}
     # __authenticated__ holds read_metadata/read_monitoring but not read_data.
     # Every registered backend is still listed (issue #123: hiding a
-    # capability-gated backend entirely left the portal unable to say *why*
+    # permission-gated backend entirely left the portal unable to say *why*
     # it has no tools) -- rucio (read_data) now appears flagged
-    # "capability_required" rather than being omitted.
+    # "permission_required" rather than being omitted.
     assert "docs" in servers
     assert servers["docs"]["status"] == "available"
     assert "ami" in servers
     assert servers["ami"]["status"] == "available"
     assert "rucio" in servers
-    assert servers["rucio"]["status"] == "capability_required"
+    assert servers["rucio"]["status"] == "permission_required"
     # condor-mcp isn't in the shipped services.yaml at all -- absent
     # regardless.
     assert "condor-mcp" not in servers
@@ -164,7 +164,7 @@ def test_catalog_server_carries_display_metadata(
     assert rucio["display_name"]
     assert rucio["description"]
     assert rucio["auth_type"] == "bearer"
-    assert rucio["capability"] == "read_data"
+    assert rucio["permission"] == "read_data"
     assert "tools" not in rucio
 
 
@@ -209,7 +209,7 @@ def test_catalog_never_exposes_backend_url(
 def test_catalog_status_available_for_open_backend(
     app_client: tuple[TestClient, dict], make_principal: Callable[..., object]
 ) -> None:
-    """ "docs" opts into "__none__" (no capability gate) and auth_type "none"
+    """ "docs" opts into "__none__" (no permission gate) and auth_type "none"
     (no credential needed) -- always "available"."""
     client, state = app_client
     state["principal"] = make_principal(groups=[])
@@ -227,8 +227,8 @@ def test_catalog_status_link_required_when_not_linked(
     """ "rucio" needs read_data (held by "atlas") and a linked atlas-oidc
     identity; the default test principal isn't linked (OIDCProvider.
     is_linked() probes an unreachable issuer -- see test_credential_
-    unlinked_provider_404), so the capability check passes but linkage
-    doesn't -- "link_required", not "capability_required"."""
+    unlinked_provider_404), so the permission check passes but linkage
+    doesn't -- "link_required", not "permission_required"."""
     client, state = app_client
     state["principal"] = make_principal(groups=["atlas"])
     resp = client.get("/v1/catalog", headers=_AUTH)
@@ -239,7 +239,7 @@ def test_catalog_status_link_required_when_not_linked(
     assert rucio["correlation_id"] is None
 
 
-def test_catalog_status_available_when_capability_and_linked(
+def test_catalog_status_available_when_permission_and_linked(
     app_client: tuple[TestClient, dict],
     make_principal: Callable[..., object],
     monkeypatch: pytest.MonkeyPatch,
@@ -261,11 +261,11 @@ def test_catalog_status_available_when_capability_and_linked(
     assert rucio["correlation_id"] is None
 
 
-def test_catalog_status_capability_required_includes_correlation_id(
+def test_catalog_status_permission_required_includes_correlation_id(
     app_client: tuple[TestClient, dict], make_principal: Callable[..., object]
 ) -> None:
     """__authenticated__ lacks read_data -- "rucio" is flagged
-    "capability_required" with a correlation id an admin can grep the audit
+    "permission_required" with a correlation id an admin can grep the audit
     log for, per issue #123's "never leak internals, but let an admin trace
     it" constraint."""
     client, state = app_client
@@ -273,7 +273,7 @@ def test_catalog_status_capability_required_includes_correlation_id(
     resp = client.get("/v1/catalog", headers=_AUTH)
     assert resp.status_code == 200, resp.text
     rucio = {s["name"]: s for s in resp.json()["servers"]}["rucio"]
-    assert rucio["status"] == "capability_required"
+    assert rucio["status"] == "permission_required"
     assert rucio["status_detail"]
     assert rucio["correlation_id"]
 
@@ -282,7 +282,7 @@ def test_catalog_status_detail_names_the_diagnostic_tools(
     app_client: tuple[TestClient, dict], make_principal: Callable[..., object]
 ) -> None:
     """Close the loop (issue #153): both the "link_required" and
-    "capability_required" status_detail sentences name the af_* diagnostic
+    "permission_required" status_detail sentences name the af_* diagnostic
     tool a model should call next, not just a human-facing instruction."""
     from af_mcp_broker.mcp.registry import LIST_IDENTITIES_TOOL_NAME, WHOAMI_TOOL_NAME
 
@@ -297,14 +297,14 @@ def test_catalog_status_detail_names_the_diagnostic_tools(
     state["principal"] = make_principal(groups=[])
     resp = client.get("/v1/catalog", headers=_AUTH)
     rucio = {s["name"]: s for s in resp.json()["servers"]}["rucio"]
-    assert rucio["status"] == "capability_required"
+    assert rucio["status"] == "permission_required"
     assert WHOAMI_TOOL_NAME in rucio["status_detail"]
 
 
 def test_catalog_status_misconfigured_when_no_credential_provider_resolves(
     app_client: tuple[TestClient, dict], make_principal: Callable[..., object]
 ) -> None:
-    """A backend that omits required_capability (credential layer is the
+    """A backend that omits required_permission (credential layer is the
     gate -- issue #60) but has no credential provider resolving for it is a
     genuine platform misconfiguration, not a transient failure -- flagged
     "misconfigured" with a correlation id. (app.py's startup check normally
@@ -387,28 +387,28 @@ def test_catalog_status_unauthorized_failure_prompts_relink(
 
 
 @pytest.mark.parametrize(
-    ("required_capability", "groups", "expected_status"),
+    ("required_permission", "groups", "expected_status"),
     [
-        # Omitted (None) -- no capability gate, credential layer is the sole
+        # Omitted (None) -- no permission gate, credential layer is the sole
         # gate (issue #60); auth_type "none" below means that gate is a
         # no-op too, so this reports "available" regardless of groups.
         (None, [], "available"),
         # "__none__" -- the explicit open-access opt-in; same as above.
         ("__none__", [], "available"),
-        # An explicit capability the principal holds.
+        # An explicit permission the principal holds.
         ("read_data", ["atlas"], "available"),
-        # An explicit capability the principal lacks.
-        ("read_data", [], "capability_required"),
+        # An explicit permission the principal lacks.
+        ("read_data", [], "permission_required"),
     ],
 )
-def test_catalog_status_required_capability_forms(
+def test_catalog_status_required_permission_forms(
     app_client: tuple[TestClient, dict],
     make_principal: Callable[..., object],
-    required_capability: str | None,
+    required_permission: str | None,
     groups: list[str],
     expected_status: str,
 ) -> None:
-    """All three `required_capability` forms (declared / "__none__" /
+    """All three `required_permission` forms (declared / "__none__" /
     omitted) must be handled by the status derivation, not just the
     declared-string form (issue #127 made services.yaml authoritative for
     all three)."""
@@ -423,7 +423,7 @@ def test_catalog_status_required_capability_forms(
             prefix="capform",
             url="http://capform-mcp.mcp.svc.cluster.local/mcp",
             transport="http",
-            required_capability=required_capability,
+            required_permission=required_permission,
             auth_type="none",
         )
     )
@@ -436,7 +436,7 @@ def test_catalog_status_required_capability_forms(
 def test_catalog_status_never_leaks_urls_or_upstream_errors(
     app_client: tuple[TestClient, dict], make_principal: Callable[..., object]
 ) -> None:
-    """Across every status (capability_required, link_required,
+    """Across every status (permission_required, link_required,
     misconfigured, available), the catalog response must never carry a
     backend URL, an upstream error body, policy internals, or a group list
     -- issue #123's "never leak internals" constraint."""
@@ -468,13 +468,13 @@ def test_catalog_action_type_reflects_target_action_type_overrides(
     app_client_factory: Callable[..., object],
     make_principal: Callable[..., object],
 ) -> None:
-    """A backend whose capability defaults to "read" but whose
+    """A backend whose permission defaults to "read" but whose
     target_action_types glob overrides include a "state_change" pattern
     must report the server-level badge as "state_change" — the rollup rule
     for issue #89: any state-changing tool taints the whole server's badge
     until #58 lands per-tool enumeration. No shipped service pairs a
-    read-typed capability with a state_change glob, so this test writes its
-    own policy (still granting every capability the shipped services.yaml
+    read-typed permission with a state_change glob, so this test writes its
+    own policy (still granting every permission the shipped services.yaml
     requires, or startup refuses — issue #125).
     """
     from af_mcp_broker.app import app
@@ -482,7 +482,7 @@ def test_catalog_action_type_reflects_target_action_type_overrides(
 
     policy_path = tmp_path / "policy.yaml"
     policy_path.write_text(
-        "group_capabilities:\n"
+        "group_permissions:\n"
         "  atlas: [read_data, read_metadata, read_monitoring, manage_jupyter, read_files]\n"
         "target_action_types:\n"
         "  logbook:\n"
@@ -498,7 +498,7 @@ def test_catalog_action_type_reflects_target_action_type_overrides(
                 prefix="logbook",
                 url="http://logbook-mcp.mcp.svc.cluster.local/mcp",
                 transport="http",
-                required_capability="read_monitoring",
+                required_permission="read_monitoring",
                 auth_type="none",
             )
         )

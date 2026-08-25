@@ -14,18 +14,18 @@ attribute of the principal, not the token" resolution):
 
 2. **What authority does it carry?** For a JWT this is "read uid/gid/
    unixname/groups straight off the claims" -- self-contained, re-validated
-   every request. For every PAT -- identity or capability alike -- it is
+   every request. For every PAT -- identity or permission alike -- it is
    *always* deferred to ``principal_cache.PrincipalCache``, keyed by the
    principal id question 1 just answered. This is the seam #144 step 4's
-   **capability PAT** uses (``_resolve_authority`` below): an identity PAT
+   **permission PAT** uses (``_resolve_authority`` below): an identity PAT
    carries no authority of its own, full stop, so the cache's answer is the
-   whole story; a capability PAT ALSO carries an explicit grant
-   (``TokenRecord.capability_grant``) -- but that grant is a RESTRICTION
+   whole story; a permission PAT ALSO carries an explicit grant
+   (``TokenRecord.permission_grant``) -- but that grant is a RESTRICTION
    layered on top of the cache's answer, never a substitute for consulting
-   it. Reading the grant *instead of* the cache would let a capability PAT
+   it. Reading the grant *instead of* the cache would let a permission PAT
    outlive a group removal, reintroducing exactly the staleness problem
    group-snapshotting was rejected for; see ``_resolve_authority``'s
-   docstring for the mechanics and ``authorization.get_principal_capabilities``
+   docstring for the mechanics and ``authorization.get_principal_permissions``
    for where the actual intersection happens. Question 1's resolution (and
    anything upstream of it, e.g. ``pat.parse_pat``/hashing) is unchanged
    either way.
@@ -155,7 +155,7 @@ async def resolve_pat_principal(
 
     # --- Question 2: what authority does it carry? --------------------------
     # Always deferred to the principal cache -- see the module docstring and
-    # _resolve_authority's docstring for why a capability PAT's grant, when
+    # _resolve_authority's docstring for why a permission PAT's grant, when
     # present, does not change that.
     try:
         attributes = await _resolve_authority(record, principal_cache)
@@ -170,30 +170,30 @@ async def resolve_pat_principal(
         unixname=attributes.unixname,
         groups=attributes.groups,
         raw_token=SecretStr(token),
-        capability_grant=record.capability_grant,
+        permission_grant=record.permission_grant,
     )
 
 
 async def _resolve_authority(
     record: TokenRecord, principal_cache: PrincipalCache
 ) -> PrincipalAttributes:
-    """Answer question 2: the principal cache's current view -- identically for an identity PAT and a capability PAT.
+    """Answer question 2: the principal cache's current view -- identically for an identity PAT and a permission PAT.
 
     Takes the full *record* (not just ``record.principal_id``) so this is
-    visibly the one seam issue #144 flagged for a future capability PAT, but
-    the lookup itself never changes shape: ``record.capability_grant`` is
-    NOT read here, and never substitutes for this call. A capability PAT
+    visibly the one seam issue #144 flagged for a future permission PAT, but
+    the lookup itself never changes shape: ``record.permission_grant`` is
+    NOT read here, and never substitutes for this call. A permission PAT
     still needs the principal cache's CURRENT groups -- the grant is a
     restriction applied on top of them, not a replacement for asking what
-    they currently are. Substituting the grant instead would let a capability
+    they currently are. Substituting the grant instead would let a permission
     PAT keep working after its owner lost the underlying group, reintroducing
     exactly the staleness problem group-snapshotting was rejected for.
 
     The grant itself is carried through unchanged by ``resolve_pat_principal``
-    onto the returned ``Principal.capability_grant``; the actual intersection
+    onto the returned ``Principal.permission_grant``; the actual intersection
     against these attributes' groups happens downstream, in
-    ``authorization.get_principal_capabilities``, once a policy is available
-    to derive capabilities from groups in the first place -- see that
+    ``authorization.get_principal_permissions``, once a policy is available
+    to derive permissions from groups in the first place -- see that
     function's docstring.
     """
     return await principal_cache.get(record.principal_id)
