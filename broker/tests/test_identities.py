@@ -391,8 +391,8 @@ def test_broker_issued_link_mechanism_is_none(
 # joins on.
 # ---------------------------------------------------------------------------
 
-_NO_X509_BACKENDS_YAML = """
-backends:
+_NO_X509_SERVICES_YAML = """
+services:
   - name: docs
     prefix: docs
     url: "http://docs-mcp.af.svc.cluster.local/mcp"
@@ -434,7 +434,7 @@ def test_x509_entry_absent_without_x509_backends(
     services.yaml), since a dangling entry would fail the broker's coverage
     check the other way (an x509 entry targeting a non-x509 backend)."""
     services_file = tmp_path / "services.yaml"
-    services_file.write_text(_NO_X509_BACKENDS_YAML)
+    services_file.write_text(_NO_X509_SERVICES_YAML)
     monkeypatch.setenv("SERVICES_FILE", str(services_file))
     monkeypatch.setenv(
         "IDENTITY_PROVIDERS",

@@ -137,7 +137,7 @@ def running_broker(
     # dedicated tests/fixtures registering real credential providers.
     services_file.write_text(
         f"""
-backends:
+services:
   - name: toy
     prefix: toy
     url: "{toy_backend_url}"

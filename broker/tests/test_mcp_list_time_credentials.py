@@ -346,7 +346,7 @@ async def test_unlinked_principal_missing_secure_tools_rest_of_list_works(
         kwargs
         for event, kwargs in events
         if event == "aggregator.service_list_failed"
-        and kwargs.get("backend") == "secure"
+        and kwargs.get("service") == "secure"
     ]
     assert matches, events
     assert matches[0]["reason"] == "not_linked"

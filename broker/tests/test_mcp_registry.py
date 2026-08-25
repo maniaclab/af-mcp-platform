@@ -34,7 +34,7 @@ def test_load_defaults_apply_namespace_true_when_absent(tmp_path: Path) -> None:
     services_file = tmp_path / "services.yaml"
     services_file.write_text(
         """
-backends:
+services:
   - name: example
     prefix: example
     url: "http://example.invalid/mcp"
@@ -52,7 +52,7 @@ def test_load_respects_apply_namespace_false(tmp_path: Path) -> None:
     services_file = tmp_path / "services.yaml"
     services_file.write_text(
         """
-backends:
+services:
   - name: example
     prefix: example
     url: "http://example.invalid/mcp"
@@ -113,7 +113,7 @@ def test_load_defaults_timeout_seconds_when_absent(tmp_path: Path) -> None:
     services_file = tmp_path / "services.yaml"
     services_file.write_text(
         """
-backends:
+services:
   - name: example
     prefix: example
     url: "http://example.invalid/mcp"
@@ -131,7 +131,7 @@ def test_load_respects_custom_timeout_seconds(tmp_path: Path) -> None:
     services_file = tmp_path / "services.yaml"
     services_file.write_text(
         """
-backends:
+services:
   - name: example
     prefix: example
     url: "http://example.invalid/mcp"
@@ -170,7 +170,7 @@ def test_load_rejects_reserved_diagnostic_prefix_in_backends_yaml(
     services_file = tmp_path / "services.yaml"
     services_file.write_text(
         """
-backends:
+services:
   - name: shadow
     prefix: af
     url: "http://shadow.invalid/mcp"

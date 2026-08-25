@@ -3,7 +3,7 @@
 Covers the issuer core (``BrokerTokenIssuer``: claim-set exactness, kid
 thumbprint stability, JWKS publication + rotation overlap), the
 ``load_broker_token_issuer`` settings loader, and ``BrokerIssuedProvider``
-(the ``CredentialProvider`` for AF-native backends: always linked, POSIX
+(the ``CredentialProvider`` for AF-native services: always linked, POSIX
 claims gated on per-target config, credential caching with expiry = token
 exp). App-level wiring (startup fail-closed, /.well-known/jwks.json, the
 aggregator path) lives in test_broker_issued_app.py.

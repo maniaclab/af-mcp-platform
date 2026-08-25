@@ -392,11 +392,11 @@ async def test_entitled_call_increments_invocation_counters(
 
     before_total = _sample(
         "af_mcp_tool_invocations_total",
-        {"backend": "rucio", "tool": "rucio_list_dids", "action_type": "read"},
+        {"service": "rucio", "tool": "rucio_list_dids", "action_type": "read"},
     )
     before_denied = _sample(
         "af_mcp_tool_invocations_denied_total",
-        {"backend": "rucio", "action_type": "read"},
+        {"service": "rucio", "action_type": "read"},
     )
 
     await mw.on_call_tool(context, call_next)
@@ -404,7 +404,7 @@ async def test_entitled_call_increments_invocation_counters(
     assert (
         _sample(
             "af_mcp_tool_invocations_total",
-            {"backend": "rucio", "tool": "rucio_list_dids", "action_type": "read"},
+            {"service": "rucio", "tool": "rucio_list_dids", "action_type": "read"},
         )
         == before_total + 1
     )
@@ -412,7 +412,7 @@ async def test_entitled_call_increments_invocation_counters(
     assert (
         _sample(
             "af_mcp_tool_invocations_denied_total",
-            {"backend": "rucio", "action_type": "read"},
+            {"service": "rucio", "action_type": "read"},
         )
         == before_denied
     )
@@ -428,11 +428,11 @@ async def test_unentitled_call_increments_invocation_and_denied_counters(
 
     before_total = _sample(
         "af_mcp_tool_invocations_total",
-        {"backend": "rucio", "tool": "rucio_list_dids", "action_type": "read"},
+        {"service": "rucio", "tool": "rucio_list_dids", "action_type": "read"},
     )
     before_denied = _sample(
         "af_mcp_tool_invocations_denied_total",
-        {"backend": "rucio", "action_type": "read"},
+        {"service": "rucio", "action_type": "read"},
     )
 
     with pytest.raises(AuthorizationError):
@@ -442,7 +442,7 @@ async def test_unentitled_call_increments_invocation_and_denied_counters(
     assert (
         _sample(
             "af_mcp_tool_invocations_total",
-            {"backend": "rucio", "tool": "rucio_list_dids", "action_type": "read"},
+            {"service": "rucio", "tool": "rucio_list_dids", "action_type": "read"},
         )
         == before_total + 1
     )
@@ -450,7 +450,7 @@ async def test_unentitled_call_increments_invocation_and_denied_counters(
     assert (
         _sample(
             "af_mcp_tool_invocations_denied_total",
-            {"backend": "rucio", "action_type": "read"},
+            {"service": "rucio", "action_type": "read"},
         )
         == before_denied + 1
     )
@@ -486,11 +486,11 @@ async def test_call_next_failure_increments_invocation_counters_not_denied(
 
     before_total = _sample(
         "af_mcp_tool_invocations_total",
-        {"backend": "rucio", "tool": "rucio_list_dids", "action_type": "read"},
+        {"service": "rucio", "tool": "rucio_list_dids", "action_type": "read"},
     )
     before_denied = _sample(
         "af_mcp_tool_invocations_denied_total",
-        {"backend": "rucio", "action_type": "read"},
+        {"service": "rucio", "action_type": "read"},
     )
 
     with pytest.raises(RuntimeError):
@@ -501,7 +501,7 @@ async def test_call_next_failure_increments_invocation_counters_not_denied(
     assert (
         _sample(
             "af_mcp_tool_invocations_total",
-            {"backend": "rucio", "tool": "rucio_list_dids", "action_type": "read"},
+            {"service": "rucio", "tool": "rucio_list_dids", "action_type": "read"},
         )
         == before_total + 1
     )
@@ -510,7 +510,7 @@ async def test_call_next_failure_increments_invocation_counters_not_denied(
     assert (
         _sample(
             "af_mcp_tool_invocations_denied_total",
-            {"backend": "rucio", "action_type": "read"},
+            {"service": "rucio", "action_type": "read"},
         )
         == before_denied
     )
