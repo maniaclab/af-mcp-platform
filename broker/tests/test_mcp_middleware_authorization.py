@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import io
+import json
 from typing import TYPE_CHECKING, Any
 
 import mcp.types as mt
@@ -8,6 +10,12 @@ from fastmcp.exceptions import AuthorizationError
 from fastmcp.tools.base import ToolResult
 from prometheus_client import REGISTRY
 
+from af_mcp_broker.audit import pipeline
+from af_mcp_broker.audit.logger import init_audit_logger
+from af_mcp_broker.audit.pipeline import (
+    aclose_metering_pipeline,
+    init_metering_pipeline,
+)
 from af_mcp_broker.authorization import EntitlementPolicy
 from af_mcp_broker.mcp.middleware import authorization_mw
 from af_mcp_broker.mcp.middleware.authorization_mw import AuthorizationMiddleware
@@ -131,6 +139,11 @@ def captured_audits(monkeypatch: pytest.MonkeyPatch) -> list[AuditRecord]:
         records.append(record)
 
     monkeypatch.setattr(authorization_mw, "write_audit", _fake_write_audit)
+    # Success/error records flow through the metering pipeline's helper,
+    # whose uninitialized fallback (no pipeline installed in unit tests)
+    # measures and writes via pipeline.write_audit -- patch that too so
+    # every audit path in the middleware lands here.
+    monkeypatch.setattr(pipeline, "write_audit", _fake_write_audit)
     return records
 
 
@@ -389,8 +402,10 @@ async def test_success_records_duration_and_observes_histogram(
 async def test_success_records_result_bytes_and_tokens(
     registry, policy, make_principal, captured_audits, monkeypatch
 ) -> None:
-    """The success path measures the result via audit.measure and records
-    both fields; the measurement sees the very ToolResult call_next returned."""
+    """The success path measures the result via audit.measure (in the
+    metering pipeline -- audit/pipeline.py -- not on the hot path) and
+    records both fields; the measurement sees the very ToolResult call_next
+    returned."""
     mw = AuthorizationMiddleware(registry, policy)
     principal = make_principal(groups=["atlas"])
     context = _call_tool_context("rucio_list_dids", {"scope": "foo"}, principal)
@@ -403,7 +418,7 @@ async def test_success_records_result_bytes_and_tokens(
         measured.append(result)
         return (5, 2)
 
-    monkeypatch.setattr(authorization_mw, "measure_tool_result", _fake_measure)
+    monkeypatch.setattr(pipeline, "measure_tool_result", _fake_measure)
 
     await mw.on_call_tool(context, call_next)
 
@@ -626,3 +641,80 @@ async def test_call_next_failure_increments_invocation_counters_not_denied(
         )
         == before_denied
     )
+
+
+# ---------------------------------------------------------------------------
+# Metering pipeline integration (audit/pipeline.py): with a real pipeline
+# installed, success/error audit lines are measured and written by the
+# background worker so the tool call never waits on them; denied lines stay
+# synchronous inline (security-relevant, nothing to measure).
+# ---------------------------------------------------------------------------
+
+
+async def test_success_audit_flows_through_metering_pipeline(
+    registry, policy, make_principal
+) -> None:
+    """With a real pipeline installed the success path hands the record
+    over and returns without writing; after the pipeline drains, the line
+    carries the same fields the old inline path produced -- including the
+    measurement the worker performed."""
+    buffer = io.StringIO()
+    init_audit_logger(buffer)
+    init_metering_pipeline()
+    try:
+        mw = AuthorizationMiddleware(registry, policy)
+        principal = make_principal(groups=["atlas"])
+        context = _call_tool_context("rucio_list_dids", {"scope": "foo"}, principal)
+        fake_result = ToolResult(
+            content=[mt.TextContent(type="text", text="hellohello")]
+        )
+
+        result = await mw.on_call_tool(context, _CallNextRecorder(result=fake_result))
+
+        assert result is fake_result
+        # The tool call returned without waiting on measurement or audit
+        # I/O: nothing has been written yet (put_nowait never yields, so
+        # the worker cannot have run between enqueue and here).
+        assert buffer.getvalue() == ""
+    finally:
+        await aclose_metering_pipeline()
+
+    line = json.loads(buffer.getvalue().strip())
+    assert line["event"] == "audit"
+    assert line["outcome"] == "success"
+    assert line["error"] is None
+    assert line["permission"] == "read_data"
+    assert line["target"] == "rucio"
+    assert line["action"] == "rucio_list_dids"
+    assert line["action_type"] == "read"
+    assert line["mcp_service"] == "rucio"
+    assert line["principal_sub"] == principal.subject
+    assert line["principal_uid"] == principal.uid
+    assert line["duration_ms"] >= 0.0
+    assert line["result_bytes"] == len(b"hellohello")
+    # conftest's stub tiktoken encoder: one token per 4 characters.
+    assert line["result_tokens_est"] == 2
+
+
+async def test_denied_audit_written_inline_not_via_pipeline(
+    registry, policy, make_principal
+) -> None:
+    """A denial is security-relevant and has nothing to measure: its audit
+    line must be on disk before the AuthorizationError even propagates --
+    no drain required."""
+    buffer = io.StringIO()
+    init_audit_logger(buffer)
+    init_metering_pipeline()
+    try:
+        mw = AuthorizationMiddleware(registry, policy)
+        principal = make_principal(groups=[])
+        context = _call_tool_context("rucio_list_dids", {}, principal)
+
+        with pytest.raises(AuthorizationError):
+            await mw.on_call_tool(context, _CallNextRecorder())
+
+        line = json.loads(buffer.getvalue().strip())
+        assert line["outcome"] == "denied"
+        assert line["target"] == "rucio"
+    finally:
+        await aclose_metering_pipeline()

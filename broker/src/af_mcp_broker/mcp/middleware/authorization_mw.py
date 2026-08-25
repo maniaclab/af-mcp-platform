@@ -10,7 +10,7 @@ from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 
 from af_mcp_broker import metrics
 from af_mcp_broker.audit import AuditRecord, write_audit
-from af_mcp_broker.audit.measure import measure_tool_result
+from af_mcp_broker.audit.pipeline import submit_metered_audit
 from af_mcp_broker.authorization import (
     EntitlementPolicy,
     check_entitlement,
@@ -205,7 +205,10 @@ class AuthorizationMiddleware(Middleware):
             metrics.tool_duration_seconds.labels(
                 service=service.name, tool=tool_name, action_type=action_type
             ).observe(duration)
-            await write_audit(
+            # Routed through the metering pipeline (result=None -- an error
+            # produced no result to measure) so the error response is not
+            # held by audit I/O either.
+            await submit_metered_audit(
                 AuditRecord(
                     principal_sub=principal.subject,
                     principal_uid=principal.uid,
@@ -221,21 +224,25 @@ class AuthorizationMiddleware(Middleware):
                     error=str(exc),
                     principal_permission_grant=_permission_grant_field(principal),
                     duration_ms=duration * 1000.0,
-                )
+                ),
+                None,
             )
             raise
         duration = time.perf_counter() - started
-        # An estimate of the result's context-injection cost, not wire size
-        # -- see measure_tool_result's docstring for exactly what is
-        # serialized and counted. Success path only: an error produced no
-        # result to measure.
-        result_bytes, result_tokens_est = measure_tool_result(result)
-
         _record_invocation(service.name, tool_name, action_type)
         metrics.tool_duration_seconds.labels(
             service=service.name, tool=tool_name, action_type=action_type
         ).observe(duration)
-        await write_audit(
+        # The result measurement -- an estimate of its context-injection
+        # cost, not wire size; see measure_tool_result's docstring for
+        # exactly what is serialized and counted -- happens on the metering
+        # pipeline's background worker (audit/pipeline.py), never here:
+        # serializing and tokenizing a large result can cost tens of ms,
+        # and the tool call must not wait on it (nor on the audit write).
+        # The record is handed over with result_bytes/result_tokens_est
+        # still None for the worker to fill. Success path only: an error
+        # produced no result to measure (result=None above).
+        await submit_metered_audit(
             AuditRecord(
                 principal_sub=principal.subject,
                 principal_uid=principal.uid,
@@ -250,8 +257,7 @@ class AuthorizationMiddleware(Middleware):
                 outcome="success",
                 principal_permission_grant=_permission_grant_field(principal),
                 duration_ms=duration * 1000.0,
-                result_bytes=result_bytes,
-                result_tokens_est=result_tokens_est,
-            )
+            ),
+            result,
         )
         return result
