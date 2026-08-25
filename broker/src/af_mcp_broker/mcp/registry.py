@@ -157,6 +157,10 @@ class BackendRegistry:
         """Record the most recent classified tools/list failure *reason* for backend *name*. Called by aggregator.py's _ObservableProxyProvider when a tools/list request fails -- see _classify_list_failure."""
         self._recent_list_failures[name] = reason
 
+    def clear_list_failure(self, name: str) -> None:
+        """Clear any recorded tools/list failure reason for *name*. Called by aggregator.py's _ObservableProxyProvider on a successful tools/list, so a backend that recovers stops being reported "unavailable" -- record_list_failure() has last-write-wins semantics but nothing previously cleared a stale reason on success, so it otherwise persisted for the life of the process. No-op if nothing was recorded."""
+        self._recent_list_failures.pop(name, None)
+
     def recent_list_failure(self, name: str) -> str | None:
         """Return the most recently recorded tools/list failure reason for *name*, or None if none has been recorded (the healthy default)."""
         return self._recent_list_failures.get(name)

@@ -4,6 +4,7 @@ import inspect
 import time
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
@@ -764,6 +765,38 @@ async def test_observable_proxy_provider_records_list_failure_on_registry(
         await provider._list_tools()
 
     assert registry.recent_list_failure("example") == "unavailable"
+
+
+async def test_observable_proxy_provider_clears_list_failure_on_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A backend that previously failed tools/list and has since recovered
+    must not stay reported "unavailable" forever -- record_list_failure() had
+    no counterpart to un-record a stale reason, so /v1/catalog and
+    af_list_mcp_servers kept surfacing a backend as unavailable for the rest
+    of the broker pod's uptime even once its /mcp endpoint was answering
+    fine again. A successful _list_tools() must clear any reason previously
+    recorded for this backend."""
+    monkeypatch.setattr(
+        aggregator.ProxyProvider, "_list_tools", AsyncMock(return_value=[])
+    )
+
+    registry = BackendRegistry()
+    registry.register(_spec())
+    registry.record_list_failure("example", "unavailable")
+
+    async def _factory() -> Client:
+        raise AssertionError(
+            "ProxyProvider._list_tools is stubbed; should never call the client factory"
+        )
+
+    provider = aggregator._ObservableProxyProvider(
+        "example", _factory, registry=registry
+    )
+
+    await provider._list_tools()
+
+    assert registry.recent_list_failure("example") is None
 
 
 # ---------------------------------------------------------------------------

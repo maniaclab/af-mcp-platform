@@ -732,7 +732,11 @@ class _ObservableProxyProvider(ProxyProvider):
     record_list_failure) so /v1/catalog's per-backend status derivation
     (issue #123) can factor in a recent listing failure -- e.g. downgrading
     an otherwise "available" backend to "unavailable" -- without an extra
-    live probe of its own.
+    live probe of its own. A subsequent successful listing clears that
+    recorded reason (BackendRegistry.clear_list_failure) -- otherwise a
+    backend that recovers from one transient failure would keep reporting
+    "unavailable" for the life of the process, since record_list_failure()
+    on its own has no expiry or reset path.
     """
 
     def __init__(
@@ -748,7 +752,7 @@ class _ObservableProxyProvider(ProxyProvider):
 
     async def _list_tools(self) -> Sequence[Tool]:
         try:
-            return await super()._list_tools()
+            tools = await super()._list_tools()
         except Exception as exc:
             reason, detail = await _classify_list_failure(exc, self._backend_name)
             self._registry.record_list_failure(self._backend_name, reason)
@@ -759,6 +763,13 @@ class _ObservableProxyProvider(ProxyProvider):
                 error=detail,
             )
             raise
+        else:
+            # A successful listing means the backend has recovered from any
+            # previously recorded failure -- clear it so /v1/catalog and
+            # af_list_mcp_servers stop reporting "unavailable" for a backend
+            # that's actually fine again.
+            self._registry.clear_list_failure(self._backend_name)
+            return tools
 
 
 def build_aggregator(
