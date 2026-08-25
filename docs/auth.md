@@ -885,16 +885,19 @@ broker first, then migrate** — in the window between the two, scoped PATs
 are denied, never widened.
 
 Run the one-time migration inside a broker pod (which already carries the
-Vault/OpenBao environment):
+Vault/OpenBao environment). The image deliberately does not ship
+`scripts/`, and `kubectl exec` bypasses the entrypoint so `python` is not
+on `PATH` — pipe the script from a repo checkout over stdin into the pixi
+environment's interpreter (arguments go after python's `-`):
 
 ```bash
 # Dry run (the default): reports every record it would rewrite, writes nothing.
-kubectl exec deploy/af-mcp-platform-broker -- \
-    python /app/scripts/migrate-pat-capability-grant.py
+kubectl exec -i -n mcp deploy/af-mcp-platform-broker -- \
+    /app/.pixi/envs/broker/bin/python - < scripts/migrate-pat-capability-grant.py
 
 # Execute. Idempotent: already-migrated records are counted and skipped.
-kubectl exec deploy/af-mcp-platform-broker -- \
-    python /app/scripts/migrate-pat-capability-grant.py --apply
+kubectl exec -i -n mcp deploy/af-mcp-platform-broker -- \
+    /app/.pixi/envs/broker/bin/python - --apply < scripts/migrate-pat-capability-grant.py
 ```
 
 The final summary counts migrated / already-migrated / unscoped-null /
