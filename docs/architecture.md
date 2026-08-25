@@ -137,6 +137,60 @@ Everywhere else in these docs, "capability" means sense (1).
 
 ---
 
+## Trust tiers
+
+Elwood v5 / Shannon defines three trust tiers. Each deployed app's tier is
+declared alongside its deployment manifests in the GitOps repo
+(maniaclab/flux_apps#32); this section declares the platform's own posture.
+
+- **user-tier** — lowest privilege: acts only with per-user credentials.
+- **service-tier** — interacts with shared infrastructure; requires a
+  runbook, a policy, and a named reviewer.
+- **infrastructure-tier** — holds platform-wide secrets or can modify the
+  platform; the highest governance bar.
+
+### The broker is infrastructure-tier
+
+The broker holds the AF Broker Identity Token signing key
+(`broker.identityToken.existingSigningKeySecret`) and the Vault access
+behind the token store (`broker.oauth21.tokenStore`), where every linked
+user's brokered credentials are persisted — together, the ability to obtain
+a credential for any linked user. It also runs a standing Keycloak
+directory-read client (`broker.keycloakAdmin`, realm-management
+`view-users` + `query-groups` only). That is why its governance bar is the
+strictest in the platform: fail-closed startup (a missing signing key,
+unmatched x509 wiring, or a service left with no gate at all refuses to
+start rather than degrading), authority never carried in a token
+(broker-issued JWTs are identity assertions, nothing more — see
+[docs/auth.md](auth.md)), and every secret delivered as an
+externally-created SealedSecret the chart never mints itself.
+
+### Per-mode tiers differ
+
+The broker's effective privilege depends on configuration:
+
+- **x509 minting mode.** With `serviceUrl` set on an `x509`
+  `identityProviders` entry, proxy minting is delegated to
+  voms-token-service and the broker pod needs no Job-creation RBAC. In the
+  legacy mode (`serviceUrl` omitted) the broker's own ServiceAccount
+  creates ephemeral k8s Jobs that read users' NFS `~/.globus` directories,
+  which requires `rbac.create` (batch/jobs create + pods/attach) on the
+  broker pod itself — the higher-trust configuration.
+- **Credential execution model** (`ExecutionModel` in
+  `broker/src/af_mcp_broker/credentials/base.py`). `DELEGATED` providers
+  forward a per-user credential — user-tier posture. `ON_BEHALF` providers
+  act with a facility service credential on the user's behalf —
+  service-tier posture, which is why an ON_BEHALF provider must always
+  write an audit record (`CredentialProvider.issue`).
+- **Registered services.** Each service's tier is declared where it is
+  deployed (the GitOps repo, per above). On the platform side, a service's
+  registry entry expresses its posture through `auth_type` (what credential
+  the aggregator injects) and `required_capability` (who may call it).
+  `required_capability: __none__` — open to any authenticated user — is
+  only appropriate for user-tier read-only services.
+
+---
+
 ## The Four Broker Subsystems
 
 ### 1. Identity

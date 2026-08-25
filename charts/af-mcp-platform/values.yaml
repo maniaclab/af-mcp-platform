@@ -54,6 +54,9 @@ oidc:
 
 # ---------------------------------------------------------------------------
 # Broker: FastAPI (/v1 REST) + FastMCP aggregator (/mcp) — same pod
+# Trust tier (Elwood v5 / Shannon): infrastructure-tier — holds the
+# identity-token signing key + Vault access; see docs/architecture.md
+# "Trust tiers".
 # ---------------------------------------------------------------------------
 broker:
   replicaCount: 2
@@ -283,6 +286,10 @@ broker:
   #   alias: x509
   #   displayName: "Grid certificate (x509)"
   #   enables: "VOMS proxy minting for x509-authenticated services"
+  #   # Trust tier: voms-token-service mode (serviceUrl set) keeps Job
+  #   # minting out of the broker pod; the legacy Job-mint mode (serviceUrl
+  #   # omitted) grants the broker pod rbac.create — the higher-trust
+  #   # configuration. See docs/architecture.md "Trust tiers".
   #   # Every service wired with auth_type: x509 in aggregator.services must
   #   # be covered by an x509 entry's targets (and vice versa) — the broker
   #   # refuses to start on a mismatch, including the entry-less case (no
@@ -442,6 +449,9 @@ aggregator:
   # whose tools are already self-prefixed at the source, and only when no
   # other configured service can advertise an overlapping name -- otherwise
   # one silently shadows the other. See docs/adding-a-service.md.
+  # Each registered service's trust tier (Elwood v5 / Shannon) is declared
+  # alongside its deployment manifests in the GitOps repo;
+  # required_capability: __none__ is only for user-tier read-only services.
   services: []
 
 # ---------------------------------------------------------------------------
