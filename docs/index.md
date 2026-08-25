@@ -11,9 +11,9 @@ servers. It gives an AF's users a single endpoint that:
   ATLAS GitLab, Jupyter, HTCondor, …);
 - aggregates every registered backend MCP server behind one URL.
 
-LLM clients never hold raw x509 or IAM credentials. Every tool invocation
-passes through the broker's authorization and audit layer before reaching
-any backend.
+LLM clients never hold raw x509 or IAM credentials. Every method invocation
+(MCP "tool" call) passes through the broker's authorization and audit layer
+before reaching any backend.
 
 The reference deployment is the [UChicago ATLAS Analysis Facility](https://af.uchicago.edu/)
 (`mcp.af.uchicago.edu`, ~800 physics users); the diagrams and examples below
