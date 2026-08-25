@@ -9,8 +9,8 @@ from af_mcp_broker.authorization import EntitlementPolicy
 from af_mcp_broker.mcp.middleware.entitlement_mw import EntitlementMiddleware
 from af_mcp_broker.mcp.registry import (
     DIAGNOSTIC_TOOL_NAMES,
-    BackendRegistry,
-    BackendSpec,
+    ServiceRegistry,
+    ServiceSpec,
 )
 
 
@@ -32,10 +32,10 @@ def _tool(name: str) -> Tool:
 
 
 @pytest.fixture
-def registry() -> BackendRegistry:
-    reg = BackendRegistry()
+def registry() -> ServiceRegistry:
+    reg = ServiceRegistry()
     reg.register(
-        BackendSpec(
+        ServiceSpec(
             name="rucio",
             prefix="rucio",
             url="http://rucio.invalid/mcp",
@@ -45,7 +45,7 @@ def registry() -> BackendRegistry:
         )
     )
     reg.register(
-        BackendSpec(
+        ServiceSpec(
             name="docs",
             prefix="docs",
             url="http://docs.invalid/mcp",
@@ -54,7 +54,7 @@ def registry() -> BackendRegistry:
         )
     )
     reg.register(
-        BackendSpec(
+        ServiceSpec(
             name="credentialed",
             prefix="credentialed",
             url="http://credentialed.invalid/mcp",
@@ -185,7 +185,7 @@ async def test_registry_and_policy_are_mutable_attributes(
 ):
     """populate_aggregator() refreshes these in place on every lifespan
     entry rather than constructing a new middleware instance."""
-    mw = EntitlementMiddleware(BackendRegistry(), EntitlementPolicy())
+    mw = EntitlementMiddleware(ServiceRegistry(), EntitlementPolicy())
     mw.registry = registry
     mw.policy = policy
 

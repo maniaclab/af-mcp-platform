@@ -14,19 +14,19 @@ if TYPE_CHECKING:
     import mcp.types as mt
     from fastmcp.tools.base import Tool
 
-    from af_mcp_broker.mcp.registry import BackendRegistry
+    from af_mcp_broker.mcp.registry import ServiceRegistry
 
 logger = structlog.get_logger(__name__)
 
 # on_list_tools middleware: filters the tool list to capabilities the
 # Principal (stored by identity_mw, which must be registered first so it
-# runs outermost) actually has. Backends whose required_capability the
+# runs outermost) actually has. Services whose required_capability the
 # Principal lacks are hidden entirely, as are tools that don't map to any
-# known backend.
+# known service.
 
 
 class EntitlementMiddleware(Middleware):
-    def __init__(self, registry: BackendRegistry, policy: EntitlementPolicy) -> None:
+    def __init__(self, registry: ServiceRegistry, policy: EntitlementPolicy) -> None:
         # Mutable on purpose: populate_aggregator() refreshes these in place
         # on every lifespan entry rather than constructing a new middleware
         # instance each time.
@@ -56,24 +56,24 @@ class EntitlementMiddleware(Middleware):
     def _tool_is_allowed(self, tool: Tool, principal_caps: set[str]) -> bool:
         if tool.name in DIAGNOSTIC_TOOL_NAMES:
             # af_* diagnostic tools (issue #153) describe the broker's own
-            # state (identity linkage, backend availability, the caller's
+            # state (identity linkage, service availability, the caller's
             # own capabilities) and need no capability -- they must stay
             # visible to every authenticated caller regardless of
             # entitlements, precisely because they're how a caller
             # self-diagnoses a missing/denied tool elsewhere. No registered
-            # backend can ever claim this prefix (BackendRegistry.register()
-            # refuses it), so this can't be used to smuggle a real backend's
+            # service can ever claim this prefix (ServiceRegistry.register()
+            # refuses it), so this can't be used to smuggle a real service's
             # tool past the capability check below.
             return True
-        backend = self.registry.get_by_tool_prefix(tool.name)
-        if backend is None:
+        service = self.registry.get_by_tool_prefix(tool.name)
+        if service is None:
             return False  # unknown prefix: deny by default (fail-closed)
         if (
-            backend.required_capability is None
-            or backend.required_capability == "__none__"
+            service.required_capability is None
+            or service.required_capability == "__none__"
         ):
             # Omitted -> the credential layer is the gate (see app.py's
             # startup validation); "__none__" -> open to any authenticated
             # user. Either way, no capability check gates this tool's listing.
             return True
-        return backend.required_capability in principal_caps
+        return service.required_capability in principal_caps

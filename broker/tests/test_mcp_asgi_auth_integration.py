@@ -14,7 +14,7 @@ from fastmcp.utilities.tests import run_server_async
 from af_mcp_broker.authorization import EntitlementPolicy
 from af_mcp_broker.credentials import CredentialRegistry
 from af_mcp_broker.mcp.aggregator import build_aggregator
-from af_mcp_broker.mcp.registry import BackendRegistry, BackendSpec
+from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -79,10 +79,10 @@ def policy() -> EntitlementPolicy:
 
 
 @pytest.fixture
-def registry(open_backend_url: str) -> BackendRegistry:
-    registry = BackendRegistry()
+def registry(open_backend_url: str) -> ServiceRegistry:
+    registry = ServiceRegistry()
     registry.register(
-        BackendSpec(
+        ServiceSpec(
             name="open",
             prefix="open",
             url=open_backend_url,
@@ -98,7 +98,7 @@ def registry(open_backend_url: str) -> BackendRegistry:
 async def aggregator_url(
     settings: Any,
     policy: EntitlementPolicy,
-    registry: BackendRegistry,
+    registry: ServiceRegistry,
     static_principal_cache: Any,
 ) -> AsyncIterator[str]:
     principal_cache, _directory = static_principal_cache
@@ -190,7 +190,7 @@ async def test_valid_bearer_tools_list_and_call_unchanged(
 
 
 async def test_pat_round_trip_tools_list_and_call(
-    settings: Any, policy: EntitlementPolicy, registry: BackendRegistry
+    settings: Any, policy: EntitlementPolicy, registry: ServiceRegistry
 ) -> None:
     """End-to-end coverage for issue #144 step 2a: mint a PAT through the
     same TokenRecord shape POST /v1/tokens produces, present it as a real
@@ -263,7 +263,7 @@ async def test_pat_round_trip_tools_list_and_call(
 
 
 async def test_dev_bypass_path_tools_list_and_call_still_work(
-    settings: Any, policy: EntitlementPolicy, registry: BackendRegistry
+    settings: Any, policy: EntitlementPolicy, registry: ServiceRegistry
 ) -> None:
     dev_settings = settings.model_copy(
         update={

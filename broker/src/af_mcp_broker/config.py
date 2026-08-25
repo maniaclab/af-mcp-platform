@@ -220,9 +220,9 @@ class Settings(BaseSettings):
     # passes PROXY_DIR when broker.tmpfsProxy is enabled).
     proxy_dir: str = "/run/broker/proxies"
 
-    # Policy and backend config files read at startup
+    # Policy and service config files read at startup
     policy_file: str = "/etc/af-mcp/policy.yaml"
-    backends_file: str = "/etc/af-mcp/backends.yaml"
+    services_file: str = "/etc/af-mcp/services.yaml"
 
     # Audit log destination; "-" means stdout
     audit_log_file: str = "-"
@@ -523,7 +523,7 @@ class Settings(BaseSettings):
     # AF_SERVICE_TOKEN_FILE. Empty means the feature is unconfigured: valid
     # for local dev, but app.py's lifespan refuses to start when a
     # broker-issued identityProviders entry exists without it (fail-closed,
-    # like the unreachable_capabilities/ungated_backends checks).
+    # like the unreachable_capabilities/ungated_services checks).
     broker_signing_key_file: str = ""
 
     # Directory of ADDITIONAL public key PEMs (files named *.pem) published

@@ -568,10 +568,10 @@ class TestAppWiring:
         is guaranteed to run after ``app_client_factory``'s own (fixture
         setup order between two same-scoped, non-dependent fixtures is
         unspecified, and app_client_factory sets a default
-        IDENTITY_PROVIDERS unconditionally). The shipped backends.yaml
+        IDENTITY_PROVIDERS unconditionally). The shipped services.yaml
         already declares "ami" as ``auth_type: x509``, so this entry
         (targeting "ami") satisfies the broker's coverage check with no
-        need to override BACKENDS_FILE.
+        need to override SERVICES_FILE.
         """
         import json
 

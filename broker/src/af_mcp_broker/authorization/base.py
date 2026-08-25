@@ -110,10 +110,10 @@ def get_action_type(
     """Resolve the action type for a specific tool on a target.
 
     ``capability`` is the target's required capability as declared by the
-    backend registry (``BackendSpec.required_capability``) -- the fallback
+    service registry (``ServiceSpec.required_capability``) -- the fallback
     below a tool-glob override, same as before this took the capability as a
     parameter instead of looking it up in ``policy.target_capabilities``
-    (deleted; the backend registry is now the sole source for what capability
+    (deleted; the service registry is now the sole source for what capability
     a target requires -- see issue #60).
     """
     overrides = policy.target_action_types.get(target, {})
@@ -135,7 +135,7 @@ def check_entitlement(
     """Return (allow, reason).
 
     ``capability`` is the target's required capability as declared by the
-    backend registry (``BackendSpec.required_capability`` -- backends.yaml is
+    service registry (``ServiceSpec.required_capability`` -- services.yaml is
     the sole source of truth for what a target requires; policy.yaml no
     longer duplicates it):
       - a capability name (e.g. "read_data") -> principal must hold it.

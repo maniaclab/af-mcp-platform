@@ -15,16 +15,16 @@ if TYPE_CHECKING:
 _AUTH = {"Authorization": "Bearer test"}
 
 
-def _register_panda_backend(client: TestClient) -> None:
-    """panda isn't in the shipped backends.yaml -- register it directly on
+def _register_panda_service(client: TestClient) -> None:
+    """panda isn't in the shipped services.yaml -- register it directly on
     the booted app's registry the same way test_catalog_action_type_reflects_
     target_action_type_overrides does for gitlab, so /v1/authorize (which now
     derives the required capability from the registry, not the request body
     -- issue #60) has a real backend to look up."""
-    from af_mcp_broker.mcp.registry import BackendSpec
+    from af_mcp_broker.mcp.registry import ServiceSpec
 
-    client.app.state.backend_registry.register(
-        BackendSpec(
+    client.app.state.service_registry.register(
+        ServiceSpec(
             name="panda",
             prefix="panda",
             url="http://panda-mcp.mcp.svc.cluster.local/mcp",
@@ -53,7 +53,7 @@ def test_authorize_panda_submit_state_change(
 ) -> None:
     client, state = app_client
     state["principal"] = make_principal(groups=["atlas"])
-    _register_panda_backend(client)
+    _register_panda_service(client)
     resp = client.post(
         "/v1/authorize",
         json={"target": "panda", "action": "submit_task"},
@@ -70,7 +70,7 @@ def test_authorize_no_groups_denied_panda(
 ) -> None:
     client, state = app_client
     state["principal"] = make_principal(groups=[])
-    _register_panda_backend(client)
+    _register_panda_service(client)
     resp = client.post(
         "/v1/authorize",
         json={"target": "panda", "action": "submit_task"},
@@ -141,7 +141,7 @@ def test_catalog_reflects_capabilities(
     assert servers["ami"]["status"] == "available"
     assert "rucio" in servers
     assert servers["rucio"]["status"] == "capability_required"
-    # panda isn't in the shipped backends.yaml at all -- absent regardless.
+    # panda isn't in the shipped services.yaml at all -- absent regardless.
     assert "panda" not in servers
 
 
@@ -149,7 +149,7 @@ def test_catalog_server_carries_display_metadata(
     app_client: tuple[TestClient, dict], make_principal: Callable[..., object]
 ) -> None:
     """Each server exposes display_name/description/auth_type from
-    backends.yaml. Per-server tool enumeration is deliberately NOT part of
+    services.yaml. Per-server tool enumeration is deliberately NOT part of
     the catalog payload — it lives at GET /v1/catalog/{backend}/tools (see
     test_catalog_tools.py), fetched on demand per backend."""
     client, state = app_client
@@ -309,12 +309,12 @@ def test_catalog_status_misconfigured_when_no_credential_provider_resolves(
     already-booted registry, as other tests here do for "panda"/"gitlab",
     exercises the defensive path.)"""
     from af_mcp_broker.app import app
-    from af_mcp_broker.mcp.registry import BackendSpec
+    from af_mcp_broker.mcp.registry import ServiceSpec
 
     client, state = app_client
     state["principal"] = make_principal(groups=["atlas"])
-    app.state.backend_registry.register(
-        BackendSpec(
+    app.state.service_registry.register(
+        ServiceSpec(
             name="orphan",
             prefix="orphan",
             url="http://orphan-mcp.mcp.svc.cluster.local/mcp",
@@ -336,7 +336,7 @@ def test_catalog_status_unavailable_when_recent_list_failure_recorded(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A recent tools/list failure the aggregator classified as "unavailable"
-    (BackendRegistry.record_list_failure -- see aggregator.py's
+    (ServiceRegistry.record_list_failure -- see aggregator.py's
     _ObservableProxyProvider) downgrades an otherwise-available backend to
     "unavailable" without an extra live probe."""
     from af_mcp_broker.app import app
@@ -346,7 +346,7 @@ def test_catalog_status_unavailable_when_recent_list_failure_recorded(
         return True
 
     monkeypatch.setattr(OIDCProvider, "is_linked", _linked)
-    app.state.backend_registry.record_list_failure("rucio", "unavailable")
+    app.state.service_registry.record_list_failure("rucio", "unavailable")
 
     client, state = app_client
     state["principal"] = make_principal(groups=["atlas"])
@@ -373,7 +373,7 @@ def test_catalog_status_unauthorized_failure_prompts_relink(
         return True
 
     monkeypatch.setattr(OIDCProvider, "is_linked", _linked)
-    app.state.backend_registry.record_list_failure("rucio", "unauthorized")
+    app.state.service_registry.record_list_failure("rucio", "unauthorized")
 
     client, state = app_client
     state["principal"] = make_principal(groups=["atlas"])
@@ -407,15 +407,15 @@ def test_catalog_status_required_capability_forms(
 ) -> None:
     """All three `required_capability` forms (declared / "__none__" /
     omitted) must be handled by the status derivation, not just the
-    declared-string form (issue #127 made backends.yaml authoritative for
+    declared-string form (issue #127 made services.yaml authoritative for
     all three)."""
     from af_mcp_broker.app import app
-    from af_mcp_broker.mcp.registry import BackendSpec
+    from af_mcp_broker.mcp.registry import ServiceSpec
 
     client, state = app_client
     state["principal"] = make_principal(groups=groups)
-    app.state.backend_registry.register(
-        BackendSpec(
+    app.state.service_registry.register(
+        ServiceSpec(
             name="capform",
             prefix="capform",
             url="http://capform-mcp.mcp.svc.cluster.local/mcp",
@@ -438,12 +438,12 @@ def test_catalog_status_never_leaks_urls_or_upstream_errors(
     backend URL, an upstream error body, policy internals, or a group list
     -- issue #123's "never leak internals" constraint."""
     from af_mcp_broker.app import app
-    from af_mcp_broker.mcp.registry import BackendSpec
+    from af_mcp_broker.mcp.registry import ServiceSpec
 
     client, state = app_client
     state["principal"] = make_principal(groups=[])
-    app.state.backend_registry.register(
-        BackendSpec(
+    app.state.service_registry.register(
+        ServiceSpec(
             name="orphan",
             prefix="orphan",
             url="http://orphan-mcp.mcp.svc.cluster.local/mcp",
@@ -470,12 +470,12 @@ def test_catalog_action_type_reflects_target_action_type_overrides(
     per-tool enumeration.
     """
     from af_mcp_broker.app import app
-    from af_mcp_broker.mcp.registry import BackendSpec
+    from af_mcp_broker.mcp.registry import ServiceSpec
 
     client, state = app_client
     state["principal"] = make_principal(groups=["atlas"])
-    app.state.backend_registry.register(
-        BackendSpec(
+    app.state.service_registry.register(
+        ServiceSpec(
             name="gitlab",
             prefix="gitlab",
             url="http://gitlab-mcp.mcp.svc.cluster.local/mcp",
@@ -511,7 +511,7 @@ def test_catalog_credential_provider_oauth21_direct(
                     "issuer": "https://backend-as.example",
                 },
                 # This override replaces conftest's default entirely, but
-                # the shipped backends.yaml's "ami" (auth_type: x509) still
+                # the shipped services.yaml's "ami" (auth_type: x509) still
                 # needs an explicit entry or the broker refuses to start.
                 {
                     "type": "x509",

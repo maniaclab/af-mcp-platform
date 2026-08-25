@@ -3,7 +3,7 @@
 
 Exercises a *deployed* broker exactly the way a real MCP client would: over
 the wire, via the fastmcp Client, with a real AF Keycloak bearer token. No
-mocks -- every step is a real MCP-over-HTTP round trip to whatever backend(s)
+mocks -- every step is a real MCP-over-HTTP round trip to whatever service(s)
 the broker is actually wired to.
 
 Sibling of the /v1-surface verification this issue's design doc refers to as
@@ -16,11 +16,11 @@ comment next to the `!scripts/verify-mcp-flow.py` exception for why.
 
 Steps:
     1. Connect (MCP initialize handshake).
-    2. tools/list -- prints every visible tool, grouped by inferred backend
+    2. tools/list -- prints every visible tool, grouped by inferred service
        prefix. What's visible reflects entitlement filtering: a principal
-       only sees tools for backends its Keycloak groups grant a capability
+       only sees tools for services its Keycloak groups grant a capability
        for (see docs/architecture.md's Authorization subsystem).
-    3. (optional, --call) tools/call one real tool against a real backend.
+    3. (optional, --call) tools/call one real tool against a real service.
 
 Usage:
     # Read the token with -s so it never lands in shell history or a file.
@@ -65,7 +65,7 @@ TOKEN_ENV_VAR = "MCP_BEARER_TOKEN"
 # error path it actually names.
 _HINTS: dict[str, str] = {
     "not linked": (
-        "The credential provider for this backend has no linked account "
+        "The credential provider for this service has no linked account "
         "for you yet. Visit the portal's Identities page and click "
         "'Link', then re-run this script."
     ),
@@ -74,19 +74,19 @@ _HINTS: dict[str, str] = {
         "URL in the error above."
     ),
     "Authorization denied": (
-        "Your Keycloak groups don't grant the capability this backend "
+        "Your Keycloak groups don't grant the capability this service "
         "requires. Check `GET /v1/capabilities` for what you currently have."
     ),
     "requires an x509/VOMS proxy, which needs a POSIX": (
-        "x509 backends are callable via /mcp (issue #112), but this "
+        "x509 services are callable via /mcp (issue #112), but this "
         "account has no POSIX/grid identity for the legacy ephemeral-Job "
         "mint path. If a voms-token-service identity_providers entry "
-        "covers this backend, that path doesn't need POSIX at all -- see "
+        "covers this service, that path doesn't need POSIX at all -- see "
         "docs/x509-deployment-notes.md. Otherwise contact your Analysis "
         "Facility operator to request a grid identity."
     ),
-    "No backend registered for tool": (
-        "The tool name doesn't match any configured backend's prefix. "
+    "No service registered for tool": (
+        "The tool name doesn't match any configured service's prefix. "
         "Check the exact name printed by the tools/list step above."
     ),
 }
@@ -108,12 +108,12 @@ def _hint_for(error_text: str) -> str | None:
     return None
 
 
-def _group_tools_by_backend(tool_names: list[str]) -> dict[str, list[str]]:
-    """Groups tool names by inferred backend prefix (the segment before the
+def _group_tools_by_service(tool_names: list[str]) -> dict[str, list[str]]:
+    """Groups tool names by inferred service prefix (the segment before the
     first underscore). This is a display heuristic, not authoritative: it
-    works because every backend in backends.yaml either namespaces its
+    works because every service in services.yaml either namespaces its
     tools as "<prefix>_<name>" or (like rucio-mcp) already self-prefixes
-    the same way -- see BackendSpec.apply_namespace in mcp/registry.py.
+    the same way -- see ServiceSpec.apply_namespace in mcp/registry.py.
     """
     grouped: dict[str, list[str]] = {}
     for name in tool_names:
@@ -149,9 +149,9 @@ async def run(args: argparse.Namespace) -> bool:
             return False
 
         tool_names = sorted(t.name for t in tools)
-        grouped = _group_tools_by_backend(tool_names)
+        grouped = _group_tools_by_service(tool_names)
         _print_result(
-            True, f"{len(tool_names)} tool(s) across {len(grouped)} backend(s)"
+            True, f"{len(tool_names)} tool(s) across {len(grouped)} service(s)"
         )
         for prefix in sorted(grouped):
             print(f"    {prefix}:")

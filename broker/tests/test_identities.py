@@ -9,7 +9,7 @@ explicit entry (app.py's lifespan refuses to start otherwise — there is no
 synthesized fallback), so the x509 row is always registry-sourced like every
 other. conftest.py's ``app_client``/``app_client_factory`` default supplies
 a minimal legacy-mode entry (alias "x509", targets ["ami"]) covering the
-shipped backends.yaml's x509 backend, which is what the x509-specific tests
+shipped services.yaml's x509 backend, which is what the x509-specific tests
 below exercise. These tests cover building that list: probing
 ``is_linked()`` so the response reflects reality rather than a JWT claim
 that may be absent, ``link_url`` shape for both provider types (always null
@@ -65,7 +65,7 @@ def _configure_oauth21_env(monkeypatch: pytest.MonkeyPatch) -> None:
                     "enables": "ATLAS Rucio operations via rucio-mcp",
                 },
                 # This override replaces conftest's default entirely, but
-                # the shipped backends.yaml's "ami" (auth_type: x509) still
+                # the shipped services.yaml's "ami" (auth_type: x509) still
                 # needs an explicit entry or the broker refuses to start.
                 {
                     "type": "x509",
@@ -288,7 +288,7 @@ def test_providers_order_matches_identity_providers_config_order(
                     "alias": "a-keycloak-provider",
                     "targets": ["a-keycloak-provider"],
                 },
-                # The shipped backends.yaml wires "ami" with auth_type: x509,
+                # The shipped services.yaml wires "ami" with auth_type: x509,
                 # so this override (replacing conftest's default entirely)
                 # must still cover it or the broker refuses to start.
                 {
@@ -362,7 +362,7 @@ def test_broker_issued_link_mechanism_is_none(
                     "targets": ["af-internal"],
                 },
                 # This override replaces conftest's default entirely, but
-                # the shipped backends.yaml's "ami" (auth_type: x509) still
+                # the shipped services.yaml's "ami" (auth_type: x509) still
                 # needs an explicit entry or the broker refuses to start.
                 {
                     "type": "x509",
@@ -384,7 +384,7 @@ def test_broker_issued_link_mechanism_is_none(
 # ---------------------------------------------------------------------------
 # The x509 entry — registry-sourced like every other row: conftest.py's
 # app_client_factory default supplies a minimal legacy-mode entry (alias
-# "x509", targets ["ami"]) covering the shipped backends.yaml's auth_type:
+# "x509", targets ["ami"]) covering the shipped services.yaml's auth_type:
 # x509 backend, since the broker refuses to start otherwise (there is no
 # synthesized fallback) — id "x509" matching the credential_provider alias
 # /v1/catalog reports (app.py's _build_target_to_alias), which the portal
@@ -407,7 +407,7 @@ backends:
 def test_x509_entry_present_with_x509_backend(
     app_client: tuple[TestClient, dict],
 ) -> None:
-    """The shipped backends.yaml wires "ami" with auth_type: x509, and
+    """The shipped services.yaml wires "ami" with auth_type: x509, and
     conftest's default identity_providers covers it -- the default app must
     list the entry with the passphrase mechanism and no link_url (x509
     links via an in-portal passphrase form, not a redirect)."""
@@ -431,11 +431,11 @@ def test_x509_entry_absent_without_x509_backends(
     """With no ``auth_type: x509`` backend at all, an x509 entry is neither
     required nor rendered -- override IDENTITY_PROVIDERS too, dropping
     conftest's default x509 entry (which targets "ami", absent from this
-    backends.yaml), since a dangling entry would fail the broker's coverage
+    services.yaml), since a dangling entry would fail the broker's coverage
     check the other way (an x509 entry targeting a non-x509 backend)."""
-    backends_file = tmp_path / "backends.yaml"
-    backends_file.write_text(_NO_X509_BACKENDS_YAML)
-    monkeypatch.setenv("BACKENDS_FILE", str(backends_file))
+    services_file = tmp_path / "services.yaml"
+    services_file.write_text(_NO_X509_BACKENDS_YAML)
+    monkeypatch.setenv("SERVICES_FILE", str(services_file))
     monkeypatch.setenv(
         "IDENTITY_PROVIDERS",
         json.dumps(
@@ -892,7 +892,7 @@ def test_unlink_oauth21_alias_204_even_when_revocation_endpoint_fails(
                     "revocation_endpoint": "https://backend-as.example/revoke",
                 },
                 # This override replaces conftest's default entirely, but
-                # the shipped backends.yaml's "ami" (auth_type: x509) still
+                # the shipped services.yaml's "ami" (auth_type: x509) still
                 # needs an explicit entry or the broker refuses to start.
                 {
                     "type": "x509",

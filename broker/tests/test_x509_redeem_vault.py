@@ -55,9 +55,9 @@ def service_app(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, app_client_factory
 ) -> Iterator[tuple[TestClient, FakeX509Store, FakeVomsClient, dict]]:
     """Boot the real app with an x509 backend + signing key, then flip its X509Provider into service mode with fakes."""
-    backends_file = tmp_path / "backends.yaml"
-    backends_file.write_text(_BACKENDS_YAML)
-    monkeypatch.setenv("BACKENDS_FILE", str(backends_file))
+    services_file = tmp_path / "services.yaml"
+    services_file.write_text(_BACKENDS_YAML)
+    monkeypatch.setenv("SERVICES_FILE", str(services_file))
     monkeypatch.setenv("BROKER_PUBLIC_ORIGIN", "https://mcp.example.com")
     key_file = tmp_path / "signing-key.pem"
     key_file.write_bytes(_private_pem(_make_rsa_key()))

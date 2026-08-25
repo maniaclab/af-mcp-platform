@@ -17,7 +17,7 @@ from fastmcp.utilities.tests import run_server_async
 from af_mcp_broker.authorization import EntitlementPolicy
 from af_mcp_broker.credentials import CredentialRegistry
 from af_mcp_broker.mcp.aggregator import _make_client_factory, build_aggregator
-from af_mcp_broker.mcp.registry import BackendRegistry, BackendSpec
+from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
 
 # ---------------------------------------------------------------------------
 # Call-time upstream-failure mapping.
@@ -56,7 +56,7 @@ async def test_dead_backend_call_surfaces_as_clean_tool_error_not_a_traceback(
     reproduces the case where the schema was already cached while the
     backend was up and it has since gone down."""
     dead_url = f"http://127.0.0.1:{find_available_port()}/mcp"
-    spec = BackendSpec(
+    spec = ServiceSpec(
         name="dead",
         prefix="dead",
         url=dead_url,
@@ -110,9 +110,9 @@ async def test_upstream_mcp_level_error_passes_through_unchanged(
     token = sig_key.sign(make_claims())
 
     async with run_server_async(_toy_backend_with_failing_tool(), path="/mcp") as url:
-        registry = BackendRegistry()
+        registry = ServiceRegistry()
         registry.register(
-            BackendSpec(
+            ServiceSpec(
                 name="toy",
                 prefix="toy",
                 url=url,
@@ -156,7 +156,7 @@ def _toy_backend_with_slow_tool() -> FastMCP:
 async def test_slow_backend_call_times_out_cleanly_instead_of_hanging(
     settings: Any, sig_key: Any, prime_jwks: Any, static_principal_cache: Any
 ) -> None:
-    """BackendSpec.timeout_seconds must actually be enforced on the wire, not
+    """ServiceSpec.timeout_seconds must actually be enforced on the wire, not
     just recorded on the Client -- a backend that never responds within that
     window must fail the call quickly with a clean ToolError, rather than
     the aggregator hanging on it indefinitely."""
@@ -165,9 +165,9 @@ async def test_slow_backend_call_times_out_cleanly_instead_of_hanging(
     token = sig_key.sign(make_claims())
 
     async with run_server_async(_toy_backend_with_slow_tool(), path="/mcp") as url:
-        registry = BackendRegistry()
+        registry = ServiceRegistry()
         registry.register(
-            BackendSpec(
+            ServiceSpec(
                 name="slow",
                 prefix="slow",
                 url=url,

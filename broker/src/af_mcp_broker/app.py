@@ -51,7 +51,7 @@ from af_mcp_broker.mcp.aggregator import (
     build_asgi_auth_middleware,
     populate_aggregator,
 )
-from af_mcp_broker.mcp.registry import BackendRegistry
+from af_mcp_broker.mcp.registry import ServiceRegistry
 from af_mcp_broker.mcp_auth_codes import McpAuthCodeStore
 from af_mcp_broker.principal_cache import (
     InMemoryPrincipalCacheBackend,
@@ -74,7 +74,7 @@ logger = structlog.get_logger(__name__)
 def _build_target_to_alias(
     identity_providers_cfgs: Iterable[IdentityProviderConfig],
 ) -> dict[str, str]:
-    """Reverse map from backend target name to the credential-provider alias that services it, surfaced on /v1/catalog as ``credential_provider`` (issue #90). Every target gets its entry's configured alias — x509 targets included, since x509 is an ordinary ``identity_providers`` type: every ``auth_type: x509`` backend must be covered by an explicit entry (``_validate_x509_provider_targets`` refuses to boot otherwise), so this helper never needs a hardcoded synthetic alias. Targets with ``auth_type: none`` need no user credential and are simply absent from the mapping."""
+    """Reverse map from service target name to the credential-provider alias that services it, surfaced on /v1/catalog as ``credential_provider`` (issue #90). Every target gets its entry's configured alias — x509 targets included, since x509 is an ordinary ``identity_providers`` type: every ``auth_type: x509`` service must be covered by an explicit entry (``_validate_x509_provider_targets`` refuses to boot otherwise), so this helper never needs a hardcoded synthetic alias. Targets with ``auth_type: none`` need no user credential and are simply absent from the mapping."""
     target_to_alias: dict[str, str] = {}
     for cfg in identity_providers_cfgs:
         for target in cfg.targets:
@@ -84,22 +84,22 @@ def _build_target_to_alias(
 
 def _validate_x509_provider_targets(
     identity_providers_cfgs: Iterable[IdentityProviderConfig],
-    x509_backend_names: set[str],
+    x509_service_names: set[str],
 ) -> None:
-    """Fail-closed drift protection between ``auth_type: x509`` backends and explicit x509 ``identity_providers`` entries (both directions) — same reasoning as issue #60's required_capability consolidation: a mismatch is a typo, a stale backends.yaml, or a missing entry, and a startup RuntimeError surfaces it as a visible rollout failure with zero outage risk.
+    """Fail-closed drift protection between ``auth_type: x509`` services and explicit x509 ``identity_providers`` entries (both directions) — same reasoning as issue #60's required_capability consolidation: a mismatch is a typo, a stale services.yaml, or a missing entry, and a startup RuntimeError surfaces it as a visible rollout failure with zero outage risk.
 
     Universal: there is no synthesized-entry escape hatch. Every
-    ``auth_type: x509`` backend must be named in some explicit entry's
+    ``auth_type: x509`` service must be named in some explicit entry's
     ``targets``, including deployments with zero x509 entries at all — an
-    x509 backend with no covering entry refuses to boot naming it, the same
+    x509 service with no covering entry refuses to boot naming it, the same
     as one covered by the wrong entry.
     """
     x509_cfgs = [cfg for cfg in identity_providers_cfgs if cfg.type == "x509"]
     covered = {target for cfg in x509_cfgs for target in cfg.targets}
-    uncovered = sorted(x509_backend_names - covered)
+    uncovered = sorted(x509_service_names - covered)
     if uncovered:
         msg = (
-            "The following auth_type: x509 backends are not targeted by any "
+            "The following auth_type: x509 services are not targeted by any "
             f"x509 identity_providers entry: {uncovered}. They would have no "
             "credential provider (and no catalog credential_provider alias) "
             "at all. Add an entry covering them, e.g.:\n"
@@ -111,15 +111,15 @@ def _validate_x509_provider_targets(
             "mint path), or change their auth_type."
         )
         raise RuntimeError(msg)
-    not_x509 = sorted(covered - x509_backend_names)
+    not_x509 = sorted(covered - x509_service_names)
     if not_x509:
         msg = (
             "The following x509 identity_providers targets are not "
-            f"auth_type: x509 backends: {not_x509}. The aggregator only "
+            f"auth_type: x509 services: {not_x509}. The aggregator only "
             "injects the identity JWT (and the redeem endpoint only accepts "
-            "the audience) for auth_type: x509 backends, so the entry would "
-            "silently do nothing for them. Fix the typo, set the backend's "
-            "auth_type to x509 in backends.yaml, or remove the target."
+            "the audience) for auth_type: x509 services, so the entry would "
+            "silently do nothing for them. Fix the typo, set the service's "
+            "auth_type to x509 in services.yaml, or remove the target."
         )
         raise RuntimeError(msg)
 
@@ -218,23 +218,23 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         },
     )
 
-    # --- Backend registry (config-only; adding a backend needs no code change).
-    # backends_loaded means "backends.yaml parsed without error" — an empty
-    # `backends: []` is a valid, successfully-parsed degraded state (issue #29);
+    # --- Service registry (config-only; adding a service needs no code change).
+    # services_loaded means "services.yaml parsed without error" — an empty
+    # `services: []` is a valid, successfully-parsed degraded state (issue #29);
     # it is only False when the file is missing or fails to parse.
-    backend_registry = BackendRegistry()
+    service_registry = ServiceRegistry()
     try:
-        backend_registry.load(settings.backends_file)
-        backends_loaded = True
+        service_registry.load(settings.services_file)
+        services_loaded = True
     except FileNotFoundError:
-        logger.warning("backends_file_not_found", path=settings.backends_file)
-        backends_loaded = False
-    backends = backend_registry.all_backends()
-    if not backends:
-        logger.warning("no_backends_configured")
+        logger.warning("services_file_not_found", path=settings.services_file)
+        services_loaded = False
+    services = service_registry.all_services()
+    if not services:
+        logger.warning("no_services_configured")
 
-    # A backend's required_capability that no group in group_capabilities
-    # grants makes that backend unusable by every principal -- e.g. the
+    # A service's required_capability that no group in group_capabilities
+    # grants makes that service unusable by every principal -- e.g. the
     # operator never wrote a policy for it (a chart-rendered policy.yaml
     # with a stale key name the broker doesn't read, issue #59) or typo'd
     # the capability name. This is a hard startup failure, not a log line:
@@ -243,20 +243,20 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # to start surfaces the misconfiguration as a visible rollout failure /
     # CrashLoopBackOff / k8s event with zero outage risk, which is strictly
     # better than a log line an operator has to be watching for. (Distinct
-    # from the fail-closed check below, which guards against a backend with
+    # from the fail-closed check below, which guards against a service with
     # *no* gate at all -- this one guards against a gate nobody can pass.)
     granted_capabilities = {
         cap for caps in entitlement_policy.group_capabilities.values() for cap in caps
     }
     unreachable_capabilities: list[tuple[str, str]] = []
-    for spec in backends:
+    for spec in services:
         if spec.required_capability in (None, "__none__"):
             continue
         if spec.required_capability not in granted_capabilities:
             unreachable_capabilities.append((spec.name, spec.required_capability))
     if unreachable_capabilities:
         msg = (
-            "The following backends require a capability that no group in "
+            "The following services require a capability that no group in "
             "group_capabilities grants, so they are unreachable by every "
             "principal (a forgotten policy entry or a typo'd capability "
             f"name): {sorted(unreachable_capabilities)}. Set "
@@ -265,15 +265,15 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         )
         raise RuntimeError(msg)
 
-    # --- x509 backends and the identity-provider config list: x509 is an
+    # --- x509 services and the identity-provider config list: x509 is an
     # ordinary `identity_providers` type with no synthesized fallback --
-    # every `auth_type: x509` backend must be covered by an explicit entry,
+    # every `auth_type: x509` service must be covered by an explicit entry,
     # drift-checked both directions, fail-closed (_validate_x509_provider_
     # targets). Every surface downstream — provider registration,
     # /v1/catalog's credential_provider alias, /v1/identities — works from
     # these real, operator-declared entries.
     x509_targets: list[str] = [
-        spec.name for spec in backends if spec.auth_type == "x509"
+        spec.name for spec in services if spec.auth_type == "x509"
     ]
     identity_provider_cfg_list = list(settings.identity_providers)
     _validate_x509_provider_targets(settings.identity_providers, set(x509_targets))
@@ -367,12 +367,12 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # --- AF Broker Identity Token issuer (issue #162): the broker's own
     # RS256 signing key for the identity-assertion JWTs the native providers
     # (BrokerIssuedProvider, and CondorTokenProvider's service exchange --
-    # issue #169) mint for AF-native backends. None when the feature is
+    # issue #169) mint for AF-native services. None when the feature is
     # unconfigured entirely (no BROKER_SIGNING_KEY_FILE -- a valid local-dev
     # state); load_broker_token_issuer itself raises RuntimeError on an
     # unreadable/invalid key or a missing issuer URL. The fail-closed check
     # below is the remaining gap: a native identity_providers entry (and
-    # therefore every backend resolving to it) with no signing key configured
+    # therefore every service resolving to it) with no signing key configured
     # at all must refuse to boot rather than fail at first request -- same
     # rollout-failure-over-silent-breakage reasoning as
     # unreachable_capabilities above.
@@ -398,10 +398,10 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # (``service_url`` set) needs the signing key and is fail-closed at boot
     # without it — same rollout-failure-over-silent-breakage reasoning as
     # the broker-issued/condor-token check above. A legacy-mode entry
-    # (``service_url`` None — every x509 backend still needs one covering
+    # (``service_url`` None — every x509 service still needs one covering
     # it, see ``_validate_x509_provider_targets`` above) keeps the
-    # pre-existing loud WARNING instead: the shipped backends.yaml has
-    # always declared an x509 backend (ami), so refusing to boot would break
+    # pre-existing loud WARNING instead: the shipped services.yaml has
+    # always declared an x509 service (ami), so refusing to boot would break
     # existing keyless deployments that never call it; enforcement then
     # stays at the point of use — the aggregator's x509 factory raises an
     # actionable ToolError and the redeem endpoint answers 503.
@@ -420,10 +420,10 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
             raise RuntimeError(msg)
         if x509_targets:
             logger.warning(
-                "x509_backends_without_signing_key",
+                "x509_services_without_signing_key",
                 x509_targets=x509_targets,
                 hint=(
-                    "BROKER_SIGNING_KEY_FILE is not set; x509 backends cannot "
+                    "BROKER_SIGNING_KEY_FILE is not set; x509 services cannot "
                     "be called over /mcp until the RS256 signing key is "
                     "mounted (chart: broker.identityToken."
                     "existingSigningKeySecret)."
@@ -447,9 +447,9 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # One CredentialProvider per configured entry, registered for the entry's
     # targets below — x509 included (voms-proxy minted from the user's
     # ~/.globus cert in legacy mode, or via the entry's voms-token-service
-    # when a service_url is configured). `bearer`-auth backends' credential
+    # when a service_url is configured). `bearer`-auth services' credential
     # provider comes from `identity_providers`' per-entry `targets` list,
-    # not a blanket auth_type match — this lets different backends bind to
+    # not a blanket auth_type match — this lets different services bind to
     # different aliases. `none` requires no user credential, so no provider
     # is registered.
     for cfg in identity_provider_cfg_list:
@@ -528,40 +528,40 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         for target in cfg.targets:
             credential_registry.register(target, provider)
 
-    # --- Fail-closed check (issue #60): a backend that omits
-    # `required_capability` in backends.yaml relies on the credential layer
+    # --- Fail-closed check (issue #60): a service that omits
+    # `required_capability` in services.yaml relies on the credential layer
     # as its sole authorization gate -- the user must have a linked identity
     # / mintable credential for that target. If credential_registry can't
     # resolve a provider for it either (e.g. `auth_type: bearer` with no
     # `identity_providers` entry targeting it, or `auth_type: none` with no
     # provider registered at all), there is no gate whatsoever: any
     # authenticated principal could call it. Refuse to start rather than
-    # silently exposing an ungated backend -- this must be based on whether
+    # silently exposing an ungated service -- this must be based on whether
     # credential_registry actually resolves the target, not the `auth_type`
     # string, since `auth_type: bearer` alone doesn't guarantee a provider is
     # wired up for this specific target.
-    ungated_backends: list[str] = []
-    for spec in backends:
+    ungated_services: list[str] = []
+    for spec in services:
         if spec.required_capability is not None:
             continue
         try:
             await credential_registry.resolve(spec.name)
         except KeyError:
-            ungated_backends.append(spec.name)
-    if ungated_backends:
+            ungated_services.append(spec.name)
+    if ungated_services:
         msg = (
-            "The following backends omit `required_capability` in "
-            "backends.yaml and have no credential provider resolving for "
+            "The following services omit `required_capability` in "
+            "services.yaml and have no credential provider resolving for "
             "their target, so there is no authorization gate at all "
             f"(neither a declared capability nor a mintable credential): "
-            f"{sorted(ungated_backends)}. Either declare `required_capability` "
+            f"{sorted(ungated_services)}. Either declare `required_capability` "
             "(or `__none__` to explicitly open it to any authenticated user), "
             "or configure a credential provider (identity_providers / x509) "
-            "targeting this backend."
+            "targeting this service."
         )
         raise RuntimeError(msg)
 
-    # --- Identity<->backend join for /v1/catalog's credential_provider field
+    # --- Identity<->service join for /v1/catalog's credential_provider field
     # (issue #90): who services each target, from the same effective config
     # list the providers above were wired from — x509 targets get their real
     # entry's alias, no synthetic string.
@@ -569,8 +569,8 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
 
     # The default X509Provider api/credentials.py's /v1/x509/* routes fall
     # back to when no explicit target is given: the provider servicing the
-    # first x509 backend (matching _resolve_x509_target's default), or None
-    # when no x509 backend exists at all.
+    # first x509 service (matching _resolve_x509_target's default), or None
+    # when no x509 service exists at all.
     x509_provider: X509Provider | None = None
     if x509_targets:
         resolved = await credential_registry.resolve(x509_targets[0])
@@ -648,7 +648,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
             settings.keycloak_admin_client_id,
             settings.keycloak_admin_client_secret.get_secret_value(),
         )
-        # Persistence backend for the cache above (issue #144 step 2b) —
+        # Persistence service for the cache above (issue #144 step 2b) —
         # same in-memory/Vault selection shape as token_registry_backend
         # above, sharing the same vault_kv transport instance.
         principal_cache_backend: PrincipalCacheBackend
@@ -683,14 +683,14 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
 
     # --- MCP aggregator: the FastMCP instance and its ASGI app already exist
     # (built eagerly at module scope below, since the aggregator must be
-    # mountable before Settings()/BackendRegistry() are known — see the
+    # mountable before Settings()/ServiceRegistry() are known — see the
     # comment above `_mcp_aggregator`). Push the registry/policy/settings/
     # credential_registry/revoked_jti_cache/identity providers just loaded
     # above into it now that they're real -- the last three feed the af_*
     # diagnostic tools (issue #153).
     populate_aggregator(
         _mcp_aggregator,
-        backend_registry,
+        service_registry,
         settings,
         entitlement_policy,
         credential_registry,
@@ -724,9 +724,9 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
 
     application.state.settings = settings
     application.state.entitlement_policy = entitlement_policy
-    application.state.backend_registry = backend_registry
-    application.state.backends = backends
-    application.state.backends_loaded = backends_loaded
+    application.state.service_registry = service_registry
+    application.state.services = services
+    application.state.services_loaded = services_loaded
     application.state.credential_cache = credential_cache
     application.state.credential_registry = credential_registry
     application.state.x509_provider = x509_provider
@@ -756,8 +756,8 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         version=__version__,
         oidc_issuer=settings.oidc_issuer,
         policy_file=settings.policy_file,
-        backends_file=settings.backends_file,
-        backends_count=len(backends),
+        services_file=settings.services_file,
+        services_count=len(services),
         x509_targets=x509_targets,
         identity_provider_aliases=list(identity_providers),
     )
@@ -784,19 +784,19 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
 # lifespan (required so its StreamableHTTPSessionManager task group actually
 # starts — omitting this makes every /mcp/** request 500) means the ASGI
 # app's `.lifespan` must already exist when `lifespan=` is passed to
-# FastAPI() below. Settings()/BackendRegistry() are only loaded inside the
+# FastAPI() below. Settings()/ServiceRegistry() are only loaded inside the
 # async `lifespan()` above, which runs later — so this is built with an
 # empty registry and placeholder Settings()/EntitlementPolicy()/
 # CredentialRegistry(), and `lifespan()` calls `populate_aggregator()` to
 # push in the real values before the app starts serving requests.
 _mcp_aggregator_placeholder_settings = Settings()
 _mcp_aggregator = build_aggregator(
-    BackendRegistry(),
+    ServiceRegistry(),
     _mcp_aggregator_placeholder_settings,
     EntitlementPolicy(),
     CredentialRegistry(),
 )
-# stateless_http (issue #128): unlike policy_file/backends_file, Settings()
+# stateless_http (issue #128): unlike policy_file/services_file, Settings()
 # reads env vars synchronously at construction, so the placeholder instance
 # above already reflects the real MCP_STATELESS_HTTP value -- no need to
 # wait for populate_aggregator() to push in a later value.

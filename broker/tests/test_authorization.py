@@ -173,8 +173,8 @@ def _write_policy(tmp_path: Path, text: str) -> str:
     return str(path)
 
 
-def _write_backends(tmp_path: Path, text: str) -> str:
-    path = tmp_path / "backends.yaml"
+def _write_services(tmp_path: Path, text: str) -> str:
+    path = tmp_path / "services.yaml"
     path.write_text(text)
     return str(path)
 
@@ -203,7 +203,7 @@ def test_startup_refuses_to_start_when_group_capabilities_empty(
         with app_client_factory():
             pass
 
-    # SHIPPED_BACKENDS' "rucio" entry requires "read_data" (!= "__none__"),
+    # SHIPPED_SERVICES' "rucio" entry requires "read_data" (!= "__none__"),
     # so both must be named in the failure.
     message = str(exc_info.value)
     assert "rucio" in message, message
@@ -213,7 +213,7 @@ def test_startup_refuses_to_start_when_group_capabilities_empty(
 def test_startup_quiet_when_capabilities_are_all_reachable(
     app_client_factory: Callable[..., Any],
 ) -> None:
-    """The shipped policy.yaml grants every capability SHIPPED_BACKENDS
+    """The shipped policy.yaml grants every capability SHIPPED_SERVICES
     requires (to at least one group), so startup must succeed for the
     default local-dev configuration."""
     with app_client_factory() as (client, _):
@@ -268,10 +268,10 @@ def test_startup_stays_quiet_with_empty_group_capabilities_and_no_gated_backends
         _write_policy(tmp_path, "group_capabilities: {}\ntarget_action_types: {}\n"),
     )
     monkeypatch.setenv(
-        "BACKENDS_FILE",
-        _write_backends(
+        "SERVICES_FILE",
+        _write_services(
             tmp_path,
-            "backends:\n"
+            "services:\n"
             "  - name: docs\n"
             "    prefix: docs\n"
             "    url: http://docs.invalid/mcp\n"

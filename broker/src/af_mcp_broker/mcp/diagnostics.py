@@ -7,7 +7,7 @@ from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_context
 from pydantic import BaseModel, ConfigDict
 
-from af_mcp_broker.api.capabilities import BackendStatus, _backend_status
+from af_mcp_broker.api.capabilities import ServiceStatus, _service_status
 from af_mcp_broker.authorization import get_principal_capabilities
 from af_mcp_broker.mcp.registry import (
     LINK_IDENTITY_TOOL_NAME,
@@ -24,17 +24,17 @@ if TYPE_CHECKING:
     from af_mcp_broker.config import IdentityProviderConfig, Settings
     from af_mcp_broker.credentials import CredentialProvider, CredentialRegistry
     from af_mcp_broker.identity import Principal
-    from af_mcp_broker.mcp.registry import BackendRegistry
+    from af_mcp_broker.mcp.registry import ServiceRegistry
 
 # Broker-native diagnostic tools (issue #153), registered directly on the
-# aggregator's FastMCP instance -- never as a backends.yaml entry -- for two
+# aggregator's FastMCP instance -- never as a services.yaml entry -- for two
 # reasons worth keeping explicit:
 #
-#   1. They are needed precisely when a backend is broken, so a separate
-#      aggregated MCP server (itself just another backend) could be the very
+#   1. They are needed precisely when a service is broken, so a separate
+#      aggregated MCP server (itself just another service) could be the very
 #      thing that is down.
 #   2. They describe the broker's own in-process state (identity linkage,
-#      per-backend availability, the caller's own capabilities) rather than
+#      per-service availability, the caller's own capabilities) rather than
 #      proxying to anything, so they need no credential and no ProxyProvider
 #      at all -- calling register_diagnostic_tools() below adds them as
 #      ordinary local tools, never a provider.
@@ -46,10 +46,10 @@ if TYPE_CHECKING:
 # path entirely.
 #
 # Reuses rather than reimplements: af_list_mcp_servers calls api/capabilities.py's
-# _backend_status() (issue #123's per-backend status derivation, same
+# _service_status() (issue #123's per-service status derivation, same
 # "available"/"link_required"/"capability_required"/"unavailable"/
 # "misconfigured" taxonomy and canned sentences /v1/catalog already returns),
-# and both af_list_identities/af_list_mcp_servers read the identity<->backend
+# and both af_list_identities/af_list_mcp_servers read the identity<->service
 # join (target_to_alias) issue #90 added for /v1/catalog's credential_provider
 # field. No second status taxonomy, no second join.
 
@@ -87,19 +87,19 @@ class LinkIdentityResult(BaseModel):
 
 
 class DiagnosticMcpServer(BaseModel):
-    """One configured MCP backend's tool prefix, identity, and availability -- af_list_mcp_servers' per-backend row."""
+    """One configured MCP service's tool prefix, identity, and availability -- af_list_mcp_servers' per-service row."""
 
     model_config = ConfigDict(frozen=True)
 
     name: str
     display_name: str
     prefix: str
-    # The identity-provider alias that powers this backend's credential (see
+    # The identity-provider alias that powers this service's credential (see
     # api/identities.py's identity_providers / issue #90's target_to_alias
-    # join), or None for a backend that needs no per-user identity at all
+    # join), or None for a service that needs no per-user identity at all
     # (auth_type: none).
     credential_provider: str | None
-    status: BackendStatus
+    status: ServiceStatus
     status_detail: str
 
 
@@ -120,7 +120,7 @@ async def _require_principal() -> Principal:
 
 def register_diagnostic_tools(
     mcp: FastMCP,
-    registry: BackendRegistry,
+    registry: ServiceRegistry,
     policy: EntitlementPolicy,
     credential_registry: CredentialRegistry,
     identity_providers: dict[str, CredentialProvider],
@@ -131,7 +131,7 @@ def register_diagnostic_tools(
     """(Re)register the af_* diagnostic tools on *mcp*, bound to the given state.
 
     Called from both aggregator.py's build_aggregator() and
-    populate_aggregator(), mirroring _register_backends()'s rebuild-from-
+    populate_aggregator(), mirroring _register_services()'s rebuild-from-
     scratch pattern rather than middleware's mutate-in-place one: a fresh
     populate_aggregator() call always supplies fresh registry/policy/
     credential_registry/identity provider objects rather than mutating the
@@ -158,8 +158,8 @@ def register_diagnostic_tools(
         (e.g. "requires capability '...'") to see exactly which groups and
         capabilities the caller currently holds, so you can tell them
         whether the fix is a missing group membership or something else.
-        Needs no capability of its own and never contacts a backend, so it
-        always answers even when every other backend is down.
+        Needs no capability of its own and never contacts a service, so it
+        always answers even when every other service is down.
         """
         principal = await _require_principal()
         caps = get_principal_capabilities(principal, policy)
@@ -174,10 +174,10 @@ def register_diagnostic_tools(
         """List the broker's configured identity providers and whether the caller has linked each one.
 
         Call this when a tool call fails with a "not linked" error, or when
-        a backend's tools are missing or non-functional and you need to
+        a service's tools are missing or non-functional and you need to
         find out which identity provider it depends on and whether this
         caller has connected it yet (link it from the portal's Identities
-        page). Needs no capability of its own and never contacts a backend.
+        page). Needs no capability of its own and never contacts a service.
         """
         principal = await _require_principal()
         providers: list[DiagnosticIdentityProvider] = []
@@ -199,7 +199,7 @@ def register_diagnostic_tools(
 
         Call this after a tool call fails with a "not linked" error, or
         after `af_list_identities` shows `linked: false` for a provider a
-        backend needs, to get the exact link to hand the user. `provider`
+        service needs, to get the exact link to hand the user. `provider`
         is the identity-provider alias -- the same `id` field
         `af_list_identities` returns. Calling this for an already-linked
         provider is fine too (e.g. to get the link again so the user can
@@ -224,22 +224,22 @@ def register_diagnostic_tools(
 
     @mcp.tool(name=LIST_MCP_SERVERS_TOOL_NAME)
     async def _list_mcp_servers() -> list[DiagnosticMcpServer]:
-        """List every configured MCP backend, the identity that powers it, and whether it's currently available to the caller.
+        """List every configured MCP service, the identity that powers it, and whether it's currently available to the caller.
 
         Call this first when an expected tool is missing from tools/list,
         or a tool call fails for a reason that isn't obviously a bad
-        argument, to see each backend's tool-name prefix, which identity
+        argument, to see each service's tool-name prefix, which identity
         provider (if any) it needs, and a short reason if it's unavailable
         (linking required, capability required, temporarily down, or
         misconfigured). Needs no capability of its own and never contacts a
-        backend -- the status reported is the broker's own last-known state,
+        service -- the status reported is the broker's own last-known state,
         the same data the portal's Catalog page shows.
         """
         principal = await _require_principal()
         caps = get_principal_capabilities(principal, policy)
         servers: list[DiagnosticMcpServer] = []
-        for spec in registry.all_backends():
-            status, status_detail, _correlation_id = await _backend_status(
+        for spec in registry.all_services():
+            status, status_detail, _correlation_id = await _service_status(
                 spec, principal, caps, credential_registry, registry
             )
             servers.append(

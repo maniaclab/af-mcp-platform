@@ -68,14 +68,14 @@ class PosixIdentityRequiredError(RuntimeError):
     values). Rather than reject such a principal at the door for every
     backend (the old JWT-level behavior this issue removes), the requirement
     moves to this point of use, naming *target* so the resulting error is
-    actionable: "this backend needs a grid identity your account doesn't
+    actionable: "this service needs a grid identity your account doesn't
     have" rather than an opaque failure.
     """
 
     def __init__(self, target: str, *, settings: Settings) -> None:
         self.target = target
         super().__init__(
-            f"Backend {target!r} requires an x509/VOMS proxy, which needs a "
+            f"Service {target!r} requires an x509/VOMS proxy, which needs a "
             "POSIX (grid) identity your account does not have. The broker "
             "looked for the Keycloak profile attributes "
             f"{settings.posix_uid_attribute!r}/{settings.posix_gid_attribute!r}/"

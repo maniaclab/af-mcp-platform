@@ -34,7 +34,7 @@ _CONDOR_TOKEN_PROVIDERS = [
 ]
 
 _BACKENDS_YAML = (
-    "backends:\n"
+    "services:\n"
     "  - name: condor-mcp\n"
     "    prefix: condor\n"
     "    url: http://condor-mcp.invalid/mcp\n"
@@ -50,9 +50,9 @@ def condor_token_env(
     """Point the app at a condor-token identity provider and (optionally) a real signing key on disk."""
 
     def _apply(*, with_signing_key: bool = True) -> None:
-        backends_file = tmp_path / "backends.yaml"
-        backends_file.write_text(_BACKENDS_YAML)
-        monkeypatch.setenv("BACKENDS_FILE", str(backends_file))
+        services_file = tmp_path / "services.yaml"
+        services_file.write_text(_BACKENDS_YAML)
+        monkeypatch.setenv("SERVICES_FILE", str(services_file))
         monkeypatch.setenv("IDENTITY_PROVIDERS", json.dumps(_CONDOR_TOKEN_PROVIDERS))
         monkeypatch.setenv("BROKER_PUBLIC_ORIGIN", "https://mcp.example.com")
         if with_signing_key:

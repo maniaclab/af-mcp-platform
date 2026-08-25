@@ -23,14 +23,14 @@ Cardinality policy -- read this before adding a label or a new metric:
 - NEVER label a metric with a raw token, jti, request ID, or tool argument
   either -- those are attacker-influenced or session-scoped and unbounded,
   and will exhaust Prometheus memory.
-- ``backend`` and ``action_type`` are drawn from the operator-configured
-  ``backends.yaml`` / ``policy.yaml`` (single/low-digit cardinality at
+- ``service`` and ``action_type`` are drawn from the operator-configured
+  ``services.yaml`` / ``policy.yaml`` (single/low-digit cardinality at
   facility scale) -- safe on every counter that carries them.
-- ``tool`` is also configuration-bound (a backend's own fixed schema, on
+- ``tool`` is also configuration-bound (a service's own fixed schema, on
   the order of dozens of names) -- safe on ``tool_invocations_total``.
-- ``target`` on the credential-cache counters is the configured backend
-  target set (``backends.yaml``), not user input.
-- A tool call whose name matches no registered backend prefix is audited
+- ``target`` on the credential-cache counters is the configured service
+  target set (``services.yaml``), not user input.
+- A tool call whose name matches no registered service prefix is audited
   (see ``audit/logger.py``) but deliberately NOT counted by tool name here
   -- an unmapped tool name is client-supplied and unbounded (a buggy or
   hostile client can send an arbitrary string per call).
@@ -44,22 +44,22 @@ from prometheus_client import Counter
 
 tool_invocations_total = Counter(
     "af_mcp_tool_invocations_total",
-    "Tool invocations attempted via the /mcp aggregator, by backend, tool, "
+    "Tool invocations attempted via the /mcp aggregator, by service, tool, "
     "and action_type. Incremented once per call regardless of outcome "
     "(success, denied, or error) -- see tool_invocations_denied_total to "
     "isolate denials. No identity label -- see module docstring.",
-    ["backend", "tool", "action_type"],
+    ["service", "tool", "action_type"],
 )
 
 tool_invocations_denied_total = Counter(
     "af_mcp_tool_invocations_denied_total",
-    "Tool invocations denied by AuthorizationMiddleware for a known backend.",
-    ["backend", "action_type"],
+    "Tool invocations denied by AuthorizationMiddleware for a known service.",
+    ["service", "action_type"],
 )
 
 tool_invocations_unmapped_total = Counter(
     "af_mcp_tool_invocations_unmapped_total",
-    "Tool invocations whose name matched no registered backend prefix. "
+    "Tool invocations whose name matched no registered service prefix. "
     "No labels -- see module docstring.",
 )
 
@@ -84,7 +84,7 @@ broker_identity_tokens_issued_total = Counter(
     "af_mcp_broker_identity_tokens_issued_total",
     "AF Broker Identity Tokens actually minted (issue #162) -- cache hits "
     "are not counted (see credential_cache_hits_total). `target` is the "
-    "configured backend target set, not user input; no identity label -- "
+    "configured service target set, not user input; no identity label -- "
     "see module docstring.",
     ["target"],
 )
@@ -93,7 +93,7 @@ condor_tokens_issued_total = Counter(
     "af_mcp_condor_tokens_issued_total",
     "HTCondor IDTOKENs actually obtained from condor-token-service (issue "
     "#169) -- cache hits are not counted (see credential_cache_hits_total). "
-    "`target` is the configured backend target set, not user input; no "
+    "`target` is the configured service target set, not user input; no "
     "identity label -- see module docstring.",
     ["target"],
 )

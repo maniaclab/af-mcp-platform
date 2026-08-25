@@ -25,17 +25,17 @@ async def _unreachable_jwks(settings: Any) -> list[dict[str, Any]]:
 
 
 def _write_empty_backends(tmp_path: Path) -> str:
-    path = tmp_path / "backends.yaml"
-    path.write_text("backends: []\n")
+    path = tmp_path / "services.yaml"
+    path.write_text("services: []\n")
     return str(path)
 
 
 def _use_empty_backends(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Point BACKENDS_FILE at an empty backends list, and drop conftest's
+    """Point SERVICES_FILE at an empty backends list, and drop conftest's
     default x509 identity_providers entry (targets ["ami"]) along with it —
     an x509 entry naming a nonexistent backend would trip the broker's
     coverage check the other way (an entry targeting a non-x509 backend)."""
-    monkeypatch.setenv("BACKENDS_FILE", _write_empty_backends(tmp_path))
+    monkeypatch.setenv("SERVICES_FILE", _write_empty_backends(tmp_path))
     monkeypatch.setenv("IDENTITY_PROVIDERS", "[]")
 
 
@@ -66,7 +66,7 @@ def test_readyz_503_when_jwks_unreachable(
     assert resp.json()["status"] == "not_ready"
 
 
-def test_readyz_body_reports_backends_count(
+def test_readyz_body_reports_services_count(
     monkeypatch: pytest.MonkeyPatch,
     app_client_factory: Callable[..., Any],
 ) -> None:
@@ -74,17 +74,17 @@ def test_readyz_body_reports_backends_count(
 
     with app_client_factory() as (client, _):
         resp: Any = client.get("/v1/readyz")
-        backends_count_on_app = len(client.app.state.backends)
+        services_count_on_app = len(client.app.state.services)
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["backends_count"] == backends_count_on_app
-    # The shipped backends.yaml used by app_client_factory is non-empty —
+    assert body["services_count"] == services_count_on_app
+    # The shipped services.yaml used by app_client_factory is non-empty —
     # this asserts we're actually exercising the "backends present" case.
-    assert body["backends_count"] > 0
+    assert body["services_count"] > 0
 
 
-def test_readyz_body_reports_backends_count_zero(
+def test_readyz_body_reports_services_count_zero(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     app_client_factory: Callable[..., Any],
@@ -97,8 +97,8 @@ def test_readyz_body_reports_backends_count_zero(
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["backends_count"] == 0
-    assert body["backends_loaded"] is True
+    assert body["services_count"] == 0
+    assert body["services_loaded"] is True
 
 
 def test_startup_warns_on_no_backends(
@@ -129,4 +129,4 @@ def test_startup_warns_on_no_backends(
     with app_client_factory():
         pass
 
-    assert "no_backends_configured" in events
+    assert "no_services_configured" in events

@@ -14,13 +14,13 @@ group_capabilities:
   # Any authenticated user (no group membership required)
   __authenticated__: [read_metadata, read_monitoring]
 
-# Which capability is required to use each backend target is declared by
-# `required_capability` in backends.yaml, not here -- backends.yaml is the
+# Which capability is required to use each service target is declared by
+# `required_capability` in services.yaml, not here -- services.yaml is the
 # sole source of truth for that mapping (see issue #60; this file used to
 # carry a parallel `target_capabilities` section that could silently drift
-# out of sync with backends.yaml).
+# out of sync with services.yaml).
 
-# Action type overrides per backend (tool glob pattern -> action type).
+# Action type overrides per service (tool glob pattern -> action type).
 # Anything not listed defaults to "read".
 target_action_types:
   panda:

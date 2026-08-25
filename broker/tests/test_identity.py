@@ -72,7 +72,7 @@ async def test_wrong_audience_raises_token_audience_error_with_correlation_id(
     admin grants the audience via group membership (docs/auth.md's
     "cascading failure" section), so it gets its own exception type and a
     correlation_id the caller can quote, mirroring capability_required in
-    api/capabilities.py::_backend_status (see
+    api/capabilities.py::_service_status (see
     docs/plans/2026-08-24-audience-mismatch-error-ui-design.md)."""
     cache, _directory = static_principal_cache
     prime_jwks([sig_key.jwk])

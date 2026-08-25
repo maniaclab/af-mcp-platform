@@ -68,31 +68,31 @@ def test_no_metric_carries_a_forbidden_label():
         )
 
 
-def test_tool_invocations_total_labeled_by_backend_tool_action_type():
+def test_tool_invocations_total_labeled_by_service_tool_action_type():
     """No identity label -- per-user counting was dropped in favor of the
     audit log; see the module docstring's cardinality policy."""
     assert _full_name(metrics.tool_invocations_total) == "af_mcp_tool_invocations_total"
     assert set(metrics.tool_invocations_total._labelnames) == {
-        "backend",
+        "service",
         "tool",
         "action_type",
     }
 
 
-def test_tool_invocations_denied_total_labeled_by_backend_action_type():
+def test_tool_invocations_denied_total_labeled_by_service_action_type():
     assert (
         _full_name(metrics.tool_invocations_denied_total)
         == "af_mcp_tool_invocations_denied_total"
     )
     assert set(metrics.tool_invocations_denied_total._labelnames) == {
-        "backend",
+        "service",
         "action_type",
     }
 
 
 def test_tool_invocations_unmapped_total_has_no_labels():
     """Tool name is client-supplied and unbounded when it matches no
-    registered backend prefix -- this counter must never be labeled by it."""
+    registered service prefix -- this counter must never be labeled by it."""
     assert (
         _full_name(metrics.tool_invocations_unmapped_total)
         == "af_mcp_tool_invocations_unmapped_total"

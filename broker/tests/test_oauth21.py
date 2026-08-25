@@ -53,7 +53,7 @@ EXPECTED_STATE_ISSUER = "https://keycloak.invalid/realms/connect"
 
 _SRC = Path(__file__).resolve().parents[1] / "src" / "af_mcp_broker"
 SHIPPED_POLICY = _SRC / "authorization" / "policy.yaml"
-SHIPPED_BACKENDS = _SRC / "mcp" / "backends.yaml"
+SHIPPED_SERVICES = _SRC / "mcp" / "services.yaml"
 
 AUTHORIZATION_ENDPOINT = "https://backend-as.example/authorize"
 TOKEN_ENDPOINT = "https://backend-as.example/token"
@@ -172,7 +172,7 @@ def _configure_oauth21_env(monkeypatch: pytest.MonkeyPatch, fernet_key: str) -> 
                 # This override replaces conftest's default entirely (or,
                 # for tests that boot the app directly via _fresh_app, is
                 # the only IDENTITY_PROVIDERS source at all) -- either way,
-                # the shipped backends.yaml's "ami" (auth_type: x509) still
+                # the shipped services.yaml's "ami" (auth_type: x509) still
                 # needs an explicit entry or the broker refuses to start.
                 {
                     "type": "x509",
@@ -880,7 +880,7 @@ def test_authorize_400_for_unsafe_return_url(
 def _bootstrap_no_override_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Point the app at the shipped YAML with no keycloak_dependency override."""
     monkeypatch.setenv("POLICY_FILE", str(SHIPPED_POLICY))
-    monkeypatch.setenv("BACKENDS_FILE", str(SHIPPED_BACKENDS))
+    monkeypatch.setenv("SERVICES_FILE", str(SHIPPED_SERVICES))
     monkeypatch.setenv("METRICS_PORT", "0")
     monkeypatch.setenv("OIDC_ISSUER", EXPECTED_STATE_ISSUER)
     # Issue #144 step 3: the broker refuses to start without a configured

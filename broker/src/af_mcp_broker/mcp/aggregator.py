@@ -1,16 +1,16 @@
 from __future__ import annotations
 
 # Aggregator entry point — builds the FastMCP application that proxies tool
-# calls to downstream MCP backends after the broker has validated identity,
+# calls to downstream MCP services after the broker has validated identity,
 # applied entitlement filtering, checked authorization, and (for
-# auth_type="bearer" backends) minted and injected a per-user credential.
+# auth_type="bearer" services) minted and injected a per-user credential.
 #
-# app.py builds an aggregator eagerly (with an empty BackendRegistry) so its
+# app.py builds an aggregator eagerly (with an empty ServiceRegistry) so its
 # ASGI app exists at FastAPI-construction time for mounting at /mcp and for
 # combining lifespans; app.py's own lifespan then calls populate_aggregator()
-# once BACKENDS_FILE/POLICY_FILE/the credential subsystem have actually been
+# once SERVICES_FILE/POLICY_FILE/the credential subsystem have actually been
 # loaded. The client_factory below deliberately never forwards the caller's
-# inbound Authorization header to a backend; see its docstring.
+# inbound Authorization header to a service; see its docstring.
 from typing import TYPE_CHECKING
 
 import httpx
@@ -58,7 +58,7 @@ if TYPE_CHECKING:
     from af_mcp_broker.credentials import CredentialProvider, CredentialRegistry
     from af_mcp_broker.credentials.broker_issued import BrokerTokenIssuer
     from af_mcp_broker.identity import Principal
-    from af_mcp_broker.mcp.registry import BackendRegistry, BackendSpec
+    from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
     from af_mcp_broker.principal_cache import PrincipalCache
     from af_mcp_broker.token_registry import RevokedJtiCache, TokenRegistryBackend
 
@@ -66,14 +66,14 @@ logger = structlog.get_logger(__name__)
 
 
 def _build_client(
-    spec: BackendSpec,
+    spec: ServiceSpec,
     transport_cls: type[SSETransport | StreamableHttpTransport],
     headers: dict[str, str] | None = None,
 ) -> Client:
     """Construct the plain (never ProxyClient) Client every branch of _make_client_factory returns.
 
-    Applies the backend's configured per-call read timeout (BackendSpec.
-    timeout_seconds) so a slow/unresponsive backend fails that one call
+    Applies the service's configured per-call read timeout (ServiceSpec.
+    timeout_seconds) so a slow/unresponsive service fails that one call
     cleanly instead of hanging the aggregator, and installs the same
     progress/log *notification* forwarding handlers fastmcp's ProxyClient
     installs by default -- ProxyClient itself is still not used (see
@@ -81,7 +81,7 @@ def _build_client(
     forward_incoming_headers=True for HTTP/SSE transports is the one
     behavior deliberately avoided here), but that has nothing to do with
     these two handlers, which only relay already-decided-safe notification
-    content from the backend to the aggregator's own caller, never inbound
+    content from the service to the aggregator's own caller, never inbound
     credentials.
     """
     return Client(
@@ -93,7 +93,7 @@ def _build_client(
 
 
 async def _resolve_list_time_headers(
-    spec: BackendSpec,
+    spec: ServiceSpec,
     credential_registry: CredentialRegistry,
     principal: Principal,
 ) -> tuple[dict[str, str] | None, str | None]:
@@ -101,7 +101,7 @@ async def _resolve_list_time_headers(
 
     Returns ``(headers, skip_reason)``. Never raises: unlike the authorized
     tools/call path in ``_bearer_factory``, a failure here must not prevent
-    the connection attempt outright -- doing so would mean this backend's
+    the connection attempt outright -- doing so would mean this service's
     ``ProxyProvider`` never completes a single successful ``_list_tools()``
     call for an unlinked caller, which (a) would leave its component-list
     cache permanently unpopulated (fastmcp's ``ProxyProvider`` only writes
@@ -112,16 +112,16 @@ async def _resolve_list_time_headers(
     ``AggregateProvider._get_tool()``'s own warn-and-continue handling into
     a bare "Unknown tool", losing the friendly authorized-path ``ToolError``
     entirely. Connecting without a credential instead reproduces exactly
-    what a "none" backend does: a backend that itself gates listing on auth
+    what a "none" service does: a service that itself gates listing on auth
     (rucio-mcp) still ends up excluded via its own 401 -- classified and
     logged by ``_ObservableProxyProvider`` below -- while one that doesn't
-    (e.g. a bearer backend whose listing endpoint happens to be open) still
+    (e.g. a bearer service whose listing endpoint happens to be open) still
     lists successfully, deferring the real access decision to the
     authorized tools/call path exactly as before this fix.
 
     ``skip_reason`` (``"not_linked"`` | ``"unavailable"``) is set whenever
     ``headers`` is ``None``, letting the caller pre-record *why* no
-    credential was attached (see the per-backend request-scoped state in
+    credential was attached (see the per-service request-scoped state in
     ``_bearer_factory``) for ``_classify_list_failure`` to use if the
     resulting uncredentialed connection does go on to fail.
     """
@@ -170,7 +170,7 @@ def _classify_failure(
     """Classify failure decision for api access.
 
     Decision core shared by ``_classify_list_failure`` (the /mcp listing
-    path) and ``fetch_backend_tool_listing`` (the /v1 per-backend tool
+    path) and ``fetch_service_tool_listing`` (the /v1 per-service tool
     listing), so the two can never disagree on what a failure means.
 
     If a credential mint was deliberately skipped (``skip_reason`` set),
@@ -179,7 +179,7 @@ def _classify_failure(
     "unauthorized" -- meaning the stored credential itself was rejected,
     bad/expired, the caller should re-link -- when a credential actually was
     injected for this attempt; a 401 with nothing injected (e.g. a
-    "none"/"x509" backend unexpectedly requiring auth), a connection
+    "none"/"x509" service unexpectedly requiring auth), a connection
     refusal, a timeout, or any other error all fall back to "unavailable",
     an operational/config problem rather than a "go re-link" prompt.
     """
@@ -193,29 +193,29 @@ def _classify_failure(
     return "unavailable"
 
 
-async def _classify_list_failure(exc: Exception, backend_name: str) -> tuple[str, str]:
+async def _classify_list_failure(exc: Exception, service_name: str) -> tuple[str, str]:
     """Classify a ``_list_tools()`` failure for structured logging.
 
-    Consults the per-backend request-scoped state ``_bearer_factory``'s
-    list-time branch records (keyed per backend since one ``tools/list``
-    request fans out to every backend concurrently), then applies
+    Consults the per-service request-scoped state ``_bearer_factory``'s
+    list-time branch records (keyed per service since one ``tools/list``
+    request fans out to every service concurrently), then applies
     ``_classify_failure``'s shared decision core.
     """
     ctx = get_context()
-    status = await ctx.get_state(f"__list_credential_status__:{backend_name}")
+    status = await ctx.get_state(f"__list_credential_status__:{service_name}")
     injected, skip_reason = status if status is not None else (False, None)
     return _classify_failure(exc, injected=injected, skip_reason=skip_reason), str(exc)
 
 
 async def resolve_list_time_credential(
-    spec: BackendSpec,
+    spec: ServiceSpec,
     credential_registry: CredentialRegistry,
     principal: Principal,
     broker_token_issuer: BrokerTokenIssuer | None = None,
 ) -> tuple[dict[str, str] | None, str | None]:
     """Best-effort list-time credential headers for *spec*, any auth_type.
 
-    The /v1 per-backend tool listing's (api/catalog_tools.py) entry point
+    The /v1 per-service tool listing's (api/catalog_tools.py) entry point
     into the exact same list-time credential logic the aggregator's client
     factories use, so the portal's tool listing can never disagree with what
     a tools/list through /mcp would have injected:
@@ -242,8 +242,8 @@ async def resolve_list_time_credential(
     return await _resolve_list_time_headers(spec, credential_registry, principal)
 
 
-async def fetch_backend_tool_listing(
-    spec: BackendSpec,
+async def fetch_service_tool_listing(
+    spec: ServiceSpec,
     headers: dict[str, str] | None,
     skip_reason: str | None,
 ) -> tuple[str, list[tuple[str, str]]]:
@@ -252,7 +252,7 @@ async def fetch_backend_tool_listing(
     *headers*/*skip_reason* come from ``resolve_list_time_credential``.
     Returns ``(status, tools)``: status is "ok" or a ``_classify_failure``
     reason ("not_linked" | "unauthorized" | "unavailable"), and tools are
-    ``(name, description)`` pairs with ``BackendSpec.apply_namespace``
+    ``(name, description)`` pairs with ``ServiceSpec.apply_namespace``
     already applied -- the names a caller actually sees through /mcp.
     Deliberately built on ``_build_client`` (same transport choice, per-call
     timeout, and notification handlers as the aggregator's own factories)
@@ -276,7 +276,7 @@ def _identity_link_url(settings: Settings, alias: str | None) -> str:
     Shared by ``_not_linked_error`` (the plain-text hint) and
     ``_require_linked`` (the elicitation message below) so the URL can never
     drift between the two. Falls back to the bare Identities page when
-    *alias* is ``None`` -- shouldn't happen for a backend that resolved a
+    *alias* is ``None`` -- shouldn't happen for a service that resolved a
     credential provider at all, but keeps this defensive rather than raising
     a second, more confusing error over a missing join entry.
     """
@@ -321,7 +321,7 @@ def _not_linked_error(
     elicitation first and falls back to this exact error when that isn't
     possible or the caller doesn't complete it.
 
-    *alias* is the identity-provider alias servicing this backend
+    *alias* is the identity-provider alias servicing this service
     (``target_to_alias.get(spec.name)``), used to deep-link straight to that
     provider's card via ``_identity_link_url`` -- the same URL
     ``af_link_identity`` (mcp/diagnostics.py) returns. Falls back to the bare
@@ -337,8 +337,8 @@ def _not_linked_error(
         f"{type(provider).__name__} not linked. Visit {url} to connect it, "
         f"or call {link_hint} to get this link. Call "
         f"`{LIST_IDENTITIES_TOOL_NAME}` to see which identity provider this "
-        f"backend needs, or `{LIST_MCP_SERVERS_TOOL_NAME}` for this "
-        "backend's current status."
+        f"service needs, or `{LIST_MCP_SERVERS_TOOL_NAME}` for this "
+        "service's current status."
     )
 
 
@@ -384,7 +384,7 @@ _ELICIT_CANCEL_OPTION = "Cancel"
 async def _require_linked(
     provider: CredentialProvider,
     principal: Principal,
-    spec: BackendSpec,
+    spec: ServiceSpec,
     settings: Settings,
     target_to_alias: dict[str, str] | None,
     identity_provider_configs: dict[str, IdentityProviderConfig] | None = None,
@@ -456,7 +456,7 @@ async def _require_linked(
 
 
 def _make_client_factory(
-    spec: BackendSpec,
+    spec: ServiceSpec,
     credential_registry: CredentialRegistry,
     settings: Settings,
     policy: EntitlementPolicy,
@@ -465,7 +465,7 @@ def _make_client_factory(
     target_to_alias: dict[str, str] | None = None,
     identity_provider_configs: dict[str, IdentityProviderConfig] | None = None,
 ) -> ClientFactoryT:
-    """Build a ProxyProvider client_factory for one backend.
+    """Build a ProxyProvider client_factory for one service.
 
     Security property: constructing a plain ``Client`` around an explicit
     transport object never sets ``forward_incoming_headers`` -- it stays at
@@ -473,17 +473,17 @@ def _make_client_factory(
     wrapper unconditionally sets that flag to True for HTTP/SSE transports
     (intended for proxies that should forward the caller's credentials), so
     it is deliberately not used here: the broker's own AF-internal bearer
-    token must never reach a backend regardless. The ``headers`` passed to
+    token must never reach a service regardless. The ``headers`` passed to
     the transport below come exclusively from a credential this factory
     itself minted -- never copied from the inbound request -- so passing
     them does not reintroduce that forwarding behavior.
 
     ``auth_type`` selects the branch:
-      - "none": no credential is resolved at all; the backend needs no
+      - "none": no credential is resolved at all; the service needs no
         per-user credential (e.g. it authorizes via a platform k8s SA).
-      - "x509": inject an AF Broker Identity Token (aud = this backend);
-        the backend redeems the caller's VOMS proxy server-side via
-        POST /v1/credentials/x509/redeem (issue #112's "backend calls
+      - "x509": inject an AF Broker Identity Token (aud = this service);
+        the service redeems the caller's VOMS proxy server-side via
+        POST /v1/credentials/x509/redeem (issue #112's "service calls
         back" wire format). The proxy PEM itself never transits the
         aggregator. Gated on ``credential_registry``'s linkage the same way
         as "bearer" below (see ``_not_linked_error``) before any token is
@@ -500,7 +500,7 @@ def _make_client_factory(
     The "x509" and "bearer" branches both key off ``authorized_call_target``
     (request-scoped state set by ``AuthorizationMiddleware`` right before it
     calls ``call_next``) to tell an authorized tools/call targeting this
-    backend apart from any other invocation reaching this factory --
+    service apart from any other invocation reaching this factory --
     ``ProxyTool.run()`` always hits the former; ``ProxyProvider._list_tools()``
     (which answers a ``tools/list`` request, and which ``_get_tool()`` also
     calls on a stale-cache lookup) hits the latter, and the two are otherwise
@@ -510,15 +510,15 @@ def _make_client_factory(
     not-yet-supported error during a listing would be both wasteful (every
     session's first list would eat it) and wrong (a listing shouldn't itself
     hard-fail), so absent the authorized-call signal the factory just
-    connects without a credential, same as a "none" backend -- unchanged.
+    connects without a credential, same as a "none" service -- unchanged.
 
     For "bearer", that same "wasteful and wrong" framing used to justify
     skipping credential resolution entirely during a listing -- until issue
-    #121: a backend whose MCP endpoint itself requires a bearer token to
+    #121: a service whose MCP endpoint itself requires a bearer token to
     respond to ``tools/list`` (rucio-mcp) then 401s on every listing and
     becomes permanently invisible to every caller, with no user-facing
     error at all. Resolved by attempting a *best-effort* mint during a
-    listing too, gated on the caller actually having the backend's
+    listing too, gated on the caller actually having the service's
     ``required_capability`` (``check_entitlement``, the same check
     ``AuthorizationMiddleware`` uses) -- the in-process ``CredentialCache``
     already makes repeat mints for the same ``(uid, target)`` cheap, so
@@ -530,8 +530,8 @@ def _make_client_factory(
     poisoning a *different* caller's later, genuinely authorized tools/call).
     ``_ObservableProxyProvider`` (below) classifies and structured-logs
     whatever the resulting connection attempt produces, then lets it
-    propagate so the existing warn-and-skip behavior drops the backend from
-    the list exactly like a dead backend would.
+    propagate so the existing warn-and-skip behavior drops the service from
+    the list exactly like a dead service would.
 
     This does mean a listing fetched with one user's credential can leave
     ``ProxyProvider``'s ``_tools_cache`` (used by ``_get_tool()`` for
@@ -543,8 +543,8 @@ def _make_client_factory(
     aren't user-specific -- true for rucio-mcp, one ``--read-only`` tool set
     per site -- since each ``ProxyTool`` only carries a reference back to
     this same ``client_factory`` (which mints fresh per call) rather than a
-    baked-in credential. A backend whose tool list genuinely does personalize
-    per caller should set ``BackendSpec.tools_cache_ttl: 0`` to disable that
+    baked-in credential. A service whose tool list genuinely does personalize
+    per caller should set ``ServiceSpec.tools_cache_ttl: 0`` to disable that
     cache outright.
     """
     transport_cls = SSETransport if spec.transport == "sse" else StreamableHttpTransport
@@ -590,7 +590,7 @@ def _make_client_factory(
                 )
             if broker_token_issuer is None:
                 raise ToolError(
-                    f"Backend '{spec.name}' is an x509 backend, which needs the "
+                    f"Service '{spec.name}' is an x509 service, which needs the "
                     "broker to sign AF Broker Identity Tokens, but no signing key "
                     "is configured (chart: broker.identityToken."
                     "existingSigningKeySecret)."
@@ -604,7 +604,7 @@ def _make_client_factory(
             # Same linkage gate _bearer_factory applies BEFORE minting --
             # without it an unlinked caller got a broker identity token
             # unconditionally, and the failure only ever surfaced as
-            # whatever generic error the backend's own redeem call happened
+            # whatever generic error the service's own redeem call happened
             # to produce (e.g. a bare 404 from POST /v1/credentials/x509/
             # redeem), never a "go link your identity" message. Now also
             # tries a real elicitation before giving up -- see
@@ -618,7 +618,7 @@ def _make_client_factory(
                 identity_provider_configs,
             )
 
-            # Identity assertion only (sub/aud): the backend redeems the proxy
+            # Identity assertion only (sub/aud): the service redeems the proxy
             # with this token; it has no use for POSIX claims.
             token, _ = broker_token_issuer.mint(principal.subject, spec.name)
             return _build_client(
@@ -630,7 +630,7 @@ def _make_client_factory(
     async def _bearer_factory() -> Client:
         ctx = get_context()
         if await ctx.get_state("authorized_call_target") != spec.name:
-            # Not an authorized tools/call for this backend -- most commonly
+            # Not an authorized tools/call for this service -- most commonly
             # a tools/list request (or a stale-cache _get_tool() refresh
             # triggered by one). See the docstring above for why a
             # best-effort mint is attempted here rather than skipped
@@ -645,7 +645,7 @@ def _make_client_factory(
             # Same capability gate AuthorizationMiddleware applies to an
             # actual call -- a caller who could never pass it shouldn't
             # trigger a mint attempt at all; EntitlementMiddleware already
-            # hides this backend's tools from such a caller's own tools/list
+            # hides this service's tools from such a caller's own tools/list
             # response, so this is just avoiding wasted work, not a security
             # boundary of its own.
             allowed, _reason = check_entitlement(
@@ -657,8 +657,8 @@ def _make_client_factory(
             headers, skip_reason = await _resolve_list_time_headers(
                 spec, credential_registry, principal
             )
-            # Keyed per backend (not a single shared key) since one
-            # tools/list request fans out to every backend's factory
+            # Keyed per service (not a single shared key) since one
+            # tools/list request fans out to every service's factory
             # concurrently -- see _classify_list_failure's use of this.
             await ctx.set_state(
                 f"__list_credential_status__:{spec.name}",
@@ -717,7 +717,7 @@ def _make_client_factory(
 
 
 class _ObservableProxyProvider(ProxyProvider):
-    """ProxyProvider that structured-logs a classified reason when its ``tools/list`` fails, then re-raises so ``AggregateProvider``'s existing ``provider_error_strategy="warn"`` still drops this backend's contribution and keeps every other backend's listing unaffected -- exactly today's degrade-gracefully behavior, just with an ``aggregator.backend_list_failed`` structlog event on record instead of only fastmcp's own unparseable stdlib WARNING (see issue #121).
+    """ProxyProvider that structured-logs a classified reason when its ``tools/list`` fails, then re-raises so ``AggregateProvider``'s existing ``provider_error_strategy="warn"`` still drops this service's contribution and keeps every other service's listing unaffected -- exactly today's degrade-gracefully behavior, just with an ``aggregator.service_list_failed`` structlog event on record instead of only fastmcp's own unparseable stdlib WARNING (see issue #121).
 
     Overrides only the private ``_list_tools()`` extension hook that
     ``fastmcp.server.providers.proxy.ProxyProvider`` (pinned at 3.4.4, see
@@ -728,52 +728,52 @@ class _ObservableProxyProvider(ProxyProvider):
     docstring for why that path matters here), or its cache-write-only-on-
     success behavior change on a future fastmcp bump, re-check this class.
 
-    Also records the classified reason onto ``registry`` (BackendRegistry.
-    record_list_failure) so /v1/catalog's per-backend status derivation
+    Also records the classified reason onto ``registry`` (ServiceRegistry.
+    record_list_failure) so /v1/catalog's per-service status derivation
     (issue #123) can factor in a recent listing failure -- e.g. downgrading
-    an otherwise "available" backend to "unavailable" -- without an extra
+    an otherwise "available" service to "unavailable" -- without an extra
     live probe of its own. A subsequent successful listing clears that
-    recorded reason (BackendRegistry.clear_list_failure) -- otherwise a
-    backend that recovers from one transient failure would keep reporting
+    recorded reason (ServiceRegistry.clear_list_failure) -- otherwise a
+    service that recovers from one transient failure would keep reporting
     "unavailable" for the life of the process, since record_list_failure()
     on its own has no expiry or reset path.
     """
 
     def __init__(
         self,
-        backend_name: str,
+        service_name: str,
         client_factory: ClientFactoryT,
-        registry: BackendRegistry,
+        registry: ServiceRegistry,
         cache_ttl: float | None = None,
     ) -> None:
         super().__init__(client_factory, cache_ttl=cache_ttl)
-        self._backend_name = backend_name
+        self._service_name = service_name
         self._registry = registry
 
     async def _list_tools(self) -> Sequence[Tool]:
         try:
             tools = await super()._list_tools()
         except Exception as exc:
-            reason, detail = await _classify_list_failure(exc, self._backend_name)
-            self._registry.record_list_failure(self._backend_name, reason)
+            reason, detail = await _classify_list_failure(exc, self._service_name)
+            self._registry.record_list_failure(self._service_name, reason)
             logger.warning(
-                "aggregator.backend_list_failed",
-                backend=self._backend_name,
+                "aggregator.service_list_failed",
+                service=self._service_name,
                 reason=reason,
                 error=detail,
             )
             raise
         else:
-            # A successful listing means the backend has recovered from any
+            # A successful listing means the service has recovered from any
             # previously recorded failure -- clear it so /v1/catalog and
-            # af_list_mcp_servers stop reporting "unavailable" for a backend
+            # af_list_mcp_servers stop reporting "unavailable" for a service
             # that's actually fine again.
-            self._registry.clear_list_failure(self._backend_name)
+            self._registry.clear_list_failure(self._service_name)
             return tools
 
 
 def build_aggregator(
-    registry: BackendRegistry,
+    registry: ServiceRegistry,
     settings: Settings,
     policy: EntitlementPolicy,
     credential_registry: CredentialRegistry,
@@ -792,10 +792,10 @@ def build_aggregator(
     second (filters tools/list to what the Principal is entitled to), and
     AuthorizationMiddleware third (checks entitlement again for tools/call,
     since a filtered list is not an access-control boundary by itself, and
-    audits every invocation) -- then adds one ProxyProvider per backend in
+    audits every invocation) -- then adds one ProxyProvider per service in
     ``registry`` plus the broker-native af_* diagnostic tools (issue #153,
-    see mcp/diagnostics.py). Namespacing follows ``BackendSpec.apply_namespace``
-    -- backends whose tools already self-prefix (e.g. rucio-mcp) opt out.
+    see mcp/diagnostics.py). Namespacing follows ``ServiceSpec.apply_namespace``
+    -- services whose tools already self-prefix (e.g. rucio-mcp) opt out.
 
     *revoked_jti_cache*/*pat_backend*/*principal_cache* default to None here
     because app.py builds the aggregator eagerly, before the real token
@@ -816,7 +816,7 @@ def build_aggregator(
     )
     mcp.add_middleware(EntitlementMiddleware(registry, policy))
     mcp.add_middleware(AuthorizationMiddleware(registry, policy))
-    _register_backends(
+    _register_services(
         mcp,
         registry,
         credential_registry,
@@ -858,7 +858,7 @@ def build_asgi_auth_middleware(mcp: FastMCP) -> Middleware:
 
 def populate_aggregator(
     mcp: FastMCP,
-    registry: BackendRegistry,
+    registry: ServiceRegistry,
     settings: Settings,
     policy: EntitlementPolicy,
     credential_registry: CredentialRegistry,
@@ -873,13 +873,13 @@ def populate_aggregator(
     """Refresh an aggregator built by ``build_aggregator`` with a freshly loaded registry/settings/policy/credential_registry/revoked_jti_cache/pat_backend/principal_cache/identity_providers/identity_provider_configs/target_to_alias.
 
     app.py's mount-time constraint means the aggregator's FastMCP instance
-    and ASGI app must exist before BACKENDS_FILE/POLICY_FILE/the credential
+    and ASGI app must exist before SERVICES_FILE/POLICY_FILE/the credential
     subsystem are loaded (they are only read inside the async lifespan);
     this function is how the lifespan pushes the real values into the
     already-mounted instance. Safe to call more than once per process (every
-    lifespan entry, including repeated TestClient entries in tests): backend
+    lifespan entry, including repeated TestClient entries in tests): service
     providers are replaced wholesale rather than appended to, mirroring how
-    BackendRegistry and EntitlementPolicy are themselves rebuilt from scratch
+    ServiceRegistry and EntitlementPolicy are themselves rebuilt from scratch
     on every lifespan entry rather than merged -- the af_* diagnostic tools
     (register_diagnostic_tools) follow the same rebuild-from-scratch pattern.
     """
@@ -892,7 +892,7 @@ def populate_aggregator(
     entitlement_mw.policy = policy
     authorization_mw.registry = registry
     authorization_mw.policy = policy
-    _register_backends(
+    _register_services(
         mcp,
         registry,
         credential_registry,
@@ -914,9 +914,9 @@ def populate_aggregator(
     )
 
 
-def _register_backends(
+def _register_services(
     mcp: FastMCP,
-    registry: BackendRegistry,
+    registry: ServiceRegistry,
     credential_registry: CredentialRegistry,
     settings: Settings,
     policy: EntitlementPolicy,
@@ -936,7 +936,7 @@ def _register_backends(
     # every call: it carries no per-call state of its own, and the list was
     # just cleared, so this never produces a duplicate entry.
     mcp.add_provider(mcp.local_provider)
-    for spec in registry.all_backends():
+    for spec in registry.all_services():
         provider = _ObservableProxyProvider(
             spec.name,
             client_factory=_make_client_factory(

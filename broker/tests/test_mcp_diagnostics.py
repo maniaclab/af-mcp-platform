@@ -22,8 +22,8 @@ from af_mcp_broker.mcp.registry import (
     LIST_IDENTITIES_TOOL_NAME,
     LIST_MCP_SERVERS_TOOL_NAME,
     WHOAMI_TOOL_NAME,
-    BackendRegistry,
-    BackendSpec,
+    ServiceRegistry,
+    ServiceSpec,
     identity_provider_url,
 )
 
@@ -76,7 +76,7 @@ async def test_af_whoami_returns_subject_groups_and_capabilities(
     policy = EntitlementPolicy(group_capabilities={"atlas": ["read_data"]})
 
     mcp = build_aggregator(
-        BackendRegistry(),
+        ServiceRegistry(),
         settings,
         policy,
         CredentialRegistry(),
@@ -113,7 +113,7 @@ async def test_af_list_identities_reflects_linkage_per_provider(
     }
 
     mcp = build_aggregator(
-        BackendRegistry(),
+        ServiceRegistry(),
         settings,
         EntitlementPolicy(),
         CredentialRegistry(),
@@ -163,7 +163,7 @@ async def test_af_link_identity_returns_portal_url_and_linked_status(
     }
 
     mcp = build_aggregator(
-        BackendRegistry(),
+        ServiceRegistry(),
         settings,
         EntitlementPolicy(),
         CredentialRegistry(),
@@ -210,7 +210,7 @@ async def test_af_link_identity_unknown_provider_raises_tool_error(
     identity_provider_configs = {"linked-idp": _idp_config("Linked IdP", "Some access")}
 
     mcp = build_aggregator(
-        BackendRegistry(),
+        ServiceRegistry(),
         settings,
         EntitlementPolicy(),
         CredentialRegistry(),
@@ -234,10 +234,10 @@ async def test_af_link_identity_unknown_provider_raises_tool_error(
     assert LIST_IDENTITIES_TOOL_NAME in str(excinfo.value)
 
 
-async def test_af_list_mcp_servers_reuses_backend_status_and_identity_join(
+async def test_af_list_mcp_servers_reuses_service_status_and_identity_join(
     settings: Any, sig_key: Any, prime_jwks: Any, static_principal_cache: Any
 ) -> None:
-    """Reuses api/capabilities.py's _backend_status() (issue #123) and the
+    """Reuses api/capabilities.py's _service_status() (issue #123) and the
     target_to_alias identity<->backend join (issue #90) rather than
     reimplementing either -- this asserts the same statuses/joins /v1/catalog
     would report for the identical setup, through the MCP tool instead."""
@@ -246,9 +246,9 @@ async def test_af_list_mcp_servers_reuses_backend_status_and_identity_join(
     prime_jwks([sig_key.jwk])
     token = sig_key.sign(make_claims())
 
-    registry = BackendRegistry()
+    registry = ServiceRegistry()
     registry.register(
-        BackendSpec(
+        ServiceSpec(
             name="open",
             prefix="open",
             url="http://open.invalid/mcp",
@@ -259,7 +259,7 @@ async def test_af_list_mcp_servers_reuses_backend_status_and_identity_join(
         )
     )
     registry.register(
-        BackendSpec(
+        ServiceSpec(
             name="gated",
             prefix="gated",
             url="http://gated.invalid/mcp",
@@ -270,7 +270,7 @@ async def test_af_list_mcp_servers_reuses_backend_status_and_identity_join(
         )
     )
     registry.register(
-        BackendSpec(
+        ServiceSpec(
             name="needs-link",
             prefix="needslink",
             url="http://needslink.invalid/mcp",
@@ -322,9 +322,9 @@ async def test_diagnostic_tools_visible_to_principal_with_no_capabilities(
     prime_jwks([sig_key.jwk])
     token = sig_key.sign(make_claims())
 
-    registry = BackendRegistry()
+    registry = ServiceRegistry()
     registry.register(
-        BackendSpec(
+        ServiceSpec(
             name="gated",
             prefix="gated",
             url="http://gated.invalid/mcp",
@@ -377,9 +377,9 @@ async def test_no_diagnostic_tool_response_contains_a_url(
     prime_jwks([sig_key.jwk])
     token = sig_key.sign(make_claims())
 
-    registry = BackendRegistry()
+    registry = ServiceRegistry()
     registry.register(
-        BackendSpec(
+        ServiceSpec(
             name="needs-link",
             prefix="needslink",
             url="http://internal.svc.cluster.local/mcp",

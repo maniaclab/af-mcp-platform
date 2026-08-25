@@ -13,8 +13,8 @@ from af_mcp_broker.mcp.middleware import authorization_mw
 from af_mcp_broker.mcp.middleware.authorization_mw import AuthorizationMiddleware
 from af_mcp_broker.mcp.registry import (
     DIAGNOSTIC_TOOL_NAMES,
-    BackendRegistry,
-    BackendSpec,
+    ServiceRegistry,
+    ServiceSpec,
 )
 
 if TYPE_CHECKING:
@@ -63,10 +63,10 @@ def _call_tool_context(
 
 
 @pytest.fixture
-def registry() -> BackendRegistry:
-    reg = BackendRegistry()
+def registry() -> ServiceRegistry:
+    reg = ServiceRegistry()
     reg.register(
-        BackendSpec(
+        ServiceSpec(
             name="rucio",
             prefix="rucio",
             url="http://rucio.invalid/mcp",
@@ -76,7 +76,7 @@ def registry() -> BackendRegistry:
         )
     )
     reg.register(
-        BackendSpec(
+        ServiceSpec(
             name="docs",
             prefix="docs",
             url="http://docs.invalid/mcp",
@@ -85,7 +85,7 @@ def registry() -> BackendRegistry:
         )
     )
     reg.register(
-        BackendSpec(
+        ServiceSpec(
             name="credentialed",
             prefix="credentialed",
             url="http://credentialed.invalid/mcp",
@@ -155,7 +155,7 @@ async def test_entitled_call_proceeds_and_audits_success(
     assert record.target == "rucio"
     assert record.action == "rucio_list_dids"
     assert record.action_type == "read"
-    assert record.mcp_backend == "rucio"
+    assert record.mcp_service == "rucio"
     assert record.principal_uid == principal.uid
     assert record.principal_sub == principal.subject
     # The client_factory (aggregator.py) reads this to distinguish a genuine
@@ -361,7 +361,7 @@ async def test_registry_and_policy_are_mutable_attributes(
 ) -> None:
     """populate_aggregator() refreshes these in place on every lifespan
     entry rather than constructing a new middleware instance."""
-    mw = AuthorizationMiddleware(BackendRegistry(), EntitlementPolicy())
+    mw = AuthorizationMiddleware(ServiceRegistry(), EntitlementPolicy())
     mw.registry = registry
     mw.policy = policy
 

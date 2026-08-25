@@ -41,7 +41,7 @@ from af_mcp_broker.credentials import (
 )
 from af_mcp_broker.mcp import aggregator as aggregator_module
 from af_mcp_broker.mcp.aggregator import build_aggregator
-from af_mcp_broker.mcp.registry import BackendRegistry, BackendSpec
+from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
@@ -59,7 +59,7 @@ _BROKER_ISSUED_PROVIDERS = [
 ]
 
 _BACKENDS_YAML = (
-    "backends:\n"
+    "services:\n"
     "  - name: condor-token-service\n"
     "    prefix: condor\n"
     "    url: http://condor-token-service.invalid/mcp\n"
@@ -75,9 +75,9 @@ def broker_issued_env(
     """Point the app at a broker-issued identity provider and (optionally) a real signing key on disk."""
 
     def _apply(*, with_signing_key: bool = True) -> None:
-        backends_file = tmp_path / "backends.yaml"
-        backends_file.write_text(_BACKENDS_YAML)
-        monkeypatch.setenv("BACKENDS_FILE", str(backends_file))
+        services_file = tmp_path / "services.yaml"
+        services_file.write_text(_BACKENDS_YAML)
+        monkeypatch.setenv("SERVICES_FILE", str(services_file))
         monkeypatch.setenv("IDENTITY_PROVIDERS", json.dumps(_BROKER_ISSUED_PROVIDERS))
         monkeypatch.setenv("BROKER_PUBLIC_ORIGIN", "https://mcp.example.com")
         if with_signing_key:
@@ -113,7 +113,7 @@ def test_broker_issued_provider_registered_from_config(
 def test_broker_issued_entry_without_signing_key_refuses_to_start(
     broker_issued_env, app_client_factory
 ) -> None:
-    """Fail-closed, like unreachable_capabilities/ungated_backends: a
+    """Fail-closed, like unreachable_capabilities/ungated_services: a
     backend wired to broker-issued with no signing key configured would
     otherwise fail at first request instead of at boot."""
     broker_issued_env(with_signing_key=False)
@@ -219,9 +219,9 @@ async def test_aggregator_injects_broker_identity_token(
     principal_cache, directory = static_principal_cache
     directory.groups_by_subject["user-123"] = ["atlas"]
 
-    registry = BackendRegistry()
+    registry = ServiceRegistry()
     registry.register(
-        BackendSpec(
+        ServiceSpec(
             name="toy",
             prefix="toy",
             url=toy_backend_url,
@@ -306,7 +306,7 @@ def test_identities_lists_broker_issued_provider_as_linked(
 # ---------------------------------------------------------------------------
 
 
-def _find_backend_provider(mcp: FastMCP, backend_name: str) -> Any:
+def _find_service_provider(mcp: FastMCP, service_name: str) -> Any:
     """Fish one backend's _ObservableProxyProvider out of the aggregator.
 
     Namespaced providers sit behind fastmcp's ``_WrappedProvider`` (its
@@ -317,10 +317,10 @@ def _find_backend_provider(mcp: FastMCP, backend_name: str) -> Any:
         inner = getattr(provider, "_inner", provider)
         if (
             isinstance(inner, aggregator_module._ObservableProxyProvider)
-            and inner._backend_name == backend_name
+            and inner._service_name == service_name
         ):
             return inner
-    raise AssertionError(f"no provider registered for backend {backend_name!r}")
+    raise AssertionError(f"no provider registered for backend {service_name!r}")
 
 
 def test_lifespan_threads_issuer_into_x509_client_factory(
@@ -339,8 +339,8 @@ def test_lifespan_threads_issuer_into_x509_client_factory(
     with app_client_factory() as (client, _):
         issuer = client.app.state.broker_token_issuer
         assert issuer is not None
-        # SHIPPED_BACKENDS' "ami" is its auth_type: x509 entry.
-        ami_provider = _find_backend_provider(app_module._mcp_aggregator, "ami")
+        # SHIPPED_SERVICES' "ami" is its auth_type: x509 entry.
+        ami_provider = _find_service_provider(app_module._mcp_aggregator, "ami")
         # A list-time invocation (no authorized_call_target) by an entitled
         # principal: the factory attaches the identity header best-effort --
         # exactly the connection that goes out bare and 401s in production

@@ -21,7 +21,7 @@ from af_mcp_broker.credentials import (
     NeedsUnlock,
 )
 from af_mcp_broker.mcp.aggregator import build_aggregator
-from af_mcp_broker.mcp.registry import BackendRegistry, BackendSpec
+from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -120,9 +120,9 @@ def aggregator_app_url(settings, toy_backend_url, policy, static_principal_cache
     before calling ``aggregator_app_url(provider)``.
     """
     principal_cache, directory = static_principal_cache
-    registry = BackendRegistry()
+    registry = ServiceRegistry()
     registry.register(
-        BackendSpec(
+        ServiceSpec(
             name="toy",
             prefix="toy",
             url=toy_backend_url,
@@ -132,7 +132,7 @@ def aggregator_app_url(settings, toy_backend_url, policy, static_principal_cache
         )
     )
     registry.register(
-        BackendSpec(
+        ServiceSpec(
             name="open",
             prefix="open",
             url=toy_backend_url,

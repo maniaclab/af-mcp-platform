@@ -135,7 +135,7 @@ def _new_audit_id() -> str:
 class CredentialRegistry:
     """Maps target names to providers.
 
-    Loaded at startup from ``backends.yaml`` (via ``Settings.backends_file``).
+    Loaded at startup from ``services.yaml`` (via ``Settings.services_file``).
     Targets are registered explicitly; an unknown target raises ``KeyError``
     rather than falling through silently — fail-closed is the right default for
     a credential broker.
@@ -149,7 +149,7 @@ class CredentialRegistry:
     def register(self, target: str, provider: CredentialProvider) -> None:
         """Explicitly bind *target* to *provider*.
 
-        Call this from the startup routine after reading ``backends.yaml``.
+        Call this from the startup routine after reading ``services.yaml``.
         """
         if target in self._target_map:
             existing = self._target_map[target]
@@ -174,7 +174,7 @@ class CredentialRegistry:
             return self._target_map[target]
         raise KeyError(
             f"No credential provider registered for target {target!r}. "
-            "Check backends.yaml or call CredentialRegistry.register()."
+            "Check services.yaml or call CredentialRegistry.register()."
         )
 
     async def issue(

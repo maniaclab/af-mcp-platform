@@ -1,6 +1,6 @@
-# Default backend registry. Deployed as a ConfigMap and mounted at /etc/af-mcp/backends.yaml.
-# Adding a backend requires only a new entry here (via Helm values) — no code changes.
-backends:
+# Default service registry. Deployed as a ConfigMap and mounted at /etc/af-mcp/services.yaml.
+# Adding a service requires only a new entry here (via Helm values) — no code changes.
+services:
   - name: rucio
     prefix: rucio
     url: "http://rucio-mcp.mcp.svc.cluster.local:80/site/atlas"
@@ -13,7 +13,7 @@ backends:
     auth_type: bearer
     # rucio-mcp's tools are already self-prefixed (rucio_list_dids, ...);
     # namespacing again would produce rucio_rucio_*. Safe only while a single
-    # rucio site is configured -- see docs/adding-a-backend.md's
+    # rucio site is configured -- see docs/adding-a-service.md's
     # apply_namespace section and #113 before adding a second site, since two
     # apply_namespace: false rucio entries would shadow each other's tools.
     apply_namespace: false
