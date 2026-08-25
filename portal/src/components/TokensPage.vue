@@ -1434,7 +1434,7 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
   }
   /* Hide the columns that matter least for a quick glance or a revoke
      decision -- same hide-secondary-columns-not-horizontal-scroll pattern
-     BackendCard.vue already uses. Name/Scope identify the token, Expires/
+     ServiceCard.vue already uses. Name/Scope identify the token, Expires/
      Status are what you'd act on; Token ID/Created/Last used are dropped
      rather than forcing horizontal scroll for them. */
   .tp__th--secondary,

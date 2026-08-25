@@ -1,13 +1,13 @@
 /**
- * serverTools.ts — pure mapping from a GET /v1/catalog/{backend}/tools
+ * serverTools.ts — pure mapping from a GET /v1/catalog/{service}/tools
  * response (see broker/src/af_mcp_broker/api/catalog_tools.py) to what
- * BackendCard.vue's Tools accordion should render. Kept as plain
+ * ServiceCard.vue's Tools accordion should render. Kept as plain
  * data-in/data-out functions (no DOM/fetch access) so it's trivially
- * unit-testable, same pattern as lib/backendStatus.ts -- component logic
+ * unit-testable, same pattern as lib/serviceStatus.ts -- component logic
  * stays thin and this module carries the actual decisions.
  */
 import type { CatalogTool, ServerToolsResponse } from './api';
-import type { StatusCta } from './backendStatus';
+import type { StatusCta } from './serviceStatus';
 
 export type ToolListingView =
   /** Status "ok" with at least one tool — render the tool table. */
@@ -31,7 +31,7 @@ export function resolveToolListing(listing: ServerToolsResponse): ToolListingVie
     if (listing.tools.length > 0) {
       return { kind: 'tools', tools: listing.tools };
     }
-    return { kind: 'empty', message: 'This backend currently registers no tools.' };
+    return { kind: 'empty', message: 'This service currently registers no tools.' };
   }
   return {
     kind: 'blocked',

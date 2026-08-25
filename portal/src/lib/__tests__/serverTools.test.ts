@@ -1,8 +1,8 @@
 /**
  * Unit tests for lib/serverTools.ts — the pure mapping from a
- * GET /v1/catalog/{backend}/tools response to what BackendCard.vue's Tools
+ * GET /v1/catalog/{service}/tools response to what ServiceCard.vue's Tools
  * accordion should render. Same data-in/data-out pattern as
- * lib/backendStatus.ts.
+ * lib/serviceStatus.ts.
  */
 import { describe, expect, it } from 'vitest';
 import type { ServerToolsResponse } from '../api';
@@ -40,12 +40,12 @@ describe('resolveToolListing', () => {
     const view = resolveToolListing(
       listing({
         status: 'not_linked',
-        status_detail: "Link your identity to see this backend's tools.",
+        status_detail: "Link your identity to see this service's tools.",
       }),
     );
     expect(view).toEqual({
       kind: 'blocked',
-      message: "Link your identity to see this backend's tools.",
+      message: "Link your identity to see this service's tools.",
       cta: { label: 'Link identity', href: '/identities/' },
     });
   });

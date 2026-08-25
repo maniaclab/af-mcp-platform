@@ -1,14 +1,14 @@
 /**
- * backendStatus.ts — pure mapping from a catalog server's `status` (issue
- * #123, see broker/src/af_mcp_broker/api/capabilities.py's _backend_status)
- * to how BackendCard.vue should render it: a label, severity, and the right
+ * serviceStatus.ts — pure mapping from a catalog server's `status` (issue
+ * #123, see broker/src/af_mcp_broker/api/capabilities.py's _service_status)
+ * to how ServiceCard.vue should render it: a label, severity, and the right
  * call to action. Kept as plain data-in/data-out functions (no DOM/fetch
  * access) so it's trivially unit-testable, same pattern as lib/catalog.ts
  * and lib/linkedBanner.ts -- the repo deliberately avoids component-mount
  * harnesses, so component logic stays thin and this module carries the
  * actual decisions.
  */
-import type { BackendStatus, CatalogServer } from './api';
+import type { ServiceStatus, CatalogServer } from './api';
 
 export type StatusSeverity = 'ok' | 'info' | 'warning' | 'error';
 
@@ -17,7 +17,7 @@ export interface StatusCta {
   href: string;
 }
 
-export interface BackendStatusView {
+export interface ServiceStatusView {
   label: string;
   /** The broker's own status_detail sentence -- already internals-free. */
   detail: string;
@@ -32,7 +32,7 @@ export interface BackendStatusView {
   correlationId: string | null;
 }
 
-const LABELS: Record<BackendStatus, string> = {
+const LABELS: Record<ServiceStatus, string> = {
   available: 'Available',
   link_required: 'Link required',
   capability_required: 'Access required',
@@ -40,7 +40,7 @@ const LABELS: Record<BackendStatus, string> = {
   misconfigured: 'Misconfigured',
 };
 
-const SEVERITIES: Record<BackendStatus, StatusSeverity> = {
+const SEVERITIES: Record<ServiceStatus, StatusSeverity> = {
   available: 'ok',
   link_required: 'info',
   capability_required: 'warning',
@@ -56,9 +56,9 @@ const SEVERITIES: Record<BackendStatus, StatusSeverity> = {
  * correlationId carries the id to quote), and unavailable is a
  * wait-and-retry state with nothing to link to.
  */
-export function resolveBackendStatus(
+export function resolveServiceStatus(
   server: Pick<CatalogServer, 'status' | 'status_detail' | 'correlation_id'>,
-): BackendStatusView {
+): ServiceStatusView {
   return {
     label: LABELS[server.status],
     detail: server.status_detail,
@@ -80,7 +80,7 @@ export function resolveBackendStatus(
  * every other status, and for the "no linked/unlinked concept" case (null).
  */
 export function resolvePoweredByLinked(
-  status: BackendStatus,
+  status: ServiceStatus,
   poweredByLinked: boolean | null,
 ): boolean | null {
   if (poweredByLinked === null) return null;
