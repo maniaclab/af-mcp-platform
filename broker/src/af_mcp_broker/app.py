@@ -866,7 +866,10 @@ try:
     # instrument() records request metrics into the default prometheus
     # registry; the lifespan serves that registry on METRICS_PORT (9090).
     # No expose() here — the API port must not serve /metrics (issue #11).
-    Instrumentator().instrument(app)
+    # metric_namespace prefixes the default http_* series to af_mcp_http_*,
+    # matching the custom metrics' naming and the Grafana dashboard's
+    # queries (issue #226).
+    Instrumentator().instrument(app, metric_namespace="af_mcp")
 except ImportError:
     # prometheus-fastapi-instrumentator is an optional dependency. The broker
     # functions correctly without it; metrics simply won't be available.

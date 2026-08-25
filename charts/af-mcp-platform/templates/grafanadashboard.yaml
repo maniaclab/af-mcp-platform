@@ -33,8 +33,8 @@ data:
           "options": { "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
           "targets": [
             {
-              "expr": "sum(rate(af_mcp_http_requests_total{job=~\".*af-mcp.*\"}[5m])) by (endpoint, method)",
-              "legendFormat": "{{`{{method}}`}} {{`{{endpoint}}`}}",
+              "expr": "sum(rate(af_mcp_http_requests_total{job=~\".*af-mcp.*\"}[5m])) by (handler, method)",
+              "legendFormat": "{{`{{method}}`}} {{`{{handler}}`}}",
               "refId": "A"
             }
           ],
@@ -52,8 +52,8 @@ data:
           "options": { "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
           "targets": [
             {
-              "expr": "histogram_quantile(0.95, sum(rate(af_mcp_http_request_duration_seconds_bucket{job=~\".*af-mcp.*\"}[5m])) by (le, endpoint))",
-              "legendFormat": "p95 {{`{{endpoint}}`}}",
+              "expr": "histogram_quantile(0.95, sum(rate(af_mcp_http_request_duration_seconds_bucket{job=~\".*af-mcp.*\"}[5m])) by (le, handler))",
+              "legendFormat": "p95 {{`{{handler}}`}}",
               "refId": "A"
             }
           ],
@@ -71,8 +71,8 @@ data:
           "options": { "legend": { "calcs": ["mean"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
           "targets": [
             {
-              "expr": "sum(rate(af_mcp_http_requests_total{job=~\".*af-mcp.*\", status=~\"5..\"}[5m])) by (endpoint) / sum(rate(af_mcp_http_requests_total{job=~\".*af-mcp.*\"}[5m])) by (endpoint)",
-              "legendFormat": "5xx rate {{`{{endpoint}}`}}",
+              "expr": "sum(rate(af_mcp_http_requests_total{job=~\".*af-mcp.*\", status=~\"5..\"}[5m])) by (handler) / sum(rate(af_mcp_http_requests_total{job=~\".*af-mcp.*\"}[5m])) by (handler)",
+              "legendFormat": "5xx rate {{`{{handler}}`}}",
               "refId": "A"
             }
           ],
