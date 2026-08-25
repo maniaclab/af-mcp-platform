@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import json
 import sys
@@ -76,6 +77,11 @@ class AuditLogger:
         payload["args_summary"] = payload["args_summary"][:500]
         payload["event"] = "audit"
         line = json.dumps(payload, default=str)
+        # The output can be a real file (or stdout redirected to one) whose
+        # write/flush block — never do that on the event loop.
+        await asyncio.to_thread(self._write_line, line)
+
+    def _write_line(self, line: str) -> None:
         self._output.write(line + "\n")
         self._output.flush()
 
