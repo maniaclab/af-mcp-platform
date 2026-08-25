@@ -1216,16 +1216,16 @@ starting point if you're deploying for that AF or want a similar shape:
 
 ```yaml
 group_capabilities:
-  # Full ATLAS analysis + compute + GitLab access.
-  atlas: [read_data, read_metadata, read_monitoring, read_gitlab, submit_jobs, manage_jobs, launch_compute, manage_jupyter, manage_gitlab, read_files]
-  # Analysis + compute access, no GitLab/Jupyter management.
+  # Full ATLAS analysis + compute access.
+  atlas: [read_data, read_metadata, read_monitoring, submit_jobs, manage_jobs, launch_compute, manage_jupyter, read_files]
+  # Analysis + compute access, no Jupyter management.
   cms: [read_data, read_metadata, read_monitoring, submit_jobs, manage_jobs, launch_compute, read_files]
   # Analysis + compute access, no monitoring dashboards.
   dune: [read_data, read_metadata, submit_jobs, manage_jobs, launch_compute, read_files]
   # Read-only data + metadata access.
   escape: [read_data, read_metadata, read_files]
   # Full access plus data management and platform administration.
-  af-admins: [read_data, read_metadata, read_monitoring, read_gitlab, submit_jobs, manage_jobs, launch_compute, manage_jupyter, manage_gitlab, manage_data, admin, read_files]
+  af-admins: [read_data, read_metadata, read_monitoring, submit_jobs, manage_jobs, launch_compute, manage_jupyter, manage_data, admin, read_files]
   # Any authenticated user (no group membership required)
   __authenticated__: [read_metadata, read_monitoring]
 ```
@@ -1267,7 +1267,7 @@ backends:
     required_capability: read_data
   - name: ami
     required_capability: read_metadata
-  - name: panda
+  - name: condor-mcp
     required_capability: submit_jobs
   - name: docs
     required_capability: __none__     # open to any authenticated user
