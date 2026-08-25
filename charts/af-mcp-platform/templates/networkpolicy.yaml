@@ -73,15 +73,15 @@ spec:
         - protocol: TCP
           port: 443
 
-    # In-cluster: allow broker to reach backend MCP services within the same
-    # namespace, on the configured ports (see values.yaml networkPolicy.broker.backendPorts).
-    {{- if .Values.networkPolicy.broker.backendPorts }}
+    # In-cluster: allow broker to reach the registered MCP services within the same
+    # namespace, on the configured ports (see values.yaml networkPolicy.broker.servicePorts).
+    {{- if .Values.networkPolicy.broker.servicePorts }}
     - to:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: {{ .Release.Namespace | quote }}
       ports:
-        {{- range .Values.networkPolicy.broker.backendPorts }}
+        {{- range .Values.networkPolicy.broker.servicePorts }}
         - protocol: TCP
           port: {{ . }}
         {{- end }}

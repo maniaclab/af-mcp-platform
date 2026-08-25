@@ -245,7 +245,7 @@ broker:
   #
   # Consolidates the former broker.oidc.idpAlias / broker.oauth21.providers /
   # broker.cimd.idpAliases / broker.identitiesLinkClientId — see
-  # docs/adding-a-backend.md for the migration.
+  # docs/adding-a-service.md for the migration.
   identityProviders: []
   # - type: keycloak-brokered
   #   alias: atlas-oidc
@@ -282,8 +282,8 @@ broker:
   # - type: x509
   #   alias: x509
   #   displayName: "Grid certificate (x509)"
-  #   enables: "VOMS proxy minting for x509-authenticated backends"
-  #   # Every backend wired with auth_type: x509 in aggregator.backends must
+  #   enables: "VOMS proxy minting for x509-authenticated services"
+  #   # Every service wired with auth_type: x509 in aggregator.services must
   #   # be covered by an x509 entry's targets (and vice versa) — the broker
   #   # refuses to start on a mismatch, including the entry-less case (no
   #   # synthesized fallback). Requires
@@ -425,24 +425,24 @@ tokenSweep:
   graceSeconds: ""
 
 # ---------------------------------------------------------------------------
-# Aggregator: FastMCP backend registry
+# Aggregator: FastMCP service registry
 # ---------------------------------------------------------------------------
 aggregator:
-  # List of BackendSpec objects passed verbatim into backends.yaml.
-  # Each entry should follow the FastMCP BackendSpec schema, e.g.:
+  # List of ServiceSpec objects passed verbatim into services.yaml.
+  # Each entry should follow the FastMCP ServiceSpec schema, e.g.:
   #   - name: my-tool
   #     transport: sse
   #     url: http://my-tool-svc:8000/mcp
   #     apply_namespace: true
   #     tools_cache_ttl: 300  # optional; 0 disables the by-name lookup cache
-  #                           # for a backend whose tool list personalizes
-  #                           # per caller -- see docs/adding-a-backend.md
+  #                           # for a service whose tool list personalizes
+  #                           # per caller -- see docs/adding-a-service.md
   # apply_namespace defaults to true (mounts tools as <prefix>_<toolname>) to
-  # prevent cross-backend tool-name collisions; set false only for a backend
+  # prevent cross-service tool-name collisions; set false only for a service
   # whose tools are already self-prefixed at the source, and only when no
-  # other configured backend can advertise an overlapping name -- otherwise
-  # one silently shadows the other. See docs/adding-a-backend.md.
-  backends: []
+  # other configured service can advertise an overlapping name -- otherwise
+  # one silently shadows the other. See docs/adding-a-service.md.
+  services: []
 
 # ---------------------------------------------------------------------------
 # Entitlements / policy
@@ -459,14 +459,14 @@ entitlements:
   # another realm could mean something else entirely. If you are deploying
   # this chart for any analysis facility OTHER than the UChicago AF, you
   # MUST override group_capabilities below with your own Keycloak group
-  # names, or every backend whose `required_capability` (backends.yaml)
+  # names, or every service whose `required_capability` (services.yaml)
   # isn't __none__ becomes unreachable by everyone -- the broker refuses to
-  # start, naming the offending backend and capability, rather than
+  # start, naming the offending service and capability, rather than
   # deploying silently broken (issue #125). See docs/auth.md's "Group-to-
   # Capability Mapping Example" section for both the UChicago mapping and a
   # worked example for a non-ATLAS site.
-  # Which capability a backend target requires is declared by
-  # `required_capability` in backends.yaml (aggregator.backends), not here --
+  # Which capability a service target requires is declared by
+  # `required_capability` in services.yaml (aggregator.services), not here --
   # see issue #60.
   group_capabilities: {}
   # group_capabilities:
@@ -561,15 +561,15 @@ ingress:
 # ---------------------------------------------------------------------------
 networkPolicy:
   # When enabled, deny-all ingress to broker except from ingress controller;
-  # restrict broker egress to DNS, Keycloak, ATLAS IAM, backends, and Prometheus.
+  # restrict broker egress to DNS, Keycloak, ATLAS IAM, services, and Prometheus.
   enabled: true
 
   broker:
-    # Ports the broker is allowed to reach on in-namespace backend services.
-    # Add a port here when introducing a backend MCP that listens on a
+    # Ports the broker is allowed to reach on in-namespace MCP services.
+    # Add a port here when introducing a service MCP server that listens on a
     # non-default port (e.g., rucio-mcp on 9000). Defaults cover the two most
     # common backend port choices; extend as needed.
-    backendPorts:
+    servicePorts:
       - 8000
       - 8080
 

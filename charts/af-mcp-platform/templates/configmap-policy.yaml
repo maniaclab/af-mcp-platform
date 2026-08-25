@@ -20,9 +20,9 @@ data:
     # own group names -- see values.yaml's entitlements.group_capabilities
     # comment and docs/auth.md's "Group-to-Capability Mapping Example" for a
     # non-ATLAS worked example. Deploying unmodified against a realm without
-    # these exact group names means no user can reach a backend whose
-    # `required_capability` (backends.yaml) isn't __none__ -- the broker
-    # refuses to start, naming each such backend and capability (issue #125).
+    # these exact group names means no user can reach a service whose
+    # `required_capability` (services.yaml) isn't __none__ -- the broker
+    # refuses to start, naming each such service and capability (issue #125).
     group_capabilities:
     {{- if .Values.entitlements.group_capabilities }}
       {{- toYaml .Values.entitlements.group_capabilities | nindent 6 }}
@@ -39,11 +39,11 @@ data:
       __authenticated__: [read_metadata, read_monitoring]
     {{- end }}
 
-    # Which capability is required to use each backend target is declared by
-    # `required_capability` in backends.yaml, not here -- backends.yaml is
+    # Which capability is required to use each service target is declared by
+    # `required_capability` in services.yaml, not here -- services.yaml is
     # the sole source of truth for that mapping (see issue #60).
 
-    # Action type overrides per backend (tool glob pattern -> action type).
+    # Action type overrides per service (tool glob pattern -> action type).
     # Anything not listed defaults to "read".
     target_action_types:
     {{- if .Values.entitlements.target_action_types }}
