@@ -3,13 +3,13 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from af_mcp_broker.api import (
-    permissions,
     catalog_tools,
     credentials,
     health,
     identities,
     mcp_oauth,
     oauth21,
+    permissions,
     tokens,
 )
 

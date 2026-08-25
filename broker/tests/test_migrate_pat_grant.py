@@ -16,7 +16,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from test_token_registry import (
     KV_PATH_PREFIX,
     _FakeRegistryVault,
@@ -30,6 +29,7 @@ def sa_token_path(tmp_path: Path) -> Path:
     path.write_text("fake-sa-jwt\n")
     return path
 
+
 _SCRIPT = (
     Path(__file__).resolve().parents[2] / "scripts" / "migrate-pat-capability-grant.py"
 )
@@ -37,7 +37,8 @@ _SCRIPT = (
 
 def _load_script() -> Any:
     spec = importlib.util.spec_from_file_location("migrate_pat_grant", _SCRIPT)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     # Registered before exec: @dataclass resolves the defining module through
     # sys.modules, which a bare module_from_spec object isn't in yet.
@@ -62,7 +63,9 @@ def _fields(lookup_id: str, **extra: Any) -> dict[str, Any]:
     return fields
 
 
-def _seed(fake: _FakeRegistryVault, principal_id: str, *records: dict[str, Any]) -> None:
+def _seed(
+    fake: _FakeRegistryVault, principal_id: str, *records: dict[str, Any]
+) -> None:
     fake.entries[f"{KV_PATH_PREFIX}/by-principal/{principal_id}"] = {
         "data": {fields["lookup_id"]: fields for fields in records},
         "version": 1,
@@ -80,7 +83,9 @@ async def test_apply_migrates_scoped_record(sa_token_path: Path) -> None:
     backend = _make_vault_backend(fake, sa_token_path)
 
     stats = await script.migrate(
-        backend._vault_kv, KV_PATH_PREFIX, apply=True  # noqa: SLF001
+        backend._vault_kv,
+        KV_PATH_PREFIX,
+        apply=True,
     )
 
     fields = _stored(fake, "p1")["scoped"]
@@ -99,7 +104,9 @@ async def test_apply_migrates_null_record_preserving_null(
     backend = _make_vault_backend(fake, sa_token_path)
 
     stats = await script.migrate(
-        backend._vault_kv, KV_PATH_PREFIX, apply=True  # noqa: SLF001
+        backend._vault_kv,
+        KV_PATH_PREFIX,
+        apply=True,
     )
 
     fields = _stored(fake, "p1")["unscoped"]
@@ -118,15 +125,15 @@ async def test_already_migrated_record_is_counted_and_untouched(
     backend = _make_vault_backend(fake, sa_token_path)
 
     stats = await script.migrate(
-        backend._vault_kv, KV_PATH_PREFIX, apply=True  # noqa: SLF001
+        backend._vault_kv,
+        KV_PATH_PREFIX,
+        apply=True,
     )
 
     fields = _stored(fake, "p1")["done"]
     assert fields["permission_grant"] == ["read_data"]
     # Idempotent: no write happened, so the version is still the seeded one.
-    assert (
-        fake.entries[f"{KV_PATH_PREFIX}/by-principal/p1"]["version"] == 1
-    )
+    assert fake.entries[f"{KV_PATH_PREFIX}/by-principal/p1"]["version"] == 1
     assert stats.already_migrated == 1
     assert stats.migrated == 0
 
@@ -145,7 +152,9 @@ async def test_record_with_both_keys_is_refused_untouched(
     backend = _make_vault_backend(fake, sa_token_path)
 
     stats = await script.migrate(
-        backend._vault_kv, KV_PATH_PREFIX, apply=True  # noqa: SLF001
+        backend._vault_kv,
+        KV_PATH_PREFIX,
+        apply=True,
     )
 
     weird = _stored(fake, "p1")["weird"]
@@ -166,7 +175,9 @@ async def test_dry_run_writes_nothing(sa_token_path: Path) -> None:
     backend = _make_vault_backend(fake, sa_token_path)
 
     stats = await script.migrate(
-        backend._vault_kv, KV_PATH_PREFIX, apply=False  # noqa: SLF001
+        backend._vault_kv,
+        KV_PATH_PREFIX,
+        apply=False,
     )
 
     fields = _stored(fake, "p1")["scoped"]
