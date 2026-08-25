@@ -109,11 +109,11 @@ class InMemoryUsageStore(UsageStore):
         # number of distinct keys, not the call volume.
         self._counters: dict[tuple[str, date, str, str, str], _Counters] = {}
 
-    async def start(self) -> None:  # noqa: D102 -- nothing to acquire
-        pass
+    async def start(self) -> None:
+        """Nothing to acquire."""
 
-    async def aclose(self) -> None:  # noqa: D102 -- nothing to release
-        pass
+    async def aclose(self) -> None:
+        """Nothing to release."""
 
     async def record(self, record: AuditRecord) -> None:
         if record.mcp_service is None:
@@ -148,8 +148,6 @@ class InMemoryUsageStore(UsageStore):
                 result_bytes=c.result_bytes,
                 result_tokens_est=c.result_tokens_est,
             )
-            for (sub, day, service, tool, outcome), c in sorted(
-                self._counters.items()
-            )
+            for (sub, day, service, tool, outcome), c in sorted(self._counters.items())
             if sub == subject and day >= start
         ]

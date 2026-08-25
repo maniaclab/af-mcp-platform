@@ -11,6 +11,7 @@ from af_mcp_broker.api import (
     oauth21,
     permissions,
     tokens,
+    usage,
 )
 
 # All routes are grouped under /v1 at the application level. Sub-routers
@@ -25,3 +26,4 @@ router.include_router(credentials.router)
 router.include_router(oauth21.router)
 router.include_router(tokens.router)
 router.include_router(mcp_oauth.router)
+router.include_router(usage.router)

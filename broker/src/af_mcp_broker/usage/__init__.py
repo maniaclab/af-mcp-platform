@@ -43,7 +43,7 @@ _store: UsageStore | None = None
 def _build_postgres_store(settings: Settings) -> UsageStore:
     # _validate_usage_store_config guarantees the DSN is set whenever this
     # backend is selected, so the assert is a type-narrowing formality.
-    assert settings.usage_postgres_dsn is not None  # noqa: S101
+    assert settings.usage_postgres_dsn is not None
     return PostgresUsageStore(settings.usage_postgres_dsn.get_secret_value())
 
 
@@ -52,7 +52,7 @@ def _build_postgres_store(settings: Settings) -> UsageStore:
 # already rejects values with no entry here, so a KeyError below means the
 # Literal and this table drifted apart.
 _STORE_FACTORIES: dict[str, Callable[[Settings], UsageStore]] = {
-    "in_memory": lambda settings: InMemoryUsageStore(),
+    "in_memory": lambda _settings: InMemoryUsageStore(),
     "postgres": _build_postgres_store,
 }
 
@@ -103,6 +103,4 @@ async def record_usage(record: AuditRecord) -> None:
         await _store.record(record)
     except Exception as exc:  # noqa: BLE001 -- usage must never lose an audit line
         metrics.metering_worker_errors_total.inc()
-        logger.warning(
-            "usage_record_failed", audit_id=record.audit_id, error=str(exc)
-        )
+        logger.warning("usage_record_failed", audit_id=record.audit_id, error=str(exc))

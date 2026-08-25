@@ -379,7 +379,9 @@ async def test_worker_feeds_the_usage_store_after_the_audit_write(
     init_audit_logger(buffer)
     await init_metering_pipeline()
 
-    await submit_metered_audit(_record(mcp_service="rucio", timestamp=time.time()), None)
+    await submit_metered_audit(
+        _record(mcp_service="rucio", timestamp=time.time()), None
+    )
     await aclose_metering_pipeline()
 
     assert len(_lines(buffer)) == 1
@@ -393,7 +395,9 @@ async def test_synchronous_fallback_feeds_the_usage_store(usage_store) -> None:
     buffer = io.StringIO()
     init_audit_logger(buffer)
 
-    await submit_metered_audit(_record(mcp_service="rucio", timestamp=time.time()), None)
+    await submit_metered_audit(
+        _record(mcp_service="rucio", timestamp=time.time()), None
+    )
 
     (agg,) = await usage_store.query("sub-abc", days=30)
     assert agg.calls == 1
@@ -407,8 +411,13 @@ async def test_overflow_inline_write_feeds_the_usage_store(usage_store) -> None:
     # Tiny queue, worker deliberately not started: the second submit
     # overflows deterministically (same setup as the overflow test above).
     p = InProcessMeteringBackend(maxsize=1)
-    await p.submit(_record(request_id="queued", mcp_service="rucio", timestamp=time.time()), None)
-    await p.submit(_record(request_id="overflowed", mcp_service="rucio", timestamp=time.time()), None)
+    await p.submit(
+        _record(request_id="queued", mcp_service="rucio", timestamp=time.time()), None
+    )
+    await p.submit(
+        _record(request_id="overflowed", mcp_service="rucio", timestamp=time.time()),
+        None,
+    )
 
     # Only the overflowed record has been written (and accounted) so far.
     (agg,) = await usage_store.query("sub-abc", days=30)
@@ -438,7 +447,6 @@ async def test_usage_store_failure_never_affects_the_audit_write(
 ) -> None:
     """The audit write happens FIRST and a store failure after it is caught,
     logged, and counted -- the line is intact and the worker survives."""
-    from af_mcp_broker import usage
 
     async def _boom(record: AuditRecord) -> None:
         raise RuntimeError("usage store down")
@@ -450,7 +458,9 @@ async def test_usage_store_failure_never_affects_the_audit_write(
     await init_metering_pipeline()
 
     errors_before = _sample("af_mcp_metering_worker_errors_total")
-    await submit_metered_audit(_record(mcp_service="rucio", timestamp=time.time()), None)
+    await submit_metered_audit(
+        _record(mcp_service="rucio", timestamp=time.time()), None
+    )
     await aclose_metering_pipeline()
 
     (line,) = _lines(buffer)

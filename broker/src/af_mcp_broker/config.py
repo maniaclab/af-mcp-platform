@@ -836,8 +836,7 @@ class Settings(BaseSettings):
             log.error(
                 "usage_store_config_invalid",
                 reason=(
-                    "usage_postgres_dsn is empty but usage_store_backend "
-                    "is 'postgres'"
+                    "usage_postgres_dsn is empty but usage_store_backend is 'postgres'"
                 ),
             )
             raise ValueError(
