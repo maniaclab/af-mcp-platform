@@ -27,7 +27,7 @@ mcp.af.uchicago.edu                     mcp-portal.af.uchicago.edu
         ├── condor-mcp        (HTCondor local cluster)
         ├── jupyterlab-mcp    (JupyterLab server / notebook management)
         ├── filesystem-mcp    (read-only AF filesystem access)
-        └── ...               (Nth backend — no code change)
+        └── ...               (Nth service — no code change)
 ```
 
 ## Quick Start for ATLAS AF Users
