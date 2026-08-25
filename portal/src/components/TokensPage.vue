@@ -603,14 +603,12 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
                 class="tp__checkbox"
                 :disabled="minting"
               />
-              <span class="tp__form-label tp__checkbox-label"
-                >Restrict permissions (optional)</span
-              >
+              <span class="tp__form-label tp__checkbox-label">Restrict permissions (optional)</span>
             </label>
             <p class="tp__scope-hint">
               Unchecked mints a token with your full account access, exactly as before. Checked
-              scopes the token to at most the permissions selected below — least privilege for CI
-              or scripts.
+              scopes the token to at most the permissions selected below — least privilege for CI or
+              scripts.
             </p>
             <fieldset v-if="restrictPermissions" class="tp__scope-fieldset">
               <legend class="sr-only">Permissions to grant</legend>
