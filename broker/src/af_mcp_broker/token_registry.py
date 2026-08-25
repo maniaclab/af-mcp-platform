@@ -449,6 +449,29 @@ def _record_to_fields(record: TokenRecord) -> dict[str, Any]:
     }
 
 
+def _decode_permission_grant(fields: dict[str, Any]) -> frozenset[str] | None:
+    """Decode ``permission_grant`` from raw KV *fields*, failing CLOSED on unmigrated records.
+
+    A record written before the capability->permission rename still keys its
+    grant ``capability_grant``. If that legacy key holds a non-null grant and
+    no ``permission_grant`` is present, the record is an unmigrated *scoped*
+    PAT: decoding it as None would silently widen the restriction to
+    "unrestricted", so it decodes as frozenset() (deny-all) until the
+    one-time migration (scripts/migrate-pat-capability-grant.py) rewrites
+    the key. A legacy ``capability_grant: null`` (an unscoped identity PAT)
+    decodes as None exactly as before -- nothing to widen.
+    """
+    if fields.get("permission_grant") is not None:
+        return frozenset(fields["permission_grant"])
+    if fields.get("capability_grant") is not None:
+        log.warning(
+            "token_registry.unmigrated_grant_denied",
+            lookup_id=fields.get("lookup_id"),
+        )
+        return frozenset()
+    return None
+
+
 def _record_from_fields(fields: dict[str, Any]) -> TokenRecord:
     return TokenRecord(
         lookup_id=fields["lookup_id"],
@@ -472,11 +495,7 @@ def _record_from_fields(fields: dict[str, Any]) -> TokenRecord:
             else None
         ),
         note=fields.get("note"),
-        permission_grant=(
-            frozenset(fields["permission_grant"])
-            if fields.get("permission_grant") is not None
-            else None
-        ),
+        permission_grant=_decode_permission_grant(fields),
     )
 
 
