@@ -48,6 +48,20 @@ class AuditRecord:
     # authorization.get_principal_permissions for the intersection this
     # reflects.
     principal_permission_grant: list[str] | None = None
+    # Per-call metering (observability roadmap PR B). All three are None,
+    # not 0, when nothing was measured -- a denied or unmapped call never
+    # executed anything, so it has no duration and no result.
+    #
+    # duration_ms: wall time of the downstream call (credential resolution
+    # plus the backend tool call), recorded on the success and error paths.
+    duration_ms: float | None = None
+    # result_bytes / result_tokens_est: size of the tool result's serialized
+    # text content -- an estimate of what the call injects into the LLM
+    # client's context, not wire size. Success path only; tokens are a
+    # tiktoken ESTIMATE (see audit/measure.py) and stay None when estimation
+    # is disabled or unavailable.
+    result_bytes: int | None = None
+    result_tokens_est: int | None = None
 
 
 class AuditLogger:
