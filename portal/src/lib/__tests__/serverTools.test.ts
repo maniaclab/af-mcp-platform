@@ -14,7 +14,7 @@ function listing(overrides: Partial<ServerToolsResponse>): ServerToolsResponse {
     display_name: 'Rucio',
     description: 'ATLAS data management',
     status: 'ok',
-    status_detail: 'Tools listed.',
+    status_detail: 'Methods listed.',
     tools: [],
     ...overrides,
   };
@@ -40,12 +40,12 @@ describe('resolveToolListing', () => {
     const view = resolveToolListing(
       listing({
         status: 'not_linked',
-        status_detail: "Link your identity to see this service's tools.",
+        status_detail: "Link your identity to see this service's methods.",
       }),
     );
     expect(view).toEqual({
       kind: 'blocked',
-      message: "Link your identity to see this service's tools.",
+      message: "Link your identity to see this service's methods.",
       cta: { label: 'Link identity', href: '/identities/' },
     });
   });
@@ -89,8 +89,8 @@ describe('resolveToolListing', () => {
 
 describe('toolCountLabel', () => {
   it('pluralizes', () => {
-    expect(toolCountLabel(1)).toBe('1 tool');
-    expect(toolCountLabel(0)).toBe('0 tools');
-    expect(toolCountLabel(12)).toBe('12 tools');
+    expect(toolCountLabel(1)).toBe('1 method');
+    expect(toolCountLabel(0)).toBe('0 methods');
+    expect(toolCountLabel(12)).toBe('12 methods');
   });
 });

@@ -47,7 +47,7 @@ function listing(overrides: Partial<ServerToolsResponse> = {}): ServerToolsRespo
     display_name: 'Rucio',
     description: 'ATLAS distributed data management',
     status: 'ok',
-    status_detail: 'Tools listed.',
+    status_detail: 'Methods listed.',
     tools: [
       { name: 'rucio_list_dids', description: 'List DIDs.', action_type: 'read' },
       {
@@ -104,7 +104,7 @@ describe('Tools accordion', () => {
 
     expect(wrapper.text()).toContain('rucio_list_dids');
     expect(wrapper.text()).toContain('rucio_add_rule');
-    expect(countChip(wrapper)).toBe('2 tools');
+    expect(countChip(wrapper)).toBe('2 methods');
   });
 
   it('discards a response that lands after the accordion collapsed', async () => {
@@ -141,7 +141,7 @@ describe('Tools accordion', () => {
     await flushPromises();
 
     // Fetch #2 belongs to the current open period and must win.
-    expect(countChip(wrapper)).toBe('1 tool');
+    expect(countChip(wrapper)).toBe('1 method');
     expect(wrapper.text()).toContain('rucio_whoami');
     expect(wrapper.text()).not.toContain('rucio_list_dids');
   });
@@ -150,7 +150,7 @@ describe('Tools accordion', () => {
     vi.mocked(fetchServerTools).mockResolvedValueOnce(
       listing({
         status: 'not_linked',
-        status_detail: "Link your identity to see this service's tools.",
+        status_detail: "Link your identity to see this service's methods.",
         tools: [],
       }),
     );
@@ -159,7 +159,7 @@ describe('Tools accordion', () => {
     await toolsToggle(wrapper).trigger('click');
     await flushPromises();
 
-    expect(wrapper.text()).toContain("Link your identity to see this service's tools.");
+    expect(wrapper.text()).toContain("Link your identity to see this service's methods.");
     const cta = wrapper.find('.bc__tools-cta');
     expect(cta.exists()).toBe(true);
     expect(cta.attributes('href')).toBe('/identities/');
@@ -173,7 +173,7 @@ describe('Tools accordion', () => {
     await toolsToggle(wrapper).trigger('click');
     await flushPromises();
 
-    expect(wrapper.text()).toContain('This service currently registers no tools.');
+    expect(wrapper.text()).toContain('This service currently registers no methods.');
   });
 
   it('surfaces a fetch failure as an error note, not a silent empty section', async () => {

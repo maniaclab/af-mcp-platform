@@ -47,8 +47,8 @@ ToolListingStatus = Literal[
 ]
 
 _STATUS_DETAILS: dict[str, str] = {
-    "ok": "Tools listed.",
-    "not_linked": "Link your identity to see this service's tools.",
+    "ok": "Methods listed.",
+    "not_linked": "Link your identity to see this service's methods.",
     "unauthorized": "Your linked credential was rejected. Re-link your identity.",
     "unavailable": "Temporarily unavailable. Try again shortly.",
     "capability_required": (

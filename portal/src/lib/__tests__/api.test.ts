@@ -817,7 +817,7 @@ describe('fetchServerTools()', () => {
       display_name: 'Rucio',
       description: 'ATLAS data management',
       status: 'ok',
-      status_detail: 'Tools listed.',
+      status_detail: 'Methods listed.',
       tools: [{ name: 'rucio_list_dids', description: 'List DIDs.', action_type: 'read' }],
     };
     globalThis.fetch = mockJson(200, body);

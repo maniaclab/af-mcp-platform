@@ -47,7 +47,7 @@ onMounted(async () => {
       <span class="dc__label">MCP Servers</span>
       <p class="dc__desc">
         The backend systems your AI assistant can reach through this platform — dataset lookup,
-        metadata, job submission, and more — all exposed as tools it can call directly.
+        metadata, job submission, and more — all exposed as methods it can call directly.
       </p>
       <span class="dc__status" :class="{ 'dc__status--loading': loading }">
         {{ loading ? 'Loading…' : `${summary?.serverCount ?? 0} servers reachable` }}
