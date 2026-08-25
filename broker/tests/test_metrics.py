@@ -28,3 +28,17 @@ def test_metrics_disabled_with_negative_port(monkeypatch, app_client_factory) ->
     monkeypatch.setenv("METRICS_PORT", "-1")
     with app_client_factory() as (client, _):
         assert client.app.state.metrics_port is None
+
+
+def test_http_metrics_use_af_mcp_namespace(app_client) -> None:
+    """The Grafana dashboard (issue #226) queries af_mcp_http_requests_total
+    and af_mcp_http_request_duration_seconds_bucket labeled by handler — the
+    instrumentator must emit exactly those series names and labels.
+    """
+    client, _ = app_client
+    assert client.get("/v1/healthz").status_code == 200
+    port = client.app.state.metrics_port
+    with urllib.request.urlopen(f"http://127.0.0.1:{port}/metrics") as resp:
+        body = resp.read().decode()
+    assert 'af_mcp_http_requests_total{handler="/v1/healthz"' in body
+    assert 'af_mcp_http_request_duration_seconds_bucket{handler="/v1/healthz"' in body
