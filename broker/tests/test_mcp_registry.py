@@ -8,19 +8,19 @@ from af_mcp_broker.config import Settings
 from af_mcp_broker.mcp.registry import (
     DIAGNOSTIC_TOOL_NAMES,
     LINK_IDENTITY_TOOL_NAME,
-    BackendRegistry,
-    BackendSpec,
+    ServiceRegistry,
+    ServiceSpec,
     identity_provider_url,
 )
 
-# The shipped backends.yaml is the authoritative source for the apply_namespace
+# The shipped services.yaml is the authoritative source for the apply_namespace
 # behavior this file tests (rucio is self-prefixed; everything else is not).
 _SRC = Path(__file__).resolve().parents[1] / "src" / "af_mcp_broker"
-SHIPPED_BACKENDS = _SRC / "mcp" / "backends.yaml"
+SHIPPED_SERVICES = _SRC / "mcp" / "services.yaml"
 
 
 def test_backend_spec_apply_namespace_defaults_true() -> None:
-    spec = BackendSpec(
+    spec = ServiceSpec(
         name="example",
         prefix="example",
         url="http://example.invalid/mcp",
@@ -31,28 +31,28 @@ def test_backend_spec_apply_namespace_defaults_true() -> None:
 
 
 def test_load_defaults_apply_namespace_true_when_absent(tmp_path: Path) -> None:
-    backends_file = tmp_path / "backends.yaml"
-    backends_file.write_text(
+    services_file = tmp_path / "services.yaml"
+    services_file.write_text(
         """
-backends:
+services:
   - name: example
     prefix: example
     url: "http://example.invalid/mcp"
     required_capability: __none__
 """
     )
-    registry = BackendRegistry()
-    registry.load(str(backends_file))
+    registry = ServiceRegistry()
+    registry.load(str(services_file))
     spec = registry.get("example")
     assert spec is not None
     assert spec.apply_namespace is True
 
 
 def test_load_respects_apply_namespace_false(tmp_path: Path) -> None:
-    backends_file = tmp_path / "backends.yaml"
-    backends_file.write_text(
+    services_file = tmp_path / "services.yaml"
+    services_file.write_text(
         """
-backends:
+services:
   - name: example
     prefix: example
     url: "http://example.invalid/mcp"
@@ -60,8 +60,8 @@ backends:
     apply_namespace: false
 """
     )
-    registry = BackendRegistry()
-    registry.load(str(backends_file))
+    registry = ServiceRegistry()
+    registry.load(str(services_file))
     spec = registry.get("example")
     assert spec is not None
     assert spec.apply_namespace is False
@@ -70,8 +70,8 @@ backends:
 def test_shipped_backends_rucio_apply_namespace_false() -> None:
     """rucio-mcp's tools are already self-prefixed (rucio_list_dids, ...);
     namespacing again would produce rucio_rucio_*."""
-    registry = BackendRegistry()
-    registry.load(str(SHIPPED_BACKENDS))
+    registry = ServiceRegistry()
+    registry.load(str(SHIPPED_SERVICES))
     rucio = registry.get("rucio")
     assert rucio is not None
     assert rucio.apply_namespace is False
@@ -81,8 +81,8 @@ def test_shipped_backends_rucio_apply_namespace_false() -> None:
     "name", ["ami", "atlasopenmagic", "af-jupyterlab-mcp", "monitoring", "docs"]
 )
 def test_shipped_backends_others_apply_namespace_true(name: str) -> None:
-    registry = BackendRegistry()
-    registry.load(str(SHIPPED_BACKENDS))
+    registry = ServiceRegistry()
+    registry.load(str(SHIPPED_SERVICES))
     spec = registry.get(name)
     assert spec is not None
     assert spec.apply_namespace is True
@@ -91,15 +91,15 @@ def test_shipped_backends_others_apply_namespace_true(name: str) -> None:
 def test_shipped_backends_af_filesystem_mcp_apply_namespace_false() -> None:
     """af-filesystem-mcp's tools are already self-prefixed (fs_list, fs_stat,
     fs_read, fs_grep, ...); namespacing again would produce fs_fs_*."""
-    registry = BackendRegistry()
-    registry.load(str(SHIPPED_BACKENDS))
+    registry = ServiceRegistry()
+    registry.load(str(SHIPPED_SERVICES))
     fs = registry.get("af-filesystem-mcp")
     assert fs is not None
     assert fs.apply_namespace is False
 
 
 def test_backend_spec_timeout_seconds_defaults_to_30() -> None:
-    spec = BackendSpec(
+    spec = ServiceSpec(
         name="example",
         prefix="example",
         url="http://example.invalid/mcp",
@@ -110,28 +110,28 @@ def test_backend_spec_timeout_seconds_defaults_to_30() -> None:
 
 
 def test_load_defaults_timeout_seconds_when_absent(tmp_path: Path) -> None:
-    backends_file = tmp_path / "backends.yaml"
-    backends_file.write_text(
+    services_file = tmp_path / "services.yaml"
+    services_file.write_text(
         """
-backends:
+services:
   - name: example
     prefix: example
     url: "http://example.invalid/mcp"
     required_capability: __none__
 """
     )
-    registry = BackendRegistry()
-    registry.load(str(backends_file))
+    registry = ServiceRegistry()
+    registry.load(str(services_file))
     spec = registry.get("example")
     assert spec is not None
     assert spec.timeout_seconds == 30.0
 
 
 def test_load_respects_custom_timeout_seconds(tmp_path: Path) -> None:
-    backends_file = tmp_path / "backends.yaml"
-    backends_file.write_text(
+    services_file = tmp_path / "services.yaml"
+    services_file.write_text(
         """
-backends:
+services:
   - name: example
     prefix: example
     url: "http://example.invalid/mcp"
@@ -139,8 +139,8 @@ backends:
     timeout_seconds: 5
 """
     )
-    registry = BackendRegistry()
-    registry.load(str(backends_file))
+    registry = ServiceRegistry()
+    registry.load(str(services_file))
     spec = registry.get("example")
     assert spec is not None
     assert spec.timeout_seconds == 5.0
@@ -151,10 +151,10 @@ def test_register_rejects_reserved_diagnostic_prefix() -> None:
     reserved for the broker-native af_whoami/af_list_identities/
     af_list_mcp_servers diagnostic tools (mcp/diagnostics.py), which must
     stay impossible to shadow."""
-    registry = BackendRegistry()
+    registry = ServiceRegistry()
     with pytest.raises(ValueError, match="af"):
         registry.register(
-            BackendSpec(
+            ServiceSpec(
                 name="shadow",
                 prefix="af",
                 url="http://shadow.invalid/mcp",
@@ -167,28 +167,28 @@ def test_register_rejects_reserved_diagnostic_prefix() -> None:
 def test_load_rejects_reserved_diagnostic_prefix_in_backends_yaml(
     tmp_path: Path,
 ) -> None:
-    backends_file = tmp_path / "backends.yaml"
-    backends_file.write_text(
+    services_file = tmp_path / "services.yaml"
+    services_file.write_text(
         """
-backends:
+services:
   - name: shadow
     prefix: af
     url: "http://shadow.invalid/mcp"
     required_capability: __none__
 """
     )
-    registry = BackendRegistry()
+    registry = ServiceRegistry()
     with pytest.raises(ValueError, match="af"):
-        registry.load(str(backends_file))
+        registry.load(str(services_file))
 
 
 def test_get_by_tool_prefix_unaffected_by_apply_namespace() -> None:
     """apply_namespace only controls FastMCP's namespace= wiring; the
     registry's own prefix matching used for entitlement filtering is
     unchanged regardless of its value."""
-    registry = BackendRegistry()
+    registry = ServiceRegistry()
     registry.register(
-        BackendSpec(
+        ServiceSpec(
             name="rucio",
             prefix="rucio",
             url="http://rucio.invalid/mcp",

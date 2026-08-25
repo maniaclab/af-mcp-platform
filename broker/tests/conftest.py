@@ -33,18 +33,18 @@ AUDIENCE = "mcp-gateway"
 # entitlement decisions exercised here match production config.
 _SRC = Path(__file__).resolve().parents[1] / "src" / "af_mcp_broker"
 SHIPPED_POLICY = _SRC / "authorization" / "policy.yaml"
-SHIPPED_BACKENDS = _SRC / "mcp" / "backends.yaml"
+SHIPPED_SERVICES = _SRC / "mcp" / "services.yaml"
 
 # Default `identity_providers` entry `app_client_factory` configures below —
 # one keycloak-brokered provider bound to the historic default OIDCProvider
-# targets, so `bearer`-auth backends (e.g. "rucio" in SHIPPED_BACKENDS) still
+# targets, so `bearer`-auth backends (e.g. "rucio" in SHIPPED_SERVICES) still
 # resolve to an OIDCProvider instance the way they did before issue #66 PR4
 # replaced the single `oidc_idp_alias`-derived singleton with per-entry
 # `identity_providers` config; plus a legacy-mode x509 entry (no
-# `service_url`) covering SHIPPED_BACKENDS' "ami" — every `auth_type: x509`
+# `service_url`) covering SHIPPED_SERVICES' "ami" — every `auth_type: x509`
 # backend must be covered by an explicit entry or the broker refuses to
 # start (app.py's `_validate_x509_provider_targets`), so this fixture
-# supplies the minimal one the shipped backends.yaml needs. Tests that care
+# supplies the minimal one the shipped services.yaml needs. Tests that care
 # about a specific `identity_providers` shape (test_identities.py,
 # test_oauth21*.py, test_wellknown_cimd.py) override IDENTITY_PROVIDERS
 # themselves.
@@ -278,7 +278,7 @@ def app_client_factory(
     ``state["principal"]`` to change who the caller is for a given request.
     """
     monkeypatch.setenv("POLICY_FILE", str(SHIPPED_POLICY))
-    monkeypatch.setenv("BACKENDS_FILE", str(SHIPPED_BACKENDS))
+    monkeypatch.setenv("SERVICES_FILE", str(SHIPPED_SERVICES))
     # An unreachable issuer keeps startup JWKS priming a no-op (non-fatal).
     monkeypatch.setenv("OIDC_ISSUER", "https://keycloak.invalid/realms/connect")
     # Ephemeral metrics port so test runs never collide on 9090.

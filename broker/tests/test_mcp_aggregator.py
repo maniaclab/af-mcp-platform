@@ -46,15 +46,15 @@ from af_mcp_broker.mcp.registry import (
     LIST_IDENTITIES_TOOL_NAME,
     LIST_MCP_SERVERS_TOOL_NAME,
     WHOAMI_TOOL_NAME,
-    BackendRegistry,
-    BackendSpec,
+    ServiceRegistry,
+    ServiceSpec,
 )
 
 if TYPE_CHECKING:
     from af_mcp_broker.identity import Principal
 
 
-def _spec(**overrides: Any) -> BackendSpec:
+def _spec(**overrides: Any) -> ServiceSpec:
     defaults: dict[str, Any] = {
         "name": "example",
         "prefix": "example",
@@ -63,13 +63,13 @@ def _spec(**overrides: Any) -> BackendSpec:
         "required_capability": "__none__",
     }
     defaults.update(overrides)
-    return BackendSpec(**defaults)
+    return ServiceSpec(**defaults)
 
 
 # Every direct _make_client_factory() call below cares about credential
 # resolution, not entitlement -- _bearer_factory's list-time branch (see
 # aggregator.py) now also gates on check_entitlement(), but that check takes
-# the required capability straight from the spec (BackendSpec.
+# the required capability straight from the spec (ServiceSpec.
 # required_capability, see issue #60) rather than looking it up in
 # policy.yaml, and _spec()'s default of "__none__" already keeps the gate a
 # no-op here -- so an empty policy is sufficient.
@@ -243,7 +243,7 @@ def _patch_context(
 
 def test_build_aggregator_returns_fastmcp(settings: Any) -> None:
     mcp = build_aggregator(
-        BackendRegistry(), settings, EntitlementPolicy(), CredentialRegistry()
+        ServiceRegistry(), settings, EntitlementPolicy(), CredentialRegistry()
     )
     assert isinstance(mcp, FastMCP)
 
@@ -257,7 +257,7 @@ def test_build_aggregator_wires_identity_before_entitlement_before_authorization
     prepends its own DereferenceRefsMiddleware, so assert relative order
     between ours rather than absolute list positions."""
     mcp = build_aggregator(
-        BackendRegistry(), settings, EntitlementPolicy(), CredentialRegistry()
+        ServiceRegistry(), settings, EntitlementPolicy(), CredentialRegistry()
     )
     identity_index = next(
         i for i, mw in enumerate(mcp.middleware) if isinstance(mw, IdentityMiddleware)
@@ -275,7 +275,7 @@ def test_build_aggregator_wires_identity_before_entitlement_before_authorization
     assert identity_index < entitlement_index < authorization_index
 
 
-# _register_backends() re-adds mcp.local_provider (which the af_* diagnostic
+# _register_services() re-adds mcp.local_provider (which the af_* diagnostic
 # tools live on -- see mcp/diagnostics.py) right after clearing mcp.providers,
 # so every count below is "one backend provider per registered backend" PLUS
 # that one constant local-provider entry.
@@ -283,7 +283,7 @@ _LOCAL_PROVIDER_COUNT = 1
 
 
 def test_build_aggregator_registers_one_provider_per_backend(settings: Any) -> None:
-    registry = BackendRegistry()
+    registry = ServiceRegistry()
     registry.register(_spec(name="a", prefix="a"))
     registry.register(_spec(name="b", prefix="b"))
 
@@ -295,17 +295,17 @@ def test_build_aggregator_registers_one_provider_per_backend(settings: Any) -> N
 
 
 async def test_local_provider_tools_survive_populate_aggregator(settings: Any) -> None:
-    """Regression test: _register_backends() clears mcp.providers wholesale
+    """Regression test: _register_services() clears mcp.providers wholesale
     on every call (see its docstring), which would silently drop
     mcp.local_provider -- and with it every af_* diagnostic tool
     (mcp/diagnostics.py) -- from dispatch on the very next
     populate_aggregator() refresh if it weren't re-added. af_whoami is a
     stand-in for "any locally-registered tool stays reachable."""
     mcp = build_aggregator(
-        BackendRegistry(), settings, EntitlementPolicy(), CredentialRegistry()
+        ServiceRegistry(), settings, EntitlementPolicy(), CredentialRegistry()
     )
     populate_aggregator(
-        mcp, BackendRegistry(), settings, EntitlementPolicy(), CredentialRegistry()
+        mcp, ServiceRegistry(), settings, EntitlementPolicy(), CredentialRegistry()
     )
 
     tools = await mcp._list_tools()
@@ -314,14 +314,14 @@ async def test_local_provider_tools_survive_populate_aggregator(settings: Any) -
 
 
 def test_populate_aggregator_replaces_providers_not_appends(settings: Any) -> None:
-    registry_a = BackendRegistry()
+    registry_a = ServiceRegistry()
     registry_a.register(_spec(name="a", prefix="a"))
     mcp = build_aggregator(
         registry_a, settings, EntitlementPolicy(), CredentialRegistry()
     )
     assert len(mcp.providers) == 1 + _LOCAL_PROVIDER_COUNT
 
-    registry_b = BackendRegistry()
+    registry_b = ServiceRegistry()
     registry_b.register(_spec(name="b", prefix="b"))
     registry_b.register(_spec(name="c", prefix="c"))
     populate_aggregator(
@@ -333,7 +333,7 @@ def test_populate_aggregator_replaces_providers_not_appends(settings: Any) -> No
 
 def test_populate_aggregator_refreshes_middleware_state(settings: Any) -> None:
     mcp = build_aggregator(
-        BackendRegistry(), settings, EntitlementPolicy(), CredentialRegistry()
+        ServiceRegistry(), settings, EntitlementPolicy(), CredentialRegistry()
     )
     identity_mw = next(
         mw for mw in mcp.middleware if isinstance(mw, IdentityMiddleware)
@@ -345,7 +345,7 @@ def test_populate_aggregator_refreshes_middleware_state(settings: Any) -> None:
         mw for mw in mcp.middleware if isinstance(mw, AuthorizationMiddleware)
     )
 
-    new_registry = BackendRegistry()
+    new_registry = ServiceRegistry()
     new_registry.register(_spec(name="a", prefix="a"))
     new_policy = EntitlementPolicy(group_capabilities={"atlas": ["read_data"]})
     new_settings = settings.model_copy(update={"oidc_audience": "something-else"})
@@ -366,7 +366,7 @@ def test_populate_aggregator_raises_if_middleware_missing(settings: Any) -> None
     with pytest.raises(RuntimeError, match="build_aggregator"):
         populate_aggregator(
             mcp,
-            BackendRegistry(),
+            ServiceRegistry(),
             settings,
             EntitlementPolicy(),
             CredentialRegistry(),
@@ -384,7 +384,7 @@ def test_populate_aggregator_propagates_revoked_jti_cache(settings: Any) -> None
     )
 
     mcp = build_aggregator(
-        BackendRegistry(), settings, EntitlementPolicy(), CredentialRegistry()
+        ServiceRegistry(), settings, EntitlementPolicy(), CredentialRegistry()
     )
     identity_mw = next(
         mw for mw in mcp.middleware if isinstance(mw, IdentityMiddleware)
@@ -394,7 +394,7 @@ def test_populate_aggregator_propagates_revoked_jti_cache(settings: Any) -> None
     cache = RevokedJtiCache(InMemoryTokenRegistryBackend())
     populate_aggregator(
         mcp,
-        BackendRegistry(),
+        ServiceRegistry(),
         settings,
         EntitlementPolicy(),
         CredentialRegistry(),
@@ -744,9 +744,9 @@ async def test_observable_proxy_provider_records_list_failure_on_registry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """_ObservableProxyProvider now also records the classified tools/list
-    failure reason onto the BackendRegistry (BackendRegistry.
+    failure reason onto the ServiceRegistry (ServiceRegistry.
     record_list_failure), alongside the existing structured
-    'aggregator.backend_list_failed' log -- so /v1/catalog's per-backend
+    'aggregator.service_list_failed' log -- so /v1/catalog's per-backend
     status derivation (issue #123) can factor in a recent listing failure
     without an extra live probe of its own."""
     ctx = _patch_context(monkeypatch, None, active_backend=None)
@@ -755,7 +755,7 @@ async def test_observable_proxy_provider_records_list_failure_on_registry(
     async def _raising_factory() -> Client:
         raise ConnectionError("connection refused")
 
-    registry = BackendRegistry()
+    registry = ServiceRegistry()
     registry.register(_spec())
     provider = aggregator._ObservableProxyProvider(
         "example", _raising_factory, registry=registry
@@ -781,7 +781,7 @@ async def test_observable_proxy_provider_clears_list_failure_on_success(
         aggregator.ProxyProvider, "_list_tools", AsyncMock(return_value=[])
     )
 
-    registry = BackendRegistry()
+    registry = ServiceRegistry()
     registry.register(_spec())
     registry.record_list_failure("example", "unavailable")
 

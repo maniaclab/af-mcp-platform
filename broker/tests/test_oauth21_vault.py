@@ -344,7 +344,7 @@ async def test_delete_raises_vault_error_on_5xx(sa_token_path: Path) -> None:
 
 _SRC = Path(__file__).resolve().parents[1] / "src" / "af_mcp_broker"
 SHIPPED_POLICY = _SRC / "authorization" / "policy.yaml"
-SHIPPED_BACKENDS = _SRC / "mcp" / "backends.yaml"
+SHIPPED_SERVICES = _SRC / "mcp" / "services.yaml"
 STATE_ISSUER = "https://keycloak.invalid/realms/connect"
 CIMD_CLIENT_ID = "https://mcp.af.uchicago.edu/.well-known/cimd"
 
@@ -353,7 +353,7 @@ def _bootstrap_oauth21_vault_env(
     monkeypatch: pytest.MonkeyPatch, sa_token_path: Path
 ) -> None:
     monkeypatch.setenv("POLICY_FILE", str(SHIPPED_POLICY))
-    monkeypatch.setenv("BACKENDS_FILE", str(SHIPPED_BACKENDS))
+    monkeypatch.setenv("SERVICES_FILE", str(SHIPPED_SERVICES))
     monkeypatch.setenv("METRICS_PORT", "0")
     monkeypatch.setenv("OIDC_ISSUER", STATE_ISSUER)
     monkeypatch.setenv("BROKER_STATE_KEY", Fernet.generate_key().decode())
@@ -371,7 +371,7 @@ def _bootstrap_oauth21_vault_env(
                     "token_endpoint": "https://backend-as.example/token",
                     "issuer": "https://backend-as.example",
                 },
-                # The shipped backends.yaml's "ami" (auth_type: x509) needs
+                # The shipped services.yaml's "ami" (auth_type: x509) needs
                 # an explicit entry covering it or the broker refuses to
                 # start (there is no synthesized fallback).
                 {

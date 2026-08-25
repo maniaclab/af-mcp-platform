@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { resolveBackendStatus, resolvePoweredByLinked } from '../backendStatus';
-import type { BackendStatus, CatalogServer } from '../api';
+import { resolveServiceStatus, resolvePoweredByLinked } from '../serviceStatus';
+import type { ServiceStatus, CatalogServer } from '../api';
 
 function statusFields(
-  status: BackendStatus,
+  status: ServiceStatus,
   overrides: Partial<Pick<CatalogServer, 'status_detail' | 'correlation_id'>> = {},
 ): Pick<CatalogServer, 'status' | 'status_detail' | 'correlation_id'> {
   return {
@@ -13,9 +13,9 @@ function statusFields(
   };
 }
 
-describe('resolveBackendStatus', () => {
+describe('resolveServiceStatus', () => {
   it('reports "available" as ok severity with no CTA and no correlation id', () => {
-    const view = resolveBackendStatus(statusFields('available', { status_detail: 'Available.' }));
+    const view = resolveServiceStatus(statusFields('available', { status_detail: 'Available.' }));
     expect(view).toEqual({
       label: 'Available',
       detail: 'Available.',
@@ -26,8 +26,8 @@ describe('resolveBackendStatus', () => {
   });
 
   it('reports "link_required" as info severity with a link-identity CTA', () => {
-    const view = resolveBackendStatus(
-      statusFields('link_required', { status_detail: 'Link your identity to use this backend.' }),
+    const view = resolveServiceStatus(
+      statusFields('link_required', { status_detail: 'Link your identity to use this service.' }),
     );
     expect(view.severity).toBe('info');
     expect(view.cta).toEqual({ label: 'Link identity', href: '/identities/' });
@@ -35,7 +35,7 @@ describe('resolveBackendStatus', () => {
   });
 
   it('reports "capability_required" as warning severity with no CTA but a correlation id', () => {
-    const view = resolveBackendStatus(
+    const view = resolveServiceStatus(
       statusFields('capability_required', { correlation_id: 'abc123' }),
     );
     expect(view.severity).toBe('warning');
@@ -44,21 +44,21 @@ describe('resolveBackendStatus', () => {
   });
 
   it('reports "unavailable" as warning severity with no CTA and no correlation id', () => {
-    const view = resolveBackendStatus(statusFields('unavailable'));
+    const view = resolveServiceStatus(statusFields('unavailable'));
     expect(view.severity).toBe('warning');
     expect(view.cta).toBeNull();
     expect(view.correlationId).toBeNull();
   });
 
   it('reports "misconfigured" as error severity with no CTA but a correlation id', () => {
-    const view = resolveBackendStatus(statusFields('misconfigured', { correlation_id: 'def456' }));
+    const view = resolveServiceStatus(statusFields('misconfigured', { correlation_id: 'def456' }));
     expect(view.severity).toBe('error');
     expect(view.cta).toBeNull();
     expect(view.correlationId).toBe('def456');
   });
 
   it('always carries the broker-supplied status_detail sentence through verbatim', () => {
-    const view = resolveBackendStatus(
+    const view = resolveServiceStatus(
       statusFields('capability_required', { status_detail: "Your account doesn't have access." }),
     );
     expect(view.detail).toBe("Your account doesn't have access.");

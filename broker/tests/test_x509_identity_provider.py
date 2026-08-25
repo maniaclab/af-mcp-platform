@@ -50,7 +50,7 @@ if TYPE_CHECKING:
 _SERVICE_URL = "http://voms-token-service.af-mcp.svc:8080"
 
 _X509_BACKENDS_YAML = (
-    "backends:\n"
+    "services:\n"
     "  - name: ami\n"
     "    prefix: ami\n"
     "    url: http://ami-mcp.invalid/mcp\n"
@@ -112,7 +112,7 @@ class TestValidateTargets:
 
     def test_entry_targeting_a_non_x509_backend_refuses_to_start(self) -> None:
         """An x509 entry targeting a backend that isn't auth_type: x509 is a
-        typo or a stale backends.yaml — the aggregator would never inject an
+        typo or a stale services.yaml — the aggregator would never inject an
         identity JWT for it and the redeem endpoint would reject its
         audience, so the entry silently does nothing. Refuse to boot."""
         cfgs = [X509ProviderConfig(alias="x509", targets=["ami", "rucio"])]
@@ -172,9 +172,9 @@ def vault_stub_env(monkeypatch: pytest.MonkeyPatch) -> None:
 def _set_backends(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, text: str = _X509_BACKENDS_YAML
 ) -> None:
-    backends_file = tmp_path / "backends.yaml"
-    backends_file.write_text(text)
-    monkeypatch.setenv("BACKENDS_FILE", str(backends_file))
+    services_file = tmp_path / "services.yaml"
+    services_file.write_text(text)
+    monkeypatch.setenv("SERVICES_FILE", str(services_file))
 
 
 def _set_identity_providers(
@@ -388,7 +388,7 @@ class TestBootValidation:
             pass
 
         assert any(
-            event == "x509_backends_without_signing_key" for event, _ in warning_events
+            event == "x509_services_without_signing_key" for event, _ in warning_events
         )
 
 

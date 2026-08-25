@@ -10,8 +10,8 @@ web
 
 Each deployment's own signed-in physics users — the portal and broker are self-service
 only, with no separate operator/admin role inside the portal UI; operators manage
-`policy.yaml` / `backends.yaml` outside the portal, via config PRs to the repo (see
-`docs/adding-a-backend.md`), not through any UI surface.
+`policy.yaml` / `services.yaml` outside the portal, via config PRs to the repo (see
+`docs/adding-a-service.md`), not through any UI surface.
 
 The reference deployment is UChicago's ATLAS Analysis Facility (AF): ~800 physics users,
 who are the sole audience for its portal (`mcp-portal.af.uchicago.edu`) and its broker
@@ -47,7 +47,7 @@ integration could not truthfully claim: LLM clients never hold raw credentials (
 proxies, ATLAS IAM tokens) — the broker authenticates the caller once, mints
 short-lived per-user credentials behind the scenes, and every tool invocation passes
 through one authorization + audit layer regardless of which backend it eventually
-reaches. Adding a new backend is config-only (`backends.yaml`), no code change, so the
+reaches. Adding a new service is config-only (`services.yaml`), no code change, so the
 platform can aggregate an arbitrary and growing number of ATLAS MCP servers behind one
 URL without multiplying the number of places a client must trust with credentials.
 
@@ -76,7 +76,7 @@ URL without multiplying the number of places a client must trust with credential
   broker-issued PAT (`mcp_pat_…`, `/mcp` only). Groups/POSIX uid/gid come from a
   directory-backed `PrincipalCache`, never from token claims.
 - Authorization: declarative `policy.yaml` maps groups to capabilities; each
-  backend's required capability is defined once, in `backends.yaml` (the
+  service's required capability is defined once, in `services.yaml` (the
   authoritative registry).
 - Credentials: provider classes behind `CredentialProvider` (oidc, oauth21, x509,
   service); minted credentials are cached in-process by `(subject, target)` with
@@ -87,7 +87,7 @@ URL without multiplying the number of places a client must trust with credential
   external ATLAS services must instead use Keycloak's stored brokered token
   (`GET /realms/<realm>/broker/atlas-oidc/token`), which requires the user to have
   linked their CERN account first (the portal's Identities page is how they do that).
-- Adding a backend is config-only (`backends.yaml`) — no broker code change required.
+- Adding a service is config-only (`services.yaml`) — no broker code change required.
 - Accessibility: `eslint-plugin-vuejs-accessibility` already lints every `.vue`
   template in CI (see commit `7a49dfa`).
 
@@ -104,7 +104,7 @@ fill this gap.
   to paste, view, or manage a raw x509/IAM credential — only broker-issued tokens and
   proxy status.
 - Config-only extensibility: the platform's growth path is adding backends via
-  `backends.yaml`, not code changes — portal surfaces (like the catalog) should
+  `services.yaml`, not code changes — portal surfaces (like the catalog) should
   reflect that registry-driven model rather than hardcoding backend knowledge.
 - Self-service, not admin tooling: every portal screen serves the signed-in user's own
   account; there is no multi-user management surface to design for.

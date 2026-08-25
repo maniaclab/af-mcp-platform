@@ -2,7 +2,7 @@ from __future__ import annotations
 
 # GET /v1/catalog/{backend}/tools -- the portal's per-backend tool listing.
 # The endpoint reuses the aggregator's list-time credential logic
-# (aggregator.resolve_list_time_credential / fetch_backend_tool_listing, the
+# (aggregator.resolve_list_time_credential / fetch_service_tool_listing, the
 # issue #121 best-effort mint), so these tests mirror
 # test_mcp_list_time_credentials.py's backend zoo: an open backend, an
 # auth-gated backend that 401s any request without a recognized minted
@@ -37,7 +37,7 @@ from af_mcp_broker.credentials import (
     IssuedCredential,
 )
 from af_mcp_broker.identity import keycloak_dependency
-from af_mcp_broker.mcp.registry import BackendRegistry, BackendSpec
+from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
@@ -178,7 +178,7 @@ def policy() -> EntitlementPolicy:
     )
 
 
-def _spec(name: str, url: str, **overrides: Any) -> BackendSpec:
+def _spec(name: str, url: str, **overrides: Any) -> ServiceSpec:
     defaults: dict[str, Any] = {
         "prefix": name,
         "transport": "http",
@@ -188,11 +188,11 @@ def _spec(name: str, url: str, **overrides: Any) -> BackendSpec:
         "display_name": name.title(),
     }
     defaults.update(overrides)
-    return BackendSpec(name=name, url=url, **defaults)
+    return ServiceSpec(name=name, url=url, **defaults)
 
 
 def _make_app(
-    registry: BackendRegistry,
+    registry: ServiceRegistry,
     policy: EntitlementPolicy,
     credential_registry: CredentialRegistry | None = None,
     principal_state: dict[str, Any] | None = None,
@@ -205,7 +205,7 @@ def _make_app(
     state = principal_state if principal_state is not None else {}
     app = FastAPI()
     app.include_router(catalog_tools.router, prefix="/v1")
-    app.state.backend_registry = registry
+    app.state.service_registry = registry
     app.state.entitlement_policy = policy
     app.state.credential_registry = credential_registry or CredentialRegistry()
     app.state.broker_token_issuer = broker_token_issuer
@@ -233,7 +233,7 @@ async def _get_tools(app: FastAPI, backend: str) -> httpx.Response:
 async def test_unknown_backend_is_404(
     policy: EntitlementPolicy, make_principal: Callable[..., Any]
 ) -> None:
-    app, state = _make_app(BackendRegistry(), policy)
+    app, state = _make_app(ServiceRegistry(), policy)
     state["principal"] = make_principal(groups=["atlas"])
     resp = await _get_tools(app, "no-such-backend")
     assert resp.status_code == 404, resp.text
@@ -244,7 +244,7 @@ async def test_open_backend_lists_namespaced_tools(
     make_principal: Callable[..., Any],
     open_backend_url: str,
 ) -> None:
-    registry = BackendRegistry()
+    registry = ServiceRegistry()
     registry.register(_spec("open", open_backend_url))
     app, state = _make_app(registry, policy)
     state["principal"] = make_principal(groups=[])
@@ -267,12 +267,12 @@ async def test_open_backend_lists_namespaced_tools(
     assert "input_schema" not in resp.text
 
 
-async def test_display_name_falls_back_to_backend_name(
+async def test_display_name_falls_back_to_service_name(
     policy: EntitlementPolicy,
     make_principal: Callable[..., Any],
     open_backend_url: str,
 ) -> None:
-    registry = BackendRegistry()
+    registry = ServiceRegistry()
     registry.register(_spec("open", open_backend_url, display_name=""))
     app, state = _make_app(registry, policy)
     state["principal"] = make_principal(groups=[])
@@ -289,7 +289,7 @@ async def test_apply_namespace_false_keeps_raw_tool_names(
 ) -> None:
     """A self-prefixing backend (rucio-mcp's shape) opts out of aggregator
     namespacing -- the listing must show its raw names, same as /mcp does."""
-    registry = BackendRegistry()
+    registry = ServiceRegistry()
     registry.register(_spec("open", open_backend_url, apply_namespace=False))
     app, state = _make_app(registry, policy)
     state["principal"] = make_principal(groups=[])
@@ -312,7 +312,7 @@ async def test_action_type_reflects_policy_tool_overrides(
         group_capabilities={"__authenticated__": []},
         target_action_types={"open": {"open_submit": "state_change"}},
     )
-    registry = BackendRegistry()
+    registry = ServiceRegistry()
     registry.register(_spec("open", open_backend_url))
     app, state = _make_app(registry, policy)
     state["principal"] = make_principal(groups=[])
@@ -337,7 +337,7 @@ async def test_capability_required_without_contacting_backend(
     """A caller lacking the required capability gets "capability_required"
     -- derived locally, before any connection attempt (the dead URL proves
     no probe happened: it would classify "unavailable" instead)."""
-    registry = BackendRegistry()
+    registry = ServiceRegistry()
     registry.register(
         _spec(
             "secure",
@@ -362,7 +362,7 @@ async def test_not_linked_status_for_unlinked_caller(
     make_principal: Callable[..., Any],
     secure_backend_url: str,
 ) -> None:
-    registry = BackendRegistry()
+    registry = ServiceRegistry()
     registry.register(
         _spec(
             "secure",
@@ -394,7 +394,7 @@ async def test_linked_caller_lists_auth_gated_tools(
     through the same provider path the aggregator's list-time branch uses,
     so an auth-gated backend (401 without a token, rucio-mcp's shape) still
     lists."""
-    registry = BackendRegistry()
+    registry = ServiceRegistry()
     registry.register(
         _spec(
             "secure",
@@ -423,7 +423,7 @@ async def test_unauthorized_when_injected_credential_is_rejected(
     """A minted-and-injected credential the backend 401s means the stored
     credential itself is bad -- "unauthorized" (re-link is the fix), never
     conflated with "not_linked" or a generic outage."""
-    registry = BackendRegistry()
+    registry = ServiceRegistry()
     registry.register(
         _spec(
             "secure",
@@ -447,7 +447,7 @@ async def test_unavailable_when_backend_is_down(
     make_principal: Callable[..., Any],
     dead_backend_url: str,
 ) -> None:
-    registry = BackendRegistry()
+    registry = ServiceRegistry()
     registry.register(
         _spec(
             "dead",
@@ -480,7 +480,7 @@ async def test_x509_backend_lists_with_broker_identity_token(
         def mint(self, subject: str, target: str) -> tuple[str, float]:
             return f"token-for-{target}", time.time() + 300
 
-    registry = BackendRegistry()
+    registry = ServiceRegistry()
     registry.register(
         _spec(
             "secure",
@@ -504,7 +504,7 @@ async def test_response_never_exposes_backend_url(
     make_principal: Callable[..., Any],
     open_backend_url: str,
 ) -> None:
-    registry = BackendRegistry()
+    registry = ServiceRegistry()
     registry.register(_spec("open", open_backend_url))
     app, state = _make_app(registry, policy)
     state["principal"] = make_principal(groups=[])
@@ -546,7 +546,7 @@ async def test_successful_listing_is_served_from_cache(
 ) -> None:
     """After one successful listing, a repeat request within the TTL is
     answered from cache -- no backend traffic at all on the second call."""
-    registry = BackendRegistry()
+    registry = ServiceRegistry()
     credential_registry = CredentialRegistry()
     app, state = _make_app(registry, policy, credential_registry)
     state["principal"] = make_principal(groups=[])
@@ -572,7 +572,7 @@ async def test_tools_cache_ttl_zero_disables_caching(
     policy: EntitlementPolicy,
     make_principal: Callable[..., Any],
 ) -> None:
-    registry = BackendRegistry()
+    registry = ServiceRegistry()
     app, state = _make_app(registry, policy)
     state["principal"] = make_principal(groups=[])
 
@@ -597,7 +597,7 @@ async def test_cache_never_masks_a_degraded_callers_status(
     unlinked caller must still see "not_linked" -- their credential state is
     evaluated live on every request, never papered over by another caller's
     cached success."""
-    registry = BackendRegistry()
+    registry = ServiceRegistry()
     registry.register(
         _spec(
             "secure",

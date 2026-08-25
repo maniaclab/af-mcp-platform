@@ -28,7 +28,7 @@ from af_mcp_broker.credentials import (
 )
 from af_mcp_broker.mcp import aggregator as aggregator_module
 from af_mcp_broker.mcp.aggregator import build_aggregator, build_asgi_auth_middleware
-from af_mcp_broker.mcp.registry import BackendRegistry, BackendSpec
+from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -178,7 +178,7 @@ class _FakeListProvider(CredentialProvider):
 @pytest.fixture
 def policy() -> EntitlementPolicy:
     # required_capability for each target ("secure"/"open"/"dead") is
-    # declared on that target's BackendSpec in the aggregator_url fixture
+    # declared on that target's ServiceSpec in the aggregator_url fixture
     # below -- the registry is authoritative for that, not EntitlementPolicy
     # (see check_entitlement's docstring). This policy only needs to say
     # which capabilities the "atlas" group grants.
@@ -221,9 +221,9 @@ async def aggregator_url(
             "gid": gid,
             "unixname": unixname,
         }
-    registry = BackendRegistry()
+    registry = ServiceRegistry()
     registry.register(
-        BackendSpec(
+        ServiceSpec(
             name="secure",
             prefix="secure",
             url=secure_backend_url,
@@ -233,7 +233,7 @@ async def aggregator_url(
         )
     )
     registry.register(
-        BackendSpec(
+        ServiceSpec(
             name="open",
             prefix="open",
             url=open_backend_url,
@@ -243,7 +243,7 @@ async def aggregator_url(
         )
     )
     registry.register(
-        BackendSpec(
+        ServiceSpec(
             name="dead",
             prefix="dead",
             url=dead_backend_url,
@@ -345,8 +345,8 @@ async def test_unlinked_principal_missing_secure_tools_rest_of_list_works(
     matches = [
         kwargs
         for event, kwargs in events
-        if event == "aggregator.backend_list_failed"
-        and kwargs.get("backend") == "secure"
+        if event == "aggregator.service_list_failed"
+        and kwargs.get("service") == "secure"
     ]
     assert matches, events
     assert matches[0]["reason"] == "not_linked"
@@ -509,9 +509,9 @@ async def test_replica_split_session_continuity(
     prime_jwks([sig_key.jwk])
     token = sig_key.sign(_token_for(111, 111, "alice"))
 
-    registry = BackendRegistry()
+    registry = ServiceRegistry()
     registry.register(
-        BackendSpec(
+        ServiceSpec(
             name="open",
             prefix="open",
             url=open_backend_url,

@@ -12,7 +12,7 @@ from fastmcp.utilities.tests import run_server_async
 from af_mcp_broker.authorization import EntitlementPolicy
 from af_mcp_broker.credentials import CredentialRegistry
 from af_mcp_broker.mcp.aggregator import build_aggregator
-from af_mcp_broker.mcp.registry import BackendRegistry, BackendSpec
+from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -56,9 +56,9 @@ def aggregator_url(settings, progress_backend_url, static_principal_cache):
     pass-through rather than credential injection (which has its own
     dedicated coverage in test_mcp_credential_injection_integration.py)."""
     principal_cache, _directory = static_principal_cache
-    registry = BackendRegistry()
+    registry = ServiceRegistry()
     registry.register(
-        BackendSpec(
+        ServiceSpec(
             name="progress",
             prefix="progress",
             url=progress_backend_url,

@@ -1,5 +1,5 @@
 /**
- * Component tests for BackendCard.vue's fetch-on-expand Tools accordion.
+ * Component tests for ServiceCard.vue's fetch-on-expand Tools accordion.
  *
  * The staleness contract is the same one X509IdentityCard.test.ts pins down
  * (PR #185's toggle sequence-number guard): a fetch may only apply its
@@ -17,7 +17,7 @@ vi.mock('../../lib/api', () => ({
 }));
 
 import { fetchServerTools } from '../../lib/api';
-import BackendCard from '../BackendCard.vue';
+import ServiceCard from '../ServiceCard.vue';
 
 /** A promise whose resolution the test controls — stands in for a slow HTTP response. */
 function deferred<T>() {
@@ -61,7 +61,7 @@ function listing(overrides: Partial<ServerToolsResponse> = {}): ServerToolsRespo
 }
 
 function mountCard(): VueWrapper {
-  return mount(BackendCard, {
+  return mount(ServiceCard, {
     props: {
       server: SERVER,
       poweredBy: {
@@ -150,7 +150,7 @@ describe('Tools accordion', () => {
     vi.mocked(fetchServerTools).mockResolvedValueOnce(
       listing({
         status: 'not_linked',
-        status_detail: "Link your identity to see this backend's tools.",
+        status_detail: "Link your identity to see this service's tools.",
         tools: [],
       }),
     );
@@ -159,7 +159,7 @@ describe('Tools accordion', () => {
     await toolsToggle(wrapper).trigger('click');
     await flushPromises();
 
-    expect(wrapper.text()).toContain("Link your identity to see this backend's tools.");
+    expect(wrapper.text()).toContain("Link your identity to see this service's tools.");
     const cta = wrapper.find('.bc__tools-cta');
     expect(cta.exists()).toBe(true);
     expect(cta.attributes('href')).toBe('/identities/');
@@ -173,7 +173,7 @@ describe('Tools accordion', () => {
     await toolsToggle(wrapper).trigger('click');
     await flushPromises();
 
-    expect(wrapper.text()).toContain('This backend currently registers no tools.');
+    expect(wrapper.text()).toContain('This service currently registers no tools.');
   });
 
   it('surfaces a fetch failure as an error note, not a silent empty section', async () => {

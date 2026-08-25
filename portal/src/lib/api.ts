@@ -59,7 +59,7 @@ export class SessionExpiredError extends Error {
  * fix it — it's permanent until an administrator grants the missing token
  * audience (see docs/auth.md's "cascading failure" section). `correlationId`
  * is the id to quote when contacting them, the same convention
- * `backendStatus.ts` already uses for `capability_required`.
+ * `serviceStatus.ts` already uses for `capability_required`.
  */
 export class AccessDeniedError extends Error {
   constructor(
@@ -333,7 +333,7 @@ export type AuthType = 'bearer' | 'x509' | 'none';
 /** One tool as the caller would see it through /mcp: the (namespace-applied)
  * name, its description, and the same read/state_change resolution real
  * enforcement uses. Never the full input schema -- the payload stays light.
- * Returned by GET /v1/catalog/{backend}/tools (fetchServerTools below). */
+ * Returned by GET /v1/catalog/{service}/tools (fetchServerTools below). */
 export interface CatalogTool {
   name: string;
   description: string;
@@ -341,10 +341,10 @@ export interface CatalogTool {
 }
 
 /** Per-caller availability (issue #123) -- see broker/src/af_mcp_broker/
- * api/capabilities.py's _backend_status. Every registered backend is
+ * api/capabilities.py's _service_status. Every registered service is
  * listed, even one the caller can't currently use; status/status_detail say
  * why instead of a silent omission. */
-export type BackendStatus =
+export type ServiceStatus =
   'available' | 'link_required' | 'capability_required' | 'unavailable' | 'misconfigured';
 
 export interface CatalogServer {
@@ -357,7 +357,7 @@ export interface CatalogServer {
   /** The identity_providers alias (or synthetic "x509" alias) that services
    * this server's credential, or null when auth_type is "none". */
   credential_provider: string | null;
-  status: BackendStatus;
+  status: ServiceStatus;
   /** Short, human, internals-free sentence -- never a URL or upstream error. */
   status_detail: string;
   /** Set only for admin-actionable statuses (capability_required,
@@ -375,8 +375,8 @@ export async function fetchCatalog(): Promise<CatalogResponse> {
 }
 
 // ---------------------------------------------------------------------------
-// Per-backend tool listing — GET /v1/catalog/{backend}/tools. Fetched on
-// expand by BackendCard.vue's Tools accordion, one backend at a time -- the
+// Per-service tool listing — GET /v1/catalog/{service}/tools. Fetched on
+// expand by ServiceCard.vue's Tools accordion, one backend at a time -- the
 // catalog itself stays a single cheap request and the broker only fans out
 // to the backend the user actually opened.
 // ---------------------------------------------------------------------------

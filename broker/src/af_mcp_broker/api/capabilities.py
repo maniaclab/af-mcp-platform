@@ -19,18 +19,18 @@ from af_mcp_broker.identity import Principal, keycloak_dependency
 from af_mcp_broker.mcp.registry import (
     LIST_IDENTITIES_TOOL_NAME,
     WHOAMI_TOOL_NAME,
-    BackendRegistry,
+    ServiceRegistry,
 )
 
 if TYPE_CHECKING:
-    from af_mcp_broker.mcp.registry import BackendSpec
+    from af_mcp_broker.mcp.registry import ServiceSpec
 
 logger = structlog.get_logger(__name__)
 
-# Per-backend availability status for /v1/catalog (issue #123). A short,
+# Per-service availability status for /v1/catalog (issue #123). A short,
 # canned sentence per status -- never an upstream error body or policy/group
-# detail (see _backend_status below).
-BackendStatus = Literal[
+# detail (see _service_status below).
+ServiceStatus = Literal[
     "available",
     "link_required",
     "capability_required",
@@ -38,19 +38,19 @@ BackendStatus = Literal[
     "misconfigured",
 ]
 
-_STATUS_DETAILS: dict[BackendStatus, str] = {
+_STATUS_DETAILS: dict[ServiceStatus, str] = {
     "available": "Available.",
     "link_required": (
-        "Link your identity to use this backend. Call "
+        "Link your identity to use this service. Call "
         f"`{LIST_IDENTITIES_TOOL_NAME}` to see which identity provider it needs."
     ),
     "capability_required": (
-        "Your account doesn't have the access this backend requires. "
+        "Your account doesn't have the access this service requires. "
         f"Contact the AF admins. Call `{WHOAMI_TOOL_NAME}` to see your "
         "current capabilities."
     ),
     "unavailable": "Temporarily unavailable. Try again shortly.",
-    "misconfigured": "This backend is misconfigured. Contact the AF admins.",
+    "misconfigured": "This service is misconfigured. Contact the AF admins.",
 }
 
 # A stored credential that was itself rejected (a recorded "unauthorized"
@@ -107,8 +107,8 @@ class CatalogServer(BaseModel):
 
     Per-server tool enumeration deliberately does NOT live here: the catalog
     stays a single cheap request, and the portal fetches one server's tools
-    on demand via GET /v1/catalog/{backend}/tools (api/catalog_tools.py),
-    which fans out to that backend alone.
+    on demand via GET /v1/catalog/{service}/tools (api/catalog_tools.py),
+    which fans out to that service alone.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -120,9 +120,9 @@ class CatalogServer(BaseModel):
     auth_type: str
     action_type: Literal["read", "state_change"]
     credential_provider: str | None
-    # Per-caller availability (issue #123) -- see _backend_status. Always
+    # Per-caller availability (issue #123) -- see _service_status. Always
     # populated; status_detail is a short, human, internals-free sentence.
-    status: BackendStatus
+    status: ServiceStatus
     status_detail: str
     # Set only for admin-actionable statuses (capability_required,
     # misconfigured) -- a correlation id the caller can quote in a ticket so
@@ -150,8 +150,8 @@ def _get_policy(request: Request) -> EntitlementPolicy:
     return getattr(request.app.state, "entitlement_policy", None) or _empty_policy()
 
 
-def _get_registry(request: Request) -> BackendRegistry:
-    return getattr(request.app.state, "backend_registry", None) or BackendRegistry()
+def _get_registry(request: Request) -> ServiceRegistry:
+    return getattr(request.app.state, "service_registry", None) or ServiceRegistry()
 
 
 def _get_target_to_alias(request: Request) -> dict[str, str]:
@@ -171,10 +171,10 @@ def _action_type_for_capability(
     return cap.action_type if cap else "read"  # type: ignore[return-value]
 
 
-def _action_type_for_backend(
+def _action_type_for_service(
     target: str, capability: str | None, policy: EntitlementPolicy
 ) -> Literal["read", "state_change"]:
-    """Server-level read/write badge for a backend target.
+    """Server-level read/write badge for a service target.
 
     Real enforcement (``get_action_type`` in authorization/base.py) resolves
     ``policy.target_action_types[target]`` glob overrides per tool. The
@@ -193,12 +193,12 @@ def _action_type_for_backend(
 
 
 def _grants_for(
-    principal: Principal, policy: EntitlementPolicy, registry: BackendRegistry
+    principal: Principal, policy: EntitlementPolicy, registry: ServiceRegistry
 ) -> list[CapabilityGrant]:
     """Build per-capability grants from the principal's capabilities.
 
     For each granted capability we list the targets that require it, per the
-    backend registry's ``required_capability`` (backends.yaml is the sole
+    service registry's ``required_capability`` (services.yaml is the sole
     source of truth for that mapping -- see issue #60).
     """
     caps = get_principal_capabilities(principal, policy)
@@ -206,7 +206,7 @@ def _grants_for(
     for cap in sorted(caps):
         targets = sorted(
             spec.name
-            for spec in registry.all_backends()
+            for spec in registry.all_services()
             if spec.required_capability == cap
         )
         grants.append(
@@ -219,14 +219,14 @@ def _grants_for(
     return grants
 
 
-async def _backend_status(
-    spec: BackendSpec,
+async def _service_status(
+    spec: ServiceSpec,
     principal: Principal,
     caps: set[str],
     credential_registry: CredentialRegistry,
-    registry: BackendRegistry,
-) -> tuple[BackendStatus, str, str | None]:
-    """Derive one backend's per-caller availability status for /v1/catalog (issue #123) from data the broker already has -- never an upstream probe of the backend itself, an upstream error body, a policy internal, or a group list (see _STATUS_DETAILS's canned sentences).
+    registry: ServiceRegistry,
+) -> tuple[ServiceStatus, str, str | None]:
+    """Derive one service's per-caller availability status for /v1/catalog (issue #123) from data the broker already has -- never an upstream probe of the service itself, an upstream error body, a policy internal, or a group list (see _STATUS_DETAILS's canned sentences).
 
     Precedence mirrors the real enforcement order (AuthorizationMiddleware
     checks entitlement before a client_factory ever attempts to mint a
@@ -240,7 +240,7 @@ async def _backend_status(
     if required not in (None, "__none__") and required not in caps:
         correlation_id = uuid.uuid4().hex
         logger.info(
-            "catalog.backend_status_flagged",
+            "catalog.service_status_flagged",
             subject=principal.subject,
             target=spec.name,
             status="capability_required",
@@ -265,7 +265,7 @@ async def _backend_status(
         # not something the caller can fix themselves.
         correlation_id = uuid.uuid4().hex
         logger.info(
-            "catalog.backend_status_flagged",
+            "catalog.service_status_flagged",
             subject=principal.subject,
             target=spec.name,
             status="misconfigured",
@@ -278,9 +278,9 @@ async def _backend_status(
 
     # Capability satisfied, provider resolves, and linked -- the live checks
     # above all say "available". Factor in a recent classified tools/list
-    # failure (BackendRegistry.record_list_failure, written by aggregator.py's
+    # failure (ServiceRegistry.record_list_failure, written by aggregator.py's
     # _ObservableProxyProvider) as a best-effort refinement, without an extra
-    # live probe of the backend itself. "not_linked" can't appear here (the
+    # live probe of the service itself. "not_linked" can't appear here (the
     # live is_linked() check above already accounts for it); "unauthorized"
     # means the stored credential itself was rejected, so re-linking (not
     # waiting it out) is the fix.
@@ -324,12 +324,12 @@ async def authorize(
     request: Request,
     principal: Annotated[Principal, Depends(keycloak_dependency)],
 ) -> AuthorizeResponse:
-    """Derive the required capability server-side from the backend registry (``body.target`` -> ``BackendSpec.required_capability``) rather than trusting a capability supplied by the caller -- a client used to be able to claim any capability for any target and have it evaluated at face value (see issue #60)."""
+    """Derive the required capability server-side from the service registry (``body.target`` -> ``ServiceSpec.required_capability``) rather than trusting a capability supplied by the caller -- a client used to be able to claim any capability for any target and have it evaluated at face value (see issue #60)."""
     policy = _get_policy(request)
     registry = _get_registry(request)
-    backend = registry.get(body.target)
-    if backend is None:
-        reason = f"target '{body.target}' is not a registered backend"
+    service = registry.get(body.target)
+    if service is None:
+        reason = f"target '{body.target}' is not a registered service"
         logger.info(
             "authorize_decision",
             subject=principal.subject,
@@ -343,15 +343,15 @@ async def authorize(
         )
 
     allow, reason = check_entitlement(
-        principal, backend.required_capability, backend.name, policy
+        principal, service.required_capability, service.name, policy
     )
     action_type = get_action_type(
-        backend.name, body.action, backend.required_capability, policy
+        service.name, body.action, service.required_capability, policy
     )
     logger.info(
         "authorize_decision",
         subject=principal.subject,
-        capability=backend.required_capability,
+        capability=service.required_capability,
         target=body.target,
         action=body.action,
         action_type=action_type,
@@ -382,13 +382,13 @@ async def get_catalog(
     target_to_alias = _get_target_to_alias(request)
 
     servers: list[CatalogServer] = []
-    for spec in registry.all_backends():
+    for spec in registry.all_services():
         required = spec.required_capability
-        # Every registered backend is listed, even one this caller can't
+        # Every registered service is listed, even one this caller can't
         # currently use -- status/status_detail say why instead of a silent
-        # omission (issue #123: a hidden, capability-gated backend left the
+        # omission (issue #123: a hidden, capability-gated service left the
         # portal unable to explain an empty tools/list).
-        status, status_detail, correlation_id = await _backend_status(
+        status, status_detail, correlation_id = await _service_status(
             spec, principal, caps, credential_registry, registry
         )
         servers.append(
@@ -402,7 +402,7 @@ async def get_catalog(
                 # opt-in, since neither implies a capability requirement.
                 capability=required if required is not None else "__none__",
                 auth_type=spec.auth_type,
-                action_type=_action_type_for_backend(spec.name, required, policy),
+                action_type=_action_type_for_service(spec.name, required, policy),
                 credential_provider=target_to_alias.get(spec.name),
                 status=status,
                 status_detail=status_detail,

@@ -23,7 +23,7 @@ Before a tool call succeeds, three things have to be true, in order:
    Missing this means the tool is invisible in `tools/list`, not just
    denied at call time (see [Errors](#errors-youll-see) below).
 3. **For backends that need your own credential** (`auth_type: bearer` in
-   `backends.yaml` — Rucio is the Phase 1 example), **you've linked that
+   `services.yaml` — Rucio is the Phase 1 example), **you've linked that
    identity provider from the portal's Identities page**
    (`mcp-portal.af.uchicago.edu/identities/`). Without this, the tool is
    visible in `tools/list` (entitlement filtering only checks the
@@ -184,7 +184,7 @@ pixi run -e dev python scripts/verify-mcp-flow.py
 namespaced by backend prefix (`<prefix>_<toolname>`), except where a
 backend already self-prefixes its own tools (rucio-mcp ships
 `rucio_list_dids`, `rucio_whoami`, etc. — namespacing it again would double
-up into `rucio_rucio_*`, so its `backends.yaml` entry opts out via
+up into `rucio_rucio_*`, so its `services.yaml` entry opts out via
 `apply_namespace: false`). Either way, every tool you see starts with its
 backend's prefix, e.g. `rucio_whoami`.
 

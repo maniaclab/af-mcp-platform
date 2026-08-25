@@ -218,7 +218,7 @@ class TokenAudienceError(HTTPException):
     carrying a stable ``error`` discriminator (RFC 6750's
     ``insufficient_scope``) plus a ``correlation_id`` the caller can quote
     when contacting an administrator -- the same pattern
-    ``api/capabilities.py``'s ``_backend_status`` already uses for
+    ``api/capabilities.py``'s ``_service_status`` already uses for
     ``capability_required``/``misconfigured``.
     """
 

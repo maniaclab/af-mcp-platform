@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from fastmcp.tools.base import ToolResult
 
     from af_mcp_broker.identity import Principal
-    from af_mcp_broker.mcp.registry import BackendRegistry
+    from af_mcp_broker.mcp.registry import ServiceRegistry
 
 logger = structlog.get_logger(__name__)
 
@@ -36,7 +36,7 @@ logger = structlog.get_logger(__name__)
 # which call_next only reaches once this middleware has already allowed the
 # call through. On allow, this middleware also stamps request-scoped state
 # (see the comment above set_state() below) telling that client_factory this
-# is a genuine tools/call for a specific backend, not a tools/list
+# is a genuine tools/call for a specific service, not a tools/list
 # schema-cache refresh sharing the same factory.
 #
 # Supersedes the old HTTP-loopback broker_mw.py: that module re-validated the
@@ -54,7 +54,7 @@ def _capability_grant_field(principal: Principal) -> list[str] | None:
     return sorted(principal.capability_grant)
 
 
-def _record_invocation(backend_name: str, tool_name: str, action_type: str) -> None:
+def _record_invocation(service_name: str, tool_name: str, action_type: str) -> None:
     """Increment the tool-invocation counter.
 
     No identity label -- per-identity counting was deliberately dropped in
@@ -63,12 +63,12 @@ def _record_invocation(backend_name: str, tool_name: str, action_type: str) -> N
     behind access control); see metrics.py's cardinality policy.
     """
     metrics.tool_invocations_total.labels(
-        backend=backend_name, tool=tool_name, action_type=action_type
+        service=service_name, tool=tool_name, action_type=action_type
     ).inc()
 
 
 class AuthorizationMiddleware(Middleware):
-    def __init__(self, registry: BackendRegistry, policy: EntitlementPolicy) -> None:
+    def __init__(self, registry: ServiceRegistry, policy: EntitlementPolicy) -> None:
         # Mutable on purpose: populate_aggregator() refreshes these in place
         # on every lifespan entry rather than constructing a new middleware
         # instance each time (mirrors EntitlementMiddleware).
@@ -97,25 +97,25 @@ class AuthorizationMiddleware(Middleware):
 
         if tool_name in DIAGNOSTIC_TOOL_NAMES:
             # af_* diagnostic tools (issue #153) bypass entitlement
-            # checking, credential minting, and per-backend audit/metrics
-            # entirely: they need no capability, touch no backend, and
+            # checking, credential minting, and per-service audit/metrics
+            # entirely: they need no capability, touch no service, and
             # ProxyProvider never enters this call path for them at all
             # (they're registered directly on the aggregator -- see
             # mcp/diagnostics.py). They must keep answering precisely when
-            # a backend or its credential provider is broken, so gating
+            # a service or its credential provider is broken, so gating
             # them behind the same machinery that call is meant to explain
-            # would be circular. No registered backend can claim this
-            # prefix (BackendRegistry.register() refuses it), so this can't
-            # be used to route a real backend's tool around authorization.
+            # would be circular. No registered service can claim this
+            # prefix (ServiceRegistry.register() refuses it), so this can't
+            # be used to route a real service's tool around authorization.
             return await call_next(context)
 
-        backend = self.registry.get_by_tool_prefix(tool_name)
+        service = self.registry.get_by_tool_prefix(tool_name)
         request_id = str(uuid.uuid4())
         args_summary = ", ".join(f"{k}=..." for k in list(tool_args.keys())[:10])
 
-        if backend is None:
+        if service is None:
             # tool_name is client-supplied and matches no configured
-            # backend prefix here, so it must never become a label value
+            # service prefix here, so it must never become a label value
             # (unbounded cardinality) -- count it in the label-free
             # unmapped counter instead. See metrics.py's cardinality policy.
             metrics.tool_invocations_unmapped_total.inc()
@@ -131,39 +131,39 @@ class AuthorizationMiddleware(Middleware):
                     timestamp=time.time(),
                     request_id=request_id,
                     outcome="denied",
-                    error=f"no backend registered for tool '{tool_name}'",
+                    error=f"no service registered for tool '{tool_name}'",
                     principal_capability_grant=_capability_grant_field(principal),
                 )
             )
-            raise AuthorizationError(f"No backend registered for tool '{tool_name}'")
+            raise AuthorizationError(f"No service registered for tool '{tool_name}'")
 
         action_type = get_action_type(
-            backend.name, tool_name, backend.required_capability, self.policy
+            service.name, tool_name, service.required_capability, self.policy
         )
         allow, reason = check_entitlement(
-            principal, backend.required_capability, backend.name, self.policy
+            principal, service.required_capability, service.name, self.policy
         )
         if not allow:
             # A denial is still an attempted invocation for the coarse
             # counters, plus its own isolated denied counter -- see
             # metrics.py's cardinality policy for why outcome isn't a label
             # on tool_invocations_total itself.
-            _record_invocation(backend.name, tool_name, action_type)
+            _record_invocation(service.name, tool_name, action_type)
             metrics.tool_invocations_denied_total.labels(
-                backend=backend.name, action_type=action_type
+                service=service.name, action_type=action_type
             ).inc()
             await write_audit(
                 AuditRecord(
                     principal_sub=principal.subject,
                     principal_uid=principal.uid,
-                    capability=backend.required_capability,
-                    target=backend.name,
+                    capability=service.required_capability,
+                    target=service.name,
                     action=tool_name,
                     action_type=action_type,
                     args_summary=args_summary,
                     timestamp=time.time(),
                     request_id=request_id,
-                    mcp_backend=backend.name,
+                    mcp_service=service.name,
                     outcome="denied",
                     error=reason,
                     principal_capability_grant=_capability_grant_field(principal),
@@ -173,7 +173,7 @@ class AuthorizationMiddleware(Middleware):
 
         # Signal to the aggregator's client_factory (aggregator.py) that this
         # in-flight request is a genuine, authorized tools/call targeting
-        # this backend -- credential minting is gated on this because
+        # this service -- credential minting is gated on this because
         # ProxyProvider shares the same client_factory for tools/list schema
         # caching (process-wide, up to 5 minutes, across all sessions), and
         # a factory invocation triggered by that cache refresh is otherwise
@@ -182,30 +182,30 @@ class AuthorizationMiddleware(Middleware):
         # wasteful and semantically wrong. Request-scoped state, so it never
         # leaks into a later, unrelated request.
         await fastmcp_context.set_state(
-            "authorized_call_target", backend.name, serializable=False
+            "authorized_call_target", service.name, serializable=False
         )
 
         try:
             result = await call_next(context)
         except Exception as exc:
             # An error downstream of authorization (credential resolution,
-            # the backend call itself) is still an attempted invocation --
+            # the service call itself) is still an attempted invocation --
             # authorization allowed it, so it's not a denial, and gets no
             # separate error counter (the audit log is the source of truth
             # for exact per-outcome fidelity; see metrics.py's docstring).
-            _record_invocation(backend.name, tool_name, action_type)
+            _record_invocation(service.name, tool_name, action_type)
             await write_audit(
                 AuditRecord(
                     principal_sub=principal.subject,
                     principal_uid=principal.uid,
-                    capability=backend.required_capability,
-                    target=backend.name,
+                    capability=service.required_capability,
+                    target=service.name,
                     action=tool_name,
                     action_type=action_type,
                     args_summary=args_summary,
                     timestamp=time.time(),
                     request_id=request_id,
-                    mcp_backend=backend.name,
+                    mcp_service=service.name,
                     outcome="error",
                     error=str(exc),
                     principal_capability_grant=_capability_grant_field(principal),
@@ -213,19 +213,19 @@ class AuthorizationMiddleware(Middleware):
             )
             raise
 
-        _record_invocation(backend.name, tool_name, action_type)
+        _record_invocation(service.name, tool_name, action_type)
         await write_audit(
             AuditRecord(
                 principal_sub=principal.subject,
                 principal_uid=principal.uid,
-                capability=backend.required_capability,
-                target=backend.name,
+                capability=service.required_capability,
+                target=service.name,
                 action=tool_name,
                 action_type=action_type,
                 args_summary=args_summary,
                 timestamp=time.time(),
                 request_id=request_id,
-                mcp_backend=backend.name,
+                mcp_service=service.name,
                 outcome="success",
                 principal_capability_grant=_capability_grant_field(principal),
             )

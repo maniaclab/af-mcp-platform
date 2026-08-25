@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-# GET /v1/catalog/{backend}/tools -- the portal's per-backend tool listing
+# GET /v1/catalog/{service}/tools -- the portal's per-service tool listing
 # (the fetch-on-expand companion to GET /v1/catalog). Lives in its own module
 # rather than api/capabilities.py because it imports mcp/aggregator.py's
 # list-time helpers, and capabilities.py importing the aggregator would be a
@@ -20,13 +20,13 @@ from af_mcp_broker.api.capabilities import (
 from af_mcp_broker.authorization import check_entitlement, get_action_type
 from af_mcp_broker.identity import Principal, keycloak_dependency
 from af_mcp_broker.mcp.aggregator import (
-    fetch_backend_tool_listing,
+    fetch_service_tool_listing,
     resolve_list_time_credential,
 )
 
 if TYPE_CHECKING:
     from af_mcp_broker.authorization import EntitlementPolicy
-    from af_mcp_broker.mcp.registry import BackendSpec
+    from af_mcp_broker.mcp.registry import ServiceSpec
 
 logger = structlog.get_logger(__name__)
 
@@ -34,8 +34,8 @@ router = APIRouter(tags=["capabilities"])
 
 # The status vocabulary matches aggregator.py's _classify_failure one-to-one
 # (plus "ok" and the locally-derived "capability_required"), so a portal
-# status and an `aggregator.backend_list_failed` log line for the same
-# backend always speak the same language. Sentences are short, human, and
+# status and an `aggregator.service_list_failed` log line for the same
+# service always speak the same language. Sentences are short, human, and
 # internals-free -- portal-facing, so unlike capabilities.py's
 # _STATUS_DETAILS they never name the af_* diagnostic tools.
 ToolListingStatus = Literal[
@@ -48,17 +48,17 @@ ToolListingStatus = Literal[
 
 _STATUS_DETAILS: dict[str, str] = {
     "ok": "Tools listed.",
-    "not_linked": "Link your identity to see this backend's tools.",
+    "not_linked": "Link your identity to see this service's tools.",
     "unauthorized": "Your linked credential was rejected. Re-link your identity.",
     "unavailable": "Temporarily unavailable. Try again shortly.",
     "capability_required": (
-        "Your account doesn't have the access this backend requires. "
+        "Your account doesn't have the access this service requires. "
         "Contact the AF admins."
     ),
 }
 
 
-class BackendTool(BaseModel):
+class ServiceTool(BaseModel):
     """One tool as a caller sees it through /mcp.
 
     Carries the (namespace-applied) name, the description, and the same
@@ -74,8 +74,8 @@ class BackendTool(BaseModel):
     action_type: Literal["read", "state_change"]
 
 
-class BackendToolsResponse(BaseModel):
-    """A backend never vanishes from this endpoint for credential reasons.
+class ServiceToolsResponse(BaseModel):
+    """A service never vanishes from this endpoint for credential reasons.
 
     ``status``/``status_detail`` say why ``tools`` is empty instead (same
     issue #123 philosophy as GET /v1/catalog's per-server status).
@@ -88,34 +88,34 @@ class BackendToolsResponse(BaseModel):
     description: str
     status: ToolListingStatus
     status_detail: str
-    tools: list[BackendTool]
+    tools: list[ServiceTool]
 
 
 class ToolListingCache:
-    """In-process TTL cache of successful tool listings, keyed by backend.
+    """In-process TTL cache of successful tool listings, keyed by service.
 
     Tool schemas aren't user-specific (the same cross-user assumption
     fastmcp's ProxyProvider component cache already relies on -- see
     aggregator.py's _make_client_factory docstring; that cache itself can't
     be reused here because its client factories require an in-flight MCP
-    request context), so one process-wide entry per backend is safe. The TTL
-    is the backend's own ``tools_cache_ttl`` -- the same operator knob that
+    request context), so one process-wide entry per service is safe. The TTL
+    is the service's own ``tools_cache_ttl`` -- the same operator knob that
     governs the ProxyProvider cache, and 0 disables caching here too.
     Per-caller decisions (entitlement, linkage) are re-evaluated on every
     request; only the network fan-out is skipped. Each broker replica keeps
     its own copy -- acceptable divergence for a tool *catalog* (worst case a
-    just-redeployed backend's new tool appears on one replica up to one TTL
+    just-redeployed service's new tool appears on one replica up to one TTL
     before another), unlike per-caller status data which is never cached.
     """
 
     def __init__(self) -> None:
-        # backend name -> (monotonic fetch time, [(tool name, description)])
+        # service name -> (monotonic fetch time, [(tool name, description)])
         self._entries: dict[str, tuple[float, list[tuple[str, str]]]] = {}
 
-    def get(self, backend: str, ttl: float) -> list[tuple[str, str]] | None:
+    def get(self, service: str, ttl: float) -> list[tuple[str, str]] | None:
         if ttl <= 0:
             return None
-        entry = self._entries.get(backend)
+        entry = self._entries.get(service)
         if entry is None:
             return None
         fetched_at, tools = entry
@@ -123,8 +123,8 @@ class ToolListingCache:
             return None
         return tools
 
-    def put(self, backend: str, tools: list[tuple[str, str]]) -> None:
-        self._entries[backend] = (time.monotonic(), tools)
+    def put(self, service: str, tools: list[tuple[str, str]]) -> None:
+        self._entries[service] = (time.monotonic(), tools)
 
 
 def _get_cache(request: Request) -> ToolListingCache:
@@ -138,19 +138,19 @@ def _get_cache(request: Request) -> ToolListingCache:
 
 
 def _respond(
-    spec: BackendSpec,
+    spec: ServiceSpec,
     status: str,
     tools: list[tuple[str, str]],
     policy: EntitlementPolicy,
-) -> BackendToolsResponse:
-    return BackendToolsResponse(
+) -> ServiceToolsResponse:
+    return ServiceToolsResponse(
         name=spec.name,
         display_name=spec.display_name or spec.name,
         description=spec.description,
         status=status,  # type: ignore[arg-type]
         status_detail=_STATUS_DETAILS[status],
         tools=[
-            BackendTool(
+            ServiceTool(
                 name=name,
                 description=description,
                 action_type=get_action_type(  # type: ignore[arg-type]
@@ -163,33 +163,33 @@ def _respond(
 
 
 @router.get(
-    "/catalog/{backend}/tools",
-    response_model=BackendToolsResponse,
-    summary="List one backend's tools as the caller would see them via /mcp",
+    "/catalog/{service}/tools",
+    response_model=ServiceToolsResponse,
+    summary="List one service's tools as the caller would see them via /mcp",
 )
-async def get_backend_tools(
-    backend: str,
+async def get_service_tools(
+    service: str,
     request: Request,
     principal: Annotated[Principal, Depends(keycloak_dependency)],
-) -> BackendToolsResponse:
-    """Enumerate *backend*'s tools as the caller would see them via /mcp.
+) -> ServiceToolsResponse:
+    """Enumerate *service*'s tools as the caller would see them via /mcp.
 
     Uses the aggregator's own list-time credential logic
-    (aggregator.resolve_list_time_credential / fetch_backend_tool_listing),
+    (aggregator.resolve_list_time_credential / fetch_service_tool_listing),
     so what the portal shows always matches what a tools/list through /mcp
     would return for this caller.
     """
     registry = _get_registry(request)
-    spec = registry.get(backend)
+    spec = registry.get(service)
     if spec is None:
         raise HTTPException(
-            status_code=404, detail=f"backend '{backend}' is not registered"
+            status_code=404, detail=f"service '{service}' is not registered"
         )
     policy = _get_policy(request)
 
     # Same capability gate the aggregator's factories (and /v1/catalog's
     # status derivation) apply before any credential work -- derived locally,
-    # never by probing the backend.
+    # never by probing the service.
     allowed, _reason = check_entitlement(
         principal, spec.required_capability, spec.name, policy
     )
@@ -213,7 +213,7 @@ async def get_backend_tools(
         if cached is not None:
             return _respond(spec, "ok", cached, policy)
 
-    status, tools = await fetch_backend_tool_listing(spec, headers, skip_reason)
+    status, tools = await fetch_service_tool_listing(spec, headers, skip_reason)
     if status == "ok":
         if skip_reason is None:
             cache.put(spec.name, tools)

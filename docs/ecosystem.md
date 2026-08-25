@@ -4,8 +4,8 @@ af-mcp-platform (this repo) is the broker + portal — the credential-brokering
 core described in [Architecture](architecture.md). On its own it authenticates
 callers and routes tool calls; it doesn't mint grid credentials or expose any
 compute itself. Those come from separate, independently-deployed services that
-plug into the broker's `identity_providers`/`backends.yaml` extension points
-(see [Authentication](auth.md) and [Adding a Backend](adding-a-backend.md)).
+plug into the broker's `identity_providers`/`services.yaml` extension points
+(see [Authentication](auth.md) and [Adding a Service](adding-a-service.md)).
 
 This page lists the real components that make up the UChicago ATLAS Analysis
 Facility's deployment — the reference deployment, not a requirement. A
@@ -41,8 +41,8 @@ mechanism — see that section for the general native-backend pattern.
 
 ## Backend MCP servers
 
-Any MCP server can be a backend — adding one is a `backends.yaml` entry, no
-broker code change (see [Adding a Backend](adding-a-backend.md)). These are
+Any MCP server can be a service — adding one is a `services.yaml` entry, no
+broker code change (see [Adding a Service](adding-a-service.md)). These are
 the ones registered in the reference deployment today:
 
 - **[rucio-mcp](https://github.com/kratsg/rucio-mcp)** — ATLAS distributed
@@ -68,6 +68,6 @@ None of the services above are required by af-mcp-platform itself — they're
 what UChicago's ATLAS AF happens to run behind its broker. A different
 facility or experiment deploys the same broker + portal chart and registers
 whichever backend MCP servers and credential services fit its own compute
-and storage systems; see [Adding a Backend](adding-a-backend.md) for the
+and storage systems; see [Adding a Service](adding-a-service.md) for the
 config-only mechanism and [Authentication](auth.md) for the identity-provider
 types available for wiring up a new credential-minting service.

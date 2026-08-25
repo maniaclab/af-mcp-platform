@@ -342,7 +342,7 @@ class BrokerIssuedProvider(CredentialProvider):
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=(
-                        f"Backend {target!r} requires POSIX identity claims "
+                        f"Service {target!r} requires POSIX identity claims "
                         "(uid/gid/unixname) in its AF Broker Identity Token, "
                         "which your account does not have. Contact your "
                         "Analysis Facility operator to request a POSIX "

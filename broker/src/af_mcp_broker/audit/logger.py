@@ -30,7 +30,7 @@ class AuditRecord:
     timestamp: float  # epoch seconds
     request_id: str
     audit_id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    mcp_backend: str | None = None
+    mcp_service: str | None = None
     execution_model: str | None = None
     # "success" | "denied" | "error" -- lets a single audit line cover both a
     # completed tool call and an authorization denial or a downstream

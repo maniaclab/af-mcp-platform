@@ -74,12 +74,12 @@ class BrokerIssuedTargetOptions(BaseModel):
     """Per-target options for a ``broker-issued`` identity provider entry.
 
     ``audience`` is the exact ``aud`` claim minted into the AF Broker
-    Identity Token for this target; empty means "use the target/backend name
-    itself", which is the right default for every AF-native backend (the
+    Identity Token for this target; empty means "use the target/service name
+    itself", which is the right default for every AF-native service (the
     consumer MUST reject tokens whose ``aud`` is not exactly itself — issue
     #162). ``include_posix`` opts this target's tokens into the optional
     ``uid``/``gid``/``unixname`` claims, resolved from the directory-backed
-    Principal — declare it only for backends that genuinely need a POSIX
+    Principal — declare it only for services that genuinely need a POSIX
     identity (same point-of-use reasoning as issue #148).
     """
 
@@ -142,7 +142,7 @@ class CondorTokenProviderConfig(BaseModel):
 
 
 class X509ProviderConfig(BaseModel):
-    """A grid-certificate credential source (``X509Provider``): VOMS proxies minted for the entry's targets, delivered by backend-side redemption (``POST /v1/credentials/x509/redeem``) rather than header injection — see docs/auth.md.
+    """A grid-certificate credential source (``X509Provider``): VOMS proxies minted for the entry's targets, delivered by service-side redemption (``POST /v1/credentials/x509/redeem``) rather than header injection — see docs/auth.md.
 
     ``service_url`` is the base URL of the voms-token-service deployment
     (no path — the client appends ``/v1/mint``); when set, proxies and the
@@ -153,7 +153,7 @@ class X509ProviderConfig(BaseModel):
     the ``aud`` claim minted into each mint call's AF Broker Identity Token
     (same shape as ``CondorTokenProviderConfig``). Multiple entries with
     different service URLs/VOs are expressible — every ``auth_type: x509``
-    backend must be covered by an explicit entry (see
+    service must be covered by an explicit entry (see
     ``app.py``'s ``_validate_x509_provider_targets``); there is no
     synthesized fallback.
     """
@@ -220,9 +220,9 @@ class Settings(BaseSettings):
     # passes PROXY_DIR when broker.tmpfsProxy is enabled).
     proxy_dir: str = "/run/broker/proxies"
 
-    # Policy and backend config files read at startup
+    # Policy and service config files read at startup
     policy_file: str = "/etc/af-mcp/policy.yaml"
-    backends_file: str = "/etc/af-mcp/backends.yaml"
+    services_file: str = "/etc/af-mcp/services.yaml"
 
     # Audit log destination; "-" means stdout
     audit_log_file: str = "-"
@@ -523,7 +523,7 @@ class Settings(BaseSettings):
     # AF_SERVICE_TOKEN_FILE. Empty means the feature is unconfigured: valid
     # for local dev, but app.py's lifespan refuses to start when a
     # broker-issued identityProviders entry exists without it (fail-closed,
-    # like the unreachable_capabilities/ungated_backends checks).
+    # like the unreachable_capabilities/ungated_services checks).
     broker_signing_key_file: str = ""
 
     # Directory of ADDITIONAL public key PEMs (files named *.pem) published

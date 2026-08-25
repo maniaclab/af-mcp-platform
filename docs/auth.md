@@ -131,7 +131,7 @@ done:
 | Broker retrieves it via | `GET /realms/<realm>/broker/<alias>/token` | `TokenStore.get(sub, alias)`, refreshing on demand near expiry | `VaultX509Store.get_proxy(sub)`, re-minting hands-free with the stored passphrase when expired (service mode) |
 | Credential persistence | Keycloak (broker holds no copy) | The broker's own `TokenStore` (in-memory or Vault-backed — see PR3) | Vault KV-v2 (service mode) / broker tmpfs (legacy) |
 | Delivery to the backend | `Authorization: Bearer` header injected by the aggregator | `Authorization: Bearer` header injected by the aggregator | **Backend-side redemption, not header injection**: the aggregator injects only an AF Broker Identity Token (`aud` = the backend), and the backend redeems the proxy PEM itself via `POST /v1/credentials/x509/redeem` — issue #112's "backend calls back" wire format, chosen so proxy material never transits the aggregator |
-| Requires backend to be | An OIDC-compatible IdP Keycloak can broker to | An OAuth 2.1 authorization server (no OIDC discovery needed) | An MCP server that verifies broker JWTs and redeems proxies (ami-mcp's `--auth broker`, via `af-credentials`), marked `auth_type: x509` in `backends.yaml` |
+| Requires backend to be | An OIDC-compatible IdP Keycloak can broker to | An OAuth 2.1 authorization server (no OIDC discovery needed) | An MCP server that verifies broker JWTs and redeems proxies (ami-mcp's `--auth broker`, via `af-credentials`), marked `auth_type: x509` in `services.yaml` |
 | Portal `link_url` | Always `null` — the portal re-runs its own client-side `startIdpLink()` flow | Full URL to the broker's own `/v1/oauth/authorize/{alias}` | Always `null` — `link_mechanism: "passphrase"`, an in-portal form POSTing the Globus passphrase to `/v1/x509/proxy` |
 
 Use `keycloak-brokered` when the backend is (or can be registered as) an
@@ -150,7 +150,7 @@ in the table above: it links nothing, because there is no external identity
 to link. It is the native half of the two-class doctrine below.
 
 An `x509` entry carries one extra coupling the other types don't: each of
-its targets must also be marked `auth_type: x509` in `backends.yaml` — that
+its targets must also be marked `auth_type: x509` in `services.yaml` — that
 flag is what drives the aggregator's identity-JWT injection branch and the
 redeem endpoint's audience gate. The broker refuses to start when the two
 drift in either direction (an x509 backend no entry targets, or an entry
@@ -159,7 +159,7 @@ targeting a non-x509 backend) — **there is no synthesized fallback**: every
 legacy one (`service_url` omitted). A service-mode entry (`service_url`
 set) also requires the broker signing key — the same fail-closed reasoning
 as the broker-issued/condor-token checks; a keyless legacy entry instead
-gets a loud startup warning, since the shipped `backends.yaml` has always
+gets a loud startup warning, since the shipped `services.yaml` has always
 declared an x509 backend. Multiple x509 entries with different
 voms-token-service URLs/VOs are supported.
 
@@ -1254,12 +1254,12 @@ group_capabilities:
 The capability names on the right (`read_data`, `submit_jobs`, ...) are not
 site-specific — they're the fixed vocabulary this policy engine understands
 (see `CAPABILITIES` in `broker/src/af_mcp_broker/authorization/base.py`),
-matched against whatever `required_capability` values your `backends.yaml`
+matched against whatever `required_capability` values your `services.yaml`
 declares.
 
 Which capability a backend target requires is declared alongside the
-backend itself, in `backends.yaml`'s `required_capability` field, not in
-`policy.yaml` (see `docs/adding-a-backend.md`):
+service itself, in `services.yaml`'s `required_capability` field, not in
+`policy.yaml` (see `docs/adding-a-service.md`):
 
 ```yaml
 backends:

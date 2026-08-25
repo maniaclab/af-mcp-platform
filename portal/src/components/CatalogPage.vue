@@ -3,7 +3,7 @@ import { ref, computed, onMounted } from 'vue';
 import { AccessDeniedError, fetchCatalog, fetchIdentities, SessionExpiredError } from '../lib/api';
 import type { CatalogServer, IdentityProvider } from '../lib/api';
 import { resolvePoweredBy } from '../lib/catalog';
-import BackendCard from './BackendCard.vue';
+import ServiceCard from './ServiceCard.vue';
 
 const servers = ref<CatalogServer[]>([]);
 const providers = ref<IdentityProvider[]>([]);
@@ -168,7 +168,7 @@ function poweredByFor(server: CatalogServer) {
     <!-- Server list -->
     <div v-else class="cp__list" role="list" aria-label="Available MCP servers">
       <div v-for="server in filteredServers" :key="server.name" role="listitem">
-        <BackendCard :server="server" :powered-by="poweredByFor(server)" />
+        <ServiceCard :server="server" :powered-by="poweredByFor(server)" />
       </div>
     </div>
   </div>

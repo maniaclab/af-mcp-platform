@@ -165,16 +165,16 @@ class TestPreflightRoute:
     ) -> None:
         """A deployment with no x509 providers at all answers 404, mirroring
         the other /v1/x509 routes' "No x509 target is configured"."""
-        backends_file = tmp_path / "backends.yaml"
-        backends_file.write_text(
-            "backends:\n"
+        services_file = tmp_path / "services.yaml"
+        services_file.write_text(
+            "services:\n"
             "  - name: rucio\n"
             "    prefix: rucio\n"
             "    url: http://rucio-mcp.invalid/mcp\n"
             "    auth_type: bearer\n"
             "    required_capability: read_data\n"
         )
-        monkeypatch.setenv("BACKENDS_FILE", str(backends_file))
+        monkeypatch.setenv("SERVICES_FILE", str(services_file))
         monkeypatch.setenv("IDENTITY_PROVIDERS", "[]")
 
         with app_client_factory() as (client, _state):

@@ -42,24 +42,24 @@ Monorepo layout:
 - `portal/` — Astro/Vue user-facing portal (catalog, identities, proxy status)
 - `charts/af-mcp-platform/` — Helm chart deploying broker + portal (Flux CD in production)
 - `spikes/` — validation experiments with their own tests (credential-isolation, nfs-subpath)
-- `docs/` — architecture.md, auth.md, adding-a-backend.md; read these before touching auth or backend wiring
+- `docs/` — architecture.md, auth.md, adding-a-service.md; read these before touching auth or service wiring
 
 ### Broker structure
 
-One FastAPI process serves two surfaces: the FastMCP aggregator mounted at `/mcp` (speaks MCP-over-HTTP to LLM clients) and the `/v1` HTTP API. **`/v1` is the platform boundary** — the aggregator translates MCP calls into `/v1` calls, and everything behind `/v1` (aggregator choice, backends, credential providers) is swappable implementation detail.
+One FastAPI process serves two surfaces: the FastMCP aggregator mounted at `/mcp` (speaks MCP-over-HTTP to LLM clients) and the `/v1` HTTP API. **`/v1` is the platform boundary** — the aggregator translates MCP calls into `/v1` calls, and everything behind `/v1` (aggregator choice, services, credential providers) is swappable implementation detail.
 
 Four subsystems, each a package under `broker/src/af_mcp_broker/`:
 
 1. **Identity** (`identity.py`) — the credential answers only "who is this?". Two kinds are accepted: a Keycloak JWT (`Authorization: Bearer`) and a broker-issued PAT (`mcp_pat_…`, `/mcp` only — `/v1` is JWT-only so a PAT cannot mint further PATs). Everything else about the principal — groups and POSIX uid/gid/unixname — is resolved from `PrincipalDirectory` via `PrincipalCache`, never from token claims. Broker is the sole token validator; oauth2-proxy still fronts the portal's HTML on `mcp-portal.af.uchicago.edu/` but is not in the `/v1` or `/mcp` path on either host.
-2. **Authorization** (`authorization/`) — declarative `policy.yaml` maps groups to capabilities; each backend's required capability comes from `backends.yaml` (the registry is authoritative — `policy.yaml` no longer duplicates it). Groups come from the directory-backed principal cache, so Keycloak group changes take effect within one refresh window without any token-side mapper.
+2. **Authorization** (`authorization/`) — declarative `policy.yaml` maps groups to capabilities; each service's required capability comes from `services.yaml` (the registry is authoritative — `policy.yaml` no longer duplicates it). Groups come from the directory-backed principal cache, so Keycloak group changes take effect within one refresh window without any token-side mapper.
 3. **Credentials** (`credentials/`) — provider classes (oidc, oauth21, x509, service) behind `CredentialProvider`; minted creds cached in-process by `(subject, target)` in `CredentialCache` with expiry sweeping. POSIX identity is optional and required only by x509.
 4. **Audit** (`audit/`) — structlog JSON line per tool invocation + Prometheus metrics served on a dedicated port (9090, `METRICS_PORT`); the API port has no `/metrics`.
 
-Configuration is file + env driven: `POLICY_FILE` and `BACKENDS_FILE` (defaults under `/etc/af-mcp/`) are loaded at startup into `app.state` (see `app.py` lifespan); missing files degrade gracefully for local dev. Settings are pydantic-settings env vars in `config.py`.
+Configuration is file + env driven: `POLICY_FILE` and `SERVICES_FILE` (defaults under `/etc/af-mcp/`) are loaded at startup into `app.state` (see `app.py` lifespan); missing files degrade gracefully for local dev. Settings are pydantic-settings env vars in `config.py`.
 
-### Adding a backend requires no code
+### Adding a service requires no code
 
-`BackendRegistry` (`mcp/registry.py`) is driven by `backends.yaml`; tools route to backends by name prefix (`<prefix>_toolname`). The full operator procedure is config-only — see `docs/adding-a-backend.md`.
+`ServiceRegistry` (`mcp/registry.py`) is driven by `services.yaml`; tools route to services by name prefix (`<prefix>_toolname`). The full operator procedure is config-only — see `docs/adding-a-service.md`.
 
 ### Critical auth constraint
 

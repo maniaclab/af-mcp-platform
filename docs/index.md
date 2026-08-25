@@ -60,7 +60,7 @@ broker subsystems and the `/v1` contract, and
 - [Authentication](auth.md) — the full credential chain: AF Keycloak, the
   broker's own bearer-token validation, ATLAS IAM brokered tokens, and
   x509/VOMS proxy minting.
-- [Adding a Backend](adding-a-backend.md) — the five-step, config-only
+- [Adding a Service](adding-a-service.md) — the five-step, config-only
   procedure for wiring a new MCP backend into the aggregator.
 - [Rucio: Per-Site Setup](rucio-per-site-setup.md) — the concrete, deployed
   procedure for wiring up an additional Rucio VO/site behind rucio-mcp.

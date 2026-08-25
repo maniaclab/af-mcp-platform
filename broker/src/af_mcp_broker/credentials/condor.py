@@ -120,7 +120,7 @@ class CondorTokenProvider(CredentialProvider):
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=(
-                    f"Backend {target!r} requires a POSIX identity "
+                    f"Service {target!r} requires a POSIX identity "
                     "(uid/gid/unixname) — HTCondor IDTOKENs are minted for "
                     "your unix account, which your account does not have. "
                     "Contact your Analysis Facility operator to request a "

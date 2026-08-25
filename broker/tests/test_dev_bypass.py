@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 # The shipped policy/backends need to be findable regardless of the caller's CWD.
 _SRC = Path(__file__).resolve().parents[1] / "src" / "af_mcp_broker"
 SHIPPED_POLICY = _SRC / "authorization" / "policy.yaml"
-SHIPPED_BACKENDS = _SRC / "mcp" / "backends.yaml"
+SHIPPED_SERVICES = _SRC / "mcp" / "services.yaml"
 
 # Copy-paste value from docs/local-development.md so the tests exercise the
 # exact string a developer will use.
@@ -34,9 +34,9 @@ DEV_PRINCIPAL_JSON = json.dumps(
 def _bootstrap_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Point the app at the shipped YAML and an ephemeral metrics port."""
     monkeypatch.setenv("POLICY_FILE", str(SHIPPED_POLICY))
-    monkeypatch.setenv("BACKENDS_FILE", str(SHIPPED_BACKENDS))
+    monkeypatch.setenv("SERVICES_FILE", str(SHIPPED_SERVICES))
     monkeypatch.setenv("METRICS_PORT", "0")
-    # The shipped backends.yaml wires "ami" with auth_type: x509, which
+    # The shipped services.yaml wires "ami" with auth_type: x509, which
     # needs an explicit identity_providers entry covering it or the broker
     # refuses to start (there is no synthesized fallback).
     monkeypatch.setenv(

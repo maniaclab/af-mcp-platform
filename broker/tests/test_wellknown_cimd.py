@@ -100,7 +100,7 @@ def test_cimd_redirect_uris_use_public_origin(
                     "issuer": "https://backend-as-2.example",
                 },
                 # This override replaces conftest's default entirely, but
-                # the shipped backends.yaml's "ami" (auth_type: x509) still
+                # the shipped services.yaml's "ami" (auth_type: x509) still
                 # needs an explicit entry or the broker refuses to start.
                 {
                     "type": "x509",

@@ -129,13 +129,13 @@ Answers: "is this principal allowed to call this tool?"
 - Policy is declarative YAML (`policy.yaml`) — no code change needed to add a
   capability.
 - Each backend target's required capability is declared by
-  `required_capability` in `backends.yaml` (e.g., rucio requires `read_data`,
-  panda requires `submit_jobs`) — backends.yaml is the sole source of truth
+  `required_capability` in `services.yaml` (e.g., rucio requires `read_data`,
+  panda requires `submit_jobs`) — services.yaml is the sole source of truth
   for that mapping; `policy.yaml` doesn't enumerate targets. It's optional:
   omit it and the credential layer becomes the gate instead (the broker
   refuses to start if that would leave the backend with no gate at all), or
   set it to `__none__` to explicitly open the backend to any authenticated
-  user. See `docs/adding-a-backend.md` for the full model.
+  user. See `docs/adding-a-service.md` for the full model.
 - A principal's capabilities come from their Keycloak group memberships via
   `group_capabilities` in `policy.yaml` (shipped in the chart's policy
   ConfigMap). Every credential type resolves those groups from Keycloak's
@@ -368,7 +368,7 @@ Grafana. A per-user label here would duplicate the audit log at worse
 fidelity while adding storage cost and a privacy surface, so per-identity
 questions are answered from the audit log, not from these counters.
 `backend`, `action_type`, and `target` are drawn from operator-configured
-`backends.yaml`/`policy.yaml`; `tool` is bounded by a backend's own fixed
+`services.yaml`/`policy.yaml`; `tool` is bounded by a service's own fixed
 schema. A tool name that matches no backend is client-supplied and
 unbounded, so it is never used as a label — see `metrics.py`'s module
 docstring for the full reasoning, and avoid adding a raw token, jti, or

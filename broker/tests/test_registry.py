@@ -1,4 +1,4 @@
-"""Tests for BackendSpec/BackendRegistry — the config-driven backend catalog
+"""Tests for ServiceSpec/ServiceRegistry — the config-driven backend catalog
 that both /v1/catalog and the /mcp aggregator's routing read from.
 """
 
@@ -6,19 +6,19 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from af_mcp_broker.mcp.registry import BackendRegistry, BackendSpec
+from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
 
-SHIPPED_BACKENDS = (
+SHIPPED_SERVICES = (
     Path(__file__).resolve().parents[1]
     / "src"
     / "af_mcp_broker"
     / "mcp"
-    / "backends.yaml"
+    / "services.yaml"
 )
 
 
 def test_backend_spec_description_and_display_name_default_to_empty() -> None:
-    spec = BackendSpec(
+    spec = ServiceSpec(
         name="rucio",
         prefix="rucio",
         url="http://rucio-mcp/mcp",
@@ -32,9 +32,9 @@ def test_backend_spec_description_and_display_name_default_to_empty() -> None:
 def test_registry_load_reads_description_and_display_name_from_yaml(
     tmp_path: Path,
 ) -> None:
-    backends_yaml = tmp_path / "backends.yaml"
+    backends_yaml = tmp_path / "services.yaml"
     backends_yaml.write_text(
-        "backends:\n"
+        "services:\n"
         "  - name: rucio\n"
         "    prefix: rucio\n"
         "    url: http://rucio-mcp/mcp\n"
@@ -42,7 +42,7 @@ def test_registry_load_reads_description_and_display_name_from_yaml(
         "    display_name: Rucio\n"
         "    description: ATLAS distributed data management\n"
     )
-    registry = BackendRegistry()
+    registry = ServiceRegistry()
     registry.load(str(backends_yaml))
     spec = registry.get("rucio")
     assert spec is not None
@@ -51,11 +51,11 @@ def test_registry_load_reads_description_and_display_name_from_yaml(
 
 
 def test_shipped_backends_carry_display_name_and_description() -> None:
-    """The shipped backends.yaml must not ship description-less entries
+    """The shipped services.yaml must not ship description-less entries
     forever — every entry gets a real display_name/description."""
-    registry = BackendRegistry()
-    registry.load(str(SHIPPED_BACKENDS))
-    for spec in registry.all_backends():
+    registry = ServiceRegistry()
+    registry.load(str(SHIPPED_SERVICES))
+    for spec in registry.all_services():
         assert spec.display_name, f"{spec.name} is missing display_name"
         assert spec.description, f"{spec.name} is missing description"
 
@@ -64,7 +64,7 @@ def test_backend_spec_required_capability_defaults_to_none() -> None:
     """Omitted required_capability means "no capability gate; the credential
     layer is the gate instead" (issue #60) -- distinct from the "__none__"
     sentinel, which is an explicit open-access opt-in."""
-    spec = BackendSpec(
+    spec = ServiceSpec(
         name="rucio",
         prefix="rucio",
         url="http://rucio-mcp/mcp",
@@ -74,14 +74,14 @@ def test_backend_spec_required_capability_defaults_to_none() -> None:
 
 
 def test_registry_load_omitted_required_capability_is_none(tmp_path: Path) -> None:
-    """backends.yaml entries that omit required_capability must load as None,
+    """services.yaml entries that omit required_capability must load as None,
     not silently default to "__none__" (open access) -- that would collapse
     the "credential layer is the gate" case into the "no gate at all" case."""
-    backends_yaml = tmp_path / "backends.yaml"
+    backends_yaml = tmp_path / "services.yaml"
     backends_yaml.write_text(
-        "backends:\n  - name: rucio\n    prefix: rucio\n    url: http://rucio-mcp/mcp\n"
+        "services:\n  - name: rucio\n    prefix: rucio\n    url: http://rucio-mcp/mcp\n"
     )
-    registry = BackendRegistry()
+    registry = ServiceRegistry()
     registry.load(str(backends_yaml))
     spec = registry.get("rucio")
     assert spec is not None
@@ -91,7 +91,7 @@ def test_registry_load_omitted_required_capability_is_none(tmp_path: Path) -> No
 def test_recent_list_failure_absent_by_default() -> None:
     """A backend with no recorded tools/list failure reports None -- the
     common case for a healthy backend (issue #123's /v1/catalog status)."""
-    registry = BackendRegistry()
+    registry = ServiceRegistry()
     assert registry.recent_list_failure("rucio") is None
 
 
@@ -101,7 +101,7 @@ def test_recent_list_failure_reflects_last_recorded_reason() -> None:
     tools/list failure so /v1/catalog can factor it into a backend's status
     without an extra live probe (issue #123). Last write wins -- no history
     is kept, only the most recent reason."""
-    registry = BackendRegistry()
+    registry = ServiceRegistry()
     registry.record_list_failure("rucio", "unauthorized")
     assert registry.recent_list_failure("rucio") == "unauthorized"
     registry.record_list_failure("rucio", "unavailable")
@@ -113,13 +113,13 @@ def test_clear_list_failure_removes_a_recorded_reason() -> None:
     _ObservableProxyProvider) un-records a stale failure once a backend
     recovers -- without it, recent_list_failure() would report a backend
     "unavailable" forever after a single transient blip."""
-    registry = BackendRegistry()
+    registry = ServiceRegistry()
     registry.record_list_failure("rucio", "unavailable")
     registry.clear_list_failure("rucio")
     assert registry.recent_list_failure("rucio") is None
 
 
 def test_clear_list_failure_is_a_noop_when_nothing_was_recorded() -> None:
-    registry = BackendRegistry()
+    registry = ServiceRegistry()
     registry.clear_list_failure("rucio")  # must not raise
     assert registry.recent_list_failure("rucio") is None

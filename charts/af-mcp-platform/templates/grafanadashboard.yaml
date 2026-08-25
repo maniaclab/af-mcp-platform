@@ -128,8 +128,8 @@ data:
           "options": { "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
           "targets": [
             {
-              "expr": "sum(increase(af_mcp_tool_invocations_total{job=~\".*af-mcp.*\", action_type=\"state_change\"}[1h])) by (backend, tool)",
-              "legendFormat": "state_change {{`{{backend}}`}}/{{`{{tool}}`}}",
+              "expr": "sum(increase(af_mcp_tool_invocations_total{job=~\".*af-mcp.*\", action_type=\"state_change\"}[1h])) by (service, tool)",
+              "legendFormat": "state_change {{`{{service}}`}}/{{`{{tool}}`}}",
               "refId": "A"
             }
           ],

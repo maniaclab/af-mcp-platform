@@ -35,7 +35,7 @@ _STATUS = "/v1/x509/proxy/status"
 # covering it is required too (conftest's app_client_factory default
 # supplies one; the broker refuses to start otherwise).
 _BACKENDS_YAML = (
-    "backends:\n"
+    "services:\n"
     "  - name: ami\n"
     "    prefix: ami\n"
     "    url: http://ami-mcp.invalid/mcp\n"
@@ -51,9 +51,9 @@ def x509_redeem_env(
     """Configure a broker-issued provider for the x509 target 'ami' with a real signing key."""
 
     def _apply() -> None:
-        backends_file = tmp_path / "backends.yaml"
-        backends_file.write_text(_BACKENDS_YAML)
-        monkeypatch.setenv("BACKENDS_FILE", str(backends_file))
+        services_file = tmp_path / "services.yaml"
+        services_file.write_text(_BACKENDS_YAML)
+        monkeypatch.setenv("SERVICES_FILE", str(services_file))
         monkeypatch.setenv("BROKER_PUBLIC_ORIGIN", "https://mcp.example.com")
         key_file = tmp_path / "signing-key.pem"
         key_file.write_bytes(_private_pem(_make_rsa_key()))
@@ -257,10 +257,10 @@ class TestKeylessBoot:
         (service_url omitted -- an entry is still required, there is no
         synthesized fallback), but the redeem endpoint answers 503 until the
         signing key is mounted -- enforcement at point of use, with a loud
-        startup warning (see app.py's x509_backends_without_signing_key)."""
-        backends_file = tmp_path / "backends.yaml"
-        backends_file.write_text(_BACKENDS_YAML)
-        monkeypatch.setenv("BACKENDS_FILE", str(backends_file))
+        startup warning (see app.py's x509_services_without_signing_key)."""
+        services_file = tmp_path / "services.yaml"
+        services_file.write_text(_BACKENDS_YAML)
+        monkeypatch.setenv("SERVICES_FILE", str(services_file))
         monkeypatch.setenv(
             "IDENTITY_PROVIDERS",
             json.dumps([{"type": "x509", "alias": "x509", "targets": ["ami"]}]),

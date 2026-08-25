@@ -71,8 +71,8 @@ def test_build_target_to_alias_uses_the_real_x509_entry_alias() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _write_backends(tmp_path: Path, text: str) -> str:
-    path = tmp_path / "backends.yaml"
+def _write_services(tmp_path: Path, text: str) -> str:
+    path = tmp_path / "services.yaml"
     path.write_text(text)
     return str(path)
 
@@ -89,10 +89,10 @@ def test_omitted_capability_with_credential_provider_starts_cleanly(
     credential) even without a declared capability.
     """
     monkeypatch.setenv(
-        "BACKENDS_FILE",
-        _write_backends(
+        "SERVICES_FILE",
+        _write_services(
             tmp_path,
-            "backends:\n"
+            "services:\n"
             "  - name: ami\n"
             "    prefix: ami\n"
             "    url: http://ami.invalid/mcp\n"
@@ -120,17 +120,17 @@ def test_omitted_capability_without_credential_provider_refuses_to_start(
     caller.
     """
     monkeypatch.setenv(
-        "BACKENDS_FILE",
-        _write_backends(
+        "SERVICES_FILE",
+        _write_services(
             tmp_path,
-            "backends:\n"
+            "services:\n"
             "  - name: mystery\n"
             "    prefix: mystery\n"
             "    url: http://mystery.invalid/mcp\n"
             "    auth_type: bearer\n",
         ),
     )
-    # This backends.yaml has no auth_type: x509 backend at all, so drop
+    # This services.yaml has no auth_type: x509 backend at all, so drop
     # conftest's default x509 entry (targets ["ami"], absent here) -- an
     # x509 entry targeting a nonexistent backend would trip the OTHER
     # direction of the coverage check before we ever reach the assertion

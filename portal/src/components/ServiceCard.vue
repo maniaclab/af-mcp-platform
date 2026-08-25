@@ -3,7 +3,7 @@ import { computed, ref } from 'vue';
 import { fetchServerTools } from '../lib/api';
 import type { CatalogServer, ServerToolsResponse } from '../lib/api';
 import type { PoweredBy } from '../lib/catalog';
-import { resolveBackendStatus, resolvePoweredByLinked } from '../lib/backendStatus';
+import { resolveServiceStatus, resolvePoweredByLinked } from '../lib/serviceStatus';
 import { resolveToolListing, toolCountLabel } from '../lib/serverTools';
 import ToolTable from './ToolTable.vue';
 
@@ -13,7 +13,7 @@ const props = defineProps<{
 }>();
 
 const actionLabel = props.server.action_type === 'state_change' ? 'write' : 'read';
-const statusView = computed(() => resolveBackendStatus(props.server));
+const statusView = computed(() => resolveServiceStatus(props.server));
 // "link_required" is authoritative over the identities response's own
 // linked flag -- see resolvePoweredByLinked's docstring for why the two can
 // disagree for a moment.
@@ -78,7 +78,7 @@ async function toggleTools() {
             type="button"
             class="bc__info-icon"
             :aria-describedby="`bc-desc-${server.name}`"
-            aria-label="About this backend"
+            aria-label="About this service"
           >
             <span aria-hidden="true">ⓘ</span>
           </button>
@@ -179,7 +179,7 @@ async function toggleTools() {
     <!-- Tools -- collapsed by default (a backend can register dozens of
          tools; the catalog's job is a quick scan of reachable backends, not
          reading every tool's docstring up front) and fetched on expand from
-         GET /v1/catalog/{backend}/tools. Toggle-button accordion with the
+         GET /v1/catalog/{service}/tools. Toggle-button accordion with the
          same stale-response sequence guard as X509IdentityCard.vue's
          sections. -->
     <div class="bc__tools">

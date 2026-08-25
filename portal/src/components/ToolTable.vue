@@ -28,7 +28,7 @@ const rows = computed(() =>
       <div class="tool-table__row-header">
         <code class="tool-table__code">{{ tool.name }}</code>
         <!-- Focusable button + aria-describedby tooltip, not a bare title
-             attribute -- same pattern as BackendCard.vue's badges and
+             attribute -- same pattern as ServiceCard.vue's badges and
              TokensPage.vue's note icon: keyboard-reachable and always
              present in the DOM for assistive tech. -->
         <span class="tool-table__badge-wrap">
@@ -164,7 +164,7 @@ const rows = computed(() =>
  * describedby a tooltip span that stays in the DOM at all times (hidden via
  * opacity/visibility, not display: none) so aria-describedby reaches it for
  * assistive tech regardless of hover/focus state. Same pattern as
- * TokensPage.vue's note-icon/note-tooltip and BackendCard.vue's badges. */
+ * TokensPage.vue's note-icon/note-tooltip and ServiceCard.vue's badges. */
 .tool-table__badge-wrap {
   position: relative;
   display: inline-flex;

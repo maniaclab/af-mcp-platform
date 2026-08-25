@@ -14,7 +14,7 @@ spec:
       annotations:
         # Trigger rolling update when ConfigMaps change
         checksum/config-policy: {{ include (print $.Template.BasePath "/configmap-policy.yaml") . | sha256sum }}
-        checksum/config-backends: {{ include (print $.Template.BasePath "/configmap-backends.yaml") . | sha256sum }}
+        checksum/config-services: {{ include (print $.Template.BasePath "/configmap-services.yaml") . | sha256sum }}
         prometheus.io/scrape: "true"
         prometheus.io/port: "9090"
         prometheus.io/path: "/metrics"
@@ -132,9 +132,9 @@ spec:
               mountPath: /etc/af-mcp/policy.yaml
               subPath: policy.yaml
               readOnly: true
-            - name: backends
-              mountPath: /etc/af-mcp/backends.yaml
-              subPath: backends.yaml
+            - name: services
+              mountPath: /etc/af-mcp/services.yaml
+              subPath: services.yaml
               readOnly: true
             {{- if .Values.broker.homeDir.enabled }}
             - name: home-dir
@@ -159,9 +159,9 @@ spec:
         - name: policy
           configMap:
             name: {{ include "af-mcp-platform.fullname" . }}-policy
-        - name: backends
+        - name: services
           configMap:
-            name: {{ include "af-mcp-platform.fullname" . }}-backends
+            name: {{ include "af-mcp-platform.fullname" . }}-services
         {{- if .Values.broker.homeDir.enabled }}
         - name: home-dir
           {{- if eq .Values.broker.homeDir.mode "pvc" }}

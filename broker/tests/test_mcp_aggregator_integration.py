@@ -129,15 +129,15 @@ def running_broker(
 ):
     """Boot the real af_mcp_broker.app.app (module-level singleton, same
     object every test module shares) behind a real HTTP server, wired to
-    three test backends via a temp backends.yaml/policy.yaml."""
-    backends_file = tmp_path / "backends.yaml"
+    three test backends via a temp services.yaml/policy.yaml."""
+    services_file = tmp_path / "services.yaml"
     # auth_type: none on all three -- these tests exercise aggregator
     # plumbing (namespacing, entitlement filtering, dead-backend tolerance,
     # header non-forwarding), not credential injection, which has its own
     # dedicated tests/fixtures registering real credential providers.
-    backends_file.write_text(
+    services_file.write_text(
         f"""
-backends:
+services:
   - name: toy
     prefix: toy
     url: "{toy_backend_url}"
@@ -168,7 +168,7 @@ group_capabilities:
 """
     )
 
-    monkeypatch.setenv("BACKENDS_FILE", str(backends_file))
+    monkeypatch.setenv("SERVICES_FILE", str(services_file))
     monkeypatch.setenv("POLICY_FILE", str(policy_file))
     monkeypatch.setenv("OIDC_ISSUER", ISSUER)
     monkeypatch.setenv("OIDC_AUDIENCE", AUDIENCE)

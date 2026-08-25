@@ -54,7 +54,7 @@ broker:
       targets: ["ami-example"]
       serviceUrl: "https://voms-token-service.example.com"
       displayName: "Grid certificate (example)"
-      enables: "Example VOMS proxy minting for x509 backends"
+      enables: "Example VOMS proxy minting for x509 services"
   # Exercises the AF Broker Identity Token env/volume template paths (issue
   # #162) in CI. The named Secrets only need to exist for a real deployment,
   # not for `helm lint`/`helm template`.
@@ -104,12 +104,12 @@ broker:
 tokenSweep:
   enabled: true
 
-# Exercises the ranged networkPolicy.broker.backendPorts template path in CI
+# Exercises the ranged networkPolicy.broker.servicePorts template path in CI
 # (a non-default port alongside the chart's defaults) so a broken render is
 # caught by `helm template`, not just by eyeballing the diff.
 networkPolicy:
   broker:
-    backendPorts:
+    servicePorts:
       - 8000
       - 8080
       - 9000
