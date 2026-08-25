@@ -10,22 +10,22 @@ data:
     # Mounted at /etc/af-mcp/policy.yaml in the broker container.
     # Override any section via values.entitlements.* in your overlay.
 
-    # Keycloak group -> allowed broker capabilities. The default below (used
-    # when entitlements.group_capabilities is unset) is the UChicago ATLAS
+    # Keycloak group -> allowed broker permissions. The default below (used
+    # when entitlements.group_permissions is unset) is the UChicago ATLAS
     # AF's own Keycloak group names -- a working convenience for that one
     # deployment, and a template for what an overlay looks like, NOT a
     # generic default. Group names are inherently site-specific (they come
     # from the deployer's own Keycloak realm), so any OTHER analysis facility
-    # MUST set entitlements.group_capabilities in its own overlay with its
-    # own group names -- see values.yaml's entitlements.group_capabilities
-    # comment and docs/auth.md's "Group-to-Capability Mapping Example" for a
+    # MUST set entitlements.group_permissions in its own overlay with its
+    # own group names -- see values.yaml's entitlements.group_permissions
+    # comment and docs/auth.md's "Group-to-Permission Mapping Example" for a
     # non-ATLAS worked example. Deploying unmodified against a realm without
     # these exact group names means no user can reach a service whose
-    # `required_capability` (services.yaml) isn't __none__ -- the broker
-    # refuses to start, naming each such service and capability (issue #125).
-    group_capabilities:
-    {{- if .Values.entitlements.group_capabilities }}
-      {{- toYaml .Values.entitlements.group_capabilities | nindent 6 }}
+    # `required_permission` (services.yaml) isn't __none__ -- the broker
+    # refuses to start, naming each such service and permission (issue #125).
+    group_permissions:
+    {{- if .Values.entitlements.group_permissions }}
+      {{- toYaml .Values.entitlements.group_permissions | nindent 6 }}
     {{- else }}
       # UChicago ATLAS AF default -- see the comment above before relying on
       # this for any other site.
@@ -39,8 +39,8 @@ data:
       __authenticated__: [read_metadata, read_monitoring]
     {{- end }}
 
-    # Which capability is required to use each service target is declared by
-    # `required_capability` in services.yaml, not here -- services.yaml is
+    # Which permission is required to use each service target is declared by
+    # `required_permission` in services.yaml, not here -- services.yaml is
     # the sole source of truth for that mapping (see issue #60).
 
     # Action type overrides per service (tool glob pattern -> action type).
