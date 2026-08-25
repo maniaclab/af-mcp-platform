@@ -59,7 +59,7 @@ export class SessionExpiredError extends Error {
  * fix it — it's permanent until an administrator grants the missing token
  * audience (see docs/auth.md's "cascading failure" section). `correlationId`
  * is the id to quote when contacting them, the same convention
- * `serviceStatus.ts` already uses for `capability_required`.
+ * `serviceStatus.ts` already uses for `permission_required`.
  */
 export class AccessDeniedError extends Error {
   constructor(
@@ -341,17 +341,17 @@ export interface CatalogTool {
 }
 
 /** Per-caller availability (issue #123) -- see broker/src/af_mcp_broker/
- * api/capabilities.py's _service_status. Every registered service is
+ * api/permissions.py's _service_status. Every registered service is
  * listed, even one the caller can't currently use; status/status_detail say
  * why instead of a silent omission. */
 export type ServiceStatus =
-  'available' | 'link_required' | 'capability_required' | 'unavailable' | 'misconfigured';
+  'available' | 'link_required' | 'permission_required' | 'unavailable' | 'misconfigured';
 
 export interface CatalogServer {
   name: string;
   display_name: string;
   description: string;
-  capability: string;
+  permission: string;
   auth_type: AuthType;
   action_type: ActionType;
   /** The identity_providers alias (or synthetic "x509" alias) that services
@@ -360,7 +360,7 @@ export interface CatalogServer {
   status: ServiceStatus;
   /** Short, human, internals-free sentence -- never a URL or upstream error. */
   status_detail: string;
-  /** Set only for admin-actionable statuses (capability_required,
+  /** Set only for admin-actionable statuses (permission_required,
    * misconfigured) -- quote it in a ticket so an admin can grep the audit
    * log. Null otherwise. */
   correlation_id: string | null;
@@ -387,7 +387,7 @@ export async function fetchCatalog(): Promise<CatalogResponse> {
  * say why `tools` is empty instead (same issue #123 philosophy as the
  * catalog's per-server status). */
 export type ToolListingStatus =
-  'ok' | 'not_linked' | 'unauthorized' | 'unavailable' | 'capability_required';
+  'ok' | 'not_linked' | 'unauthorized' | 'unavailable' | 'permission_required';
 
 export interface ServerToolsResponse {
   name: string;
@@ -406,26 +406,26 @@ export async function fetchServerTools(name: string): Promise<ServerToolsRespons
 }
 
 // ---------------------------------------------------------------------------
-// Capabilities — GET /v1/capabilities. Lists the caller's CURRENT capability
-// grants (broker/src/af_mcp_broker/api/capabilities.py's get_capabilities()).
-// TokensPage.vue's mint dialog uses this to offer a capability PAT's optional
+// Permissions — GET /v1/permissions. Lists the caller's CURRENT permission
+// grants (broker/src/af_mcp_broker/api/permissions.py's get_permissions()).
+// TokensPage.vue's mint dialog uses this to offer a permission PAT's optional
 // scope as checkboxes over exactly what the caller holds right now (issue
 // #144 step 4) -- never a static, potentially-stale list.
 // ---------------------------------------------------------------------------
 
-export interface CapabilityGrant {
-  capability: string;
+export interface PermissionGrant {
+  permission: string;
   targets: string[];
   action_types: ActionType[];
 }
 
-export interface CapabilitiesResponse {
+export interface PermissionsResponse {
   subject: string;
-  grants: CapabilityGrant[];
+  grants: PermissionGrant[];
 }
 
-export async function fetchCapabilities(): Promise<CapabilitiesResponse> {
-  return apiFetch<CapabilitiesResponse>('/capabilities');
+export async function fetchPermissions(): Promise<PermissionsResponse> {
+  return apiFetch<PermissionsResponse>('/permissions');
 }
 
 // ---------------------------------------------------------------------------
@@ -531,11 +531,11 @@ export async function fetchX509Preflight(): Promise<X509Preflight> {
  * case-insensitively -- a collision is a 409 (see mintToken's caller). `note`
  * is optional, free-text, purely self-descriptive, and absent (`null`)
  * unless supplied. `expires_at` is `null` for a never-expiring PAT
- * (`neverExpires: true` in the mint request). `capability_grant` is `null`
+ * (`neverExpires: true` in the mint request). `permission_grant` is `null`
  * for an ordinary identity PAT (this token's authority is always the
- * caller's CURRENT capabilities), or the sorted list of capability names a
- * capability PAT is scoped to at most (issue #144 step 4) -- see
- * tokenDisplay.ts's capabilityGrantLabel(). */
+ * caller's CURRENT permissions), or the sorted list of permission names a
+ * permission PAT is scoped to at most (issue #144 step 4) -- see
+ * tokenDisplay.ts's permissionGrantLabel(). */
 export interface MintedToken {
   token: string;
   lookup_id: string;
@@ -543,7 +543,7 @@ export interface MintedToken {
   expires_at: string | null;
   name: string;
   note: string | null;
-  capability_grant: string[] | null;
+  permission_grant: string[] | null;
 }
 
 /** GET /v1/tokens row — no `token` field, by design. `revoked_at` is null
@@ -553,7 +553,7 @@ export interface MintedToken {
  * `last_used_at` is null until the PAT has authenticated at least one
  * request on /mcp (throttled server-side -- see token_registry.py -- so it
  * updates at most once every few minutes, not on every call). See
- * MintedToken.capability_grant for the meaning of that field here too. */
+ * MintedToken.permission_grant for the meaning of that field here too. */
 export interface TokenSummary {
   lookup_id: string;
   name: string;
@@ -562,7 +562,7 @@ export interface TokenSummary {
   expires_at: string | null;
   revoked_at: string | null;
   last_used_at: string | null;
-  capability_grant: string[] | null;
+  permission_grant: string[] | null;
 }
 
 export async function mintToken(
@@ -570,7 +570,7 @@ export async function mintToken(
   note?: string,
   expiresInDays?: number,
   neverExpires?: boolean,
-  capabilities?: string[],
+  permissions?: string[],
 ): Promise<MintedToken> {
   return apiFetch<MintedToken>('/tokens', {
     method: 'POST',
@@ -579,7 +579,7 @@ export async function mintToken(
       ...(note ? { note } : {}),
       ...(expiresInDays !== undefined ? { expires_in_days: expiresInDays } : {}),
       ...(neverExpires ? { never_expires: true } : {}),
-      ...(capabilities !== undefined ? { capabilities } : {}),
+      ...(permissions !== undefined ? { permissions } : {}),
     }),
   });
 }

@@ -1,6 +1,6 @@
 /**
  * serviceStatus.ts — pure mapping from a catalog server's `status` (issue
- * #123, see broker/src/af_mcp_broker/api/capabilities.py's _service_status)
+ * #123, see broker/src/af_mcp_broker/api/permissions.py's _service_status)
  * to how ServiceCard.vue should render it: a label, severity, and the right
  * call to action. Kept as plain data-in/data-out functions (no DOM/fetch
  * access) so it's trivially unit-testable, same pattern as lib/catalog.ts
@@ -22,12 +22,12 @@ export interface ServiceStatusView {
   /** The broker's own status_detail sentence -- already internals-free. */
   detail: string;
   severity: StatusSeverity;
-  /** Null when there's nothing actionable to link to (capability_required/
+  /** Null when there's nothing actionable to link to (permission_required/
    * misconfigured are admin-actionable, not user-actionable; unavailable is
    * "wait and retry", not a link). */
   cta: StatusCta | null;
   /** Carried straight through from CatalogServer.correlation_id -- set only
-   * for capability_required/misconfigured, so the card can show it for the
+   * for permission_required/misconfigured, so the card can show it for the
    * user to quote in a ticket. */
   correlationId: string | null;
 }
@@ -35,7 +35,7 @@ export interface ServiceStatusView {
 const LABELS: Record<ServiceStatus, string> = {
   available: 'Available',
   link_required: 'Link required',
-  capability_required: 'Access required',
+  permission_required: 'Access required',
   unavailable: 'Unavailable',
   misconfigured: 'Misconfigured',
 };
@@ -43,7 +43,7 @@ const LABELS: Record<ServiceStatus, string> = {
 const SEVERITIES: Record<ServiceStatus, StatusSeverity> = {
   available: 'ok',
   link_required: 'info',
-  capability_required: 'warning',
+  permission_required: 'warning',
   unavailable: 'warning',
   misconfigured: 'error',
 };
@@ -51,7 +51,7 @@ const SEVERITIES: Record<ServiceStatus, StatusSeverity> = {
 /**
  * Resolves how a card should present its server's status. Only
  * "link_required" gets a real CTA link (to /identities/, where the user can
- * actually fix it themselves) -- capability_required/misconfigured are
+ * actually fix it themselves) -- permission_required/misconfigured are
  * admin-actionable (the detail sentence already says to contact admins, and
  * correlationId carries the id to quote), and unavailable is a
  * wait-and-retry state with nothing to link to.

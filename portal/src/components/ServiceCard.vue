@@ -93,12 +93,12 @@ async function toggleTools() {
              (same pattern as TokensPage.vue's note icon) rather than a bare
              `title` attribute -- title-only meant the badge's meaning was
              invisible on touch and unreliable across screen readers. -->
-        <span v-if="server.capability !== '__none__'" class="bc__badge-wrap">
+        <span v-if="server.permission !== '__none__'" class="bc__badge-wrap">
           <button type="button" class="bc__cap-badge" :aria-describedby="`bc-cap-${server.name}`">
-            {{ server.capability }}
+            {{ server.permission }}
           </button>
           <span :id="`bc-cap-${server.name}`" class="bc__badge-tooltip" role="tooltip">
-            Requires capability: {{ server.capability }}
+            Requires permission: {{ server.permission }}
           </span>
         </span>
 
@@ -211,7 +211,7 @@ async function toggleTools() {
           <p v-else-if="toolsView.kind === 'empty'" class="bc__tools-note">
             {{ toolsView.message }}
           </p>
-          <!-- Blocked (not_linked/unauthorized/unavailable/capability_
+          <!-- Blocked (not_linked/unauthorized/unavailable/permission_
                required): the broker's own status_detail sentence, plus a
                CTA to the Identities page when linking is the fix. -->
           <p v-else class="bc__tools-note">

@@ -18,13 +18,13 @@ import {
   mintToken,
   listTokens,
   revokeToken,
-  fetchCapabilities,
+  fetchPermissions,
   SessionExpiredError,
 } from '../lib/api';
 import type { MintedToken, TokenSummary } from '../lib/api';
 import {
   NOTE_MAX_LENGTH,
-  capabilityGrantLabel,
+  permissionGrantLabel,
   shortLookupId,
   tokenStatus,
   truncateNote,
@@ -87,36 +87,36 @@ const mintError = ref<string | null>(null);
 const mintedToken = ref<MintedToken | null>(null);
 const copyLabel = ref('Copy');
 
-// ── Capability PATs (issue #144 step 4) ─────────────────────────────────
-// `availableCapabilities` is the caller's CURRENT capabilities (GET
-// /v1/capabilities), fetched once on mount -- never a static list, since
-// the whole point of a capability PAT is that it can only ever narrow what
-// its owner already holds *right now*. `restrictCapabilities` is the mint
+// ── Permission PATs (issue #144 step 4) ─────────────────────────────────
+// `availablePermissions` is the caller's CURRENT permissions (GET
+// /v1/permissions), fetched once on mount -- never a static list, since
+// the whole point of a permission PAT is that it can only ever narrow what
+// its owner already holds *right now*. `restrictPermissions` is the mint
 // form's opt-in: unchecked (the default) mints an ordinary identity PAT,
 // exactly as before this field existed; checked reveals the checkbox list
-// below and mints a capability PAT scoped to whatever's selected.
-const availableCapabilities = ref<string[]>([]);
-const restrictCapabilities = ref(false);
-const selectedCapabilities = ref<Set<string>>(new Set());
+// below and mints a permission PAT scoped to whatever's selected.
+const availablePermissions = ref<string[]>([]);
+const restrictPermissions = ref(false);
+const selectedPermissions = ref<Set<string>>(new Set());
 
 onMounted(async () => {
   try {
-    const { grants } = await fetchCapabilities();
-    availableCapabilities.value = grants.map((g) => g.capability).sort();
+    const { grants } = await fetchPermissions();
+    availablePermissions.value = grants.map((g) => g.permission).sort();
   } catch {
     // Best-effort: if this fails, the mint dialog simply offers no
-    // capability restriction (identity PATs remain fully mintable, which
+    // permission restriction (identity PATs remain fully mintable, which
     // is the more important path to keep working) rather than blocking
     // the page load or the dialog itself over a secondary feature.
-    availableCapabilities.value = [];
+    availablePermissions.value = [];
   }
 });
 
-function toggleSelectedCapability(capability: string, checked: boolean) {
+function toggleSelectedPermission(permission: string, checked: boolean) {
   if (checked) {
-    selectedCapabilities.value.add(capability);
+    selectedPermissions.value.add(permission);
   } else {
-    selectedCapabilities.value.delete(capability);
+    selectedPermissions.value.delete(permission);
   }
 }
 
@@ -128,8 +128,8 @@ async function openMintDialog(evt: Event) {
   note.value = '';
   expiryOption.value = '90';
   copyLabel.value = 'Copy';
-  restrictCapabilities.value = false;
-  selectedCapabilities.value = new Set();
+  restrictPermissions.value = false;
+  selectedPermissions.value = new Set();
   await nextTick();
   mintDialog.value?.showModal();
 }
@@ -153,7 +153,7 @@ async function handleMint(evt: Event) {
       note.value.trim() || undefined,
       neverExpires ? undefined : Number(expiryOption.value),
       neverExpires,
-      restrictCapabilities.value ? [...selectedCapabilities.value] : undefined,
+      restrictPermissions.value ? [...selectedPermissions.value] : undefined,
     );
   } catch (err) {
     // Includes the 409 duplicate-name case (api/tokens.py's DuplicateNameError)
@@ -430,10 +430,10 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
               </td>
               <td
                 class="tp__td tp__td--scope"
-                :class="{ 'tp__td--scope-identity': row.capability_grant === null }"
-                :title="capabilityGrantLabel(row.capability_grant)"
+                :class="{ 'tp__td--scope-identity': row.permission_grant === null }"
+                :title="permissionGrantLabel(row.permission_grant)"
               >
-                {{ capabilityGrantLabel(row.capability_grant) }}
+                {{ permissionGrantLabel(row.permission_grant) }}
               </td>
               <td class="tp__td tp__td--jti tp__td--secondary" :title="row.lookup_id">
                 {{ shortLookupId(row.lookup_id) }}
@@ -591,37 +591,37 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
             ></textarea>
           </div>
 
-          <!-- Capability PATs (issue #144 step 4): optional restriction below
-               the caller's own CURRENT capabilities. Hidden entirely when
-               availableCapabilities is empty (e.g. the /v1/capabilities fetch
+          <!-- Permission PATs (issue #144 step 4): optional restriction below
+               the caller's own CURRENT permissions. Hidden entirely when
+               availablePermissions is empty (e.g. the /v1/permissions fetch
                failed) -- an identity PAT remains mintable regardless. -->
-          <div v-if="availableCapabilities.length > 0" class="tp__form-group">
+          <div v-if="availablePermissions.length > 0" class="tp__form-group">
             <label class="tp__checkbox-row">
               <input
-                v-model="restrictCapabilities"
+                v-model="restrictPermissions"
                 type="checkbox"
                 class="tp__checkbox"
                 :disabled="minting"
               />
               <span class="tp__form-label tp__checkbox-label"
-                >Restrict capabilities (optional)</span
+                >Restrict permissions (optional)</span
               >
             </label>
             <p class="tp__scope-hint">
               Unchecked mints a token with your full account access, exactly as before. Checked
-              scopes the token to at most the capabilities selected below — least privilege for CI
+              scopes the token to at most the permissions selected below — least privilege for CI
               or scripts.
             </p>
-            <fieldset v-if="restrictCapabilities" class="tp__scope-fieldset">
-              <legend class="sr-only">Capabilities to grant</legend>
-              <label v-for="cap in availableCapabilities" :key="cap" class="tp__checkbox-row">
+            <fieldset v-if="restrictPermissions" class="tp__scope-fieldset">
+              <legend class="sr-only">Permissions to grant</legend>
+              <label v-for="cap in availablePermissions" :key="cap" class="tp__checkbox-row">
                 <input
                   type="checkbox"
                   class="tp__checkbox"
-                  :checked="selectedCapabilities.has(cap)"
+                  :checked="selectedPermissions.has(cap)"
                   :disabled="minting"
                   @change="
-                    toggleSelectedCapability(cap, ($event.target as HTMLInputElement).checked)
+                    toggleSelectedPermission(cap, ($event.target as HTMLInputElement).checked)
                   "
                 />
                 <span class="tp__scope-cap-name">{{ cap }}</span>
@@ -701,7 +701,7 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
           </div>
           <div class="tp__token-meta-row">
             <dt>Scope</dt>
-            <dd>{{ capabilityGrantLabel(mintedToken.capability_grant) }}</dd>
+            <dd>{{ permissionGrantLabel(mintedToken.permission_grant) }}</dd>
           </div>
           <div class="tp__token-meta-row">
             <dt>Expires</dt>
@@ -989,8 +989,8 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
   color: var(--color-af-red);
 }
 
-/* Scope column (issue #144 step 4) -- a capability PAT's grant is
- * comma-joined plain text (capabilityGrantLabel), truncated by the column's
+/* Scope column (issue #144 step 4) -- a permission PAT's grant is
+ * comma-joined plain text (permissionGrantLabel), truncated by the column's
  * own max-width with the full value always available via `title`. An
  * identity PAT's "Full account access" is dimmed relative to a named grant,
  * the same visual weight tp__td--jti already uses for secondary detail. */
@@ -1236,7 +1236,7 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
   color: var(--color-af-dim);
 }
 
-/* Capability PATs (issue #144 step 4) -- "Restrict capabilities" toggle and
+/* Permission PATs (issue #144 step 4) -- "Restrict permissions" toggle and
  * the checkbox list it reveals. */
 .tp__checkbox-row {
   display: flex;

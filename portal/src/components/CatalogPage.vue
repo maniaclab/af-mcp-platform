@@ -57,7 +57,7 @@ const filteredServers = computed<CatalogServer[]>(() => {
         s.name.toLowerCase().includes(q) ||
         s.display_name.toLowerCase().includes(q) ||
         s.description.toLowerCase().includes(q) ||
-        s.capability.toLowerCase().includes(q),
+        s.permission.toLowerCase().includes(q),
     );
   }
 
@@ -80,7 +80,7 @@ function poweredByFor(server: CatalogServer) {
           v-model="search"
           type="search"
           class="cp__search"
-          placeholder="Search servers, descriptions, capabilities…"
+          placeholder="Search servers, descriptions, permissions…"
           aria-label="Search MCP servers"
         />
       </div>
@@ -150,7 +150,7 @@ function poweredByFor(server: CatalogServer) {
     <div v-else-if="servers.length === 0" class="cp__empty">
       <p class="cp__empty-title">No MCP servers available</p>
       <p class="cp__empty-body">
-        Your account doesn't have any granted capabilities yet. Link your external identities to
+        Your account doesn't have any granted permissions yet. Link your external identities to
         unlock access.
       </p>
       <a href="/identities/" class="cp__empty-cta">Link identities →</a>
