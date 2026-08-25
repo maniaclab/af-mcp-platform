@@ -31,7 +31,7 @@ export function resolveToolListing(listing: ServerToolsResponse): ToolListingVie
     if (listing.tools.length > 0) {
       return { kind: 'tools', tools: listing.tools };
     }
-    return { kind: 'empty', message: 'This service currently registers no tools.' };
+    return { kind: 'empty', message: 'This service currently registers no methods.' };
   }
   return {
     kind: 'blocked',
@@ -40,7 +40,7 @@ export function resolveToolListing(listing: ServerToolsResponse): ToolListingVie
   };
 }
 
-/** "1 tool" / "7 tools" — the accordion toggle's count chip. */
+/** "1 method" / "7 methods" — the accordion toggle's count chip. */
 export function toolCountLabel(count: number): string {
-  return `${count} ${count === 1 ? 'tool' : 'tools'}`;
+  return `${count} ${count === 1 ? 'method' : 'methods'}`;
 }

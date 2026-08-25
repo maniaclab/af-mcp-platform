@@ -3,10 +3,10 @@
 ## Overview
 
 The AF MCP Platform sits between LLM clients (Claude, Gemini, or any MCP-capable
-agent framework) and a growing set of ATLAS/AF backend services. Its job is to
-ensure that tool calls are authenticated, authorized, and executed with the right
-per-user credentials — without ever handing raw secrets to the LLM or requiring
-backends to implement their own auth plumbing.
+client) and a growing set of ATLAS/AF backend services. Its job is to
+ensure that method calls (MCP "tool" calls) are authenticated, authorized, and
+executed with the right per-user credentials — without ever handing raw secrets
+to the LLM or requiring backends to implement their own auth plumbing.
 
 Two distinct client identities authenticate against the same Keycloak realm,
 then hit the broker the same way, but end up with different credential shapes:
@@ -105,6 +105,35 @@ each request independently with no session pinning by default.
   (`mcp_stateful_multi_replica` in the broker logs) rather than refuse to
   start; the chart's `NOTES.txt` warns at install/upgrade time for the
   same combination.
+
+---
+
+## Elwood vocabulary alignment
+
+This platform predates the Elwood v5 glossary used across the parent
+collaboration; this section maps the platform's terms onto it. In Elwood
+terms the broker is the **Gateway / Orchestration-Platform boundary**, not a
+Service; each registered MCP server is a **Service**; the tools a Service
+exposes are **Methods**.
+
+| Platform term | Elwood v5 term | Note |
+|---|---|---|
+| service (registry entry, `services.yaml`) | Service | A packaged interface to one backend system — an MCP server. |
+| tool (MCP wire term) | Method | "tool" remains correct in code and on the MCP wire; it is what the MCP protocol calls a Method. |
+| capability (permission string, `policy.yaml` / `GET /v1/capabilities`) | **no Elwood equivalent — NOT an Elwood Capability** | An Elwood Capability is a named agent role owning Services. Call the platform's permission strings "permissions" in cross-project prose. |
+| broker | Gateway / Orchestration-Platform boundary | The user-facing entry point; the multi-agent orchestration layer sits above this platform. |
+| LLM client | Reasoning Engine + Agent (client side) | "Agent" (Elwood) is the running implementation of a Capability — never a generic word for LLM clients. |
+
+**Three things called "capability"** — do not conflate them:
+
+1. **This repo's capability** — a permission string granted to Keycloak
+   groups via `policy.yaml` and served by `GET /v1/capabilities`.
+2. **An Elwood Capability** — a named agent role that owns Services.
+3. **The VOMS FQAN `/Capability=NULL` field** — fixed WLCG grid vocabulary
+   that appears in x509/VOMS proxy log lines, unrelated to either of the
+   above.
+
+Everywhere else in these docs, "capability" means sense (1).
 
 ---
 

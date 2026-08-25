@@ -23,7 +23,7 @@ const rows = computed(() =>
     into horizontal scroll). Each tool's own vertical block avoids both:
     it wraps normally at any width, and only ever grows downward.
   -->
-  <div class="tool-table" role="list" aria-label="Available tools">
+  <div class="tool-table" role="list" aria-label="Available methods">
     <div v-for="{ tool, parsed } in rows" :key="tool.name" class="tool-table__row" role="listitem">
       <div class="tool-table__row-header">
         <code class="tool-table__code">{{ tool.name }}</code>

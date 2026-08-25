@@ -54,7 +54,7 @@ async function toggleTools() {
   } catch (err) {
     if (seq !== toolsSeq) return;
     toolListing.value = null;
-    toolsError.value = err instanceof Error ? err.message : 'Could not load tools.';
+    toolsError.value = err instanceof Error ? err.message : 'Could not load methods.';
   } finally {
     if (seq === toolsSeq) toolsLoading.value = false;
   }
@@ -192,7 +192,7 @@ async function toggleTools() {
         <span class="bc__tools-chevron" :class="{ 'bc__tools-chevron--open': toolsOpen }"
           >&#9656;</span
         >
-        <span>Tools</span>
+        <span>Methods</span>
         <span v-if="toolsView && toolsView.kind !== 'blocked'" class="bc__tools-count">
           {{ toolCountLabel(toolsView.kind === 'tools' ? toolsView.tools.length : 0) }}
         </span>
@@ -202,9 +202,9 @@ async function toggleTools() {
         v-if="toolsOpen"
         class="bc__tools-body"
         role="region"
-        :aria-label="`Tools for ${server.name}`"
+        :aria-label="`Methods for ${server.name}`"
       >
-        <p v-if="toolsLoading" class="bc__tools-note" aria-live="polite">Loading tools…</p>
+        <p v-if="toolsLoading" class="bc__tools-note" aria-live="polite">Loading methods…</p>
         <div v-else-if="toolsError" class="bc__tools-error" role="alert">{{ toolsError }}</div>
         <template v-else-if="toolsView">
           <ToolTable v-if="toolsView.kind === 'tools'" :tools="toolsView.tools" />

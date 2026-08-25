@@ -200,6 +200,15 @@ capability, auth type); the individual tool names live one level down at
 `GET /v1/catalog/{service}/tools`, which the portal fetches when a server
 card's Tools section is expanded.
 
+### Naming conventions
+
+New services are named `<backend>_service` per the Elwood v5 glossary (e.g.
+`rucio_service`); existing deployed services predate this convention and keep
+their JWT-audience-bearing names until a rename can be coordinated. Methods
+(MCP "tools") use `verb_noun` naming (e.g. `list_dids`, `submit_job`). This
+documents the convention for new services — it renames nothing that already
+exists.
+
 ---
 
 ## Step 2 — Pick (or reuse) a capability for the service

@@ -2,8 +2,9 @@
 
 af-mcp-platform (this repo) is the broker + portal — the credential-brokering
 core described in [Architecture](architecture.md). On its own it authenticates
-callers and routes tool calls; it doesn't mint grid credentials or expose any
-compute itself. Those come from separate, independently-deployed services that
+callers and routes method calls (MCP "tools"); it doesn't mint grid
+credentials or expose any compute itself. Those come from separate,
+independently-deployed services that
 plug into the broker's `identity_providers`/`services.yaml` extension points
 (see [Authentication](auth.md) and [Adding a Service](adding-a-service.md)).
 
