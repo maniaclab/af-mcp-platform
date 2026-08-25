@@ -76,6 +76,14 @@ tool_invocations_unmapped_total = Counter(
     "No labels -- see module docstring.",
 )
 
+metering_queue_overflow_total = Counter(
+    "af_mcp_metering_queue_overflow_total",
+    "Audit records that found the metering pipeline's queue full and were "
+    "written inline without measurement instead (audit/pipeline.py) -- "
+    "nothing is dropped, but a nonzero rate means tool calls are paying "
+    "for audit I/O again. No labels -- see module docstring.",
+)
+
 credential_cache_hits_total = Counter(
     "af_mcp_credential_cache_hits_total",
     "Credential cache lookups that returned a still-valid cached credential.",

@@ -1,0 +1,151 @@
+"""Asynchronous tool-call metering pipeline (observability roadmap PR B).
+
+A tool call must never wait on measurement or audit I/O: serializing and
+tokenizing a large result (``audit/measure.py``) can cost tens of
+milliseconds, and even the to_thread'd audit write is an inline await. The
+authorization middleware therefore hands its success and error audit
+records to this pipeline -- ``submit_metered_audit(record, result)`` -- and
+returns; a background worker measures the result (success path) and writes
+the line. DENIED and UNMAPPED records deliberately do NOT come through
+here: they are security-relevant, have nothing to measure, and cost
+nothing, so the middleware still writes them synchronously inline.
+
+Nothing is ever dropped. A full queue degrades to writing the record
+inline without measurement -- an overloaded broker paying that cost is
+acceptable, a lost audit line is not -- counted by
+``metrics.metering_queue_overflow_total``. And with no pipeline installed
+at all (unit tests, local dev), the module-level helper degrades to
+measuring and writing synchronously, exactly the pre-pipeline behavior
+(mirrors ``write_audit``'s graceful not-initialized fallback).
+"""
+
+from __future__ import annotations
+
+import asyncio
+from typing import TYPE_CHECKING, Any
+
+import structlog
+
+from af_mcp_broker import metrics
+from af_mcp_broker.audit.logger import AuditRecord, write_audit
+from af_mcp_broker.audit.measure import measure_tool_result
+
+if TYPE_CHECKING:
+    from fastmcp.tools.base import ToolResult
+
+logger = structlog.get_logger(__name__)
+
+# Queue bound. Beyond backpressure, this also bounds memory: queued items
+# hold references to result payloads until the worker measures them, so an
+# unbounded queue under a slow output could pin arbitrarily many results.
+QUEUE_MAXSIZE = 10_000
+
+# Enqueued by aclose(): the worker processes every record queued before it,
+# then exits -- a deterministic drain with no cancellation racing a
+# half-processed item.
+_SENTINEL: Any = object()
+
+_pipeline: MeteringPipeline | None = None
+
+
+def _measure_into(record: AuditRecord, result: ToolResult | None) -> None:
+    """Fill ``record.result_bytes``/``result_tokens_est`` from *result*.
+
+    ``measure_tool_result`` already degrades to ``(None, None)`` internally;
+    the catch here is belt-and-braces for failures it did not anticipate --
+    the audit line must still be written (unmeasured) if measurement blows
+    up, so nothing may propagate out of this helper.
+    """
+    if result is None:
+        return
+    try:
+        record.result_bytes, record.result_tokens_est = measure_tool_result(result)
+    except Exception as exc:  # noqa: BLE001 -- metering must never lose an audit line
+        logger.warning(
+            "metering_measurement_failed", audit_id=record.audit_id, error=str(exc)
+        )
+
+
+class MeteringPipeline:
+    """Bounded queue + background worker measuring and writing audit records."""
+
+    def __init__(self, maxsize: int = QUEUE_MAXSIZE) -> None:
+        # Items are (record, result) tuples, or the drain sentinel.
+        self._queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=maxsize)
+        self._worker: asyncio.Task[None] | None = None
+
+    @property
+    def is_running(self) -> bool:
+        return self._worker is not None and not self._worker.done()
+
+    def start(self) -> None:
+        self._worker = asyncio.create_task(self._run(), name="metering-pipeline")
+
+    async def aclose(self) -> None:
+        """Drain every already-enqueued record, then stop the worker."""
+        if self._worker is None:
+            return
+        await self._queue.put(_SENTINEL)
+        await self._worker
+        self._worker = None
+
+    async def submit(self, record: AuditRecord, result: ToolResult | None) -> None:
+        """Enqueue without ever blocking the caller.
+
+        On a full queue: do NOT drop -- write the record immediately,
+        without measurement (this fallback path may await; an overloaded
+        broker paying that cost is acceptable, a lost audit line is not),
+        and count the overflow.
+        """
+        try:
+            self._queue.put_nowait((record, result))
+        except asyncio.QueueFull:
+            metrics.metering_queue_overflow_total.inc()
+            await write_audit(record)
+
+    async def _run(self) -> None:
+        while True:
+            item = await self._queue.get()
+            if item is _SENTINEL:
+                return
+            record, result = item
+            # _measure_into never raises (see its docstring), so a
+            # measurement failure still reaches the write below unmeasured.
+            _measure_into(record, result)
+            try:
+                await write_audit(record)
+            except Exception as exc:  # noqa: BLE001 -- the worker must never die
+                logger.warning(
+                    "metering_audit_write_failed",
+                    audit_id=record.audit_id,
+                    error=str(exc),
+                )
+
+
+def init_metering_pipeline(maxsize: int = QUEUE_MAXSIZE) -> MeteringPipeline:
+    """Create, start, and install the process-wide pipeline (app.py lifespan)."""
+    global _pipeline
+    _pipeline = MeteringPipeline(maxsize=maxsize)
+    _pipeline.start()
+    return _pipeline
+
+
+async def aclose_metering_pipeline() -> None:
+    """Drain and uninstall the process-wide pipeline (app.py lifespan shutdown)."""
+    global _pipeline
+    if _pipeline is None:
+        return
+    await _pipeline.aclose()
+    _pipeline = None
+
+
+async def submit_metered_audit(record: AuditRecord, result: ToolResult | None) -> None:
+    """Module-level helper. With no running pipeline installed (unit tests,
+    local dev -- mirrors write_audit's graceful fallback), measure + write
+    synchronously inline: behavior degrades to exactly the pre-pipeline
+    inline path."""
+    if _pipeline is None or not _pipeline.is_running:
+        _measure_into(record, result)
+        await write_audit(record)
+        return
+    await _pipeline.submit(record, result)
