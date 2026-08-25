@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * DashboardCards.vue — introduces the three things a new user needs to
- * understand (MCP Servers, Identities, Tokens) with a plain-language
+ * understand (Services, Identities, Tokens) with a plain-language
  * explanation of each, plus its own live status pulled from the same
  * summary endpoint the old four-tile stat grid used. Replaces that grid:
  * three of its four numbers already duplicated the sidebar nav's own count
@@ -29,7 +29,7 @@ onMounted(async () => {
 
 <template>
   <div class="dc" role="region" aria-label="Get started">
-    <!-- MCP Servers -->
+    <!-- Services -->
     <div class="dc__card">
       <svg
         class="dc__icon"
@@ -44,13 +44,13 @@ onMounted(async () => {
         <path d="M7.5 7.75h.01" />
         <path d="M7.5 16.25h.01" />
       </svg>
-      <span class="dc__label">MCP Servers</span>
+      <span class="dc__label">Services</span>
       <p class="dc__desc">
         The backend systems your AI assistant can reach through this platform — dataset lookup,
         metadata, job submission, and more — all exposed as methods it can call directly.
       </p>
       <span class="dc__status" :class="{ 'dc__status--loading': loading }">
-        {{ loading ? 'Loading…' : `${summary?.serverCount ?? 0} servers reachable` }}
+        {{ loading ? 'Loading…' : `${summary?.serverCount ?? 0} services reachable` }}
       </span>
       <a href="/catalog/" class="dc__link">Browse the catalog →</a>
     </div>
