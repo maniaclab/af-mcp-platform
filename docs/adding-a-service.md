@@ -128,6 +128,12 @@ values:
 
 `required_capability` is the capability string the broker's Authorization
 subsystem will check before forwarding any tool call to this service.
+When adding a service, also state its trust tier (Elwood v5 / Shannon:
+user-tier, service-tier, or infrastructure-tier) in its deployment
+manifests in the GitOps repo, and choose `required_capability` accordingly
+— see docs/architecture.md "Trust tiers". `required_capability: __none__`
+(open to any authenticated user) is only appropriate for user-tier
+read-only services.
 
 `auth_type` controls what per-user credential the aggregator injects into
 the service call and **defaults to `bearer`** if omitted — meaning the
