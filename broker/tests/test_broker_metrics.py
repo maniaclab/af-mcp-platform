@@ -113,6 +113,36 @@ def test_credential_cache_counters_labeled_by_target():
     assert metrics.credential_cache_misses_total._labelnames == ("target",)
 
 
+def test_tool_duration_seconds_labeled_by_service_tool_action_type():
+    """Same label set as tool_invocations_total -- and deliberately NOT
+    outcome (the audit log is the per-outcome source of truth) and never an
+    identity label; see the module docstring's cardinality policy."""
+    assert metrics.tool_duration_seconds._name == "af_mcp_tool_duration_seconds"
+    assert set(metrics.tool_duration_seconds._labelnames) == {
+        "service",
+        "tool",
+        "action_type",
+    }
+    assert not _FORBIDDEN_LABEL_NAMES & set(metrics.tool_duration_seconds._labelnames)
+    # Buckets sized for tool calls that can include credential minting via
+    # ephemeral k8s Jobs (tens of seconds to minutes), plus the implicit +Inf.
+    assert metrics.tool_duration_seconds._upper_bounds == [
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1.0,
+        2.5,
+        5.0,
+        10.0,
+        30.0,
+        60.0,
+        120.0,
+        300.0,
+        float("inf"),
+    ]
+
+
 def test_x509_proxy_mints_total_has_no_labels():
     """No username label -- mints are rare/expensive but still per-user
     events, and per-user labels are forbidden outright; see the module

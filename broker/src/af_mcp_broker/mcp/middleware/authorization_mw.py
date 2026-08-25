@@ -185,15 +185,25 @@ class AuthorizationMiddleware(Middleware):
             "authorized_call_target", service.name, serializable=False
         )
 
+        # Wall time of everything downstream of authorization -- credential
+        # resolution plus the backend call itself. Metered on the success and
+        # error paths alike (an error still spent this long); denied/unmapped
+        # calls above never executed anything, so their audit records carry
+        # duration_ms=None.
+        started = time.perf_counter()
         try:
             result = await call_next(context)
         except Exception as exc:
+            duration = time.perf_counter() - started
             # An error downstream of authorization (credential resolution,
             # the service call itself) is still an attempted invocation --
             # authorization allowed it, so it's not a denial, and gets no
             # separate error counter (the audit log is the source of truth
             # for exact per-outcome fidelity; see metrics.py's docstring).
             _record_invocation(service.name, tool_name, action_type)
+            metrics.tool_duration_seconds.labels(
+                service=service.name, tool=tool_name, action_type=action_type
+            ).observe(duration)
             await write_audit(
                 AuditRecord(
                     principal_sub=principal.subject,
@@ -209,11 +219,16 @@ class AuthorizationMiddleware(Middleware):
                     outcome="error",
                     error=str(exc),
                     principal_permission_grant=_permission_grant_field(principal),
+                    duration_ms=duration * 1000.0,
                 )
             )
             raise
+        duration = time.perf_counter() - started
 
         _record_invocation(service.name, tool_name, action_type)
+        metrics.tool_duration_seconds.labels(
+            service=service.name, tool=tool_name, action_type=action_type
+        ).observe(duration)
         await write_audit(
             AuditRecord(
                 principal_sub=principal.subject,
@@ -228,6 +243,7 @@ class AuthorizationMiddleware(Middleware):
                 mcp_service=service.name,
                 outcome="success",
                 principal_permission_grant=_permission_grant_field(principal),
+                duration_ms=duration * 1000.0,
             )
         )
         return result

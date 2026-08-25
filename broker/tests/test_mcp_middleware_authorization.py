@@ -356,6 +356,91 @@ async def test_call_next_failure_audited_as_error_and_reraised(
     assert record.error == "credential provider unreachable"
 
 
+async def test_success_records_duration_and_observes_histogram(
+    registry, policy, make_principal, captured_audits
+) -> None:
+    """A successful call must meter the downstream call's wall time into
+    both the audit record (duration_ms) and the duration histogram."""
+    mw = AuthorizationMiddleware(registry, policy)
+    principal = make_principal(groups=["atlas"])
+    context = _call_tool_context("rucio_list_dids", {"scope": "foo"}, principal)
+    call_next = _CallNextRecorder(result=ToolResult(content=[]))
+
+    before_count = _sample(
+        "af_mcp_tool_duration_seconds_count",
+        {"service": "rucio", "tool": "rucio_list_dids", "action_type": "read"},
+    )
+
+    await mw.on_call_tool(context, call_next)
+
+    record = captured_audits[0]
+    assert record.outcome == "success"
+    assert record.duration_ms is not None
+    assert record.duration_ms >= 0.0
+    assert (
+        _sample(
+            "af_mcp_tool_duration_seconds_count",
+            {"service": "rucio", "tool": "rucio_list_dids", "action_type": "read"},
+        )
+        == before_count + 1
+    )
+
+
+async def test_call_next_failure_records_duration_but_no_result_fields(
+    registry, policy, make_principal, captured_audits
+) -> None:
+    """An error downstream still has a measurable duration (the call ran and
+    failed), but produced no result to measure."""
+    mw = AuthorizationMiddleware(registry, policy)
+    principal = make_principal(groups=["atlas"])
+    context = _call_tool_context("rucio_list_dids", {}, principal)
+    call_next = _CallNextRecorder(error=RuntimeError("boom"))
+
+    before_count = _sample(
+        "af_mcp_tool_duration_seconds_count",
+        {"service": "rucio", "tool": "rucio_list_dids", "action_type": "read"},
+    )
+
+    with pytest.raises(RuntimeError):
+        await mw.on_call_tool(context, call_next)
+
+    record = captured_audits[0]
+    assert record.outcome == "error"
+    assert record.duration_ms is not None
+    assert record.duration_ms >= 0.0
+    assert record.result_bytes is None
+    assert record.result_tokens_est is None
+    # The histogram observes errors too -- outcome is deliberately not a
+    # label (the audit log is the per-outcome source of truth).
+    assert (
+        _sample(
+            "af_mcp_tool_duration_seconds_count",
+            {"service": "rucio", "tool": "rucio_list_dids", "action_type": "read"},
+        )
+        == before_count + 1
+    )
+
+
+async def test_denied_call_leaves_metering_fields_none(
+    registry, policy, make_principal, captured_audits
+) -> None:
+    """A denial never reaches call_next -- nothing executed, so there is no
+    duration and no result to measure."""
+    mw = AuthorizationMiddleware(registry, policy)
+    principal = make_principal(groups=[])
+    context = _call_tool_context("rucio_list_dids", {}, principal)
+    call_next = _CallNextRecorder()
+
+    with pytest.raises(AuthorizationError):
+        await mw.on_call_tool(context, call_next)
+
+    record = captured_audits[0]
+    assert record.outcome == "denied"
+    assert record.duration_ms is None
+    assert record.result_bytes is None
+    assert record.result_tokens_est is None
+
+
 async def test_registry_and_policy_are_mutable_attributes(
     registry, policy, make_principal, captured_audits
 ) -> None:

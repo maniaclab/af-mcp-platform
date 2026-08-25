@@ -40,7 +40,7 @@ Cardinality policy -- read this before adding a label or a new metric:
 
 from __future__ import annotations
 
-from prometheus_client import Counter
+from prometheus_client import Counter, Histogram
 
 tool_invocations_total = Counter(
     "af_mcp_tool_invocations_total",
@@ -55,6 +55,19 @@ tool_invocations_denied_total = Counter(
     "af_mcp_tool_invocations_denied_total",
     "Tool invocations denied by AuthorizationMiddleware for a known service.",
     ["service", "action_type"],
+)
+
+tool_duration_seconds = Histogram(
+    "af_mcp_tool_duration_seconds",
+    "Wall time of the downstream tool call (credential resolution plus the "
+    "backend call itself), by service, tool, and action_type. Observed on "
+    "success and error alike -- outcome is deliberately not a label; the "
+    "audit log is the per-outcome source of truth. No identity label -- "
+    "see module docstring. Buckets are sized for tool calls that can "
+    "include credential minting via ephemeral k8s Jobs (tens of seconds "
+    "to minutes), not just fast HTTP proxying.",
+    ["service", "tool", "action_type"],
+    buckets=(0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0),
 )
 
 tool_invocations_unmapped_total = Counter(
