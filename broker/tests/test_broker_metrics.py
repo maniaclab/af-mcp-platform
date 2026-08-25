@@ -49,6 +49,10 @@ def _all_counters() -> list:
         metrics.credential_cache_hits_total,
         metrics.credential_cache_misses_total,
         metrics.x509_proxy_mints_total,
+        metrics.metering_queue_overflow_total,
+        metrics.metering_worker_processed_total,
+        metrics.metering_worker_errors_total,
+        metrics.metering_records_missing_measurements_total,
     ]
 
 
@@ -141,6 +145,21 @@ def test_tool_duration_seconds_labeled_by_service_tool_action_type():
         300.0,
         float("inf"),
     ]
+
+
+def test_metering_metrics_have_no_labels():
+    """Every metering pipeline metric (counters and worker-health gauges
+    alike) is deliberately unlabeled -- per-record dimensions live in the
+    audit log; see the module docstring's cardinality policy."""
+    for metric in (
+        metrics.metering_queue_overflow_total,
+        metrics.metering_queue_depth,
+        metrics.metering_queue_delay_seconds,
+        metrics.metering_worker_processed_total,
+        metrics.metering_worker_errors_total,
+        metrics.metering_records_missing_measurements_total,
+    ):
+        assert metric._labelnames == ()
 
 
 def test_x509_proxy_mints_total_has_no_labels():

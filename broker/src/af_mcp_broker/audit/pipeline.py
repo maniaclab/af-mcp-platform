@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import abc
 import asyncio
+import time
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -71,6 +72,8 @@ def _measure_into(record: AuditRecord, result: ToolResult | None) -> None:
     try:
         record.result_bytes, record.result_tokens_est = measure_tool_result(result)
     except Exception as exc:  # noqa: BLE001 -- metering must never lose an audit line
+        metrics.metering_worker_errors_total.inc()
+        metrics.metering_records_missing_measurements_total.inc()
         logger.warning(
             "metering_measurement_failed", audit_id=record.audit_id, error=str(exc)
         )
@@ -110,7 +113,9 @@ class InProcessMeteringBackend(MeteringBackend):
     """Bounded queue + background worker measuring and writing audit records."""
 
     def __init__(self, maxsize: int = QUEUE_MAXSIZE) -> None:
-        # Items are (record, result) tuples, or the drain sentinel.
+        # Items are (record, result, enqueued_at) tuples -- enqueued_at is a
+        # time.monotonic() timestamp feeding the queue-delay gauge -- or the
+        # drain sentinel.
         self._queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=maxsize)
         self._worker: asyncio.Task[None] | None = None
 
@@ -138,28 +143,38 @@ class InProcessMeteringBackend(MeteringBackend):
         and count the overflow.
         """
         try:
-            self._queue.put_nowait((record, result))
+            self._queue.put_nowait((record, result, time.monotonic()))
+            metrics.metering_queue_depth.set(self._queue.qsize())
         except asyncio.QueueFull:
             metrics.metering_queue_overflow_total.inc()
+            if result is not None:
+                # A result was there to measure and the fallback skips
+                # measurement -- the line goes out incomplete, not late.
+                metrics.metering_records_missing_measurements_total.inc()
             await write_audit(record)
 
     async def _run(self) -> None:
         while True:
             item = await self._queue.get()
+            metrics.metering_queue_depth.set(self._queue.qsize())
             if item is _SENTINEL:
                 return
-            record, result = item
+            record, result, enqueued_at = item
+            metrics.metering_queue_delay_seconds.set(time.monotonic() - enqueued_at)
             # _measure_into never raises (see its docstring), so a
             # measurement failure still reaches the write below unmeasured.
             _measure_into(record, result)
             try:
                 await write_audit(record)
             except Exception as exc:  # noqa: BLE001 -- the worker must never die
+                metrics.metering_worker_errors_total.inc()
                 logger.warning(
                     "metering_audit_write_failed",
                     audit_id=record.audit_id,
                     error=str(exc),
                 )
+            else:
+                metrics.metering_worker_processed_total.inc()
 
 
 # Maps ``settings.metering_backend`` values to backend factories. Adding a

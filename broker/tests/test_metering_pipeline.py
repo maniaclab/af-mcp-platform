@@ -39,8 +39,12 @@ from af_mcp_broker.audit.pipeline import (
 from af_mcp_broker.config import Settings
 
 
+def _sample(name: str) -> float:
+    return REGISTRY.get_sample_value(name) or 0.0
+
+
 def _overflow_count() -> float:
-    return REGISTRY.get_sample_value("af_mcp_metering_queue_overflow_total") or 0.0
+    return _sample("af_mcp_metering_queue_overflow_total")
 
 
 @pytest.fixture(autouse=True)
@@ -141,16 +145,23 @@ async def test_overflow_writes_inline_unmeasured_and_drops_nothing() -> None:
     p = InProcessMeteringBackend(maxsize=1)
 
     before = _overflow_count()
+    missing_before = _sample("af_mcp_metering_records_missing_measurements_total")
     await p.submit(_record(request_id="queued"), None)
     overflow_result = ToolResult(content=[mt.TextContent(type="text", text="big")])
     await p.submit(_record(request_id="overflowed"), overflow_result)
 
-    # The overflowing record was written inline, unmeasured, and counted.
+    # The overflowing record was written inline, unmeasured, and counted --
+    # both as an overflow and as a record whose present result went
+    # unmeasured.
     (line,) = _lines(buffer)
     assert line["request_id"] == "overflowed"
     assert line["result_bytes"] is None
     assert line["result_tokens_est"] is None
     assert _overflow_count() == before + 1
+    assert (
+        _sample("af_mcp_metering_records_missing_measurements_total")
+        == missing_before + 1
+    )
 
     # The queued record was not dropped either: the worker still writes it.
     await p.start()
@@ -188,6 +199,8 @@ async def test_worker_survives_measurement_failure(
 
     monkeypatch.setattr(pipeline, "measure_tool_result", _boom)
 
+    errors_before = _sample("af_mcp_metering_worker_errors_total")
+    missing_before = _sample("af_mcp_metering_records_missing_measurements_total")
     poisoned = ToolResult(content=[mt.TextContent(type="text", text="x")])
     await p.submit(_record(request_id="poisoned"), poisoned)
     await p.submit(_record(request_id="next"), None)
@@ -197,6 +210,13 @@ async def test_worker_survives_measurement_failure(
     assert [line["request_id"] for line in lines] == ["poisoned", "next"]
     assert lines[0]["result_bytes"] is None
     assert lines[0]["result_tokens_est"] is None
+    # The failure was counted, and so was the record it left unmeasured
+    # despite its present result.
+    assert _sample("af_mcp_metering_worker_errors_total") == errors_before + 1
+    assert (
+        _sample("af_mcp_metering_records_missing_measurements_total")
+        == missing_before + 1
+    )
 
 
 async def test_worker_survives_audit_write_failure(
@@ -218,11 +238,13 @@ async def test_worker_survives_audit_write_failure(
 
     monkeypatch.setattr(pipeline, "write_audit", _flaky_write_audit)
 
+    errors_before = _sample("af_mcp_metering_worker_errors_total")
     await p.submit(_record(request_id="doomed"), None)
     await p.submit(_record(request_id="next"), None)
     await p.aclose()
 
     assert [line["request_id"] for line in _lines(buffer)] == ["next"]
+    assert _sample("af_mcp_metering_worker_errors_total") == errors_before + 1
 
 
 async def test_uninitialized_helper_measures_and_writes_inline() -> None:
@@ -258,3 +280,74 @@ async def test_init_builds_the_backend_selected_by_settings() -> None:
     backend = await init_metering_pipeline(Settings(metering_backend="in_process"))
     assert isinstance(backend, InProcessMeteringBackend)
     assert backend.is_running
+
+
+# ---------------------------------------------------------------------------
+# Worker health metrics -- queue depth, time-in-queue, and processed counts
+# are the empirical trigger for ever introducing a distributed backend.
+# ---------------------------------------------------------------------------
+
+
+async def test_queue_depth_gauge_tracks_enqueue_and_dequeue() -> None:
+    buffer = io.StringIO()
+    init_audit_logger(buffer)
+    # Worker deliberately not started: each submit only enqueues, so the
+    # gauge must climb with the queue and return to zero after the drain.
+    p = InProcessMeteringBackend(maxsize=10)
+
+    await p.submit(_record(), None)
+    assert _sample("af_mcp_metering_queue_depth") == 1
+    await p.submit(_record(), None)
+    assert _sample("af_mcp_metering_queue_depth") == 2
+
+    await p.start()
+    await p.aclose()
+    assert _sample("af_mcp_metering_queue_depth") == 0
+
+
+async def test_queue_delay_gauge_set_on_dequeue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each queued item carries its enqueue time; the worker publishes the
+    time-in-queue of the most recently dequeued item. With the worker gated
+    on the first record's write, the second record measurably ages in the
+    queue before its dequeue."""
+    buffer = io.StringIO()
+    init_audit_logger(buffer)
+    p = InProcessMeteringBackend()
+
+    gate = asyncio.Event()
+    real_write_audit = pipeline.write_audit
+
+    async def _gated_write_audit(record: AuditRecord) -> None:
+        await gate.wait()
+        await real_write_audit(record)
+
+    monkeypatch.setattr(pipeline, "write_audit", _gated_write_audit)
+
+    await p.start()
+    await p.submit(_record(request_id="first"), None)
+    await p.submit(_record(request_id="second"), None)
+    # Not an ordering sleep -- it exists purely so "second" accrues a
+    # nonzero time-in-queue while the worker is parked on the gate.
+    await asyncio.sleep(0.02)
+    gate.set()
+    await p.aclose()
+
+    assert _sample("af_mcp_metering_queue_delay_seconds") > 0.0
+
+
+async def test_worker_processed_total_counts_written_records() -> None:
+    buffer = io.StringIO()
+    init_audit_logger(buffer)
+    p = InProcessMeteringBackend()
+    await p.start()
+
+    before = _sample("af_mcp_metering_worker_processed_total")
+    await p.submit(_record(), None)
+    await p.submit(
+        _record(), ToolResult(content=[mt.TextContent(type="text", text="x")])
+    )
+    await p.aclose()
+
+    assert _sample("af_mcp_metering_worker_processed_total") == before + 2
