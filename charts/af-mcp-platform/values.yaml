@@ -419,6 +419,33 @@ broker:
   metering:
     backend: "in-process"
 
+  # Per-user usage accounting (broker usage/) -- the per-(day, service,
+  # tool, outcome) aggregates behind GET /v1/usage and the portal's usage
+  # card. "in-memory" is single-replica and lost on restart (fine for dev
+  # and small facilities that treat usage as a convenience view; the audit
+  # log stays authoritative either way); "postgres" persists events via
+  # asyncpg. Postgres itself is BYO -- this chart only consumes an existing
+  # instance, it does not deploy one.
+  usage:
+    backend: "in-memory"  # or "postgres"
+    postgres:
+      # Secret carrying the asyncpg DSN, rendered as USAGE_POSTGRES_DSN via
+      # secretKeyRef only when backend="postgres". With Crunchy PGO the
+      # operator generates a `<cluster>-pguser-<user>` secret whose `uri`
+      # key is exactly this DSN -- point `name` at that secret and leave
+      # `key` as "uri".
+      existingSecret:
+        name: ""
+        key: "uri"
+      # Selects the postgres pods for the broker's NetworkPolicy egress rule
+      # (rendered only when backend="postgres" and networkPolicy.enabled):
+      # pods labeled postgres-operator.crunchydata.com/cluster=<clusterName>
+      # and postgres-operator.crunchydata.com/data=postgres in <namespace>
+      # (empty = the release namespace), port 5432.
+      networkPolicy:
+        namespace: ""
+        clusterName: ""
+
 # ---------------------------------------------------------------------------
 # Token sweep: periodic janitor for the Vault-backed token registry above
 # (broker.tokenRegistry.backend="vault"). Removes registry entries whose

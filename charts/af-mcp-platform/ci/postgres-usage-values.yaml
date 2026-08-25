@@ -1,0 +1,26 @@
+# Exercises the postgres usage-store template paths (USAGE_STORE_BACKEND,
+# the USAGE_POSTGRES_DSN secretKeyRef, and the NetworkPolicy egress rule to
+# the Crunchy PGO postgres pods) so a broken render is caught by CI's
+# `ct lint`, which lints the chart once per values file in this directory.
+# Placeholder example.com values, same caveats as test-values.yaml; the named
+# Secret only needs to exist for a real deployment, not for linting.
+oidc:
+  issuer: "https://keycloak.example.com/realms/example"
+portal:
+  oidc:
+    clientId: "example-portal-client"
+    scope: "openid profile email example-audience"
+  brokerOrigin: "https://mcp.example.com"
+
+broker:
+  usage:
+    backend: "postgres"
+    postgres:
+      # With Crunchy PGO this is the operator-generated
+      # `<cluster>-pguser-<user>` secret; `uri` is its asyncpg DSN key.
+      existingSecret:
+        name: "example-usage-pguser-broker"
+        key: "uri"
+      networkPolicy:
+        namespace: "database"
+        clusterName: "example-usage"
