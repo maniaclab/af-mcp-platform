@@ -321,6 +321,53 @@ in `tools/list` over `/mcp` (see Verification below).
 
 ---
 
+## Tool-authoring conventions
+
+Steps 1–5 wire a service in with no code. This section is about the code you
+*do* write — the tools the backend itself advertises. The aggregator forwards
+whatever the backend serves verbatim, so the quality of each tool's
+description, error text, and schema is set entirely at the source. These three
+conventions cost every LLM agent a wasted retry cycle when skipped, regardless
+of which client calls the tool or how good its own discovery is, so treat them
+as the bar for every backend — existing and new. rucio-mcp already meets it and
+is cited below as the shipped example.
+
+- **Lead each tool's description with a one-line summary.** The first line is
+  what a client shows in a compact tool list and what it ranks on. This matters
+  more as clients move from loading every tool's full schema upfront to
+  progressive tool-search over just the summaries, where a tool whose first
+  line doesn't say what it does never gets picked. Put the one-liner first, then
+  the detail (arguments, caveats, when to call it) below it. The builtin
+  `af-mcp` tools follow this — see `af_whoami`'s "Return the caller's own
+  subject, groups, and effective permissions." ahead of its usage notes in
+  `broker/src/af_mcp_broker/mcp/diagnostics.py`.
+
+- **On an empty or error result, return an actionable next step, not just the
+  raw condition.** "No replicas found" or a bare backend exception makes the
+  agent guess (and usually burn a diagnostic call, or several — the frictions in
+  [#216](https://github.com/maniaclab/af-mcp-platform/issues/216) came from
+  exactly this). Say what to do instead. rucio-mcp is the model: several of its
+  tools' empty/error results carry a "Next steps" hint, e.g. on an empty
+  dataset-replicas result it points the caller at "if this is a container DID,
+  use `rucio_list_container_replicas` instead". Name the specific tool or
+  argument that fixes the situation whenever you can. Surface it as a structured
+  MCP error (`isError: true` with the hint in the message), not raw backend
+  exception text.
+
+- **Declare `outputSchema` wherever the backend's SDK supports it.** Without an
+  output schema a client can't type-check a tool's result or programmatically
+  compose one tool's output into another's input; it's left parsing prose. Note
+  that an MCP `outputSchema` MUST be a JSON *object* schema — a tool that
+  returns a bare list gets no usable schema (or a synthetic single-key wrapper
+  with a meaningless field name), so wrap a list in a small object model with a
+  named field. The `af-mcp` tools are the in-repo reference instance: all five
+  declare an object `outputSchema`, and `af_list_identities` /
+  `af_list_mcp_servers` show the list-wrapping pattern
+  (`ListIdentitiesResult.identities` / `ListMcpServersResult.servers`) in
+  `broker/src/af_mcp_broker/mcp/diagnostics.py`.
+
+---
+
 ## Verification
 
 ```bash
