@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import json
 import socket
+import socketserver
 import time
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
@@ -95,6 +96,25 @@ def stub_tiktoken(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         measure.tiktoken, "get_encoding", lambda name: _StubTiktokenEncoding()
     )
+
+
+@pytest.fixture(autouse=True)
+def fast_metrics_server_shutdown(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Shrink socketserver's serve_forever poll so app teardown is fast.
+
+    The app lifespan runs prometheus_client's metrics server on a thread
+    whose ``serve_forever`` uses the stdlib default ``poll_interval=0.5``;
+    ``shutdown()`` blocks until that poll loop notices the flag, so every
+    ``TestClient(app)`` teardown paid up to 0.5s of pure waiting. Tightening
+    the poll interval changes only shutdown latency -- the exact same
+    production code path (start, serve, shutdown) is still exercised.
+    """
+    orig = socketserver.BaseServer.serve_forever
+
+    def fast_poll(self: Any, poll_interval: float = 0.005) -> None:
+        orig(self, poll_interval)
+
+    monkeypatch.setattr(socketserver.BaseServer, "serve_forever", fast_poll)
 
 
 @dataclass
