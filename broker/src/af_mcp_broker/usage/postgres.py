@@ -4,7 +4,7 @@ One raw event row per tool-call audit record, keyed by ``audit_id``:
 inserting with ``ON CONFLICT (audit_id) DO NOTHING`` makes recording
 idempotent, so redelivery of the same record (best-effort metering may hand
 one over more than once) is safe by construction. Aggregation happens in
-SQL at query time (``GROUP BY day, service, tool, outcome``), keeping the
+SQL at query time (``GROUP BY day, service, method, outcome``), keeping the
 stored data raw enough to re-slice later without a schema change.
 
 The DSN is ``settings.usage_postgres_dsn`` -- with Crunchy PGO, typically
@@ -27,15 +27,35 @@ if TYPE_CHECKING:
 # Idempotent DDL run by start(). Deliberate: one table plus one index does
 # not justify a migration framework yet -- CREATE ... IF NOT EXISTS makes
 # every broker start (and every replica racing another) safe against a
-# schema that already exists. Revisit if a second table or an ALTER ever
-# shows up.
+# schema that already exists. Revisit if a second table or another ALTER
+# ever shows up.
+#
+# The DO block is the one migration so far (Elwood vocabulary: the public
+# name for what a service exposes is a *method*): tables created before the
+# rename carry a `tool` column, and renaming it here -- guarded, so it is
+# idempotent and a no-op on fresh or already-migrated tables -- lets deploys
+# self-migrate with no manual step. During a rolling deploy, not-yet-updated
+# replicas briefly fail their inserts against the renamed column; usage is
+# best-effort by contract (audit records are authoritative), so that window
+# loses nothing that matters.
 _DDL = """
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = 'af_mcp_usage_events'
+          AND column_name = 'tool'
+    ) THEN
+        ALTER TABLE af_mcp_usage_events RENAME COLUMN tool TO method;
+    END IF;
+END $$;
 CREATE TABLE IF NOT EXISTS af_mcp_usage_events (
     audit_id TEXT PRIMARY KEY,
     request_id TEXT NOT NULL,
     principal_sub TEXT NOT NULL,
     service TEXT NOT NULL,
-    tool TEXT NOT NULL,
+    method TEXT NOT NULL,
     action_type TEXT NOT NULL,
     outcome TEXT NOT NULL,
     ts TIMESTAMPTZ NOT NULL,
@@ -49,7 +69,7 @@ CREATE INDEX IF NOT EXISTS af_mcp_usage_events_principal_ts
 
 _INSERT = """
 INSERT INTO af_mcp_usage_events (
-    audit_id, request_id, principal_sub, service, tool, action_type,
+    audit_id, request_id, principal_sub, service, method, action_type,
     outcome, ts, duration_ms, result_bytes, result_tokens_est
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 ON CONFLICT (audit_id) DO NOTHING
@@ -59,15 +79,15 @@ ON CONFLICT (audit_id) DO NOTHING
 # passed in, so both backends share one definition of "trailing N days".
 _QUERY = """
 SELECT (ts AT TIME ZONE 'UTC')::date AS day,
-       service, tool, outcome,
+       service, method, outcome,
        count(*)::bigint AS calls,
        coalesce(sum(duration_ms), 0)::double precision AS duration_ms,
        coalesce(sum(result_bytes), 0)::bigint AS result_bytes,
        coalesce(sum(result_tokens_est), 0)::bigint AS result_tokens_est
 FROM af_mcp_usage_events
 WHERE principal_sub = $1 AND (ts AT TIME ZONE 'UTC')::date >= $2
-GROUP BY day, service, tool, outcome
-ORDER BY day, service, tool, outcome
+GROUP BY day, service, method, outcome
+ORDER BY day, service, method, outcome
 """
 
 
@@ -120,7 +140,7 @@ class PostgresUsageStore(UsageStore):
             UsageAggregate(
                 day=row["day"],
                 service=row["service"],
-                tool=row["tool"],
+                method=row["method"],
                 outcome=row["outcome"],
                 calls=row["calls"],
                 duration_ms=row["duration_ms"],

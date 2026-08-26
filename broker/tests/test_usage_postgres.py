@@ -126,6 +126,49 @@ async def test_start_ddl_is_idempotent(postgres_dsn: str) -> None:
     await second.aclose()
 
 
+async def test_start_renames_the_legacy_tool_column(postgres_dsn: str) -> None:
+    """A table created before the Elwood rename (column `tool`) is migrated
+    in place by start(): column renamed to `method`, data preserved, and the
+    migration is idempotent (a second start() is a no-op)."""
+    conn = await asyncpg.connect(postgres_dsn)
+    try:
+        await conn.execute("DROP TABLE IF EXISTS af_mcp_usage_events")
+        await conn.execute(
+            """
+            CREATE TABLE af_mcp_usage_events (
+                audit_id TEXT PRIMARY KEY,
+                request_id TEXT NOT NULL,
+                principal_sub TEXT NOT NULL,
+                service TEXT NOT NULL,
+                tool TEXT NOT NULL,
+                action_type TEXT NOT NULL,
+                outcome TEXT NOT NULL,
+                ts TIMESTAMPTZ NOT NULL,
+                duration_ms DOUBLE PRECISION,
+                result_bytes BIGINT,
+                result_tokens_est BIGINT
+            )
+            """
+        )
+        await conn.execute(
+            "INSERT INTO af_mcp_usage_events VALUES "
+            "('legacy-1', 'req', 'user-a', 'svc', 'old_tool', 'read', "
+            "'success', now(), 1.0, 10, 5)"
+        )
+    finally:
+        await conn.close()
+
+    migrated = PostgresUsageStore(postgres_dsn)
+    await migrated.start()
+    again = PostgresUsageStore(postgres_dsn)
+    await again.start()  # idempotent
+
+    aggs = await migrated.query("user-a", days=1)
+    assert [a.method for a in aggs] == ["old_tool"]
+    await migrated.aclose()
+    await again.aclose()
+
+
 async def test_record_and_query_round_trip(store: PostgresUsageStore) -> None:
     await store.record(_record())
     await store.record(
@@ -139,7 +182,7 @@ async def test_record_and_query_round_trip(store: PostgresUsageStore) -> None:
 
     (agg,) = await store.query("sub-abc", days=30)
     assert agg.service == "rucio"
-    assert agg.tool == "rucio_list_dids"
+    assert agg.method == "rucio_list_dids"
     assert agg.outcome == "success"
     assert agg.day == datetime.now(tz=UTC).date()
     assert agg.calls == 2
@@ -182,7 +225,7 @@ async def test_null_measurements_count_calls_but_contribute_zero_sums(
     assert agg.result_tokens_est == 25
 
 
-async def test_aggregates_split_by_day_service_tool_and_outcome(
+async def test_aggregates_split_by_day_service_method_and_outcome(
     store: PostgresUsageStore,
 ) -> None:
     yesterday = (datetime.now(tz=UTC) - timedelta(days=1)).timestamp()
@@ -194,7 +237,7 @@ async def test_aggregates_split_by_day_service_tool_and_outcome(
     await store.record(_record(audit_id="a4", outcome="error"))
 
     aggs = await store.query("sub-abc", days=30)
-    keys = {(a.day, a.service, a.tool, a.outcome) for a in aggs}
+    keys = {(a.day, a.service, a.method, a.outcome) for a in aggs}
     today = datetime.now(tz=UTC).date()
     assert keys == {
         (today, "rucio", "rucio_list_dids", "success"),
