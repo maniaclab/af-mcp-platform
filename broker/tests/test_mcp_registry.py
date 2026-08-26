@@ -430,10 +430,10 @@ def test_shipped_services_declare_trust_tier(name: str, tier: str) -> None:
 
 def test_link_identity_tool_name_is_reserved_diagnostic_tool() -> None:
     """af_link_identity (stage 1 of the elicitation/link-identity design) is
-    a broker-native diagnostic tool like the other three -- it must be in
-    DIAGNOSTIC_TOOL_NAMES so middleware special-cases it as always-callable,
+    a broker-native diagnostic tool like the other af_* methods -- it must be
+    in DIAGNOSTIC_TOOL_NAMES so middleware special-cases it as always-callable,
     no credential, no ProxyProvider, the same as af_whoami/af_list_identities/
-    af_list_mcp_servers."""
+    af_list_mcp_servers/af_usage."""
     assert LINK_IDENTITY_TOOL_NAME == "af_link_identity"
     assert LINK_IDENTITY_TOOL_NAME in DIAGNOSTIC_TOOL_NAMES
 

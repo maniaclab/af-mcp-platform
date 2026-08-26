@@ -435,7 +435,7 @@ async def test_af_whoami_call_is_audited_and_metered_as_the_af_mcp_service(
 async def test_no_diagnostic_tool_response_contains_a_url(
     settings: Any, sig_key: Any, prime_jwks: Any, static_principal_cache: Any
 ) -> None:
-    """Never leak: none of the three af_* tools' responses may contain a URL
+    """Never leak: no af_* diagnostic tool's response may contain a URL
     -- not a backend's internal address, not the portal's own link URL. The
     generic "go to the portal" instruction lives in the *static* tool
     description / the pre-existing not-linked ToolError, never in this
