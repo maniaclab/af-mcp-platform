@@ -36,6 +36,7 @@ mypy = ">=1.10"
 pre-commit = ">=3.7"
 tbump = ">=6.7.0"
 httpx2 = ">=2.7.0,<3"
+pytest-timeout = ">=2.4.0,<3"
 
 [feature.broker.tasks]
 broker = { cmd = "uvicorn af_mcp_broker.app:app --host 0.0.0.0 --port 8080 --reload", description = "Run broker dev server" }
