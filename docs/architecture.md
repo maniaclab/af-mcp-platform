@@ -439,6 +439,11 @@ Structured log (structlog + JSON) of every tool invocation, including:
   session JWTs — `principal_sub` identifies the user across all their
   tokens, this identifies the specific token, so a leaked PAT's calls can
   be isolated and that one token revoked (never any secret material)
+- resolved VOMS nickname (`nickname`): on x509 proxy-release records, the
+  CERN/Rucio account the released proxy authenticates as — the grid identity
+  the credential is usable as, distinct from the AF principal in
+  `principal_sub`/`principal_uid`; `null` on every non-x509 record and on the
+  legacy redeem path, whose `ProxyMeta` cache carries no nickname (issue #199)
 
 Every tool invocation means every one: calls to the gateway's own `af_*`
 methods are audited and metered too, as service `af-mcp` (the builtin
