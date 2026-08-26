@@ -211,10 +211,13 @@ async def aclose_metering_pipeline() -> None:
 
 
 async def submit_metered_audit(record: AuditRecord, result: ToolResult | None) -> None:
-    """Module-level helper. With no running pipeline installed (unit tests,
+    """Module-level helper to submit audit record.
+
+    With no running pipeline installed (unit tests,
     local dev -- mirrors write_audit's graceful fallback), measure + write
     synchronously inline: behavior degrades to exactly the pre-pipeline
-    inline path."""
+    inline path.
+    """
     if _pipeline is None or not _pipeline.is_running:
         _measure_into(record, result)
         await write_audit(record)

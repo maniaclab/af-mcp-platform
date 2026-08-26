@@ -70,7 +70,10 @@ def _get_encoding(encoding_name: str) -> tiktoken.Encoding | None:
 
 
 def _serialized_text(result: ToolResult) -> str:
-    """The result's serialized text -- see the module docstring for exactly what is (and is not) counted."""
+    """Return serialized text of tool result.
+
+    See the module docstring for exactly what is (and is not) counted.
+    """
     parts = [
         block.text for block in result.content if isinstance(block, mt.TextContent)
     ]
