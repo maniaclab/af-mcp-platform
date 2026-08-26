@@ -423,6 +423,10 @@ Structured log (structlog + JSON) of every tool invocation, including:
 - credential provider used
 - response status and latency
 - request ID (propagated in `X-Request-ID` header)
+- calling token (`token_id`): the PAT's public `lookup_id`, `null` for
+  session JWTs — `principal_sub` identifies the user across all their
+  tokens, this identifies the specific token, so a leaked PAT's calls can
+  be isolated and that one token revoked (never any secret material)
 
 Success and error records reach the log through the metering pipeline
 (`audit/pipeline.py`): the hot path enqueues `(record, result)` and returns,

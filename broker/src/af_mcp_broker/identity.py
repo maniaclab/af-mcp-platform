@@ -155,6 +155,13 @@ class Principal:
     # accidental logging.
     raw_token: SecretStr = field(compare=False, repr=False)
     permission_grant: frozenset[str] | None = None
+    # Which token made the call (issue #247): the presenting PAT's public,
+    # non-secret lookup_id (the same registry index touch_last_used keys
+    # on), set only by pat_auth.resolve_pat_principal. None for every JWT
+    # -- a session JWT is not a distinct long-lived credential worth
+    # attributing separately from ``subject``. NEVER secret material or the
+    # full token.
+    token_id: str | None = None
 
 
 # ---------------------------------------------------------------------------

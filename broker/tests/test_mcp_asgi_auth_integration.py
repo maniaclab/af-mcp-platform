@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import time
 from typing import TYPE_CHECKING, Any
@@ -197,7 +198,10 @@ async def test_pat_round_trip_tools_list_and_call(
     Bearer against a live aggregator, and confirm it resolves a working
     Principal all the way through tools/list and tools/call -- both
     credential types now work on /mcp side by side (this test) and neither
-    disturbs the other (every JWT-path test above is unmodified)."""
+    disturbs the other (every JWT-path test above is unmodified). The
+    call's audit line must also attribute to this PAT's public lookup_id
+    (issue #247) without leaking any secret material."""
+    from af_mcp_broker.audit.logger import init_audit_logger
     from af_mcp_broker.pat import mint_pat
     from af_mcp_broker.principal_cache import (
         InMemoryPrincipalCacheBackend,
@@ -247,6 +251,9 @@ async def test_pat_round_trip_tools_list_and_call(
         principal_cache=principal_cache,
     )
 
+    audit_buffer = io.StringIO()
+    init_audit_logger(audit_buffer)
+
     async with (
         run_aggregator_async(mcp, path="/mcp") as url,
         _bearer_client(url, plaintext) as client,
@@ -260,6 +267,17 @@ async def test_pat_round_trip_tools_list_and_call(
     record = await pat_backend.get_by_lookup_id(lookup_id)
     assert record is not None
     assert record.last_used_at is not None  # touched by the successful call(s)
+
+    # Issue #247: the successful tools/call's audit line carries the PAT's
+    # public lookup_id as token_id, and no audit field ever contains the
+    # secret half (or the full plaintext token).
+    audit_out = audit_buffer.getvalue()
+    audit_lines = [json.loads(line) for line in audit_out.strip().splitlines()]
+    assert audit_lines, "expected an audit line for the tools/call"
+    assert all(line["token_id"] == lookup_id for line in audit_lines)
+    secret = plaintext.split("_", 3)[3]
+    assert secret not in audit_out
+    assert plaintext not in audit_out
 
 
 async def test_dev_bypass_path_tools_list_and_call_still_work(
