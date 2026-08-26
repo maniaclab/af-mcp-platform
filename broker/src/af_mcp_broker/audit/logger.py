@@ -92,6 +92,16 @@ class AuditRecord:
     # every non-x509 record, and for the legacy redeem path whose ProxyMeta
     # cache carries no nickname.
     nickname: str | None = None
+    # Failure classification, observability only (issue #216 A.3): on an
+    # outcome="error" record, "transient_connection" when the backend call
+    # failed on a known-transient connection error (connection reset, socket
+    # EOF / closed connection, connect timeout -- see mcp/errors.py) vs
+    # "backend_error" for a genuine tool-usage/backend failure. None on every
+    # other outcome (success, and the denied/unmapped paths that never
+    # executed a backend call). Nothing branches on it -- it exists to count
+    # how often backends fail transiently before deciding whether the broker
+    # should ever retry.
+    error_class: str | None = None
 
 
 class AuditLogger:
