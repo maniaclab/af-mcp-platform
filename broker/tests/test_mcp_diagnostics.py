@@ -318,6 +318,13 @@ async def test_af_list_mcp_servers_reuses_service_status_and_identity_join(
     assert rows["gated"]["status"] == "permission_required"
     assert rows["needs-link"]["status"] == "link_required"
     assert rows["needs-link"]["credential_provider"] == "unlinked-idp"
+    # The gateway lists itself too (issue #240): the builtin af-mcp service
+    # is always present and available -- even to this zero-permission caller
+    # -- with no identity provider servicing it.
+    assert rows["af-mcp"]["status"] == "available"
+    assert rows["af-mcp"]["prefix"] == "af"
+    assert rows["af-mcp"]["credential_provider"] is None
+    assert rows["af-mcp"]["display_name"]
 
 
 async def test_diagnostic_tools_visible_to_principal_with_no_permissions(

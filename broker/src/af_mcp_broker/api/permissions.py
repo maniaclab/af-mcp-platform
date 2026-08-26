@@ -17,6 +17,7 @@ from af_mcp_broker.authorization import (
 from af_mcp_broker.credentials import CredentialRegistry
 from af_mcp_broker.identity import Principal, keycloak_dependency
 from af_mcp_broker.mcp.registry import (
+    BUILTIN_SERVICE_NAME,
     LIST_IDENTITIES_TOOL_NAME,
     WHOAMI_TOOL_NAME,
     ServiceRegistry,
@@ -41,13 +42,14 @@ ServiceStatus = Literal[
 _STATUS_DETAILS: dict[ServiceStatus, str] = {
     "available": "Available.",
     "link_required": (
-        "Link your identity to use this service. Call "
-        f"`{LIST_IDENTITIES_TOOL_NAME}` to see which identity provider it needs."
+        "Link your identity to use this service. Call the "
+        f"{BUILTIN_SERVICE_NAME} service's `{LIST_IDENTITIES_TOOL_NAME}` "
+        "method to see which identity provider it needs."
     ),
     "permission_required": (
         "Your account doesn't have the access this service requires. "
-        f"Contact the AF admins. Call `{WHOAMI_TOOL_NAME}` to see your "
-        "current permissions."
+        f"Contact the AF admins. Call the {BUILTIN_SERVICE_NAME} service's "
+        f"`{WHOAMI_TOOL_NAME}` method to see your current permissions."
     ),
     "unavailable": "Temporarily unavailable. Try again shortly.",
     "misconfigured": "This service is misconfigured. Contact the AF admins.",
@@ -58,8 +60,9 @@ _STATUS_DETAILS: dict[ServiceStatus, str] = {
 # to "link_required" (re-linking is the fix, same as never having linked at
 # all), but the sentence should say "re-link", not "link for the first time".
 _RELINK_DETAIL = (
-    "Your linked credential was rejected. Re-link your identity. Call "
-    f"`{LIST_IDENTITIES_TOOL_NAME}` to see which identity provider to re-link."
+    "Your linked credential was rejected. Re-link your identity. Call the "
+    f"{BUILTIN_SERVICE_NAME} service's `{LIST_IDENTITIES_TOOL_NAME}` method "
+    "to see which identity provider to re-link."
 )
 
 router = APIRouter(tags=["permissions"])
@@ -128,6 +131,10 @@ class CatalogServer(BaseModel):
     # misconfigured) -- a correlation id the caller can quote in a ticket so
     # an admin can grep the audit log for it. None otherwise.
     correlation_id: str | None
+    # True only for the broker's own af-mcp entry (ServiceSpec.builtin,
+    # issue #240) -- the portal's cue to drop the identity-link/credential
+    # affordances that don't apply to the gateway itself.
+    builtin: bool
 
 
 class CatalogResponse(BaseModel):
@@ -407,6 +414,7 @@ async def get_catalog(
                 status=status,
                 status_detail=status_detail,
                 correlation_id=correlation_id,
+                builtin=spec.builtin,
             )
         )
     return CatalogResponse(servers=servers)

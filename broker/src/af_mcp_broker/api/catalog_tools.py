@@ -196,6 +196,21 @@ async def get_service_tools(
     if not allowed:
         return _respond(spec, "permission_required", [], policy)
 
+    if spec.builtin:
+        # The builtin af-mcp service's methods (issue #240) are the
+        # aggregator's own local tools (mcp/diagnostics.py) -- there is no
+        # backend to HTTP-fetch and no credential to resolve, so list them
+        # straight from the mounted FastMCP instance's local provider
+        # (stamped onto app.state at mount time in app.py). A bare app
+        # without one (misassembled test double) degrades to "unavailable"
+        # rather than passing off an empty method list as the truth.
+        aggregator = getattr(request.app.state, "mcp_aggregator", None)
+        if aggregator is None:
+            return _respond(spec, "unavailable", [], policy)
+        local_tools = await aggregator.local_provider.list_tools()
+        tools = sorted((tool.name, tool.description or "") for tool in local_tools)
+        return _respond(spec, "ok", tools, policy)
+
     credential_registry = _get_credential_registry(request)
     broker_token_issuer = getattr(request.app.state, "broker_token_issuer", None)
     headers, skip_reason = await resolve_list_time_credential(

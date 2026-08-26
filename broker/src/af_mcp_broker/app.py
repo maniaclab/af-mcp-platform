@@ -878,6 +878,12 @@ app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 # FastAPI middleware chain after the mount point.
 app.mount("/mcp", _mcp_aggregator_app)
 
+# The mounted aggregator instance itself, for /v1 routes that read the
+# broker's own local tools: GET /v1/catalog/af-mcp/tools (api/catalog_tools.py)
+# lists the builtin af-mcp service's methods straight from this instance's
+# local provider instead of HTTP-fetching a backend (issue #240).
+app.state.mcp_aggregator = _mcp_aggregator
+
 app.include_router(v1_router)
 app.include_router(wellknown_router)
 

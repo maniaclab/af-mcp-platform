@@ -36,7 +36,13 @@ from af_mcp_broker.credentials import (
     IssuedCredential,
 )
 from af_mcp_broker.identity import keycloak_dependency
-from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
+from af_mcp_broker.mcp.diagnostics import register_diagnostic_tools
+from af_mcp_broker.mcp.registry import (
+    BUILTIN_SERVICE_NAME,
+    DIAGNOSTIC_TOOL_NAMES,
+    ServiceRegistry,
+    ServiceSpec,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
@@ -599,4 +605,69 @@ async def test_cache_never_masks_a_degraded_callers_status(
     second = await _get_tools(app, "secure")
     body = second.json()
     assert body["status"] == "not_linked"
+    assert body["tools"] == []
+
+
+# ---------------------------------------------------------------------------
+# The builtin af-mcp service (issue #240): its methods are the aggregator's
+# own local tools, so the endpoint lists them straight from the mounted
+# FastMCP instance's local provider -- no backend HTTP fetch, no credential.
+# ---------------------------------------------------------------------------
+
+
+def _aggregator_with_diagnostic_tools(
+    registry: ServiceRegistry, policy: EntitlementPolicy, settings: Any
+) -> FastMCP:
+    """A FastMCP instance carrying the real af_* methods, wired the same way
+    build_aggregator()/populate_aggregator() wire them (mcp/diagnostics.py's
+    register_diagnostic_tools), so the listing below exercises the genuine
+    tool names and descriptions rather than doubles."""
+    mcp = FastMCP(name="test-aggregator")
+    register_diagnostic_tools(
+        mcp, registry, policy, CredentialRegistry(), {}, {}, {}, settings
+    )
+    return mcp
+
+
+async def test_builtin_service_lists_the_af_methods_locally(
+    policy: EntitlementPolicy, make_principal: Callable[..., Any], settings: Any
+) -> None:
+    """A zero-permission principal (the builtin's whole point: af_whoami/
+    af_link_identity are the bootstrap methods) lists every af_* method with
+    its real description -- served from the local provider, no network."""
+    registry = ServiceRegistry()
+    app, state = _make_app(registry, policy)
+    app.state.mcp_aggregator = _aggregator_with_diagnostic_tools(
+        registry, policy, settings
+    )
+    state["principal"] = make_principal(groups=[])
+
+    resp = await _get_tools(app, BUILTIN_SERVICE_NAME)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["name"] == BUILTIN_SERVICE_NAME
+    assert body["status"] == "ok"
+    tools = {t["name"]: t for t in body["tools"]}
+    assert set(tools) == set(DIAGNOSTIC_TOOL_NAMES)
+    for tool in tools.values():
+        assert tool["description"]
+        assert tool["action_type"] == "read"
+    # Light payload by design, same as every other service's listing.
+    assert "inputSchema" not in resp.text
+
+
+async def test_builtin_service_degrades_to_unavailable_without_an_aggregator(
+    policy: EntitlementPolicy, make_principal: Callable[..., Any]
+) -> None:
+    """A bare app with no mounted aggregator on app.state (shouldn't happen
+    in production -- app.py stamps it at mount time) reports "unavailable"
+    rather than pretending an empty method list is the truth."""
+    registry = ServiceRegistry()
+    app, state = _make_app(registry, policy)
+    state["principal"] = make_principal(groups=[])
+
+    resp = await _get_tools(app, BUILTIN_SERVICE_NAME)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "unavailable"
     assert body["tools"] == []
