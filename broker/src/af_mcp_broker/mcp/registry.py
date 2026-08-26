@@ -111,7 +111,7 @@ class ServiceSpec:
 
 
 def _builtin_service_spec() -> ServiceSpec:
-    """The broker's own ``af-mcp`` service entry (issue #240).
+    """Build the broker's own ``af-mcp`` service entry (issue #240).
 
     Self-registered by every ``ServiceRegistry`` so the broker-native af_*
     methods (mcp/diagnostics.py) are a first-class service: visible in

@@ -215,6 +215,16 @@ their JWT-audience-bearing names until a rename can be coordinated. Methods
 documents the convention for new services — it renames nothing that already
 exists.
 
+**Reserved: the `af` prefix and the `af-mcp` name.** The registry always
+carries a builtin `af-mcp` service (issue #240) — the gateway's own
+identity, catalog, and usage methods (`af_whoami`, `af_list_identities`,
+`af_list_mcp_servers`, `af_link_identity`, `af_usage`), served by the
+aggregator itself rather than proxied to any backend. It is not a
+`services.yaml` entry and cannot be one: an entry claiming the `af` prefix
+or the `af-mcp` name fails registration with a clear error, since either
+would let a configured service shadow (or replace) the methods a caller
+relies on precisely when everything else is broken.
+
 ---
 
 ## Step 2 — Pick (or reuse) a permission for the service
