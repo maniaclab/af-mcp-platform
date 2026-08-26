@@ -1,0 +1,25 @@
+# Exercises the tracing template paths (OTEL_EXPORTER_OTLP_ENDPOINT, the
+# parentbased_traceidratio sampler pair, and the NetworkPolicy egress rule to
+# the collector) so a broken render is caught by CI's `ct lint`, which lints
+# the chart once per values file in this directory. Placeholder example.com
+# values, same caveats as test-values.yaml; no collector needs to exist for
+# linting -- the broker is an emitter only.
+oidc:
+  issuer: "https://keycloak.example.com/realms/example"
+portal:
+  oidc:
+    clientId: "example-portal-client"
+    scope: "openid profile email example-audience"
+  brokerOrigin: "https://mcp.example.com"
+
+broker:
+  tracing:
+    enabled: true
+    endpoint: "http://otel-collector.observability:4318"
+    sampleRatio: "0.25"
+    networkPolicy:
+      namespaceSelector:
+        kubernetes.io/metadata.name: "observability"
+      podSelector:
+        app.kubernetes.io/name: "opentelemetry-collector"
+      port: 4318
