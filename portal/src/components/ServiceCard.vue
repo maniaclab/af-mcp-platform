@@ -102,7 +102,10 @@ async function toggleTools() {
           </span>
         </span>
 
-        <span class="bc__badge-wrap">
+        <!-- The builtin af-mcp entry (issue #240) has no per-user credential
+             concept at all -- a "none" credential-type badge would read like
+             a state to fix, so it renders no badge instead. -->
+        <span v-if="!server.builtin" class="bc__badge-wrap">
           <button type="button" class="bc__auth-badge" :aria-describedby="`bc-auth-${server.name}`">
             {{ server.auth_type }}
           </button>
@@ -140,8 +143,10 @@ async function toggleTools() {
       </div>
     </div>
 
-    <!-- Powered by -->
-    <div class="bc__powered-by">
+    <!-- Powered by -- omitted for the builtin af-mcp entry (issue #240):
+         the gateway powers itself, there is no identity to link or
+         credential provider to name. -->
+    <div v-if="!server.builtin" class="bc__powered-by">
       <span class="bc__powered-by-label">Powered by:</span>
       <span v-if="poweredBy.kind === 'none'" class="bc__powered-by-value">
         {{ poweredBy.label }}

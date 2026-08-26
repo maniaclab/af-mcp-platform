@@ -39,6 +39,22 @@ const SERVER: CatalogServer = {
   status: 'available',
   status_detail: 'Available.',
   correlation_id: null,
+  builtin: false,
+};
+
+/** The broker's own af-mcp entry as /v1/catalog reports it (issue #240). */
+const BUILTIN_SERVER: CatalogServer = {
+  name: 'af-mcp',
+  display_name: 'AF Gateway',
+  description: "The gateway's own identity, catalog, and usage methods.",
+  permission: '__none__',
+  auth_type: 'none',
+  action_type: 'read',
+  credential_provider: null,
+  status: 'available',
+  status_detail: 'Available.',
+  correlation_id: null,
+  builtin: true,
 };
 
 function listing(overrides: Partial<ServerToolsResponse> = {}): ServerToolsResponse {
@@ -69,6 +85,22 @@ function mountCard(): VueWrapper {
         label: 'ATLAS IAM',
         linked: true,
         linkHref: '/identities/',
+      },
+    },
+  });
+}
+
+function mountBuiltinCard(): VueWrapper {
+  return mount(ServiceCard, {
+    props: {
+      server: BUILTIN_SERVER,
+      // What CatalogPage's resolvePoweredBy produces for a null
+      // credential_provider -- the builtin card never renders it.
+      poweredBy: {
+        kind: 'none' as const,
+        label: 'No credential required',
+        linked: null,
+        linkHref: null,
       },
     },
   });
@@ -185,5 +217,44 @@ describe('Tools accordion', () => {
 
     expect(wrapper.find('.bc__tools-error').exists()).toBe(true);
     expect(wrapper.text()).toContain('boom');
+  });
+});
+
+describe('builtin af-mcp card (issue #240)', () => {
+  it('renders no credential-type badge and no Powered by row', () => {
+    // The gateway itself has no per-user credential, no identity to link,
+    // and no backend that could be unreachable -- the card drops those
+    // affordances entirely instead of showing "none"/"No credential
+    // required" rows that read like states to fix.
+    const wrapper = mountBuiltinCard();
+
+    expect(wrapper.find('.bc__auth-badge').exists()).toBe(false);
+    expect(wrapper.find('.bc__powered-by').exists()).toBe(false);
+    // "__none__" already suppresses the permission badge, same as any other
+    // open service.
+    expect(wrapper.find('.bc__cap-badge').exists()).toBe(false);
+  });
+
+  it('still lists its methods through the same fetch-on-expand accordion', async () => {
+    vi.mocked(fetchServerTools).mockResolvedValueOnce(
+      listing({
+        name: 'af-mcp',
+        display_name: 'AF Gateway',
+        status: 'ok',
+        tools: [
+          { name: 'af_whoami', description: 'Who am I.', action_type: 'read' },
+          { name: 'af_usage', description: 'My usage.', action_type: 'read' },
+        ],
+      }),
+    );
+    const wrapper = mountBuiltinCard();
+
+    await toolsToggle(wrapper).trigger('click');
+    expect(fetchServerTools).toHaveBeenCalledWith('af-mcp');
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('af_whoami');
+    expect(wrapper.text()).toContain('af_usage');
+    expect(countChip(wrapper)).toBe('2 methods');
   });
 });
