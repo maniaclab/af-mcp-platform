@@ -137,14 +137,16 @@ async def test_tool_with_unknown_prefix_is_denied(registry, policy, make_princip
 
 
 @pytest.mark.parametrize("tool_name", sorted(DIAGNOSTIC_TOOL_NAMES))
-async def test_diagnostic_tool_visible_to_principal_with_no_permissions(
+async def test_af_method_visible_to_principal_with_no_permissions(
     registry, policy, make_principal, tool_name
 ):
-    """Requirement (issue #153): the af_* diagnostic tools must stay visible
-    regardless of entitlements -- unlike every other tool here, they need no
-    permission and no registered backend at all, so a principal with zero
-    group memberships (zero permissions) must still see them, exactly as if
-    they were fully entitled."""
+    """Requirement (issues #153/#240): the af_* methods must stay visible
+    regardless of entitlements -- they are how a caller self-diagnoses a
+    missing/denied tool elsewhere, so a principal with zero group
+    memberships (zero permissions) must still see them. Since issue #240
+    this is the normal filtering path, not a name-based bypass: the prefix
+    maps to the builtin af-mcp service, whose "__none__" permission admits
+    any authenticated principal."""
     mw = EntitlementMiddleware(registry, policy)
     principal = make_principal(groups=[])
     context = _FakeMiddlewareContext(_FakeFastMCPContext({"principal": principal}))
