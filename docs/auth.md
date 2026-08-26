@@ -729,7 +729,8 @@ is why introspection, RFC 7662, exists at all).
 3. **`GET /v1/oauth/authorize`** validates the client's CIMD document and
    `redirect_uri`, then redirects the browser to Keycloak's own login using
    the broker's *own* confidential client (see "Operator setup: the MCP
-   OAuth discovery bootstrap login client" below) — PKCE plus a Fernet-
+   OAuth discovery bootstrap login client" below), requesting
+   `scope=openid mcp-gateway` — PKCE plus a Fernet-
    encrypted `state` token (`oauth_state.py`'s `McpAuthorizePayload`,
    sibling to the account-linking flow's `StatePayload`) carrying the MCP
    client's own pending `redirect_uri`/`state`/PKCE challenge across the
@@ -737,7 +738,17 @@ is why introspection, RFC 7662, exists at all).
 4. **`GET /v1/oauth/keycloak-login/callback`** receives Keycloak's redirect
    back (nonce-cookie CSRF check, same shape as the account-linking flow's
    callback), exchanges the code at Keycloak's token endpoint, verifies the
-   resulting `id_token`, and mints a short-lived, single-use, in-process
+   resulting `id_token`, and — issue #245 — verifies the exchange's
+   **access token** against the broker's `mcp-gateway` audience with the
+   same decode `/v1` applies to every bearer
+   (`identity.decode_broker_bearer`). The id_token proves *who* logged in;
+   the access token proves they're *entitled*: Keycloak only mints the
+   audience for users who pass the `mcp-gateway` scope's role filter (see
+   "Client scope Scope tab: a filter, not a grant" below), so a user it
+   refuses the audience to gets an `access_denied` redirect — no
+   authorization code, no PAT — symmetric with the `TokenAudienceError` a
+   JWT caller would get on `/mcp`. Only then does the broker mint a
+   short-lived, single-use, in-process
    authorization code (`mcp_auth_codes.py` — a few seconds' lifetime, not
    Vault-backed; a broker restart mid-flow just means the MCP client retries
    from `/authorize`) before redirecting the browser back to the MCP
@@ -776,7 +787,12 @@ would degrade into whack-a-mole against tokens the leaked one itself
 created (GitHub disallows this by default for the same reason). A PAT is
 therefore always traceable back to an interactive Keycloak login, whether
 initiated from the portal or from the MCP OAuth discovery bootstrap flow
-above — both authenticate via Keycloak first. The portal SPA itself is
+above — both authenticate via Keycloak first, and (issue #245) both mints
+sit behind the same `mcp-gateway` audience gate: the portal mint because
+`POST /v1/tokens` requires an audienced Keycloak JWT like the rest of
+`/v1`, the bootstrap mint because its callback verifies the login
+exchange's access token against that same audience before an
+authorization code is ever issued. The portal SPA itself is
 never issued a PAT — it keeps using its short-lived Keycloak JWT, since
 handing a long-lived credential to browser storage would be strictly worse
 than a JWT that expires in minutes.
@@ -1038,7 +1054,24 @@ Secret in place.
 5. **Advanced → Proof Key for Code Exchange Code Challenge Method: S256** —
    the broker always sends PKCE on this leg in addition to the client
    secret, defence in depth rather than a substitute for either.
-6. Note the client's **Client ID** and, from the **Credentials** tab, its
+6. **Client scopes → Add client scope → `mcp-gateway`, attached as
+   `Default`** — REQUIRED (issue #245). The bootstrap callback verifies
+   this login's access token against the broker's `mcp-gateway` audience —
+   the same gate `/v1` applies to every bearer — and the audience only
+   appears in tokens minted through a client that has the scope (and its
+   Audience mapper) attached. *Default* means Keycloak evaluates the scope
+   on every token request from this client, with no `scope=` request
+   needed; *Optional* means only when explicitly requested — the broker
+   does request it, so Optional also works, but Default is the required
+   baseline so the gate cannot be skipped. In both cases the scope's own
+   Scope-tab role filter still decides *per user* whether the audience is
+   actually minted — see "Client scope Scope tab: a filter, not a grant"
+   below. **Fail-closed symptom:** with this attachment missing, no access
+   token from this client ever carries the audience, so *every* bootstrap
+   login — entitled users included — ends in an `access_denied` redirect
+   back to the MCP client (the broker logs
+   `mcp_oauth.bootstrap_not_entitled`).
+7. Note the client's **Client ID** and, from the **Credentials** tab, its
    **Client secret**. These become `TOKEN_MINT_CLIENT_ID`/
    `TOKEN_MINT_CLIENT_SECRET`.
 
