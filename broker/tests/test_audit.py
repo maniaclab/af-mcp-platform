@@ -137,6 +137,52 @@ async def test_write_audit_token_id_serializes_when_set() -> None:
     assert line["token_id"] == "pat-lookup-1"
 
 
+async def test_write_audit_nickname_defaults_none() -> None:
+    """nickname (issue #199) must default to None so every pre-existing call
+    site -- and every non-x509 record, which has no grid identity to
+    attribute -- still serializes, with an explicit null."""
+    buffer = io.StringIO()
+    init_audit_logger(buffer)
+
+    record = AuditRecord(
+        principal_sub="sub-abc",
+        principal_uid=1000,
+        permission="submit_jobs",
+        target="panda",
+        action="submit_task",
+        action_type="state_change",
+        args_summary="task=...",
+        timestamp=1234.5,
+        request_id="req-1",
+    )
+    await write_audit(record)
+
+    line = json.loads(buffer.getvalue().strip())
+    assert line["nickname"] is None
+
+
+async def test_write_audit_nickname_serializes_when_set() -> None:
+    buffer = io.StringIO()
+    init_audit_logger(buffer)
+
+    record = AuditRecord(
+        principal_sub="sub-abc",
+        principal_uid=1000,
+        permission=None,
+        target="ami",
+        action="x509_proxy_release",
+        action_type="read",
+        args_summary="proxy released to backend 'ami'",
+        timestamp=1234.5,
+        request_id="req-1",
+        nickname="jdoe",
+    )
+    await write_audit(record)
+
+    line = json.loads(buffer.getvalue().strip())
+    assert line["nickname"] == "jdoe"
+
+
 async def test_write_audit_runs_write_and_flush_off_the_event_loop_thread() -> None:
     """AuditLogger.write must not block the event loop: the output can be a
     real file (or stdout redirected to one) whose write/flush block, so both

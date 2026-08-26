@@ -508,8 +508,15 @@ def _release_audit(
     outcome: str,
     args_summary: str,
     error: str | None = None,
+    nickname: str | None = None,
 ) -> AuditRecord:
-    """One ``x509_proxy_release`` audit record — shared by the legacy and Vault redeem paths so every release (and every failed renewal) is shaped identically."""
+    """One ``x509_proxy_release`` audit record — shared by the legacy and Vault redeem paths so every release (and every failed renewal) is shaped identically.
+
+    ``nickname`` is the resolved VOMS nickname of the released proxy (issue
+    #199) — supplied only on the Vault success path, where the store record
+    carries it; the legacy path (ProxyMeta has no nickname) and every failure
+    path (no proxy resolved) leave it null.
+    """
     return AuditRecord(
         principal_sub=subject,
         principal_uid=uid,
@@ -522,6 +529,7 @@ def _release_audit(
         request_id=request_id,
         outcome=outcome,
         error=error,
+        nickname=nickname,
     )
 
 
@@ -605,6 +613,7 @@ async def _redeem_from_vault(
                 if renewed
                 else f"proxy released to backend {audience!r}"
             ),
+            nickname=record.nickname,
         )
     )
     now = time.time()

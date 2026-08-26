@@ -216,6 +216,9 @@ class TestRedeem:
         assert releases[0]["principal_sub"] == "sub-abc"
         assert releases[0]["target"] == "ami"
         assert releases[0]["outcome"] == "success"
+        # Legacy ProxyMeta carries no nickname (see test_legacy_path_has_no_nickname),
+        # so the release audit record's nickname (issue #199) stays null here.
+        assert releases[0]["nickname"] is None
 
     def test_legacy_path_has_no_nickname(
         self, x509_redeem_env, app_client_factory, tmp_path: Path

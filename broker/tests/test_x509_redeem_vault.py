@@ -170,6 +170,41 @@ class TestRedeemVaultServe:
         assert resp.status_code == 200, resp.text
         assert resp.json()["nickname"] == "jdoe"
 
+    async def test_stored_nickname_is_recorded_in_the_release_audit(
+        self, service_app
+    ) -> None:
+        """issue #199: the resolved nickname is the grid identity the released
+        proxy authenticates as -- an operator grepping the audit trail during
+        an incident must be able to see which CERN/Rucio account a credential
+        was actually usable as, not just the AF principal."""
+        client, store, _, state = service_app
+        await _seed_link(store)
+        await _seed_proxy(store, nickname="jdoe")
+
+        resp = _redeem(client, _mint_token(client))
+
+        assert resp.status_code == 200, resp.text
+        releases = _release_audit_records(state)
+        assert len(releases) == 1
+        assert releases[0]["outcome"] == "success"
+        assert releases[0]["nickname"] == "jdoe"
+
+    async def test_missing_nickname_records_none_in_the_release_audit(
+        self, service_app
+    ) -> None:
+        """A record stored before voms-token-service shipped nicknames still
+        releases successfully, with the audit nickname simply absent."""
+        client, store, _, state = service_app
+        await _seed_link(store)
+        await _seed_proxy(store)
+
+        resp = _redeem(client, _mint_token(client))
+
+        assert resp.status_code == 200, resp.text
+        releases = _release_audit_records(state)
+        assert len(releases) == 1
+        assert releases[0]["nickname"] is None
+
     async def test_missing_nickname_serves_as_none(self, service_app) -> None:
         """A record stored before voms-token-service shipped nicknames must
         still redeem successfully, with nickname simply absent."""
