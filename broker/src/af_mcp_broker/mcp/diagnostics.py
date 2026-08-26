@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import contextlib
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated
 
 from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_context
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from af_mcp_broker.api.permissions import ServiceStatus, _service_status
 from af_mcp_broker.authorization import get_principal_permissions
@@ -13,8 +13,15 @@ from af_mcp_broker.mcp.registry import (
     LINK_IDENTITY_TOOL_NAME,
     LIST_IDENTITIES_TOOL_NAME,
     LIST_MCP_SERVERS_TOOL_NAME,
+    USAGE_TOOL_NAME,
     WHOAMI_TOOL_NAME,
     identity_provider_url,
+)
+from af_mcp_broker.usage import get_usage_store
+from af_mcp_broker.usage.summary import (
+    UnknownCostModelError,
+    UsageResponse,
+    build_usage_summary,
 )
 
 if TYPE_CHECKING:
@@ -146,6 +153,7 @@ def register_diagnostic_tools(
         LIST_IDENTITIES_TOOL_NAME,
         LIST_MCP_SERVERS_TOOL_NAME,
         LINK_IDENTITY_TOOL_NAME,
+        USAGE_TOOL_NAME,
     ):
         with contextlib.suppress(KeyError):
             mcp.local_provider.remove_tool(name)
@@ -221,6 +229,44 @@ def register_diagnostic_tools(
             url=identity_provider_url(settings, provider),
             already_linked=await identity_providers[provider].is_linked(principal),
         )
+
+    @mcp.tool(name=USAGE_TOOL_NAME)
+    async def _usage(
+        days: Annotated[int, Field(ge=1, le=365)] = 30,
+        model: str | None = None,
+    ) -> UsageResponse:
+        """Return the caller's own tool-call usage over a trailing window.
+
+        The same data `GET /v1/usage` serves: window totals plus
+        per-service and per-day aggregates of the caller's tool calls (and
+        nobody else's -- the subject comes from the authenticated
+        principal, never a parameter). Honesty caveats to relay to the
+        user: token counts are a tiktoken (o200k) ESTIMATE of the
+        tool-result text injected into the LLM client's context -- not
+        provider-reported usage, and not the user's full LLM spend -- and
+        `estimated_cost_usd` is that estimate priced at the chosen model's
+        *input* rate. `days` is the trailing window in UTC calendar days
+        (1..365, today inclusive); `model` picks the tokencost price-table
+        key to price at (default: the broker's configured reference
+        model). Needs no permission of its own and never contacts a
+        service.
+        """
+        principal = await _require_principal()
+        # The process-wide store app.py's lifespan installed -- None outside
+        # the lifespan, which build_usage_summary degrades to an empty
+        # window (mirroring GET /v1/usage's own bare-router behavior).
+        try:
+            return await build_usage_summary(
+                get_usage_store(),
+                principal.subject,
+                days,
+                model,
+                settings.cost_reference_model,
+            )
+        except UnknownCostModelError as exc:
+            # Mirror the endpoint's 422 semantics: same message, tool-error
+            # shape (never enumerates the table's thousands of keys).
+            raise ToolError(str(exc)) from exc
 
     @mcp.tool(name=LIST_MCP_SERVERS_TOOL_NAME)
     async def _list_mcp_servers() -> list[DiagnosticMcpServer]:

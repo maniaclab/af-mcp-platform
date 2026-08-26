@@ -105,9 +105,16 @@ into the LLM client's context — not provider-reported usage, and not the
 user's full LLM spend — and `estimated_cost_usd` is that estimate priced
 at the chosen model's input rate.
 
+An MCP client doesn't need to leave the MCP surface for this: the
+broker-native `af_usage` tool (alongside `af_whoami` and the other `af_*`
+tools) returns the same payload — totals, `by_service`, `by_day` — for the
+calling principal, with the same `days`/`model` parameters and the same
+honesty caveats in its tool description, so the LLM can relay them.
+
 The portal shows the same numbers as a usage card on its overview page
 (`mcp-portal.af.uchicago.edu/overview/`), labeled with the same estimate
-caveat.
+caveat, and in full — window selector, per-service table, daily activity —
+on its Usage page (`mcp-portal.af.uchicago.edu/usage/`).
 
 ## Operator: the usage store
 
@@ -140,6 +147,24 @@ The recipe:
           databases: ["usage"]
       # instances, storage, postgresVersion, … per your facility's PGO defaults
     ```
+
+    **Give the user a writable schema** (learned in production): PGO can
+    create a schema owned by the user automatically via the
+    `postgres-operator.crunchydata.com/autoCreateUserSchema: "true"`
+    annotation on the `PostgresCluster`, but that annotation requires
+    **PGO ≥ 5.6**. On older operators (this facility runs 5.5.0) with
+    Postgres ≥ 15 — where `public` is no longer world-writable — the user
+    ends up with no writable schema at all, and the broker's startup DDL
+    fails with `permission denied for schema public`. The fix is to create
+    the user-owned schema yourself, in the user's database:
+
+    ```sql
+    CREATE SCHEMA IF NOT EXISTS broker AUTHORIZATION broker;
+    ```
+
+    ideally declaratively at cluster bootstrap via `spec.databaseInitSQL`
+    (a ConfigMap of SQL PGO runs once at cluster creation), or as a single
+    manual `psql` against an already-running cluster.
 
 2. PGO generates a secret named `<cluster>-pguser-<user>`
    (here `af-mcp-usage-pguser-broker`) whose `uri` key is exactly the

@@ -45,6 +45,10 @@ const navGroups: {
     label: 'Credentials',
     items: [{ href: '/tokens/', label: 'Tokens', icon: 'key', badge: true }],
   },
+  {
+    label: 'Activity',
+    items: [{ href: '/usage/', label: 'Usage', icon: 'chart', badge: false }],
+  },
 ];
 
 // Decorative stroke icons (aria-hidden), one or more path `d` strings each,
@@ -59,6 +63,8 @@ const icons: Record<string, string[]> = {
     'M16.2 7.6l2.2 2.2',
   ],
   shield: ['M12 3l7 3v5.2c0 4.3-2.9 8.2-7 9.8-4.1-1.6-7-5.5-7-9.8V6l7-3z'],
+  // Same bar-chart glyph the overview's UsageCard draws.
+  chart: ['M4 19.5V10', 'M10 19.5V4.5', 'M16 19.5v-8', 'M4 19.5h16'],
 };
 
 const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
