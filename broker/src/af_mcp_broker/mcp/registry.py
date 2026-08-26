@@ -124,6 +124,16 @@ class ServiceSpec:
     # app's deployment manifests in the GitOps repo (maniaclab/flux_apps#32),
     # not here.
     trust_tier: TrustTier | None = None
+    # Model-facing policy/guidance the LLM agent reads and reasons over before
+    # deciding whether and how to call this service's tools -- the model-facing
+    # half of "dual enforcement" (Elwood v5 re-review finding #6). DISTINCT from
+    # `description` (user-facing catalog UX shown in the portal) and from the
+    # authorization policy.yaml/required_permission gate (the technical
+    # permission boundary). This text is guidance the agent reasons over, NOT an
+    # access-control boundary: the technical gate remains authoritative. The
+    # aggregator composes each service's agent_policy into its FastMCP
+    # instructions (see mcp/instructions.py). None when undeclared.
+    agent_policy: str | None = None
 
     def __post_init__(self) -> None:
         # trust_tier from services.yaml arrives as an arbitrary string (yaml
@@ -173,6 +183,17 @@ def _builtin_service_spec() -> ServiceSpec:
         # key and the token store behind every linked user's credentials. Its
         # own builtin entry is the first concrete instance of trust_tier.
         trust_tier="infrastructure-tier",
+        # Model-facing guidance for the gateway's own methods: these are the
+        # agent's orientation and self-service tools. Read-only except
+        # af_link_identity, which the agent should surface whenever a service
+        # reports a missing or unlinked credential rather than retrying.
+        agent_policy=(
+            "The gateway's own identity and catalog methods. af_whoami, "
+            "af_list_identities, af_list_mcp_servers, and af_usage are "
+            "read-only orientation tools. When another service fails because "
+            "the caller has no linked identity, route the user to "
+            "af_link_identity (or the portal) instead of retrying the call."
+        ),
     )
 
 
@@ -210,6 +231,7 @@ class ServiceRegistry:
                 timeout_seconds=entry.get("timeout_seconds", 30.0),
                 tools_cache_ttl=entry.get("tools_cache_ttl", 300.0),
                 trust_tier=entry.get("trust_tier"),
+                agent_policy=entry.get("agent_policy"),
             )
             self.register(spec)
 

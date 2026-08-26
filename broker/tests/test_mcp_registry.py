@@ -428,6 +428,88 @@ def test_shipped_services_declare_trust_tier(name: str, tier: str) -> None:
     assert spec.trust_tier == tier
 
 
+# ---------------------------------------------------------------------------
+# Model-facing per-service policy (agent_policy) -- the "dual enforcement"
+# (Elwood v5 re-review finding #6) model-facing half. DISTINCT from the
+# technical permission gate: agent_policy is guidance the LLM agent reads and
+# reasons over, NOT an access-control boundary. It is also distinct from
+# `description` (user-facing catalog UX).
+# ---------------------------------------------------------------------------
+
+
+def test_agent_policy_defaults_to_none() -> None:
+    spec = ServiceSpec(
+        name="example",
+        prefix="example",
+        url="http://example.invalid/mcp",
+        transport="http",
+        required_permission="__none__",
+    )
+    assert spec.agent_policy is None
+
+
+def test_load_parses_agent_policy(tmp_path: Path) -> None:
+    services_file = tmp_path / "services.yaml"
+    services_file.write_text(
+        """
+services:
+  - name: example
+    prefix: example
+    url: "http://example.invalid/mcp"
+    required_permission: __none__
+    agent_policy: "Read-only; safe to call without confirmation."
+"""
+    )
+    registry = ServiceRegistry()
+    registry.load(str(services_file))
+    spec = registry.get("example")
+    assert spec is not None
+    assert spec.agent_policy == "Read-only; safe to call without confirmation."
+
+
+def test_load_defaults_agent_policy_none_when_absent(tmp_path: Path) -> None:
+    services_file = tmp_path / "services.yaml"
+    services_file.write_text(
+        """
+services:
+  - name: example
+    prefix: example
+    url: "http://example.invalid/mcp"
+    required_permission: __none__
+"""
+    )
+    registry = ServiceRegistry()
+    registry.load(str(services_file))
+    spec = registry.get("example")
+    assert spec is not None
+    assert spec.agent_policy is None
+
+
+def test_builtin_af_mcp_service_declares_an_agent_policy() -> None:
+    """The builtin af-mcp service is the model's entry point for the identity
+    and catalog methods, so it carries model-facing guidance of its own."""
+    registry = ServiceRegistry()
+    spec = registry.get(BUILTIN_SERVICE_NAME)
+    assert spec is not None
+    assert spec.agent_policy is not None
+    assert spec.agent_policy.strip() != ""
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["rucio", "ami", "af-jupyterlab-mcp", "af-filesystem-mcp", "docs"],
+)
+def test_shipped_services_declare_agent_policy(name: str) -> None:
+    """The reference services.yaml carries model-facing guidance for each
+    service the agent should reason over before calling its tools."""
+    registry = ServiceRegistry()
+    registry.load(str(SHIPPED_SERVICES))
+    spec = registry.get(name)
+    assert spec is not None
+    assert spec.agent_policy is not None
+    assert spec.agent_policy.strip() != ""
+
+
 def test_link_identity_tool_name_is_reserved_diagnostic_tool() -> None:
     """af_link_identity (stage 1 of the elicitation/link-identity design) is
     a broker-native diagnostic tool like the other af_* methods -- it must be

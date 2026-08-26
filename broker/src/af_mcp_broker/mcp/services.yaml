@@ -20,6 +20,13 @@ services:
     trust_tier: user-tier
     display_name: Rucio
     description: ATLAS distributed data management — browse and query datasets, files, and replicas.
+    # Model-facing policy (dual enforcement, re-review #6): guidance the agent
+    # reasons over — distinct from the user-facing description above.
+    agent_policy: >-
+      Read-only DID, replica, and rule *queries* are safe. Creating, updating,
+      or deleting replication rules changes real data placement across the
+      grid — confirm the exact DID and RSE with the user before any add/update/
+      delete rule call.
     # OIDCProvider returns the stored IAM-brokered token.
     # rucio-mcp handles the aud=rucio RFC 8693 exchange itself.
     auth_type: bearer
@@ -44,6 +51,9 @@ services:
     trust_tier: user-tier
     display_name: AMI
     description: ATLAS Metadata Interface — dataset provenance and metadata catalogs.
+    agent_policy: >-
+      Metadata and provenance lookups are read-only and safe to call without
+      confirmation.
     # X509Provider mints a voms-proxy via the user's home-dir cert.
     auth_type: x509
 
@@ -57,6 +67,9 @@ services:
     trust_tier: service-tier
     display_name: ATLAS Open Data
     description: Metadata and access helpers for ATLAS Open Data releases.
+    agent_policy: >-
+      Read-only metadata and access helpers for public Open Data — safe to
+      call without confirmation.
     # ServiceProvider: on_behalf with AF service credential.
     auth_type: none
 
@@ -70,6 +83,10 @@ services:
     trust_tier: service-tier
     display_name: JupyterLab
     description: Start, stop, and configure JupyterLab notebook servers on the Analysis Facility.
+    agent_policy: >-
+      Listing servers, images, and GPU availability is read-only. Creating or
+      deleting a Jupyter server starts or stops real shared compute (and can
+      claim a GPU) — confirm with the user before any create/delete call.
     # Authorization via broker-issued identity JWT (aud=af-jupyterlab-mcp); no shared secret.
     auth_type: bearer
     timeout_seconds: 120   # phase 2 nested execute calls will need this later; harmless now
@@ -85,6 +102,9 @@ services:
     trust_tier: user-tier
     display_name: Filesystem
     description: Browse and read files in your Analysis Facility home directory.
+    agent_policy: >-
+      Reads the caller's own home directory only, and is read-only — never
+      treat any path here as writable, and do not attempt to modify files.
     # af-filesystem-mcp's tools are already self-prefixed (fs_list, fs_stat,
     # fs_read, fs_grep, ...); namespacing again would produce fs_fs_*, same
     # rationale as rucio's apply_namespace: false above.
@@ -100,6 +120,9 @@ services:
     trust_tier: service-tier
     display_name: Monitoring
     description: Grafana dashboards and metrics for facility monitoring.
+    agent_policy: >-
+      Reads shared facility dashboards and metrics — read-only, safe to call
+      without confirmation.
     auth_type: none
 
   - name: docs
@@ -112,4 +135,7 @@ services:
     trust_tier: user-tier
     display_name: Docs
     description: Search and browse Analysis Facility documentation.
+    agent_policy: >-
+      Read-only documentation search and retrieval — safe to call without
+      confirmation.
     auth_type: none
