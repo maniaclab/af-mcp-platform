@@ -11,6 +11,7 @@
 import { ref, onMounted } from 'vue';
 import { fetchUsage } from '../lib/api';
 import type { UsageResponse } from '../lib/api';
+import { formatCost, formatTokens } from '../lib/usageFormat';
 
 const usage = ref<UsageResponse | null>(null);
 const loading = ref(true);
@@ -25,16 +26,6 @@ onMounted(async () => {
     loading.value = false;
   }
 });
-
-function formatTokens(n: number): string {
-  return n.toLocaleString('en-US');
-}
-
-function formatCost(n: number): string {
-  // Tool-result costs are typically fractions of a cent -- keep enough
-  // precision that a nonzero estimate never rounds to a misleading $0.00.
-  return `$${n.toLocaleString('en-US', { maximumSignificantDigits: 3 })}`;
-}
 </script>
 
 <template>
@@ -69,6 +60,7 @@ function formatCost(n: number): string {
         {{ formatCost(usage.totals.estimated_cost_usd) }} estimated at {{ usage.cost_model }} input
         rate
       </span>
+      <a class="uc__link" href="/usage/">View usage details →</a>
     </div>
   </div>
 </template>
@@ -121,5 +113,17 @@ function formatCost(n: number): string {
 .uc__status--loading,
 .uc__status--empty {
   color: var(--color-af-dim);
+}
+
+.uc__link {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-af-teal);
+  text-decoration: none;
+  letter-spacing: 0.04em;
+}
+.uc__link:hover {
+  text-decoration: underline;
 }
 </style>

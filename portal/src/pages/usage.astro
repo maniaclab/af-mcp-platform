@@ -1,0 +1,41 @@
+---
+import Base from '../layouts/Base.astro';
+import UsagePage from '../components/UsagePage.vue';
+---
+
+<Base title="Usage">
+  <div class="page-header">
+    <h1 class="page-title">Usage</h1>
+    <p class="page-subtitle">
+      What your AI assistant's tool calls put into its context through this platform, over a
+      trailing window: call counts, estimated tokens, and an estimated cost priced at a reference
+      model's input rate. Estimates only — this is not your provider bill, and your prompts and the
+      model's own output are invisible to the platform.
+    </p>
+  </div>
+
+  <UsagePage client:load />
+</Base>
+
+<style>
+  .page-header {
+    margin-bottom: 1.75rem;
+  }
+
+  .page-title {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 1.5rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    color: var(--color-af-text);
+    margin: 0 0 0.5rem;
+  }
+
+  .page-subtitle {
+    font-size: 0.9375rem;
+    color: var(--color-af-dim);
+    line-height: 1.6;
+    margin: 0;
+    max-width: 52rem;
+  }
+</style>
