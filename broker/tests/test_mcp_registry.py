@@ -304,12 +304,136 @@ def test_get_by_tool_prefix_unaffected_by_apply_namespace() -> None:
     assert registry.get_by_tool_prefix("rucio_list_dids").name == "rucio"
 
 
+# ---------------------------------------------------------------------------
+# Trust tier (Elwood v5 / Shannon) as structured data -- docs/architecture.md's
+# "Trust tiers" section defines the vocabulary; ServiceSpec.trust_tier lets
+# services.yaml/the chart *declare* a service's posture machine-checkably
+# (re-review finding #5). The authoritative per-deployment assignment still
+# lives in the GitOps repo (maniaclab/flux_apps#32); this field is the
+# declaration, not the policy.
+# ---------------------------------------------------------------------------
+
+
+def test_trust_tier_defaults_to_none() -> None:
+    spec = ServiceSpec(
+        name="example",
+        prefix="example",
+        url="http://example.invalid/mcp",
+        transport="http",
+        required_permission="__none__",
+    )
+    assert spec.trust_tier is None
+
+
+def test_load_parses_trust_tier(tmp_path: Path) -> None:
+    services_file = tmp_path / "services.yaml"
+    services_file.write_text(
+        """
+services:
+  - name: example
+    prefix: example
+    url: "http://example.invalid/mcp"
+    required_permission: __none__
+    trust_tier: service-tier
+"""
+    )
+    registry = ServiceRegistry()
+    registry.load(str(services_file))
+    spec = registry.get("example")
+    assert spec is not None
+    assert spec.trust_tier == "service-tier"
+
+
+def test_load_defaults_trust_tier_none_when_absent(tmp_path: Path) -> None:
+    services_file = tmp_path / "services.yaml"
+    services_file.write_text(
+        """
+services:
+  - name: example
+    prefix: example
+    url: "http://example.invalid/mcp"
+    required_permission: __none__
+"""
+    )
+    registry = ServiceRegistry()
+    registry.load(str(services_file))
+    spec = registry.get("example")
+    assert spec is not None
+    assert spec.trust_tier is None
+
+
+def test_spec_rejects_unknown_trust_tier() -> None:
+    """A typo'd tier must fail loudly, not silently stick -- __post_init__
+    validates against the closed Elwood vocabulary."""
+    with pytest.raises(ValueError, match="trust_tier"):
+        ServiceSpec(
+            name="example",
+            prefix="example",
+            url="http://example.invalid/mcp",
+            transport="http",
+            required_permission="__none__",
+            trust_tier="platform-tier",  # type: ignore[arg-type]  # not an Elwood tier
+        )
+
+
+def test_load_rejects_unknown_trust_tier(tmp_path: Path) -> None:
+    services_file = tmp_path / "services.yaml"
+    services_file.write_text(
+        """
+services:
+  - name: example
+    prefix: example
+    url: "http://example.invalid/mcp"
+    required_permission: __none__
+    trust_tier: bogus-tier
+"""
+    )
+    registry = ServiceRegistry()
+    with pytest.raises(ValueError, match="trust_tier"):
+        registry.load(str(services_file))
+
+
+def test_builtin_af_mcp_service_is_infrastructure_tier() -> None:
+    """The broker is infrastructure-tier (docs/architecture.md's "The broker
+    is infrastructure-tier"): it holds the identity-token signing key and the
+    token store, so its own builtin service entry declares that posture as the
+    first concrete instance of the field."""
+    registry = ServiceRegistry()
+    spec = registry.get(BUILTIN_SERVICE_NAME)
+    assert spec is not None
+    assert spec.trust_tier == "infrastructure-tier"
+
+
+@pytest.mark.parametrize(
+    ("name", "tier"),
+    [
+        ("rucio", "user-tier"),
+        ("ami", "user-tier"),
+        ("atlasopenmagic", "service-tier"),
+        ("af-jupyterlab-mcp", "service-tier"),
+        ("af-filesystem-mcp", "user-tier"),
+        ("monitoring", "service-tier"),
+        ("docs", "user-tier"),
+    ],
+)
+def test_shipped_services_declare_trust_tier(name: str, tier: str) -> None:
+    """The reference services.yaml classifies each entry per the Trust tiers
+    doc: external-fronting / shared-infrastructure backends are service-tier;
+    per-user own-resource read (filesystem) and __none__ read-only (docs) are
+    user-tier."""
+    registry = ServiceRegistry()
+    registry.load(str(SHIPPED_SERVICES))
+    spec = registry.get(name)
+    assert spec is not None
+    assert spec.trust_tier == tier
+
+
 def test_link_identity_tool_name_is_reserved_diagnostic_tool() -> None:
     """af_link_identity (stage 1 of the elicitation/link-identity design) is
-    a broker-native diagnostic tool like the other three -- it must be in
-    DIAGNOSTIC_TOOL_NAMES so middleware special-cases it as always-callable,
+    a broker-native diagnostic tool like the other af_* methods -- it must be
+    in DIAGNOSTIC_TOOL_NAMES so middleware special-cases it as always-callable,
     no credential, no ProxyProvider, the same as af_whoami/af_list_identities/
-    af_list_mcp_servers."""
+    af_list_mcp_servers/af_usage."""
     assert LINK_IDENTITY_TOOL_NAME == "af_link_identity"
     assert LINK_IDENTITY_TOOL_NAME in DIAGNOSTIC_TOOL_NAMES
 

@@ -114,6 +114,25 @@ networkPolicy:
       - 8080
       - 9000
 
+# Exercises the aggregator.services -> services.yaml ConfigMap render in CI,
+# including the trust_tier field flowing through verbatim (re-review finding
+# #5), so a broken configmap-services.yaml render is caught by `helm template`.
+aggregator:
+  services:
+    - name: rucio-example
+      prefix: rucio
+      url: "http://rucio-mcp.example.svc.cluster.local/site/atlas"
+      transport: http
+      required_permission: read_data
+      apply_namespace: false
+      trust_tier: service-tier
+    - name: docs-example
+      prefix: docs
+      url: "http://docs-mcp.example.svc.cluster.local/mcp"
+      transport: http
+      required_permission: __none__
+      trust_tier: user-tier
+
 # Exercises the ranged entitlements.group_permissions template path in CI
 # so a broken policy.yaml render is caught by `helm template`, not just by
 # eyeballing the diff. Vocabulary matches the broker's built-in
