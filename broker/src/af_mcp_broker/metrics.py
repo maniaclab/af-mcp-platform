@@ -40,7 +40,7 @@ Cardinality policy -- read this before adding a label or a new metric:
 
 from __future__ import annotations
 
-from prometheus_client import Counter
+from prometheus_client import Counter, Gauge, Histogram
 
 tool_invocations_total = Counter(
     "af_mcp_tool_invocations_total",
@@ -57,10 +57,70 @@ tool_invocations_denied_total = Counter(
     ["service", "action_type"],
 )
 
+tool_duration_seconds = Histogram(
+    "af_mcp_tool_duration_seconds",
+    "Wall time of the downstream tool call (credential resolution plus the "
+    "backend call itself), by service, tool, and action_type. Observed on "
+    "success and error alike -- outcome is deliberately not a label; the "
+    "audit log is the per-outcome source of truth. No identity label -- "
+    "see module docstring. Buckets are sized for tool calls that can "
+    "include credential minting via ephemeral k8s Jobs (tens of seconds "
+    "to minutes), not just fast HTTP proxying.",
+    ["service", "tool", "action_type"],
+    buckets=(0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0),
+)
+
 tool_invocations_unmapped_total = Counter(
     "af_mcp_tool_invocations_unmapped_total",
     "Tool invocations whose name matched no registered service prefix. "
     "No labels -- see module docstring.",
+)
+
+metering_queue_overflow_total = Counter(
+    "af_mcp_metering_queue_overflow_total",
+    "Audit records that found the metering pipeline's queue full and were "
+    "written inline without measurement instead (audit/pipeline.py) -- "
+    "nothing is dropped, but a nonzero rate means tool calls are paying "
+    "for audit I/O again. No labels -- see module docstring.",
+)
+
+metering_queue_depth = Gauge(
+    "af_mcp_metering_queue_depth",
+    "Audit records currently waiting in the metering pipeline's queue "
+    "(audit/pipeline.py), updated after every enqueue and dequeue. No "
+    "labels -- see module docstring.",
+)
+
+metering_queue_delay_seconds = Gauge(
+    "af_mcp_metering_queue_delay_seconds",
+    "Time-in-queue (seconds) of the item the metering worker most recently "
+    "dequeued. A rising value means the worker is falling behind the "
+    "enqueue rate; together with metering_queue_depth and "
+    "metering_queue_overflow_total this is the empirical trigger for "
+    "introducing a distributed metering backend (audit/pipeline.py's "
+    "MeteringBackend seam). No labels -- see module docstring.",
+)
+
+metering_worker_processed_total = Counter(
+    "af_mcp_metering_worker_processed_total",
+    "Audit records fully processed by the metering worker -- written, "
+    "measured or not. No labels -- see module docstring.",
+)
+
+metering_worker_errors_total = Counter(
+    "af_mcp_metering_worker_errors_total",
+    "Measurement or audit-write failures in the metering pipeline's "
+    "processing path (audit/pipeline.py's warning sites) -- the record is "
+    "still written unmeasured where possible, never dropped. No labels -- "
+    "see module docstring.",
+)
+
+metering_records_missing_measurements_total = Counter(
+    "af_mcp_metering_records_missing_measurements_total",
+    "Success-path audit records written WITHOUT result measurements even "
+    "though a result was present to measure: the queue-overflow inline "
+    "fallback and the measurement-failure path (audit/pipeline.py). No "
+    "labels -- see module docstring.",
 )
 
 credential_cache_hits_total = Counter(

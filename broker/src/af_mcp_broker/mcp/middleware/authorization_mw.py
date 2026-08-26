@@ -10,6 +10,7 @@ from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 
 from af_mcp_broker import metrics
 from af_mcp_broker.audit import AuditRecord, write_audit
+from af_mcp_broker.audit.pipeline import submit_metered_audit
 from af_mcp_broker.authorization import (
     EntitlementPolicy,
     check_entitlement,
@@ -185,16 +186,29 @@ class AuthorizationMiddleware(Middleware):
             "authorized_call_target", service.name, serializable=False
         )
 
+        # Wall time of everything downstream of authorization -- credential
+        # resolution plus the backend call itself. Metered on the success and
+        # error paths alike (an error still spent this long); denied/unmapped
+        # calls above never executed anything, so their audit records carry
+        # duration_ms=None.
+        started = time.perf_counter()
         try:
             result = await call_next(context)
         except Exception as exc:
+            duration = time.perf_counter() - started
             # An error downstream of authorization (credential resolution,
             # the service call itself) is still an attempted invocation --
             # authorization allowed it, so it's not a denial, and gets no
             # separate error counter (the audit log is the source of truth
             # for exact per-outcome fidelity; see metrics.py's docstring).
             _record_invocation(service.name, tool_name, action_type)
-            await write_audit(
+            metrics.tool_duration_seconds.labels(
+                service=service.name, tool=tool_name, action_type=action_type
+            ).observe(duration)
+            # Routed through the metering pipeline (result=None -- an error
+            # produced no result to measure) so the error response is not
+            # held by audit I/O either.
+            await submit_metered_audit(
                 AuditRecord(
                     principal_sub=principal.subject,
                     principal_uid=principal.uid,
@@ -209,12 +223,26 @@ class AuthorizationMiddleware(Middleware):
                     outcome="error",
                     error=str(exc),
                     principal_permission_grant=_permission_grant_field(principal),
-                )
+                    duration_ms=duration * 1000.0,
+                ),
+                None,
             )
             raise
-
+        duration = time.perf_counter() - started
         _record_invocation(service.name, tool_name, action_type)
-        await write_audit(
+        metrics.tool_duration_seconds.labels(
+            service=service.name, tool=tool_name, action_type=action_type
+        ).observe(duration)
+        # The result measurement -- an estimate of its context-injection
+        # cost, not wire size; see measure_tool_result's docstring for
+        # exactly what is serialized and counted -- happens on the metering
+        # pipeline's background worker (audit/pipeline.py), never here:
+        # serializing and tokenizing a large result can cost tens of ms,
+        # and the tool call must not wait on it (nor on the audit write).
+        # The record is handed over with result_bytes/result_tokens_est
+        # still None for the worker to fill. Success path only: an error
+        # produced no result to measure (result=None above).
+        await submit_metered_audit(
             AuditRecord(
                 principal_sub=principal.subject,
                 principal_uid=principal.uid,
@@ -228,6 +256,8 @@ class AuthorizationMiddleware(Middleware):
                 mcp_service=service.name,
                 outcome="success",
                 principal_permission_grant=_permission_grant_field(principal),
-            )
+                duration_ms=duration * 1000.0,
+            ),
+            result,
         )
         return result

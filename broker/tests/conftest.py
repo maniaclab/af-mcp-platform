@@ -26,6 +26,7 @@ from jwt.algorithms import RSAAlgorithm
 from pydantic import SecretStr
 
 from af_mcp_broker import identity
+from af_mcp_broker.audit import measure
 from af_mcp_broker.config import Settings, get_settings
 from af_mcp_broker.mcp.aggregator import build_asgi_auth_middleware
 
@@ -70,6 +71,30 @@ _DEFAULT_IDENTITY_PROVIDERS = [
         "targets": ["ami"],
     },
 ]
+
+
+class _StubTiktokenEncoding:
+    """Deterministic stand-in for a tiktoken Encoding: one token per 4 characters, minimum 1."""
+
+    def encode(self, text: str, **kwargs: Any) -> list[int]:
+        return [0] * max(1, len(text) // 4)
+
+
+@pytest.fixture(autouse=True)
+def stub_tiktoken(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the suite off the network: tiktoken downloads encoding files
+    from a CDN on first use, and audit/measure.py loads its encoding lazily
+    inside the tool-call path, so any test driving a successful tool call
+    with a non-empty result would otherwise trigger a download mid-suite.
+    Replace the loader with a deterministic stub for every test and reset
+    measure.py's module-level cache so no test observes another's load.
+    test_measure.py re-patches the loader per-test where it exercises the
+    loading/degradation behavior itself."""
+    monkeypatch.setattr(measure, "_encoding", None)
+    monkeypatch.setattr(measure, "_encoding_load_failed", False)
+    monkeypatch.setattr(
+        measure.tiktoken, "get_encoding", lambda name: _StubTiktokenEncoding()
+    )
 
 
 @dataclass

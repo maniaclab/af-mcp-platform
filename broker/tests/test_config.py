@@ -523,3 +523,19 @@ def test_vault_config_not_required_by_legacy_x509_entry():
     and touches no Vault store — the connection settings stay optional."""
     entry = {k: v for k, v in _X509_ENTRY.items() if k != "service_url"}
     Settings(identity_providers=[entry])  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# Metering backend selection (audit/pipeline.py's MeteringBackend seam)
+# ---------------------------------------------------------------------------
+
+
+def test_metering_backend_defaults_to_in_process():
+    assert Settings().metering_backend == "in_process"
+
+
+def test_metering_backend_rejects_unknown_value():
+    """The Literal is single-valued on purpose: a value must never be
+    accepted before its backend implementation exists (fail-closed)."""
+    with pytest.raises(ValueError, match="metering_backend"):
+        Settings(metering_backend="taskiq")

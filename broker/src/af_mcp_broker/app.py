@@ -26,6 +26,10 @@ from af_mcp_broker.api.router import router as v1_router
 from af_mcp_broker.api.tokens import TokenRegistry
 from af_mcp_broker.api.wellknown import router as wellknown_router
 from af_mcp_broker.audit.logger import init_audit_logger
+from af_mcp_broker.audit.pipeline import (
+    aclose_metering_pipeline,
+    init_metering_pipeline,
+)
 from af_mcp_broker.authorization import EntitlementPolicy, load_policy
 from af_mcp_broker.config import Settings
 from af_mcp_broker.credentials import (
@@ -706,6 +710,11 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # --- Audit: without init the module drops every record. Honor AUDIT_LOG_FILE.
     audit_output = _open_audit_output(settings.audit_log_file)
     init_audit_logger(audit_output)
+    # --- Metering: success/error audit records are measured and written by a
+    # background worker (audit/pipeline.py) so tool calls never wait on
+    # measurement or audit I/O; without init the helper degrades to inline.
+    # The transport is the MeteringBackend selected by METERING_BACKEND.
+    await init_metering_pipeline(settings)
 
     # --- Metrics: /metrics lives on its own port (chart NetworkPolicy allows
     # Prometheus only there), served by prometheus_client's thread so the
@@ -766,6 +775,10 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
 
     await credential_cache.stop_janitor()
     await aclose_http_client()
+    # Shutdown drains pending metering (records still queued for measurement
+    # and writing) so audit lines aren't lost on a graceful stop -- and it
+    # must run before the audit output below is closed.
+    await aclose_metering_pipeline()
     if metrics_server is not None:
         metrics_server.shutdown()
         metrics_server.server_close()

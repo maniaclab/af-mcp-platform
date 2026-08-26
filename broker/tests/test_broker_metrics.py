@@ -49,6 +49,10 @@ def _all_counters() -> list:
         metrics.credential_cache_hits_total,
         metrics.credential_cache_misses_total,
         metrics.x509_proxy_mints_total,
+        metrics.metering_queue_overflow_total,
+        metrics.metering_worker_processed_total,
+        metrics.metering_worker_errors_total,
+        metrics.metering_records_missing_measurements_total,
     ]
 
 
@@ -111,6 +115,51 @@ def test_credential_cache_counters_labeled_by_target():
         == "af_mcp_credential_cache_misses_total"
     )
     assert metrics.credential_cache_misses_total._labelnames == ("target",)
+
+
+def test_tool_duration_seconds_labeled_by_service_tool_action_type():
+    """Same label set as tool_invocations_total -- and deliberately NOT
+    outcome (the audit log is the per-outcome source of truth) and never an
+    identity label; see the module docstring's cardinality policy."""
+    assert metrics.tool_duration_seconds._name == "af_mcp_tool_duration_seconds"
+    assert set(metrics.tool_duration_seconds._labelnames) == {
+        "service",
+        "tool",
+        "action_type",
+    }
+    assert not _FORBIDDEN_LABEL_NAMES & set(metrics.tool_duration_seconds._labelnames)
+    # Buckets sized for tool calls that can include credential minting via
+    # ephemeral k8s Jobs (tens of seconds to minutes), plus the implicit +Inf.
+    assert metrics.tool_duration_seconds._upper_bounds == [
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1.0,
+        2.5,
+        5.0,
+        10.0,
+        30.0,
+        60.0,
+        120.0,
+        300.0,
+        float("inf"),
+    ]
+
+
+def test_metering_metrics_have_no_labels():
+    """Every metering pipeline metric (counters and worker-health gauges
+    alike) is deliberately unlabeled -- per-record dimensions live in the
+    audit log; see the module docstring's cardinality policy."""
+    for metric in (
+        metrics.metering_queue_overflow_total,
+        metrics.metering_queue_depth,
+        metrics.metering_queue_delay_seconds,
+        metrics.metering_worker_processed_total,
+        metrics.metering_worker_errors_total,
+        metrics.metering_records_missing_measurements_total,
+    ):
+        assert metric._labelnames == ()
 
 
 def test_x509_proxy_mints_total_has_no_labels():

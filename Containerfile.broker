@@ -13,6 +13,13 @@ ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AF_MCP_BROKER=${SETUPTOOLS_SCM_PRETEND_VE
 # Install only the broker feature, not dev
 RUN pixi install --frozen --environment broker
 
+# tiktoken downloads encoding files from a CDN on first use, caching them
+# under TIKTOKEN_CACHE_DIR -- but the broker pod runs behind default-deny
+# egress, so that first-use download would fail at runtime. Pre-download the
+# encoding here in the builder (which has network) and ship the cache into
+# the final image; see also audit/measure.py's degradation path.
+RUN TIKTOKEN_CACHE_DIR=/app/tiktoken-cache /app/.pixi/envs/broker/bin/python -c "import tiktoken; tiktoken.get_encoding('o200k_base')"
+
 # Capture pixi's full activation (PATH, and anything else the environment
 # needs — e.g. lib/cert paths for conda-provided packages) as a static
 # entrypoint script, so the final image needs no pixi binary at runtime.
@@ -30,10 +37,14 @@ WORKDIR /app
 COPY --from=builder /app/.pixi/envs/broker /app/.pixi/envs/broker
 COPY --from=builder /app/broker/src /app/broker/src
 COPY --from=builder /app/entrypoint.sh /app/entrypoint.sh
+# Pre-seeded tiktoken encoding cache (see the builder-stage comment: the pod
+# has default-deny egress, so the runtime download path is unavailable).
+COPY --from=builder /app/tiktoken-cache /app/tiktoken-cache
 
 ENV PYTHONPATH="/app/broker/src" \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    TIKTOKEN_CACHE_DIR="/app/tiktoken-cache"
 
 # Numeric uid/gid required: k8s runAsUser/runAsGroup can't resolve names.
 RUN groupadd -r -g 1000 af-mcp && useradd -r -u 1000 -g af-mcp af-mcp

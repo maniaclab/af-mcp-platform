@@ -424,6 +424,16 @@ Structured log (structlog + JSON) of every tool invocation, including:
 - response status and latency
 - request ID (propagated in `X-Request-ID` header)
 
+Success and error records reach the log through the metering pipeline
+(`audit/pipeline.py`): the hot path enqueues `(record, result)` and returns,
+and a background worker measures the result (`result_bytes`,
+`result_tokens_est`) and writes the line — a tool call never waits on
+measurement or audit I/O. DENIED and UNMAPPED records stay synchronous
+inline: they are security-relevant and have nothing to measure. Metering is
+best-effort; audit records are authoritative. The transport behind the
+pipeline is a config-selected backend (`METERING_BACKEND`); only
+`in_process` exists today, and the broker fails closed on any other value.
+
 Prometheus metrics expose per-tool latency histograms and error counters,
 served as `/metrics` on a dedicated port (9090, `METRICS_PORT`) so the
 chart's NetworkPolicy can allow Prometheus scraping without opening the API
