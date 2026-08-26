@@ -140,3 +140,10 @@ select = [
 pythonpath = ["src"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+# Backstop against silent CI hangs (pytest-timeout): several tests run real
+# uvicorn servers, and a wedged startup/shutdown used to stall the whole job
+# with no output until GitHub Actions' 6-hour job timeout. No legitimate test
+# comes anywhere near this bound; the "thread" method dumps every thread's
+# stack on expiry, so a residual hang becomes a diagnosable failure.
+timeout = 300
+timeout_method = "thread"

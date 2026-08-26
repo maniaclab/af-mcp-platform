@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import asyncio
-from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
 import httpx
 import pytest
-import uvicorn
-from conftest import AUDIENCE, ISSUER, make_claims
+from conftest import AUDIENCE, ISSUER, make_claims, run_asgi_app
 from fastmcp import Client, FastMCP
 from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.server.dependencies import get_http_headers
@@ -53,25 +50,6 @@ def _self_prefixed_backend() -> FastMCP:
         return "pong"
 
     return mcp
-
-
-@asynccontextmanager
-async def _run_asgi_app(app: Any) -> AsyncIterator[str]:
-    """Run an arbitrary ASGI app (not necessarily a FastMCP server) behind a
-    real uvicorn server on an ephemeral port, for testing app.py's actual
-    mount + combine_lifespans wiring end-to-end -- not just the aggregator
-    FastMCP instance in isolation."""
-    port = find_available_port()
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error")
-    server = uvicorn.Server(config)
-    task = asyncio.create_task(server.serve())
-    while not server.started:
-        await asyncio.sleep(0.01)
-    try:
-        yield f"http://127.0.0.1:{port}"
-    finally:
-        server.should_exit = True
-        await task
 
 
 @pytest.fixture
@@ -212,7 +190,7 @@ async def test_entitled_principal_sees_namespaced_and_selfprefixed_tools(
     token = sig_key.sign(make_claims())
     _TEST_PRINCIPAL_GROUPS["user-123"] = ["atlas"]
 
-    async with _run_asgi_app(running_broker) as base_url:
+    async with run_asgi_app(running_broker) as base_url:
         names = await _list_tool_names(base_url, token)
 
     # toy's tools are namespaced ("toy_echo"); selfpfx's are not
@@ -229,7 +207,7 @@ async def test_unentitled_principal_does_not_see_gated_tools(running_broker, sig
     token = sig_key.sign(make_claims())
     _TEST_PRINCIPAL_GROUPS["user-123"] = []
 
-    async with _run_asgi_app(running_broker) as base_url:
+    async with run_asgi_app(running_broker) as base_url:
         names = await _list_tool_names(base_url, token)
 
     # No read_data permission -> toy's tools (required_permission=read_data)
@@ -245,7 +223,7 @@ async def test_missing_bearer_rejected(running_broker):
     MCP client OAuth discovery is gated on the real status code, and a
     generic JSON-RPC error gave users no actionable signal for an expired
     token either."""
-    async with _run_asgi_app(running_broker) as base_url:
+    async with run_asgi_app(running_broker) as base_url:
         with pytest.raises(httpx.HTTPStatusError) as exc_info:
             async with Client(f"{base_url}/mcp/") as client:
                 await client.list_tools()
@@ -259,7 +237,7 @@ async def test_tool_call_round_trips_to_backend(running_broker, sig_key):
     _TEST_PRINCIPAL_GROUPS["user-123"] = ["atlas"]
 
     async with (
-        _run_asgi_app(running_broker) as base_url,
+        run_asgi_app(running_broker) as base_url,
         _bearer_client(f"{base_url}/mcp/", token) as client,
     ):
         result = await client.call_tool("toy_echo", {"message": "hello"})
@@ -274,7 +252,7 @@ async def test_authorization_header_not_forwarded_to_backend(running_broker, sig
     _TEST_PRINCIPAL_GROUPS["user-123"] = ["atlas"]
 
     async with (
-        _run_asgi_app(running_broker) as base_url,
+        run_asgi_app(running_broker) as base_url,
         _bearer_client(f"{base_url}/mcp/", token) as client,
     ):
         result = await client.call_tool("toy_seen_headers", {})

@@ -1,15 +1,12 @@
 from __future__ import annotations
 
-import asyncio
 import re
 import time
-from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
 import httpx
 import pytest
-import uvicorn
-from conftest import make_claims, run_aggregator_async
+from conftest import make_claims, run_aggregator_async, run_asgi_app
 from fastmcp import Client, FastMCP
 from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.server.dependencies import get_http_headers
@@ -93,31 +90,9 @@ def _open_backend() -> FastMCP:
     return mcp
 
 
-@asynccontextmanager
-async def _run_asgi_app(app: Any) -> AsyncIterator[str]:
-    """Run an arbitrary ASGI app (not necessarily a bare FastMCP server)
-    behind a real uvicorn server on an ephemeral port -- fastmcp's own
-    run_server_async only accepts a FastMCP instance directly, which can't
-    carry the ASGI-level auth middleware _auth_gated_backend() needs to
-    reproduce issue #121 faithfully. Mirrors the identical helper in
-    test_mcp_aggregator_integration.py.
-    """
-    port = find_available_port()
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error")
-    server = uvicorn.Server(config)
-    task = asyncio.create_task(server.serve())
-    while not server.started:
-        await asyncio.sleep(0.01)
-    try:
-        yield f"http://127.0.0.1:{port}"
-    finally:
-        server.should_exit = True
-        await task
-
-
 @pytest.fixture
 async def secure_backend_url() -> AsyncIterator[str]:
-    async with _run_asgi_app(_auth_gated_backend()) as url:
+    async with run_asgi_app(_auth_gated_backend()) as url:
         yield f"{url}/mcp"
 
 
@@ -543,8 +518,8 @@ async def test_replica_split_session_continuity(
     }
 
     async with (
-        _run_asgi_app(_replica()) as replica_1_url,
-        _run_asgi_app(_replica()) as replica_2_url,
+        run_asgi_app(_replica()) as replica_1_url,
+        run_asgi_app(_replica()) as replica_2_url,
         httpx.AsyncClient() as http_client,
     ):
         init_body = {

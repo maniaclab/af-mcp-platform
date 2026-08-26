@@ -3,9 +3,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import socket
 import time
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -16,6 +18,7 @@ if TYPE_CHECKING:
 
 import jwt
 import pytest
+import uvicorn
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
 from fastmcp.utilities.http import find_available_port
@@ -129,6 +132,144 @@ def prime_jwks(settings: Settings):
     identity._jwks_cache.pop(settings.oidc_jwks_uri, None)
 
 
+# --- ClientSession hotfix -- modelcontextprotocol/python-sdk#1144 ----------
+# An MCP streamable-HTTP client whose response dies mid-flight hangs forever
+# on mcp v1: an Exception object the transport sends into the session's read
+# stream is handled by a default no-op (the receive loop keeps iterating, so
+# its teardown -- which WOULD fail all pending requests with
+# CONNECTION_CLOSED -- never runs), and a connection that goes dead without
+# delivering anything produces no event at all. Fixed upstream in mcp v2,
+# which only fastmcp v4 (still beta) can use; until that migration this
+# keeps a flaky server abort from wedging the suite (it caused the historic
+# silent CI hangs, e.g. run 32922473653). Two halves:
+#   - a wrapping message_handler closes the read stream when an Exception
+#     arrives, so the receive loop exits NORMALLY and its own teardown
+#     delivers CONNECTION_CLOSED to every waiter (cleaner than cancelling
+#     the session task group, which races that same teardown);
+#   - sessions with no read timeout get a default one, covering the
+#     dead-but-open-connection case where no event ever arrives.
+# Mutable so tests of the hotfix itself can shrink the timeout.
+_CLIENT_SESSION_HOTFIX: dict[str, Any] = {"read_timeout": timedelta(seconds=30)}
+
+
+@pytest.fixture(autouse=True)
+def client_session_hotfix(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bound every test ClientSession -- see _CLIENT_SESSION_HOTFIX above."""
+    import mcp.client.session as mcp_client_session
+
+    orig_init = mcp_client_session.ClientSession.__init__
+
+    def patched_init(self: Any, *args: Any, **kwargs: Any) -> None:
+        if kwargs.get("read_timeout_seconds") is None:
+            kwargs["read_timeout_seconds"] = _CLIENT_SESSION_HOTFIX["read_timeout"]
+        inner = kwargs.get("message_handler")
+
+        async def close_on_stream_exception(message: Any) -> None:
+            if isinstance(message, Exception):
+                # Ends the receive loop's `async for`; its finally block then
+                # fails every pending request with CONNECTION_CLOSED.
+                await self._read_stream.aclose()
+                return
+            if inner is not None:
+                await inner(message)
+
+        kwargs["message_handler"] = close_on_stream_exception
+        orig_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(mcp_client_session.ClientSession, "__init__", patched_init)
+
+
+# How long a test server gets to report started before the harness gives up.
+# Generous: startup is normally milliseconds even on a loaded CI runner --
+# the point is a bounded, diagnosable failure instead of the silent
+# until-the-6-hour-job-timeout hang an unbounded wait produces when the
+# server task dies (e.g. the find_available_port TOCTOU race losing the
+# port to another process between probe and bind).
+_SERVER_START_TIMEOUT = 30.0
+
+
+async def _contained(coro: Any) -> None:
+    """Await *coro*, converting SystemExit into an ordinary exception.
+
+    uvicorn reports a startup failure (e.g. a lost port-bind race) with
+    ``sys.exit(3)`` -- and asyncio re-raises SystemExit from a task straight
+    into the event loop, crashing whatever drives it, instead of containing
+    it in the task like a normal exception. Wrapping the server coroutine
+    keeps the failure inside the task where _await_server_started can
+    surface it as a diagnosable error.
+    """
+    try:
+        await coro
+    except SystemExit as exc:
+        raise RuntimeError(f"uvicorn exited during startup (code {exc.code})") from exc
+
+
+async def _await_server_started(
+    server_task: asyncio.Task[Any], started: Callable[[], bool]
+) -> None:
+    """Wait (bounded) for *started*, surfacing *server_task*'s death.
+
+    The historic failure mode this replaces: the server task exits with an
+    exception (uvicorn's bind failure raises SystemExit inside the task,
+    contained by _contained above), the started flag therefore never flips,
+    and an unbounded wait spins forever with the exception swallowed -- the
+    CI hang. Checking ``server_task.done()`` on every poll turns that into
+    an immediate, chained error.
+    """
+    deadline = time.monotonic() + _SERVER_START_TIMEOUT
+    while not started():
+        if server_task.done():
+            # .exception() itself raises CancelledError if the task was
+            # cancelled, which is equally a startup failure -- let it out.
+            exc = server_task.exception()
+            raise RuntimeError("server task exited before startup") from exc
+        if time.monotonic() > deadline:
+            server_task.cancel()
+            raise TimeoutError(
+                f"test server failed to start within {_SERVER_START_TIMEOUT}s"
+            )
+        await asyncio.sleep(0.01)
+
+
+@asynccontextmanager
+async def run_asgi_app(app: Any, port: int | None = None) -> AsyncIterator[str]:
+    """Run an arbitrary ASGI app (not necessarily a bare FastMCP server)
+    behind a real uvicorn server on an ephemeral port -- fastmcp's own
+    run_server_async only accepts a FastMCP instance directly, which can't
+    carry the ASGI-level auth middleware some tests need (e.g. the
+    _auth_gated_backend() doubles reproducing issue #121), nor exercise
+    app.py's actual mount + combine_lifespans wiring end-to-end.
+
+    The listening socket is bound HERE, synchronously, and handed to uvicorn
+    -- unlike the probe-close-rebind of ``find_available_port``, there is no
+    window for another process to steal the port, so the bind race that used
+    to hang CI cannot occur on this harness at all. A genuinely occupied
+    *port* (a harness-test seam, see test_server_harness.py; everything else
+    leaves it None for an ephemeral one) fails the bind right here with a
+    plain OSError instead.
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.bind(("127.0.0.1", port or 0))
+    port = sock.getsockname()[1]
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error")
+    server = uvicorn.Server(config)
+    task = asyncio.create_task(_contained(server.serve(sockets=[sock])))
+    try:
+        await _await_server_started(task, lambda: server.started)
+        yield f"http://127.0.0.1:{port}"
+    finally:
+        server.should_exit = True
+        # Bounded for the same reason as startup: a server wedged on
+        # shutdown (e.g. a lingering keep-alive connection) must fail the
+        # test, not stall the whole run.
+        with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
+            await asyncio.wait_for(task, timeout=10.0)
+        # uvicorn/asyncio normally close the socket on shutdown; make sure it
+        # never outlives the harness even on an aborted startup.
+        with contextlib.suppress(OSError):
+            sock.close()
+
+
 @asynccontextmanager
 async def run_aggregator_async(mcp: FastMCP, path: str = "/mcp") -> AsyncIterator[str]:
     """Like fastmcp.utilities.tests.run_server_async, but for an aggregator
@@ -139,21 +280,27 @@ async def run_aggregator_async(mcp: FastMCP, path: str = "/mcp") -> AsyncIterato
     run_server_async's run_http_async() call has no way to attach it without
     reimplementing this same loop, so tests that need a real aggregator
     (rather than a bare test FastMCP backend) use this instead.
+
+    Unlike run_server_async (unbounded ``await mcp._started.wait()``,
+    upstream), startup here is bounded and surfaces the server task's death
+    -- see _await_server_started.
     """
     port = find_available_port()
     await asyncio.sleep(0.01)
     server_task = asyncio.create_task(
-        mcp.run_http_async(
-            host="127.0.0.1",
-            port=port,
-            path=path,
-            middleware=[build_asgi_auth_middleware(mcp)],
-            show_banner=False,
+        _contained(
+            mcp.run_http_async(
+                host="127.0.0.1",
+                port=port,
+                path=path,
+                middleware=[build_asgi_auth_middleware(mcp)],
+                show_banner=False,
+            )
         )
     )
-    await mcp._started.wait()
-    await asyncio.sleep(0.1)
     try:
+        await _await_server_started(server_task, mcp._started.is_set)
+        await asyncio.sleep(0.1)
         yield f"http://127.0.0.1:{port}{path}"
     finally:
         server_task.cancel()
