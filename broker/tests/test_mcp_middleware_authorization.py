@@ -4,9 +4,10 @@ import io
 import json
 from typing import TYPE_CHECKING, Any
 
+import httpx
 import mcp.types as mt
 import pytest
-from fastmcp.exceptions import AuthorizationError
+from fastmcp.exceptions import AuthorizationError, ToolError
 from fastmcp.tools.base import ToolResult
 from prometheus_client import REGISTRY
 
@@ -453,6 +454,75 @@ async def test_call_next_failure_audited_as_error_and_reraised(
     record = captured_audits[0]
     assert record.outcome == "error"
     assert record.error == "credential provider unreachable"
+    # A plain downstream failure is a genuine backend/tool error, not a
+    # transient connection drop (issue #216 A.3).
+    assert record.error_class == "backend_error"
+
+
+def _tool_error_from_transient() -> ToolError:
+    """A ToolError chained from a transient connection exception, exactly as
+    fastmcp's core call_tool re-raises one (``ToolError(...) from e``) when a
+    broker->backend call's socket fails mid-response. Setting ``__cause__``
+    directly is what ``raise ... from`` records."""
+    err = ToolError("Error calling tool 'ami_get_dataset_info'")
+    err.__cause__ = httpx.RemoteProtocolError(
+        "Server disconnected -- Closed Connection"
+    )
+    return err
+
+
+async def test_transient_connection_failure_audited_with_error_class(
+    registry, policy, make_principal, captured_audits
+) -> None:
+    """A backend call whose connection drops (reset / socket EOF / connect
+    timeout) is audited outcome=error with error_class="transient_connection"
+    -- observability only, the exception still propagates unchanged (issue
+    #216 A.3)."""
+    mw = AuthorizationMiddleware(registry, policy)
+    principal = make_principal(groups=["atlas"])
+    context = _call_tool_context("rucio_list_dids", {}, principal)
+    call_next = _CallNextRecorder(error=_tool_error_from_transient())
+
+    with pytest.raises(ToolError):
+        await mw.on_call_tool(context, call_next)
+
+    assert len(captured_audits) == 1
+    record = captured_audits[0]
+    assert record.outcome == "error"
+    assert record.error_class == "transient_connection"
+
+
+async def test_success_carries_no_error_class(
+    registry, policy, make_principal, captured_audits
+) -> None:
+    """A success is not a failed call, so error_class stays None (issue #216
+    A.3's two-value-plus-null shape)."""
+    mw = AuthorizationMiddleware(registry, policy)
+    principal = make_principal(groups=["atlas"])
+    context = _call_tool_context("rucio_list_dids", {"scope": "foo"}, principal)
+    call_next = _CallNextRecorder(result=ToolResult(content=[]))
+
+    await mw.on_call_tool(context, call_next)
+
+    assert captured_audits[0].outcome == "success"
+    assert captured_audits[0].error_class is None
+
+
+async def test_denied_call_carries_no_error_class(
+    registry, policy, make_principal, captured_audits
+) -> None:
+    """A denial never executed a backend call, so error_class stays None --
+    it is an authorization outcome, not a backend failure (issue #216 A.3)."""
+    mw = AuthorizationMiddleware(registry, policy)
+    principal = make_principal(groups=[])
+    context = _call_tool_context("rucio_list_dids", {}, principal)
+    call_next = _CallNextRecorder()
+
+    with pytest.raises(AuthorizationError):
+        await mw.on_call_tool(context, call_next)
+
+    assert captured_audits[0].outcome == "denied"
+    assert captured_audits[0].error_class is None
 
 
 async def test_success_records_duration_and_observes_histogram(

@@ -76,6 +76,53 @@ def _idp_config(display_name: str, enables: str) -> KeycloakBrokeredProviderConf
     )
 
 
+async def test_af_tools_declare_a_proper_object_output_schema(
+    settings: Any, sig_key: Any, prime_jwks: Any, static_principal_cache: Any
+) -> None:
+    """Every af_* tool must advertise an authored object outputSchema (issue
+    #216 A.1): a non-null ``{"type": "object", ...}`` a client can type-check
+    and compose against. FastMCP auto-wraps a bare ``list[...]`` return under a
+    synthetic single ``result`` key stamped ``x-fastmcp-wrap-result: true`` --
+    that IS an object schema, but ``result`` is a meaningless machine name, no
+    real contract, so it doesn't count here; the list-returning tools declare
+    their own wrapper model with a self-describing field instead."""
+    principal_cache, directory = static_principal_cache
+    directory.groups_by_subject["user-123"] = []
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+
+    mcp = build_aggregator(
+        ServiceRegistry(),
+        settings,
+        EntitlementPolicy(),
+        CredentialRegistry(),
+        principal_cache=principal_cache,
+    )
+
+    async with run_aggregator_async(mcp, path="/mcp") as agg_url:
+        transport = StreamableHttpTransport(
+            agg_url, headers={"Authorization": f"Bearer {token}"}
+        )
+        async with Client(transport) as client:
+            tools = await client.list_tools()
+
+    by_name = {t.name: t for t in tools}
+    for name in (
+        WHOAMI_TOOL_NAME,
+        LIST_IDENTITIES_TOOL_NAME,
+        LIST_MCP_SERVERS_TOOL_NAME,
+        LINK_IDENTITY_TOOL_NAME,
+        USAGE_TOOL_NAME,
+    ):
+        schema = by_name[name].outputSchema
+        assert schema is not None, f"{name} has no outputSchema"
+        assert schema.get("type") == "object", f"{name} outputSchema is not an object"
+        assert not schema.get("x-fastmcp-wrap-result"), (
+            f"{name} relies on FastMCP's synthetic result wrapper rather than "
+            "an authored object schema"
+        )
+
+
 async def test_af_whoami_returns_subject_groups_and_permissions(
     settings: Any, sig_key: Any, prime_jwks: Any, static_principal_cache: Any
 ) -> None:
@@ -139,7 +186,7 @@ async def test_af_list_identities_reflects_linkage_per_provider(
         async with Client(transport) as client:
             result = await client.call_tool(LIST_IDENTITIES_TOOL_NAME, {})
 
-    rows = {row["id"]: row for row in result.structured_content["result"]}
+    rows = {row["id"]: row for row in result.structured_content["identities"]}
     assert rows["linked-idp"] == {
         "id": "linked-idp",
         "display_name": "Linked IdP",
@@ -311,7 +358,7 @@ async def test_af_list_mcp_servers_reuses_service_status_and_identity_join(
         async with Client(transport) as client:
             result = await client.call_tool(LIST_MCP_SERVERS_TOOL_NAME, {})
 
-    rows = {row["name"]: row for row in result.structured_content["result"]}
+    rows = {row["name"]: row for row in result.structured_content["servers"]}
     assert rows["open"]["status"] == "available"
     assert rows["open"]["prefix"] == "open"
     assert rows["open"]["credential_provider"] is None

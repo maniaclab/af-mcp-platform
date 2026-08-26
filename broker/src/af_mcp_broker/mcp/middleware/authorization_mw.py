@@ -17,6 +17,7 @@ from af_mcp_broker.authorization import (
     check_entitlement,
     get_action_type,
 )
+from af_mcp_broker.mcp.errors import classify_backend_error
 from af_mcp_broker.tracing import (
     current_trace_id,
     get_tracer,
@@ -284,6 +285,11 @@ class AuthorizationMiddleware(Middleware):
                     span.set_attribute("af.outcome", "error")
                     span.record_exception(exc)
                     span.set_status(Status(StatusCode.ERROR, str(exc)))
+                # Observability only (issue #216 A.3): tag whether this was a
+                # known-transient connection drop vs a genuine backend/tool
+                # error. Classification never alters the failure -- the
+                # exception still propagates unchanged below.
+                error_class = classify_backend_error(exc)
                 # Routed through the metering pipeline (result=None -- an error
                 # produced no result to measure) so the error response is not
                 # held by audit I/O either.
@@ -305,6 +311,7 @@ class AuthorizationMiddleware(Middleware):
                         token_id=principal.token_id,
                         duration_ms=duration * 1000.0,
                         trace_id=current_trace_id(),
+                        error_class=error_class,
                     ),
                     None,
                 )

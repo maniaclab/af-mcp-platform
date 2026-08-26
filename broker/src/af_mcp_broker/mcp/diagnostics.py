@@ -86,6 +86,22 @@ class DiagnosticIdentityProvider(BaseModel):
     linked: bool
 
 
+# af_list_identities/af_list_mcp_servers wrap their rows in these single-field
+# models rather than returning a bare list[...] (issue #216 A.1). An MCP
+# outputSchema MUST be a JSON *object* schema; FastMCP does emit one for a
+# bare-list return, but only by auto-wrapping it under a synthetic ``result``
+# key stamped ``x-fastmcp-wrap-result`` -- a meaningless machine name, not a
+# contract a client or LLM can read. A named wrapper field (``identities`` /
+# ``servers``) is the authored object schema the convention asks every tool to
+# declare, and reads naturally as the tool's return value.
+class ListIdentitiesResult(BaseModel):
+    """The broker's configured identity providers and the caller's linkage to each -- af_list_identities' return value."""
+
+    model_config = ConfigDict(frozen=True)
+
+    identities: list[DiagnosticIdentityProvider]
+
+
 class LinkIdentityResult(BaseModel):
     """The portal deep link for one identity provider -- af_link_identity's return value."""
 
@@ -112,6 +128,14 @@ class DiagnosticMcpServer(BaseModel):
     credential_provider: str | None
     status: ServiceStatus
     status_detail: str
+
+
+class ListMcpServersResult(BaseModel):
+    """The broker's configured MCP services and each one's identity/availability -- af_list_mcp_servers' return value. Wraps the rows in a named field for the same reason as ListIdentitiesResult (issue #216 A.1)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    servers: list[DiagnosticMcpServer]
 
 
 async def _require_principal() -> Principal:
@@ -182,7 +206,7 @@ def register_diagnostic_tools(
         )
 
     @mcp.tool(name=LIST_IDENTITIES_TOOL_NAME)
-    async def _list_identities() -> list[DiagnosticIdentityProvider]:
+    async def _list_identities() -> ListIdentitiesResult:
         """List the broker's configured identity providers and whether the caller has linked each one.
 
         Call this when a tool call fails with a "not linked" error, or when
@@ -203,7 +227,7 @@ def register_diagnostic_tools(
                     linked=await provider.is_linked(principal),
                 )
             )
-        return providers
+        return ListIdentitiesResult(identities=providers)
 
     @mcp.tool(name=LINK_IDENTITY_TOOL_NAME)
     async def _link_identity(provider: str) -> LinkIdentityResult:
@@ -273,7 +297,7 @@ def register_diagnostic_tools(
             raise ToolError(str(exc)) from exc
 
     @mcp.tool(name=LIST_MCP_SERVERS_TOOL_NAME)
-    async def _list_mcp_servers() -> list[DiagnosticMcpServer]:
+    async def _list_mcp_servers() -> ListMcpServersResult:
         """List every configured MCP service, the identity that powers it, and whether it's currently available to the caller.
 
         Call this first when an expected tool is missing from tools/list,
@@ -302,4 +326,4 @@ def register_diagnostic_tools(
                     status_detail=status_detail,
                 )
             )
-        return servers
+        return ListMcpServersResult(servers=servers)
