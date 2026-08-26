@@ -130,7 +130,7 @@ done:
 | Backend credential source | Keycloak's stored-broker-token pattern — the user links via `kc_action=LINK_IDP`, Keycloak stores the resulting token internally | The broker itself is an OAuth 2.1 client to the backend's own authorization server (PKCE + CIMD `client_id`, see `docs/architecture.md#client-id-metadata-document-cimd`) | A VOMS proxy minted from the user's grid certificate — the user enters their Globus passphrase once at the portal; with a `service_url`, voms-token-service mints and Vault persists (hands-free renewal); without one, the legacy ephemeral-Job path mints into tmpfs |
 | Broker retrieves it via | `GET /realms/<realm>/broker/<alias>/token` | `TokenStore.get(sub, alias)`, refreshing on demand near expiry | `VaultX509Store.get_proxy(sub)`, re-minting hands-free with the stored passphrase when expired (service mode) |
 | Credential persistence | Keycloak (broker holds no copy) | The broker's own `TokenStore` (in-memory or Vault-backed — see PR3) | Vault KV-v2 (service mode) / broker tmpfs (legacy) |
-| Delivery to the backend | `Authorization: Bearer` header injected by the aggregator | `Authorization: Bearer` header injected by the aggregator | **Backend-side redemption, not header injection**: the aggregator injects only an AF Broker Identity Token (`aud` = the backend), and the backend redeems the proxy PEM itself via `POST /v1/credentials/x509/redeem` — issue #112's "backend calls back" wire format, chosen so proxy material never transits the aggregator |
+| Delivery to the backend | `Authorization: Bearer` header injected by the aggregator | `Authorization: Bearer` header injected by the aggregator | **Backend-side redemption, not header injection**: the aggregator injects only an AF Broker Identity Token (`aud` = the backend), and the backend redeems the proxy PEM itself via `POST /v1/credentials/x509/redeem` — issue maniaclab/af-mcp-platform#112's "backend calls back" wire format, chosen so proxy material never transits the aggregator |
 | Requires backend to be | An OIDC-compatible IdP Keycloak can broker to | An OAuth 2.1 authorization server (no OIDC discovery needed) | An MCP server that verifies broker JWTs and redeems proxies (ami-mcp's `--auth broker`, via `af-credentials`), marked `auth_type: x509` in `services.yaml` |
 | Portal `link_url` | Always `null` — the portal re-runs its own client-side `startIdpLink()` flow | Full URL to the broker's own `/v1/oauth/authorize/{alias}` | Always `null` — `link_mechanism: "passphrase"`, an in-portal form POSTing the Globus passphrase to `/v1/x509/proxy` |
 
@@ -323,7 +323,7 @@ for the other providers.
 
 ## Authorization is an attribute of the principal, not the token
 
-**Issue #144 steps 3 and 3b unified this for every credential type.** Before
+**Issue maniaclab/af-mcp-platform#144 steps 3 and 3b unified this for every credential type.** Before
 this change, a JWT was self-contained -- it carried `groups`/`posix` claims
 re-validated on every request -- while a PAT (carrying no authorization or
 identity data of its own) always deferred to the principal cache. Two
@@ -336,7 +336,7 @@ the principal cache. As of step 3b, the same is true for `posix`
 (uid/gid/unixname) -- see "Keycloak: POSIX User Attribute mappers" below.
 The token answers only "who is this?"; the directory answers "what groups/
 POSIX identity do they have?" POSIX identity remains optional on every
-principal regardless of source (issue #148) -- only x509 credential minting
+principal regardless of source (issue maniaclab/af-mcp-platform#148) -- only x509 credential minting
 genuinely needs it, enforced at that point of use.
 
 Three separate concerns, deliberately kept separate in the code:
@@ -359,7 +359,7 @@ Three separate concerns, deliberately kept separate in the code:
   `group_permissions` from whatever groups the principal cache currently
   reports, regardless of which credential type asked.
 
-**Availability regression for JWT callers (issue #144 steps 3/3b) -- read
+**Availability regression for JWT callers (issue maniaclab/af-mcp-platform#144 steps 3/3b) -- read
 this before relying on it in production.** A JWT used to be self-contained:
 Keycloak being unreachable never blocked authentication, because the
 token's own signature and claims were the whole answer. That is no longer
@@ -368,7 +368,7 @@ a genuinely new user, or a cold-started replica that has never seen them --
 hit during a Keycloak outage has no last-known value to fall back on and
 **cannot authenticate at all**, receiving a 503 (`identity.
 PrincipalDirectoryUnavailableError`) rather than a 401, specifically so the
-error reads as a platform outage rather than a bad credential. #150's
+error reads as a platform outage rather than a bad credential. maniaclab/af-mcp-platform#150's
 persisted cache (below) covers the *restart* case for a principal already
 seen by some replica before the outage; it does nothing for a principal no
 replica has ever resolved. This is a deliberate tradeoff, not an oversight:
@@ -381,7 +381,7 @@ POSIX User Attribute mappers (see below, both) as irreversible without a
 plan: after removal, there is no fallback path left at all if the Keycloak
 admin service account itself becomes unreachable for an extended period.
 
-**Persisted across restarts (issue #144 step 2b).** The principal cache is
+**Persisted across restarts (issue maniaclab/af-mcp-platform#144 step 2b).** The principal cache is
 backed by a `PrincipalCacheBackend`, selected via
 `PRINCIPAL_CACHE_BACKEND`/`broker.principalCache.backend` the same way
 `TOKEN_REGISTRY_BACKEND` selects the PAT store's backend — `in_memory`
@@ -630,7 +630,7 @@ OAuth discovery — Claude Desktop today. Those clients have no browser session
 to inherit and no way to run the OIDC dance themselves, so they need a static
 credential to put directly in their config's `Authorization` header. The
 portal's `mcp-portal.af.uchicago.edu/tokens` page exists for exactly this,
-and (issue #144 step 2a) it now mints a **broker-issued identity PAT**
+and (issue maniaclab/af-mcp-platform#144 step 2a) it now mints a **broker-issued identity PAT**
 (Personal Access Token) rather than exchanging the caller's Keycloak JWT for
 another JWT:
 
@@ -664,7 +664,7 @@ another JWT:
    endpoint, including ones already revoked (shown with a revoked status
    rather than removed, so the portal can distinguish active/revoked/
    expired). Also covers PATs minted via the MCP OAuth discovery bootstrap
-   flow below (issue #140) — both mint through the same registry, so a PAT
+   flow below (issue maniaclab/af-mcp-platform#140) — both mint through the same registry, so a PAT
    obtained either way shows up here identically, named after the MCP
    client's own CIMD `client_name` when the bootstrap flow minted it.
 3. **Revoke** — `DELETE /v1/tokens/{lookup_id}` marks the PAT revoked in the
@@ -689,7 +689,7 @@ another JWT:
 ### MCP OAuth discovery + PAT bootstrap (issue #140)
 
 The portal's mint page above still requires a signed-in human to visit it and
-copy-paste a token. Issue #140 adds a second way to obtain a PAT that a
+copy-paste a token. Issue maniaclab/af-mcp-platform#140 adds a second way to obtain a PAT that a
 spec-compliant MCP client drives entirely itself, with no manual step: point
 the client at `mcp.af.uchicago.edu/mcp` with no credential at all, and it
 discovers and completes the login on its own.
@@ -705,7 +705,7 @@ understand (RFC 6749 deliberately does not specify access-token format, which
 is why introspection, RFC 7662, exists at all).
 
 1. **Discovery.** An unauthenticated `/mcp` request now returns a genuine
-   HTTP 401 (issue #138/#144 step 1) carrying
+   HTTP 401 (issue maniaclab/af-mcp-platform#138/maniaclab/af-mcp-platform#144 step 1) carrying
    `WWW-Authenticate: Bearer resource_metadata="…/.well-known/oauth-protected-resource/mcp"`.
    That URL, and its un-suffixed root form (both served identically —
    `api/wellknown.py`), are RFC 9728 protected-resource metadata naming
@@ -738,7 +738,7 @@ is why introspection, RFC 7662, exists at all).
 4. **`GET /v1/oauth/keycloak-login/callback`** receives Keycloak's redirect
    back (nonce-cookie CSRF check, same shape as the account-linking flow's
    callback), exchanges the code at Keycloak's token endpoint, verifies the
-   resulting `id_token`, and — issue #245 — verifies the exchange's
+   resulting `id_token`, and — issue maniaclab/af-mcp-platform#245 — verifies the exchange's
    **access token** against the broker's `mcp-gateway` audience with the
    same decode `/v1` applies to every bearer
    (`identity.decode_broker_bearer`). The id_token proves *who* logged in;
@@ -771,10 +771,10 @@ portal's own mint path — see "Where PATs are accepted" immediately below.
 starting with `mcp_pat_` and routes it to `pat_auth.resolve_pat_principal`;
 anything else follows the existing JWT path (`identity.get_principal`)
 unchanged. This is deliberately a *recognition* dispatch, not a cutover —
-both credential types work side by side until a future issue #144 step 5
+both credential types work side by side until a future issue maniaclab/af-mcp-platform#144 step 5
 flips `/mcp` to PAT-only, now that the OAuth discovery bootstrap flow above
 gives every client a way to obtain a PAT without visiting the portal first.
-That cutover is deliberately not part of this change — see issue #144's
+That cutover is deliberately not part of this change — see issue maniaclab/af-mcp-platform#144's
 "PAT-only must be the last step, not an early one" resolution.
 
 **`/v1` remains Keycloak-JWT-only, including `POST /v1/tokens` itself.**
@@ -787,7 +787,7 @@ would degrade into whack-a-mole against tokens the leaked one itself
 created (GitHub disallows this by default for the same reason). A PAT is
 therefore always traceable back to an interactive Keycloak login, whether
 initiated from the portal or from the MCP OAuth discovery bootstrap flow
-above — both authenticate via Keycloak first, and (issue #245) both mints
+above — both authenticate via Keycloak first, and (issue maniaclab/af-mcp-platform#245) both mints
 sit behind the same `mcp-gateway` audience gate: the portal mint because
 `POST /v1/tokens` requires an audienced Keycloak JWT like the rest of
 `/v1`, the bootstrap mint because its callback verifies the login
@@ -827,7 +827,7 @@ fall out of intersecting rather than substituting:
    `read_data` and later being removed from the ATLAS group would leave
    that PAT fully functional — reintroducing exactly the staleness problem
    snapshotting groups into a PAT was rejected for (see "Open design gap"
-   in issue #144). Intersecting means removing a Keycloak group still kills
+   in issue maniaclab/af-mcp-platform#144). Intersecting means removing a Keycloak group still kills
    every credential the user holds, of any type, within one principal-cache
    refresh interval — a permission PAT included.
 2. **Escalation is structurally impossible, not merely validated against.**
@@ -973,7 +973,7 @@ account to the narrowest roles that satisfy the two Admin REST API calls
    authenticates *as*, not a per-user credential.
 
 **This account is now required for all authentication, not only PATs
-(issue #144 step 3).** Before step 3, both empty (the chart default) was a
+(issue maniaclab/af-mcp-platform#144 step 3).** Before step 3, both empty (the chart default) was a
 valid, degraded state: the broker logged `keycloak_admin_not_configured`
 and only PAT authority resolution was unavailable -- a JWT's own claims were
 enough on their own. That fallback no longer exists. As of step 3, the
@@ -1028,7 +1028,7 @@ spec:
 (`Settings.keycloak_login_client_id`/`keycloak_login_client_secret`) existed
 only to support the RFC 8693 token-exchange design the "broker-issued
 identity PATs" section above replaced, and sat configured-but-unread until
-issue #140 repurposed the identical "confidential client + sealed secret"
+issue maniaclab/af-mcp-platform#140 repurposed the identical "confidential client + sealed secret"
 shape for a different grant type: the broker's own `/v1/oauth/authorize`
 (`api/mcp_oauth.py`) authenticates *as* this client when it redirects an MCP
 client's browser through a real Keycloak login on that MCP client's behalf
@@ -1055,7 +1055,7 @@ Secret in place.
    the broker always sends PKCE on this leg in addition to the client
    secret, defence in depth rather than a substitute for either.
 6. **Client scopes → Add client scope → `mcp-gateway`, attached as
-   `Default`** — REQUIRED (issue #245). The bootstrap callback verifies
+   `Default`** — REQUIRED (issue maniaclab/af-mcp-platform#245). The bootstrap callback verifies
    this login's access token against the broker's `mcp-gateway` audience —
    the same gate `/v1` applies to every bearer — and the audience only
    appears in tokens minted through a client that has the scope (and its
@@ -1224,7 +1224,7 @@ entry is inert to the broker and safe to ignore.
 
 `principal_directory.py`'s `KeycloakPrincipalDirectory` reads a principal's
 POSIX identity directly from Keycloak's Admin REST API, bypassing the JWT
-mapper layer entirely — so, as of issue #144 step 3b, this is the *only*
+mapper layer entirely — so, as of issue maniaclab/af-mcp-platform#144 step 3b, this is the *only*
 path (JWT and PAT alike; see above), and it needs to know the *real* profile
 attribute key, not whatever a mapper used to normalize it to. Three
 settings, all defaulting to AF's own convention:
@@ -1250,7 +1250,7 @@ guessing.
 A related, separate setting: `principal_directory_group_full_path`
 (`PRINCIPAL_DIRECTORY_GROUP_FULL_PATH`, default `false`) controls whether
 the directory matches a Keycloak group by its bare `name` (e.g. `atlas`) or
-its full `path` (e.g. `/atlas/users`). As of issue #144 step 3 this governs
+its full `path` (e.g. `/atlas/users`). As of issue maniaclab/af-mcp-platform#144 step 3 this governs
 group matching for **every** authenticated request, JWT and PAT alike —
 groups resolution is fully unified through the directory, so there is no
 separate "JWT path" convention left to keep in sync with it. Set this
@@ -1340,7 +1340,7 @@ backends:
 ```
 
 Keycloak group membership is resolved from `PrincipalDirectory` via the
-principal cache (issue #144 step 3) -- not from a token claim, for either
+principal cache (issue maniaclab/af-mcp-platform#144 step 3) -- not from a token claim, for either
 credential type. Keycloak remains the authoritative source; the cache is a
 stale-while-revalidate layer in front of it (see "Authorization is an
 attribute of the principal, not the token" above), refreshed roughly every
@@ -1349,7 +1349,7 @@ request.
 
 ### Keycloak: POSIX User Attribute mappers
 
-**As of issue #144 step 3b, the broker never reads a `posix` claim from any
+**As of issue maniaclab/af-mcp-platform#144 step 3b, the broker never reads a `posix` claim from any
 token.** Every credential type -- JWT and identity PAT alike -- resolves a
 principal's current POSIX identity (`uid`/`gid`/`unixname`) the same way:
 from `PrincipalDirectory` (the Keycloak Admin REST API lookup above), via
@@ -1371,7 +1371,7 @@ group-path matching" above) -- there is no longer a separate JWT-side mapper
 convention they need to stay consistent with, because there is no longer a
 JWT-side source of POSIX identity at all.
 
-**POSIX identity remains optional (issue #148).** The broker still requires
+**POSIX identity remains optional (issue maniaclab/af-mcp-platform#148).** The broker still requires
 no POSIX attributes to authenticate a request: a principal the directory has
 no `uid`/`gid`/`unixname` for still authenticates successfully, with those
 fields simply left `None` on the resulting `Principal`. Only x509/VOMS proxy
@@ -1402,7 +1402,7 @@ uid/gid/unixname changes within `principal_cache_refresh_seconds` (default
 above) on their next request, regardless of which credential type they
 present.
 
-**Finding your real Keycloak attribute keys (issue #148).** The directory's
+**Finding your real Keycloak attribute keys (issue maniaclab/af-mcp-platform#148).** The directory's
 configurable attribute names (`Settings.posix_uid_attribute`/
 `posix_gid_attribute`/`posix_unixname_attribute`, below) refer to a
 Keycloak profile attribute — an operator needs the real key, not the
@@ -1419,7 +1419,7 @@ display label the admin console shows by default:
 
 ### Keycloak: Group Membership mapper
 
-**As of issue #144 step 3, the broker never reads a `groups` claim from any
+**As of issue maniaclab/af-mcp-platform#144 step 3, the broker never reads a `groups` claim from any
 token.** Every credential type -- JWT and identity PAT alike -- resolves a
 principal's current groups the same way: from `PrincipalDirectory` (the
 Keycloak Admin REST API lookup above), via the principal cache. If your

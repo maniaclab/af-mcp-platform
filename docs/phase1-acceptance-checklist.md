@@ -1,10 +1,10 @@
 # Phase 1 Acceptance Checklist — FastMCP Aggregator (#58)
 
-Issue #58's acceptance test is "one AF login → Rucio tools in Claude." This
+Issue maniaclab/af-mcp-platform#58's acceptance test is "one AF login → Rucio tools in Claude." This
 page maps that test, and the aggregator behaviors it depends on, to their
 current status: implemented-and-tested by the automated suite, or still
 needing a check against a real deployment. It complements
-[issue #70](https://github.com/maniaclab/af-mcp-platform/issues/70)'s
+issue maniaclab/af-mcp-platform#70's
 broader live-test tracker for the `/v1` credential-brokering surface, which
 this page does not duplicate.
 
@@ -56,7 +56,7 @@ test can stand in for. Use `scripts/verify-mcp-flow.py` against
       `rucio_rucio_*`).
 - [ ] `scripts/verify-mcp-flow.py --call rucio_whoami --args-json '{}'`
       against `rucio-mcp-escape` (the working OAuth 2.1 target per issue
-      #70 — `rucio-mcp-atlas` is blocked upstream on an ATLAS-side x509
+      maniaclab/af-mcp-platform#70 — `rucio-mcp-atlas` is blocked upstream on an ATLAS-side x509
       issue, unrelated to this PR) succeeds end-to-end: the broker mints
       the IAM-brokered credential, rucio-mcp does its own RFC 8693
       exchange, and a real Rucio response comes back through the
@@ -83,10 +83,10 @@ test can stand in for. Use `scripts/verify-mcp-flow.py` against
 ## Known non-goals (not blocking the above)
 
 - MCP OAuth discovery (RFC 8414) for clients to bootstrap their first
-  token without the portal — explicitly deferred (issue #58's non-goals),
-  pending the portal's `/tokens` page (#24), itself pending OpenBao (#2).
+  token without the portal — explicitly deferred (issue maniaclab/af-mcp-platform#58's non-goals),
+  pending the portal's `/tokens` page (maniaclab/af-mcp-platform#24), itself pending OpenBao (maniaclab/af-mcp-platform#2).
   (Both have since shipped: the portal's `/tokens` page exists, and issue
-  #140 delivered the OAuth discovery flow.)
+  maniaclab/af-mcp-platform#140 delivered the OAuth discovery flow.)
 - x509 backends (`ami`) callable via `/mcp` — no per-call delivery
   mechanism defined yet for a credential that's consumed server-side from
   an NFS-mounted home directory; tracked as a TODO in `mcp/aggregator.py`,

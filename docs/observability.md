@@ -114,7 +114,7 @@ description, so the LLM can relay them.
 
 `af_*` calls are themselves audited and metered like every other call
 (service `af-mcp` in audit lines, usage rows, and metric labels — issue
-#240), so they show up in this data too. In particular `af_usage` meters
+maniaclab/af-mcp-platform#240), so they show up in this data too. In particular `af_usage` meters
 itself: each call to it appears as one `af-mcp` call in the next usage
 window it reports — accepted and deliberately visible.
 

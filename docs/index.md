@@ -82,7 +82,7 @@ Claude, Claude Code, and other MCP-over-HTTP clients (the
 has a short version). Every client presents its own `aud=mcp-gateway` bearer
 token directly to the broker; the portal obtains its own automatically via
 OIDC, and MCP clients bootstrap theirs via MCP OAuth discovery against the
-broker's own OAuth endpoints — the recommended path (issue #140). Pasting a
+broker's own OAuth endpoints — the recommended path (issue maniaclab/af-mcp-platform#140). Pasting a
 static token minted from the portal's `/tokens` page remains the fallback
 for clients that can't run the discovery flow. The
 [Authentication](auth.md) page walks through every hop of the credential

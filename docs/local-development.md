@@ -96,7 +96,7 @@ portal — the Vue islands now render with the dev principal.
 
 ### Testing the manual `/tokens` flow locally
 
-The portal's `/tokens` page mints a broker-issued identity PAT (issue #144
+The portal's `/tokens` page mints a broker-issued identity PAT (issue maniaclab/af-mcp-platform#144
 step 2a) — no Keycloak call happens at mint time, so under the `bypass`
 environment the whole mint/list/revoke round trip works exactly as-is:
 `keycloak_dependency` returns the dev principal, and `POST /v1/tokens`
@@ -118,7 +118,7 @@ account configured (see the note under "Terminal 1" above).
 
 ### Testing broker-issued identity tokens locally
 
-The AF Broker Identity Token (issue #162, see docs/auth.md's "AF Broker
+The AF Broker Identity Token (issue maniaclab/af-mcp-platform#162, see docs/auth.md's "AF Broker
 Identity Token" section) needs an RS256 signing key on disk. Generate a
 throwaway one — never commit it, and never auto-generate keys in
 production paths (production keys arrive as SealedSecrets):
