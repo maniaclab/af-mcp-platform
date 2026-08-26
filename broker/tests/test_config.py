@@ -539,3 +539,31 @@ def test_metering_backend_rejects_unknown_value():
     accepted before its backend implementation exists (fail-closed)."""
     with pytest.raises(ValueError, match="metering_backend"):
         Settings(metering_backend="taskiq")
+
+
+# ---------------------------------------------------------------------------
+# Usage store selection (usage/ -- per-user usage accounting, PR C)
+# ---------------------------------------------------------------------------
+
+
+def test_usage_store_backend_defaults_to_in_memory():
+    settings = Settings()
+    assert settings.usage_store_backend == "in_memory"
+    assert settings.usage_postgres_dsn is None
+
+
+def test_usage_store_postgres_ok_when_dsn_set():
+    Settings(
+        usage_store_backend="postgres",
+        usage_postgres_dsn="postgresql://broker:pw@pg.example/usage",
+    )  # must not raise
+
+
+def test_usage_store_postgres_raises_when_dsn_missing():
+    with pytest.raises(ValueError, match="usage_postgres_dsn"):
+        Settings(usage_store_backend="postgres")
+
+
+def test_usage_store_rejects_unknown_backend():
+    with pytest.raises(ValueError, match="usage_store_backend"):
+        Settings(usage_store_backend="mysql")

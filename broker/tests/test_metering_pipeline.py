@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import time
 from typing import Any
 
 import mcp.types as mt
@@ -351,3 +352,117 @@ async def test_worker_processed_total_counts_written_records() -> None:
     await p.aclose()
 
     assert _sample("af_mcp_metering_worker_processed_total") == before + 2
+
+
+# ---------------------------------------------------------------------------
+# Usage store feed (PR C) -- after each audit write the record is accounted
+# in the installed UsageStore (tool-call records with outcome success/error
+# only). Best-effort: a store failure never affects the audit write, which
+# always happens FIRST.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+async def usage_store():
+    """An installed module-level usage store, uninstalled afterwards."""
+    from af_mcp_broker.usage import aclose_usage_store, init_usage_store
+
+    store = await init_usage_store(Settings())
+    yield store
+    await aclose_usage_store()
+
+
+async def test_worker_feeds_the_usage_store_after_the_audit_write(
+    usage_store,
+) -> None:
+    buffer = io.StringIO()
+    init_audit_logger(buffer)
+    await init_metering_pipeline()
+
+    await submit_metered_audit(
+        _record(mcp_service="rucio", timestamp=time.time()), None
+    )
+    await aclose_metering_pipeline()
+
+    assert len(_lines(buffer)) == 1
+    (agg,) = await usage_store.query("sub-abc", days=30)
+    assert agg.calls == 1
+    assert agg.service == "rucio"
+
+
+async def test_synchronous_fallback_feeds_the_usage_store(usage_store) -> None:
+    """With no pipeline installed the inline fallback still accounts usage."""
+    buffer = io.StringIO()
+    init_audit_logger(buffer)
+
+    await submit_metered_audit(
+        _record(mcp_service="rucio", timestamp=time.time()), None
+    )
+
+    (agg,) = await usage_store.query("sub-abc", days=30)
+    assert agg.calls == 1
+
+
+async def test_overflow_inline_write_feeds_the_usage_store(usage_store) -> None:
+    """The full-queue degradation writes the line inline unmeasured -- that
+    written record is usage too, not a gap in the accounting."""
+    buffer = io.StringIO()
+    init_audit_logger(buffer)
+    # Tiny queue, worker deliberately not started: the second submit
+    # overflows deterministically (same setup as the overflow test above).
+    p = InProcessMeteringBackend(maxsize=1)
+    await p.submit(
+        _record(request_id="queued", mcp_service="rucio", timestamp=time.time()), None
+    )
+    await p.submit(
+        _record(request_id="overflowed", mcp_service="rucio", timestamp=time.time()),
+        None,
+    )
+
+    # Only the overflowed record has been written (and accounted) so far.
+    (agg,) = await usage_store.query("sub-abc", days=30)
+    assert agg.calls == 1
+    await p.start()
+    await p.aclose()
+    (agg,) = await usage_store.query("sub-abc", days=30)
+    assert agg.calls == 2
+
+
+async def test_worker_skips_usage_for_records_without_an_mcp_service(
+    usage_store,
+) -> None:
+    """Non-tool-call records flow through the same write paths but are not
+    usage (no service to attribute them to)."""
+    buffer = io.StringIO()
+    init_audit_logger(buffer)
+
+    await submit_metered_audit(_record(mcp_service=None, timestamp=time.time()), None)
+
+    assert len(_lines(buffer)) == 1
+    assert await usage_store.query("sub-abc", days=30) == []
+
+
+async def test_usage_store_failure_never_affects_the_audit_write(
+    usage_store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The audit write happens FIRST and a store failure after it is caught,
+    logged, and counted -- the line is intact and the worker survives."""
+
+    async def _boom(record: AuditRecord) -> None:
+        raise RuntimeError("usage store down")
+
+    monkeypatch.setattr(usage_store, "record", _boom)
+
+    buffer = io.StringIO()
+    init_audit_logger(buffer)
+    await init_metering_pipeline()
+
+    errors_before = _sample("af_mcp_metering_worker_errors_total")
+    await submit_metered_audit(
+        _record(mcp_service="rucio", timestamp=time.time()), None
+    )
+    await aclose_metering_pipeline()
+
+    (line,) = _lines(buffer)
+    assert line["outcome"] == "success"
+    assert _sample("af_mcp_metering_worker_errors_total") == errors_before + 1

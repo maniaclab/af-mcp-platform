@@ -86,6 +86,23 @@ spec:
           port: {{ . }}
         {{- end }}
     {{- end }}
+
+    # Postgres usage store (broker.usage.backend="postgres") -- allow the broker to
+    # reach the Crunchy PGO postgres pods backing USAGE_POSTGRES_DSN (see values.yaml
+    # broker.usage.postgres.networkPolicy for the namespace/cluster selection).
+    {{- if eq .Values.broker.usage.backend "postgres" }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.broker.usage.postgres.networkPolicy.namespace | default .Release.Namespace | quote }}
+          podSelector:
+            matchLabels:
+              postgres-operator.crunchydata.com/cluster: {{ .Values.broker.usage.postgres.networkPolicy.clusterName | quote }}
+              postgres-operator.crunchydata.com/data: postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+    {{- end }}
 ---
 # Portal network policy: allow ingress from nginx only; no special egress rules.
 apiVersion: networking.k8s.io/v1

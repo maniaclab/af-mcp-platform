@@ -348,6 +348,23 @@ Callers pipe this through `nindent` at whatever depth their container's
 # same visibility rationale as TOKEN_STORE_BACKEND above.
 - name: METERING_BACKEND
   value: {{ .Values.broker.metering.backend | replace "-" "_" | quote }}
+# Usage store backend (broker usage/) -- per-user usage accounting behind
+# GET /v1/usage. Always set, same visibility rationale as
+# TOKEN_STORE_BACKEND above.
+- name: USAGE_STORE_BACKEND
+  value: {{ .Values.broker.usage.backend | replace "-" "_" | quote }}
+{{- if eq .Values.broker.usage.backend "postgres" }}
+{{- if .Values.broker.usage.postgres.existingSecret.name }}
+# asyncpg DSN for the postgres usage store -- with Crunchy PGO, typically
+# the `uri` key of the operator-generated `<cluster>-pguser-<user>` secret
+# (see broker.usage.postgres.existingSecret in values.yaml).
+- name: USAGE_POSTGRES_DSN
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.broker.usage.postgres.existingSecret.name | quote }}
+      key: {{ .Values.broker.usage.postgres.existingSecret.key | quote }}
+{{- end }}
+{{- end }}
 {{- /*
 Vault connection settings are shared by all Vault-backed stores above (one
 VaultKV instance, per config.py/app.py) — rendered once whenever any of

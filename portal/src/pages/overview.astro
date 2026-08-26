@@ -4,6 +4,7 @@
 // portal pages must not use those prefixes.
 import Base from '../layouts/Base.astro';
 import DashboardCards from '../components/DashboardCards.vue';
+import UsageCard from '../components/UsageCard.vue';
 
 // Identity is filled client-side (see Base.astro) — the greeting element is
 // tagged data-af-identity and stays hidden until GET /v1/identities resolves.
@@ -40,6 +41,9 @@ import DashboardCards from '../components/DashboardCards.vue';
 
   <!-- ── Status cards (Vue island — fetches live data) ─────────────────── -->
   <DashboardCards client:load />
+
+  <!-- ── Usage summary (Vue island — fetches live data) ────────────────── -->
+  <UsageCard client:load />
 
   <!-- ── MCP endpoint ──────────────────────────────────────────────────── -->
   <section class="endpoint-section" aria-label="MCP endpoint">

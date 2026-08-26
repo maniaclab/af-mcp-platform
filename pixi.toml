@@ -22,10 +22,12 @@ prometheus-fastapi-instrumentator = ">=7.0"
 kubernetes_asyncio = ">=30.0"
 pyyaml = ">=6.0"
 tiktoken = ">=0.14.0"
+asyncpg = ">=0.31.0,<0.32"
 
 [feature.broker.pypi-dependencies]
 # Editable install triggers hatch-vcs to generate _version.py from git tags.
 af-mcp-broker = {path = "broker/", editable = true}
+tokencost = ">=0.1.26, <0.2"
 
 [feature.dev.dependencies]
 pytest = ">=8.0"
@@ -38,6 +40,7 @@ pre-commit = ">=3.7"
 tbump = ">=6.7.0"
 httpx2 = ">=2.7.0,<3"
 pytest-timeout = ">=2.4.0,<3"
+postgresql = ">=18.4,<19"
 
 [feature.broker.tasks]
 broker = { cmd = "uvicorn af_mcp_broker.app:app --host 0.0.0.0 --port 8080 --reload", description = "Run broker dev server" }

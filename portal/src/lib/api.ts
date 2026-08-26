@@ -644,3 +644,51 @@ export async function fetchDashboardSummary(): Promise<DashboardSummary> {
 
   return { linkedCount, serverCount, proxyStatus: proxy, activeTokenCount };
 }
+
+// ---------------------------------------------------------------------------
+// Usage — GET /v1/usage
+// ---------------------------------------------------------------------------
+
+export interface UsageTotals {
+  calls: number;
+  errors: number;
+  duration_ms: number;
+  result_bytes: number;
+  // A tiktoken (o200k) ESTIMATE of the tool-result text injected into the
+  // LLM client's context — not provider-reported usage, and not the user's
+  // full LLM spend. estimated_cost_usd prices that estimate at the response's
+  // cost_model input rate. Label both as estimates wherever they render.
+  result_tokens_est: number;
+  estimated_cost_usd: number;
+}
+
+export interface UsageByService {
+  service: string;
+  calls: number;
+  errors: number;
+  result_bytes: number;
+  result_tokens_est: number;
+  estimated_cost_usd: number;
+}
+
+export interface UsageByDay {
+  /** ISO-8601 UTC calendar day. */
+  date: string;
+  calls: number;
+  result_tokens_est: number;
+}
+
+export interface UsageResponse {
+  subject: string;
+  window_days: number;
+  /** The price-table key whose input rate produced every estimated_cost_usd. */
+  cost_model: string;
+  totals: UsageTotals;
+  by_service: UsageByService[];
+  by_day: UsageByDay[];
+}
+
+/** The caller's own tool-call usage over a trailing window (default 30 days). */
+export async function fetchUsage(days = 30): Promise<UsageResponse> {
+  return apiFetch<UsageResponse>(`/usage?days=${days}`);
+}

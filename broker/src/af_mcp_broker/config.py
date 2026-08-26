@@ -246,6 +246,28 @@ class Settings(BaseSettings):
     # implementation exists -- fail-closed at Settings construction time.
     metering_backend: Literal["in_process"] = "in_process"
 
+    # Which UsageStore implementation (usage/) accumulates per-user tool-call
+    # usage -- the per-(day, service, tool, outcome) aggregates GET /v1/usage
+    # serves. "in_memory" is single-replica and lost on restart (fine for dev
+    # and small facilities that treat usage as a convenience view; the audit
+    # log stays authoritative either way); "postgres" persists events to the
+    # af_mcp_usage_events table via asyncpg -- see usage/postgres.py.
+    usage_store_backend: Literal["in_memory", "postgres"] = "in_memory"
+
+    # asyncpg-compatible DSN (postgresql://user:pass@host/db) for the
+    # postgres usage store. Required when usage_store_backend="postgres" --
+    # fail-closed at Settings construction time, see
+    # _validate_usage_store_config. With Crunchy PGO this is typically the
+    # `uri` key of the operator-generated `<cluster>-pguser-<user>` secret,
+    # wired in the chart via broker.usage.postgres.existingSecret.
+    usage_postgres_dsn: SecretStr | None = None
+
+    # Model key (a tokencost.TOKEN_COSTS entry) whose *input* token price
+    # turns GET /v1/usage's result_tokens_est sums into estimated_cost_usd at
+    # read time. Dollars are never stored -- only tokens -- so repricing is a
+    # config change, not a migration. Overridable per-request via ?model=.
+    cost_reference_model: str = "claude-sonnet-4-20250514"
+
     # Prometheus /metrics is served on its own port so a NetworkPolicy can
     # firewall scraping separately from API traffic. 0 picks an ephemeral
     # port (tests); a negative value disables the metrics server.
@@ -800,6 +822,27 @@ class Settings(BaseSettings):
                 "principal_cache_backend is 'vault' or voms-token-service "
                 "mode is configured (an x509 identity_providers entry with a "
                 "service_url)."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_usage_store_config(self) -> Settings:
+        """Fail startup loudly when the postgres usage store is selected without a DSN — a half-configured PostgresUsageStore would otherwise fail at first request instead of at boot, same rationale as ``_validate_vault_config``."""
+        if self.usage_store_backend != "postgres":
+            return self
+        if self.usage_postgres_dsn is None or not (
+            self.usage_postgres_dsn.get_secret_value()
+        ):
+            log.error(
+                "usage_store_config_invalid",
+                reason=(
+                    "usage_postgres_dsn is empty but usage_store_backend is 'postgres'"
+                ),
+            )
+            raise ValueError(
+                "usage_postgres_dsn (USAGE_POSTGRES_DSN) must be set when "
+                "usage_store_backend is 'postgres' -- typically the `uri` key "
+                "of a Crunchy PGO `<cluster>-pguser-<user>` secret."
             )
         return self
 
