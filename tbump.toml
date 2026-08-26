@@ -32,10 +32,6 @@ src = "portal/package.json"
 search = '"version": "{current_version}"'
 
 [[file]]
-src = "portal/package-lock.json"
-search = '"version": "{current_version}"'
-
-[[file]]
 src = "charts/af-mcp-platform/Chart.yaml"
 search = 'appVersion: "{current_version}"'
 
@@ -46,3 +42,7 @@ search = 'version: {current_version}'
 [[field]]
 name = "candidate"
 default = ""
+
+[[before_commit]]
+name = "re-lock portal/package-lock.json"
+cmd = "pixi run -e portal install --package-lock-only"
