@@ -147,7 +147,7 @@ async def build_usage_summary(
         ),
     )
 
-    # Roll the (day, service, tool, outcome) aggregates up along each axis.
+    # Roll the (day, service, method, outcome) aggregates up along each axis.
     by_service_acc: dict[str, dict[str, int]] = defaultdict(
         lambda: {"calls": 0, "errors": 0, "result_bytes": 0, "result_tokens_est": 0}
     )

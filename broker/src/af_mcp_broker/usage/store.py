@@ -2,7 +2,7 @@
 
 The broker itself is the metering system: the metering pipeline
 (``audit/pipeline.py``) hands every success/error tool-call ``AuditRecord``
-to a ``UsageStore``, which accumulates per-(day, service, tool, outcome)
+to a ``UsageStore``, which accumulates per-(day, service, method, outcome)
 aggregates that ``GET /v1/usage`` serves back to the calling user. Usage is
 best-effort by the same contract as metering -- the audit log stays
 authoritative -- and dollars are NEVER stored: only tokens; cost is derived
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class UsageAggregate:
-    """One subject's usage rolled up per (UTC day, service, tool, outcome).
+    """One subject's usage rolled up per (UTC day, service, method, outcome).
 
     ``duration_ms``/``result_bytes``/``result_tokens_est`` are sums over the
     aggregated calls; a record whose corresponding ``AuditRecord`` field was
@@ -40,7 +40,9 @@ class UsageAggregate:
 
     day: date
     service: str
-    tool: str
+    # The method (MCP "tool") name -- Elwood vocabulary; matches the
+    # postgres column.
+    method: str
     outcome: str  # "success" | "error"
     calls: int
     duration_ms: float
@@ -104,7 +106,7 @@ class InMemoryUsageStore(UsageStore):
     """
 
     def __init__(self) -> None:
-        # (subject, day, service, tool, outcome) -> counters. Aggregating at
+        # (subject, day, service, method, outcome) -> counters. Aggregating at
         # write time (rather than keeping raw events) bounds memory by the
         # number of distinct keys, not the call volume.
         self._counters: dict[tuple[str, date, str, str, str], _Counters] = {}
@@ -141,13 +143,15 @@ class InMemoryUsageStore(UsageStore):
             UsageAggregate(
                 day=day,
                 service=service,
-                tool=tool,
+                method=method,
                 outcome=outcome,
                 calls=c.calls,
                 duration_ms=c.duration_ms,
                 result_bytes=c.result_bytes,
                 result_tokens_est=c.result_tokens_est,
             )
-            for (sub, day, service, tool, outcome), c in sorted(self._counters.items())
+            for (sub, day, service, method, outcome), c in sorted(
+                self._counters.items()
+            )
             if sub == subject and day >= start
         ]

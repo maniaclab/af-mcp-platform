@@ -80,7 +80,7 @@ async def test_record_and_query_round_trip() -> None:
     (agg,) = await store.query("sub-abc", days=30)
 
     assert agg.service == "rucio"
-    assert agg.tool == "rucio_list_dids"
+    assert agg.method == "rucio_list_dids"
     assert agg.outcome == "success"
     assert agg.day == datetime.now(tz=UTC).date()
     assert agg.calls == 2
@@ -106,14 +106,14 @@ async def test_unmeasured_records_count_calls_but_contribute_zero_sums() -> None
     assert agg.result_tokens_est == 25
 
 
-async def test_aggregates_split_by_service_tool_and_outcome() -> None:
+async def test_aggregates_split_by_service_method_and_outcome() -> None:
     store = InMemoryUsageStore()
     await store.record(_record())
     await store.record(_record(mcp_service="ami", action="ami_list_datasets"))
     await store.record(_record(outcome="error"))
 
     aggs = await store.query("sub-abc", days=30)
-    keys = {(a.service, a.tool, a.outcome) for a in aggs}
+    keys = {(a.service, a.method, a.outcome) for a in aggs}
     assert keys == {
         ("rucio", "rucio_list_dids", "success"),
         ("ami", "ami_list_datasets", "success"),
