@@ -71,7 +71,7 @@ class UsageStore(abc.ABC):
 
     @abc.abstractmethod
     async def query(self, subject: str, days: int) -> list[UsageAggregate]:
-        """Aggregates for *subject* over the trailing *days* UTC calendar days, today inclusive."""
+        """Return aggregates for *subject* over the trailing *days* UTC calendar days, today inclusive."""
 
 
 def window_start(days: int) -> date:

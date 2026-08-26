@@ -130,7 +130,7 @@ async def get_usage(
     days: Annotated[int, Query(ge=1, le=365)] = 30,
     model: str | None = None,
 ) -> UsageResponse:
-    """The caller's own usage -- scoped strictly to ``principal.subject``.
+    """Return the caller's own usage -- scoped strictly to ``principal.subject``.
 
     Token counts are a tiktoken (o200k) ESTIMATE of tool-result context
     injection only (see the module docstring's honesty caveats);

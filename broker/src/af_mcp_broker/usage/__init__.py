@@ -81,7 +81,7 @@ async def aclose_usage_store() -> None:
 
 
 def get_usage_store() -> UsageStore | None:
-    """The installed process-wide store, or None outside the lifespan."""
+    """Return the installed process-wide store, or None outside the lifespan."""
     return _store
 
 
