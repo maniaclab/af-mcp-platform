@@ -235,7 +235,12 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     except FileNotFoundError:
         logger.warning("services_file_not_found", path=settings.services_file)
         services_loaded = False
-    services = service_registry.all_services()
+    # Operator-configured services only: the registry always carries the
+    # builtin af-mcp entry too (issue #240), which needs none of the startup
+    # validation below (permission "__none__", no credential, no x509) and
+    # would otherwise mask an empty services.yaml from the warning here and
+    # inflate /readyz's services_count.
+    services = [spec for spec in service_registry.all_services() if not spec.builtin]
     if not services:
         logger.warning("no_services_configured")
 

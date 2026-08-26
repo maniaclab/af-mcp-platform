@@ -9,22 +9,26 @@ import yaml  # type: ignore[import-untyped]
 if TYPE_CHECKING:
     from af_mcp_broker.config import Settings
 
-# Reserved for the broker-native diagnostic tools registered directly on the
+# Reserved for the broker's own methods, registered directly on the
 # aggregator (mcp/diagnostics.py, issue #153): af_whoami, af_list_identities,
-# af_list_mcp_servers. No service may configure this prefix -- doing so would
-# let a service's own tools ("af_<toolname>", once namespaced) shadow the
-# diagnostic tools' names in a caller's tools/list, defeating the "always
-# visible, never proxied" guarantee those tools exist to provide. Enforced by
+# af_list_mcp_servers, af_link_identity, af_usage. The prefix belongs to the
+# builtin BUILTIN_SERVICE_NAME entry ServiceRegistry self-registers below
+# (issue #240) -- no operator service may configure it: doing so would let a
+# service's own tools ("af_<toolname>", once namespaced) shadow these methods'
+# names in a caller's tools/list, defeating the "always visible, never
+# proxied" guarantee they exist to provide. Enforced by
 # ServiceRegistry.register() below.
 #
 # These names live here rather than in mcp/diagnostics.py itself so that
-# EntitlementMiddleware/AuthorizationMiddleware (which need DIAGNOSTIC_TOOL_NAMES
-# to bypass entitlement/authorization for these tools) and api/permissions.py
-# (which names them in a status_detail sentence -- see _STATUS_DETAILS) can
-# both import them without either importing mcp/diagnostics.py itself, which
-# in turn imports api/permissions.py's _service_status -- that would be a
-# straight import cycle.
+# api/permissions.py (which names them in a status_detail sentence -- see
+# _STATUS_DETAILS) and mcp/aggregator.py (which names them in the not-linked
+# ToolError text) can import them without importing mcp/diagnostics.py
+# itself, which in turn imports api/permissions.py's _service_status -- that
+# would be a straight import cycle.
 RESERVED_PREFIX = "af"
+# The registry's self-registered entry for the broker's own af_* methods --
+# see _builtin_service_spec() below.
+BUILTIN_SERVICE_NAME = "af-mcp"
 WHOAMI_TOOL_NAME = f"{RESERVED_PREFIX}_whoami"
 LIST_IDENTITIES_TOOL_NAME = f"{RESERVED_PREFIX}_list_identities"
 LIST_MCP_SERVERS_TOOL_NAME = f"{RESERVED_PREFIX}_list_mcp_servers"
@@ -98,6 +102,45 @@ class ServiceSpec:
     # matches fastmcp's own ProxyProvider default; set 0 to disable caching
     # entirely for a service whose tool list personalizes per caller.
     tools_cache_ttl: float = 300.0
+    # True only for the registry's self-registered BUILTIN_SERVICE_NAME entry
+    # (issue #240) -- the broker's own af_* methods, dispatched by the
+    # aggregator's local provider rather than proxied anywhere. Not a
+    # services.yaml key: load() never reads it, and register() refuses the
+    # builtin name/prefix outright, so an operator entry can never be builtin.
+    builtin: bool = False
+
+
+def _builtin_service_spec() -> ServiceSpec:
+    """The broker's own ``af-mcp`` service entry (issue #240).
+
+    Self-registered by every ``ServiceRegistry`` so the broker-native af_*
+    methods (mcp/diagnostics.py) are a first-class service: visible in
+    /v1/catalog and ``af_list_mcp_servers``, and routed through the normal
+    entitlement/authorization/audit path by prefix like every other service.
+    There is no backend to dial -- the aggregator's own FastMCP instance
+    serves these methods from its local provider, so ``url``/``transport``
+    are inert placeholders and aggregator.py's ``_register_services`` skips
+    building a ProxyProvider for a builtin spec.
+    """
+    return ServiceSpec(
+        name=BUILTIN_SERVICE_NAME,
+        prefix=RESERVED_PREFIX,
+        url="",
+        transport="http",
+        # Open to any authenticated principal: af_whoami/af_link_identity are
+        # exactly the bootstrap methods a caller with zero permissions needs.
+        required_permission="__none__",
+        # No per-user credential concept at all -- which also makes
+        # api/permissions.py's _service_status report it "available"
+        # unconditionally (it is the thing serving the status).
+        auth_type="none",
+        description=(
+            "The gateway's own identity, catalog, and usage methods -- "
+            "always available to any authenticated caller."
+        ),
+        display_name="AF Gateway",
+        builtin=True,
+    )
 
 
 class ServiceRegistry:
@@ -105,6 +148,11 @@ class ServiceRegistry:
 
     def __init__(self) -> None:
         self._services: dict[str, ServiceSpec] = {}
+        # The broker's own af-mcp service is always present (issue #240) --
+        # inserted directly rather than via register(), which refuses its
+        # name/prefix precisely so services.yaml can never define, replace,
+        # or unregister the broker from itself.
+        self._services[BUILTIN_SERVICE_NAME] = _builtin_service_spec()
         # service name -> most recently classified tools/list failure reason
         # ("not_linked" | "unauthorized" | "unavailable", see aggregator.py's
         # _classify_list_failure). Best-effort, last-write-wins, no history --
@@ -135,9 +183,21 @@ class ServiceRegistry:
         if service.prefix == RESERVED_PREFIX:
             msg = (
                 f"service '{service.name}' cannot use prefix "
-                f"'{RESERVED_PREFIX}' -- reserved for the broker's own "
-                f"af_* diagnostic tools ({sorted(DIAGNOSTIC_TOOL_NAMES)}, "
-                "issue #153). Choose a different prefix."
+                f"'{RESERVED_PREFIX}' -- it belongs to the builtin "
+                f"'{BUILTIN_SERVICE_NAME}' service serving the broker's own "
+                f"af_* methods ({sorted(DIAGNOSTIC_TOOL_NAMES)}, issues "
+                "#153/#240). Choose a different prefix."
+            )
+            raise ValueError(msg)
+        if service.name == BUILTIN_SERVICE_NAME:
+            # A same-name entry would silently replace the builtin spec in
+            # _services (dict keyed by name) -- the config-file equivalent of
+            # unregistering the broker from itself.
+            msg = (
+                f"service name '{BUILTIN_SERVICE_NAME}' is reserved for the "
+                "builtin service serving the broker's own af_* methods "
+                "(issue #240) and cannot be configured in services.yaml. "
+                "Choose a different name."
             )
             raise ValueError(msg)
         self._services[service.name] = service
