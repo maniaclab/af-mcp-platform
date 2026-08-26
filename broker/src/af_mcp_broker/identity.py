@@ -169,6 +169,43 @@ class Principal:
 # ---------------------------------------------------------------------------
 
 
+def decode_broker_bearer(
+    token: str, keys: list[dict[str, Any]], settings: Settings
+) -> dict[str, Any]:
+    """Decode *token* against *keys* and return its claims, enforcing the broker's resource-server audience (``settings.oidc_audience``), issuer, and expiry.
+
+    This is the single audience-gate implementation: ``get_principal`` runs
+    every JWT presented on ``/v1`` and ``/mcp`` through it, and the MCP
+    OAuth bootstrap callback (``api/mcp_oauth.py``) runs the Keycloak login
+    exchange's access token through it before an authorization code (and
+    thus a PAT) can be minted (issue #245) -- so "carries the broker
+    audience" means exactly the same thing on every admission path.
+
+    Raises ``jwt.InvalidTokenError`` (or a subclass -- notably
+    ``jwt.InvalidAudienceError`` for the missing/wrong-audience case) on any
+    decode failure, and ``ValueError`` when no JWKS key matches the token's
+    ``kid``; callers map those to their own surface's error shape.
+    """
+    # Select the signing key by the token's `kid`. A JWKS commonly carries
+    # more than one key (e.g. Keycloak publishes both a signature and an
+    # encryption key); trying keys in list order and treating a signature
+    # mismatch as fatal fails whenever the wrong key sorts first.
+    header = jwt.get_unverified_header(token)
+    kid = header.get("kid")
+    key_data = _select_jwk(keys, kid)
+    if key_data is None:
+        raise ValueError(f"no JWKS key matches token kid={kid!r}")
+    public_key = jwt.algorithms.RSAAlgorithm.from_jwk(key_data)
+    return jwt.decode(
+        token,
+        public_key,  # type: ignore[arg-type]  # JWKS only has public keys
+        algorithms=["RS256"],
+        audience=settings.oidc_audience,
+        issuer=settings.oidc_issuer,
+        options={"verify_exp": True},
+    )
+
+
 def _extract_principal(claims: dict[str, Any], raw_token: str) -> Principal:
     """Map decoded JWT claims to a Principal.
 
@@ -344,36 +381,16 @@ async def get_principal(
     expired = False
     wrong_audience = False
     try:
-        # Select the signing key by the token's `kid`. A JWKS commonly carries
-        # more than one key (e.g. Keycloak publishes both a signature and an
-        # encryption key); trying keys in list order and treating a signature
-        # mismatch as fatal fails whenever the wrong key sorts first.
-        header = jwt.get_unverified_header(token)
-        kid = header.get("kid")
-        key_data = _select_jwk(keys, kid)
-        if key_data is None:
-            error = f"no JWKS key matches token kid={kid!r}"
-        else:
-            public_key = jwt.algorithms.RSAAlgorithm.from_jwk(key_data)
-            claims = jwt.decode(
-                token,
-                public_key,  # type: ignore[arg-type]  # JWKS only has public keys
-                algorithms=["RS256"],
-                audience=settings.oidc_audience,
-                issuer=settings.oidc_issuer,
-                options={"verify_exp": True},
-            )
-            jti = claims.get("jti")
-            if (
-                jti
-                and revoked_jti_cache is not None
-                and await revoked_jti_cache.is_revoked(jti)
-            ):
-                _raise_revoked(jti)
-            identity_principal = _extract_principal(claims, token)
-            return await _resolve_current_attributes(
-                identity_principal, principal_cache
-            )
+        claims = decode_broker_bearer(token, keys, settings)
+        jti = claims.get("jti")
+        if (
+            jti
+            and revoked_jti_cache is not None
+            and await revoked_jti_cache.is_revoked(jti)
+        ):
+            _raise_revoked(jti)
+        identity_principal = _extract_principal(claims, token)
+        return await _resolve_current_attributes(identity_principal, principal_cache)
     except jwt.ExpiredSignatureError as exc:
         error = exc
         expired = True
