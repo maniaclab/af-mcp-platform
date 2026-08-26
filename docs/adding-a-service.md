@@ -366,6 +366,23 @@ is cited below as the shipped example.
   (`ListIdentitiesResult.identities` / `ListMcpServersResult.servers`) in
   `broker/src/af_mcp_broker/mcp/diagnostics.py`.
 
+- **Set `agent_policy` — the model-facing per-service policy knob.** The three
+  conventions above are per-tool text the backend advertises; `agent_policy` is
+  a per-*service* field you set in the Step 1 service list (alongside
+  `required_permission`/`trust_tier`) and is the model-facing half of *dual
+  enforcement* (see docs/architecture.md's "Dual enforcement"). The aggregator
+  composes every service's `agent_policy` into the MCP server `instructions` the
+  LLM agent reads, so write 1–3 sentences of guidance the agent should reason
+  over before calling this service's tools — which operations are safe reads,
+  and which change real facility state and warrant confirming with the user
+  first. Keep it distinct from `description` (user-facing catalog UX shown in
+  the portal): `agent_policy` addresses the agent, imperatively. It is guidance,
+  **not** an access-control boundary — the `required_permission` gate
+  (`maniaclab/af-mcp-platform#253` also adds `trust_tier` as declared posture)
+  remains authoritative. The shipped `services.yaml` carries one for each
+  reference service — e.g. Rucio's says read queries are safe but creating or
+  deleting rules changes real data placement and should be confirmed first.
+
 ---
 
 ## Verification

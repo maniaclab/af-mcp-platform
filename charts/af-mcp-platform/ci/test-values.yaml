@@ -115,8 +115,9 @@ networkPolicy:
       - 9000
 
 # Exercises the aggregator.services -> services.yaml ConfigMap render in CI,
-# including the trust_tier field flowing through verbatim (re-review finding
-# #5), so a broken configmap-services.yaml render is caught by `helm template`.
+# including the trust_tier field (re-review finding #5) and the agent_policy
+# model-facing policy field (re-review finding #6) flowing through verbatim, so
+# a broken configmap-services.yaml render is caught by `helm template`.
 aggregator:
   services:
     - name: rucio-example
@@ -126,6 +127,9 @@ aggregator:
       required_permission: read_data
       apply_namespace: false
       trust_tier: service-tier
+      agent_policy: >-
+        Read queries are safe; creating or deleting rules changes real data
+        placement — confirm with the user first.
     - name: docs-example
       prefix: docs
       url: "http://docs-mcp.example.svc.cluster.local/mcp"

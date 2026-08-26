@@ -241,6 +241,40 @@ Answers: "is this principal allowed to call this tool?"
   `af-mcp` appears in `/v1/catalog` and `af_list_mcp_servers` like any
   other service; `services.yaml` can neither define nor unregister it.
 
+#### Dual enforcement: technical gate + model-facing policy
+
+Enforcement on this platform is dual (Elwood v5 re-review, finding #6), and the
+two layers do different jobs:
+
+- **Technical gate (authoritative).** The permission check above — declared by
+  `required_permission` in `services.yaml`, resolved from the principal's
+  groups — is what actually stops an unauthorized call. It returns HTTP 403 to
+  the aggregator regardless of what any client or model wants. This layer is
+  unchanged by the model-facing layer and remains the sole access-control
+  boundary.
+- **Model-facing policy (guidance).** The aggregator also exposes policy text
+  the LLM agent itself reads and reasons over, surfaced in the MCP `initialize`
+  response as the server's `instructions`. It has two parts, composed in
+  `mcp/instructions.py`: a **platform preamble** (this is a credential-brokering
+  gateway; a denial is a policy decision, not a transient error — do not retry
+  a denied call; a missing-credential failure should route the user to
+  `af_link_identity`/the portal, not a retry) and a **per-service policy
+  section** built from each service's `agent_policy` field (`ServiceSpec.agent_policy`,
+  set in `services.yaml`). Each `agent_policy` is 1–3 sentences of model-facing
+  guidance — for example, that Rucio read queries are safe but creating or
+  deleting *rules* changes real data placement and should be confirmed with the
+  user first.
+
+The model-facing layer is **guidance the agent reasons over, not an access-control
+boundary** — a capable-but-adversarial model can ignore it, and the technical
+gate is what still stops the call. Its purpose is to make a *cooperative* agent
+behave well: not retry a denial, route the user to link an identity, and confirm
+before mutating real facility state. `agent_policy` is therefore distinct both
+from `description` (user-facing catalog UX shown in the portal) and from
+`policy.yaml`/`required_permission` (the technical gate). See
+`maniaclab/af-mcp-platform#253` for the related `trust_tier` declaration the
+preamble also references.
+
 ### 3. Credentialing
 
 Fetches or mints the per-user credential required by the backend, given an
