@@ -142,12 +142,17 @@ def _make_key(kid: str) -> RsaKey:
     )
 
 
-@pytest.fixture
+# Session-scoped: a 2048-bit keygen costs ~40ms, and well over a hundred
+# tests request these fixtures -- that's seconds of pure prime hunting per
+# run. The keys are interchangeable, read-only test material (tests only
+# call .sign()/.jwk, never mutate), and the two kids stay distinct, so one
+# generated-once pair serves the whole run without coupling tests.
+@pytest.fixture(scope="session")
 def sig_key() -> RsaKey:
     return _make_key("sig-key")
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def enc_key() -> RsaKey:
     return _make_key("enc-key")
 
