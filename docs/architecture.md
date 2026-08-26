@@ -468,6 +468,56 @@ unbounded, so it is never used as a label — see `metrics.py`'s module
 docstring for the full reasoning, and avoid adding a raw token, jti, or
 request ID as a label on any future metric for the same reason.
 
+#### Distributed tracing (OpenTelemetry)
+
+The broker can emit OpenTelemetry traces (`tracing.py`) — it is an
+**emitter only**: no trace backend is shipped or assumed. Tracing is
+env-gated and off by default: set `OTEL_EXPORTER_OTLP_ENDPOINT` (chart:
+`broker.tracing.{enabled, endpoint}`) to point span export at any OTLP/HTTP
+collector (Grafana Tempo, Jaeger, an OTel Collector, …). With the endpoint
+unset, no SDK tracer provider is installed and every OTel API call — the
+broker's own spans and fastmcp's native ones alike — no-ops at zero
+overhead. Export failures are the batch exporter's background problem: an
+unreachable collector never fails startup or a tool call. Sampling uses the
+standard `OTEL_TRACES_SAMPLER`/`OTEL_TRACES_SAMPLER_ARG` env vars (chart:
+`broker.tracing.sampleRatio`); the default is `parentbased_always_on`
+(keep every trace), fine at tool-call volumes.
+
+Every tool call gets a `tools/call <name>` server span opened by
+`AuthorizationMiddleware` — on **all** outcome paths, denied and unmapped
+included — carrying identity, authorization, and outcome attributes:
+`user.id` (the principal's subject), `af.service`, `af.permission`,
+`af.action_type`, and `af.outcome` (`success` / `denied` / `error`; the
+error path also records the exception and sets span status ERROR). fastmcp
+3.4.4's own `tools/call` span (plus its per-delegation and client spans
+toward the backend service) nests underneath as children.
+
+**The trace ↔ audit join.** Spans carry identity/outcome/timing;
+measurements (`result_bytes`, `result_tokens_est`) stay in the audit log —
+they are computed by the metering worker *after* the response returns, so
+they can never be span attributes. Every `AuditRecord` instead carries the
+span's `trace_id` (32-hex, `null` when tracing is off), captured at record
+construction — so a trace in the collector, its audit lines, and the usage
+aggregates derived from them all join on one key.
+
+**Payload privacy.** Tool arguments and results never become span
+attributes (`gen_ai.tool.call.arguments`/`gen_ai.tool.call.result` stay
+off) — the same keys-only posture as the audit log's `args_summary`.
+
+**How a user traces their own agent.** A client that traces itself sends a
+W3C `traceparent` inside the MCP request's `_meta` (SEP-414); the broker
+parses it as a *remote parent*, so the broker's spans join the client's
+trace. Propagation invariant (see `authorization_mw.py` /
+`aggregator.py`): inbound trace context is only ever parsed, never
+forwarded verbatim; outbound context toward backend MCP servers is
+broker-generated, injected by fastmcp's client into the outbound request's
+`_meta` — never into HTTP headers, preserving the aggregator's
+no-header-forwarding invariant. A backend MCP server that itself emits OTel
+spans therefore continues the same trace. `/v1` requests get standard HTTP
+server spans via FastAPI instrumentation (health probes excluded); `/mcp`
+is deliberately excluded from HTTP instrumentation so an HTTP-level span
+cannot shadow the client's `_meta` traceparent.
+
 ---
 
 ## The `/v1` Broker Contract
