@@ -135,6 +135,13 @@ class CatalogServer(BaseModel):
     # issue #240) -- the portal's cue to drop the identity-link/credential
     # affordances that don't apply to the gateway itself.
     builtin: bool
+    # The service's declared Elwood v5 / Shannon trust tier (ServiceSpec.
+    # trust_tier -- see docs/architecture.md's "Trust tiers"), or None when
+    # the registry entry leaves it undeclared. Surfaced as a machine-readable
+    # field so a catalog consumer can reason about a service's governance
+    # posture; the authoritative per-deployment assignment lives in the GitOps
+    # repo (maniaclab/flux_apps#32).
+    trust_tier: str | None
 
 
 class CatalogResponse(BaseModel):
@@ -415,6 +422,7 @@ async def get_catalog(
                 status_detail=status_detail,
                 correlation_id=correlation_id,
                 builtin=spec.builtin,
+                trust_tier=spec.trust_tier,
             )
         )
     return CatalogResponse(servers=servers)
