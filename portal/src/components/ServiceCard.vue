@@ -233,14 +233,26 @@ async function toggleTools() {
 
 <style scoped>
 .bc {
+  /* position + stacking context so an interacting card lifts above the
+   * cards after it (see .bc:hover/:focus-within) -- otherwise a badge
+   * tooltip, painted at card level, sits behind the next card in the grid. */
+  position: relative;
   border: 1px solid var(--color-af-border);
   border-radius: 4px;
   overflow: hidden;
   transition: border-color 150ms;
 }
 
-.bc:hover {
+.bc:hover,
+.bc:focus-within {
   border-color: var(--color-af-muted);
+  /* Reveal + raise the card while a badge tooltip is open: `overflow: hidden`
+   * (for the rounded-corner clip) would otherwise crop a tooltip that
+   * overflows the card's bottom edge, and a later sibling card would paint
+   * over it. The tooltips are the only thing that overflow here; the methods
+   * list has its own scroll container. */
+  overflow: visible;
+  z-index: 5;
 }
 
 .bc__header {
