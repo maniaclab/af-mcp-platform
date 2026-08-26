@@ -463,6 +463,7 @@ def make_principal() -> Callable[..., object]:
         unixname: str | None = "tuser",
         subject: str = "sub-abc",
         permission_grant: frozenset[str] | None = None,
+        token_id: str | None = None,
     ) -> Principal:
         return Principal(
             subject=subject,
@@ -473,6 +474,7 @@ def make_principal() -> Callable[..., object]:
             groups=list(groups or []),
             raw_token=SecretStr("fake-token"),
             permission_grant=permission_grant,
+            token_id=token_id,
         )
 
     return _make

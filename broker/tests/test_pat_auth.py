@@ -132,6 +132,30 @@ async def test_valid_pat_with_no_posix_identity_resolves_principal(
     assert principal.groups == ["atlas"]
 
 
+async def test_valid_pat_principal_carries_public_lookup_id_as_token_id(
+    settings, pat_backend, principal_cache, directory, tracker
+) -> None:
+    """Issue #247: the resolved Principal must carry the PAT's public,
+    non-secret lookup_id (the same registry index touch_last_used keys on)
+    so audit records can attribute a call to the specific token that made
+    it -- never the secret half, and never the full token."""
+    directory.responses["kc-sub-1"] = PrincipalAttributes(
+        uid=1, gid=1, unixname="u", groups=[], email=""
+    )
+    token = await _mint_and_store(pat_backend, principal_id="kc-sub-1")
+    lookup_id = token.split("_")[2]
+    secret = token.split("_", 3)[3]
+
+    principal = await resolve_pat_principal(
+        token, settings, pat_backend, principal_cache, tracker
+    )
+
+    assert principal.token_id == lookup_id
+    assert principal.token_id is not None
+    assert secret not in principal.token_id
+    assert token not in principal.token_id
+
+
 # ---------------------------------------------------------------------------
 # Permission PATs (issue #144 step 4): resolve_pat_principal's job is only to
 # carry TokenRecord.permission_grant through onto Principal.permission_grant

@@ -171,6 +171,9 @@ async def resolve_pat_principal(
         groups=attributes.groups,
         raw_token=SecretStr(token),
         permission_grant=record.permission_grant,
+        # The public, non-secret registry index parsed above -- audit
+        # records attribute the call to this specific token (issue #247).
+        token_id=lookup_id,
     )
 
 

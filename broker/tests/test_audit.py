@@ -91,6 +91,52 @@ async def test_write_audit_metering_fields_serialize_when_set() -> None:
     assert line["result_tokens_est"] == 512
 
 
+async def test_write_audit_token_id_defaults_none() -> None:
+    """token_id (issue #247) must default to None so every pre-existing call
+    site -- and every session-JWT call, which has no distinct long-lived
+    token to attribute -- still serializes, with an explicit null."""
+    buffer = io.StringIO()
+    init_audit_logger(buffer)
+
+    record = AuditRecord(
+        principal_sub="sub-abc",
+        principal_uid=1000,
+        permission="submit_jobs",
+        target="panda",
+        action="submit_task",
+        action_type="state_change",
+        args_summary="task=...",
+        timestamp=1234.5,
+        request_id="req-1",
+    )
+    await write_audit(record)
+
+    line = json.loads(buffer.getvalue().strip())
+    assert line["token_id"] is None
+
+
+async def test_write_audit_token_id_serializes_when_set() -> None:
+    buffer = io.StringIO()
+    init_audit_logger(buffer)
+
+    record = AuditRecord(
+        principal_sub="sub-abc",
+        principal_uid=1000,
+        permission="submit_jobs",
+        target="panda",
+        action="submit_task",
+        action_type="state_change",
+        args_summary="task=...",
+        timestamp=1234.5,
+        request_id="req-1",
+        token_id="pat-lookup-1",
+    )
+    await write_audit(record)
+
+    line = json.loads(buffer.getvalue().strip())
+    assert line["token_id"] == "pat-lookup-1"
+
+
 async def test_write_audit_runs_write_and_flush_off_the_event_loop_thread() -> None:
     """AuditLogger.write must not block the event loop: the output can be a
     real file (or stdout redirected to one) whose write/flush block, so both

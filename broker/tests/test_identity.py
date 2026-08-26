@@ -108,6 +108,21 @@ async def test_no_matching_kid_raises_401(
 # ---------------------------------------------------------------------------
 
 
+async def test_jwt_principal_has_no_token_id(
+    settings, sig_key, prime_jwks, static_principal_cache
+):
+    """Issue #247: a session JWT is not a distinct long-lived credential, so
+    the Principal it resolves to carries no token_id -- only a PAT's public
+    lookup_id ever populates that field (see test_pat_auth.py)."""
+    cache, _directory = static_principal_cache
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+
+    principal = await get_principal(token, settings, cache)
+
+    assert principal.token_id is None
+
+
 async def test_jwt_with_no_groups_claim_resolves_via_directory(
     settings, sig_key, prime_jwks, static_principal_cache
 ):

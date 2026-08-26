@@ -49,6 +49,14 @@ class AuditRecord:
     # authorization.get_principal_permissions for the intersection this
     # reflects.
     principal_permission_grant: list[str] | None = None
+    # Per-token attribution (issue #247): the calling PAT's public,
+    # non-secret lookup_id, null for a session JWT (not a distinct
+    # long-lived credential). ``principal_sub`` identifies the user across
+    # all their tokens; this identifies the specific token, so a leaked
+    # PAT's calls can be isolated -- and that one token revoked -- without
+    # guessing among the owner's other tokens. NEVER secret material or the
+    # full token.
+    token_id: str | None = None
     # Per-call metering (observability roadmap PR B). All three are None,
     # not 0, when nothing was measured -- a denied or unmapped call never
     # executed anything, so it has no duration and no result.

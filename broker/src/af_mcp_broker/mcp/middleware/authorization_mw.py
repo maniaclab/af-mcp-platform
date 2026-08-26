@@ -196,6 +196,7 @@ class AuthorizationMiddleware(Middleware):
                         outcome="denied",
                         error=f"no service registered for tool '{tool_name}'",
                         principal_permission_grant=_permission_grant_field(principal),
+                        token_id=principal.token_id,
                         trace_id=current_trace_id(),
                     )
                 )
@@ -242,6 +243,7 @@ class AuthorizationMiddleware(Middleware):
                         outcome="denied",
                         error=reason,
                         principal_permission_grant=_permission_grant_field(principal),
+                        token_id=principal.token_id,
                         trace_id=current_trace_id(),
                     )
                 )
@@ -302,6 +304,7 @@ class AuthorizationMiddleware(Middleware):
                         outcome="error",
                         error=str(exc),
                         principal_permission_grant=_permission_grant_field(principal),
+                        token_id=principal.token_id,
                         duration_ms=duration * 1000.0,
                         trace_id=current_trace_id(),
                     ),
@@ -337,6 +340,7 @@ class AuthorizationMiddleware(Middleware):
                     mcp_service=service.name,
                     outcome="success",
                     principal_permission_grant=_permission_grant_field(principal),
+                    token_id=principal.token_id,
                     duration_ms=duration * 1000.0,
                     trace_id=current_trace_id(),
                 ),

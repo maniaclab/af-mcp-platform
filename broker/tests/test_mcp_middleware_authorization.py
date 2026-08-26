@@ -263,6 +263,66 @@ async def test_denied_call_audit_carries_the_scoped_pats_permission_grant(
     assert captured_audits[0].principal_permission_grant == ["submit_jobs"]
 
 
+async def test_audit_token_id_copied_on_all_four_outcome_paths(
+    registry, policy, make_principal, captured_audits
+) -> None:
+    """Issue #247: per-token attribution -- every audit outcome path
+    (success, denied, unmapped, error) must copy the calling PAT's public
+    lookup_id from Principal.token_id into the record, so a leaked PAT's
+    calls can be isolated (and that one token revoked) without guessing
+    among the owner's other tokens."""
+    mw = AuthorizationMiddleware(registry, policy)
+    principal = make_principal(groups=["atlas"], token_id="pat-lookup-1")
+
+    # success
+    await mw.on_call_tool(
+        _call_tool_context("rucio_list_dids", {}, principal),
+        _CallNextRecorder(result=ToolResult(content=[])),
+    )
+    # denied (same token, a principal whose groups grant nothing)
+    unentitled = make_principal(groups=[], token_id="pat-lookup-1")
+    with pytest.raises(AuthorizationError):
+        await mw.on_call_tool(
+            _call_tool_context("rucio_list_dids", {}, unentitled),
+            _CallNextRecorder(),
+        )
+    # unmapped
+    with pytest.raises(AuthorizationError):
+        await mw.on_call_tool(
+            _call_tool_context("mystery_tool", {}, principal), _CallNextRecorder()
+        )
+    # error downstream of authorization
+    with pytest.raises(RuntimeError):
+        await mw.on_call_tool(
+            _call_tool_context("rucio_list_dids", {}, principal),
+            _CallNextRecorder(error=RuntimeError("boom")),
+        )
+
+    assert [r.outcome for r in captured_audits] == [
+        "success",
+        "denied",
+        "denied",
+        "error",
+    ]
+    assert all(r.token_id == "pat-lookup-1" for r in captured_audits)
+
+
+async def test_jwt_call_audit_token_id_is_none(
+    registry, policy, make_principal, captured_audits
+) -> None:
+    """A session JWT resolves to Principal.token_id=None (the default), so
+    its audit lines carry token_id null -- only a PAT ever attributes a call
+    to a specific token (issue #247)."""
+    mw = AuthorizationMiddleware(registry, policy)
+    principal = make_principal(groups=["atlas"])
+    await mw.on_call_tool(
+        _call_tool_context("rucio_list_dids", {}, principal),
+        _CallNextRecorder(result=ToolResult(content=[])),
+    )
+
+    assert captured_audits[0].token_id is None
+
+
 async def test_unknown_tool_prefix_denied(
     registry, policy, make_principal, captured_audits
 ) -> None:
