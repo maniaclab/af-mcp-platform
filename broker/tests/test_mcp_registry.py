@@ -407,8 +407,8 @@ def test_builtin_af_mcp_service_is_infrastructure_tier() -> None:
 @pytest.mark.parametrize(
     ("name", "tier"),
     [
-        ("rucio", "service-tier"),
-        ("ami", "service-tier"),
+        ("rucio", "user-tier"),
+        ("ami", "user-tier"),
         ("atlasopenmagic", "service-tier"),
         ("af-jupyterlab-mcp", "service-tier"),
         ("af-filesystem-mcp", "user-tier"),

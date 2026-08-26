@@ -14,9 +14,10 @@ services:
     url: "http://rucio-mcp.mcp.svc.cluster.local:80/site/atlas"
     transport: http
     required_permission: read_data
-    # Fronts external ATLAS distributed data management (Rucio) with a
-    # per-user IAM token — a backend on shared infrastructure.
-    trust_tier: service-tier
+    # Acts only with the caller's own forwarded per-user IAM token (never a
+    # facility/shared credential), so the proxied authority is exactly the
+    # user's — user-tier per the Elwood definition.
+    trust_tier: user-tier
     display_name: Rucio
     description: ATLAS distributed data management — browse and query datasets, files, and replicas.
     # OIDCProvider returns the stored IAM-brokered token.
@@ -37,9 +38,10 @@ services:
     url: "https://ami.cern.ch/mcp"
     transport: http
     required_permission: read_metadata
-    # Fronts external ATLAS Metadata Interface (ami.cern.ch) — a backend on
-    # shared infrastructure.
-    trust_tier: service-tier
+    # Acts only with the caller's own forwarded per-user x509/VOMS proxy, so
+    # the proxied authority is exactly the user's — user-tier per the Elwood
+    # definition.
+    trust_tier: user-tier
     display_name: AMI
     description: ATLAS Metadata Interface — dataset provenance and metadata catalogs.
     # X509Provider mints a voms-proxy via the user's home-dir cert.
