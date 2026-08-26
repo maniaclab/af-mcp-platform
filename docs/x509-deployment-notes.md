@@ -203,7 +203,7 @@ this prefix, nothing broader.
 | --- | --- | --- |
 | Mint | ephemeral k8s Job, NFS-subPath mount of the user's home **on the broker's cluster config** | HTTP call to voms-token-service (only IT mounts homes) |
 | Proxy storage | broker tmpfs (`PROXY_DIR`), lost on restart | Vault KV-v2, shared across replicas and restarts |
-| Passphrase | never persisted; re-entered at every expiry | persisted in Vault (the issue #112 custodianship decision) for hands-free renewal |
+| Passphrase | never persisted; re-entered at every expiry | persisted in Vault (the issue maniaclab/af-mcp-platform#112 custodianship decision) for hands-free renewal |
 | Expiry | proxy silently unusable until the user unlocks again | renewed hands-free; user only re-enters on a changed Globus password |
 | Credential kind | `x509_proxy_ref` (`proxy_path` on the broker filesystem) | `x509_proxy_redeem` (no local file; backends redeem the PEM) |
 | Broker POSIX/NFS needs | homes PVC + per-uid Job plumbing | none (POSIX identity is captured at link time and asserted to the service) |

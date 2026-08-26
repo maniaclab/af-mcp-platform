@@ -64,7 +64,7 @@ the portal's Identities page — no separate mapping to keep in sync.
   proxy (e.g. ami-mcp). Unlike the two types above, delivery is
   **service-side redemption, not header injection**: the aggregator injects
   only an AF Broker Identity Token, and the service redeems the caller's
-  proxy itself via `POST /v1/credentials/x509/redeem` (issue #112's wire
+  proxy itself via `POST /v1/credentials/x509/redeem` (issue maniaclab/af-mcp-platform#112's wire
   format — proxy PEM material never transits the aggregator). The service
   must also be marked `auth_type: x509` in the aggregator service list
   (Step 1); the broker refuses to start when the entry's `targets` and the
@@ -146,7 +146,7 @@ account) and needs no per-user credential forwarded at all. `auth_type: x509`
 marks a service whose per-user credential is a VOMS proxy (e.g. ami-mcp):
 the aggregator injects an AF Broker Identity Token (`aud` = the service
 name) and the service redeems the caller's cached proxy itself via
-`POST /v1/credentials/x509/redeem` (issue #112) — this requires the broker
+`POST /v1/credentials/x509/redeem` (issue maniaclab/af-mcp-platform#112) — this requires the broker
 signing key to be mounted (`broker.identityToken.existingSigningKeySecret`),
 and the service to run in a mode that verifies broker JWTs and redeems
 proxies (ami-mcp's `--auth broker`, via the `af-credentials` library). The new service's `name` must be added to some `identityProviders` entry's
@@ -195,7 +195,7 @@ instead of failing loudly. The accepted fix for that case is to set
 `apply_namespace: true` on both site entries and accept the resulting
 double-prefixed names (`rucio_atlas_rucio_whoami`, `rucio_escape_rucio_whoami`)
 — ugly, but unambiguous and requires no upstream rucio-mcp change. See
-[#113](https://github.com/maniaclab/af-mcp-platform/issues/113) for the
+maniaclab/af-mcp-platform#113 for the
 full tradeoff discussion.
 
 Whatever you choose, the deployed tool names are what callers actually see
@@ -216,7 +216,7 @@ documents the convention for new services — it renames nothing that already
 exists.
 
 **Reserved: the `af` prefix and the `af-mcp` name.** The registry always
-carries a builtin `af-mcp` service (issue #240) — the gateway's own
+carries a builtin `af-mcp` service (issue maniaclab/af-mcp-platform#240) — the gateway's own
 identity, catalog, and usage methods (`af_whoami`, `af_list_identities`,
 `af_list_mcp_servers`, `af_link_identity`, `af_usage`), served by the
 aggregator itself rather than proxied to any backend. It is not a
@@ -231,7 +231,7 @@ relies on precisely when everything else is broken.
 
 `required_permission` in `services.yaml` (Step 1 above) is the **sole**
 declaration of what a service target requires — the service registry, not
-`policy.yaml`, is authoritative here (see issue #60). `policy.yaml`'s only
+`policy.yaml`, is authoritative here (see issue maniaclab/af-mcp-platform#60). `policy.yaml`'s only
 remaining job is mapping permissions to Keycloak groups via
 `group_permissions` (Step 3 below).
 
@@ -345,7 +345,7 @@ is cited below as the shipped example.
 - **On an empty or error result, return an actionable next step, not just the
   raw condition.** "No replicas found" or a bare backend exception makes the
   agent guess (and usually burn a diagnostic call, or several — the frictions in
-  [#216](https://github.com/maniaclab/af-mcp-platform/issues/216) came from
+  maniaclab/af-mcp-platform#216 came from
   exactly this). Say what to do instead. rucio-mcp is the model: several of its
   tools' empty/error results carry a "Next steps" hint, e.g. on an empty
   dataset-replicas result it points the caller at "if this is a container DID,

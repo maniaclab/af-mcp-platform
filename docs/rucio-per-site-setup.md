@@ -22,7 +22,7 @@ the broker acts as a direct OAuth 2.1 client to each site's authorize/token
 endpoints, identifying itself via its own CIMD document
 (`GET /.well-known/cimd`) instead of registering per site through Dynamic
 Client Registration. **No Keycloak Identity Provider is created for rucio-mcp
-at all** — an earlier design ([#62](https://github.com/maniaclab/af-mcp-platform/issues/62))
+at all** — an earlier design (maniaclab/af-mcp-platform#62)
 proposed one per site, but it was never built; `oauth21-direct` is what
 shipped.
 

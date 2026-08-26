@@ -97,7 +97,7 @@ each request independently with no session pinning by default.
   holds a live `anyio` task group and open memory streams, not
   serializable state.
 - Running a stateful aggregator at `replicaCount > 1` without that
-  affinity in place produces exactly the failure issue #128 describes: a
+  affinity in place produces exactly the failure issue maniaclab/af-mcp-platform#128 describes: a
   session's later request lands on a replica that never created it, which
   terminates it — surfacing as an intermittent `McpError: Session
   terminated` that no single-replica test will ever catch. The broker
@@ -231,8 +231,8 @@ Answers: "is this principal allowed to call this tool?"
 - The gateway's own methods (`af_whoami`, `af_list_identities`,
   `af_list_mcp_servers`, `af_link_identity`, `af_usage`) take this exact
   same path: the registry always self-registers a builtin `af-mcp` service
-  (prefix `af`, `required_permission: __none__` — issue #240, replacing
-  issue #153's name-based middleware bypass), so they are
+  (prefix `af`, `required_permission: __none__` — issue maniaclab/af-mcp-platform#240, replacing
+  issue maniaclab/af-mcp-platform#153's name-based middleware bypass), so they are
   entitlement-checked, audited, and metered like every other method while
   staying available to any authenticated principal, permissions or not —
   they are the bootstrap methods an unlinked, zero-permission caller needs.
@@ -360,7 +360,7 @@ before ever prompting for a passphrase indistinguishable from an attack: a
 handful of routine retries could burn through the whole budget and lock the
 user out of their own next (correct) unlock attempt — including the very
 `POST /v1/x509/proxy` call that would have succeeded, since it also goes
-through `get()` first (issue #93).
+through `get()` first (issue maniaclab/af-mcp-platform#93).
 
 The threshold and window are configurable via `Settings`:
 
@@ -443,11 +443,11 @@ Structured log (structlog + JSON) of every tool invocation, including:
   CERN/Rucio account the released proxy authenticates as — the grid identity
   the credential is usable as, distinct from the AF principal in
   `principal_sub`/`principal_uid`; `null` on every non-x509 record and on the
-  legacy redeem path, whose `ProxyMeta` cache carries no nickname (issue #199)
+  legacy redeem path, whose `ProxyMeta` cache carries no nickname (issue maniaclab/af-mcp-platform#199)
 
 Every tool invocation means every one: calls to the gateway's own `af_*`
 methods are audited and metered too, as service `af-mcp` (the builtin
-service entry — issue #240; they previously bypassed audit entirely). One
+service entry — issue maniaclab/af-mcp-platform#240; they previously bypassed audit entirely). One
 deliberately accepted side effect: `af_usage` meters itself, so each call
 to it appears in the very usage data it reports.
 
@@ -637,7 +637,7 @@ the simplest correct thing. The extraction path if it becomes necessary:
    this step; `auth_type: "x509"` backends get an AF Broker Identity Token
    (`aud` = the backend) minted locally by the broker's own signing key, and
    redeem the caller's VOMS proxy server-side via
-   `POST /v1/credentials/x509/redeem` (issue #112).
+   `POST /v1/credentials/x509/redeem` (issue maniaclab/af-mcp-platform#112).
 5. The aggregator forwards the call to the target backend MCP server with
    the minted credential injected as `Authorization: Bearer <token>` — the
    caller's own inbound bearer is never forwarded.
