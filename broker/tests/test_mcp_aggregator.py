@@ -275,6 +275,44 @@ def test_build_aggregator_wires_identity_before_entitlement_before_authorization
     assert identity_index < entitlement_index < authorization_index
 
 
+def test_build_aggregator_composes_model_facing_instructions(settings: Any) -> None:
+    """Dual enforcement (re-review finding #6): the built FastMCP instance
+    carries non-empty model-facing instructions -- the platform preamble plus
+    each service's agent_policy."""
+    registry = ServiceRegistry()
+    registry.register(
+        _spec(name="widgets", prefix="widgets", agent_policy="Widgets are read-only.")
+    )
+    mcp = build_aggregator(
+        registry, settings, EntitlementPolicy(), CredentialRegistry()
+    )
+    assert mcp.instructions
+    # deny-is-policy guidance from the preamble
+    assert "retry" in mcp.instructions.lower()
+    # the service's own model-facing policy
+    assert "Widgets are read-only." in mcp.instructions
+
+
+def test_populate_aggregator_refreshes_instructions(settings: Any) -> None:
+    """build_aggregator is called eagerly with an empty registry (see app.py);
+    populate_aggregator must recompose the instructions once the real registry
+    is pushed in, or the eager build's instructions would omit every operator
+    service's agent_policy."""
+    mcp = build_aggregator(
+        ServiceRegistry(), settings, EntitlementPolicy(), CredentialRegistry()
+    )
+    assert "Widgets are read-only." not in (mcp.instructions or "")
+
+    real_registry = ServiceRegistry()
+    real_registry.register(
+        _spec(name="widgets", prefix="widgets", agent_policy="Widgets are read-only.")
+    )
+    populate_aggregator(
+        mcp, real_registry, settings, EntitlementPolicy(), CredentialRegistry()
+    )
+    assert "Widgets are read-only." in (mcp.instructions or "")
+
+
 # _register_services() re-adds mcp.local_provider (which the af_* diagnostic
 # tools live on -- see mcp/diagnostics.py) right after clearing mcp.providers,
 # so every count below is "one backend provider per registered backend" PLUS

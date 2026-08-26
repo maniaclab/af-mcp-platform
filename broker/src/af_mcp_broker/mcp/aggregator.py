@@ -34,6 +34,7 @@ from starlette.middleware import Middleware
 from af_mcp_broker.authorization import check_entitlement
 from af_mcp_broker.credentials import CredentialKind, NeedsUnlock
 from af_mcp_broker.mcp.diagnostics import register_diagnostic_tools
+from af_mcp_broker.mcp.instructions import compose_agent_instructions
 from af_mcp_broker.mcp.middleware.authorization_mw import AuthorizationMiddleware
 from af_mcp_broker.mcp.middleware.entitlement_mw import EntitlementMiddleware
 from af_mcp_broker.mcp.middleware.identity_mw import (
@@ -819,7 +820,16 @@ def build_aggregator(
     same eager-build reason -- af_list_identities/af_list_mcp_servers simply
     report nothing until ``populate_aggregator`` supplies the real ones.
     """
-    mcp = FastMCP(name="af-mcp-aggregator")
+    # instructions is the model-facing "dual enforcement" layer (finding #6):
+    # a platform preamble plus each service's agent_policy, surfaced to clients
+    # in the MCP initialize response. Composed here from whatever registry is
+    # available at construction -- the eager module-scope build starts with an
+    # empty registry (see app.py), so populate_aggregator recomposes below once
+    # the real registry is loaded, mirroring how settings/policy get pushed in.
+    mcp = FastMCP(
+        name="af-mcp-aggregator",
+        instructions=compose_agent_instructions(registry),
+    )
     mcp.add_middleware(
         IdentityMiddleware(settings, revoked_jti_cache, pat_backend, principal_cache)
     )
@@ -893,6 +903,10 @@ def populate_aggregator(
     (register_diagnostic_tools) follow the same rebuild-from-scratch pattern.
     """
     identity_mw, entitlement_mw, authorization_mw = _find_middleware(mcp)
+    # Recompose the model-facing instructions from the real registry: the eager
+    # build (app.py) constructed mcp with an empty registry, so its instructions
+    # omitted every operator service's agent_policy until now (finding #6).
+    mcp.instructions = compose_agent_instructions(registry)
     identity_mw.settings = settings
     identity_mw.revoked_jti_cache = revoked_jti_cache
     identity_mw.pat_backend = pat_backend
