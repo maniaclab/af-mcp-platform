@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import json
 import socket
+import socketserver
 import time
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
@@ -97,6 +98,25 @@ def stub_tiktoken(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+@pytest.fixture(autouse=True)
+def fast_metrics_server_shutdown(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Shrink socketserver's serve_forever poll so app teardown is fast.
+
+    The app lifespan runs prometheus_client's metrics server on a thread
+    whose ``serve_forever`` uses the stdlib default ``poll_interval=0.5``;
+    ``shutdown()`` blocks until that poll loop notices the flag, so every
+    ``TestClient(app)`` teardown paid up to 0.5s of pure waiting. Tightening
+    the poll interval changes only shutdown latency -- the exact same
+    production code path (start, serve, shutdown) is still exercised.
+    """
+    orig = socketserver.BaseServer.serve_forever
+
+    def fast_poll(self: Any, poll_interval: float = 0.005) -> None:
+        orig(self, poll_interval)
+
+    monkeypatch.setattr(socketserver.BaseServer, "serve_forever", fast_poll)
+
+
 @dataclass
 class RsaKey:
     """An RSA keypair plus its published JWK (with a stable ``kid``)."""
@@ -122,12 +142,17 @@ def _make_key(kid: str) -> RsaKey:
     )
 
 
-@pytest.fixture
+# Session-scoped: a 2048-bit keygen costs ~40ms, and well over a hundred
+# tests request these fixtures -- that's seconds of pure prime hunting per
+# run. The keys are interchangeable, read-only test material (tests only
+# call .sign()/.jwk, never mutate), and the two kids stay distinct, so one
+# generated-once pair serves the whole run without coupling tests.
+@pytest.fixture(scope="session")
 def sig_key() -> RsaKey:
     return _make_key("sig-key")
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def enc_key() -> RsaKey:
     return _make_key("enc-key")
 
@@ -256,6 +281,14 @@ async def _await_server_started(
         await asyncio.sleep(0.01)
 
 
+def _port_accepting(port: int) -> bool:
+    """True once a TCP connect to 127.0.0.1:*port* succeeds (sub-ms on
+    loopback) -- the real "uvicorn has bound and is accepting" condition."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.settimeout(0.05)
+        return probe.connect_ex(("127.0.0.1", port)) == 0
+
+
 @asynccontextmanager
 async def run_asgi_app(app: Any, port: int | None = None) -> AsyncIterator[str]:
     """Run an arbitrary ASGI app (not necessarily a bare FastMCP server)
@@ -325,7 +358,14 @@ async def run_aggregator_async(mcp: FastMCP, path: str = "/mcp") -> AsyncIterato
     )
     try:
         await _await_server_started(server_task, mcp._started.is_set)
-        await asyncio.sleep(0.1)
+        # ``_started`` flips when the app lifespan is ready, which is BEFORE
+        # uvicorn binds the listening socket -- upstream's run_server_async
+        # papers over that gap with a flat 0.1s sleep ("give uvicorn a moment
+        # to bind the port"). Poll the actual readiness condition instead: a
+        # TCP connect succeeding means the port is accepting, so the harness
+        # proceeds the moment the server is really up (same bounded loop, so
+        # a server that never binds still fails diagnosably).
+        await _await_server_started(server_task, lambda: _port_accepting(port))
         yield f"http://127.0.0.1:{port}{path}"
     finally:
         server_task.cancel()

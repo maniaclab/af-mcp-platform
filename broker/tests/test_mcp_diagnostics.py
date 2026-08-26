@@ -391,7 +391,12 @@ async def test_no_diagnostic_tool_response_contains_a_url(
         ServiceSpec(
             name="needs-link",
             prefix="needslink",
-            url="http://internal.svc.cluster.local/mcp",
+            # .invalid (RFC 2606) instead of .cluster.local: macOS routes
+            # .local lookups through mDNS with a ~5s timeout, which this test
+            # paid twice (~10s) when the aggregator dialed the backend; an
+            # NXDOMAIN in .invalid fails in milliseconds and is still an
+            # unreachable cluster-internal-looking address.
+            url="http://internal.svc.cluster.invalid/mcp",
             transport="http",
             required_permission="__none__",
             auth_type="bearer",
