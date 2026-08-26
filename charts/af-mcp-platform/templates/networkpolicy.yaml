@@ -103,6 +103,29 @@ spec:
         - protocol: TCP
           port: 5432
     {{- end }}
+
+    # OpenTelemetry collector (broker.tracing.enabled) -- allow the broker's
+    # OTLP/HTTP span exports to reach the collector selected by
+    # broker.tracing.networkPolicy (an empty namespaceSelector means the
+    # release namespace; an empty podSelector allows any pod there).
+    {{- if .Values.broker.tracing.enabled }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              {{- if .Values.broker.tracing.networkPolicy.namespaceSelector }}
+              {{- toYaml .Values.broker.tracing.networkPolicy.namespaceSelector | nindent 14 }}
+              {{- else }}
+              kubernetes.io/metadata.name: {{ .Release.Namespace | quote }}
+              {{- end }}
+          {{- if .Values.broker.tracing.networkPolicy.podSelector }}
+          podSelector:
+            matchLabels:
+              {{- toYaml .Values.broker.tracing.networkPolicy.podSelector | nindent 14 }}
+          {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.broker.tracing.networkPolicy.port }}
+    {{- end }}
 ---
 # Portal network policy: allow ingress from nginx only; no special egress rules.
 apiVersion: networking.k8s.io/v1

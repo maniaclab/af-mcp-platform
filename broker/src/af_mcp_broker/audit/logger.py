@@ -63,6 +63,17 @@ class AuditRecord:
     # is disabled or unavailable.
     result_bytes: int | None = None
     result_tokens_est: int | None = None
+    # The trace <-> audit <-> usage join key (observability roadmap PR D):
+    # 32-hex-lowercase OTel trace id of the tool-call span that was current
+    # when the middleware built this record, or None when there was no
+    # recording span (tracing disabled, or the trace was sampled out). Spans
+    # carry identity/outcome/timing; measurements (the fields above) live
+    # only here and are joined back to a trace via this id -- they are
+    # filled in by the metering worker AFTER the response returns, so they
+    # can never be span attributes. Captured at record construction
+    # (tracing.current_trace_id()), which is why the later background write
+    # doesn't lose it.
+    trace_id: str | None = None
 
 
 class AuditLogger:

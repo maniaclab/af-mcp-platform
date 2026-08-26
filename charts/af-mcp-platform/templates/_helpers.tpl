@@ -365,6 +365,23 @@ Callers pipe this through `nindent` at whatever depth their container's
       key: {{ .Values.broker.usage.postgres.existingSecret.key | quote }}
 {{- end }}
 {{- end }}
+{{- if .Values.broker.tracing.enabled }}
+# OpenTelemetry trace emission (broker tracing.py) -- the standard OTel env
+# vars, read natively by the SDK's OTLP/HTTP exporter (which appends the
+# /v1/traces signal path) and sampler; the broker itself only reads the
+# endpoint as its on/off gate. Rendered only when tracing is enabled so a
+# disabled deployment carries no OTel configuration at all.
+- name: OTEL_EXPORTER_OTLP_ENDPOINT
+  value: {{ .Values.broker.tracing.endpoint | quote }}
+{{- if .Values.broker.tracing.sampleRatio }}
+# Head sampling: honor an inbound sampled flag, otherwise keep this ratio of
+# new traces. Unset (SDK default parentbased_always_on) keeps every trace.
+- name: OTEL_TRACES_SAMPLER
+  value: "parentbased_traceidratio"
+- name: OTEL_TRACES_SAMPLER_ARG
+  value: {{ .Values.broker.tracing.sampleRatio | quote }}
+{{- end }}
+{{- end }}
 {{- /*
 Vault connection settings are shared by all Vault-backed stores above (one
 VaultKV instance, per config.py/app.py) — rendered once whenever any of

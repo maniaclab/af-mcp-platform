@@ -446,6 +446,33 @@ broker:
         namespace: ""
         clusterName: ""
 
+  # OpenTelemetry trace EMISSION (broker tracing.py, observability roadmap
+  # PR D). The broker is an emitter only -- no trace backend is shipped or
+  # assumed; point `endpoint` at any OTLP/HTTP collector. Disabled (the
+  # default) renders nothing: no env vars, no NetworkPolicy egress, and the
+  # broker installs no SDK tracer provider (every OTel call no-ops).
+  tracing:
+    enabled: false
+    # OTLP/HTTP collector base URL, rendered as OTEL_EXPORTER_OTLP_ENDPOINT
+    # (the SDK appends the /v1/traces signal path itself), e.g.
+    # http://otel-collector.observability:4318
+    endpoint: ""
+    # Head sampling ratio in [0, 1]. When set, rendered as
+    # OTEL_TRACES_SAMPLER=parentbased_traceidratio with
+    # OTEL_TRACES_SAMPLER_ARG=<ratio>; empty means the SDK default
+    # (parentbased_always_on, i.e. every trace -- equivalent to 1.0), fine
+    # at tool-call volumes.
+    sampleRatio: ""
+    # Selects the collector for the broker's NetworkPolicy egress rule
+    # (rendered only when enabled and networkPolicy.enabled) -- same shape
+    # as broker.usage.postgres.networkPolicy above. namespaceSelector /
+    # podSelector are matchLabels maps: an empty namespaceSelector selects
+    # the release namespace; an empty podSelector allows any pod there.
+    networkPolicy:
+      namespaceSelector: {}
+      podSelector: {}
+      port: 4318
+
 # ---------------------------------------------------------------------------
 # Token sweep: periodic janitor for the Vault-backed token registry above
 # (broker.tokenRegistry.backend="vault"). Removes registry entries whose

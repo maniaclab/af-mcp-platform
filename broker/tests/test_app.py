@@ -177,6 +177,31 @@ def test_stateful_multi_replica_warns_at_startup(
     assert matches[0]["replica_count"] == 2
 
 
+# ---------------------------------------------------------------------------
+# Tracing wiring (observability roadmap PR D): off by default -- with
+# OTEL_EXPORTER_OTLP_ENDPOINT unset at import time, module-scope
+# instrument_fastapi() must have been a no-op; and the lifespan teardown must
+# flush whatever provider init_tracing() installed (a no-op when none was).
+# ---------------------------------------------------------------------------
+
+
+def test_app_not_instrumented_by_default() -> None:
+    assert not getattr(app_module.app, "_is_instrumented_by_opentelemetry", False)
+
+
+def test_lifespan_teardown_flushes_tracing(
+    monkeypatch: pytest.MonkeyPatch,
+    app_client_factory: Callable[..., Any],
+) -> None:
+    calls: list[bool] = []
+    monkeypatch.setattr(app_module, "shutdown_tracing", lambda: calls.append(True))
+
+    with app_client_factory():
+        pass
+
+    assert calls == [True]
+
+
 @pytest.mark.parametrize(
     ("stateless_http", "replica_count"),
     [

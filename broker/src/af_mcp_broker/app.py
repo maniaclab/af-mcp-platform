@@ -70,6 +70,7 @@ from af_mcp_broker.token_registry import (
     TokenRegistryBackend,
     VaultTokenRegistryBackend,
 )
+from af_mcp_broker.tracing import init_tracing, instrument_fastapi, shutdown_tracing
 from af_mcp_broker.usage import aclose_usage_store, init_usage_store
 from af_mcp_broker.vault_kv import VaultKV
 
@@ -794,6 +795,10 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         metrics_server.server_close()
     if audit_output is not sys.stdout:
         audit_output.close()
+    # Flush spans still buffered in the batch processor (a no-op when tracing
+    # was never enabled). After the pipeline drain above so the last audit
+    # records' traces are flushed too.
+    shutdown_tracing()
     logger.info("af_mcp_broker_stopped")
 
 
@@ -813,6 +818,14 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
 # CredentialRegistry(), and `lifespan()` calls `populate_aggregator()` to
 # push in the real values before the app starts serving requests.
 _mcp_aggregator_placeholder_settings = Settings()
+# Tracing (observability roadmap PR D) initializes before any FastMCP object
+# exists: fastmcp 3.4.4 acquires its tracer lazily per span, so this early
+# placement is conservative rather than load-bearing (see init_tracing's
+# docstring) -- but it guarantees nothing downstream can ever capture a
+# pre-init no-op tracer. A no-op when OTEL_EXPORTER_OTLP_ENDPOINT is unset;
+# like MCP_STATELESS_HTTP below, Settings() reads the env synchronously at
+# construction, so the placeholder instance already carries the real value.
+init_tracing(_mcp_aggregator_placeholder_settings)
 _mcp_aggregator = build_aggregator(
     ServiceRegistry(),
     _mcp_aggregator_placeholder_settings,
@@ -862,6 +875,11 @@ app.mount("/mcp", _mcp_aggregator_app)
 
 app.include_router(v1_router)
 app.include_router(wellknown_router)
+
+# HTTP-level spans for the /v1 surface, only when tracing is enabled -- a
+# no-op otherwise (no extra ASGI middleware). Health probes and the /mcp
+# mount are excluded; see tracing._EXCLUDED_URLS for why /mcp must stay out.
+instrument_fastapi(app, _mcp_aggregator_placeholder_settings)
 
 
 @app.middleware("http")

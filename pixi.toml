@@ -23,6 +23,9 @@ kubernetes_asyncio = ">=30.0"
 pyyaml = ">=6.0"
 tiktoken = ">=0.14.0"
 asyncpg = ">=0.31.0,<0.32"
+opentelemetry-sdk = ">=1.44"
+opentelemetry-exporter-otlp-proto-http = ">=1.44"
+opentelemetry-instrumentation-fastapi = ">=0.65b0"
 
 [feature.broker.pypi-dependencies]
 # Editable install triggers hatch-vcs to generate _version.py from git tags.
