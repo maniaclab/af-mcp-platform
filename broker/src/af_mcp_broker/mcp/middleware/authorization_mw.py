@@ -17,7 +17,6 @@ from af_mcp_broker.authorization import (
     check_entitlement,
     get_action_type,
 )
-from af_mcp_broker.mcp.registry import DIAGNOSTIC_TOOL_NAMES
 from af_mcp_broker.tracing import (
     current_trace_id,
     get_tracer,
@@ -115,20 +114,15 @@ class AuthorizationMiddleware(Middleware):
             # (mirrors entitlement_mw's identical defensive branch).
             raise AuthorizationError("No authenticated principal for this tool call")
 
-        if tool_name in DIAGNOSTIC_TOOL_NAMES:
-            # af_* diagnostic tools (issue #153) bypass entitlement
-            # checking, credential minting, and per-service audit/metrics
-            # entirely: they need no permission, touch no service, and
-            # ProxyProvider never enters this call path for them at all
-            # (they're registered directly on the aggregator -- see
-            # mcp/diagnostics.py). They must keep answering precisely when
-            # a service or its credential provider is broken, so gating
-            # them behind the same machinery that call is meant to explain
-            # would be circular. No registered service can claim this
-            # prefix (ServiceRegistry.register() refuses it), so this can't
-            # be used to route a real service's tool around authorization.
-            return await call_next(context)
-
+        # The broker's own af_* methods (issue #153) take this same path:
+        # the prefix maps to the builtin af-mcp service (issue #240), whose
+        # "__none__" permission passes check_entitlement for any
+        # authenticated principal -- they must keep answering precisely when
+        # a service or its credential provider is broken, and an entitlement
+        # check against "__none__" touches neither. Unlike issue #153's
+        # name-based bypass, the calls are now audited and metered
+        # (service=af-mcp) like everything else; the one builtin difference
+        # is the authorized_call_target guard below.
         service = self.registry.get_by_tool_prefix(tool_name)
         request_id = str(uuid.uuid4())
         args_summary = ", ".join(f"{k}=..." for k in list(tool_args.keys())[:10])
@@ -258,10 +252,14 @@ class AuthorizationMiddleware(Middleware):
             # indistinguishable from one triggered by an actual call. Minting a
             # per-user credential during a shared schema listing would be both
             # wasteful and semantically wrong. Request-scoped state, so it never
-            # leaks into a later, unrelated request.
-            await fastmcp_context.set_state(
-                "authorized_call_target", service.name, serializable=False
-            )
+            # leaks into a later, unrelated request. Never stamped for the
+            # builtin af-mcp service: its methods are the FastMCP server's own
+            # local tools -- no credential to mint, nothing to forward -- so
+            # there is no client_factory for this signal to reach (issue #240).
+            if not service.builtin:
+                await fastmcp_context.set_state(
+                    "authorized_call_target", service.name, serializable=False
+                )
 
             # Wall time of everything downstream of authorization -- credential
             # resolution plus the backend call itself. Metered on the success and

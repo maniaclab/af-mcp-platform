@@ -228,6 +228,18 @@ Answers: "is this principal allowed to call this tool?"
   [docs/auth.md#authorization-is-an-attribute-of-the-principal-not-the-token](auth.md#authorization-is-an-attribute-of-the-principal-not-the-token).
 - Authorization failures are logged with structured fields (uid, tool, permission)
   and return HTTP 403 to the aggregator.
+- The gateway's own methods (`af_whoami`, `af_list_identities`,
+  `af_list_mcp_servers`, `af_link_identity`, `af_usage`) take this exact
+  same path: the registry always self-registers a builtin `af-mcp` service
+  (prefix `af`, `required_permission: __none__` — issue #240, replacing
+  issue #153's name-based middleware bypass), so they are
+  entitlement-checked, audited, and metered like every other method while
+  staying available to any authenticated principal, permissions or not —
+  they are the bootstrap methods an unlinked, zero-permission caller needs.
+  The one builtin difference is dispatch: the aggregator serves them from
+  its own local tools, so no credential is minted and nothing is forwarded.
+  `af-mcp` appears in `/v1/catalog` and `af_list_mcp_servers` like any
+  other service; `services.yaml` can neither define nor unregister it.
 
 ### 3. Credentialing
 
@@ -427,6 +439,12 @@ Structured log (structlog + JSON) of every tool invocation, including:
   session JWTs — `principal_sub` identifies the user across all their
   tokens, this identifies the specific token, so a leaked PAT's calls can
   be isolated and that one token revoked (never any secret material)
+
+Every tool invocation means every one: calls to the gateway's own `af_*`
+methods are audited and metered too, as service `af-mcp` (the builtin
+service entry — issue #240; they previously bypassed audit entirely). One
+deliberately accepted side effect: `af_usage` meters itself, so each call
+to it appears in the very usage data it reports.
 
 Success and error records reach the log through the metering pipeline
 (`audit/pipeline.py`): the hot path enqueues `(record, result)` and returns,

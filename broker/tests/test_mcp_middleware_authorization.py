@@ -198,16 +198,15 @@ async def test_unentitled_call_denied_before_call_next(
 
 
 @pytest.mark.parametrize("tool_name", sorted(DIAGNOSTIC_TOOL_NAMES))
-async def test_diagnostic_tool_call_bypasses_backend_lookup_and_audit(
+async def test_af_method_call_flows_through_the_builtin_service(
     registry, policy, make_principal, captured_audits, tool_name
 ) -> None:
-    """Requirement (issue #153): an af_* diagnostic tool call must reach
-    call_next directly -- no backend lookup (there is none to look up: no
-    registered backend can claim this prefix, see registry.py), no
-    entitlement check, no credential minting, and no audit/metrics record,
-    since it never touches a backend and needs no permission. A principal
-    with no groups at all (so no permissions) proves this isn't gated on
-    entitlement the way every other tool here is."""
+    """Issue #240: an af_* call routes by prefix to the builtin af-mcp
+    service like any other tool -- no name-based bypass. Its "__none__"
+    permission passes for a principal with no groups at all (af_whoami/
+    af_link_identity are the bootstrap methods a zero-permission caller
+    needs), and unlike issue #153's bypass the call is now audited and
+    metered with service=af-mcp."""
     mw = AuthorizationMiddleware(registry, policy)
     principal = make_principal(groups=[])
     context = _call_tool_context(tool_name, {}, principal)
@@ -218,7 +217,34 @@ async def test_diagnostic_tool_call_bypasses_backend_lookup_and_audit(
 
     assert result is fake_result
     assert call_next.called is True
-    assert captured_audits == []
+    assert len(captured_audits) == 1
+    record = captured_audits[0]
+    assert record.outcome == "success"
+    assert record.mcp_service == "af-mcp"
+    assert record.target == "af-mcp"
+    assert record.action == tool_name
+    assert record.permission == "__none__"
+    assert record.duration_ms is not None
+
+
+@pytest.mark.parametrize("tool_name", sorted(DIAGNOSTIC_TOOL_NAMES))
+async def test_af_method_call_never_sets_authorized_call_target(
+    registry, policy, make_principal, captured_audits, tool_name
+) -> None:
+    """A builtin call must not stamp authorized_call_target: that state
+    exists solely to tell the aggregator's client_factory to mint a per-user
+    credential for a proxied service, and the builtin af-mcp service has no
+    credential and no forwarding -- the FastMCP server dispatches its own
+    registered tools locally."""
+    mw = AuthorizationMiddleware(registry, policy)
+    principal = make_principal(groups=[])
+    context = _call_tool_context(tool_name, {}, principal)
+    call_next = _CallNextRecorder(result=ToolResult(content=[]))
+
+    await mw.on_call_tool(context, call_next)
+
+    state = await context.fastmcp_context.get_state("authorized_call_target")
+    assert state is None
 
 
 async def test_unentitled_call_denied_audit_carries_no_permission_grant_when_not_a_permission_pat(

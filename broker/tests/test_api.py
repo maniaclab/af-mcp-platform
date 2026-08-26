@@ -278,13 +278,17 @@ def test_catalog_status_permission_required_includes_correlation_id(
     assert rucio["correlation_id"]
 
 
-def test_catalog_status_detail_names_the_diagnostic_tools(
+def test_catalog_status_detail_names_the_af_mcp_methods(
     app_client: tuple[TestClient, dict], make_principal: Callable[..., object]
 ) -> None:
-    """Close the loop (issue #153): both the "link_required" and
-    "permission_required" status_detail sentences name the af_* diagnostic
-    tool a model should call next, not just a human-facing instruction."""
-    from af_mcp_broker.mcp.registry import LIST_IDENTITIES_TOOL_NAME, WHOAMI_TOOL_NAME
+    """Close the loop (issues #153/#240): both the "link_required" and
+    "permission_required" status_detail sentences name the af-mcp service
+    method a model should call next, not just a human-facing instruction."""
+    from af_mcp_broker.mcp.registry import (
+        BUILTIN_SERVICE_NAME,
+        LIST_IDENTITIES_TOOL_NAME,
+        WHOAMI_TOOL_NAME,
+    )
 
     client, state = app_client
 
@@ -293,12 +297,39 @@ def test_catalog_status_detail_names_the_diagnostic_tools(
     rucio = {s["name"]: s for s in resp.json()["servers"]}["rucio"]
     assert rucio["status"] == "link_required"
     assert LIST_IDENTITIES_TOOL_NAME in rucio["status_detail"]
+    assert BUILTIN_SERVICE_NAME in rucio["status_detail"]
 
     state["principal"] = make_principal(groups=[])
     resp = client.get("/v1/catalog", headers=_AUTH)
     rucio = {s["name"]: s for s in resp.json()["servers"]}["rucio"]
     assert rucio["status"] == "permission_required"
     assert WHOAMI_TOOL_NAME in rucio["status_detail"]
+    assert BUILTIN_SERVICE_NAME in rucio["status_detail"]
+
+
+def test_catalog_lists_the_builtin_af_mcp_service(
+    app_client: tuple[TestClient, dict], make_principal: Callable[..., object]
+) -> None:
+    """Issue #240: the broker's own af-mcp service appears in the catalog
+    like every other service -- available even to a caller with zero
+    permissions (its methods are the bootstrap tools such a caller needs),
+    flagged builtin so the portal can drop the identity-link/credential
+    affordances that don't apply to it."""
+    client, state = app_client
+    state["principal"] = make_principal(groups=[])
+    resp = client.get("/v1/catalog", headers=_AUTH)
+    assert resp.status_code == 200, resp.text
+    servers = {s["name"]: s for s in resp.json()["servers"]}
+    af = servers["af-mcp"]
+    assert af["builtin"] is True
+    assert af["status"] == "available"
+    assert af["permission"] == "__none__"
+    assert af["auth_type"] == "none"
+    assert af["credential_provider"] is None
+    assert af["display_name"]
+    assert af["description"]
+    # Every operator service reports builtin False.
+    assert servers["rucio"]["builtin"] is False
 
 
 def test_catalog_status_misconfigured_when_no_credential_provider_resolves(

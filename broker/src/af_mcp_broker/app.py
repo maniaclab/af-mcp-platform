@@ -235,7 +235,12 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     except FileNotFoundError:
         logger.warning("services_file_not_found", path=settings.services_file)
         services_loaded = False
-    services = service_registry.all_services()
+    # Operator-configured services only: the registry always carries the
+    # builtin af-mcp entry too (issue #240), which needs none of the startup
+    # validation below (permission "__none__", no credential, no x509) and
+    # would otherwise mask an empty services.yaml from the warning here and
+    # inflate /readyz's services_count.
+    services = [spec for spec in service_registry.all_services() if not spec.builtin]
     if not services:
         logger.warning("no_services_configured")
 
@@ -872,6 +877,12 @@ app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 # by the aggregator sub-application; they do not pass through the broker's
 # FastAPI middleware chain after the mount point.
 app.mount("/mcp", _mcp_aggregator_app)
+
+# The mounted aggregator instance itself, for /v1 routes that read the
+# broker's own local tools: GET /v1/catalog/af-mcp/tools (api/catalog_tools.py)
+# lists the builtin af-mcp service's methods straight from this instance's
+# local provider instead of HTTP-fetching a backend (issue #240).
+app.state.mcp_aggregator = _mcp_aggregator
 
 app.include_router(v1_router)
 app.include_router(wellknown_router)

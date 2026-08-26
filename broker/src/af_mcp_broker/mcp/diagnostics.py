@@ -46,11 +46,15 @@ if TYPE_CHECKING:
 #      at all -- calling register_diagnostic_tools() below adds them as
 #      ordinary local tools, never a provider.
 #
-# EntitlementMiddleware/AuthorizationMiddleware special-case DIAGNOSTIC_TOOL_NAMES
-# (imported from mcp/registry.py, not from here -- see that module's comment
-# on why) so these tools stay visible/callable for every authenticated
-# caller regardless of entitlements, bypassing ProxyProvider's whole call
-# path entirely.
+# To EntitlementMiddleware/AuthorizationMiddleware these are ordinary methods
+# of the builtin af-mcp service the ServiceRegistry always carries (issue
+# #240, replacing issue #153's name-based bypass): the af prefix maps to that
+# entry on the normal get_by_tool_prefix path, its "__none__" permission
+# keeps them visible/callable for every authenticated caller regardless of
+# entitlements, and the calls are audited/metered with service=af-mcp like
+# everything else. ProxyProvider still never enters the picture -- the
+# builtin spec gets no provider (aggregator.py's _register_services skips
+# it), so dispatch stays local to the tools registered below.
 #
 # Reuses rather than reimplements: af_list_mcp_servers calls api/permissions.py's
 # _service_status() (issue #123's per-service status derivation, same

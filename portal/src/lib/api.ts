@@ -364,6 +364,11 @@ export interface CatalogServer {
    * misconfigured) -- quote it in a ticket so an admin can grep the audit
    * log. Null otherwise. */
   correlation_id: string | null;
+  /** True only for the broker's own af-mcp entry (issue #240) -- the
+   * gateway's identity, catalog, and usage methods. It has no per-user
+   * credential, no identity to link, and no backend that could be
+   * unreachable, so ServiceCard drops those affordances for it. */
+  builtin: boolean;
 }
 
 export interface CatalogResponse {

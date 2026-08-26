@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import time
 from typing import TYPE_CHECKING, Any
@@ -12,6 +13,7 @@ from fastmcp.exceptions import ToolError
 from tokencost import calculate_cost_by_tokens  # type: ignore[import-untyped]
 
 from af_mcp_broker.audit import AuditRecord
+from af_mcp_broker.audit.logger import init_audit_logger
 from af_mcp_broker.authorization import EntitlementPolicy
 from af_mcp_broker.config import KeycloakBrokeredProviderConfig
 from af_mcp_broker.credentials import (
@@ -316,15 +318,25 @@ async def test_af_list_mcp_servers_reuses_service_status_and_identity_join(
     assert rows["gated"]["status"] == "permission_required"
     assert rows["needs-link"]["status"] == "link_required"
     assert rows["needs-link"]["credential_provider"] == "unlinked-idp"
+    # The gateway lists itself too (issue #240): the builtin af-mcp service
+    # is always present and available -- even to this zero-permission caller
+    # -- with no identity provider servicing it.
+    assert rows["af-mcp"]["status"] == "available"
+    assert rows["af-mcp"]["prefix"] == "af"
+    assert rows["af-mcp"]["credential_provider"] is None
+    assert rows["af-mcp"]["display_name"]
 
 
 async def test_diagnostic_tools_visible_to_principal_with_no_permissions(
     settings: Any, sig_key: Any, prime_jwks: Any, static_principal_cache: Any
 ) -> None:
-    """Requirement: the af_* tools must be visible regardless of entitlements
-    -- a principal with zero group memberships (so zero permissions) still
-    sees all three, even while a permission-gated backend's own tools stay
-    hidden (proving this isn't just "entitlement filtering is broken")."""
+    """Requirement: the af_* methods must be visible regardless of
+    entitlements -- a principal with zero group memberships (so zero
+    permissions) still sees all five, even while a permission-gated
+    backend's own tools stay hidden (proving this isn't just "entitlement
+    filtering is broken"). Since issue #240 the visibility comes from the
+    builtin af-mcp service's "__none__" permission on the normal filtering
+    path, not a name-based bypass."""
     principal_cache, directory = static_principal_cache
     directory.groups_by_subject["user-123"] = []
     prime_jwks([sig_key.jwk])
@@ -370,6 +382,54 @@ async def test_diagnostic_tools_visible_to_principal_with_no_permissions(
     # proves the af_* visibility above is a deliberate bypass, not a broken
     # entitlement filter that would let everything through.
     assert not any(n.startswith("gated_") for n in names)
+
+
+async def test_af_whoami_call_is_audited_and_metered_as_the_af_mcp_service(
+    settings: Any, sig_key: Any, prime_jwks: Any, static_principal_cache: Any
+) -> None:
+    """Issue #240: with the DIAGNOSTIC_TOOL_NAMES bypass gone, a successful
+    af_* call produces an audit line like any other call -- service af-mcp,
+    measured result (bytes/token estimate) and duration included -- proven
+    through a real aggregator round trip by a principal with zero
+    permissions (the builtin service's "__none__" admits them)."""
+    principal_cache, directory = static_principal_cache
+    directory.groups_by_subject["user-123"] = []
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+
+    buffer = io.StringIO()
+    init_audit_logger(buffer)
+
+    mcp = build_aggregator(
+        ServiceRegistry(),
+        settings,
+        EntitlementPolicy(),
+        CredentialRegistry(),
+        principal_cache=principal_cache,
+    )
+
+    async with run_aggregator_async(mcp, path="/mcp") as agg_url:
+        transport = StreamableHttpTransport(
+            agg_url, headers={"Authorization": f"Bearer {token}"}
+        )
+        async with Client(transport) as client:
+            await client.call_tool(WHOAMI_TOOL_NAME, {})
+
+    line = json.loads(buffer.getvalue().strip())
+    assert line["event"] == "audit"
+    assert line["outcome"] == "success"
+    assert line["mcp_service"] == "af-mcp"
+    assert line["target"] == "af-mcp"
+    assert line["action"] == WHOAMI_TOOL_NAME
+    assert line["permission"] == "__none__"
+    assert line["principal_sub"] == "user-123"
+    assert line["duration_ms"] >= 0.0
+    # The success path measures the result exactly like a proxied call's --
+    # af_whoami returned a non-empty structured payload, so both fields are
+    # populated (no pipeline installed in this harness, so the fallback
+    # measured and wrote synchronously).
+    assert line["result_bytes"] > 0
+    assert line["result_tokens_est"] > 0
 
 
 async def test_no_diagnostic_tool_response_contains_a_url(
@@ -571,8 +631,15 @@ async def test_af_usage_days_and_model_parameters(
     )
     body = repriced.structured_content
     assert body["cost_model"] == other
-    assert body["totals"]["calls"] == 2
-    assert body["totals"]["estimated_cost_usd"] == pytest.approx(
+    # af_usage now meters itself (issue #240): the narrow call above shows up
+    # here as one af-mcp call -- an accepted, deliberately visible side
+    # effect of routing af_* through the normal audit/metering path. The
+    # seeded rucio rows still price exactly as before.
+    per_service = {s["service"]: s for s in body["by_service"]}
+    assert per_service["rucio"]["calls"] == 2
+    assert per_service["af-mcp"]["calls"] == 1
+    assert body["totals"]["calls"] == 3
+    assert per_service["rucio"]["estimated_cost_usd"] == pytest.approx(
         float(calculate_cost_by_tokens(1500, other, token_type="input"))
     )
 

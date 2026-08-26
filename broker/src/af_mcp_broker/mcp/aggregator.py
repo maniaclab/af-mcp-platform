@@ -946,6 +946,13 @@ def _register_services(
     # just cleared, so this never produces a duplicate entry.
     mcp.add_provider(mcp.local_provider)
     for spec in registry.all_services():
+        if spec.builtin:
+            # The builtin af-mcp service (issue #240) has no backend to
+            # proxy: its af_* methods are the local tools
+            # register_diagnostic_tools() puts on mcp.local_provider above,
+            # so building a ProxyProvider (which would dial spec.url) is
+            # both impossible and unnecessary.
+            continue
         provider = _ObservableProxyProvider(
             spec.name,
             client_factory=_make_client_factory(

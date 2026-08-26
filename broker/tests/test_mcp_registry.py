@@ -6,8 +6,10 @@ import pytest
 
 from af_mcp_broker.config import Settings
 from af_mcp_broker.mcp.registry import (
+    BUILTIN_SERVICE_NAME,
     DIAGNOSTIC_TOOL_NAMES,
     LINK_IDENTITY_TOOL_NAME,
+    RESERVED_PREFIX,
     ServiceRegistry,
     ServiceSpec,
     identity_provider_url,
@@ -144,6 +146,107 @@ services:
     spec = registry.get("example")
     assert spec is not None
     assert spec.timeout_seconds == 5.0
+
+
+# ---------------------------------------------------------------------------
+# The builtin af-mcp service (issue #240): the registry self-registers the
+# broker's own af_* methods as a first-class service so the catalog,
+# af_list_mcp_servers, and the middleware authorization path all see it --
+# and operators can never define, replace, or unregister it via services.yaml.
+# ---------------------------------------------------------------------------
+
+
+def test_registry_self_registers_the_builtin_af_mcp_service() -> None:
+    registry = ServiceRegistry()
+    spec = registry.get(BUILTIN_SERVICE_NAME)
+    assert spec is not None
+    assert spec.builtin is True
+    assert spec.name == "af-mcp"
+    assert spec.prefix == RESERVED_PREFIX
+    # Open to any authenticated principal: af_whoami/af_link_identity are the
+    # bootstrap methods a caller with zero permissions needs.
+    assert spec.required_permission == "__none__"
+    # No per-user credential concept at all -- keeps _service_status
+    # (api/permissions.py) reporting it "available" unconditionally.
+    assert spec.auth_type == "none"
+    assert spec in registry.all_services()
+
+
+def test_builtin_af_mcp_service_owns_the_af_tool_prefix() -> None:
+    """Tool routing by prefix must map every af_* method to the builtin
+    service, so EntitlementMiddleware/AuthorizationMiddleware handle them on
+    the normal path instead of a name-based bypass."""
+    registry = ServiceRegistry()
+    for tool_name in sorted(DIAGNOSTIC_TOOL_NAMES):
+        spec = registry.get_by_tool_prefix(tool_name)
+        assert spec is not None
+        assert spec.name == BUILTIN_SERVICE_NAME
+
+
+def test_operator_spec_defaults_to_not_builtin() -> None:
+    spec = ServiceSpec(
+        name="example",
+        prefix="example",
+        url="http://example.invalid/mcp",
+        transport="http",
+        required_permission="__none__",
+    )
+    assert spec.builtin is False
+
+
+def test_register_rejects_the_builtin_service_name() -> None:
+    """An operator entry named af-mcp (even under a different prefix) would
+    silently replace the builtin entry -- refuse it with a clear error."""
+    registry = ServiceRegistry()
+    with pytest.raises(ValueError, match="af-mcp"):
+        registry.register(
+            ServiceSpec(
+                name=BUILTIN_SERVICE_NAME,
+                prefix="shadow",
+                url="http://shadow.invalid/mcp",
+                transport="http",
+                required_permission="__none__",
+            )
+        )
+
+
+def test_load_rejects_the_builtin_service_name_in_services_yaml(
+    tmp_path: Path,
+) -> None:
+    services_file = tmp_path / "services.yaml"
+    services_file.write_text(
+        """
+services:
+  - name: af-mcp
+    prefix: shadow
+    url: "http://shadow.invalid/mcp"
+    required_permission: __none__
+"""
+    )
+    registry = ServiceRegistry()
+    with pytest.raises(ValueError, match="af-mcp"):
+        registry.load(str(services_file))
+
+
+def test_load_cannot_mark_an_operator_service_builtin(tmp_path: Path) -> None:
+    """`builtin` is not a services.yaml key -- an operator entry carrying it
+    is simply ignored, never honored."""
+    services_file = tmp_path / "services.yaml"
+    services_file.write_text(
+        """
+services:
+  - name: example
+    prefix: example
+    url: "http://example.invalid/mcp"
+    required_permission: __none__
+    builtin: true
+"""
+    )
+    registry = ServiceRegistry()
+    registry.load(str(services_file))
+    spec = registry.get("example")
+    assert spec is not None
+    assert spec.builtin is False
 
 
 def test_register_rejects_reserved_diagnostic_prefix() -> None:
