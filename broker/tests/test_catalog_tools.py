@@ -9,7 +9,6 @@ from __future__ import annotations
 # bearer (rucio-mcp's shape), and a dead URL. Real HTTP backends throughout,
 # no transport mocks -- only the FastAPI route itself is driven in-process
 # via httpx's ASGITransport.
-import asyncio
 import json
 import re
 import time
@@ -18,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 import pytest
-import uvicorn
+from conftest import run_asgi_app
 from fastapi import FastAPI
 from fastmcp import FastMCP
 from fastmcp.server.dependencies import get_http_headers
@@ -92,26 +91,6 @@ def _open_backend() -> FastMCP:
     return mcp
 
 
-@asynccontextmanager
-async def _run_asgi_app(app: Any) -> AsyncIterator[str]:
-    """Run an arbitrary ASGI app behind a real uvicorn server on an ephemeral
-    port -- mirrors the identical helper in test_mcp_list_time_credentials.py
-    (and test_mcp_aggregator_integration.py): fastmcp's run_server_async only
-    accepts a bare FastMCP instance, which can't carry the ASGI-level auth
-    middleware _auth_gated_backend() needs."""
-    port = find_available_port()
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error")
-    server = uvicorn.Server(config)
-    task = asyncio.create_task(server.serve())
-    while not server.started:
-        await asyncio.sleep(0.01)
-    try:
-        yield f"http://127.0.0.1:{port}"
-    finally:
-        server.should_exit = True
-        await task
-
-
 @pytest.fixture
 async def open_backend_url() -> AsyncIterator[str]:
     async with run_server_async(_open_backend(), path="/mcp") as url:
@@ -120,7 +99,7 @@ async def open_backend_url() -> AsyncIterator[str]:
 
 @pytest.fixture
 async def secure_backend_url() -> AsyncIterator[str]:
-    async with _run_asgi_app(_auth_gated_backend()) as url:
+    async with run_asgi_app(_auth_gated_backend()) as url:
         yield f"{url}/mcp"
 
 
@@ -552,7 +531,7 @@ async def test_successful_listing_is_served_from_cache(
     state["principal"] = make_principal(groups=[])
 
     backend_app, counter = _counting_backend()
-    async with _run_asgi_app(backend_app) as url:
+    async with run_asgi_app(backend_app) as url:
         registry.register(_spec("open", f"{url}/mcp"))
         first = await _get_tools(app, "open")
         assert first.status_code == 200, first.text
@@ -577,7 +556,7 @@ async def test_tools_cache_ttl_zero_disables_caching(
     state["principal"] = make_principal(groups=[])
 
     backend_app, counter = _counting_backend()
-    async with _run_asgi_app(backend_app) as url:
+    async with run_asgi_app(backend_app) as url:
         registry.register(_spec("open", f"{url}/mcp", tools_cache_ttl=0))
         first = await _get_tools(app, "open")
         assert first.json()["status"] == "ok"
