@@ -13,10 +13,24 @@ hanging. The ``timeout`` marks keep a regression from wedging this very file.
 
 from __future__ import annotations
 
+import asyncio
 import socket
 
 import pytest
-from conftest import run_asgi_app
+
+# Import from conftest at module level ONLY: pytest imports every collected
+# conftest.py under the bare name "conftest", and the CI invocation
+# (`pytest broker/ spikes/`) collects spikes/credential-isolation/conftest.py
+# AFTER this module is imported -- replacing sys.modules["conftest"]. A
+# module-level import here binds broker's conftest at collection time (like
+# every other test file); a function-level `from conftest import ...` would
+# resolve at test time and get the spikes one.
+from conftest import (
+    _CLIENT_SESSION_HOTFIX,
+    _await_server_started,
+    _contained,
+    run_asgi_app,
+)
 
 
 async def _hello_app(scope, receive, send):  # pragma: no cover - trivial ASGI app
@@ -55,9 +69,6 @@ async def test_dead_server_task_surfaces_instead_of_hanging() -> None:
     which asyncio would otherwise re-raise into the event loop itself) is
     contained and reported, instead of the started-flag wait spinning
     forever."""
-    import asyncio
-
-    from conftest import _await_server_started, _contained
 
     async def _dying_server() -> None:
         raise SystemExit(3)
@@ -67,3 +78,63 @@ async def test_dead_server_task_surfaces_instead_of_hanging() -> None:
         await _await_server_started(task, lambda: False)
     # The original uvicorn failure stays on the chain for diagnosis.
     assert "uvicorn exited during startup" in str(excinfo.value.__cause__)
+
+
+# ---------------------------------------------------------------------------
+# ClientSession hotfix (conftest's autouse client_session_hotfix fixture):
+# modelcontextprotocol/python-sdk#1144 -- fixed upstream in mcp v2, which
+# needs fastmcp v4 (beta). Until that migration, an MCP client whose
+# streamable-HTTP response dies mid-flight waits forever: an Exception object
+# sent into the session's read stream is handled by a no-op, and a connection
+# that goes dead without ever delivering anything produces no event at all.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.timeout(30)
+async def test_stream_exception_fails_pending_request_instead_of_hanging() -> None:
+    """An Exception arriving on the read stream (what the streamable-HTTP
+    transport sends when the response body dies mid-parse) must fail the
+    pending request promptly -- the hotfix closes the read stream, letting
+    the receive loop's own teardown deliver CONNECTION_CLOSED to waiters."""
+    import anyio
+    from mcp.client.session import ClientSession
+    from mcp.shared.exceptions import McpError
+
+    srv_send, cli_recv = anyio.create_memory_object_stream(8)
+    cli_send, _srv_recv = anyio.create_memory_object_stream(8)
+
+    async def _inject_after_request_is_pending() -> None:
+        # what streamablehttp_client does on a parse failure; must land
+        # AFTER send_ping has registered its response stream, or teardown
+        # has nothing to fail yet.
+        await asyncio.sleep(0.05)
+        await srv_send.send(ValueError("truncated SSE event"))
+
+    async with ClientSession(cli_recv, cli_send) as session:
+        with anyio.fail_after(10):  # the pre-hotfix behavior: hangs here
+            inject = asyncio.create_task(_inject_after_request_is_pending())
+            with pytest.raises(McpError, match="Connection closed"):
+                await session.send_ping()
+            await inject
+
+
+@pytest.mark.timeout(30)
+async def test_dead_connection_times_out_instead_of_hanging(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A session whose server never answers (dead-but-open connection -- the
+    CI hang observed on #237) must fail at the injected default read timeout
+    rather than wait forever."""
+    from datetime import timedelta
+
+    import anyio
+    from mcp.client.session import ClientSession
+    from mcp.shared.exceptions import McpError
+
+    monkeypatch.setitem(_CLIENT_SESSION_HOTFIX, "read_timeout", timedelta(seconds=0.5))
+    _srv_send, cli_recv = anyio.create_memory_object_stream(8)
+    cli_send, _srv_recv = anyio.create_memory_object_stream(8)
+    async with ClientSession(cli_recv, cli_send) as session:
+        with anyio.fail_after(10):
+            with pytest.raises(McpError):
+                await session.send_ping()

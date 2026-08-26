@@ -7,6 +7,7 @@ import socket
 import time
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -129,6 +130,53 @@ def prime_jwks(settings: Settings):
 
     yield _install
     identity._jwks_cache.pop(settings.oidc_jwks_uri, None)
+
+
+# --- ClientSession hotfix -- modelcontextprotocol/python-sdk#1144 ----------
+# An MCP streamable-HTTP client whose response dies mid-flight hangs forever
+# on mcp v1: an Exception object the transport sends into the session's read
+# stream is handled by a default no-op (the receive loop keeps iterating, so
+# its teardown -- which WOULD fail all pending requests with
+# CONNECTION_CLOSED -- never runs), and a connection that goes dead without
+# delivering anything produces no event at all. Fixed upstream in mcp v2,
+# which only fastmcp v4 (still beta) can use; until that migration this
+# keeps a flaky server abort from wedging the suite (it caused the historic
+# silent CI hangs, e.g. run 32922473653). Two halves:
+#   - a wrapping message_handler closes the read stream when an Exception
+#     arrives, so the receive loop exits NORMALLY and its own teardown
+#     delivers CONNECTION_CLOSED to every waiter (cleaner than cancelling
+#     the session task group, which races that same teardown);
+#   - sessions with no read timeout get a default one, covering the
+#     dead-but-open-connection case where no event ever arrives.
+# Mutable so tests of the hotfix itself can shrink the timeout.
+_CLIENT_SESSION_HOTFIX: dict[str, Any] = {"read_timeout": timedelta(seconds=30)}
+
+
+@pytest.fixture(autouse=True)
+def client_session_hotfix(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bound every test ClientSession -- see _CLIENT_SESSION_HOTFIX above."""
+    import mcp.client.session as mcp_client_session
+
+    orig_init = mcp_client_session.ClientSession.__init__
+
+    def patched_init(self: Any, *args: Any, **kwargs: Any) -> None:
+        if kwargs.get("read_timeout_seconds") is None:
+            kwargs["read_timeout_seconds"] = _CLIENT_SESSION_HOTFIX["read_timeout"]
+        inner = kwargs.get("message_handler")
+
+        async def close_on_stream_exception(message: Any) -> None:
+            if isinstance(message, Exception):
+                # Ends the receive loop's `async for`; its finally block then
+                # fails every pending request with CONNECTION_CLOSED.
+                await self._read_stream.aclose()
+                return
+            if inner is not None:
+                await inner(message)
+
+        kwargs["message_handler"] = close_on_stream_exception
+        orig_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(mcp_client_session.ClientSession, "__init__", patched_init)
 
 
 # How long a test server gets to report started before the harness gives up.
