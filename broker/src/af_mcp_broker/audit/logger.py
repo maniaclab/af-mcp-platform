@@ -82,6 +82,16 @@ class AuditRecord:
     # (tracing.current_trace_id()), which is why the later background write
     # doesn't lose it.
     trace_id: str | None = None
+    # The resolved VOMS nickname -- the CERN/Rucio account the x509 proxy
+    # authenticates as -- on x509 proxy-release records (issue #199). Distinct
+    # from principal_sub/principal_uid, which identify the AF principal, not
+    # the grid identity the credential is actually usable as; an operator
+    # grepping the audit trail during an incident (nickname-resolution bug,
+    # VOMS AC parsing regression, a user who changed their Globus identity)
+    # needs to query which account a released proxy was good for. Null for
+    # every non-x509 record, and for the legacy redeem path whose ProxyMeta
+    # cache carries no nickname.
+    nickname: str | None = None
 
 
 class AuditLogger:
