@@ -268,6 +268,20 @@ class Settings(BaseSettings):
     # config change, not a migration. Overridable per-request via ?model=.
     cost_reference_model: str = "claude-sonnet-4-20250514"
 
+    # OTLP/HTTP collector base URL (e.g. http://collector:4318) that turns on
+    # OpenTelemetry trace EMISSION (tracing.py). Empty (the default) means
+    # tracing is off: no SDK tracer provider is installed and every OTel API
+    # call -- fastmcp's native spans included -- no-ops. The field name is
+    # deliberately the standard OTel env var OTEL_EXPORTER_OTLP_ENDPOINT
+    # (pydantic-settings matches it case-insensitively), which the SDK's OTLP
+    # exporter also reads natively (appending the /v1/traces signal path) --
+    # the broker only uses the value as the on/off gate and lets the exporter
+    # do its own env handling. Sampling is likewise configured through the
+    # standard OTEL_TRACES_SAMPLER / OTEL_TRACES_SAMPLER_ARG env vars, which
+    # the SDK reads natively; the default sampler (parentbased_always_on) is
+    # fine at tool-call volumes.
+    otel_exporter_otlp_endpoint: str = ""
+
     # Prometheus /metrics is served on its own port so a NetworkPolicy can
     # firewall scraping separately from API traffic. 0 picks an ephemeral
     # port (tests); a negative value disables the metrics server.
