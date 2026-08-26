@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal, get_args
 
 import yaml  # type: ignore[import-untyped]
 
@@ -25,6 +25,14 @@ if TYPE_CHECKING:
 # ToolError text) can import them without importing mcp/diagnostics.py
 # itself, which in turn imports api/permissions.py's _service_status -- that
 # would be a straight import cycle.
+# Elwood v5 / Shannon trust tiers, as defined in docs/architecture.md's
+# "Trust tiers" section: user-tier acts only with per-user credentials;
+# service-tier interacts with shared infrastructure (runbook + policy +
+# reviewer); infrastructure-tier holds platform-wide secrets or can modify the
+# platform. A closed Literal so a typo is a type error, not a silent tier.
+TrustTier = Literal["user-tier", "service-tier", "infrastructure-tier"]
+TRUST_TIERS: frozenset[str] = frozenset(get_args(TrustTier))
+
 RESERVED_PREFIX = "af"
 # The registry's self-registered entry for the broker's own af_* methods --
 # see _builtin_service_spec() below.
@@ -108,6 +116,26 @@ class ServiceSpec:
     # services.yaml key: load() never reads it, and register() refuses the
     # builtin name/prefix outright, so an operator entry can never be builtin.
     builtin: bool = False
+    # The service's Elwood v5 / Shannon trust tier (see docs/architecture.md's
+    # "Trust tiers" section for what each tier's governance bar means), or None
+    # when undeclared. This field only lets services.yaml/the chart *declare* a
+    # service's posture in machine-checkable form (re-review finding #5); the
+    # authoritative per-deployment tier assignment still lives alongside each
+    # app's deployment manifests in the GitOps repo (maniaclab/flux_apps#32),
+    # not here.
+    trust_tier: TrustTier | None = None
+
+    def __post_init__(self) -> None:
+        # trust_tier from services.yaml arrives as an arbitrary string (yaml
+        # gives us Any, and the Literal only guards in-code call sites), so a
+        # typo'd tier must fail loudly here rather than silently sticking.
+        if self.trust_tier is not None and self.trust_tier not in TRUST_TIERS:
+            msg = (
+                f"service '{self.name}' declares unknown trust_tier "
+                f"'{self.trust_tier}' -- must be one of {sorted(TRUST_TIERS)} "
+                "or omitted (see docs/architecture.md's 'Trust tiers')."
+            )
+            raise ValueError(msg)
 
 
 def _builtin_service_spec() -> ServiceSpec:
@@ -140,6 +168,11 @@ def _builtin_service_spec() -> ServiceSpec:
         ),
         display_name="AF Gateway",
         builtin=True,
+        # The broker is infrastructure-tier (docs/architecture.md's "The
+        # broker is infrastructure-tier"): it holds the identity-token signing
+        # key and the token store behind every linked user's credentials. Its
+        # own builtin entry is the first concrete instance of trust_tier.
+        trust_tier="infrastructure-tier",
     )
 
 
@@ -176,6 +209,7 @@ class ServiceRegistry:
                 apply_namespace=entry.get("apply_namespace", True),
                 timeout_seconds=entry.get("timeout_seconds", 30.0),
                 tools_cache_ttl=entry.get("tools_cache_ttl", 300.0),
+                trust_tier=entry.get("trust_tier"),
             )
             self.register(spec)
 

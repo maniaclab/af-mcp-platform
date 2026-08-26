@@ -1,11 +1,22 @@
 # Default service registry. Deployed as a ConfigMap and mounted at /etc/af-mcp/services.yaml.
 # Adding a service requires only a new entry here (via Helm values) — no code changes.
+#
+# trust_tier declares each service's Elwood v5 / Shannon posture (see
+# docs/architecture.md's "Trust tiers"): service-tier for backends that front
+# an external system or touch shared facility infrastructure; user-tier for a
+# service that acts only with per-user credentials on the caller's own
+# resources; infrastructure-tier for anything holding platform-wide secrets.
+# It is a declaration only — the authoritative per-deployment assignment lives
+# alongside each app's manifests in the GitOps repo (maniaclab/flux_apps#32).
 services:
   - name: rucio
     prefix: rucio
     url: "http://rucio-mcp.mcp.svc.cluster.local:80/site/atlas"
     transport: http
     required_permission: read_data
+    # Fronts external ATLAS distributed data management (Rucio) with a
+    # per-user IAM token — a backend on shared infrastructure.
+    trust_tier: service-tier
     display_name: Rucio
     description: ATLAS distributed data management — browse and query datasets, files, and replicas.
     # OIDCProvider returns the stored IAM-brokered token.
@@ -26,6 +37,9 @@ services:
     url: "https://ami.cern.ch/mcp"
     transport: http
     required_permission: read_metadata
+    # Fronts external ATLAS Metadata Interface (ami.cern.ch) — a backend on
+    # shared infrastructure.
+    trust_tier: service-tier
     display_name: AMI
     description: ATLAS Metadata Interface — dataset provenance and metadata catalogs.
     # X509Provider mints a voms-proxy via the user's home-dir cert.
@@ -36,6 +50,9 @@ services:
     url: "http://atlasopenmagic-mcp.mcp.svc.cluster.local/mcp"
     transport: http
     required_permission: read_metadata
+    # Fronts external ATLAS Open Data with an AF service credential (on_behalf)
+    # — shared infrastructure acted on with a facility credential.
+    trust_tier: service-tier
     display_name: ATLAS Open Data
     description: Metadata and access helpers for ATLAS Open Data releases.
     # ServiceProvider: on_behalf with AF service credential.
@@ -46,6 +63,9 @@ services:
     url: "http://af-jupyterlab-mcp.mcp.svc.cluster.local:80/mcp"
     transport: http
     required_permission: manage_jupyter
+    # Provisions and tears down shared facility compute (JupyterLab servers,
+    # GPU) — interacts with shared infrastructure, not per-user read-only.
+    trust_tier: service-tier
     display_name: JupyterLab
     description: Start, stop, and configure JupyterLab notebook servers on the Analysis Facility.
     # Authorization via broker-issued identity JWT (aud=af-jupyterlab-mcp); no shared secret.
@@ -58,6 +78,9 @@ services:
     url: "http://af-filesystem-mcp.mcp.svc.cluster.local:80/mcp"
     transport: http
     required_permission: read_files
+    # Reads the caller's own home directory with the caller's own identity —
+    # acts only with per-user credentials, lowest privilege.
+    trust_tier: user-tier
     display_name: Filesystem
     description: Browse and read files in your Analysis Facility home directory.
     # af-filesystem-mcp's tools are already self-prefixed (fs_list, fs_stat,
@@ -70,6 +93,9 @@ services:
     url: "http://grafana.prom.svc.cluster.local:3000/mcp"
     transport: http
     required_permission: read_monitoring
+    # Reads shared facility monitoring (Grafana) — shared infrastructure, not
+    # a per-user resource.
+    trust_tier: service-tier
     display_name: Monitoring
     description: Grafana dashboards and metrics for facility monitoring.
     auth_type: none
@@ -79,6 +105,9 @@ services:
     url: "http://docs-mcp.af.svc.cluster.local/mcp"
     transport: http
     required_permission: __none__
+    # Public read-only documentation, open to any authenticated caller — the
+    # doc's canonical user-tier case (__none__ read-only).
+    trust_tier: user-tier
     display_name: Docs
     description: Search and browse Analysis Facility documentation.
     auth_type: none
