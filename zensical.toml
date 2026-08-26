@@ -32,6 +32,7 @@ nav = [
   { "Adding a Service" = "adding-a-service.md" },
   { "Rucio: Per-Site Setup" = "rucio-per-site-setup.md" },
   { "Connecting a Client" = "connecting-a-client.md" },
+  { "Observability" = "observability.md" },
   { "Phase 1 Acceptance Checklist" = "phase1-acceptance-checklist.md" },
   { "agentgateway Spike" = "agentgateway-spike.md" },
 ]

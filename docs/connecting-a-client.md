@@ -240,10 +240,20 @@ on how it handles the redirect Starlette's `Mount` issues — this is one of
 the items pending live verification; see
 [Phase 1 Acceptance Checklist](phase1-acceptance-checklist.md).
 
+## Usage and tracing
+
+Once connected, you can see what your tool calls cost (estimated tokens
+and dollars, via `GET /v1/usage` or the portal's overview page) and, if
+your client instruments itself with OpenTelemetry, join the broker's spans
+to your own traces — both are covered in
+[Observability](observability.md).
+
 ## See also
 
 - [Architecture](architecture.md) — the full request path from your bearer
   token to a backend MCP server.
+- [Observability](observability.md) — checking your own usage and tracing
+  your own agent's tool calls.
 - [Authentication](auth.md) — how identity providers, IAM-brokered tokens,
   and x509/VOMS proxies work.
 - The portal's [Identities page](https://mcp-portal.af.uchicago.edu/identities/)

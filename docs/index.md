@@ -66,6 +66,9 @@ broker subsystems and the `/v1` contract, and
   Claude Code, and any other MCP-over-HTTP client, plus the exact error
   strings you'll see if a prerequisite (permission, linked identity) is
   missing.
+- [Observability](observability.md) — operating the metering pipeline,
+  usage store, metrics, and trace emission, plus the user-facing
+  `GET /v1/usage` endpoint and how to join your own traces.
 - [Phase 1 Acceptance Checklist](phase1-acceptance-checklist.md) — what's
   verified by automated tests vs. what still needs a live-deploy check.
 - [agentgateway Spike](agentgateway-spike.md) — the acceptance test that
