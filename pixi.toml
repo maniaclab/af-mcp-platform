@@ -59,6 +59,7 @@ nodejs = ">=20"
 
 [feature.portal.tasks]
 install = { cmd = "npm install", cwd = "portal", description = "Install portal npm dependencies", inputs = ["portal/package.json", "portal/package-lock.json"], outputs = ["portal/node_modules/.package-lock.json"] }
+audit-fix = { cmd = "npm audit fix", cwd = "portal", description = "Update dependencies to resolve security vulnerabilities" }
 dev = { cmd = "npm run dev", cwd = "portal", depends-on = ["install"], description = "Start portal dev server at http://localhost:4321" }
 build = { cmd = "npm run build", cwd = "portal", depends-on = ["install"], description = "Build portal static site to portal/dist/", inputs = ["portal/src/**", "portal/public/**", "portal/astro.config.mjs", "portal/tsconfig.json", "portal/src/styles/**"], outputs = ["portal/dist/"] }
 preview = { cmd = "npm run preview", cwd = "portal", depends-on = ["build"], description = "Serve production portal build locally" }
