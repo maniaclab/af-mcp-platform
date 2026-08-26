@@ -14,7 +14,9 @@ credential once Keycloak has vouched for the human:
 
     MCP client --/authorize--> broker --redirect--> Keycloak login
     Keycloak --code--> broker's own callback (as Keycloak's OAuth client)
-    broker exchanges that code, learns `sub`, mints an MCP-facing auth code
+    broker exchanges that code, checks the access token carries the
+    `mcp-gateway` audience (issue #245), learns `sub`, mints an MCP-facing
+    auth code
     broker --redirect w/ that code--> MCP client
     MCP client --code + PKCE verifier--> broker's /token
     broker mints a PAT, returns it as `access_token`
@@ -66,7 +68,7 @@ from af_mcp_broker.cimd_client import (
 )
 from af_mcp_broker.config import Settings, get_settings
 from af_mcp_broker.http import get_http_client
-from af_mcp_broker.identity import get_jwks
+from af_mcp_broker.identity import decode_broker_bearer, get_jwks
 from af_mcp_broker.mcp_auth_codes import McpAuthCodeRecord
 from af_mcp_broker.oauth_state import (
     MCP_NONCE_COOKIE_NAME,
@@ -101,11 +103,18 @@ router = APIRouter(tags=["mcp-oauth"])
 # who can observe the authorize request).
 _CODE_CHALLENGE_METHOD = "S256"
 
-# Scope requested from Keycloak for the login exchange -- just enough for an
-# id_token carrying `sub`; this is not the audience the broker validates a
-# normal Keycloak JWT against (see identity.py's keycloak_dependency), so no
-# `mcp-gateway` audience is needed here.
-_KEYCLOAK_LOGIN_SCOPE = "openid"
+# Scope requested from Keycloak for the login exchange: `openid` yields an
+# id_token carrying `sub` (who logged in), and `mcp-gateway` asks for the
+# broker's resource-server audience on the accompanying access token -- the
+# same audience identity.py's keycloak_dependency validates every /v1 bearer
+# against. The callback refuses to proceed (access_denied) when that audience
+# is missing (issue #245), so a plain Keycloak login by a user Keycloak won't
+# mint the audience for can no longer bootstrap a PAT. Operators attach the
+# `mcp-gateway` client scope to the login client as a *Default* scope (see
+# docs/auth.md's operator setup reference), which makes this explicit request
+# redundant -- it is kept so the flow still works if that attachment is ever
+# flipped to Optional.
+_KEYCLOAK_LOGIN_SCOPE = "openid mcp-gateway"
 
 
 def _oauth_error_redirect(redirect_uri: str, error: str, state: str) -> Response:
@@ -181,6 +190,35 @@ def _pkce_challenge_matches(verifier: str, challenge: str) -> bool:
     )
 
 
+async def _access_token_denial_reason(
+    access_token: str | None, settings: Settings
+) -> str | None:
+    """Return why the login exchange's access token fails the broker-audience gate, or None when it passes.
+
+    The bootstrap's entitlement check (issue #245): the id_token proves *who*
+    logged in, but only the access token carries the `mcp-gateway` audience
+    Keycloak's client-scope filter mints exclusively for entitled users --
+    verified with the same decode `identity.get_principal` applies to every
+    /v1 bearer (`decode_broker_bearer`), so this path cannot drift from the
+    platform's one audience gate. Fails closed: a token response with no
+    access token at all is a denial, not a pass -- which is also the symptom
+    of the operator forgetting to attach the `mcp-gateway` client scope to
+    the login client (see docs/auth.md's operator setup reference).
+
+    The returned reason is safe to log: it never contains token material.
+    """
+    if not access_token:
+        return "token response carries no access_token"
+    keys = await get_jwks(settings)
+    try:
+        decode_broker_bearer(access_token, keys, settings)
+    except jwt.InvalidAudienceError:
+        return "access token lacks the broker audience"
+    except (jwt.InvalidTokenError, ValueError) as exc:
+        return f"access token failed verification: {exc}"
+    return None
+
+
 async def _verify_keycloak_id_token(id_token: str, settings: Settings) -> str:
     """Verify *id_token*'s signature/issuer/expiry and return its `sub` claim.
 
@@ -188,6 +226,8 @@ async def _verify_keycloak_id_token(id_token: str, settings: Settings) -> str:
     (the resource-server audience `identity.get_principal` validates a normal
     bearer against) -- this id_token proves who logged in via the broker's
     *login* client, a different relying party than the resource server.
+    Entitlement to the platform is checked separately, against the exchange's
+    access token -- see `_access_token_denial_reason`.
     """
     keys = await get_jwks(settings)
     header = jwt.get_unverified_header(id_token)
@@ -423,11 +463,29 @@ async def keycloak_login_callback(
             timeout=10.0,
         )
         resp.raise_for_status()
-        id_token = resp.json()["id_token"]
+        token_response = resp.json()
+        id_token = token_response["id_token"]
     except (httpx.HTTPError, KeyError) as exc:
         log.warning("mcp_oauth.keycloak_token_exchange_failed", error=str(exc))
         response = _oauth_error_redirect(
             payload.mcp_redirect_uri, "server_error", payload.mcp_state
+        )
+        response.delete_cookie(MCP_NONCE_COOKIE_NAME, path=MCP_NONCE_COOKIE_PATH)
+        return response
+
+    # The mcp-gateway audience gate (issue #245) -- see
+    # _access_token_denial_reason. Refused here, before the id_token is even
+    # looked at: no auth code is stored, so no PAT can ever be redeemed from
+    # this login. access_denied, not server_error -- the platform worked; the
+    # user is not entitled, symmetric with the TokenAudienceError a JWT
+    # caller gets on /mcp.
+    denial_reason = await _access_token_denial_reason(
+        token_response.get("access_token"), settings
+    )
+    if denial_reason is not None:
+        log.warning("mcp_oauth.bootstrap_not_entitled", reason=denial_reason)
+        response = _oauth_error_redirect(
+            payload.mcp_redirect_uri, "access_denied", payload.mcp_state
         )
         response.delete_cookie(MCP_NONCE_COOKIE_NAME, path=MCP_NONCE_COOKIE_PATH)
         return response
