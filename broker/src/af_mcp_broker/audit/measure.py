@@ -5,8 +5,10 @@
 records on every successful call. Both numbers estimate what the call
 injects into the LLM client's context -- NOT wire size: what is measured
 is the result's serialized text, defined as the concatenated text of its
-text-content blocks plus, when structured content is present, its
-``json.dumps``. Non-text blocks (images, audio, resource links) are
+text-content blocks -- or, only when there are none, the ``json.dumps`` of
+its structured content (counting both would double-count backends that
+mirror text into structured output; issue #241). Non-text blocks (images,
+audio, resource links) are
 ignored -- their payloads are not text the client feeds back into its
 context verbatim.
 
@@ -77,9 +79,16 @@ def _serialized_text(result: ToolResult) -> str:
     parts = [
         block.text for block in result.content if isinstance(block, mt.TextContent)
     ]
+    # Text blocks and structured content are alternatives, not additive:
+    # fastmcp mirrors a typed tool's text into structured_content, and a
+    # client feeds the model ONE representation -- summing both double-counts
+    # such backends (issue #241). Structured content is measured only when it
+    # is the sole payload.
+    if parts:
+        return "".join(parts)
     if result.structured_content is not None:
-        parts.append(json.dumps(result.structured_content, default=str))
-    return "".join(parts)
+        return json.dumps(result.structured_content, default=str)
+    return ""
 
 
 def measure_tool_result(result: ToolResult) -> tuple[int | None, int | None]:

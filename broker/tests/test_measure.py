@@ -93,9 +93,12 @@ def test_non_text_content_blocks_are_ignored(
     assert result_tokens == 3
 
 
-def test_structured_content_counted_via_json_dumps(
+def test_structured_content_ignored_when_text_blocks_present(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """A backend that mirrors its text into structured output must not be
+    counted twice (issue #241): with text blocks present, only they are
+    measured -- that is the representation a client feeds the model."""
     _fake_loader(monkeypatch, _FakeEncoding(4))
     structured = {"a": 1, "b": ["x", "y"]}
     result = ToolResult(
@@ -105,7 +108,21 @@ def test_structured_content_counted_via_json_dumps(
 
     result_bytes, result_tokens = measure.measure_tool_result(result)
 
-    assert result_bytes == len(b"ok" + json.dumps(structured).encode())
+    assert result_bytes == len(b"ok")
+    assert result_tokens == 4
+
+
+def test_structured_only_result_counted_via_json_dumps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With no text blocks, the structured content IS the payload."""
+    _fake_loader(monkeypatch, _FakeEncoding(4))
+    structured = {"a": 1, "b": ["x", "y"]}
+    result = ToolResult(content=[], structured_content=structured)
+
+    result_bytes, result_tokens = measure.measure_tool_result(result)
+
+    assert result_bytes == len(json.dumps(structured).encode())
     assert result_tokens == 4
 
 

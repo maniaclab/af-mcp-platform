@@ -28,7 +28,7 @@ record (and the usage store accumulates them):
 | Field | What it is |
 |---|---|
 | `duration_ms` | Wall time of the downstream tool call — credential resolution plus the backend call itself. |
-| `result_bytes` | Size of the tool result's serialized text content. |
+| `result_bytes` | Size of the tool result's serialized text content — its text blocks, or the JSON of its structured content only when no text blocks are present (the two are alternatives, never summed, since backends commonly mirror one into the other). |
 | `result_tokens_est` | A tiktoken **estimate** of the same text, using the `o200k_base` encoding by default (`TOKEN_ESTIMATE_ENCODING`; empty string disables token estimation, byte measurement is unaffected). |
 
 Be clear about what the token number is: an estimate of what each tool
