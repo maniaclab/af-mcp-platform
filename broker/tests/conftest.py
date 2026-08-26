@@ -276,6 +276,14 @@ async def _await_server_started(
         await asyncio.sleep(0.01)
 
 
+def _port_accepting(port: int) -> bool:
+    """True once a TCP connect to 127.0.0.1:*port* succeeds (sub-ms on
+    loopback) -- the real "uvicorn has bound and is accepting" condition."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.settimeout(0.05)
+        return probe.connect_ex(("127.0.0.1", port)) == 0
+
+
 @asynccontextmanager
 async def run_asgi_app(app: Any, port: int | None = None) -> AsyncIterator[str]:
     """Run an arbitrary ASGI app (not necessarily a bare FastMCP server)
@@ -345,7 +353,14 @@ async def run_aggregator_async(mcp: FastMCP, path: str = "/mcp") -> AsyncIterato
     )
     try:
         await _await_server_started(server_task, mcp._started.is_set)
-        await asyncio.sleep(0.1)
+        # ``_started`` flips when the app lifespan is ready, which is BEFORE
+        # uvicorn binds the listening socket -- upstream's run_server_async
+        # papers over that gap with a flat 0.1s sleep ("give uvicorn a moment
+        # to bind the port"). Poll the actual readiness condition instead: a
+        # TCP connect succeeding means the port is accepting, so the harness
+        # proceeds the moment the server is really up (same bounded loop, so
+        # a server that never binds still fails diagnosably).
+        await _await_server_started(server_task, lambda: _port_accepting(port))
         yield f"http://127.0.0.1:{port}{path}"
     finally:
         server_task.cancel()
