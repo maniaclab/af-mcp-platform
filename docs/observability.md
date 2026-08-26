@@ -105,9 +105,16 @@ into the LLM client's context — not provider-reported usage, and not the
 user's full LLM spend — and `estimated_cost_usd` is that estimate priced
 at the chosen model's input rate.
 
+An MCP client doesn't need to leave the MCP surface for this: the
+broker-native `af_usage` tool (alongside `af_whoami` and the other `af_*`
+tools) returns the same payload — totals, `by_service`, `by_day` — for the
+calling principal, with the same `days`/`model` parameters and the same
+honesty caveats in its tool description, so the LLM can relay them.
+
 The portal shows the same numbers as a usage card on its overview page
 (`mcp-portal.af.uchicago.edu/overview/`), labeled with the same estimate
-caveat.
+caveat, and in full — window selector, per-service table, daily activity —
+on its Usage page (`mcp-portal.af.uchicago.edu/usage/`).
 
 ## Operator: the usage store
 
