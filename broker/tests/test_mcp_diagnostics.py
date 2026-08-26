@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -8,7 +9,9 @@ from conftest import make_claims, run_aggregator_async
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.exceptions import ToolError
+from tokencost import calculate_cost_by_tokens  # type: ignore[import-untyped]
 
+from af_mcp_broker.audit import AuditRecord
 from af_mcp_broker.authorization import EntitlementPolicy
 from af_mcp_broker.config import KeycloakBrokeredProviderConfig
 from af_mcp_broker.credentials import (
@@ -21,14 +24,19 @@ from af_mcp_broker.mcp.registry import (
     LINK_IDENTITY_TOOL_NAME,
     LIST_IDENTITIES_TOOL_NAME,
     LIST_MCP_SERVERS_TOOL_NAME,
+    USAGE_TOOL_NAME,
     WHOAMI_TOOL_NAME,
     ServiceRegistry,
     ServiceSpec,
     identity_provider_url,
 )
+from af_mcp_broker.usage import aclose_usage_store, init_usage_store
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
     from af_mcp_broker.identity import Principal
+    from af_mcp_broker.usage import UsageStore
 
 # ---------------------------------------------------------------------------
 # End-to-end tests for the af_* diagnostic tools (issue #153), exercised
@@ -356,6 +364,7 @@ async def test_diagnostic_tools_visible_to_principal_with_no_permissions(
         LIST_IDENTITIES_TOOL_NAME,
         LIST_MCP_SERVERS_TOOL_NAME,
         LINK_IDENTITY_TOOL_NAME,
+        USAGE_TOOL_NAME,
     } <= names
     # The permission-gated backend's own tool is correctly still hidden --
     # proves the af_* visibility above is a deliberate bypass, not a broken
@@ -418,3 +427,188 @@ async def test_no_diagnostic_tool_response_contains_a_url(
         blob = json.dumps(result.structured_content)
         assert "http://" not in blob
         assert "https://" not in blob
+
+
+# ---------------------------------------------------------------------------
+# af_usage -- the caller's own usage summary through the MCP surface, the
+# same data GET /v1/usage serves (both are thin wrappers over
+# usage/summary.py's build_usage_summary). Seeded through the process-wide
+# usage store (init_usage_store), which is what the tool reads at call time
+# -- the aggregator harness runs in-process, so the module-level store the
+# app lifespan would install is visible to the tool closure here too.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+async def usage_store(settings: Any) -> AsyncIterator[UsageStore]:
+    """Install (and tear down) the process-wide in-memory usage store, as app.py's lifespan would."""
+    store = await init_usage_store(settings)
+    yield store
+    await aclose_usage_store()
+
+
+def _usage_record(**overrides: Any) -> AuditRecord:
+    fields: dict[str, Any] = {
+        "principal_sub": "user-123",
+        "principal_uid": 1000,
+        "permission": "read_data",
+        "target": "rucio",
+        "action": "rucio_list_dids",
+        "action_type": "read",
+        "args_summary": "scope=...",
+        "timestamp": time.time(),
+        "request_id": "req-1",
+        "mcp_service": "rucio",
+        "outcome": "success",
+        "duration_ms": 10.0,
+        "result_bytes": 100,
+        "result_tokens_est": 1000,
+    }
+    fields.update(overrides)
+    return AuditRecord(**fields)
+
+
+async def _call_af_usage(
+    settings: Any, principal_cache: Any, token: str, args: dict[str, Any]
+) -> Any:
+    """Round-trip one af_usage call through a real aggregator (the same harness the other af_* tests use)."""
+    mcp = build_aggregator(
+        ServiceRegistry(),
+        settings,
+        EntitlementPolicy(),
+        CredentialRegistry(),
+        principal_cache=principal_cache,
+    )
+    async with run_aggregator_async(mcp, path="/mcp") as agg_url:
+        transport = StreamableHttpTransport(
+            agg_url, headers={"Authorization": f"Bearer {token}"}
+        )
+        async with Client(transport) as client:
+            return await client.call_tool(USAGE_TOOL_NAME, args)
+
+
+async def test_af_usage_returns_only_the_callers_usage(
+    settings: Any,
+    sig_key: Any,
+    prime_jwks: Any,
+    static_principal_cache: Any,
+    usage_store: UsageStore,
+) -> None:
+    """Seed two subjects; the caller sees only their own aggregates -- there
+    is no parameter that reaches anyone else's (same isolation contract as
+    GET /v1/usage, proven through the MCP surface)."""
+    principal_cache, directory = static_principal_cache
+    directory.groups_by_subject["user-123"] = []
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+
+    await usage_store.record(_usage_record())
+    await usage_store.record(
+        _usage_record(outcome="error", result_bytes=10, result_tokens_est=None)
+    )
+    await usage_store.record(
+        _usage_record(principal_sub="someone-else", result_tokens_est=7)
+    )
+
+    result = await _call_af_usage(settings, principal_cache, token, {})
+
+    body = result.structured_content
+    assert body["subject"] == "user-123"
+    assert body["window_days"] == 30
+    assert body["cost_model"] == settings.cost_reference_model
+    expected_cost = float(
+        calculate_cost_by_tokens(
+            1000, settings.cost_reference_model, token_type="input"
+        )
+    )
+    assert body["totals"]["calls"] == 2
+    assert body["totals"]["errors"] == 1
+    # someone-else's 7 tokens must never leak into user-123's summary.
+    assert body["totals"]["result_tokens_est"] == 1000
+    assert body["totals"]["estimated_cost_usd"] == pytest.approx(expected_cost)
+    assert [s["service"] for s in body["by_service"]] == ["rucio"]
+    assert body["by_service"][0]["calls"] == 2
+    assert body["by_service"][0]["errors"] == 1
+    assert len(body["by_day"]) == 1
+    assert body["by_day"][0]["calls"] == 2
+
+
+async def test_af_usage_days_and_model_parameters(
+    settings: Any,
+    sig_key: Any,
+    prime_jwks: Any,
+    static_principal_cache: Any,
+    usage_store: UsageStore,
+) -> None:
+    """days narrows the trailing window; model reprices it -- the same
+    semantics as GET /v1/usage's query parameters."""
+    principal_cache, directory = static_principal_cache
+    directory.groups_by_subject["user-123"] = []
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+
+    await usage_store.record(_usage_record())
+    await usage_store.record(
+        _usage_record(timestamp=time.time() - 10 * 86400, result_tokens_est=500)
+    )
+
+    narrow = await _call_af_usage(settings, principal_cache, token, {"days": 7})
+    assert narrow.structured_content["window_days"] == 7
+    assert narrow.structured_content["totals"]["calls"] == 1
+    assert narrow.structured_content["totals"]["result_tokens_est"] == 1000
+
+    # Any second Claude key from the bundled table works; pinned so a
+    # tokencost upgrade that drops it fails loudly (same reasoning as
+    # test_usage_api.py's PINNED_MODEL).
+    other = "claude-3-5-sonnet-20241022"
+    repriced = await _call_af_usage(
+        settings, principal_cache, token, {"days": 30, "model": other}
+    )
+    body = repriced.structured_content
+    assert body["cost_model"] == other
+    assert body["totals"]["calls"] == 2
+    assert body["totals"]["estimated_cost_usd"] == pytest.approx(
+        float(calculate_cost_by_tokens(1500, other, token_type="input"))
+    )
+
+
+async def test_af_usage_unknown_model_raises_tool_error(
+    settings: Any,
+    sig_key: Any,
+    prime_jwks: Any,
+    static_principal_cache: Any,
+    usage_store: UsageStore,
+) -> None:
+    """An unknown price-table key is a clean ToolError naming the model --
+    mirroring the endpoint's 422 -- and must not enumerate the table."""
+    principal_cache, directory = static_principal_cache
+    directory.groups_by_subject["user-123"] = []
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+
+    with pytest.raises(ToolError) as excinfo:
+        await _call_af_usage(
+            settings, principal_cache, token, {"model": "not-a-real-model"}
+        )
+
+    assert "not-a-real-model" in str(excinfo.value)
+    # The table has thousands of keys -- the error must not enumerate them.
+    assert settings.cost_reference_model not in str(excinfo.value)
+
+
+async def test_af_usage_without_installed_store_degrades_to_empty_window(
+    settings: Any, sig_key: Any, prime_jwks: Any, static_principal_cache: Any
+) -> None:
+    """No process-wide store (outside the lifespan) means an empty window,
+    never a crash -- the same degrade GET /v1/usage applies."""
+    principal_cache, directory = static_principal_cache
+    directory.groups_by_subject["user-123"] = []
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+
+    result = await _call_af_usage(settings, principal_cache, token, {})
+
+    body = result.structured_content
+    assert body["totals"]["calls"] == 0
+    assert body["by_service"] == []
+    assert body["by_day"] == []
