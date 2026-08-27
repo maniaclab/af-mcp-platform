@@ -287,6 +287,16 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     x509_targets: list[str] = [
         spec.name for spec in services if spec.auth_type == "x509"
     ]
+    # Reverse map from the aud a backend presents to the x509 redeem endpoint
+    # (the service's effective_audience -- what the broker mints, issue #257)
+    # back to the x509 target name the proxy/provider are keyed under. Without
+    # it the redeem endpoint would keep assuming aud == target name, which the
+    # name/audience split invalidated -- the 2026-08-27 x509 proxy 403.
+    x509_audiences: dict[str, str] = {
+        spec.effective_audience: spec.name
+        for spec in services
+        if spec.auth_type == "x509"
+    }
     identity_provider_cfg_list = list(settings.identity_providers)
     _validate_x509_provider_targets(settings.identity_providers, set(x509_targets))
     has_service_mode_x509_cfg = any(
@@ -767,6 +777,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     application.state.credential_registry = credential_registry
     application.state.x509_provider = x509_provider
     application.state.x509_targets = x509_targets
+    application.state.x509_audiences = x509_audiences
     application.state.identity_providers = identity_providers
     application.state.identity_provider_configs = identity_provider_configs
     application.state.target_to_alias = target_to_alias

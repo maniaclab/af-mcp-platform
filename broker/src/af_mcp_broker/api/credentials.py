@@ -667,29 +667,35 @@ async def redeem_x509_proxy(request: Request) -> ProxyRedeemResponse:
         )
 
     subject: str = claims["sub"]
-    audience: str = claims["aud"]
+    token_aud: str = claims["aud"]
     request_id = claims.get("jti", "")
 
-    x509_targets: list[str] = getattr(request.app.state, "x509_targets", [])
-    if audience not in x509_targets:
+    # The token's aud is the service's effective_audience (what the broker
+    # mints, issue #257), which can differ from the x509 *target* name the
+    # proxy/provider are keyed under. Map it back rather than assuming
+    # aud == target name -- that assumption 403'd every renamed x509 backend
+    # on 2026-08-27. An aud that maps to no x509 target is genuinely not ours.
+    x509_audiences: dict[str, str] = getattr(request.app.state, "x509_audiences", {})
+    audience = x509_audiences.get(token_aud)
+    if audience is None:
         await write_audit(
             AuditRecord(
                 principal_sub=subject,
                 principal_uid=claims.get("uid"),
                 permission=None,
-                target=audience,
+                target=token_aud,
                 action="x509_proxy_release",
                 action_type="read",
                 args_summary="redeem denied: audience is not an x509 target",
                 timestamp=time.time(),
                 request_id=request_id,
                 outcome="denied",
-                error=f"audience {audience!r} is not a configured x509 target",
+                error=f"audience {token_aud!r} is not a configured x509 target",
             )
         )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Audience {audience!r} is not a configured x509 target",
+            detail=f"Audience {token_aud!r} is not a configured x509 target",
         )
 
     # voms-token-service mode: Vault is authoritative — serve the stored
