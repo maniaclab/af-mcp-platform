@@ -269,11 +269,10 @@ broker:
   #   displayName: "AF-native services"
   #   enables: "HTCondor and other AF-internal services"
   #   targets: ["condor-token-service"]
-  #   # Per-target options; a target absent here gets the defaults
-  #   # (audience = target name, no POSIX claims).
-  #   targetOptions:
-  #     condor-token-service:
-  #       includePosix: true
+  #   # No per-target options here: each target's aud and POSIX requirement
+  #   # are declared on its service entry (aggregator.services' `audience`
+  #   # and `requires_posix`, issue #257), so every token property of a
+  #   # service lives in one place.
   # - type: condor-token
   #   alias: condor
   #   displayName: "HTCondor"
@@ -507,6 +506,21 @@ aggregator:
   #     tools_cache_ttl: 300  # optional; 0 disables the by-name lookup cache
   #                           # for a service whose tool list personalizes
   #                           # per caller -- see docs/adding-a-service.md
+  # For x509/broker-issued (AF-native) services, two more fields carry the
+  # token contract (issue #257):
+  #     audience: my-tool-mcp   # the exact `aud` the backend validates the AF
+  #                             # Broker Identity Token against. Omit ⇒ equals
+  #                             # `name`. Set it explicitly so you can rename
+  #                             # `name` (registry/catalog/audit identity)
+  #                             # WITHOUT moving the aud every backend checks --
+  #                             # renaming `name` alone silently re-points the
+  #                             # contract and 401s the backend. Must match the
+  #                             # backend deployment's own expected-audience.
+  #     requires_posix: true    # stamp the caller's uid/gid/unixname into this
+  #                             # backend's token (and 404 if the caller has
+  #                             # none). Only for backends that act AS the POSIX
+  #                             # user (home-dir access, launching as the user);
+  #                             # omit for metadata backends (least privilege).
   # apply_namespace defaults to true (mounts tools as <prefix>_<toolname>) to
   # prevent cross-service tool-name collisions; set false only for a service
   # whose tools are already self-prefixed at the source, and only when no

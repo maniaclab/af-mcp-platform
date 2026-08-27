@@ -140,8 +140,9 @@ JSON-serialized IDENTITY_PROVIDERS env var value, converting
 field names `IdentityProviderConfig` (broker/src/af_mcp_broker/config.py)
 parses from JSON. Every entry carries alias/type/targets/displayName/enables;
 oauth21-direct entries additionally carry the endpoint/issuer/scope fields,
-broker-issued entries their per-target audience/includePosix options
-(issue #162), condor-token entries their serviceUrl/audience (issue #169),
+broker-issued entries carry nothing more -- each target's aud/POSIX options
+now live on the service entry (aggregator.services' audience/requires_posix,
+issue #257), condor-token entries their serviceUrl/audience (issue #169),
 and x509 entries their serviceUrl/voms/valid/audience (serviceUrl omitted =
 the legacy k8s-Job mint path; replaces the removed global
 broker.env.VOMS_TOKEN_SERVICE_URL -- every auth_type: x509 backend now
@@ -163,20 +164,12 @@ needs an explicit entry, there is no synthesized fallback).
       "scope" (.scope | default "openid profile email")
     ) -}}
 {{- else if eq .type "broker-issued" -}}
-{{- $targetOptions := dict -}}
-{{- range $target, $opts := (.targetOptions | default (dict)) -}}
-{{- $_ := set $targetOptions $target (dict
-      "audience" ($opts.audience | default "")
-      "include_posix" ($opts.includePosix | default false)
-    ) -}}
-{{- end -}}
 {{- $providers = append $providers (dict
       "type" .type
       "alias" .alias
       "targets" (.targets | default (list))
       "display_name" (.displayName | default "")
       "enables" (.enables | default "")
-      "target_options" $targetOptions
     ) -}}
 {{- else if eq .type "condor-token" -}}
 {{- $providers = append $providers (dict
