@@ -307,7 +307,7 @@ def test_catalog_status_detail_names_the_af_mcp_methods(
     assert BUILTIN_SERVICE_NAME in rucio["status_detail"]
 
 
-def test_catalog_lists_the_builtin_af_mcp_service(
+def test_catalog_lists_the_builtin_gateway_service(
     app_client: tuple[TestClient, dict], make_principal: Callable[..., object]
 ) -> None:
     """Issue #240: the broker's own af-mcp service appears in the catalog
@@ -320,7 +320,7 @@ def test_catalog_lists_the_builtin_af_mcp_service(
     resp = client.get("/v1/catalog", headers=_AUTH)
     assert resp.status_code == 200, resp.text
     servers = {s["name"]: s for s in resp.json()["servers"]}
-    af = servers["af-mcp"]
+    af = servers["gateway_service"]
     assert af["builtin"] is True
     assert af["status"] == "available"
     assert af["permission"] == "__none__"

@@ -287,6 +287,16 @@ def test_mcp_replica_count_env_var_still_works(monkeypatch):
     assert Settings().mcp_replica_count == 3
 
 
+def test_builtin_service_name_defaults_and_env_override(monkeypatch):
+    """The builtin gateway service name (issue #240) defaults to
+    registry.BUILTIN_SERVICE_NAME and is overridable via BUILTIN_SERVICE_NAME."""
+    from af_mcp_broker.mcp.registry import BUILTIN_SERVICE_NAME
+
+    assert Settings().builtin_service_name == BUILTIN_SERVICE_NAME
+    monkeypatch.setenv("BUILTIN_SERVICE_NAME", "facility_service")
+    assert Settings().builtin_service_name == "facility_service"
+
+
 # ---------------------------------------------------------------------------
 # broker-issued identity providers (issue #162) — the AF Broker Identity
 # Token's config surface: discriminated-union parsing and the signing-key /

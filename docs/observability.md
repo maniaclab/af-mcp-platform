@@ -107,15 +107,15 @@ at the chosen model's input rate.
 
 An MCP client doesn't need to leave the MCP surface for this: the
 broker-native `af_usage` method (alongside `af_whoami` and the builtin
-`af-mcp` service's other methods) returns the same payload — totals,
+`gateway_service` service's other methods) returns the same payload — totals,
 `by_service`, `by_day` — for the calling principal, with the same
 `days`/`model` parameters and the same honesty caveats in its tool
 description, so the LLM can relay them.
 
 `af_*` calls are themselves audited and metered like every other call
-(service `af-mcp` in audit lines, usage rows, and metric labels — issue
+(service `gateway_service` in audit lines, usage rows, and metric labels — issue
 maniaclab/af-mcp-platform#240), so they show up in this data too. In particular `af_usage` meters
-itself: each call to it appears as one `af-mcp` call in the next usage
+itself: each call to it appears as one `gateway_service` call in the next usage
 window it reports — accepted and deliberately visible.
 
 The portal shows the same numbers as a usage card on its overview page

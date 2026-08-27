@@ -61,6 +61,16 @@ oidc:
 broker:
   replicaCount: 2
 
+  # Name of the builtin gateway service (issue #240) -- the entry the registry
+  # self-registers for the broker's own af_* methods (af_whoami, af_usage,
+  # ...), used as its catalog identity and its audit/usage `mcp_service` label.
+  # Empty means use the broker default (`gateway_service`). Override to align
+  # with a facility's own service-naming convention; the reserved `af` prefix
+  # and the af_* method wire-names are unaffected. Renaming it re-labels the
+  # gateway's usage rows from the change forward -- migrate historical rows
+  # separately if you want one continuous series.
+  builtinServiceName: ""
+
   # /mcp aggregator transport mode (issue #128). Streamable-HTTP sessions
   # are in-process state, so a stateful session (false) only survives an
   # unpinned load balancer routing its later requests to a *different*

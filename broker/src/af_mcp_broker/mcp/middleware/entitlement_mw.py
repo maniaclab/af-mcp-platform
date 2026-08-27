@@ -54,7 +54,7 @@ class EntitlementMiddleware(Middleware):
 
     def _tool_is_allowed(self, tool: Tool, principal_caps: set[str]) -> bool:
         # The broker's own af_* methods (issue #153) route here too, via the
-        # builtin af-mcp service the registry always carries (issue #240):
+        # builtin gateway service the registry always carries (issue #240):
         # its "__none__" permission keeps them visible to every authenticated
         # caller regardless of entitlements, precisely because they're how a
         # caller self-diagnoses a missing/denied tool elsewhere. No operator

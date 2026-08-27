@@ -144,8 +144,9 @@ requires an identity provider configured for this service's `name` (see
 service authorizes itself some other way (e.g. a platform k8s service
 account) and needs no per-user credential forwarded at all. `auth_type: x509`
 marks a service whose per-user credential is a VOMS proxy (e.g. ami-mcp):
-the aggregator injects an AF Broker Identity Token (`aud` = the service
-name) and the service redeems the caller's cached proxy itself via
+the aggregator injects an AF Broker Identity Token (`aud` = the service's
+`audience`, defaulting to its `name` — issue maniaclab/af-mcp-platform#257) and the service
+redeems the caller's cached proxy itself via
 `POST /v1/credentials/x509/redeem` (issue maniaclab/af-mcp-platform#112) — this requires the broker
 signing key to be mounted (`broker.identityToken.existingSigningKeySecret`),
 and the service to run in a mode that verifies broker JWTs and redeems
@@ -224,14 +225,17 @@ explicit `audience` silently re-points the contract and 401s the backend
 Token"). A rename is: `name: <backend>_service` + `audience: <old-name>`, with
 the identity-provider `targets` updated to the new name in lockstep.
 
-**Reserved: the `af` prefix and the `af-mcp` name.** The registry always
-carries a builtin `af-mcp` service (issue maniaclab/af-mcp-platform#240) — the gateway's own
-identity, catalog, and usage methods (`af_whoami`, `af_list_identities`,
-`af_list_mcp_servers`, `af_link_identity`, `af_usage`), served by the
-aggregator itself rather than proxied to any backend. It is not a
-`services.yaml` entry and cannot be one: an entry claiming the `af` prefix
-or the `af-mcp` name fails registration with a clear error, since either
-would let a configured service shadow (or replace) the methods a caller
+**Reserved: the `af` prefix and the builtin gateway service name.** The
+registry always carries a builtin gateway service (issue maniaclab/af-mcp-platform#240) — the
+gateway's own identity, catalog, and usage methods (`af_whoami`,
+`af_list_identities`, `af_list_mcp_servers`, `af_link_identity`, `af_usage`),
+served by the aggregator itself rather than proxied to any backend. Its name
+defaults to `gateway_service` and is deployment-configurable
+(`broker.builtinServiceName` / `BUILTIN_SERVICE_NAME`); the reserved `af`
+prefix is fixed, since the method wire-names are built from it. It is not a
+`services.yaml` entry and cannot be one: an entry claiming the `af` prefix or
+the configured builtin name fails registration with a clear error, since
+either would let a configured service shadow (or replace) the methods a caller
 relies on precisely when everything else is broken.
 
 ---
@@ -347,7 +351,7 @@ is cited below as the shipped example.
   progressive tool-search over just the summaries, where a tool whose first
   line doesn't say what it does never gets picked. Put the one-liner first, then
   the detail (arguments, caveats, when to call it) below it. The builtin
-  `af-mcp` tools follow this — see `af_whoami`'s "Return the caller's own
+  `gateway_service` tools follow this — see `af_whoami`'s "Return the caller's own
   subject, groups, and effective permissions." ahead of its usage notes in
   `broker/src/af_mcp_broker/mcp/diagnostics.py`.
 
@@ -369,7 +373,7 @@ is cited below as the shipped example.
   that an MCP `outputSchema` MUST be a JSON *object* schema — a tool that
   returns a bare list gets no usable schema (or a synthetic single-key wrapper
   with a meaningless field name), so wrap a list in a small object model with a
-  named field. The `af-mcp` tools are the in-repo reference instance: all five
+  named field. The `gateway_service` tools are the in-repo reference instance: all five
   declare an object `outputSchema`, and `af_list_identities` /
   `af_list_mcp_servers` show the list-wrapping pattern
   (`ListIdentitiesResult.identities` / `ListMcpServersResult.servers`) in

@@ -197,7 +197,7 @@ async def get_service_tools(
         return _respond(spec, "permission_required", [], policy)
 
     if spec.builtin:
-        # The builtin af-mcp service's methods (issue #240) are the
+        # The builtin gateway service's methods (issue #240) are the
         # aggregator's own local tools (mcp/diagnostics.py) -- there is no
         # backend to HTTP-fetch and no credential to resolve, so list them
         # straight from the mounted FastMCP instance's local provider

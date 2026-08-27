@@ -230,7 +230,7 @@ Answers: "is this principal allowed to call this tool?"
   and return HTTP 403 to the aggregator.
 - The gateway's own methods (`af_whoami`, `af_list_identities`,
   `af_list_mcp_servers`, `af_link_identity`, `af_usage`) take this exact
-  same path: the registry always self-registers a builtin `af-mcp` service
+  same path: the registry always self-registers a builtin `gateway_service` service
   (prefix `af`, `required_permission: __none__` — issue maniaclab/af-mcp-platform#240, replacing
   issue maniaclab/af-mcp-platform#153's name-based middleware bypass), so they are
   entitlement-checked, audited, and metered like every other method while
@@ -238,7 +238,7 @@ Answers: "is this principal allowed to call this tool?"
   they are the bootstrap methods an unlinked, zero-permission caller needs.
   The one builtin difference is dispatch: the aggregator serves them from
   its own local tools, so no credential is minted and nothing is forwarded.
-  `af-mcp` appears in `/v1/catalog` and `af_list_mcp_servers` like any
+  `gateway_service` appears in `/v1/catalog` and `af_list_mcp_servers` like any
   other service; `services.yaml` can neither define nor unregister it.
 
 #### Dual enforcement: technical gate + model-facing policy
@@ -480,7 +480,7 @@ Structured log (structlog + JSON) of every tool invocation, including:
   legacy redeem path, whose `ProxyMeta` cache carries no nickname (issue maniaclab/af-mcp-platform#199)
 
 Every tool invocation means every one: calls to the gateway's own `af_*`
-methods are audited and metered too, as service `af-mcp` (the builtin
+methods are audited and metered too, as service `gateway_service` (the builtin
 service entry — issue maniaclab/af-mcp-platform#240; they previously bypassed audit entirely). One
 deliberately accepted side effect: `af_usage` meters itself, so each call
 to it appears in the very usage data it reports.

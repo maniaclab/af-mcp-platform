@@ -368,10 +368,10 @@ async def test_af_list_mcp_servers_reuses_service_status_and_identity_join(
     # The gateway lists itself too (issue #240): the builtin af-mcp service
     # is always present and available -- even to this zero-permission caller
     # -- with no identity provider servicing it.
-    assert rows["af-mcp"]["status"] == "available"
-    assert rows["af-mcp"]["prefix"] == "af"
-    assert rows["af-mcp"]["credential_provider"] is None
-    assert rows["af-mcp"]["display_name"]
+    assert rows["gateway_service"]["status"] == "available"
+    assert rows["gateway_service"]["prefix"] == "af"
+    assert rows["gateway_service"]["credential_provider"] is None
+    assert rows["gateway_service"]["display_name"]
 
 
 async def test_diagnostic_tools_visible_to_principal_with_no_permissions(
@@ -431,7 +431,7 @@ async def test_diagnostic_tools_visible_to_principal_with_no_permissions(
     assert not any(n.startswith("gated_") for n in names)
 
 
-async def test_af_whoami_call_is_audited_and_metered_as_the_af_mcp_service(
+async def test_af_whoami_call_is_audited_and_metered_as_the_gateway_service(
     settings: Any, sig_key: Any, prime_jwks: Any, static_principal_cache: Any
 ) -> None:
     """Issue #240: with the DIAGNOSTIC_TOOL_NAMES bypass gone, a successful
@@ -465,8 +465,8 @@ async def test_af_whoami_call_is_audited_and_metered_as_the_af_mcp_service(
     line = json.loads(buffer.getvalue().strip())
     assert line["event"] == "audit"
     assert line["outcome"] == "success"
-    assert line["mcp_service"] == "af-mcp"
-    assert line["target"] == "af-mcp"
+    assert line["mcp_service"] == "gateway_service"
+    assert line["target"] == "gateway_service"
     assert line["action"] == WHOAMI_TOOL_NAME
     assert line["permission"] == "__none__"
     assert line["principal_sub"] == "user-123"
@@ -684,7 +684,7 @@ async def test_af_usage_days_and_model_parameters(
     # seeded rucio rows still price exactly as before.
     per_service = {s["service"]: s for s in body["by_service"]}
     assert per_service["rucio"]["calls"] == 2
-    assert per_service["af-mcp"]["calls"] == 1
+    assert per_service["gateway_service"]["calls"] == 1
     assert body["totals"]["calls"] == 3
     assert per_service["rucio"]["estimated_cost_usd"] == pytest.approx(
         float(calculate_cost_by_tokens(1500, other, token_type="input"))
