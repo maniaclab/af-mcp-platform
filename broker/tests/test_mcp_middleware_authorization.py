@@ -221,8 +221,8 @@ async def test_af_method_call_flows_through_the_builtin_service(
     assert len(captured_audits) == 1
     record = captured_audits[0]
     assert record.outcome == "success"
-    assert record.mcp_service == "af-mcp"
-    assert record.target == "af-mcp"
+    assert record.mcp_service == "gateway_service"
+    assert record.target == "gateway_service"
     assert record.action == tool_name
     assert record.permission == "__none__"
     assert record.duration_ms is not None

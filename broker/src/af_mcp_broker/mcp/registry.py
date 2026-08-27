@@ -34,9 +34,13 @@ TrustTier = Literal["user-tier", "service-tier", "infrastructure-tier"]
 TRUST_TIERS: frozenset[str] = frozenset(get_args(TrustTier))
 
 RESERVED_PREFIX = "af"
-# The registry's self-registered entry for the broker's own af_* methods --
-# see _builtin_service_spec() below.
-BUILTIN_SERVICE_NAME = "af-mcp"
+# Default name of the registry's self-registered entry for the broker's own
+# af_* methods (see _builtin_service_spec() below). Configurable per deployment
+# via BUILTIN_SERVICE_NAME (config.py) so a facility can align it with its
+# service-naming convention -- the `<backend>_service` form here. Only the
+# *name* is configurable; the reserved `af` prefix stays fixed because the
+# method wire-names (af_whoami, ...) are built from it.
+BUILTIN_SERVICE_NAME = "gateway_service"
 WHOAMI_TOOL_NAME = f"{RESERVED_PREFIX}_whoami"
 LIST_IDENTITIES_TOOL_NAME = f"{RESERVED_PREFIX}_list_identities"
 LIST_MCP_SERVERS_TOOL_NAME = f"{RESERVED_PREFIX}_list_mcp_servers"
@@ -180,8 +184,8 @@ class ServiceSpec:
             raise ValueError(msg)
 
 
-def _builtin_service_spec() -> ServiceSpec:
-    """Build the broker's own ``af-mcp`` service entry (issue #240).
+def _builtin_service_spec(name: str = BUILTIN_SERVICE_NAME) -> ServiceSpec:
+    """Build the broker's own gateway service entry (issue #240), named *name* (default ``gateway_service``, deployment-configurable).
 
     Self-registered by every ``ServiceRegistry`` so the broker-native af_*
     methods (mcp/diagnostics.py) are a first-class service: visible in
@@ -193,7 +197,7 @@ def _builtin_service_spec() -> ServiceSpec:
     building a ProxyProvider for a builtin spec.
     """
     return ServiceSpec(
-        name=BUILTIN_SERVICE_NAME,
+        name=name,
         prefix=RESERVED_PREFIX,
         url="",
         transport="http",
@@ -232,13 +236,17 @@ def _builtin_service_spec() -> ServiceSpec:
 class ServiceRegistry:
     """Config-driven service registry. Adding a service = one YAML entry, no code change."""
 
-    def __init__(self) -> None:
+    def __init__(self, builtin_service_name: str = BUILTIN_SERVICE_NAME) -> None:
+        self._builtin_service_name = builtin_service_name
         self._services: dict[str, ServiceSpec] = {}
-        # The broker's own af-mcp service is always present (issue #240) --
+        # The broker's own gateway service is always present (issue #240) --
         # inserted directly rather than via register(), which refuses its
         # name/prefix precisely so services.yaml can never define, replace,
-        # or unregister the broker from itself.
-        self._services[BUILTIN_SERVICE_NAME] = _builtin_service_spec()
+        # or unregister the broker from itself. Its name is deployment-
+        # configurable (BUILTIN_SERVICE_NAME, default gateway_service).
+        self._services[builtin_service_name] = _builtin_service_spec(
+            builtin_service_name
+        )
         # service name -> most recently classified tools/list failure reason
         # ("not_linked" | "unauthorized" | "unavailable", see aggregator.py's
         # _classify_list_failure). Best-effort, last-write-wins, no history --
@@ -274,18 +282,18 @@ class ServiceRegistry:
             msg = (
                 f"service '{service.name}' cannot use prefix "
                 f"'{RESERVED_PREFIX}' -- it belongs to the builtin "
-                f"'{BUILTIN_SERVICE_NAME}' service serving the broker's own "
+                f"'{self._builtin_service_name}' service serving the broker's own "
                 f"af_* methods ({sorted(DIAGNOSTIC_TOOL_NAMES)}, issues "
                 "#153/#240). Choose a different prefix."
             )
             raise ValueError(msg)
-        if service.name == BUILTIN_SERVICE_NAME:
+        if service.name == self._builtin_service_name:
             # A same-name entry would silently replace the builtin spec in
             # _services (dict keyed by name) -- the config-file equivalent of
             # unregistering the broker from itself.
             msg = (
-                f"service name '{BUILTIN_SERVICE_NAME}' is reserved for the "
-                "builtin service serving the broker's own af_* methods "
+                f"service name '{self._builtin_service_name}' is reserved for "
+                "the builtin service serving the broker's own af_* methods "
                 "(issue #240) and cannot be configured in services.yaml. "
                 "Choose a different name."
             )

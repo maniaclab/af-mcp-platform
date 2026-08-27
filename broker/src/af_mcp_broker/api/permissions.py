@@ -131,7 +131,7 @@ class CatalogServer(BaseModel):
     # misconfigured) -- a correlation id the caller can quote in a ticket so
     # an admin can grep the audit log for it. None otherwise.
     correlation_id: str | None
-    # True only for the broker's own af-mcp entry (ServiceSpec.builtin,
+    # True only for the broker's own gateway service entry (ServiceSpec.builtin,
     # issue #240) -- the portal's cue to drop the identity-link/credential
     # affordances that don't apply to the gateway itself.
     builtin: bool

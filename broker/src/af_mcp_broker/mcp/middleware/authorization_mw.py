@@ -116,13 +116,13 @@ class AuthorizationMiddleware(Middleware):
             raise AuthorizationError("No authenticated principal for this tool call")
 
         # The broker's own af_* methods (issue #153) take this same path:
-        # the prefix maps to the builtin af-mcp service (issue #240), whose
+        # the prefix maps to the builtin gateway service (issue #240), whose
         # "__none__" permission passes check_entitlement for any
         # authenticated principal -- they must keep answering precisely when
         # a service or its credential provider is broken, and an entitlement
         # check against "__none__" touches neither. Unlike issue #153's
         # name-based bypass, the calls are now audited and metered
-        # (service=af-mcp) like everything else; the one builtin difference
+        # (service=gateway_service) like everything else; the one builtin difference
         # is the authorized_call_target guard below.
         service = self.registry.get_by_tool_prefix(tool_name)
         request_id = str(uuid.uuid4())
@@ -254,7 +254,7 @@ class AuthorizationMiddleware(Middleware):
             # per-user credential during a shared schema listing would be both
             # wasteful and semantically wrong. Request-scoped state, so it never
             # leaks into a later, unrelated request. Never stamped for the
-            # builtin af-mcp service: its methods are the FastMCP server's own
+            # builtin gateway service: its methods are the FastMCP server's own
             # local tools -- no credential to mint, nothing to forward -- so
             # there is no client_factory for this signal to reach (issue #240).
             if not service.builtin:

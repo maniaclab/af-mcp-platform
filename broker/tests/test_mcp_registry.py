@@ -156,12 +156,12 @@ services:
 # ---------------------------------------------------------------------------
 
 
-def test_registry_self_registers_the_builtin_af_mcp_service() -> None:
+def test_registry_self_registers_the_builtin_gateway_service() -> None:
     registry = ServiceRegistry()
     spec = registry.get(BUILTIN_SERVICE_NAME)
     assert spec is not None
     assert spec.builtin is True
-    assert spec.name == "af-mcp"
+    assert spec.name == "gateway_service"
     assert spec.prefix == RESERVED_PREFIX
     # Open to any authenticated principal: af_whoami/af_link_identity are the
     # bootstrap methods a caller with zero permissions needs.
@@ -172,7 +172,7 @@ def test_registry_self_registers_the_builtin_af_mcp_service() -> None:
     assert spec in registry.all_services()
 
 
-def test_builtin_af_mcp_service_owns_the_af_tool_prefix() -> None:
+def test_builtin_gateway_service_owns_the_af_tool_prefix() -> None:
     """Tool routing by prefix must map every af_* method to the builtin
     service, so EntitlementMiddleware/AuthorizationMiddleware handle them on
     the normal path instead of a name-based bypass."""
@@ -181,6 +181,38 @@ def test_builtin_af_mcp_service_owns_the_af_tool_prefix() -> None:
         spec = registry.get_by_tool_prefix(tool_name)
         assert spec is not None
         assert spec.name == BUILTIN_SERVICE_NAME
+
+
+def test_builtin_service_name_is_configurable() -> None:
+    """The builtin gateway service's name is deployment-configurable (default
+    gateway_service): a custom name registers the builtin under it, keeps the
+    reserved `af` prefix, and is itself reserved against operator services."""
+    registry = ServiceRegistry(builtin_service_name="mygw_service")
+    spec = registry.get("mygw_service")
+    assert spec is not None
+    assert spec.builtin is True
+    assert spec.name == "mygw_service"
+    assert spec.prefix == RESERVED_PREFIX
+    # The default name is no longer special once overridden.
+    assert registry.get(BUILTIN_SERVICE_NAME) is None
+    # An af_* method still routes to the (renamed) builtin by prefix.
+    assert registry.get_by_tool_prefix(LINK_IDENTITY_TOOL_NAME) is spec
+
+
+def test_register_rejects_the_configured_builtin_service_name() -> None:
+    """The reservation follows the configured name, not the default -- an
+    operator entry claiming the custom builtin name is refused."""
+    registry = ServiceRegistry(builtin_service_name="mygw_service")
+    with pytest.raises(ValueError, match="mygw_service"):
+        registry.register(
+            ServiceSpec(
+                name="mygw_service",
+                prefix="mygw",
+                url="http://shadow.invalid/mcp",
+                transport="http",
+                required_permission="__none__",
+            )
+        )
 
 
 def test_operator_spec_defaults_to_not_builtin() -> None:
@@ -198,7 +230,7 @@ def test_register_rejects_the_builtin_service_name() -> None:
     """An operator entry named af-mcp (even under a different prefix) would
     silently replace the builtin entry -- refuse it with a clear error."""
     registry = ServiceRegistry()
-    with pytest.raises(ValueError, match="af-mcp"):
+    with pytest.raises(ValueError, match="gateway_service"):
         registry.register(
             ServiceSpec(
                 name=BUILTIN_SERVICE_NAME,
@@ -217,14 +249,14 @@ def test_load_rejects_the_builtin_service_name_in_services_yaml(
     services_file.write_text(
         """
 services:
-  - name: af-mcp
+  - name: gateway_service
     prefix: shadow
     url: "http://shadow.invalid/mcp"
     required_permission: __none__
 """
     )
     registry = ServiceRegistry()
-    with pytest.raises(ValueError, match="af-mcp"):
+    with pytest.raises(ValueError, match="gateway_service"):
         registry.load(str(services_file))
 
 
@@ -393,7 +425,7 @@ services:
         registry.load(str(services_file))
 
 
-def test_builtin_af_mcp_service_is_infrastructure_tier() -> None:
+def test_builtin_gateway_service_is_infrastructure_tier() -> None:
     """The broker is infrastructure-tier (docs/architecture.md's "The broker
     is infrastructure-tier"): it holds the identity-token signing key and the
     token store, so its own builtin service entry declares that posture as the
@@ -485,7 +517,7 @@ services:
     assert spec.agent_policy is None
 
 
-def test_builtin_af_mcp_service_declares_an_agent_policy() -> None:
+def test_builtin_gateway_service_declares_an_agent_policy() -> None:
     """The builtin af-mcp service is the model's entry point for the identity
     and catalog methods, so it carries model-facing guidance of its own."""
     registry = ServiceRegistry()

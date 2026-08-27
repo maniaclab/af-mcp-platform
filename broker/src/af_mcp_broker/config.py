@@ -16,6 +16,8 @@ from pydantic import (
 )
 from pydantic_settings import BaseSettings
 
+from af_mcp_broker.mcp.registry import BUILTIN_SERVICE_NAME
+
 log = structlog.get_logger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -197,6 +199,14 @@ class Settings(BaseSettings):
     # Policy and service config files read at startup
     policy_file: str = "/etc/af-mcp/policy.yaml"
     services_file: str = "/etc/af-mcp/services.yaml"
+
+    # Name of the builtin gateway service the registry self-registers for the
+    # broker's own af_* methods (issue #240) -- its registry key, catalog
+    # identity, and audit/usage `mcp_service` label. Deployment-configurable so
+    # a facility can align it with its service-naming convention; the reserved
+    # `af` prefix (and the af_* method wire-names) are unaffected. Default is
+    # registry.BUILTIN_SERVICE_NAME.
+    builtin_service_name: str = BUILTIN_SERVICE_NAME
 
     # Audit log destination; "-" means stdout
     audit_log_file: str = "-"

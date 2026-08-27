@@ -282,6 +282,13 @@ Callers pipe this through `nindent` at whatever depth their container's
 - name: BROKER_PUBLIC_ORIGIN
   value: {{ .Values.broker.publicOrigin | quote }}
 {{- end }}
+# Name of the builtin gateway service (issue #240) -- the broker's own af_*
+# methods' catalog/audit identity. Omitted so the broker's pydantic default
+# (gateway_service) applies unless a facility overrides it.
+{{- if .Values.broker.builtinServiceName }}
+- name: BUILTIN_SERVICE_NAME
+  value: {{ .Values.broker.builtinServiceName | quote }}
+{{- end }}
 # Identity providers (issue #66 PR4) — one entry per
 # keycloak-brokered or oauth21-direct provider the broker can
 # link a user's account to. Omitted entirely when none are

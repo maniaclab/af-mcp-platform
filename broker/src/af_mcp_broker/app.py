@@ -229,7 +229,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # services_loaded means "services.yaml parsed without error" — an empty
     # `services: []` is a valid, successfully-parsed degraded state (issue #29);
     # it is only False when the file is missing or fails to parse.
-    service_registry = ServiceRegistry()
+    service_registry = ServiceRegistry(settings.builtin_service_name)
     try:
         service_registry.load(settings.services_file)
         services_loaded = True
@@ -237,7 +237,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         logger.warning("services_file_not_found", path=settings.services_file)
         services_loaded = False
     # Operator-configured services only: the registry always carries the
-    # builtin af-mcp entry too (issue #240), which needs none of the startup
+    # builtin gateway service entry too (issue #240), which needs none of the startup
     # validation below (permission "__none__", no credential, no x509) and
     # would otherwise mask an empty services.yaml from the warning here and
     # inflate /readyz's services_count.
@@ -905,8 +905,8 @@ app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 app.mount("/mcp", _mcp_aggregator_app)
 
 # The mounted aggregator instance itself, for /v1 routes that read the
-# broker's own local tools: GET /v1/catalog/af-mcp/tools (api/catalog_tools.py)
-# lists the builtin af-mcp service's methods straight from this instance's
+# broker's own local tools: GET /v1/catalog/gateway_service/tools (api/catalog_tools.py)
+# lists the builtin gateway service's methods straight from this instance's
 # local provider instead of HTTP-fetching a backend (issue #240).
 app.state.mcp_aggregator = _mcp_aggregator
 

@@ -47,11 +47,11 @@ if TYPE_CHECKING:
 #      ordinary local tools, never a provider.
 #
 # To EntitlementMiddleware/AuthorizationMiddleware these are ordinary methods
-# of the builtin af-mcp service the ServiceRegistry always carries (issue
+# of the builtin gateway service the ServiceRegistry always carries (issue
 # #240, replacing issue #153's name-based bypass): the af prefix maps to that
 # entry on the normal get_by_tool_prefix path, its "__none__" permission
 # keeps them visible/callable for every authenticated caller regardless of
-# entitlements, and the calls are audited/metered with service=af-mcp like
+# entitlements, and the calls are audited/metered with service=gateway_service like
 # everything else. ProxyProvider still never enters the picture -- the
 # builtin spec gets no provider (aggregator.py's _register_services skips
 # it), so dispatch stays local to the tools registered below.
