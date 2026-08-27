@@ -30,6 +30,7 @@ import hashlib
 import json
 import time
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -53,11 +54,27 @@ if TYPE_CHECKING:
 
     from pydantic import SecretBytes
 
-    from af_mcp_broker.config import BrokerIssuedTargetOptions, Settings
+    from af_mcp_broker.config import Settings
     from af_mcp_broker.credentials.cache import CredentialCache
     from af_mcp_broker.identity import Principal
 
 log = structlog.get_logger(__name__)
+
+
+@dataclass(frozen=True)
+class BrokerIssuedTokenOptions:
+    """The per-target token properties the broker-issued provider needs to mint one AF-native backend's identity token: the ``aud`` to stamp, and whether to carry POSIX identity.
+
+    Sourced from the target's ``ServiceSpec`` (``effective_audience``,
+    ``requires_posix``) at wiring time in ``app.py`` (issue #257) -- so every
+    token property of a service lives on the service entry, while the provider
+    stays decoupled from the service registry and receives only the resolved
+    values it needs. ``audience`` is always the resolved effective audience
+    (never empty); a target with no options at all falls back to its own name.
+    """
+
+    audience: str
+    requires_posix: bool = False
 
 
 def _rfc7638_thumbprint(public_key: rsa.RSAPublicKey) -> str:
@@ -282,9 +299,9 @@ class BrokerIssuedProvider(CredentialProvider):
     all. Tokens are cached in the shared ``CredentialCache`` keyed
     ``(subject, target)`` with expiry = token ``exp``.
 
-    A target whose ``target_options`` sets ``include_posix`` requires the
-    principal to actually carry a POSIX identity; a principal without one
-    gets an ``HTTPException(404)`` naming the target -- the same
+    A target whose service sets ``requires_posix`` (via ``token_options``,
+    issue #257) requires the principal to actually carry a POSIX identity; a
+    principal without one gets an ``HTTPException(404)`` naming the target -- the same
     point-of-use requirement as x509's ``PosixIdentityRequiredError``,
     raised as HTTPException because this provider is delivered over the
     aggregator's ``bearer`` branch, which already surfaces HTTPException
@@ -300,13 +317,13 @@ class BrokerIssuedProvider(CredentialProvider):
         cache: CredentialCache,
         alias: str,
         targets: frozenset[str],
-        target_options: Mapping[str, BrokerIssuedTargetOptions],
+        token_options: Mapping[str, BrokerIssuedTokenOptions],
     ) -> None:
         self._issuer = issuer
         self._cache = cache
         self._alias = alias
         self._targets = targets
-        self._target_options = target_options
+        self._token_options = token_options
         self._log = structlog.get_logger(__name__).bind(
             provider="BrokerIssuedProvider", alias=alias
         )
@@ -325,15 +342,15 @@ class BrokerIssuedProvider(CredentialProvider):
         """Return a bearer credential carrying a freshly-minted (or still-valid cached) AF Broker Identity Token for *(principal, target)*.
 
         Raises:
-            HTTPException(404): when this target's config declares
-                ``include_posix`` but the principal has no POSIX identity —
+            HTTPException(404): when this target's service declares
+                ``requires_posix`` but the principal has no POSIX identity —
                 see the class docstring.
 
         """
-        audience, include_posix = self._resolve_target_options(target)
+        audience, requires_posix = self._resolve_target_options(target)
 
         posix: dict[str, Any] = {}
-        if include_posix:
+        if requires_posix:
             if (
                 principal.uid is None
                 or principal.gid is None
@@ -392,7 +409,7 @@ class BrokerIssuedProvider(CredentialProvider):
                 subject=principal.subject,
                 target=target,
                 audience=audience,
-                include_posix=include_posix,
+                requires_posix=requires_posix,
                 audit_id=audit_id,
                 expires_at=expires_at,
             )
@@ -411,8 +428,8 @@ class BrokerIssuedProvider(CredentialProvider):
         await self._cache.revoke(principal.subject, target)
 
     def _resolve_target_options(self, target: str) -> tuple[str, bool]:
-        """Return *(audience, include_posix)* for *target*: configured options, or the defaults (audience = target name, no POSIX claims)."""
-        opts = self._target_options.get(target)
+        """Return *(audience, requires_posix)* for *target*: the service-declared token options, or the defaults (audience = target name, no POSIX claims) when the target has no service entry. ``audience`` from options is already the resolved ``effective_audience`` (never empty)."""
+        opts = self._token_options.get(target)
         if opts is None:
             return target, False
-        return opts.audience or target, opts.include_posix
+        return opts.audience, opts.requires_posix

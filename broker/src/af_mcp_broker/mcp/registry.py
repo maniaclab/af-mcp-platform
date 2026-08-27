@@ -86,6 +86,20 @@ class ServiceSpec:
     #     since that would mean no gate at all -- see issue #60.
     required_permission: str | None = None
     auth_type: str = "bearer"  # "bearer" | "x509" | "none"
+    # The exact ``aud`` an AF-native backend validates the AF Broker Identity
+    # Token against (issue #257). Split from ``name`` so a service can be
+    # renamed -- its registry key, catalog identity, audit/metrics label -- WITHOUT
+    # moving the cross-system wire contract every backend checks against its own
+    # config. The broker mints ``aud=effective_audience`` for x509 (aggregator's
+    # list-/call-time mint sites) and broker-issued (credentials/broker_issued.py)
+    # services alike; renaming ``name`` while a backend still expects the old
+    # ``aud`` is exactly what 401'd every AF-native backend on 2026-08-26. None
+    # (omitted) means "same as name" -- see ``effective_audience`` -- which keeps
+    # the historical name-is-audience behavior for services that never rename.
+    # NOT the token-exchange audience of condor-token-service/voms-token-service:
+    # those are the audience of the *exchange* service, configured per identity
+    # provider, and are unrelated to what a backend MCP server validates.
+    audience: str | None = None
     description: str = ""
     display_name: str = ""
     # Whether the aggregator namespaces this service's tools as
@@ -134,6 +148,24 @@ class ServiceSpec:
     # aggregator composes each service's agent_policy into its FastMCP
     # instructions (see mcp/instructions.py). None when undeclared.
     agent_policy: str | None = None
+    # Whether the broker stamps the caller's directory-resolved POSIX identity
+    # (uid/gid/unixname) into the AF Broker Identity Token minted for this
+    # backend, and 404s the call when the caller has none (issue #257, moved
+    # here from the broker-issued provider's targetOptions). A per-BACKEND
+    # requirement, not a provider or scope concept: a backend that acts as the
+    # POSIX user (filesystem-mcp reads home dirs; jupyterlab-mcp launches as the
+    # user) needs it; a metadata backend must NOT get it, since uid/gid is extra
+    # PII we don't leak to services that don't act on it (least privilege). The
+    # POSIX identity itself is resolved from the PrincipalDirectory, never from
+    # an inbound token claim/scope (identity.py) -- this flag only controls
+    # whether that resolved identity is forwarded to this backend. Only the
+    # bearer/broker-issued mint path honors it; x509 mints identity-only tokens.
+    requires_posix: bool = False
+
+    @property
+    def effective_audience(self) -> str:
+        """The ``aud`` the broker mints for this service: explicit ``audience`` when set, else ``name`` (issue #257). The single accessor every mint site reads, so the name-is-audience default lives in exactly one place."""
+        return self.audience or self.name
 
     def __post_init__(self) -> None:
         # trust_tier from services.yaml arrives as an arbitrary string (yaml
@@ -225,6 +257,7 @@ class ServiceRegistry:
                 transport=entry.get("transport", "http"),
                 required_permission=entry.get("required_permission"),
                 auth_type=entry.get("auth_type", "bearer"),
+                audience=entry.get("audience"),
                 description=entry.get("description", ""),
                 display_name=entry.get("display_name", ""),
                 apply_namespace=entry.get("apply_namespace", True),
@@ -232,6 +265,7 @@ class ServiceRegistry:
                 tools_cache_ttl=entry.get("tools_cache_ttl", 300.0),
                 trust_tier=entry.get("trust_tier"),
                 agent_policy=entry.get("agent_policy"),
+                requires_posix=entry.get("requires_posix", False),
             )
             self.register(spec)
 

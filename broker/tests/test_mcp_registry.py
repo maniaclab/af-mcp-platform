@@ -536,3 +536,134 @@ def test_identity_provider_url_strips_trailing_slash_from_portal_url() -> None:
     )
     url = identity_provider_url(settings, "x509")
     assert url == "https://mcp-portal.af.uchicago.edu/identities#identity-card-x509"
+
+
+# ---------------------------------------------------------------------------
+# Audience (issue #257): the `aud` an AF-native backend validates the broker
+# identity token against. Split from `name` so a service can be renamed (its
+# registry/catalog/audit identity) without moving the cross-system wire
+# contract every backend checks. `effective_audience` is `audience or name`,
+# so an omitted audience keeps the historical name-is-audience behavior.
+# ---------------------------------------------------------------------------
+
+
+def test_audience_defaults_to_none_and_effective_falls_back_to_name() -> None:
+    spec = ServiceSpec(
+        name="ami_service",
+        prefix="ami",
+        url="http://example.invalid/mcp",
+        transport="http",
+        required_permission="__none__",
+    )
+    assert spec.audience is None
+    assert spec.effective_audience == "ami_service"
+
+
+def test_effective_audience_uses_explicit_audience_when_set() -> None:
+    spec = ServiceSpec(
+        name="ami_service",
+        prefix="ami",
+        url="http://example.invalid/mcp",
+        transport="http",
+        required_permission="__none__",
+        audience="ami-mcp",
+    )
+    assert spec.effective_audience == "ami-mcp"
+
+
+def test_load_parses_audience(tmp_path: Path) -> None:
+    services_file = tmp_path / "services.yaml"
+    services_file.write_text(
+        """
+services:
+  - name: ami_service
+    prefix: ami
+    url: "http://example.invalid/mcp"
+    required_permission: __none__
+    audience: ami-mcp
+"""
+    )
+    registry = ServiceRegistry()
+    registry.load(str(services_file))
+    spec = registry.get("ami_service")
+    assert spec is not None
+    assert spec.audience == "ami-mcp"
+    assert spec.effective_audience == "ami-mcp"
+
+
+def test_load_defaults_audience_none_when_absent(tmp_path: Path) -> None:
+    services_file = tmp_path / "services.yaml"
+    services_file.write_text(
+        """
+services:
+  - name: example
+    prefix: example
+    url: "http://example.invalid/mcp"
+    required_permission: __none__
+"""
+    )
+    registry = ServiceRegistry()
+    registry.load(str(services_file))
+    spec = registry.get("example")
+    assert spec is not None
+    assert spec.audience is None
+    assert spec.effective_audience == "example"
+
+
+# ---------------------------------------------------------------------------
+# requires_posix (issue #257): does the broker stamp the caller's
+# directory-resolved uid/gid/unixname into this backend's identity token (and
+# 404 if the caller has none)? A per-service backend requirement -- moved here
+# from the broker-issued provider's targetOptions so every token property of a
+# service lives on the service entry.
+# ---------------------------------------------------------------------------
+
+
+def test_requires_posix_defaults_false() -> None:
+    spec = ServiceSpec(
+        name="example",
+        prefix="example",
+        url="http://example.invalid/mcp",
+        transport="http",
+        required_permission="__none__",
+    )
+    assert spec.requires_posix is False
+
+
+def test_load_parses_requires_posix(tmp_path: Path) -> None:
+    services_file = tmp_path / "services.yaml"
+    services_file.write_text(
+        """
+services:
+  - name: filesystem_service
+    prefix: fs
+    url: "http://example.invalid/mcp"
+    required_permission: __none__
+    requires_posix: true
+"""
+    )
+    registry = ServiceRegistry()
+    registry.load(str(services_file))
+    spec = registry.get("filesystem_service")
+    assert spec is not None
+    assert spec.requires_posix is True
+
+
+@pytest.mark.parametrize("name", ["af-jupyterlab-mcp", "af-filesystem-mcp"])
+def test_shipped_posix_backends_require_posix(name: str) -> None:
+    """The reference broker-issued backends that act as the POSIX user
+    (filesystem reads home dirs; jupyterlab launches as the user) declare
+    requires_posix; a metadata backend must not, to avoid leaking uid/gid."""
+    registry = ServiceRegistry()
+    registry.load(str(SHIPPED_SERVICES))
+    spec = registry.get(name)
+    assert spec is not None
+    assert spec.requires_posix is True
+
+
+def test_shipped_metadata_backend_does_not_require_posix() -> None:
+    registry = ServiceRegistry()
+    registry.load(str(SHIPPED_SERVICES))
+    spec = registry.get("ami")
+    assert spec is not None
+    assert spec.requires_posix is False

@@ -87,8 +87,13 @@ services:
       Listing servers, images, and GPU availability is read-only. Creating or
       deleting a Jupyter server starts or stops real shared compute (and can
       claim a GPU) — confirm with the user before any create/delete call.
-    # Authorization via broker-issued identity JWT (aud=af-jupyterlab-mcp); no shared secret.
+    # Authorization via broker-issued identity JWT; no shared secret. `audience`
+    # is omitted, so the minted aud defaults to the name (af-jupyterlab-mcp);
+    # set it explicitly to keep the backend contract steady across a rename.
     auth_type: bearer
+    # Launches the notebook server AS the caller, so its identity token must
+    # carry the caller's POSIX identity (issue #257).
+    requires_posix: true
     timeout_seconds: 120   # phase 2 nested execute calls will need this later; harmless now
 
   - name: af-filesystem-mcp
@@ -109,6 +114,9 @@ services:
     # fs_read, fs_grep, ...); namespacing again would produce fs_fs_*, same
     # rationale as rucio's apply_namespace: false above.
     auth_type: bearer
+    # Reads the caller's home directory as the caller, so its identity token
+    # must carry the caller's POSIX identity (issue #257).
+    requires_posix: true
 
   - name: monitoring
     prefix: monitoring
