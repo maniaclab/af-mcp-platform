@@ -503,7 +503,7 @@ async def test_provider_includes_posix_claims_when_configured(
     assert claims["unixname"] == "auser"
 
 
-async def test_provider_include_posix_without_posix_identity_raises_404(
+async def test_provider_requires_posix_without_posix_identity_raises_404(
     provider_factory, make_principal
 ) -> None:
     """Same point-of-use shape as x509's PosixIdentityRequiredError, raised

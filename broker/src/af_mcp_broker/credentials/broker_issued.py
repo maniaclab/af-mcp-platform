@@ -347,7 +347,7 @@ class BrokerIssuedProvider(CredentialProvider):
                 see the class docstring.
 
         """
-        audience, requires_posix = self._resolve_target_options(target)
+        audience, requires_posix = self._resolve_token_options(target)
 
         posix: dict[str, Any] = {}
         if requires_posix:
@@ -427,7 +427,7 @@ class BrokerIssuedProvider(CredentialProvider):
         """Drop the cached token; the short TTL is the actual revocation bound."""
         await self._cache.revoke(principal.subject, target)
 
-    def _resolve_target_options(self, target: str) -> tuple[str, bool]:
+    def _resolve_token_options(self, target: str) -> tuple[str, bool]:
         """Return *(audience, requires_posix)* for *target*: the service-declared token options, or the defaults (audience = target name, no POSIX claims) when the target has no service entry. ``audience`` from options is already the resolved ``effective_audience`` (never empty)."""
         opts = self._token_options.get(target)
         if opts is None:

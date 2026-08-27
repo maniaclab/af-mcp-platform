@@ -209,11 +209,20 @@ card's Tools section is expanded.
 ### Naming conventions
 
 New services are named `<backend>_service` per the Elwood v5 glossary (e.g.
-`rucio_service`); existing deployed services predate this convention and keep
-their JWT-audience-bearing names until a rename can be coordinated. Methods
-(MCP "tools") use `verb_noun` naming (e.g. `list_dids`, `submit_job`). This
-documents the convention for new services — it renames nothing that already
-exists.
+`rucio_service`). Methods (MCP "tools") use `verb_noun` naming (e.g.
+`list_dids`, `submit_job`). This documents the convention for new services —
+it renames nothing that already exists.
+
+**`name` is the registry identity, not the wire audience.** For AF-native
+(x509/broker-issued) services, the broker mints an AF Broker Identity Token
+whose `aud` each backend validates. That `aud` is the service's `audience`
+field, defaulting to `name` — so set an explicit `audience` and you can adopt
+the `<backend>_service` name (registry key, catalog, audit label) while the
+backend keeps validating its historical audience. Renaming `name` *without* an
+explicit `audience` silently re-points the contract and 401s the backend
+(learned the hard way, 2026-08-26 — see docs/auth.md's "AF Broker Identity
+Token"). A rename is: `name: <backend>_service` + `audience: <old-name>`, with
+the identity-provider `targets` updated to the new name in lockstep.
 
 **Reserved: the `af` prefix and the `af-mcp` name.** The registry always
 carries a builtin `af-mcp` service (issue maniaclab/af-mcp-platform#240) — the gateway's own
