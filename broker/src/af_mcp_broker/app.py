@@ -34,6 +34,7 @@ from af_mcp_broker.authorization import EntitlementPolicy, load_policy
 from af_mcp_broker.config import Settings
 from af_mcp_broker.credentials import (
     BrokerIssuedProvider,
+    BrokerIssuedTokenOptions,
     CondorTokenProvider,
     CredentialCache,
     CredentialRegistry,
@@ -474,12 +475,26 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
             )
         elif cfg.type == "broker-issued":
             assert broker_token_issuer is not None  # guaranteed by the check above
+            # The aud and POSIX requirement of each target's token are declared
+            # on the *service* (ServiceSpec.audience / requires_posix, issue
+            # #257), so resolve them from the registry here rather than from
+            # provider config -- keeping every token property of a service on
+            # the service entry. A target with no matching service entry (not
+            # reachable at call time anyway) falls back to the historical
+            # default: aud = target name, no POSIX claims.
+            token_options: dict[str, BrokerIssuedTokenOptions] = {}
+            for target in cfg.targets:
+                tspec = service_registry.get(target)
+                token_options[target] = BrokerIssuedTokenOptions(
+                    audience=tspec.effective_audience if tspec else target,
+                    requires_posix=tspec.requires_posix if tspec else False,
+                )
             provider = BrokerIssuedProvider(
                 issuer=broker_token_issuer,
                 cache=credential_cache,
                 alias=cfg.alias,
                 targets=frozenset(cfg.targets),
-                target_options=cfg.target_options,
+                token_options=token_options,
             )
         elif cfg.type == "condor-token":
             assert broker_token_issuer is not None  # guaranteed by the check above

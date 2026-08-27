@@ -238,7 +238,7 @@ async def resolve_list_time_credential(
     if spec.auth_type == "x509":
         if broker_token_issuer is None:
             return None, None
-        token, _ = broker_token_issuer.mint(principal.subject, spec.name)
+        token, _ = broker_token_issuer.mint(principal.subject, spec.effective_audience)
         return {"Authorization": f"Bearer {token}"}, None
     return await _resolve_list_time_headers(spec, credential_registry, principal)
 
@@ -583,7 +583,9 @@ def _make_client_factory(
                 )
                 if not allowed:
                     return _build_client(spec, transport_cls)
-                token, _ = broker_token_issuer.mint(principal.subject, spec.name)
+                token, _ = broker_token_issuer.mint(
+                    principal.subject, spec.effective_audience
+                )
                 await ctx.set_state(
                     f"__list_credential_status__:{spec.name}",
                     (True, None),
@@ -630,7 +632,9 @@ def _make_client_factory(
 
             # Identity assertion only (sub/aud): the service redeems the proxy
             # with this token; it has no use for POSIX claims.
-            token, _ = broker_token_issuer.mint(principal.subject, spec.name)
+            token, _ = broker_token_issuer.mint(
+                principal.subject, spec.effective_audience
+            )
             return _build_client(
                 spec, transport_cls, headers={"Authorization": f"Bearer {token}"}
             )

@@ -298,7 +298,7 @@ async def test_revoke_drops_cached_credential(
 async def test_issue_without_posix_identity_raises_404(
     provider_factory, make_principal, fake_client
 ) -> None:
-    """Same point-of-use shape as BrokerIssuedProvider's include_posix check
+    """Same point-of-use shape as BrokerIssuedProvider's requires_posix check
     (and x509's PosixIdentityRequiredError): an HTTPException(404) naming
     the target, raised before any token is minted or any HTTP happens."""
     provider, _ = provider_factory()

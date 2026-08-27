@@ -10,6 +10,7 @@ from af_mcp_broker.credentials.base import (
 )
 from af_mcp_broker.credentials.broker_issued import (
     BrokerIssuedProvider,
+    BrokerIssuedTokenOptions,
     BrokerTokenIssuer,
     load_broker_token_issuer,
 )
@@ -41,6 +42,7 @@ from af_mcp_broker.vault_kv import VaultError
 
 __all__ = [
     "BrokerIssuedProvider",
+    "BrokerIssuedTokenOptions",
     "BrokerTokenIssuer",
     "CondorTokenProvider",
     "CredentialCache",

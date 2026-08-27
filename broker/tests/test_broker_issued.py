@@ -29,10 +29,11 @@ from cryptography.hazmat.primitives.serialization import (
 from fastapi import HTTPException
 from jwt.algorithms import RSAAlgorithm
 
-from af_mcp_broker.config import BrokerIssuedTargetOptions, Settings
+from af_mcp_broker.config import Settings
 from af_mcp_broker.credentials import CredentialKind, ExecutionModel
 from af_mcp_broker.credentials.broker_issued import (
     BrokerIssuedProvider,
+    BrokerIssuedTokenOptions,
     BrokerTokenIssuer,
     load_broker_token_issuer,
 )
@@ -392,7 +393,7 @@ def provider_factory(
     issuer: BrokerTokenIssuer,
 ) -> Callable[..., tuple[BrokerIssuedProvider, CredentialCache]]:
     def _make(
-        target_options: dict[str, BrokerIssuedTargetOptions] | None = None,
+        token_options: dict[str, BrokerIssuedTokenOptions] | None = None,
     ) -> tuple[BrokerIssuedProvider, CredentialCache]:
         cache = CredentialCache()
         provider = BrokerIssuedProvider(
@@ -400,7 +401,7 @@ def provider_factory(
             cache=cache,
             alias="af-native",
             targets=frozenset({"condor-token-service", "jupyter-mcp"}),
-            target_options=target_options or {},
+            token_options=token_options or {},
         )
         return provider, cache
 
@@ -446,11 +447,13 @@ async def test_provider_audience_defaults_to_target_name(
     assert claims["aud"] == "jupyter-mcp"
 
 
-async def test_provider_audience_override_from_target_options(
+async def test_provider_audience_from_token_options(
     provider_factory, make_principal
 ) -> None:
+    """The provider stamps the service-declared audience (issue #257) -- here a
+    target whose name (jupyter-mcp) and audience (jupyter) diverge."""
     provider, _ = provider_factory(
-        {"jupyter-mcp": BrokerIssuedTargetOptions(audience="jupyter")}
+        {"jupyter-mcp": BrokerIssuedTokenOptions(audience="jupyter")}
     )
 
     cred = await provider.issue(make_principal(), "jupyter-mcp")
@@ -464,7 +467,7 @@ async def test_provider_audience_override_from_target_options(
 async def test_provider_omits_posix_claims_by_default(
     provider_factory, make_principal
 ) -> None:
-    """Even for a principal that HAS a POSIX identity: without include_posix
+    """Even for a principal that HAS a POSIX identity: without requires_posix
     the token is exactly the base identity assertion."""
     provider, _ = provider_factory()
     principal = make_principal(uid=50123, gid=5000, unixname="auser")
@@ -481,7 +484,11 @@ async def test_provider_includes_posix_claims_when_configured(
     provider_factory, make_principal
 ) -> None:
     provider, _ = provider_factory(
-        {"condor-token-service": BrokerIssuedTargetOptions(include_posix=True)}
+        {
+            "condor-token-service": BrokerIssuedTokenOptions(
+                audience="condor-token-service", requires_posix=True
+            )
+        }
     )
     principal = make_principal(uid=50123, gid=5000, unixname="auser")
 
@@ -496,7 +503,7 @@ async def test_provider_includes_posix_claims_when_configured(
     assert claims["unixname"] == "auser"
 
 
-async def test_provider_include_posix_without_posix_identity_raises_404(
+async def test_provider_requires_posix_without_posix_identity_raises_404(
     provider_factory, make_principal
 ) -> None:
     """Same point-of-use shape as x509's PosixIdentityRequiredError, raised
@@ -504,7 +511,11 @@ async def test_provider_include_posix_without_posix_identity_raises_404(
     aggregator's bearer branch, which surfaces HTTPException detail cleanly
     (the OIDCProvider precedent) -- see the provider docstring."""
     provider, _ = provider_factory(
-        {"condor-token-service": BrokerIssuedTargetOptions(include_posix=True)}
+        {
+            "condor-token-service": BrokerIssuedTokenOptions(
+                audience="condor-token-service", requires_posix=True
+            )
+        }
     )
     principal = make_principal(uid=None, gid=None, unixname=None)
 

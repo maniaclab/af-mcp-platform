@@ -70,33 +70,19 @@ class OAuth21DirectProviderConfig(BaseModel):
     enables: str = ""
 
 
-class BrokerIssuedTargetOptions(BaseModel):
-    """Per-target options for a ``broker-issued`` identity provider entry.
-
-    ``audience`` is the exact ``aud`` claim minted into the AF Broker
-    Identity Token for this target; empty means "use the target/service name
-    itself", which is the right default for every AF-native service (the
-    consumer MUST reject tokens whose ``aud`` is not exactly itself — issue
-    #162). ``include_posix`` opts this target's tokens into the optional
-    ``uid``/``gid``/``unixname`` claims, resolved from the directory-backed
-    Principal — declare it only for services that genuinely need a POSIX
-    identity (same point-of-use reasoning as issue #148).
-    """
-
-    audience: str = ""
-    include_posix: bool = False
-
-
 class BrokerIssuedProviderConfig(BaseModel):
-    """An AF-native credential source: the broker itself signs short-TTL identity-assertion JWTs (``BrokerIssuedProvider``, issue #162) — no linking, no external identity system, the broker is authoritative. See docs/auth.md's "AF Broker Identity Token" section."""
+    """An AF-native credential source: the broker itself signs short-TTL identity-assertion JWTs (``BrokerIssuedProvider``, issue #162) — no linking, no external identity system, the broker is authoritative. See docs/auth.md's "AF Broker Identity Token" section.
+
+    Carries no per-target token options: the ``aud`` and POSIX requirement of
+    each target's token are declared on the *service* (``ServiceSpec.audience``
+    / ``requires_posix``, issue #257) and resolved from the registry at wiring
+    time, so every token property of a service lives in one place -- the
+    service entry -- rather than being split between here and the aggregator.
+    """
 
     type: Literal["broker-issued"] = "broker-issued"
     alias: str
     targets: list[str] = Field(default_factory=list)
-
-    # Per-target options keyed by target name; a target absent from this map
-    # gets the defaults (audience = target name, no POSIX claims).
-    target_options: dict[str, BrokerIssuedTargetOptions] = Field(default_factory=dict)
 
     # Portal-facing metadata for GET /v1/identities. Optional so a minimal
     # provider config still parses; an operator who leaves these blank just
@@ -104,18 +90,6 @@ class BrokerIssuedProviderConfig(BaseModel):
     # them in.
     display_name: str = ""
     enables: str = ""
-
-    @model_validator(mode="after")
-    def _validate_target_options_keys(self) -> BrokerIssuedProviderConfig:
-        """Reject ``target_options`` keys naming targets absent from ``targets`` — such a typo would otherwise silently apply to nothing."""
-        unknown = sorted(set(self.target_options) - set(self.targets))
-        if unknown:
-            raise ValueError(
-                f"target_options names targets not in this provider's "
-                f"targets list: {unknown}. Fix the typo or add them to "
-                "targets."
-            )
-        return self
 
 
 class CondorTokenProviderConfig(BaseModel):

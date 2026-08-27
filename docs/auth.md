@@ -478,10 +478,10 @@ a TTL at or below that floor makes every call a fresh mint).
 |------------|----------|-------|
 | `iss`      | yes      | The broker issuer URL — `BROKER_TOKEN_ISSUER`, defaulting to `BROKER_PUBLIC_ORIGIN` |
 | `sub`      | yes      | The principal's subject (Keycloak `sub`) |
-| `aud`      | yes      | The exact backend name (or the entry's configured `audience` override) — consumers **MUST reject** tokens whose `aud` is not exactly themselves |
+| `aud`      | yes      | The service's `effective_audience` — its `ServiceSpec.audience` if set, else its `name` (issue #257) — consumers **MUST reject** tokens whose `aud` is not exactly themselves |
 | `exp` / `iat` | yes   | Mint time and mint time + TTL |
 | `jti`      | yes      | Unique per token (uuid4) |
-| `uid` / `gid` / `unixname` | optional | POSIX identity from the directory-backed `Principal` (the same source x509 minting uses — never a token claim), included **only** for targets whose config sets `include_posix` |
+| `uid` / `gid` / `unixname` | optional | POSIX identity from the directory-backed `Principal` (the same source x509 minting uses — never a token claim), included **only** for services that set `requires_posix` |
 
 **Deliberately absent: permissions, groups, or any authorization claim.**
 Authorization is an attribute of the principal, decided per-call by the
@@ -507,22 +507,42 @@ verifying `aud=condor-token-service` against this JWKS.
 
 ### Configuration
 
-One `identity_providers` entry (chart: `broker.identityProviders`) of type
-`broker-issued`, plus the signing key:
+The token contract lives on the **service** entry (issue #257): the
+`audience` it mints and whether it carries POSIX identity are properties of
+the backend, so they sit next to `name`, not on the provider. The
+`broker-issued` `identity_providers` entry only declares who mints (the
+alias) and which services it serves (`targets`), plus the signing key:
 
 ```yaml
+aggregator:
+  services:
+    - name: af-jupyterlab-mcp
+      prefix: jlab
+      url: "http://af-jupyterlab-mcp.mcp.svc.cluster.local:80/mcp"
+      transport: http
+      required_permission: manage_jupyter
+      auth_type: bearer
+      # audience omitted ⇒ aud = name (af-jupyterlab-mcp). Set it explicitly to
+      # rename `name` without moving the aud the backend validates — renaming
+      # `name` alone silently re-points the contract and 401s the backend.
+      requires_posix: true      # launches the notebook AS the caller
 broker:
   identityProviders:
     - type: broker-issued
       alias: af-native
       displayName: "AF-native services"
-      targets: ["condor-token-service"]
-      targetOptions:
-        condor-token-service:
-          includePosix: true    # this backend needs uid/gid/unixname
+      targets: ["af-jupyterlab-mcp"]   # must match the service name
   identityToken:
     existingSigningKeySecret: af-mcp-identity-token-signing-key
 ```
+
+`audience` (the exact `aud` the backend validates) and `requires_posix`
+(stamp the caller's directory-resolved uid/gid/unixname, and 404 if the
+caller has none) are read from the service's `ServiceSpec` at wiring time —
+so every token property of a service is declared in one place. `audience`
+defaults to `name`; **renaming `name` while a backend still expects the old
+`aud` is exactly what 401'd every AF-native backend on 2026-08-26** — set an
+explicit `audience` and the rename is safe.
 
 The Secret must carry the RS256 private key PEM under the key name
 `signing-key.pem`; the chart mounts it read-only and points
@@ -531,7 +551,7 @@ with no signing key configured refuses to boot (a startup `RuntimeError`,
 consistent with the `unreachable_permissions`/`ungated_backends` checks)
 rather than failing at first request; a broker with neither configured
 boots cleanly with the feature absent (`/.well-known/jwks.json` answers
-503). A target with `include_posix` whose caller has no POSIX identity
+503). A service with `requires_posix` whose caller has no POSIX identity
 gets an actionable 404 naming the backend at issue time — the same
 point-of-use requirement as x509's `PosixIdentityRequiredError`.
 

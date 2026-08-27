@@ -35,17 +35,15 @@ broker:
       issuer: "https://rucio-mcp.example.com"
       displayName: "Rucio (example)"
       enables: "Example Rucio operations via rucio-mcp"
-    # Exercises the broker-issued identityProviders branch (issue #162,
-    # including the targetOptions -> target_options conversion) so a broken
-    # IDENTITY_PROVIDERS render is caught by `helm template`.
+    # Exercises the broker-issued identityProviders branch (issue #162) so a
+    # broken IDENTITY_PROVIDERS render is caught by `helm template`. Per-target
+    # aud/POSIX options now live on the service entry (audience/requires_posix
+    # on filesystem-example below, issue #257), not here.
     - type: broker-issued
       alias: af-native-example
-      targets: ["condor-token-service-example"]
-      targetOptions:
-        condor-token-service-example:
-          includePosix: true
+      targets: ["filesystem-example"]
       displayName: "AF-native services (example)"
-      enables: "Example HTCondor token issuance via condor-token-service"
+      enables: "Example filesystem access via af-filesystem-mcp"
     # Exercises the x509 identityProviders branch (first-class x509 entries,
     # replacing the removed global broker.env.VOMS_TOKEN_SERVICE_URL) so a
     # broken IDENTITY_PROVIDERS render is caught by `helm template`.
@@ -115,9 +113,10 @@ networkPolicy:
       - 9000
 
 # Exercises the aggregator.services -> services.yaml ConfigMap render in CI,
-# including the trust_tier field (re-review finding #5) and the agent_policy
-# model-facing policy field (re-review finding #6) flowing through verbatim, so
-# a broken configmap-services.yaml render is caught by `helm template`.
+# including the trust_tier field (re-review finding #5), the agent_policy
+# model-facing policy field (re-review finding #6), and the audience /
+# requires_posix token-contract fields (issue #257) flowing through verbatim,
+# so a broken configmap-services.yaml render is caught by `helm template`.
 aggregator:
   services:
     - name: rucio-example
@@ -130,6 +129,17 @@ aggregator:
       agent_policy: >-
         Read queries are safe; creating or deleting rules changes real data
         placement — confirm with the user first.
+    # Broker-issued (AF-native) service: name and audience diverge (issue
+    # #257), and it acts as the POSIX user, so it carries requires_posix.
+    - name: filesystem-example
+      prefix: fs
+      url: "http://af-filesystem-mcp.example.svc.cluster.local/mcp"
+      transport: http
+      required_permission: read_files
+      auth_type: bearer
+      audience: af-filesystem-mcp
+      requires_posix: true
+      trust_tier: user-tier
     - name: docs-example
       prefix: docs
       url: "http://docs-mcp.example.svc.cluster.local/mcp"

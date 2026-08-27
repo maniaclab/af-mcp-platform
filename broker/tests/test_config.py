@@ -289,18 +289,17 @@ def test_mcp_replica_count_env_var_still_works(monkeypatch):
 
 # ---------------------------------------------------------------------------
 # broker-issued identity providers (issue #162) — the AF Broker Identity
-# Token's config surface: discriminated-union parsing, per-target options,
-# and the signing-key / issuer / TTL settings the issuer core reads.
+# Token's config surface: discriminated-union parsing and the signing-key /
+# issuer / TTL settings the issuer core reads. Per-target token options
+# (audience, requires_posix) no longer live here: they moved to the service
+# entry (ServiceSpec, issue #257), so the provider config is just alias +
+# targets + portal metadata.
 # ---------------------------------------------------------------------------
 
 _BROKER_ISSUED_ENTRY = {
     "type": "broker-issued",
     "alias": "af-native",
     "targets": ["condor-token-service", "jupyter-mcp"],
-    "target_options": {
-        "condor-token-service": {"include_posix": True},
-        "jupyter-mcp": {"audience": "jupyter"},
-    },
 }
 
 
@@ -311,38 +310,23 @@ def test_identity_providers_broker_issued_parses():
     assert cfg.type == "broker-issued"
     assert cfg.alias == "af-native"
     assert cfg.targets == ["condor-token-service", "jupyter-mcp"]
-    assert cfg.target_options["condor-token-service"].include_posix is True
-    assert cfg.target_options["condor-token-service"].audience == ""
-    assert cfg.target_options["jupyter-mcp"].audience == "jupyter"
-    assert cfg.target_options["jupyter-mcp"].include_posix is False
 
 
-def test_identity_providers_broker_issued_target_options_default_empty():
+def test_identity_providers_broker_issued_ignores_stray_target_options():
+    """target_options moved to the service entry (issue #257); a leftover key
+    on the provider entry is harmlessly ignored, not a parse error, so a
+    mid-migration config still boots."""
     settings = Settings(
         identity_providers=[
-            {"type": "broker-issued", "alias": "af-native", "targets": ["condor-mcp"]}
+            {
+                **_BROKER_ISSUED_ENTRY,
+                "target_options": {"jupyter-mcp": {"audience": "jupyter"}},
+            }
         ]
     )
 
     (cfg,) = settings.identity_providers
-    assert cfg.target_options == {}
-
-
-def test_identity_providers_broker_issued_rejects_options_for_unknown_target():
-    """A target_options key naming a target absent from `targets` is a typo
-    that would otherwise silently apply to nothing -- fail construction
-    loudly instead."""
-    with pytest.raises(ValueError, match="target_options"):
-        Settings(
-            identity_providers=[
-                {
-                    "type": "broker-issued",
-                    "alias": "af-native",
-                    "targets": ["condor-mcp"],
-                    "target_options": {"condor-mpc": {"include_posix": True}},
-                }
-            ]
-        )
+    assert not hasattr(cfg, "target_options")
 
 
 def test_identity_providers_broker_issued_needs_no_oauth21_settings():

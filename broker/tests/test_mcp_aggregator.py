@@ -38,6 +38,7 @@ from af_mcp_broker.mcp.aggregator import (
     _require_linked,
     build_aggregator,
     populate_aggregator,
+    resolve_list_time_credential,
 )
 from af_mcp_broker.mcp.middleware.authorization_mw import AuthorizationMiddleware
 from af_mcp_broker.mcp.middleware.entitlement_mw import EntitlementMiddleware
@@ -879,6 +880,29 @@ async def test_client_factory_x509_injects_broker_identity_jwt(
     assert claims["aud"] == "example"
 
 
+async def test_client_factory_x509_call_time_aud_uses_effective_audience(
+    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When a service's name and audience diverge (issue #257), the call-time
+    x509 mint stamps the backend's `audience`, NOT the (renamed) `name` -- so a
+    service can be renamed without moving the aud every backend validates."""
+    _patch_context(monkeypatch, make_principal(subject="sub-abc"))
+    issuer = _make_issuer()
+    spec = _spec(name="ami_service", auth_type="x509", audience="ami-mcp")
+    registry = CredentialRegistry()
+    registry.register(spec.name, _FakeProvider(linked=True))
+
+    client = await _make_client_factory(
+        spec, registry, settings, _OPEN_POLICY, broker_token_issuer=issuer
+    )()
+
+    claims = issuer.verify(
+        client.transport.headers["Authorization"].removeprefix("Bearer ")
+    )
+    assert claims is not None
+    assert claims["aud"] == "ami-mcp"
+
+
 async def test_client_factory_x509_without_issuer_is_toolerror(
     settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -955,6 +979,50 @@ async def test_client_factory_x509_list_time_injects_header_best_effort(
     )()
 
     assert client.transport.headers["Authorization"].startswith("Bearer ")
+
+
+async def test_client_factory_x509_list_time_aud_uses_effective_audience(
+    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The list-time x509 factory mint honors the audience/name split too
+    (issue #257), so a portal/tools-list connection presents the same aud the
+    call-time mint does."""
+    _patch_context(monkeypatch, make_principal(subject="sub-abc"), active_backend=None)
+    issuer = _make_issuer()
+    spec = _spec(name="ami_service", auth_type="x509", audience="ami-mcp")
+
+    client = await _make_client_factory(
+        spec, CredentialRegistry(), settings, _OPEN_POLICY, broker_token_issuer=issuer
+    )()
+
+    claims = issuer.verify(
+        client.transport.headers["Authorization"].removeprefix("Bearer ")
+    )
+    assert claims is not None
+    assert claims["aud"] == "ami-mcp"
+
+
+async def test_resolve_list_time_credential_x509_aud_uses_effective_audience(
+    settings: Any, make_principal
+) -> None:
+    """The /v1 catalog list path (resolve_list_time_credential) mints the same
+    audience-split aud as the aggregator's own factories (issue #257) -- the two
+    list-time code paths must never disagree on the token they present."""
+    issuer = _make_issuer()
+    spec = _spec(name="ami_service", auth_type="x509", audience="ami-mcp")
+
+    headers, skip_reason = await resolve_list_time_credential(
+        spec,
+        CredentialRegistry(),
+        make_principal(subject="sub-abc"),
+        broker_token_issuer=issuer,
+    )
+
+    assert skip_reason is None
+    assert headers is not None
+    claims = issuer.verify(headers["Authorization"].removeprefix("Bearer "))
+    assert claims is not None
+    assert claims["aud"] == "ami-mcp"
 
 
 async def test_client_factory_x509_list_time_without_issuer_connects_bare(

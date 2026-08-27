@@ -32,9 +32,9 @@ from test_mcp_aggregator import _FakeFastMCPContext
 
 import af_mcp_broker.app as app_module
 from af_mcp_broker.authorization import EntitlementPolicy
-from af_mcp_broker.config import BrokerIssuedTargetOptions
 from af_mcp_broker.credentials import (
     BrokerIssuedProvider,
+    BrokerIssuedTokenOptions,
     BrokerTokenIssuer,
     CredentialCache,
     CredentialRegistry,
@@ -238,7 +238,7 @@ async def test_aggregator_injects_broker_identity_token(
         cache=CredentialCache(),
         alias="af-native",
         targets=frozenset({"toy"}),
-        target_options={"toy": BrokerIssuedTargetOptions(audience="toy-svc")},
+        token_options={"toy": BrokerIssuedTokenOptions(audience="toy-svc")},
     )
     credential_registry = CredentialRegistry()
     credential_registry.register("toy", provider)

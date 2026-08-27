@@ -59,7 +59,7 @@ class CondorTokenProvider(CredentialProvider):
     a POSIX identity can never receive an IDTOKEN; that requirement is
     enforced at ``issue()`` time as an ``HTTPException(404)`` naming the
     target, the same point-of-use shape (and the same aggregator ``bearer``
-    delivery branch) as ``BrokerIssuedProvider``'s ``include_posix`` check.
+    delivery branch) as ``BrokerIssuedProvider``'s ``requires_posix`` check.
 
     Service failures map to generic client-visible errors: 429 passes
     through with its ``Retry-After`` (the service rate-limits per subject);
