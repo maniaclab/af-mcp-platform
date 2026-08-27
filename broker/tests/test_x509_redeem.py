@@ -43,6 +43,18 @@ _BACKENDS_YAML = (
     "    required_permission: read_data\n"
 )
 
+# An x509 service whose registry name and token audience diverge (issue #257):
+# the broker mints aud=ami-mcp (effective_audience) for the target ami_service.
+_DIVERGENT_YAML = (
+    "services:\n"
+    "  - name: ami_service\n"
+    "    prefix: ami\n"
+    "    url: http://ami-mcp.invalid/mcp\n"
+    "    auth_type: x509\n"
+    "    audience: ami-mcp\n"
+    "    required_permission: read_data\n"
+)
+
 
 @pytest.fixture
 def x509_redeem_env(
@@ -50,11 +62,32 @@ def x509_redeem_env(
 ) -> Callable[..., None]:
     """Configure a broker-issued provider for the x509 target 'ami' with a real signing key."""
 
-    def _apply() -> None:
+    def _apply(
+        services_yaml: str = _BACKENDS_YAML,
+        x509_targets: list[str] | None = None,
+    ) -> None:
         services_file = tmp_path / "services.yaml"
-        services_file.write_text(_BACKENDS_YAML)
+        services_file.write_text(services_yaml)
         monkeypatch.setenv("SERVICES_FILE", str(services_file))
         monkeypatch.setenv("BROKER_PUBLIC_ORIGIN", "https://mcp.example.com")
+        # When a test uses a service whose name differs from conftest's default
+        # x509 target ("ami"), it must also point the x509 identity_providers
+        # entry at the new name, or the broker refuses to boot
+        # (_validate_x509_provider_targets).
+        if x509_targets is not None:
+            monkeypatch.setenv(
+                "IDENTITY_PROVIDERS",
+                json.dumps(
+                    [
+                        {
+                            "type": "x509",
+                            "alias": "x509",
+                            "display_name": "Grid certificate (x509)",
+                            "targets": x509_targets,
+                        }
+                    ]
+                ),
+            )
         key_file = tmp_path / "signing-key.pem"
         key_file.write_bytes(_private_pem(_make_rsa_key()))
         monkeypatch.setenv("BROKER_SIGNING_KEY_FILE", str(key_file))
@@ -63,9 +96,14 @@ def x509_redeem_env(
 
 
 def _seed_proxy(
-    client: TestClient, tmp_path: Path, *, subject: str, remaining: float = 3600.0
+    client: TestClient,
+    tmp_path: Path,
+    *,
+    subject: str,
+    remaining: float = 3600.0,
+    target: str = "ami",
 ) -> Path:
-    """Store a fake proxy for *subject* against target 'ami' in the cache."""
+    """Store a fake proxy for *subject* against x509 *target* in the cache."""
     proxy_file = tmp_path / f"proxy-{subject}.pem"
     proxy_file.write_text("FAKE PROXY PEM\n")
     not_after = time.time() + remaining
@@ -78,7 +116,7 @@ def _seed_proxy(
     asyncio.run(
         client.app.state.credential_cache.put(
             subject,
-            "ami",
+            target,
             {"proxy_handle": subject, "proxy_path": str(proxy_file)},
             expires_at=not_after,
             proxy_meta=meta,
@@ -123,6 +161,26 @@ class TestRedeemAuth:
                 _REDEEM, json={}, headers={"Authorization": f"Bearer {token}"}
             )
         assert resp.status_code == 403
+
+    def test_redeem_maps_audience_to_target_when_name_differs(
+        self, x509_redeem_env, app_client_factory, tmp_path: Path
+    ) -> None:
+        """issue #257 regression: for an x509 service whose name and audience
+        diverge (name=ami_service, audience=ami-mcp), the broker mints tokens
+        with aud=ami-mcp. The redeem endpoint must map that audience back to
+        the x509 target ('ami_service') and serve the proxy cached under it --
+        NOT 403 because 'ami-mcp' isn't a target name. This is the redeem-side
+        of the name/audience split; before the fix it 401'd every proxy-needing
+        x509 call in prod on 2026-08-27."""
+        x509_redeem_env(services_yaml=_DIVERGENT_YAML, x509_targets=["ami_service"])
+        with app_client_factory() as (client, _):
+            _seed_proxy(client, tmp_path, subject="sub-abc", target="ami_service")
+            token = _mint(client, audience="ami-mcp")
+            resp = client.post(
+                _REDEEM, json={}, headers={"Authorization": f"Bearer {token}"}
+            )
+        assert resp.status_code == 200
+        assert "FAKE PROXY PEM" in resp.json()["pem"]
 
 
 class TestRedeem:
