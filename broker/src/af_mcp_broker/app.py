@@ -213,9 +213,9 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
 
     # --- Maintenance mode backend (config.py's maintenance_mode_backend): the
     # in_memory backend is process-local, so toggling maintenance mode (via
-    # the admin API, once that endpoint exists) only takes effect on the
-    # replica that handled the toggle -- every other replica keeps admitting
-    # requests as if nothing changed. Same warn-never-fail shape as the
+    # the admin API, api/admin.py) only takes effect on the replica that
+    # handled the toggle -- every other replica keeps admitting requests as
+    # if nothing changed. Same warn-never-fail shape as the
     # mcp_stateful_multi_replica check above: a single-replica or local-dev
     # deployment legitimately wants this default with no extra infra, so this
     # can only warn.

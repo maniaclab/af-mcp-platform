@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 
 from af_mcp_broker.api import (
+    admin,
     catalog_tools,
     credentials,
     health,
@@ -34,3 +35,10 @@ router.include_router(oauth21.router, dependencies=_maintenance_gated)
 router.include_router(tokens.router, dependencies=_maintenance_gated)
 router.include_router(mcp_oauth.router, dependencies=_maintenance_gated)
 router.include_router(usage.router, dependencies=_maintenance_gated)
+
+# No maintenance-mode dependency here -- GET must stay reachable during
+# maintenance (see api/admin.py's GET route docstring), and POST is gated by
+# require_admin instead, which doesn't consult maintenance state at all (an
+# admin is never blocked by require_not_in_maintenance either, but this
+# router simply isn't wired with that dependency in the first place).
+router.include_router(admin.router)

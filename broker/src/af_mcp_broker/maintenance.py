@@ -9,7 +9,7 @@ of that shared-visibility requirement. ``check_not_maintenance`` is the
 request-path enforcement gate that reads a store; it is wired into /v1 (see
 ``identity.require_not_in_maintenance``) and /mcp (see
 ``mcp.middleware.identity_mw.AsgiAuthMiddleware``). The admin-facing
-endpoint to toggle the state is later, separate work and does not exist yet.
+endpoint to toggle the state is ``api/admin.py``'s ``POST /v1/admin/maintenance``.
 
 ``MaintenanceModeStore`` has ``start()``/``aclose()`` like ``UsageStore``
 (not the simpler get/put-only shape of ``PrincipalCacheBackend``/
@@ -165,8 +165,9 @@ class VaultMaintenanceModeStore(MaintenanceModeStore):
         Silently retrying such an action behind the caller's back could
         commit them to a decision made with stale knowledge of the current
         state; raising ``MaintenanceStateConflict`` once and letting the
-        caller (the admin API, a later task) decide whether to re-read and
-        retry is the correct failure mode for this kind of write.
+        caller (``api/admin.py``'s ``POST /v1/admin/maintenance``, which
+        translates it to a 409) decide whether to re-read and retry is the
+        correct failure mode for this kind of write.
         """
         current = await self._vault_kv.get(self._path)
         version = current[1] if current is not None else None

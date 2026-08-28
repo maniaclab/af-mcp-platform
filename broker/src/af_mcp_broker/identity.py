@@ -565,11 +565,11 @@ async def require_not_in_maintenance(
     """FastAPI dependency: 503s when maintenance mode is on and the caller isn't an admin.
 
     A separate dependency from keycloak_dependency (not folded into it)
-    because GET /v1/admin/maintenance must stay reachable by every caller
-    (so the portal can show a maintenance banner to non-admins too, once
-    that endpoint exists) and /v1's health probes must never be gated
-    (Kubernetes would otherwise restart pods during a deliberate maintenance
-    window) -- see api/router.py for exactly which routers this is applied to.
+    because GET /v1/admin/maintenance (api/admin.py) must stay reachable by
+    every caller (so the portal can show a maintenance banner to non-admins
+    too) and /v1's health probes must never be gated (Kubernetes would
+    otherwise restart pods during a deliberate maintenance window) -- see
+    api/router.py for exactly which routers this is applied to.
 
     Store-unavailability decision: fail OPEN. If the maintenance store
     backend itself is unreachable (a Vault or Postgres outage),
