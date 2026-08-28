@@ -9,7 +9,9 @@ from af_mcp_broker.authorization import (
     check_entitlement,
     get_action_type,
     get_principal_permissions,
+    is_admin,
 )
+from af_mcp_broker.config import Settings
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -173,6 +175,38 @@ def test_action_type_resolution_omitted_permission_defaults_to_read(
     """A target with no glob override and no declared permission (None) has
     no action-type signal to derive from, so it defaults to "read"."""
     assert get_action_type("mystery", "list_things", None, policy) == "read"
+
+
+def test_is_admin_true_when_member_of_configured_admin_group(
+    make_principal: Callable[..., object],
+) -> None:
+    settings = Settings(admin_group="af-admins")
+    principal = make_principal(groups=["atlas", "af-admins"])
+    assert is_admin(principal, settings) is True
+
+
+def test_is_admin_false_when_not_a_member(
+    make_principal: Callable[..., object],
+) -> None:
+    settings = Settings(admin_group="af-admins")
+    principal = make_principal(groups=["atlas"])
+    assert is_admin(principal, settings) is False
+
+
+def test_is_admin_false_when_admin_group_unconfigured(
+    make_principal: Callable[..., object],
+) -> None:
+    settings = Settings(admin_group="")
+    principal = make_principal(groups=["af-admins"])
+    assert is_admin(principal, settings) is False
+
+
+def test_is_admin_false_when_principal_has_no_groups(
+    make_principal: Callable[..., object],
+) -> None:
+    settings = Settings(admin_group="af-admins")
+    principal = make_principal(groups=[])
+    assert is_admin(principal, settings) is False
 
 
 def _write_policy(tmp_path: Path, text: str) -> str:
