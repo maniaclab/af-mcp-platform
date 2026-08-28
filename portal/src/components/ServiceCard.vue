@@ -5,6 +5,7 @@ import type { CatalogServer, ServerToolsResponse } from '../lib/api';
 import type { PoweredBy } from '../lib/catalog';
 import { resolveServiceStatus, resolvePoweredByLinked } from '../lib/serviceStatus';
 import { resolveToolListing, toolCountLabel } from '../lib/serverTools';
+import InfoTooltip from './InfoTooltip.vue';
 import ToolTable from './ToolTable.vue';
 
 const props = defineProps<{
@@ -73,7 +74,7 @@ async function toggleTools() {
              with no configured display_name would otherwise show the same
              string twice, once in each style. -->
         <span v-if="server.name !== server.display_name" class="bc__prefix">{{ server.name }}</span>
-        <span v-if="server.description" class="bc__badge-wrap">
+        <InfoTooltip v-if="server.description" :tooltip-id="`bc-desc-${server.name}`">
           <button
             type="button"
             class="bc__info-icon"
@@ -82,10 +83,8 @@ async function toggleTools() {
           >
             <span aria-hidden="true">ⓘ</span>
           </button>
-          <span :id="`bc-desc-${server.name}`" class="bc__badge-tooltip" role="tooltip">
-            {{ server.description }}
-          </span>
-        </span>
+          <template #tooltip>{{ server.description }}</template>
+        </InfoTooltip>
       </div>
 
       <div class="bc__header-right">
@@ -93,26 +92,22 @@ async function toggleTools() {
              (same pattern as TokensPage.vue's note icon) rather than a bare
              `title` attribute -- title-only meant the badge's meaning was
              invisible on touch and unreliable across screen readers. -->
-        <span v-if="server.permission !== '__none__'" class="bc__badge-wrap">
+        <InfoTooltip v-if="server.permission !== '__none__'" :tooltip-id="`bc-cap-${server.name}`">
           <button type="button" class="bc__cap-badge" :aria-describedby="`bc-cap-${server.name}`">
             {{ server.permission }}
           </button>
-          <span :id="`bc-cap-${server.name}`" class="bc__badge-tooltip" role="tooltip">
-            Requires permission: {{ server.permission }}
-          </span>
-        </span>
+          <template #tooltip>Requires permission: {{ server.permission }}</template>
+        </InfoTooltip>
 
         <!-- The builtin af-mcp entry (issue #240) has no per-user credential
              concept at all -- a "none" credential-type badge would read like
              a state to fix, so it renders no badge instead. -->
-        <span v-if="!server.builtin" class="bc__badge-wrap">
+        <InfoTooltip v-if="!server.builtin" :tooltip-id="`bc-auth-${server.name}`">
           <button type="button" class="bc__auth-badge" :aria-describedby="`bc-auth-${server.name}`">
             {{ server.auth_type }}
           </button>
-          <span :id="`bc-auth-${server.name}`" class="bc__badge-tooltip" role="tooltip">
-            Credential type: {{ server.auth_type }}
-          </span>
-        </span>
+          <template #tooltip>Credential type: {{ server.auth_type }}</template>
+        </InfoTooltip>
 
         <span
           v-if="server.status !== 'available'"
@@ -123,7 +118,7 @@ async function toggleTools() {
           {{ statusView.label }}
         </span>
 
-        <span class="bc__badge-wrap">
+        <InfoTooltip :tooltip-id="`bc-count-${server.name}`">
           <button
             type="button"
             class="bc__count"
@@ -132,14 +127,14 @@ async function toggleTools() {
           >
             {{ actionLabel }}
           </button>
-          <span :id="`bc-count-${server.name}`" class="bc__badge-tooltip" role="tooltip">
+          <template #tooltip>
             {{
               server.action_type === 'state_change'
                 ? 'Has at least one state-changing tool — use with care'
                 : 'Read-only — no side effects'
             }}
-          </span>
-        </span>
+          </template>
+        </InfoTooltip>
       </div>
     </div>
 
@@ -315,46 +310,6 @@ async function toggleTools() {
   align-items: center;
   gap: 0.5rem;
   flex-shrink: 0;
-}
-
-/* Badge wrapper + tooltip -- the badge itself is a <button> (focusable,
- * keyboard-operable) describedby a tooltip span that stays in the DOM at all
- * times (hidden via opacity/visibility, not display: none) so aria-describedby
- * reaches it for assistive tech regardless of hover/focus state. Same
- * pattern as TokensPage.vue's note-icon/note-tooltip. */
-.bc__badge-wrap {
-  position: relative;
-  display: inline-flex;
-}
-
-.bc__badge-tooltip {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  margin-top: 0.375rem;
-  max-width: 16rem;
-  padding: 0.5rem 0.625rem;
-  background: var(--color-af-void);
-  border: 1px solid var(--color-af-muted);
-  border-radius: 4px;
-  font-family: 'IBM Plex Sans', system-ui, sans-serif;
-  font-size: 0.75rem;
-  font-weight: 400;
-  text-transform: none;
-  letter-spacing: normal;
-  line-height: 1.5;
-  color: var(--color-af-text);
-  white-space: normal;
-  opacity: 0;
-  visibility: hidden;
-  transition: opacity 120ms;
-  pointer-events: none;
-  z-index: 10;
-}
-.bc__badge-wrap:hover .bc__badge-tooltip,
-.bc__badge-wrap:focus-within .bc__badge-tooltip {
-  opacity: 1;
-  visibility: visible;
 }
 
 .bc__cap-badge {

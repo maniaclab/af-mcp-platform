@@ -35,6 +35,7 @@ import {
   pythonMintAndConnectSnippet,
 } from '../lib/tokenCliSnippets';
 import { getBrokerOrigin } from '../lib/auth';
+import InfoTooltip from './InfoTooltip.vue';
 
 const tokens = ref<TokenSummary[]>([]);
 const loading = ref(true);
@@ -409,23 +410,21 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
               <td class="tp__td">
                 <div class="tp__td-name-wrap">
                   <span class="tp__td-name">{{ row.name }}</span>
-                  <button
+                  <InfoTooltip
                     v-if="row.note"
-                    type="button"
-                    class="tp__note-icon"
-                    :aria-describedby="`tp-note-${row.lookup_id}`"
-                    aria-label="Show note"
+                    :tooltip-id="`tp-note-${row.lookup_id}`"
+                    max-width="18rem"
                   >
-                    <span aria-hidden="true">ⓘ</span>
-                  </button>
-                  <span
-                    v-if="row.note"
-                    :id="`tp-note-${row.lookup_id}`"
-                    class="tp__note-tooltip"
-                    role="tooltip"
-                  >
-                    {{ truncateNote(row.note) }}
-                  </span>
+                    <button
+                      type="button"
+                      class="tp__note-icon"
+                      :aria-describedby="`tp-note-${row.lookup_id}`"
+                      aria-label="Show note"
+                    >
+                      <span aria-hidden="true">ⓘ</span>
+                    </button>
+                    <template #tooltip>{{ truncateNote(row.note) }}</template>
+                  </InfoTooltip>
                 </div>
               </td>
               <td
@@ -850,7 +849,7 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
    box rather than a compact list.
    overflow-y: hidden, set explicitly rather than left to its default --
    overflow-x: auto alone makes overflow-y compute to 'auto' too, and each
-   row's (invisible, opacity:0/visibility:hidden) .tp__note-tooltip is
+   row's (invisible, opacity:0/visibility:hidden) InfoTooltip bubble is
    `position: absolute`, which doesn't affect this box's own auto-height
    but DOES count toward its *scrollable overflow* once it's a scroll
    container -- which is what was inflating this box well past its actual
@@ -919,7 +918,6 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
  * truncating its own text -- the bug this replaces).
  */
 .tp__td-name-wrap {
-  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 0.375rem;
@@ -943,38 +941,6 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
 .tp__note-icon:focus-visible {
   outline: 2px solid var(--color-af-teal);
   outline-offset: 2px;
-}
-
-/* Hidden via opacity/visibility, not `display: none` -- aria-describedby
- * still reaches this content for assistive tech regardless of the visual
- * hover/focus state below, which is what makes it keyboard-accessible and
- * not just hover-only. */
-.tp__note-tooltip {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  margin-top: 0.375rem;
-  max-width: 18rem;
-  padding: 0.5rem 0.625rem;
-  background: var(--color-af-void);
-  border: 1px solid var(--color-af-muted);
-  border-radius: 4px;
-  font-family: 'IBM Plex Sans', system-ui, sans-serif;
-  font-size: 0.75rem;
-  line-height: 1.5;
-  color: var(--color-af-text);
-  white-space: normal;
-  word-break: break-word;
-  opacity: 0;
-  visibility: hidden;
-  transition: opacity 120ms;
-  pointer-events: none;
-  z-index: 10;
-}
-.tp__note-icon:hover + .tp__note-tooltip,
-.tp__note-icon:focus-visible + .tp__note-tooltip {
-  opacity: 1;
-  visibility: visible;
 }
 
 .tp__td--jti {
