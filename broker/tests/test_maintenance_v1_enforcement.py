@@ -21,6 +21,37 @@ def _store_unavailable_count() -> float:
     return REGISTRY.get_sample_value(_STORE_UNAVAILABLE_COUNTER) or 0.0
 
 
+def test_lifespan_constructs_the_default_in_memory_store(app_client_factory):
+    """Every test above manually overwrites ``client.app.state.maintenance_mode_store``
+    after entering ``app_client_factory``'s context, which proves
+    ``check_not_maintenance`` works but not that app.py's lifespan actually
+    constructs a store on its own. Here nothing overrides it: with
+    MAINTENANCE_MODE_BACKEND unset (default "in_memory"), the lifespan must
+    have built a real, usable, initially-disabled InMemoryMaintenanceModeStore
+    and pushed it onto app.state -- not left it None (which
+    check_not_maintenance treats as "never blocks anyone", masking a broken
+    wiring path in every other test in this file)."""
+    with app_client_factory() as (client, _state):
+        store = client.app.state.maintenance_mode_store
+        assert isinstance(store, InMemoryMaintenanceModeStore)
+        state = asyncio.run(store.get())
+        assert state.enabled is False
+
+        # Prove it's actually wired into request-path enforcement, not just
+        # sitting on app.state unused: enabling it through this exact
+        # instance must block a subsequent /v1 request the same way the
+        # other tests' manually-constructed stores do.
+        asyncio.run(
+            store.set(
+                MaintenanceState(
+                    enabled=True, reason="r", enabled_by="a", enabled_at=1.0
+                )
+            )
+        )
+        resp = client.get("/v1/identities")
+        assert resp.status_code == 503
+
+
 def test_non_admin_blocked_when_maintenance_enabled(app_client_factory, monkeypatch):
     monkeypatch.setenv("ADMIN_GROUP", "af-admins")
     with app_client_factory() as (client, _state):

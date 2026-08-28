@@ -178,6 +178,100 @@ def test_stateful_multi_replica_warns_at_startup(
 
 
 # ---------------------------------------------------------------------------
+# Maintenance-mode backend startup check: the in_memory backend is
+# process-local, so it can't propagate a toggle across replicas -- warn
+# (never fail), the same shape as the mcp_stateful_multi_replica check above.
+# ---------------------------------------------------------------------------
+
+
+def test_warns_when_in_memory_maintenance_backend_with_multiple_replicas(
+    monkeypatch: pytest.MonkeyPatch,
+    app_client_factory: Callable[..., Any],
+) -> None:
+    monkeypatch.setenv("MCP_REPLICA_COUNT", "3")
+    monkeypatch.setenv("MAINTENANCE_MODE_BACKEND", "in_memory")
+
+    events: list[tuple[str, dict[str, Any]]] = []
+    original_warning = app_module.logger.warning
+
+    def _capture(event: str, **kwargs: Any) -> Any:
+        events.append((event, kwargs))
+        return original_warning(event, **kwargs)
+
+    monkeypatch.setattr(app_module.logger, "warning", _capture)
+
+    with app_client_factory():
+        pass
+
+    matches = [
+        kwargs
+        for event, kwargs in events
+        if event == "maintenance_mode_in_memory_multi_replica"
+    ]
+    assert matches, events
+    assert matches[0]["replica_count"] == 3
+
+
+@pytest.mark.parametrize(
+    "replica_count",
+    [
+        "1",  # single replica is the in_memory default's home turf
+        None,  # replica count unknown -- nothing to warn about
+    ],
+)
+def test_maintenance_mode_warning_does_not_fire_at_safe_replica_counts(
+    monkeypatch: pytest.MonkeyPatch,
+    app_client_factory: Callable[..., Any],
+    replica_count: str | None,
+) -> None:
+    if replica_count is not None:
+        monkeypatch.setenv("MCP_REPLICA_COUNT", replica_count)
+
+    events: list[tuple[str, dict[str, Any]]] = []
+    original_warning = app_module.logger.warning
+
+    def _capture(event: str, **kwargs: Any) -> Any:
+        events.append((event, kwargs))
+        return original_warning(event, **kwargs)
+
+    monkeypatch.setattr(app_module.logger, "warning", _capture)
+
+    with app_client_factory():
+        pass
+
+    assert not any(
+        event == "maintenance_mode_in_memory_multi_replica" for event, _ in events
+    )
+
+
+def test_maintenance_mode_warning_does_not_fire_for_replica_visible_backend(
+    monkeypatch: pytest.MonkeyPatch,
+    app_client_factory: Callable[..., Any],
+    postgres_dsn: str,
+) -> None:
+    """The postgres backend is visible to every replica, so it needs no warning even at replica_count > 1 -- unlike the in_memory default above."""
+    monkeypatch.setenv("MAINTENANCE_MODE_BACKEND", "postgres")
+    monkeypatch.setenv("MAINTENANCE_MODE_POSTGRES_DSN", postgres_dsn)
+    monkeypatch.setenv("MCP_REPLICA_COUNT", "3")
+
+    events: list[tuple[str, dict[str, Any]]] = []
+    original_warning = app_module.logger.warning
+
+    def _capture(event: str, **kwargs: Any) -> Any:
+        events.append((event, kwargs))
+        return original_warning(event, **kwargs)
+
+    monkeypatch.setattr(app_module.logger, "warning", _capture)
+
+    with app_client_factory():
+        pass
+
+    assert not any(
+        event == "maintenance_mode_in_memory_multi_replica" for event, _ in events
+    )
+
+
+# ---------------------------------------------------------------------------
 # Tracing wiring (observability roadmap PR D): off by default -- with
 # OTEL_EXPORTER_OTLP_ENDPOINT unset at import time, module-scope
 # instrument_fastapi() must have been a no-op; and the lifespan teardown must
