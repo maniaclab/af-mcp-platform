@@ -107,6 +107,41 @@ def test_get_identities_succeeds_with_no_posix_identity(
 
 
 # ---------------------------------------------------------------------------
+# is_admin
+# ---------------------------------------------------------------------------
+
+
+def test_is_admin_true_for_admin_group_member(
+    monkeypatch: pytest.MonkeyPatch,
+    app_client_factory: Callable[..., object],
+    make_principal: Callable[..., object],
+) -> None:
+    monkeypatch.setenv("ADMIN_GROUP", "af-admins")
+
+    with app_client_factory() as (client, state):
+        state["principal"] = make_principal(groups=["atlas", "af-admins"])
+        resp = client.get("/v1/identities", headers=_AUTH)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["is_admin"] is True
+
+
+def test_is_admin_false_for_non_admin_group_member(
+    monkeypatch: pytest.MonkeyPatch,
+    app_client_factory: Callable[..., object],
+    make_principal: Callable[..., object],
+) -> None:
+    monkeypatch.setenv("ADMIN_GROUP", "af-admins")
+
+    with app_client_factory() as (client, state):
+        state["principal"] = make_principal(groups=["atlas"])
+        resp = client.get("/v1/identities", headers=_AUTH)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["is_admin"] is False
+
+
+# ---------------------------------------------------------------------------
 # keycloak-brokered providers
 # ---------------------------------------------------------------------------
 
