@@ -365,6 +365,12 @@ Callers pipe this through `nindent` at whatever depth their container's
       key: {{ .Values.broker.usage.postgres.existingSecret.key | quote }}
 {{- end }}
 {{- end }}
+{{- if .Values.broker.adminGroup }}
+# Admin group -- gates require_admin and every admin-only /v1 route. Only
+# rendered when set; unset means no admin surface is reachable by anyone.
+- name: ADMIN_GROUP
+  value: {{ .Values.broker.adminGroup | quote }}
+{{- end }}
 {{- if .Values.broker.tracing.enabled }}
 # OpenTelemetry trace emission (broker tracing.py) -- the standard OTel env
 # vars, read natively by the SDK's OTLP/HTTP exporter (which appends the

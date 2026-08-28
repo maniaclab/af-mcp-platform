@@ -71,6 +71,11 @@ broker:
   # separately if you want one continuous series.
   builtinServiceName: ""
 
+  # Keycloak group whose members see and can use admin-only broker surfaces
+  # (the Admin portal page, the usage-for-other-users view, maintenance
+  # mode). Empty means no admin surface is reachable by anyone.
+  adminGroup: ""
+
   # /mcp aggregator transport mode (issue #128). Streamable-HTTP sessions
   # are in-process state, so a stateful session (false) only survives an
   # unpinned load balancer routing its later requests to a *different*
