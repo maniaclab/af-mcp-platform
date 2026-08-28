@@ -23,6 +23,8 @@ import abc
 from dataclasses import dataclass
 from typing import Any
 
+import asyncpg  # type: ignore[import-untyped]
+
 from af_mcp_broker.vault_kv import CasConflict, VaultKV
 
 
@@ -64,8 +66,10 @@ class MaintenanceModeStore(abc.ABC):
     async def set(self, state: MaintenanceState) -> None:
         """Overwrite the current maintenance state.
 
-        Raises ``MaintenanceStateConflict`` when a concurrent writer already
-        changed the state.
+        May raise ``MaintenanceStateConflict`` on backends that support
+        compare-and-set writes (currently only ``VaultMaintenanceModeStore``)
+        when a concurrent writer already changed the state; other backends
+        silently apply last-writer-wins.
         """
 
 
@@ -161,3 +165,72 @@ class VaultMaintenanceModeStore(MaintenanceModeStore):
                 f"vault cas write conflict for path={self._path!r} "
                 f"expected_version={version!r}"
             ) from exc
+
+
+# Idempotent DDL, single-row table (id is always 1) -- mirrors usage/postgres.py's
+# CREATE TABLE IF NOT EXISTS shape; one table does not justify a migration
+# framework here either. CREATE TABLE IF NOT EXISTS makes every broker
+# start (and every replica racing another against the same database) safe
+# against a schema that already exists.
+_DDL = """
+CREATE TABLE IF NOT EXISTS af_mcp_maintenance_mode (
+    id SMALLINT PRIMARY KEY DEFAULT 1,
+    enabled BOOLEAN NOT NULL,
+    reason TEXT,
+    enabled_by TEXT,
+    enabled_at DOUBLE PRECISION,
+    CONSTRAINT single_row CHECK (id = 1)
+);
+"""
+
+_UPSERT = """
+INSERT INTO af_mcp_maintenance_mode (id, enabled, reason, enabled_by, enabled_at)
+VALUES (1, $1, $2, $3, $4)
+ON CONFLICT (id) DO UPDATE SET
+    enabled = EXCLUDED.enabled,
+    reason = EXCLUDED.reason,
+    enabled_by = EXCLUDED.enabled_by,
+    enabled_at = EXCLUDED.enabled_at
+"""
+
+_SELECT = "SELECT enabled, reason, enabled_by, enabled_at FROM af_mcp_maintenance_mode WHERE id = 1"
+
+
+class PostgresMaintenanceModeStore(MaintenanceModeStore):
+    """``MaintenanceModeStore`` backed by a single-row Postgres table (asyncpg)."""
+
+    def __init__(self, dsn: str) -> None:
+        self._dsn = dsn
+        self._pool: asyncpg.Pool | None = None
+
+    async def start(self) -> None:
+        self._pool = await asyncpg.create_pool(self._dsn)
+        async with self._pool.acquire() as conn:
+            await conn.execute(_DDL)
+
+    async def aclose(self) -> None:
+        if self._pool is None:
+            return
+        await self._pool.close()
+        self._pool = None
+
+    def _require_pool(self) -> asyncpg.Pool:
+        if self._pool is None:
+            raise RuntimeError("PostgresMaintenanceModeStore used before start()")
+        return self._pool
+
+    async def get(self) -> MaintenanceState:
+        row = await self._require_pool().fetchrow(_SELECT)
+        if row is None:
+            return _DISABLED
+        return MaintenanceState(
+            enabled=row["enabled"],
+            reason=row["reason"],
+            enabled_by=row["enabled_by"],
+            enabled_at=row["enabled_at"],
+        )
+
+    async def set(self, state: MaintenanceState) -> None:
+        await self._require_pool().execute(
+            _UPSERT, state.enabled, state.reason, state.enabled_by, state.enabled_at
+        )
