@@ -65,6 +65,8 @@ CREATE TABLE IF NOT EXISTS af_mcp_usage_events (
 );
 CREATE INDEX IF NOT EXISTS af_mcp_usage_events_principal_ts
     ON af_mcp_usage_events (principal_sub, ts);
+CREATE INDEX IF NOT EXISTS af_mcp_usage_events_ts
+    ON af_mcp_usage_events (ts);
 """
 
 _INSERT = """
@@ -88,6 +90,12 @@ FROM af_mcp_usage_events
 WHERE principal_sub = $1 AND (ts AT TIME ZONE 'UTC')::date >= $2
 GROUP BY day, service, method, outcome
 ORDER BY day, service, method, outcome
+"""
+
+_LIST_SUBJECTS_QUERY = """
+SELECT DISTINCT principal_sub
+FROM af_mcp_usage_events
+WHERE (ts AT TIME ZONE 'UTC')::date >= $1
 """
 
 
@@ -149,3 +157,9 @@ class PostgresUsageStore(UsageStore):
             )
             for row in rows
         ]
+
+    async def list_subjects(self, days: int) -> list[str]:
+        rows = await self._require_pool().fetch(
+            _LIST_SUBJECTS_QUERY, window_start(days)
+        )
+        return sorted(row["principal_sub"] for row in rows)

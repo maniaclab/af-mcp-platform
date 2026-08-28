@@ -10,20 +10,17 @@ come from the dev feature's ``postgresql`` dependency (pixi.toml).
 
 from __future__ import annotations
 
-import shutil
-import subprocess
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import asyncpg  # type: ignore[import-untyped]
 import pytest
-from fastmcp.utilities.http import find_available_port
 
 from af_mcp_broker.audit import AuditRecord
 from af_mcp_broker.usage import PostgresUsageStore, UsageStore
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Iterator
+    from collections.abc import AsyncIterator
 
 
 def _record(**overrides: Any) -> AuditRecord:
@@ -45,56 +42,6 @@ def _record(**overrides: Any) -> AuditRecord:
     }
     fields.update(overrides)
     return AuditRecord(**fields)
-
-
-@pytest.fixture(scope="session")
-def postgres_dsn(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
-    """DSN of a real, throwaway postgres started for this test session.
-
-    Loopback TCP on a random free port (unix sockets disabled entirely --
-    their path-length limit is easy to trip under pytest temp dirs), trust
-    auth (it only ever listens on 127.0.0.1 for the lifetime of one test
-    run), fsync off for speed on a database we're about to delete.
-    """
-    for binary in ("initdb", "pg_ctl"):
-        if shutil.which(binary) is None:
-            raise RuntimeError(
-                f"{binary} not found -- the dev pixi environment provides "
-                "the postgresql server these tests require (pixi.toml's dev "
-                "feature); run via `pixi run -e dev pytest`."
-            )
-
-    datadir = tmp_path_factory.mktemp("pg") / "data"
-    subprocess.run(
-        ["initdb", "-D", str(datadir), "-U", "postgres", "--auth=trust", "--no-sync"],
-        check=True,
-        capture_output=True,
-    )
-    port = find_available_port()
-    subprocess.run(
-        [
-            "pg_ctl",
-            "-D",
-            str(datadir),
-            "-l",
-            str(datadir / "server.log"),
-            "-w",
-            "-o",
-            f"-p {port} -c listen_addresses=127.0.0.1 "
-            "-c unix_socket_directories='' -c fsync=off",
-            "start",
-        ],
-        check=True,
-        capture_output=True,
-    )
-    try:
-        yield f"postgresql://postgres@127.0.0.1:{port}/postgres"
-    finally:
-        subprocess.run(
-            ["pg_ctl", "-D", str(datadir), "-m", "immediate", "stop"],
-            check=False,
-            capture_output=True,
-        )
 
 
 @pytest.fixture
@@ -267,3 +214,15 @@ async def test_query_is_scoped_to_the_subject(store: PostgresUsageStore) -> None
 
     aggs = await store.query("sub-abc", days=30)
     assert sum(a.calls for a in aggs) == 1
+
+
+async def test_list_subjects_returns_distinct_subjects_in_window(
+    store: PostgresUsageStore,
+) -> None:
+    await store.record(_record(principal_sub="alice"))
+    await store.record(_record(principal_sub="bob", audit_id="audit-2"))
+    await store.record(_record(principal_sub="alice", audit_id="audit-3"))
+
+    subjects = await store.list_subjects(days=30)
+
+    assert sorted(subjects) == ["alice", "bob"]
