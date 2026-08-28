@@ -6,9 +6,10 @@ admitting requests. The store contract follows the same
 ABC-plus-selectable-backend shape as
 ``token_registry.TokenRegistryBackend``/``usage.UsageStore`` in anticipation
 of that shared-visibility requirement. ``check_not_maintenance`` is the
-request-path enforcement gate that reads a store; the admin-facing endpoint
-to toggle one, and the ``/v1``/``/mcp`` call sites that invoke the gate, are
-later, separate work and do not exist yet.
+request-path enforcement gate that reads a store; it is wired into /v1 (see
+``identity.require_not_in_maintenance``). The admin-facing endpoint to
+toggle the state, and the /mcp call site, are later, separate work and do
+not exist yet.
 
 ``MaintenanceModeStore`` has ``start()``/``aclose()`` like ``UsageStore``
 (not the simpler get/put-only shape of ``PrincipalCacheBackend``/
@@ -250,18 +251,29 @@ async def check_not_maintenance(
 ) -> None:
     """Raise HTTPException(503) when maintenance mode is on and *principal* is not an admin.
 
-    Will be called from both /v1 (a require_not_in_maintenance gate to be
-    added to identity.py) and /mcp (AsgiAuthMiddleware,
-    mcp/middleware/identity_mw.py) right after a Principal is resolved (JWT
-    or PAT) -- one gate, two call sites, so both credential types and both
-    surfaces are covered uniformly. A None *store* (maintenance mode
-    unconfigured -- unreachable in a properly started app, but matches the
-    getattr-default-None pattern every other optional app.state lookup in
-    this codebase uses) never blocks anyone.
+    Called from /v1 (``identity.require_not_in_maintenance``) and, in a
+    later task, from /mcp (AsgiAuthMiddleware, mcp/middleware/identity_mw.py)
+    right after a Principal is resolved (JWT or PAT) -- one gate, two call
+    sites, so both credential types and both surfaces are covered uniformly.
+    A None *store* (maintenance mode unconfigured -- unreachable in a
+    properly started app, but matches the getattr-default-None pattern every
+    other optional app.state lookup in this codebase uses) never blocks
+    anyone.
 
     ``state.reason`` is echoed verbatim to every blocked caller across both
     /v1 and /mcp -- treat it like a public status-page message; never put
     secrets or internal details in it.
+
+    Store-unavailability limitation: this function has no error handling
+    around ``store.get()`` -- an outage there surfaces as an unclassified
+    exception, not a clean 503 (see the admin-check comment below). Every
+    caller of this function fails OPEN on that exception rather than
+    treating it as "blocked": ``identity.require_not_in_maintenance``'s
+    docstring has the full reasoning and, importantly, the resulting
+    limitation -- maintenance mode is a planned-maintenance convenience
+    feature, not an incident-containment control, precisely because a
+    store outage lets non-admins straight through rather than blocking
+    them.
     """
     if store is None:
         return
