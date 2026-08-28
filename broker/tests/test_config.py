@@ -561,3 +561,13 @@ def test_usage_store_postgres_raises_when_dsn_missing():
 def test_usage_store_rejects_unknown_backend():
     with pytest.raises(ValueError, match="usage_store_backend"):
         Settings(usage_store_backend="mysql")
+
+
+# ---------------------------------------------------------------------------
+# Admin group (admin gating)
+# ---------------------------------------------------------------------------
+
+
+def test_admin_group_defaults_to_empty():
+    settings = Settings()
+    assert settings.admin_group == ""

@@ -208,6 +208,12 @@ class Settings(BaseSettings):
     # registry.BUILTIN_SERVICE_NAME.
     builtin_service_name: str = BUILTIN_SERVICE_NAME
 
+    # Keycloak group whose members see and can use every admin-only broker
+    # surface (require_admin dependency, authorization/base.py's is_admin).
+    # Empty means no admin surface is reachable by anyone: fail closed, no
+    # magic default group name.
+    admin_group: str = ""
+
     # Audit log destination; "-" means stdout
     audit_log_file: str = "-"
 
