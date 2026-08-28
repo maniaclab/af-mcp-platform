@@ -26,10 +26,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from pydantic import BaseModel, ConfigDict
 
 from af_mcp_broker.authorization import is_admin
 from af_mcp_broker.config import get_settings
-from af_mcp_broker.identity import Principal, keycloak_dependency
+from af_mcp_broker.identity import Principal, keycloak_dependency, require_admin
+from af_mcp_broker.principal_cache import PrincipalUnavailableError
 from af_mcp_broker.usage.summary import (
     UnknownCostModelError,
     UsageResponse,
@@ -111,3 +113,55 @@ async def get_usage(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(exc),
         ) from exc
+
+
+class UsageSubject(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    subject: str
+    unixname: str | None
+    email: str
+
+
+class UsageSubjectsResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    subjects: list[UsageSubject]
+
+
+@router.get(
+    "/subjects",
+    response_model=UsageSubjectsResponse,
+    summary="List subjects with recorded usage (admin only)",
+)
+async def get_usage_subjects(
+    request: Request,
+    _principal: Annotated[Principal, Depends(require_admin)],
+    days: Annotated[int, Query(ge=1, le=365)] = 30,
+) -> UsageSubjectsResponse:
+    """Admin-only: distinct subjects with usage in the trailing window, resolved to unixname/email for display.
+
+    Backs the portal's admin usage-view dropdown. Only ever lists people
+    with broker activity -- never a full Keycloak user directory.
+    """
+    store: UsageStore | None = getattr(request.app.state, "usage_store", None)
+    if store is None:
+        return UsageSubjectsResponse(subjects=[])
+
+    subjects = await store.list_subjects(days)
+    principal_cache = getattr(request.app.state, "principal_cache", None)
+
+    resolved: list[UsageSubject] = []
+    for subject in subjects:
+        unixname: str | None = None
+        email = ""
+        if principal_cache is not None:
+            try:
+                attrs = await principal_cache.get(subject)
+                unixname = attrs.unixname
+                email = attrs.email
+            except PrincipalUnavailableError:
+                pass  # unresolvable subject (e.g. deleted user) -- fall back to bare subject
+        resolved.append(UsageSubject(subject=subject, unixname=unixname, email=email))
+
+    return UsageSubjectsResponse(subjects=resolved)

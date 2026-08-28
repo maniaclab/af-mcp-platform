@@ -284,3 +284,55 @@ def test_usage_requires_authentication(app_client) -> None:
             app.dependency_overrides[keycloak_dependency] = saved
 
     assert resp.status_code == 401, resp.text
+
+
+def test_usage_subjects_requires_admin(app_client_factory) -> None:
+    with app_client_factory() as (client, _state):
+        resp = client.get("/v1/usage/subjects")
+        assert resp.status_code == 403
+
+
+def test_usage_subjects_resolves_unixname(
+    app_client_factory, monkeypatch, make_principal, static_principal_cache
+) -> None:
+    monkeypatch.setenv("ADMIN_GROUP", "af-admins")
+    cache, directory = static_principal_cache
+    directory.groups_by_subject["someone-else"] = ["atlas"]
+    directory.posix_by_subject["someone-else"] = {"unixname": "sperson"}
+
+    with app_client_factory() as (client, state):
+        state["principal"] = make_principal(groups=["atlas", "af-admins"])
+        client.app.state.principal_cache = cache
+        _seed(client, _record(principal_sub="someone-else"))
+
+        resp = client.get("/v1/usage/subjects")
+
+    assert resp.status_code == 200, resp.text
+    assert {
+        "subject": "someone-else",
+        "unixname": "sperson",
+        "email": "",
+    } in resp.json()["subjects"]
+
+
+def test_usage_subjects_falls_back_to_bare_subject_when_unresolvable(
+    app_client_factory, monkeypatch, make_principal, static_principal_cache
+) -> None:
+    """A subject the principal directory no longer knows about (e.g. a
+    deleted user) still appears in the list -- with no unixname/email,
+    rather than 500ing or silently dropping them from the response."""
+    monkeypatch.setenv("ADMIN_GROUP", "af-admins")
+    cache, directory = static_principal_cache
+    directory.unavailable_subjects.add("ghost")
+
+    with app_client_factory() as (client, state):
+        state["principal"] = make_principal(groups=["atlas", "af-admins"])
+        client.app.state.principal_cache = cache
+        _seed(client, _record(principal_sub="ghost"))
+
+        resp = client.get("/v1/usage/subjects")
+
+    assert resp.status_code == 200, resp.text
+    assert {"subject": "ghost", "unixname": None, "email": ""} in resp.json()[
+        "subjects"
+    ]
