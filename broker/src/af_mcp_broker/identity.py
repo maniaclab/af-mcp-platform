@@ -14,6 +14,7 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import SecretStr
 
+from af_mcp_broker.authorization import is_admin
 from af_mcp_broker.config import Settings, get_settings
 from af_mcp_broker.http import get_http_client
 from af_mcp_broker.principal_cache import PrincipalUnavailableError
@@ -529,6 +530,30 @@ async def keycloak_dependency(
     return await get_principal(
         credentials.credentials, settings, principal_cache, revoked_jti_cache
     )
+
+
+async def require_admin(
+    principal: Annotated[Principal, Depends(keycloak_dependency)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> Principal:
+    """FastAPI dependency: 403s unless *principal* is in ``settings.admin_group``.
+
+    Depends on ``keycloak_dependency`` so every admin route gets identity
+    resolution AND admin-group enforcement from one dependency -- inject this
+    in place of ``keycloak_dependency`` on any admin-only route:
+
+        @router.post("/admin/example")
+        async def example(
+            principal: Annotated[Principal, Depends(require_admin)],
+        ):
+            ...
+    """
+    if not is_admin(principal, settings):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This action requires membership in the admin group.",
+        )
+    return principal
 
 
 # ---------------------------------------------------------------------------
