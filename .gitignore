@@ -74,3 +74,6 @@ Thumbs.db
 
 # AI Agents / Tooling
 .impeccable/
+
+# Git worktrees (superpowers:using-git-worktrees)
+.worktrees/
