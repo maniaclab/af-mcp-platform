@@ -8,16 +8,21 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 import pytest
+from fastapi import HTTPException
 
+from af_mcp_broker.config import Settings
 from af_mcp_broker.maintenance import (
     InMemoryMaintenanceModeStore,
+    MaintenanceModeStore,
     MaintenanceState,
     MaintenanceStateConflict,
     VaultMaintenanceModeStore,
+    check_not_maintenance,
 )
 from af_mcp_broker.vault_kv import VaultKV
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 
@@ -210,3 +215,92 @@ async def test_vault_set_raises_conflict_on_concurrent_write(
                 enabled=False, reason=None, enabled_by=None, enabled_at=None
             )
         )
+
+
+# ---------------------------------------------------------------------------
+# check_not_maintenance() -- the gate helper
+# ---------------------------------------------------------------------------
+
+
+async def test_admin_bypasses_maintenance(make_principal: Callable[..., object]):
+    settings = Settings(admin_group="af-admins")
+    principal = make_principal(groups=["af-admins"])
+    store = InMemoryMaintenanceModeStore()
+    await store.set(
+        MaintenanceState(enabled=True, reason="r", enabled_by="x", enabled_at=1.0)
+    )
+
+    await check_not_maintenance(principal, settings, store)  # must not raise
+
+
+async def test_non_admin_blocked_with_reason(make_principal: Callable[..., object]):
+    settings = Settings(admin_group="af-admins")
+    principal = make_principal(groups=["atlas"])
+    store = InMemoryMaintenanceModeStore()
+    await store.set(
+        MaintenanceState(
+            enabled=True, reason="upgrading", enabled_by="x", enabled_at=1.0
+        )
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await check_not_maintenance(principal, settings, store)
+    assert exc_info.value.status_code == 503
+    assert "upgrading" in str(exc_info.value.detail)
+
+
+async def test_disabled_maintenance_never_raises(make_principal: Callable[..., object]):
+    settings = Settings(admin_group="af-admins")
+    principal = make_principal(groups=["atlas"])
+    store = InMemoryMaintenanceModeStore()
+
+    await check_not_maintenance(principal, settings, store)  # must not raise
+
+
+async def test_no_store_configured_never_raises(make_principal: Callable[..., object]):
+    settings = Settings(admin_group="af-admins")
+    principal = make_principal(groups=["atlas"])
+
+    await check_not_maintenance(principal, settings, None)  # must not raise
+
+
+async def test_reason_none_produces_clean_detail_with_no_suffix(
+    make_principal: Callable[..., object],
+):
+    settings = Settings(admin_group="af-admins")
+    principal = make_principal(groups=["atlas"])
+    store = InMemoryMaintenanceModeStore()
+    await store.set(
+        MaintenanceState(enabled=True, reason=None, enabled_by="x", enabled_at=1.0)
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await check_not_maintenance(principal, settings, store)
+    assert exc_info.value.detail == "The broker is in maintenance mode."
+
+
+class _ExplodingMaintenanceModeStore(MaintenanceModeStore):
+    """A store whose ``get()`` always raises -- proves an admin never reaches it."""
+
+    async def start(self) -> None:
+        raise NotImplementedError
+
+    async def aclose(self) -> None:
+        raise NotImplementedError
+
+    async def get(self) -> MaintenanceState:
+        raise RuntimeError("store should never be read for an admin")
+
+    async def set(self, state: MaintenanceState) -> None:
+        raise NotImplementedError
+
+
+async def test_admin_bypass_never_calls_store_get(
+    make_principal: Callable[..., object],
+):
+    settings = Settings(admin_group="af-admins")
+    principal = make_principal(groups=["af-admins"])
+
+    await check_not_maintenance(
+        principal, settings, _ExplodingMaintenanceModeStore()
+    )  # must not raise

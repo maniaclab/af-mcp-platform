@@ -2,11 +2,12 @@
 
 Toggling maintenance mode must be visible to every broker replica
 consistently -- a flag flipped on one pod is useless if the others keep
-admitting requests. This module only defines the store contract, so it
-follows the same ABC-plus-selectable-backend shape as
+admitting requests. The store contract follows the same
+ABC-plus-selectable-backend shape as
 ``token_registry.TokenRegistryBackend``/``usage.UsageStore`` in anticipation
-of that shared-visibility requirement; the admin-facing endpoint and the
-``/v1``/``/mcp`` request-path enforcement that will read this store are
+of that shared-visibility requirement. ``check_not_maintenance`` is the
+request-path enforcement gate that reads a store; the admin-facing endpoint
+to toggle one, and the ``/v1``/``/mcp`` call sites that invoke the gate, are
 later, separate work and do not exist yet.
 
 ``MaintenanceModeStore`` has ``start()``/``aclose()`` like ``UsageStore``
@@ -21,11 +22,17 @@ from __future__ import annotations
 
 import abc
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import asyncpg  # type: ignore[import-untyped]
+from fastapi import HTTPException, status
 
+from af_mcp_broker.authorization import is_admin
 from af_mcp_broker.vault_kv import CasConflict, VaultKV
+
+if TYPE_CHECKING:
+    from af_mcp_broker.config import Settings
+    from af_mcp_broker.identity import Principal
 
 
 class MaintenanceStateConflict(Exception):
@@ -234,3 +241,41 @@ class PostgresMaintenanceModeStore(MaintenanceModeStore):
         await self._require_pool().execute(
             _UPSERT, state.enabled, state.reason, state.enabled_by, state.enabled_at
         )
+
+
+async def check_not_maintenance(
+    principal: Principal,
+    settings: Settings,
+    store: MaintenanceModeStore | None,
+) -> None:
+    """Raise HTTPException(503) when maintenance mode is on and *principal* is not an admin.
+
+    Will be called from both /v1 (a require_not_in_maintenance gate to be
+    added to identity.py) and /mcp (AsgiAuthMiddleware,
+    mcp/middleware/identity_mw.py) right after a Principal is resolved (JWT
+    or PAT) -- one gate, two call sites, so both credential types and both
+    surfaces are covered uniformly. A None *store* (maintenance mode
+    unconfigured -- unreachable in a properly started app, but matches the
+    getattr-default-None pattern every other optional app.state lookup in
+    this codebase uses) never blocks anyone.
+
+    ``state.reason`` is echoed verbatim to every blocked caller across both
+    /v1 and /mcp -- treat it like a public status-page message; never put
+    secrets or internal details in it.
+    """
+    if store is None:
+        return
+    # Admin check runs before store.get() as a fail-safe, not just an
+    # optimization: if the store backend itself is unreachable (a Vault or
+    # Postgres outage), an admin must still be able to get through to fix
+    # things. This function has no error handling around store.get() -- an
+    # outage there surfaces as an unclassified exception, not a clean 503.
+    if is_admin(principal, settings):
+        return
+    state = await store.get()
+    if not state.enabled:
+        return
+    detail = "The broker is in maintenance mode."
+    if state.reason:
+        detail = f"{detail} Reason: {state.reason}"
+    raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail)
