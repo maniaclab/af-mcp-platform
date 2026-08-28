@@ -8,7 +8,13 @@ from typing import Any
 import pytest
 from conftest import make_claims
 from fastmcp.exceptions import AuthorizationError
+from prometheus_client import REGISTRY
 
+from af_mcp_broker.maintenance import (
+    InMemoryMaintenanceModeStore,
+    MaintenanceModeStore,
+    MaintenanceState,
+)
 from af_mcp_broker.mcp.middleware import identity_mw
 from af_mcp_broker.mcp.middleware.identity_mw import (
     AsgiAuthMiddleware,
@@ -312,7 +318,17 @@ async def test_active_jti_allowed_through_mcp_path_with_cache_configured(
 # ---------------------------------------------------------------------------
 
 
-async def test_valid_pat_stashes_principal_and_calls_inner_app(settings):
+async def _pat_principal_cache_and_token(
+    *, groups: list[str] | None = None
+) -> tuple[InMemoryTokenRegistryBackend, str, Any]:
+    """Build a PAT backend + minted plaintext bearer + backing PrincipalCache.
+
+    Shared setup for tests that exercise a real PAT round trip through
+    AsgiAuthMiddleware (unlike test_malformed_pat_rejected_with_vague_401/
+    test_unknown_pat_lookup_id_rejected, which deliberately use a directory
+    that must never be called -- those keep their own inline setup). Returns
+    ``(backend, plaintext, principal_cache)``.
+    """
     from af_mcp_broker.pat import mint_pat
     from af_mcp_broker.principal_cache import (
         InMemoryPrincipalCacheBackend,
@@ -327,7 +343,11 @@ async def test_valid_pat_stashes_principal_and_calls_inner_app(settings):
     class _FakeDirectory(PrincipalDirectory):
         async def resolve(self, principal_id: str) -> PrincipalAttributes:
             return PrincipalAttributes(
-                uid=50123, gid=5000, unixname="auser", groups=["atlas"], email=""
+                uid=50123,
+                gid=5000,
+                unixname="auser",
+                groups=list(groups or []),
+                email="",
             )
 
     backend = InMemoryTokenRegistryBackend()
@@ -350,6 +370,13 @@ async def test_valid_pat_stashes_principal_and_calls_inner_app(settings):
         refresh_interval_seconds=1000.0,
         max_staleness_seconds=3600.0,
         heartbeat_interval_seconds=3600.0,
+    )
+    return backend, plaintext, principal_cache
+
+
+async def test_valid_pat_stashes_principal_and_calls_inner_app(settings):
+    backend, plaintext, principal_cache = await _pat_principal_cache_and_token(
+        groups=["atlas"]
     )
 
     inner = _InnerApp()
@@ -522,6 +549,207 @@ async def test_expired_pat_rejected_with_actionable_portal_message(settings):
     body = json.loads(_body(messages))
     assert "expired" in body["detail"]
     assert f"{settings.portal_url.rstrip('/')}/tokens" in body["detail"]
+
+
+# ---------------------------------------------------------------------------
+# Maintenance mode enforcement on /mcp (Task C7) -- one check_not_maintenance()
+# call in AsgiAuthMiddleware, right after principal resolution converges for
+# both JWT and PAT bearers. Fails open on store-unavailability, exactly like
+# /v1's require_not_in_maintenance (test_maintenance_v1_enforcement.py) --
+# same module-level metrics.maintenance_store_unavailable_total counter.
+# ---------------------------------------------------------------------------
+
+
+def _store_unavailable_count() -> float:
+    # No labels on this counter -- see metrics.py's maintenance_store_unavailable_total.
+    return (
+        REGISTRY.get_sample_value("af_mcp_maintenance_store_unavailable_total") or 0.0
+    )
+
+
+class _BrokenMaintenanceModeStore(MaintenanceModeStore):
+    """Store double whose ``get()`` raises, simulating a Vault/Postgres outage."""
+
+    async def start(self) -> None:
+        """Nothing to acquire."""
+
+    async def aclose(self) -> None:
+        """Nothing to release."""
+
+    async def get(self) -> MaintenanceState:
+        raise RuntimeError("maintenance store unreachable (test)")
+
+    async def set(self, state: MaintenanceState) -> None:
+        raise AssertionError("not exercised by this test")
+
+
+async def test_mcp_blocks_non_admin_jwt_during_maintenance(
+    settings, sig_key, prime_jwks, static_principal_cache
+):
+    principal_cache, directory = static_principal_cache
+    directory.posix_by_subject["user-123"] = {"uid": 50123, "unixname": "auser"}
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+
+    store = InMemoryMaintenanceModeStore()
+    await store.set(
+        MaintenanceState(
+            enabled=True, reason="down for updates", enabled_by="a", enabled_at=1.0
+        )
+    )
+
+    inner = _InnerApp()
+    middleware = AsgiAuthMiddleware(
+        inner,
+        IdentityMiddleware(
+            settings, principal_cache=principal_cache, maintenance_mode_store=store
+        ),
+    )
+
+    messages = await _run(middleware, _http_scope({"authorization": f"Bearer {token}"}))
+
+    assert not inner.called
+    assert _status(messages) == 503
+    body = json.loads(_body(messages))
+    assert "maintenance mode" in body["detail"]
+    assert "down for updates" in body["detail"]
+
+
+async def test_mcp_blocks_non_admin_pat_during_maintenance(settings):
+    backend, plaintext, principal_cache = await _pat_principal_cache_and_token()
+
+    store = InMemoryMaintenanceModeStore()
+    await store.set(
+        MaintenanceState(enabled=True, reason="r", enabled_by="a", enabled_at=1.0)
+    )
+
+    inner = _InnerApp()
+    middleware = AsgiAuthMiddleware(
+        inner,
+        IdentityMiddleware(
+            settings,
+            pat_backend=backend,
+            principal_cache=principal_cache,
+            maintenance_mode_store=store,
+        ),
+    )
+
+    messages = await _run(
+        middleware, _http_scope({"authorization": f"Bearer {plaintext}"})
+    )
+
+    assert not inner.called
+    assert _status(messages) == 503
+
+
+async def test_mcp_allows_admin_during_maintenance(
+    settings, sig_key, prime_jwks, static_principal_cache
+):
+    principal_cache, directory = static_principal_cache
+    directory.posix_by_subject["user-123"] = {"uid": 50123, "unixname": "auser"}
+    directory.groups_by_subject["user-123"] = ["af-admins"]
+    admin_settings = settings.model_copy(update={"admin_group": "af-admins"})
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+
+    store = InMemoryMaintenanceModeStore()
+    await store.set(
+        MaintenanceState(enabled=True, reason="r", enabled_by="a", enabled_at=1.0)
+    )
+
+    inner = _InnerApp()
+    middleware = AsgiAuthMiddleware(
+        inner,
+        IdentityMiddleware(
+            admin_settings,
+            principal_cache=principal_cache,
+            maintenance_mode_store=store,
+        ),
+    )
+
+    messages = await _run(middleware, _http_scope({"authorization": f"Bearer {token}"}))
+
+    assert inner.called
+    assert _status(messages) != 503
+    assert _status(messages) == 200
+
+
+async def test_mcp_not_blocked_when_maintenance_disabled(
+    settings, sig_key, prime_jwks, static_principal_cache
+):
+    principal_cache, directory = static_principal_cache
+    directory.posix_by_subject["user-123"] = {"uid": 50123, "unixname": "auser"}
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+
+    store = InMemoryMaintenanceModeStore()  # disabled by default
+
+    inner = _InnerApp()
+    middleware = AsgiAuthMiddleware(
+        inner,
+        IdentityMiddleware(
+            settings, principal_cache=principal_cache, maintenance_mode_store=store
+        ),
+    )
+
+    messages = await _run(middleware, _http_scope({"authorization": f"Bearer {token}"}))
+
+    assert inner.called
+    assert _status(messages) == 200
+
+
+async def test_mcp_non_admin_not_blocked_when_store_unavailable(
+    settings, sig_key, prime_jwks, static_principal_cache
+):
+    """Store-unavailability decision: fail OPEN, exactly matching /v1's
+    require_not_in_maintenance -- see that function's docstring and
+    test_maintenance_v1_enforcement.py's analogous test."""
+    principal_cache, directory = static_principal_cache
+    directory.posix_by_subject["user-123"] = {"uid": 50123, "unixname": "auser"}
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+
+    inner = _InnerApp()
+    middleware = AsgiAuthMiddleware(
+        inner,
+        IdentityMiddleware(
+            settings,
+            principal_cache=principal_cache,
+            maintenance_mode_store=_BrokenMaintenanceModeStore(),
+        ),
+    )
+
+    messages = await _run(middleware, _http_scope({"authorization": f"Bearer {token}"}))
+
+    assert inner.called
+    assert _status(messages) == 200
+
+
+async def test_mcp_store_unavailable_is_logged_and_shares_v1s_counter(
+    settings, sig_key, prime_jwks, static_principal_cache
+):
+    """Same module-level Counter as /v1's require_not_in_maintenance -- this
+    just confirms /mcp's failure path increments it too, not a second one."""
+    principal_cache, directory = static_principal_cache
+    directory.posix_by_subject["user-123"] = {"uid": 50123, "unixname": "auser"}
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+
+    inner = _InnerApp()
+    middleware = AsgiAuthMiddleware(
+        inner,
+        IdentityMiddleware(
+            settings,
+            principal_cache=principal_cache,
+            maintenance_mode_store=_BrokenMaintenanceModeStore(),
+        ),
+    )
+
+    before = _store_unavailable_count()
+    messages = await _run(middleware, _http_scope({"authorization": f"Bearer {token}"}))
+
+    assert _status(messages) == 200
+    assert _store_unavailable_count() == before + 1
 
 
 # ---------------------------------------------------------------------------

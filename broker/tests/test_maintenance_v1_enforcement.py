@@ -120,17 +120,24 @@ def test_store_unavailable_is_logged_at_error_with_traceback_and_counted(
     lifespan, which would otherwise swallow pytest's caplog handler (see
     test_health.py::test_startup_warns_on_no_backends), so this asserts
     directly against the module's logger call instead, the same way.
+
+    The fail-open observability itself (this ``logger.exception`` call and
+    the counter increment) lives in
+    ``maintenance.check_not_maintenance_or_fail_open`` -- shared verbatim
+    with /mcp's identical fail-open path (test_mcp_middleware_identity.py)
+    -- so this patches ``maintenance``'s module-level logger, not
+    ``identity``'s.
     """
-    from af_mcp_broker import identity as identity_module
+    from af_mcp_broker import maintenance as maintenance_module
 
     calls: list[dict[str, Any]] = []
-    original_exception = identity_module.logger.exception
+    original_exception = maintenance_module.logger.exception
 
     def _capture(event: str, **kwargs: Any) -> Any:
         calls.append({"event": event, **kwargs})
         return original_exception(event, **kwargs)
 
-    monkeypatch.setattr(identity_module.logger, "exception", _capture)
+    monkeypatch.setattr(maintenance_module.logger, "exception", _capture)
 
     with app_client_factory() as (client, _state):
         client.app.state.maintenance_mode_store = _BrokenMaintenanceModeStore()
@@ -139,10 +146,6 @@ def test_store_unavailable_is_logged_at_error_with_traceback_and_counted(
         assert resp.status_code == 200
         assert _store_unavailable_count() == before + 1
 
-    # identity.py's module-level logger is shared with _fetch_jwks, which
-    # also legitimately calls .exception() during this app's startup (an
-    # unreachable JWKS issuer) -- filter to this call's own event name
-    # rather than asserting on the raw call count.
     matching = [c for c in calls if c["event"] == "maintenance_store_unavailable"]
     assert len(matching) == 1
     assert "maintenance store unreachable" in matching[0]["error"]

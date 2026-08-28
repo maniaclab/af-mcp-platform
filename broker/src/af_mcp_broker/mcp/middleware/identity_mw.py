@@ -16,6 +16,10 @@ from af_mcp_broker.identity import (
     get_principal,
     issuer_is_local,
 )
+from af_mcp_broker.maintenance import (
+    MaintenanceModeStore,
+    check_not_maintenance_or_fail_open,
+)
 from af_mcp_broker.pat import PAT_PREFIX
 from af_mcp_broker.pat_auth import LastUsedTracker, resolve_pat_principal
 
@@ -166,6 +170,7 @@ class AsgiAuthMiddleware:
         revoked_jti_cache = self._identity_mw.revoked_jti_cache
         pat_backend = self._identity_mw.pat_backend
         principal_cache = self._identity_mw.principal_cache
+        maintenance_mode_store = self._identity_mw.maintenance_mode_store
 
         if settings.dev_insecure_principal is not None:
             # Local-dev auth bypass, mirroring app.py's lifespan check
@@ -261,6 +266,26 @@ class AsgiAuthMiddleware:
                 await _send_401(scope, receive, send, "Invalid bearer token", settings)
                 return
 
+        # Runs after principal resolution converges for every branch above
+        # (dev-bypass, JWT, PAT) -- one gate covers both credential types on
+        # /mcp, mirroring /v1's require_not_in_maintenance (identity.py)
+        # exactly, including its fail-open-on-store-unavailability behavior
+        # (see maintenance.check_not_maintenance_or_fail_open's docstring for
+        # the full reasoning and the resulting limitation -- that function is
+        # also where the fail-open logging/counting shared with /v1 lives).
+        maintenance_exc = await check_not_maintenance_or_fail_open(
+            principal, settings, maintenance_mode_store
+        )
+        if maintenance_exc is not None:
+            await _send_error(
+                scope,
+                receive,
+                send,
+                maintenance_exc.status_code,
+                str(maintenance_exc.detail),
+            )
+            return
+
         scope.setdefault("state", {})
         scope["state"]["principal"] = principal
         await self.app(scope, receive, send)
@@ -273,6 +298,7 @@ class IdentityMiddleware(Middleware):
         revoked_jti_cache: RevokedJtiCache | None = None,
         pat_backend: TokenRegistryBackend | None = None,
         principal_cache: PrincipalCache | None = None,
+        maintenance_mode_store: MaintenanceModeStore | None = None,
     ) -> None:
         # on_request below reads none of these directly -- it is a thin
         # hand-off (see the module docstring). They're kept here anyway
@@ -285,6 +311,7 @@ class IdentityMiddleware(Middleware):
         self.revoked_jti_cache = revoked_jti_cache
         self.pat_backend = pat_backend
         self.principal_cache = principal_cache
+        self.maintenance_mode_store = maintenance_mode_store
         # Purely in-process, ephemeral throttle state for PAT last_used_at
         # writes (see pat_auth.LastUsedTracker) -- constructed unconditionally
         # (not a constructor param) since it has no external dependency and

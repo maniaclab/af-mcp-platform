@@ -7,9 +7,9 @@ ABC-plus-selectable-backend shape as
 ``token_registry.TokenRegistryBackend``/``usage.UsageStore`` in anticipation
 of that shared-visibility requirement. ``check_not_maintenance`` is the
 request-path enforcement gate that reads a store; it is wired into /v1 (see
-``identity.require_not_in_maintenance``). The admin-facing endpoint to
-toggle the state, and the /mcp call site, are later, separate work and do
-not exist yet.
+``identity.require_not_in_maintenance``) and /mcp (see
+``mcp.middleware.identity_mw.AsgiAuthMiddleware``). The admin-facing
+endpoint to toggle the state is later, separate work and does not exist yet.
 
 ``MaintenanceModeStore`` has ``start()``/``aclose()`` like ``UsageStore``
 (not the simpler get/put-only shape of ``PrincipalCacheBackend``/
@@ -26,14 +26,18 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import asyncpg  # type: ignore[import-untyped]
+import structlog
 from fastapi import HTTPException, status
 
+from af_mcp_broker import metrics
 from af_mcp_broker.authorization import is_admin
 from af_mcp_broker.vault_kv import CasConflict, VaultKV
 
 if TYPE_CHECKING:
     from af_mcp_broker.config import Settings
     from af_mcp_broker.identity import Principal
+
+logger = structlog.get_logger(__name__)
 
 
 class MaintenanceStateConflict(Exception):
@@ -251,10 +255,10 @@ async def check_not_maintenance(
 ) -> None:
     """Raise HTTPException(503) when maintenance mode is on and *principal* is not an admin.
 
-    Called from /v1 (``identity.require_not_in_maintenance``) and, in a
-    later task, from /mcp (AsgiAuthMiddleware, mcp/middleware/identity_mw.py)
-    right after a Principal is resolved (JWT or PAT) -- one gate, two call
-    sites, so both credential types and both surfaces are covered uniformly.
+    Called from /v1 (``identity.require_not_in_maintenance``) and /mcp
+    (AsgiAuthMiddleware, mcp/middleware/identity_mw.py) right after a
+    Principal is resolved (JWT or PAT) -- one gate, two call sites, so both
+    credential types and both surfaces are covered uniformly.
     A None *store* (maintenance mode unconfigured -- unreachable in a
     properly started app, but matches the getattr-default-None pattern every
     other optional app.state lookup in this codebase uses) never blocks
@@ -291,3 +295,43 @@ async def check_not_maintenance(
     if state.reason:
         detail = f"{detail} Reason: {state.reason}"
     raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail)
+
+
+async def check_not_maintenance_or_fail_open(
+    principal: Principal,
+    settings: Settings,
+    store: MaintenanceModeStore | None,
+) -> HTTPException | None:
+    """Run ``check_not_maintenance``, converting its store-unavailability fail-open behavior into a return value instead of a raise.
+
+    Both call sites (/v1's ``identity.require_not_in_maintenance``, a FastAPI
+    dependency that raises to reject a request, and /mcp's
+    ``AsgiAuthMiddleware``, an ASGI middleware that builds its own error
+    response) need the exact same "what to do when the store itself is
+    unreachable" observability -- log at ERROR with a traceback and increment
+    ``metrics.maintenance_store_unavailable_total`` -- but differ in how they
+    actually deliver a block to the caller, which is why this returns the
+    ``HTTPException`` to raise/send rather than raising or sending it
+    directly. Returns ``None`` when the caller is not blocked, whether
+    because maintenance mode is off, the caller is an admin, or the store
+    was unreachable (fail open -- see ``check_not_maintenance``'s docstring
+    for the full reasoning and the resulting limitation).
+    """
+    try:
+        await check_not_maintenance(principal, settings, store)
+    except HTTPException as exc:
+        return exc
+    except Exception as exc:
+        # .exception(), not .warning(): this is silently overriding an
+        # admin's explicit security-relevant lockdown action for every
+        # non-admin caller, not merely serving stale group data (contrast
+        # principal_cache.py's refresh_failed_serving_stale, which stays at
+        # .warning()) -- ERROR level with a full traceback, same idiom
+        # identity.py already uses for _fetch_jwks's jwks_fetch_failed.
+        logger.exception(
+            "maintenance_store_unavailable",
+            error=str(exc),
+            subject=principal.subject,
+        )
+        metrics.maintenance_store_unavailable_total.inc()
+    return None

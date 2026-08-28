@@ -14,11 +14,10 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import SecretStr
 
-from af_mcp_broker import metrics
 from af_mcp_broker.authorization import is_admin
 from af_mcp_broker.config import Settings, get_settings
 from af_mcp_broker.http import get_http_client
-from af_mcp_broker.maintenance import check_not_maintenance
+from af_mcp_broker.maintenance import check_not_maintenance_or_fail_open
 from af_mcp_broker.principal_cache import PrincipalUnavailableError
 
 if TYPE_CHECKING:
@@ -588,7 +587,10 @@ async def require_not_in_maintenance(
     maintenance window is active. So a store failure is treated the same as
     a disabled store: the request proceeds, and the failure is logged (and
     counted -- ``metrics.maintenance_store_unavailable_total``) so it's
-    visible to operators.
+    visible to operators. That logging/counting -- shared with /mcp's
+    identical fail-open behavior -- lives in
+    ``maintenance.check_not_maintenance_or_fail_open``, which this dependency
+    calls rather than ``check_not_maintenance`` directly.
 
     IMPORTANT LIMITATION this implies: non-admins keep their pre-incident
     access whenever the maintenance store can't be reached, rather than
@@ -606,25 +608,9 @@ async def require_not_in_maintenance(
     as, an incident-response kill switch.
     """
     store = getattr(request.app.state, "maintenance_mode_store", None)
-    try:
-        await check_not_maintenance(principal, settings, store)
-    except HTTPException:
-        # The legitimate "you are blocked" 503 (or any other HTTPException
-        # check_not_maintenance might raise) -- never swallow this.
-        raise
-    except Exception as exc:
-        # .exception(), not .warning(): this is silently overriding an
-        # admin's explicit security-relevant lockdown action for every
-        # non-admin caller, not merely serving stale group data (contrast
-        # principal_cache.py's refresh_failed_serving_stale, which stays at
-        # .warning()) -- ERROR level with a full traceback, same idiom this
-        # module already uses for _fetch_jwks's jwks_fetch_failed.
-        logger.exception(
-            "maintenance_store_unavailable",
-            error=str(exc),
-            subject=principal.subject,
-        )
-        metrics.maintenance_store_unavailable_total.inc()
+    exc = await check_not_maintenance_or_fail_open(principal, settings, store)
+    if exc is not None:
+        raise exc
     return principal
 
 
