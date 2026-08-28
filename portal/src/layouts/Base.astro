@@ -26,28 +26,44 @@ const { title = 'AF MCP Platform' } = Astro.props;
 
 // Sidebar nav, grouped Filament-style. Badge slots are keyed by href and
 // filled on mount from the dashboard summary (see ../lib/navSummary).
+// adminOnly items render `hidden` and are only revealed on mount once
+// GET /v1/identities reports `is_admin: true` (see the mount script below) —
+// this is a static build with no per-request server auth state, so hiding
+// happens client-side rather than by omitting the markup at render time.
 const navGroups: {
   label: string | null;
-  items: { href: string; label: string; icon: string; badge: boolean }[];
+  items: { href: string; label: string; icon: string; badge: boolean; adminOnly: boolean }[];
 }[] = [
   {
     label: null,
-    items: [{ href: '/overview/', label: 'Overview', icon: 'home', badge: false }],
+    items: [
+      { href: '/overview/', label: 'Overview', icon: 'home', badge: false, adminOnly: false },
+    ],
   },
   {
     label: 'Access',
     items: [
-      { href: '/catalog/', label: 'Services', icon: 'servers', badge: true },
-      { href: '/identities/', label: 'Identities', icon: 'identity', badge: true },
+      { href: '/catalog/', label: 'Services', icon: 'servers', badge: true, adminOnly: false },
+      {
+        href: '/identities/',
+        label: 'Identities',
+        icon: 'identity',
+        badge: true,
+        adminOnly: false,
+      },
     ],
   },
   {
     label: 'Credentials',
-    items: [{ href: '/tokens/', label: 'Tokens', icon: 'key', badge: true }],
+    items: [{ href: '/tokens/', label: 'Tokens', icon: 'key', badge: true, adminOnly: false }],
   },
   {
     label: 'Activity',
-    items: [{ href: '/usage/', label: 'Usage', icon: 'chart', badge: false }],
+    items: [{ href: '/usage/', label: 'Usage', icon: 'chart', badge: false, adminOnly: false }],
+  },
+  {
+    label: 'Platform',
+    items: [{ href: '/admin/', label: 'Admin', icon: 'shield', badge: false, adminOnly: true }],
   },
 ];
 
@@ -495,10 +511,10 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
               <div class="af-sidebar__group">
                 {group.label && <p class="af-sidebar__group-label">{group.label}</p>}
                 <ul class="af-sidebar__list" role="list">
-                  {group.items.map(({ href, label, icon, badge }) => {
+                  {group.items.map(({ href, label, icon, badge, adminOnly }) => {
                     const isActive = currentPath.startsWith(href.replace(/\/$/, ''));
                     return (
-                      <li>
+                      <li hidden={adminOnly} data-af-admin-nav={adminOnly || undefined}>
                         <a
                           href={href}
                           class="af-sidebar__link"
@@ -661,6 +677,13 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
 
         try {
           const id = await fetchIdentities();
+
+          if (id.is_admin) {
+            document.querySelectorAll<HTMLElement>('[data-af-admin-nav]').forEach((el) => {
+              el.hidden = false;
+            });
+          }
+
           const label = id.email || id.unixname;
           if (!label) return;
           document.querySelectorAll<HTMLElement>('[data-af-identity]').forEach((el) => {

@@ -30,6 +30,7 @@ const IDENTITIES: IdentitiesResponse = {
   uid: 1000,
   gid: 1000,
   groups: [],
+  is_admin: false,
   providers: [
     {
       id: 'atlas-iam',

@@ -206,6 +206,10 @@ export interface IdentitiesResponse {
   gid: number;
   groups: string[];
   providers: IdentityProvider[];
+  /** True when the caller is a member of the broker's configured admin
+   * group -- gates the portal's Admin nav entry and admin-only views. False
+   * whenever the broker has no admin group configured. */
+  is_admin: boolean;
 }
 
 // Identity data (providers[].linked) changes only when the user completes a
