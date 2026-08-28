@@ -21,6 +21,13 @@ from __future__ import annotations
 
 import abc
 from dataclasses import dataclass
+from typing import Any
+
+from af_mcp_broker.vault_kv import CasConflict, VaultKV
+
+
+class MaintenanceStateConflict(Exception):
+    """Raised by ``MaintenanceModeStore.set`` when a concurrent writer already changed the state."""
 
 
 @dataclass(frozen=True)
@@ -55,7 +62,11 @@ class MaintenanceModeStore(abc.ABC):
 
     @abc.abstractmethod
     async def set(self, state: MaintenanceState) -> None:
-        """Overwrite the current maintenance state."""
+        """Overwrite the current maintenance state.
+
+        Raises ``MaintenanceStateConflict`` when a concurrent writer already
+        changed the state.
+        """
 
 
 class InMemoryMaintenanceModeStore(MaintenanceModeStore):
@@ -81,3 +92,72 @@ class InMemoryMaintenanceModeStore(MaintenanceModeStore):
 
     async def set(self, state: MaintenanceState) -> None:
         self._state = state
+
+
+_KV_KEY = "state"
+
+
+def _state_to_fields(state: MaintenanceState) -> dict[str, Any]:
+    return {
+        "enabled": state.enabled,
+        "reason": state.reason,
+        "enabled_by": state.enabled_by,
+        "enabled_at": state.enabled_at,
+    }
+
+
+def _state_from_fields(fields: dict[str, Any]) -> MaintenanceState:
+    return MaintenanceState(
+        enabled=bool(fields.get("enabled", False)),
+        reason=fields.get("reason"),
+        enabled_by=fields.get("enabled_by"),
+        enabled_at=fields.get("enabled_at"),
+    )
+
+
+class VaultMaintenanceModeStore(MaintenanceModeStore):
+    """``MaintenanceModeStore`` backed by Vault/OpenBao KV-v2, one record at ``{kv_path_prefix}/state`` -- HA-safe across replicas.
+
+    No CAS-retry loop, unlike ``VaultPrincipalCacheBackend.put()`` -- see
+    this class's ``set()``.
+    """
+
+    def __init__(self, *, vault_kv: VaultKV, kv_path_prefix: str) -> None:
+        self._vault_kv = vault_kv
+        self._path = f"{kv_path_prefix.strip('/')}/{_KV_KEY}"
+
+    async def start(self) -> None:
+        """Nothing to acquire -- vault_kv is already authenticated by app.py's lifespan."""
+
+    async def aclose(self) -> None:
+        """Nothing to release."""
+
+    async def get(self) -> MaintenanceState:
+        current = await self._vault_kv.get(self._path)
+        if current is None:
+            return _DISABLED
+        data, _version = current
+        return _state_from_fields(data)
+
+    async def set(self, state: MaintenanceState) -> None:
+        """Overwrite the current maintenance state.
+
+        A single read-then-CAS-write, no retry loop: unlike
+        ``VaultPrincipalCacheBackend.put()`` (whose lost race is harmless --
+        the loser just tries again on its own next refresh cycle), this is a
+        deliberate admin action toggling shared, user-visible facility state.
+        Silently retrying such an action behind the caller's back could
+        commit them to a decision made with stale knowledge of the current
+        state; raising ``MaintenanceStateConflict`` once and letting the
+        caller (the admin API, a later task) decide whether to re-read and
+        retry is the correct failure mode for this kind of write.
+        """
+        current = await self._vault_kv.get(self._path)
+        version = current[1] if current is not None else None
+        try:
+            await self._vault_kv.write_cas(self._path, _state_to_fields(state), version)
+        except CasConflict as exc:
+            raise MaintenanceStateConflict(
+                f"vault cas write conflict for path={self._path!r} "
+                f"expected_version={version!r}"
+            ) from exc
