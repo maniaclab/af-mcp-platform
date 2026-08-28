@@ -697,7 +697,33 @@ export interface UsageResponse {
   by_day: UsageByDay[];
 }
 
-/** The caller's own tool-call usage over a trailing window (default 30 days). */
-export async function fetchUsage(days = 30): Promise<UsageResponse> {
-  return apiFetch<UsageResponse>(`/usage?days=${days}`);
+/**
+ * The caller's own tool-call usage over a trailing window (default 30
+ * days). Passing *subject* asks for another subject's usage instead — the
+ * broker rejects this with a 403 unless the caller is in the configured
+ * admin group (see api/usage.py::get_usage).
+ */
+export async function fetchUsage(days = 30, subject?: string): Promise<UsageResponse> {
+  const query = subject ? `days=${days}&subject=${encodeURIComponent(subject)}` : `days=${days}`;
+  return apiFetch<UsageResponse>(`/usage?${query}`);
+}
+
+export interface UsageSubject {
+  subject: string;
+  unixname: string | null;
+  email: string;
+}
+
+export interface UsageSubjectsResponse {
+  subjects: UsageSubject[];
+}
+
+/**
+ * Admin-only: distinct subjects with recorded usage over a trailing window,
+ * resolved to unixname/email for display. Backs the admin usage-view
+ * dropdown (see api/usage.py::get_usage_subjects) — the broker 403s this
+ * for a non-admin caller.
+ */
+export async function fetchUsageSubjects(days = 30): Promise<UsageSubjectsResponse> {
+  return apiFetch<UsageSubjectsResponse>(`/usage/subjects?days=${days}`);
 }
