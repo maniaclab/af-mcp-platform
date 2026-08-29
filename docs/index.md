@@ -69,6 +69,9 @@ broker subsystems and the `/v1` contract, and
 - [Observability](observability.md) — operating the metering pipeline,
   usage store, metrics, and trace emission, plus the user-facing
   `GET /v1/usage` endpoint and how to join your own traces.
+- [Admin Capabilities](admin.md) — configuring the admin group, the
+  usage-for-other-users view, and maintenance mode (including its
+  fail-open-on-store-outage limitation).
 - [Phase 1 Acceptance Checklist](phase1-acceptance-checklist.md) — what's
   verified by automated tests vs. what still needs a live-deploy check.
 - [agentgateway Spike](agentgateway-spike.md) — the acceptance test that
