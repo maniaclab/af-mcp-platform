@@ -18,6 +18,14 @@
  * that's the `pixi run -e portal dev` + `pixi run -e bypass broker` combo,
  * where BROKER_DEV_INSECURE_PRINCIPAL supplies the principal server-side and
  * the broker doesn't check for a Bearer at all.
+ *
+ * The one deliberate exception to all of the above: fetchMaintenanceStatus()
+ * calls a bare fetch() with no Authorization header at all, because GET
+ * /v1/admin/maintenance itself requires no authentication (it has to stay
+ * reachable for a visitor maintenance mode is currently blocking on every
+ * other route). Don't copy that shape for a new endpoint without checking —
+ * it's a special case earned by the broker's own no-auth contract on that
+ * one route, not a template for "public-ish" endpoints in general.
  */
 import { getAccessToken, isOidcConfigured, renewAccessToken } from './auth';
 import { tokenStatus } from './tokenDisplay';
@@ -726,4 +734,52 @@ export interface UsageSubjectsResponse {
  */
 export async function fetchUsageSubjects(days = 30): Promise<UsageSubjectsResponse> {
   return apiFetch<UsageSubjectsResponse>(`/usage/subjects?days=${days}`);
+}
+
+// ---------------------------------------------------------------------------
+// Maintenance mode — GET/POST /v1/admin/maintenance
+// ---------------------------------------------------------------------------
+
+export interface MaintenanceStatus {
+  enabled: boolean;
+  reason: string | null;
+  enabled_by: string | null;
+  enabled_at: number | null;
+}
+
+/**
+ * GET /v1/admin/maintenance carries NO authentication requirement at all
+ * (see broker api/admin.py) — the whole point is that a visitor currently
+ * locked out by maintenance mode, including one with no session whatsoever,
+ * can still learn why. Deliberately bypasses authFetch/apiFetch: authFetch
+ * throws SessionExpiredError up front when there's no session to renew (see
+ * its early-exit branch), which is exactly backwards for a banner that must
+ * render for a logged-out or expired-session visitor. A plain, header-free
+ * fetch is the correct client for a route the broker never checks auth on.
+ */
+export async function fetchMaintenanceStatus(): Promise<MaintenanceStatus> {
+  const res = await fetch(`${API_BASE}/admin/maintenance`);
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new APIError(res.status, res.statusText, body);
+  }
+  return res.json() as Promise<MaintenanceStatus>;
+}
+
+/**
+ * POST /v1/admin/maintenance — requires admin-group membership
+ * (require_admin), so unlike fetchMaintenanceStatus this goes through the
+ * normal Bearer-attaching apiFetch every other mutating call in this file
+ * uses. 403 if the caller's admin membership isn't (or is no longer) valid;
+ * 409 if another admin's concurrent write lost the Vault compare-and-set
+ * race (see api/admin.py::set_maintenance_status).
+ */
+export async function setMaintenanceStatus(
+  enabled: boolean,
+  reason?: string,
+): Promise<MaintenanceStatus> {
+  return apiFetch<MaintenanceStatus>('/admin/maintenance', {
+    method: 'POST',
+    body: JSON.stringify({ enabled, ...(reason ? { reason } : {}) }),
+  });
 }

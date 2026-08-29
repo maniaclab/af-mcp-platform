@@ -133,6 +133,22 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
         top: 1rem;
       }
 
+      /* Maintenance banner ------------------------------------------------------
+       Revealed on mount (see the mount script below) for EVERY visitor --
+       authenticated or not -- fetched from GET /v1/admin/maintenance, which
+       carries no authentication requirement at all so it stays reachable for
+       whoever is currently blocked by maintenance mode on everything else.
+    ----------------------------------------------------------------------- */
+      .af-maintenance-banner {
+        padding: 0.625rem 2rem;
+        background: rgb(from var(--color-af-amber) r g b / 0.12);
+        border-bottom: 1px solid rgb(from var(--color-af-amber) r g b / 0.3);
+        color: var(--color-af-amber);
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 0.8125rem;
+        text-align: center;
+      }
+
       /* Shell ------------------------------------------------------------------
        Sidebar + content column. The sidebar is sticky full-height on desktop
        and an off-canvas drawer below 900px.
@@ -499,6 +515,8 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
 
     <a href="#main-content" class="skip-link">Skip to content</a>
 
+    <div data-af-maintenance-banner class="af-maintenance-banner" role="alert" hidden></div>
+
     <div class="af-shell">
       <aside class="af-sidebar" id="af-sidebar">
         <a href="/overview/" class="af-sidebar__logo" aria-label="AF MCP Platform home">
@@ -605,10 +623,35 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
         clearIdentitiesCache,
         fetchDashboardSummary,
         fetchIdentities,
+        fetchMaintenanceStatus,
         revokeAllCredentials,
       } from '../lib/api';
       import { getUser, isOidcConfigured, login, logout } from '../lib/auth';
+      import { maintenanceBannerText } from '../lib/maintenanceBanner';
       import { navBadges } from '../lib/navSummary';
+
+      // Runs independently of the auth check below, and before it -- GET
+      // /v1/admin/maintenance requires no authentication at all (see
+      // fetchMaintenanceStatus's docstring), precisely so a visitor currently
+      // locked out by maintenance mode on every other route -- including one
+      // with no session at all, or one about to be redirected to Keycloak by
+      // the auth check just below -- still sees why.
+      (async () => {
+        const banner = document.querySelector<HTMLElement>('[data-af-maintenance-banner]');
+        if (!banner) return;
+        try {
+          const status = await fetchMaintenanceStatus();
+          const text = maintenanceBannerText(status);
+          if (text) {
+            banner.textContent = text;
+            banner.hidden = false;
+          }
+        } catch {
+          // Fails open, same as the broker route itself (api/admin.py) -- an
+          // unreachable maintenance store or a network error must not put a
+          // false banner in front of every visitor.
+        }
+      })();
 
       // Off-canvas sidebar toggle — registered before the auth check so the
       // drawer works even when the page renders unauthenticated (dev bypass).

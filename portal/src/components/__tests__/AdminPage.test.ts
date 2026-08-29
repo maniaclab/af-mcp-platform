@@ -11,17 +11,48 @@
  */
 import { flushPromises, mount } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { UsageResponse, UsageSubjectsResponse } from '../../lib/api';
+import type { MaintenanceStatus, UsageResponse, UsageSubjectsResponse } from '../../lib/api';
 
 vi.mock('../../lib/api', () => ({
   fetchUsage: vi.fn(),
   fetchUsageSubjects: vi.fn(),
+  fetchMaintenanceStatus: vi.fn(),
+  setMaintenanceStatus: vi.fn(),
   SessionExpiredError: class SessionExpiredError extends Error {},
   AccessDeniedError: class AccessDeniedError extends Error {},
+  APIError: class APIError extends Error {
+    constructor(
+      public readonly status: number,
+      public readonly statusText: string,
+      public readonly body: string,
+    ) {
+      super(`${status} ${statusText}: ${body}`);
+      this.name = 'APIError';
+    }
+  },
 }));
 
-import { fetchUsage, fetchUsageSubjects } from '../../lib/api';
+import {
+  fetchMaintenanceStatus,
+  fetchUsage,
+  fetchUsageSubjects,
+  setMaintenanceStatus,
+} from '../../lib/api';
 import AdminPage from '../AdminPage.vue';
+
+const DISABLED: MaintenanceStatus = {
+  enabled: false,
+  reason: null,
+  enabled_by: null,
+  enabled_at: null,
+};
+
+const ENABLED: MaintenanceStatus = {
+  enabled: true,
+  reason: 'Scheduled Postgres upgrade',
+  enabled_by: 'sub-admin',
+  enabled_at: 1756450000,
+};
 
 const SUBJECTS: UsageSubjectsResponse = {
   subjects: [
@@ -147,5 +178,124 @@ describe('AdminPage', () => {
     expect(fetchUsage).toHaveBeenCalledWith(30, 'sub-2');
     expect(wrapper.text()).toContain('$0.099');
     expect(wrapper.text()).not.toContain('$0.001');
+  });
+});
+
+describe('AdminPage maintenance mode', () => {
+  beforeEach(() => {
+    // These tests don't exercise the usage dropdown -- keep it a harmless
+    // empty state so its own assertions can't bleed into these.
+    vi.mocked(fetchUsageSubjects).mockResolvedValue({ subjects: [] });
+  });
+
+  it('shows the current maintenance status when disabled', async () => {
+    vi.mocked(fetchMaintenanceStatus).mockResolvedValue(DISABLED);
+    const wrapper = mount(AdminPage);
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('Disabled');
+  });
+
+  it('shows reason/enabled_by when enabled', async () => {
+    vi.mocked(fetchMaintenanceStatus).mockResolvedValue(ENABLED);
+    const wrapper = mount(AdminPage);
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('Enabled');
+    expect(wrapper.text()).toContain('Scheduled Postgres upgrade');
+    expect(wrapper.text()).toContain('sub-admin');
+  });
+
+  it('enabling calls setMaintenanceStatus with the reason input and updates the displayed status', async () => {
+    vi.mocked(fetchMaintenanceStatus).mockResolvedValue(DISABLED);
+    vi.mocked(setMaintenanceStatus).mockResolvedValue(ENABLED);
+    const wrapper = mount(AdminPage);
+    await flushPromises();
+
+    await wrapper.find('[data-af-maintenance-reason]').setValue('Scheduled Postgres upgrade');
+    await wrapper.find('[data-af-maintenance-enable]').trigger('click');
+    await flushPromises();
+
+    expect(setMaintenanceStatus).toHaveBeenCalledWith(true, 'Scheduled Postgres upgrade');
+    expect(wrapper.text()).toContain('Enabled');
+    expect(wrapper.text()).toContain('sub-admin');
+  });
+
+  it('disabling calls setMaintenanceStatus(false) and updates the displayed status', async () => {
+    vi.mocked(fetchMaintenanceStatus).mockResolvedValue(ENABLED);
+    vi.mocked(setMaintenanceStatus).mockResolvedValue(DISABLED);
+    const wrapper = mount(AdminPage);
+    await flushPromises();
+
+    await wrapper.find('[data-af-maintenance-disable]').trigger('click');
+    await flushPromises();
+
+    expect(setMaintenanceStatus).toHaveBeenCalledWith(false);
+    expect(wrapper.text()).toContain('Disabled');
+  });
+
+  it('surfaces a 403 from the POST as an access-denied-style message', async () => {
+    vi.mocked(fetchMaintenanceStatus).mockResolvedValue(DISABLED);
+    const { APIError } = await import('../../lib/api');
+    vi.mocked(setMaintenanceStatus).mockRejectedValue(new APIError(403, 'Forbidden', '{}'));
+    const wrapper = mount(AdminPage);
+    await flushPromises();
+
+    await wrapper.find('[data-af-maintenance-enable]').trigger('click');
+    await flushPromises();
+
+    expect(wrapper.find('[role="alert"]').exists()).toBe(true);
+    expect(wrapper.text().toLowerCase()).toContain('access');
+  });
+
+  it('surfaces a 409 from the POST as a retry-prompting message', async () => {
+    vi.mocked(fetchMaintenanceStatus).mockResolvedValue(DISABLED);
+    const { APIError } = await import('../../lib/api');
+    vi.mocked(setMaintenanceStatus).mockRejectedValue(new APIError(409, 'Conflict', '{}'));
+    const wrapper = mount(AdminPage);
+    await flushPromises();
+
+    await wrapper.find('[data-af-maintenance-enable]').trigger('click');
+    await flushPromises();
+
+    expect(wrapper.find('[role="alert"]').exists()).toBe(true);
+    expect(wrapper.text().toLowerCase()).toContain('retry');
+  });
+
+  it('shows a generic error when fetchMaintenanceStatus fails', async () => {
+    vi.mocked(fetchMaintenanceStatus).mockRejectedValue(new Error('network down'));
+    const wrapper = mount(AdminPage);
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('network down');
+  });
+
+  it("prefers the broker's actual detail text over the canned 403/409 messages", async () => {
+    vi.mocked(fetchMaintenanceStatus).mockResolvedValue(DISABLED);
+    const { APIError } = await import('../../lib/api');
+    vi.mocked(setMaintenanceStatus).mockRejectedValue(
+      new APIError(409, 'Conflict', JSON.stringify({ detail: 'a very specific broker detail' })),
+    );
+    const wrapper = mount(AdminPage);
+    await flushPromises();
+
+    await wrapper.find('[data-af-maintenance-enable]').trigger('click');
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('a very specific broker detail');
+  });
+
+  it('shows the same dedicated Reload UI as the Usage section when the toggle POST session expires', async () => {
+    vi.mocked(fetchMaintenanceStatus).mockResolvedValue(DISABLED);
+    const { SessionExpiredError } = await import('../../lib/api');
+    vi.mocked(setMaintenanceStatus).mockRejectedValue(new SessionExpiredError());
+    const wrapper = mount(AdminPage);
+    await flushPromises();
+
+    await wrapper.find('[data-af-maintenance-enable]').trigger('click');
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('Session expired');
+    expect(wrapper.find('.ap__reload').exists()).toBe(true);
   });
 });

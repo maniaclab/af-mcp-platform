@@ -14,6 +14,7 @@ import {
   fetchPermissions,
   fetchDashboardSummary,
   fetchIdentities,
+  fetchMaintenanceStatus,
   fetchOAuth21AuthorizeUrl,
   fetchProxyStatus,
   fetchServerTools,
@@ -23,6 +24,7 @@ import {
   mintToken,
   revokeAllCredentials,
   revokeToken,
+  setMaintenanceStatus,
   unlinkIdentity,
 } from '../api';
 import * as auth from '../auth';
@@ -838,5 +840,115 @@ describe('fetchServerTools()', () => {
     await fetchServerTools('a/b');
     const [url] = vi.mocked(globalThis.fetch).mock.calls[0] as [string, RequestInit];
     expect(url).toContain('/catalog/a%2Fb/tools');
+  });
+});
+
+describe('fetchMaintenanceStatus()', () => {
+  it('GETs /admin/maintenance and returns the status verbatim', async () => {
+    const body = { enabled: true, reason: 'upgrade', enabled_by: 'sub-1', enabled_at: 123.4 };
+    globalThis.fetch = mockJson(200, body);
+    await expect(fetchMaintenanceStatus()).resolves.toEqual(body);
+    const [url] = vi.mocked(globalThis.fetch).mock.calls[0] as [string, RequestInit];
+    expect(url).toContain('/admin/maintenance');
+  });
+
+  it('sends no Authorization header even when a Bearer is available', async () => {
+    globalThis.fetch = mockJson(200, {
+      enabled: false,
+      reason: null,
+      enabled_by: null,
+      enabled_at: null,
+    });
+    await fetchMaintenanceStatus();
+    const [, init] = vi.mocked(globalThis.fetch).mock.calls[0] as [string, RequestInit];
+    expect((init?.headers as Record<string, string> | undefined)?.Authorization).toBeUndefined();
+  });
+
+  it('succeeds with no session at all, unlike every authFetch-backed call', async () => {
+    // The whole point of this route: a visitor with no valid (or renewable)
+    // OIDC session must still be able to see the maintenance banner —
+    // authFetch would throw SessionExpiredError before ever calling fetch()
+    // in this exact scenario (see authFetch's early-exit branch).
+    vi.mocked(auth.getAccessToken).mockResolvedValue(null);
+    vi.mocked(auth.isOidcConfigured).mockResolvedValue(true);
+    globalThis.fetch = mockJson(200, {
+      enabled: false,
+      reason: null,
+      enabled_by: null,
+      enabled_at: null,
+    });
+    await expect(fetchMaintenanceStatus()).resolves.toEqual({
+      enabled: false,
+      reason: null,
+      enabled_by: null,
+      enabled_at: null,
+    });
+  });
+
+  it('raises APIError with the response body on non-2xx', async () => {
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValue(new Response('nope', { status: 500, statusText: 'Server Error' }));
+    await expect(fetchMaintenanceStatus()).rejects.toMatchObject({
+      name: 'APIError',
+      status: 500,
+    });
+  });
+
+  it('propagates a raw network failure (DNS/connection error) rather than swallowing it', async () => {
+    // The exact scenario the banner exists for -- a real fetch() rejection,
+    // not merely a non-2xx response. Same pattern as auth.test.ts's
+    // getBrokerOrigin() network-failure test.
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error('network down'));
+    await expect(fetchMaintenanceStatus()).rejects.toThrow('network down');
+  });
+});
+
+describe('setMaintenanceStatus()', () => {
+  it('POSTs enabled/reason to /admin/maintenance with a Bearer and returns the status', async () => {
+    const body = { enabled: true, reason: 'upgrade', enabled_by: 'sub-1', enabled_at: 123.4 };
+    globalThis.fetch = mockJson(200, body);
+    await expect(setMaintenanceStatus(true, 'upgrade')).resolves.toEqual(body);
+    const [url, init] = vi.mocked(globalThis.fetch).mock.calls[0] as [string, RequestInit];
+    expect(url).toContain('/admin/maintenance');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual({ enabled: true, reason: 'upgrade' });
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer test-token');
+  });
+
+  it('omits reason from the body when not supplied', async () => {
+    globalThis.fetch = mockJson(200, {
+      enabled: false,
+      reason: null,
+      enabled_by: null,
+      enabled_at: null,
+    });
+    await setMaintenanceStatus(false);
+    const [, init] = vi.mocked(globalThis.fetch).mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({ enabled: false });
+  });
+
+  it('raises APIError on a 403 (non-admin caller)', async () => {
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValue(
+        new Response('{"detail":"forbidden"}', { status: 403, statusText: 'Forbidden' }),
+      );
+    await expect(setMaintenanceStatus(true)).rejects.toMatchObject({
+      name: 'APIError',
+      status: 403,
+    });
+  });
+
+  it('raises APIError on a 409 (concurrent admin write)', async () => {
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValue(
+        new Response('{"detail":"conflict"}', { status: 409, statusText: 'Conflict' }),
+      );
+    await expect(setMaintenanceStatus(true)).rejects.toMatchObject({
+      name: 'APIError',
+      status: 409,
+    });
   });
 });
