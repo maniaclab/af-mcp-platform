@@ -460,6 +460,36 @@ broker:
         namespace: ""
         clusterName: ""
 
+  # Broker-wide maintenance mode: only admins get through /v1 and /mcp while
+  # enabled. Must be visible to every replica consistently -- "in-memory"
+  # only ever affects the one replica that handled the toggle request (the
+  # broker warns loudly at startup if this is selected alongside
+  # replicaCount > 1); "vault" and "postgres" propagate to every replica.
+  maintenanceMode:
+    backend: "in-memory"  # or "vault" or "postgres"
+    # Path prefix under oauth21.tokenStore.vault.kvMount where the
+    # maintenance-mode record is stored. Only meaningful when backend="vault".
+    kvPathPrefix: "mcp/maintenance-mode"
+    postgres:
+      # Secret carrying the asyncpg DSN, rendered as MAINTENANCE_MODE_POSTGRES_DSN
+      # via secretKeyRef only when backend="postgres" and this is set. With Crunchy
+      # PGO the operator generates a `<cluster>-pguser-<user>` secret whose `uri`
+      # key is exactly this DSN -- point `name` at that secret and leave `key` as
+      # "uri", same convention as broker.usage.postgres.existingSecret above.
+      # Optional: leave unset to reuse broker.usage.postgres's DSN instead (both
+      # point at the same database by default; Settings.
+      # maintenance_mode_effective_postgres_dsn falls back to it) -- set only if
+      # maintenance mode should use a genuinely different database than the usage
+      # store. CAVEAT: unlike broker.usage.postgres, there is no
+      # maintenanceMode.postgres.networkPolicy sub-block -- the broker's
+      # NetworkPolicy egress rule for postgres is wired only off
+      # broker.usage.postgres.networkPolicy. A separate-database setup here is
+      # unreachable when networkPolicy.enabled=true (only the DSN-fallback case,
+      # which shares usage's already-open egress rule, is fully supported).
+      existingSecret:
+        name: ""
+        key: "uri"
+
   # OpenTelemetry trace EMISSION (broker tracing.py, observability roadmap
   # PR D). The broker is an emitter only -- no trace backend is shipped or
   # assumed; point `endpoint` at any OTLP/HTTP collector. Disabled (the

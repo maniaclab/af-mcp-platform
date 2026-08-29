@@ -24,3 +24,10 @@ broker:
       networkPolicy:
         namespace: "database"
         clusterName: "example-usage"
+  # Exercises the postgres maintenance-mode backend without its own
+  # existingSecret, so the render also covers the "no
+  # MAINTENANCE_MODE_POSTGRES_DSN env var" branch -- the broker falls back
+  # to usage_postgres_dsn above at runtime (Settings.
+  # maintenance_mode_effective_postgres_dsn), same database, no new secret.
+  maintenanceMode:
+    backend: "postgres"

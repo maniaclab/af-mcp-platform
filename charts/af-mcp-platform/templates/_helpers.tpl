@@ -365,6 +365,26 @@ Callers pipe this through `nindent` at whatever depth their container's
       key: {{ .Values.broker.usage.postgres.existingSecret.key | quote }}
 {{- end }}
 {{- end }}
+# Maintenance-mode backend -- always set, same visibility rationale as
+# TOKEN_STORE_BACKEND above.
+- name: MAINTENANCE_MODE_BACKEND
+  value: {{ .Values.broker.maintenanceMode.backend | replace "-" "_" | quote }}
+{{- if .Values.broker.maintenanceMode.kvPathPrefix }}
+- name: MAINTENANCE_MODE_KV_PATH_PREFIX
+  value: {{ .Values.broker.maintenanceMode.kvPathPrefix | quote }}
+{{- end }}
+{{- if eq .Values.broker.maintenanceMode.backend "postgres" }}
+{{- if .Values.broker.maintenanceMode.postgres.existingSecret.name }}
+# asyncpg DSN for the postgres maintenance-mode store. Omit this secret
+# entirely to reuse broker.usage.postgres's DSN instead (Settings.
+# maintenance_mode_effective_postgres_dsn falls back to it).
+- name: MAINTENANCE_MODE_POSTGRES_DSN
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.broker.maintenanceMode.postgres.existingSecret.name | quote }}
+      key: {{ .Values.broker.maintenanceMode.postgres.existingSecret.key | quote }}
+{{- end }}
+{{- end }}
 {{- if .Values.broker.adminGroup }}
 # Admin group -- gates require_admin and every admin-only /v1 route. Only
 # rendered when set; unset means no admin surface is reachable by anyone.
