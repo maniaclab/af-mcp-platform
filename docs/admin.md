@@ -42,8 +42,8 @@ FastAPI dependency):
   client-side until `GET /v1/identities` reports `is_admin: true` for the
   caller — this is a static build with no per-request server auth state, so
   the real enforcement is server-side on the API calls the page makes, not
-  the nav visibility. Today the page's only content is the usage-by-subject
-  view below; it has no maintenance-mode control.
+  the nav visibility. The page hosts both the usage-by-subject view below
+  and the maintenance-mode toggle described next.
 - **Usage for other subjects.** `GET /v1/usage/subjects` lists the distinct
   subjects with recorded usage in a trailing window (resolved to
   unixname/email where the principal cache can), and is admin-only end to
@@ -95,8 +95,16 @@ share fate with the broker's own dependencies.
 
 ### Toggling it
 
-There is currently no portal UI for toggling maintenance mode — enable or
-disable it directly against the API:
+The portal's Admin page has a maintenance-mode section (status, reason,
+who/when it was last enabled, and enable/disable controls) for an admin who
+just wants to click a button. Every visitor, admin or not, also sees a
+banner across the top of the portal whenever maintenance mode is on — it's
+fetched from `GET /v1/admin/maintenance` with no authentication at all, so
+it renders even for someone whose session has expired or who was never
+logged in, which is the population it exists to inform.
+
+To toggle it without the portal, enable or disable it directly against the
+API:
 
 ```bash
 read -s -p "Bearer token: " MCP_BEARER_TOKEN
