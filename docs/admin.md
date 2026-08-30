@@ -93,6 +93,24 @@ switch. If you need the latter, it has to live somewhere upstream of the
 broker (an ingress-level block, a network policy, or similar) that doesn't
 share fate with the broker's own dependencies.
 
+### Don't combine an empty `admin_group` with maintenance mode
+
+If `broker.adminGroup` is ever unset or misconfigured (empty is the
+fail-closed default — see above) *while* maintenance mode is enabled, every
+principal is a non-admin, so `is_admin()` is `False` for everyone —
+including whoever meant to be the admin. `POST /v1/admin/maintenance` then
+403s unconditionally (there is no bypass), so the API alone can't turn
+maintenance mode back off. `GET /v1/admin/maintenance` stays reachable (it
+requires no auth), so you can at least confirm it's stuck on.
+
+The recovery path is still simple: `admin_group` is a `Settings` field
+(`ADMIN_GROUP` env var, `broker.adminGroup` chart value), not something
+stored in the maintenance-mode backend — restoring it to a correct group
+name and redeploying fixes `is_admin()` for everyone immediately, regardless
+of whether the maintenance-mode backend is in-memory, Vault, or Postgres.
+Direct manipulation of the maintenance store itself is only needed if chart
+or `kubectl` access is *also* unavailable.
+
 ### Toggling it
 
 The portal's Admin page has a maintenance-mode section (status, reason,
