@@ -36,6 +36,13 @@ function subjectLabel(s: UsageSubject): string {
   return s.unixname || s.email || s.subject;
 }
 
+/** Same fallback chain as subjectLabel, applied to MaintenanceStatus's
+ * enabled_by/enabled_by_unixname/enabled_by_email trio instead of a
+ * UsageSubject -- kept separate since the two response shapes differ. */
+function enabledByLabel(status: MaintenanceStatus): string {
+  return status.enabled_by_unixname || status.enabled_by_email || status.enabled_by || '';
+}
+
 onMounted(async () => {
   try {
     const res = await fetchUsageSubjects();
@@ -219,7 +226,7 @@ function formatEnabledAt(epochSeconds: number): string {
           <dt>Reason</dt>
           <dd>{{ maintenanceStatus.reason || '(none given)' }}</dd>
           <dt>Enabled by</dt>
-          <dd>{{ maintenanceStatus.enabled_by }}</dd>
+          <dd>{{ enabledByLabel(maintenanceStatus) }}</dd>
           <dt>Enabled at</dt>
           <dd>
             {{ maintenanceStatus.enabled_at ? formatEnabledAt(maintenanceStatus.enabled_at) : '—' }}
