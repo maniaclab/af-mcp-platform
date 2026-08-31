@@ -80,8 +80,10 @@ async def get_usage(
         ),
     ] = None,
 ) -> UsageResponse:
-    """Return the caller's own usage -- scoped strictly to ``principal.subject``,
-    unless an admin passes ``subject=`` to view another user's (see is_admin()).
+    """Return the caller's own usage, or an admin's chosen subject's.
+
+    Scoped strictly to ``principal.subject`` unless an admin passes
+    ``subject=`` to view another user's usage (see ``is_admin()``).
 
     Token counts are a tiktoken (o200k) ESTIMATE of tool-result context
     injection only (see the module docstring's honesty caveats);
