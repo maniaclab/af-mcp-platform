@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import yaml  # type: ignore[import-untyped]
 
 if TYPE_CHECKING:
+    from af_mcp_broker.config import Settings
     from af_mcp_broker.identity import Principal
 
 
@@ -99,6 +100,19 @@ def get_principal_permissions(
     if principal.permission_grant is not None:
         caps &= principal.permission_grant
     return caps
+
+
+def is_admin(principal: Principal, settings: Settings) -> bool:
+    """Return True when *principal* belongs to the configured admin group.
+
+    Deliberately separate from the permission engine's ``group_permissions``
+    -- "can this principal manage the platform" is a different axis than "can
+    this principal call this tool", and maintenance mode (see maintenance.py)
+    needs this same check to bypass an otherwise-universal gate, which
+    doesn't fit the permission model. An empty ``admin_group`` (the default)
+    means no admin surface is reachable by anyone.
+    """
+    return bool(settings.admin_group) and settings.admin_group in principal.groups
 
 
 def get_action_type(

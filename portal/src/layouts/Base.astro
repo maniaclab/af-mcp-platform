@@ -26,28 +26,44 @@ const { title = 'AF MCP Platform' } = Astro.props;
 
 // Sidebar nav, grouped Filament-style. Badge slots are keyed by href and
 // filled on mount from the dashboard summary (see ../lib/navSummary).
+// adminOnly items render `hidden` and are only revealed on mount once
+// GET /v1/identities reports `is_admin: true` (see the mount script below) —
+// this is a static build with no per-request server auth state, so hiding
+// happens client-side rather than by omitting the markup at render time.
 const navGroups: {
   label: string | null;
-  items: { href: string; label: string; icon: string; badge: boolean }[];
+  items: { href: string; label: string; icon: string; badge: boolean; adminOnly: boolean }[];
 }[] = [
   {
     label: null,
-    items: [{ href: '/overview/', label: 'Overview', icon: 'home', badge: false }],
+    items: [
+      { href: '/overview/', label: 'Overview', icon: 'home', badge: false, adminOnly: false },
+    ],
   },
   {
     label: 'Access',
     items: [
-      { href: '/catalog/', label: 'Services', icon: 'servers', badge: true },
-      { href: '/identities/', label: 'Identities', icon: 'identity', badge: true },
+      { href: '/catalog/', label: 'Services', icon: 'servers', badge: true, adminOnly: false },
+      {
+        href: '/identities/',
+        label: 'Identities',
+        icon: 'identity',
+        badge: true,
+        adminOnly: false,
+      },
     ],
   },
   {
     label: 'Credentials',
-    items: [{ href: '/tokens/', label: 'Tokens', icon: 'key', badge: true }],
+    items: [{ href: '/tokens/', label: 'Tokens', icon: 'key', badge: true, adminOnly: false }],
   },
   {
     label: 'Activity',
-    items: [{ href: '/usage/', label: 'Usage', icon: 'chart', badge: false }],
+    items: [{ href: '/usage/', label: 'Usage', icon: 'chart', badge: false, adminOnly: false }],
+  },
+  {
+    label: 'Platform',
+    items: [{ href: '/admin/', label: 'Admin', icon: 'shield', badge: false, adminOnly: true }],
   },
 ];
 
@@ -115,6 +131,22 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
       }
       .skip-link:focus {
         top: 1rem;
+      }
+
+      /* Maintenance banner ------------------------------------------------------
+       Revealed on mount (see the mount script below) for EVERY visitor --
+       authenticated or not -- fetched from GET /v1/admin/maintenance, which
+       carries no authentication requirement at all so it stays reachable for
+       whoever is currently blocked by maintenance mode on everything else.
+    ----------------------------------------------------------------------- */
+      .af-maintenance-banner {
+        padding: 0.625rem 2rem;
+        background: rgb(from var(--color-af-amber) r g b / 0.12);
+        border-bottom: 1px solid rgb(from var(--color-af-amber) r g b / 0.3);
+        color: var(--color-af-amber);
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 0.8125rem;
+        text-align: center;
       }
 
       /* Shell ------------------------------------------------------------------
@@ -483,6 +515,8 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
 
     <a href="#main-content" class="skip-link">Skip to content</a>
 
+    <div data-af-maintenance-banner class="af-maintenance-banner" role="alert" hidden></div>
+
     <div class="af-shell">
       <aside class="af-sidebar" id="af-sidebar">
         <a href="/overview/" class="af-sidebar__logo" aria-label="AF MCP Platform home">
@@ -495,10 +529,10 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
               <div class="af-sidebar__group">
                 {group.label && <p class="af-sidebar__group-label">{group.label}</p>}
                 <ul class="af-sidebar__list" role="list">
-                  {group.items.map(({ href, label, icon, badge }) => {
+                  {group.items.map(({ href, label, icon, badge, adminOnly }) => {
                     const isActive = currentPath.startsWith(href.replace(/\/$/, ''));
                     return (
-                      <li>
+                      <li hidden={adminOnly} data-af-admin-nav={adminOnly || undefined}>
                         <a
                           href={href}
                           class="af-sidebar__link"
@@ -589,10 +623,35 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
         clearIdentitiesCache,
         fetchDashboardSummary,
         fetchIdentities,
+        fetchMaintenanceStatus,
         revokeAllCredentials,
       } from '../lib/api';
       import { getUser, isOidcConfigured, login, logout } from '../lib/auth';
+      import { maintenanceBannerText } from '../lib/maintenanceBanner';
       import { navBadges } from '../lib/navSummary';
+
+      // Runs independently of the auth check below, and before it -- GET
+      // /v1/admin/maintenance requires no authentication at all (see
+      // fetchMaintenanceStatus's docstring), precisely so a visitor currently
+      // locked out by maintenance mode on every other route -- including one
+      // with no session at all, or one about to be redirected to Keycloak by
+      // the auth check just below -- still sees why.
+      (async () => {
+        const banner = document.querySelector<HTMLElement>('[data-af-maintenance-banner]');
+        if (!banner) return;
+        try {
+          const status = await fetchMaintenanceStatus();
+          const text = maintenanceBannerText(status);
+          if (text) {
+            banner.textContent = text;
+            banner.hidden = false;
+          }
+        } catch {
+          // Fails open, same as the broker route itself (api/admin.py) -- an
+          // unreachable maintenance store or a network error must not put a
+          // false banner in front of every visitor.
+        }
+      })();
 
       // Off-canvas sidebar toggle — registered before the auth check so the
       // drawer works even when the page renders unauthenticated (dev bypass).
@@ -661,6 +720,13 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
 
         try {
           const id = await fetchIdentities();
+
+          if (id.is_admin) {
+            document.querySelectorAll<HTMLElement>('[data-af-admin-nav]').forEach((el) => {
+              el.hidden = false;
+            });
+          }
+
           const label = id.email || id.unixname;
           if (!label) return;
           document.querySelectorAll<HTMLElement>('[data-af-identity]').forEach((el) => {

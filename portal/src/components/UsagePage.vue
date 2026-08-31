@@ -6,11 +6,18 @@
  * that refetches on change. Everything here is an ESTIMATE (tokenized
  * tool-result text priced at one model's input rate, not provider-reported
  * spend) and is labeled as such — see the broker's GET /v1/usage caveats.
+ *
+ * `subject` is optional and only meaningful for an admin caller: passing it
+ * views that subject's usage instead of the caller's own (AdminPage.vue's
+ * usage-for-other-users dropdown; see api/usage.py::get_usage). Self-service
+ * usage.astro renders this with no `subject`, unchanged from before.
  */
 import { ref, computed, onMounted } from 'vue';
 import { AccessDeniedError, fetchUsage, SessionExpiredError } from '../lib/api';
 import type { UsageResponse } from '../lib/api';
 import { formatBytes, formatCost, formatTokens } from '../lib/usageFormat';
+
+const props = defineProps<{ subject?: string }>();
 
 const WINDOWS = [7, 30, 90] as const;
 
@@ -25,7 +32,10 @@ async function load(): Promise<void> {
   loading.value = true;
   error.value = null;
   try {
-    usage.value = await fetchUsage(days.value);
+    // `subject` is expected to be static for this component's lifetime --
+    // AdminPage.vue remounts us (via :key) rather than changing it on a
+    // live instance, so there's no watcher reloading on a `subject` change.
+    usage.value = await fetchUsage(days.value, props.subject);
   } catch (err) {
     usage.value = null;
     if (err instanceof AccessDeniedError) {

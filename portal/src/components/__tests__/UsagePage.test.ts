@@ -124,14 +124,16 @@ describe('UsagePage', () => {
     vi.mocked(fetchUsage).mockResolvedValue(USAGE);
     const wrapper = mount(UsagePage);
     await flushPromises();
-    expect(fetchUsage).toHaveBeenCalledWith(30);
+    // With no `subject` prop, UsagePage always passes it through as
+    // `undefined` -- fetchUsage treats that identically to omitting it.
+    expect(fetchUsage).toHaveBeenCalledWith(30, undefined);
 
     const ninety = wrapper.findAll('button').find((b) => b.text() === '90d');
     expect(ninety).toBeDefined();
     await ninety!.trigger('click');
     await flushPromises();
 
-    expect(fetchUsage).toHaveBeenCalledWith(90);
+    expect(fetchUsage).toHaveBeenCalledWith(90, undefined);
   });
 
   it('renders a friendly empty state when the window has no calls', async () => {

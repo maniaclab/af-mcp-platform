@@ -145,6 +145,38 @@ async def test_query_excludes_records_outside_the_trailing_window() -> None:
     assert sum(a.calls for a in aggs_year) == 2
 
 
+async def test_list_subjects_returns_distinct_subjects_in_window() -> None:
+    store = InMemoryUsageStore()
+    await store.record(_record(principal_sub="alice"))
+    await store.record(_record(principal_sub="bob"))
+    await store.record(_record(principal_sub="alice"))
+
+    subjects = await store.list_subjects(days=30)
+
+    assert sorted(subjects) == ["alice", "bob"]
+
+
+async def test_list_subjects_dedups_a_subject_across_multiple_counter_keys() -> None:
+    """A subject's usage is keyed by (subject, day, service, method, outcome)
+    -- one subject spread across multiple keys (here, two services) must
+    still surface once, not once per key."""
+    store = InMemoryUsageStore()
+    await store.record(_record(principal_sub="alice", mcp_service="rucio"))
+    await store.record(
+        _record(principal_sub="alice", mcp_service="ami", action="ami_list_datasets")
+    )
+
+    assert await store.list_subjects(days=30) == ["alice"]
+
+
+async def test_list_subjects_excludes_outside_window() -> None:
+    store = InMemoryUsageStore()
+    old_ts = (datetime.now(tz=UTC) - timedelta(days=90)).timestamp()
+    await store.record(_record(principal_sub="stale", timestamp=old_ts))
+
+    assert await store.list_subjects(days=30) == []
+
+
 # ---------------------------------------------------------------------------
 # Module-level wiring -- mirrors audit/pipeline.py's init/aclose/helper shape.
 # ---------------------------------------------------------------------------

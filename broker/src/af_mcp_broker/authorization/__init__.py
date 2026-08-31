@@ -7,6 +7,7 @@ from af_mcp_broker.authorization.base import (
     check_entitlement,
     get_action_type,
     get_principal_permissions,
+    is_admin,
     load_policy,
 )
 
@@ -17,5 +18,6 @@ __all__ = [
     "check_entitlement",
     "get_action_type",
     "get_principal_permissions",
+    "is_admin",
     "load_policy",
 ]

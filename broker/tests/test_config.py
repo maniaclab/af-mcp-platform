@@ -264,6 +264,35 @@ def test_vault_config_raises_when_principal_cache_backend_vault_and_auth_role_mi
 
 
 # ---------------------------------------------------------------------------
+# Vault MaintenanceModeStore backend config — shares the same
+# vault_addr/vault_auth_role validation as the TokenStore/TokenRegistry/
+# PrincipalCache backends above.
+# ---------------------------------------------------------------------------
+
+
+def test_vault_config_ok_when_maintenance_mode_backend_is_in_memory():
+    Settings(maintenance_mode_backend="in_memory")  # must not raise
+
+
+def test_vault_config_ok_when_maintenance_mode_backend_vault_and_addr_and_role_set():
+    Settings(
+        maintenance_mode_backend="vault",
+        vault_addr="https://vault.example",
+        vault_auth_role="af-mcp-broker",
+    )  # must not raise
+
+
+def test_vault_config_raises_when_maintenance_mode_backend_vault_and_addr_missing():
+    with pytest.raises(ValueError, match="vault_addr"):
+        Settings(maintenance_mode_backend="vault", vault_auth_role="af-mcp-broker")
+
+
+def test_vault_config_raises_when_maintenance_mode_backend_vault_and_auth_role_missing():
+    with pytest.raises(ValueError, match="vault_auth_role"):
+        Settings(maintenance_mode_backend="vault", vault_addr="https://vault.example")
+
+
+# ---------------------------------------------------------------------------
 # /mcp aggregator transport mode (issue #128)
 # ---------------------------------------------------------------------------
 
@@ -561,3 +590,52 @@ def test_usage_store_postgres_raises_when_dsn_missing():
 def test_usage_store_rejects_unknown_backend():
     with pytest.raises(ValueError, match="usage_store_backend"):
         Settings(usage_store_backend="mysql")
+
+
+# ---------------------------------------------------------------------------
+# Admin group (admin gating)
+# ---------------------------------------------------------------------------
+
+
+def test_admin_group_defaults_to_empty():
+    settings = Settings()
+    assert settings.admin_group == ""
+
+
+# ---------------------------------------------------------------------------
+# Maintenance mode backend
+# ---------------------------------------------------------------------------
+
+
+def test_maintenance_mode_backend_defaults_to_in_memory():
+    settings = Settings()
+    assert settings.maintenance_mode_backend == "in_memory"
+    assert settings.maintenance_mode_postgres_dsn is None
+
+
+def test_maintenance_mode_postgres_ok_when_own_dsn_set():
+    Settings(
+        maintenance_mode_backend="postgres",
+        maintenance_mode_postgres_dsn="postgresql://broker:pw@pg.example/maint",
+    )  # must not raise
+
+
+def test_maintenance_mode_postgres_falls_back_to_usage_dsn():
+    settings = Settings(
+        maintenance_mode_backend="postgres",
+        usage_postgres_dsn="postgresql://broker:pw@pg.example/usage",
+    )  # must not raise -- reuses usage_postgres_dsn
+    assert (
+        settings.maintenance_mode_effective_postgres_dsn.get_secret_value()
+        == "postgresql://broker:pw@pg.example/usage"
+    )
+
+
+def test_maintenance_mode_postgres_raises_when_no_dsn_available():
+    with pytest.raises(ValueError, match="maintenance_mode_postgres_dsn"):
+        Settings(maintenance_mode_backend="postgres")
+
+
+def test_maintenance_mode_rejects_unknown_backend():
+    with pytest.raises(ValueError, match="maintenance_mode_backend"):
+        Settings(maintenance_mode_backend="mysql")

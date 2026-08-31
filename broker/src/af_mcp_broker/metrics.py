@@ -157,3 +157,17 @@ condor_tokens_issued_total = Counter(
     "identity label -- see module docstring.",
     ["target"],
 )
+
+maintenance_store_unavailable_total = Counter(
+    "af_mcp_maintenance_store_unavailable_total",
+    "require_not_in_maintenance (identity.py, /v1) or AsgiAuthMiddleware "
+    "(mcp/middleware/identity_mw.py, /mcp) failed to reach the "
+    "maintenance-mode store and fell open, letting the non-admin request "
+    "through as if maintenance mode were disabled -- see either call site's "
+    "docstring for why this fails open rather than closed, and for the "
+    "resulting limitation: maintenance mode cannot be relied on as an "
+    "incident-containment control if the store itself is within the "
+    "incident's blast radius. A nonzero rate means maintenance mode has "
+    "silently stopped enforcing and needs operator attention. No labels "
+    "-- see module docstring.",
+)

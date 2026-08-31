@@ -8,6 +8,8 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict
 
+from af_mcp_broker.authorization import is_admin
+from af_mcp_broker.config import get_settings
 from af_mcp_broker.credentials import X509Provider
 from af_mcp_broker.identity import Principal, keycloak_dependency
 
@@ -114,6 +116,10 @@ class IdentitiesResponse(BaseModel):
     gid: int | None
     groups: list[str]
     providers: list[IdentityProvider]
+    # True when the caller is a member of Settings.admin_group -- gates the
+    # portal's Admin nav entry and admin-only views. False whenever
+    # admin_group is unconfigured.
+    is_admin: bool
 
 
 # ---------------------------------------------------------------------------
@@ -233,6 +239,7 @@ async def get_identities(
     principal: Annotated[Principal, Depends(keycloak_dependency)],
 ) -> IdentitiesResponse:
     providers = await _build_providers(request, principal)
+    settings = getattr(request.app.state, "settings", None) or get_settings()
     return IdentitiesResponse(
         subject=principal.subject,
         email=principal.email,
@@ -241,6 +248,7 @@ async def get_identities(
         gid=principal.gid,
         groups=principal.groups,
         providers=providers,
+        is_admin=is_admin(principal, settings),
     )
 
 

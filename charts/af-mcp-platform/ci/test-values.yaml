@@ -82,6 +82,12 @@ broker:
   # the diff.
   principalCache:
     backend: "vault"
+  # Exercises the Vault-backed maintenance-mode template path (shares the
+  # tokenStore.vault connection above — see values.yaml's `maintenanceMode`
+  # comments) so a broken render is caught here, not just by eyeballing
+  # the diff.
+  maintenanceMode:
+    backend: "vault"
   # Exercises the TOKEN_MINT_CLIENT_ID/TOKEN_MINT_CLIENT_SECRET template
   # path in CI so a broken render is caught by `helm template`, not just by
   # eyeballing the diff. `existingClientSecretSecret` only needs to name a

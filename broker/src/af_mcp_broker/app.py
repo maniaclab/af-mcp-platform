@@ -51,6 +51,12 @@ from af_mcp_broker.credentials.cache import RateLimitError
 from af_mcp_broker.http import aclose_http_client
 from af_mcp_broker.identity import build_dev_principal, get_jwks, issuer_is_local
 from af_mcp_broker.logging import configure_logging
+from af_mcp_broker.maintenance import (
+    InMemoryMaintenanceModeStore,
+    MaintenanceModeStore,
+    PostgresMaintenanceModeStore,
+    VaultMaintenanceModeStore,
+)
 from af_mcp_broker.mcp.aggregator import (
     build_aggregator,
     build_asgi_auth_middleware,
@@ -205,6 +211,31 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
             replica_count=settings.mcp_replica_count,
         )
 
+    # --- Maintenance mode backend (config.py's maintenance_mode_backend): the
+    # in_memory backend is process-local, so toggling maintenance mode (via
+    # the admin API, api/admin.py) only takes effect on the replica that
+    # handled the toggle -- every other replica keeps admitting requests as
+    # if nothing changed. Same warn-never-fail shape as the
+    # mcp_stateful_multi_replica check above: a single-replica or local-dev
+    # deployment legitimately wants this default with no extra infra, so this
+    # can only warn.
+    if (
+        settings.maintenance_mode_backend == "in_memory"
+        and settings.mcp_replica_count is not None
+        and settings.mcp_replica_count > 1
+    ):
+        logger.warning(
+            "maintenance_mode_in_memory_multi_replica",
+            message=(
+                "maintenance_mode_backend=in_memory with more than one "
+                "broker replica: toggling maintenance mode only affects the "
+                "replica that handled the toggle, so other replicas keep "
+                "serving normally. Select maintenance_mode_backend=vault or "
+                "=postgres for a toggle that's visible to every replica."
+            ),
+            replica_count=settings.mcp_replica_count,
+        )
+
     # --- Authorization: the authorization/ engine matches the shipped policy.yaml.
     try:
         entitlement_policy = load_policy(settings.policy_file)
@@ -315,9 +346,10 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
 
     # --- Vault/OpenBao transport: one VaultKV instance (one K8s auth login
     # per process) shared by the oauth21 token store, the token registry,
-    # the principal cache, and the x509 link/proxy store below, whichever of
-    # the four (or more) is configured to use Vault — see vault_kv.py's
-    # module docstring for the transport/domain split.
+    # the principal cache, the maintenance-mode store, and the x509
+    # link/proxy store below, whichever of the five (or more) is configured
+    # to use Vault — see vault_kv.py's module docstring for the
+    # transport/domain split.
     # A service-mode x509 entry implies the x509 store: in service mode
     # proxies and passphrases persist in Vault (Settings._validate_vault_config
     # already refused to construct `settings` without the connection
@@ -327,6 +359,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         settings.token_store_backend == "vault"
         or settings.token_registry_backend == "vault"
         or settings.principal_cache_backend == "vault"
+        or settings.maintenance_mode_backend == "vault"
         or has_service_mode_x509_cfg
     ):
         vault_kv = VaultKV(
@@ -717,13 +750,34 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         )
         raise RuntimeError(msg)
 
+    # --- Maintenance mode (maintenance.py): one MaintenanceModeStore for the
+    # whole process, selected the same in_memory/vault/postgres way as
+    # token_registry_backend/principal_cache_backend above, sharing the same
+    # vault_kv transport instance when Vault-backed.
+    maintenance_mode_store: MaintenanceModeStore
+    if settings.maintenance_mode_backend == "vault":
+        assert vault_kv is not None  # guaranteed by the vault_kv check above
+        maintenance_mode_store = VaultMaintenanceModeStore(
+            vault_kv=vault_kv,
+            kv_path_prefix=settings.maintenance_mode_kv_path_prefix,
+        )
+    elif settings.maintenance_mode_backend == "postgres":
+        dsn = settings.maintenance_mode_effective_postgres_dsn
+        assert dsn is not None  # guaranteed by _validate_maintenance_mode_config
+        maintenance_mode_store = PostgresMaintenanceModeStore(dsn.get_secret_value())
+    else:
+        maintenance_mode_store = InMemoryMaintenanceModeStore()
+    await maintenance_mode_store.start()
+
     # --- MCP aggregator: the FastMCP instance and its ASGI app already exist
     # (built eagerly at module scope below, since the aggregator must be
     # mountable before Settings()/ServiceRegistry() are known — see the
     # comment above `_mcp_aggregator`). Push the registry/policy/settings/
-    # credential_registry/revoked_jti_cache/identity providers just loaded
-    # above into it now that they're real -- the last three feed the af_*
-    # diagnostic tools (issue #153).
+    # credential_registry/revoked_jti_cache/identity providers/maintenance_mode_store
+    # just loaded above into it now that they're real -- the middle three
+    # feed the af_* diagnostic tools (issue #153), and maintenance_mode_store
+    # feeds AsgiAuthMiddleware's /mcp enforcement (mirroring /v1's
+    # require_not_in_maintenance, which reads it straight off app.state).
     populate_aggregator(
         _mcp_aggregator,
         service_registry,
@@ -737,6 +791,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         identity_provider_configs=identity_provider_configs,
         target_to_alias=target_to_alias,
         broker_token_issuer=broker_token_issuer,
+        maintenance_mode_store=maintenance_mode_store,
     )
 
     # --- Audit: without init the module drops every record. Honor AUDIT_LOG_FILE.
@@ -789,6 +844,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     application.state.mcp_auth_code_store = mcp_auth_code_store
     application.state.broker_token_issuer = broker_token_issuer
     application.state.usage_store = usage_store
+    application.state.maintenance_mode_store = maintenance_mode_store
 
     # Prime the JWKS cache at startup so the first request does not pay the
     # latency cost of a remote fetch.
@@ -821,6 +877,12 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # The usage store closes only after the pipeline drain above -- drained
     # records are still being accounted right up to the last audit write.
     await aclose_usage_store()
+    # The maintenance-mode store has no ordering dependency on the
+    # audit/metering/usage chain above -- it is never read or written from
+    # the tool-call path those drain, only from the /v1 and /mcp request-gate
+    # checks (both already stopped serving new requests by the time shutdown
+    # reaches here) and, later, the admin API. Close it whenever convenient.
+    await maintenance_mode_store.aclose()
     if metrics_server is not None:
         metrics_server.shutdown()
         metrics_server.server_close()

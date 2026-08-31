@@ -208,6 +208,12 @@ class Settings(BaseSettings):
     # registry.BUILTIN_SERVICE_NAME.
     builtin_service_name: str = BUILTIN_SERVICE_NAME
 
+    # Keycloak group whose members see and can use every admin-only broker
+    # surface (require_admin dependency, authorization/base.py's is_admin).
+    # Empty means no admin surface is reachable by anyone: fail closed, no
+    # magic default group name.
+    admin_group: str = ""
+
     # Audit log destination; "-" means stdout
     audit_log_file: str = "-"
 
@@ -245,6 +251,26 @@ class Settings(BaseSettings):
     # `uri` key of the operator-generated `<cluster>-pguser-<user>` secret,
     # wired in the chart via broker.usage.postgres.existingSecret.
     usage_postgres_dsn: SecretStr | None = None
+
+    # Which MaintenanceModeStore implementation (maintenance.py) holds the
+    # broker's maintenance-mode flag -- must be visible to every replica
+    # consistently. Mirrors the in_memory/vault/postgres selection shape
+    # used elsewhere in this file for token_registry_backend and others.
+    # "in_memory" is the single-replica/local-dev default; a startup check
+    # elsewhere warns (never fails) when it's selected alongside more than
+    # one replica, since maintenance mode then won't propagate across pods.
+    maintenance_mode_backend: Literal["in_memory", "vault", "postgres"] = "in_memory"
+
+    # asyncpg-compatible DSN for the postgres maintenance-mode store. Falls
+    # back to usage_postgres_dsn when unset (maintenance_mode_effective_
+    # postgres_dsn below) -- a facility already running Postgres for usage
+    # reuses it with no new secret, but isn't forced to couple the two.
+    maintenance_mode_postgres_dsn: SecretStr | None = None
+
+    # KV-v2 path prefix for the persisted maintenance-mode record, distinct
+    # from every other Vault-backed store's prefix so they never collide
+    # under the same kv_mount.
+    maintenance_mode_kv_path_prefix: str = "mcp/maintenance-mode"
 
     # Model key (a tokencost.TOKEN_COSTS entry) whose *input* token price
     # turns GET /v1/usage's result_tokens_est sums into estimated_cost_usd at
@@ -617,6 +643,15 @@ class Settings(BaseSettings):
         return self.oauth21_state_issuer or self.oidc_issuer
 
     @property
+    def maintenance_mode_effective_postgres_dsn(self) -> SecretStr | None:
+        """``maintenance_mode_postgres_dsn`` if set, else ``usage_postgres_dsn``.
+
+        Computed at read time (like ``broker_token_effective_issuer``) so it
+        always reflects the current value of either field.
+        """
+        return self.maintenance_mode_postgres_dsn or self.usage_postgres_dsn
+
+    @property
     def oidc_backchannel_url(self) -> str:
         """Realm URL for server-to-server Keycloak calls.
 
@@ -777,11 +812,12 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _validate_vault_config(self) -> Settings:
-        """Fail startup loudly when any Vault-backed store is selected but the settings they depend on are not — a half-configured VaultTokenStore/VaultTokenRegistryBackend/VaultPrincipalCacheBackend/VaultX509Store would otherwise fail at first request instead of at boot (see also app.py's lifespan trial authentication). All four stores share the same Vault connection settings (only their kv_path_prefix differs), so one validator covers any or all being selected. voms-token-service mode — an x509 identity_providers entry with a service_url — implies the x509 store: in service mode proxies and passphrases persist in Vault, there is no in-memory fallback (a legacy-mode x509 entry, no service_url, touches no Vault store and imposes nothing here)."""
+        """Fail startup loudly when any Vault-backed store is selected but the settings they depend on are not — a half-configured VaultTokenStore/VaultTokenRegistryBackend/VaultPrincipalCacheBackend/VaultMaintenanceModeStore/VaultX509Store would otherwise fail at first request instead of at boot (see also app.py's lifespan trial authentication). All five stores share the same Vault connection settings (only their kv_path_prefix differs), so one validator covers any or all being selected. voms-token-service mode — an x509 identity_providers entry with a service_url — implies the x509 store: in service mode proxies and passphrases persist in Vault, there is no in-memory fallback (a legacy-mode x509 entry, no service_url, touches no Vault store and imposes nothing here)."""
         if (
             self.token_store_backend != "vault"
             and self.token_registry_backend != "vault"
             and self.principal_cache_backend != "vault"
+            and self.maintenance_mode_backend != "vault"
             and not any(
                 p.type == "x509" and p.service_url is not None
                 for p in self.identity_providers
@@ -793,33 +829,36 @@ class Settings(BaseSettings):
                 "vault_config_invalid",
                 reason=(
                     "vault_addr is empty but token_store_backend, "
-                    "token_registry_backend, and/or principal_cache_backend "
-                    "is 'vault', or voms-token-service mode is configured "
-                    "(an x509 identity_providers entry with a service_url)"
+                    "token_registry_backend, principal_cache_backend, "
+                    "and/or maintenance_mode_backend is 'vault', or "
+                    "voms-token-service mode is configured (an x509 "
+                    "identity_providers entry with a service_url)"
                 ),
             )
             raise ValueError(
                 "vault_addr (VAULT_ADDR) must be set when token_store_backend, "
-                "token_registry_backend, or principal_cache_backend is 'vault' "
-                "or voms-token-service mode is configured (an x509 "
-                "identity_providers entry with a service_url)."
+                "token_registry_backend, principal_cache_backend, or "
+                "maintenance_mode_backend is 'vault' or voms-token-service "
+                "mode is configured (an x509 identity_providers entry with a "
+                "service_url)."
             )
         if not self.vault_auth_role:
             log.error(
                 "vault_config_invalid",
                 reason=(
                     "vault_auth_role is empty but token_store_backend, "
-                    "token_registry_backend, and/or principal_cache_backend "
-                    "is 'vault', or voms-token-service mode is configured "
-                    "(an x509 identity_providers entry with a service_url)"
+                    "token_registry_backend, principal_cache_backend, "
+                    "and/or maintenance_mode_backend is 'vault', or "
+                    "voms-token-service mode is configured (an x509 "
+                    "identity_providers entry with a service_url)"
                 ),
             )
             raise ValueError(
                 "vault_auth_role (VAULT_AUTH_ROLE) must be set when "
-                "token_store_backend, token_registry_backend, or "
-                "principal_cache_backend is 'vault' or voms-token-service "
-                "mode is configured (an x509 identity_providers entry with a "
-                "service_url)."
+                "token_store_backend, token_registry_backend, "
+                "principal_cache_backend, or maintenance_mode_backend is "
+                "'vault' or voms-token-service mode is configured (an x509 "
+                "identity_providers entry with a service_url)."
             )
         return self
 
@@ -841,6 +880,28 @@ class Settings(BaseSettings):
                 "usage_postgres_dsn (USAGE_POSTGRES_DSN) must be set when "
                 "usage_store_backend is 'postgres' -- typically the `uri` key "
                 "of a Crunchy PGO `<cluster>-pguser-<user>` secret."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_maintenance_mode_config(self) -> Settings:
+        """Fail startup loudly when the postgres maintenance-mode backend is selected without a DSN (its own, or usage_postgres_dsn as a fallback) -- same rationale as ``_validate_usage_store_config``."""
+        if self.maintenance_mode_backend != "postgres":
+            return self
+        dsn = self.maintenance_mode_effective_postgres_dsn
+        if dsn is None or not dsn.get_secret_value():
+            log.error(
+                "maintenance_mode_config_invalid",
+                reason=(
+                    "maintenance_mode_postgres_dsn and usage_postgres_dsn "
+                    "are both empty but maintenance_mode_backend is "
+                    "'postgres'"
+                ),
+            )
+            raise ValueError(
+                "maintenance_mode_postgres_dsn (MAINTENANCE_MODE_POSTGRES_DSN) "
+                "or usage_postgres_dsn (USAGE_POSTGRES_DSN) must be set when "
+                "maintenance_mode_backend is 'postgres'."
             )
         return self
 

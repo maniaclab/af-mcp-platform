@@ -53,6 +53,7 @@ def _all_counters() -> list:
         metrics.metering_worker_processed_total,
         metrics.metering_worker_errors_total,
         metrics.metering_records_missing_measurements_total,
+        metrics.maintenance_store_unavailable_total,
     ]
 
 
@@ -168,3 +169,15 @@ def test_x509_proxy_mints_total_has_no_labels():
     docstring's cardinality policy."""
     assert _full_name(metrics.x509_proxy_mints_total) == "af_mcp_x509_proxy_mints_total"
     assert metrics.x509_proxy_mints_total._labelnames == ()
+
+
+def test_maintenance_store_unavailable_total_has_no_labels():
+    """No subject/identity label -- this fires from require_not_in_maintenance
+    (identity.py) when the maintenance store itself can't be reached; see
+    that function's docstring for why the resulting behavior is a fail-open,
+    not a per-caller decision worth labeling."""
+    assert (
+        _full_name(metrics.maintenance_store_unavailable_total)
+        == "af_mcp_maintenance_store_unavailable_total"
+    )
+    assert metrics.maintenance_store_unavailable_total._labelnames == ()

@@ -1,12 +1,14 @@
 """Tests for ``GET /v1/usage`` -- self-service usage with read-time cost.
 
-The endpoint is strictly self-scoped (a caller only ever sees their own
-subject's aggregates) and prices stored token ESTIMATES at read time via
-tokencost's bundled static price table -- dollars are never stored, and no
-network is ever touched (the pod is egress-deny; see the socket-disabled
-test). ``PINNED_MODEL`` must stay a key of the installed tokencost's
-TOKEN_COSTS so the expected costs below are plain Decimal math against the
-bundled table.
+The endpoint is self-scoped by default (a caller sees only their own
+subject's aggregates) with one override: a caller in ``settings.admin_group``
+may pass ``?subject=`` to view another subject's usage instead of their own
+(see the admin-override tests below). It prices stored token ESTIMATES at
+read time via tokencost's bundled static price table -- dollars are never
+stored, and no network is ever touched (the pod is egress-deny; see the
+socket-disabled test). ``PINNED_MODEL`` must stay a key of the installed
+tokencost's TOKEN_COSTS so the expected costs below are plain Decimal math
+against the bundled table.
 """
 
 from __future__ import annotations
@@ -26,6 +28,8 @@ from tokencost import (  # type: ignore[import-untyped]
 from af_mcp_broker.audit import AuditRecord
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from fastapi.testclient import TestClient
 
 # The broker's default cost_reference_model (config.py) -- pinned here so a
@@ -200,6 +204,70 @@ def test_usage_is_scoped_to_the_calling_subject(app_client, make_principal) -> N
     assert body["totals"]["result_tokens_est"] == 7
 
 
+def test_usage_subject_override_requires_admin(
+    monkeypatch: pytest.MonkeyPatch,
+    app_client_factory: Callable[..., object],
+    make_principal: Callable[..., object],
+) -> None:
+    """A non-admin caller passing ?subject= is rejected -- it never silently
+    falls back to serving their own usage instead."""
+    monkeypatch.setenv("ADMIN_GROUP", "af-admins")
+
+    with app_client_factory() as (client, state):
+        state["principal"] = make_principal(groups=["atlas"])
+        resp = client.get("/v1/usage", params={"subject": "sub-other"})
+
+    assert resp.status_code == 403, resp.text
+    assert "admin" in resp.json()["detail"].lower()
+
+
+def test_usage_subject_override_for_admin_returns_that_subjects_usage(
+    monkeypatch: pytest.MonkeyPatch,
+    app_client_factory: Callable[..., object],
+    make_principal: Callable[..., object],
+) -> None:
+    monkeypatch.setenv("ADMIN_GROUP", "af-admins")
+
+    with app_client_factory() as (client, state):
+        state["principal"] = make_principal(groups=["atlas", "af-admins"])
+        _seed(
+            client,
+            _record(),
+            _record(principal_sub="sub-other", result_tokens_est=7),
+        )
+
+        resp = client.get("/v1/usage", params={"subject": "sub-other"})
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["subject"] == "sub-other"
+    assert body["totals"]["calls"] == 1
+    assert body["totals"]["result_tokens_est"] == 7
+
+
+def test_usage_subject_override_for_admin_matching_own_subject_is_a_noop(
+    monkeypatch: pytest.MonkeyPatch,
+    app_client_factory: Callable[..., object],
+    make_principal: Callable[..., object],
+) -> None:
+    """An admin passing their own subject back gets the same result as
+    omitting the parameter entirely -- the override is not a special path
+    when it happens to match the caller."""
+    monkeypatch.setenv("ADMIN_GROUP", "af-admins")
+
+    with app_client_factory() as (client, state):
+        state["principal"] = make_principal(groups=["atlas", "af-admins"])
+        _seed(client, _record())
+
+        resp = client.get("/v1/usage", params={"subject": "sub-abc"})
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["subject"] == "sub-abc"
+    assert body["totals"]["calls"] == 1
+    assert body["totals"]["result_tokens_est"] == 1000
+
+
 def test_usage_requires_authentication(app_client) -> None:
     """Missing bearer is a 401 from the real keycloak_dependency (the
     override-removal technique test_tokens_api.py uses)."""
@@ -216,3 +284,55 @@ def test_usage_requires_authentication(app_client) -> None:
             app.dependency_overrides[keycloak_dependency] = saved
 
     assert resp.status_code == 401, resp.text
+
+
+def test_usage_subjects_requires_admin(app_client_factory) -> None:
+    with app_client_factory() as (client, _state):
+        resp = client.get("/v1/usage/subjects")
+        assert resp.status_code == 403
+
+
+def test_usage_subjects_resolves_unixname(
+    app_client_factory, monkeypatch, make_principal, static_principal_cache
+) -> None:
+    monkeypatch.setenv("ADMIN_GROUP", "af-admins")
+    cache, directory = static_principal_cache
+    directory.groups_by_subject["someone-else"] = ["atlas"]
+    directory.posix_by_subject["someone-else"] = {"unixname": "sperson"}
+
+    with app_client_factory() as (client, state):
+        state["principal"] = make_principal(groups=["atlas", "af-admins"])
+        client.app.state.principal_cache = cache
+        _seed(client, _record(principal_sub="someone-else"))
+
+        resp = client.get("/v1/usage/subjects")
+
+    assert resp.status_code == 200, resp.text
+    assert {
+        "subject": "someone-else",
+        "unixname": "sperson",
+        "email": "",
+    } in resp.json()["subjects"]
+
+
+def test_usage_subjects_falls_back_to_bare_subject_when_unresolvable(
+    app_client_factory, monkeypatch, make_principal, static_principal_cache
+) -> None:
+    """A subject the principal directory no longer knows about (e.g. a
+    deleted user) still appears in the list -- with no unixname/email,
+    rather than 500ing or silently dropping them from the response."""
+    monkeypatch.setenv("ADMIN_GROUP", "af-admins")
+    cache, directory = static_principal_cache
+    directory.unavailable_subjects.add("ghost")
+
+    with app_client_factory() as (client, state):
+        state["principal"] = make_principal(groups=["atlas", "af-admins"])
+        client.app.state.principal_cache = cache
+        _seed(client, _record(principal_sub="ghost"))
+
+        resp = client.get("/v1/usage/subjects")
+
+    assert resp.status_code == 200, resp.text
+    assert {"subject": "ghost", "unixname": None, "email": ""} in resp.json()[
+        "subjects"
+    ]
