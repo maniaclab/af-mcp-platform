@@ -30,6 +30,16 @@ log = structlog.get_logger(__name__)
 
 router = APIRouter(tags=["credentials"])
 
+# Separate from `router`: holds only routes authenticated by an AF Broker
+# Identity Token (redeem_x509_proxy below), never a Keycloak token. Mounted
+# in api/router.py WITHOUT the maintenance-mode dependency -- that
+# dependency resolves its caller via keycloak_dependency to check for
+# admin-bypass, and an AF Broker Identity Token can never satisfy that (it
+# isn't a Keycloak token and carries no groups), so every backend redeem
+# call 401'd as "Invalid or expired token" regardless of maintenance state
+# when this router was still folded into the gated one.
+backend_router = APIRouter(tags=["credentials"])
+
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
@@ -627,7 +637,7 @@ async def _redeem_from_vault(
     )
 
 
-@router.post(
+@backend_router.post(
     "/credentials/x509/redeem",
     response_model=ProxyRedeemResponse,
     summary="Redeem the caller's cached x509 proxy (backend-facing)",

@@ -215,10 +215,11 @@ class BrokerTokenIssuer:
             except jwt.InvalidSignatureError:
                 continue  # try the next rotation key
             except jwt.InvalidTokenError as exc:
-                # TEMPORARY (debugging rucio-mcp redeem 401s): verify() has
-                # historically returned bare None here with no record of
-                # which check failed. Remove once the redeem-401 root cause
-                # is confirmed.
+                # verify() used to return bare None here with no record of
+                # which check failed (expired vs. wrong issuer vs. a stale
+                # token from before a key rotation) -- logging the specific
+                # PyJWT rejection reason is the only way an operator can
+                # tell those apart after the fact.
                 log.warning(
                     "broker_token_issuer.verify_failed",
                     reason=str(exc),

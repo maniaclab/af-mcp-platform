@@ -230,7 +230,11 @@ class AsgiAuthMiddleware:
                     )
                 else:
                     principal = await get_principal(
-                        token, settings, principal_cache, revoked_jti_cache
+                        token,
+                        settings,
+                        principal_cache,
+                        revoked_jti_cache,
+                        caller_path=scope.get("path"),
                     )
             except TokenExpiredError:
                 # Safe to state explicitly -- expiry alone reveals nothing
