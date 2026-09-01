@@ -148,6 +148,41 @@ def captured_audits(monkeypatch: pytest.MonkeyPatch) -> list[AuditRecord]:
     return records
 
 
+async def test_is_error_result_audits_as_error_not_success(
+    registry, policy, make_principal, captured_audits
+) -> None:
+    """A tool that signals failure via the MCP isError result convention
+    (e.g. a downstream backend's ToolError, which the MCP SDK converts to an
+    isError=True result rather than propagating as an exception the client
+    library re-raises here) must never be audited as a success just because
+    call_next didn't raise -- see _tool_result_error_text's docstring for
+    the real-world case this went undetected in."""
+    mw = AuthorizationMiddleware(registry, policy)
+    principal = make_principal(groups=["atlas"])
+    context = _call_tool_context("rucio_list_dids", {"scope": "foo"}, principal)
+    fake_result = ToolResult(
+        content=[mt.TextContent(type="text", text="backend proxy redeem failed")],
+        is_error=True,
+    )
+    call_next = _CallNextRecorder(result=fake_result)
+
+    result = await mw.on_call_tool(context, call_next)
+
+    assert result is fake_result
+    assert call_next.called is True
+    assert len(captured_audits) == 1
+    record = captured_audits[0]
+    assert record.outcome == "error"
+    assert record.error == "backend proxy redeem failed"
+    # Distinct from a raised exception's "backend_error" (see
+    # ERROR_CLASS_TOOL_REPORTED's docstring): the RPC completed normally
+    # here, unlike test_call_next_failure_audited_as_error_and_reraised's
+    # own plumbing failure.
+    assert record.error_class == "tool_reported"
+    assert record.target == "rucio"
+    assert record.action == "rucio_list_dids"
+
+
 async def test_entitled_call_proceeds_and_audits_success(
     registry, policy, make_principal, captured_audits
 ) -> None:

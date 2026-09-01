@@ -17,7 +17,7 @@ from af_mcp_broker.authorization import (
     check_entitlement,
     get_action_type,
 )
-from af_mcp_broker.mcp.errors import classify_backend_error
+from af_mcp_broker.mcp.errors import ERROR_CLASS_TOOL_REPORTED, classify_backend_error
 from af_mcp_broker.tracing import (
     current_trace_id,
     get_tracer,
@@ -72,6 +72,27 @@ def _permission_grant_field(principal: Principal) -> list[str] | None:
     if principal.permission_grant is None:
         return None
     return sorted(principal.permission_grant)
+
+
+def _tool_result_error_text(result: ToolResult) -> str:
+    """Best-effort error message for a ``ToolResult`` whose ``is_error`` is True.
+
+    A tool that signals failure via the MCP ``isError`` result convention
+    (rather than raising, which the except-block above already handles)
+    never touches this middleware's try/except at all -- ``call_next``
+    returns normally. Without this, such a call was audited as
+    ``outcome="success"`` with the error text sitting undetected in
+    ``result`` -- exactly how every rucio-mcp call redeeming an x509 proxy
+    failing this way went unnoticed in the audit trail while the maintenance-
+    gate bug on ``/credentials/x509/redeem`` was live. Falls back to a
+    generic message when the content isn't plain text (e.g. no content
+    blocks, or a non-text block) rather than raising out of an audit path.
+    """
+    for block in result.content or []:
+        text = getattr(block, "text", None)
+        if isinstance(text, str) and text:
+            return text
+    return "tool call reported isError=true with no text content"
 
 
 def _record_invocation(service_name: str, tool_name: str, action_type: str) -> None:
@@ -321,6 +342,48 @@ class AuthorizationMiddleware(Middleware):
             metrics.tool_duration_seconds.labels(
                 service=service.name, tool=tool_name, action_type=action_type
             ).observe(duration)
+            # A tool signaling failure via the MCP isError result convention
+            # never raises -- call_next returned normally above -- so this is
+            # the only place that class of failure is distinguishable from a
+            # genuine success. outcome="error" here matches the except-block's
+            # error path, but error_class is deliberately its own value
+            # (ERROR_CLASS_TOOL_REPORTED, never classify_backend_error's
+            # TRANSIENT/BACKEND) -- see that constant's docstring for why
+            # collapsing "our own plumbing broke" and "a reachable tool
+            # deliberately refused this call" into one bucket would have
+            # cost the exact distinction that matters here. result_bytes/
+            # result_tokens_est stay unmeasured (None) same as an exception's,
+            # matching that path's "an error produced no result worth
+            # measuring" reasoning even though a result object technically
+            # exists here.
+            if result.is_error:
+                span.set_attribute("af.outcome", "error")
+                error_text = _tool_result_error_text(result)
+                if span.is_recording():
+                    span.set_status(Status(StatusCode.ERROR, error_text))
+                await submit_metered_audit(
+                    AuditRecord(
+                        principal_sub=principal.subject,
+                        principal_uid=principal.uid,
+                        permission=service.required_permission,
+                        target=service.name,
+                        action=tool_name,
+                        action_type=action_type,
+                        args_summary=args_summary,
+                        timestamp=time.time(),
+                        request_id=request_id,
+                        mcp_service=service.name,
+                        outcome="error",
+                        error=error_text,
+                        principal_permission_grant=_permission_grant_field(principal),
+                        token_id=principal.token_id,
+                        duration_ms=duration * 1000.0,
+                        trace_id=current_trace_id(),
+                        error_class=ERROR_CLASS_TOOL_REPORTED,
+                    ),
+                    None,
+                )
+                return result
             span.set_attribute("af.outcome", "success")
             # The result measurement -- an estimate of its context-injection
             # cost, not wire size; see measure_tool_result's docstring for
