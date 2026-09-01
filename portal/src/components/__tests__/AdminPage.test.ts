@@ -45,6 +45,8 @@ const DISABLED: MaintenanceStatus = {
   reason: null,
   enabled_by: null,
   enabled_at: null,
+  enabled_by_unixname: null,
+  enabled_by_email: '',
 };
 
 const ENABLED: MaintenanceStatus = {
@@ -52,6 +54,8 @@ const ENABLED: MaintenanceStatus = {
   reason: 'Scheduled Postgres upgrade',
   enabled_by: 'sub-admin',
   enabled_at: 1756450000,
+  enabled_by_unixname: 'gstark',
+  enabled_by_email: 'gstark@example.org',
 };
 
 const SUBJECTS: UsageSubjectsResponse = {
@@ -203,6 +207,18 @@ describe('AdminPage maintenance mode', () => {
 
     expect(wrapper.text()).toContain('Enabled');
     expect(wrapper.text()).toContain('Scheduled Postgres upgrade');
+    expect(wrapper.text()).toContain('gstark');
+  });
+
+  it('falls back to the bare enabled_by subject when the principal cache could not resolve it', async () => {
+    vi.mocked(fetchMaintenanceStatus).mockResolvedValue({
+      ...ENABLED,
+      enabled_by_unixname: null,
+      enabled_by_email: '',
+    });
+    const wrapper = mount(AdminPage);
+    await flushPromises();
+
     expect(wrapper.text()).toContain('sub-admin');
   });
 
@@ -218,7 +234,7 @@ describe('AdminPage maintenance mode', () => {
 
     expect(setMaintenanceStatus).toHaveBeenCalledWith(true, 'Scheduled Postgres upgrade');
     expect(wrapper.text()).toContain('Enabled');
-    expect(wrapper.text()).toContain('sub-admin');
+    expect(wrapper.text()).toContain('gstark');
   });
 
   it('disabling calls setMaintenanceStatus(false) and updates the displayed status', async () => {

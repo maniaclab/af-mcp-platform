@@ -745,6 +745,12 @@ export interface MaintenanceStatus {
   reason: string | null;
   enabled_by: string | null;
   enabled_at: number | null;
+  // Resolved from enabled_by via the broker's principal cache -- null/""
+  // (never omitted) when enabled_by is null or the subject can't currently
+  // be resolved (e.g. a deleted user). Prefer this for display; fall back
+  // to the bare enabled_by subject only when both are empty.
+  enabled_by_unixname: string | null;
+  enabled_by_email: string;
 }
 
 /**

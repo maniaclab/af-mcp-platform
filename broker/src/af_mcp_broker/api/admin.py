@@ -36,6 +36,7 @@ from af_mcp_broker.maintenance import (
     MaintenanceState,
     MaintenanceStateConflict,
 )
+from af_mcp_broker.principal_cache import PrincipalUnavailableError
 
 logger = structlog.get_logger(__name__)
 
@@ -56,6 +57,12 @@ class MaintenanceStatusResponse(BaseModel):
     # just lower severity since an admin never types this value directly.
     enabled_by: str | None
     enabled_at: float | None
+    # Resolved from enabled_by via the principal cache -- same subject
+    # you'd otherwise have to go look up yourself to know who actually
+    # flipped the switch. None/"" (never omitted) when enabled_by is None
+    # or the subject can't currently be resolved (e.g. a deleted user).
+    enabled_by_unixname: str | None
+    enabled_by_email: str
 
 
 class SetMaintenanceRequest(BaseModel):
@@ -73,6 +80,28 @@ class SetMaintenanceRequest(BaseModel):
 
 def _store(request: Request) -> MaintenanceModeStore | None:
     return getattr(request.app.state, "maintenance_mode_store", None)
+
+
+async def _resolve_enabled_by(
+    request: Request, enabled_by: str | None
+) -> tuple[str | None, str]:
+    """Resolve ``enabled_by`` (a bare Keycloak subject) to unixname/email for display.
+
+    Mirrors ``get_usage_subjects``'s resolution shape exactly (same cache,
+    same fallback) -- a `None` subject or an unresolvable one (e.g. a
+    deleted Keycloak user) degrades to ``(None, "")`` rather than failing
+    the request; the raw ``enabled_by`` subject is always shown regardless.
+    """
+    if enabled_by is None:
+        return None, ""
+    principal_cache = getattr(request.app.state, "principal_cache", None)
+    if principal_cache is None:
+        return None, ""
+    try:
+        attrs = await principal_cache.get(enabled_by)
+    except PrincipalUnavailableError:
+        return None, ""
+    return attrs.unixname, attrs.email
 
 
 @router.get(
@@ -109,11 +138,14 @@ async def get_maintenance_status(request: Request) -> MaintenanceStatusResponse:
             logger.exception("maintenance_store_unavailable", error=str(exc))
             metrics.maintenance_store_unavailable_total.inc()
             state = _DISABLED_DEFAULT
+    unixname, email = await _resolve_enabled_by(request, state.enabled_by)
     return MaintenanceStatusResponse(
         enabled=state.enabled,
         reason=state.reason,
         enabled_by=state.enabled_by,
         enabled_at=state.enabled_at,
+        enabled_by_unixname=unixname,
+        enabled_by_email=email,
     )
 
 
@@ -167,9 +199,12 @@ async def set_maintenance_status(
                     "time. Re-check GET /v1/admin/maintenance and retry."
                 ),
             ) from exc
+    unixname, email = await _resolve_enabled_by(request, state.enabled_by)
     return MaintenanceStatusResponse(
         enabled=state.enabled,
         reason=state.reason,
         enabled_by=state.enabled_by,
         enabled_at=state.enabled_at,
+        enabled_by_unixname=unixname,
+        enabled_by_email=email,
     )

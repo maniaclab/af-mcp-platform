@@ -51,6 +51,54 @@ def test_admin_can_enable_and_it_shows_up_on_get(maintenance_client, make_princi
     assert body["enabled_at"] is not None
 
 
+def test_enabled_by_resolves_to_unixname_when_principal_cache_can(
+    maintenance_client, make_principal, static_principal_cache
+):
+    client, state = maintenance_client
+    cache, directory = static_principal_cache
+    directory.groups_by_subject["admin-sub"] = ["af-admins"]
+    directory.posix_by_subject["admin-sub"] = {"unixname": "gstark"}
+    client.app.state.principal_cache = cache
+    state["principal"] = make_principal(groups=["af-admins"], subject="admin-sub")
+
+    post_resp = client.post(
+        "/v1/admin/maintenance", json={"enabled": True, "reason": "upgrading"}
+    )
+    assert post_resp.json()["enabled_by_unixname"] == "gstark"
+
+    get_resp = client.get("/v1/admin/maintenance")
+    body = get_resp.json()
+    assert body["enabled_by"] == "admin-sub"
+    assert body["enabled_by_unixname"] == "gstark"
+
+
+def test_enabled_by_falls_back_to_bare_subject_when_unresolvable(
+    maintenance_client, make_principal, static_principal_cache
+):
+    client, state = maintenance_client
+    cache, directory = static_principal_cache
+    directory.unavailable_subjects.add("admin-sub")
+    client.app.state.principal_cache = cache
+    state["principal"] = make_principal(groups=["af-admins"], subject="admin-sub")
+
+    client.post("/v1/admin/maintenance", json={"enabled": True, "reason": "upgrading"})
+
+    resp = client.get("/v1/admin/maintenance")
+    body = resp.json()
+    assert body["enabled_by"] == "admin-sub"
+    assert body["enabled_by_unixname"] is None
+    assert body["enabled_by_email"] == ""
+
+
+def test_enabled_by_resolution_fields_are_null_when_disabled(maintenance_client):
+    client, _state = maintenance_client
+    resp = client.get("/v1/admin/maintenance")
+    body = resp.json()
+    assert body["enabled_by"] is None
+    assert body["enabled_by_unixname"] is None
+    assert body["enabled_by_email"] == ""
+
+
 def test_admin_can_disable_and_enabled_by_at_are_cleared(
     maintenance_client, make_principal
 ):

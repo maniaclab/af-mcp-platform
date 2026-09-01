@@ -15,6 +15,8 @@ describe('maintenanceBannerText', () => {
       reason: null,
       enabled_by: null,
       enabled_at: null,
+      enabled_by_unixname: null,
+      enabled_by_email: '',
     };
     expect(maintenanceBannerText(disabled)).toBeNull();
   });
@@ -25,6 +27,8 @@ describe('maintenanceBannerText', () => {
       reason: 'Scheduled Postgres upgrade, back by 14:00 UTC',
       enabled_by: 'af92c1d0-...',
       enabled_at: 1756450000,
+      enabled_by_unixname: null,
+      enabled_by_email: '',
     };
     expect(maintenanceBannerText(enabled)).toBe(
       'Maintenance mode is enabled: Scheduled Postgres upgrade, back by 14:00 UTC',
@@ -37,6 +41,8 @@ describe('maintenanceBannerText', () => {
       reason: null,
       enabled_by: 'af92c1d0-...',
       enabled_at: 1756450000,
+      enabled_by_unixname: null,
+      enabled_by_email: '',
     };
     expect(maintenanceBannerText(enabled)).toBe('Maintenance mode is enabled.');
   });
