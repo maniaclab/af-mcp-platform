@@ -162,6 +162,39 @@ class TestRedeemAuth:
             )
         assert resp.status_code == 403
 
+    def test_redeem_never_calls_keycloak(
+        self, x509_redeem_env, app_client_factory, tmp_path: Path
+    ) -> None:
+        """Regression: /credentials/x509/redeem must authenticate purely via
+        BrokerTokenIssuer.verify() (its own RS256 signature check), never via
+        keycloak_dependency.
+
+        Every other test in this module (like every route test in this
+        codebase) runs through app_client_factory's blanket
+        ``app.dependency_overrides[keycloak_dependency] = ...``, which would
+        silently mask this endpoint being wired behind keycloak_dependency
+        the way the rest of credentials.router's routes correctly are (see
+        api/router.py: redeem lives on credentials.backend_router precisely
+        so it never gets pulled in there). This test removes that override
+        for this one call so a regression -- redeem ending up back on a
+        router gated by require_not_in_maintenance, whose admin-bypass check
+        depends on keycloak_dependency -- fails loudly: OIDC_ISSUER here
+        points at an unreachable host, so an actual Keycloak round trip
+        can only ever error, never return 200.
+        """
+        from af_mcp_broker.identity import keycloak_dependency
+
+        x509_redeem_env()
+        with app_client_factory() as (client, _):
+            client.app.dependency_overrides.pop(keycloak_dependency, None)
+            _seed_proxy(client, tmp_path, subject="sub-abc", target="ami")
+            token = _mint(client, audience="ami")
+            resp = client.post(
+                _REDEEM, json={}, headers={"Authorization": f"Bearer {token}"}
+            )
+        assert resp.status_code == 200
+        assert "FAKE PROXY PEM" in resp.json()["pem"]
+
     def test_redeem_maps_audience_to_target_when_name_differs(
         self, x509_redeem_env, app_client_factory, tmp_path: Path
     ) -> None:

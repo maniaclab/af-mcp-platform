@@ -338,6 +338,7 @@ async def get_principal(
     settings: Settings,
     principal_cache: PrincipalCache | None,
     revoked_jti_cache: RevokedJtiCache | None = None,
+    caller_path: str | None = None,
 ) -> Principal:
     """Validate a Bearer token and return the extracted Principal.
 
@@ -376,6 +377,12 @@ async def get_principal(
     claim, or one whose `jti` was never minted through the manual bearer
     registry, is never affected -- only jtis the registry actually knows
     about can be revoked (see token_registry.RevokedJtiCache).
+
+    *caller_path* is purely diagnostic: the request path this validation is
+    gating, attached to the ``jwt_validation_failed`` log line below so a
+    rejection here can be told apart from an unrelated one logged moments
+    later by a different concurrent request -- this function otherwise gives
+    no indication of which endpoint invoked it. Never affects the outcome.
     """
     keys = await get_jwks(settings)
 
@@ -412,6 +419,7 @@ async def get_principal(
     logger.warning(
         "jwt_validation_failed",
         error=str(error) if error else "no matching key",
+        caller_path=caller_path,
     )
     if wrong_audience:
         correlation_id = uuid.uuid4().hex
@@ -529,7 +537,11 @@ async def keycloak_dependency(
     # PrincipalDirectoryUnavailableError rather than crashing.
     principal_cache = getattr(request.app.state, "principal_cache", None)
     return await get_principal(
-        credentials.credentials, settings, principal_cache, revoked_jti_cache
+        credentials.credentials,
+        settings,
+        principal_cache,
+        revoked_jti_cache,
+        caller_path=request.url.path,
     )
 
 
