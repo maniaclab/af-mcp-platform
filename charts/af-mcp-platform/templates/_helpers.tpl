@@ -208,8 +208,11 @@ needs an explicit entry, there is no synthesized fallback).
 
 {{/*
 True when at least one broker.identityProviders entry is type
-"oauth21-direct" — gates OAUTH21_CLIENT_ID/BROKER_STATE_KEY/
-OAUTH21_STATE_ISSUER env wiring, which only matters for that provider type.
+"oauth21-direct" — gates OAUTH21_CLIENT_ID/OAUTH21_STATE_ISSUER env wiring,
+which only matters for that provider type. BROKER_STATE_KEY is NOT gated on
+this (see its own site below) — it also protects the plain MCP OAuth login
+bootstrap flow's state, needed whenever tokenMint.clientId is configured,
+independent of identityProviders.
 */}}
 {{- define "af-mcp-platform.hasOAuth21Provider" -}}
 {{- $has := false -}}
@@ -298,7 +301,7 @@ Callers pipe this through `nindent` at whatever depth their container's
 - name: IDENTITY_PROVIDERS
   value: {{ include "af-mcp-platform.identityProviders" . | quote }}
 {{- end }}
-# OAuth 2.1 state-token infrastructure — only needed when at
+# OAuth 2.1 direct-linking-flow infrastructure — only needed when at
 # least one identityProviders entry is oauth21-direct.
 {{- if eq (include "af-mcp-platform.hasOAuth21Provider" .) "true" }}
 - name: OAUTH21_CLIENT_ID
@@ -307,13 +310,18 @@ Callers pipe this through `nindent` at whatever depth their container's
 - name: OAUTH21_STATE_ISSUER
   value: {{ .Values.broker.oauth21.stateIssuer | quote }}
 {{- end }}
+{{- end }}
+# BROKER_STATE_KEY protects both the oauth21-direct linking flow's state
+# AND the plain MCP OAuth login bootstrap flow's state (broker Settings
+# validation requires it whenever tokenMint.clientId/keycloak_login_client_id
+# is configured, not only when an oauth21-direct provider is present) —
+# rendered independently of hasOAuth21Provider above.
 {{- if .Values.broker.oauth21.existingStateKeySecret }}
 - name: BROKER_STATE_KEY
   valueFrom:
     secretKeyRef:
       name: {{ .Values.broker.oauth21.existingStateKeySecret | quote }}
       key: broker-state-key
-{{- end }}
 {{- end }}
 # OAuth 2.1 TokenStore backend — always set (pydantic default is
 # "in_memory" so an unset value here is equivalent, but the env
