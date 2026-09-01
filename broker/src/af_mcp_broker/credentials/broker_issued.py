@@ -214,9 +214,23 @@ class BrokerTokenIssuer:
                 )
             except jwt.InvalidSignatureError:
                 continue  # try the next rotation key
-            except jwt.InvalidTokenError:
+            except jwt.InvalidTokenError as exc:
+                # TEMPORARY (debugging rucio-mcp redeem 401s): verify() has
+                # historically returned bare None here with no record of
+                # which check failed. Remove once the redeem-401 root cause
+                # is confirmed.
+                log.warning(
+                    "broker_token_issuer.verify_failed",
+                    reason=str(exc),
+                    issuer=self._issuer,
+                )
                 return None  # authentic-looking but invalid (expired, iss, ...)
             return claims
+        log.warning(
+            "broker_token_issuer.verify_failed",
+            reason="signature did not match any verification key",
+            issuer=self._issuer,
+        )
         return None
 
     def jwks(self) -> dict[str, Any]:
