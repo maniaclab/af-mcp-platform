@@ -10,11 +10,27 @@ import httpx
 # numbers on how often backends fail transiently across all users before
 # deciding whether the broker should ever retry on their behalf.
 
-# The two error_class values a failed call is tagged with. A success/denied/
+# The error_class values a failed call is tagged with. A success/denied/
 # unmapped call is never an executed-and-failed backend call, so it carries
-# neither (error_class stays None -- see AuditRecord.error_class).
+# none of these (error_class stays None -- see AuditRecord.error_class).
+#
+# ERROR_CLASS_TRANSIENT and ERROR_CLASS_BACKEND are classify_backend_error()'s
+# two outcomes for a call that raised: the RPC itself never completed
+# cleanly, whether because the dial/socket failed (TRANSIENT) or some other
+# exception reached the middleware (BACKEND) -- see that function's
+# docstring. ERROR_CLASS_TOOL_REPORTED is a third, disjoint case
+# classify_backend_error never produces: the RPC completed entirely
+# normally, and the tool itself decided to report failure via the MCP
+# isError result convention rather than raising (authorization_mw.py's
+# on_call_tool sets this directly, no classification needed -- there is
+# nothing to walk an exception chain over). Keeping it distinct from
+# ERROR_CLASS_BACKEND matters because the two are diagnostically different
+# questions: "did our own plumbing (credential minting, the connection
+# itself, an unexpected bug) break" vs "did a fully-reachable downstream
+# tool deliberately refuse this specific call".
 ERROR_CLASS_TRANSIENT = "transient_connection"
 ERROR_CLASS_BACKEND = "backend_error"
+ERROR_CLASS_TOOL_REPORTED = "tool_reported"
 
 # Known-transient exception types a broker->backend HTTP tool call raises when
 # the connection itself fails, as opposed to the backend running and returning
