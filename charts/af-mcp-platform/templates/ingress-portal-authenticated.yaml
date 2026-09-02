@@ -41,7 +41,7 @@ spec:
     - host: {{ .Values.ingress.portalHost | quote }}
       http:
         paths:
-          {{- range list "/overview" "/catalog" "/identities" "/tokens" "/usage" "/admin" "/callback" }}
+          {{- range list "/overview" "/catalog" "/identities" "/tokens" "/usage" "/admin" "/entitlements" "/callback" }}
           - path: {{ . }}
             pathType: Prefix
             backend:

@@ -19,5 +19,10 @@ data:
         "clientId": {{ required "portal.oidc.clientId must be set (e.g. via your deploying HelmRelease values)" .Values.portal.oidc.clientId | quote }},
         "scope": {{ .Values.portal.oidc.scope | quote }}
       },
-      "brokerOrigin": {{ required "portal.brokerOrigin must be set (e.g. via your deploying HelmRelease values)" .Values.portal.brokerOrigin | quote }}
+      "brokerOrigin": {{ required "portal.brokerOrigin must be set (e.g. via your deploying HelmRelease values)" .Values.portal.brokerOrigin | quote }},
+      "branding": {
+        "shortName": {{ .Values.portal.branding.shortName | default "" | quote }},
+        "fullName": {{ .Values.portal.branding.fullName | default "" | quote }},
+        "facilityName": {{ .Values.portal.branding.facilityName | default "" | quote }}
+      }
     }

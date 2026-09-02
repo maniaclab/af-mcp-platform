@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import time
+from typing import Any
 
 import pytest
-from conftest import make_claims
+from conftest import AUDIENCE, make_claims
 from fastapi import HTTPException
 
+from af_mcp_broker import identity as identity_module
 from af_mcp_broker.authorization import get_principal_permissions
 from af_mcp_broker.identity import (
     PrincipalDirectoryUnavailableError,
@@ -86,6 +88,50 @@ async def test_wrong_audience_raises_token_audience_error_with_correlation_id(
     correlation_id = exc.value.detail["correlation_id"]
     assert correlation_id
     assert correlation_id in exc.value.detail["message"]
+
+
+async def test_wrong_audience_logs_actual_and_expected_audience(
+    settings, sig_key, prime_jwks, static_principal_cache, monkeypatch
+):
+    """The jwt_audience_mismatch log line must carry the token's actual `aud`
+    and the broker's expected one directly -- an operator (or Claude)
+    grepping pod logs for this event should see immediately which audience
+    the token had without needing to decode it separately, and without
+    needing to first find the matching correlation_id (hit in production
+    2026-09-01: diagnosing a real audience mismatch took several rounds of
+    log searching before this context was available).
+
+    Patches identity.logger.warning directly rather than using
+    structlog.testing.capture_logs() -- the app's structlog config sets
+    cache_logger_on_first_use=True (logging.py), so a bound logger resolved
+    by an earlier test's real app boot (any test using app_client_factory)
+    is already cached by the time this test runs and capture_logs()'s
+    processor swap doesn't reach it. monkeypatch.setattr on the module's
+    own logger object sidesteps that entirely -- same pattern as
+    test_app.py/test_health.py/test_mcp_list_time_credentials.py.
+    """
+    cache, _directory = static_principal_cache
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims(aud="some-other-service"))
+
+    events: list[tuple[str, dict[str, Any]]] = []
+    original_warning = identity_module.logger.warning
+
+    def _capture(event: str, **kwargs: Any) -> Any:
+        events.append((event, kwargs))
+        return original_warning(event, **kwargs)
+
+    monkeypatch.setattr(identity_module.logger, "warning", _capture)
+
+    with pytest.raises(TokenAudienceError):
+        await get_principal(token, settings, cache)
+
+    mismatch_entries = [
+        kwargs for event, kwargs in events if event == "jwt_audience_mismatch"
+    ]
+    assert len(mismatch_entries) == 1
+    assert mismatch_entries[0]["actual_audience"] == "some-other-service"
+    assert mismatch_entries[0]["expected_audience"] == AUDIENCE
 
 
 async def test_no_matching_kid_raises_401(

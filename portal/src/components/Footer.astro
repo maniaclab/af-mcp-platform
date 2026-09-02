@@ -8,7 +8,9 @@ const appVersion = import.meta.env.PUBLIC_APP_VERSION || 'dev';
 ---
 
 <footer class="af-footer" aria-label="Site footer">
-  <span class="af-footer__text">ATLAS Analysis Facility · MCP Platform</span>
+  <span class="af-footer__text"
+    ><span data-af-brand="facilityName">ATLAS Analysis Facility</span> · MCP Platform</span
+  >
   <span class="af-footer__version">v{appVersion}</span>
   <a href="https://atlas.cern" class="af-footer__link" target="_blank" rel="noopener noreferrer">
     atlas.cern
@@ -59,3 +61,14 @@ const appVersion = import.meta.env.PUBLIC_APP_VERSION || 'dev';
     opacity: 0.6;
   }
 </style>
+
+<script>
+  // Self-contained: Base.astro's mount script also sweeps [data-af-brand]
+  // (harmless double-apply there), but PublicBase.astro's unauthenticated
+  // landing page never runs that script, and this is the only place its
+  // Footer instance's facility name would otherwise get patched.
+  import { getBranding } from '../lib/auth';
+  import { applyBranding } from '../lib/branding';
+
+  applyBranding(await getBranding());
+</script>

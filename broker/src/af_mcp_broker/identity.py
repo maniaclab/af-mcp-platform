@@ -427,6 +427,8 @@ async def get_principal(
             "jwt_audience_mismatch",
             subject=_peek_sub(token),
             correlation_id=correlation_id,
+            actual_audience=_peek_aud(token),
+            expected_audience=settings.oidc_audience,
         )
         raise TokenAudienceError(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -473,6 +475,15 @@ def _peek_sub(token: str) -> str:
     try:
         payload = jwt.decode(token, options={"verify_signature": False})
         return payload.get("sub", "<unknown>")
+    except Exception:  # noqa: BLE001  # log-only helper; never raises
+        return "<unparseable>"
+
+
+def _peek_aud(token: str) -> str | list[str] | None:
+    """Decode the audience claim without signature verification for logging only -- see _peek_sub."""
+    try:
+        payload = jwt.decode(token, options={"verify_signature": False})
+        return payload.get("aud")
     except Exception:  # noqa: BLE001  # log-only helper; never raises
         return "<unparseable>"
 

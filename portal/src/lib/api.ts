@@ -438,11 +438,28 @@ export interface PermissionGrant {
 
 export interface PermissionsResponse {
   subject: string;
+  /** The caller's raw Keycloak group membership -- see EntitlementsResponse for what each grants. */
+  groups: string[];
   grants: PermissionGrant[];
 }
 
 export async function fetchPermissions(): Promise<PermissionsResponse> {
   return apiFetch<PermissionsResponse>('/permissions');
+}
+
+/**
+ * GET /v1/entitlements — the static group -> permission reference table
+ * (broker/src/af_mcp_broker/api/permissions.py's get_entitlements()), the
+ * same for every caller. Pairs with PermissionsResponse.groups on the
+ * Entitlements page: "here's what each group grants" next to "here's what
+ * you're actually in".
+ */
+export interface EntitlementsResponse {
+  group_permissions: Record<string, string[]>;
+}
+
+export async function fetchEntitlements(): Promise<EntitlementsResponse> {
+  return apiFetch<EntitlementsResponse>('/entitlements');
 }
 
 // ---------------------------------------------------------------------------

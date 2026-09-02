@@ -27,12 +27,16 @@
  */
 import { UserManager, WebStorageStateStore, type User } from 'oidc-client-ts';
 
+import { DEFAULT_BRANDING, type BrandingConfig } from './branding';
+
 interface RuntimeConfig {
   oidc: {
     issuer: string;
     clientId: string;
     scope: string;
   };
+  /** Optional -- absent in older ConfigMaps and the dev stub; getBranding() fills in DEFAULT_BRANDING for any missing/empty field. */
+  branding?: Partial<BrandingConfig>;
   brokerOrigin: string;
 }
 
@@ -134,6 +138,26 @@ export async function getBrokerOrigin(): Promise<string> {
     return cfg.brokerOrigin || window.location.origin;
   } catch {
     return window.location.origin;
+  }
+}
+
+/**
+ * Returns this deployment's branding (`/config.json`'s `branding`), with
+ * DEFAULT_BRANDING filling in any field left empty/unset -- same
+ * fallback convention as getBrokerOrigin. Never throws: a missing or
+ * unreachable config.json resolves to DEFAULT_BRANDING outright, same as
+ * every other config-derived helper here.
+ */
+export async function getBranding(): Promise<BrandingConfig> {
+  try {
+    const cfg = await loadConfig();
+    return {
+      shortName: cfg.branding?.shortName || DEFAULT_BRANDING.shortName,
+      fullName: cfg.branding?.fullName || DEFAULT_BRANDING.fullName,
+      facilityName: cfg.branding?.facilityName || DEFAULT_BRANDING.facilityName,
+    };
+  } catch {
+    return DEFAULT_BRANDING;
   }
 }
 
