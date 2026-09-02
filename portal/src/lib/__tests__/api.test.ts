@@ -11,6 +11,7 @@ import {
   AccessDeniedError,
   SessionExpiredError,
   clearIdentitiesCache,
+  fetchEntitlements,
   fetchPermissions,
   fetchDashboardSummary,
   fetchIdentities,
@@ -563,9 +564,10 @@ describe('fetchDashboardSummary()', () => {
 });
 
 describe('permissions client (issue #144 step 4: permission PATs)', () => {
-  it('fetchPermissions returns the parsed grants', async () => {
+  it('fetchPermissions returns the parsed grants and the callers raw groups', async () => {
     globalThis.fetch = mockJson(200, {
       subject: 'sub-abc',
+      groups: ['atlas', 'af-admins'],
       grants: [
         { permission: 'read_data', targets: ['rucio'], action_types: ['read'] },
         { permission: 'submit_jobs', targets: ['panda'], action_types: ['state_change'] },
@@ -575,7 +577,22 @@ describe('permissions client (issue #144 step 4: permission PATs)', () => {
     const result = await fetchPermissions();
 
     expect(result.subject).toBe('sub-abc');
+    expect(result.groups).toEqual(['atlas', 'af-admins']);
     expect(result.grants.map((g) => g.permission)).toEqual(['read_data', 'submit_jobs']);
+  });
+
+  it('fetchEntitlements returns the static group -> permission table', async () => {
+    globalThis.fetch = mockJson(200, {
+      group_permissions: {
+        atlas: ['read_data', 'submit_jobs'],
+        'af-admins': ['admin'],
+      },
+    });
+
+    const result = await fetchEntitlements();
+
+    expect(result.group_permissions.atlas).toEqual(['read_data', 'submit_jobs']);
+    expect(result.group_permissions['af-admins']).toEqual(['admin']);
   });
 });
 

@@ -658,6 +658,20 @@ portal:
   # also used to build the CSP header.
   brokerOrigin: ""
 
+  # Per-deployment site identity, delivered via /config.json exactly like
+  # oidc/brokerOrigin above and patched into the DOM on mount (see
+  # portal/src/lib/branding.ts) — this is a static build, so it can't be
+  # baked in at build time. Leave any field empty to keep that field's
+  # built-in default (the original AF branding, unchanged from before this
+  # existed): "AF / MCP" / "AF MCP Platform" / "ATLAS Analysis Facility".
+  branding:
+    # Short mark in the sidebar/topbar logo, e.g. "UChicago AF Ops".
+    shortName: ""
+    # Full name, used in the logo links' aria-label ("<fullName> home").
+    fullName: ""
+    # Facility/institution name shown in the overview hero and footer.
+    facilityName: ""
+
 # ---------------------------------------------------------------------------
 # OAuth2 Proxy — forward-auth integration
 # ---------------------------------------------------------------------------

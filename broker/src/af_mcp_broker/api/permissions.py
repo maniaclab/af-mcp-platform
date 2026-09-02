@@ -84,7 +84,26 @@ class PermissionsResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     subject: str
+    # The caller's raw Keycloak group membership -- alongside `grants`
+    # (what those groups resolve to) so the portal can show both halves of
+    # "why do/don't I have access" without a second round trip (issue:
+    # ops-platform-usability, 2026-09-01).
+    groups: list[str]
     grants: list[PermissionGrant]
+
+
+class EntitlementsResponse(BaseModel):
+    """The static group -> permission table, verbatim from policy.yaml.
+
+    Not caller-scoped -- unlike PermissionsResponse, this is the same for
+    every authenticated caller. Lets the portal show "here's what each
+    group grants" as a standing reference, not just the caller's own
+    resolved grants.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    group_permissions: dict[str, list[str]]
 
 
 class AuthorizeRequest(BaseModel):
@@ -324,8 +343,23 @@ async def get_permissions(
     policy = _get_policy(request)
     registry = _get_registry(request)
     return PermissionsResponse(
-        subject=principal.subject, grants=_grants_for(principal, policy, registry)
+        subject=principal.subject,
+        groups=principal.groups,
+        grants=_grants_for(principal, policy, registry),
     )
+
+
+@router.get(
+    "/entitlements",
+    response_model=EntitlementsResponse,
+    summary="Get the group -> permission reference table",
+)
+async def get_entitlements(
+    request: Request,
+    _principal: Annotated[Principal, Depends(keycloak_dependency)],
+) -> EntitlementsResponse:
+    policy = _get_policy(request)
+    return EntitlementsResponse(group_permissions=policy.group_permissions)
 
 
 @router.post(

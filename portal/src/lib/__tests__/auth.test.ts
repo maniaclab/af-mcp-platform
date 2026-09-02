@@ -6,6 +6,8 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { DEFAULT_BRANDING } from '../branding';
+
 const realFetch = globalThis.fetch;
 
 beforeEach(() => {
@@ -73,6 +75,11 @@ describe('auth — OIDC not configured (dev-bypass mode)', () => {
     const { getBrokerOrigin } = await import('../auth');
     await expect(getBrokerOrigin()).resolves.toBe(window.location.origin);
   });
+
+  it('getBranding() falls back to DEFAULT_BRANDING when config.json has no branding field', async () => {
+    const { getBranding } = await import('../auth');
+    await expect(getBranding()).resolves.toEqual(DEFAULT_BRANDING);
+  });
 });
 
 describe('auth — /config.json unreachable', () => {
@@ -88,6 +95,12 @@ describe('auth — /config.json unreachable', () => {
     globalThis.fetch = vi.fn().mockRejectedValue(new Error('network down'));
     const { getBrokerOrigin } = await import('../auth');
     await expect(getBrokerOrigin()).resolves.toBe(window.location.origin);
+  });
+
+  it('getBranding() falls back to DEFAULT_BRANDING instead of throwing', async () => {
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error('network down'));
+    const { getBranding } = await import('../auth');
+    await expect(getBranding()).resolves.toEqual(DEFAULT_BRANDING);
   });
 });
 
@@ -109,6 +122,11 @@ describe('auth — OIDC configured', () => {
         scope: 'openid mcp-gateway',
       },
       brokerOrigin: 'https://mcp.example.com',
+      branding: {
+        shortName: 'UChicago AF Ops',
+        fullName: '',
+        facilityName: 'UChicago Analysis Facility',
+      },
     });
     // Plain `function` (not arrow) implementations — auth.ts calls both of
     // these with `new`, and mockImplementation with an arrow function isn't
@@ -198,5 +216,14 @@ describe('auth — OIDC configured', () => {
   it("getBrokerOrigin() returns /config.json's brokerOrigin", async () => {
     const { getBrokerOrigin } = await import('../auth');
     await expect(getBrokerOrigin()).resolves.toBe('https://mcp.example.com');
+  });
+
+  it('getBranding() returns configured fields and DEFAULT_BRANDING for one left empty', async () => {
+    const { getBranding } = await import('../auth');
+    await expect(getBranding()).resolves.toEqual({
+      shortName: 'UChicago AF Ops',
+      fullName: DEFAULT_BRANDING.fullName,
+      facilityName: 'UChicago Analysis Facility',
+    });
   });
 });

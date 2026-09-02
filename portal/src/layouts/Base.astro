@@ -63,7 +63,16 @@ const navGroups: {
   },
   {
     label: 'Platform',
-    items: [{ href: '/admin/', label: 'Admin', icon: 'shield', badge: false, adminOnly: true }],
+    items: [
+      {
+        href: '/entitlements/',
+        label: 'Entitlements',
+        icon: 'list',
+        badge: false,
+        adminOnly: false,
+      },
+      { href: '/admin/', label: 'Admin', icon: 'shield', badge: false, adminOnly: true },
+    ],
   },
 ];
 
@@ -81,6 +90,7 @@ const icons: Record<string, string[]> = {
   shield: ['M12 3l7 3v5.2c0 4.3-2.9 8.2-7 9.8-4.1-1.6-7-5.5-7-9.8V6l7-3z'],
   // Same bar-chart glyph the overview's UsageCard draws.
   chart: ['M4 19.5V10', 'M10 19.5V4.5', 'M16 19.5v-8', 'M4 19.5h16'],
+  list: ['M8 6h13', 'M8 12h13', 'M8 18h13', 'M3 6h.01', 'M3 12h.01', 'M3 18h.01'],
 };
 
 const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
@@ -519,7 +529,12 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
 
     <div class="af-shell">
       <aside class="af-sidebar" id="af-sidebar">
-        <a href="/overview/" class="af-sidebar__logo" aria-label="AF MCP Platform home">
+        <a
+          href="/overview/"
+          class="af-sidebar__logo"
+          aria-label="AF MCP Platform home"
+          data-af-brand-logo
+        >
           AF&nbsp;/&nbsp;MCP
         </a>
 
@@ -591,7 +606,12 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
             </svg>
           </button>
 
-          <a href="/overview/" class="af-topbar__logo" aria-label="AF MCP Platform home">
+          <a
+            href="/overview/"
+            class="af-topbar__logo"
+            aria-label="AF MCP Platform home"
+            data-af-brand-logo
+          >
             AF&nbsp;/&nbsp;MCP
           </a>
 
@@ -626,9 +646,26 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
         fetchMaintenanceStatus,
         revokeAllCredentials,
       } from '../lib/api';
-      import { getUser, isOidcConfigured, login, logout } from '../lib/auth';
+      import { getBranding, getUser, isOidcConfigured, login, logout } from '../lib/auth';
+      import { applyBranding } from '../lib/branding';
       import { maintenanceBannerText } from '../lib/maintenanceBanner';
       import { navBadges } from '../lib/navSummary';
+
+      // Runs independently of the auth check below, same rationale as the
+      // maintenance banner above -- branding is deployment identity, not
+      // user-specific, so it applies whether or not this visitor ends up
+      // authenticated. Patches every [data-af-brand] element (footer,
+      // overview hero) plus the two logo links, which need an "X home"
+      // aria-label rather than a bare field value so a generic
+      // [data-af-brand] pass doesn't cover them.
+      (async () => {
+        const branding = await getBranding();
+        applyBranding(branding);
+        document.querySelectorAll<HTMLElement>('[data-af-brand-logo]').forEach((el) => {
+          el.textContent = branding.shortName;
+          el.setAttribute('aria-label', `${branding.fullName} home`);
+        });
+      })();
 
       // Runs independently of the auth check below, and before it -- GET
       // /v1/admin/maintenance requires no authentication at all (see
