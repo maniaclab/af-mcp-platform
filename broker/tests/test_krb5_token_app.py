@@ -110,3 +110,6 @@ def test_identities_lists_krb5_token_provider_as_linked(
     # has no cached ticket for any of the entry's targets.
     assert row["linked"] is False
     assert row["link_url"] is None
+    # krb5-token needs username + password, two fields, not one -- distinct
+    # from x509's "passphrase" (see identities.py's _LINK_MECHANISM_BY_TYPE).
+    assert row["link_mechanism"] == "credential"
