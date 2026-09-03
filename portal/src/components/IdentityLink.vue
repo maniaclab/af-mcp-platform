@@ -12,6 +12,10 @@ const props = defineProps<{
   /** Display names of catalog backends this identity's credential powers, empty/absent if none. */
   powers?: string[];
   link_url: string | null;
+  /** True when Keycloak's stored-broker-token endpoint last answered 403 —
+   * the caller's own access token lacks the `read-token` client role, not
+   * simply "never linked". Only ever set on a keycloak-brokered entry. */
+  link_permission_denied?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -120,10 +124,17 @@ const glyph = props.id[0]?.toUpperCase() ?? '?';
       <div class="il__header">
         <span class="il__name">{{ display_name }}</span>
         <span v-if="linked" class="il__status il__status--linked">linked</span>
+        <span v-else-if="link_permission_denied" class="il__status il__status--permission-denied"
+          >access required</span
+        >
         <span v-else class="il__status il__status--unlinked">not linked</span>
       </div>
 
       <p class="il__desc">{{ enables }}</p>
+      <p v-if="!linked && link_permission_denied" class="il__notice" role="status">
+        Your account isn't authorized to use this identity yet. Contact the platform team to request
+        access.
+      </p>
       <div v-if="powers && powers.length" class="il__powers">
         <span class="il__powers-label">Powers</span>
         <span v-for="power in powers" :key="power" class="il__power-chip">{{ power }}</span>
@@ -292,9 +303,22 @@ const glyph = props.id[0]?.toUpperCase() ?? '?';
   border: 1px solid rgb(from var(--color-af-dim) r g b / 0.25);
 }
 
+.il__status--permission-denied {
+  background: rgb(from var(--color-af-amber) r g b / 0.12);
+  color: var(--color-af-amber);
+  border: 1px solid rgb(from var(--color-af-amber) r g b / 0.3);
+}
+
 .il__desc {
   font-size: 0.8125rem;
   color: var(--color-af-dim);
+  margin: 0;
+  line-height: 1.5;
+}
+
+.il__notice {
+  font-size: 0.8125rem;
+  color: var(--color-af-amber);
   margin: 0;
   line-height: 1.5;
 }

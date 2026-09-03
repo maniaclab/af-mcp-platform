@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict
 
 from af_mcp_broker.authorization import is_admin
 from af_mcp_broker.config import get_settings
-from af_mcp_broker.credentials import X509Provider
+from af_mcp_broker.credentials import OIDCProvider, X509Provider
 from af_mcp_broker.identity import Principal, keycloak_dependency
 
 if TYPE_CHECKING:
@@ -101,6 +101,16 @@ class IdentityProvider(BaseModel):
     # x509 entries (filesystem linkage has no custody concept), and on
     # every non-x509 entry.
     x509_link_mode: Literal["auto-renew", "until-expiry"] | None = None
+    # True only for a "keycloak-brokered" entry whose last link_status()
+    # probe got a 403 from Keycloak's stored-broker-token endpoint -- the
+    # caller's own access token lacks the `read-token` client role Keycloak
+    # requires there (see docs/auth.md's "Required Keycloak role" section),
+    # distinct from an ordinary not-yet-linked `linked=False`. A user in
+    # this state may have already completed the IdP linking flow and would
+    # otherwise see an indistinguishable "not linked" with no indication
+    # that a missing role, not a missing link, is the actual blocker.
+    # Always False for every other provider type.
+    link_permission_denied: bool = False
 
 
 class IdentitiesResponse(BaseModel):
@@ -168,6 +178,7 @@ async def _build_providers(
         link_url = (
             _oauth21_link_url(request, alias) if cfg.type == "oauth21-direct" else None
         )
+        link_permission_denied = False
         if isinstance(provider, X509Provider):
             # One probe answers linked + custody mode + expiry together. In
             # service mode the Vault record is authoritative for the expiry;
@@ -186,6 +197,12 @@ async def _build_providers(
                 proxy_expires_at = None
             else:
                 proxy_expires_at = _x509_proxy_expires_at(request, principal, cfg)
+        elif isinstance(provider, OIDCProvider):
+            oidc_status = await provider.link_status(principal)
+            linked = oidc_status.linked
+            link_permission_denied = oidc_status.permission_denied
+            x509_link_mode = None
+            proxy_expires_at = None
         else:
             linked = await provider.is_linked(principal)
             x509_link_mode = None
@@ -201,6 +218,7 @@ async def _build_providers(
                 link_mechanism=_LINK_MECHANISM_BY_TYPE[cfg.type],
                 proxy_expires_at=proxy_expires_at,
                 x509_link_mode=x509_link_mode,
+                link_permission_denied=link_permission_denied,
             )
         )
 

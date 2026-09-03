@@ -19,7 +19,8 @@ operators run into. A few common questions, and where to read the answer:
 | If you're wondering... | Read |
 |---|---|
 | How does a browser or CLI get its first token at all? | [Portal auth (OIDC public client)](#portal-auth-oidc-public-client) |
-| Why did an audience (`mcp-gateway`, `broker`, ...) appear or vanish from someone's token when their group membership changed? | [Client scope Scope tab: a filter, not a grant](#client-scope-scope-tab-a-filter-not-a-grant) |
+| Does `mcp-gateway`'s audience decide who's allowed to do what, or just who's talking to the broker at all? | [`mcp-gateway`/`mcp-ops-gateway`: audience is population, not permission](#mcp-gatewaymcp-ops-gateway-audience-is-population-not-permission) |
+| Why did `read-token`/`broker` appear or vanish from someone's token when their group membership changed? | [Client scope Scope tab: a filter, not a grant](#client-scope-scope-tab-a-filter-not-a-grant) |
 | How does an MCP client (Claude Desktop, Claude Code) get a credential without a human visiting the portal? | [MCP OAuth discovery + PAT bootstrap](#mcp-oauth-discovery-pat-bootstrap-issue-140) |
 | Why can't a leaked PAT just mint itself a replacement? | [Where PATs are accepted — and where they deliberately are not](#where-pats-are-accepted-and-where-they-deliberately-are-not) |
 | Why doesn't removing someone from a Keycloak group take effect instantly everywhere? | [Authorization is an attribute of the principal, not the token](#authorization-is-an-attribute-of-the-principal-not-the-token) |
@@ -762,12 +763,12 @@ is why introspection, RFC 7662, exists at all).
    **access token** against the broker's `mcp-gateway` audience with the
    same decode `/v1` applies to every bearer
    (`identity.decode_broker_bearer`). The id_token proves *who* logged in;
-   the access token proves they're *entitled*: Keycloak only mints the
-   audience for users who pass the `mcp-gateway` scope's role filter (see
-   "Client scope Scope tab: a filter, not a grant" below), so a user it
-   refuses the audience to gets an `access_denied` redirect — no
-   authorization code, no PAT — symmetric with the `TokenAudienceError` a
-   JWT caller would get on `/mcp`. Only then does the broker mint a
+   the access token proves the login went through a client actually
+   entitled to request `mcp-gateway` (see "`mcp-gateway`/`mcp-ops-gateway`:
+   audience is population, not permission" below) — a login that somehow
+   lacks the audience gets an `access_denied` redirect — no authorization
+   code, no PAT — symmetric with the `TokenAudienceError` a JWT caller
+   would get on `/mcp`. Only then does the broker mint a
    short-lived, single-use, in-process
    authorization code (`mcp_auth_codes.py` — a few seconds' lifetime, not
    Vault-backed; a broker restart mid-flow just means the MCP client retries
@@ -1083,10 +1084,11 @@ Secret in place.
    on every token request from this client, with no `scope=` request
    needed; *Optional* means only when explicitly requested — the broker
    does request it, so Optional also works, but Default is the required
-   baseline so the gate cannot be skipped. In both cases the scope's own
-   Scope-tab role filter still decides *per user* whether the audience is
-   actually minted — see "Client scope Scope tab: a filter, not a grant"
-   below. **Fail-closed symptom:** with this attachment missing, no access
+   baseline so the gate cannot be skipped. The scope itself carries no
+   per-user role restriction (see "`mcp-gateway`/`mcp-ops-gateway`: audience
+   is population, not permission" below) — the audience mints for any
+   `connect`-realm user who authenticates through this client, unconditionally.
+   **Fail-closed symptom:** with this attachment missing, no access
    token from this client ever carries the audience, so *every* bootstrap
    login — entitled users included — ends in an `access_denied` redirect
    back to the MCP client (the broker logs
@@ -1166,6 +1168,21 @@ appears in `resource_access.broker.roles`. `credentials/oidc.py` is the
 only code path in this repo that exercises `/broker/<alias>/token` — grep
 there if you need to trace how the broker consumes the resulting token.
 
+**Distinguishing "missing the role" from "never linked":** a principal
+without `read-token` gets a 403 from every call this section describes —
+including the `is_linked()`/`link_status()` probe `api/identities.py` runs
+to build the portal's Identities page. Before `link_status()` existed
+(`credentials/oidc.py`), that 403 collapsed into the same `linked: false`
+an ordinary not-yet-linked user gets, so someone who genuinely lacks
+`read-token` could run the entire IdP linking flow to completion and the
+portal would still show "not linked" forever, with nothing pointing at the
+real cause. `link_status()` now returns an `OIDCLinkStatus(linked,
+permission_denied)`, and `/v1/identities`' `providers[]` entries carry the
+`permission_denied` bit through as `link_permission_denied` — the portal's
+`IdentityLink.vue` renders a distinct "access required" state (pointing the
+user at the platform team) instead of the plain "not linked" + clickable
+"Link account" a role-less user would otherwise see indefinitely.
+
 ### Client scope Scope tab: a filter, not a grant
 
 A client scope's **Scope** tab looks like a place to grant `read-token` to
@@ -1182,12 +1199,15 @@ one of the listed roles; it does not grant the role to anyone. Add
 Keycloak silently excludes every user from the scope.
 
 **The cascading failure:** a scope's audience mapper — the thing that puts
-`mcp-gateway` (or whatever audience a backend expects) into the token's
-`aud` claim — only fires for users who actually get the scope. Excluded
-from the scope means excluded from the mapper too, so minted tokens are
-missing the audience entirely, not just the role. If a decoded token's
-`aud` doesn't contain the audience you expected, suspect this before
-anything else in the credential path.
+a backend's expected audience into the token's `aud` claim — only fires
+for users who actually get the scope. Excluded from the scope means
+excluded from the mapper too, so minted tokens are missing the audience
+entirely, not just the role. If a decoded token's `aud` doesn't contain the
+audience you expected on a client scope that *does* carry a Scope-tab role
+restriction, suspect this before anything else in the credential path — as
+of this writing, that applies to nothing `mcp-gateway`/`mcp-ops-gateway`
+related (see the next section), but the mechanism is generic and any
+future scope could hit it.
 
 **How to actually grant `read-token` at scale:**
 
@@ -1205,39 +1225,58 @@ belt-and-suspenders — it can additionally restrict which users obtain a
 given scope — but it is never itself where the grant happens.
 
 **AF's setup:** the `connect` realm has a `default-roles-connect` composite,
-but we grant `read-token` via group membership instead of adding it there,
-since `connect` serves more than just the AF. The `mcp-gateway` scope's
-Scope tab also lists `read-token`, purely as a second filter: group
-membership is what actually grants the role, and users get both the role
-and the scope's audience together.
-**Worked example: tracing why removing someone from a group makes `mcp-gateway` — and `broker` — disappear from their token's `aud`.**
+but we grant `read-token` via group membership (`af-mcp-users`) instead of
+adding it there, since `connect` serves more than just the AF and
+`read-token` is a single, coarse, all-brokered-IdPs-or-nothing permission —
+opening it realm-wide would let any `connect` user retrieve a stored token
+from *any* brokered IdP the realm ever configures, not just `atlas-oidc`.
 
-Put together, the group → role → scope-gate chain above plus one more built-in Keycloak
-mechanism explains a specific, easy-to-observe symptom: a user in a group that grants
-`read-token` has both `mcp-gateway` and `broker` in their token's `aud`, and removing them
-from the group makes both vanish together — even though only one of the two has an explicit
-Audience mapper behind it.
+### `mcp-gateway`/`mcp-ops-gateway`: audience is population, not permission
 
-1. Group membership grants the `broker` client's `read-token` role (its Role Mapping tab, as
-   above).
-2. At token-mint time, Keycloak checks whether the user actually qualifies for each scope the
-   client requests. `mcp-gateway` is a Default scope on `mcp-portal`, but its own Scope tab
-   restricts it to holders of `read-token` — satisfied, so the scope (and the custom Audience
-   mapper on it that writes `mcp-gateway` into `aud`) is included.
-3. Independently, holding `read-token` also puts a `broker: {"roles": ["read-token"]}` entry
-   into the token's `resource_access` claim — that's just Keycloak recording which client
-   roles this token's holder has. The realm's built-in `roles` client scope (assigned as a
-   Default scope to every client) ships a mapper called **Audience Resolve**: unconditionally,
-   for every client that has an entry in `resource_access`, it adds that client's ID to `aud`.
-   This does not consult `mcp-gateway`'s Scope tab at all — it fires purely off
-   `resource_access` containing a `broker` entry.
+Earlier revisions of this setup also listed `read-token` on `mcp-gateway`'s
+(and `mcp-ops-gateway`'s) own Scope tab, so the audience only minted for
+members of the same `af-mcp-users` group `read-token` came from. That
+coupling is now removed (issue tracked alongside the ops-platform usability
+pass): **`mcp-gateway` and `mcp-ops-gateway` are Optional client scopes with
+an empty Scope tab**, explicitly requested by their portal client
+(`portal.oidc.scope` in the Helm values already includes it) — the audience
+mints unconditionally for any `connect`-realm user who authenticates
+through that client, full stop.
 
-Remove the user from the group: step 1 no longer holds, so step 2's Scope-tab check fails
-(`mcp-gateway` and its mapper are dropped) and step 3 has no `broker` entry in
-`resource_access` for Audience Resolve to act on either. Both audience entries disappear in
-the same token, which is why it looks like a single on/off switch even though two independent
-mappers produced the two entries. None of this is broker-side logic — `identity.py`'s
-`keycloak_dependency` only ever checks that `aud` *contains* `mcp-gateway`; an extra `broker`
+**Why the coupling existed, and why it was the wrong lever:** `read-token`
+had to stay group-scoped for the retrieval-blast-radius reason above,
+regardless of anything to do with the gateway audience. Riding
+`mcp-gateway`'s own population on that same role meant "who can reach the
+broker's API at all" was accidentally decided by a permission that exists
+purely to gate ATLAS-IAM/Rucio stored-token retrieval — unrelated
+subsystems sharing a control neither actually wanted shared. Two concrete
+symptoms this produced: a user could complete the ATLAS-IAM linking flow
+and still never see `mcp-gateway` in their token if they weren't also in
+`af-mcp-users` (fixed independently — see "Distinguishing 'missing the
+role' from 'never linked'" above); and `entitlements.group_permissions`'
+`__authenticated__` tier (meant to give every signed-in user some baseline
+permission, e.g. `read_monitoring`) was unreachable in practice for anyone
+outside `af-mcp-users`, since they had no audience to reach the broker with
+at all.
+
+**What decides access now:** `entitlements.group_permissions` alone — the
+audience gate answers "is this a token for the MCP gateway", and the
+group-permissions map answers "what can this principal do", and only the
+second question is actually about authorization. This also makes standing
+up a new facility simpler: `mcp-gateway`'s Keycloak config (client scope +
+Audience mapper, Optional, empty Scope tab) is stock, generic, and requires
+no group to pre-provision; only `read-token`/ATLAS-IAM linking (if a
+deployment even has that integration — `mcp-ops-platform` in `flux_apps`,
+condor-only, does not) needs its own group.
+
+**Consequence for `resource_access.broker`:** Keycloak's built-in `roles`
+client scope ships an **Audience Resolve** mapper that unconditionally adds
+`broker` to `aud` for any token whose holder has a `resource_access.broker`
+entry — which `read-token`-holders always do, independent of
+`mcp-gateway`. A user's token can therefore still show `aud` containing
+both `mcp-gateway` and `broker` (the latter purely from holding
+`read-token` for IAM purposes) — `identity.py`'s `keycloak_dependency` only
+ever checks that `aud` *contains* `mcp-gateway`, so the extra `broker`
 entry is inert to the broker and safe to ignore.
 
 ### Configurable POSIX attribute names and group-path matching (issue #148)

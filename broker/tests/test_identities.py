@@ -149,12 +149,12 @@ def test_is_admin_false_for_non_admin_group_member(
 def test_keycloak_brokered_provider_reflects_is_linked_true(
     app_client: tuple[TestClient, dict], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from af_mcp_broker.credentials.oidc import OIDCProvider
+    from af_mcp_broker.credentials.oidc import OIDCLinkStatus, OIDCProvider
 
-    async def _linked(self, principal) -> bool:
-        return True
+    async def _linked(self, principal) -> OIDCLinkStatus:
+        return OIDCLinkStatus(linked=True, permission_denied=False)
 
-    monkeypatch.setattr(OIDCProvider, "is_linked", _linked)
+    monkeypatch.setattr(OIDCProvider, "link_status", _linked)
 
     client, _ = app_client
     resp = client.get("/v1/identities", headers=_AUTH)
@@ -163,17 +163,18 @@ def test_keycloak_brokered_provider_reflects_is_linked_true(
     entry = _by_id(resp.json())[DEFAULT_KEYCLOAK_ALIAS]
     assert entry["type"] == "keycloak-brokered"
     assert entry["linked"] is True
+    assert entry["link_permission_denied"] is False
 
 
 def test_keycloak_brokered_provider_reflects_is_linked_false(
     app_client: tuple[TestClient, dict], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from af_mcp_broker.credentials.oidc import OIDCProvider
+    from af_mcp_broker.credentials.oidc import OIDCLinkStatus, OIDCProvider
 
-    async def _not_linked(self, principal) -> bool:
-        return False
+    async def _not_linked(self, principal) -> OIDCLinkStatus:
+        return OIDCLinkStatus(linked=False, permission_denied=False)
 
-    monkeypatch.setattr(OIDCProvider, "is_linked", _not_linked)
+    monkeypatch.setattr(OIDCProvider, "link_status", _not_linked)
 
     client, _ = app_client
     resp = client.get("/v1/identities", headers=_AUTH)
@@ -181,6 +182,31 @@ def test_keycloak_brokered_provider_reflects_is_linked_false(
     assert resp.status_code == 200, resp.text
     entry = _by_id(resp.json())[DEFAULT_KEYCLOAK_ALIAS]
     assert entry["linked"] is False
+    assert entry["link_permission_denied"] is False
+
+
+def test_keycloak_brokered_provider_reflects_permission_denied(
+    app_client: tuple[TestClient, dict], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A 403 from Keycloak's broker endpoint (caller lacks `read-token`)
+    surfaces as link_permission_denied=True, distinct from an ordinary
+    not-yet-linked False — so the portal can tell the user why, instead of
+    an indistinguishable "not linked" for someone who may have already
+    completed the IdP linking flow."""
+    from af_mcp_broker.credentials.oidc import OIDCLinkStatus, OIDCProvider
+
+    async def _permission_denied(self, principal) -> OIDCLinkStatus:
+        return OIDCLinkStatus(linked=False, permission_denied=True)
+
+    monkeypatch.setattr(OIDCProvider, "link_status", _permission_denied)
+
+    client, _ = app_client
+    resp = client.get("/v1/identities", headers=_AUTH)
+
+    assert resp.status_code == 200, resp.text
+    entry = _by_id(resp.json())[DEFAULT_KEYCLOAK_ALIAS]
+    assert entry["linked"] is False
+    assert entry["link_permission_denied"] is True
 
 
 def test_keycloak_brokered_provider_probes_not_jwt_claims(
@@ -188,14 +214,14 @@ def test_keycloak_brokered_provider_probes_not_jwt_claims(
 ) -> None:
     """A principal has no JWT-derived sub claim to carry any more (the fields
     were removed from Principal entirely) — the linked flag must still be
-    accurate, built purely from the is_linked() probe."""
-    from af_mcp_broker.credentials.oidc import OIDCProvider
+    accurate, built purely from the link_status() probe."""
+    from af_mcp_broker.credentials.oidc import OIDCLinkStatus, OIDCProvider
 
-    async def _linked(self, principal) -> bool:
-        return True
+    async def _linked(self, principal) -> OIDCLinkStatus:
+        return OIDCLinkStatus(linked=True, permission_denied=False)
 
     with pytest.MonkeyPatch.context() as monkeypatch:
-        monkeypatch.setattr(OIDCProvider, "is_linked", _linked)
+        monkeypatch.setattr(OIDCProvider, "link_status", _linked)
         with app_client_factory() as (client, state):
             state["principal"] = make_principal(groups=[])
             resp = client.get("/v1/identities", headers=_AUTH)
