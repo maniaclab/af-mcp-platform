@@ -21,6 +21,7 @@ import {
   fetchServerTools,
   fetchX509Preflight,
   listTokens,
+  requestKrb5Ticket,
   requestProxy,
   mintToken,
   revokeAllCredentials,
@@ -801,6 +802,67 @@ describe('requestProxy() custody consent', () => {
     await requestProxy('hunter2', '12:00', 'atlas', false);
     const [, init] = vi.mocked(globalThis.fetch).mock.calls[0] as [string, RequestInit];
     expect(JSON.parse(init.body as string)).toMatchObject({ remember: false });
+  });
+});
+
+describe('requestKrb5Ticket', () => {
+  it('POSTs username/password and returns ticket metadata', async () => {
+    globalThis.fetch = mockJson(201, {
+      target: 'condor',
+      principal: 'auser@ATLAS.EXAMPLE.ORG',
+      realm: 'ATLAS.EXAMPLE.ORG',
+      expires_at: '2026-09-04T00:00:00+00:00',
+      remaining_seconds: 86400,
+      renew_until: '2026-09-10T00:00:00+00:00',
+    });
+
+    const result = await requestKrb5Ticket('auser', 'hunter2');
+
+    const [url, init] = vi.mocked(globalThis.fetch).mock.calls[0] as [string, RequestInit];
+    expect(String(url)).toContain('/krb5/ticket');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual({ username: 'auser', password: 'hunter2' });
+    expect(result).toEqual({
+      target: 'condor',
+      principal: 'auser@ATLAS.EXAMPLE.ORG',
+      realm: 'ATLAS.EXAMPLE.ORG',
+      expires_at: '2026-09-04T00:00:00+00:00',
+      remaining_seconds: 86400,
+      renew_until: '2026-09-10T00:00:00+00:00',
+    });
+  });
+
+  it('includes target/lifetime/renewable_lifetime in the body when supplied', async () => {
+    globalThis.fetch = mockJson(201, {
+      target: 'condor',
+      principal: 'auser@ATLAS.EXAMPLE.ORG',
+      realm: 'ATLAS.EXAMPLE.ORG',
+      expires_at: '2026-09-04T00:00:00+00:00',
+      remaining_seconds: 86400,
+      renew_until: null,
+    });
+
+    await requestKrb5Ticket('auser', 'hunter2', 'condor', '24h', '7d');
+
+    const [, init] = vi.mocked(globalThis.fetch).mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({
+      username: 'auser',
+      password: 'hunter2',
+      target: 'condor',
+      lifetime: '24h',
+      renewable_lifetime: '7d',
+    });
+  });
+
+  it.each([400, 403, 422, 429, 502])('throws APIError on a %i response', async (status) => {
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValue(new Response('nope', { status, statusText: 'Error' }));
+    await expect(requestKrb5Ticket('auser', 'wrong')).rejects.toMatchObject({
+      name: 'APIError',
+      status,
+      body: 'nope',
+    });
   });
 });
 
