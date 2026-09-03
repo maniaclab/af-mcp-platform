@@ -143,7 +143,8 @@ oauth21-direct entries additionally carry the endpoint/issuer/scope fields,
 broker-issued entries carry nothing more -- each target's aud/POSIX options
 now live on the service entry (aggregator.services' audience/requires_posix,
 issue #257), condor-token entries their serviceUrl/audience (issue #169),
-and x509 entries their serviceUrl/voms/valid/audience (serviceUrl omitted =
+krb5-token entries their serviceUrl/audience (issue #274), and x509 entries
+their serviceUrl/voms/valid/audience (serviceUrl omitted =
 the legacy k8s-Job mint path; replaces the removed global
 broker.env.VOMS_TOKEN_SERVICE_URL -- every auth_type: x509 backend now
 needs an explicit entry, there is no synthesized fallback).
@@ -180,6 +181,16 @@ needs an explicit entry, there is no synthesized fallback).
       "enables" (.enables | default "")
       "service_url" .serviceUrl
       "audience" (.audience | default "condor-token-service")
+    ) -}}
+{{- else if eq .type "krb5-token" -}}
+{{- $providers = append $providers (dict
+      "type" .type
+      "alias" .alias
+      "targets" (.targets | default (list))
+      "display_name" (.displayName | default "")
+      "enables" (.enables | default "")
+      "service_url" .serviceUrl
+      "audience" (.audience | default "krb5-token-service")
     ) -}}
 {{- else if eq .type "x509" -}}
 {{- $providers = append $providers (dict
