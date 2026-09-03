@@ -113,6 +113,11 @@ class KrbTicketRequest(BaseModel):
     target: str | None = None
     lifetime: str | None = None
     renewable_lifetime: str | None = None
+    # Custody consent: True — additionally bootstrap and store a keytab from
+    # this same password so future tickets can be renewed/reminted hands-free
+    # (tier 4) without the user re-entering their password; False (the
+    # default) mints a ticket without persisting anything password-derived.
+    remember: bool = False
 
 
 class KrbTicketMetadata(BaseModel):
@@ -461,6 +466,7 @@ async def create_krb5_ticket(
             username=body.username,
             lifetime=body.lifetime,
             renewable_lifetime=body.renewable_lifetime,
+            remember=body.remember,
         )
     except Krb5TokenBadCredentialError as exc:
         raise HTTPException(

@@ -73,22 +73,35 @@ _BACKENDS_YAML = (
 
 
 class FakeKrb5Client:
-    """Recording fake for ``Krb5TokenServiceClient.mint``.
+    """Recording fake for ``Krb5TokenServiceClient.mint``/``mint_keytab``.
 
     ``outcome`` is a ``MintedTicket`` to return or an exception to raise;
     mutate it between requests to script the next mint's result. Every
-    call's kwargs are recorded in ``calls``.
+    call's kwargs are recorded in ``calls``. ``keytab_result`` scripts
+    ``mint_keytab`` -- exercised only by a ``remember=True`` request, which
+    ``KrbTokenProvider.issue()``'s tier-5 path calls with the same
+    already-captured password (see test_krb5_token.py's tier-5 tests).
     """
 
-    def __init__(self, outcome: MintedTicket | Exception | None = None) -> None:
+    def __init__(
+        self,
+        outcome: MintedTicket | Exception | None = None,
+        keytab_result: tuple[str, str] | None = None,
+    ) -> None:
         self.outcome = outcome or _minted()
+        self.keytab_result = keytab_result or ("a2V5dGFi", "tuser@CERN.CH")
         self.calls: list[dict[str, Any]] = []
+        self.keytab_calls: list[dict[str, Any]] = []
 
     async def mint(self, **kwargs: Any) -> MintedTicket:
         self.calls.append(kwargs)
         if isinstance(self.outcome, Exception):
             raise self.outcome
         return self.outcome
+
+    async def mint_keytab(self, **kwargs: Any) -> tuple[str, str]:
+        self.keytab_calls.append(kwargs)
+        return self.keytab_result
 
 
 def _minted(remaining: float = 3600.0, renewable: bool = True) -> MintedTicket:
@@ -185,6 +198,50 @@ def test_happy_path_null_renew_until_for_non_renewable_ticket(krb5_app) -> None:
 
     assert resp.status_code == 201, resp.text
     assert resp.json()["renew_until"] is None
+
+
+# ---------------------------------------------------------------------------
+# remember
+# ---------------------------------------------------------------------------
+
+
+def test_remember_true_stores_a_keytab_link(krb5_app) -> None:
+    """``remember: true`` must reach ``provider.issue()`` -- observed via its
+    tier-5 side effect (a stored keytab link), the same signal
+    test_krb5_token.py's ``test_issue_tier5_remember_true_also_mints_and_stores_keytab``
+    asserts on, rather than intercepting ``issue()``'s call arguments
+    directly (this is an HTTP-level test; FakeKrb5Client -- unlike
+    ``_FakeClient`` in test_krb5_token.py -- has no reason to expose its own
+    call history for the provider layer's internals)."""
+    client, state, _fake_client = krb5_app
+    vault_store = asyncio.run(
+        client.app.state.credential_registry.resolve(_TARGET)
+    )._vault_store
+
+    resp = client.post(
+        "/v1/krb5/ticket",
+        json={"username": "tuser", "password": "hunter2", "remember": True},
+    )
+
+    assert resp.status_code == 201, resp.text
+    link = asyncio.run(vault_store.get_link(state["principal"].subject))
+    assert link is not None
+    assert link.username == "tuser"
+
+
+def test_remember_omitted_defaults_to_false_and_stores_no_link(krb5_app) -> None:
+    client, state, _fake_client = krb5_app
+    vault_store = asyncio.run(
+        client.app.state.credential_registry.resolve(_TARGET)
+    )._vault_store
+
+    resp = client.post(
+        "/v1/krb5/ticket",
+        json={"username": "tuser", "password": "hunter2"},
+    )
+
+    assert resp.status_code == 201, resp.text
+    assert asyncio.run(vault_store.get_link(state["principal"].subject)) is None
 
 
 # ---------------------------------------------------------------------------
