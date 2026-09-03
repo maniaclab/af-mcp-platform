@@ -8,15 +8,20 @@ test_krb5_service_client.py -- here the client is a fake double.
 
 from __future__ import annotations
 
+import asyncio
 import time
 
 import pytest
+from prometheus_client import REGISTRY
 from pydantic import SecretBytes, SecretStr
 
 from af_mcp_broker.credentials.base import CredentialKind, NeedsUnlock
 from af_mcp_broker.credentials.cache import CredentialCache
 from af_mcp_broker.credentials.krb5 import KrbTokenProvider
-from af_mcp_broker.credentials.krb5_service import MintedTicket
+from af_mcp_broker.credentials.krb5_service import (
+    Krb5TokenBadCredentialError,
+    MintedTicket,
+)
 from af_mcp_broker.identity import Principal
 
 
@@ -141,3 +146,93 @@ async def test_revoke_drops_cached_ticket():
     )
     await provider.revoke(principal, "krb5-target")
     assert await cache.get(principal.subject, "krb5-target", min_remaining=0) is None
+
+
+async def test_is_linked_true_when_only_one_of_multiple_targets_has_a_ticket():
+    """``is_linked()`` loops over all of this entry's configured targets with
+    ``any()``, not ``all()`` -- a ticket cached for just one of them must
+    still report linked."""
+    client = _FakeClient(ticket=_ticket())
+    provider, _ = provider_factory(client, targets=("krb5-target-a", "krb5-target-b"))
+    principal = make_principal()
+    await provider.issue(
+        principal,
+        "krb5-target-a",
+        passphrase=SecretBytes(b"hunter2"),
+        username="alice",
+    )
+
+    assert await provider.is_linked(principal) is True
+
+
+async def test_is_linked_does_not_affect_cache_metrics():
+    """``is_linked()`` is a live cache-state probe, not a credential-serving
+    lookup -- it must not move ``af_mcp_credential_cache_hits_total``/
+    ``..._misses_total`` (see ``CredentialCache.peek()``)."""
+    client = _FakeClient(ticket=_ticket())
+    provider, _ = provider_factory(client)
+    principal = make_principal()
+    await provider.issue(
+        principal, "krb5-target", passphrase=SecretBytes(b"hunter2"), username="alice"
+    )
+
+    def _sample(name: str) -> float:
+        return REGISTRY.get_sample_value(name, {"target": "krb5-target"}) or 0.0
+
+    before_hits = _sample("af_mcp_credential_cache_hits_total")
+    before_misses = _sample("af_mcp_credential_cache_misses_total")
+
+    for _ in range(3):
+        assert await provider.is_linked(principal) is True
+
+    assert _sample("af_mcp_credential_cache_hits_total") == before_hits
+    assert _sample("af_mcp_credential_cache_misses_total") == before_misses
+
+
+async def test_issue_mint_failure_propagates_and_does_not_cache():
+    """A failed mint must propagate uncaught, and must not poison the cache
+    -- mirrors test_condor_token.py's equivalent service-failure coverage."""
+    client = _FakeClient(error=Krb5TokenBadCredentialError())
+    provider, cache = provider_factory(client)
+    principal = make_principal()
+
+    with pytest.raises(Krb5TokenBadCredentialError):
+        await provider.issue(
+            principal,
+            "krb5-target",
+            passphrase=SecretBytes(b"hunter2"),
+            username="alice",
+        )
+
+    assert await cache.get(principal.subject, "krb5-target", min_remaining=0) is None
+
+
+async def test_issue_single_flights_concurrent_misses():
+    """N concurrent issue() calls for the same (subject, target) must cost
+    exactly one krb5-token-service mint call (issue #94's pattern, mirrored
+    from test_condor_token.py's test_issue_single_flights_concurrent_misses)."""
+
+    class _SlowClient(_FakeClient):
+        async def mint(self, **kwargs):
+            # Force a real suspension so concurrent callers actually overlap.
+            await asyncio.sleep(0.01)
+            return await super().mint(**kwargs)
+
+    client = _SlowClient(ticket=_ticket())
+    provider, _ = provider_factory(client)
+    principal = make_principal()
+
+    results = await asyncio.gather(
+        *[
+            provider.issue(
+                principal,
+                "krb5-target",
+                passphrase=SecretBytes(b"hunter2"),
+                username="alice",
+            )
+            for _ in range(5)
+        ]
+    )
+
+    assert len(client.calls) == 1
+    assert all(r.payload["ccache_b64"] == "ZmFrZQ==" for r in results)
