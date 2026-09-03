@@ -37,8 +37,16 @@ router = APIRouter(prefix="/identities", tags=["identities"])
 # `identity_providers` entry: every `auth_type: x509` backend must be
 # covered by an explicit entry (app.py's lifespan refuses to start
 # otherwise), so this row is always registry-sourced.
+# "krb5-token" — Kerberos-authenticated tokens minted via KrbTokenProvider
+# (issue #274), an ordinary `identity_providers` entry linked by the user
+# submitting a username + password to the portal rather than a redirect.
 ProviderType = Literal[
-    "keycloak-brokered", "oauth21-direct", "broker-issued", "condor-token", "x509"
+    "keycloak-brokered",
+    "oauth21-direct",
+    "broker-issued",
+    "condor-token",
+    "krb5-token",
+    "x509",
 ]
 
 # How the portal starts a linking flow for an entry: "redirect" — a browser
@@ -46,15 +54,19 @@ ProviderType = Literal[
 # oauth21-direct's `link_url`); "passphrase" — an in-portal form that POSTs
 # the user's Globus passphrase to /v1/x509/proxy (x509 only — there is no
 # URL to redirect to, so this is deliberately a distinct mechanism rather
-# than an overloaded `link_url`); "none" — no linking step exists
-# (broker-issued, condor-token: the broker is authoritative).
-LinkMechanism = Literal["redirect", "passphrase", "none"]
+# than an overloaded `link_url`); "credential" — an in-portal form that POSTs
+# a username + password (krb5-token only — distinct from "passphrase" since
+# it is two fields, not one, and the portal form must reflect that); "none"
+# — no linking step exists (broker-issued, condor-token: the broker is
+# authoritative).
+LinkMechanism = Literal["redirect", "passphrase", "credential", "none"]
 
 _LINK_MECHANISM_BY_TYPE: dict[str, LinkMechanism] = {
     "keycloak-brokered": "redirect",
     "oauth21-direct": "redirect",
     "broker-issued": "none",
     "condor-token": "none",
+    "krb5-token": "credential",
     "x509": "passphrase",
 }
 
