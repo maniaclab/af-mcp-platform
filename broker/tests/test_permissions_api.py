@@ -53,6 +53,41 @@ def test_entitlements_returns_the_full_policy_table(app_client) -> None:
     }
 
 
+def test_grants_reflect_every_permission_a_dict_form_service_can_require(
+    app_client, make_principal
+) -> None:
+    """A caller holding both of a dict-form service's declared permissions
+    must see that service listed as a target under BOTH grants -- not just
+    the one matching some single top-level value (issue: per-tool
+    required_permission, condor_service's query_jobs/manage_jobs split)."""
+    from af_mcp_broker.mcp.registry import ServiceSpec
+
+    client, state = app_client
+    client.app.state.entitlement_policy = EntitlementPolicy(
+        group_permissions={"atlas": ["read_monitoring", "manage_jobs"]}
+    )
+    client.app.state.service_registry.register(
+        ServiceSpec(
+            name="condor_service",
+            prefix="condor",
+            url="http://condor.invalid/mcp",
+            transport="http",
+            required_permission={
+                "__default__": "manage_jobs",
+                "query_jobs": "read_monitoring",
+            },
+        )
+    )
+    state["principal"] = make_principal(groups=["atlas"])
+
+    resp = client.get("/v1/permissions")
+
+    assert resp.status_code == 200
+    grants = {g["permission"]: g["targets"] for g in resp.json()["grants"]}
+    assert "condor_service" in grants["read_monitoring"]
+    assert "condor_service" in grants["manage_jobs"]
+
+
 def test_entitlements_requires_authentication(app_client_factory) -> None:
     """Reference table or not, this still goes through keycloak_dependency
     like every other /v1 route -- an unauthenticated caller gets the same

@@ -103,13 +103,29 @@ def registry() -> ServiceRegistry:
             # gate instead (issue #60).
         )
     )
+    reg.register(
+        ServiceSpec(
+            name="condor_service",
+            prefix="condor",
+            url="http://condor.invalid/mcp",
+            transport="http",
+            required_permission={
+                "__default__": "manage_jobs",
+                "query_jobs": "read_monitoring",
+            },
+        )
+    )
     return reg
 
 
 @pytest.fixture
 def policy() -> EntitlementPolicy:
     return EntitlementPolicy(
-        group_permissions={"atlas": ["read_data"], "__authenticated__": []},
+        group_permissions={
+            "atlas": ["read_data", "read_monitoring"],
+            "af-admins": ["read_monitoring", "manage_jobs"],
+            "__authenticated__": [],
+        },
         target_action_types={"rucio": {"rucio_list_dids": "read"}},
     )
 
@@ -672,6 +688,91 @@ async def test_denied_call_leaves_metering_fields_none(
     assert record.duration_ms is None
     assert record.result_bytes is None
     assert record.result_tokens_est is None
+
+
+# ---------------------------------------------------------------------------
+# Per-tool required_permission (dict form): different tools of the same
+# service can require different permissions, with an optional "__default__"
+# fallback -- an unlisted tool with no default is disabled for everyone.
+# ---------------------------------------------------------------------------
+
+
+async def test_dict_form_permission_allows_the_tool_it_names(
+    registry, policy, make_principal, captured_audits
+) -> None:
+    mw = AuthorizationMiddleware(registry, policy)
+    principal = make_principal(
+        groups=["atlas"]
+    )  # holds read_monitoring, not manage_jobs
+    context = _call_tool_context("condor_query_jobs", {}, principal)
+    fake_result = ToolResult(content=[])
+    call_next = _CallNextRecorder(result=fake_result)
+
+    result = await mw.on_call_tool(context, call_next)
+
+    assert result is fake_result
+    assert captured_audits[0].outcome == "success"
+    assert captured_audits[0].permission == "read_monitoring"
+
+
+async def test_dict_form_permission_falls_back_to_default_for_other_tools(
+    registry, policy, make_principal, captured_audits
+) -> None:
+    """condor_submit_job isn't an explicit key -- it falls back to
+    __default__ (manage_jobs), which this atlas principal doesn't hold."""
+    mw = AuthorizationMiddleware(registry, policy)
+    principal = make_principal(groups=["atlas"])
+    context = _call_tool_context("condor_submit_job", {}, principal)
+    call_next = _CallNextRecorder()
+
+    with pytest.raises(AuthorizationError):
+        await mw.on_call_tool(context, call_next)
+
+    assert captured_audits[0].outcome == "denied"
+    assert captured_audits[0].permission == "manage_jobs"
+
+
+async def test_dict_form_permission_grants_default_to_a_holder(
+    registry, policy, make_principal, captured_audits
+) -> None:
+    mw = AuthorizationMiddleware(registry, policy)
+    principal = make_principal(groups=["af-admins"])
+    context = _call_tool_context("condor_submit_job", {}, principal)
+    fake_result = ToolResult(content=[])
+    call_next = _CallNextRecorder(result=fake_result)
+
+    result = await mw.on_call_tool(context, call_next)
+
+    assert result is fake_result
+    assert captured_audits[0].outcome == "success"
+
+
+async def test_dict_form_permission_without_default_disables_unlisted_tool(
+    registry, policy, make_principal, captured_audits
+) -> None:
+    """A separate dict-form service with no __default__: an admin holding
+    every permission still can't call an unlisted tool -- opt-in only."""
+    reg = ServiceRegistry()
+    reg.register(
+        ServiceSpec(
+            name="strict_service",
+            prefix="strict",
+            url="http://strict.invalid/mcp",
+            transport="http",
+            required_permission={"read_thing": "read_monitoring"},
+        )
+    )
+    mw = AuthorizationMiddleware(reg, policy)
+    principal = make_principal(groups=["af-admins"])
+    context = _call_tool_context("strict_unlisted_tool", {}, principal)
+    call_next = _CallNextRecorder()
+
+    with pytest.raises(AuthorizationError):
+        await mw.on_call_tool(context, call_next)
+
+    assert captured_audits[0].outcome == "denied"
+    assert captured_audits[0].permission == "__disabled__"
+    assert call_next.called is False
 
 
 async def test_registry_and_policy_are_mutable_attributes(

@@ -31,7 +31,7 @@ from fastmcp.server.providers.proxy import (
 from mcp.types import ClientCapabilities, ElicitationCapability
 from starlette.middleware import Middleware
 
-from af_mcp_broker.authorization import check_entitlement
+from af_mcp_broker.authorization import get_principal_permissions
 from af_mcp_broker.credentials import CredentialKind, NeedsUnlock
 from af_mcp_broker.mcp.diagnostics import register_diagnostic_tools
 from af_mcp_broker.mcp.instructions import compose_agent_instructions
@@ -46,6 +46,7 @@ from af_mcp_broker.mcp.registry import (
     LIST_IDENTITIES_TOOL_NAME,
     LIST_MCP_SERVERS_TOOL_NAME,
     identity_provider_url,
+    namespaced_tool_name,
 )
 
 if TYPE_CHECKING:
@@ -230,9 +231,10 @@ async def resolve_list_time_credential(
       mint), unchanged -- ``skip_reason`` ("not_linked" | "unavailable")
       is set whenever no credential could be attached.
 
-    Callers must gate on ``check_entitlement`` first, exactly like the
-    aggregator's factories do -- a caller who could never pass the
-    permission check shouldn't trigger a mint attempt at all.
+    Callers must gate on holding at least one of the service's required
+    permissions first (``_might_be_entitled`` here; ``api/permissions.py``'s
+    ``_holds_any_required_permission`` for ``api/catalog_tools.py``) -- a
+    caller who could never pass it shouldn't trigger a mint attempt at all.
     """
     if spec.auth_type == "none":
         return {}, None
@@ -242,6 +244,24 @@ async def resolve_list_time_credential(
         token, _ = broker_token_issuer.mint(principal.subject, spec.effective_audience)
         return {"Authorization": f"Bearer {token}"}, None
     return await _resolve_list_time_headers(spec, credential_registry, principal)
+
+
+def _might_be_entitled(
+    principal: Principal, spec: ServiceSpec, policy: EntitlementPolicy
+) -> bool:
+    """Return whether a list-time credential mint for *spec* is worth attempting at all.
+
+    Best-effort: this runs for a caller with no specific tool_name in hand
+    yet (a tools/list request, or a stale-cache _get_tool() refresh) -- not a
+    security boundary of its own (EntitlementMiddleware already hides a
+    service's tools from a caller with no chance of using any of them; a
+    caller who slips past this and calls one anyway is still stopped by
+    AuthorizationMiddleware's real per-tool check). True if *spec* has no
+    permission gate at all, or the caller holds at least one of the
+    permissions it can require across any of its tools.
+    """
+    required = spec.all_required_permissions()
+    return not required or bool(required & get_principal_permissions(principal, policy))
 
 
 async def fetch_service_tool_listing(
@@ -268,8 +288,10 @@ async def fetch_service_tool_listing(
     except Exception as exc:  # noqa: BLE001
         reason = _classify_failure(exc, injected=bool(headers), skip_reason=skip_reason)
         return reason, []
-    prefix = f"{spec.prefix}_" if spec.apply_namespace else ""
-    return "ok", [(f"{prefix}{tool.name}", tool.description or "") for tool in tools]
+    return "ok", [
+        (namespaced_tool_name(spec, tool.name), tool.description or "")
+        for tool in tools
+    ]
 
 
 def _identity_link_url(settings: Settings, alias: str | None) -> str:
@@ -529,10 +551,11 @@ def _make_client_factory(
     respond to ``tools/list`` (rucio-mcp) then 401s on every listing and
     becomes permanently invisible to every caller, with no user-facing
     error at all. Resolved by attempting a *best-effort* mint during a
-    listing too, gated on the caller actually having the service's
-    ``required_permission`` (``check_entitlement``, the same check
-    ``AuthorizationMiddleware`` uses) -- the in-process ``CredentialCache``
-    already makes repeat mints for the same ``(uid, target)`` cheap, so
+    listing too, gated on the caller holding at least one of the service's
+    required permissions (``_might_be_entitled``, a coarser whole-service
+    version of the per-tool check ``AuthorizationMiddleware`` uses) -- the
+    in-process ``CredentialCache`` already makes repeat mints for the same
+    ``(uid, target)`` cheap, so
     "wasteful" no longer applies. A failure to mint (no linked identity, no
     provider configured, a mint error) does NOT prevent the connection
     attempt, unlike the authorized tools/call path below -- see
@@ -579,10 +602,7 @@ def _make_client_factory(
                 principal = await ctx.get_state("principal")
                 if principal is None or broker_token_issuer is None:
                     return _build_client(spec, transport_cls)
-                allowed, _reason = check_entitlement(
-                    principal, spec.required_permission, spec.name, policy
-                )
-                if not allowed:
+                if not _might_be_entitled(principal, spec, policy):
                     return _build_client(spec, transport_cls)
                 token, _ = broker_token_issuer.mint(
                     principal.subject, spec.effective_audience
@@ -663,10 +683,7 @@ def _make_client_factory(
             # hides this service's tools from such a caller's own tools/list
             # response, so this is just avoiding wasted work, not a security
             # boundary of its own.
-            allowed, _reason = check_entitlement(
-                principal, spec.required_permission, spec.name, policy
-            )
-            if not allowed:
+            if not _might_be_entitled(principal, spec, policy):
                 return _build_client(spec, transport_cls)
 
             headers, skip_reason = await _resolve_list_time_headers(
