@@ -220,20 +220,21 @@ class AuthorizationMiddleware(Middleware):
                     f"No service registered for tool '{tool_name}'"
                 )
 
+            permission = self.registry.required_permission_for(tool_name, service)
             action_type = get_action_type(
-                service.name, tool_name, service.required_permission, self.policy
+                service.name, tool_name, permission, self.policy
             )
             allow, reason = check_entitlement(
-                principal, service.required_permission, service.name, self.policy
+                principal, permission, service.name, self.policy
             )
             if span.is_recording():
                 span.set_attributes(
                     {"af.service": service.name, "af.action_type": action_type}
                 )
-                if service.required_permission is not None:
+                if permission is not None:
                     # None means the credential layer is the sole gate
                     # (issue #60) -- there is no permission name to record.
-                    span.set_attribute("af.permission", service.required_permission)
+                    span.set_attribute("af.permission", permission)
             if not allow:
                 # A denial is still an attempted invocation for the coarse
                 # counters, plus its own isolated denied counter -- see
@@ -248,7 +249,7 @@ class AuthorizationMiddleware(Middleware):
                     AuditRecord(
                         principal_sub=principal.subject,
                         principal_uid=principal.uid,
-                        permission=service.required_permission,
+                        permission=permission,
                         target=service.name,
                         action=tool_name,
                         action_type=action_type,
@@ -318,7 +319,7 @@ class AuthorizationMiddleware(Middleware):
                     AuditRecord(
                         principal_sub=principal.subject,
                         principal_uid=principal.uid,
-                        permission=service.required_permission,
+                        permission=permission,
                         target=service.name,
                         action=tool_name,
                         action_type=action_type,
@@ -365,7 +366,7 @@ class AuthorizationMiddleware(Middleware):
                     AuditRecord(
                         principal_sub=principal.subject,
                         principal_uid=principal.uid,
-                        permission=service.required_permission,
+                        permission=permission,
                         target=service.name,
                         action=tool_name,
                         action_type=action_type,
@@ -398,7 +399,7 @@ class AuthorizationMiddleware(Middleware):
                 AuditRecord(
                     principal_sub=principal.subject,
                     principal_uid=principal.uid,
-                    permission=service.required_permission,
+                    permission=permission,
                     target=service.name,
                     action=tool_name,
                     action_type=action_type,

@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from af_mcp_broker.authorization import (
+    DISABLED_PERMISSION,
     EntitlementPolicy,
     check_entitlement,
     get_action_type,
@@ -177,6 +178,37 @@ def test_action_type_resolution_omitted_permission_defaults_to_read(
     assert get_action_type("mystery", "list_things", None, policy) == "read"
 
 
+# ---------------------------------------------------------------------------
+# DISABLED_PERMISSION ("__disabled__"): the per-tool required_permission
+# resolver's sentinel for "dict form declared, this tool isn't in it, and
+# there's no __default__ to fall back to" -- opt-in-only per-tool gating
+# (registry.py's ServiceRegistry.required_permission_for). Deny unconditionally,
+# the same way "__none__" is unconditionally allowed.
+# ---------------------------------------------------------------------------
+
+
+def test_disabled_permission_denies_every_principal(
+    policy: EntitlementPolicy, make_principal: Callable[..., object]
+) -> None:
+    principal = make_principal(groups=["af-admins"])
+    allow, reason = check_entitlement(
+        principal, DISABLED_PERMISSION, "condor_service", policy
+    )
+    assert not allow
+    assert "condor_service" in reason
+
+
+def test_disabled_permission_action_type_defaults_to_read(
+    policy: EntitlementPolicy,
+) -> None:
+    """Never actually reachable (the call is denied first), but must not
+    crash the action-type resolver used for audit/span labeling."""
+    assert (
+        get_action_type("condor_service", "submit_job", DISABLED_PERMISSION, policy)
+        == "read"
+    )
+
+
 def test_is_admin_true_when_member_of_configured_admin_group(
     make_principal: Callable[..., object],
 ) -> None:
@@ -294,6 +326,52 @@ def test_startup_refuses_to_start_for_typoed_permission_name(
     # "rucio" requires read_data, correctly spelled and reachable -- it must
     # not be named.
     assert "rucio" not in message, message
+
+
+def test_startup_refuses_to_start_for_unreachable_permission_in_dict_form(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    app_client_factory: Callable[..., Any],
+) -> None:
+    """A dict-form required_permission's values are checked individually --
+    a typo'd (or simply ungranted) per-tool value must be named, exactly like
+    the flat-string case."""
+    # This services.yaml has no auth_type: x509 backend at all -- drop
+    # conftest's default x509 entry (targets ["ami"], absent here), same as
+    # test_app.py's test_omitted_permission_without_credential_provider_
+    # refuses_to_start.
+    monkeypatch.setenv("IDENTITY_PROVIDERS", "[]")
+    monkeypatch.setenv(
+        "SERVICES_FILE",
+        _write_services(
+            tmp_path,
+            "services:\n"
+            "  - name: condor_service\n"
+            "    prefix: condor\n"
+            "    url: http://condor.invalid/mcp\n"
+            "    auth_type: none\n"
+            "    required_permission:\n"
+            "      __default__: manage_jobs\n"
+            "      query_jobs: read_monitroing\n",  # typo: read_monitroing
+        ),
+    )
+    monkeypatch.setenv(
+        "POLICY_FILE",
+        _write_policy(
+            tmp_path,
+            "group_permissions:\n  atlas: [manage_jobs]\ntarget_action_types: {}\n",
+        ),
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:  # noqa: SIM117
+        with app_client_factory():
+            pass
+
+    message = str(exc_info.value)
+    assert "condor_service" in message, message
+    assert "read_monitroing" in message, message
+    # manage_jobs is correctly spelled and reachable -- must not be named.
+    assert "manage_jobs" not in message, message
 
 
 def test_startup_stays_quiet_with_empty_group_permissions_and_no_gated_backends(

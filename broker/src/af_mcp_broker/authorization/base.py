@@ -12,6 +12,17 @@ if TYPE_CHECKING:
     from af_mcp_broker.identity import Principal
 
 
+# Sentinel a per-tool required_permission resolution can produce
+# (mcp/registry.py's ServiceRegistry.required_permission_for) when a
+# service's required_permission is a dict, the tool being called isn't one of
+# its explicit keys, and no "__default__" was declared: opt-in-only per-tool
+# gating means an unlisted tool is disabled, never silently open. Distinct
+# from both a real permission name and "__none__" (open to any authenticated
+# user) -- check_entitlement/get_action_type below deny it unconditionally,
+# the mirror image of how they already special-case "__none__".
+DISABLED_PERMISSION = "__disabled__"
+
+
 @dataclass(frozen=True)
 class Permission:
     name: str
@@ -148,18 +159,23 @@ def check_entitlement(
 ) -> tuple[bool, str]:
     """Return (allow, reason).
 
-    ``permission`` is the target's required permission as declared by the
-    service registry (``ServiceSpec.required_permission`` -- services.yaml is
-    the sole source of truth for what a target requires; policy.yaml no
-    longer duplicates it):
+    ``permission`` is the target's required permission, resolved per-tool by
+    ``ServiceRegistry.required_permission_for`` from ``ServiceSpec.
+    required_permission`` (services.yaml is the sole source of truth for what
+    a target requires; policy.yaml no longer duplicates it):
       - a permission name (e.g. "read_data") -> principal must hold it.
       - "__none__" -> open to any authenticated user (deliberate opt-in).
       - None (omitted) -> no permission gate; the credential layer is the
         gate instead (enforced at startup -- see app.py's lifespan), so any
         authenticated principal is allowed through here.
+      - DISABLED_PERMISSION -> a dict-form required_permission declared this
+        tool isn't reachable (not one of its explicit keys, no "__default__"
+        to fall back to) -- denied unconditionally, for every principal.
     """
     if permission is None or permission == "__none__":
         return True, ""
+    if permission == DISABLED_PERMISSION:
+        return False, f"target '{target}' has no permission mapping for this tool"
 
     principal_caps = get_principal_permissions(principal, policy)
     if permission not in principal_caps:

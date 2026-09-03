@@ -138,7 +138,12 @@ class CatalogServer(BaseModel):
     name: str
     display_name: str
     description: str
-    permission: str
+    # "__none__" for open access (including an omitted required_permission,
+    # preserving the historical convention); a real permission name for a
+    # scalar required_permission or a dict form's "__default__"; None for a
+    # dict form with no "__default__" -- no single representative value,
+    # check GET /v1/catalog/{service}/tools' per-tool permission instead.
+    permission: str | None
     auth_type: str
     action_type: Literal["read", "state_change"]
     credential_provider: str | None
@@ -205,21 +210,27 @@ def _action_type_for_permission(
 
 
 def _action_type_for_service(
-    target: str, permission: str | None, policy: EntitlementPolicy
+    spec: ServiceSpec, policy: EntitlementPolicy
 ) -> Literal["read", "state_change"]:
     """Server-level read/write badge for a service target.
 
     Real enforcement (``get_action_type`` in authorization/base.py) resolves
     ``policy.target_action_types[target]`` glob overrides per tool. The
-    catalog has no per-tool enumeration yet (issue #58), so this reports the
-    safe rollup: "state_change" if the permission's default action type is
-    already "state_change", or if *any* per-tool override for this target
-    maps to "state_change" (i.e. the server has at least one state-changing
-    tool available) — otherwise "read".
+    catalog has no per-tool enumeration yet (issue #58; per-tool `permission`
+    now does exist at GET /v1/catalog/{service}/tools -- see
+    api/catalog_tools.py -- but not a per-tool action_type rollup here), so
+    this reports the safe rollup: "state_change" if *any* permission the
+    service can require (across every tool, dict-form included) defaults to
+    "state_change", or if *any* per-tool override for this target maps to
+    "state_change" (i.e. the server has at least one state-changing tool
+    available) — otherwise "read".
     """
-    if _action_type_for_permission(permission) == "state_change":
+    if any(
+        _action_type_for_permission(perm) == "state_change"
+        for perm in spec.all_required_permissions()
+    ):
         return "state_change"
-    overrides = policy.target_action_types.get(target, {})
+    overrides = policy.target_action_types.get(spec.name, {})
     if any(action_type == "state_change" for action_type in overrides.values()):
         return "state_change"
     return "read"
@@ -232,7 +243,10 @@ def _grants_for(
 
     For each granted permission we list the targets that require it, per the
     service registry's ``required_permission`` (services.yaml is the sole
-    source of truth for that mapping -- see issue #60).
+    source of truth for that mapping -- see issue #60). A dict-form
+    required_permission can require different permissions for different
+    tools, so a service can legitimately appear as a target under more than
+    one grant (see ``ServiceSpec.all_required_permissions``).
     """
     caps = get_principal_permissions(principal, policy)
     grants: list[PermissionGrant] = []
@@ -240,7 +254,7 @@ def _grants_for(
         targets = sorted(
             spec.name
             for spec in registry.all_services()
-            if spec.required_permission == cap
+            if cap in spec.all_required_permissions()
         )
         grants.append(
             PermissionGrant(
@@ -250,6 +264,23 @@ def _grants_for(
             )
         )
     return grants
+
+
+def _holds_any_required_permission(spec: ServiceSpec, caps: set[str]) -> bool:
+    """Return whether *spec* has no permission gate, or *caps* holds one it can require.
+
+    True if *spec* has no permission gate at all (nothing declared -- an
+    omitted, "__none__", or degenerate empty-dict required_permission), or
+    the caller holds at least one of the permissions it can require.
+
+    Shared between _service_status (GET /v1/catalog's per-service rollup) and
+    catalog_tools.get_service_tools' pre-fetch gate (GET /v1/catalog/{service}
+    /tools) -- both need the same "is at least one tool possibly reachable"
+    check before deciding whether it's worth fetching/filtering a live tool
+    listing at all.
+    """
+    required = spec.all_required_permissions()
+    return not required or bool(required & caps)
 
 
 async def _service_status(
@@ -268,9 +299,14 @@ async def _service_status(
     until the permission gate is fixed. Returns
     ``(status, status_detail, correlation_id)`` -- correlation_id is set
     only for the two admin-actionable statuses.
+
+    For a dict-form required_permission a service can require several
+    different permissions across its tools -- "available" here means the
+    caller holds at least one of them (some tool is callable), matching
+    EntitlementMiddleware's per-tool tools/list filtering rather than an
+    all-or-nothing gate on a single value.
     """
-    required = spec.required_permission
-    if required not in (None, "__none__") and required not in caps:
+    if not _holds_any_required_permission(spec, caps):
         correlation_id = uuid.uuid4().hex
         logger.info(
             "catalog.service_status_flagged",
@@ -372,7 +408,7 @@ async def authorize(
     request: Request,
     principal: Annotated[Principal, Depends(keycloak_dependency)],
 ) -> AuthorizeResponse:
-    """Derive the required permission server-side from the service registry (``body.target`` -> ``ServiceSpec.required_permission``) rather than trusting a permission supplied by the caller -- a client used to be able to claim any permission for any target and have it evaluated at face value (see issue #60)."""
+    """Derive the required permission server-side from the service registry (``body.target``/``body.action`` -> ``ServiceRegistry.required_permission_for``) rather than trusting a permission supplied by the caller -- a client used to be able to claim any permission for any target and have it evaluated at face value (see issue #60)."""
     policy = _get_policy(request)
     registry = _get_registry(request)
     service = registry.get(body.target)
@@ -390,16 +426,13 @@ async def authorize(
             allow=False, reason=reason, action_type="read", obligations=[]
         )
 
-    allow, reason = check_entitlement(
-        principal, service.required_permission, service.name, policy
-    )
-    action_type = get_action_type(
-        service.name, body.action, service.required_permission, policy
-    )
+    permission = registry.required_permission_for(body.action, service)
+    allow, reason = check_entitlement(principal, permission, service.name, policy)
+    action_type = get_action_type(service.name, body.action, permission, policy)
     logger.info(
         "authorize_decision",
         subject=principal.subject,
-        permission=service.required_permission,
+        permission=permission,
         target=body.target,
         action=body.action,
         action_type=action_type,
@@ -431,7 +464,6 @@ async def get_catalog(
 
     servers: list[CatalogServer] = []
     for spec in registry.all_services():
-        required = spec.required_permission
         # Every registered service is listed, even one this caller can't
         # currently use -- status/status_detail say why instead of a silent
         # omission (issue #123: a hidden, permission-gated service left the
@@ -444,13 +476,15 @@ async def get_catalog(
                 name=spec.name,
                 display_name=spec.display_name or spec.name,
                 description=spec.description,
-                # Omitted required_permission means no permission gate (the
-                # credential layer gates it instead -- see registry.py); the
-                # catalog reports that the same way as the explicit "__none__"
-                # opt-in, since neither implies a permission requirement.
-                permission=required if required is not None else "__none__",
+                # "__none__" for an omitted required_permission preserves the
+                # historical convention (indistinguishable there from an
+                # explicit "__none__"); None means a dict-form
+                # required_permission with no single representative
+                # permission -- see per-tool GET /v1/catalog/{service}/tools
+                # (api/catalog_tools.py) instead.
+                permission=spec.default_permission_label(),
                 auth_type=spec.auth_type,
-                action_type=_action_type_for_service(spec.name, required, policy),
+                action_type=_action_type_for_service(spec, policy),
                 credential_provider=target_to_alias.get(spec.name),
                 status=status,
                 status_detail=status_detail,

@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING, Literal, get_args
 
 import yaml  # type: ignore[import-untyped]
 
+from af_mcp_broker.authorization import DISABLED_PERMISSION
+
 if TYPE_CHECKING:
     from af_mcp_broker.config import Settings
 
@@ -74,6 +76,21 @@ def identity_provider_url(settings: Settings, alias: str) -> str:
     return f"{portal}/identities#identity-card-{alias}"
 
 
+def namespaced_tool_name(spec: ServiceSpec, native_name: str) -> str:
+    """Return the wire tool name a caller sees for *spec*'s tool *native_name*.
+
+    Mirrors fastmcp's own ``Namespace`` transform (``f"{prefix}_{name}"``,
+    applied only when ``apply_namespace`` is true) -- the exact rule
+    aggregator.py's ``fetch_service_tool_listing`` independently replicates
+    for the ``/v1/catalog`` listing path, since neither that path nor
+    services.yaml parsing has a live FastMCP mount to ask. This is the one
+    place that rule is written down for permission-key resolution
+    (ServiceRegistry.required_permission_for); fetch_service_tool_listing
+    calls this too rather than keeping its own copy.
+    """
+    return f"{spec.prefix}_{native_name}" if spec.apply_namespace else native_name
+
+
 @dataclass
 class ServiceSpec:
     name: str
@@ -81,14 +98,25 @@ class ServiceSpec:
     url: str
     transport: str  # "http" | "sse"
     # The permission a caller must hold to invoke this service's tools:
-    #   - a permission name (e.g. "read_data") -> gated on that permission.
+    #   - a permission name (e.g. "read_data") -> gated on that permission,
+    #     for every tool this service exposes.
     #   - "__none__" -> open to any authenticated user (deliberate opt-in).
     #   - None (omitted) -> no permission gate; the credential layer is the
     #     gate instead (the caller must have a linked identity / mintable
     #     credential for this target). app.py's lifespan refuses to start if
     #     a service omits this AND has no resolvable credential provider,
     #     since that would mean no gate at all -- see issue #60.
-    required_permission: str | None = None
+    #   - a dict -> per-tool permissions, keyed by each tool's *native*
+    #     (pre-namespace) name, e.g. {"__default__": "manage_jobs",
+    #     "query_jobs": "read_monitoring"}. "__default__" is an OPTIONAL
+    #     fallback for any tool not explicitly listed; if it's absent, an
+    #     unlisted tool is disabled entirely (DISABLED_PERMISSION) rather
+    #     than silently open or silently inheriting some other tool's
+    #     permission -- opt-in only, so a forgotten entry can never
+    #     under-gate a tool. See ServiceRegistry.required_permission_for()
+    #     for resolution and docs/adding-a-service.md for the operator-facing
+    #     writeup.
+    required_permission: str | dict[str, str] | None = None
     auth_type: str = "bearer"  # "bearer" | "x509" | "none"
     # The exact ``aud`` an AF-native backend validates the AF Broker Identity
     # Token against (issue #257). Split from ``name`` so a service can be
@@ -171,6 +199,41 @@ class ServiceSpec:
         """The ``aud`` the broker mints for this service: explicit ``audience`` when set, else ``name`` (issue #257). The single accessor every mint site reads, so the name-is-audience default lives in exactly one place."""
         return self.audience or self.name
 
+    def all_required_permissions(self) -> set[str]:
+        """Every permission name this service can require, across all its tools.
+
+        Independent of ServiceRegistry -- just enumerates the declared
+        values, "__none__" excluded (it's an open-access opt-in, not a real
+        permission a group needs to grant). Used where the exact tool being
+        called doesn't matter: the "your access" grants list
+        (api/permissions.py's _grants_for), a service's coarse availability
+        status (_service_status), and app.py's startup check that every
+        declared permission is reachable by at least one group.
+        """
+        rp = self.required_permission
+        if rp is None:
+            return set()
+        if isinstance(rp, str):
+            return set() if rp == "__none__" else {rp}
+        return {perm for perm in rp.values() if perm != "__none__"}
+
+    def default_permission_label(self) -> str | None:
+        """Return the single representative permission GET /v1/catalog's coarse per-service ``permission`` field reports.
+
+        "__none__" for an omitted required_permission preserves the
+        historical convention (indistinguishable there from an explicit
+        "__none__" -- the catalog has never distinguished them). A dict form
+        without "__default__" has no one representative value across its
+        tools -- None there means "mixed; see the per-tool listing"
+        (GET /v1/catalog/{service}/tools, api/catalog_tools.py).
+        """
+        rp = self.required_permission
+        if rp is None:
+            return "__none__"
+        if isinstance(rp, str):
+            return rp
+        return rp.get("__default__")
+
     def __post_init__(self) -> None:
         # trust_tier from services.yaml arrives as an arbitrary string (yaml
         # gives us Any, and the Literal only guards in-code call sites), so a
@@ -239,20 +302,32 @@ class ServiceRegistry:
     def __init__(self, builtin_service_name: str = BUILTIN_SERVICE_NAME) -> None:
         self._builtin_service_name = builtin_service_name
         self._services: dict[str, ServiceSpec] = {}
-        # The broker's own gateway service is always present (issue #240) --
-        # inserted directly rather than via register(), which refuses its
-        # name/prefix precisely so services.yaml can never define, replace,
-        # or unregister the broker from itself. Its name is deployment-
-        # configurable (BUILTIN_SERVICE_NAME, default gateway_service).
-        self._services[builtin_service_name] = _builtin_service_spec(
-            builtin_service_name
-        )
         # service name -> most recently classified tools/list failure reason
         # ("not_linked" | "unauthorized" | "unavailable", see aggregator.py's
         # _classify_list_failure). Best-effort, last-write-wins, no history --
         # lets /v1/catalog's status derivation (issue #123) factor in a recent
         # listing failure without an extra live probe of its own.
         self._recent_list_failures: dict[str, str] = {}
+        # Merged, O(1)-lookup permission map built by register(): a dict-form
+        # required_permission's per-tool entries insert under their namespaced
+        # wire name; a plain string, or a dict's "__default__", insert under
+        # the service's own name. Deliberately one flat dict across every
+        # service rather than per-service maps, so required_permission_for()
+        # is a plain two-get lookup with no glob/iteration -- see
+        # docs/adding-a-service.md. Tool names and service names don't
+        # legitimately collide (register() below raises if they ever would).
+        self._tool_permissions: dict[str, str] = {}
+        # The broker's own gateway service is always present (issue #240) --
+        # inserted directly rather than via register(), which refuses its
+        # name/prefix precisely so services.yaml can never define, replace,
+        # or unregister the broker from itself. Its name is deployment-
+        # configurable (BUILTIN_SERVICE_NAME, default gateway_service). Still
+        # contributes to _tool_permissions (required_permission_for() must
+        # resolve builtin af_* tools too), via the same helper register() uses.
+        builtin_spec = _builtin_service_spec(builtin_service_name)
+        self._services[builtin_service_name] = builtin_spec
+        for key, value in self._tool_permission_entries(builtin_spec):
+            self._tool_permissions[key] = value
 
     def load(self, path: str) -> None:
         with Path(path).open() as fh:
@@ -298,7 +373,60 @@ class ServiceRegistry:
                 "Choose a different name."
             )
             raise ValueError(msg)
+        for key, value in self._tool_permission_entries(service):
+            existing = self._tool_permissions.get(key)
+            if existing is not None and existing != value:
+                msg = (
+                    f"service '{service.name}' declares required_permission "
+                    f"for '{key}', which another service already declares "
+                    f"differently ('{existing}' != '{value}') -- per-tool "
+                    "permission keys (and each service's own name, used as "
+                    "the default-permission key) must not collide across "
+                    "services. Rename the colliding tool/service or pick a "
+                    "different prefix."
+                )
+                raise ValueError(msg)
+            self._tool_permissions[key] = value
         self._services[service.name] = service
+
+    def _tool_permission_entries(self, service: ServiceSpec) -> list[tuple[str, str]]:
+        """Return the (key, permission) pairs *service* contributes to the merged ``_tool_permissions`` map.
+
+        See required_permission_for() for how the map is queried.
+        """
+        rp = service.required_permission
+        if rp is None:
+            return []
+        if isinstance(rp, str):
+            return [(service.name, rp)]
+        entries = [
+            (namespaced_tool_name(service, tool), permission)
+            for tool, permission in rp.items()
+            if tool != "__default__"
+        ]
+        if "__default__" in rp:
+            entries.append((service.name, rp["__default__"]))
+        return entries
+
+    def required_permission_for(
+        self, tool_name: str, service: ServiceSpec
+    ) -> str | None:
+        """Return the permission *tool_name* (on *service*) requires -- O(1) exact lookups only, no glob matching.
+
+        Resolution order: the tool's own entry, else the service's default
+        (a plain string ``required_permission``, or a dict's
+        ``__default__``), else -- since neither is present -- fall back to
+        ``service.required_permission`` itself to disambiguate the two ways
+        "no entry" can happen: the field was omitted entirely (``None`` ->
+        the credential layer is the gate, so this returns ``None``, open),
+        versus a dict was declared and this tool just isn't in it (returns
+        DISABLED_PERMISSION -- opt-in only, never silently open).
+        """
+        if tool_name in self._tool_permissions:
+            return self._tool_permissions[tool_name]
+        if service.name in self._tool_permissions:
+            return self._tool_permissions[service.name]
+        return None if service.required_permission is None else DISABLED_PERMISSION
 
     def all_services(self) -> list[ServiceSpec]:
         return list(self._services.values())

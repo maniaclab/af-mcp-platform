@@ -16,8 +16,13 @@ from af_mcp_broker.api.permissions import (
     _get_credential_registry,
     _get_policy,
     _get_registry,
+    _holds_any_required_permission,
 )
-from af_mcp_broker.authorization import check_entitlement, get_action_type
+from af_mcp_broker.authorization import (
+    DISABLED_PERMISSION,
+    get_action_type,
+    get_principal_permissions,
+)
 from af_mcp_broker.identity import Principal, keycloak_dependency
 from af_mcp_broker.mcp.aggregator import (
     fetch_service_tool_listing,
@@ -26,7 +31,7 @@ from af_mcp_broker.mcp.aggregator import (
 
 if TYPE_CHECKING:
     from af_mcp_broker.authorization import EntitlementPolicy
-    from af_mcp_broker.mcp.registry import ServiceSpec
+    from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
 
 logger = structlog.get_logger(__name__)
 
@@ -61,8 +66,10 @@ _STATUS_DETAILS: dict[str, str] = {
 class ServiceTool(BaseModel):
     """One tool as a caller sees it through /mcp.
 
-    Carries the (namespace-applied) name, the description, and the same
-    read/state_change action type real enforcement resolves -- never the
+    Carries the (namespace-applied) name, the description, the same
+    read/state_change action type real enforcement resolves, and the exact
+    permission this tool requires (a dict-form required_permission can vary
+    per tool -- see ServiceRegistry.required_permission_for) -- never the
     full input schema (the payload stays light; schemas belong to the MCP
     client, not the catalog).
     """
@@ -72,6 +79,13 @@ class ServiceTool(BaseModel):
     name: str
     description: str
     action_type: Literal["read", "state_change"]
+    # "__none__" covers both the explicit opt-in and an omitted (credential-
+    # layer-only) required_permission -- same convention as
+    # CatalogServer.permission (api/permissions.py). Always a concrete value
+    # here: a tool this caller can't hold a satisfying permission for
+    # (denied, or DISABLED_PERMISSION) is never included in the response at
+    # all -- see _respond's filtering.
+    permission: str
 
 
 class ServiceToolsResponse(BaseModel):
@@ -142,23 +156,44 @@ def _respond(
     status: str,
     tools: list[tuple[str, str]],
     policy: EntitlementPolicy,
+    registry: ServiceRegistry,
+    caps: set[str],
 ) -> ServiceToolsResponse:
+    """Build the response, filtering *tools* to the ones *caps* actually satisfies.
+
+    A dict-form required_permission can gate different tools of
+    the same service differently (or disable one outright), so this mirrors
+    EntitlementMiddleware's per-tool tools/list filtering rather than the
+    single all-or-nothing gate get_service_tools applies before ever
+    fetching *tools*.
+    """
+    visible: list[ServiceTool] = []
+    for name, description in tools:
+        permission = registry.required_permission_for(name, spec)
+        if permission == DISABLED_PERMISSION:
+            continue
+        if (
+            permission is not None
+            and permission != "__none__"
+            and permission not in caps
+        ):
+            continue  # a real permission this caller doesn't hold
+        action_type = get_action_type(spec.name, name, permission, policy)
+        visible.append(
+            ServiceTool(
+                name=name,
+                description=description,
+                action_type=action_type,  # type: ignore[arg-type]
+                permission=permission if permission is not None else "__none__",
+            )
+        )
     return ServiceToolsResponse(
         name=spec.name,
         display_name=spec.display_name or spec.name,
         description=spec.description,
         status=status,  # type: ignore[arg-type]
         status_detail=_STATUS_DETAILS[status],
-        tools=[
-            ServiceTool(
-                name=name,
-                description=description,
-                action_type=get_action_type(  # type: ignore[arg-type]
-                    spec.name, name, spec.required_permission, policy
-                ),
-            )
-            for name, description in tools
-        ],
+        tools=visible,
     )
 
 
@@ -186,15 +221,15 @@ async def get_service_tools(
             status_code=404, detail=f"service '{service}' is not registered"
         )
     policy = _get_policy(request)
+    caps = get_principal_permissions(principal, policy)
 
-    # Same permission gate the aggregator's factories (and /v1/catalog's
-    # status derivation) apply before any credential work -- derived locally,
-    # never by probing the service.
-    allowed, _reason = check_entitlement(
-        principal, spec.required_permission, spec.name, policy
-    )
-    if not allowed:
-        return _respond(spec, "permission_required", [], policy)
+    # Same pre-fetch gate /v1/catalog's status derivation applies (issue #60,
+    # now per-tool-aware): if the caller holds none of the permissions this
+    # service could possibly require, no tool of it could be visible either
+    # -- skip the fetch entirely rather than probing the service (or the
+    # cache) just to filter everything back out.
+    if not _holds_any_required_permission(spec, caps):
+        return _respond(spec, "permission_required", [], policy, registry, caps)
 
     if spec.builtin:
         # The builtin gateway service's methods (issue #240) are the
@@ -206,10 +241,10 @@ async def get_service_tools(
         # rather than passing off an empty method list as the truth.
         aggregator = getattr(request.app.state, "mcp_aggregator", None)
         if aggregator is None:
-            return _respond(spec, "unavailable", [], policy)
+            return _respond(spec, "unavailable", [], policy, registry, caps)
         local_tools = await aggregator.local_provider.list_tools()
         tools = sorted((tool.name, tool.description or "") for tool in local_tools)
-        return _respond(spec, "ok", tools, policy)
+        return _respond(spec, "ok", tools, policy, registry, caps)
 
     credential_registry = _get_credential_registry(request)
     broker_token_issuer = getattr(request.app.state, "broker_token_issuer", None)
@@ -226,7 +261,7 @@ async def get_service_tools(
     if skip_reason is None:
         cached = cache.get(spec.name, spec.tools_cache_ttl)
         if cached is not None:
-            return _respond(spec, "ok", cached, policy)
+            return _respond(spec, "ok", cached, policy, registry, caps)
 
     status, tools = await fetch_service_tool_listing(spec, headers, skip_reason)
     if status == "ok":
@@ -239,4 +274,4 @@ async def get_service_tools(
             target=spec.name,
             status=status,
         )
-    return _respond(spec, status, tools, policy)
+    return _respond(spec, status, tools, policy, registry, caps)

@@ -291,12 +291,16 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     granted_permissions = {
         cap for caps in entitlement_policy.group_permissions.values() for cap in caps
     }
-    unreachable_permissions: list[tuple[str, str]] = []
-    for spec in services:
-        if spec.required_permission in (None, "__none__"):
-            continue
-        if spec.required_permission not in granted_permissions:
-            unreachable_permissions.append((spec.name, spec.required_permission))
+    # all_required_permissions() already excludes "__none__" and handles a
+    # dict-form required_permission's multiple values (each checked
+    # individually, so a typo in one per-tool entry is named without
+    # flagging its correctly-spelled siblings).
+    unreachable_permissions: list[tuple[str, str]] = [
+        (spec.name, permission)
+        for spec in services
+        for permission in spec.all_required_permissions()
+        if permission not in granted_permissions
+    ]
     if unreachable_permissions:
         msg = (
             "The following services require a permission that no group in "

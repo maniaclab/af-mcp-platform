@@ -8,11 +8,13 @@ from af_mcp_broker.config import Settings
 from af_mcp_broker.mcp.registry import (
     BUILTIN_SERVICE_NAME,
     DIAGNOSTIC_TOOL_NAMES,
+    DISABLED_PERMISSION,
     LINK_IDENTITY_TOOL_NAME,
     RESERVED_PREFIX,
     ServiceRegistry,
     ServiceSpec,
     identity_provider_url,
+    namespaced_tool_name,
 )
 
 # The shipped services.yaml is the authoritative source for the apply_namespace
@@ -699,3 +701,230 @@ def test_shipped_metadata_backend_does_not_require_posix() -> None:
     spec = registry.get("ami")
     assert spec is not None
     assert spec.requires_posix is False
+
+
+# ---------------------------------------------------------------------------
+# Per-tool required_permission: services.yaml's required_permission may be a
+# dict mapping a tool's *native* (pre-namespace) name to a permission, so a
+# service can require different permissions for different tools instead of
+# one blanket value. `__default__` is an optional fallback for any tool not
+# explicitly listed -- if it's absent, an unlisted tool is disabled entirely
+# (opt-in only, so a forgotten entry can never silently under-gate a new
+# tool). See docs/adding-a-service.md.
+# ---------------------------------------------------------------------------
+
+
+def test_namespaced_tool_name_applies_prefix_when_apply_namespace_true() -> None:
+    spec = ServiceSpec(
+        name="condor_service",
+        prefix="condor",
+        url="http://condor.invalid/mcp",
+        transport="http",
+        required_permission="submit_jobs",
+        apply_namespace=True,
+    )
+    assert namespaced_tool_name(spec, "query_jobs") == "condor_query_jobs"
+
+
+def test_namespaced_tool_name_returns_native_name_when_apply_namespace_false() -> None:
+    spec = ServiceSpec(
+        name="rucio",
+        prefix="rucio",
+        url="http://rucio.invalid/mcp",
+        transport="http",
+        required_permission="read_data",
+        apply_namespace=False,
+    )
+    assert namespaced_tool_name(spec, "list_dids") == "list_dids"
+
+
+def test_all_required_permissions_empty_when_omitted() -> None:
+    spec = ServiceSpec(
+        name="example",
+        prefix="example",
+        url="http://example.invalid/mcp",
+        transport="http",
+    )
+    assert spec.all_required_permissions() == set()
+
+
+def test_all_required_permissions_excludes_none_sentinel_for_string_form() -> None:
+    spec = ServiceSpec(
+        name="example",
+        prefix="example",
+        url="http://example.invalid/mcp",
+        transport="http",
+        required_permission="__none__",
+    )
+    assert spec.all_required_permissions() == set()
+
+
+def test_all_required_permissions_returns_single_value_for_string_form() -> None:
+    spec = ServiceSpec(
+        name="rucio",
+        prefix="rucio",
+        url="http://rucio.invalid/mcp",
+        transport="http",
+        required_permission="read_data",
+    )
+    assert spec.all_required_permissions() == {"read_data"}
+
+
+def test_all_required_permissions_returns_every_dict_value() -> None:
+    spec = ServiceSpec(
+        name="condor_service",
+        prefix="condor",
+        url="http://condor.invalid/mcp",
+        transport="http",
+        required_permission={
+            "__default__": "manage_jobs",
+            "query_jobs": "read_monitoring",
+        },
+    )
+    assert spec.all_required_permissions() == {"manage_jobs", "read_monitoring"}
+
+
+def test_all_required_permissions_excludes_none_sentinel_values_in_dict_form() -> None:
+    spec = ServiceSpec(
+        name="condor_service",
+        prefix="condor",
+        url="http://condor.invalid/mcp",
+        transport="http",
+        required_permission={
+            "__default__": "manage_jobs",
+            "condor_doc_search": "__none__",
+        },
+    )
+    assert spec.all_required_permissions() == {"manage_jobs"}
+
+
+def test_load_parses_dict_form_required_permission(tmp_path: Path) -> None:
+    services_file = tmp_path / "services.yaml"
+    services_file.write_text(
+        """
+services:
+  - name: condor_service
+    prefix: condor
+    url: "http://condor.invalid/mcp"
+    required_permission:
+      __default__: manage_jobs
+      query_jobs: read_monitoring
+"""
+    )
+    registry = ServiceRegistry()
+    registry.load(str(services_file))
+    spec = registry.get("condor_service")
+    assert spec is not None
+    assert spec.required_permission == {
+        "__default__": "manage_jobs",
+        "query_jobs": "read_monitoring",
+    }
+
+
+# ---------------------------------------------------------------------------
+# ServiceRegistry.required_permission_for: O(1) exact-match resolution
+# (tool name, else the service's own default/scalar, else disabled/open).
+# ---------------------------------------------------------------------------
+
+
+def _condor_spec(required_permission: object, **overrides: object) -> ServiceSpec:
+    return ServiceSpec(
+        name="condor_service",
+        prefix="condor",
+        url="http://condor.invalid/mcp",
+        transport="http",
+        required_permission=required_permission,  # type: ignore[arg-type]
+        **overrides,  # type: ignore[arg-type]
+    )
+
+
+def test_required_permission_for_exact_tool_match() -> None:
+    registry = ServiceRegistry()
+    spec = _condor_spec({"__default__": "manage_jobs", "query_jobs": "read_monitoring"})
+    registry.register(spec)
+    assert (
+        registry.required_permission_for("condor_query_jobs", spec) == "read_monitoring"
+    )
+
+
+def test_required_permission_for_falls_back_to_default() -> None:
+    registry = ServiceRegistry()
+    spec = _condor_spec({"__default__": "manage_jobs", "query_jobs": "read_monitoring"})
+    registry.register(spec)
+    assert registry.required_permission_for("condor_submit_job", spec) == "manage_jobs"
+
+
+def test_required_permission_for_disabled_without_default_or_match() -> None:
+    """No __default__ and this tool isn't listed -- opt-in-only means it's
+    disabled, not silently open."""
+    registry = ServiceRegistry()
+    spec = _condor_spec({"query_jobs": "read_monitoring"})
+    registry.register(spec)
+    assert (
+        registry.required_permission_for("condor_submit_job", spec)
+        == DISABLED_PERMISSION
+    )
+
+
+def test_required_permission_for_open_when_field_omitted_entirely() -> None:
+    """Distinct from the disabled case above: an omitted required_permission
+    (not a dict at all) means the credential layer is the gate -- always
+    open at the permission-check step, exactly as today."""
+    registry = ServiceRegistry()
+    spec = _condor_spec(None)
+    registry.register(spec)
+    assert registry.required_permission_for("condor_submit_job", spec) is None
+
+
+def test_required_permission_for_string_form_applies_to_every_tool() -> None:
+    registry = ServiceRegistry()
+    spec = _condor_spec("submit_jobs")
+    registry.register(spec)
+    assert registry.required_permission_for("condor_query_jobs", spec) == "submit_jobs"
+    assert registry.required_permission_for("condor_submit_job", spec) == "submit_jobs"
+
+
+def test_required_permission_for_dict_keys_are_native_names_regardless_of_apply_namespace() -> (
+    None
+):
+    """The same config key (the tool's native name) resolves correctly
+    whether or not the service namespaces its tools -- the operator never
+    has to think about the prefix when writing per-tool overrides."""
+    registry = ServiceRegistry()
+    namespaced = _condor_spec({"query_jobs": "read_monitoring"}, apply_namespace=True)
+    registry.register(namespaced)
+    assert (
+        registry.required_permission_for("condor_query_jobs", namespaced)
+        == "read_monitoring"
+    )
+
+    registry2 = ServiceRegistry()
+    unnamespaced = ServiceSpec(
+        name="rucio",
+        prefix="rucio",
+        url="http://rucio.invalid/mcp",
+        transport="http",
+        required_permission={"list_dids": "read_data"},
+        apply_namespace=False,
+    )
+    registry2.register(unnamespaced)
+    assert registry2.required_permission_for("list_dids", unnamespaced) == "read_data"
+
+
+def test_register_rejects_colliding_tool_permission_keys_across_services() -> None:
+    """Two services whose merged per-tool/default keys collide would make one
+    service's permission silently win over the other's -- fail loud instead."""
+    registry = ServiceRegistry()
+    registry.register(_condor_spec("manage_jobs"))
+    # A dict-form entry whose literal (already-namespaced) key collides with
+    # another service's own name-as-default-key.
+    other = ServiceSpec(
+        name="collider",
+        prefix="other",
+        url="http://other.invalid/mcp",
+        transport="http",
+        required_permission={"condor_service": "read_data"},
+        apply_namespace=False,
+    )
+    with pytest.raises(ValueError, match="condor_service"):
+        registry.register(other)

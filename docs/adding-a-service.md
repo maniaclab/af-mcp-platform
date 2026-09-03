@@ -248,10 +248,11 @@ declaration of what a service target requires — the service registry, not
 remaining job is mapping permissions to Keycloak groups via
 `group_permissions` (Step 3 below).
 
-`required_permission` has three forms:
+`required_permission` has four forms:
 
 - **A permission name** (e.g. `read_data`) — the caller must hold that
-  permission, granted via `group_permissions`.
+  permission, granted via `group_permissions`, for every tool this service
+  exposes.
 - **`__none__`** — open to any authenticated user; no permission needed.
   Use this only as a deliberate, explicit opt-in.
 - **Omitted entirely** — no permission gate; the credential layer becomes
@@ -262,6 +263,36 @@ remaining job is mapping permissions to Keycloak groups via
   bearer` with no `identity_providers` entry naming it, or `auth_type: none`
   with nothing registered) — that combination would mean the service has no
   gate at all, neither a permission nor a credential requirement.
+- **A dict, keyed by tool name** — different tools of the same service can
+  require different permissions:
+
+  ```yaml
+  required_permission:
+    __default__: manage_jobs     # optional -- see below
+    query_jobs: read_monitoring
+    query_history_db: read_monitoring
+  ```
+
+  Keys are the tool's **native** name — the name the backend itself
+  advertises, before the aggregator's `<prefix>_` namespacing is applied (or
+  the raw name, unchanged, if `apply_namespace: false`) — so the same key
+  works regardless of that choice. `__default__` is the permission any tool
+  *not* listed as its own key falls back to, and it's **optional, not
+  required**: if you omit it, an unlisted tool is disabled outright (nobody
+  can call it, regardless of what they hold) rather than silently inheriting
+  some other tool's permission or falling open. This is deliberate —
+  per-tool gating is opt-in, so a new tool a backend adds later can never
+  slip through under a permission nobody meant to grant it. Give every tool
+  you want reachable its own key, or set `__default__` to whatever you want
+  the safe fallback to be — usually the service's *most* privileged
+  permission, with only the genuinely read-only tools de-escalated by their
+  own key, exactly as the example above does for `query_jobs`/
+  `query_history_db`. A service can appear as a target under more than one
+  permission's "your access" grants (`GET /v1/permissions`) when it uses
+  this form, and
+  `GET /v1/catalog/{service}/tools` reports each visible tool's own resolved
+  permission — `GET /v1/catalog`'s single `permission` field is `null` for a
+  dict form with no `__default__`, since there's no one value to summarize.
 
 If an existing permission already covers the new service (e.g. a generic
 `read_metadata` that several services already require), reuse it and skip to

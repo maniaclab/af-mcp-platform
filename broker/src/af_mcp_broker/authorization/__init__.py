@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from af_mcp_broker.authorization.base import (
+    DISABLED_PERMISSION,
     PERMISSIONS,
     EntitlementPolicy,
     Permission,
@@ -12,6 +13,7 @@ from af_mcp_broker.authorization.base import (
 )
 
 __all__ = [
+    "DISABLED_PERMISSION",
     "PERMISSIONS",
     "EntitlementPolicy",
     "Permission",

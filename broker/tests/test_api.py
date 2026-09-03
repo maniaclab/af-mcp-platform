@@ -124,6 +124,60 @@ def test_authorize_ignores_client_supplied_permission(
     assert body["allow"] is False
 
 
+# ---------------------------------------------------------------------------
+# Per-tool required_permission (dict form): /v1/authorize resolves through
+# ServiceRegistry.required_permission_for(body.action, ...) instead of a
+# single service-wide value.
+# ---------------------------------------------------------------------------
+
+
+def _register_dict_form_condor_service(client: TestClient) -> None:
+    from af_mcp_broker.mcp.registry import ServiceSpec
+
+    client.app.state.service_registry.register(
+        ServiceSpec(
+            name="condor_service",
+            prefix="condor",
+            url="http://condor-mcp.mcp.svc.cluster.local/mcp",
+            transport="http",
+            required_permission={
+                "__default__": "manage_jobs",
+                "query_jobs": "read_monitoring",
+            },
+            auth_type="none",
+        )
+    )
+
+
+def test_authorize_dict_form_resolves_per_tool(
+    app_client: tuple[TestClient, dict], make_principal: Callable[..., object]
+) -> None:
+    """A caller with only read_monitoring is allowed to call query_jobs
+    (explicitly mapped) but denied submit_job (falls back to __default__,
+    manage_jobs, which this caller lacks)."""
+    client, state = app_client
+    # __authenticated__ grants read_metadata/read_monitoring to any signed-in
+    # caller, groups or not -- and, crucially, not manage_jobs.
+    state["principal"] = make_principal(groups=[])
+    _register_dict_form_condor_service(client)
+
+    allowed = client.post(
+        "/v1/authorize",
+        json={"target": "condor_service", "action": "condor_query_jobs"},
+        headers=_AUTH,
+    )
+    assert allowed.status_code == 200, allowed.text
+    assert allowed.json()["allow"] is True
+
+    denied = client.post(
+        "/v1/authorize",
+        json={"target": "condor_service", "action": "condor_submit_job"},
+        headers=_AUTH,
+    )
+    assert denied.status_code == 200, denied.text
+    assert denied.json()["allow"] is False
+
+
 def test_catalog_reflects_permissions(
     app_client: tuple[TestClient, dict], make_principal: Callable[..., object]
 ) -> None:

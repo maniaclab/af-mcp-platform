@@ -103,6 +103,31 @@ async def open_backend_url() -> AsyncIterator[str]:
         yield url
 
 
+def _condor_like_backend() -> FastMCP:
+    """Two tools mirroring the dict-form required_permission worked example
+    (query_jobs read-only/read_monitoring, submit_job state-changing/
+    manage_jobs by default)."""
+    mcp = FastMCP(name="condor-like-backend")
+
+    @mcp.tool
+    def query_jobs() -> str:
+        """List queued jobs."""
+        return "[]"
+
+    @mcp.tool
+    def submit_job(payload: str) -> str:
+        """Submit a job."""
+        return payload
+
+    return mcp
+
+
+@pytest.fixture
+async def condor_like_backend_url() -> AsyncIterator[str]:
+    async with run_server_async(_condor_like_backend(), path="/mcp") as url:
+        yield url
+
+
 @pytest.fixture
 async def secure_backend_url() -> AsyncIterator[str]:
     async with run_asgi_app(_auth_gated_backend()) as url:
@@ -247,6 +272,9 @@ async def test_open_backend_lists_namespaced_tools(
     assert "open_ping" in tools
     assert tools["open_ping"]["description"]
     assert tools["open_ping"]["action_type"] == "read"
+    # A scalar/omitted-permission service reports "__none__" per-tool too --
+    # the same "no gate at all" convention GET /v1/catalog uses.
+    assert tools["open_ping"]["permission"] == "__none__"
     # Light payload by design: never a tool's full input schema.
     assert "inputSchema" not in resp.text
     assert "input_schema" not in resp.text
@@ -497,6 +525,133 @@ async def test_response_never_exposes_backend_url(
     resp = await _get_tools(app, "open")
     assert resp.status_code == 200, resp.text
     assert "url" not in json.dumps(resp.json())
+
+
+# ---------------------------------------------------------------------------
+# Per-tool required_permission (dict form): different tools of the same
+# service can require different permissions -- the listing must filter to
+# just the ones the caller actually holds, not gate the whole service on one
+# value, and each visible tool reports its own resolved permission.
+# ---------------------------------------------------------------------------
+
+
+async def test_dict_form_permission_filters_to_the_tools_caller_holds(
+    make_principal: Callable[..., Any],
+    condor_like_backend_url: str,
+) -> None:
+    policy = EntitlementPolicy(
+        group_permissions={"__authenticated__": ["read_monitoring"]},
+    )
+    registry = ServiceRegistry()
+    registry.register(
+        _spec(
+            "condor_service",
+            condor_like_backend_url,
+            prefix="condor",
+            required_permission={
+                "__default__": "manage_jobs",
+                "query_jobs": "read_monitoring",
+            },
+        )
+    )
+    app, state = _make_app(registry, policy)
+    state["principal"] = make_principal(groups=[])
+
+    resp = await _get_tools(app, "condor_service")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    # Holding read_monitoring (but not manage_jobs) is still "some tool is
+    # callable" -- not an all-or-nothing denial.
+    assert body["status"] == "ok"
+    tools = {t["name"]: t for t in body["tools"]}
+    assert set(tools) == {"condor_query_jobs"}
+    assert tools["condor_query_jobs"]["permission"] == "read_monitoring"
+
+
+async def test_dict_form_permission_required_when_caller_holds_none_of_them(
+    make_principal: Callable[..., Any],
+    condor_like_backend_url: str,
+) -> None:
+    """Neither declared permission is held -- permission_required without
+    ever contacting the backend (condor_like_backend_url would otherwise
+    prove a probe happened by actually responding)."""
+    policy = EntitlementPolicy(group_permissions={"__authenticated__": []})
+    registry = ServiceRegistry()
+    registry.register(
+        _spec(
+            "condor_service",
+            condor_like_backend_url,
+            prefix="condor",
+            required_permission={
+                "__default__": "manage_jobs",
+                "query_jobs": "read_monitoring",
+            },
+        )
+    )
+    app, state = _make_app(registry, policy)
+    state["principal"] = make_principal(groups=[])
+
+    resp = await _get_tools(app, "condor_service")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "permission_required"
+    assert body["tools"] == []
+
+
+async def test_dict_form_permission_holder_of_default_sees_default_tool(
+    make_principal: Callable[..., Any],
+    condor_like_backend_url: str,
+) -> None:
+    policy = EntitlementPolicy(
+        group_permissions={"__authenticated__": ["manage_jobs"]},
+    )
+    registry = ServiceRegistry()
+    registry.register(
+        _spec(
+            "condor_service",
+            condor_like_backend_url,
+            prefix="condor",
+            required_permission={
+                "__default__": "manage_jobs",
+                "query_jobs": "read_monitoring",
+            },
+        )
+    )
+    app, state = _make_app(registry, policy)
+    state["principal"] = make_principal(groups=[])
+
+    resp = await _get_tools(app, "condor_service")
+    assert resp.status_code == 200, resp.text
+    tools = {t["name"]: t for t in resp.json()["tools"]}
+    assert set(tools) == {"condor_submit_job"}
+    assert tools["condor_submit_job"]["permission"] == "manage_jobs"
+
+
+async def test_dict_form_permission_without_default_hides_unlisted_tool(
+    make_principal: Callable[..., Any],
+    condor_like_backend_url: str,
+) -> None:
+    """No __default__: an unlisted tool is disabled for everyone, even a
+    caller who holds every other permission this service can require."""
+    policy = EntitlementPolicy(
+        group_permissions={"__authenticated__": ["read_monitoring"]},
+    )
+    registry = ServiceRegistry()
+    registry.register(
+        _spec(
+            "condor_service",
+            condor_like_backend_url,
+            prefix="condor",
+            required_permission={"query_jobs": "read_monitoring"},
+        )
+    )
+    app, state = _make_app(registry, policy)
+    state["principal"] = make_principal(groups=[])
+
+    resp = await _get_tools(app, "condor_service")
+    assert resp.status_code == 200, resp.text
+    tools = {t["name"] for t in resp.json()["tools"]}
+    assert tools == {"condor_query_jobs"}
 
 
 # ---------------------------------------------------------------------------

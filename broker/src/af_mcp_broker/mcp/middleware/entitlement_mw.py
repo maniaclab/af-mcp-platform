@@ -5,7 +5,11 @@ from typing import TYPE_CHECKING
 import structlog
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 
-from af_mcp_broker.authorization import EntitlementPolicy, get_principal_permissions
+from af_mcp_broker.authorization import (
+    DISABLED_PERMISSION,
+    EntitlementPolicy,
+    get_principal_permissions,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -64,12 +68,15 @@ class EntitlementMiddleware(Middleware):
         service = self.registry.get_by_tool_prefix(tool.name)
         if service is None:
             return False  # unknown prefix: deny by default (fail-closed)
-        if (
-            service.required_permission is None
-            or service.required_permission == "__none__"
-        ):
+        permission = self.registry.required_permission_for(tool.name, service)
+        if permission is None or permission == "__none__":
             # Omitted -> the credential layer is the gate (see app.py's
             # startup validation); "__none__" -> open to any authenticated
             # user. Either way, no permission check gates this tool's listing.
             return True
-        return service.required_permission in principal_caps
+        if permission == DISABLED_PERMISSION:
+            # Dict-form required_permission, this tool isn't one of its
+            # explicit keys, and there's no __default__ -- opt-in-only means
+            # nobody can hold a permission that would satisfy it.
+            return False
+        return permission in principal_caps

@@ -64,13 +64,29 @@ def registry() -> ServiceRegistry:
             # not hide this tool from anyone.
         )
     )
+    reg.register(
+        ServiceSpec(
+            name="condor_service",
+            prefix="condor",
+            url="http://condor.invalid/mcp",
+            transport="http",
+            required_permission={
+                "query_jobs": "read_monitoring",
+                # submit_job intentionally has no entry and there's no
+                # __default__ -- opt-in-only per-tool gating disables it.
+            },
+        )
+    )
     return reg
 
 
 @pytest.fixture
 def policy() -> EntitlementPolicy:
     return EntitlementPolicy(
-        group_permissions={"atlas": ["read_data"], "__authenticated__": []},
+        group_permissions={
+            "atlas": ["read_data", "read_monitoring"],
+            "__authenticated__": [],
+        },
     )
 
 
@@ -176,6 +192,38 @@ async def test_missing_fastmcp_context_returns_empty_list(registry, policy):
     mw = EntitlementMiddleware(registry, policy)
     context = _FakeMiddlewareContext(None)
     tools = [_tool("rucio_list_dids")]
+
+    result = await mw.on_list_tools(context, _call_next_factory(tools))
+
+    assert result == []
+
+
+async def test_dict_form_permission_filters_per_tool_not_per_service(
+    registry, policy, make_principal
+):
+    """A caller holding read_monitoring but not manage_jobs sees
+    condor_query_jobs (explicitly mapped to read_monitoring) but not
+    condor_submit_job (unlisted, no __default__ -- disabled for everyone)."""
+    mw = EntitlementMiddleware(registry, policy)
+    principal = make_principal(groups=["atlas"])
+    context = _FakeMiddlewareContext(_FakeFastMCPContext({"principal": principal}))
+    tools = [_tool("condor_query_jobs"), _tool("condor_submit_job")]
+
+    result = await mw.on_list_tools(context, _call_next_factory(tools))
+
+    assert {t.name for t in result} == {"condor_query_jobs"}
+
+
+async def test_dict_form_permission_hides_unlisted_tool_even_from_admin(
+    registry, policy, make_principal
+):
+    """Opt-in-only: no group grants a permission for condor_submit_job to
+    hold in the first place -- there is no permission that would satisfy it,
+    since it isn't declared at all."""
+    mw = EntitlementMiddleware(registry, policy)
+    principal = make_principal(groups=["atlas"])
+    context = _FakeMiddlewareContext(_FakeFastMCPContext({"principal": principal}))
+    tools = [_tool("condor_submit_job")]
 
     result = await mw.on_list_tools(context, _call_next_factory(tools))
 
