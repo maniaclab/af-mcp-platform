@@ -14,6 +14,12 @@ from af_mcp_broker.credentials import (
     CredentialCache,
     CredentialKind,
     CredentialRegistry,
+    Krb5TokenAccountError,
+    Krb5TokenBadCredentialError,
+    Krb5TokenInvalidRequestError,
+    Krb5TokenMintError,
+    Krb5TokenRateLimitedError,
+    KrbTokenProvider,
     NeedsUnlock,
     PosixIdentityRequiredError,
     VomsServiceBadPassphraseError,
@@ -94,6 +100,32 @@ class ProxyMetadata(BaseModel):
     expires_at: str  # ISO-8601
     remaining_seconds: int
     # PEM is intentionally absent — the proxy is stored server-side.
+
+
+class KrbTicketRequest(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    username: str
+    # SecretStr prevents the CERN password from appearing in repr/logs.
+    password: SecretStr
+    # Which krb5-token target to mint for; defaults to the first configured
+    # krb5-token target.
+    target: str | None = None
+    lifetime: str | None = None
+    renewable_lifetime: str | None = None
+
+
+class KrbTicketMetadata(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    target: str
+    principal: str
+    realm: str
+    expires_at: str  # ISO-8601
+    remaining_seconds: int
+    renew_until: str | None = None  # ISO-8601, null if not renewable
+    # ccache_b64 is intentionally absent -- the ticket is cached server-side
+    # (same "credentials never transit to the client" rule as x509's PEM).
 
 
 class ProxyCacheStatus(BaseModel):
@@ -199,6 +231,42 @@ def _resolve_x509_target(request: Request, target: str | None) -> str:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No x509 target is configured",
+        )
+    return targets[0]
+
+
+async def _krb5_provider(request: Request, target: str) -> KrbTokenProvider:
+    """Resolve the ``KrbTokenProvider`` registered for *target*.
+
+    Mirrors ``_x509_provider``: each krb5-token ``identity_providers`` entry
+    constructs its own provider with its own krb5-token-service client, so
+    the /v1/krb5 surfaces must mint via the entry that actually services the
+    requested target.
+    """
+    registry = _registry(request)
+    try:
+        provider = await registry.resolve(target)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No krb5-token credential provider is configured for '{target}'",
+        ) from exc
+    if not isinstance(provider, KrbTokenProvider):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Target '{target}' is not a krb5-token target",
+        )
+    return provider
+
+
+def _resolve_krb5_target(request: Request, target: str | None) -> str:
+    if target is not None:
+        return target
+    targets: list[str] = getattr(request.app.state, "krb5_targets", [])
+    if not targets:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No krb5-token target is configured",
         )
     return targets[0]
 
@@ -368,6 +436,66 @@ async def create_proxy(
         voms_attributes=meta.voms_attributes,
         expires_at=_iso(meta.not_after),
         remaining_seconds=max(0, int(meta.not_after - time.time())),
+    )
+
+
+@router.post(
+    "/krb5/ticket",
+    response_model=KrbTicketMetadata,
+    status_code=status.HTTP_201_CREATED,
+    summary="Mint and cache a Kerberos ticket",
+)
+async def create_krb5_ticket(
+    body: KrbTicketRequest,
+    request: Request,
+    principal: Annotated[Principal, Depends(keycloak_dependency)],
+) -> KrbTicketMetadata:
+    target = _resolve_krb5_target(request, body.target)
+    provider = await _krb5_provider(request, target)
+    passphrase = SecretBytes(body.password.get_secret_value().encode())
+    try:
+        cred = await provider.issue(
+            principal,
+            target,
+            passphrase=passphrase,
+            username=body.username,
+            lifetime=body.lifetime,
+            renewable_lifetime=body.renewable_lifetime,
+        )
+    except Krb5TokenBadCredentialError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+    except Krb5TokenAccountError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)
+        ) from exc
+    except Krb5TokenInvalidRequestError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
+        ) from exc
+    except Krb5TokenRateLimitedError as exc:
+        headers = {"Retry-After": exc.retry_after} if exc.retry_after else None
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=str(exc),
+            headers=headers,
+        ) from exc
+    except Krb5TokenMintError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Kerberos ticket issuance is temporarily unavailable — retry later.",
+        ) from exc
+
+    payload = cred.payload
+    renew_until = payload.get("renew_until")
+    return KrbTicketMetadata(
+        target=target,
+        principal=payload["principal"],
+        realm=payload["realm"],
+        expires_at=_iso(cred.expires_at),
+        remaining_seconds=max(0, int(cred.expires_at - time.time())),
+        renew_until=_iso(renew_until) if renew_until is not None else None,
     )
 
 

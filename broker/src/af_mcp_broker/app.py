@@ -324,6 +324,17 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     x509_targets: list[str] = [
         spec.name for spec in services if spec.auth_type == "x509"
     ]
+    # krb5-token has no analogous `auth_type` variant in services.yaml (its
+    # targets are ordinary bearer-auth backends, resolved to a
+    # KrbTokenProvider purely via `identity_providers`), so there is no
+    # drift to validate here the way `_validate_x509_provider_targets` does
+    # for x509 -- just collect every krb5-token entry's targets.
+    krb5_targets: list[str] = [
+        target
+        for cfg in settings.identity_providers
+        if cfg.type == "krb5-token"
+        for target in cfg.targets
+    ]
     # Reverse map from the aud a backend presents to the x509 redeem endpoint
     # (the service's effective_audience -- what the broker mints, issue #257)
     # back to the x509 target name the proxy/provider are keyed under. Without
@@ -851,6 +862,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     application.state.x509_provider = x509_provider
     application.state.x509_targets = x509_targets
     application.state.x509_audiences = x509_audiences
+    application.state.krb5_targets = krb5_targets
     application.state.identity_providers = identity_providers
     application.state.identity_provider_configs = identity_provider_configs
     application.state.target_to_alias = target_to_alias
