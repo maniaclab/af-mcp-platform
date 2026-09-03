@@ -30,6 +30,10 @@ mechanism — see that section for the general native-backend pattern.
   — mints HTCondor IDTOKENs for users who complete the broker's OIDC login,
   via the `condor-token` identity-provider type (see
   [Authentication](auth.md#condortokenprovider-htcondor-idtokens-issue-169)).
+- **[krb5-token-service](https://github.com/maniaclab/krb5-token-service)**
+  mints CERN Kerberos tickets (ccaches) for CERN-authenticated identities
+  via the `krb5-token` identity-provider type (see
+  [Authentication](auth.md#krbtokenprovider-cern-kerberos-tickets-issue-274)).
 - **[voms-token-service](https://github.com/maniaclab/voms-token-service)** —
   mints x509/VOMS proxies for users who complete the broker's OIDC login,
   via an `x509` identity-provider entry with `serviceUrl` set (see

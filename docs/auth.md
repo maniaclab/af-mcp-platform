@@ -636,6 +636,90 @@ HTCondor is later configured to trust the broker's JWKS directly
 the `CredentialProvider` contract, condor-mcp, and the registry wiring
 are untouched.
 
+### KrbTokenProvider: CERN Kerberos tickets (issue #274)
+
+Unlike `CondorTokenProvider` above, krb5-token-service holds no standing
+secret the broker can redeem on its own: the CERN password is a live,
+non-recoverable secret (krb5-token-service runs `kinit` against CERN's
+realm with it) that must be supplied fresh on every mint call, not a
+passphrase that merely unlocks an already-stored credential. Nothing is
+persisted at rest — no Vault record, no "remember" option.
+`KrbTokenProvider` (`credentials/krb5.py`) therefore raises `NeedsUnlock`
+(pointing at `POST /v1/krb5/ticket`) whenever nothing valid is cached and
+no fresh `username`/`password` was supplied, mirroring `X509Provider`'s
+passphrase-unlock doctrine rather than `CondorTokenProvider`'s
+unconditional `is_linked() -> True`.
+
+`POST /v1/krb5/ticket` (`KrbTicketRequest` → `KrbTicketMetadata`,
+`api/credentials.py`) accepts `username`, `password` (a `SecretStr`,
+never logged or echoed), an optional `target` (defaults to the entry's
+first configured target), and optional `lifetime`/`renewable_lifetime`
+strings forwarded verbatim to krb5-token-service. The response carries
+`target`, `principal`, `realm`, `expires_at`, `remaining_seconds`, and
+`renew_until` (null when the ticket isn't renewable) — **`ccache_b64` is
+deliberately absent**: the ticket is cached server-side in the
+`CredentialCache`, the same "credentials never transit to the client"
+rule x509's proxy metadata follows for the PEM.
+
+`is_linked()` reports whether a still-valid ticket happens to be cached
+for one of the entry's targets, not a durable linkage the way
+`X509Provider`'s stored Globus passphrase is — a principal can flip from
+`linked: true` to `linked: false` on the portal's Identities page purely
+because their cached ticket expired, with no user action taken. `GET
+/v1/identities` marks the entry's `link_mechanism` as `"credential"` — a
+two-field username+password form, distinct from x509's one-field
+`"passphrase"` — so the portal renders the right form shape.
+
+`Krb5TokenServiceClient.mint()` (`credentials/krb5_service.py`) maps
+krb5-token-service's `POST /v1/mint` responses onto exceptions the
+endpoint turns into HTTP statuses, the same client-actionable-vs-infra
+split `CondorTokenProvider` and `VomsTokenServiceClient` already use:
+
+| krb5-token-service status | Exception | Endpoint status |
+|---|---|---|
+| 400 (wrong username/password) | `Krb5TokenBadCredentialError` | 400 |
+| 403 (account revoked or password expired) | `Krb5TokenAccountError` | 403 |
+| 422 (malformed username/lifetime) | `Krb5TokenInvalidRequestError` | 422 |
+| 429 (rate-limited) | `Krb5TokenRateLimitedError`, `Retry-After` forwarded | 429 |
+| anything else — unreachable, timeout, **401**, 5xx | `Krb5TokenMintError` | 502 |
+
+401 is deliberately folded into the generic 502 rather than surfaced as a
+client-facing 401: it means krb5-token-service rejected the *broker's
+own* AF Broker Identity Token, a broker↔service contract failure the end
+user cannot act on — it must never read as "your CERN password was
+wrong." As with `VomsTokenServiceClient` and `CondorTokenProvider`, the
+service's response body is never logged or relayed verbatim; every
+mapped error carries a fixed, generic message instead.
+
+Configuration is one `identity_providers` entry of type `krb5-token`
+with a required `service_url` (the service's base URL — the provider
+appends `/v1/mint`) and an `audience` defaulting to
+`krb5-token-service`:
+
+```yaml
+broker:
+  identityProviders:
+    - type: krb5-token
+      alias: krb5
+      displayName: "CERN Kerberos ticket"
+      enables: "Kerberos-authenticated access"
+      targets: ["some-service"]
+      serviceUrl: http://krb5-token-service.invalid
+```
+
+The same fail-closed rule applies as for `broker-issued`/`condor-token`:
+a `krb5-token` entry with no signing key configured refuses to boot,
+since the provider cannot mint the identity token it exchanges with
+krb5-token-service.
+
+**No downstream `aggregator.services` consumer exists yet.** `targets`
+ships empty by default, and `CredentialKind.KRB5_CCACHE` is defined, but
+no aggregator delivery branch forwards a minted ccache to any backend
+service — issue #274 covers only the provider-type plumbing (the mint
+path and the `/v1/krb5/ticket` endpoint), not choosing or wiring an
+actual `auth_type: krb5` backend. That remains a separate,
+not-yet-made decision.
+
 ---
 
 ## Programmatic client bootstrap
