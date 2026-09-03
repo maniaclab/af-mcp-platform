@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import type { CatalogTool } from '../lib/api';
 import { parseToolDescription } from '../lib/toolDescription';
 import InfoTooltip from './InfoTooltip.vue';
@@ -8,11 +8,43 @@ const props = defineProps<{
   tools: CatalogTool[];
 }>();
 
-// Parsed once per render, not once per template interpolation -- v-for can't
-// bind a per-iteration computed value the way a plain script-side map can.
+// A tool's own docstring is written summary-paragraph-first (Google style:
+// one short sentence, then elaboration -- see toolDescription.ts), so the
+// first paragraph alone is a fair teaser. Everything after it (further
+// paragraphs, parsed args, parsed returns) starts collapsed: a service with
+// a handful of tools can otherwise turn "scan the method list" into
+// "scroll past a wall of docstring prose" (e.g. an ami_execute-style tool
+// with a full worked-example block). Parsed once per render, not once per
+// template interpolation -- v-for can't bind a per-iteration computed value
+// the way a plain script-side map can.
 const rows = computed(() =>
-  props.tools.map((tool) => ({ tool, parsed: parseToolDescription(tool.description) })),
+  props.tools.map((tool) => {
+    const parsed = parseToolDescription(tool.description);
+    const paragraphs = parsed.summary.split(/\n\s*\n/).filter((p) => p.trim() !== '');
+    const teaser = paragraphs[0] ?? '';
+    const restSummary = paragraphs.slice(1).join('\n\n');
+    const hasMore = restSummary !== '' || parsed.args.length > 0 || parsed.returns !== null;
+    return { tool, parsed, teaser, restSummary, hasMore };
+  }),
 );
+
+const expanded = ref<Set<string>>(new Set());
+
+function toggleExpanded(name: string): void {
+  if (expanded.value.has(name)) {
+    expanded.value.delete(name);
+  } else {
+    expanded.value.add(name);
+  }
+}
+
+// "No specific permission required" covers both "__none__" (the explicit
+// opt-in) and a service-level scalar permission that's already named on the
+// READ/WRITE badge's own row -- same "__none__" convention CatalogServer.
+// permission uses, just resolved per tool here instead of per service.
+function permissionNote(permission: string): string {
+  return permission === '__none__' ? 'No specific permission required.' : `Requires ${permission}.`;
+}
 </script>
 
 <template>
@@ -25,7 +57,12 @@ const rows = computed(() =>
     it wraps normally at any width, and only ever grows downward.
   -->
   <div class="tool-table" role="list" aria-label="Available methods">
-    <div v-for="{ tool, parsed } in rows" :key="tool.name" class="tool-table__row" role="listitem">
+    <div
+      v-for="{ tool, parsed, teaser, restSummary, hasMore } in rows"
+      :key="tool.name"
+      class="tool-table__row"
+      role="listitem"
+    >
       <div class="tool-table__row-header">
         <code class="tool-table__code">{{ tool.name }}</code>
         <!-- Focusable button + aria-describedby tooltip, not a bare title
@@ -48,26 +85,41 @@ const rows = computed(() =>
           <template #tooltip>
             {{
               tool.action_type === 'state_change'
-                ? 'Modifies state — use with care'
-                : 'Read-only — no side effects'
+                ? 'Modifies state — use with care.'
+                : 'Read-only — no side effects.'
             }}
+            {{ permissionNote(tool.permission) }}
           </template>
         </InfoTooltip>
       </div>
 
-      <p class="tool-table__summary">{{ parsed.summary }}</p>
+      <p class="tool-table__summary">{{ teaser }}</p>
 
-      <dl v-if="parsed.args.length > 0" class="tool-table__args">
-        <div v-for="arg in parsed.args" :key="arg.name" class="tool-table__arg-row">
-          <dt class="tool-table__arg-name">{{ arg.name }}</dt>
-          <dd class="tool-table__arg-desc">{{ arg.desc }}</dd>
-        </div>
-      </dl>
+      <button
+        v-if="hasMore"
+        type="button"
+        class="tool-table__more-toggle"
+        :aria-expanded="expanded.has(tool.name)"
+        @click="toggleExpanded(tool.name)"
+      >
+        {{ expanded.has(tool.name) ? 'Show less' : 'Show more' }}
+      </button>
 
-      <p v-if="parsed.returns" class="tool-table__returns">
-        <span class="tool-table__returns-label">Returns:</span>
-        {{ parsed.returns }}
-      </p>
+      <template v-if="hasMore && expanded.has(tool.name)">
+        <p v-if="restSummary" class="tool-table__summary">{{ restSummary }}</p>
+
+        <dl v-if="parsed.args.length > 0" class="tool-table__args">
+          <div v-for="arg in parsed.args" :key="arg.name" class="tool-table__arg-row">
+            <dt class="tool-table__arg-name">{{ arg.name }}</dt>
+            <dd class="tool-table__arg-desc">{{ arg.desc }}</dd>
+          </div>
+        </dl>
+
+        <p v-if="parsed.returns" class="tool-table__returns">
+          <span class="tool-table__returns-label">Returns:</span>
+          {{ parsed.returns }}
+        </p>
+      </template>
     </div>
   </div>
 </template>
@@ -112,6 +164,27 @@ const rows = computed(() =>
      blocks as authored, rather than collapsing them into one run-on line. */
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.tool-table__more-toggle {
+  display: inline-block;
+  margin-top: 0.375rem;
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--color-af-teal);
+  cursor: pointer;
+}
+.tool-table__more-toggle:hover {
+  text-decoration: underline;
+}
+.tool-table__more-toggle:focus-visible {
+  outline: 2px solid var(--color-af-teal);
+  outline-offset: 2px;
 }
 
 .tool-table__args {

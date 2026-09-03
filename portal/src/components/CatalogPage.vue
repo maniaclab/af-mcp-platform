@@ -57,7 +57,7 @@ const filteredServers = computed<CatalogServer[]>(() => {
         s.name.toLowerCase().includes(q) ||
         s.display_name.toLowerCase().includes(q) ||
         s.description.toLowerCase().includes(q) ||
-        s.permission.toLowerCase().includes(q),
+        (s.permission ?? '').toLowerCase().includes(q),
     );
   }
 
