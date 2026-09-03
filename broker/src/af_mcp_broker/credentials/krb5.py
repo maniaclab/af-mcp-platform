@@ -323,21 +323,41 @@ class KrbTokenProvider(CredentialProvider):
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _cred_from_ticket(self, ticket: MintedTicket, target: str) -> IssuedCredential:
+    def _build_credential(
+        self,
+        target: str,
+        *,
+        ccache_b64: str,
+        principal: str | None,
+        realm: str | None,
+        not_after: float,
+        renew_until: float | None,
+    ) -> IssuedCredential:
+        """Build an ``IssuedCredential`` from a ticket's primitive fields, shared by ``_cred_from_ticket`` (a freshly minted/renewed ``MintedTicket``) and ``_serve_stored_ticket`` (a Vault-stored ``StoredKrb5Credential``, whose ``SecretStr`` fields the caller must unwrap first)."""
         return IssuedCredential(
             cred_class=self.cred_class,
             target=target,
             kind=CredentialKind.KRB5_CCACHE,
-            expires_at=ticket.not_after,
+            expires_at=not_after,
             payload={
-                "ccache_b64": ticket.ccache_b64,
-                "principal": ticket.principal,
-                "realm": ticket.realm,
-                "renew_until": ticket.renew_until,
+                "ccache_b64": ccache_b64,
+                "principal": principal,
+                "realm": realm,
+                "renew_until": renew_until,
             },
             audit_id=uuid.uuid4().hex,
             source="krb5_token_service",
             execution_model=self.execution_model,
+        )
+
+    def _cred_from_ticket(self, ticket: MintedTicket, target: str) -> IssuedCredential:
+        return self._build_credential(
+            target,
+            ccache_b64=ticket.ccache_b64,
+            principal=ticket.principal,
+            realm=ticket.realm,
+            not_after=ticket.not_after,
+            renew_until=ticket.renew_until,
         )
 
     async def _persist_and_cache(
@@ -379,20 +399,13 @@ class KrbTokenProvider(CredentialProvider):
         """Build a credential from a Vault-stored ticket *record* and repopulate the in-process cache with it -- no service call, since Vault already has a ticket with enough validity left."""
         assert record.ccache_b64 is not None  # has_ticket guarantees this
         assert record.not_after is not None  # has_ticket guarantees this
-        cred = IssuedCredential(
-            cred_class=self.cred_class,
-            target=target,
-            kind=CredentialKind.KRB5_CCACHE,
-            expires_at=record.not_after,
-            payload={
-                "ccache_b64": record.ccache_b64.get_secret_value(),
-                "principal": record.principal,
-                "realm": record.realm,
-                "renew_until": record.renew_until,
-            },
-            audit_id=uuid.uuid4().hex,
-            source="krb5_token_service",
-            execution_model=self.execution_model,
+        cred = self._build_credential(
+            target,
+            ccache_b64=record.ccache_b64.get_secret_value(),
+            principal=record.principal,
+            realm=record.realm,
+            not_after=record.not_after,
+            renew_until=record.renew_until,
         )
         await self._cache.put(
             principal.subject, target, cred, expires_at=record.not_after
