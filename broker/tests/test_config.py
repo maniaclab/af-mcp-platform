@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from af_mcp_broker.config import Settings, get_settings
 
@@ -451,6 +452,37 @@ def test_identity_providers_condor_token_audience_is_overridable():
 
     (cfg,) = settings.identity_providers
     assert cfg.audience == "condor-token-service-dev"
+
+
+# krb5-token identity providers (issue #274) -- KrbTokenProvider's config.
+def test_krb5_token_provider_config_parses():
+    settings = Settings(
+        identity_providers=[
+            {
+                "type": "krb5-token",
+                "alias": "krb5",
+                "display_name": "CERN Kerberos ticket",
+                "enables": "Kerberos-authenticated access",
+                "targets": ["some-service"],
+                "service_url": "http://krb5-token-service.invalid",
+            }
+        ]
+    )
+    (cfg,) = settings.identity_providers
+    assert cfg.type == "krb5-token"
+    assert cfg.alias == "krb5"
+    assert cfg.targets == ["some-service"]
+    assert str(cfg.service_url) == "http://krb5-token-service.invalid/"
+    assert cfg.audience == "krb5-token-service"  # default
+
+
+def test_krb5_token_provider_config_requires_service_url():
+    with pytest.raises(ValidationError):
+        Settings(
+            identity_providers=[
+                {"type": "krb5-token", "alias": "krb5", "targets": ["some-service"]}
+            ]
+        )
 
 
 # ---------------------------------------------------------------------------

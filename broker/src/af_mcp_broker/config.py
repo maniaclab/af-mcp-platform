@@ -117,6 +117,35 @@ class CondorTokenProviderConfig(BaseModel):
     enables: str = ""
 
 
+class KrbTokenProviderConfig(BaseModel):
+    """An AF-native credential source for CERN Kerberos tickets (``KrbTokenProvider``, issue #274): the broker mints an AF Broker Identity Token with ``aud=audience`` and exchanges it, together with a caller-supplied CERN username/password, at krb5-token-service's ``POST /v1/mint`` — see docs/auth.md's "KrbTokenProvider" section.
+
+    Unlike ``CondorTokenProviderConfig``, the broker holds no standing
+    secret for this exchange: the CERN password is a live, non-recoverable
+    secret supplied per-call via ``POST /v1/krb5/ticket`` (mirroring x509's
+    passphrase-unlock flow) and is never persisted.
+
+    ``service_url`` is the base URL of the krb5-token-service deployment
+    (no path — the provider appends ``/v1/mint``). ``audience`` is the
+    exact ``aud`` claim the service verifies; the default matches the
+    service's own default and should only change if a deployment renames
+    itself.
+    """
+
+    type: Literal["krb5-token"] = "krb5-token"
+    alias: str
+    targets: list[str] = Field(default_factory=list)
+    service_url: AnyHttpUrl
+    audience: str = "krb5-token-service"
+
+    # Portal-facing metadata for GET /v1/identities. Optional so a minimal
+    # provider config still parses; an operator who leaves these blank just
+    # gets an empty label/description on the Identities page until they fill
+    # them in.
+    display_name: str = ""
+    enables: str = ""
+
+
 class X509ProviderConfig(BaseModel):
     """A grid-certificate credential source (``X509Provider``): VOMS proxies minted for the entry's targets, delivered by service-side redemption (``POST /v1/credentials/x509/redeem``) rather than header injection — see docs/auth.md.
 
@@ -155,6 +184,7 @@ IdentityProviderConfig = Annotated[
     | OAuth21DirectProviderConfig
     | BrokerIssuedProviderConfig
     | CondorTokenProviderConfig
+    | KrbTokenProviderConfig
     | X509ProviderConfig,
     Field(discriminator="type"),
 ]
