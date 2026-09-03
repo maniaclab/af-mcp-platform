@@ -232,6 +232,26 @@ class CredentialCache:
             metrics.credential_cache_hits_total.labels(target=target).inc()
         return value
 
+    async def peek(
+        self,
+        subject: str,
+        target: str,
+        min_remaining: int = 0,
+    ) -> Any | None:
+        """Return a cached value if still valid, else None -- without touching the hit/miss counters.
+
+        Same freshness semantics as ``get()`` (both call the shared
+        ``_lookup()`` helper), but for callers asking "is something live
+        cached right now" as a side question rather than actually serving a
+        credential -- e.g. ``KrbTokenProvider.is_linked()`` probing for a
+        still-valid ticket. Using ``get()`` there would silently inflate
+        ``af_mcp_credential_cache_hits_total``/``..._misses_total`` on every
+        linkage-status check (``GET /v1/identities`` calls ``is_linked()`` on
+        every configured provider), double-counting against genuine
+        ``issue()``-driven lookups that those counters are meant to reflect.
+        """
+        return self._lookup(subject, target, min_remaining)
+
     async def get_or_mint(
         self,
         subject: str,

@@ -71,10 +71,19 @@ class KrbTokenProvider(CredentialProvider):
         )
 
     async def is_linked(self, principal: Principal) -> bool:
-        """True iff a still-valid ticket happens to be cached for one of this entry's targets — see the module docstring."""
+        """True iff a still-valid ticket happens to be cached for one of this entry's targets — see the module docstring.
+
+        Uses ``CredentialCache.peek()``, not ``get()``, so this status probe
+        doesn't skew the credential-cache hit/miss metrics that ``get()``
+        records. Note this checks with ``min_remaining=0`` while ``issue()``
+        defaults to a 300s buffer (``min_remaining_seconds``) -- a ticket
+        reported as "linked" here can still trigger ``NeedsUnlock`` from an
+        immediately-following ``issue()`` call using that default buffer,
+        since the two use different staleness thresholds.
+        """
         for target in self._targets:
             if (
-                await self._cache.get(principal.subject, target, min_remaining=0)
+                await self._cache.peek(principal.subject, target, min_remaining=0)
                 is not None
             ):
                 return True
