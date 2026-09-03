@@ -123,6 +123,19 @@ class TestMintResponse:
         ticket = await _mint(client)
         assert ticket.renew_until is None
 
+    async def test_missing_renew_until_key_raises(self, make_client) -> None:
+        """The contract pins ``renew_until`` as always present (string or
+        null) -- Giordon owns the deploy of both this broker and
+        krb5-token-service, so there is no scenario where a deployed
+        service omits the key -- an absent key is a service bug to surface
+        loudly, not skew to tolerate (same doctrine as voms_service.py's
+        ``nickname``)."""
+        response = dict(_MINT_RESPONSE)
+        del response["renew_until"]
+        client, _ = make_client(httpx.Response(200, json=response))
+        with pytest.raises(KeyError):
+            await _mint(client)
+
 
 class TestMintFailures:
     async def test_mint_400_raises_bad_credential_error(self, make_client) -> None:

@@ -205,10 +205,14 @@ class Krb5TokenServiceClient:
         # a naive timestamp as UTC rather than broker-local time (same as
         # condor.py/voms_service.py).
         not_after = _parse_iso_utc(data["expires_at"])
+        # Required key (renew_until is null when not renewable, but always
+        # present) -- Giordon owns the deploy of both this broker and
+        # krb5-token-service, so a missing key is a service bug to surface
+        # loudly (KeyError), not skew to tolerate. A present-but-null value
+        # stays legitimate (same doctrine as voms_service.py's nickname).
+        renew_until_raw = data["renew_until"]
         renew_until = (
-            _parse_iso_utc(data["renew_until"])
-            if data.get("renew_until") is not None
-            else None
+            _parse_iso_utc(renew_until_raw) if renew_until_raw is not None else None
         )
         return MintedTicket(
             ccache_b64=data["ccache_b64"],
