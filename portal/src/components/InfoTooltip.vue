@@ -5,8 +5,15 @@ withDefaults(
   defineProps<{
     tooltipId: string;
     maxWidth?: string;
+    /** 'above' opens the bubble upward from the trigger instead of downward
+     * -- for a trigger with nothing below it in a scrollable container (e.g.
+     * a table's last row), a downward bubble is still in the DOM at full
+     * size even while hidden (see the note below), and inflates that
+     * container's scrollable overflow past its own bottom edge with nothing
+     * to actually scroll to. */
+    placement?: 'below' | 'above';
   }>(),
-  { maxWidth: '16rem' },
+  { maxWidth: '16rem', placement: 'below' },
 );
 
 const wrapper = useTemplateRef<HTMLSpanElement>('wrapper');
@@ -39,7 +46,13 @@ onBeforeUnmount(() => wrapper.value?.removeEventListener('click', releaseClickFo
 <template>
   <span ref="wrapper" class="info-tooltip">
     <slot />
-    <span :id="tooltipId" class="info-tooltip__bubble" role="tooltip" :style="{ maxWidth }">
+    <span
+      :id="tooltipId"
+      class="info-tooltip__bubble"
+      :class="{ 'info-tooltip__bubble--above': placement === 'above' }"
+      role="tooltip"
+      :style="{ maxWidth }"
+    >
       <slot name="tooltip" />
     </span>
   </span>
@@ -82,5 +95,12 @@ onBeforeUnmount(() => wrapper.value?.removeEventListener('click', releaseClickFo
 .info-tooltip:focus-within .info-tooltip__bubble {
   opacity: 1;
   visibility: visible;
+}
+
+.info-tooltip__bubble--above {
+  top: auto;
+  bottom: 100%;
+  margin-top: 0;
+  margin-bottom: 0.375rem;
 }
 </style>

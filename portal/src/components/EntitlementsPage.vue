@@ -317,7 +317,18 @@ function meHasPermission(permission: string): boolean {
                 :class="{ 'ep__matrix-row--divider': i === firstWriteIndex }"
               >
                 <th scope="row" class="ep__matrix-rowhead">
-                  <InfoTooltip v-if="col.description" :tooltip-id="`ep-perm-${col.name}`">
+                  <!-- The last row's tooltip opens upward: nothing below it
+                       in the table to visually extend into, so a downward
+                       bubble (present in the DOM at full size even hidden)
+                       inflated .ep__matrix-scroll's scrollable overflow past
+                       the table's own bottom edge -- the same phantom-
+                       scrollbar bug the group-header tooltips had
+                       horizontally, just vertically and on this one row. -->
+                  <InfoTooltip
+                    v-if="col.description"
+                    :tooltip-id="`ep-perm-${col.name}`"
+                    :placement="i === columns.length - 1 ? 'above' : 'below'"
+                  >
                     <button
                       type="button"
                       class="ep__matrix-rowhead-btn"
@@ -498,7 +509,12 @@ function meHasPermission(permission: string): boolean {
 .ep__matrix {
   border-collapse: collapse;
   font-size: 0.8125rem;
-  width: 100%;
+  /* Not width: 100% -- every group column now has a fixed 3rem width (see
+     .ep__matrix-colhead--group), so forcing the table to fill its
+     container would dump 100% minus those fixed columns into the one
+     remaining unconstrained column (You), stretching it into a huge slab.
+     Auto width sizes the table to the sum of its actual columns instead. */
+  width: auto;
 }
 
 /* Permission column (row headers) is a fixed width so the sticky "You"
@@ -546,7 +562,14 @@ function meHasPermission(permission: string): boolean {
    spreadsheet-style diagonal header trick. */
 .ep__matrix-colhead--group {
   position: relative;
-  height: 7.5rem;
+  /* Fixed, not derived from the checkmark cell below: three tunable knobs
+     for this whole pattern (column width, header height, label angle) --
+     width and height stay in lockstep with the -45deg angle below, so
+     change them together if the angle ever changes. */
+  width: 3rem;
+  min-width: 3rem;
+  max-width: 3rem;
+  height: 8rem;
   padding: 0;
   /* A horizontal line here would cut across every label mid-flight as it
      crosses into a neighboring column's box. */
@@ -555,7 +578,7 @@ function meHasPermission(permission: string): boolean {
 
 .ep__matrix-colhead-label {
   position: absolute;
-  left: 0.5rem;
+  left: 0.65rem;
   bottom: 0.5rem;
   transform-origin: bottom left;
   transform: rotate(-45deg);
