@@ -21,6 +21,7 @@
 import { nextTick, ref } from 'vue';
 import { requestKrb5Ticket, type KrbTicketMetadata } from '../lib/api';
 import { krb5LinkErrorMessage } from '../lib/krb5Identity';
+import { formatShortDateTime } from '../lib/x509Identity';
 
 const props = defineProps<{
   linked: boolean;
@@ -95,13 +96,7 @@ async function handleSubmit() {
  * fall back on here.
  */
 function formatExpiry(iso: string): string {
-  return new Date(iso).toLocaleString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    timeZoneName: 'short',
-  });
+  return formatShortDateTime(new Date(iso));
 }
 </script>
 
