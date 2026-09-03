@@ -317,7 +317,18 @@ function meHasPermission(permission: string): boolean {
                 :class="{ 'ep__matrix-row--divider': i === firstWriteIndex }"
               >
                 <th scope="row" class="ep__matrix-rowhead">
-                  <InfoTooltip v-if="col.description" :tooltip-id="`ep-perm-${col.name}`">
+                  <!-- The last row's tooltip opens upward: nothing below it
+                       in the table to visually extend into, so a downward
+                       bubble (present in the DOM at full size even hidden)
+                       inflated .ep__matrix-scroll's scrollable overflow past
+                       the table's own bottom edge -- the same phantom-
+                       scrollbar bug the group-header tooltips had
+                       horizontally, just vertically and on this one row. -->
+                  <InfoTooltip
+                    v-if="col.description"
+                    :tooltip-id="`ep-perm-${col.name}`"
+                    :placement="i === columns.length - 1 ? 'above' : 'below'"
+                  >
                     <button
                       type="button"
                       class="ep__matrix-rowhead-btn"
