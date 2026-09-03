@@ -415,10 +415,16 @@ async def test_issue_mint_failure_propagates_and_does_not_cache():
     assert await vault_store.get_link(principal.subject) is None
 
 
-async def test_issue_single_flights_concurrent_misses():
-    """N concurrent issue() calls for the same (subject, target) must cost
-    exactly one krb5-token-service mint call (issue #94's pattern, mirrored
-    from test_condor_token.py's test_issue_single_flights_concurrent_misses)."""
+async def test_issue_concurrent_password_mints_each_mint_independently():
+    """N concurrent tier-5 issue() calls for the same (subject, target) each
+    reach client.mint() independently -- an explicit password mint is NOT
+    single-flighted through the cache the way tiers 1-4's cache/Vault reads
+    are. Mirrors X509Provider's own accepted trade-off for its equivalent
+    explicit-passphrase/consent path (see x509.py's ``_link_and_mint`` and
+    the comment on ``_issue_via_service``'s link/unlock branch): deduping an
+    explicit user action with a consent flag (``remember``) against a
+    concurrent, possibly-different request would silently let one caller's
+    consent decision win over another's."""
 
     class _SlowClient(_FakeClient):
         async def mint(self, **kwargs):
@@ -442,7 +448,7 @@ async def test_issue_single_flights_concurrent_misses():
         ]
     )
 
-    assert len(client.calls) == 1
+    assert len(client.calls) == 5
     assert all(r.payload["ccache_b64"] == "ZmFrZQ==" for r in results)
 
 

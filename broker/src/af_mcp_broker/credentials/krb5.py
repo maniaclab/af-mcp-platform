@@ -294,10 +294,18 @@ class KrbTokenProvider(CredentialProvider):
                     )
             return cred
 
-        # Single-flighted like every other provider (issue #94's pattern).
-        return await self._cache.get_or_mint(
-            principal.subject, target, min_remaining_seconds, _do_mint
-        )
+        # Deliberately NOT single-flighted through get_or_mint (unlike every
+        # other provider's cache-miss mint, issue #94's pattern) -- this is
+        # an explicit password mint carrying a consent flag (remember), and
+        # get_or_mint's in-flight re-check only looks at the in-process
+        # cache, not at remember: a concurrent caller with a DIFFERENT
+        # remember value would silently get back the first caller's
+        # consent decision. Mirrors X509Provider._issue_via_service's own
+        # explicit-passphrase/consent path (see its comment on why THAT
+        # call is not deduped through get_or_mint either) -- tiers 1-4
+        # above (cache, Vault repopulation, renew, keytab remint) carry no
+        # consent flag and remain unwrapped/direct as they always were.
+        return await _do_mint()
 
     async def revoke(self, principal: Principal, target: str) -> None:
         """Drop the cached ticket and the Vault-stored ticket half; a stored keytab (the link) is untouched.
