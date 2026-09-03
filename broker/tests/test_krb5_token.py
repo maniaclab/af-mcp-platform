@@ -515,7 +515,7 @@ async def test_issue_tier3_renewal_window_closed_falls_through_to_needs_unlock()
 
 async def test_issue_tier3_renewal_window_closed_falls_through_to_tier4():
     """Same window-closed signal, but this time a keytab IS stored -- the
-    fallthrough must actually reach and succeed at tier 3."""
+    fallthrough must actually reach and succeed at tier 4."""
     vault_store = FakeKrb5VaultStore()
     principal = make_principal()
     await vault_store.store_ticket(
@@ -558,7 +558,7 @@ async def test_issue_tier3_hard_failure_propagates():
         renew_until=time.time() + 3600,
     )
     # A stored keytab is also present, to prove the hard failure does NOT
-    # fall through to tier 3 either.
+    # fall through to tier 4 either.
     await vault_store.store_link(
         principal.subject, username="alice", keytab_b64=SecretStr("a2V5dGFi")
     )
@@ -656,7 +656,7 @@ async def test_issue_tier5_remember_true_also_mints_and_stores_keytab():
 async def test_issue_tier5_remember_false_default_does_not_store_keytab():
     """Without remember=True (the default), no keytab is bootstrapped and
     no link half is stored -- but the ticket half IS always stored,
-    regardless of remember, since tier-2 renewal must work for every user."""
+    regardless of remember, since tier-3 renewal must work for every user."""
     client = _FakeClient(ticket=_ticket())
     provider, _, vault_store = provider_factory(client)
     principal = make_principal()
