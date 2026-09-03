@@ -3,20 +3,20 @@
 Persists, per subject, everything ``KrbTokenProvider``'s renew/keytab-remint
 fallback tiers need to mint a fresh Kerberos ticket with no user interaction:
 
-* the **link half** -- a keytab and its username, captured once via
+* the **link half** — a keytab and its username, captured once via
   ``POST /v1/keytab`` (using the same password already supplied for the
   initial mint) and stored only when the user opts in ("remember"). Unlike
   x509's passphrase, a stored keytab has no bearing on whether an
   already-minted ticket is still good, so a re-link never touches the
   ticket half (see ``store_link``'s docstring).
-* the **ticket half** -- the last-minted ccache and its ``not_after`` /
+* the **ticket half** — the last-minted ccache and its ``not_after`` /
   ``renew_until`` deadlines, written on *every* successful mint regardless
   of "remember". This is what makes renew-without-remember possible: the
   renewal tier needs no stored secret at all, just the ticket's own ccache
   and its own renewable window.
 
 One KV-v2 record per subject at ``{kv_path_prefix}/{subject}/krb5``, over
-the shared ``VaultKV`` transport -- this module owns the path layout, the
+the shared ``VaultKV`` transport — this module owns the path layout, the
 record shape, and the ``SecretStr`` reveal/reload round trip, mirroring
 ``credentials/x509_vault.py``'s ``VaultX509Store``. Writes are
 read-modify-write under KV-v2 CAS with a bounded retry: concurrent mints
@@ -48,7 +48,7 @@ _CAS_ATTEMPTS = 3
 class StoredKrb5Credential:
     """A Vault-persisted krb5 record: a link half (keytab, durable, opt-in via 'remember')
     plus a ticket half (last-minted ccache metadata, written on every mint regardless of
-    remember -- this is what makes renew-without-remember possible)."""
+    remember — this is what makes renew-without-remember possible)."""
 
     username: str | None = None
     keytab_b64: SecretStr | None = None
@@ -97,7 +97,7 @@ class Krb5VaultStore:
         Unlike x509's ``store_link`` (which wipes a stale proxy on re-link,
         since a new passphrase may not be able to re-mint the old one), a
         krb5 ticket's validity has nothing to do with which keytab is
-        currently on file -- a still-good ticket must survive a (re-)link.
+        currently on file — a still-good ticket must survive a (re-)link.
         """
 
         def _merge(current: StoredKrb5Credential | None) -> StoredKrb5Credential:
@@ -164,7 +164,7 @@ class Krb5VaultStore:
 
         Deliberately separate from ``get_ticket``: this answers "is there a
         ccache that ``client.renew()`` can still extend", which stays true
-        well past ``not_after`` -- a VOMS proxy has no equivalent second,
+        well past ``not_after`` — a VOMS proxy has no equivalent second,
         later deadline, so x509 has no analogous accessor.
         """
         got = await self._read(subject)
@@ -199,7 +199,7 @@ class Krb5VaultStore:
         await self._write_cas_retry(subject, _clear)
 
     async def delete(self, subject: str) -> None:
-        """Unlink *subject*: destroy the record -- keytab, ticket, and all KV-v2 version history."""
+        """Unlink *subject*: destroy the record — keytab, ticket, and all KV-v2 version history."""
         await self._vault_kv.delete_metadata(self._path(subject))
 
     async def _write_cas_retry(
@@ -211,7 +211,7 @@ class Krb5VaultStore:
 
         *build* maps the current record (or None) to the record to write.
         Retrying re-reads the current version each attempt, so a concurrent
-        writer's bump is absorbed rather than surfaced -- see the module
+        writer's bump is absorbed rather than surfaced — see the module
         docstring for why last-writer-wins is correct here.
         """
         for attempt in range(_CAS_ATTEMPTS):
@@ -233,7 +233,7 @@ def _record_from_dict(data: dict[str, Any]) -> StoredKrb5Credential:
     """Reconstruct a ``StoredKrb5Credential`` from a raw Vault-stored payload.
 
     Mirrors ``StoredX509Credential.model_validate``'s job of re-wrapping
-    plain strings into ``SecretStr`` on read -- ``dataclass`` has no
+    plain strings into ``SecretStr`` on read — ``dataclass`` has no
     built-in validation round trip, so this does it explicitly.
     """
     keytab_b64 = data.get("keytab_b64")

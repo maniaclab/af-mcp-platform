@@ -213,7 +213,7 @@ class TestLink:
     async def test_relink_replaces_keytab_and_preserves_ticket(self, store) -> None:
         """Unlike x509's passphrase (which the proxy was minted with), a
         krb5 ticket's validity has nothing to do with which keytab is
-        currently on file -- a re-link must not wipe a still-good ticket."""
+        currently on file — a re-link must not wipe a still-good ticket."""
         await _link(store)
         not_after, _renew_until = await _store_ticket(store)
         await store.store_link(
@@ -281,7 +281,7 @@ class TestTicket:
         assert await store.get_link(SUBJECT) is None
 
     async def test_ticket_without_a_link_round_trips(self, store) -> None:
-        """A ticket half can exist with no stored keytab at all -- the
+        """A ticket half can exist with no stored keytab at all — the
         common case (remember=False writes only the ticket half)."""
         await _store_ticket(store)
         record = await store.get_ticket(SUBJECT)
@@ -303,7 +303,7 @@ class TestRenewableTicket:
         self, store
     ) -> None:
         """This is exactly the tier-2 renewal window: not_after has passed
-        but renew_until has not -- get_ticket says no, get_renewable_ticket
+        but renew_until has not — get_ticket says no, get_renewable_ticket
         says yes."""
         await _store_ticket(store, remaining=-10.0, renew_remaining=3600.0)
         assert await store.get_ticket(SUBJECT) is None
@@ -325,7 +325,7 @@ class TestRenewableTicket:
 
     async def test_returns_record_even_when_ticket_is_still_fresh(self, store) -> None:
         """get_renewable_ticket answers purely off renew_until, independent
-        of not_after -- a fresh ticket with a valid renew_until is still a
+        of not_after — a fresh ticket with a valid renew_until is still a
         legitimate answer (callers only reach for this accessor once
         get_ticket has already said no, but the method itself makes no such
         assumption)."""
@@ -374,11 +374,11 @@ class TestDelete:
         assert fake_vault.entries == {}
 
     async def test_delete_is_idempotent(self, store) -> None:
-        await store.delete(SUBJECT)  # never linked -- must not raise
+        await store.delete(SUBJECT)  # never linked — must not raise
 
     async def test_relink_after_delete_succeeds(self, store) -> None:
         """delete() must destroy metadata (not soft-delete data) so the next
-        store_link's cas=0 create succeeds -- same reasoning as
+        store_link's cas=0 create succeeds — same reasoning as
         VaultKV.delete_metadata's docstring."""
         await _link(store)
         await store.delete(SUBJECT)
