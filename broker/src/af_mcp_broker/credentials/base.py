@@ -25,6 +25,11 @@ class CredentialKind(StrEnum):
     # "deliverable proxy vs local file path" distinction): no local path —
     # the backend redeems the PEM via POST /v1/credentials/x509/redeem.
     X509_PROXY_REDEEM = "x509_proxy_redeem"
+    # A Kerberos credential cache (ccache), base64-encoded in the payload.
+    # No aggregator delivery branch exists yet -- issue #274 covers only the
+    # provider-type plumbing; the downstream aggregator.services consumer is
+    # a separate, not-yet-made decision (see the provider-type's own docs).
+    KRB5_CCACHE = "krb5_ccache"
     NONE = "none"
 
 
@@ -51,6 +56,7 @@ class IssuedCredential:
     # x509 (proxy_ref):    {"proxy_handle": ..., "proxy_path": ..., "delivery": "direct"}
     # x509 (proxy_redeem): {"proxy_handle": ..., "delivery": "redeem"}
     # service:{"access_token": ..., "on_behalf_of": ..., "token_type": "Bearer"}
+    # krb5_ccache: {"ccache_b64": ..., "principal": ..., "realm": ..., "renew_until": float | None}
     payload: dict
     audit_id: str
     source: str  # which provider backend produced this credential
