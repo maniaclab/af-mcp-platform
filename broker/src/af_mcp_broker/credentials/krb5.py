@@ -189,10 +189,28 @@ class KrbTokenProvider(CredentialProvider):
         renewable = await self._vault_store.get_renewable_ticket(principal.subject)
         if renewable is not None:
             assert renewable.ccache_b64 is not None  # has_ticket guarantees this
-            try:
+            ccache_b64 = renewable.ccache_b64.get_secret_value()
+
+            async def _do_renew() -> IssuedCredential:
                 ticket = await self._client.renew(
                     subject=principal.subject,
-                    ccache_b64=renewable.ccache_b64.get_secret_value(),
+                    ccache_b64=ccache_b64,
+                )
+                return await self._persist_and_cache(
+                    principal, target, ticket, tier="renew"
+                )
+
+            # Single-flighted like X509Provider._do_renew (issue #94's
+            # pattern): unlike tier 5 below, this carries no consent flag,
+            # so a concurrent caller reusing the first caller's renewal is
+            # exactly what should happen, not a bug. The try/except sits
+            # OUTSIDE get_or_mint rather than inside _do_renew, so the
+            # expected Krb5TokenRenewalWindowClosedError propagates through
+            # get_or_mint uninterrupted to this tier-dispatch logic instead
+            # of being swallowed by the single-flight machinery.
+            try:
+                return await self._cache.get_or_mint(
+                    principal.subject, target, min_remaining_seconds, _do_renew
                 )
             except Krb5TokenRenewalWindowClosedError:
                 # Expected, recoverable: the renewable window has closed --
@@ -201,10 +219,6 @@ class KrbTokenProvider(CredentialProvider):
                     "krb5_token.issue.renewal_window_closed",
                     subject=principal.subject,
                     target=target,
-                )
-            else:
-                return await self._persist_and_cache(
-                    principal, target, ticket, tier="renew"
                 )
             # Any OTHER exception from client.renew() propagates uncaught
             # here -- a genuine infra failure must surface as one, not be
@@ -215,13 +229,29 @@ class KrbTokenProvider(CredentialProvider):
         if link is not None:
             assert link.username is not None  # has_link guarantees this
             assert link.keytab_b64 is not None  # has_link guarantees this
-            try:
+            link_username = link.username
+            link_keytab_b64 = link.keytab_b64
+
+            async def _do_remint() -> IssuedCredential:
                 ticket = await self._client.mint(
                     subject=principal.subject,
-                    username=link.username,
-                    keytab_b64=link.keytab_b64,
+                    username=link_username,
+                    keytab_b64=link_keytab_b64,
                     lifetime=lifetime,
                     renewable_lifetime=renewable_lifetime,
+                )
+                return await self._persist_and_cache(
+                    principal, target, ticket, tier="keytab_remint"
+                )
+
+            # Single-flighted for the same reason as tier 3 above: no
+            # consent flag here either, so deduping concurrent remints is
+            # strictly a win. Same try/except-outside-get_or_mint structure
+            # so the expected Krb5TokenBadCredentialError still reaches this
+            # tier-dispatch logic instead of the single-flight machinery.
+            try:
+                return await self._cache.get_or_mint(
+                    principal.subject, target, min_remaining_seconds, _do_remint
                 )
             except Krb5TokenBadCredentialError:
                 # The stored keytab is dead (e.g. the CERN password was
@@ -233,10 +263,6 @@ class KrbTokenProvider(CredentialProvider):
                 self._log.info(
                     "krb5_token.issue.stored_keytab_rejected",
                     subject=principal.subject,
-                )
-            else:
-                return await self._persist_and_cache(
-                    principal, target, ticket, tier="keytab_remint"
                 )
             # Any OTHER exception from client.mint() propagates uncaught here.
 

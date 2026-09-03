@@ -494,6 +494,50 @@ async def test_issue_tier3_renew_success():
     assert stored.ccache_b64.get_secret_value() == "bmV3Y2NhY2hl"
 
 
+class _SlowRenewMintClient(_FakeClient):
+    """Sleeps before renew()/mint() delegate to the real fake, forcing real
+    concurrency (mirrors
+    test_issue_concurrent_password_mints_each_mint_independently's
+    ``_SlowClient`` pattern) so single-flighting can actually be observed."""
+
+    async def renew(self, **kwargs):
+        await asyncio.sleep(0.01)
+        return await super().renew(**kwargs)
+
+    async def mint(self, **kwargs):
+        await asyncio.sleep(0.01)
+        return await super().mint(**kwargs)
+
+
+async def test_issue_concurrent_tier3_renews_are_single_flighted():
+    """N concurrent issue() calls racing against the same stale-but-renewable
+    Vault ticket, with no fresh credentials supplied, must result in exactly
+    ONE client.renew() call -- unlike tier 5's explicit password mint (see
+    test_issue_concurrent_password_mints_each_mint_independently), tier 3
+    carries no consent flag, so deduping concurrent renewals is a pure win,
+    not a correctness risk."""
+    vault_store = FakeKrb5VaultStore()
+    principal = make_principal()
+    await vault_store.store_ticket(
+        principal.subject,
+        ccache_b64=SecretStr("b2xkY2NhY2hl"),
+        principal="alice@CERN.CH",
+        realm="CERN.CH",
+        not_after=time.time() - 60,
+        renew_until=time.time() + 3600,
+    )
+    fresh_ticket = _ticket(ccache_b64="bmV3Y2NhY2hl")
+    client = _SlowRenewMintClient(renew_ticket=fresh_ticket)
+    provider, _, _ = provider_factory(client, vault_store=vault_store)
+
+    results = await asyncio.gather(
+        *[provider.issue(principal, "krb5-target") for _ in range(5)]
+    )
+
+    assert len(client.renew_calls) == 1
+    assert all(r.payload["ccache_b64"] == "bmV3Y2NhY2hl" for r in results)
+
+
 async def test_issue_tier3_renewal_window_closed_falls_through_to_needs_unlock():
     """A renewal-window-closed signal is expected and recoverable: with no
     stored keytab and no fresh credentials, it must fall through to
@@ -605,6 +649,28 @@ async def test_issue_tier4_keytab_remint_success():
 
     stored = await vault_store.get_ticket(principal.subject, min_remaining=0)
     assert stored is not None
+
+
+async def test_issue_concurrent_tier4_reminits_are_single_flighted():
+    """N concurrent issue() calls racing against the same stored keytab, with
+    no fresh credentials supplied, must result in exactly ONE
+    client.mint(keytab_b64=...) call -- same reasoning as tier 3's
+    equivalent test above: no consent flag here, so deduping is a pure win."""
+    vault_store = FakeKrb5VaultStore()
+    principal = make_principal()
+    await vault_store.store_link(
+        principal.subject, username="alice", keytab_b64=SecretStr("a2V5dGFi")
+    )
+    client = _SlowRenewMintClient(ticket=_ticket())
+    provider, _, _ = provider_factory(client, vault_store=vault_store)
+
+    results = await asyncio.gather(
+        *[provider.issue(principal, "krb5-target") for _ in range(5)]
+    )
+
+    assert len(client.calls) == 1
+    assert client.calls[0]["keytab_b64"] == "a2V5dGFi"
+    assert all(r.payload["ccache_b64"] == "ZmFrZQ==" for r in results)
 
 
 async def test_issue_tier4_bad_keytab_unlinks_and_raises_needs_unlock():
