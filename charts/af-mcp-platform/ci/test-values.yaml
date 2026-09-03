@@ -44,6 +44,16 @@ broker:
       targets: ["filesystem-example"]
       displayName: "AF-native services (example)"
       enables: "Example filesystem access via af-filesystem-mcp"
+    # Exercises the krb5-token identityProviders branch (issue #274) so a
+    # broken IDENTITY_PROVIDERS render is caught by `helm template`. No
+    # downstream aggregator.services consumer is defined yet, so targets is
+    # empty, matching the commented-out example in values.yaml.
+    - type: krb5-token
+      alias: krb5-example
+      targets: []
+      serviceUrl: "http://krb5-token-service.example.svc.cluster.local:8080"
+      displayName: "CERN Kerberos ticket (example)"
+      enables: "Example Kerberos-authenticated access"
     # Exercises the x509 identityProviders branch (first-class x509 entries,
     # replacing the removed global broker.env.VOMS_TOKEN_SERVICE_URL) so a
     # broken IDENTITY_PROVIDERS render is caught by `helm template`.
