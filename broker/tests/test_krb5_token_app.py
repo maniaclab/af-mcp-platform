@@ -20,6 +20,7 @@ import pytest
 from test_broker_issued import _make_rsa_key, _private_pem
 
 from af_mcp_broker.credentials import KrbTokenProvider
+from af_mcp_broker.credentials.krb5_vault import Krb5VaultStore
 from af_mcp_broker.vault_kv import VaultKV
 
 if TYPE_CHECKING:
@@ -96,6 +97,20 @@ def test_krb5_token_provider_registered_from_config(
         assert isinstance(provider, KrbTokenProvider)
         # issue #90's catalog join: the target maps to the configured alias.
         assert state.target_to_alias["krb5-target"] == "krb5"
+
+
+def test_krb5_vault_store_constructed_and_exposed_on_state(
+    krb5_token_env, app_client_factory
+) -> None:
+    """Happy-path counterpart to the fail-closed tests below: a krb5-token
+    entry with Vault configured must actually construct the shared
+    Krb5VaultStore and expose it on app.state, not just refuse to boot
+    without one."""
+    krb5_token_env()
+
+    with app_client_factory() as (client, _):
+        state = client.app.state
+        assert isinstance(state.krb5_vault_store, Krb5VaultStore)
 
 
 def test_krb5_token_entry_without_signing_key_refuses_to_start(
