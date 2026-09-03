@@ -263,19 +263,35 @@ class KrbTokenProvider(CredentialProvider):
             if remember:
                 # Reuses the SAME already-captured password -- never a
                 # second prompt, never persisted anywhere but this one call.
-                keytab_b64, keytab_principal = await self._client.mint_keytab(
-                    subject=principal.subject, username=username, password=password
-                )
-                await self._vault_store.store_link(
-                    principal.subject,
-                    username=username,
-                    keytab_b64=SecretStr(keytab_b64),
-                )
-                self._log.info(
-                    "krb5_token.issue.keytab_remembered",
-                    subject=principal.subject,
-                    principal=keytab_principal,
-                )
+                # Best-effort: the ticket above already minted successfully,
+                # so ANY failure here (e.g. mint_keytab sharing its rate
+                # limiter with the password-mint call that just happened) must
+                # not discard that success -- remembering is a bonus, not a
+                # reason to fail a call that already did its primary job.
+                try:
+                    keytab_b64, keytab_principal = await self._client.mint_keytab(
+                        subject=principal.subject,
+                        username=username,
+                        password=password,
+                    )
+                    await self._vault_store.store_link(
+                        principal.subject,
+                        username=username,
+                        keytab_b64=SecretStr(keytab_b64),
+                    )
+                except Exception as exc:  # noqa: BLE001  # best-effort keytab bootstrap
+                    self._log.warning(
+                        "krb5_token.issue.keytab_remember_failed",
+                        subject=principal.subject,
+                        target=target,
+                        error=str(exc),
+                    )
+                else:
+                    self._log.info(
+                        "krb5_token.issue.keytab_remembered",
+                        subject=principal.subject,
+                        principal=keytab_principal,
+                    )
             return cred
 
         # Single-flighted like every other provider (issue #94's pattern).

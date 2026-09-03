@@ -653,6 +653,28 @@ async def test_issue_tier5_remember_true_also_mints_and_stores_keytab():
     assert link.keytab_b64.get_secret_value() == "a2V5dGFi"
 
 
+async def test_issue_tier5_remember_true_keytab_bootstrap_failure_still_returns_ticket():
+    """A failed keytab bootstrap (any krb5-token-service error -- e.g. the
+    shared rate limiter tripping right after the password mint it follows)
+    must NOT discard an already-successful ticket mint: remembering is
+    best-effort, not a reason to fail a call that already succeeded at its
+    primary job. No partial/corrupt link record is left behind either."""
+    client = _FakeClient(ticket=_ticket(), keytab_error=Krb5TokenMintError("boom"))
+    provider, _, vault_store = provider_factory(client)
+    principal = make_principal()
+
+    cred = await provider.issue(
+        principal,
+        "krb5-target",
+        passphrase=SecretBytes(b"hunter2"),
+        username="alice",
+        remember=True,
+    )
+
+    assert cred.payload["ccache_b64"] == "ZmFrZQ=="
+    assert await vault_store.get_link(principal.subject) is None
+
+
 async def test_issue_tier5_remember_false_default_does_not_store_keytab():
     """Without remember=True (the default), no keytab is bootstrapped and
     no link half is stored -- but the ticket half IS always stored,
