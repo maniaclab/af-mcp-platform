@@ -703,7 +703,9 @@ broker:
       alias: krb5
       displayName: "CERN Kerberos ticket"
       enables: "Kerberos-authenticated access"
-      targets: ["some-service"]
+      # No downstream aggregator.services consumer is defined yet (issue
+      # #274) -- leave targets empty until one is chosen.
+      targets: []
       serviceUrl: http://krb5-token-service.invalid
 ```
 
