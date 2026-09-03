@@ -585,6 +585,18 @@ export interface KrbTicketMetadata {
   renew_until: string | null;
 }
 
+/**
+ * Request a new Kerberos ticket for the caller's CERN principal.
+ *
+ * `target` selects which krb5-token-service backend mints the ticket (see
+ * `services.yaml`); omitted, the broker's configured default is used.
+ * `lifetime` and `renewable_lifetime` are opaque strings forwarded to
+ * krb5-token-service as-is -- the broker does not parse or validate their
+ * format (see `krb5_service.py`'s mint request body).
+ *
+ * IMPORTANT: The caller MUST clear the password from Vue state immediately
+ * after this call returns — regardless of success or failure.
+ */
 export async function requestKrb5Ticket(
   username: string,
   password: string,
@@ -592,7 +604,7 @@ export async function requestKrb5Ticket(
   lifetime?: string,
   renewableLifetime?: string,
 ): Promise<KrbTicketMetadata> {
-  return apiFetch('/krb5/ticket', {
+  return apiFetch<KrbTicketMetadata>('/krb5/ticket', {
     method: 'POST',
     body: JSON.stringify({
       username,

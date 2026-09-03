@@ -854,16 +854,19 @@ describe('requestKrb5Ticket', () => {
     });
   });
 
-  it.each([400, 403, 422, 429, 502])('throws APIError on a %i response', async (status) => {
-    globalThis.fetch = vi
-      .fn()
-      .mockResolvedValue(new Response('nope', { status, statusText: 'Error' }));
-    await expect(requestKrb5Ticket('auser', 'wrong')).rejects.toMatchObject({
-      name: 'APIError',
-      status,
-      body: 'nope',
-    });
-  });
+  it.each([400, 403, 422, 429, 502])(
+    'raises APIError with the response body on a %i response',
+    async (status) => {
+      globalThis.fetch = vi
+        .fn()
+        .mockResolvedValue(new Response('nope', { status, statusText: 'Error' }));
+      await expect(requestKrb5Ticket('auser', 'wrong')).rejects.toMatchObject({
+        name: 'APIError',
+        status,
+        body: 'nope',
+      });
+    },
+  );
 });
 
 describe('fetchX509Preflight()', () => {
