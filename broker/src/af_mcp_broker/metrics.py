@@ -158,6 +158,13 @@ condor_tokens_issued_total = Counter(
     ["target"],
 )
 
+krb5_tickets_issued_total = Counter(
+    "af_mcp_krb5_tickets_issued_total",
+    "Kerberos tickets actually obtained from krb5-token-service (issue "
+    "#274; cache hits not counted).",
+    ["target"],
+)
+
 maintenance_store_unavailable_total = Counter(
     "af_mcp_maintenance_store_unavailable_total",
     "require_not_in_maintenance (identity.py, /v1) or AsgiAuthMiddleware "
