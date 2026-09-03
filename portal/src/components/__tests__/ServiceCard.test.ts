@@ -65,11 +65,17 @@ function listing(overrides: Partial<ServerToolsResponse> = {}): ServerToolsRespo
     status: 'ok',
     status_detail: 'Methods listed.',
     tools: [
-      { name: 'rucio_list_dids', description: 'List DIDs.', action_type: 'read' },
+      {
+        name: 'rucio_list_dids',
+        description: 'List DIDs.',
+        action_type: 'read',
+        permission: 'read_data',
+      },
       {
         name: 'rucio_add_rule',
         description: 'Add a replication rule.',
         action_type: 'state_change',
+        permission: 'manage_data',
       },
     ],
     ...overrides,
@@ -166,7 +172,11 @@ describe('Tools accordion', () => {
     await toggle.trigger('click'); // collapse
     await toggle.trigger('click'); // re-expand — fetch #2 in flight
     d2.resolve(
-      listing({ tools: [{ name: 'rucio_whoami', description: '', action_type: 'read' }] }),
+      listing({
+        tools: [
+          { name: 'rucio_whoami', description: '', action_type: 'read', permission: '__none__' },
+        ],
+      }),
     );
     await flushPromises();
     d1.resolve(listing()); // the abandoned fetch (2 tools) lands LAST
@@ -220,6 +230,52 @@ describe('Tools accordion', () => {
   });
 });
 
+describe('permission badge', () => {
+  it('shows the single permission when every tool of the service requires the same one', () => {
+    const wrapper = mount(ServiceCard, {
+      props: {
+        server: SERVER, // permission: 'read_data'
+        poweredBy: {
+          kind: 'identity' as const,
+          label: 'ATLAS IAM',
+          linked: true,
+          linkHref: '/identities/',
+        },
+      },
+    });
+
+    const badge = wrapper.find('.bc__cap-badge');
+    expect(badge.exists()).toBe(true);
+    expect(badge.text()).toBe('read_data');
+    expect(wrapper.find('.bc__cap-badge--mixed').exists()).toBe(false);
+  });
+
+  it('shows "mixed" (not an empty badge) when a service\'s tools require different permissions', () => {
+    // A dict-form required_permission in services.yaml with no "__default__"
+    // has no single representative value -- GET /v1/catalog reports that as
+    // permission: null (see api/permissions.py's default_permission_label
+    // docstring). Rendering that null straight into the old badge produced
+    // an empty box with a "Requires permission: " tooltip and nothing after
+    // the colon.
+    const wrapper = mount(ServiceCard, {
+      props: {
+        server: { ...SERVER, permission: null },
+        poweredBy: {
+          kind: 'identity' as const,
+          label: 'ATLAS IAM',
+          linked: true,
+          linkHref: '/identities/',
+        },
+      },
+    });
+
+    const badge = wrapper.find('.bc__cap-badge--mixed');
+    expect(badge.exists()).toBe(true);
+    expect(badge.text()).toBe('mixed');
+    expect(wrapper.text()).toContain('Different methods require different permissions');
+  });
+});
+
 describe('builtin af-mcp card (issue #240)', () => {
   it('renders no credential-type badge and no Powered by row', () => {
     // The gateway itself has no per-user credential, no identity to link,
@@ -242,8 +298,18 @@ describe('builtin af-mcp card (issue #240)', () => {
         display_name: 'AF Gateway',
         status: 'ok',
         tools: [
-          { name: 'af_whoami', description: 'Who am I.', action_type: 'read' },
-          { name: 'af_usage', description: 'My usage.', action_type: 'read' },
+          {
+            name: 'af_whoami',
+            description: 'Who am I.',
+            action_type: 'read',
+            permission: '__none__',
+          },
+          {
+            name: 'af_usage',
+            description: 'My usage.',
+            action_type: 'read',
+            permission: '__none__',
+          },
         ],
       }),
     );

@@ -23,7 +23,12 @@ function listing(overrides: Partial<ServerToolsResponse>): ServerToolsResponse {
 describe('resolveToolListing', () => {
   it('returns the tools for a populated ok listing', () => {
     const tools = [
-      { name: 'rucio_list_dids', description: 'List DIDs.', action_type: 'read' as const },
+      {
+        name: 'rucio_list_dids',
+        description: 'List DIDs.',
+        action_type: 'read' as const,
+        permission: 'read_data',
+      },
     ];
     expect(resolveToolListing(listing({ tools }))).toEqual({ kind: 'tools', tools });
   });

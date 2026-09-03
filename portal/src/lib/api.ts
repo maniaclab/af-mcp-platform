@@ -355,6 +355,12 @@ export interface CatalogTool {
   name: string;
   description: string;
   action_type: ActionType;
+  /** The exact permission this tool requires -- can vary per tool within
+   * one service (services.yaml's dict-form required_permission), which is
+   * why it isn't just CatalogServer.permission for every tool. "__none__"
+   * means no specific permission is required (open to any authenticated
+   * caller, or credential-gated only). */
+  permission: string;
 }
 
 /** Per-caller availability (issue #123) -- see broker/src/af_mcp_broker/
@@ -368,7 +374,12 @@ export interface CatalogServer {
   name: string;
   display_name: string;
   description: string;
-  permission: string;
+  /** "__none__" for open access; a real permission name when every tool of
+   * this service requires the same one; null when a dict-form
+   * required_permission requires *different* permissions per tool -- there
+   * is no single representative value, see each tool's own `permission` in
+   * GET /v1/catalog/{service}/tools instead. */
+  permission: string | null;
   auth_type: AuthType;
   action_type: ActionType;
   /** The identity_providers alias (or synthetic "x509" alias) that services

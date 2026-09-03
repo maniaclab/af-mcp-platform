@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { onBeforeUnmount, onMounted, useTemplateRef } from 'vue';
+
 withDefaults(
   defineProps<{
     tooltipId: string;
@@ -6,10 +8,36 @@ withDefaults(
   }>(),
   { maxWidth: '16rem' },
 );
+
+const wrapper = useTemplateRef<HTMLSpanElement>('wrapper');
+
+// The trigger is a real <button> so a keyboard/screen-reader user can reach
+// the tooltip via Tab (a hover-only tooltip is invisible to them) -- but
+// that means a mouse click also leaves it focused, and CSS :focus-within
+// keeps the bubble open until focus moves elsewhere, which reads as a
+// "frozen" tooltip to a mouse user who clicked expecting an action. The
+// trigger does nothing on click, so blur it immediately after: hover still
+// closes the bubble normally once the pointer leaves, and Tab-driven focus
+// (no click event) is untouched.
+//
+// Attached imperatively (not a template @click) because a template click
+// binding on this non-interactive wrapper span would be exactly the "static
+// element interaction" eslint-plugin-vuejs-accessibility exists to catch --
+// correctly so for a real interactive behavior, but this handler adds none:
+// the slotted trigger keeps its own semantics, this just releases focus
+// after the fact.
+function releaseClickFocus(): void {
+  if (document.activeElement instanceof HTMLElement && document.activeElement !== document.body) {
+    document.activeElement.blur();
+  }
+}
+
+onMounted(() => wrapper.value?.addEventListener('click', releaseClickFocus));
+onBeforeUnmount(() => wrapper.value?.removeEventListener('click', releaseClickFocus));
 </script>
 
 <template>
-  <span class="info-tooltip">
+  <span ref="wrapper" class="info-tooltip">
     <slot />
     <span :id="tooltipId" class="info-tooltip__bubble" role="tooltip" :style="{ maxWidth }">
       <slot name="tooltip" />

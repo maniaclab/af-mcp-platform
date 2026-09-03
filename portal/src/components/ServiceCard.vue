@@ -92,7 +92,28 @@ async function toggleTools() {
              (same pattern as TokensPage.vue's note icon) rather than a bare
              `title` attribute -- title-only meant the badge's meaning was
              invisible on touch and unreliable across screen readers. -->
-        <InfoTooltip v-if="server.permission !== '__none__'" :tooltip-id="`bc-cap-${server.name}`">
+        <!-- server.permission is null when this service's tools require
+             different permissions from each other (services.yaml's dict-form
+             required_permission with no single "__default__") -- there is no
+             one badge that could truthfully summarize that, so this shows
+             "mixed" and points at the per-tool Methods list below instead of
+             either guessing or rendering an empty badge. -->
+        <InfoTooltip v-if="server.permission === null" :tooltip-id="`bc-cap-${server.name}`">
+          <button
+            type="button"
+            class="bc__cap-badge bc__cap-badge--mixed"
+            :aria-describedby="`bc-cap-${server.name}`"
+          >
+            mixed
+          </button>
+          <template #tooltip>
+            Different methods require different permissions — see Methods below for each one.
+          </template>
+        </InfoTooltip>
+        <InfoTooltip
+          v-else-if="server.permission !== '__none__'"
+          :tooltip-id="`bc-cap-${server.name}`"
+        >
           <button type="button" class="bc__cap-badge" :aria-describedby="`bc-cap-${server.name}`">
             {{ server.permission }}
           </button>
@@ -328,6 +349,12 @@ async function toggleTools() {
 .bc__cap-badge:focus-visible {
   outline: 2px solid var(--color-af-teal);
   outline-offset: 1px;
+}
+
+.bc__cap-badge--mixed {
+  background: rgb(from var(--color-af-dim) r g b / 0.08);
+  color: var(--color-af-dim);
+  border: 1px solid rgb(from var(--color-af-dim) r g b / 0.2);
 }
 
 .bc__auth-badge {
