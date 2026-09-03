@@ -42,7 +42,7 @@ custody-gated behind "remember".
 from __future__ import annotations
 
 import uuid
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, ClassVar, Literal
 
 import structlog
 from pydantic import SecretStr
@@ -75,6 +75,11 @@ if TYPE_CHECKING:
     from af_mcp_broker.identity import Principal
 
 log = structlog.get_logger(__name__)
+
+# The three tiers that persist a freshly minted/renewed ticket -- kept as a
+# Literal (rather than a bare str) so a typo or an unlisted future value is
+# caught by mypy at the _persist_and_cache() call sites, not at runtime.
+_MintTier = Literal["renew", "keytab_remint", "password_mint"]
 
 
 class KrbTokenProvider(CredentialProvider):
@@ -312,7 +317,12 @@ class KrbTokenProvider(CredentialProvider):
         )
 
     async def _persist_and_cache(
-        self, principal: Principal, target: str, ticket: MintedTicket, *, tier: str
+        self,
+        principal: Principal,
+        target: str,
+        ticket: MintedTicket,
+        *,
+        tier: _MintTier,
     ) -> IssuedCredential:
         """Build the credential for a freshly minted/renewed *ticket*, persist it to Vault, cache it, and return it."""
         cred = self._cred_from_ticket(ticket, target)
