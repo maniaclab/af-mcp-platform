@@ -92,16 +92,6 @@ def test_krb5_token_entry_without_signing_key_refuses_to_start(
             pass
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "api/identities.py's ProviderType Literal and _LINK_MECHANISM_BY_TYPE "
-        "dict don't include 'krb5-token' yet (Task 9 of the krb5-token-provider "
-        "plan) -- GET /v1/identities KeyErrors on a krb5-token entry until "
-        "then. Task 7 only wires provider construction/registration into "
-        "app.py; fixing identities.py is explicitly out of scope here."
-    ),
-)
 def test_identities_lists_krb5_token_provider_as_linked(
     krb5_token_env, app_client_factory
 ) -> None:
