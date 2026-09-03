@@ -39,6 +39,8 @@ from af_mcp_broker.credentials import (
     CredentialCache,
     CredentialRegistry,
     InMemoryTokenStore,
+    Krb5TokenServiceClient,
+    KrbTokenProvider,
     OAuth21Provider,
     OIDCProvider,
     VaultTokenStore,
@@ -437,16 +439,16 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # unreachable_permissions above.
     broker_token_issuer = load_broker_token_issuer(settings)
     if broker_token_issuer is None and any(
-        cfg.type in ("broker-issued", "condor-token")
+        cfg.type in ("broker-issued", "condor-token", "krb5-token")
         for cfg in settings.identity_providers
     ):
         msg = (
-            "identity_providers contains a broker-issued or condor-token "
-            "entry but BROKER_SIGNING_KEY_FILE is not set, so the broker "
-            "cannot sign AF Broker Identity Tokens for its targets. Mount "
-            "the RS256 signing key (chart: broker.identityToken."
-            "existingSigningKeySecret) or remove the entry -- see "
-            "docs/auth.md's 'AF Broker Identity Token' section."
+            "identity_providers contains a broker-issued, condor-token, or "
+            "krb5-token entry but BROKER_SIGNING_KEY_FILE is not set, so "
+            "the broker cannot sign AF Broker Identity Tokens for its "
+            "targets. Mount the RS256 signing key (chart: broker."
+            "identityToken.existingSigningKeySecret) or remove the entry "
+            "-- see docs/auth.md's 'AF Broker Identity Token' section."
         )
         raise RuntimeError(msg)
 
@@ -552,6 +554,18 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
                 targets=frozenset(cfg.targets),
                 service_url=str(cfg.service_url),
                 audience=cfg.audience,
+            )
+        elif cfg.type == "krb5-token":
+            assert broker_token_issuer is not None  # guaranteed by the check above
+            provider = KrbTokenProvider(
+                client=Krb5TokenServiceClient(
+                    issuer=broker_token_issuer,
+                    service_url=str(cfg.service_url),
+                    audience=cfg.audience,
+                ),
+                cache=credential_cache,
+                alias=cfg.alias,
+                targets=frozenset(cfg.targets),
             )
         elif cfg.type == "x509":
             if cfg.service_url is not None:
