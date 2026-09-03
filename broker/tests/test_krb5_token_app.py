@@ -1,11 +1,13 @@
 """App-level wiring for KrbTokenProvider (issue #274).
 
 Covers: provider registration from an ``identity_providers`` krb5-token
-entry, the startup fail-closed check (a krb5-token entry with no broker
-signing key must refuse to boot -- the provider composes the same
-``BrokerTokenIssuer`` as broker-issued/condor-token), and /v1/identities
-listing the provider's is_linked() state. The provider unit tests (HTTP
-boundary stubbed) live in test_krb5_token.py.
+entry, the startup fail-closed checks (a krb5-token entry with no broker
+signing key, or with no Vault connection configured, must both refuse to
+boot -- the provider composes the same ``BrokerTokenIssuer`` as
+broker-issued/condor-token, and its optional "remember" feature persists in
+Vault with no in-memory fallback), and /v1/identities listing the
+provider's is_linked() state. The provider unit tests (HTTP boundary
+stubbed) live in test_krb5_token.py.
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ import pytest
 from test_broker_issued import _make_rsa_key, _private_pem
 
 from af_mcp_broker.credentials import KrbTokenProvider
+from af_mcp_broker.vault_kv import VaultKV
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -43,13 +46,26 @@ _BACKENDS_YAML = (
 )
 
 
+async def _fake_authenticate(self: VaultKV) -> str:
+    return "vault-test-token"
+
+
 @pytest.fixture
 def krb5_token_env(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> Callable[..., None]:
-    """Point the app at a krb5-token identity provider and (optionally) a real signing key on disk."""
+    """Point the app at a krb5-token identity provider and (optionally) a real signing key on disk and a stubbed Vault connection.
 
-    def _apply(*, with_signing_key: bool = True) -> None:
+    A krb5-token entry always requires Vault to be configured -- unlike
+    x509 there is no legacy/service-mode split (service_url is mandatory on
+    every entry), and a given entry can't declare ahead of time whether any
+    caller will ever check "remember" (config.py's _validate_vault_config).
+    Vault is therefore stubbed by default here the same way
+    test_x509_service_mode.py's ``voms_service_env`` stubs it: VaultKV's
+    startup trial auth is faked out rather than requiring a real Vault.
+    """
+
+    def _apply(*, with_signing_key: bool = True, with_vault: bool = True) -> None:
         services_file = tmp_path / "services.yaml"
         services_file.write_text(_BACKENDS_YAML)
         monkeypatch.setenv("SERVICES_FILE", str(services_file))
@@ -59,6 +75,10 @@ def krb5_token_env(
             key_file = tmp_path / "signing-key.pem"
             key_file.write_bytes(_private_pem(_make_rsa_key()))
             monkeypatch.setenv("BROKER_SIGNING_KEY_FILE", str(key_file))
+        if with_vault:
+            monkeypatch.setattr(VaultKV, "_authenticate", _fake_authenticate)
+            monkeypatch.setenv("VAULT_ADDR", "https://vault.invalid")
+            monkeypatch.setenv("VAULT_AUTH_ROLE", "af-mcp-broker")
 
     return _apply
 
@@ -88,6 +108,23 @@ def test_krb5_token_entry_without_signing_key_refuses_to_start(
     krb5_token_env(with_signing_key=False)
 
     with pytest.raises(RuntimeError, match="BROKER_SIGNING_KEY_FILE"):  # noqa: SIM117
+        with app_client_factory():
+            pass
+
+
+def test_krb5_token_entry_without_vault_refuses_to_start(
+    krb5_token_env, app_client_factory
+) -> None:
+    """Fail-closed, same reasoning as voms-token-service mode: krb5-token's
+    optional "remember" feature persists in Vault with no in-memory
+    fallback, and a krb5-token entry can't declare ahead of time whether any
+    caller will ever check "remember" -- so a krb5-token entry with no Vault
+    connection configured must refuse to boot rather than fail at first
+    request. (test_config.py's test_vault_config_required_by_krb5_token_entry
+    covers the same check directly at the Settings level.)"""
+    krb5_token_env(with_vault=False)
+
+    with pytest.raises(ValueError, match="vault_addr"):  # noqa: SIM117
         with app_client_factory():
             pass
 

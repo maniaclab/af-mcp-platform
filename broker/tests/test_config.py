@@ -465,7 +465,8 @@ def test_krb5_token_provider_config_parses():
                 "targets": ["some-service"],
                 "service_url": "http://krb5-token-service.invalid",
             }
-        ]
+        ],
+        **_VAULT_ENV,
     )
     (cfg,) = settings.identity_providers
     assert cfg.type == "krb5-token"
@@ -486,7 +487,28 @@ def test_krb5_token_provider_config_requires_service_url():
     }
     entry = {k: v for k, v in valid_entry.items() if k != "service_url"}
     with pytest.raises(ValueError, match="service_url"):
+        Settings(identity_providers=[entry], **_VAULT_ENV)
+
+
+def test_vault_config_required_by_krb5_token_entry():
+    """Unlike x509 there is no legacy/service-mode split for krb5-token --
+    service_url is mandatory on every entry, and a given entry can't declare
+    ahead of time whether any caller will ever request its optional
+    "remember" persistence -- so Vault is required unconditionally."""
+    entry = {
+        "type": "krb5-token",
+        "alias": "krb5",
+        "targets": ["some-service"],
+        "service_url": "http://krb5-token-service.invalid",
+    }
+    with pytest.raises(ValueError, match="vault_addr"):
         Settings(identity_providers=[entry])
+    with pytest.raises(ValueError, match="vault_auth_role"):
+        Settings(identity_providers=[entry], vault_addr="https://vault.example")
+
+
+def test_krb5_kv_path_prefix_default():
+    assert Settings().krb5_kv_path_prefix == "mcp/krb5"
 
 
 # ---------------------------------------------------------------------------

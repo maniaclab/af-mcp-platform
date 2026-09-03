@@ -34,6 +34,7 @@ from af_mcp_broker.credentials.krb5_service import (
     Krb5TokenRateLimitedError,
     MintedTicket,
 )
+from af_mcp_broker.vault_kv import VaultKV
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -93,6 +94,10 @@ def _minted(remaining: float = 3600.0, renewable: bool = True) -> MintedTicket:
     )
 
 
+async def _fake_authenticate(self: VaultKV) -> str:
+    return "vault-test-token"
+
+
 @pytest.fixture
 def krb5_app(
     monkeypatch: pytest.MonkeyPatch,
@@ -109,6 +114,13 @@ def krb5_app(
     key_file = tmp_path / "signing-key.pem"
     key_file.write_bytes(_private_pem(_make_rsa_key()))
     monkeypatch.setenv("BROKER_SIGNING_KEY_FILE", str(key_file))
+    # A krb5-token entry always requires Vault (config.py's
+    # _validate_vault_config -- its optional "remember" feature persists
+    # there with no in-memory fallback); stub the trial auth the same way
+    # test_x509_service_mode.py's voms_service_env does for x509.
+    monkeypatch.setattr(VaultKV, "_authenticate", _fake_authenticate)
+    monkeypatch.setenv("VAULT_ADDR", "https://vault.invalid")
+    monkeypatch.setenv("VAULT_AUTH_ROLE", "af-mcp-broker")
 
     with app_client_factory() as (client, state):
         provider = asyncio.run(client.app.state.credential_registry.resolve(_TARGET))

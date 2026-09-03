@@ -50,6 +50,7 @@ from af_mcp_broker.credentials import (
     load_broker_token_issuer,
 )
 from af_mcp_broker.credentials.cache import RateLimitError
+from af_mcp_broker.credentials.krb5_vault import Krb5VaultStore
 from af_mcp_broker.http import aclose_http_client
 from af_mcp_broker.identity import build_dev_principal, get_jwks, issuer_is_local
 from af_mcp_broker.logging import configure_logging
@@ -351,6 +352,14 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         cfg.type == "x509" and cfg.service_url is not None
         for cfg in identity_provider_cfg_list
     )
+    # Unlike x509 there is no legacy/service-mode split -- service_url is
+    # mandatory on every krb5-token entry (Settings' own validation), so any
+    # such entry always implies the krb5 Vault store (Settings._validate_
+    # vault_config already refused to construct `settings` without the
+    # connection settings).
+    has_krb5_token_cfg = any(
+        cfg.type == "krb5-token" for cfg in identity_provider_cfg_list
+    )
 
     # --- Credential subsystem: cache + janitor + provider registry.
     credential_cache = CredentialCache(
@@ -363,14 +372,15 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
 
     # --- Vault/OpenBao transport: one VaultKV instance (one K8s auth login
     # per process) shared by the oauth21 token store, the token registry,
-    # the principal cache, the maintenance-mode store, and the x509
-    # link/proxy store below, whichever of the five (or more) is configured
-    # to use Vault — see vault_kv.py's module docstring for the
-    # transport/domain split.
+    # the principal cache, the maintenance-mode store, the x509 link/proxy
+    # store, and the krb5 link/ticket store below, whichever of the six (or
+    # more) is configured to use Vault — see vault_kv.py's module docstring
+    # for the transport/domain split.
     # A service-mode x509 entry implies the x509 store: in service mode
     # proxies and passphrases persist in Vault (Settings._validate_vault_config
     # already refused to construct `settings` without the connection
-    # settings).
+    # settings). A krb5-token entry implies the krb5 store unconditionally,
+    # same reasoning (see has_krb5_token_cfg above).
     vault_kv: VaultKV | None = None
     if (
         settings.token_store_backend == "vault"
@@ -378,6 +388,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         or settings.principal_cache_backend == "vault"
         or settings.maintenance_mode_backend == "vault"
         or has_service_mode_x509_cfg
+        or has_krb5_token_cfg
     ):
         vault_kv = VaultKV(
             addr=settings.vault_addr,
@@ -514,6 +525,20 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         logger.info(
             "x509_voms_service_mode",
             kv_path_prefix=settings.x509_kv_path_prefix,
+        )
+
+    # --- krb5 Vault link/ticket store, shared by every krb5-token entry: one
+    # KV record per subject regardless of how many entries exist, same
+    # per-user-not-per-service reasoning as x509_vault_store above.
+    krb5_vault_store: Krb5VaultStore | None = None
+    if has_krb5_token_cfg:
+        assert vault_kv is not None  # guaranteed by the vault block above
+        krb5_vault_store = Krb5VaultStore(
+            vault_kv=vault_kv, kv_path_prefix=settings.krb5_kv_path_prefix
+        )
+        logger.info(
+            "krb5_vault_store_wired",
+            kv_path_prefix=settings.krb5_kv_path_prefix,
         )
 
     # One CredentialProvider per configured entry, registered for the entry's
@@ -875,6 +900,10 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     application.state.broker_token_issuer = broker_token_issuer
     application.state.usage_store = usage_store
     application.state.maintenance_mode_store = maintenance_mode_store
+    # Not yet consumed by KrbTokenProvider -- issue #274's remember/renew
+    # support wires it in -- exposed on state now so it exists in one place
+    # from the moment Vault is wired up, same as every other subsystem here.
+    application.state.krb5_vault_store = krb5_vault_store
 
     # Prime the JWKS cache at startup so the first request does not pay the
     # latency cost of a remote fetch.
