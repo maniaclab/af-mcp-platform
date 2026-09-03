@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from test_broker_issued import _make_rsa_key, _private_pem
+from test_krb5_token import FakeKrb5VaultStore
 
 from af_mcp_broker.credentials import KrbTokenProvider
 from af_mcp_broker.credentials.krb5_vault import Krb5VaultStore
@@ -113,6 +114,23 @@ def test_krb5_vault_store_constructed_and_exposed_on_state(
         assert isinstance(state.krb5_vault_store, Krb5VaultStore)
 
 
+def test_krb5_token_provider_wired_to_shared_vault_store(
+    krb5_token_env, app_client_factory
+) -> None:
+    """The registered KrbTokenProvider must be constructed with the same
+    shared Krb5VaultStore instance exposed on app.state -- not just have a
+    Krb5VaultStore built alongside it (that's the previous test's coverage).
+    This is the provider-registration branch's own wiring, distinct from
+    the fact that a Krb5VaultStore exists at all."""
+    krb5_token_env()
+
+    with app_client_factory() as (client, _):
+        state = client.app.state
+        provider = state.identity_providers["krb5"]
+        assert isinstance(provider, KrbTokenProvider)
+        assert provider._vault_store is state.krb5_vault_store
+
+
 def test_krb5_token_entry_without_signing_key_refuses_to_start(
     krb5_token_env, app_client_factory
 ) -> None:
@@ -150,6 +168,12 @@ def test_identities_lists_krb5_token_provider_as_linked(
     krb5_token_env()
 
     with app_client_factory() as (client, _):
+        # is_linked() asks the vault store -- swap in the in-memory fake
+        # (test_krb5_token.py's FakeKrb5VaultStore, same "swap the concrete
+        # attribute post-boot" pattern test_x509_preflight.py's
+        # _enable_service_mode uses for X509Provider._vault_store) so this
+        # assertion doesn't require a live Vault connection.
+        client.app.state.identity_providers["krb5"]._vault_store = FakeKrb5VaultStore()
         resp = client.get("/v1/identities")
 
     assert resp.status_code == 200, resp.text

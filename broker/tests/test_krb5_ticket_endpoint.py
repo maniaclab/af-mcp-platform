@@ -8,6 +8,12 @@ underlying ``Krb5TokenServiceClient`` with an in-memory recording fake --
 the same "swap the concrete client attribute post-boot" pattern
 test_x509_service_mode.py's ``FakeVomsClient`` uses for
 ``VomsTokenServiceClient`` -- rather than mocking httpx at the wire level.
+The provider's vault store is swapped the same way, for the same reason
+``test_x509_preflight.py``'s ``_enable_service_mode`` swaps
+``X509Provider._vault_store`` for a ``FakeX509Store``: with a real
+``Krb5VaultStore`` wired in, ``issue()`` reads/writes Vault on every call,
+and this fixture only stubs ``VaultKV``'s startup trial auth, not its KV
+verbs.
 
 The provider's own error-mapping/NeedsUnlock behavior is unit-tested in
 test_krb5_token.py; this file covers only the ``/v1/krb5/ticket`` route's
@@ -25,6 +31,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from test_broker_issued import _make_rsa_key, _private_pem
+from test_krb5_token import FakeKrb5VaultStore
 
 from af_mcp_broker.credentials import KrbTokenProvider
 from af_mcp_broker.credentials.krb5_service import (
@@ -127,6 +134,7 @@ def krb5_app(
         assert isinstance(provider, KrbTokenProvider)
         fake_client = FakeKrb5Client()
         provider._client = fake_client
+        provider._vault_store = FakeKrb5VaultStore()
         yield client, state, fake_client
 
 
@@ -251,9 +259,12 @@ def test_credential_endpoint_needs_unlock_409_before_a_usable_ticket_is_cached(
     username/password) then hits ``issue()``'s cache miss and its
     ``NeedsUnlock`` raise, which ``issue_credential``'s existing generic
     ``except NeedsUnlock`` handler maps to 409 -- no krb5-specific code
-    needed."""
+    needed. Minted non-renewable so tier 3 (``get_renewable_ticket``) also
+    misses and falls through to tier 5 -- a renewable ticket would instead
+    be picked up by ``FakeKrb5VaultStore``'s real bookkeeping and hands-free
+    renewed, never reaching ``NeedsUnlock`` at all."""
     client, _state, fake_client = krb5_app
-    fake_client.outcome = _minted(remaining=60.0)
+    fake_client.outcome = _minted(remaining=60.0, renewable=False)
     mint_resp = client.post(
         "/v1/krb5/ticket",
         json={"username": "tuser", "password": "hunter2"},

@@ -593,6 +593,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
             )
         elif cfg.type == "krb5-token":
             assert broker_token_issuer is not None  # guaranteed by the check above
+            assert krb5_vault_store is not None  # built above for krb5-token entries
             provider = KrbTokenProvider(
                 client=Krb5TokenServiceClient(
                     issuer=broker_token_issuer,
@@ -602,6 +603,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
                 cache=credential_cache,
                 alias=cfg.alias,
                 targets=frozenset(cfg.targets),
+                vault_store=krb5_vault_store,
             )
         elif cfg.type == "x509":
             if cfg.service_url is not None:
