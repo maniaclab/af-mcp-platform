@@ -1,4 +1,4 @@
-"""HTTP client for krb5-token-service's ``POST /v1/mint`` (issue #274).
+"""HTTP client for krb5-token-service's mint/renew/keytab endpoints (issue #274).
 
 krb5-token-service (maniaclab/krb5-token-service) is a sibling of
 voms-token-service and condor-token-service: it receives a CERN username and
@@ -8,6 +8,15 @@ Unlike condor-token-service, there is no standing broker-side secret to
 redeem -- the password on the wire IS the entire credential, supplied fresh
 on every mint call (see ``credentials/krb5.py``'s module docstring for how
 the provider surfaces that as ``NeedsUnlock``).
+
+``POST /v1/renew`` refreshes a ccache this client already minted (``kinit
+-R``) without needing the CERN credential again -- it is capped at the
+ticket's own ``renew_until`` and fails once that renewable window has
+closed, at which point the caller must fall through to a fresh mint.
+``POST /v1/keytab`` bootstraps a long-lived keytab from a one-time CERN
+password; krb5-token-service never persists the keytab itself, so the
+caller is responsible for storing the returned bytes if it wants to mint
+via keytab later instead of a live password.
 
 This client authenticates to it with an AF Broker Identity Token
 (``aud=audience`` -- issue #162's internal protocol, the same one
@@ -126,13 +135,18 @@ class MintedTicket:
 
 
 class Krb5TokenServiceClient:
-    """Mints Kerberos tickets at krb5-token-service's ``POST /v1/mint``.
+    """Mints, renews, and bootstraps keytabs for Kerberos tickets at krb5-token-service.
 
-    Composes the same ``BrokerTokenIssuer`` as ``CondorTokenProvider``/
-    ``VomsTokenServiceClient``: each mint call carries a fresh short-TTL
-    identity assertion with ``aud=audience``. The CERN username/password
-    travel in the request body, never the token -- this service derives no
-    authorization from token claims (see its README).
+    ``mint()`` calls ``POST /v1/mint`` with a CERN password or a
+    previously-bootstrapped keytab, ``renew()`` calls ``POST /v1/renew`` to
+    refresh an already-minted ccache without a credential, and
+    ``mint_keytab()`` calls ``POST /v1/keytab`` to bootstrap a long-lived
+    keytab from a one-time password. Composes the same ``BrokerTokenIssuer``
+    as ``CondorTokenProvider``/``VomsTokenServiceClient``: each call carries
+    a fresh short-TTL identity assertion with ``aud=audience``. The CERN
+    username/password/keytab travel in the request body, never the token --
+    this service derives no authorization from token claims (see its
+    README).
     """
 
     def __init__(

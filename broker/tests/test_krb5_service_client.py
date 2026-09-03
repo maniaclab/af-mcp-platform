@@ -1,18 +1,25 @@
-"""Tests for the krb5-token-service mint client (issue #274).
+"""Tests for the krb5-token-service client (issue #274).
 
 ``Krb5TokenServiceClient`` speaks the contract documented in
 maniaclab/krb5-token-service: ``POST {url}/v1/mint`` authenticated by an AF
 Broker Identity Token with ``aud=krb5-token-service``, JSON body
-``{"username", "password", "lifetime"?, "renewable_lifetime"?}``, returning
-``{"ccache_b64", "principal", "realm", "expires_at", "renew_until"}``.
+``{"username", "password"|"keytab_b64", "lifetime"?, "renewable_lifetime"?}``,
+returning ``{"ccache_b64", "principal", "realm", "expires_at",
+"renew_until"}``. The same suite covers ``POST /v1/renew`` (JSON body
+``{"ccache_b64"}``, no credential, same response shape as ``/v1/mint``) and
+``POST /v1/keytab`` (JSON body ``{"username", "password"}``, returning
+``{"keytab_b64", "principal"}``).
 
 Unlike ``voms_service.py``'s single "bad passphrase" signal, krb5-token-service
 draws several client-actionable distinctions: 400 (bad username/password), 403
 (CERN account revoked/expired), 422 (malformed request) and 429
-(rate-limited, with ``Retry-After``). 401 and 5xx mean the broker's own
-identity token or the service itself is broken -- a broker<->service
-contract failure the end user cannot act on -- and must stay clearly
-distinct from a bad CERN password.
+(rate-limited, with ``Retry-After``) on ``/v1/mint`` and ``/v1/keytab``;
+``/v1/renew`` instead draws 422 (stored ccache malformed -- internal
+corruption, not user input) and 400 (renewable window closed -- an expected,
+recoverable condition). 401 and 5xx mean the broker's own identity token or
+the service itself is broken -- a broker<->service contract failure the end
+user cannot act on -- and must stay clearly distinct from a bad CERN
+password.
 """
 
 from __future__ import annotations
