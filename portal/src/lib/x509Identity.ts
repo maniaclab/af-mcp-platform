@@ -13,8 +13,12 @@ import { APIError, SessionExpiredError } from './api';
 /**
  * Extracts FastAPI's `{"detail": "..."}` from an APIError body, or null when
  * the body isn't that shape (e.g. an HTML error page from a proxy hop).
+ *
+ * Generic APIError-detail parsing with nothing x509-specific in it — exported
+ * so krb5Identity.ts's krb5LinkErrorMessage can reuse it rather than
+ * duplicating it.
  */
-function apiErrorDetail(err: APIError): string | null {
+export function apiErrorDetail(err: APIError): string | null {
   try {
     const parsed = JSON.parse(err.body) as { detail?: unknown };
     return typeof parsed.detail === 'string' ? parsed.detail : null;
