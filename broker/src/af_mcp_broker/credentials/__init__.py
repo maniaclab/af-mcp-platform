@@ -16,6 +16,15 @@ from af_mcp_broker.credentials.broker_issued import (
 )
 from af_mcp_broker.credentials.cache import CredentialCache
 from af_mcp_broker.credentials.condor import CondorTokenProvider
+from af_mcp_broker.credentials.krb5 import KrbTokenProvider
+from af_mcp_broker.credentials.krb5_service import (
+    Krb5TokenAccountError,
+    Krb5TokenBadCredentialError,
+    Krb5TokenInvalidRequestError,
+    Krb5TokenMintError,
+    Krb5TokenRateLimitedError,
+    Krb5TokenServiceClient,
+)
 from af_mcp_broker.credentials.oauth21 import (
     InMemoryTokenStore,
     OAuth21Provider,
@@ -52,6 +61,13 @@ __all__ = [
     "ExecutionModel",
     "InMemoryTokenStore",
     "IssuedCredential",
+    "Krb5TokenAccountError",
+    "Krb5TokenBadCredentialError",
+    "Krb5TokenInvalidRequestError",
+    "Krb5TokenMintError",
+    "Krb5TokenRateLimitedError",
+    "Krb5TokenServiceClient",
+    "KrbTokenProvider",
     "NeedsUnlock",
     "OAuth21Provider",
     "OIDCProvider",
