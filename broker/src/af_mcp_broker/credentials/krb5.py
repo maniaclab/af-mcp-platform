@@ -4,7 +4,7 @@ Unlike ``CondorTokenProvider`` (broker-authoritative, no external secret),
 krb5-token-service needs a live CERN username+password to mint a ticket from
 scratch -- there is no standing linkage the broker can redeem on its own
 UNLESS the user has opted in to "remember" (below). ``issue()`` therefore
-works through a four-tier fallback, mirroring ``X509Provider``'s
+works through a five-tier fallback, mirroring ``X509Provider``'s
 Vault-as-source-of-truth design, before ever raising ``NeedsUnlock``
 (pointing at ``POST /v1/krb5/ticket``):
 

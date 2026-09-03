@@ -1,6 +1,6 @@
 """Unit tests for KrbTokenProvider (issue #274, #274 remember/keytab follow-up).
 
-Covers the four-tier fallback (cache -> renew-from-Vault ->
+Covers the five-tier fallback (cache -> vault repopulation -> renew-from-Vault ->
 remint-from-stored-keytab -> interactive password), is_linked() reflecting
 ANY of cache/link/renewable-ticket state, and revoke()'s ticket-only clear.
 The krb5-token-service HTTP exchange itself is covered by
@@ -447,11 +447,11 @@ async def test_issue_single_flights_concurrent_misses():
 
 
 # ------------------------------------------------------------------
-# Tier 2: renew from a Vault-stored renewable ticket
+# Tier 3: renew from a Vault-stored renewable ticket
 # ------------------------------------------------------------------
 
 
-async def test_issue_tier2_renew_success():
+async def test_issue_tier3_renew_success():
     """A ticket half past its not_after but within renew_until, with no
     fresh username/passphrase supplied, is renewed rather than freshly
     minted -- and the renewed ticket is re-persisted to both Vault and the
@@ -488,7 +488,7 @@ async def test_issue_tier2_renew_success():
     assert stored.ccache_b64.get_secret_value() == "bmV3Y2NhY2hl"
 
 
-async def test_issue_tier2_renewal_window_closed_falls_through_to_needs_unlock():
+async def test_issue_tier3_renewal_window_closed_falls_through_to_needs_unlock():
     """A renewal-window-closed signal is expected and recoverable: with no
     stored keytab and no fresh credentials, it must fall through to
     NeedsUnlock rather than propagate."""
@@ -513,7 +513,7 @@ async def test_issue_tier2_renewal_window_closed_falls_through_to_needs_unlock()
     assert client.calls == []  # no keytab was stored, so mint() is never reached
 
 
-async def test_issue_tier2_renewal_window_closed_falls_through_to_tier3():
+async def test_issue_tier3_renewal_window_closed_falls_through_to_tier4():
     """Same window-closed signal, but this time a keytab IS stored -- the
     fallthrough must actually reach and succeed at tier 3."""
     vault_store = FakeKrb5VaultStore()
@@ -544,7 +544,7 @@ async def test_issue_tier2_renewal_window_closed_falls_through_to_tier3():
     assert cached is not None
 
 
-async def test_issue_tier2_hard_failure_propagates():
+async def test_issue_tier3_hard_failure_propagates():
     """A genuine infra failure from renew() must propagate uncaught -- never
     silently downgraded to demanding a password."""
     vault_store = FakeKrb5VaultStore()
@@ -574,11 +574,11 @@ async def test_issue_tier2_hard_failure_propagates():
 
 
 # ------------------------------------------------------------------
-# Tier 3: remint from a Vault-stored keytab
+# Tier 4: remint from a Vault-stored keytab
 # ------------------------------------------------------------------
 
 
-async def test_issue_tier3_keytab_remint_success():
+async def test_issue_tier4_keytab_remint_success():
     """No usable cache/ticket, but a keytab is stored and no fresh
     username/password was supplied -- mints via the stored keytab rather
     than raising NeedsUnlock."""
@@ -601,7 +601,7 @@ async def test_issue_tier3_keytab_remint_success():
     assert stored is not None
 
 
-async def test_issue_tier3_bad_keytab_unlinks_and_raises_needs_unlock():
+async def test_issue_tier4_bad_keytab_unlinks_and_raises_needs_unlock():
     """A rejected stored keytab (e.g. a rotated password) proactively
     unlinks the identity -- mirroring X509Provider.renew_from_stored_link's
     auto-unlink-on-bad-stored-passphrase behavior -- then raises
@@ -623,11 +623,11 @@ async def test_issue_tier3_bad_keytab_unlinks_and_raises_needs_unlock():
 
 
 # ------------------------------------------------------------------
-# Tier 4: fresh password mint, with optional keytab bootstrap ("remember")
+# Tier 5: fresh password mint, with optional keytab bootstrap ("remember")
 # ------------------------------------------------------------------
 
 
-async def test_issue_tier4_remember_true_also_mints_and_stores_keytab():
+async def test_issue_tier5_remember_true_also_mints_and_stores_keytab():
     """With remember=True, a successful password mint ALSO bootstraps and
     stores a keytab, reusing the SAME already-captured password (no second
     prompt)."""
@@ -653,7 +653,7 @@ async def test_issue_tier4_remember_true_also_mints_and_stores_keytab():
     assert link.keytab_b64.get_secret_value() == "a2V5dGFi"
 
 
-async def test_issue_tier4_remember_false_default_does_not_store_keytab():
+async def test_issue_tier5_remember_false_default_does_not_store_keytab():
     """Without remember=True (the default), no keytab is bootstrapped and
     no link half is stored -- but the ticket half IS always stored,
     regardless of remember, since tier-2 renewal must work for every user."""
