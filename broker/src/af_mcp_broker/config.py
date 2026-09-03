@@ -126,7 +126,7 @@ class KrbTokenProviderConfig(BaseModel):
     passphrase-unlock flow) and is never persisted.
 
     ``service_url`` is the base URL of the krb5-token-service deployment
-    (no path — the provider appends ``/v1/mint``). ``audience`` is the
+    (no path — the client appends ``/v1/mint``). ``audience`` is the
     exact ``aud`` claim the service verifies; the default matches the
     service's own default and should only change if a deployment renames
     itself.

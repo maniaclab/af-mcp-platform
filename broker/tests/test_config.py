@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-from pydantic import ValidationError
 
 from af_mcp_broker.config import Settings, get_settings
 
@@ -477,12 +476,17 @@ def test_krb5_token_provider_config_parses():
 
 
 def test_krb5_token_provider_config_requires_service_url():
-    with pytest.raises(ValidationError):
-        Settings(
-            identity_providers=[
-                {"type": "krb5-token", "alias": "krb5", "targets": ["some-service"]}
-            ]
-        )
+    valid_entry = {
+        "type": "krb5-token",
+        "alias": "krb5",
+        "display_name": "CERN Kerberos ticket",
+        "enables": "Kerberos-authenticated access",
+        "targets": ["some-service"],
+        "service_url": "http://krb5-token-service.invalid",
+    }
+    entry = {k: v for k, v in valid_entry.items() if k != "service_url"}
+    with pytest.raises(ValueError, match="service_url"):
+        Settings(identity_providers=[entry])
 
 
 # ---------------------------------------------------------------------------
