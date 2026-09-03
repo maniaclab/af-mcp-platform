@@ -264,6 +264,7 @@ function handleX509Revoked(id: string) {
               :enables="p.enables"
               :powers="powersForAlias(p.id)"
               :link_url="p.link_url"
+              :link_permission_denied="p.link_permission_denied"
               @unlinked="handleUnlinked(p.id)"
             />
           </div>

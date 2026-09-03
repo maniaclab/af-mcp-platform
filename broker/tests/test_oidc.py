@@ -5,6 +5,7 @@ from typing import Any, ClassVar
 
 import httpx
 import pytest
+from fastapi import HTTPException
 from pydantic import SecretStr
 
 from af_mcp_broker.config import Settings
@@ -70,6 +71,30 @@ async def test_fetch_brokered_token_sends_real_token(monkeypatch):
     auth = _FakeClient.captured["Authorization"]
     assert auth == f"Bearer {REAL_TOKEN}"
     assert "*" not in auth
+
+
+async def test_fetch_brokered_token_raises_403_with_actionable_detail(monkeypatch):
+    """A 403 from Keycloak's broker endpoint means the caller lacks the
+    `read-token` client role — surface that distinctly from the existing
+    401 (session expired)/404 (never linked) handling rather than letting
+    it fall through to raise_for_status()'s opaque 5xx-shaped error."""
+
+    class _ForbiddenClient:
+        async def get(self, url: str, headers: dict[str, str], **kwargs: Any):
+            return httpx.Response(403)
+
+    monkeypatch.setattr(oidc, "get_http_client", _ForbiddenClient)
+
+    provider = oidc.OIDCProvider(
+        settings=Settings(oidc_issuer="https://keycloak.test/realms/connect"),
+        cache=CredentialCache(),
+        alias="atlas-oidc",
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await provider._fetch_brokered_token(_principal())
+
+    assert exc_info.value.status_code == 403
 
 
 async def test_fetch_brokered_token_uses_internal_url_when_set(monkeypatch):
@@ -150,6 +175,45 @@ async def test_is_linked_false_on_4xx(monkeypatch, status_code):
     monkeypatch.setattr(oidc, "get_http_client", lambda: client)
 
     assert await _make_provider().is_linked(_principal()) is False
+
+
+async def test_link_status_flags_permission_denied_on_403(monkeypatch):
+    """A 403 means the caller's own bearer token lacks the `read-token`
+    client role Keycloak's broker endpoint requires — distinct from "not
+    linked yet" (issue: users blocked from ever seeing a completed link
+    reflected, with no indication the real cause is a missing role)."""
+    client = _FakeLinkClient(status_code=403)
+    monkeypatch.setattr(oidc, "get_http_client", lambda: client)
+
+    status = await _make_provider().link_status(_principal())
+
+    assert status.linked is False
+    assert status.permission_denied is True
+
+
+async def test_link_status_not_permission_denied_on_404(monkeypatch):
+    """404 (no stored token yet) must NOT be flagged as permission_denied —
+    only 403 means the role, not the linkage, is the blocker."""
+    client = _FakeLinkClient(status_code=404)
+    monkeypatch.setattr(oidc, "get_http_client", lambda: client)
+
+    status = await _make_provider().link_status(_principal())
+
+    assert status.linked is False
+    assert status.permission_denied is False
+
+
+async def test_link_status_not_permission_denied_on_network_error(monkeypatch):
+    class _FailingClient:
+        async def head(self, *args: Any, **kwargs: Any):
+            raise httpx.ConnectError("boom")
+
+    monkeypatch.setattr(oidc, "get_http_client", _FailingClient)
+
+    status = await _make_provider().link_status(_principal())
+
+    assert status.linked is False
+    assert status.permission_denied is False
 
 
 async def test_is_linked_falls_back_to_get_when_head_unsupported(monkeypatch):

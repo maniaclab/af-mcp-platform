@@ -204,6 +204,11 @@ export interface IdentityProvider {
    * link lasts exactly as long as proxy_expires_at. Null when not linked, on
    * legacy x509 entries, and on every non-x509 entry. */
   x509_link_mode?: 'auto-renew' | 'until-expiry' | null;
+  /** True when Keycloak's stored-broker-token endpoint last answered 403 —
+   * the caller's own access token lacks the `read-token` client role,
+   * distinct from an ordinary not-yet-linked `linked: false`. Only ever
+   * set on a "keycloak-brokered" entry. */
+  link_permission_denied?: boolean;
 }
 
 export interface IdentitiesResponse {

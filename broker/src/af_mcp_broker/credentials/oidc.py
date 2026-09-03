@@ -39,9 +39,28 @@ _DEFAULT_OIDC_TARGETS: frozenset[str] = frozenset({"rucio", "opendata", "af-inte
 _LINK_CACHE_TTL_SECONDS = 60
 
 
+@dataclass(frozen=True)
+class OIDCLinkStatus:
+    """Result of probing Keycloak's stored-brokered-token endpoint.
+
+    ``linked`` is True only on a 200 (Keycloak holds a stored token).
+    ``permission_denied`` is True only on a 403 — the caller's own bearer
+    token lacks the `read-token` client role Keycloak's ``broker`` requires
+    for ``GET /broker/{alias}/token`` (see docs/auth.md's "Required Keycloak
+    role" section) — distinct from every other non-200 outcome (no link
+    yet, session expired, Keycloak unreachable), all of which are simply
+    "not linked". A user can complete the IdP linking flow successfully and
+    still get a 403 here if they lack the role, so this lets callers tell
+    them why instead of showing an indistinguishable "not linked".
+    """
+
+    linked: bool
+    permission_denied: bool
+
+
 @dataclass
 class _LinkStatus:
-    linked: bool
+    status: OIDCLinkStatus
     checked_at: float  # time.monotonic()
 
 
@@ -87,27 +106,40 @@ class OIDCProvider(CredentialProvider):
     async def is_linked(self, principal: Principal) -> bool:
         """Return True if Keycloak holds a brokered ATLAS IAM token for *principal*.
 
-        Probes ``GET {oidc_backchannel_url}/broker/{alias}/token`` with the
+        See ``link_status()`` for the full probe semantics; this is the
+        plain-bool view other callers (the credential-issuing pre-check,
+        the MCP catalog/aggregator) use when they don't need to distinguish
+        *why* a principal isn't linked.
+        """
+        return (await self.link_status(principal)).linked
+
+    async def link_status(self, principal: Principal) -> OIDCLinkStatus:
+        """Probe Keycloak's stored-brokered-token endpoint for *principal*.
+
+        ``GET {oidc_backchannel_url}/broker/{alias}/token`` with the
         principal's own bearer token: HTTP 200 means Keycloak has a stored
-        brokered token (the user completed IdP linking). Any other outcome —
-        a 4xx/5xx response or an unreachable Keycloak — is treated as "not
-        linked", since a credential broker should fail closed rather than
-        assume linkage it cannot verify. Results are cached per subject for
-        ``_LINK_CACHE_TTL_SECONDS`` seconds (see module docstring comment).
-        Keyed by ``principal.subject``, not ``principal.uid`` -- OIDCProvider
-        has no genuine need for a POSIX identity (issue #148), and uid may
-        not exist for its caller at all; subject is always present.
+        brokered token (the user completed IdP linking); HTTP 403 means the
+        caller's own token lacks the `read-token` client role Keycloak
+        requires for this endpoint (see ``OIDCLinkStatus``); any other
+        outcome — a different 4xx/5xx response or an unreachable Keycloak —
+        is treated as "not linked", since a credential broker should fail
+        closed rather than assume linkage it cannot verify. Results are
+        cached per subject for ``_LINK_CACHE_TTL_SECONDS`` seconds (see
+        module docstring comment). Keyed by ``principal.subject``, not
+        ``principal.uid`` -- OIDCProvider has no genuine need for a POSIX
+        identity (issue #148), and uid may not exist for its caller at all;
+        subject is always present.
         """
         now = time.monotonic()
         cached = self._link_cache.get(principal.subject)
         if cached is not None and (now - cached.checked_at) <= _LINK_CACHE_TTL_SECONDS:
-            return cached.linked
+            return cached.status
 
-        linked = await self._probe_linked(principal)
-        self._link_cache[principal.subject] = _LinkStatus(linked=linked, checked_at=now)
-        return linked
+        status = await self._probe_linked(principal)
+        self._link_cache[principal.subject] = _LinkStatus(status=status, checked_at=now)
+        return status
 
-    async def _probe_linked(self, principal: Principal) -> bool:
+    async def _probe_linked(self, principal: Principal) -> OIDCLinkStatus:
         broker_token_url = f"{self._settings.oidc_backchannel_url.rstrip('/')}/broker/{self._alias}/token"
         headers = {"Authorization": f"Bearer {principal.raw_token.get_secret_value()}"}
         try:
@@ -124,8 +156,11 @@ class OIDCProvider(CredentialProvider):
             self._log.warning(
                 "oidc.is_linked.probe_failed", uid=principal.uid, error=str(exc)
             )
-            return False
-        return resp.status_code == 200
+            return OIDCLinkStatus(linked=False, permission_denied=False)
+        if resp.status_code == 403:
+            self._log.warning("oidc.is_linked.permission_denied", uid=principal.uid)
+            return OIDCLinkStatus(linked=False, permission_denied=True)
+        return OIDCLinkStatus(linked=resp.status_code == 200, permission_denied=False)
 
     async def issue(
         self,
@@ -203,8 +238,9 @@ class OIDCProvider(CredentialProvider):
 
         Returns ``(iam_access_token, expires_at_epoch)``.
 
-        Raises HTTPException on 401 (session expired) and 404 (no stored
-        token — user must re-link).
+        Raises HTTPException on 401 (session expired), 403 (caller's token
+        lacks the `read-token` client role — see ``OIDCLinkStatus``), and
+        404 (no stored token — user must re-link).
         """
         broker_token_url = f"{self._settings.oidc_backchannel_url.rstrip('/')}/broker/{self._alias}/token"
 
@@ -224,6 +260,16 @@ class OIDCProvider(CredentialProvider):
                     "identity link is invalid. Please re-authenticate and "
                     "reconnect your ATLAS account from the portal's "
                     "Identities page."
+                ),
+            )
+        if resp.status_code == 403:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "Your account isn't authorized to retrieve a stored "
+                    "ATLAS IAM token. Contact the platform team to be "
+                    "granted access, then link (or re-link) your ATLAS "
+                    "account from the portal's Identities page."
                 ),
             )
         if resp.status_code == 404:
