@@ -3,14 +3,27 @@
  * Krb5IdentityCard.vue — the Identities page's card for a krb5-token entry
  * (link_mechanism: "credential").
  *
- * Unlike X509IdentityCard.vue's stored-proxy link, minting a Kerberos ticket
- * is currently a one-shot action: no checkbox or other affordance here
- * establishes a durable, hands-free-renewal link (see
- * docs/plans/2026-09-04-krb5-user-provided-keytab.md for that work). The
- * in-page form POSTs the user's CERN username/password to /v1/krb5/ticket, and a
- * successful mint's metadata (principal/realm/expiry) is shown transiently
- * in local component state only — it is never persisted, and disappears on
- * reload, leaving just the plain linked/not-linked badge from props.
+ * Two separate, mutually exclusive actions live in this card, gated by
+ * their own `formOpen`/`keytabFormOpen` refs (opening one closes the
+ * other):
+ *
+ * - "Get Kerberos ticket" / "Refresh ticket" — a one-shot mint. The in-page
+ *   form POSTs the user's CERN username/password to POST /v1/krb5/ticket.
+ *   No custody: the broker uses the password once and never stores it, and
+ *   nothing here establishes a durable renewal link.
+ * - "Link a keytab" — a durable link. The user generates a keytab
+ *   themselves (on lxplus, per the in-form instructions — the broker cannot
+ *   generate one itself, see krb5.py's module docstring for why) and
+ *   uploads it via POST /v1/krb5/keytab. The broker validates the keytab by
+ *   minting a ticket with it (mirroring krb5-token-service's tier-4
+ *   remint) before persisting it; a keytab that doesn't authenticate is
+ *   rejected with nothing stored.
+ *
+ * Both routes return the same `KrbTicketMetadata` shape, so a successful
+ * call from either form shares the same transient result rendering below
+ * (principal/realm/expiry) — shown in local component state only, never
+ * persisted, and gone on reload, leaving just the plain linked/not-linked
+ * badge from props.
  *
  * Once linked, a "Forget this ticket" button calls the shared
  * unlinkIdentity() (already used by IdentityLink.vue) to delete the whole
@@ -20,9 +33,17 @@
  * passphrase): the password input is captured and cleared immediately
  * before the API call, regardless of success or failure. It is never stored
  * anywhere beyond the controlled ref() within this component's lifecycle.
+ * The keytab file's contents pass through this component only as a
+ * transient base64 string built for the one POST body — also never
+ * persisted client-side.
  */
 import { nextTick, ref } from 'vue';
-import { requestKrb5Ticket, unlinkIdentity, type KrbTicketMetadata } from '../lib/api';
+import {
+  linkKrb5Keytab,
+  requestKrb5Ticket,
+  unlinkIdentity,
+  type KrbTicketMetadata,
+} from '../lib/api';
 import { krb5LinkErrorMessage } from '../lib/krb5Identity';
 import { formatShortDateTime } from '../lib/x509Identity';
 
@@ -48,8 +69,19 @@ const busy = ref(false);
 const error = ref<string | null>(null);
 const usernameInput = ref<HTMLInputElement | null>(null);
 
-// Transient result of the last successful mint — local state only, never
-// persisted, and gone on reload (see the module doc comment above).
+// Keytab-upload form state — separate from the password-mint form above,
+// and mutually exclusive with it (see openForm()/openKeytabForm()).
+const keytabFormOpen = ref(false);
+const keytabUsername = ref('');
+const keytabFile = ref<File | null>(null);
+const keytabBusy = ref(false);
+const keytabError = ref<string | null>(null);
+const keytabUsernameInput = ref<HTMLInputElement | null>(null);
+const keytabFileInput = ref<HTMLInputElement | null>(null);
+
+// Transient result of the last successful mint (either form) — local state
+// only, never persisted, and gone on reload (see the module doc comment
+// above).
 const result = ref<KrbTicketMetadata | null>(null);
 
 // Two-step "Forget" confirmation (click "Forget this ticket", then "Confirm
@@ -77,6 +109,7 @@ function resetForgetState() {
 
 async function openForm() {
   formOpen.value = true;
+  closeKeytabForm();
   error.value = null;
   resetForgetState();
   await nextTick();
@@ -89,6 +122,43 @@ function closeForm() {
   password.value = '';
   error.value = null;
   resetForgetState();
+}
+
+async function openKeytabForm() {
+  keytabFormOpen.value = true;
+  closeForm();
+  keytabError.value = null;
+  resetForgetState();
+  await nextTick();
+  keytabUsernameInput.value?.focus();
+}
+
+function closeKeytabForm() {
+  keytabFormOpen.value = false;
+  keytabUsername.value = '';
+  keytabFile.value = null;
+  if (keytabFileInput.value) keytabFileInput.value.value = '';
+  keytabError.value = null;
+  resetForgetState();
+}
+
+/** Reads a File as a base64 string — a keytab is a small binary file, a few KB at most. */
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      // readAsDataURL yields "data:<mime>;base64,<data>" — keep only the payload.
+      const dataUrl = reader.result as string;
+      resolve(dataUrl.slice(dataUrl.indexOf(',') + 1));
+    };
+    reader.onerror = () => reject(reader.error ?? new Error('Failed to read the keytab file.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function handleKeytabFileChange(event: Event) {
+  const input = event.target as HTMLInputElement;
+  keytabFile.value = input.files?.[0] ?? null;
 }
 
 async function handleSubmit() {
@@ -122,6 +192,27 @@ async function handleSubmit() {
     busy.value = false;
     // password was already cleared above — this is belt-and-suspenders
     password.value = '';
+  }
+}
+
+async function handleKeytabSubmit() {
+  if (!keytabUsername.value || !keytabFile.value) return;
+
+  keytabBusy.value = true;
+  keytabError.value = null;
+
+  try {
+    const keytabB64 = await fileToBase64(keytabFile.value);
+    const meta = await linkKrb5Keytab(keytabUsername.value, keytabB64);
+    keytabFormOpen.value = false;
+    result.value = meta;
+    emit('linked', meta);
+  } catch (err) {
+    // Same status-code contract as the password form's handleSubmit — see
+    // krb5LinkErrorMessage's contract notes (shared between both routes).
+    keytabError.value = krb5LinkErrorMessage(err);
+  } finally {
+    keytabBusy.value = false;
   }
 }
 
@@ -198,11 +289,27 @@ function formatExpiry(iso: string): string {
         {{ linked ? 'Refresh ticket' : 'Get Kerberos ticket' }}
       </button>
 
-      <!-- "Forget" deletes the whole stored Vault record (any remembered
+      <!-- Separate action from the one-shot mint above: uploads a
+           user-generated keytab so the broker can renew the ticket
+           hands-free -- see the module doc comment for the design split.
+           Visible whenever its own form isn't already open (independent of
+           `formOpen`), so it can be clicked directly to switch away from an
+           open password form -- openKeytabForm() then closes that form. -->
+      <button
+        v-if="!keytabFormOpen"
+        type="button"
+        class="kc__btn kc__btn--keytab"
+        :disabled="keytabBusy"
+        @click="openKeytabForm"
+      >
+        Link a keytab
+      </button>
+
+      <!-- "Forget" deletes the whole stored Vault record (any linked
            keytab included, not just the current ticket) -- shown only once
            linked, with a two-step confirm mirroring X509IdentityCard.vue's
            proxy revoke. -->
-      <div v-if="!formOpen && linked" class="kc__forget-row">
+      <div v-if="!formOpen && !keytabFormOpen && linked" class="kc__forget-row">
         <button
           type="button"
           class="kc__btn kc__btn--forget"
@@ -276,6 +383,77 @@ function formatExpiry(iso: string): string {
           :aria-busy="busy"
         >
           {{ busy ? 'Minting…' : linked ? 'Refresh ticket' : 'Get ticket' }}
+        </button>
+      </div>
+    </form>
+
+    <!-- Keytab-upload form -- a separate action from the password-mint form
+         above, never shown at the same time (see openForm()/
+         openKeytabForm()'s mutual exclusion). Spans the full card width. -->
+    <form v-if="keytabFormOpen" class="kc__form" novalidate @submit.prevent="handleKeytabSubmit">
+      <p class="kc__form-hint">
+        Generate a keytab on lxplus, then upload it here so the broker can renew your Kerberos
+        ticket automatically without asking for your password again:
+      </p>
+      <pre class="kc__keytab-steps"><code>ssh &lt;username&gt;@lxplus.cern.ch
+cern-get-keytab --keytab &lt;username&gt;.keytab --user
+# (enter your CERN password when prompted)
+kinit -kt &lt;username&gt;.keytab &lt;username&gt;@CERN.CH   # verify it works
+echo $?                                          # should print 0</code></pre>
+      <p class="kc__form-hint">
+        Then download <code>&lt;username&gt;.keytab</code> from lxplus (e.g.
+        <code>scp &lt;username&gt;@lxplus.cern.ch:&lt;username&gt;.keytab .</code>) and upload it
+        below.
+      </p>
+
+      <div class="kc__form-group">
+        <label for="krb5-keytab-username" class="kc__form-label"> CERN username </label>
+        <input
+          id="krb5-keytab-username"
+          ref="keytabUsernameInput"
+          v-model="keytabUsername"
+          type="text"
+          class="kc__input"
+          placeholder="Enter CERN username"
+          autocomplete="username"
+          :disabled="keytabBusy"
+          required
+          aria-required="true"
+        />
+      </div>
+
+      <div class="kc__form-group">
+        <label for="krb5-keytab-file" class="kc__form-label"> Keytab file </label>
+        <input
+          id="krb5-keytab-file"
+          ref="keytabFileInput"
+          type="file"
+          class="kc__input"
+          :disabled="keytabBusy"
+          required
+          aria-required="true"
+          @change="handleKeytabFileChange"
+        />
+      </div>
+
+      <div v-if="keytabError" class="kc__error" role="alert">{{ keytabError }}</div>
+
+      <div class="kc__form-actions">
+        <button
+          type="button"
+          class="kc__btn kc__btn--cancel"
+          :disabled="keytabBusy"
+          @click="closeKeytabForm"
+        >
+          Cancel
+        </button>
+        <button
+          type="submit"
+          class="kc__btn kc__btn--submit"
+          :disabled="keytabBusy || !keytabUsername || !keytabFile"
+          :aria-busy="keytabBusy"
+        >
+          {{ keytabBusy ? 'Linking…' : 'Link keytab' }}
         </button>
       </div>
     </form>
@@ -513,6 +691,20 @@ function formatExpiry(iso: string): string {
   color: var(--color-af-label);
 }
 
+/* lxplus keytab-generation steps, reproduced verbatim in the keytab-upload form. */
+.kc__keytab-steps {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.75rem;
+  line-height: 1.6;
+  color: var(--color-af-text);
+  background: var(--color-af-void);
+  border: 1px solid var(--color-af-muted);
+  border-radius: 3px;
+  padding: 0.625rem 0.75rem;
+  margin: 0;
+  overflow-x: auto;
+}
+
 .kc__error {
   font-family: 'IBM Plex Mono', monospace;
   font-size: 0.75rem;
@@ -568,12 +760,14 @@ function formatExpiry(iso: string): string {
   border-color: rgb(from var(--color-af-teal) r g b / 0.5);
 }
 
-.kc__btn--cancel {
+.kc__btn--cancel,
+.kc__btn--keytab {
   background: transparent;
   color: var(--color-af-dim);
   border-color: var(--color-af-muted);
 }
-.kc__btn--cancel:not(:disabled):hover {
+.kc__btn--cancel:not(:disabled):hover,
+.kc__btn--keytab:not(:disabled):hover {
   color: var(--color-af-text);
   border-color: var(--color-af-dim);
 }

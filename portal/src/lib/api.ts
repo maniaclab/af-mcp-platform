@@ -616,6 +616,33 @@ export async function requestKrb5Ticket(
   });
 }
 
+/**
+ * Validate and store a user-provided Kerberos keytab.
+ *
+ * The broker mints a ticket with the keytab to prove it works (the same
+ * `kinit -kt` check krb5-token-service's tier-4 remint already relies on)
+ * before persisting it — a keytab that doesn't authenticate for `username`
+ * is rejected with nothing stored.
+ */
+export async function linkKrb5Keytab(
+  username: string,
+  keytabB64: string,
+  target?: string,
+  lifetime?: string,
+  renewableLifetime?: string,
+): Promise<KrbTicketMetadata> {
+  return apiFetch<KrbTicketMetadata>('/krb5/keytab', {
+    method: 'POST',
+    body: JSON.stringify({
+      username,
+      keytab_b64: keytabB64,
+      target,
+      lifetime,
+      renewable_lifetime: renewableLifetime,
+    }),
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Tokens — POST/GET/DELETE /v1/tokens. Mints a broker-issued identity PAT
 // (issue #144 step 2a) -- see docs/auth.md's "Programmatic client bootstrap"
