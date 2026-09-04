@@ -113,6 +113,13 @@ class IdentityProvider(BaseModel):
     # x509 entries (filesystem linkage has no custody concept), and on
     # every non-x509 entry.
     x509_link_mode: Literal["auto-renew", "until-expiry"] | None = None
+    # True only for a "krb5-token" entry with a durably linked keytab
+    # (KrbTokenProvider.has_keytab_link) -- tier 4 can remint that entry's
+    # tickets hands-free indefinitely, distinct from `linked=True` alone,
+    # which krb5-token also reports for nothing more than a live cached or
+    # still-renewable ticket with no keytab (a bounded link that lasts only
+    # until the ticket's own renew_until). Always False on every other entry.
+    krb5_has_keytab: bool = False
     # True only for a "keycloak-brokered" entry whose last link_status()
     # probe got a 403 from Keycloak's stored-broker-token endpoint -- the
     # caller's own access token lacks the `read-token` client role Keycloak
@@ -191,6 +198,7 @@ async def _build_providers(
             _oauth21_link_url(request, alias) if cfg.type == "oauth21-direct" else None
         )
         link_permission_denied = False
+        krb5_has_keytab = False
         if isinstance(provider, X509Provider):
             # One probe answers linked + custody mode + expiry together. In
             # service mode the Vault record is authoritative for the expiry;
@@ -215,6 +223,11 @@ async def _build_providers(
             link_permission_denied = oidc_status.permission_denied
             x509_link_mode = None
             proxy_expires_at = None
+        elif isinstance(provider, KrbTokenProvider):
+            linked = await provider.is_linked(principal)
+            krb5_has_keytab = await provider.has_keytab_link(principal)
+            x509_link_mode = None
+            proxy_expires_at = None
         else:
             linked = await provider.is_linked(principal)
             x509_link_mode = None
@@ -230,6 +243,7 @@ async def _build_providers(
                 link_mechanism=_LINK_MECHANISM_BY_TYPE[cfg.type],
                 proxy_expires_at=proxy_expires_at,
                 x509_link_mode=x509_link_mode,
+                krb5_has_keytab=krb5_has_keytab,
                 link_permission_denied=link_permission_denied,
             )
         )

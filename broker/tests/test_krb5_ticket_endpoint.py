@@ -1,4 +1,5 @@
-"""HTTP-level tests for ``POST /v1/krb5/ticket`` (issue #274).
+"""HTTP-level tests for ``POST /v1/krb5/ticket`` and the krb5 status it
+surfaces on ``GET /v1/identities`` (issue #274).
 
 Mirrors test_x509_identity_provider.py's full-app pattern (specifically
 TestPerTargetResolution): boot the real app via ``app_client_factory`` with a
@@ -17,9 +18,9 @@ verbs.
 
 The provider's own error-mapping/NeedsUnlock behavior is unit-tested in
 test_krb5_token.py; this file covers only the ``/v1/krb5/ticket`` route's
-HTTP surface (status codes, response shape, and the pre-existing
-``NeedsUnlock`` -> 409 mapping already exercised for x509 in test_api.py's
-``test_credential_x509_needs_unlock_409``).
+HTTP surface (status codes, response shape, its own credential-optional
+``NeedsUnlock`` -> 409 mapping, and the resulting ``krb5_has_keytab`` status
+``GET /v1/identities`` reports for the same ``krb5_app`` fixture).
 """
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from pydantic import SecretStr
 from test_broker_issued import _make_rsa_key, _private_pem
 from test_krb5_token import FakeKrb5VaultStore
 
@@ -342,3 +344,102 @@ def test_credential_endpoint_needs_unlock_409_before_a_usable_ticket_is_cached(
     detail = resp.json()["detail"]
     assert detail["error"] == "proxy_unlock_required"
     assert detail["unlock_endpoint"] == "/v1/krb5/ticket"
+
+
+# ---------------------------------------------------------------------------
+# POST /v1/krb5/ticket with no credential -- the portal's own hands-free
+# attempt, distinct from the generic /v1/credential case above.
+# ---------------------------------------------------------------------------
+
+
+def test_ticket_route_mints_hands_free_via_stored_keytab_with_no_credential(
+    krb5_app,
+) -> None:
+    """A linked keytab (tier 4) lets ``POST /v1/krb5/ticket`` succeed with an
+    empty body -- the exact request the portal's "Refresh ticket" button now
+    sends before ever asking for a password."""
+    client, state, fake_client = krb5_app
+    vault_store = asyncio.run(
+        client.app.state.credential_registry.resolve(_TARGET)
+    )._vault_store
+    asyncio.run(
+        vault_store.store_link(
+            state["principal"].subject,
+            username="tuser",
+            keytab_b64=SecretStr("a2V5dGFi"),
+        )
+    )
+
+    resp = client.post("/v1/krb5/ticket", json={})
+
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["principal"] == "tuser@CERN.CH"
+    assert fake_client.calls[0]["keytab_b64"].get_secret_value() == "a2V5dGFi"
+
+
+def test_ticket_route_needs_unlock_409_with_no_credential_and_no_stored_link(
+    krb5_app,
+) -> None:
+    """Nothing cached, nothing stored -- an empty-body request can't produce
+    a ticket, so the route maps ``NeedsUnlock`` to 409 rather than the
+    generic-endpoint's ``422`` a truly missing ``username``/``password``
+    would otherwise be (both are optional on ``KrbTicketRequest`` now)."""
+    client, _state, _fake_client = krb5_app
+
+    resp = client.post("/v1/krb5/ticket", json={})
+
+    assert resp.status_code == 409, resp.text
+    detail = resp.json()["detail"]
+    assert detail["error"] == "krb5_unlock_required"
+    assert detail["unlock_endpoint"] == "/v1/krb5/ticket"
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/identities -- krb5_has_keytab status, distinct from `linked`
+# ---------------------------------------------------------------------------
+
+
+def test_identities_krb5_has_keytab_false_when_not_linked(krb5_app) -> None:
+    client, _state, _fake_client = krb5_app
+
+    resp = client.get("/v1/identities")
+
+    assert resp.status_code == 200, resp.text
+    entry = next(p for p in resp.json()["providers"] if p["id"] == "krb5")
+    assert entry["linked"] is False
+    assert entry["krb5_has_keytab"] is False
+
+
+def test_identities_krb5_has_keytab_true_after_keytab_link(krb5_app) -> None:
+    client, _state, _fake_client = krb5_app
+    link_resp = client.post(
+        "/v1/krb5/keytab",
+        json={"username": "tuser", "keytab_b64": "a2V5dGFi"},
+    )
+    assert link_resp.status_code == 201, link_resp.text
+
+    resp = client.get("/v1/identities")
+
+    assert resp.status_code == 200, resp.text
+    entry = next(p for p in resp.json()["providers"] if p["id"] == "krb5")
+    assert entry["linked"] is True
+    assert entry["krb5_has_keytab"] is True
+
+
+def test_identities_krb5_has_keytab_false_with_ticket_only_link(krb5_app) -> None:
+    """A cached ticket with no stored keytab reads as `linked` but NOT
+    keytab-linked -- the two are independent, see
+    ``KrbTokenProvider.has_keytab_link``'s docstring."""
+    client, _state, _fake_client = krb5_app
+    mint_resp = client.post(
+        "/v1/krb5/ticket",
+        json={"username": "tuser", "password": "hunter2"},
+    )
+    assert mint_resp.status_code == 201, mint_resp.text
+
+    resp = client.get("/v1/identities")
+
+    assert resp.status_code == 200, resp.text
+    entry = next(p for p in resp.json()["providers"] if p["id"] == "krb5")
+    assert entry["linked"] is True
+    assert entry["krb5_has_keytab"] is False
