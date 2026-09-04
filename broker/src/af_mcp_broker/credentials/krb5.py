@@ -152,6 +152,19 @@ class KrbTokenProvider(CredentialProvider):
             await self._vault_store.get_renewable_ticket(principal.subject) is not None
         )
 
+    async def has_keytab_link(self, principal: Principal) -> bool:
+        """Whether *principal* has a durably linked keytab (tier 4 can remint hands-free forever), independent of ``is_linked()``.
+
+        ``is_linked()`` also returns True for a principal with nothing but a
+        live cached ticket or a still-renewable ticket half and no keytab at
+        all -- that link is bounded (it lasts only until the ticket's own
+        ``renew_until``), whereas a keytab link is durable. Exposed for
+        ``/v1/identities``' status display (``IdentityProvider.
+        krb5_has_keytab``), mirroring ``X509Provider.link_status()``'s
+        ``mode`` distinction between "auto-renew" and "until-expiry".
+        """
+        return await self._vault_store.get_link(principal.subject) is not None
+
     async def issue(
         self,
         principal: Principal,

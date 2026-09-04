@@ -680,15 +680,28 @@ Tier 5, the interactive fresh mint, still requires a live username and
 password:
 
 `POST /v1/krb5/ticket` (`KrbTicketRequest` → `KrbTicketMetadata`,
-`api/credentials.py`) accepts `username`, `password` (a `SecretStr`,
-never logged or echoed), an optional `target` (defaults to the entry's
-first configured target), and optional `lifetime`/`renewable_lifetime`
-strings forwarded verbatim to krb5-token-service. The response carries
-`target`, `principal`, `realm`, `expires_at`, `remaining_seconds`, and
-`renew_until` (null when the ticket isn't renewable) —
-**`ccache_b64` is deliberately absent**: the ticket is cached
-server-side in the `CredentialCache`, the same "credentials never
-transit to the client" rule x509's proxy metadata follows for the PEM.
+`api/credentials.py`) accepts optional `username` and `password` (a
+`SecretStr`, never logged or echoed), an optional `target` (defaults to
+the entry's first configured target), and optional
+`lifetime`/`renewable_lifetime` strings forwarded verbatim to
+krb5-token-service. The response carries `target`, `principal`, `realm`,
+`expires_at`, `remaining_seconds`, and `renew_until` (null when the
+ticket isn't renewable) — **`ccache_b64` is deliberately absent**: the
+ticket is cached server-side in the `CredentialCache`, the same
+"credentials never transit to the client" rule x509's proxy metadata
+follows for the PEM.
+
+`username`/`password` are optional so a caller can attempt a hands-free
+mint first: an empty body still runs through `issue()`'s full tier
+fallback, so a linked keytab (tier 4) or a still-renewable ticket (tier
+3) can satisfy the request with **no credential at all**. Only when none
+of tiers 1-4 can produce a ticket does the route map the resulting
+`NeedsUnlock` onto `409` — `{"error": "krb5_unlock_required",
+"unlock_endpoint": "/v1/krb5/ticket"}` — telling the caller a live
+password is genuinely needed this time. The portal's "Refresh ticket"
+button (`Krb5IdentityCard.vue`) sends the empty-body request first and
+only falls back to its password form on that 409, rather than always
+demanding a password a linked keytab may have made unnecessary.
 
 ```jsonc
 // POST /v1/krb5/ticket
@@ -702,6 +715,19 @@ transit to the client" rule x509's proxy metadata follows for the PEM.
   "expires_at": "2026-09-04T18:00:00+00:00",
   "remaining_seconds": 36000,
   "renew_until": "2026-09-11T06:00:00+00:00"
+}
+```
+
+```jsonc
+// POST /v1/krb5/ticket -- hands-free attempt, no credential
+{}
+
+// 409 -- nothing usable without one (tiers 1-4 all missed)
+{
+  "detail": {
+    "error": "krb5_unlock_required",
+    "unlock_endpoint": "/v1/krb5/ticket"
+  }
 }
 ```
 
@@ -735,6 +761,14 @@ identical link-half schema and tier-4 remint logic the old "remember"
 auto-bootstrap used to populate. Validation happens **before** the
 store, never after: a caller can never end up with a bad keytab
 persisted to Vault.
+
+Whether a keytab is durably linked is exposed separately from plain
+linkage on `GET /v1/identities`'s krb5-token entry:
+`KrbTokenProvider.has_keytab_link()` backs `IdentityProvider.
+krb5_has_keytab`, distinct from `linked` — a caller with nothing more
+than a live cached or still-renewable ticket also reads as `linked`,
+even with no keytab at all. The portal shows a "keytab linked" badge
+only when `krb5_has_keytab` is true.
 
 ```jsonc
 // POST /v1/krb5/keytab

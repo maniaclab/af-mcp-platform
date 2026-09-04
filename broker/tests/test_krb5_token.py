@@ -280,6 +280,33 @@ async def test_is_linked_true_from_stored_link_alone():
     assert await provider.is_linked(principal) is True
 
 
+async def test_has_keytab_link_false_with_no_link():
+    """No stored link at all -- neither a cached ticket nor a renewable
+    ticket-only half implies a keytab link."""
+    vault_store = FakeKrb5VaultStore()
+    principal = make_principal()
+    await vault_store.store_ticket(
+        principal.subject,
+        ccache_b64=SecretStr("b2xkY2NhY2hl"),
+        principal="alice@CERN.CH",
+        realm="CERN.CH",
+        not_after=time.time() - 60,
+        renew_until=time.time() + 3600,
+    )
+    provider, _, _ = provider_factory(_FakeClient(), vault_store=vault_store)
+    assert await provider.has_keytab_link(principal) is False
+
+
+async def test_has_keytab_link_true_with_stored_link():
+    vault_store = FakeKrb5VaultStore()
+    principal = make_principal()
+    await vault_store.store_link(
+        principal.subject, username="alice", keytab_b64=SecretStr("a2V5dGFi")
+    )
+    provider, _, _ = provider_factory(_FakeClient(), vault_store=vault_store)
+    assert await provider.has_keytab_link(principal) is True
+
+
 async def test_is_linked_true_from_renewable_ticket_alone():
     """Vault-renewable-ticket route: a ticket half past not_after but still
     within its renew_until, with an empty cache and no stored link."""

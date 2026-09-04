@@ -105,9 +105,15 @@ class ProxyMetadata(BaseModel):
 class KrbTicketRequest(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    username: str
+    # Both optional so the portal can attempt a hands-free mint first --
+    # `issue()`'s tiers 1-4 (cache, Vault repopulation, renew, keytab
+    # remint) may already produce a ticket with no credential at all, and a
+    # linked-but-nothing-cached caller who supplies neither field simply
+    # hits tier 4 or, failing that, `NeedsUnlock` (mapped to 409 below,
+    # telling the caller a live password is actually needed this time).
     # SecretStr prevents the CERN password from appearing in repr/logs.
-    password: SecretStr
+    username: str | None = None
+    password: SecretStr | None = None
     # Which krb5-token target to mint for; defaults to the first configured
     # krb5-token target.
     target: str | None = None
@@ -490,7 +496,11 @@ async def create_krb5_ticket(
 ) -> KrbTicketMetadata:
     target = _resolve_krb5_target(request, body.target)
     provider = await _krb5_provider(request, target)
-    passphrase = SecretBytes(body.password.get_secret_value().encode())
+    passphrase = (
+        SecretBytes(body.password.get_secret_value().encode())
+        if body.password is not None
+        else None
+    )
     try:
         cred = await provider.issue(
             principal,
@@ -500,6 +510,22 @@ async def create_krb5_ticket(
             lifetime=body.lifetime,
             renewable_lifetime=body.renewable_lifetime,
         )
+    except NeedsUnlock as exc:
+        # Only reachable when the caller omitted (or only partially gave)
+        # username/password AND none of issue()'s tiers 1-4 (cache, Vault
+        # repopulation, renew, keytab remint) could produce a ticket with no
+        # credential -- i.e. a genuine hands-free attempt failed. The portal
+        # sends this shape first, before ever asking the user for a
+        # password; a 409 here tells it to fall back to the password form,
+        # mirroring the generic POST /v1/credential handler's own
+        # NeedsUnlock -> 409 mapping.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "krb5_unlock_required",
+                "unlock_endpoint": exc.unlock_endpoint,
+            },
+        ) from exc
     except Krb5TokenBadCredentialError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)

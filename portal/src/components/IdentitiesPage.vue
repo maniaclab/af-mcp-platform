@@ -161,6 +161,30 @@ function handleKrb5Linked(id: string, meta: KrbTicketMetadata) {
   clearIdentitiesCache();
 }
 
+// Called on Krb5IdentityCard's `keytab-linked` event, once POST
+// /v1/krb5/keytab has already succeeded -- fires alongside `linked` above
+// (both events fire together for that flow), the one that flips
+// `krb5_has_keytab` so the card's "keytab linked" badge and the
+// hands-free-first "Refresh ticket" behavior reflect the new durable link
+// without a full page reload.
+function handleKrb5KeytabLinked(id: string) {
+  const provider = providers.value.find((p) => p.id === id);
+  if (provider) provider.krb5_has_keytab = true;
+  clearIdentitiesCache();
+}
+
+// Called on Krb5IdentityCard's `keytab-unlinked` event -- a hands-free
+// refresh's 409 revealed the broker just deleted this principal's stored
+// keytab server-side (a bad stored keytab, e.g. a rotated CERN password).
+// Unlike handleKrb5Revoked below, `linked` is untouched: the caller may
+// still get a ticket via the password form that's about to appear, and
+// linkage is about the ticket, not the keytab specifically.
+function handleKrb5KeytabUnlinked(id: string) {
+  const provider = providers.value.find((p) => p.id === id);
+  if (provider) provider.krb5_has_keytab = false;
+  clearIdentitiesCache();
+}
+
 // Called on X509IdentityCard's `revoked` event, once DELETE /v1/x509/proxy
 // has already succeeded. Revoking burns the proxy but never unlinks an
 // auto-renew identity (the stored passphrase re-mints hands-free); an
@@ -184,7 +208,10 @@ function handleX509Revoked(id: string) {
 // flips `linked` back to false.
 function handleKrb5Revoked(id: string) {
   const provider = providers.value.find((p) => p.id === id);
-  if (provider) provider.linked = false;
+  if (provider) {
+    provider.linked = false;
+    provider.krb5_has_keytab = false;
+  }
   clearIdentitiesCache();
 }
 </script>
@@ -284,10 +311,13 @@ function handleKrb5Revoked(id: string) {
               v-else-if="p.link_mechanism === 'credential'"
               :id="p.id"
               :linked="p.linked"
+              :krb5_has_keytab="p.krb5_has_keytab"
               :display_name="p.display_name"
               :enables="p.enables"
               :powers="powersForAlias(p.id)"
               @linked="(meta) => handleKrb5Linked(p.id, meta)"
+              @keytab-linked="handleKrb5KeytabLinked(p.id)"
+              @keytab-unlinked="handleKrb5KeytabUnlinked(p.id)"
               @revoked="handleKrb5Revoked(p.id)"
             />
             <IdentityLink

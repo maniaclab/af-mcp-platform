@@ -7,23 +7,46 @@
  * their own `formOpen`/`keytabFormOpen` refs (opening one closes the
  * other):
  *
- * - "Get Kerberos ticket" / "Refresh ticket" — a one-shot mint. The in-page
- *   form POSTs the user's CERN username/password to POST /v1/krb5/ticket.
- *   No custody: the broker uses the password once and never stores it, and
- *   nothing here establishes a durable renewal link.
- * - "Link a keytab" — a durable link. The user generates a keytab
- *   themselves (on lxplus, per the in-form instructions — the broker cannot
- *   generate one itself, see krb5.py's module docstring for why) and
- *   uploads it via POST /v1/krb5/keytab. The broker validates the keytab by
- *   minting a ticket with it (mirroring krb5-token-service's tier-4
- *   remint) before persisting it; a keytab that doesn't authenticate is
- *   rejected with nothing stored.
+ * - "Get Kerberos ticket" / "Refresh ticket" — while linked, this button
+ *   does NOT open the password form directly: it first attempts a
+ *   hands-free mint (POST /v1/krb5/ticket with no credential at all).
+ *   The broker's KrbTokenProvider.issue() tries, in order, a cached ticket,
+ *   a still-renewable one (tier 3, no credential), and THEN a linked
+ *   keytab (tier 4, no credential either) before ever needing a password
+ *   -- see krb5.py's module docstring -- so demanding one upfront would be
+ *   needless friction for exactly the callers this card marks "keytab
+ *   linked". Only when every one of those rejects does the attempt come
+ *   back 409 (`APIError` status 409 -- nothing usable without a
+ *   credential), and openForm() then runs, falling back to the in-page
+ *   username/password form that POSTs to the same endpoint with both
+ *   fields set. Since a linked keytab always implies `linked` too, a bad
+ *   stored keytab (tier 4's own `Krb5TokenBadCredentialError` handling)
+ *   is *always* what a 409 means for a caller who had one -- the broker
+ *   proactively deletes it server-side right there, so the fallback form
+ *   says so explicitly (and this card emits `keytab-unlinked` to drop its
+ *   own badge immediately) rather than reusing the plain "enter your
+ *   password" wording a caller with no keytab at all gets. An unlinked
+ *   caller skips the hands-free attempt entirely (guaranteed to need a
+ *   password on a first link) and goes straight to the form. No custody
+ *   either way: the broker uses a submitted password once and never
+ *   stores it, and submitting the form alone establishes no durable
+ *   renewal link.
+ * - "Link a keytab" / "Replace keytab" — a durable link. The user
+ *   generates a keytab themselves (on lxplus, per the in-form instructions
+ *   — the broker cannot generate one itself, see krb5.py's module
+ *   docstring for why) and uploads it via POST /v1/krb5/keytab. The broker
+ *   validates the keytab by minting a ticket with it (mirroring
+ *   krb5-token-service's tier-4 remint) before persisting it; a keytab
+ *   that doesn't authenticate is rejected with nothing stored. This is
+ *   what makes the hands-free refresh above actually succeed for a linked
+ *   caller, rather than always falling through to 409.
  *
- * Both routes return the same `KrbTicketMetadata` shape, so a successful
- * call from either form shares the same transient result rendering below
- * (principal/realm/expiry) — shown in local component state only, never
- * persisted, and gone on reload, leaving just the plain linked/not-linked
- * badge from props.
+ * All three routes return the same `KrbTicketMetadata` shape, so a
+ * successful call from any of them shares the same transient result
+ * rendering below (principal/realm/expiry) — shown in local component
+ * state only, never persisted, and gone on reload, leaving just the plain
+ * linked/not-linked badge (and, once a keytab is linked, the separate
+ * "keytab linked" badge) from props.
  *
  * Once linked, a "Forget this ticket" button calls the shared
  * unlinkIdentity() (already used by IdentityLink.vue) to delete the whole
@@ -39,6 +62,7 @@
  */
 import { nextTick, ref } from 'vue';
 import {
+  APIError,
   linkKrb5Keytab,
   requestKrb5Ticket,
   unlinkIdentity,
@@ -50,6 +74,12 @@ import { formatShortDateTime } from '../lib/x509Identity';
 const props = defineProps<{
   id: string;
   linked: boolean;
+  /** True only once a keytab is durably linked (tier 4 can remint hands-free
+   * indefinitely) -- distinct from `linked` alone, which also reads true for
+   * nothing more than a live/renewable ticket with no keytab. Drives the
+   * "keytab linked" badge and the "Replace keytab" vs. "Link a keytab"
+   * button label. */
+  krb5_has_keytab?: boolean;
   display_name: string;
   enables: string;
   /** Display names of catalog backends this identity's credential powers, empty/absent if none. */
@@ -58,6 +88,16 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'linked', meta: KrbTicketMetadata): void;
+  // Fires only for the keytab-upload flow, alongside `linked` above (both
+  // fire together for that flow) -- the one IdentitiesPage.vue listens to
+  // in order to flip `krb5_has_keytab` locally without a full refetch.
+  (e: 'keytab-linked'): void;
+  // Fires when a hands-free refresh's 409 reveals the broker just deleted
+  // this principal's stored keytab (see attemptHandsFreeRefresh() below) --
+  // the counterpart to `keytab-linked`, dropping `krb5_has_keytab` locally
+  // the moment the fallback form appears, rather than waiting for a later
+  // /v1/identities refetch to notice.
+  (e: 'keytab-unlinked'): void;
   (e: 'revoked'): void;
 }>();
 
@@ -68,6 +108,16 @@ const password = ref('');
 const busy = ref(false);
 const error = ref<string | null>(null);
 const usernameInput = ref<HTMLInputElement | null>(null);
+
+// Result of a failed hands-free refresh attempt (see attemptHandsFreeRefresh()
+// below) -- rendered in the body, not inside `formOpen`'s form, since a
+// non-409 failure there leaves no form open at all. A 409 instead opens the
+// password form with refreshFallbackNotice set, not this.
+const refreshError = ref<string | null>(null);
+// Set only when the password form was opened BECAUSE a hands-free refresh
+// attempt came back 409 -- explains why the form suddenly appeared instead
+// of the password hint's usual framing. Cleared whenever the form closes.
+const refreshFallbackNotice = ref<string | null>(null);
 
 // Keytab-upload form state — separate from the password-mint form above,
 // and mutually exclusive with it (see openForm()/openKeytabForm()).
@@ -111,6 +161,7 @@ async function openForm() {
   formOpen.value = true;
   closeKeytabForm();
   error.value = null;
+  refreshError.value = null;
   resetForgetState();
   await nextTick();
   usernameInput.value?.focus();
@@ -121,7 +172,62 @@ function closeForm() {
   username.value = '';
   password.value = '';
   error.value = null;
+  refreshFallbackNotice.value = null;
   resetForgetState();
+}
+
+/**
+ * Click handler for the top "Get Kerberos ticket" / "Refresh ticket"
+ * button -- see the module doc comment for why a linked caller tries a
+ * hands-free mint before ever seeing the password form, while an unlinked
+ * one goes straight to it.
+ */
+async function handleMintClick() {
+  if (props.linked) {
+    await attemptHandsFreeRefresh();
+  } else {
+    await openForm();
+  }
+}
+
+/**
+ * POSTs /v1/krb5/ticket with no credential at all -- the broker's
+ * KrbTokenProvider.issue() may already satisfy this via a linked keytab or
+ * a still-renewable ticket (see requestKrb5Ticket()'s doc comment). A 409
+ * means nothing worked without one, so this falls back to the password
+ * form instead of surfacing it as an ordinary error.
+ */
+async function attemptHandsFreeRefresh() {
+  closeKeytabForm();
+  resetForgetState();
+  // Captured before the request: a 409 always means the broker just
+  // exhausted (and, if it was a keytab, deleted) whatever this caller had
+  // BEFORE this attempt -- see the module doc comment's explanation of why
+  // `krb5_has_keytab` alone is enough to tell the two 409 causes apart.
+  const hadKeytab = props.krb5_has_keytab ?? false;
+  busy.value = true;
+  refreshError.value = null;
+  try {
+    const meta = await requestKrb5Ticket();
+    result.value = meta;
+    emit('linked', meta);
+  } catch (err) {
+    if (err instanceof APIError && err.status === 409) {
+      if (hadKeytab) {
+        refreshFallbackNotice.value =
+          'Your linked keytab stopped working and was removed — enter your CERN password to get a new ticket, then link a fresh keytab below if you want automatic renewal again.';
+        emit('keytab-unlinked');
+      } else {
+        refreshFallbackNotice.value =
+          "Automatic renewal isn't available right now — enter your CERN password to get a new ticket.";
+      }
+      await openForm();
+    } else {
+      refreshError.value = krb5LinkErrorMessage(err);
+    }
+  } finally {
+    busy.value = false;
+  }
 }
 
 async function openKeytabForm() {
@@ -207,6 +313,7 @@ async function handleKeytabSubmit() {
     keytabFormOpen.value = false;
     result.value = meta;
     emit('linked', meta);
+    emit('keytab-linked');
   } catch (err) {
     // Same status-code contract as the password form's handleSubmit — see
     // krb5LinkErrorMessage's contract notes (shared between both routes).
@@ -256,6 +363,10 @@ function formatExpiry(iso: string): string {
         <span class="kc__name">{{ display_name }}</span>
         <span v-if="linked" class="kc__status kc__status--linked">linked</span>
         <span v-else class="kc__status kc__status--unlinked">not linked</span>
+        <!-- Distinct from the badge above: `linked` alone can mean nothing
+             more durable than a still-renewable ticket, see krb5_has_keytab's
+             prop doc comment. -->
+        <span v-if="krb5_has_keytab" class="kc__status kc__status--keytab">keytab linked</span>
       </div>
 
       <p class="kc__desc">{{ enables }}</p>
@@ -281,12 +392,24 @@ function formatExpiry(iso: string): string {
       </div>
 
       <div v-if="forgetError" class="kc__error" role="alert">{{ forgetError }}</div>
+      <!-- A failed hands-free refresh that wasn't a 409 (see
+           attemptHandsFreeRefresh()) -- a 409 opens the password form
+           instead of landing here. -->
+      <div v-if="refreshError" class="kc__error" role="alert">{{ refreshError }}</div>
     </div>
 
     <!-- Action -->
     <div class="kc__actions">
-      <button v-if="!formOpen" class="kc__btn kc__btn--link" :disabled="busy" @click="openForm">
-        {{ linked ? 'Refresh ticket' : 'Get Kerberos ticket' }}
+      <!-- While linked, this click attempts a hands-free mint before ever
+           opening the password form below -- see handleMintClick()'s and
+           the module doc comment's explanation. -->
+      <button
+        v-if="!formOpen"
+        class="kc__btn kc__btn--link"
+        :disabled="busy"
+        @click="handleMintClick"
+      >
+        {{ busy ? 'Refreshing…' : linked ? 'Refresh ticket' : 'Get Kerberos ticket' }}
       </button>
 
       <!-- Separate action from the one-shot mint above: uploads a
@@ -302,7 +425,7 @@ function formatExpiry(iso: string): string {
         :disabled="keytabBusy"
         @click="openKeytabForm"
       >
-        Link a keytab
+        {{ krb5_has_keytab ? 'Replace keytab' : 'Link a keytab' }}
       </button>
 
       <!-- "Forget" deletes the whole stored Vault record (any linked
@@ -334,6 +457,15 @@ function formatExpiry(iso: string): string {
          the CERN password once to mint the ticket. Spans the full card
          width. -->
     <form v-if="formOpen" class="kc__form" novalidate @submit.prevent="handleSubmit">
+      <!-- Only present when this form opened because a hands-free refresh
+           attempt came back 409 -- see attemptHandsFreeRefresh(). Its own
+           class (rather than relying on text matching) is what tests
+           target to tell this apart from the unconditional password hint
+           below. -->
+      <p v-if="refreshFallbackNotice" class="kc__form-hint kc__fallback-notice">
+        {{ refreshFallbackNotice }}
+      </p>
+
       <div class="kc__form-group">
         <label for="krb5-link-username" class="kc__form-label"> CERN username </label>
         <input
@@ -539,6 +671,15 @@ echo $?                                          # should print 0</code></pre>
   background: rgb(from var(--color-af-dim) r g b / 0.12);
   color: var(--color-af-dim);
   border: 1px solid rgb(from var(--color-af-dim) r g b / 0.25);
+}
+
+/* Teal, not green -- distinct from .kc__status--linked so the two badges
+   read as two different facts (linked at all vs. durably keytab-linked)
+   rather than a shade variation of the same one. */
+.kc__status--keytab {
+  background: rgb(from var(--color-af-teal) r g b / 0.12);
+  color: color-mix(in srgb, var(--color-af-teal) 70%, var(--color-af-dim));
+  border: 1px solid rgb(from var(--color-af-teal) r g b / 0.22);
 }
 
 .kc__desc {

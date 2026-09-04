@@ -208,6 +208,12 @@ export interface IdentityProvider {
    * link lasts exactly as long as proxy_expires_at. Null when not linked, on
    * legacy x509 entries, and on every non-x509 entry. */
   x509_link_mode?: 'auto-renew' | 'until-expiry' | null;
+  /** True only for a "krb5-token" entry with a durably linked keytab —
+   * tickets remint hands-free indefinitely. Distinct from `linked`, which
+   * krb5-token also reports for nothing more than a live cached or
+   * still-renewable ticket with no keytab (a link that lasts only until the
+   * ticket's own renew_until). False on every other entry. */
+  krb5_has_keytab?: boolean;
   /** True when Keycloak's stored-broker-token endpoint last answered 403 —
    * the caller's own access token lacks the `read-token` client role,
    * distinct from an ordinary not-yet-linked `linked: false`. Only ever
@@ -588,6 +594,14 @@ export interface KrbTicketMetadata {
 /**
  * Request a new Kerberos ticket for the caller's CERN principal.
  *
+ * `username`/`password` are optional -- calling with neither attempts a
+ * hands-free mint first: the broker's `issue()` may already produce a
+ * ticket via a linked keytab or a still-renewable ticket with no
+ * credential at all (see `docs/auth.md`'s `KrbTokenProvider` section).
+ * That attempt rejects with `APIError(409)` when nothing usable exists
+ * without one -- the caller should fall back to collecting a password and
+ * retrying with both fields set.
+ *
  * `target` selects which krb5-token-service backend mints the ticket (see
  * `services.yaml`); omitted, the broker's configured default is used.
  * `lifetime` and `renewable_lifetime` are opaque strings forwarded to
@@ -598,8 +612,8 @@ export interface KrbTicketMetadata {
  * after this call returns — regardless of success or failure.
  */
 export async function requestKrb5Ticket(
-  username: string,
-  password: string,
+  username?: string,
+  password?: string,
   target?: string,
   lifetime?: string,
   renewableLifetime?: string,
