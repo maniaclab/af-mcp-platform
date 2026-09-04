@@ -62,11 +62,12 @@ const TICKET: KrbTicketMetadata = {
   renew_until: '2026-09-10T00:00:00+00:00',
 };
 
-function mountCard(linked = false): VueWrapper {
+function mountCard(linked = false, krb5HasKeytab = false): VueWrapper {
   return mount(Krb5IdentityCard, {
     props: {
       id: 'krb5',
       linked,
+      krb5_has_keytab: krb5HasKeytab,
       display_name: 'Kerberos ticket (krb5)',
       enables: 'Kerberos ticket minting for krb5-authenticated backends',
     },
@@ -144,6 +145,18 @@ describe('badge and action button', () => {
       },
     });
     expect(wrapper.text()).toContain('lxplus');
+  });
+
+  it('does not render a "keytab linked" badge when no keytab is linked', () => {
+    const wrapper = mountCard(true, false);
+    expect(wrapper.text()).not.toContain('keytab linked');
+    expect(wrapper.find('button.kc__btn--keytab').text()).toBe('Link a keytab');
+  });
+
+  it('renders a "keytab linked" badge and a "Replace keytab" button once a keytab is linked', () => {
+    const wrapper = mountCard(true, true);
+    expect(wrapper.text()).toContain('keytab linked');
+    expect(wrapper.find('button.kc__btn--keytab').text()).toBe('Replace keytab');
   });
 });
 
@@ -352,9 +365,13 @@ describe('forget affordance', () => {
     expect(unlinkIdentity).not.toHaveBeenCalled();
   });
 
-  it('opening the mint form (e.g. via "Refresh ticket") disarms a pending forget confirmation, even after the form is cancelled', async () => {
+  it('a failed hands-free refresh that falls back to the password form disarms a pending forget confirmation, even after the form is cancelled', async () => {
     // See the previous test's comment on clearing shared mock call history.
     vi.mocked(unlinkIdentity).mockClear();
+    // linked=true means clicking the main button attempts a hands-free
+    // refresh first (see Krb5IdentityCard.vue's handleMintClick) -- a 409
+    // is what makes it fall back to actually opening the password form.
+    vi.mocked(requestKrb5Ticket).mockRejectedValueOnce(new APIError(409, 'Conflict', 'not-json'));
     const wrapper = mountCard(true);
 
     // Arm the forget confirmation.
@@ -363,7 +380,9 @@ describe('forget affordance', () => {
 
     // Opening the mint form hides the forget row entirely — it must not
     // leave forgetArmed set for when the row reappears.
-    await openForm(wrapper);
+    await wrapper.find('button.kc__btn').trigger('click');
+    await flushPromises();
+    expect(wrapper.find('input[type="password"]').exists()).toBe(true);
     await wrapper.find('button.kc__btn--cancel').trigger('click');
 
     // The forget row is back, but must require a fresh confirm click before
@@ -373,8 +392,9 @@ describe('forget affordance', () => {
     expect(unlinkIdentity).not.toHaveBeenCalled();
   });
 
-  it('opening the mint form clears a stale forgetError from a previous failed forget attempt', async () => {
+  it('attempting a hands-free refresh clears a stale forgetError from a previous failed forget attempt, even when the refresh itself succeeds', async () => {
     vi.mocked(unlinkIdentity).mockRejectedValueOnce(new Error('boom'));
+    vi.mocked(requestKrb5Ticket).mockResolvedValueOnce(TICKET);
     const wrapper = mountCard(true);
 
     await wrapper.find('button.kc__btn--forget').trigger('click');
@@ -382,9 +402,76 @@ describe('forget affordance', () => {
     await flushPromises();
     expect(wrapper.find('[role="alert"]').exists()).toBe(true);
 
-    await openForm(wrapper);
+    await wrapper.find('button.kc__btn').trigger('click');
+    await flushPromises();
 
     expect(wrapper.find('[role="alert"]').exists()).toBe(false);
+  });
+});
+
+describe('hands-free refresh (linked)', () => {
+  it('clicking the main button attempts a hands-free mint with no credential, without opening the password form, on success', async () => {
+    vi.mocked(requestKrb5Ticket).mockResolvedValueOnce(TICKET);
+    const wrapper = mountCard(true);
+
+    await wrapper.find('button.kc__btn').trigger('click');
+    await flushPromises();
+
+    expect(requestKrb5Ticket).toHaveBeenCalledWith();
+    expect(wrapper.find('form').exists()).toBe(false);
+    expect(wrapper.emitted('linked')).toEqual([[TICKET]]);
+    expect(wrapper.text()).toContain('jdoe@CERN.CH');
+  });
+
+  it('shows a "Refreshing…" label while the hands-free attempt is in flight', async () => {
+    const d = deferred<KrbTicketMetadata>();
+    vi.mocked(requestKrb5Ticket).mockReturnValueOnce(d.promise);
+    const wrapper = mountCard(true);
+
+    await wrapper.find('button.kc__btn').trigger('click');
+    expect(wrapper.find('button.kc__btn').text()).toBe('Refreshing…');
+    expect(wrapper.find('button.kc__btn').attributes('disabled')).toBeDefined();
+
+    d.resolve(TICKET);
+    await flushPromises();
+  });
+
+  it('falls back to opening the password form with an explanatory notice on a 409 (nothing usable without a credential)', async () => {
+    vi.mocked(requestKrb5Ticket).mockRejectedValueOnce(new APIError(409, 'Conflict', 'not-json'));
+    const wrapper = mountCard(true);
+
+    await wrapper.find('button.kc__btn').trigger('click');
+    await flushPromises();
+
+    expect(wrapper.find('input[type="password"]').exists()).toBe(true);
+    expect(wrapper.text()).toContain(
+      "Automatic renewal wasn't available — enter your CERN password to get a new ticket.",
+    );
+    expect(wrapper.emitted('linked')).toBeUndefined();
+  });
+
+  it('surfaces a non-409 failure inline without opening the password form', async () => {
+    vi.mocked(requestKrb5Ticket).mockRejectedValueOnce(
+      new APIError(502, 'Bad Gateway', 'not-json'),
+    );
+    const wrapper = mountCard(true);
+
+    await wrapper.find('button.kc__btn').trigger('click');
+    await flushPromises();
+
+    const alert = wrapper.find('[role="alert"]');
+    expect(alert.exists()).toBe(true);
+    expect(alert.text()).toMatch(/unavailable/i);
+    expect(wrapper.find('form').exists()).toBe(false);
+    expect(wrapper.emitted('linked')).toBeUndefined();
+  });
+
+  it('the fallback notice never appears when the form is opened directly (unlinked, no hands-free attempt made)', async () => {
+    const wrapper = mountCard(false);
+
+    await openForm(wrapper);
+
+    expect(wrapper.text()).not.toContain("Automatic renewal wasn't available");
   });
 });
 
