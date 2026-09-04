@@ -10,14 +10,22 @@
  * - "Get Kerberos ticket" / "Refresh ticket" — while linked, this button
  *   does NOT open the password form directly: it first attempts a
  *   hands-free mint (POST /v1/krb5/ticket with no credential at all).
- *   The broker's KrbTokenProvider.issue() may already produce a ticket via
- *   a linked keytab (tier 4) or a still-renewable ticket (tier 3) with no
- *   password whatsoever -- see krb5.py's module docstring -- so demanding
- *   one upfront would be needless friction for exactly the callers this
- *   card marks "keytab linked". Only when that attempt rejects with 409
- *   (`APIError` status 409 -- nothing usable without a credential) does
- *   openForm() run, falling back to the in-page username/password form
- *   that POSTs to the same endpoint with both fields set. An unlinked
+ *   The broker's KrbTokenProvider.issue() tries, in order, a cached ticket,
+ *   a still-renewable one (tier 3, no credential), and THEN a linked
+ *   keytab (tier 4, no credential either) before ever needing a password
+ *   -- see krb5.py's module docstring -- so demanding one upfront would be
+ *   needless friction for exactly the callers this card marks "keytab
+ *   linked". Only when every one of those rejects does the attempt come
+ *   back 409 (`APIError` status 409 -- nothing usable without a
+ *   credential), and openForm() then runs, falling back to the in-page
+ *   username/password form that POSTs to the same endpoint with both
+ *   fields set. Since a linked keytab always implies `linked` too, a bad
+ *   stored keytab (tier 4's own `Krb5TokenBadCredentialError` handling)
+ *   is *always* what a 409 means for a caller who had one -- the broker
+ *   proactively deletes it server-side right there, so the fallback form
+ *   says so explicitly (and this card emits `keytab-unlinked` to drop its
+ *   own badge immediately) rather than reusing the plain "enter your
+ *   password" wording a caller with no keytab at all gets. An unlinked
  *   caller skips the hands-free attempt entirely (guaranteed to need a
  *   password on a first link) and goes straight to the form. No custody
  *   either way: the broker uses a submitted password once and never
@@ -84,6 +92,12 @@ const emit = defineEmits<{
   // fire together for that flow) -- the one IdentitiesPage.vue listens to
   // in order to flip `krb5_has_keytab` locally without a full refetch.
   (e: 'keytab-linked'): void;
+  // Fires when a hands-free refresh's 409 reveals the broker just deleted
+  // this principal's stored keytab (see attemptHandsFreeRefresh() below) --
+  // the counterpart to `keytab-linked`, dropping `krb5_has_keytab` locally
+  // the moment the fallback form appears, rather than waiting for a later
+  // /v1/identities refetch to notice.
+  (e: 'keytab-unlinked'): void;
   (e: 'revoked'): void;
 }>();
 
@@ -186,6 +200,11 @@ async function handleMintClick() {
 async function attemptHandsFreeRefresh() {
   closeKeytabForm();
   resetForgetState();
+  // Captured before the request: a 409 always means the broker just
+  // exhausted (and, if it was a keytab, deleted) whatever this caller had
+  // BEFORE this attempt -- see the module doc comment's explanation of why
+  // `krb5_has_keytab` alone is enough to tell the two 409 causes apart.
+  const hadKeytab = props.krb5_has_keytab ?? false;
   busy.value = true;
   refreshError.value = null;
   try {
@@ -194,8 +213,14 @@ async function attemptHandsFreeRefresh() {
     emit('linked', meta);
   } catch (err) {
     if (err instanceof APIError && err.status === 409) {
-      refreshFallbackNotice.value =
-        "Automatic renewal wasn't available — enter your CERN password to get a new ticket.";
+      if (hadKeytab) {
+        refreshFallbackNotice.value =
+          'Your linked keytab stopped working and was removed — enter your CERN password to get a new ticket, then link a fresh keytab below if you want automatic renewal again.';
+        emit('keytab-unlinked');
+      } else {
+        refreshFallbackNotice.value =
+          "Automatic renewal isn't available right now — enter your CERN password to get a new ticket.";
+      }
       await openForm();
     } else {
       refreshError.value = krb5LinkErrorMessage(err);
@@ -433,8 +458,13 @@ function formatExpiry(iso: string): string {
          width. -->
     <form v-if="formOpen" class="kc__form" novalidate @submit.prevent="handleSubmit">
       <!-- Only present when this form opened because a hands-free refresh
-           attempt came back 409 -- see attemptHandsFreeRefresh(). -->
-      <p v-if="refreshFallbackNotice" class="kc__form-hint">{{ refreshFallbackNotice }}</p>
+           attempt came back 409 -- see attemptHandsFreeRefresh(). Its own
+           class (rather than relying on text matching) is what tests
+           target to tell this apart from the unconditional password hint
+           below. -->
+      <p v-if="refreshFallbackNotice" class="kc__form-hint kc__fallback-notice">
+        {{ refreshFallbackNotice }}
+      </p>
 
       <div class="kc__form-group">
         <label for="krb5-link-username" class="kc__form-label"> CERN username </label>

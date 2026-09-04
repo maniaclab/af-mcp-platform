@@ -173,6 +173,18 @@ function handleKrb5KeytabLinked(id: string) {
   clearIdentitiesCache();
 }
 
+// Called on Krb5IdentityCard's `keytab-unlinked` event -- a hands-free
+// refresh's 409 revealed the broker just deleted this principal's stored
+// keytab server-side (a bad stored keytab, e.g. a rotated CERN password).
+// Unlike handleKrb5Revoked below, `linked` is untouched: the caller may
+// still get a ticket via the password form that's about to appear, and
+// linkage is about the ticket, not the keytab specifically.
+function handleKrb5KeytabUnlinked(id: string) {
+  const provider = providers.value.find((p) => p.id === id);
+  if (provider) provider.krb5_has_keytab = false;
+  clearIdentitiesCache();
+}
+
 // Called on X509IdentityCard's `revoked` event, once DELETE /v1/x509/proxy
 // has already succeeded. Revoking burns the proxy but never unlinks an
 // auto-renew identity (the stored passphrase re-mints hands-free); an
@@ -305,6 +317,7 @@ function handleKrb5Revoked(id: string) {
               :powers="powersForAlias(p.id)"
               @linked="(meta) => handleKrb5Linked(p.id, meta)"
               @keytab-linked="handleKrb5KeytabLinked(p.id)"
+              @keytab-unlinked="handleKrb5KeytabUnlinked(p.id)"
               @revoked="handleKrb5Revoked(p.id)"
             />
             <IdentityLink

@@ -436,17 +436,33 @@ describe('hands-free refresh (linked)', () => {
     await flushPromises();
   });
 
-  it('falls back to opening the password form with an explanatory notice on a 409 (nothing usable without a credential)', async () => {
+  it('falls back to opening the password form with a generic notice on a 409 when there was no linked keytab (e.g. a lapsed ticket-only link)', async () => {
     vi.mocked(requestKrb5Ticket).mockRejectedValueOnce(new APIError(409, 'Conflict', 'not-json'));
-    const wrapper = mountCard(true);
+    const wrapper = mountCard(true, false);
 
     await wrapper.find('button.kc__btn').trigger('click');
     await flushPromises();
 
     expect(wrapper.find('input[type="password"]').exists()).toBe(true);
-    expect(wrapper.text()).toContain(
-      "Automatic renewal wasn't available — enter your CERN password to get a new ticket.",
+    expect(wrapper.find('.kc__fallback-notice').text()).toBe(
+      "Automatic renewal isn't available right now — enter your CERN password to get a new ticket.",
     );
+    expect(wrapper.emitted('linked')).toBeUndefined();
+    expect(wrapper.emitted('keytab-unlinked')).toBeUndefined();
+  });
+
+  it('falls back with a keytab-specific notice and emits keytab-unlinked when the caller had a linked keytab (the broker just deleted it -- tier 4 rejected it)', async () => {
+    vi.mocked(requestKrb5Ticket).mockRejectedValueOnce(new APIError(409, 'Conflict', 'not-json'));
+    const wrapper = mountCard(true, true);
+
+    await wrapper.find('button.kc__btn').trigger('click');
+    await flushPromises();
+
+    expect(wrapper.find('input[type="password"]').exists()).toBe(true);
+    expect(wrapper.find('.kc__fallback-notice').text()).toBe(
+      'Your linked keytab stopped working and was removed — enter your CERN password to get a new ticket, then link a fresh keytab below if you want automatic renewal again.',
+    );
+    expect(wrapper.emitted('keytab-unlinked')).toEqual([[]]);
     expect(wrapper.emitted('linked')).toBeUndefined();
   });
 
@@ -471,7 +487,7 @@ describe('hands-free refresh (linked)', () => {
 
     await openForm(wrapper);
 
-    expect(wrapper.text()).not.toContain("Automatic renewal wasn't available");
+    expect(wrapper.find('.kc__fallback-notice').exists()).toBe(false);
   });
 });
 
