@@ -466,10 +466,13 @@ class KrbTokenProvider(CredentialProvider):
         The read-only subset of ``issue()``'s tiers 1-2 (cache, then Vault
         repopulation) -- see the module docstring for the full tier order.
         Deliberately stops there: tiers 3-5 (renew, keytab remint, password
-        mint) each have a side effect (a krb5-token-service round trip, or
-        requiring a password) that's inappropriate for a synchronous
-        backend-to-backend redeem call, which has no way to prompt a user for
-        a CERN password. Used by ``POST /v1/credentials/krb5/redeem``
+        mint) each require a synchronous krb5-token-service network round
+        trip (tier 3's renew included -- it needs no credential, but still
+        calls out to the service), which this route must never perform at
+        redeem time; it only serves whatever is already resolved and
+        cached/stored. Tiers 4-5 additionally require a password, which a
+        synchronous backend-to-backend call has no way to prompt a user for.
+        Used by ``POST /v1/credentials/krb5/redeem``
         (api/credentials.py) -- the krb5 analogue of
         ``X509Provider.vault_store``'s direct read for
         ``POST /v1/credentials/x509/redeem``.

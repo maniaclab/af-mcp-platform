@@ -311,6 +311,25 @@ class TestRedeem:
         assert 3500 < body["remaining_seconds"] <= 3600
         assert body["expires_at"]
 
+    def test_cache_hit_with_90_seconds_remaining_still_redeems(
+        self, krb5_redeem_env, app_client_factory
+    ) -> None:
+        """Redeem must use a zero-second freshness buffer, not issue()'s
+        normal 300s "plenty of runway" default -- a ticket with only 90
+        seconds left is still genuinely usable and must be served, not
+        404'd as if it were already stale. Regression guard for the route
+        calling peek_ticket() with no explicit min_remaining_seconds, which
+        silently inherited peek_ticket's own default of 300."""
+        krb5_redeem_env()
+        with app_client_factory() as (client, _):
+            _fake_vault_store(client)
+            _seed_cache_ticket(client, subject="sub-abc", remaining=90.0)
+            token = _mint(client)
+            resp = client.post(
+                _REDEEM, json={}, headers={"Authorization": f"Bearer {token}"}
+            )
+        assert resp.status_code == 200, resp.text
+
     def test_cache_hit_null_renew_until_for_non_renewable_ticket(
         self, krb5_redeem_env, app_client_factory
     ) -> None:

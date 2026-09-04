@@ -1006,7 +1006,10 @@ async def redeem_krb5_ticket(request: Request) -> KrbTicketRedeemResponse:
         )
 
     provider = await _krb5_provider(request, target)
-    cred = await provider.peek_ticket(subject, target)
+    # 0, not peek_ticket's own 300s default -- issue()'s "plenty of runway"
+    # buffer is wrong here: this route serves whatever is currently valid,
+    # right now, not what has 5 minutes of margin left.
+    cred = await provider.peek_ticket(subject, target, min_remaining_seconds=0)
     if cred is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=_KRB5_REDEEM_MINT_HINT
