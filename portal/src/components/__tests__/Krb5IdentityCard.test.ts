@@ -497,4 +497,49 @@ describe('keytab upload', () => {
       expect(wrapper.emitted('linked')).toBeUndefined();
     },
   );
+
+  it('surfaces a read error and never calls linkKrb5Keytab when the FileReader fails', async () => {
+    // Earlier tests in this describe block also call linkKrb5Keytab; clear
+    // its call history so this test's own not.toHaveBeenCalled() assertion
+    // reflects only what happens below (see the "forget affordance" block's
+    // identical comment on unlinkIdentity for why vi.restoreAllMocks() alone
+    // doesn't do this).
+    vi.mocked(linkKrb5Keytab).mockClear();
+
+    // Force the real FileReader instance down its onerror path instead of
+    // onload -- fileToBase64() never gets a chance to resolve, so the
+    // network call it would otherwise make must not happen either. Mirrors
+    // jsdom's real error condition without needing to manufacture an
+    // actually-unreadable File.
+    const readAsDataURLSpy = vi
+      .spyOn(FileReader.prototype, 'readAsDataURL')
+      .mockImplementation(function (this: FileReader) {
+        this.onerror?.(new ProgressEvent('error') as unknown as ProgressEvent<FileReader>);
+      });
+
+    const wrapper = mountCard();
+    await openKeytabForm(wrapper);
+    await fillKeytabForm(wrapper, 'jdoe', makeKeytabFile());
+
+    await submit(wrapper);
+    await waitForFileRead();
+    await flushPromises();
+
+    expect(linkKrb5Keytab).not.toHaveBeenCalled();
+
+    const alert = wrapper.find('[role="alert"]');
+    expect(alert.exists()).toBe(true);
+    // reader.error is unset in this synthetic failure, so fileToBase64()
+    // falls back to its own message rather than surfacing a null error.
+    expect(alert.text()).toBe('Failed to read the keytab file.');
+
+    // keytabBusy must be false again -- the submit button is re-enabled --
+    // and the form stays open rather than silently closing the way success
+    // does.
+    expect(wrapper.find('form button.kc__btn--submit').attributes('disabled')).toBeUndefined();
+    expect(wrapper.find('form').exists()).toBe(true);
+    expect(wrapper.emitted('linked')).toBeUndefined();
+
+    readAsDataURLSpy.mockRestore();
+  });
 });
