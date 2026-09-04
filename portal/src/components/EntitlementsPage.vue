@@ -569,11 +569,17 @@ function meHasPermission(permission: string): boolean {
   width: 3rem;
   min-width: 3rem;
   max-width: 3rem;
-  height: 8rem;
+  height: 12rem;
   padding: 0;
   /* A horizontal line here would cut across every label mid-flight as it
      crosses into a neighboring column's box. */
   border-bottom: none;
+  /* Overrides .ep__matrix-colhead's opaque background: each label overflows
+     out of its own cell and travels diagonally across several neighboring
+     <th> cells, so an opaque background on this cell would clip the label
+     wherever it crosses into the next column instead of reading as one
+     continuous diagonal line. */
+  background: transparent;
 }
 
 .ep__matrix-colhead-label {
