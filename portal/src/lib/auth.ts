@@ -34,6 +34,8 @@ interface RuntimeConfig {
     issuer: string;
     clientId: string;
     scope: string;
+    /** Optional static params forwarded to Keycloak's authorize endpoint on login() — e.g. `{ kc_idp_hint: "oidc" }` to skip Keycloak's own login page. Absent/empty by default. */
+    extraAuthorizeParams?: Record<string, string>;
   };
   /** Optional -- absent in older ConfigMaps and the dev stub; getBranding() fills in DEFAULT_BRANDING for any missing/empty field. */
   branding?: Partial<BrandingConfig>;
@@ -175,6 +177,10 @@ export async function getUser(): Promise<User | null> {
  * Keycloak untouched and comes back on the `User` returned from
  * signinRedirectCallback() — that's how callback.astro knows where to send
  * the user after the exchange completes.
+ *
+ * Forwards `oidc.extraAuthorizeParams` from `/config.json` (if any) as
+ * `extraQueryParams` — e.g. `kc_idp_hint` to skip Keycloak's own login page
+ * in favor of a specific upstream IdP.
  */
 export async function login(): Promise<void> {
   const manager = await getUserManager();
@@ -183,7 +189,12 @@ export async function login(): Promise<void> {
     return;
   }
   const state: AuthState = { returnUrl: window.location.pathname + window.location.search };
-  await manager.signinRedirect({ state });
+  const extraAuthorizeParams = (await loadConfig()).oidc.extraAuthorizeParams;
+  await manager.signinRedirect(
+    extraAuthorizeParams && Object.keys(extraAuthorizeParams).length > 0
+      ? { state, extraQueryParams: extraAuthorizeParams }
+      : { state },
+  );
 }
 
 /** Options for {@link startIdpLink}. */

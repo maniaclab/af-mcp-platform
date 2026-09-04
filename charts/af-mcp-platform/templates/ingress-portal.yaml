@@ -1,18 +1,13 @@
 {{- if .Values.ingress.enabled }}
-# This Ingress is the portalHost catch-all and is deliberately WITHOUT
-# oauth2-proxy annotations: `/` serves the public landing page (no session
-# required — see portal/src/pages/index.astro), plus the static assets
-# (/_astro, /fonts) every portal page loads, including the authenticated ones
-# gated by ingress-portal-authenticated.yaml. Those assets are static
-# JS/CSS/font bundles, not user data, so serving them without the ForwardAuth
-# gate discloses nothing — nginx's longest-prefix matching still sends
-# /overview, /catalog, /identities, /tokens, and /callback to that other
-# Ingress first. /v1 and /mcp on this host are routed by ingress-portal-api.yaml
-# instead, deliberately WITHOUT oauth2-proxy in front, because the portal SPA
-# is its own OAuth public client (Authorization Code + PKCE) and sends the
-# broker its own `aud=mcp-gateway` Bearer directly; the broker validates it
-# the same way it validates any other caller's token. See #42 for the full
-# design.
+# This Ingress is the portalHost catch-all: every page route (public landing,
+# authenticated app pages, static /_astro and /fonts assets) falls through to
+# the portal Service here — auth for the authenticated pages is enforced
+# client-side by Base.astro's getUser()-or-login() check, not at the ingress.
+# /v1 and /mcp on this host are routed by ingress-portal-api.yaml instead,
+# without any gate in front, because the portal SPA is its own OAuth public
+# client (Authorization Code + PKCE) and sends the broker its own
+# `aud=mcp-gateway` Bearer directly; the broker validates it the same way it
+# validates any other caller's token. See #42 for the full design.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -35,10 +30,8 @@ spec:
   {{- end }}
   rules:
     # Portal host — everything falls through to the portal Service here.
-    # ingress-portal-api.yaml routes /v1/* and /mcp/* to the broker, and
-    # ingress-portal-authenticated.yaml routes the authenticated app pages
-    # through oauth2-proxy first, both on this same host and both ahead of
-    # this rule via nginx's longest-prefix matching.
+    # ingress-portal-api.yaml routes /v1/* and /mcp/* to the broker instead,
+    # ahead of this rule via nginx's longest-prefix matching.
     #
     # IMPORTANT: any new portal page route MUST NOT start with /v1/ or /mcp/ —
     # those prefixes are reserved for the broker and would be silently

@@ -1,11 +1,11 @@
 {{- if .Values.ingress.enabled }}
-# This Ingress deliberately carries NO oauth2-proxy annotations. The broker
-# owns JWT validation for mcpHost (see identity.py's keycloak_dependency) —
-# routing mcpHost through the shared oauth2-proxy ForwardAuth gate would 302
-# every Bearer request instead of passing it through, because oauth2-proxy's
-# keycloak-oidc provider validates `aud` against its own client_id, which
-# doesn't match the broker's expected audience. Verified live in #26;
-# analysis and settled architecture in #42.
+# This Ingress carries no auth gate of its own. The broker owns JWT
+# validation for mcpHost directly (see identity.py's keycloak_dependency) —
+# an earlier design routed this host through a shared oauth2-proxy
+# ForwardAuth gate, which 302'd every Bearer request instead of passing it
+# through, because oauth2-proxy's keycloak-oidc provider validates `aud`
+# against its own client_id, not the broker's expected audience. Verified
+# live in #26; settled architecture in #42.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:

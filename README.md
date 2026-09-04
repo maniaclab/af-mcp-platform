@@ -8,11 +8,11 @@ The reference deployment is the [UChicago ATLAS Analysis Facility](https://af.uc
 
 ```
 Claude / Gemini / any MCP client         Browser (portal SPA)
-        │  own Bearer (OIDC)                     │  oauth2-proxy: HTML only
+        │  own Bearer (OIDC)                     │  own OIDC login (client-side)
         ▼                                         ▼
 mcp.af.uchicago.edu                     mcp-portal.af.uchicago.edu
-(no oauth2-proxy — broker               (portal does its own OIDC; /v1
- validates the Bearer itself)            + /mcp bypass oauth2-proxy too)
+(broker validates the                   (portal does its own OIDC;
+ Bearer itself)                          /v1 + /mcp carry no gate)
         │                                         │
         └───────────────────┬─────────────────────┘
                              ▼
@@ -52,8 +52,7 @@ Most clients need nothing else configured: the first request 401s, the client di
 
 Every caller — the portal SPA in your browser, or an MCP client like Claude Desktop — obtains its own bearer token via OIDC Authorization Code + PKCE against the facility's Keycloak realm (the `connect` realm on the UChicago AF reference deployment), carrying the configured audience claim (`aud=mcp-gateway` by default). Nobody fetches, pastes, or configures a raw token by hand for the portal; MCP clients run the OIDC flow themselves.
 
-- The broker's `HTTPBearer` dependency validates every request directly against that realm's JWKS — it's the sole validator, on both the MCP host and the portal host (`mcp.af.uchicago.edu` / `mcp-portal.af.uchicago.edu` on the reference deployment). There's no ForwardAuth proxy in the `/v1` or `/mcp` path on either host.
-- oauth2-proxy still gates the portal's HTML for browser single sign-on across the facility's domain, but never sees or forwards the broker's own bearer tokens.
+- The broker's `HTTPBearer` dependency validates every request directly against that realm's JWKS — it's the sole validator, on both the MCP host and the portal host (`mcp.af.uchicago.edu` / `mcp-portal.af.uchicago.edu` on the reference deployment). There's no ForwardAuth proxy in the `/v1` or `/mcp` path, or the portal's HTML, on either host — the portal SPA enforces its own client-side OIDC login.
 - Once validated, the broker resolves your POSIX identity and brokers per-user credentials (ATLAS IAM token, x509/VOMS proxy) to whichever backend the tool call targets. **Your MCP client never sees those brokered credentials.**
 - Most clients bootstrap their own bearer token via OAuth discovery against the broker's own `/v1/oauth/authorize`/`/v1/oauth/token` endpoints — see [docs/auth.md](docs/auth.md#mcp-oauth-discovery-pat-bootstrap-issue-140). A client that can't do that flow mints a static PAT from the portal's `/tokens` page instead — see [docs/auth.md](docs/auth.md#programmatic-client-bootstrap).
 
@@ -77,7 +76,7 @@ Deployment is via the Helm chart in [`charts/af-mcp-platform`](charts/af-mcp-pla
 The full new-contributor walkthrough lives in
 [docs/local-development.md](docs/local-development.md): two-terminal broker +
 portal workflow, the `BROKER_DEV_INSECURE_PRINCIPAL` bypass for clicking
-through the UI without oauth2-proxy, `PORTAL_DEV_BROKER_URL` for a non-default
+through the UI without OIDC, `PORTAL_DEV_BROKER_URL` for a non-default
 broker host, test/lint tasks, and a ports summary.
 
 ### Prerequisites

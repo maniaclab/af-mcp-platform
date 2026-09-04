@@ -1,4 +1,4 @@
-# portalHost API paths deliberately bypass oauth2-proxy — the portal SPA
+# portalHost API paths carry no auth gate of their own — the portal SPA
 # obtains its own `aud=mcp-gateway` Bearer via OIDC Code+PKCE against the
 # `connect` realm; broker validates directly. See #42.
 {{- if .Values.ingress.enabled }}

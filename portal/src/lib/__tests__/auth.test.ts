@@ -162,6 +162,31 @@ describe('auth — OIDC configured', () => {
     );
   });
 
+  it('login() omits extraQueryParams when oidc.extraAuthorizeParams is not configured', async () => {
+    const { login } = await import('../auth');
+    await login();
+    expect(signinRedirect).toHaveBeenCalledWith(
+      expect.not.objectContaining({ extraQueryParams: expect.anything() }),
+    );
+  });
+
+  it('login() forwards oidc.extraAuthorizeParams as extraQueryParams when configured', async () => {
+    mockConfig({
+      oidc: {
+        issuer: 'https://kc.example.com/realms/test',
+        clientId: 'test-client',
+        scope: 'openid mcp-gateway',
+        extraAuthorizeParams: { kc_idp_hint: 'oidc' },
+      },
+      brokerOrigin: 'https://mcp.example.com',
+    });
+    const { login } = await import('../auth');
+    await login();
+    expect(signinRedirect).toHaveBeenCalledWith(
+      expect.objectContaining({ extraQueryParams: { kc_idp_hint: 'oidc' } }),
+    );
+  });
+
   it('startIdpLink() calls signinRedirect with the LINK_IDP query params and returnUrl', async () => {
     const { startIdpLink } = await import('../auth');
     await startIdpLink({ providerAlias: 'atlas-oidc', returnUrl: '/identities/' });

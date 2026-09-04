@@ -39,9 +39,9 @@ Every caller of the broker — the portal SPA, Claude Desktop, `curl`, any
 future MCP client — obtains its **own** OAuth token for the broker's
 audience (`mcp-gateway`) and sends it as a Bearer directly. The broker
 validates it itself (`HTTPBearer` + `keycloak_dependency` in `identity.py`);
-there is no ForwardAuth proxy in this path. oauth2-proxy still exists in
-front of the portal, but only to gate the portal's HTML/static assets — see
-[Portal auth](#portal-auth-oidc-public-client) below.
+there is no ForwardAuth proxy in this path, or in front of the portal's
+HTML/static assets — the portal enforces its own client-side OIDC login —
+see [Portal auth](#portal-auth-oidc-public-client) below.
 
 ```
 ATLAS AF User
@@ -186,7 +186,7 @@ no server-side session to hold a token, so it becomes its own OAuth 2.0
 **public client** (`mcp-portal`) and runs Authorization Code + PKCE against
 the `connect` realm itself, the same way any other caller of the broker does
 (see [Full Auth Chain](#full-auth-chain) above). This is Phase B; Phase A
-(mcpHost bypassing oauth2-proxy for Claude Desktop) is in place.
+(mcpHost's own direct Bearer validation for Claude Desktop) is in place.
 
 ```
 Browser (portal SPA)
@@ -197,9 +197,9 @@ Browser (portal SPA)
     │      &code_challenge=<S256>&scope=openid profile email mcp-gateway
     ▼
 AF Keycloak (connect realm)
-    │  (2) Already has an oauth2-proxy-established SSO cookie on
-    │      .af.uchicago.edu? → silent redirect back with `code`, no
-    │      interactive login. Otherwise: user signs in once.
+    │  (2) Already has a Keycloak SSO session cookie from a previous login
+    │      to any client in this realm? → silent redirect back with `code`,
+    │      no interactive login. Otherwise: user signs in once.
     ▼
 GET /callback?code=...&state=...     (portal/src/pages/callback.astro)
     │  (3) Exchange code + PKCE verifier for tokens
@@ -239,18 +239,20 @@ Key points:
   `connect-src`, not `frame-src`). `api.ts` calls it automatically on an
   expired token or an unexpected 401 before giving up and surfacing
   "session expired."
-- **oauth2-proxy's role shrank to gating the authenticated pages.** It fronts
-  the portal's authenticated pages (`/overview`, `/catalog`, `/identities`,
-  `/tokens`, `/callback` — see `ingress-portal-authenticated.yaml`), but not
-  the public landing page at `/` or the static assets every portal page
-  loads, both served by `ingress-portal.yaml`'s `/` catch-all with no
-  oauth2-proxy annotations. It is also no longer in the request path for
-  `/v1/*` or `/mcp/*` on either host — see `ingress-portal-api.yaml` (`/v1` +
-  `/mcp`, no oauth2-proxy, same host).
-  Because oauth2-proxy's SSO cookie and the portal's own Keycloak session
-  share the same realm and browser, step (2) above is normally silent — a
-  user who's already visited any `.af.uchicago.edu` page doesn't see a
-  second interactive login.
+- **No ForwardAuth proxy gates the portal at all.** `ingress-portal.yaml`'s
+  `/` catch-all serves every portal page — public landing, authenticated
+  pages (`/overview`, `/catalog`, `/identities`, `/tokens`, `/callback`,
+  ...), and static assets — alike. Auth for the authenticated pages is
+  enforced entirely client-side: `Base.astro` calls `getUser()` on mount and,
+  if there's no valid local session, calls `login()` immediately (keeping a
+  splash screen up so the last thing visible is the splash, not a flash of
+  portal chrome, before Keycloak's redirect takes over) — see
+  `portal/src/layouts/Base.astro`. `/v1/*` and `/mcp/*` carry no gate of
+  their own on either host either — see `ingress-portal-api.yaml`.
+  An earlier design fronted the authenticated pages with a shared
+  oauth2-proxy ForwardAuth gate; it was removed once this client-side guard
+  covered the same case, since oauth2-proxy was otherwise out of the `/v1`
+  and `/mcp` paths entirely and added a redundant login hop.
 - **Runtime, not build-time, OIDC config.** The issuer/client id/scope the
   portal uses come from `GET /config.json` (see `configmap-portal-config.yaml`
   → top-level `oidc.issuer` plus `portal.oidc.clientId`/`scope`), fetched once
@@ -934,11 +936,12 @@ remains a separate, not-yet-made decision.
 
 ## Programmatic client bootstrap
 
-The chain above ("Full Auth Chain") describes the interactive path:
-oauth2-proxy handles browser-based OIDC login transparently, and a signed-in
-user never fetches, pastes, or configures a raw bearer token by hand. That
-story is unchanged and remains the default for anyone opening
-`mcp.af.uchicago.edu` in a browser-capable client.
+The chain above ("Full Auth Chain") describes the interactive path: the
+portal's own OIDC login (`portal/src/lib/auth.ts`) handles browser-based
+login transparently, and a signed-in user never fetches, pastes, or
+configures a raw bearer token by hand. That story is unchanged and remains
+the default for anyone opening `mcp.af.uchicago.edu` in a browser-capable
+client.
 
 It does not cover MCP clients that speak MCP-over-HTTP but can't yet perform
 OAuth discovery — Claude Desktop today. Those clients have no browser session
@@ -1839,8 +1842,12 @@ itself there. Phase B (this doc's [Portal auth](#portal-auth-oidc-public-client)
 section) carries the same fix to portalHost: `/v1` and `/mcp` move to a
 separate `ingress-portal-api.yaml` with no oauth2-proxy annotations, and the
 portal SPA obtains its own `aud=mcp-gateway` Bearer instead of relying on a
-cookie oauth2-proxy never actually forwarded as a header anyway. oauth2-proxy
-remains in front of the portal's authenticated pages
+cookie oauth2-proxy never actually forwarded as a header anyway. Phase C
+removed oauth2-proxy from the portal's authenticated pages too, once
+`Base.astro`'s client-side `getUser()`-or-`login()` guard was confirmed to
+cover the same "no valid session → redirect to Keycloak" case on its own —
+see [Portal auth](#portal-auth-oidc-public-client) above. No ForwardAuth
+proxy is left anywhere in this platform's request path.
 (`ingress-portal-authenticated.yaml`) — see [Portal
 auth](#portal-auth-oidc-public-client) above for why the public landing page
 and shared static assets are carved out of that gate.
