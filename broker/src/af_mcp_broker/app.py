@@ -53,7 +53,7 @@ from af_mcp_broker.credentials.cache import RateLimitError
 from af_mcp_broker.credentials.krb5_vault import Krb5VaultStore
 from af_mcp_broker.http import aclose_http_client
 from af_mcp_broker.identity import build_dev_principal, get_jwks, issuer_is_local
-from af_mcp_broker.logging import configure_logging
+from af_mcp_broker.logging import bind_new_correlation_id, configure_logging
 from af_mcp_broker.maintenance import (
     InMemoryMaintenanceModeStore,
     MaintenanceModeStore,
@@ -1051,6 +1051,23 @@ app.include_router(wellknown_router)
 # no-op otherwise (no extra ASGI middleware). Health probes and the /mcp
 # mount are excluded; see tracing._EXCLUDED_URLS for why /mcp must stay out.
 instrument_fastapi(app, _mcp_aggregator_placeholder_settings)
+
+
+@app.middleware("http")
+async def _bind_request_logging_context(request: Request, call_next):  # type: ignore[no-untyped-def]
+    """Binds a fresh correlation_id to structlog's contextvars for every /v1 request (issue #281).
+
+    ``keycloak_dependency`` binds ``subject`` alongside it once the caller's
+    identity resolves (see identity.py's ``get_principal``/its own
+    dev-bypass branch), so both fields appear on every log line for the
+    rest of the request -- including ``_http_exception_handler``'s --
+    without every call site threading them through by hand. Runs outside
+    the /mcp mount entirely (see the mount comment above), which is why
+    identity_mw.AsgiAuthMiddleware binds its own correlation_id the same
+    way for that surface.
+    """
+    bind_new_correlation_id()
+    return await call_next(request)
 
 
 @app.middleware("http")

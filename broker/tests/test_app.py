@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import pytest
+import structlog
 
 import af_mcp_broker.app as app_module
 from af_mcp_broker.app import _build_target_to_alias
@@ -277,6 +278,21 @@ def test_maintenance_mode_warning_does_not_fire_for_replica_visible_backend(
 # instrument_fastapi() must have been a no-op; and the lifespan teardown must
 # flush whatever provider init_tracing() installed (a no-op when none was).
 # ---------------------------------------------------------------------------
+
+
+async def test_bind_request_logging_context_binds_a_fresh_correlation_id() -> None:
+    """Issue #281: the only /v1 middleware that runs before keycloak_dependency
+    resolves identity, so this is where every request -- even one whose
+    credentials never validate -- gets a correlation_id to log by."""
+    structlog.contextvars.clear_contextvars()
+
+    async def call_next(request: Any) -> str:
+        return "response"
+
+    result = await app_module._bind_request_logging_context(None, call_next)
+
+    assert result == "response"
+    assert structlog.contextvars.get_contextvars()["correlation_id"]
 
 
 def test_app_not_instrumented_by_default() -> None:

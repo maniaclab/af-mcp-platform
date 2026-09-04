@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import uuid
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -78,3 +79,30 @@ def configure_logging(log_level: str = "INFO") -> None:
     # Quieten noisy third-party loggers that we don't need at DEBUG
     for noisy in ("uvicorn.access", "httpx", "httpcore"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
+
+
+def bind_new_correlation_id() -> None:
+    """Bind a fresh ``correlation_id`` to structlog's contextvars for the current request (issue #281).
+
+    Call once at the very start of every request, before identity is
+    resolved -- ``bind_subject`` below binds the caller's subject alongside
+    it once a Principal exists, but a caller whose identity never resolves
+    (an invalid token, say) still gets logged with a correlation_id, so
+    even that failure can be traced back to one client call. Clears any
+    contextvars first: without this, values bound by a previous request
+    that happened to reuse the same task (e.g. ``subject`` from a prior
+    call) would otherwise leak into this one's log lines.
+    """
+    structlog.contextvars.clear_contextvars()
+    structlog.contextvars.bind_contextvars(correlation_id=uuid.uuid4().hex)
+
+
+def bind_subject(subject: str) -> None:
+    """Bind *subject* to structlog's contextvars for the rest of the current request (issue #281).
+
+    Called from every Principal-resolution path -- ``identity.get_principal``
+    (JWT), ``pat_auth.resolve_pat_principal`` (PAT), and the local-dev bypass
+    on both /v1 and /mcp -- so every log line downstream of identity
+    resolution, on either surface, carries who made the call.
+    """
+    structlog.contextvars.bind_contextvars(subject=subject)

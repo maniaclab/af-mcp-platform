@@ -16,6 +16,7 @@ from af_mcp_broker.identity import (
     get_principal,
     issuer_is_local,
 )
+from af_mcp_broker.logging import bind_new_correlation_id, bind_subject
 from af_mcp_broker.maintenance import (
     MaintenanceModeStore,
     check_not_maintenance_or_fail_open,
@@ -166,6 +167,11 @@ class AsgiAuthMiddleware:
             await self.app(scope, receive, send)
             return
 
+        # /mcp requests never pass through /v1's FastAPI middleware chain
+        # (app.py's mount comment) -- this is the only place that can bind a
+        # correlation_id for this surface (issue #281).
+        bind_new_correlation_id()
+
         settings = self._identity_mw.settings
         revoked_jti_cache = self._identity_mw.revoked_jti_cache
         pat_backend = self._identity_mw.pat_backend
@@ -192,6 +198,7 @@ class AsgiAuthMiddleware:
                     "does not look like a local development host"
                 )
             principal = build_dev_principal(settings.dev_insecure_principal)
+            bind_subject(principal.subject)
         else:
             auth_header = _get_authorization_header(scope)
             if not auth_header or not auth_header.lower().startswith("bearer "):
