@@ -106,7 +106,7 @@ class KrbTokenProvider(CredentialProvider):
         )
 
     async def is_linked(self, principal: Principal) -> bool:
-        """True iff a usable ticket can be produced right now with no password prompt.
+        """Return True iff a usable ticket can be produced right now with no password prompt.
 
         Checks, in order, whether any of this entry's targets has a live
         cached ticket (``CredentialCache.peek()``, so this status probe

@@ -46,9 +46,11 @@ _CAS_ATTEMPTS = 3
 
 @dataclass(frozen=True)
 class StoredKrb5Credential:
-    """A Vault-persisted krb5 record: a link half (keytab, durable, opt-in via 'remember')
-    plus a ticket half (last-minted ccache metadata, written on every mint regardless of
-    remember — this is what makes renew-without-remember possible)."""
+    """A Vault-persisted krb5 record: a link half (keytab, durable, opt-in via 'remember') plus a ticket half (last-minted ccache metadata, written on every mint regardless of remember).
+
+    The ticket half is written on every successful mint regardless of
+    "remember" — this is what makes renew-without-remember possible.
+    """
 
     username: str | None = None
     keytab_b64: SecretStr | None = None
