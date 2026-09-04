@@ -642,33 +642,105 @@ Unlike `CondorTokenProvider` above, krb5-token-service holds no standing
 secret the broker can redeem on its own: the CERN password is a live,
 non-recoverable secret (krb5-token-service runs `kinit` against CERN's
 realm with it) that must be supplied fresh on every mint call, not a
-passphrase that merely unlocks an already-stored credential. Nothing is
-persisted at rest — no Vault record, no "remember" option.
+passphrase that merely unlocks an already-stored credential.
 `KrbTokenProvider` (`credentials/krb5.py`) therefore raises `NeedsUnlock`
-(pointing at `POST /v1/krb5/ticket`) whenever nothing valid is cached and
-no fresh `username`/`password` was supplied, mirroring `X509Provider`'s
+(pointing at `POST /v1/krb5/ticket`) whenever nothing usable can be
+produced with no user interaction, mirroring `X509Provider`'s
 passphrase-unlock doctrine rather than `CondorTokenProvider`'s
 unconditional `is_linked() -> True`.
+
+`issue()` works through a five-tier fallback before ever raising
+`NeedsUnlock`. Tiers 1-4 all need **no user interaction** — that is the
+point of "remember" (below): once a keytab is stored, renew and remint
+can keep a linked user's tickets flowing indefinitely without ever
+prompting for a password again:
+
+1. **Cache** — an unexpired ticket already sits in the in-process
+   `CredentialCache`.
+2. **Vault repopulation** — a fresh-enough ticket sits in Vault even
+   though the in-process cache was evicted or the pod restarted; served
+   straight from there with no network call.
+3. **Renew** — the Vault-stored ticket is past its `not_after` but still
+   within its own `renew_until` window: `Krb5TokenServiceClient.renew()`
+   (`POST /v1/renew`) extends it with **no credential at all**.
+4. **Keytab remint** — a keytab was previously bootstrapped and stored
+   (only when the user opted in to "remember" on an earlier mint, below):
+   `Krb5TokenServiceClient.mint()` with `keytab_b64` mints a fresh ticket
+   with **no live password**. A rejected keytab (e.g. the CERN password
+   was rotated since it was bootstrapped) proactively unlinks the
+   identity and falls through as if no link had ever existed.
+
+Only when none of those four tiers can produce a ticket does `issue()`
+raise `NeedsUnlock` — tiers 3 and 4 in particular mean a linked user with
+a "remembered" keytab never has to re-enter a password at all, the same
+hands-free renewal story `X509Provider` already has for VOMS proxies.
+Tier 5, the interactive fresh mint, still requires a live username and
+password:
 
 `POST /v1/krb5/ticket` (`KrbTicketRequest` → `KrbTicketMetadata`,
 `api/credentials.py`) accepts `username`, `password` (a `SecretStr`,
 never logged or echoed), an optional `target` (defaults to the entry's
-first configured target), and optional `lifetime`/`renewable_lifetime`
-strings forwarded verbatim to krb5-token-service. The response carries
-`target`, `principal`, `realm`, `expires_at`, `remaining_seconds`, and
-`renew_until` (null when the ticket isn't renewable) — **`ccache_b64` is
-deliberately absent**: the ticket is cached server-side in the
-`CredentialCache`, the same "credentials never transit to the client"
-rule x509's proxy metadata follows for the PEM.
+first configured target), optional `lifetime`/`renewable_lifetime`
+strings forwarded verbatim to krb5-token-service, and a `remember` flag
+(default `False`). The response carries `target`, `principal`, `realm`,
+`expires_at`, `remaining_seconds`, and `renew_until` (null when the
+ticket isn't renewable) — **`ccache_b64` is deliberately absent**: the
+ticket is cached server-side in the `CredentialCache`, the same
+"credentials never transit to the client" rule x509's proxy metadata
+follows for the PEM.
 
-`is_linked()` reports whether a still-valid ticket happens to be cached
-for one of the entry's targets, not a durable linkage the way
-`X509Provider`'s stored Globus passphrase is — a principal can flip from
-`linked: true` to `linked: false` on the portal's Identities page purely
-because their cached ticket expired, with no user action taken. `GET
-/v1/identities` marks the entry's `link_mechanism` as `"credential"` — a
-two-field username+password form, distinct from x509's one-field
+`remember=true` additionally bootstraps and stores a keytab from the
+**same** password already supplied for the ticket mint — one prompt, not
+two. After the ticket mint succeeds, the provider calls
+`Krb5TokenServiceClient.mint_keytab()` (`POST /v1/keytab`) with the
+identical `username`/`password` and stores the returned keytab via
+`Krb5VaultStore.store_link()`. This is best-effort: the ticket mint
+already succeeded by that point, so any failure bootstrapping the keytab
+(e.g. hitting the service's shared rate limiter) is logged and swallowed
+rather than failing a call that already did its primary job — the user
+just doesn't get hands-free renewal next time and has to re-link.
+Without `remember`, nothing password-derived is persisted; only the
+ticket half (see below) is ever stored, regardless of `remember`.
+
+`Krb5VaultStore` (`credentials/krb5_vault.py`) persists one KV-v2 record
+per subject and mirrors `VaultX509Store`'s **link half / ticket half**
+split:
+
+- the **link half** — a keytab and its username, written only via
+  `store_link()` when the user opts in to "remember". This is the
+  durable, custody-gated piece that makes tier 4 (keytab remint)
+  possible.
+- the **ticket half** — the last-minted ccache and its `not_after` /
+  `renew_until` deadlines, written on *every* successful mint or renewal
+  regardless of `remember`. This is what makes tier 3 (renew) possible
+  for every linked user, not just ones who opted into keytab custody.
+
+Unlike x509's `store_link` (which wipes a stale proxy on re-link, since a
+new passphrase may not be able to re-mint the old one), a krb5 ticket's
+validity has nothing to do with which keytab is currently on file, so
+`Krb5VaultStore.store_link()` never touches the ticket half.
+
+`is_linked()` reports True on the first hit among: a live cached ticket
+for one of the entry's targets, a stored keytab (link half), or a
+still-renewable stored ticket — so a "remembered" identity reads as
+linked even between mints, unlike a bare cached-ticket check which can
+flip `linked: true` → `false` purely because the cache entry expired.
+`GET /v1/identities` marks the entry's `link_mechanism` as `"credential"`
+— a two-field username+password form, distinct from x509's one-field
 `"passphrase"` — so the portal renders the right form shape.
+
+`DELETE /v1/identities/link/{alias}` now has a real `krb5-token` branch:
+it calls `KrbTokenProvider.unlink()`, which deletes the entire Vault
+record (keytab **and** any ticket half) via `Krb5VaultStore.delete()` —
+the same "forget me" scope as `oauth21-direct`'s existing unlink, and
+distinct from `revoke()` (drops only the cached/Vault ticket half,
+leaving a stored keytab in place so the next `issue()` can still remint
+via tier 4). This is a stronger operation than x509 has today: x509 has
+no user-initiated unlink route at all, only the automatic self-unlink
+`X509Provider.renew_from_stored_link()` performs when a stored
+passphrase is rejected — see `api/identities.py`'s `unlink_identity` for
+the comment marking that gap as a deliberate, tracked-separately scope
+decision rather than an oversight.
 
 `Krb5TokenServiceClient.mint()` (`credentials/krb5_service.py`) maps
 krb5-token-service's `POST /v1/mint` responses onto exceptions the
@@ -694,7 +766,17 @@ mapped error carries a fixed, generic message instead.
 Configuration is one `identity_providers` entry of type `krb5-token`
 with a required `service_url` (the service's base URL — the provider
 appends `/v1/mint`) and an `audience` defaulting to
-`krb5-token-service`:
+`krb5-token-service`. **Unlike the mint-only version of this section,
+Vault connection settings are now unconditionally required**: a
+`krb5-token` entry has no legacy/service-mode split the way x509 does —
+`service_url` is mandatory on every entry — and since a given entry
+can't declare ahead of time whether any caller will ever check
+"remember", `Settings._validate_vault_config` (`config.py`) requires
+`vault_addr`/`vault_auth_role` at boot for *any* `krb5-token` entry, not
+only ones actually used with `remember=true`. A `krb5-token` entry with
+no Vault connection configured refuses to boot, the same fail-closed
+doctrine as a `vault`-backed token store or principal cache with no
+Vault settings:
 
 ```yaml
 broker:
@@ -707,6 +789,18 @@ broker:
       # #274) -- leave targets empty until one is chosen.
       targets: []
       serviceUrl: http://krb5-token-service.invalid
+
+  # Vault connection settings -- shared by every Vault-backed store
+  # (oauth21's token store, the token registry, the principal cache,
+  # x509 service mode, and now any krb5-token entry above), even though
+  # the field lives under oauth21.tokenStore for historical reasons.
+  # Required as soon as ANY krb5-token entry exists, whether or not a
+  # caller ever passes remember=true.
+  oauth21:
+    tokenStore:
+      vault:
+        addr: https://vault.example.com
+        authRole: af-mcp-broker
 ```
 
 The same fail-closed rule applies as for `broker-issued`/`condor-token`:

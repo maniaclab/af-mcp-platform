@@ -344,6 +344,15 @@ async def unlink_identity(
     # (DELETE /admin/realms/{realm}/users/{id}/federated-identity/{alias}),
     # which the broker doesn't hold credentials for — surface a clear 501
     # rather than silently succeeding. Out of scope per issue #86.
+    #
+    # x509 also falls into this generic branch and gets the same 501, with
+    # a detail message that doesn't apply to it (there is no Keycloak
+    # account console entry or OAuth 2.1 token for a Globus passphrase
+    # link). That's a deliberate scope decision, not an oversight: unlike
+    # krb5-token above, X509Provider has no user-initiated unlink() today
+    # — only the automatic self-unlink in renew_from_stored_link() when a
+    # stored passphrase is rejected. Adding one is tracked separately, not
+    # part of issue #274's remember/keytab/renew work.
     logger.info(
         "identity_unlink_requested",
         subject=principal.subject,
