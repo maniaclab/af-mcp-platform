@@ -176,6 +176,17 @@ function handleX509Revoked(id: string) {
   }
   clearIdentitiesCache();
 }
+
+// Called on Krb5IdentityCard's `revoked` event, once DELETE
+// /v1/identities/link/{alias} has already succeeded -- unlike
+// handleX509Revoked, krb5's "Forget" always deletes the whole Vault record
+// (there is no separate until-expiry/auto-renew distinction), so it always
+// flips `linked` back to false.
+function handleKrb5Revoked(id: string) {
+  const provider = providers.value.find((p) => p.id === id);
+  if (provider) provider.linked = false;
+  clearIdentitiesCache();
+}
 </script>
 
 <template>
@@ -271,11 +282,13 @@ function handleX509Revoked(id: string) {
             />
             <Krb5IdentityCard
               v-else-if="p.link_mechanism === 'credential'"
+              :id="p.id"
               :linked="p.linked"
               :display_name="p.display_name"
               :enables="p.enables"
               :powers="powersForAlias(p.id)"
               @linked="(meta) => handleKrb5Linked(p.id, meta)"
+              @revoked="handleKrb5Revoked(p.id)"
             />
             <IdentityLink
               v-else

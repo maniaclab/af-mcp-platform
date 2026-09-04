@@ -1,11 +1,13 @@
 /**
  * Component tests for Krb5IdentityCard.vue — the Identities page's card for
  * a krb5-token entry (link_mechanism: "credential"). Unlike
- * X509IdentityCard.vue, this card has no accordions and no persisted custody
- * option: it mints a one-shot Kerberos ticket via POST /v1/krb5/ticket and
- * shows the result for the current page visit only (see the plan's scope
- * boundary — no "remember" checkbox, no revoke button, no fetch-on-expand
- * sections).
+ * X509IdentityCard.vue, this card has no accordions: it mints a Kerberos
+ * ticket via POST /v1/krb5/ticket and shows the result for the current page
+ * visit only. It does now carry a "remember" custody checkbox (opt-in,
+ * unlike x509's opt-out default — storing a keytab is a bigger ask than
+ * storing a passphrase) and a "Forget this ticket" affordance once linked,
+ * which calls the shared unlinkIdentity() (see IdentityLink.vue's use of it)
+ * to delete the whole Vault record.
  *
  * There's no pre-existing submit-flow test to match a bar against (x509's
  * own test file only covers its two accordions), so this file covers the
@@ -23,6 +25,7 @@ import type { KrbTicketMetadata } from '../../lib/api';
 // errors constructed in this file.
 vi.mock('../../lib/api', () => ({
   requestKrb5Ticket: vi.fn(),
+  unlinkIdentity: vi.fn(),
   SessionExpiredError: class SessionExpiredError extends Error {},
   APIError: class APIError extends Error {
     constructor(
@@ -36,7 +39,7 @@ vi.mock('../../lib/api', () => ({
   },
 }));
 
-import { APIError, requestKrb5Ticket } from '../../lib/api';
+import { APIError, requestKrb5Ticket, unlinkIdentity } from '../../lib/api';
 import Krb5IdentityCard from '../Krb5IdentityCard.vue';
 
 /** A promise whose resolution the test controls — stands in for a slow HTTP response. */
@@ -62,6 +65,7 @@ const TICKET: KrbTicketMetadata = {
 function mountCard(linked = false): VueWrapper {
   return mount(Krb5IdentityCard, {
     props: {
+      id: 'krb5',
       linked,
       display_name: 'Kerberos ticket (krb5)',
       enables: 'Kerberos ticket minting for krb5-authenticated backends',
@@ -102,6 +106,7 @@ describe('badge and action button', () => {
   it('renders powers chips when provided', () => {
     const wrapper = mount(Krb5IdentityCard, {
       props: {
+        id: 'krb5',
         linked: false,
         display_name: 'Kerberos ticket (krb5)',
         enables: 'Kerberos ticket minting for krb5-authenticated backends',
@@ -113,13 +118,15 @@ describe('badge and action button', () => {
 });
 
 describe('form open/close', () => {
-  it('opens the form with username/password inputs and no checkbox', async () => {
+  it('opens the form with username/password inputs and a remember checkbox, unchecked by default', async () => {
     const wrapper = mountCard();
     await openForm(wrapper);
 
     expect(wrapper.find('input[type="text"]').exists()).toBe(true);
     expect(wrapper.find('input[type="password"]').exists()).toBe(true);
-    expect(wrapper.find('input[type="checkbox"]').exists()).toBe(false);
+    const checkbox = wrapper.find('input[type="checkbox"]');
+    expect(checkbox.exists()).toBe(true);
+    expect((checkbox.element as HTMLInputElement).checked).toBe(false);
   });
 
   it('cancel closes the form and clears both fields without submitting', async () => {
@@ -169,7 +176,7 @@ describe('submit disabled state', () => {
 });
 
 describe('successful submission', () => {
-  it('calls requestKrb5Ticket with username/password, closes the form, emits linked, and shows the result', async () => {
+  it('calls requestKrb5Ticket with username/password and remember: false by default, closes the form, emits linked, and shows the result', async () => {
     vi.mocked(requestKrb5Ticket).mockResolvedValueOnce(TICKET);
     const wrapper = mountCard();
     await openForm(wrapper);
@@ -178,12 +185,39 @@ describe('successful submission', () => {
     await submit(wrapper);
     await flushPromises();
 
-    expect(requestKrb5Ticket).toHaveBeenCalledWith('jdoe', 'hunter2');
+    expect(requestKrb5Ticket).toHaveBeenCalledWith(
+      'jdoe',
+      'hunter2',
+      undefined,
+      undefined,
+      undefined,
+      false,
+    );
     expect(wrapper.find('form').exists()).toBe(false);
     expect(wrapper.emitted('linked')).toEqual([[TICKET]]);
 
     expect(wrapper.text()).toContain('jdoe@CERN.CH');
     expect(wrapper.text()).toContain('CERN.CH');
+  });
+
+  it('calls requestKrb5Ticket with remember: true when the checkbox is checked', async () => {
+    vi.mocked(requestKrb5Ticket).mockResolvedValueOnce(TICKET);
+    const wrapper = mountCard();
+    await openForm(wrapper);
+    await fillForm(wrapper, 'jdoe', 'hunter2');
+    await wrapper.find('input[type="checkbox"]').setValue(true);
+
+    await submit(wrapper);
+    await flushPromises();
+
+    expect(requestKrb5Ticket).toHaveBeenCalledWith(
+      'jdoe',
+      'hunter2',
+      undefined,
+      undefined,
+      undefined,
+      true,
+    );
   });
 
   it('clears the password from component state before the request resolves', async () => {
@@ -248,4 +282,43 @@ describe('failed submission', () => {
       expect(wrapper.emitted('linked')).toBeUndefined();
     },
   );
+});
+
+describe('forget affordance', () => {
+  it('does not render a Forget button when unlinked', () => {
+    const wrapper = mountCard(false);
+    expect(wrapper.find('button.kc__btn--forget').exists()).toBe(false);
+  });
+
+  it('renders a Forget button when linked', () => {
+    const wrapper = mountCard(true);
+    expect(wrapper.find('button.kc__btn--forget').exists()).toBe(true);
+  });
+
+  it('requires a second click to confirm, then calls unlinkIdentity with the provider id and emits revoked', async () => {
+    vi.mocked(unlinkIdentity).mockResolvedValueOnce(undefined);
+    const wrapper = mountCard(true);
+
+    await wrapper.find('button.kc__btn--forget').trigger('click');
+    expect(unlinkIdentity).not.toHaveBeenCalled();
+    expect(wrapper.find('button.kc__btn--forget').text()).toMatch(/confirm/i);
+
+    await wrapper.find('button.kc__btn--forget').trigger('click');
+    await flushPromises();
+
+    expect(unlinkIdentity).toHaveBeenCalledWith('krb5');
+    expect(wrapper.emitted('revoked')).toEqual([[]]);
+  });
+
+  it('surfaces an error and does not emit revoked when unlinkIdentity fails', async () => {
+    vi.mocked(unlinkIdentity).mockRejectedValueOnce(new Error('boom'));
+    const wrapper = mountCard(true);
+
+    await wrapper.find('button.kc__btn--forget').trigger('click');
+    await wrapper.find('button.kc__btn--forget').trigger('click');
+    await flushPromises();
+
+    expect(wrapper.find('[role="alert"]').exists()).toBe(true);
+    expect(wrapper.emitted('revoked')).toBeUndefined();
+  });
 });
