@@ -3,9 +3,7 @@
  * a krb5-token entry (link_mechanism: "credential"). Unlike
  * X509IdentityCard.vue, this card has no accordions: it mints a Kerberos
  * ticket via POST /v1/krb5/ticket and shows the result for the current page
- * visit only. It does now carry a "remember" custody checkbox (opt-in,
- * unlike x509's opt-out default — storing a keytab is a bigger ask than
- * storing a passphrase) and a "Forget this ticket" affordance once linked,
+ * visit only. It carries a "Forget this ticket" affordance once linked,
  * which calls the shared unlinkIdentity() (see IdentityLink.vue's use of it)
  * to delete the whole Vault record.
  *
@@ -118,15 +116,12 @@ describe('badge and action button', () => {
 });
 
 describe('form open/close', () => {
-  it('opens the form with username/password inputs and a remember checkbox, unchecked by default', async () => {
+  it('opens the form with username/password inputs', async () => {
     const wrapper = mountCard();
     await openForm(wrapper);
 
     expect(wrapper.find('input[type="text"]').exists()).toBe(true);
     expect(wrapper.find('input[type="password"]').exists()).toBe(true);
-    const checkbox = wrapper.find('input[type="checkbox"]');
-    expect(checkbox.exists()).toBe(true);
-    expect((checkbox.element as HTMLInputElement).checked).toBe(false);
   });
 
   it('cancel closes the form and clears both fields without submitting', async () => {
@@ -176,7 +171,7 @@ describe('submit disabled state', () => {
 });
 
 describe('successful submission', () => {
-  it('calls requestKrb5Ticket with username/password and remember: false by default, closes the form, emits linked, and shows the result', async () => {
+  it('calls requestKrb5Ticket with username/password, closes the form, emits linked, and shows the result', async () => {
     vi.mocked(requestKrb5Ticket).mockResolvedValueOnce(TICKET);
     const wrapper = mountCard();
     await openForm(wrapper);
@@ -191,33 +186,12 @@ describe('successful submission', () => {
       undefined,
       undefined,
       undefined,
-      false,
     );
     expect(wrapper.find('form').exists()).toBe(false);
     expect(wrapper.emitted('linked')).toEqual([[TICKET]]);
 
     expect(wrapper.text()).toContain('jdoe@CERN.CH');
     expect(wrapper.text()).toContain('CERN.CH');
-  });
-
-  it('calls requestKrb5Ticket with remember: true when the checkbox is checked', async () => {
-    vi.mocked(requestKrb5Ticket).mockResolvedValueOnce(TICKET);
-    const wrapper = mountCard();
-    await openForm(wrapper);
-    await fillForm(wrapper, 'jdoe', 'hunter2');
-    await wrapper.find('input[type="checkbox"]').setValue(true);
-
-    await submit(wrapper);
-    await flushPromises();
-
-    expect(requestKrb5Ticket).toHaveBeenCalledWith(
-      'jdoe',
-      'hunter2',
-      undefined,
-      undefined,
-      undefined,
-      true,
-    );
   });
 
   it('clears the password from component state before the request resolves', async () => {

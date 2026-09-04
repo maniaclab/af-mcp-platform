@@ -596,11 +596,6 @@ export interface KrbTicketMetadata {
  *
  * IMPORTANT: The caller MUST clear the password from Vue state immediately
  * after this call returns — regardless of success or failure.
- *
- * `remember` is the custody consent, defaulting to false (opt-in, unlike
- * x509's opt-out `requestProxy`): true stores a Kerberos keytab (not the
- * password) in the broker's Vault, letting future tickets be minted/renewed
- * without re-entering a password.
  */
 export async function requestKrb5Ticket(
   username: string,
@@ -608,7 +603,6 @@ export async function requestKrb5Ticket(
   target?: string,
   lifetime?: string,
   renewableLifetime?: string,
-  remember: boolean = false,
 ): Promise<KrbTicketMetadata> {
   return apiFetch<KrbTicketMetadata>('/krb5/ticket', {
     method: 'POST',
@@ -618,7 +612,6 @@ export async function requestKrb5Ticket(
       target,
       lifetime,
       renewable_lifetime: renewableLifetime,
-      remember,
     }),
   });
 }

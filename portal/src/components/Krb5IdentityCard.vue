@@ -4,13 +4,10 @@
  * (link_mechanism: "credential").
  *
  * Unlike X509IdentityCard.vue's stored-proxy link, minting a Kerberos ticket
- * has traditionally been a one-shot action, but krb5-token-service now
- * supports keytab-based renewal (docs/plans/2026-09-03-krb5-remember-keytab.md):
- * the "remember" checkbox below is the custody consent for that, mirroring
- * X509IdentityCard.vue's own consent checkbox but defaulting UNCHECKED
- * (opt-in) rather than x509's opt-out default — storing a keytab is a
- * bigger, less-familiar ask than storing a passphrase. The in-page form
- * POSTs the user's CERN username/password to /v1/krb5/ticket, and a
+ * is currently a one-shot action: no checkbox or other affordance here
+ * establishes a durable, hands-free-renewal link (see
+ * docs/plans/2026-09-04-krb5-user-provided-keytab.md for that work). The
+ * in-page form POSTs the user's CERN username/password to /v1/krb5/ticket, and a
  * successful mint's metadata (principal/realm/expiry) is shown transiently
  * in local component state only — it is never persisted, and disappears on
  * reload, leaving just the plain linked/not-linked badge from props.
@@ -47,9 +44,6 @@ const emit = defineEmits<{
 const formOpen = ref(false);
 const username = ref('');
 const password = ref('');
-// Custody consent — opt-in (unchecked by default), unlike x509's opt-out
-// `remember` (see the module doc comment above).
-const remember = ref(false);
 const busy = ref(false);
 const error = ref<string | null>(null);
 const usernameInput = ref<HTMLInputElement | null>(null);
@@ -83,7 +77,6 @@ function resetForgetState() {
 
 async function openForm() {
   formOpen.value = true;
-  remember.value = false;
   error.value = null;
   resetForgetState();
   await nextTick();
@@ -116,7 +109,6 @@ async function handleSubmit() {
       undefined,
       undefined,
       undefined,
-      remember.value,
     );
     formOpen.value = false;
     result.value = meta;
@@ -267,30 +259,7 @@ function formatExpiry(iso: string): string {
         />
         <span id="krb5-link-password-hint" class="kc__form-hint">
           Your CERN password is used once to mint this ticket and is never stored — you'll need to
-          re-enter it after the ticket expires, unless you remember this ticket below.
-        </span>
-      </div>
-
-      <!-- Custody consent: storing a keytab is the user's explicit choice,
-           defaulting to NOT stored (opt-in) -- unlike X509IdentityCard.vue's
-           opt-out passphrase custody, since a keytab is a bigger,
-           less-familiar ask than a stored passphrase (see the module doc
-           comment above). -->
-      <div class="kc__form-group">
-        <label class="kc__consent">
-          <input
-            v-model="remember"
-            type="checkbox"
-            class="kc__checkbox"
-            :disabled="busy"
-            aria-describedby="krb5-consent-hint"
-          />
-          <span>Remember this ticket for automatic renewal</span>
-        </label>
-        <span id="krb5-consent-hint" class="kc__form-hint">
-          Your password itself is never stored. Checking this stores a Kerberos keytab (not your
-          password) encrypted in the AF vault, so future tickets can be minted or renewed without
-          you re-entering a password.
+          re-enter it after the ticket expires.
         </span>
       </div>
 
@@ -542,24 +511,6 @@ function formatExpiry(iso: string): string {
 .kc__form-hint {
   font-size: 0.6875rem;
   color: var(--color-af-label);
-}
-
-/* Custody consent checkbox row -- same treatment as
-   X509IdentityCard.vue's .xc__consent/.xc__checkbox. */
-.kc__consent {
-  display: flex;
-  align-items: baseline;
-  gap: 0.5rem;
-  font-size: 0.8125rem;
-  color: var(--color-af-text);
-  line-height: 1.5;
-  cursor: pointer;
-}
-
-.kc__checkbox {
-  flex-shrink: 0;
-  accent-color: var(--color-af-teal);
-  translate: 0 0.125rem;
 }
 
 .kc__error {
