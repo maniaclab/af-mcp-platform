@@ -182,7 +182,9 @@ class KrbTokenProvider(CredentialProvider):
             self._log.debug(
                 "krb5_token.issue.vault_hit", subject=principal.subject, target=target
             )
-            return await self._serve_stored_ticket(principal, target, stored_ticket)
+            return await self._serve_stored_ticket(
+                principal.subject, target, stored_ticket
+            )
 
         # Tier 3: renew a ticket that's past not_after but still within its
         # own renew_until window -- no credential needed.
@@ -434,9 +436,15 @@ class KrbTokenProvider(CredentialProvider):
         return cred
 
     async def _serve_stored_ticket(
-        self, principal: Principal, target: str, record: StoredKrb5Credential
+        self, subject: str, target: str, record: StoredKrb5Credential
     ) -> IssuedCredential:
-        """Build a credential from a Vault-stored ticket *record* and repopulate the in-process cache with it -- no service call, since Vault already has a ticket with enough validity left."""
+        """Build a credential from a Vault-stored ticket *record* and repopulate the in-process cache with it -- no service call, since Vault already has a ticket with enough validity left.
+
+        Takes *subject* directly (not a ``Principal``) since the cache key is
+        all this needs -- shared by ``issue()``'s tier 2 and the read-only
+        ``peek_ticket()`` below, neither of which has any other use here for
+        a full ``Principal``.
+        """
         assert record.ccache_b64 is not None  # has_ticket guarantees this
         assert record.not_after is not None  # has_ticket guarantees this
         cred = self._build_credential(
@@ -447,7 +455,41 @@ class KrbTokenProvider(CredentialProvider):
             not_after=record.not_after,
             renew_until=record.renew_until,
         )
-        await self._cache.put(
-            principal.subject, target, cred, expires_at=record.not_after
-        )
+        await self._cache.put(subject, target, cred, expires_at=record.not_after)
         return cred
+
+    async def peek_ticket(
+        self, subject: str, target: str, min_remaining_seconds: int = 300
+    ) -> IssuedCredential | None:
+        """Return whatever ticket is currently available for *(subject, target)*, without minting, renewing, or ever prompting for a password.
+
+        The read-only subset of ``issue()``'s tiers 1-2 (cache, then Vault
+        repopulation) -- see the module docstring for the full tier order.
+        Deliberately stops there: tiers 3-5 (renew, keytab remint, password
+        mint) each require a synchronous krb5-token-service network round
+        trip (tier 3's renew included -- it needs no credential, but still
+        calls out to the service), which this route must never perform at
+        redeem time; it only serves whatever is already resolved and
+        cached/stored. Tiers 4-5 additionally require a password, which a
+        synchronous backend-to-backend call has no way to prompt a user for.
+        Used by ``POST /v1/credentials/krb5/redeem``
+        (api/credentials.py) -- the krb5 analogue of
+        ``X509Provider.vault_store``'s direct read for
+        ``POST /v1/credentials/x509/redeem``.
+        """
+        # Tier 1: in-process cache.
+        cached = await self._cache.get(
+            subject, target, min_remaining=min_remaining_seconds
+        )
+        if cached is not None:
+            return cached
+
+        # Tier 2: repopulate from Vault -- the in-process cache may have been
+        # evicted or the pod restarted, but Vault still has a ticket with
+        # enough validity left.
+        record = await self._vault_store.get_ticket(
+            subject, min_remaining=min_remaining_seconds
+        )
+        if record is None:
+            return None
+        return await self._serve_stored_ticket(subject, target, record)

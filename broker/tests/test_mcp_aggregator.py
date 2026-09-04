@@ -1038,6 +1038,201 @@ async def test_client_factory_x509_list_time_without_issuer_connects_bare(
     assert "Authorization" not in client.transport.headers
 
 
+async def test_resolve_list_time_credential_krb5_mints_not_provider_issue(
+    settings: Any, make_principal
+) -> None:
+    """resolve_list_time_credential's krb5 handling must mirror x509's --
+    mint-and-inject an AF Broker Identity Token, never call provider.issue()
+    -- the same invariant _make_client_factory's _krb5_factory list-time
+    branch enforces (see
+    test_client_factory_krb5_injects_broker_identity_jwt_not_provider_issue).
+    Without a dedicated krb5 branch here, this falls through to
+    _resolve_list_time_headers, which calls provider.issue() directly --
+    exactly what the auth_type=krb5 design (backend redeems the ticket
+    itself via POST /v1/credentials/krb5/redeem) exists to prevent."""
+    issuer = _make_issuer()
+    spec = _spec(name="krb5_service", auth_type="krb5", audience="krb5-mcp")
+    provider = _FakeProvider(linked=True)
+    registry = CredentialRegistry()
+    registry.register(spec.name, provider)
+
+    headers, skip_reason = await resolve_list_time_credential(
+        spec,
+        registry,
+        make_principal(subject="sub-abc"),
+        broker_token_issuer=issuer,
+    )
+
+    assert skip_reason is None
+    assert headers is not None
+    claims = issuer.verify(headers["Authorization"].removeprefix("Bearer "))
+    assert claims is not None
+    assert claims["sub"] == "sub-abc"
+    assert claims["aud"] == "krb5-mcp"
+    assert provider.issue_calls == []
+
+
+# ---------------------------------------------------------------------------
+# krb5 branch: broker-issued identity JWT injection, mirroring x509's
+# "mint and inject, let the backend redeem separately" behavior (this plan's
+# Task 2 adds POST /v1/credentials/krb5/redeem as that separate redeem call) --
+# NOT the bearer branch's "mint via provider.issue() and inject that
+# credential directly".
+# ---------------------------------------------------------------------------
+
+
+async def test_client_factory_krb5_auth_type_applies_backend_timeout(
+    settings: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # active_backend=None takes the tools/list-refresh path (connect without
+    # raising the not-yet-supported error), so the timeout can be inspected
+    # on the returned Client the same way as the "none"/"x509" branches above.
+    _patch_context(monkeypatch, None, active_backend=None)
+    spec = _spec(auth_type="krb5", timeout_seconds=5.0)
+    client = await _make_client_factory(
+        spec, CredentialRegistry(), settings, _OPEN_POLICY
+    )()
+    assert client._session_kwargs["read_timeout_seconds"] == timedelta(seconds=5.0)
+
+
+async def test_client_factory_krb5_call_without_principal_raises(
+    settings: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_context(monkeypatch, None)
+    spec = _spec(auth_type="krb5")
+    factory = _make_client_factory(spec, CredentialRegistry(), settings, _OPEN_POLICY)
+    with pytest.raises(ToolError, match="principal"):
+        await factory()
+
+
+async def test_client_factory_krb5_auth_type_lists_without_raising(
+    settings: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A tools/list schema-cache refresh must still be able to connect to a
+    krb5 backend to enumerate its tools -- only an actual tools/call (signalled
+    by authorized_call_target matching this backend) hits the not-yet-supported
+    error above."""
+    _patch_context(monkeypatch, None, active_backend=None)
+    spec = _spec(auth_type="krb5")
+    factory = _make_client_factory(spec, CredentialRegistry(), settings, _OPEN_POLICY)
+    client = await factory()
+    assert isinstance(client, Client)
+    assert "Authorization" not in client.transport.headers
+
+
+async def test_client_factory_krb5_injects_broker_identity_jwt_not_provider_issue(
+    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The krb5 branch mints and injects an AF Broker Identity Token the same
+    way x509 does -- it must NEVER call provider.issue() itself, since Task 2's
+    POST /v1/credentials/krb5/redeem is what the *backend* calls to fetch the
+    actual ticket (unlike the generic bearer branch, which mints a credential
+    directly via provider.issue() and injects that)."""
+    _patch_context(monkeypatch, make_principal(subject="sub-abc"))
+    issuer = _make_issuer()
+    spec = _spec(auth_type="krb5")
+    provider = _FakeProvider(linked=True)
+    registry = CredentialRegistry()
+    registry.register(spec.name, provider)
+
+    client = await _make_client_factory(
+        spec, registry, settings, _OPEN_POLICY, broker_token_issuer=issuer
+    )()
+
+    auth = client.transport.headers["Authorization"]
+    assert auth.startswith("Bearer ")
+    claims = issuer.verify(auth.removeprefix("Bearer "))
+    assert claims is not None
+    assert claims["sub"] == "sub-abc"
+    assert claims["aud"] == "example"
+    assert provider.issue_calls == []
+
+
+async def test_client_factory_krb5_call_time_aud_uses_effective_audience(
+    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mirrors x509's audience/name split (issue #257) -- the call-time krb5
+    mint stamps the backend's `audience`, NOT the (renamed) `name`."""
+    _patch_context(monkeypatch, make_principal(subject="sub-abc"))
+    issuer = _make_issuer()
+    spec = _spec(name="krb5_service", auth_type="krb5", audience="krb5-mcp")
+    registry = CredentialRegistry()
+    registry.register(spec.name, _FakeProvider(linked=True))
+
+    client = await _make_client_factory(
+        spec, registry, settings, _OPEN_POLICY, broker_token_issuer=issuer
+    )()
+
+    claims = issuer.verify(
+        client.transport.headers["Authorization"].removeprefix("Bearer ")
+    )
+    assert claims is not None
+    assert claims["aud"] == "krb5-mcp"
+
+
+async def test_client_factory_krb5_without_issuer_is_toolerror(
+    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_context(monkeypatch, make_principal(subject="sub-abc"))
+    spec = _spec(auth_type="krb5")
+
+    with pytest.raises(ToolError, match="signing key") as excinfo:
+        await _make_client_factory(spec, CredentialRegistry(), settings, _OPEN_POLICY)()
+
+    assert "krb5 service" in str(excinfo.value)
+
+
+async def test_client_factory_krb5_not_linked_raises_friendly_error(
+    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same not-linked gate x509/_bearer_factory already have -- an unlinked
+    krb5 caller must be told to link, at the broker, before any token is
+    minted."""
+    _patch_context(monkeypatch, make_principal(subject="sub-abc"))
+    issuer = _make_issuer()
+    spec = _spec(auth_type="krb5")
+    provider = _FakeProvider(linked=False)
+    registry = CredentialRegistry()
+    registry.register(spec.name, provider)
+
+    with pytest.raises(ToolError, match="not linked") as excinfo:
+        await _make_client_factory(
+            spec, registry, settings, _OPEN_POLICY, broker_token_issuer=issuer
+        )()
+
+    assert LIST_IDENTITIES_TOOL_NAME in str(excinfo.value)
+    assert LIST_MCP_SERVERS_TOOL_NAME in str(excinfo.value)
+    assert "af_link_identity" in str(excinfo.value)
+    assert provider.issue_calls == []
+
+
+async def test_client_factory_krb5_list_time_injects_header_best_effort(
+    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_context(monkeypatch, make_principal(subject="sub-abc"), active_backend=None)
+    issuer = _make_issuer()
+    spec = _spec(auth_type="krb5")
+
+    client = await _make_client_factory(
+        spec, CredentialRegistry(), settings, _OPEN_POLICY, broker_token_issuer=issuer
+    )()
+
+    assert client.transport.headers["Authorization"].startswith("Bearer ")
+
+
+async def test_client_factory_krb5_list_time_without_issuer_connects_bare(
+    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_context(monkeypatch, make_principal(subject="sub-abc"), active_backend=None)
+    spec = _spec(auth_type="krb5")
+
+    client = await _make_client_factory(
+        spec, CredentialRegistry(), settings, _OPEN_POLICY
+    )()
+
+    assert "Authorization" not in client.transport.headers
+
+
 # ---------------------------------------------------------------------------
 # Stage 2a: real interactive elicitation on the not-linked path, before
 # falling back to stage 1's plain _not_linked_error ToolError.

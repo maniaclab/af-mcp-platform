@@ -346,6 +346,16 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         for spec in services
         if spec.auth_type == "x509"
     }
+    # Same reverse map as x509_audiences above, for `auth_type: krb5`
+    # services -- the krb5 redeem endpoint's `aud` -> target lookup (no
+    # shipped services.yaml declares one yet; this is plumbing for a future
+    # backend, mirrored exactly so that endpoint's resolution works the day
+    # one does).
+    krb5_audiences: dict[str, str] = {
+        spec.effective_audience: spec.name
+        for spec in services
+        if spec.auth_type == "krb5"
+    }
     identity_provider_cfg_list = list(settings.identity_providers)
     _validate_x509_provider_targets(settings.identity_providers, set(x509_targets))
     has_service_mode_x509_cfg = any(
@@ -889,6 +899,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     application.state.x509_provider = x509_provider
     application.state.x509_targets = x509_targets
     application.state.x509_audiences = x509_audiences
+    application.state.krb5_audiences = krb5_audiences
     application.state.krb5_targets = krb5_targets
     application.state.identity_providers = identity_providers
     application.state.identity_provider_configs = identity_provider_configs

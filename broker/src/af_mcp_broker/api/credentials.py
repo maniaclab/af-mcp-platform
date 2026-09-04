@@ -133,6 +133,28 @@ class KrbTicketMetadata(BaseModel):
     # (same "credentials never transit to the client" rule as x509's PEM).
 
 
+class KrbTicketRedeemResponse(BaseModel):
+    """The one response that carries ccache material out of the broker.
+
+    Served only by ``POST /credentials/krb5/redeem`` to callers presenting a
+    valid AF Broker Identity Token whose ``aud`` is a configured krb5
+    target -- the krb5 analogue of ``ProxyRedeemResponse`` (issue #112's
+    "backend calls back" wire format, mirrored here for
+    ``af_credentials.krb5``). Read-only: this is whatever
+    ``KrbTokenProvider.peek_ticket`` finds already cached or Vault-stored --
+    the route never mints or renews.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    ccache_b64: str
+    principal: str
+    realm: str
+    expires_at: str  # ISO-8601
+    remaining_seconds: int
+    renew_until: str | None = None  # ISO-8601, null if not renewable
+
+
 class ProxyCacheStatus(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -642,6 +664,11 @@ _REDEEM_RELINK_HINT = (
     "x509 identity has been unlinked. Re-link it at the AF portal and retry."
 )
 
+_KRB5_REDEEM_MINT_HINT = (
+    "No Kerberos ticket is cached for this account — "
+    "mint one via POST /v1/krb5/ticket and retry."
+)
+
 
 def _release_audit(
     *,
@@ -900,4 +927,121 @@ async def redeem_x509_proxy(request: Request) -> ProxyRedeemResponse:
         voms_attributes=list(meta.voms_attributes),
         expires_at=_iso(meta.not_after),
         remaining_seconds=max(0, int(meta.not_after - now)),
+    )
+
+
+@backend_router.post(
+    "/credentials/krb5/redeem",
+    response_model=KrbTicketRedeemResponse,
+    summary="Redeem the caller's cached Kerberos ticket (backend-facing)",
+)
+async def redeem_krb5_ticket(request: Request) -> KrbTicketRedeemResponse:
+    """Release the caller's cached Kerberos ccache to a krb5 backend.
+
+    Authenticated by an AF Broker Identity Token (NOT a Keycloak token),
+    exactly like ``redeem_x509_proxy`` above: the broker verifies its own
+    RS256 signature and requires ``aud`` to be a configured krb5 target. The
+    path is deliberately under ``/credentials/`` for the same reason x509's
+    is -- to match the wire contract af-credentials codes against
+    (``POST /v1/credentials/krb5/redeem``).
+
+    Unlike the x509 route, this NEVER mints or renews a ticket: it only
+    serves whatever ``KrbTokenProvider.peek_ticket`` finds already cached or
+    Vault-stored, 404ing otherwise -- a synchronous backend-to-backend call
+    has no way to prompt a user for a CERN password.
+    """
+    issuer = getattr(request.app.state, "broker_token_issuer", None)
+    if issuer is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Broker identity tokens are not configured",
+        )
+
+    auth = request.headers.get("authorization", "")
+    if not auth.lower().startswith("bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing Bearer token in Authorization header",
+        )
+    claims = issuer.verify(auth[7:].strip())
+    if claims is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired broker identity token",
+        )
+
+    subject: str = claims["sub"]
+    token_aud: str = claims["aud"]
+    request_id = claims.get("jti", "")
+
+    # Same effective_audience -> target reverse map as x509_audiences above
+    # (issue #257) -- the aud a krb5 backend presents may differ from the
+    # krb5 target name the ticket/provider are keyed under.
+    krb5_audiences: dict[str, str] = getattr(request.app.state, "krb5_audiences", {})
+    target = krb5_audiences.get(token_aud)
+    if target is None:
+        # Mirrors redeem_x509_proxy's audience-not-mapped audit exactly
+        # (same inline AuditRecord shape, action renamed for krb5) -- this is
+        # security-relevant on its own: krb5_audiences is empty until a real
+        # services.yaml consumer is configured, so this 403 is the ONLY
+        # outcome this route reaches in any real deployment today.
+        await write_audit(
+            AuditRecord(
+                principal_sub=subject,
+                principal_uid=claims.get("uid"),
+                permission=None,
+                target=token_aud,
+                action="krb5_ticket_release",
+                action_type="read",
+                args_summary="redeem denied: audience is not a krb5 target",
+                timestamp=time.time(),
+                request_id=request_id,
+                outcome="denied",
+                error=f"audience {token_aud!r} is not a configured krb5 target",
+            )
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Audience {token_aud!r} is not a configured krb5 target",
+        )
+
+    provider = await _krb5_provider(request, target)
+    # 0, not peek_ticket's own 300s default -- issue()'s "plenty of runway"
+    # buffer is wrong here: this route serves whatever is currently valid,
+    # right now, not what has 5 minutes of margin left.
+    cred = await provider.peek_ticket(subject, target, min_remaining_seconds=0)
+    if cred is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=_KRB5_REDEEM_MINT_HINT
+        )
+
+    payload = cred.payload
+    renew_until = payload.get("renew_until")
+    now = time.time()
+
+    # Mirrors redeem_x509_proxy's success-path audit (_release_audit's
+    # outcome="success" record) -- subject/target/outcome plus resolved
+    # principal metadata only, never the ccache material itself.
+    await write_audit(
+        AuditRecord(
+            principal_sub=subject,
+            principal_uid=claims.get("uid"),
+            permission=None,
+            target=target,
+            action="krb5_ticket_release",
+            action_type="read",
+            args_summary=f"ticket for {payload['principal']!r} released to backend {target!r}",
+            timestamp=time.time(),
+            request_id=request_id,
+            outcome="success",
+        )
+    )
+
+    return KrbTicketRedeemResponse(
+        ccache_b64=payload["ccache_b64"],
+        principal=payload["principal"],
+        realm=payload["realm"],
+        expires_at=_iso(cred.expires_at),
+        remaining_seconds=max(0, int(cred.expires_at - now)),
+        renew_until=_iso(renew_until) if renew_until is not None else None,
     )

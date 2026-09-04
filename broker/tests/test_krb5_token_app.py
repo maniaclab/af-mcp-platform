@@ -197,6 +197,38 @@ def test_identities_lists_krb5_token_provider_as_linked(
 # ---------------------------------------------------------------------------
 
 
+def test_krb5_audiences_built_from_auth_type_krb5_services(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, app_client_factory
+) -> None:
+    """krb5_audiences must mirror app.py's x509_audiences construction: a
+    reverse map from each `auth_type: krb5` service's effective_audience back
+    to its name, for the krb5 redeem endpoint to resolve `aud` -> target
+    (docs/plans/2026-09-03-krb5-credentials-redeem.md Task 1). No shipped
+    services.yaml configures `auth_type: krb5` yet -- this is plumbing for a
+    future backend -- so the fixture below is synthetic."""
+    services_file = tmp_path / "services.yaml"
+    services_file.write_text(
+        "services:\n"
+        "  - name: krb5-example\n"
+        "    prefix: krb5ex\n"
+        "    url: http://krb5-example.invalid/mcp\n"
+        "    auth_type: krb5\n"
+        "    audience: krb5-example-service\n"
+        "    required_permission: __none__\n"
+    )
+    monkeypatch.setenv("SERVICES_FILE", str(services_file))
+    # No x509/oidc targets in this fixture's services.yaml -- clear
+    # app_client_factory's default IDENTITY_PROVIDERS (it targets "ami"/
+    # "rucio", which this file doesn't declare) rather than leave a dangling
+    # x509 target that trips _validate_x509_provider_targets.
+    monkeypatch.setenv("IDENTITY_PROVIDERS", "[]")
+
+    with app_client_factory() as (client, _):
+        assert client.app.state.krb5_audiences == {
+            "krb5-example-service": "krb5-example"
+        }
+
+
 def test_unlink_krb5_token_alias_deletes_stored_link_and_revokes_cache(
     krb5_token_env, app_client_factory
 ) -> None:
