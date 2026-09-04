@@ -113,11 +113,22 @@ class KrbTicketRequest(BaseModel):
     target: str | None = None
     lifetime: str | None = None
     renewable_lifetime: str | None = None
-    # Custody consent: True — additionally bootstrap and store a keytab from
-    # this same password so future tickets can be renewed/reminted hands-free
-    # (tier 4) without the user re-entering their password; False (the
-    # default) mints a ticket without persisting anything password-derived.
-    remember: bool = False
+
+
+class KrbKeytabLinkRequest(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    username: str
+    # Base64-encoded raw keytab bytes. The user generates this themselves
+    # (e.g. on lxplus via `cern-get-keytab --keytab <user>.keytab --user`)
+    # -- the broker cannot generate one itself; see krb5.py's module
+    # docstring for why. SecretStr for the same reason KrbTicketRequest.password
+    # is: a keytab is durable key material, at least as sensitive as a
+    # one-time password, and must not appear in reprs/logs/schemas.
+    keytab_b64: SecretStr
+    target: str | None = None
+    lifetime: str | None = None
+    renewable_lifetime: str | None = None
 
 
 class KrbTicketMetadata(BaseModel):
@@ -488,7 +499,65 @@ async def create_krb5_ticket(
             username=body.username,
             lifetime=body.lifetime,
             renewable_lifetime=body.renewable_lifetime,
-            remember=body.remember,
+        )
+    except Krb5TokenBadCredentialError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+    except Krb5TokenAccountError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)
+        ) from exc
+    except Krb5TokenInvalidRequestError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
+        ) from exc
+    except Krb5TokenRateLimitedError as exc:
+        headers = {"Retry-After": exc.retry_after} if exc.retry_after else None
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=str(exc),
+            headers=headers,
+        ) from exc
+    except Krb5TokenMintError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Kerberos ticket issuance is temporarily unavailable — retry later.",
+        ) from exc
+
+    payload = cred.payload
+    renew_until = payload.get("renew_until")
+    return KrbTicketMetadata(
+        target=target,
+        principal=payload["principal"],
+        realm=payload["realm"],
+        expires_at=_iso(cred.expires_at),
+        remaining_seconds=max(0, int(cred.expires_at - time.time())),
+        renew_until=_iso(renew_until) if renew_until is not None else None,
+    )
+
+
+@router.post(
+    "/krb5/keytab",
+    response_model=KrbTicketMetadata,
+    status_code=status.HTTP_201_CREATED,
+    summary="Validate and store a user-provided Kerberos keytab",
+)
+async def link_krb5_keytab(
+    body: KrbKeytabLinkRequest,
+    request: Request,
+    principal: Annotated[Principal, Depends(keycloak_dependency)],
+) -> KrbTicketMetadata:
+    target = _resolve_krb5_target(request, body.target)
+    provider = await _krb5_provider(request, target)
+    try:
+        cred = await provider.link_keytab(
+            principal,
+            target,
+            username=body.username,
+            keytab_b64=body.keytab_b64.get_secret_value(),
+            lifetime=body.lifetime,
+            renewable_lifetime=body.renewable_lifetime,
         )
     except Krb5TokenBadCredentialError as exc:
         raise HTTPException(

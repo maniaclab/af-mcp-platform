@@ -45,7 +45,7 @@ def make_principal(subject: str = "user1") -> Principal:
 
 
 class _FakeClient:
-    """Recording fake for ``Krb5TokenServiceClient``'s mint/renew/mint_keytab.
+    """Recording fake for ``Krb5TokenServiceClient``'s mint/renew.
 
     Each method's outcome is scripted independently via the constructor
     (a success value, or an exception to raise) and every call's kwargs are
@@ -59,18 +59,13 @@ class _FakeClient:
         error: Exception | None = None,
         renew_ticket: MintedTicket | None = None,
         renew_error: Exception | None = None,
-        keytab_result: tuple[str, str] | None = None,
-        keytab_error: Exception | None = None,
     ):
         self._ticket = ticket
         self._error = error
         self._renew_ticket = renew_ticket
         self._renew_error = renew_error
-        self._keytab_result = keytab_result
-        self._keytab_error = keytab_error
         self.calls: list[dict] = []
         self.renew_calls: list[dict] = []
-        self.keytab_calls: list[dict] = []
 
     async def mint(
         self,
@@ -107,19 +102,6 @@ class _FakeClient:
             raise self._renew_error
         assert self._renew_ticket is not None
         return self._renew_ticket
-
-    async def mint_keytab(self, *, subject, username, password):
-        self.keytab_calls.append(
-            {
-                "subject": subject,
-                "username": username,
-                "password": password.get_secret_value(),
-            }
-        )
-        if self._keytab_error is not None:
-            raise self._keytab_error
-        assert self._keytab_result is not None
-        return self._keytab_result
 
 
 class FakeKrb5VaultStore:
@@ -330,16 +312,17 @@ async def test_revoke_clears_vault_ticket_but_preserves_link():
     """revoke() drops the Vault ticket half too, but a stored keytab link
     survives -- burning a ticket must not unlink the identity (mirrors
     X509Provider.revoke()'s revoke/unlink distinction)."""
-    client = _FakeClient(ticket=_ticket(), keytab_result=("a2V5dGFi", "alice@CERN.CH"))
-    provider, cache, vault_store = provider_factory(client)
+    vault_store = FakeKrb5VaultStore()
     principal = make_principal()
-    await provider.issue(
-        principal,
-        "krb5-target",
-        passphrase=SecretBytes(b"hunter2"),
-        username="alice",
-        remember=True,
+    await vault_store.store_link(
+        principal.subject, username="alice", keytab_b64=SecretStr("a2V5dGFi")
     )
+    client = _FakeClient(ticket=_ticket())
+    provider, cache, vault_store = provider_factory(client, vault_store=vault_store)
+
+    # No fresh username/passphrase supplied -- tier 4 reminits from the
+    # already-stored link.
+    await provider.issue(principal, "krb5-target")
     assert await vault_store.get_link(principal.subject) is not None
     assert await vault_store.get_ticket(principal.subject, min_remaining=0) is not None
 
@@ -420,11 +403,10 @@ async def test_issue_concurrent_password_mints_each_mint_independently():
     reach client.mint() independently -- an explicit password mint is NOT
     single-flighted through the cache the way tiers 1-4's cache/Vault reads
     are. Mirrors X509Provider's own accepted trade-off for its equivalent
-    explicit-passphrase/consent path (see x509.py's ``_link_and_mint`` and
-    the comment on ``_issue_via_service``'s link/unlock branch): deduping an
-    explicit user action with a consent flag (``remember``) against a
-    concurrent, possibly-different request would silently let one caller's
-    consent decision win over another's."""
+    explicit-passphrase path (see x509.py's ``_link_and_mint`` and the
+    comment on ``_issue_via_service``'s link/unlock branch): deduping an
+    explicit password mint against a concurrent, possibly-different request
+    would silently let one caller's password win over another's."""
 
     class _SlowClient(_FakeClient):
         async def mint(self, **kwargs):
@@ -695,62 +677,15 @@ async def test_issue_tier4_bad_keytab_unlinks_and_raises_needs_unlock():
 
 
 # ------------------------------------------------------------------
-# Tier 5: fresh password mint, with optional keytab bootstrap ("remember")
+# Tier 5: fresh password mint
 # ------------------------------------------------------------------
 
 
-async def test_issue_tier5_remember_true_also_mints_and_stores_keytab():
-    """With remember=True, a successful password mint ALSO bootstraps and
-    stores a keytab, reusing the SAME already-captured password (no second
-    prompt)."""
-    client = _FakeClient(ticket=_ticket(), keytab_result=("a2V5dGFi", "alice@CERN.CH"))
-    provider, _, vault_store = provider_factory(client)
-    principal = make_principal()
-
-    await provider.issue(
-        principal,
-        "krb5-target",
-        passphrase=SecretBytes(b"hunter2"),
-        username="alice",
-        remember=True,
-    )
-
-    assert client.keytab_calls == [
-        {"subject": principal.subject, "username": "alice", "password": "hunter2"}
-    ]
-    link = await vault_store.get_link(principal.subject)
-    assert link is not None
-    assert link.username == "alice"
-    assert link.keytab_b64 is not None
-    assert link.keytab_b64.get_secret_value() == "a2V5dGFi"
-
-
-async def test_issue_tier5_remember_true_keytab_bootstrap_failure_still_returns_ticket():
-    """A failed keytab bootstrap (any krb5-token-service error -- e.g. the
-    shared rate limiter tripping right after the password mint it follows)
-    must NOT discard an already-successful ticket mint: remembering is
-    best-effort, not a reason to fail a call that already succeeded at its
-    primary job. No partial/corrupt link record is left behind either."""
-    client = _FakeClient(ticket=_ticket(), keytab_error=Krb5TokenMintError("boom"))
-    provider, _, vault_store = provider_factory(client)
-    principal = make_principal()
-
-    cred = await provider.issue(
-        principal,
-        "krb5-target",
-        passphrase=SecretBytes(b"hunter2"),
-        username="alice",
-        remember=True,
-    )
-
-    assert cred.payload["ccache_b64"] == "ZmFrZQ=="
-    assert await vault_store.get_link(principal.subject) is None
-
-
-async def test_issue_tier5_remember_false_default_does_not_store_keytab():
-    """Without remember=True (the default), no keytab is bootstrapped and
-    no link half is stored -- but the ticket half IS always stored,
-    regardless of remember, since tier-3 renewal must work for every user."""
+async def test_issue_tier5_password_mint_does_not_store_keytab_link():
+    """A tier-5 password mint never bootstraps or stores a keytab link on
+    its own -- but the ticket half IS always stored regardless, since
+    tier-3 renewal must work for every user. Linking a keytab is now a
+    separate, explicit action (``link_keytab()``, tested below)."""
     client = _FakeClient(ticket=_ticket())
     provider, _, vault_store = provider_factory(client)
     principal = make_principal()
@@ -759,9 +694,60 @@ async def test_issue_tier5_remember_false_default_does_not_store_keytab():
         principal, "krb5-target", passphrase=SecretBytes(b"hunter2"), username="alice"
     )
 
-    assert client.keytab_calls == []
     assert await vault_store.get_link(principal.subject) is None
     stored_ticket = await vault_store.get_ticket(principal.subject, min_remaining=0)
     assert stored_ticket is not None
     assert stored_ticket.ccache_b64 is not None
     assert stored_ticket.ccache_b64.get_secret_value() == "ZmFrZQ=="
+
+
+# ------------------------------------------------------------------
+# link_keytab(): validate a user-provided keytab, then store it
+# ------------------------------------------------------------------
+
+
+async def test_link_keytab_validates_and_stores_link():
+    """link_keytab() mints a validating ticket with the uploaded keytab,
+    then stores it as the link half -- reusing the exact same
+    Krb5VaultStore.store_link() schema tier 4 already reads from."""
+    client = _FakeClient(ticket=_ticket())
+    provider, cache, vault_store = provider_factory(client)
+    principal = make_principal()
+
+    cred = await provider.link_keytab(
+        principal, "krb5-target", username="alice", keytab_b64="a2V5dGFi"
+    )
+
+    assert client.calls[0]["username"] == "alice"
+    assert client.calls[0]["keytab_b64"] == "a2V5dGFi"
+    assert client.calls[0]["password"] is None
+
+    link = await vault_store.get_link(principal.subject)
+    assert link is not None
+    assert link.username == "alice"
+    assert link.keytab_b64 is not None
+    assert link.keytab_b64.get_secret_value() == "a2V5dGFi"
+
+    # The ticket half minted during validation is persisted/cached too, just
+    # like every other successful mint (tier 3/4/5).
+    assert cred.payload["ccache_b64"] == "ZmFrZQ=="
+    stored_ticket = await vault_store.get_ticket(principal.subject, min_remaining=0)
+    assert stored_ticket is not None
+    cached = await cache.get(principal.subject, "krb5-target", min_remaining=0)
+    assert cached is not None
+
+
+async def test_link_keytab_propagates_bad_credential_error():
+    """A keytab that doesn't work for the given username raises
+    Krb5TokenBadCredentialError, and nothing is stored -- link_keytab()
+    validates BEFORE storing, never stores then validates."""
+    client = _FakeClient(error=Krb5TokenBadCredentialError())
+    provider, _, vault_store = provider_factory(client)
+    principal = make_principal()
+
+    with pytest.raises(Krb5TokenBadCredentialError):
+        await provider.link_keytab(
+            principal, "krb5-target", username="alice", keytab_b64="a2V5dGFi"
+        )
+
+    assert await vault_store.get_link(principal.subject) is None

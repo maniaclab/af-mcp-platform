@@ -1,13 +1,12 @@
 /**
  * Component tests for Krb5IdentityCard.vue — the Identities page's card for
  * a krb5-token entry (link_mechanism: "credential"). Unlike
- * X509IdentityCard.vue, this card has no accordions: it mints a Kerberos
- * ticket via POST /v1/krb5/ticket and shows the result for the current page
- * visit only. It does now carry a "remember" custody checkbox (opt-in,
- * unlike x509's opt-out default — storing a keytab is a bigger ask than
- * storing a passphrase) and a "Forget this ticket" affordance once linked,
- * which calls the shared unlinkIdentity() (see IdentityLink.vue's use of it)
- * to delete the whole Vault record.
+ * X509IdentityCard.vue, this card has no accordions: it offers two separate
+ * actions — a one-shot Kerberos ticket mint via POST /v1/krb5/ticket, and a
+ * durable keytab upload via POST /v1/krb5/keytab — and shows the mint
+ * result for the current page visit only. It carries a "Forget this ticket"
+ * affordance once linked, which calls the shared unlinkIdentity() (see
+ * IdentityLink.vue's use of it) to delete the whole Vault record.
  *
  * There's no pre-existing submit-flow test to match a bar against (x509's
  * own test file only covers its two accordions), so this file covers the
@@ -25,6 +24,7 @@ import type { KrbTicketMetadata } from '../../lib/api';
 // errors constructed in this file.
 vi.mock('../../lib/api', () => ({
   requestKrb5Ticket: vi.fn(),
+  linkKrb5Keytab: vi.fn(),
   unlinkIdentity: vi.fn(),
   SessionExpiredError: class SessionExpiredError extends Error {},
   APIError: class APIError extends Error {
@@ -39,7 +39,7 @@ vi.mock('../../lib/api', () => ({
   },
 }));
 
-import { APIError, requestKrb5Ticket, unlinkIdentity } from '../../lib/api';
+import { APIError, linkKrb5Keytab, requestKrb5Ticket, unlinkIdentity } from '../../lib/api';
 import Krb5IdentityCard from '../Krb5IdentityCard.vue';
 
 /** A promise whose resolution the test controls — stands in for a slow HTTP response. */
@@ -86,6 +86,36 @@ function submit(wrapper: VueWrapper) {
   return wrapper.find('form').trigger('submit');
 }
 
+function openKeytabForm(wrapper: VueWrapper) {
+  return wrapper.find('button.kc__btn--keytab').trigger('click');
+}
+
+/** A small fake keytab file — a real one is a few KB of binary, this is enough to exercise FileReader. */
+function makeKeytabFile(bytes: number[] = [1, 2, 3, 4]): File {
+  return new File([new Uint8Array(bytes)], 'jdoe.keytab');
+}
+
+async function setKeytabFile(wrapper: VueWrapper, file: File) {
+  const input = wrapper.find('input[type="file"]');
+  Object.defineProperty(input.element, 'files', { value: [file], configurable: true });
+  await input.trigger('change');
+}
+
+async function fillKeytabForm(wrapper: VueWrapper, username: string, file: File) {
+  await wrapper.find('input[type="text"]').setValue(username);
+  await setKeytabFile(wrapper, file);
+}
+
+/**
+ * jsdom's FileReader dispatches its `load` event via a real timer, not a
+ * microtask — flushPromises()'s single setImmediate tick fires before it,
+ * so a submit that goes through fileToBase64() needs a genuine elapsed
+ * macrotask (a real setTimeout) for the read to actually complete.
+ */
+function waitForFileRead() {
+  return new Promise((resolve) => setTimeout(resolve, 10));
+}
+
 beforeEach(() => {
   vi.restoreAllMocks();
 });
@@ -118,15 +148,20 @@ describe('badge and action button', () => {
 });
 
 describe('form open/close', () => {
-  it('opens the form with username/password inputs and a remember checkbox, unchecked by default', async () => {
+  it('opens the form with username/password inputs', async () => {
     const wrapper = mountCard();
     await openForm(wrapper);
 
     expect(wrapper.find('input[type="text"]').exists()).toBe(true);
     expect(wrapper.find('input[type="password"]').exists()).toBe(true);
-    const checkbox = wrapper.find('input[type="checkbox"]');
-    expect(checkbox.exists()).toBe(true);
-    expect((checkbox.element as HTMLInputElement).checked).toBe(false);
+  });
+
+  it('never renders a "remember this ticket" checkbox (removed — see the keytab-upload flow instead)', async () => {
+    const wrapper = mountCard();
+    expect(wrapper.find('input[type="checkbox"]').exists()).toBe(false);
+
+    await openForm(wrapper);
+    expect(wrapper.find('input[type="checkbox"]').exists()).toBe(false);
   });
 
   it('cancel closes the form and clears both fields without submitting', async () => {
@@ -176,7 +211,7 @@ describe('submit disabled state', () => {
 });
 
 describe('successful submission', () => {
-  it('calls requestKrb5Ticket with username/password and remember: false by default, closes the form, emits linked, and shows the result', async () => {
+  it('calls requestKrb5Ticket with username/password, closes the form, emits linked, and shows the result', async () => {
     vi.mocked(requestKrb5Ticket).mockResolvedValueOnce(TICKET);
     const wrapper = mountCard();
     await openForm(wrapper);
@@ -191,33 +226,12 @@ describe('successful submission', () => {
       undefined,
       undefined,
       undefined,
-      false,
     );
     expect(wrapper.find('form').exists()).toBe(false);
     expect(wrapper.emitted('linked')).toEqual([[TICKET]]);
 
     expect(wrapper.text()).toContain('jdoe@CERN.CH');
     expect(wrapper.text()).toContain('CERN.CH');
-  });
-
-  it('calls requestKrb5Ticket with remember: true when the checkbox is checked', async () => {
-    vi.mocked(requestKrb5Ticket).mockResolvedValueOnce(TICKET);
-    const wrapper = mountCard();
-    await openForm(wrapper);
-    await fillForm(wrapper, 'jdoe', 'hunter2');
-    await wrapper.find('input[type="checkbox"]').setValue(true);
-
-    await submit(wrapper);
-    await flushPromises();
-
-    expect(requestKrb5Ticket).toHaveBeenCalledWith(
-      'jdoe',
-      'hunter2',
-      undefined,
-      undefined,
-      undefined,
-      true,
-    );
   });
 
   it('clears the password from component state before the request resolves', async () => {
@@ -371,5 +385,161 @@ describe('forget affordance', () => {
     await openForm(wrapper);
 
     expect(wrapper.find('[role="alert"]').exists()).toBe(false);
+  });
+});
+
+describe('keytab upload', () => {
+  it('opens the keytab form with username/file inputs, separate from the password form', async () => {
+    const wrapper = mountCard();
+    await openKeytabForm(wrapper);
+
+    expect(wrapper.find('input[type="text"]').exists()).toBe(true);
+    expect(wrapper.find('input[type="file"]').exists()).toBe(true);
+    // Separate action: the password form's password input must not appear.
+    expect(wrapper.find('input[type="password"]').exists()).toBe(false);
+  });
+
+  it('opening the keytab form closes an already-open password form, and vice versa', async () => {
+    const wrapper = mountCard();
+
+    await openForm(wrapper);
+    expect(wrapper.find('input[type="password"]').exists()).toBe(true);
+
+    await openKeytabForm(wrapper);
+    expect(wrapper.find('input[type="password"]').exists()).toBe(false);
+    expect(wrapper.find('input[type="file"]').exists()).toBe(true);
+
+    await openForm(wrapper);
+    expect(wrapper.find('input[type="file"]').exists()).toBe(false);
+    expect(wrapper.find('input[type="password"]').exists()).toBe(true);
+  });
+
+  it('reproduces the exact lxplus keytab-generation sequence in the instructions', async () => {
+    const wrapper = mountCard();
+    await openKeytabForm(wrapper);
+
+    const text = wrapper.text().replace(/\s+/g, ' ');
+    expect(text).toContain('ssh <username>@lxplus.cern.ch');
+    expect(text).toContain('cern-get-keytab --keytab <username>.keytab --user');
+    expect(text).toContain('kinit -kt <username>.keytab <username>@CERN.CH');
+    expect(text).toContain('echo $?');
+  });
+
+  it('cancel closes the keytab form and clears both fields without submitting', async () => {
+    const wrapper = mountCard();
+    await openKeytabForm(wrapper);
+    await fillKeytabForm(wrapper, 'jdoe', makeKeytabFile());
+
+    await wrapper.find('form button.kc__btn--cancel').trigger('click');
+
+    expect(wrapper.find('form').exists()).toBe(false);
+    expect(linkKrb5Keytab).not.toHaveBeenCalled();
+
+    await openKeytabForm(wrapper);
+    expect((wrapper.find('input[type="text"]').element as HTMLInputElement).value).toBe('');
+  });
+
+  it('submit is disabled until both a username and a file are provided', async () => {
+    const wrapper = mountCard();
+    await openKeytabForm(wrapper);
+    const submitBtn = wrapper.find('form button.kc__btn--submit');
+    expect(submitBtn.attributes('disabled')).toBeDefined();
+
+    await wrapper.find('input[type="text"]').setValue('jdoe');
+    expect(submitBtn.attributes('disabled')).toBeDefined(); // no file yet
+
+    await setKeytabFile(wrapper, makeKeytabFile());
+    expect(submitBtn.attributes('disabled')).toBeUndefined();
+  });
+
+  it('reads the file, base64-encodes it, and calls linkKrb5Keytab with username + keytab_b64, closing the form and emitting linked', async () => {
+    vi.mocked(linkKrb5Keytab).mockResolvedValueOnce(TICKET);
+    const wrapper = mountCard();
+    await openKeytabForm(wrapper);
+    await fillKeytabForm(wrapper, 'jdoe', makeKeytabFile([1, 2, 3, 4]));
+
+    await submit(wrapper);
+    await waitForFileRead();
+    await flushPromises();
+
+    expect(linkKrb5Keytab).toHaveBeenCalledTimes(1);
+    const [username, keytabB64] = vi.mocked(linkKrb5Keytab).mock.calls[0];
+    expect(username).toBe('jdoe');
+    expect(keytabB64).toBe(Buffer.from([1, 2, 3, 4]).toString('base64'));
+
+    expect(wrapper.find('form').exists()).toBe(false);
+    expect(wrapper.emitted('linked')).toEqual([[TICKET]]);
+    expect(wrapper.text()).toContain('jdoe@CERN.CH');
+  });
+
+  it.each([
+    [400, /username|password|keytab/i],
+    [403, /revoked|expired/i],
+    [422, /invalid/i],
+    [429, /too many/i],
+    [502, /unavailable/i],
+  ])(
+    'surfaces the krb5LinkErrorMessage text for a %i response and does not close the form or emit',
+    async (status, expected) => {
+      vi.mocked(linkKrb5Keytab).mockRejectedValueOnce(new APIError(status, 'Error', 'not-json'));
+      const wrapper = mountCard();
+      await openKeytabForm(wrapper);
+      await fillKeytabForm(wrapper, 'jdoe', makeKeytabFile());
+
+      await submit(wrapper);
+      await waitForFileRead();
+      await flushPromises();
+
+      const alert = wrapper.find('[role="alert"]');
+      expect(alert.exists()).toBe(true);
+      expect(alert.text()).toMatch(expected);
+      expect(wrapper.find('form').exists()).toBe(true);
+      expect(wrapper.emitted('linked')).toBeUndefined();
+    },
+  );
+
+  it('surfaces a read error and never calls linkKrb5Keytab when the FileReader fails', async () => {
+    // Earlier tests in this describe block also call linkKrb5Keytab; clear
+    // its call history so this test's own not.toHaveBeenCalled() assertion
+    // reflects only what happens below (see the "forget affordance" block's
+    // identical comment on unlinkIdentity for why vi.restoreAllMocks() alone
+    // doesn't do this).
+    vi.mocked(linkKrb5Keytab).mockClear();
+
+    // Force the real FileReader instance down its onerror path instead of
+    // onload -- fileToBase64() never gets a chance to resolve, so the
+    // network call it would otherwise make must not happen either. Mirrors
+    // jsdom's real error condition without needing to manufacture an
+    // actually-unreadable File.
+    const readAsDataURLSpy = vi
+      .spyOn(FileReader.prototype, 'readAsDataURL')
+      .mockImplementation(function (this: FileReader) {
+        this.onerror?.(new ProgressEvent('error') as unknown as ProgressEvent<FileReader>);
+      });
+
+    const wrapper = mountCard();
+    await openKeytabForm(wrapper);
+    await fillKeytabForm(wrapper, 'jdoe', makeKeytabFile());
+
+    await submit(wrapper);
+    await waitForFileRead();
+    await flushPromises();
+
+    expect(linkKrb5Keytab).not.toHaveBeenCalled();
+
+    const alert = wrapper.find('[role="alert"]');
+    expect(alert.exists()).toBe(true);
+    // reader.error is unset in this synthetic failure, so fileToBase64()
+    // falls back to its own message rather than surfacing a null error.
+    expect(alert.text()).toBe('Failed to read the keytab file.');
+
+    // keytabBusy must be false again -- the submit button is re-enabled --
+    // and the form stays open rather than silently closing the way success
+    // does.
+    expect(wrapper.find('form button.kc__btn--submit').attributes('disabled')).toBeUndefined();
+    expect(wrapper.find('form').exists()).toBe(true);
+    expect(wrapper.emitted('linked')).toBeUndefined();
+
+    readAsDataURLSpy.mockRestore();
   });
 });

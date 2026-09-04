@@ -1,12 +1,12 @@
-"""Kerberos tickets via krb5-token-service (issue #274, remember/keytab follow-up).
+"""Kerberos tickets via krb5-token-service (issue #274; keytab auto-bootstrap replaced by user-provided upload).
 
 Unlike ``CondorTokenProvider`` (broker-authoritative, no external secret),
 krb5-token-service needs a live CERN username+password to mint a ticket from
 scratch -- there is no standing linkage the broker can redeem on its own
-UNLESS the user has opted in to "remember" (below). ``issue()`` therefore
-works through a five-tier fallback, mirroring ``X509Provider``'s
-Vault-as-source-of-truth design, before ever raising ``NeedsUnlock``
-(pointing at ``POST /v1/krb5/ticket``):
+unless a keytab has already been linked (see ``link_keytab()`` below).
+``issue()`` therefore works through a five-tier fallback, mirroring
+``X509Provider``'s Vault-as-source-of-truth design, before ever raising
+``NeedsUnlock`` (pointing at ``POST /v1/krb5/ticket``):
 
 1. **Cache** -- an unexpired ticket already sits in the in-process
    ``CredentialCache``.
@@ -19,24 +19,45 @@ Vault-as-source-of-truth design, before ever raising ``NeedsUnlock``
    falls through to the next tier; any other failure is a genuine infra
    problem and propagates uncaught, rather than being silently downgraded to
    demanding a password from the user.
-4. **Keytab remint** -- a keytab was previously bootstrapped and stored
-   (only when the user opted in to "remember" on an earlier mint):
+4. **Keytab remint** -- a keytab was previously linked via ``link_keytab()``:
    ``client.mint(keytab_b64=...)`` mints a fresh ticket with no live
    password. A rejected keytab (``Krb5TokenBadCredentialError`` -- e.g. the
-   CERN password was rotated) proactively unlinks the identity
+   CERN password backing it was rotated) proactively unlinks the identity
    (``vault_store.delete``, mirroring ``X509Provider.renew_from_stored_
    link``'s auto-unlink-on-bad-stored-passphrase behavior) and falls through
    to asking for a fresh password; any other failure propagates uncaught.
 5. **Interactive password** -- nothing above worked: raise ``NeedsUnlock``
    unless a fresh username/passphrase was supplied, in which case mint via
-   the live CERN password. ``remember=True`` additionally bootstraps and
-   stores a keytab from that SAME password (one prompt, not two).
+   the live CERN password.
 
 The ticket half (last-minted ccache + its own renewal deadline) is persisted
-to Vault on EVERY successful mint or renewal, regardless of "remember" --
-that is what makes tier 3 (renew) possible for every user, not just ones who
-opted into durable keytab custody. Only the keytab (link) half is
-custody-gated behind "remember".
+to Vault on EVERY successful mint or renewal -- that is what makes tier 3
+(renew) possible for every user, not just ones with a linked keytab. Only
+the keytab (link) half requires a separate, explicit action.
+
+The broker cannot mint that keytab itself. The obvious approach --
+bootstrapping one from the same password a tier-5 caller just typed, via
+krb5-token-service's ``cern-get-keytab``-backed ``mint_keytab()`` -- is
+unreachable from this facility's network: ``cern-get-keytab``'s
+``msktutil`` backend needs CERN-internal LDAP/AD reachability (to
+``cerndc.cern.ch``, on ports other than the KDC's 88) plus an HTTPS call to
+``lxkerbwin.cern.ch``, and neither host is reachable from here (confirmed by
+testing: the call hangs and times out). An SSH-tunnel-through-lxplus
+workaround was investigated and ruled out: lxplus enforces mandatory
+multi-factor SSH (Kerberos plus a registered SSH key plus an interactive
+2FA prompt), and that interactive step cannot be satisfied by an unattended
+service. Tier 4 (remint from an already-linked keytab) is UNAFFECTED by any
+of this: ``kinit -kt`` only needs the CERN KDC on port 88, already open and
+already used by every other tier.
+
+Instead, ``link_keytab()`` (below, parallel to ``revoke()``/``unlink()``,
+not part of ``issue()``'s tier fallback) accepts a keytab the user generated
+themselves -- e.g. on lxplus, which has no such reachability problem, since
+it runs directly on CERN's network -- validates it by minting a ticket with
+it (the exact same ``Krb5TokenServiceClient.mint(..., keytab_b64=...)`` call
+tier 4 already uses), and on success stores it via the exact same
+``Krb5VaultStore.store_link()`` schema tier 4 already reads from. Only how
+the link gets INTO Vault has changed -- upload instead of auto-bootstrap.
 """
 
 from __future__ import annotations
@@ -79,7 +100,7 @@ log = structlog.get_logger(__name__)
 # The three tiers that persist a freshly minted/renewed ticket -- kept as a
 # Literal (rather than a bare str) so a typo or an unlisted future value is
 # caught by mypy at the _persist_and_cache() call sites, not at runtime.
-_MintTier = Literal["renew", "keytab_remint", "password_mint"]
+_MintTier = Literal["renew", "keytab_remint", "password_mint", "keytab_link"]
 
 
 class KrbTokenProvider(CredentialProvider):
@@ -141,14 +162,8 @@ class KrbTokenProvider(CredentialProvider):
         username: str | None = None,
         lifetime: str | None = None,
         renewable_lifetime: str | None = None,
-        remember: bool = False,
     ) -> IssuedCredential:
         """Return a ticket via the first tier that can produce one -- see the module docstring for the full fallback order.
-
-        ``remember`` only matters on the tier-5 fresh-password path: when
-        True, the same already-captured password additionally bootstraps and
-        stores a keytab (one prompt, not two) so future calls can skip
-        straight to tier 4 without the user re-entering anything.
 
         Raises:
             NeedsUnlock: nothing usable is cached or stored, and no fresh
@@ -285,54 +300,21 @@ class KrbTokenProvider(CredentialProvider):
                 lifetime=lifetime,
                 renewable_lifetime=renewable_lifetime,
             )
-            cred = await self._persist_and_cache(
+            return await self._persist_and_cache(
                 principal, target, ticket, tier="password_mint"
             )
-            if remember:
-                # Reuses the SAME already-captured password -- never a
-                # second prompt, never persisted anywhere but this one call.
-                # Best-effort: the ticket above already minted successfully,
-                # so ANY failure here (e.g. mint_keytab sharing its rate
-                # limiter with the password-mint call that just happened) must
-                # not discard that success -- remembering is a bonus, not a
-                # reason to fail a call that already did its primary job.
-                try:
-                    keytab_b64, keytab_principal = await self._client.mint_keytab(
-                        subject=principal.subject,
-                        username=username,
-                        password=password,
-                    )
-                    await self._vault_store.store_link(
-                        principal.subject,
-                        username=username,
-                        keytab_b64=SecretStr(keytab_b64),
-                    )
-                except Exception as exc:  # noqa: BLE001  # best-effort keytab bootstrap
-                    self._log.warning(
-                        "krb5_token.issue.keytab_remember_failed",
-                        subject=principal.subject,
-                        target=target,
-                        error=str(exc),
-                    )
-                else:
-                    self._log.info(
-                        "krb5_token.issue.keytab_remembered",
-                        subject=principal.subject,
-                        principal=keytab_principal,
-                    )
-            return cred
 
         # Deliberately NOT single-flighted through get_or_mint (unlike every
         # other provider's cache-miss mint, issue #94's pattern) -- this is
-        # an explicit password mint carrying a consent flag (remember), and
-        # get_or_mint's in-flight re-check only looks at the in-process
-        # cache, not at remember: a concurrent caller with a DIFFERENT
-        # remember value would silently get back the first caller's
-        # consent decision. Mirrors X509Provider._issue_via_service's own
-        # explicit-passphrase/consent path (see its comment on why THAT
-        # call is not deduped through get_or_mint either) -- tiers 1-4
-        # above (cache, Vault repopulation, renew, keytab remint) carry no
-        # consent flag and remain unwrapped/direct as they always were.
+        # an explicit password mint, and get_or_mint's in-flight re-check
+        # only looks at the in-process cache: a concurrent caller supplying
+        # a DIFFERENT password would silently get back the first caller's
+        # mint result instead of its own. Mirrors
+        # X509Provider._issue_via_service's own explicit-passphrase path
+        # (see its comment on why THAT call is not deduped through
+        # get_or_mint either) -- tiers 1-4 above (cache, Vault repopulation,
+        # renew, keytab remint) carry no live credential and remain
+        # unwrapped/direct as they always were.
         return await _do_mint()
 
     async def revoke(self, principal: Principal, target: str) -> None:
@@ -360,6 +342,48 @@ class KrbTokenProvider(CredentialProvider):
         /v1/identities/link/{provider}``'s krb5-token branch.
         """
         await self._vault_store.delete(principal.subject)
+
+    async def link_keytab(
+        self,
+        principal: Principal,
+        target: str,
+        *,
+        username: str,
+        keytab_b64: str,
+        lifetime: str | None = None,
+        renewable_lifetime: str | None = None,
+    ) -> IssuedCredential:
+        """Validate a user-supplied keytab by minting a ticket with it, then store it as this principal's link.
+
+        The broker cannot generate a keytab itself (see the module docstring
+        for why ``cern-get-keytab`` is unreachable from this facility's
+        network) -- the user generates one themselves (e.g. on lxplus) and
+        uploads it here. Validation IS the mint: a bad keytab surfaces as
+        the exact same ``Krb5TokenBadCredentialError`` tier 4's remint
+        already handles, from the exact same underlying ``kinit -kt`` check
+        (krb5-token-service's own mint endpoint, keytab_b64 branch) -- there
+        is no separate "just check, don't use" call.
+
+        Nothing is stored if validation fails: this mints (and thus proves
+        the keytab works) BEFORE calling store_link, not after -- a caller
+        must never end up with a bad keytab persisted to Vault.
+        """
+        keytab_secret = SecretStr(keytab_b64)
+        ticket = await self._client.mint(
+            subject=principal.subject,
+            username=username,
+            keytab_b64=keytab_secret,
+            lifetime=lifetime,
+            renewable_lifetime=renewable_lifetime,
+        )
+        await self._vault_store.store_link(
+            principal.subject,
+            username=username,
+            keytab_b64=keytab_secret,
+        )
+        return await self._persist_and_cache(
+            principal, target, ticket, tier="keytab_link"
+        )
 
     # ------------------------------------------------------------------
     # Internal helpers
