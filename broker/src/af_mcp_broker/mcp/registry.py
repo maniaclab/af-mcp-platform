@@ -117,7 +117,7 @@ class ServiceSpec:
     #     for resolution and docs/adding-a-service.md for the operator-facing
     #     writeup.
     required_permission: str | dict[str, str] | None = None
-    auth_type: str = "bearer"  # "bearer" | "x509" | "none"
+    auth_type: str = "bearer"  # "bearer" | "x509" | "krb5" | "none"
     # The exact ``aud`` an AF-native backend validates the AF Broker Identity
     # Token against (issue #257). Split from ``name`` so a service can be
     # renamed -- its registry key, catalog identity, audit/metrics label -- WITHOUT

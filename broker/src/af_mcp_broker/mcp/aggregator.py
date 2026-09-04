@@ -522,6 +522,12 @@ def _make_client_factory(
         as "bearer" below (see ``_not_linked_error``) before any token is
         minted -- ``target_to_alias`` supplies the alias used to build that
         error's portal deep link.
+      - "krb5": identical "mint and inject, let the backend redeem
+        separately" shape as "x509" above, just against
+        POST /v1/credentials/krb5/redeem instead -- no krb5 ccache ever
+        transits the aggregator either. No ``services.yaml`` entry declares
+        this ``auth_type`` yet (plumbing only, per the krb5-credentials-
+        redeem plan).
       - "bearer" (default): resolves the caller's Principal from the
         current request context, mints a credential in-process the same
         way ``POST /v1/credential`` does (api/credentials.py's
@@ -530,7 +536,7 @@ def _make_client_factory(
         awaiting the credential provider; ``ProxyTool._get_client()``
         already awaits the factory's return value when it is awaitable.
 
-    The "x509" and "bearer" branches both key off ``authorized_call_target``
+    The "x509", "krb5", and "bearer" branches all key off ``authorized_call_target``
     (request-scoped state set by ``AuthorizationMiddleware`` right before it
     calls ``call_next``) to tell an authorized tools/call targeting this
     service apart from any other invocation reaching this factory --
@@ -539,11 +545,12 @@ def _make_client_factory(
     calls on a stale-cache lookup) hits the latter, and the two are otherwise
     indistinguishable from inside this factory.
 
-    For "x509", the answer is still to do nothing extra: raising the
-    not-yet-supported error during a listing would be both wasteful (every
-    session's first list would eat it) and wrong (a listing shouldn't itself
-    hard-fail), so absent the authorized-call signal the factory just
-    connects without a credential, same as a "none" service -- unchanged.
+    For "x509" (and "krb5", identically), the answer is still to do nothing
+    extra: raising the not-yet-supported error during a listing would be
+    both wasteful (every session's first list would eat it) and wrong (a
+    listing shouldn't itself hard-fail), so absent the authorized-call
+    signal the factory just connects without a credential, same as a "none"
+    service -- unchanged.
 
     For "bearer", that same "wasteful and wrong" framing used to justify
     skipping credential resolution entirely during a listing -- until issue
@@ -661,6 +668,78 @@ def _make_client_factory(
             )
 
         return _x509_factory
+
+    if spec.auth_type == "krb5":
+
+        async def _krb5_factory() -> Client:
+            ctx = get_context()
+            if await ctx.get_state("authorized_call_target") != spec.name:
+                # tools/list (or a stale-cache refresh): best-effort identity
+                # header, mirroring the bearer branch -- but minting is a
+                # local signature, so there is no network to fail and no
+                # skip_reason machinery to thread through.
+                principal = await ctx.get_state("principal")
+                if principal is None or broker_token_issuer is None:
+                    return _build_client(spec, transport_cls)
+                if not _might_be_entitled(principal, spec, policy):
+                    return _build_client(spec, transport_cls)
+                token, _ = broker_token_issuer.mint(
+                    principal.subject, spec.effective_audience
+                )
+                await ctx.set_state(
+                    f"__list_credential_status__:{spec.name}",
+                    (True, None),
+                    serializable=False,
+                )
+                return _build_client(
+                    spec, transport_cls, headers={"Authorization": f"Bearer {token}"}
+                )
+
+            principal = await ctx.get_state("principal")
+            if principal is None:
+                raise ToolError(
+                    "No authenticated principal available for this tool call"
+                )
+            if broker_token_issuer is None:
+                raise ToolError(
+                    f"Service '{spec.name}' is a krb5 service, which needs the "
+                    "broker to sign AF Broker Identity Tokens, but no signing key "
+                    "is configured (chart: broker.identityToken."
+                    "existingSigningKeySecret)."
+                )
+
+            try:
+                provider = await credential_registry.resolve(spec.name)
+            except KeyError as exc:
+                raise ToolError(str(exc)) from exc
+
+            # Same linkage gate _bearer_factory applies BEFORE minting --
+            # without it an unlinked caller got a broker identity token
+            # unconditionally, and the failure only ever surfaced as
+            # whatever generic error the service's own redeem call happened
+            # to produce (e.g. a bare 404 from POST /v1/credentials/krb5/
+            # redeem), never a "go link your identity" message. Now also
+            # tries a real elicitation before giving up -- see
+            # _require_linked's docstring.
+            await _require_linked(
+                provider,
+                principal,
+                spec,
+                settings,
+                target_to_alias,
+                identity_provider_configs,
+            )
+
+            # Identity assertion only (sub/aud): the service redeems the
+            # ticket with this token; it has no use for POSIX claims.
+            token, _ = broker_token_issuer.mint(
+                principal.subject, spec.effective_audience
+            )
+            return _build_client(
+                spec, transport_cls, headers={"Authorization": f"Bearer {token}"}
+            )
+
+        return _krb5_factory
 
     async def _bearer_factory() -> Client:
         ctx = get_context()
