@@ -224,14 +224,13 @@ async def resolve_list_time_credential(
     a tools/list through /mcp would have injected:
 
     - "none": no per-user credential concept at all -> ``({}, None)``.
-    - "x509": a locally-signed AF Broker Identity Token, mirroring
-      ``_x509_factory``'s list-time branch; with no issuer configured the
-      connection proceeds bare (``(None, None)``), same as the aggregator.
-    - "krb5": identical treatment to "x509" -- a locally-signed AF Broker
-      Identity Token, mirroring ``_krb5_factory``'s list-time branch. The
-      backend redeems the actual ticket itself via
-      ``POST /v1/credentials/krb5/redeem``; this function must never call
-      ``provider.issue()`` for krb5, same as it never does for x509.
+    - "x509"/"krb5": share one code path here -- a locally-signed AF Broker
+      Identity Token, mirroring ``_x509_factory``'s/``_krb5_factory``'s
+      identical list-time branches; with no issuer configured the connection
+      proceeds bare (``(None, None)``), same as the aggregator. The backend
+      redeems the actual proxy/ticket itself via ``POST /v1/credentials/
+      x509/redeem`` or ``.../krb5/redeem`` respectively; this function must
+      never call ``provider.issue()`` for either.
     - "bearer": ``_resolve_list_time_headers`` (the issue #121 best-effort
       mint), unchanged -- ``skip_reason`` ("not_linked" | "unavailable")
       is set whenever no credential could be attached.
@@ -243,12 +242,7 @@ async def resolve_list_time_credential(
     """
     if spec.auth_type == "none":
         return {}, None
-    if spec.auth_type == "x509":
-        if broker_token_issuer is None:
-            return None, None
-        token, _ = broker_token_issuer.mint(principal.subject, spec.effective_audience)
-        return {"Authorization": f"Bearer {token}"}, None
-    if spec.auth_type == "krb5":
+    if spec.auth_type in ("x509", "krb5"):
         if broker_token_issuer is None:
             return None, None
         token, _ = broker_token_issuer.mint(principal.subject, spec.effective_audience)
