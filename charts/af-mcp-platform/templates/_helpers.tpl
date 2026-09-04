@@ -236,6 +236,29 @@ independent of identityProviders.
 {{- end }}
 
 {{/*
+True when at least one broker.identityProviders entry requires the Vault
+connection settings independent of oauth21.tokenStore/tokenRegistry/
+principalCache.backend being "vault" — mirrors config.py's
+_validate_vault_config: a service-mode x509 entry (type "x509" with a
+non-empty serviceUrl) implies the x509 Vault store, and a krb5-token entry
+always implies the krb5 Vault store (no legacy/no-Vault mode for krb5-token,
+unlike x509). Used to gate VAULT_ADDR/etc. rendering below alongside the
+three backend checks.
+*/}}
+{{- define "af-mcp-platform.identityProvidersNeedVault" -}}
+{{- $needs := false -}}
+{{- range .Values.broker.identityProviders -}}
+{{- if and (eq .type "x509") .serviceUrl -}}
+{{- $needs = true -}}
+{{- end -}}
+{{- if eq .type "krb5-token" -}}
+{{- $needs = true -}}
+{{- end -}}
+{{- end -}}
+{{- $needs -}}
+{{- end }}
+
+{{/*
 Broker container environment variables — shared verbatim between the broker
 Deployment (broker-deployment.yaml) and the token-sweep CronJob
 (cronjob-token-sweep.yaml). The sweep CLI (token_sweep.py) builds a Settings
@@ -430,9 +453,12 @@ Callers pipe this through `nindent` at whatever depth their container's
 {{- /*
 Vault connection settings are shared by all Vault-backed stores above (one
 VaultKV instance, per config.py/app.py) — rendered once whenever any of
-them needs it, not duplicated per-backend.
+them needs it, not duplicated per-backend. A service-mode x509 or
+krb5-token identityProviders entry also implies a Vault-backed store (see
+af-mcp-platform.identityProvidersNeedVault above) even when none of the
+three backend settings below is "vault".
 */}}
-{{- if or (eq .Values.broker.oauth21.tokenStore.backend "vault") (eq .Values.broker.tokenRegistry.backend "vault") (eq .Values.broker.principalCache.backend "vault") }}
+{{- if or (eq .Values.broker.oauth21.tokenStore.backend "vault") (eq .Values.broker.tokenRegistry.backend "vault") (eq .Values.broker.principalCache.backend "vault") (eq (include "af-mcp-platform.identityProvidersNeedVault" .) "true") }}
 {{- if .Values.broker.oauth21.tokenStore.vault.addr }}
 - name: VAULT_ADDR
   value: {{ .Values.broker.oauth21.tokenStore.vault.addr | quote }}
