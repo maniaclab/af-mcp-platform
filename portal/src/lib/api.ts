@@ -174,15 +174,19 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
  * IdentityLink.vue knows which linking mechanism `link_url` belongs to.
  * "x509" is the synthetic grid-certificate entry the broker appends when any
  * backend authenticates with a VOMS proxy (see api/identities.py); it links
- * via `link_mechanism: "passphrase"` below, never a `link_url`. */
-export type ProviderType = 'keycloak-brokered' | 'oauth21-direct' | 'x509';
+ * via `link_mechanism: "passphrase"` below, never a `link_url`. "krb5-token"
+ * is the synthetic Kerberos-ticket entry the broker appends when any backend
+ * authenticates with a krb5 ticket; it links via `link_mechanism:
+ * "credential"` below, never a `link_url`. */
+export type ProviderType = 'keycloak-brokered' | 'oauth21-direct' | 'krb5-token' | 'x509';
 
 /** How a linking flow starts: "redirect" — a browser navigation (the
  * keycloak-brokered client-side flow or an oauth21-direct `link_url`);
  * "passphrase" — an in-portal form that POSTs the user's Globus passphrase
- * to /v1/x509/proxy (X509IdentityCard.vue); "none" — no linking step exists
- * (broker-authoritative AF-native entries). */
-export type LinkMechanism = 'redirect' | 'passphrase' | 'none';
+ * to /v1/x509/proxy (X509IdentityCard.vue); "credential" — an in-portal form
+ * that POSTs the user's username/password to /v1/krb5/ticket; "none" — no
+ * linking step exists (broker-authoritative AF-native entries). */
+export type LinkMechanism = 'redirect' | 'passphrase' | 'credential' | 'none';
 
 export interface IdentityProvider {
   /** Portal-facing stable identifier (e.g. "atlas-iam", or an OAuth 2.1 provider's alias). */
@@ -565,6 +569,58 @@ export interface X509Preflight {
  */
 export async function fetchX509Preflight(): Promise<X509Preflight> {
   return apiFetch<X509Preflight>('/x509/preflight');
+}
+
+// ---------------------------------------------------------------------------
+// Kerberos ticket — POST /v1/krb5/ticket
+// ---------------------------------------------------------------------------
+
+/** POST /v1/krb5/ticket response (the ticket itself is never returned). */
+export interface KrbTicketMetadata {
+  target: string;
+  principal: string;
+  realm: string;
+  expires_at: string;
+  remaining_seconds: number;
+  renew_until: string | null;
+}
+
+/**
+ * Request a new Kerberos ticket for the caller's CERN principal.
+ *
+ * `target` selects which krb5-token-service backend mints the ticket (see
+ * `services.yaml`); omitted, the broker's configured default is used.
+ * `lifetime` and `renewable_lifetime` are opaque strings forwarded to
+ * krb5-token-service as-is -- the broker does not parse or validate their
+ * format (see `krb5_service.py`'s mint request body).
+ *
+ * IMPORTANT: The caller MUST clear the password from Vue state immediately
+ * after this call returns — regardless of success or failure.
+ *
+ * `remember` is the custody consent, defaulting to false (opt-in, unlike
+ * x509's opt-out `requestProxy`): true stores a Kerberos keytab (not the
+ * password) in the broker's Vault, letting future tickets be minted/renewed
+ * without re-entering a password.
+ */
+export async function requestKrb5Ticket(
+  username: string,
+  password: string,
+  target?: string,
+  lifetime?: string,
+  renewableLifetime?: string,
+  remember: boolean = false,
+): Promise<KrbTicketMetadata> {
+  return apiFetch<KrbTicketMetadata>('/krb5/ticket', {
+    method: 'POST',
+    body: JSON.stringify({
+      username,
+      password,
+      target,
+      lifetime,
+      renewable_lifetime: renewableLifetime,
+      remember,
+    }),
+  });
 }
 
 // ---------------------------------------------------------------------------

@@ -39,6 +39,8 @@ from af_mcp_broker.credentials import (
     CredentialCache,
     CredentialRegistry,
     InMemoryTokenStore,
+    Krb5TokenServiceClient,
+    KrbTokenProvider,
     OAuth21Provider,
     OIDCProvider,
     VaultTokenStore,
@@ -48,6 +50,7 @@ from af_mcp_broker.credentials import (
     load_broker_token_issuer,
 )
 from af_mcp_broker.credentials.cache import RateLimitError
+from af_mcp_broker.credentials.krb5_vault import Krb5VaultStore
 from af_mcp_broker.http import aclose_http_client
 from af_mcp_broker.identity import build_dev_principal, get_jwks, issuer_is_local
 from af_mcp_broker.logging import configure_logging
@@ -322,6 +325,17 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     x509_targets: list[str] = [
         spec.name for spec in services if spec.auth_type == "x509"
     ]
+    # krb5-token has no analogous `auth_type` variant in services.yaml (its
+    # targets are ordinary bearer-auth backends, resolved to a
+    # KrbTokenProvider purely via `identity_providers`), so there is no
+    # drift to validate here the way `_validate_x509_provider_targets` does
+    # for x509 -- just collect every krb5-token entry's targets.
+    krb5_targets: list[str] = [
+        target
+        for cfg in settings.identity_providers
+        if cfg.type == "krb5-token"
+        for target in cfg.targets
+    ]
     # Reverse map from the aud a backend presents to the x509 redeem endpoint
     # (the service's effective_audience -- what the broker mints, issue #257)
     # back to the x509 target name the proxy/provider are keyed under. Without
@@ -338,6 +352,14 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         cfg.type == "x509" and cfg.service_url is not None
         for cfg in identity_provider_cfg_list
     )
+    # Unlike x509 there is no legacy/service-mode split -- service_url is
+    # mandatory on every krb5-token entry (Settings' own validation), so any
+    # such entry always implies the krb5 Vault store (Settings._validate_
+    # vault_config already refused to construct `settings` without the
+    # connection settings).
+    has_krb5_token_cfg = any(
+        cfg.type == "krb5-token" for cfg in identity_provider_cfg_list
+    )
 
     # --- Credential subsystem: cache + janitor + provider registry.
     credential_cache = CredentialCache(
@@ -350,14 +372,15 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
 
     # --- Vault/OpenBao transport: one VaultKV instance (one K8s auth login
     # per process) shared by the oauth21 token store, the token registry,
-    # the principal cache, the maintenance-mode store, and the x509
-    # link/proxy store below, whichever of the five (or more) is configured
-    # to use Vault — see vault_kv.py's module docstring for the
-    # transport/domain split.
+    # the principal cache, the maintenance-mode store, the x509 link/proxy
+    # store, and the krb5 link/ticket store below, whichever of the six (or
+    # more) is configured to use Vault — see vault_kv.py's module docstring
+    # for the transport/domain split.
     # A service-mode x509 entry implies the x509 store: in service mode
     # proxies and passphrases persist in Vault (Settings._validate_vault_config
     # already refused to construct `settings` without the connection
-    # settings).
+    # settings). A krb5-token entry implies the krb5 store unconditionally,
+    # same reasoning (see has_krb5_token_cfg above).
     vault_kv: VaultKV | None = None
     if (
         settings.token_store_backend == "vault"
@@ -365,6 +388,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         or settings.principal_cache_backend == "vault"
         or settings.maintenance_mode_backend == "vault"
         or has_service_mode_x509_cfg
+        or has_krb5_token_cfg
     ):
         vault_kv = VaultKV(
             addr=settings.vault_addr,
@@ -437,16 +461,16 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # unreachable_permissions above.
     broker_token_issuer = load_broker_token_issuer(settings)
     if broker_token_issuer is None and any(
-        cfg.type in ("broker-issued", "condor-token")
+        cfg.type in ("broker-issued", "condor-token", "krb5-token")
         for cfg in settings.identity_providers
     ):
         msg = (
-            "identity_providers contains a broker-issued or condor-token "
-            "entry but BROKER_SIGNING_KEY_FILE is not set, so the broker "
-            "cannot sign AF Broker Identity Tokens for its targets. Mount "
-            "the RS256 signing key (chart: broker.identityToken."
-            "existingSigningKeySecret) or remove the entry -- see "
-            "docs/auth.md's 'AF Broker Identity Token' section."
+            "identity_providers contains a broker-issued, condor-token, or "
+            "krb5-token entry but BROKER_SIGNING_KEY_FILE is not set, so "
+            "the broker cannot sign AF Broker Identity Tokens for its "
+            "targets. Mount the RS256 signing key (chart: broker."
+            "identityToken.existingSigningKeySecret) or remove the entry "
+            "-- see docs/auth.md's 'AF Broker Identity Token' section."
         )
         raise RuntimeError(msg)
 
@@ -503,6 +527,20 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
             kv_path_prefix=settings.x509_kv_path_prefix,
         )
 
+    # --- krb5 Vault link/ticket store, shared by every krb5-token entry: one
+    # KV record per subject regardless of how many entries exist, same
+    # per-user-not-per-service reasoning as x509_vault_store above.
+    krb5_vault_store: Krb5VaultStore | None = None
+    if has_krb5_token_cfg:
+        assert vault_kv is not None  # guaranteed by the vault block above
+        krb5_vault_store = Krb5VaultStore(
+            vault_kv=vault_kv, kv_path_prefix=settings.krb5_kv_path_prefix
+        )
+        logger.info(
+            "krb5_vault_store_wired",
+            kv_path_prefix=settings.krb5_kv_path_prefix,
+        )
+
     # One CredentialProvider per configured entry, registered for the entry's
     # targets below — x509 included (voms-proxy minted from the user's
     # ~/.globus cert in legacy mode, or via the entry's voms-token-service
@@ -552,6 +590,20 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
                 targets=frozenset(cfg.targets),
                 service_url=str(cfg.service_url),
                 audience=cfg.audience,
+            )
+        elif cfg.type == "krb5-token":
+            assert broker_token_issuer is not None  # guaranteed by the check above
+            assert krb5_vault_store is not None  # built above for krb5-token entries
+            provider = KrbTokenProvider(
+                client=Krb5TokenServiceClient(
+                    issuer=broker_token_issuer,
+                    service_url=str(cfg.service_url),
+                    audience=cfg.audience,
+                ),
+                cache=credential_cache,
+                alias=cfg.alias,
+                targets=frozenset(cfg.targets),
+                vault_store=krb5_vault_store,
             )
         elif cfg.type == "x509":
             if cfg.service_url is not None:
@@ -837,6 +889,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     application.state.x509_provider = x509_provider
     application.state.x509_targets = x509_targets
     application.state.x509_audiences = x509_audiences
+    application.state.krb5_targets = krb5_targets
     application.state.identity_providers = identity_providers
     application.state.identity_provider_configs = identity_provider_configs
     application.state.target_to_alias = target_to_alias
@@ -849,6 +902,10 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     application.state.broker_token_issuer = broker_token_issuer
     application.state.usage_store = usage_store
     application.state.maintenance_mode_store = maintenance_mode_store
+    # Not yet consumed by KrbTokenProvider -- issue #274's remember/renew
+    # support wires it in -- exposed on state now so it exists in one place
+    # from the moment Vault is wired up, same as every other subsystem here.
+    application.state.krb5_vault_store = krb5_vault_store
 
     # Prime the JWKS cache at startup so the first request does not pay the
     # latency cost of a remote fetch.

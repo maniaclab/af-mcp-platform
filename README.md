@@ -64,7 +64,7 @@ For the full credential chain — Keycloak, the broker's token validation, broke
 This repo is the broker + portal — the credential-brokering core. A full deployment pairs it with separate, independently-maintained backend MCP servers and credential-minting services, wired in through config, not code. The UChicago ATLAS AF reference deployment runs:
 
 - **Backends:** [rucio-mcp](https://github.com/kratsg/rucio-mcp), [ami-mcp](https://github.com/kratsg/ami-mcp), [golang-htcondor](https://github.com/bbockelm/golang-htcondor) (HTCondor), [af-jupyterlab-mcp](https://github.com/maniaclab/af-jupyterlab-mcp), [af-filesystem-mcp](https://github.com/maniaclab/af-filesystem-mcp)
-- **Credential-minting services:** [condor-token-service](https://github.com/maniaclab/condor-token-service), [voms-token-service](https://github.com/maniaclab/voms-token-service), [af-credentials](https://github.com/maniaclab/af-credentials)
+- **Credential-minting services:** [condor-token-service](https://github.com/maniaclab/condor-token-service), [krb5-token-service](https://github.com/maniaclab/krb5-token-service), [voms-token-service](https://github.com/maniaclab/voms-token-service), [af-credentials](https://github.com/maniaclab/af-credentials)
 
 None of these are required by af-mcp-platform itself — a different facility registers its own mix of backends and credential services behind the same broker. See [docs/ecosystem.md](docs/ecosystem.md) for what each one does and how it plugs in.
 

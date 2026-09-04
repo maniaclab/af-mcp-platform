@@ -1,0 +1,34 @@
+# Exercises the "krb5-token identityProviders entry implies Vault" gap
+# (af-mcp-platform.identityProvidersNeedVault in _helpers.tpl) in isolation:
+# ONLY a krb5-token entry is configured, with none of
+# oauth21.tokenStore.backend/tokenRegistry.backend/principalCache.backend
+# set to "vault". test-values.yaml can't catch a regression of this gating
+# by itself -- it also sets those three backends to "vault" for their own
+# template-path coverage, so VAULT_ADDR would render there regardless of
+# whether the krb5-token/x509-service-mode gating is correct. `ct lint` and
+# `helm template` against this values file only confirm the chart is valid
+# Go-template/schema and renders without erroring for this shape of values
+# -- neither one asserts that VAULT_ADDR (or any other specific env var)
+# actually appears in the rendered output. That content assertion is a
+# separate `helm template | grep` step in chart-lint.yaml.
+oidc:
+  issuer: "https://keycloak.example.com/realms/example"
+portal:
+  oidc:
+    clientId: "example-portal-client"
+    scope: "openid profile email example-audience"
+  brokerOrigin: "https://mcp.example.com"
+
+broker:
+  identityProviders:
+    - type: krb5-token
+      alias: krb5-example
+      targets: []
+      serviceUrl: "http://krb5-token-service.example.svc.cluster.local:8080"
+      displayName: "CERN Kerberos ticket (example)"
+      enables: "Example Kerberos-authenticated access"
+  oauth21:
+    tokenStore:
+      vault:
+        addr: "https://vault.example.com"
+        authRole: "af-mcp-broker-example"

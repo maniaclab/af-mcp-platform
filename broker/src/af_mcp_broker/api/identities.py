@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict
 
 from af_mcp_broker.authorization import is_admin
 from af_mcp_broker.config import get_settings
-from af_mcp_broker.credentials import OIDCProvider, X509Provider
+from af_mcp_broker.credentials import KrbTokenProvider, OIDCProvider, X509Provider
 from af_mcp_broker.identity import Principal, keycloak_dependency
 
 if TYPE_CHECKING:
@@ -37,8 +37,16 @@ router = APIRouter(prefix="/identities", tags=["identities"])
 # `identity_providers` entry: every `auth_type: x509` backend must be
 # covered by an explicit entry (app.py's lifespan refuses to start
 # otherwise), so this row is always registry-sourced.
+# "krb5-token" — Kerberos-authenticated tokens minted via KrbTokenProvider
+# (issue #274), an ordinary `identity_providers` entry linked by the user
+# submitting a username + password to the portal rather than a redirect.
 ProviderType = Literal[
-    "keycloak-brokered", "oauth21-direct", "broker-issued", "condor-token", "x509"
+    "keycloak-brokered",
+    "oauth21-direct",
+    "broker-issued",
+    "condor-token",
+    "krb5-token",
+    "x509",
 ]
 
 # How the portal starts a linking flow for an entry: "redirect" — a browser
@@ -46,15 +54,19 @@ ProviderType = Literal[
 # oauth21-direct's `link_url`); "passphrase" — an in-portal form that POSTs
 # the user's Globus passphrase to /v1/x509/proxy (x509 only — there is no
 # URL to redirect to, so this is deliberately a distinct mechanism rather
-# than an overloaded `link_url`); "none" — no linking step exists
-# (broker-issued, condor-token: the broker is authoritative).
-LinkMechanism = Literal["redirect", "passphrase", "none"]
+# than an overloaded `link_url`); "credential" — an in-portal form that POSTs
+# a username + password (krb5-token only — distinct from "passphrase" since
+# it is two fields, not one, and the portal form must reflect that); "none"
+# — no linking step exists (broker-issued, condor-token: the broker is
+# authoritative).
+LinkMechanism = Literal["redirect", "passphrase", "credential", "none"]
 
 _LINK_MECHANISM_BY_TYPE: dict[str, LinkMechanism] = {
     "keycloak-brokered": "redirect",
     "oauth21-direct": "redirect",
     "broker-issued": "none",
     "condor-token": "none",
+    "krb5-token": "credential",
     "x509": "passphrase",
 }
 
@@ -308,10 +320,39 @@ async def unlink_identity(
         )
         return
 
+    if cfg.type == "krb5-token":
+        identity_providers = (
+            getattr(request.app.state, "identity_providers", None) or {}
+        )
+        krb5_provider = identity_providers[provider]
+        assert isinstance(krb5_provider, KrbTokenProvider)  # cfg.type guarantees this
+        await krb5_provider.unlink(principal)
+
+        credential_cache = getattr(request.app.state, "credential_cache", None)
+        if credential_cache is not None:
+            for target in cfg.targets:
+                await credential_cache.revoke(principal.subject, target)
+
+        logger.info(
+            "identity_unlink_completed",
+            subject=principal.subject,
+            provider=provider,
+        )
+        return
+
     # Keycloak-brokered unlink requires the Keycloak Admin REST API
     # (DELETE /admin/realms/{realm}/users/{id}/federated-identity/{alias}),
     # which the broker doesn't hold credentials for — surface a clear 501
     # rather than silently succeeding. Out of scope per issue #86.
+    #
+    # x509 also falls into this generic branch and gets the same 501, with
+    # a detail message that doesn't apply to it (there is no Keycloak
+    # account console entry or OAuth 2.1 token for a Globus passphrase
+    # link). That's a deliberate scope decision, not an oversight: unlike
+    # krb5-token above, X509Provider has no user-initiated unlink() today
+    # — only the automatic self-unlink in renew_from_stored_link() when a
+    # stored passphrase is rejected. Adding one is tracked separately, not
+    # part of issue #274's remember/keytab/renew work.
     logger.info(
         "identity_unlink_requested",
         subject=principal.subject,

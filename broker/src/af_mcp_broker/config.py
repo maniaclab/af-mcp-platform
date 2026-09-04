@@ -117,6 +117,35 @@ class CondorTokenProviderConfig(BaseModel):
     enables: str = ""
 
 
+class KrbTokenProviderConfig(BaseModel):
+    """An AF-native credential source for CERN Kerberos tickets (``KrbTokenProvider``, issue #274): the broker mints an AF Broker Identity Token with ``aud=audience`` and exchanges it, together with a caller-supplied CERN username/password, at krb5-token-service's ``POST /v1/mint`` — see docs/auth.md's "KrbTokenProvider" section.
+
+    Unlike ``CondorTokenProviderConfig``, the broker holds no standing
+    secret for this exchange: the CERN password is a live, non-recoverable
+    secret supplied per-call via ``POST /v1/krb5/ticket`` (mirroring x509's
+    passphrase-unlock flow) and is never persisted.
+
+    ``service_url`` is the base URL of the krb5-token-service deployment
+    (no path — the client appends ``/v1/mint``). ``audience`` is the
+    exact ``aud`` claim the service verifies; the default matches the
+    service's own default and should only change if a deployment renames
+    itself.
+    """
+
+    type: Literal["krb5-token"] = "krb5-token"
+    alias: str
+    targets: list[str] = Field(default_factory=list)
+    service_url: AnyHttpUrl
+    audience: str = "krb5-token-service"
+
+    # Portal-facing metadata for GET /v1/identities. Optional so a minimal
+    # provider config still parses; an operator who leaves these blank just
+    # gets an empty label/description on the Identities page until they fill
+    # them in.
+    display_name: str = ""
+    enables: str = ""
+
+
 class X509ProviderConfig(BaseModel):
     """A grid-certificate credential source (``X509Provider``): VOMS proxies minted for the entry's targets, delivered by service-side redemption (``POST /v1/credentials/x509/redeem``) rather than header injection — see docs/auth.md.
 
@@ -155,6 +184,7 @@ IdentityProviderConfig = Annotated[
     | OAuth21DirectProviderConfig
     | BrokerIssuedProviderConfig
     | CondorTokenProviderConfig
+    | KrbTokenProviderConfig
     | X509ProviderConfig,
     Field(discriminator="type"),
 ]
@@ -622,6 +652,13 @@ class Settings(BaseSettings):
     # collide under the same kv_mount.
     x509_kv_path_prefix: str = "mcp/x509"
 
+    # KV-v2 path prefix for the per-subject krb5 link/ticket records
+    # ({prefix}/{subject}/krb5 -- see credentials/krb5_vault.py), distinct
+    # from vault_kv_path_prefix/token_registry_kv_path_prefix/
+    # principal_cache_kv_path_prefix/x509_kv_path_prefix so all five
+    # Vault-backed stores never collide under the same kv_mount.
+    krb5_kv_path_prefix: str = "mcp/krb5"
+
     @property
     def broker_token_effective_issuer(self) -> str:
         """``broker_token_issuer`` if set, else ``broker_public_origin``.
@@ -812,7 +849,7 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _validate_vault_config(self) -> Settings:
-        """Fail startup loudly when any Vault-backed store is selected but the settings they depend on are not — a half-configured VaultTokenStore/VaultTokenRegistryBackend/VaultPrincipalCacheBackend/VaultMaintenanceModeStore/VaultX509Store would otherwise fail at first request instead of at boot (see also app.py's lifespan trial authentication). All five stores share the same Vault connection settings (only their kv_path_prefix differs), so one validator covers any or all being selected. voms-token-service mode — an x509 identity_providers entry with a service_url — implies the x509 store: in service mode proxies and passphrases persist in Vault, there is no in-memory fallback (a legacy-mode x509 entry, no service_url, touches no Vault store and imposes nothing here)."""
+        """Fail startup loudly when any Vault-backed store is selected but the settings they depend on are not — a half-configured VaultTokenStore/VaultTokenRegistryBackend/VaultPrincipalCacheBackend/VaultMaintenanceModeStore/VaultX509Store/Krb5VaultStore would otherwise fail at first request instead of at boot (see also app.py's lifespan trial authentication). All six stores share the same Vault connection settings (only their kv_path_prefix differs), so one validator covers any or all being selected. voms-token-service mode — an x509 identity_providers entry with a service_url — implies the x509 store: in service mode proxies and passphrases persist in Vault, there is no in-memory fallback (a legacy-mode x509 entry, no service_url, touches no Vault store and imposes nothing here). A krb5-token identity_providers entry always implies the krb5 store, unconditionally — unlike x509 there is no legacy/service-mode split (service_url is mandatory on every entry), and a given entry can't declare ahead of time whether any caller will ever request its optional "remember" persistence, so deferring the requirement to first use would be exactly the silent-runtime-failure trap this validator otherwise exists to avoid."""
         if (
             self.token_store_backend != "vault"
             and self.token_registry_backend != "vault"
@@ -822,6 +859,7 @@ class Settings(BaseSettings):
                 p.type == "x509" and p.service_url is not None
                 for p in self.identity_providers
             )
+            and not any(p.type == "krb5-token" for p in self.identity_providers)
         ):
             return self
         if not self.vault_addr:
@@ -832,7 +870,8 @@ class Settings(BaseSettings):
                     "token_registry_backend, principal_cache_backend, "
                     "and/or maintenance_mode_backend is 'vault', or "
                     "voms-token-service mode is configured (an x509 "
-                    "identity_providers entry with a service_url)"
+                    "identity_providers entry with a service_url), or a "
+                    "krb5-token identity_providers entry is configured"
                 ),
             )
             raise ValueError(
@@ -840,7 +879,9 @@ class Settings(BaseSettings):
                 "token_registry_backend, principal_cache_backend, or "
                 "maintenance_mode_backend is 'vault' or voms-token-service "
                 "mode is configured (an x509 identity_providers entry with a "
-                "service_url)."
+                "service_url) or a krb5-token identity_providers entry is "
+                "configured (its optional 'remember' feature persists in "
+                "Vault, with no in-memory fallback)."
             )
         if not self.vault_auth_role:
             log.error(
@@ -850,7 +891,8 @@ class Settings(BaseSettings):
                     "token_registry_backend, principal_cache_backend, "
                     "and/or maintenance_mode_backend is 'vault', or "
                     "voms-token-service mode is configured (an x509 "
-                    "identity_providers entry with a service_url)"
+                    "identity_providers entry with a service_url), or a "
+                    "krb5-token identity_providers entry is configured"
                 ),
             )
             raise ValueError(
@@ -858,7 +900,10 @@ class Settings(BaseSettings):
                 "token_store_backend, token_registry_backend, "
                 "principal_cache_backend, or maintenance_mode_backend is "
                 "'vault' or voms-token-service mode is configured (an x509 "
-                "identity_providers entry with a service_url)."
+                "identity_providers entry with a service_url) or a "
+                "krb5-token identity_providers entry is configured (its "
+                "optional 'remember' feature persists in Vault, with no "
+                "in-memory fallback)."
             )
         return self
 

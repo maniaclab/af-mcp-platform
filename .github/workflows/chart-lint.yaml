@@ -43,6 +43,20 @@ jobs:
             --set image.broker.tag=sha-test \
             --set image.portal.tag=sha-test
 
+      # ct lint / helm template above only confirm the chart renders without
+      # erroring for ci/krb5-vault-values.yaml's shape of values -- neither
+      # one asserts that VAULT_ADDR actually lands in the rendered output.
+      # This step is the real content assertion for the krb5-token-implies-
+      # Vault gating (af-mcp-platform.identityProvidersNeedVault in
+      # _helpers.tpl): it fails the build if VAULT_ADDR is silently missing.
+      - name: Verify krb5-token-only Vault rendering actually includes VAULT_ADDR
+        run: |
+          helm template af-mcp-platform charts/af-mcp-platform \
+            -f charts/af-mcp-platform/ci/krb5-vault-values.yaml \
+            --set image.broker.tag=sha-test \
+            --set image.portal.tag=sha-test \
+            | grep -q 'name: VAULT_ADDR'
+
       - name: ct lint
         run: ct lint --target-branch "$DEFAULT_BRANCH" --check-version-increment=false
         env:

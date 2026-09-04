@@ -296,6 +296,16 @@ broker:
   #   # Base URL of the condor-token-service deployment (the broker appends
   #   # /v1/token). audience defaults to "condor-token-service".
   #   serviceUrl: "http://condor-token-service.condor-token.svc.cluster.local:8080"
+  # - type: krb5-token
+  #   alias: krb5
+  #   displayName: "CERN Kerberos ticket"
+  #   enables: "Kerberos-authenticated access via <some-downstream-service>"
+  #   # No downstream aggregator.services consumer is defined yet (issue
+  #   # #274) -- leave targets empty until one is chosen.
+  #   targets: []
+  #   # Base URL of the krb5-token-service deployment (the broker appends
+  #   # /v1/mint). audience defaults to "krb5-token-service".
+  #   serviceUrl: "http://krb5-token-service.krb5-token.svc.cluster.local:8080"
   # - type: x509
   #   alias: x509
   #   displayName: "Grid certificate (x509)"

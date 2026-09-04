@@ -237,6 +237,7 @@ from `prometheus-fastapi-instrumentator`, the broker defines these
 | `af_mcp_x509_proxy_mints_total` | counter | *(none)* | Successful x509/VOMS proxy mints. |
 | `af_mcp_broker_identity_tokens_issued_total` | counter | `target` | AF Broker Identity Tokens actually minted (cache hits not counted). |
 | `af_mcp_condor_tokens_issued_total` | counter | `target` | HTCondor IDTOKENs actually obtained from condor-token-service (cache hits not counted). |
+| `af_mcp_krb5_tickets_issued_total` | counter | `target` | Kerberos tickets actually obtained from krb5-token-service (cache hits not counted). |
 
 The six `af_mcp_metering_*` metrics are the pipeline's health signal, and
 three of them are also its scaling trigger: a rising

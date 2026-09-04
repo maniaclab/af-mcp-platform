@@ -8,6 +8,7 @@ import {
   SessionExpiredError,
   type CatalogServer,
   type IdentityProvider,
+  type KrbTicketMetadata,
   type ProxyMetadata,
 } from '../lib/api';
 import { groupServersByAlias } from '../lib/catalog';
@@ -18,6 +19,7 @@ import {
   resolveLinkedErrorBanner,
 } from '../lib/linkedBanner';
 import IdentityLink from './IdentityLink.vue';
+import Krb5IdentityCard from './Krb5IdentityCard.vue';
 import X509IdentityCard from './X509IdentityCard.vue';
 
 const providers = ref<IdentityProvider[]>([]);
@@ -148,6 +150,17 @@ function handleX509Linked(id: string, meta: ProxyMetadata, remember: boolean) {
   clearIdentitiesCache();
 }
 
+// Called on Krb5IdentityCard's `linked` event, once POST /v1/krb5/ticket has
+// already succeeded — same reflect-locally-and-drop-cache pattern as
+// handleX509Linked above. Krb5 has no stored-credential custody mode or
+// proxy expiry to track: a mint is a one-shot action (see
+// Krb5IdentityCard.vue's doc comment), so only `linked` flips.
+function handleKrb5Linked(id: string, meta: KrbTicketMetadata) {
+  const provider = providers.value.find((p) => p.id === id);
+  if (provider) provider.linked = true;
+  clearIdentitiesCache();
+}
+
 // Called on X509IdentityCard's `revoked` event, once DELETE /v1/x509/proxy
 // has already succeeded. Revoking burns the proxy but never unlinks an
 // auto-renew identity (the stored passphrase re-mints hands-free); an
@@ -161,6 +174,17 @@ function handleX509Revoked(id: string) {
       provider.x509_link_mode = null;
     }
   }
+  clearIdentitiesCache();
+}
+
+// Called on Krb5IdentityCard's `revoked` event, once DELETE
+// /v1/identities/link/{alias} has already succeeded -- unlike
+// handleX509Revoked, krb5's "Forget" always deletes the whole Vault record
+// (there is no separate until-expiry/auto-renew distinction), so it always
+// flips `linked` back to false.
+function handleKrb5Revoked(id: string) {
+  const provider = providers.value.find((p) => p.id === id);
+  if (provider) provider.linked = false;
   clearIdentitiesCache();
 }
 </script>
@@ -230,7 +254,8 @@ function handleX509Revoked(id: string) {
       <!-- Identity list — one flat list. Redirect-mechanism providers
            (keycloak-brokered, oauth21-direct) render uniformly via
            IdentityLink; the passphrase-mechanism x509 entry gets its own
-           card with the in-page passphrase form. -->
+           card with the in-page passphrase form; the credential-mechanism
+           krb5-token entry gets its own card with the in-page ticket form. -->
       <div v-if="providers.length > 0" class="ip__list">
         <template v-for="p in providers" :key="p.id">
           <!--
@@ -254,6 +279,16 @@ function handleX509Revoked(id: string) {
               :x509_link_mode="p.x509_link_mode"
               @linked="(meta, remember) => handleX509Linked(p.id, meta, remember)"
               @revoked="handleX509Revoked(p.id)"
+            />
+            <Krb5IdentityCard
+              v-else-if="p.link_mechanism === 'credential'"
+              :id="p.id"
+              :linked="p.linked"
+              :display_name="p.display_name"
+              :enables="p.enables"
+              :powers="powersForAlias(p.id)"
+              @linked="(meta) => handleKrb5Linked(p.id, meta)"
+              @revoked="handleKrb5Revoked(p.id)"
             />
             <IdentityLink
               v-else

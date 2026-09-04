@@ -13,8 +13,12 @@ import { APIError, SessionExpiredError } from './api';
 /**
  * Extracts FastAPI's `{"detail": "..."}` from an APIError body, or null when
  * the body isn't that shape (e.g. an HTML error page from a proxy hop).
+ *
+ * Generic APIError-detail parsing with nothing x509-specific in it — exported
+ * so krb5Identity.ts's krb5LinkErrorMessage can reuse it rather than
+ * duplicating it.
  */
-function apiErrorDetail(err: APIError): string | null {
+export function apiErrorDetail(err: APIError): string | null {
   try {
     const parsed = JSON.parse(err.body) as { detail?: unknown };
     return typeof parsed.detail === 'string' ? parsed.detail : null;
@@ -55,6 +59,24 @@ export function x509LinkErrorMessage(err: unknown): string {
 }
 
 /**
+ * Short human form of a Date, e.g. "Aug 18, 09:30 PM GMT".
+ *
+ * Generic date formatting with nothing x509-specific about it — exported so
+ * krb5Identity's Krb5IdentityCard.vue can reuse it rather than duplicating
+ * the toLocaleString options, following apiErrorDetail's cross-import
+ * precedent above.
+ */
+export function formatShortDateTime(date: Date): string {
+  return date.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  });
+}
+
+/**
  * Short human form of the x509 entry's `proxy_expires_at` (ISO-8601), e.g.
  * "Aug 18, 09:30 PM GMT" — or null when absent/unparseable so the card can
  * simply omit the expiry line instead of rendering "Invalid Date".
@@ -63,13 +85,7 @@ export function formatProxyExpiry(iso: string | null | undefined): string | null
   if (!iso) return null;
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return null;
-  return date.toLocaleString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    timeZoneName: 'short',
-  });
+  return formatShortDateTime(date);
 }
 
 /**

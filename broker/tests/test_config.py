@@ -453,6 +453,64 @@ def test_identity_providers_condor_token_audience_is_overridable():
     assert cfg.audience == "condor-token-service-dev"
 
 
+# krb5-token identity providers (issue #274) -- KrbTokenProvider's config.
+def test_krb5_token_provider_config_parses():
+    settings = Settings(
+        identity_providers=[
+            {
+                "type": "krb5-token",
+                "alias": "krb5",
+                "display_name": "CERN Kerberos ticket",
+                "enables": "Kerberos-authenticated access",
+                "targets": ["some-service"],
+                "service_url": "http://krb5-token-service.invalid",
+            }
+        ],
+        **_VAULT_ENV,
+    )
+    (cfg,) = settings.identity_providers
+    assert cfg.type == "krb5-token"
+    assert cfg.alias == "krb5"
+    assert cfg.targets == ["some-service"]
+    assert str(cfg.service_url) == "http://krb5-token-service.invalid/"
+    assert cfg.audience == "krb5-token-service"  # default
+
+
+def test_krb5_token_provider_config_requires_service_url():
+    valid_entry = {
+        "type": "krb5-token",
+        "alias": "krb5",
+        "display_name": "CERN Kerberos ticket",
+        "enables": "Kerberos-authenticated access",
+        "targets": ["some-service"],
+        "service_url": "http://krb5-token-service.invalid",
+    }
+    entry = {k: v for k, v in valid_entry.items() if k != "service_url"}
+    with pytest.raises(ValueError, match="service_url"):
+        Settings(identity_providers=[entry], **_VAULT_ENV)
+
+
+def test_vault_config_required_by_krb5_token_entry():
+    """Unlike x509 there is no legacy/service-mode split for krb5-token --
+    service_url is mandatory on every entry, and a given entry can't declare
+    ahead of time whether any caller will ever request its optional
+    "remember" persistence -- so Vault is required unconditionally."""
+    entry = {
+        "type": "krb5-token",
+        "alias": "krb5",
+        "targets": ["some-service"],
+        "service_url": "http://krb5-token-service.invalid",
+    }
+    with pytest.raises(ValueError, match="vault_addr"):
+        Settings(identity_providers=[entry])
+    with pytest.raises(ValueError, match="vault_auth_role"):
+        Settings(identity_providers=[entry], vault_addr="https://vault.example")
+
+
+def test_krb5_kv_path_prefix_default():
+    assert Settings().krb5_kv_path_prefix == "mcp/krb5"
+
+
 # ---------------------------------------------------------------------------
 # x509 identity providers — X509Provider's config surface, replacing the
 # global VOMS_TOKEN_SERVICE_URL special case (which crash-looped a broker

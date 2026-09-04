@@ -94,3 +94,23 @@ async def test_get_or_mint_internal_recheck_does_not_double_count():
 
     assert result == "minted-value"
     assert _misses(TARGET) == before_misses + 1
+
+
+async def test_peek_does_not_increment_hit_or_miss_counters():
+    """``peek()`` shares ``get()``'s lookup logic (both call ``_lookup()``)
+    but must not touch either counter -- it exists precisely for callers
+    like ``KrbTokenProvider.is_linked()`` that want a live cache-state probe
+    without inflating counters meant to reflect real credential-serving
+    hits/misses from ``get()``/``get_or_mint()``."""
+    cache = CredentialCache()
+    uid = 2_005
+    await cache.put(uid, TARGET, "cached-value")
+    before_hits, before_misses = _hits(TARGET), _misses(TARGET)
+
+    hit_result = await cache.peek(uid, TARGET, min_remaining=0)
+    miss_result = await cache.peek("missing-subject", TARGET, min_remaining=0)
+
+    assert hit_result == "cached-value"
+    assert miss_result is None
+    assert _hits(TARGET) == before_hits
+    assert _misses(TARGET) == before_misses

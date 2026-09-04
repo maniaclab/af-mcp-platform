@@ -143,7 +143,8 @@ oauth21-direct entries additionally carry the endpoint/issuer/scope fields,
 broker-issued entries carry nothing more -- each target's aud/POSIX options
 now live on the service entry (aggregator.services' audience/requires_posix,
 issue #257), condor-token entries their serviceUrl/audience (issue #169),
-and x509 entries their serviceUrl/voms/valid/audience (serviceUrl omitted =
+krb5-token entries their serviceUrl/audience (issue #274), and x509 entries
+their serviceUrl/voms/valid/audience (serviceUrl omitted =
 the legacy k8s-Job mint path; replaces the removed global
 broker.env.VOMS_TOKEN_SERVICE_URL -- every auth_type: x509 backend now
 needs an explicit entry, there is no synthesized fallback).
@@ -180,6 +181,16 @@ needs an explicit entry, there is no synthesized fallback).
       "enables" (.enables | default "")
       "service_url" .serviceUrl
       "audience" (.audience | default "condor-token-service")
+    ) -}}
+{{- else if eq .type "krb5-token" -}}
+{{- $providers = append $providers (dict
+      "type" .type
+      "alias" .alias
+      "targets" (.targets | default (list))
+      "display_name" (.displayName | default "")
+      "enables" (.enables | default "")
+      "service_url" .serviceUrl
+      "audience" (.audience | default "krb5-token-service")
     ) -}}
 {{- else if eq .type "x509" -}}
 {{- $providers = append $providers (dict
@@ -222,6 +233,29 @@ independent of identityProviders.
 {{- end -}}
 {{- end -}}
 {{- $has -}}
+{{- end }}
+
+{{/*
+True when at least one broker.identityProviders entry requires the Vault
+connection settings independent of oauth21.tokenStore/tokenRegistry/
+principalCache.backend being "vault" — mirrors config.py's
+_validate_vault_config: a service-mode x509 entry (type "x509" with a
+non-empty serviceUrl) implies the x509 Vault store, and a krb5-token entry
+always implies the krb5 Vault store (no legacy/no-Vault mode for krb5-token,
+unlike x509). Used to gate VAULT_ADDR/etc. rendering below alongside the
+three backend checks.
+*/}}
+{{- define "af-mcp-platform.identityProvidersNeedVault" -}}
+{{- $needs := false -}}
+{{- range .Values.broker.identityProviders -}}
+{{- if and (eq .type "x509") .serviceUrl -}}
+{{- $needs = true -}}
+{{- end -}}
+{{- if eq .type "krb5-token" -}}
+{{- $needs = true -}}
+{{- end -}}
+{{- end -}}
+{{- $needs -}}
 {{- end }}
 
 {{/*
@@ -419,9 +453,22 @@ Callers pipe this through `nindent` at whatever depth their container's
 {{- /*
 Vault connection settings are shared by all Vault-backed stores above (one
 VaultKV instance, per config.py/app.py) — rendered once whenever any of
-them needs it, not duplicated per-backend.
+them needs it, not duplicated per-backend. A service-mode x509 or
+krb5-token identityProviders entry also implies a Vault-backed store (see
+af-mcp-platform.identityProvidersNeedVault above) even when none of the
+three backend settings below is "vault".
+
+KNOWN GAP (not fixed here, out of scope for this branch): config.py's
+_validate_vault_config also requires Vault when maintenance_mode_backend
+is "vault", but this gate does not check .Values.broker.maintenanceMode.
+backend. Not an active regression today — maintenanceMode.backend
+defaults to something other than "vault" — but a future maintenanceMode:
+{backend: vault} deployment would render cleanly here with VAULT_ADDR
+missing and fail at broker startup instead. Needs a fourth `eq` clause
+below (or a helper alongside identityProvidersNeedVault) when that gets
+addressed.
 */}}
-{{- if or (eq .Values.broker.oauth21.tokenStore.backend "vault") (eq .Values.broker.tokenRegistry.backend "vault") (eq .Values.broker.principalCache.backend "vault") }}
+{{- if or (eq .Values.broker.oauth21.tokenStore.backend "vault") (eq .Values.broker.tokenRegistry.backend "vault") (eq .Values.broker.principalCache.backend "vault") (eq (include "af-mcp-platform.identityProvidersNeedVault" .) "true") }}
 {{- if .Values.broker.oauth21.tokenStore.vault.addr }}
 - name: VAULT_ADDR
   value: {{ .Values.broker.oauth21.tokenStore.vault.addr | quote }}

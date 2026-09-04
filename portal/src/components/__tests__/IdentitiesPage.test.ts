@@ -50,6 +50,15 @@ const IDENTITIES: IdentitiesResponse = {
       link_url: null,
       link_mechanism: 'passphrase',
     },
+    {
+      id: 'krb5',
+      type: 'krb5-token',
+      display_name: 'CERN Kerberos ticket',
+      enables: 'AFS/CVMFS access',
+      linked: false,
+      link_url: null,
+      link_mechanism: 'credential',
+    },
   ],
 };
 
@@ -80,5 +89,16 @@ describe('IdentitiesPage provider card anchors', () => {
     const anchor = wrapper.find('#identity-card-x509');
     expect(anchor.exists()).toBe(true);
     expect(anchor.find('.xc').exists()).toBe(true);
+  });
+
+  it('renders Krb5IdentityCard for a credential-mechanism provider', async () => {
+    const wrapper = mount(IdentitiesPage);
+    await flushPromises();
+
+    const anchor = wrapper.find('#identity-card-krb5');
+    expect(anchor.exists()).toBe(true);
+    expect(anchor.find('.kc').exists()).toBe(true);
+    expect(anchor.find('.il').exists()).toBe(false);
+    expect(anchor.find('.xc').exists()).toBe(false);
   });
 });

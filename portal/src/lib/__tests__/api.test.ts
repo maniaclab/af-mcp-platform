@@ -21,6 +21,7 @@ import {
   fetchServerTools,
   fetchX509Preflight,
   listTokens,
+  requestKrb5Ticket,
   requestProxy,
   mintToken,
   revokeAllCredentials,
@@ -801,6 +802,105 @@ describe('requestProxy() custody consent', () => {
     await requestProxy('hunter2', '12:00', 'atlas', false);
     const [, init] = vi.mocked(globalThis.fetch).mock.calls[0] as [string, RequestInit];
     expect(JSON.parse(init.body as string)).toMatchObject({ remember: false });
+  });
+});
+
+describe('requestKrb5Ticket', () => {
+  it('POSTs username/password and returns ticket metadata', async () => {
+    globalThis.fetch = mockJson(201, {
+      target: 'condor',
+      principal: 'auser@ATLAS.EXAMPLE.ORG',
+      realm: 'ATLAS.EXAMPLE.ORG',
+      expires_at: '2026-09-04T00:00:00+00:00',
+      remaining_seconds: 86400,
+      renew_until: '2026-09-10T00:00:00+00:00',
+    });
+
+    const result = await requestKrb5Ticket('auser', 'hunter2');
+
+    const [url, init] = vi.mocked(globalThis.fetch).mock.calls[0] as [string, RequestInit];
+    expect(String(url)).toContain('/krb5/ticket');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual({
+      username: 'auser',
+      password: 'hunter2',
+      remember: false,
+    });
+    expect(result).toEqual({
+      target: 'condor',
+      principal: 'auser@ATLAS.EXAMPLE.ORG',
+      realm: 'ATLAS.EXAMPLE.ORG',
+      expires_at: '2026-09-04T00:00:00+00:00',
+      remaining_seconds: 86400,
+      renew_until: '2026-09-10T00:00:00+00:00',
+    });
+  });
+
+  it('includes target/lifetime/renewable_lifetime in the body when supplied', async () => {
+    globalThis.fetch = mockJson(201, {
+      target: 'condor',
+      principal: 'auser@ATLAS.EXAMPLE.ORG',
+      realm: 'ATLAS.EXAMPLE.ORG',
+      expires_at: '2026-09-04T00:00:00+00:00',
+      remaining_seconds: 86400,
+      renew_until: null,
+    });
+
+    await requestKrb5Ticket('auser', 'hunter2', 'condor', '24h', '7d');
+
+    const [, init] = vi.mocked(globalThis.fetch).mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({
+      username: 'auser',
+      password: 'hunter2',
+      target: 'condor',
+      lifetime: '24h',
+      renewable_lifetime: '7d',
+      remember: false,
+    });
+  });
+
+  it.each([400, 403, 422, 429, 502])(
+    'raises APIError with the response body on a %i response',
+    async (status) => {
+      globalThis.fetch = vi
+        .fn()
+        .mockResolvedValue(new Response('nope', { status, statusText: 'Error' }));
+      await expect(requestKrb5Ticket('auser', 'wrong')).rejects.toMatchObject({
+        name: 'APIError',
+        status,
+        body: 'nope',
+      });
+    },
+  );
+});
+
+describe('requestKrb5Ticket() remember consent', () => {
+  it('sends remember: false by default (opt-in, no keytab stored)', async () => {
+    globalThis.fetch = mockJson(201, {
+      target: 'condor',
+      principal: 'auser@ATLAS.EXAMPLE.ORG',
+      realm: 'ATLAS.EXAMPLE.ORG',
+      expires_at: '2026-09-04T00:00:00+00:00',
+      remaining_seconds: 86400,
+      renew_until: null,
+    });
+    await requestKrb5Ticket('auser', 'hunter2');
+    const [, init] = vi.mocked(globalThis.fetch).mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toMatchObject({ remember: false });
+  });
+
+  it('sends remember: true when the user opts in', async () => {
+    globalThis.fetch = mockJson(201, {
+      target: 'condor',
+      principal: 'auser@ATLAS.EXAMPLE.ORG',
+      realm: 'ATLAS.EXAMPLE.ORG',
+      expires_at: '2026-09-04T00:00:00+00:00',
+      remaining_seconds: 86400,
+      renew_until: '2026-09-10T00:00:00+00:00',
+    });
+    await requestKrb5Ticket('auser', 'hunter2', undefined, undefined, undefined, true);
+    const [, init] = vi.mocked(globalThis.fetch).mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toMatchObject({ remember: true });
   });
 });
 
