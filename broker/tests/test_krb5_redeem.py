@@ -21,6 +21,7 @@ from pydantic import SecretStr
 from test_broker_issued import _make_rsa_key, _private_pem
 from test_krb5_token import FakeKrb5VaultStore
 
+from af_mcp_broker.api import credentials as credentials_api
 from af_mcp_broker.credentials import (
     CredentialKind,
     ExecutionModel,
@@ -33,6 +34,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from fastapi.testclient import TestClient
+
+    from af_mcp_broker.audit import AuditRecord
 
 _REDEEM = "/v1/credentials/krb5/redeem"
 _TARGET = "krb5-backend"
@@ -50,6 +53,38 @@ _BACKENDS_YAML = (
     "    auth_type: krb5\n"
     "    required_permission: read_data\n"
 )
+
+# A krb5 service whose registry name and token audience diverge (issue #257,
+# same split as x509's _DIVERGENT_YAML in test_x509_redeem.py): the broker
+# mints aud=krb5-backend-mcp (effective_audience) for the target
+# krb5_backend_service.
+_DIVERGENT_YAML = (
+    "services:\n"
+    "  - name: krb5_backend_service\n"
+    "    prefix: krb5b\n"
+    "    url: http://krb5-backend.invalid/mcp\n"
+    "    auth_type: krb5\n"
+    "    audience: krb5-backend-mcp\n"
+    "    required_permission: read_data\n"
+)
+
+
+@pytest.fixture
+def captured_audits(monkeypatch: pytest.MonkeyPatch) -> list[AuditRecord]:
+    """Capture every ``write_audit`` call made from api/credentials.py.
+
+    Same pattern as test_mcp_middleware_authorization.py's fixture of the
+    same name: monkeypatch the name as imported into the module under test
+    (``write_audit`` is imported by name into af_mcp_broker.api.credentials),
+    rather than the audit logger itself.
+    """
+    records: list[AuditRecord] = []
+
+    async def _fake_write_audit(record: AuditRecord) -> None:
+        records.append(record)
+
+    monkeypatch.setattr(credentials_api, "write_audit", _fake_write_audit)
+    return records
 
 
 async def _fake_authenticate(self: VaultKV) -> str:
@@ -180,6 +215,56 @@ class TestRedeemAuth:
             )
         assert resp.status_code == 403
         assert "not a configured krb5 target" in resp.json()["detail"]
+
+    def test_non_krb5_audience_denial_is_audited(
+        self, krb5_redeem_env, app_client_factory, captured_audits
+    ) -> None:
+        """Security-relevant: since krb5_audiences is empty until a real
+        services.yaml consumer is configured, this 403 is the ONLY outcome
+        this route reaches in any real deployment today -- it must not be
+        audit-silent. Mirrors x509's audience-not-mapped audit record
+        (credentials.py's inline AuditRecord at the top of
+        redeem_x509_proxy) shape-for-shape, action renamed for krb5."""
+        krb5_redeem_env()
+        with app_client_factory() as (client, _):
+            token = _mint(client, audience="condor-token-service")
+            resp = client.post(
+                _REDEEM, json={}, headers={"Authorization": f"Bearer {token}"}
+            )
+        assert resp.status_code == 403
+        assert len(captured_audits) == 1
+        record = captured_audits[0]
+        assert record.action == "krb5_ticket_release"
+        assert record.outcome == "denied"
+        assert record.target == "condor-token-service"
+        assert record.principal_sub == "sub-abc"
+        assert "not a configured krb5 target" in (record.error or "")
+
+    def test_redeem_maps_audience_to_target_when_name_differs(
+        self, krb5_redeem_env, app_client_factory
+    ) -> None:
+        """issue #257 regression (krb5 side): for a krb5 service whose name
+        and audience diverge (name=krb5_backend_service,
+        audience=krb5-backend-mcp), the broker mints tokens with
+        aud=krb5-backend-mcp. The redeem endpoint must map that audience back
+        to the krb5 target ('krb5_backend_service') and serve the ticket
+        cached under it -- NOT 403 because 'krb5-backend-mcp' isn't a target
+        name. Mirrors test_x509_redeem.py's
+        test_redeem_maps_audience_to_target_when_name_differs."""
+        krb5_redeem_env(
+            services_yaml=_DIVERGENT_YAML, krb5_targets=["krb5_backend_service"]
+        )
+        with app_client_factory() as (client, _):
+            _fake_vault_store(client, target="krb5_backend_service")
+            cred = _seed_cache_ticket(
+                client, subject="sub-abc", target="krb5_backend_service"
+            )
+            token = _mint(client, audience="krb5-backend-mcp")
+            resp = client.post(
+                _REDEEM, json={}, headers={"Authorization": f"Bearer {token}"}
+            )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["ccache_b64"] == cred.payload["ccache_b64"]
 
 
 class TestRedeem:
@@ -317,3 +402,56 @@ class TestRedeem:
             )
         assert resp.status_code == 200
         assert resp.json()["ccache_b64"] == cred.payload["ccache_b64"]
+
+    def test_successful_redeem_is_audited(
+        self, krb5_redeem_env, app_client_factory, captured_audits
+    ) -> None:
+        """Mirrors x509's success-path audit (_release_audit's
+        outcome="success" record on redeem_x509_proxy's legacy path): the
+        ccache material itself must never appear in the record, only
+        subject/target/outcome and the resolved principal metadata."""
+        krb5_redeem_env()
+        with app_client_factory() as (client, _):
+            _fake_vault_store(client)
+            cred = _seed_cache_ticket(client, subject="sub-abc")
+            token = _mint(client)
+            resp = client.post(
+                _REDEEM, json={}, headers={"Authorization": f"Bearer {token}"}
+            )
+        assert resp.status_code == 200
+        assert len(captured_audits) == 1
+        record = captured_audits[0]
+        assert record.action == "krb5_ticket_release"
+        assert record.outcome == "success"
+        assert record.target == _TARGET
+        assert record.principal_sub == "sub-abc"
+        assert cred.payload["ccache_b64"] not in record.args_summary
+
+
+class TestKeylessBoot:
+    def test_krb5_backend_without_signing_key_boots_and_503s_redeem(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path, app_client_factory
+    ) -> None:
+        """Mirrors test_x509_redeem.py's
+        test_x509_backend_without_signing_key_boots_and_503s_redeem, adapted
+        for krb5: unlike x509 there is no legacy/service-mode split -- ANY
+        krb5-token identity_providers entry always implies the signing key
+        requirement (app.py's fail-closed check groups krb5-token in with
+        broker-issued/condor-token), so the only way to reach a booted app
+        with issuer=None and a krb5 target configured is to have an
+        auth_type: krb5 service in services.yaml with NO covering
+        krb5-token identity_providers entry at all (there is no drift check
+        for that the way _validate_x509_provider_targets enforces for x509 --
+        see app.py's krb5_targets comment). The redeem endpoint still answers
+        503 until a signing key is mounted -- enforcement at point of use."""
+        services_file = tmp_path / "services.yaml"
+        services_file.write_text(_BACKENDS_YAML)
+        monkeypatch.setenv("SERVICES_FILE", str(services_file))
+        monkeypatch.setenv("IDENTITY_PROVIDERS", json.dumps([]))
+        monkeypatch.delenv("BROKER_SIGNING_KEY_FILE", raising=False)
+
+        with app_client_factory() as (client, _):
+            resp = client.post(
+                _REDEEM, json={}, headers={"Authorization": "Bearer whatever"}
+            )
+        assert resp.status_code == 503

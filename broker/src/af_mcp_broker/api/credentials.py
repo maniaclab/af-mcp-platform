@@ -972,6 +972,7 @@ async def redeem_krb5_ticket(request: Request) -> KrbTicketRedeemResponse:
 
     subject: str = claims["sub"]
     token_aud: str = claims["aud"]
+    request_id = claims.get("jti", "")
 
     # Same effective_audience -> target reverse map as x509_audiences above
     # (issue #257) -- the aud a krb5 backend presents may differ from the
@@ -979,6 +980,26 @@ async def redeem_krb5_ticket(request: Request) -> KrbTicketRedeemResponse:
     krb5_audiences: dict[str, str] = getattr(request.app.state, "krb5_audiences", {})
     target = krb5_audiences.get(token_aud)
     if target is None:
+        # Mirrors redeem_x509_proxy's audience-not-mapped audit exactly
+        # (same inline AuditRecord shape, action renamed for krb5) -- this is
+        # security-relevant on its own: krb5_audiences is empty until a real
+        # services.yaml consumer is configured, so this 403 is the ONLY
+        # outcome this route reaches in any real deployment today.
+        await write_audit(
+            AuditRecord(
+                principal_sub=subject,
+                principal_uid=claims.get("uid"),
+                permission=None,
+                target=token_aud,
+                action="krb5_ticket_release",
+                action_type="read",
+                args_summary="redeem denied: audience is not a krb5 target",
+                timestamp=time.time(),
+                request_id=request_id,
+                outcome="denied",
+                error=f"audience {token_aud!r} is not a configured krb5 target",
+            )
+        )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Audience {token_aud!r} is not a configured krb5 target",
@@ -994,6 +1015,25 @@ async def redeem_krb5_ticket(request: Request) -> KrbTicketRedeemResponse:
     payload = cred.payload
     renew_until = payload.get("renew_until")
     now = time.time()
+
+    # Mirrors redeem_x509_proxy's success-path audit (_release_audit's
+    # outcome="success" record) -- subject/target/outcome plus resolved
+    # principal metadata only, never the ccache material itself.
+    await write_audit(
+        AuditRecord(
+            principal_sub=subject,
+            principal_uid=claims.get("uid"),
+            permission=None,
+            target=target,
+            action="krb5_ticket_release",
+            action_type="read",
+            args_summary=f"ticket for {payload['principal']!r} released to backend {target!r}",
+            timestamp=time.time(),
+            request_id=request_id,
+            outcome="success",
+        )
+    )
+
     return KrbTicketRedeemResponse(
         ccache_b64=payload["ccache_b64"],
         principal=payload["principal"],
