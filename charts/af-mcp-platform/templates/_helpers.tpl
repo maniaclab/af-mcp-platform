@@ -457,6 +457,16 @@ them needs it, not duplicated per-backend. A service-mode x509 or
 krb5-token identityProviders entry also implies a Vault-backed store (see
 af-mcp-platform.identityProvidersNeedVault above) even when none of the
 three backend settings below is "vault".
+
+KNOWN GAP (not fixed here, out of scope for this branch): config.py's
+_validate_vault_config also requires Vault when maintenance_mode_backend
+is "vault", but this gate does not check .Values.broker.maintenanceMode.
+backend. Not an active regression today — maintenanceMode.backend
+defaults to something other than "vault" — but a future maintenanceMode:
+{backend: vault} deployment would render cleanly here with VAULT_ADDR
+missing and fail at broker startup instead. Needs a fourth `eq` clause
+below (or a helper alongside identityProvidersNeedVault) when that gets
+addressed.
 */}}
 {{- if or (eq .Values.broker.oauth21.tokenStore.backend "vault") (eq .Values.broker.tokenRegistry.backend "vault") (eq .Values.broker.principalCache.backend "vault") (eq (include "af-mcp-platform.identityProvidersNeedVault" .) "true") }}
 {{- if .Values.broker.oauth21.tokenStore.vault.addr }}

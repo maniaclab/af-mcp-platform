@@ -5,9 +5,12 @@
 # set to "vault". test-values.yaml can't catch a regression of this gating
 # by itself -- it also sets those three backends to "vault" for their own
 # template-path coverage, so VAULT_ADDR would render there regardless of
-# whether the krb5-token/x509-service-mode gating is correct. `ct lint`
-# lints the chart once per values file in this directory, so a broken
-# render here is caught by CI same as the postgres/tracing scenarios above.
+# whether the krb5-token/x509-service-mode gating is correct. `ct lint` and
+# `helm template` against this values file only confirm the chart is valid
+# Go-template/schema and renders without erroring for this shape of values
+# -- neither one asserts that VAULT_ADDR (or any other specific env var)
+# actually appears in the rendered output. That content assertion is a
+# separate `helm template | grep` step in chart-lint.yaml.
 oidc:
   issuer: "https://keycloak.example.com/realms/example"
 portal:
