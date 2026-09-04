@@ -1038,6 +1038,40 @@ async def test_client_factory_x509_list_time_without_issuer_connects_bare(
     assert "Authorization" not in client.transport.headers
 
 
+async def test_resolve_list_time_credential_krb5_mints_not_provider_issue(
+    settings: Any, make_principal
+) -> None:
+    """resolve_list_time_credential's krb5 handling must mirror x509's --
+    mint-and-inject an AF Broker Identity Token, never call provider.issue()
+    -- the same invariant _make_client_factory's _krb5_factory list-time
+    branch enforces (see
+    test_client_factory_krb5_injects_broker_identity_jwt_not_provider_issue).
+    Without a dedicated krb5 branch here, this falls through to
+    _resolve_list_time_headers, which calls provider.issue() directly --
+    exactly what the auth_type=krb5 design (backend redeems the ticket
+    itself via POST /v1/credentials/krb5/redeem) exists to prevent."""
+    issuer = _make_issuer()
+    spec = _spec(name="krb5_service", auth_type="krb5", audience="krb5-mcp")
+    provider = _FakeProvider(linked=True)
+    registry = CredentialRegistry()
+    registry.register(spec.name, provider)
+
+    headers, skip_reason = await resolve_list_time_credential(
+        spec,
+        registry,
+        make_principal(subject="sub-abc"),
+        broker_token_issuer=issuer,
+    )
+
+    assert skip_reason is None
+    assert headers is not None
+    claims = issuer.verify(headers["Authorization"].removeprefix("Bearer "))
+    assert claims is not None
+    assert claims["sub"] == "sub-abc"
+    assert claims["aud"] == "krb5-mcp"
+    assert provider.issue_calls == []
+
+
 # ---------------------------------------------------------------------------
 # krb5 branch: broker-issued identity JWT injection, mirroring x509's
 # "mint and inject, let the backend redeem separately" behavior (this plan's
