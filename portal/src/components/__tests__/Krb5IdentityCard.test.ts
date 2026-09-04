@@ -111,10 +111,13 @@ async function fillKeytabForm(wrapper: VueWrapper, username: string, file: File)
  * jsdom's FileReader dispatches its `load` event via a real timer, not a
  * microtask — flushPromises()'s single setImmediate tick fires before it,
  * so a submit that goes through fileToBase64() needs a genuine elapsed
- * macrotask (a real setTimeout) for the read to actually complete.
+ * macrotask for the read to actually complete. Polls `condition` with real
+ * timers via vi.waitFor() instead of guessing a fixed delay was long
+ * enough — a fixed setTimeout(10) here occasionally lost the race under a
+ * loaded CI runner even though it never did locally.
  */
-function waitForFileRead() {
-  return new Promise((resolve) => setTimeout(resolve, 10));
+function waitForFileRead(condition: () => void) {
+  return vi.waitFor(condition, { timeout: 1000, interval: 5 });
 }
 
 beforeEach(() => {
@@ -562,10 +565,9 @@ describe('keytab upload', () => {
     await fillKeytabForm(wrapper, 'jdoe', makeKeytabFile([1, 2, 3, 4]));
 
     await submit(wrapper);
-    await waitForFileRead();
+    await waitForFileRead(() => expect(linkKrb5Keytab).toHaveBeenCalledTimes(1));
     await flushPromises();
 
-    expect(linkKrb5Keytab).toHaveBeenCalledTimes(1);
     const [username, keytabB64] = vi.mocked(linkKrb5Keytab).mock.calls[0];
     expect(username).toBe('jdoe');
     expect(keytabB64).toBe(Buffer.from([1, 2, 3, 4]).toString('base64'));
@@ -590,11 +592,10 @@ describe('keytab upload', () => {
       await fillKeytabForm(wrapper, 'jdoe', makeKeytabFile());
 
       await submit(wrapper);
-      await waitForFileRead();
+      await waitForFileRead(() => expect(wrapper.find('[role="alert"]').exists()).toBe(true));
       await flushPromises();
 
       const alert = wrapper.find('[role="alert"]');
-      expect(alert.exists()).toBe(true);
       expect(alert.text()).toMatch(expected);
       expect(wrapper.find('form').exists()).toBe(true);
       expect(wrapper.emitted('linked')).toBeUndefined();
@@ -625,13 +626,12 @@ describe('keytab upload', () => {
     await fillKeytabForm(wrapper, 'jdoe', makeKeytabFile());
 
     await submit(wrapper);
-    await waitForFileRead();
+    await waitForFileRead(() => expect(wrapper.find('[role="alert"]').exists()).toBe(true));
     await flushPromises();
 
     expect(linkKrb5Keytab).not.toHaveBeenCalled();
 
     const alert = wrapper.find('[role="alert"]');
-    expect(alert.exists()).toBe(true);
     // reader.error is unset in this synthetic failure, so fileToBase64()
     // falls back to its own message rather than surfacing a null error.
     expect(alert.text()).toBe('Failed to read the keytab file.');
