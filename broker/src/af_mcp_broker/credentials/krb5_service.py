@@ -1,4 +1,4 @@
-"""HTTP client for krb5-token-service's mint/renew/keytab endpoints (issue #274).
+"""HTTP client for krb5-token-service's mint/renew endpoints (issue #274).
 
 krb5-token-service (maniaclab/krb5-token-service) is a sibling of
 voms-token-service and condor-token-service: it receives a CERN username and
@@ -13,10 +13,6 @@ the provider surfaces that as ``NeedsUnlock``).
 -R``) without needing the CERN credential again -- it is capped at the
 ticket's own ``renew_until`` and fails once that renewable window has
 closed, at which point the caller must fall through to a fresh mint.
-``POST /v1/keytab`` bootstraps a long-lived keytab from a one-time CERN
-password; krb5-token-service never persists the keytab itself, so the
-caller is responsible for storing the returned bytes if it wants to mint
-via keytab later instead of a live password.
 
 This client authenticates to it with an AF Broker Identity Token
 (``aud=audience`` -- issue #162's internal protocol, the same one
@@ -135,15 +131,14 @@ class MintedTicket:
 
 
 class Krb5TokenServiceClient:
-    """Mints, renews, and bootstraps keytabs for Kerberos tickets at krb5-token-service.
+    """Mints and renews Kerberos tickets at krb5-token-service.
 
     ``mint()`` calls ``POST /v1/mint`` with a CERN password or a
-    previously-bootstrapped keytab, ``renew()`` calls ``POST /v1/renew`` to
-    refresh an already-minted ccache without a credential, and
-    ``mint_keytab()`` calls ``POST /v1/keytab`` to bootstrap a long-lived
-    keytab from a one-time password. Composes the same ``BrokerTokenIssuer``
-    as ``CondorTokenProvider``/``VomsTokenServiceClient``: each call carries
-    a fresh short-TTL identity assertion with ``aud=audience``. The CERN
+    user-provided keytab, and ``renew()`` calls ``POST /v1/renew`` to
+    refresh an already-minted ccache without a credential. Composes the
+    same ``BrokerTokenIssuer`` as ``CondorTokenProvider``/
+    ``VomsTokenServiceClient``: each call carries a fresh short-TTL
+    identity assertion with ``aud=audience``. The CERN
     username/password/keytab travel in the request body, never the token --
     this service derives no authorization from token claims (see its
     README).
@@ -185,9 +180,9 @@ class Krb5TokenServiceClient:
         """Mint a Kerberos ticket for *username*@CERN.CH on behalf of *subject*.
 
         Exactly one of *password* (a live CERN password) or *keytab_b64* (a
-        base64-encoded keytab bootstrapped via ``mint_keytab``) must be
-        given -- calling with both or neither is a programming error in
-        this codebase, not something the service should ever see.
+        user-provided base64-encoded keytab) must be given -- calling with
+        both or neither is a programming error in this codebase, not
+        something the service should ever see.
 
         Raises:
             ValueError: both or neither of *password*/*keytab_b64* given.
@@ -301,64 +296,6 @@ class Krb5TokenServiceClient:
             )
 
         return _parse_minted_ticket(resp.json())
-
-    async def mint_keytab(
-        self, *, subject: str, username: str, password: SecretStr
-    ) -> tuple[str, str]:
-        """Bootstrap a long-lived keytab for *username*@CERN.CH from a one-time password, on behalf of *subject*.
-
-        Returns ``(keytab_b64, principal)``.
-
-        Raises:
-            Krb5TokenBadCredentialError: 400 -- wrong password or unknown
-                principal (same meaning as ``mint``'s 400).
-            Krb5TokenInvalidRequestError: 422 -- malformed username
-                (genuinely user-actionable, same as ``mint``'s 422).
-            Krb5TokenRateLimitedError: 429 -- too many recent failed
-                passwords. The service shares its rate limiter between
-                ``/v1/mint``'s password path and this endpoint.
-            Krb5TokenMintError: any other failure (unreachable, timeout,
-                401, 5xx).
-
-        """
-        broker_token, _ = self._issuer.mint(subject, self._audience)
-        try:
-            resp = await self._http().post(
-                f"{self._base_url}/v1/keytab",
-                headers={"Authorization": f"Bearer {broker_token}"},
-                # Revealed only here, inside the call expression -- see the
-                # module docstring's handling notes.
-                json={"username": username, "password": password.get_secret_value()},
-                timeout=30.0,
-            )
-        except httpx.HTTPError as exc:
-            self._log.warning(
-                "krb5_token.mint_keytab.unreachable", subject=subject, error=str(exc)
-            )
-            raise Krb5TokenMintError(
-                "krb5-token-service could not be reached."
-            ) from exc
-
-        if resp.status_code == httpx.codes.BAD_REQUEST:
-            raise Krb5TokenBadCredentialError
-        if resp.status_code == httpx.codes.UNPROCESSABLE_ENTITY:
-            raise Krb5TokenInvalidRequestError
-        if resp.status_code == httpx.codes.TOO_MANY_REQUESTS:
-            raise Krb5TokenRateLimitedError(resp.headers.get("Retry-After"))
-        if resp.status_code != httpx.codes.OK:
-            # Status code only -- the response body may carry service
-            # internals and must reach neither the log nor the caller.
-            self._log.warning(
-                "krb5_token.mint_keytab.failed",
-                subject=subject,
-                upstream_status=resp.status_code,
-            )
-            raise Krb5TokenMintError(
-                f"krb5-token-service keytab mint failed (status {resp.status_code})."
-            )
-
-        data = resp.json()
-        return data["keytab_b64"], data["principal"]
 
 
 def _parse_iso_utc(value: str) -> float:

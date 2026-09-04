@@ -6,14 +6,12 @@ Broker Identity Token with ``aud=krb5-token-service``, JSON body
 ``{"username", "password"|"keytab_b64", "lifetime"?, "renewable_lifetime"?}``,
 returning ``{"ccache_b64", "principal", "realm", "expires_at",
 "renew_until"}``. The same suite covers ``POST /v1/renew`` (JSON body
-``{"ccache_b64"}``, no credential, same response shape as ``/v1/mint``) and
-``POST /v1/keytab`` (JSON body ``{"username", "password"}``, returning
-``{"keytab_b64", "principal"}``).
+``{"ccache_b64"}``, no credential, same response shape as ``/v1/mint``).
 
 Unlike ``voms_service.py``'s single "bad passphrase" signal, krb5-token-service
 draws several client-actionable distinctions: 400 (bad username/password), 403
 (CERN account revoked/expired), 422 (malformed request) and 429
-(rate-limited, with ``Retry-After``) on ``/v1/mint`` and ``/v1/keytab``;
+(rate-limited, with ``Retry-After``) on ``/v1/mint``;
 ``/v1/renew`` instead draws 422 (stored ccache malformed -- internal
 corruption, not user input) and 400 (renewable window closed -- an expected,
 recoverable condition). 401 and 5xx mean the broker's own identity token or
@@ -402,92 +400,3 @@ class TestRenew:
         client, _ = make_client(httpx.ConnectError("connection refused"))
         with pytest.raises(Krb5TokenMintError):
             await client.renew(subject="user1", ccache_b64="ZmFrZQ==")
-
-
-_KEYTAB_RESPONSE = {"keytab_b64": "a2V5dGFi", "principal": "alice@CERN.CH"}
-
-
-class TestMintKeytab:
-    async def test_mint_keytab_success_parses_response(self, make_client) -> None:
-        client, _ = make_client(httpx.Response(200, json=_KEYTAB_RESPONSE))
-        keytab_b64, principal = await client.mint_keytab(
-            subject="user1", username="alice", password=SecretStr("hunter2")
-        )
-        assert keytab_b64 == "a2V5dGFi"
-        assert principal == "alice@CERN.CH"
-
-    async def test_mint_keytab_sends_broker_token_and_credentials_in_body(
-        self, make_client, issuer: BrokerTokenIssuer
-    ) -> None:
-        client, requests = make_client(httpx.Response(200, json=_KEYTAB_RESPONSE))
-        await client.mint_keytab(
-            subject="user1", username="alice", password=SecretStr("hunter2")
-        )
-        assert len(requests) == 1
-        assert str(requests[0].url) == f"{_SERVICE_URL}/v1/keytab"
-
-        auth = requests[0].headers["authorization"]
-        assert auth.startswith("Bearer ")
-        claims = issuer.verify(auth.removeprefix("Bearer "))
-        assert claims is not None
-        assert claims["aud"] == "krb5-token-service"
-
-        body = json.loads(requests[0].content)
-        assert body == {"username": "alice", "password": "hunter2"}
-
-    async def test_mint_keytab_service_url_trailing_slash_is_normalized(
-        self, make_client
-    ) -> None:
-        client, requests = make_client(
-            httpx.Response(200, json=_KEYTAB_RESPONSE), service_url=f"{_SERVICE_URL}/"
-        )
-        await client.mint_keytab(
-            subject="user1", username="alice", password=SecretStr("hunter2")
-        )
-        assert str(requests[0].url) == f"{_SERVICE_URL}/v1/keytab"
-
-    async def test_mint_keytab_400_raises_bad_credential_error(
-        self, make_client
-    ) -> None:
-        client, _ = make_client(httpx.Response(400, json={"detail": "bad password"}))
-        with pytest.raises(Krb5TokenBadCredentialError):
-            await client.mint_keytab(
-                subject="user1", username="alice", password=SecretStr("hunter2")
-            )
-
-    async def test_mint_keytab_422_raises_invalid_request_error(
-        self, make_client
-    ) -> None:
-        client, _ = make_client(
-            httpx.Response(422, json={"detail": "invalid username"})
-        )
-        with pytest.raises(Krb5TokenInvalidRequestError):
-            await client.mint_keytab(
-                subject="user1", username="alice", password=SecretStr("hunter2")
-            )
-
-    async def test_mint_keytab_429_raises_rate_limited_error_with_retry_after(
-        self, make_client
-    ) -> None:
-        client, _ = make_client(httpx.Response(429, headers={"Retry-After": "30"}))
-        with pytest.raises(Krb5TokenRateLimitedError) as exc_info:
-            await client.mint_keytab(
-                subject="user1", username="alice", password=SecretStr("hunter2")
-            )
-        assert exc_info.value.retry_after == "30"
-
-    async def test_mint_keytab_401_raises_generic_mint_error(self, make_client) -> None:
-        client, _ = make_client(httpx.Response(401))
-        with pytest.raises(Krb5TokenMintError):
-            await client.mint_keytab(
-                subject="user1", username="alice", password=SecretStr("hunter2")
-            )
-
-    async def test_mint_keytab_connection_error_is_generic_mint_error(
-        self, make_client
-    ) -> None:
-        client, _ = make_client(httpx.ConnectError("connection refused"))
-        with pytest.raises(Krb5TokenMintError):
-            await client.mint_keytab(
-                subject="user1", username="alice", password=SecretStr("hunter2")
-            )
