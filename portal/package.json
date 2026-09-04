@@ -1,7 +1,7 @@
 {
   "name": "af-mcp-platform-portal",
   "type": "module",
-  "version": "0.1.19",
+  "version": "0.1.20",
   "scripts": {
     "dev": "astro dev",
     "build": "astro build && node scripts/sync-csp-hashes.mjs && node scripts/check-protected-routes.mjs",
