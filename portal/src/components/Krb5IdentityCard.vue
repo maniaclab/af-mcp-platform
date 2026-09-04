@@ -71,10 +71,21 @@ const forgetArmed = ref(false);
 // while the form is closed.
 const forgetError = ref<string | null>(null);
 
+// Reset the two-step forget confirmation and any stale forget error whenever
+// the mint form's visibility changes -- the forget row is hidden while the
+// form is open (`v-if="!formOpen && linked"`), so without this an armed
+// confirmation (or a leftover failure alert) survives invisibly and
+// reappears pre-armed/stale once the form closes again.
+function resetForgetState() {
+  forgetArmed.value = false;
+  forgetError.value = null;
+}
+
 async function openForm() {
   formOpen.value = true;
   remember.value = false;
   error.value = null;
+  resetForgetState();
   await nextTick();
   usernameInput.value?.focus();
 }
@@ -84,6 +95,7 @@ function closeForm() {
   username.value = '';
   password.value = '';
   error.value = null;
+  resetForgetState();
 }
 
 async function handleSubmit() {

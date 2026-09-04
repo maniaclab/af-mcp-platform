@@ -321,4 +321,55 @@ describe('forget affordance', () => {
     expect(wrapper.find('[role="alert"]').exists()).toBe(true);
     expect(wrapper.emitted('revoked')).toBeUndefined();
   });
+
+  it('cancel on the forget row resets the armed confirmation without calling unlinkIdentity', async () => {
+    // Earlier tests in this describe block also call unlinkIdentity('krb5');
+    // clear its call history so this test's own not.toHaveBeenCalled()
+    // assertion reflects only what happens below, regardless of run order.
+    vi.mocked(unlinkIdentity).mockClear();
+    const wrapper = mountCard(true);
+
+    await wrapper.find('button.kc__btn--forget').trigger('click');
+    expect(wrapper.find('button.kc__btn--forget').text()).toMatch(/confirm/i);
+
+    await wrapper.find('.kc__forget-row button.kc__btn--cancel').trigger('click');
+
+    expect(wrapper.find('button.kc__btn--forget').text()).toBe('Forget this ticket');
+    expect(unlinkIdentity).not.toHaveBeenCalled();
+  });
+
+  it('opening the mint form (e.g. via "Refresh ticket") disarms a pending forget confirmation, even after the form is cancelled', async () => {
+    // See the previous test's comment on clearing shared mock call history.
+    vi.mocked(unlinkIdentity).mockClear();
+    const wrapper = mountCard(true);
+
+    // Arm the forget confirmation.
+    await wrapper.find('button.kc__btn--forget').trigger('click');
+    expect(wrapper.find('button.kc__btn--forget').text()).toMatch(/confirm/i);
+
+    // Opening the mint form hides the forget row entirely — it must not
+    // leave forgetArmed set for when the row reappears.
+    await openForm(wrapper);
+    await wrapper.find('button.kc__btn--cancel').trigger('click');
+
+    // The forget row is back, but must require a fresh confirm click before
+    // it would actually call unlinkIdentity.
+    expect(wrapper.find('button.kc__btn--forget').text()).toBe('Forget this ticket');
+    await wrapper.find('button.kc__btn--forget').trigger('click');
+    expect(unlinkIdentity).not.toHaveBeenCalled();
+  });
+
+  it('opening the mint form clears a stale forgetError from a previous failed forget attempt', async () => {
+    vi.mocked(unlinkIdentity).mockRejectedValueOnce(new Error('boom'));
+    const wrapper = mountCard(true);
+
+    await wrapper.find('button.kc__btn--forget').trigger('click');
+    await wrapper.find('button.kc__btn--forget').trigger('click');
+    await flushPromises();
+    expect(wrapper.find('[role="alert"]').exists()).toBe(true);
+
+    await openForm(wrapper);
+
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false);
+  });
 });
