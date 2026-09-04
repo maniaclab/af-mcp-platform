@@ -808,13 +808,73 @@ a `krb5-token` entry with no signing key configured refuses to boot,
 since the provider cannot mint the identity token it exchanges with
 krb5-token-service.
 
-**No downstream `aggregator.services` consumer exists yet.** `targets`
-ships empty by default, and `CredentialKind.KRB5_CCACHE` is defined, but
-no aggregator delivery branch forwards a minted ccache to any backend
-service — issue #274 covers only the provider-type plumbing (the mint
-path and the `/v1/krb5/ticket` endpoint), not choosing or wiring an
-actual `auth_type: krb5` backend. That remains a separate,
-not-yet-made decision.
+**Redeeming the ticket: `POST /v1/credentials/krb5/redeem`.** Mirrors
+`redeem_x509_proxy` exactly in shape (`api/credentials.py`): mounted on
+the same `backend_router` as `POST /v1/credentials/x509/redeem` (not the
+Keycloak-gated router), authenticated by an AF Broker Identity Token in
+the `Authorization` header rather than a Keycloak JWT, and requiring its
+`aud` to map to a configured krb5 target via `app.state.krb5_audiences`
+— an `effective_audience -> target` reverse map, the same shape as
+`x509_audiences` (issue #257's audience/target split applies here too,
+since the token's `aud` is the service's `effective_audience`, which can
+differ from the krb5 target name the ticket/provider are keyed under).
+An `aud` that doesn't map to any krb5 target 403s and writes a
+`krb5_ticket_release` audit record with `outcome="denied"` — the same
+audit scope x509's redeem writes on its own audience-mismatch path.
+
+**Read-only — this route never mints or renews.** Once the audience
+resolves to a target, it calls `KrbTokenProvider.peek_ticket(subject,
+target, min_remaining_seconds=0)`: whatever is already cached in-process
+or Vault-stored, at **zero** freshness margin — not `issue()`'s
+300-second "plenty of runway" default. A synchronous backend-to-backend
+call has no way to prompt a user for a CERN password, so unlike x509's
+redeem (which can hands-free-renew from a stored passphrase in
+voms-token-service mode), there's nothing this route can do to freshen an
+expiring ticket — it serves whatever is valid *right now*, at zero
+margin, or 404s with a hint pointing at `POST /v1/krb5/ticket`. A
+300-second buffer here would silently 404 tickets that are still
+genuinely usable for tens of minutes; using `issue()`'s default was
+exactly this route's own shipped bug, and 0 is the fix.
+
+On success, it writes a second `krb5_ticket_release` audit record
+(`outcome="success"`, `args_summary` naming the released principal and
+target — never the ccache itself) and returns `KrbTicketRedeemResponse`:
+`ccache_b64`, `principal`, `realm`, `expires_at`, `remaining_seconds`,
+and `renew_until` (null when the ticket isn't renewable). This is the
+krb5 analogue of `ProxyRedeemResponse` — the same deliberate, audited
+exception to "credentials never transit to the client" that x509's PEM
+redeem makes, scoped identically: authenticated backend targets only,
+over in-cluster TLS, one release per request.
+
+**The aggregator's `auth_type: "krb5"` dispatch.** `_make_client_factory`
+(`mcp/aggregator.py`) carries a `krb5` branch identical in shape to the
+existing `x509` one: on an authorized `tools/call`, it gates on
+`_require_linked`, then mints an AF Broker Identity Token (`aud` = the
+service's `effective_audience`) and injects it as `Authorization:
+Bearer` — mint-and-inject only, exactly like x509. The backend is
+expected to redeem its own ccache via `POST /v1/credentials/krb5/redeem`
+above; no ccache material ever transits the aggregator. On a
+`tools/list` (or a stale-cache refresh — no `authorized_call_target`
+match), it falls back to the same best-effort identity-header mint the
+x509 branch uses, gated by `_might_be_entitled`, so a listing never
+hard-fails or eats a wasted mint attempt just because a krb5 service is
+in the catalog. `resolve_list_time_credential` — the portal's
+per-service tool-listing entry point into this same logic
+(`api/catalog_tools.py`) — folds `"x509"` and `"krb5"` into one shared
+`auth_type in ("x509", "krb5")` branch, since the two were byte-identical:
+mint an identity token, return it as an `Authorization` header, and
+— critically — never call `provider.issue()` for either, since minting
+a real credential is exactly the operation a best-effort, unauthenticated
+list-time code path must never trigger.
+
+**No `services.yaml` entry uses `auth_type: krb5` yet.** `targets` ships
+empty by default, and the aggregator/list-time dispatch branches above
+exist and are exercised by tests, but no backend in the shipped
+`services.yaml` declares `auth_type: krb5` — issue #274 remains
+provider-type plumbing (the mint path, the `/v1/krb5/ticket` endpoint,
+the `/v1/credentials/krb5/redeem` endpoint above, and the aggregator/
+list-time dispatch) for a consumer that hasn't been chosen yet. That
+remains a separate, not-yet-made decision.
 
 ---
 
