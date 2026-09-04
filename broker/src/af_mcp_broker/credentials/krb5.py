@@ -345,6 +345,20 @@ class KrbTokenProvider(CredentialProvider):
         await self._cache.revoke(principal.subject, target)
         await self._vault_store.clear_ticket(principal.subject)
 
+    async def unlink(self, principal: Principal) -> None:
+        """Delete the stored keytab (link), fully forgetting this identity.
+
+        Distinct from ``revoke()``, which only drops a single target's
+        cached/Vault-stored ticket and leaves the keytab in place so tier 4
+        can remint from it -- ``unlink()`` is the stronger, user-initiated
+        "forget me" operation: it deletes the entire Vault record (keytab
+        AND any ticket half), mirroring ``X509Provider``'s auto-unlink-on-
+        bad-stored-passphrase (``renew_from_stored_link``) but triggered by
+        the user rather than a rejected credential. Called by ``DELETE
+        /v1/identities/link/{provider}``'s krb5-token branch.
+        """
+        await self._vault_store.delete(principal.subject)
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------

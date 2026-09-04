@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict
 
 from af_mcp_broker.authorization import is_admin
 from af_mcp_broker.config import get_settings
-from af_mcp_broker.credentials import OIDCProvider, X509Provider
+from af_mcp_broker.credentials import KrbTokenProvider, OIDCProvider, X509Provider
 from af_mcp_broker.identity import Principal, keycloak_dependency
 
 if TYPE_CHECKING:
@@ -307,6 +307,26 @@ async def unlink_identity(
             getattr(request.app.state, "identity_providers", None) or {}
         )
         await identity_providers[provider].revoke(principal, provider)
+
+        credential_cache = getattr(request.app.state, "credential_cache", None)
+        if credential_cache is not None:
+            for target in cfg.targets:
+                await credential_cache.revoke(principal.subject, target)
+
+        logger.info(
+            "identity_unlink_completed",
+            subject=principal.subject,
+            provider=provider,
+        )
+        return
+
+    if cfg.type == "krb5-token":
+        identity_providers = (
+            getattr(request.app.state, "identity_providers", None) or {}
+        )
+        krb5_provider = identity_providers[provider]
+        assert isinstance(krb5_provider, KrbTokenProvider)  # cfg.type guarantees this
+        await krb5_provider.unlink(principal)
 
         credential_cache = getattr(request.app.state, "credential_cache", None)
         if credential_cache is not None:

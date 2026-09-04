@@ -17,6 +17,7 @@ import json
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from pydantic import SecretStr
 from test_broker_issued import _make_rsa_key, _private_pem
 from test_krb5_token import FakeKrb5VaultStore
 
@@ -189,3 +190,41 @@ def test_identities_lists_krb5_token_provider_as_linked(
     # krb5-token needs username + password, two fields, not one -- distinct
     # from x509's "passphrase" (see identities.py's _LINK_MECHANISM_BY_TYPE).
     assert row["link_mechanism"] == "credential"
+
+
+# ---------------------------------------------------------------------------
+# DELETE /v1/identities/link/krb5 (issue #274 unlink follow-up)
+# ---------------------------------------------------------------------------
+
+
+def test_unlink_krb5_token_alias_deletes_stored_link_and_revokes_cache(
+    krb5_token_env, app_client_factory
+) -> None:
+    """Mirrors the ``oauth21-direct`` branch's shape: deleting the stored
+    link (here, the Vault-stored keytab) AND revoking the credential cache
+    for every one of the entry's targets, not just returning 204."""
+    krb5_token_env()
+
+    with app_client_factory() as (client, state):
+        subject = state["principal"].subject
+        app_state = client.app.state
+        fake_vault_store = FakeKrb5VaultStore()
+        app_state.identity_providers["krb5"]._vault_store = fake_vault_store
+        asyncio.run(
+            fake_vault_store.store_link(
+                subject, username="alice", keytab_b64=SecretStr("ZmFrZQ==")
+            )
+        )
+
+        cache = app_state.credential_cache
+        asyncio.run(cache.put(subject, "krb5-target", "fake-cached-credential"))
+        assert asyncio.run(cache.get(subject, "krb5-target")) is not None
+
+        resp = client.delete("/v1/identities/link/krb5")
+
+        assert resp.status_code == 204, resp.text
+        assert fake_vault_store.deleted == [subject]
+        assert asyncio.run(fake_vault_store.get_link(subject)) is None
+        # get() itself would raise on a rate-limited miss -- read the entry
+        # dict directly to assert absence without tripping that.
+        assert (subject, "krb5-target") not in cache._entries
