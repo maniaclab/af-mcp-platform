@@ -650,10 +650,10 @@ passphrase-unlock doctrine rather than `CondorTokenProvider`'s
 unconditional `is_linked() -> True`.
 
 `issue()` works through a five-tier fallback before ever raising
-`NeedsUnlock`. Tiers 1-4 all need **no user interaction** — that is the
-point of "remember" (below): once a keytab is stored, renew and remint
-can keep a linked user's tickets flowing indefinitely without ever
-prompting for a password again:
+`NeedsUnlock`. Tiers 1-4 all need **no user interaction**: once a keytab
+is linked (see `POST /v1/krb5/keytab` below), renew and remint can keep
+a linked user's tickets flowing indefinitely without ever prompting for
+a password again:
 
 1. **Cache** — an unexpired ticket already sits in the in-process
    `CredentialCache`.
@@ -663,16 +663,16 @@ prompting for a password again:
 3. **Renew** — the Vault-stored ticket is past its `not_after` but still
    within its own `renew_until` window: `Krb5TokenServiceClient.renew()`
    (`POST /v1/renew`) extends it with **no credential at all**.
-4. **Keytab remint** — a keytab was previously bootstrapped and stored
-   (only when the user opted in to "remember" on an earlier mint, below):
+4. **Keytab remint** — a keytab was previously linked via
+   `KrbTokenProvider.link_keytab()` (below):
    `Krb5TokenServiceClient.mint()` with `keytab_b64` mints a fresh ticket
    with **no live password**. A rejected keytab (e.g. the CERN password
-   was rotated since it was bootstrapped) proactively unlinks the
-   identity and falls through as if no link had ever existed.
+   backing it was rotated) proactively unlinks the identity and falls
+   through as if no link had ever existed.
 
 Only when none of those four tiers can produce a ticket does `issue()`
 raise `NeedsUnlock` — tiers 3 and 4 in particular mean a linked user with
-a "remembered" keytab never has to re-enter a password at all, the same
+a linked keytab never has to re-enter a password at all, the same
 hands-free renewal story `X509Provider` already has for VOMS proxies.
 Tier 5, the interactive fresh mint, still requires a live username and
 password:
@@ -680,40 +680,94 @@ password:
 `POST /v1/krb5/ticket` (`KrbTicketRequest` → `KrbTicketMetadata`,
 `api/credentials.py`) accepts `username`, `password` (a `SecretStr`,
 never logged or echoed), an optional `target` (defaults to the entry's
-first configured target), optional `lifetime`/`renewable_lifetime`
-strings forwarded verbatim to krb5-token-service, and a `remember` flag
-(default `False`). The response carries `target`, `principal`, `realm`,
-`expires_at`, `remaining_seconds`, and `renew_until` (null when the
-ticket isn't renewable) — **`ccache_b64` is deliberately absent**: the
-ticket is cached server-side in the `CredentialCache`, the same
-"credentials never transit to the client" rule x509's proxy metadata
-follows for the PEM.
+first configured target), and optional `lifetime`/`renewable_lifetime`
+strings forwarded verbatim to krb5-token-service. The response carries
+`target`, `principal`, `realm`, `expires_at`, `remaining_seconds`, and
+`renew_until` (null when the ticket isn't renewable) —
+**`ccache_b64` is deliberately absent**: the ticket is cached
+server-side in the `CredentialCache`, the same "credentials never
+transit to the client" rule x509's proxy metadata follows for the PEM.
 
-`remember=true` additionally bootstraps and stores a keytab from the
-**same** password already supplied for the ticket mint — one prompt, not
-two. After the ticket mint succeeds, the provider calls
-`Krb5TokenServiceClient.mint_keytab()` (`POST /v1/keytab`) with the
-identical `username`/`password` and stores the returned keytab via
-`Krb5VaultStore.store_link()`. This is best-effort: the ticket mint
-already succeeded by that point, so any failure bootstrapping the keytab
-(e.g. hitting the service's shared rate limiter) is logged and swallowed
-rather than failing a call that already did its primary job — the user
-just doesn't get hands-free renewal next time and has to re-link.
-Without `remember`, nothing password-derived is persisted; only the
-ticket half (see below) is ever stored, regardless of `remember`.
+```jsonc
+// POST /v1/krb5/ticket
+{"username": "gstark", "password": "<cern password>"}
+
+// 201
+{
+  "target": "krb5-token-service",
+  "principal": "gstark@CERN.CH",
+  "realm": "CERN.CH",
+  "expires_at": "2026-09-04T18:00:00+00:00",
+  "remaining_seconds": 36000,
+  "renew_until": "2026-09-11T06:00:00+00:00"
+}
+```
+
+**The broker cannot mint a keytab itself.** The obvious approach —
+bootstrapping one from the same password a caller just typed, via
+krb5-token-service's `cern-get-keytab`-backed `mint_keytab()` — is
+unreachable from this facility's network: `cern-get-keytab`'s
+`msktutil` backend needs CERN-internal LDAP/AD reachability (to
+`cerndc.cern.ch`, on a port other than the KDC's 88) plus an HTTPS call
+to `lxkerbwin.cern.ch`, and neither host is reachable from here
+(confirmed by testing: the call hangs and times out after
+`CERN_GET_KEYTAB_TIMEOUT_SECONDS`). An SSH-tunnel-through-lxplus
+workaround was investigated and ruled out: lxplus enforces mandatory
+multi-factor SSH (Kerberos plus a registered SSH key plus an
+interactive 2FA prompt), and that interactive step cannot be satisfied
+by an unattended service. Tier 4 above (remint from an already-linked
+keytab) is **unaffected** by any of this: `kinit -kt` only needs the
+CERN KDC on port 88, already open and already used by every other tier.
+
+Instead, `POST /v1/krb5/keytab` (`KrbKeytabLinkRequest` →
+`KrbTicketMetadata`, same response shape as `/krb5/ticket` above) lets
+the user upload a keytab they generated **themselves** — e.g. on
+lxplus, which has no such reachability problem since it runs directly
+on CERN's network. `KrbTokenProvider.link_keytab()`
+(`credentials/krb5.py`) validates the upload by minting a ticket with
+it — the exact same `Krb5TokenServiceClient.mint(..., keytab_b64=...)`
+call tier 4 already uses, so a bad keytab surfaces as the same
+`Krb5TokenBadCredentialError` (400) tier 4's remint already handles —
+and only on success stores it via `Krb5VaultStore.store_link()`, the
+identical link-half schema and tier-4 remint logic the old "remember"
+auto-bootstrap used to populate. Validation happens **before** the
+store, never after: a caller can never end up with a bad keytab
+persisted to Vault.
+
+```jsonc
+// POST /v1/krb5/keytab
+{"username": "gstark", "keytab_b64": "<base64-encoded keytab bytes>"}
+
+// 201 — same KrbTicketMetadata shape as /krb5/ticket
+{
+  "target": "krb5-token-service",
+  "principal": "gstark@CERN.CH",
+  "realm": "CERN.CH",
+  "expires_at": "2026-09-04T18:00:00+00:00",
+  "remaining_seconds": 36000,
+  "renew_until": "2026-09-11T06:00:00+00:00"
+}
+```
+
+Both routes map krb5-token-service failures onto the same HTTP statuses
+(see the table below): 400 bad credential, 403 account error, 422
+invalid request, 429 rate-limited, and 502 for anything else (including
+the broker's own token being rejected by krb5-token-service — see the
+401-folding note below).
 
 `Krb5VaultStore` (`credentials/krb5_vault.py`) persists one KV-v2 record
 per subject and mirrors `VaultX509Store`'s **link half / ticket half**
 split:
 
 - the **link half** — a keytab and its username, written only via
-  `store_link()` when the user opts in to "remember". This is the
-  durable, custody-gated piece that makes tier 4 (keytab remint)
-  possible.
+  `store_link()`, called from `link_keytab()` when the user uploads a
+  keytab they generated themselves. This is the durable, custody-gated
+  piece that makes tier 4 (keytab remint) possible.
 - the **ticket half** — the last-minted ccache and its `not_after` /
   `renew_until` deadlines, written on *every* successful mint or renewal
-  regardless of `remember`. This is what makes tier 3 (renew) possible
-  for every linked user, not just ones who opted into keytab custody.
+  regardless of whether a keytab is linked. This is what makes tier 3
+  (renew) possible for every linked user, not just ones who've linked a
+  keytab.
 
 Unlike x509's `store_link` (which wipes a stale proxy on re-link, since a
 new passphrase may not be able to re-mint the old one), a krb5 ticket's
@@ -722,9 +776,9 @@ validity has nothing to do with which keytab is currently on file, so
 
 `is_linked()` reports True on the first hit among: a live cached ticket
 for one of the entry's targets, a stored keytab (link half), or a
-still-renewable stored ticket — so a "remembered" identity reads as
-linked even between mints, unlike a bare cached-ticket check which can
-flip `linked: true` → `false` purely because the cache entry expired.
+still-renewable stored ticket — so a linked identity reads as linked
+even between mints, unlike a bare cached-ticket check which can flip
+`linked: true` → `false` purely because the cache entry expired.
 `GET /v1/identities` marks the entry's `link_mechanism` as `"credential"`
 — a two-field username+password form, distinct from x509's one-field
 `"passphrase"` — so the portal renders the right form shape.
@@ -770,11 +824,11 @@ appends `/v1/mint`) and an `audience` defaulting to
 Vault connection settings are now unconditionally required**: a
 `krb5-token` entry has no legacy/service-mode split the way x509 does —
 `service_url` is mandatory on every entry — and since a given entry
-can't declare ahead of time whether any caller will ever check
-"remember", `Settings._validate_vault_config` (`config.py`) requires
+can't declare ahead of time whether any caller will ever link a keytab,
+`Settings._validate_vault_config` (`config.py`) requires
 `vault_addr`/`vault_auth_role` at boot for *any* `krb5-token` entry, not
-only ones actually used with `remember=true`. A `krb5-token` entry with
-no Vault connection configured refuses to boot, the same fail-closed
+only ones a caller actually links a keytab through. A `krb5-token` entry
+with no Vault connection configured refuses to boot, the same fail-closed
 doctrine as a `vault`-backed token store or principal cache with no
 Vault settings:
 
@@ -795,7 +849,7 @@ broker:
   # x509 service mode, and now any krb5-token entry above), even though
   # the field lives under oauth21.tokenStore for historical reasons.
   # Required as soon as ANY krb5-token entry exists, whether or not a
-  # caller ever passes remember=true.
+  # caller ever links a keytab.
   oauth21:
     tokenStore:
       vault:
