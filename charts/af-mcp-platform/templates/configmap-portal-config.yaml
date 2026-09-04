@@ -17,7 +17,8 @@ data:
       "oidc": {
         "issuer": {{ required "oidc.issuer must be set (e.g. via your deploying HelmRelease values)" .Values.oidc.issuer | quote }},
         "clientId": {{ required "portal.oidc.clientId must be set (e.g. via your deploying HelmRelease values)" .Values.portal.oidc.clientId | quote }},
-        "scope": {{ .Values.portal.oidc.scope | quote }}
+        "scope": {{ .Values.portal.oidc.scope | quote }},
+        "extraAuthorizeParams": {{ .Values.portal.oidc.extraAuthorizeParams | default dict | toJson }}
       },
       "brokerOrigin": {{ required "portal.brokerOrigin must be set (e.g. via your deploying HelmRelease values)" .Values.portal.brokerOrigin | quote }},
       "branding": {

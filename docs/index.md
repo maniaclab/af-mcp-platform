@@ -24,11 +24,11 @@ not as universal facts.
 
 ```
 Claude / Gemini / any MCP client         Browser (portal SPA)
-        │  own Bearer (OIDC)                     │  oauth2-proxy: HTML only
+        │  own Bearer (OIDC)                     │  own OIDC login (client-side)
         ▼                                         ▼
 mcp.af.uchicago.edu                     mcp-portal.af.uchicago.edu
-(no oauth2-proxy — broker               (portal does its own OIDC; /v1
- validates the Bearer itself)            + /mcp bypass oauth2-proxy too)
+(broker validates the                   (portal does its own OIDC;
+ Bearer itself)                          /v1 + /mcp carry no gate)
         │                                         │
         └───────────────────┬─────────────────────┘
                              ▼

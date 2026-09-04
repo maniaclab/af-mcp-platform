@@ -661,6 +661,12 @@ portal:
     # (must match broker.oidc.audience above).
     scope: "openid profile email"
 
+    # Extra static query params forwarded to Keycloak's authorize endpoint
+    # on login (auth.ts's login()). Empty by default. Set e.g.
+    # `kc_idp_hint: "oidc"` to skip Keycloak's own login page in favor of a
+    # specific upstream IdP configured in your realm.
+    extraAuthorizeParams: {}
+
   # Origin the SPA calls for the broker's /v1 and /mcp paths, and what the
   # portal's CSP connect-src allows. REQUIRED — e.g. "https://mcp.example.com".
   # Same-origin (ingress.portalHost) also works if you'd rather not expose
@@ -683,15 +689,6 @@ portal:
     facilityName: ""
 
 # ---------------------------------------------------------------------------
-# OAuth2 Proxy — forward-auth integration
-# ---------------------------------------------------------------------------
-oauth2Proxy:
-  # URL of the EXISTING shared oauth2-proxy (traefik-triton namespace).
-  # All ingress routes use this as the nginx auth-url.
-  forwardAuthUrl: "http://oauth2-proxy.traefik-triton.svc.cluster.local:4180/oauth2/auth"
-  signInUrl: "https://oauth2-proxy.af.uchicago.edu/oauth2/sign_in"
-
-# ---------------------------------------------------------------------------
 # Ingress
 # ---------------------------------------------------------------------------
 ingress:
@@ -701,8 +698,7 @@ ingress:
   mcpHost: mcp.af.uchicago.edu
   # FQDN for the portal (static site)
   portalHost: mcp-portal.af.uchicago.edu
-  # Extra annotations merged onto the Ingress. auth-url/auth-signin are derived
-  # from oauth2Proxy.* below and always added; put other annotations here.
+  # Extra annotations merged onto the Ingress.
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
   tls:

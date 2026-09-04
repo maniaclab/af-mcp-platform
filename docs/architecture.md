@@ -53,14 +53,14 @@ Backend MCP server  (rucio-mcp, ami-mcp, condor-mcp, …)
 LLM client / Portal SPA
 ```
 
-oauth2-proxy still exists, but only in front of the portal's authenticated
-pages (`ingress-portal-authenticated.yaml`) — the public landing page and
-the static assets every portal page loads are served without it
-(`ingress-portal.yaml`'s `/` catch-all), and it is not in the request path
-for `/v1/*` or `/mcp/*` on either host (`ingress-mcp.yaml` for mcpHost,
-`ingress-portal-api.yaml` for portalHost). Every caller obtains its own
-`aud=mcp-gateway` token and presents it directly; the broker's validator is
-identical regardless of which client identity issued the token. See
+No ForwardAuth proxy sits in front of any host or path — `ingress-portal.yaml`
+serves every portal page (public and authenticated alike) from a single `/`
+catch-all, and `/v1/*`/`/mcp/*` on either host (`ingress-mcp.yaml` for
+mcpHost, `ingress-portal-api.yaml` for portalHost) carry no gate of their
+own. The portal SPA enforces its own client-side OIDC login
+(`portal/src/lib/auth.ts`). Every caller obtains its own `aud=mcp-gateway`
+token and presents it directly; the broker's validator is identical
+regardless of which client identity issued the token. See
 [docs/auth.md](auth.md) for the full design record.
 
 ### `/mcp` transport mode and replica safety (issue #128)
@@ -586,8 +586,8 @@ cannot shadow the client's `_meta` traceparent.
 The FastAPI `/v1` HTTP API is the **platform boundary**. Anything behind it
 (aggregator, backends, credential providers) is an implementation detail.
 Anything in front of it (LLM clients, the portal SPA) sees only this
-surface — and presents its own bearer token directly; oauth2-proxy is not
-in this path (see [docs/auth.md](auth.md)).
+surface — and presents its own bearer token directly; no ForwardAuth proxy
+is in this path (see [docs/auth.md](auth.md)).
 
 Key endpoints:
 

@@ -4,8 +4,8 @@
  * Auth model: the portal is its own OAuth public client (see ../lib/auth) and
  * sends its own `aud=mcp-gateway` Bearer on every request — the broker
  * validates it directly, the same way it validates any other caller's token.
- * There's no cookie in this path any more: oauth2-proxy now only gates the
- * portal's HTML/static assets, not `/v1` or `/mcp` (see #42).
+ * There's no cookie in this path — `/v1` and `/mcp` carry no gate of their
+ * own on either host (see #42).
  *
  * On a 401, we attempt one silent renew (refresh_token grant) and retry the
  * request once before giving up. If that still 401s, or there was no session
@@ -33,7 +33,7 @@ import { tokenStatus } from './tokenDisplay';
 // PUBLIC_BROKER_URL MUST include the `/v1` suffix when overridden
 // (e.g. https://mcp.af.uchicago.edu/v1). It replaces the base wholesale, so a
 // value without `/v1` would silently drop the API prefix. Default is the
-// same-origin `/v1` path served behind oauth2-proxy.
+// same-origin `/v1` path.
 const API_BASE = (import.meta.env.PUBLIC_BROKER_URL ?? '/v1') as string;
 
 // ---------------------------------------------------------------------------

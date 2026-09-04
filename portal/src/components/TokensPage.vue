@@ -3,8 +3,9 @@
  * TokensPage.vue — mints broker-issued identity PATs for programmatic MCP
  * clients (issue #144 step 2a), backed by a durable, HA-safe registry with
  * enforced revocation. Interactive browser use never touches this page —
- * oauth2-proxy handles that transparently (see docs/auth.md). This page
- * exists for clients like Claude Desktop that can't do OAuth discovery yet.
+ * the portal's own OIDC login (see ../lib/auth.ts, docs/auth.md) handles that
+ * transparently. This page exists for clients like Claude Desktop that can't
+ * do OAuth discovery yet.
  *
  * CRITICAL SECURITY NOTE: the minted token value only ever lives in
  * `mintedToken` for the lifetime of the mint dialog. It is cleared the moment

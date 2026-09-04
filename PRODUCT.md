@@ -54,8 +54,8 @@ URL without multiplying the number of places a client must trust with credential
 ## Operating Context
 
 - Two hosts per deployment: one for MCP-over-HTTP (any client, broker validates its own
-  Bearer, no oauth2-proxy) and one for the portal SPA (its own OIDC login; oauth2-proxy
-  fronts only its HTML — `/v1` and `/mcp` bypass it on both hosts). The reference
+  Bearer directly) and one for the portal SPA (its own OIDC login, enforced client-side —
+  `/v1` and `/mcp` carry no gate of their own on either host). The reference
   deployment's are `mcp.af.uchicago.edu` and `mcp-portal.af.uchicago.edu`.
 - The portal has four real screens today: Overview (`/`, dashboard + MCP endpoint
   connection snippets), MCP Servers catalog (`/catalog`, backends/tools reachable by
