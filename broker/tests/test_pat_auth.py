@@ -11,6 +11,7 @@ from __future__ import annotations
 import time
 
 import pytest
+import structlog
 from fastapi import HTTPException
 
 from af_mcp_broker.config import Settings
@@ -108,6 +109,24 @@ async def test_valid_pat_resolves_principal(
     assert principal.groups == ["atlas"]
     assert principal.email == "a@x.org"
     assert principal.raw_token.get_secret_value() == token
+
+
+async def test_valid_pat_binds_subject_to_structlog_context(
+    settings, pat_backend, principal_cache, directory, tracker
+) -> None:
+    """Issue #281: /mcp's only PAT resolution path, so every log line for
+    the rest of this request must be able to name the caller."""
+    directory.responses["kc-sub-1"] = PrincipalAttributes(
+        uid=50123, gid=5000, unixname="auser", groups=["atlas"], email="a@x.org"
+    )
+    token = await _mint_and_store(pat_backend, principal_id="kc-sub-1")
+    structlog.contextvars.clear_contextvars()
+
+    principal = await resolve_pat_principal(
+        token, settings, pat_backend, principal_cache, tracker
+    )
+
+    assert structlog.contextvars.get_contextvars()["subject"] == principal.subject
 
 
 async def test_valid_pat_with_no_posix_identity_resolves_principal(

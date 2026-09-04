@@ -59,6 +59,7 @@ from fastapi import HTTPException, status
 from pydantic import SecretStr
 
 from af_mcp_broker.identity import Principal, TokenExpiredError
+from af_mcp_broker.logging import bind_subject
 from af_mcp_broker.pat import parse_pat, verify_secret
 from af_mcp_broker.principal_cache import PrincipalUnavailableError
 
@@ -162,6 +163,7 @@ async def resolve_pat_principal(
     except PrincipalUnavailableError:
         raise _vague_401() from None
 
+    bind_subject(record.principal_id)
     return Principal(
         subject=record.principal_id,
         email=attributes.email,

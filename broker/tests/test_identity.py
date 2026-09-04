@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
 import time
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
+import structlog
 from conftest import AUDIENCE, make_claims
 from fastapi import HTTPException
 
@@ -167,6 +170,47 @@ async def test_jwt_principal_has_no_token_id(
     principal = await get_principal(token, settings, cache)
 
     assert principal.token_id is None
+
+
+async def test_get_principal_binds_subject_to_structlog_context(
+    settings, sig_key, prime_jwks, static_principal_cache
+):
+    """Issue #281: every log line for the rest of this request -- on /v1 via
+    keycloak_dependency and on /mcp via AsgiAuthMiddleware, both of which
+    call get_principal directly -- must be able to name the caller."""
+    cache, _directory = static_principal_cache
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+    structlog.contextvars.clear_contextvars()
+
+    principal = await get_principal(token, settings, cache)
+
+    assert structlog.contextvars.get_contextvars()["subject"] == principal.subject
+
+
+async def test_keycloak_dependency_dev_bypass_binds_subject_to_structlog_context(
+    settings,
+) -> None:
+    """Issue #281: keycloak_dependency's dev-bypass branch never calls
+    get_principal, so it needs its own bind_subject call to cover /v1's
+    local-dev auth bypass the same way as the real JWT path above."""
+    dev_principal = identity_module.build_dev_principal(
+        json.dumps({"uid": 1000, "gid": 1000, "unixname": "devuser"})
+    )
+    fake_request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                dev_bypass_active=True, dev_bypass_principal=dev_principal
+            )
+        ),
+        url=SimpleNamespace(path="/v1/identities"),
+    )
+    structlog.contextvars.clear_contextvars()
+
+    principal = await identity_module.keycloak_dependency(fake_request, None, settings)
+
+    assert principal is dev_principal
+    assert structlog.contextvars.get_contextvars()["subject"] == "dev-insecure:devuser"
 
 
 async def test_jwt_with_no_groups_claim_resolves_via_directory(

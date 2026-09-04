@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+import structlog
 from conftest import make_claims
 from fastmcp.exceptions import AuthorizationError
 from prometheus_client import REGISTRY
@@ -231,6 +232,82 @@ async def test_dev_bypass_refuses_non_local_issuer(settings):
     with pytest.raises(RuntimeError):
         await _run(middleware, _http_scope())
     assert not inner.called
+
+
+async def test_valid_bearer_binds_correlation_id_and_subject_to_structlog_context(
+    settings, sig_key, prime_jwks, static_principal_cache
+):
+    """Issue #281: /mcp requests never pass through /v1's FastAPI middleware
+    chain (they're handled entirely by the mounted aggregator sub-app), so
+    AsgiAuthMiddleware is the only place that can bind a correlation_id for
+    this surface -- and the natural place to bind subject once a JWT
+    resolves, alongside the JWT/PAT/dev-bypass branches it already covers."""
+    principal_cache, directory = static_principal_cache
+    directory.posix_by_subject["user-123"] = {"uid": 50123, "unixname": "auser"}
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+    inner = _InnerApp()
+    middleware = AsgiAuthMiddleware(
+        inner, IdentityMiddleware(settings, principal_cache=principal_cache)
+    )
+    structlog.contextvars.clear_contextvars()
+
+    await _run(middleware, _http_scope({"authorization": f"Bearer {token}"}))
+
+    bound = structlog.contextvars.get_contextvars()
+    assert bound["subject"] == "user-123"
+    assert bound["correlation_id"]
+
+
+async def test_correlation_id_bound_even_when_auth_fails(settings):
+    """A rejected caller still gets a correlation_id -- just no subject,
+    since none was ever established."""
+    inner = _InnerApp()
+    middleware = AsgiAuthMiddleware(inner, IdentityMiddleware(settings))
+    structlog.contextvars.clear_contextvars()
+
+    messages = await _run(middleware, _http_scope())
+
+    assert _status(messages) == 401
+    bound = structlog.contextvars.get_contextvars()
+    assert bound["correlation_id"]
+    assert "subject" not in bound
+
+
+async def test_dev_bypass_binds_subject_to_structlog_context(settings):
+    dev_settings = settings.model_copy(
+        update={
+            "dev_insecure_principal": json.dumps(
+                {"uid": 1000, "gid": 1000, "unixname": "devuser", "groups": ["atlas"]}
+            ),
+            "oidc_issuer": "http://localhost:8081/realms/x",
+        }
+    )
+    inner = _InnerApp()
+    middleware = AsgiAuthMiddleware(inner, IdentityMiddleware(dev_settings))
+    structlog.contextvars.clear_contextvars()
+
+    await _run(middleware, _http_scope())
+
+    assert structlog.contextvars.get_contextvars()["subject"] == "dev-insecure:devuser"
+
+
+async def test_valid_pat_binds_subject_to_structlog_context(settings):
+    backend, plaintext, principal_cache = await _pat_principal_cache_and_token(
+        groups=["atlas"]
+    )
+    inner = _InnerApp()
+    middleware = AsgiAuthMiddleware(
+        inner,
+        IdentityMiddleware(
+            settings, pat_backend=backend, principal_cache=principal_cache
+        ),
+    )
+    structlog.contextvars.clear_contextvars()
+
+    await _run(middleware, _http_scope({"authorization": f"Bearer {plaintext}"}))
+
+    assert structlog.contextvars.get_contextvars()["subject"] == "user-123"
 
 
 async def test_non_http_scope_passes_through_untouched(settings):

@@ -17,6 +17,7 @@ from pydantic import SecretStr
 from af_mcp_broker.authorization import is_admin
 from af_mcp_broker.config import Settings, get_settings
 from af_mcp_broker.http import get_http_client
+from af_mcp_broker.logging import bind_subject
 from af_mcp_broker.maintenance import check_not_maintenance_or_fail_open
 from af_mcp_broker.principal_cache import PrincipalUnavailableError
 
@@ -399,7 +400,9 @@ async def get_principal(
         ):
             _raise_revoked(jti)
         identity_principal = _extract_principal(claims, token)
-        return await _resolve_current_attributes(identity_principal, principal_cache)
+        principal = await _resolve_current_attributes(
+            identity_principal, principal_cache
+        )
     except jwt.ExpiredSignatureError as exc:
         error = exc
         expired = True
@@ -415,6 +418,9 @@ async def get_principal(
         error = exc
     except (ValueError, KeyError) as exc:
         error = exc
+    else:
+        bind_subject(principal.subject)
+        return principal
 
     logger.warning(
         "jwt_validation_failed",
@@ -517,6 +523,7 @@ async def keycloak_dependency(
     """
     if getattr(request.app.state, "dev_bypass_active", False):
         dev_principal: Principal = request.app.state.dev_bypass_principal
+        bind_subject(dev_principal.subject)
         # Emit an audit-visible line on every bypassed request so the trail
         # captures every call that skipped real authentication.
         logger.info(
