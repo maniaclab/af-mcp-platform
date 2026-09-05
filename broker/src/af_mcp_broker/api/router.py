@@ -43,7 +43,17 @@ router.include_router(credentials.router, dependencies=_maintenance_gated)
 router.include_router(credentials.backend_router)
 router.include_router(oauth21.router, dependencies=_maintenance_gated)
 router.include_router(tokens.router, dependencies=_maintenance_gated)
-router.include_router(mcp_oauth.router, dependencies=_maintenance_gated)
+# mcp_oauth.router carries the credential-less MCP OAuth bootstrap flow
+# (issue #140): /oauth/authorize, /oauth/keycloak-login/callback, and
+# /oauth/token authenticate via CIMD client-id validation, a state-token/
+# nonce-cookie pair, and PKCE/auth-code redemption respectively -- never a
+# Keycloak bearer token. require_not_in_maintenance's admin-bypass check
+# resolves the caller via keycloak_dependency, which a credential-less
+# request can never satisfy, so gating this router the same way as
+# oauth21.router/tokens.router 401'd every /oauth/authorize hit regardless
+# of maintenance state (the same class of bug as credentials.backend_router
+# above). Left ungated for the same reason.
+router.include_router(mcp_oauth.router)
 router.include_router(usage.router, dependencies=_maintenance_gated)
 
 # No maintenance-mode dependency here -- GET must stay reachable during

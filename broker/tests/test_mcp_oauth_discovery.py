@@ -203,6 +203,57 @@ def test_mcp_401_carries_resolvable_resource_metadata(
 
 
 # ---------------------------------------------------------------------------
+# /oauth/authorize must never require a Keycloak bearer token
+# ---------------------------------------------------------------------------
+
+
+def test_authorize_never_calls_keycloak_dependency(
+    monkeypatch: pytest.MonkeyPatch,
+    app_client_factory: Callable[..., Any],
+) -> None:
+    """Regression: /v1/oauth/authorize is the *start* of authentication -- an
+    MCP client (or browser) with no credential at all lands here first (see
+    this module's own docstring) -- so it must never be wired behind a
+    dependency that itself requires a Keycloak bearer token.
+
+    Every other test in this module (like every route test in this codebase)
+    runs through app_client_factory's blanket
+    ``app.dependency_overrides[keycloak_dependency] = ...``, which would
+    silently mask this route ending up gated by require_not_in_maintenance
+    (whose admin-bypass check resolves the caller via keycloak_dependency)
+    the way api/router.py's mcp_oauth.router inclusion regressed to in
+    b98af52. This test removes that override for this one call, so an actual
+    credential-less request is what drives the response: it must 302 to
+    Keycloak, not 401 "Not authenticated".
+    """
+    from af_mcp_broker.identity import keycloak_dependency
+
+    fernet_key = Fernet.generate_key().decode()
+    _configure_env(monkeypatch, fernet_key)
+    fake_client = _FakeMcpOAuthHttpClient(_cimd_doc(), id_token="unused")
+    monkeypatch.setattr(
+        "af_mcp_broker.api.mcp_oauth.get_http_client", lambda: fake_client
+    )
+    _, mcp_challenge = generate_pkce_pair()
+
+    with app_client_factory() as (client, _state):
+        client.app.dependency_overrides.pop(keycloak_dependency, None)
+        resp = client.get(
+            "/v1/oauth/authorize",
+            params={
+                "response_type": "code",
+                "client_id": MCP_CLIENT_ID,
+                "redirect_uri": MCP_REDIRECT_URI,
+                "state": "client-state-1",
+                "code_challenge": mcp_challenge,
+                "code_challenge_method": "S256",
+            },
+            follow_redirects=False,
+        )
+    assert resp.status_code == 302, resp.text
+
+
+# ---------------------------------------------------------------------------
 # Full authorize -> Keycloak callback -> token round trip
 # ---------------------------------------------------------------------------
 
