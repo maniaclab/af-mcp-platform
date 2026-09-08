@@ -430,7 +430,12 @@ export async function fetchCatalog(): Promise<CatalogResponse> {
  * say why `tools` is empty instead (same issue #123 philosophy as the
  * catalog's per-server status). */
 export type ToolListingStatus =
-  'ok' | 'not_linked' | 'unauthorized' | 'unavailable' | 'permission_required';
+  | 'ok'
+  | 'not_linked'
+  | 'unauthorized'
+  | 'unavailable'
+  | 'timeout'
+  | 'permission_required';
 
 export interface ServerToolsResponse {
   name: string;
