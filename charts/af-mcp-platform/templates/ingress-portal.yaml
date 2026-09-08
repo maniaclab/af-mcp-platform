@@ -3,11 +3,12 @@
 # authenticated app pages, static /_astro and /fonts assets) falls through to
 # the portal Service here — auth for the authenticated pages is enforced
 # client-side by Base.astro's getUser()-or-login() check, not at the ingress.
-# /v1 and /mcp on this host are routed by ingress-portal-api.yaml instead,
-# without any gate in front, because the portal SPA is its own OAuth public
-# client (Authorization Code + PKCE) and sends the broker its own
-# `aud=mcp-gateway` Bearer directly; the broker validates it the same way it
-# validates any other caller's token. See #42 for the full design.
+# /v1, /mcp, and the broker's /.well-known discovery documents on this host
+# are routed by ingress-portal-api.yaml instead, without any gate in front,
+# because the portal SPA is its own OAuth public client (Authorization Code
+# + PKCE) and sends the broker its own `aud=mcp-gateway` Bearer directly;
+# the broker validates it the same way it validates any other caller's
+# token. See #42 for the full design.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -30,12 +31,14 @@ spec:
   {{- end }}
   rules:
     # Portal host — everything falls through to the portal Service here.
-    # ingress-portal-api.yaml routes /v1/* and /mcp/* to the broker instead,
-    # ahead of this rule via nginx's longest-prefix matching.
+    # ingress-portal-api.yaml routes /v1/*, /mcp/*, and /.well-known/* to the
+    # broker instead, ahead of this rule via nginx's longest-prefix/Exact
+    # matching.
     #
-    # IMPORTANT: any new portal page route MUST NOT start with /v1/ or /mcp/ —
-    # those prefixes are reserved for the broker and would be silently
-    # shadowed on this host.
+    # IMPORTANT: any new portal page route MUST NOT start with /v1/, /mcp/,
+    # or exactly match one of the broker's /.well-known/* paths (see
+    # ingress-portal-api.yaml) — those are reserved for the broker and would
+    # be silently shadowed on this host.
     - host: {{ .Values.ingress.portalHost | quote }}
       http:
         paths:
