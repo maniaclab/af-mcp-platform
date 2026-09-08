@@ -23,6 +23,7 @@ from af_mcp_broker.credentials import (
     NeedsUnlock,
     PosixIdentityRequiredError,
     VomsServiceBadPassphraseError,
+    VomsServiceCertificateExpiredError,
     VomsServiceMintError,
     VomsServicePreflightError,
     X509Provider,
@@ -469,6 +470,17 @@ async def create_proxy(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
+    # af-mcp-platform#288: user-actionable and safe to relay verbatim (see
+    # VomsServiceCertificateExpiredError's docstring) -- must be checked
+    # before the generic VomsServiceMintError catch-all below, which this
+    # is NOT an instance of, but ordering matches how the two are
+    # conceptually paired (both distinguish a specific cause from "retry
+    # later").
+    except VomsServiceCertificateExpiredError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=exc.detail,
+        ) from exc
     except VomsServiceMintError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -853,6 +865,25 @@ async def _redeem_from_vault(
             )
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail=_REDEEM_RELINK_HINT
+            ) from exc
+        except VomsServiceCertificateExpiredError as exc:
+            # af-mcp-platform#288: safe to relay verbatim (see
+            # VomsServiceCertificateExpiredError's docstring) -- the link
+            # itself is untouched (a stored Globus passphrase isn't what's
+            # wrong here), only the proxy mint failed, so no unlink.
+            await write_audit(
+                _release_audit(
+                    subject=subject,
+                    uid=uid,
+                    audience=audience,
+                    request_id=request_id,
+                    outcome="error",
+                    args_summary="hands-free renewal failed: grid certificate expired",
+                    error=exc.detail,
+                )
+            )
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=exc.detail
             ) from exc
         except VomsServiceMintError as exc:
             await write_audit(

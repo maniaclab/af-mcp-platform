@@ -1120,6 +1120,26 @@ async def _http_exception_handler(request: Request, exc: HTTPException) -> Respo
         detail=exc.detail,
         path=request.url.path,
     )
+    # af-mcp-platform#288: every /v1 request already gets a correlation_id
+    # bound into structlog's contextvars at request start
+    # (_bind_request_logging_context above / identity_mw's own equivalent
+    # for /mcp), so it's already on the log line just above -- fold it into
+    # the response body too, for any 5xx whose detail is a plain string, so
+    # a user hitting a generic infra failure has something to quote back to
+    # AF support instead of nothing. Scoped to 5xx only: 4xx details are
+    # already meant to be user-actionable on their own (a correlation ID
+    # doesn't help "wrong password"), and a dict-shaped detail (identity.py's
+    # TokenAudienceError, this route's own NeedsUnlock-derived 409s) is
+    # already structured/already carries its own correlation_id where one
+    # makes sense -- overwriting it here would be a regression, not a fix.
+    if exc.status_code >= 500 and isinstance(exc.detail, str):
+        correlation_id = structlog.contextvars.get_contextvars().get("correlation_id")
+        if correlation_id:
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"detail": exc.detail, "correlation_id": correlation_id},
+                headers=exc.headers,
+            )
     return await http_exception_handler(request, exc)
 
 

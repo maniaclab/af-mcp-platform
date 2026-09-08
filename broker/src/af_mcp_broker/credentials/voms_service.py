@@ -81,6 +81,34 @@ class VomsServiceBadPassphraseError(ValueError):
         )
 
 
+_CERTIFICATE_EXPIRED_FALLBACK_DETAIL = (
+    "Your grid certificate has expired. Obtain a renewed certificate from "
+    "your certificate authority and try again."
+)
+
+
+class VomsServiceCertificateExpiredError(ValueError):
+    """Raised when the service answered 422: the user's own end-entity certificate (``~/.globus/usercert.pem``) has expired.
+
+    Distinct from both siblings above: not a passphrase problem (must NOT
+    count against the unlock rate limiter, like ``VomsServiceBadPassphraseError``
+    does) and not an infra failure either (retrying cannot help until the
+    user gets a new certificate, unlike ``VomsServiceMintError``) — see
+    af-mcp-platform#288.
+
+    Unlike every other failure in this module, the service's own ``detail``
+    IS safe to relay to the caller verbatim: voms-token-service's
+    ``CertificateExpiredError`` (maniaclab/voms-token-service#16) is a
+    fixed, non-sensitive, user-actionable string by design, never
+    voms-proxy-init's raw stderr (which would include the certificate's
+    exact expiry timestamp).
+    """
+
+    def __init__(self, detail: str) -> None:
+        self.detail = detail
+        super().__init__(detail)
+
+
 @dataclass(frozen=True)
 class MintedProxy:
     """A proxy minted by voms-token-service, with its parsed metadata.
@@ -160,6 +188,10 @@ class VomsTokenServiceClient:
         Raises:
             VomsServiceBadPassphraseError: the service answered 400 — the
                 passphrase was wrong. Count against the unlock rate limiter.
+            VomsServiceCertificateExpiredError: the service answered 422 —
+                the user's own grid certificate has expired. Not a
+                passphrase problem and not an infra failure; do NOT count
+                against the rate limiter.
             VomsServiceMintError: any other failure (unreachable, timeout,
                 401/403/5xx). Do NOT count against the rate limiter.
 
@@ -191,6 +223,21 @@ class VomsTokenServiceClient:
 
         if resp.status_code == httpx.codes.BAD_REQUEST:
             raise VomsServiceBadPassphraseError
+        if resp.status_code == httpx.codes.UNPROCESSABLE_ENTITY:
+            # Unlike every other non-200 branch here, this body's `detail`
+            # is safe to read and relay -- see
+            # VomsServiceCertificateExpiredError's docstring. A malformed or
+            # unexpected body still degrades to a safe fixed string rather
+            # than raising here.
+            try:
+                detail = resp.json().get("detail")
+            except ValueError:
+                detail = None
+            raise VomsServiceCertificateExpiredError(
+                detail
+                if isinstance(detail, str)
+                else _CERTIFICATE_EXPIRED_FALLBACK_DETAIL
+            )
         if resp.status_code != httpx.codes.OK:
             # Status code only — the response body may carry service
             # internals and must reach neither the log nor the caller.
