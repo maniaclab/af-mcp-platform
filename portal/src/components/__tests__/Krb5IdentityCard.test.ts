@@ -60,6 +60,7 @@ const TICKET: KrbTicketMetadata = {
   expires_at: '2026-09-04T00:00:00+00:00',
   remaining_seconds: 36000,
   renew_until: '2026-09-10T00:00:00+00:00',
+  source: 'password_mint',
 };
 
 function mountCard(linked = false, krb5HasKeytab = false): VueWrapper {
@@ -248,6 +249,8 @@ describe('successful submission', () => {
 
     expect(wrapper.text()).toContain('jdoe@CERN.CH');
     expect(wrapper.text()).toContain('CERN.CH');
+    // af-mcp-platform#286 UI follow-up: says what this mint actually did.
+    expect(wrapper.text()).toContain('Minted with the CERN password you entered.');
   });
 
   it('clears the password from component state before the request resolves', async () => {
@@ -424,6 +427,17 @@ describe('hands-free refresh (linked)', () => {
     expect(wrapper.find('form').exists()).toBe(false);
     expect(wrapper.emitted('linked')).toEqual([[TICKET]]);
     expect(wrapper.text()).toContain('jdoe@CERN.CH');
+  });
+
+  it('shows the specific hands-free outcome (renewed vs. reminted from keytab), not just the generic mint result', async () => {
+    const reminted: KrbTicketMetadata = { ...TICKET, source: 'keytab_remint' };
+    vi.mocked(requestKrb5Ticket).mockResolvedValueOnce(reminted);
+    const wrapper = mountCard(true, true);
+
+    await wrapper.find('button.kc__btn').trigger('click');
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('Reminted hands-free from your linked keytab.');
   });
 
   it('shows a "Refreshing…" label while the hands-free attempt is in flight', async () => {
