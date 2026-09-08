@@ -148,6 +148,13 @@ class KrbTicketMetadata(BaseModel):
     renew_until: str | None = None  # ISO-8601, null if not renewable
     # ccache_b64 is intentionally absent -- the ticket is cached server-side
     # (same "credentials never transit to the client" rule as x509's PEM).
+    # How the returned ticket was actually obtained -- KrbTokenProvider's
+    # own IssuedCredential.payload["tier"], carried through verbatim so the
+    # portal can tell "already had a valid one" (cache/vault) apart from
+    # "just renewed/reminted it for you" (renew/keytab_remint/password_mint)
+    # after a "Refresh ticket" click, rather than every outcome looking the
+    # same. None only for a ticket minted before this field existed.
+    source: str | None = None
 
 
 class KrbTicketRedeemResponse(BaseModel):
@@ -560,6 +567,7 @@ async def create_krb5_ticket(
         expires_at=_iso(cred.expires_at),
         remaining_seconds=max(0, int(cred.expires_at - time.time())),
         renew_until=_iso(renew_until) if renew_until is not None else None,
+        source=payload.get("tier"),
     )
 
 
@@ -619,6 +627,7 @@ async def link_krb5_keytab(
         expires_at=_iso(cred.expires_at),
         remaining_seconds=max(0, int(cred.expires_at - time.time())),
         renew_until=_iso(renew_until) if renew_until is not None else None,
+        source=payload.get("tier"),
     )
 
 
@@ -1040,10 +1049,14 @@ async def redeem_krb5_ticket(request: Request) -> KrbTicketRedeemResponse:
     is -- to match the wire contract af-credentials codes against
     (``POST /v1/credentials/krb5/redeem``).
 
-    Unlike the x509 route, this NEVER mints or renews a ticket: it only
-    serves whatever ``KrbTokenProvider.peek_ticket`` finds already cached or
-    Vault-stored, 404ing otherwise -- a synchronous backend-to-backend call
-    has no way to prompt a user for a CERN password.
+    Like ``redeem_x509_proxy``, this serves whatever ``KrbTokenProvider.
+    peek_ticket`` finds already cached or Vault-stored, and falls back to a
+    hands-free renewal/remint (``renew_or_remint()``, tiers 3-4 -- both
+    credential-free) when that finds nothing, before ever 404ing
+    (af-mcp-platform#286). It still never prompts for a CERN password: a
+    synchronous backend-to-backend call has no way to obtain one, so a
+    caller with nothing renewable/reminted still gets the same
+    actionable 404 as before.
     """
     issuer = getattr(request.app.state, "broker_token_issuer", None)
     if issuer is None:
@@ -1105,10 +1118,42 @@ async def redeem_krb5_ticket(request: Request) -> KrbTicketRedeemResponse:
     # buffer is wrong here: this route serves whatever is currently valid,
     # right now, not what has 5 minutes of margin left.
     cred = await provider.peek_ticket(subject, target, min_remaining_seconds=0)
+    renewed = False
     if cred is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=_KRB5_REDEEM_MINT_HINT
-        )
+        # af-mcp-platform#286: nothing cached/Vault-fresh doesn't mean
+        # nothing is available -- a still-renewable ticket or a linked
+        # keytab can produce one hands-free, with no password, exactly like
+        # redeem_x509_proxy's own renew_from_stored_link fallback above.
+        # Only genuinely nothing (NeedsUnlock) still 404s with the mint hint.
+        try:
+            cred = await provider.renew_or_remint(
+                subject, target, min_remaining_seconds=0
+            )
+        except NeedsUnlock as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=_KRB5_REDEEM_MINT_HINT
+            ) from exc
+        except Krb5TokenMintError as exc:
+            await write_audit(
+                AuditRecord(
+                    principal_sub=subject,
+                    principal_uid=claims.get("uid"),
+                    permission=None,
+                    target=target,
+                    action="krb5_ticket_release",
+                    action_type="read",
+                    args_summary="hands-free renewal/remint failed: krb5-token-service unavailable",
+                    timestamp=time.time(),
+                    request_id=request_id,
+                    outcome="error",
+                    error=str(exc),
+                )
+            )
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Kerberos ticket renewal is temporarily unavailable — retry later.",
+            ) from exc
+        renewed = True
 
     payload = cred.payload
     renew_until = payload.get("renew_until")
@@ -1125,7 +1170,12 @@ async def redeem_krb5_ticket(request: Request) -> KrbTicketRedeemResponse:
             target=target,
             action="krb5_ticket_release",
             action_type="read",
-            args_summary=f"ticket for {payload['principal']!r} released to backend {target!r}",
+            args_summary=(
+                f"ticket for {payload['principal']!r} renewed hands-free "
+                f"({payload.get('tier')}) and released to backend {target!r}"
+                if renewed
+                else f"ticket for {payload['principal']!r} released to backend {target!r}"
+            ),
             timestamp=time.time(),
             request_id=request_id,
             outcome="success",

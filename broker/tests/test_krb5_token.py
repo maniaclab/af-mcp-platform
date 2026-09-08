@@ -248,6 +248,35 @@ async def test_issue_returns_cached_credential_without_recontacting_service():
     cred = await provider.issue(principal, "krb5-target")
     assert cred.payload["ccache_b64"] == "ZmFrZQ=="
     assert len(client.calls) == 1
+    # Relabeled "cache" for THIS response -- distinct from the "tier" the
+    # underlying ticket was originally minted under (password_mint here),
+    # which the first issue() call's own returned credential still carries.
+    assert cred.payload["tier"] == "cache"
+
+
+async def test_issue_tier2_vault_hit_is_labeled_vault():
+    """A pod restart wiping the in-process cache, with a still-fresh ticket
+    in Vault, must be servable without any client call -- and labeled
+    "vault", not the tier that originally minted it (which Vault's own
+    record doesn't retain)."""
+    vault_store = FakeKrb5VaultStore()
+    principal = make_principal()
+    await vault_store.store_ticket(
+        principal.subject,
+        ccache_b64=SecretStr("b2xkY2NhY2hl"),
+        principal="alice@CERN.CH",
+        realm="CERN.CH",
+        not_after=time.time() + 3600,
+        renew_until=time.time() + 7200,
+    )
+    client = _FakeClient()
+    provider, _, _ = provider_factory(client, vault_store=vault_store)
+
+    cred = await provider.issue(principal, "krb5-target")
+
+    assert cred.payload["tier"] == "vault"
+    assert client.calls == []
+    assert client.renew_calls == []
 
 
 async def test_is_linked_false_with_no_cached_ticket():
@@ -488,6 +517,7 @@ async def test_issue_tier3_renew_success():
     cred = await provider.issue(principal, "krb5-target")
 
     assert cred.payload["ccache_b64"] == "bmV3Y2NhY2hl"
+    assert cred.payload["tier"] == "renew"
     assert client.renew_calls == [
         {"subject": principal.subject, "ccache_b64": "b2xkY2NhY2hl"}
     ]
@@ -603,9 +633,12 @@ async def test_issue_tier3_renewal_window_closed_falls_through_to_tier4():
     assert cached is not None
 
 
-async def test_issue_tier3_hard_failure_propagates():
-    """A genuine infra failure from renew() must propagate uncaught -- never
-    silently downgraded to demanding a password."""
+async def test_issue_tier3_hard_failure_propagates_with_no_keytab_to_fall_through_to():
+    """A genuine infra failure from renew(), with nothing to fall through to,
+    must propagate uncaught -- never silently downgraded to demanding a
+    password (af-mcp-platform#286 part 2's Krb5TokenMintError docstring
+    note: this is the ONE case where the old "always propagate" behavior is
+    still correct)."""
     vault_store = FakeKrb5VaultStore()
     principal = make_principal()
     await vault_store.store_ticket(
@@ -616,11 +649,6 @@ async def test_issue_tier3_hard_failure_propagates():
         not_after=time.time() - 60,
         renew_until=time.time() + 3600,
     )
-    # A stored keytab is also present, to prove the hard failure does NOT
-    # fall through to tier 4 either.
-    await vault_store.store_link(
-        principal.subject, username="alice", keytab_b64=SecretStr("a2V5dGFi")
-    )
     client = _FakeClient(
         renew_error=Krb5TokenMintError("krb5-token-service unreachable")
     )
@@ -629,7 +657,70 @@ async def test_issue_tier3_hard_failure_propagates():
     with pytest.raises(Krb5TokenMintError):
         await provider.issue(principal, "krb5-target")
 
-    assert client.calls == []  # mint() must never be reached
+    assert client.calls == []  # mint() was never reached -- no keytab exists
+
+
+async def test_issue_tier3_hard_failure_falls_through_to_tier4_when_keytab_present():
+    """af-mcp-platform#286 part 2: a genuine renew() infra failure (not the
+    expected window-closed signal) must NOT block tier 4 -- keytab remint
+    needs no credential either, and a transient krb5-token-service hiccup on
+    the renew call must not waste a perfectly good keytab. Only surfaces the
+    renew failure if tier 4 also has nothing (see the test above)."""
+    vault_store = FakeKrb5VaultStore()
+    principal = make_principal()
+    await vault_store.store_ticket(
+        principal.subject,
+        ccache_b64=SecretStr("b2xkY2NhY2hl"),
+        principal="alice@CERN.CH",
+        realm="CERN.CH",
+        not_after=time.time() - 60,
+        renew_until=time.time() + 3600,
+    )
+    await vault_store.store_link(
+        principal.subject, username="alice", keytab_b64=SecretStr("a2V5dGFi")
+    )
+    remint_ticket = _ticket(ccache_b64="cmVtaW50ZWQ=")
+    client = _FakeClient(
+        renew_error=Krb5TokenMintError("krb5-token-service unreachable"),
+        ticket=remint_ticket,
+    )
+    provider, cache, _ = provider_factory(client, vault_store=vault_store)
+
+    cred = await provider.issue(principal, "krb5-target")
+
+    assert len(client.renew_calls) == 1
+    assert cred.payload["ccache_b64"] == "cmVtaW50ZWQ="
+    assert client.calls[0]["keytab_b64"] == "a2V5dGFi"
+    cached = await cache.get(principal.subject, "krb5-target", min_remaining=0)
+    assert cached is not None
+
+
+async def test_issue_tier3_hard_failure_propagates_when_tier4_also_fails():
+    """Both tiers genuinely broken: the renew() infra error still surfaces
+    (not a misleading NeedsUnlock) once tier 4's own mint() also fails for an
+    infra reason -- mirrors tier 4's pre-existing "any other exception from
+    mint() propagates uncaught" rule, just reached via the new fallthrough."""
+    vault_store = FakeKrb5VaultStore()
+    principal = make_principal()
+    await vault_store.store_ticket(
+        principal.subject,
+        ccache_b64=SecretStr("b2xkY2NhY2hl"),
+        principal="alice@CERN.CH",
+        realm="CERN.CH",
+        not_after=time.time() - 60,
+        renew_until=time.time() + 3600,
+    )
+    await vault_store.store_link(
+        principal.subject, username="alice", keytab_b64=SecretStr("a2V5dGFi")
+    )
+    client = _FakeClient(
+        renew_error=Krb5TokenMintError("krb5-token-service unreachable"),
+        error=Krb5TokenMintError("krb5-token-service unreachable"),
+    )
+    provider, _, _ = provider_factory(client, vault_store=vault_store)
+
+    with pytest.raises(Krb5TokenMintError):
+        await provider.issue(principal, "krb5-target")
 
 
 # ------------------------------------------------------------------
@@ -652,6 +743,7 @@ async def test_issue_tier4_keytab_remint_success():
     cred = await provider.issue(principal, "krb5-target")
 
     assert cred.payload["ccache_b64"] == "ZmFrZQ=="
+    assert cred.payload["tier"] == "keytab_remint"
     assert client.calls[0]["username"] == "alice"
     assert client.calls[0]["keytab_b64"] == "a2V5dGFi"
     assert client.calls[0]["password"] is None
@@ -717,10 +809,11 @@ async def test_issue_tier5_password_mint_does_not_store_keytab_link():
     provider, _, vault_store = provider_factory(client)
     principal = make_principal()
 
-    await provider.issue(
+    cred = await provider.issue(
         principal, "krb5-target", passphrase=SecretBytes(b"hunter2"), username="alice"
     )
 
+    assert cred.payload["tier"] == "password_mint"
     assert await vault_store.get_link(principal.subject) is None
     stored_ticket = await vault_store.get_ticket(principal.subject, min_remaining=0)
     assert stored_ticket is not None
@@ -758,6 +851,7 @@ async def test_link_keytab_validates_and_stores_link():
     # The ticket half minted during validation is persisted/cached too, just
     # like every other successful mint (tier 3/4/5).
     assert cred.payload["ccache_b64"] == "ZmFrZQ=="
+    assert cred.payload["tier"] == "keytab_link"
     stored_ticket = await vault_store.get_ticket(principal.subject, min_remaining=0)
     assert stored_ticket is not None
     cached = await cache.get(principal.subject, "krb5-target", min_remaining=0)

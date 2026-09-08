@@ -63,6 +63,7 @@ the link gets INTO Vault has changed -- upload instead of auto-bootstrap.
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
 from typing import TYPE_CHECKING, ClassVar, Literal
 
 import structlog
@@ -78,6 +79,7 @@ from af_mcp_broker.credentials.base import (
 )
 from af_mcp_broker.credentials.krb5_service import (
     Krb5TokenBadCredentialError,
+    Krb5TokenMintError,
     Krb5TokenRenewalWindowClosedError,
 )
 
@@ -198,7 +200,12 @@ class KrbTokenProvider(CredentialProvider):
             self._log.debug(
                 "krb5_token.issue.cache_hit", subject=principal.subject, target=target
             )
-            return cached
+            # Relabeled "cache" for this response only (never re-.put(),
+            # never mutates what's actually cached) -- lets a caller
+            # surfacing payload["tier"] (create_krb5_ticket's `source`
+            # field) tell "already had a valid one, nothing to do" apart
+            # from "just renewed/reminted it for you".
+            return replace(cached, payload={**cached.payload, "tier": "cache"})
 
         # Tier 2: repopulate from Vault -- the in-process cache may have been
         # evicted or the pod restarted, but Vault still has a ticket with
@@ -211,90 +218,25 @@ class KrbTokenProvider(CredentialProvider):
                 "krb5_token.issue.vault_hit", subject=principal.subject, target=target
             )
             return await self._serve_stored_ticket(
-                principal.subject, target, stored_ticket
+                principal.subject, target, stored_ticket, tier="vault"
             )
 
-        # Tier 3: renew a ticket that's past not_after but still within its
-        # own renew_until window -- no credential needed.
-        renewable = await self._vault_store.get_renewable_ticket(principal.subject)
-        if renewable is not None:
-            assert renewable.ccache_b64 is not None  # has_ticket guarantees this
-            ccache_b64 = renewable.ccache_b64.get_secret_value()
-
-            async def _do_renew() -> IssuedCredential:
-                ticket = await self._client.renew(
-                    subject=principal.subject,
-                    ccache_b64=ccache_b64,
-                )
-                return await self._persist_and_cache(
-                    principal, target, ticket, tier="renew"
-                )
-
-            # Single-flighted like X509Provider._do_renew (issue #94's
-            # pattern): unlike tier 5 below, this carries no consent flag,
-            # so a concurrent caller reusing the first caller's renewal is
-            # exactly what should happen, not a bug. The try/except sits
-            # OUTSIDE get_or_mint rather than inside _do_renew, so the
-            # expected Krb5TokenRenewalWindowClosedError propagates through
-            # get_or_mint uninterrupted to this tier-dispatch logic instead
-            # of being swallowed by the single-flight machinery.
-            try:
-                return await self._cache.get_or_mint(
-                    principal.subject, target, min_remaining_seconds, _do_renew
-                )
-            except Krb5TokenRenewalWindowClosedError:
-                # Expected, recoverable: the renewable window has closed --
-                # fall through to the next tier rather than surfacing this.
-                self._log.info(
-                    "krb5_token.issue.renewal_window_closed",
-                    subject=principal.subject,
-                    target=target,
-                )
-            # Any OTHER exception from client.renew() propagates uncaught
-            # here -- a genuine infra failure must surface as one, not be
-            # silently downgraded to demanding a password.
-
-        # Tier 4: remint from a previously-bootstrapped, stored keytab.
-        link = await self._vault_store.get_link(principal.subject)
-        if link is not None:
-            assert link.username is not None  # has_link guarantees this
-            assert link.keytab_b64 is not None  # has_link guarantees this
-            link_username = link.username
-            link_keytab_b64 = link.keytab_b64
-
-            async def _do_remint() -> IssuedCredential:
-                ticket = await self._client.mint(
-                    subject=principal.subject,
-                    username=link_username,
-                    keytab_b64=link_keytab_b64,
-                    lifetime=lifetime,
-                    renewable_lifetime=renewable_lifetime,
-                )
-                return await self._persist_and_cache(
-                    principal, target, ticket, tier="keytab_remint"
-                )
-
-            # Single-flighted for the same reason as tier 3 above: no
-            # consent flag here either, so deduping concurrent remints is
-            # strictly a win. Same try/except-outside-get_or_mint structure
-            # so the expected Krb5TokenBadCredentialError still reaches this
-            # tier-dispatch logic instead of the single-flight machinery.
-            try:
-                return await self._cache.get_or_mint(
-                    principal.subject, target, min_remaining_seconds, _do_remint
-                )
-            except Krb5TokenBadCredentialError:
-                # The stored keytab is dead (e.g. the CERN password was
-                # rotated since it was bootstrapped) -- unlink proactively,
-                # mirroring X509Provider.renew_from_stored_link's
-                # auto-unlink-on-bad-stored-passphrase behavior, then fall
-                # through as if no link had ever existed.
-                await self._vault_store.delete(principal.subject)
-                self._log.info(
-                    "krb5_token.issue.stored_keytab_rejected",
-                    subject=principal.subject,
-                )
-            # Any OTHER exception from client.mint() propagates uncaught here.
+        # Tiers 3-4: renew, then keytab remint -- both credential-free, so
+        # they're worth trying before ever asking for a password. Shared
+        # with the redeem endpoint's hands-free fallback (af-mcp-platform#286)
+        # via renew_or_remint() below; NeedsUnlock here just means "neither
+        # tier produced anything", so fall through to tier 5 rather than
+        # raising it -- tier 5 may yet have a fresh password to try.
+        try:
+            return await self.renew_or_remint(
+                principal.subject,
+                target,
+                min_remaining_seconds=min_remaining_seconds,
+                lifetime=lifetime,
+                renewable_lifetime=renewable_lifetime,
+            )
+        except NeedsUnlock:
+            pass
 
         # Tier 5: nothing usable without a password.
         if passphrase is None or username is None:
@@ -314,7 +256,7 @@ class KrbTokenProvider(CredentialProvider):
                 renewable_lifetime=renewable_lifetime,
             )
             return await self._persist_and_cache(
-                principal, target, ticket, tier="password_mint"
+                principal.subject, target, ticket, tier="password_mint"
             )
 
         # Deliberately NOT single-flighted through get_or_mint (unlike every
@@ -395,7 +337,150 @@ class KrbTokenProvider(CredentialProvider):
             keytab_b64=keytab_secret,
         )
         return await self._persist_and_cache(
-            principal, target, ticket, tier="keytab_link"
+            principal.subject, target, ticket, tier="keytab_link"
+        )
+
+    async def renew_or_remint(
+        self,
+        subject: str,
+        target: str,
+        *,
+        min_remaining_seconds: int = 300,
+        lifetime: str | None = None,
+        renewable_lifetime: str | None = None,
+    ) -> IssuedCredential:
+        """Tiers 3 (renew) then 4 (keytab remint) of ``issue()``'s fallback -- both credential-free -- factored out so a caller with only a *subject* (no live ``Principal``) can reach them too.
+
+        Public, mirroring ``X509Provider.renew_from_stored_link``'s role:
+        called by ``issue()`` itself (tiers 1-2 above already missed) AND by
+        ``redeem_krb5_ticket`` (api/credentials.py) as its hands-free
+        fallback when ``peek_ticket()`` finds nothing -- af-mcp-platform#286,
+        which is what makes a linked keytab actually redeem hands-free
+        instead of always 404ing at that route.
+
+        Raises:
+            NeedsUnlock: neither a renewable ticket nor a stored keytab
+                produced anything -- the caller should fall through to a
+                fresh mint (``issue()``'s tier 5) or, with no live password
+                available (the redeem endpoint), give up and say so.
+            Krb5TokenMintError: tier 3's renew() failed for a genuine infra
+                reason (not the expected window-closed signal) AND there was
+                no stored keytab to fall through to -- surfaces as itself
+                rather than the less specific ``NeedsUnlock``, since asking
+                for a password would be misleading when the real problem is
+                krb5-token-service being unreachable. When a keytab IS
+                present, this is swallowed here and tier 4 gets its own
+                attempt instead (af-mcp-platform#286 part 2: a transient
+                renew() hiccup must not block a perfectly good keytab remint
+                -- unlike tier 4's OWN mint() failures, which still propagate
+                uncaught same as before).
+
+        """
+        # Tier 3: renew a ticket that's past not_after but still within its
+        # own renew_until window -- no credential needed.
+        renew_infra_error: Krb5TokenMintError | None = None
+        renewable = await self._vault_store.get_renewable_ticket(subject)
+        if renewable is not None:
+            assert renewable.ccache_b64 is not None  # has_ticket guarantees this
+            ccache_b64 = renewable.ccache_b64.get_secret_value()
+
+            async def _do_renew() -> IssuedCredential:
+                ticket = await self._client.renew(
+                    subject=subject, ccache_b64=ccache_b64
+                )
+                return await self._persist_and_cache(
+                    subject, target, ticket, tier="renew"
+                )
+
+            # Single-flighted like X509Provider._do_renew (issue #94's
+            # pattern): unlike tier 5 above, this carries no consent flag,
+            # so a concurrent caller reusing the first caller's renewal is
+            # exactly what should happen, not a bug. The try/except sits
+            # OUTSIDE get_or_mint rather than inside _do_renew, so the
+            # expected Krb5TokenRenewalWindowClosedError/Krb5TokenMintError
+            # propagate through get_or_mint uninterrupted to this
+            # tier-dispatch logic instead of being swallowed by the
+            # single-flight machinery.
+            try:
+                return await self._cache.get_or_mint(
+                    subject, target, min_remaining_seconds, _do_renew
+                )
+            except Krb5TokenRenewalWindowClosedError:
+                # Expected, recoverable: the renewable window has closed --
+                # fall through to tier 4 rather than surfacing this.
+                self._log.info(
+                    "krb5_token.issue.renewal_window_closed",
+                    subject=subject,
+                    target=target,
+                )
+            except Krb5TokenMintError as exc:
+                # A genuine renew() infra failure -- af-mcp-platform#286 part
+                # 2: this must NOT block tier 4, which needs no credential
+                # either and may well still work. Only re-raised below if
+                # tier 4 turns out to be unavailable/also fails -- surfacing
+                # it immediately (the old behavior) would incorrectly treat
+                # "renew() timed out" as "give up entirely" when a perfectly
+                # good keytab remint was one call away.
+                self._log.info(
+                    "krb5_token.issue.renew_infra_failure_falling_through",
+                    subject=subject,
+                    target=target,
+                    error=str(exc),
+                )
+                renew_infra_error = exc
+
+        # Tier 4: remint from a previously-bootstrapped, stored keytab.
+        link = await self._vault_store.get_link(subject)
+        if link is not None:
+            assert link.username is not None  # has_link guarantees this
+            assert link.keytab_b64 is not None  # has_link guarantees this
+            link_username = link.username
+            link_keytab_b64 = link.keytab_b64
+
+            async def _do_remint() -> IssuedCredential:
+                ticket = await self._client.mint(
+                    subject=subject,
+                    username=link_username,
+                    keytab_b64=link_keytab_b64,
+                    lifetime=lifetime,
+                    renewable_lifetime=renewable_lifetime,
+                )
+                return await self._persist_and_cache(
+                    subject, target, ticket, tier="keytab_remint"
+                )
+
+            # Single-flighted for the same reason as tier 3 above: no
+            # consent flag here either, so deduping concurrent remints is
+            # strictly a win. Same try/except-outside-get_or_mint structure
+            # so the expected Krb5TokenBadCredentialError still reaches this
+            # tier-dispatch logic instead of the single-flight machinery.
+            try:
+                return await self._cache.get_or_mint(
+                    subject, target, min_remaining_seconds, _do_remint
+                )
+            except Krb5TokenBadCredentialError:
+                # The stored keytab is dead (e.g. the CERN password was
+                # rotated since it was bootstrapped) -- unlink proactively,
+                # mirroring X509Provider.renew_from_stored_link's
+                # auto-unlink-on-bad-stored-passphrase behavior, then fall
+                # through as if no link had ever existed.
+                await self._vault_store.delete(subject)
+                self._log.info(
+                    "krb5_token.issue.stored_keytab_rejected",
+                    subject=subject,
+                )
+            # Any OTHER exception from client.mint() propagates uncaught here.
+
+        # Nothing usable without a password. A hard renew() infra failure
+        # with no keytab to fall through to must surface AS that failure,
+        # not be downgraded to the less specific NeedsUnlock -- see the
+        # Krb5TokenMintError docstring note above.
+        if renew_infra_error is not None:
+            raise renew_infra_error
+        raise NeedsUnlock(
+            target,
+            "Kerberos ticket not yet minted or expired",
+            unlock_endpoint="/v1/krb5/ticket",
         )
 
     # ------------------------------------------------------------------
@@ -411,8 +496,17 @@ class KrbTokenProvider(CredentialProvider):
         realm: str | None,
         not_after: float,
         renew_until: float | None,
+        tier: str | None,
     ) -> IssuedCredential:
-        """Build an ``IssuedCredential`` from a ticket's primitive fields, shared by ``_cred_from_ticket`` (a freshly minted/renewed ``MintedTicket``) and ``_serve_stored_ticket`` (a Vault-stored ``StoredKrb5Credential``, whose ``SecretStr`` fields the caller must unwrap first)."""
+        """Build an ``IssuedCredential`` from a ticket's primitive fields, shared by ``_cred_from_ticket`` (a freshly minted/renewed ``MintedTicket``) and ``_serve_stored_ticket`` (a Vault-stored ``StoredKrb5Credential``, whose ``SecretStr`` fields the caller must unwrap first).
+
+        ``tier`` (``None`` for a caller that doesn't track one, e.g.
+        ``peek_ticket()``) rides in ``payload["tier"]`` so a caller surfacing
+        the credential to a user (``create_krb5_ticket``'s ``source`` field)
+        can say how it was actually obtained -- distinct from
+        ``IssuedCredential.source``, which names the provider backend, not
+        the fallback tier.
+        """
         return IssuedCredential(
             cred_class=self.cred_class,
             target=target,
@@ -423,13 +517,16 @@ class KrbTokenProvider(CredentialProvider):
                 "principal": principal,
                 "realm": realm,
                 "renew_until": renew_until,
+                "tier": tier,
             },
             audit_id=uuid.uuid4().hex,
             source="krb5_token_service",
             execution_model=self.execution_model,
         )
 
-    def _cred_from_ticket(self, ticket: MintedTicket, target: str) -> IssuedCredential:
+    def _cred_from_ticket(
+        self, ticket: MintedTicket, target: str, *, tier: str
+    ) -> IssuedCredential:
         return self._build_credential(
             target,
             ccache_b64=ticket.ccache_b64,
@@ -437,34 +534,41 @@ class KrbTokenProvider(CredentialProvider):
             realm=ticket.realm,
             not_after=ticket.not_after,
             renew_until=ticket.renew_until,
+            tier=tier,
         )
 
     async def _persist_and_cache(
         self,
-        principal: Principal,
+        subject: str,
         target: str,
         ticket: MintedTicket,
         *,
         tier: _MintTier,
     ) -> IssuedCredential:
-        """Build the credential for a freshly minted/renewed *ticket*, persist it to Vault, cache it, and return it."""
-        cred = self._cred_from_ticket(ticket, target)
+        """Build the credential for a freshly minted/renewed *ticket*, persist it to Vault, cache it, and return it.
+
+        Takes *subject* directly (not a ``Principal``) -- it's all this and
+        ``_cred_from_ticket`` ever needed, matching ``renew_or_remint()``'s
+        own subject-only signature (mirroring ``X509Provider.
+        renew_from_stored_link``) so both it and ``issue()`` can share this
+        helper without either holding a full ``Principal`` just to satisfy
+        the other.
+        """
+        cred = self._cred_from_ticket(ticket, target, tier=tier)
         await self._vault_store.store_ticket(
-            principal.subject,
+            subject,
             ccache_b64=SecretStr(ticket.ccache_b64),
             principal=ticket.principal,
             realm=ticket.realm,
             not_after=ticket.not_after,
             renew_until=ticket.renew_until,
         )
-        await self._cache.put(
-            principal.subject, target, cred, expires_at=ticket.not_after
-        )
+        await self._cache.put(subject, target, cred, expires_at=ticket.not_after)
         metrics.krb5_tickets_issued_total.labels(target=target).inc()
         # Never log ccache/password material -- subject/target/audit only.
         self._log.info(
             "krb5_token.issue.success",
-            subject=principal.subject,
+            subject=subject,
             target=target,
             audit_id=cred.audit_id,
             expires_at=ticket.not_after,
@@ -473,7 +577,7 @@ class KrbTokenProvider(CredentialProvider):
         return cred
 
     async def _serve_stored_ticket(
-        self, subject: str, target: str, record: StoredKrb5Credential
+        self, subject: str, target: str, record: StoredKrb5Credential, *, tier: str
     ) -> IssuedCredential:
         """Build a credential from a Vault-stored ticket *record* and repopulate the in-process cache with it -- no service call, since Vault already has a ticket with enough validity left.
 
@@ -491,6 +595,7 @@ class KrbTokenProvider(CredentialProvider):
             realm=record.realm,
             not_after=record.not_after,
             renew_until=record.renew_until,
+            tier=tier,
         )
         await self._cache.put(subject, target, cred, expires_at=record.not_after)
         return cred
@@ -502,17 +607,16 @@ class KrbTokenProvider(CredentialProvider):
 
         The read-only subset of ``issue()``'s tiers 1-2 (cache, then Vault
         repopulation) -- see the module docstring for the full tier order.
-        Deliberately stops there: tiers 3-5 (renew, keytab remint, password
-        mint) each require a synchronous krb5-token-service network round
-        trip (tier 3's renew included -- it needs no credential, but still
-        calls out to the service), which this route must never perform at
-        redeem time; it only serves whatever is already resolved and
-        cached/stored. Tiers 4-5 additionally require a password, which a
-        synchronous backend-to-backend call has no way to prompt a user for.
-        Used by ``POST /v1/credentials/krb5/redeem``
-        (api/credentials.py) -- the krb5 analogue of
-        ``X509Provider.vault_store``'s direct read for
-        ``POST /v1/credentials/x509/redeem``.
+        Deliberately stops there and never calls out to krb5-token-service
+        itself -- it only serves whatever is already resolved and
+        cached/stored. Used by ``POST /v1/credentials/krb5/redeem``
+        (api/credentials.py), the krb5 analogue of ``X509Provider.
+        vault_store``'s direct read for ``POST /v1/credentials/x509/redeem``
+        -- that route falls back to ``renew_or_remint()`` (tiers 3-4, both
+        credential-free) when this returns ``None``, mirroring
+        ``redeem_x509_proxy``'s own fallback to ``renew_from_stored_link``
+        (af-mcp-platform#286: this used to be the end of the line here,
+        which is why a linked keytab didn't actually redeem hands-free).
         """
         # Tier 1: in-process cache.
         cached = await self._cache.get(
@@ -529,4 +633,4 @@ class KrbTokenProvider(CredentialProvider):
         )
         if record is None:
             return None
-        return await self._serve_stored_ticket(subject, target, record)
+        return await self._serve_stored_ticket(subject, target, record, tier="vault")
