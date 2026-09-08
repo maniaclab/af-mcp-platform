@@ -57,6 +57,32 @@ jobs:
             --set image.portal.tag=sha-test \
             | grep -q 'name: VAULT_ADDR'
 
+      # Regression guard: portalHost is where the broker actually tells MCP
+      # clients to fetch OAuth discovery documents (broker.publicOrigin is
+      # deliberately the portal origin at AF, not mcpHost -- see
+      # ingress-portal-api.yaml's comment). Without these rules that request
+      # silently falls through to ingress-portal.yaml's `/` catch-all and
+      # gets the portal's landing-page HTML instead of JSON, breaking OAuth
+      # autodiscovery for every MCP client.
+      - name: Verify portalHost routes the broker's well-known discovery documents
+        run: |
+          rendered=$(helm template af-mcp-platform charts/af-mcp-platform \
+            -f charts/af-mcp-platform/ci/test-values.yaml \
+            --set image.broker.tag=sha-test \
+            --set image.portal.tag=sha-test \
+            --show-only templates/ingress-portal-api.yaml)
+          for path in \
+            /.well-known/cimd \
+            /.well-known/oauth-protected-resource \
+            /.well-known/oauth-protected-resource/mcp \
+            /.well-known/oauth-authorization-server \
+            /.well-known/jwks.json; do
+            echo "$rendered" | grep -qF "path: $path" || {
+              echo "Missing portalHost ingress rule for $path" >&2
+              exit 1
+            }
+          done
+
       - name: ct lint
         run: ct lint --target-branch "$DEFAULT_BRANCH" --check-version-increment=false
         env:

@@ -1,6 +1,20 @@
 # portalHost API paths carry no auth gate of their own — the portal SPA
 # obtains its own `aud=mcp-gateway` Bearer via OIDC Code+PKCE against the
 # `connect` realm; broker validates directly. See #42.
+#
+# Also routes the broker's well-known discovery documents on THIS host: at
+# AF, broker.publicOrigin (identityToken.issuer's fallback, values.yaml's
+# comment on that key) is deliberately the PORTAL origin, not mcpHost — so
+# the /mcp 401 WWW-Authenticate header's resource_metadata pointer
+# (mcp/middleware/identity_mw.py's _www_authenticate_header) sends every MCP
+# client here, to portalHost, to fetch it. Without these rules that request
+# falls through to ingress-portal.yaml's `/` catch-all — the portal's static
+# site has no server-side route for it either, so its own SPA fallback
+# (nginx.conf.template's `try_files ... /index.html`) serves the landing
+# page HTML instead of the JSON metadata document, breaking OAuth
+# autodiscovery for every client. Same rule set as ingress-mcp.yaml's
+# well-known paths, mirrored here for the host clients are actually told to
+# use.
 {{- if .Values.ingress.enabled }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -35,6 +49,41 @@ spec:
                   name: http
           - path: /mcp
             pathType: Prefix
+            backend:
+              service:
+                name: {{ include "af-mcp-platform.broker.fullname" . }}
+                port:
+                  name: http
+          - path: /.well-known/cimd
+            pathType: Exact
+            backend:
+              service:
+                name: {{ include "af-mcp-platform.broker.fullname" . }}
+                port:
+                  name: http
+          - path: /.well-known/oauth-protected-resource
+            pathType: Exact
+            backend:
+              service:
+                name: {{ include "af-mcp-platform.broker.fullname" . }}
+                port:
+                  name: http
+          - path: /.well-known/oauth-protected-resource/mcp
+            pathType: Exact
+            backend:
+              service:
+                name: {{ include "af-mcp-platform.broker.fullname" . }}
+                port:
+                  name: http
+          - path: /.well-known/oauth-authorization-server
+            pathType: Exact
+            backend:
+              service:
+                name: {{ include "af-mcp-platform.broker.fullname" . }}
+                port:
+                  name: http
+          - path: /.well-known/jwks.json
+            pathType: Exact
             backend:
               service:
                 name: {{ include "af-mcp-platform.broker.fullname" . }}
