@@ -589,6 +589,11 @@ export interface KrbTicketMetadata {
   expires_at: string;
   remaining_seconds: number;
   renew_until: string | null;
+  // How the ticket was actually obtained (KrbTokenProvider's fallback tier:
+  // "cache" | "vault" | "renew" | "keytab_remint" | "password_mint" |
+  // "keytab_link") -- null only for a ticket minted before the broker
+  // started returning this field.
+  source: string | null;
 }
 
 /**

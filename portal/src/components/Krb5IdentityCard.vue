@@ -60,7 +60,7 @@
  * transient base64 string built for the one POST body — also never
  * persisted client-side.
  */
-import { nextTick, ref } from 'vue';
+import { computed, nextTick, ref } from 'vue';
 import {
   APIError,
   linkKrb5Keytab,
@@ -68,7 +68,7 @@ import {
   unlinkIdentity,
   type KrbTicketMetadata,
 } from '../lib/api';
-import { krb5LinkErrorMessage } from '../lib/krb5Identity';
+import { describeKrb5Source, krb5LinkErrorMessage } from '../lib/krb5Identity';
 import { formatShortDateTime } from '../lib/x509Identity';
 
 const props = defineProps<{
@@ -133,6 +133,12 @@ const keytabFileInput = ref<HTMLInputElement | null>(null);
 // only, never persisted, and gone on reload (see the module doc comment
 // above).
 const result = ref<KrbTicketMetadata | null>(null);
+
+// Human-readable note for result.source (see describeKrb5Source's doc
+// comment) -- '' both for a pre-#286 ticket with no source field and for
+// any source value this card doesn't recognize, so the paragraph below
+// simply doesn't render rather than showing a blank/garbled line.
+const sourceNote = computed(() => (result.value ? describeKrb5Source(result.value.source) : ''));
 
 // Two-step "Forget" confirmation (click "Forget this ticket", then "Confirm
 // forget") — same inline armed-button pattern as X509IdentityCard.vue's
@@ -389,6 +395,12 @@ function formatExpiry(iso: string): string {
           <span class="kc__label">Expires</span>
           <span class="kc__val">{{ formatExpiry(result.expires_at) }}</span>
         </div>
+        <!-- af-mcp-platform#286 UI follow-up: says what a "Refresh ticket"
+             click actually did -- cache hit vs. a genuine renew/remint --
+             rather than every outcome rendering identically. Empty (and
+             hidden) for a ticket minted before the broker returned this
+             field. -->
+        <p v-if="sourceNote" class="kc__source-note">{{ sourceNote }}</p>
       </div>
 
       <div v-if="forgetError" class="kc__error" role="alert">{{ forgetError }}</div>
@@ -751,6 +763,15 @@ echo $?                                          # should print 0</code></pre>
   font-size: 0.6875rem;
   color: var(--color-af-dim);
   word-break: break-all;
+}
+
+/* af-mcp-platform#286 UI follow-up: a quiet aside below the principal/
+   realm/expiry fields, not another field of its own -- same treatment as
+   .kc__form-hint's muted label color. */
+.kc__source-note {
+  font-size: 0.6875rem;
+  color: var(--color-af-label);
+  margin: 0.125rem 0 0;
 }
 
 /* Fixed min-width matching the .kc grid's third column, and left-aligned --

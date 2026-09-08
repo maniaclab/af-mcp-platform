@@ -1,12 +1,17 @@
-"""Tests for the backend-facing krb5 ticket redeem endpoint (issue #274 follow-up).
+"""Tests for the backend-facing krb5 ticket redeem endpoint (issue #274 follow-up, af-mcp-platform#286).
 
 POST /v1/credentials/krb5/redeem is authenticated by an AF Broker Identity
 Token (NOT a Keycloak token) -- mirrors POST /v1/credentials/x509/redeem
-(see test_x509_redeem.py) exactly: the broker verifies its own signature,
-requires ``aud`` to be a configured krb5 target, and returns whatever ticket
-is already cached or Vault-stored for the caller. Deliberately read-only --
-this endpoint must NEVER mint or renew a ticket, since a synchronous
-backend-to-backend call has no way to prompt a user for a CERN password.
+(see test_x509_redeem.py): the broker verifies its own signature, requires
+``aud`` to be a configured krb5 target, and returns whatever ticket is
+already cached or Vault-stored for the caller. ``TestRedeem`` covers that
+read-only surface; ``TestRedeemHandsFreeRenewal`` covers the af-mcp-
+platform#286 fallback -- when nothing is cached/Vault-fresh, this route now
+attempts a hands-free renewal (tier 3) or keytab remint (tier 4), both
+credential-free, before ever 404ing, mirroring
+test_x509_redeem_vault.py's ``TestRedeemHandsFreeRenewal``. It still never
+prompts for a live CERN password: a synchronous backend-to-backend call has
+no way to obtain one.
 """
 
 from __future__ import annotations
@@ -14,18 +19,23 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from pydantic import SecretStr
 from test_broker_issued import _make_rsa_key, _private_pem
-from test_krb5_token import FakeKrb5VaultStore
+from test_krb5_token import FakeKrb5VaultStore, _FakeClient
+from test_krb5_token import _ticket as _minted_ticket
 
 from af_mcp_broker.api import credentials as credentials_api
 from af_mcp_broker.credentials import (
     CredentialKind,
     ExecutionModel,
     IssuedCredential,
+)
+from af_mcp_broker.credentials.krb5_service import (
+    Krb5TokenMintError,
+    Krb5TokenRenewalWindowClosedError,
 )
 from af_mcp_broker.vault_kv import VaultKV
 
@@ -144,6 +154,16 @@ def _fake_vault_store(client: TestClient, target: str = _TARGET) -> FakeKrb5Vaul
     store = FakeKrb5VaultStore()
     provider._vault_store = store
     return store
+
+
+def _fake_service_client(
+    client: TestClient, target: str = _TARGET, **kwargs: Any
+) -> _FakeClient:
+    """Resolve *target*'s KrbTokenProvider and swap in a scriptable fake service client -- the redeem-path counterpart to ``_fake_vault_store``, needed once the hands-free fallback can actually call renew()/mint(). ``kwargs`` forward to ``_FakeClient`` (``ticket``/``error``/``renew_ticket``/``renew_error``)."""
+    provider = asyncio.run(client.app.state.credential_registry.resolve(target))
+    fake_client = _FakeClient(**kwargs)
+    provider._client = fake_client
+    return fake_client
 
 
 def _mint(
@@ -445,6 +465,233 @@ class TestRedeem:
         assert record.target == _TARGET
         assert record.principal_sub == "sub-abc"
         assert cred.payload["ccache_b64"] not in record.args_summary
+
+
+class TestRedeemHandsFreeRenewal:
+    """af-mcp-platform#286: the hands-free fallback when peek_ticket() finds nothing -- see the module docstring."""
+
+    def test_renewable_ticket_renews_and_serves(
+        self, krb5_redeem_env, app_client_factory
+    ) -> None:
+        krb5_redeem_env()
+        with app_client_factory() as (client, _):
+            store = _fake_vault_store(client)
+            asyncio.run(
+                store.store_ticket(
+                    "sub-abc",
+                    ccache_b64=SecretStr("b2xkY2NhY2hl"),
+                    principal="tuser@CERN.CH",
+                    realm="CERN.CH",
+                    not_after=time.time() - 60,
+                    renew_until=time.time() + 3600,
+                )
+            )
+            fake_client = _fake_service_client(
+                client, renew_ticket=_minted_ticket(ccache_b64="cmVuZXdlZA==")
+            )
+            token = _mint(client)
+            resp = client.post(
+                _REDEEM, json={}, headers={"Authorization": f"Bearer {token}"}
+            )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["ccache_b64"] == "cmVuZXdlZA=="
+        assert len(fake_client.renew_calls) == 1
+        assert fake_client.calls == []  # mint() must not be reached
+
+    def test_renewal_window_closed_falls_through_to_keytab_remint(
+        self, krb5_redeem_env, app_client_factory
+    ) -> None:
+        krb5_redeem_env()
+        with app_client_factory() as (client, _):
+            store = _fake_vault_store(client)
+            asyncio.run(
+                store.store_ticket(
+                    "sub-abc",
+                    ccache_b64=SecretStr("b2xkY2NhY2hl"),
+                    principal="tuser@CERN.CH",
+                    realm="CERN.CH",
+                    not_after=time.time() - 60,
+                    renew_until=time.time() + 3600,
+                )
+            )
+            asyncio.run(
+                store.store_link(
+                    "sub-abc", username="tuser", keytab_b64=SecretStr("a2V5dGFi")
+                )
+            )
+            fake_client = _fake_service_client(
+                client,
+                renew_error=Krb5TokenRenewalWindowClosedError(),
+                ticket=_minted_ticket(ccache_b64="cmVtaW50ZWQ="),
+            )
+            token = _mint(client)
+            resp = client.post(
+                _REDEEM, json={}, headers={"Authorization": f"Bearer {token}"}
+            )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["ccache_b64"] == "cmVtaW50ZWQ="
+        assert fake_client.calls[0]["keytab_b64"] == "a2V5dGFi"
+
+    def test_keytab_link_with_nothing_renewable_reminted_and_served(
+        self, krb5_redeem_env, app_client_factory
+    ) -> None:
+        """The exact af-mcp-platform#286 repro: nothing cached, no
+        renewable ticket at all, but a keytab is linked -- must remint
+        hands-free rather than 404."""
+        krb5_redeem_env()
+        with app_client_factory() as (client, _):
+            store = _fake_vault_store(client)
+            asyncio.run(
+                store.store_link(
+                    "sub-abc", username="tuser", keytab_b64=SecretStr("a2V5dGFi")
+                )
+            )
+            fake_client = _fake_service_client(
+                client, ticket=_minted_ticket(ccache_b64="cmVtaW50ZWQ=")
+            )
+            token = _mint(client)
+            resp = client.post(
+                _REDEEM, json={}, headers={"Authorization": f"Bearer {token}"}
+            )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["ccache_b64"] == "cmVtaW50ZWQ="
+        assert fake_client.calls[0]["username"] == "tuser"
+        assert fake_client.calls[0]["keytab_b64"] == "a2V5dGFi"
+
+    def test_keytab_link_reminted_is_audited_as_hands_free(
+        self, krb5_redeem_env, app_client_factory, captured_audits
+    ) -> None:
+        krb5_redeem_env()
+        with app_client_factory() as (client, _):
+            store = _fake_vault_store(client)
+            asyncio.run(
+                store.store_link(
+                    "sub-abc", username="tuser", keytab_b64=SecretStr("a2V5dGFi")
+                )
+            )
+            _fake_service_client(
+                client, ticket=_minted_ticket(ccache_b64="cmVtaW50ZWQ=")
+            )
+            token = _mint(client)
+            resp = client.post(
+                _REDEEM, json={}, headers={"Authorization": f"Bearer {token}"}
+            )
+        assert resp.status_code == 200, resp.text
+        assert len(captured_audits) == 1
+        record = captured_audits[0]
+        assert record.outcome == "success"
+        assert "renewed hands-free" in record.args_summary
+        assert "keytab_remint" in record.args_summary
+        assert "cmVtaW50ZWQ=" not in record.args_summary
+
+    def test_no_link_and_nothing_renewable_is_still_the_existing_404(
+        self, krb5_redeem_env, app_client_factory
+    ) -> None:
+        """Genuinely nothing usable without a password -- unchanged 404
+        with the actionable mint hint, same as before af-mcp-platform#286."""
+        krb5_redeem_env()
+        with app_client_factory() as (client, _):
+            _fake_vault_store(client)
+            _fake_service_client(client)
+            token = _mint(client)
+            resp = client.post(
+                _REDEEM, json={}, headers={"Authorization": f"Bearer {token}"}
+            )
+        assert resp.status_code == 404
+        assert "/v1/krb5/ticket" in resp.json()["detail"]
+
+    def test_renewal_infra_failure_with_no_keytab_is_502(
+        self, krb5_redeem_env, app_client_factory
+    ) -> None:
+        krb5_redeem_env()
+        with app_client_factory() as (client, _):
+            store = _fake_vault_store(client)
+            asyncio.run(
+                store.store_ticket(
+                    "sub-abc",
+                    ccache_b64=SecretStr("b2xkY2NhY2hl"),
+                    principal="tuser@CERN.CH",
+                    realm="CERN.CH",
+                    not_after=time.time() - 60,
+                    renew_until=time.time() + 3600,
+                )
+            )
+            _fake_service_client(
+                client,
+                renew_error=Krb5TokenMintError("krb5-token-service unreachable"),
+            )
+            token = _mint(client)
+            resp = client.post(
+                _REDEEM, json={}, headers={"Authorization": f"Bearer {token}"}
+            )
+        assert resp.status_code == 502
+
+    def test_renewal_infra_failure_falls_through_to_keytab_remint(
+        self, krb5_redeem_env, app_client_factory
+    ) -> None:
+        """af-mcp-platform#286 part 2, at the redeem endpoint: a transient
+        renew() infra failure must not shadow a perfectly good linked
+        keytab."""
+        krb5_redeem_env()
+        with app_client_factory() as (client, _):
+            store = _fake_vault_store(client)
+            asyncio.run(
+                store.store_ticket(
+                    "sub-abc",
+                    ccache_b64=SecretStr("b2xkY2NhY2hl"),
+                    principal="tuser@CERN.CH",
+                    realm="CERN.CH",
+                    not_after=time.time() - 60,
+                    renew_until=time.time() + 3600,
+                )
+            )
+            asyncio.run(
+                store.store_link(
+                    "sub-abc", username="tuser", keytab_b64=SecretStr("a2V5dGFi")
+                )
+            )
+            fake_client = _fake_service_client(
+                client,
+                renew_error=Krb5TokenMintError("krb5-token-service unreachable"),
+                ticket=_minted_ticket(ccache_b64="cmVtaW50ZWQ="),
+            )
+            token = _mint(client)
+            resp = client.post(
+                _REDEEM, json={}, headers={"Authorization": f"Bearer {token}"}
+            )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["ccache_b64"] == "cmVtaW50ZWQ="
+        assert fake_client.calls[0]["keytab_b64"] == "a2V5dGFi"
+
+    def test_renewal_infra_failure_audit_on_final_failure(
+        self, krb5_redeem_env, app_client_factory, captured_audits
+    ) -> None:
+        krb5_redeem_env()
+        with app_client_factory() as (client, _):
+            store = _fake_vault_store(client)
+            asyncio.run(
+                store.store_ticket(
+                    "sub-abc",
+                    ccache_b64=SecretStr("b2xkY2NhY2hl"),
+                    principal="tuser@CERN.CH",
+                    realm="CERN.CH",
+                    not_after=time.time() - 60,
+                    renew_until=time.time() + 3600,
+                )
+            )
+            _fake_service_client(
+                client,
+                renew_error=Krb5TokenMintError("krb5-token-service unreachable"),
+            )
+            token = _mint(client)
+            resp = client.post(
+                _REDEEM, json={}, headers={"Authorization": f"Bearer {token}"}
+            )
+        assert resp.status_code == 502
+        assert len(captured_audits) == 1
+        record = captured_audits[0]
+        assert record.outcome == "error"
+        assert record.error
 
 
 class TestKeylessBoot:

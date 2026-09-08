@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { APIError, SessionExpiredError } from '../api';
-import { krb5LinkErrorMessage } from '../krb5Identity';
+import { describeKrb5Source, krb5LinkErrorMessage } from '../krb5Identity';
 
 describe('krb5LinkErrorMessage', () => {
   it('returns a fixed message for SessionExpiredError', () => {
@@ -62,5 +62,39 @@ describe('krb5LinkErrorMessage', () => {
 
   it('has a fixed fallback for a non-Error thrown value', () => {
     expect(krb5LinkErrorMessage('not-an-error')).toMatch(/kerberos ticket/i);
+  });
+});
+
+describe('describeKrb5Source', () => {
+  it('says nothing needed to happen for a cache hit', () => {
+    expect(describeKrb5Source('cache')).toMatch(/already.*valid/i);
+  });
+
+  it('says nothing needed to happen for a vault hit', () => {
+    expect(describeKrb5Source('vault')).toMatch(/already.*valid/i);
+  });
+
+  it('says it renewed hands-free for tier 3', () => {
+    expect(describeKrb5Source('renew')).toMatch(/renewed/i);
+  });
+
+  it('says it reminted from the linked keytab for tier 4', () => {
+    expect(describeKrb5Source('keytab_remint')).toMatch(/keytab/i);
+  });
+
+  it('says it minted with the given password for tier 5', () => {
+    expect(describeKrb5Source('password_mint')).toMatch(/password/i);
+  });
+
+  it('says the keytab was validated and linked', () => {
+    expect(describeKrb5Source('keytab_link')).toMatch(/linked/i);
+  });
+
+  it('returns an empty string for null (a ticket minted before this field existed)', () => {
+    expect(describeKrb5Source(null)).toBe('');
+  });
+
+  it('returns an empty string for an unrecognized tier rather than throwing', () => {
+    expect(describeKrb5Source('some_future_tier')).toBe('');
   });
 });

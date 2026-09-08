@@ -167,12 +167,14 @@ def test_happy_path_returns_metadata_without_ccache(krb5_app) -> None:
         "expires_at",
         "remaining_seconds",
         "renew_until",
+        "source",
     }
     assert body["target"] == _TARGET
     assert body["principal"] == "tuser@CERN.CH"
     assert body["realm"] == "CERN.CH"
     assert body["renew_until"] is not None
     assert body["remaining_seconds"] == pytest.approx(3600, abs=5)
+    assert body["source"] == "password_mint"
 
     assert len(fake_client.calls) == 1
     assert fake_client.calls[0]["username"] == "tuser"
@@ -222,9 +224,11 @@ def test_link_keytab_route_success(krb5_app) -> None:
         "expires_at",
         "remaining_seconds",
         "renew_until",
+        "source",
     }
     assert body["target"] == _TARGET
     assert body["principal"] == "tuser@CERN.CH"
+    assert body["source"] == "keytab_link"
 
     assert len(fake_client.calls) == 1
     assert fake_client.calls[0]["username"] == "tuser"

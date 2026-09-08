@@ -48,3 +48,32 @@ export function krb5LinkErrorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
   return 'Could not mint a Kerberos ticket.';
 }
+
+/**
+ * Human-readable note for a `KrbTicketMetadata.source` value -- the tier
+ * KrbTokenProvider actually served the ticket from (see krb5.py's module
+ * docstring), so a "Refresh ticket" click's result panel can say what, if
+ * anything, actually happened rather than looking identical whether it hit
+ * cache or genuinely renewed/reminted (af-mcp-platform#286 UI follow-up).
+ *
+ * Returns '' for `null` (a ticket minted before the broker started
+ * returning this field) or any value this card doesn't recognize --
+ * rendering nothing is always safe, unlike guessing at unknown tiers.
+ */
+export function describeKrb5Source(source: string | null): string {
+  switch (source) {
+    case 'cache':
+    case 'vault':
+      return 'Already had a valid ticket — nothing to refresh.';
+    case 'renew':
+      return 'Renewed hands-free.';
+    case 'keytab_remint':
+      return 'Reminted hands-free from your linked keytab.';
+    case 'password_mint':
+      return 'Minted with the CERN password you entered.';
+    case 'keytab_link':
+      return 'Keytab validated and linked.';
+    default:
+      return '';
+  }
+}
