@@ -48,6 +48,7 @@ ToolListingStatus = Literal[
     "not_linked",
     "unauthorized",
     "unavailable",
+    "timeout",
     "permission_required",
 ]
 
@@ -56,6 +57,18 @@ _STATUS_DETAILS: dict[str, str] = {
     "not_linked": "Link your identity to see this service's methods.",
     "unauthorized": "Your linked credential was rejected. Re-link your identity.",
     "unavailable": "Temporarily unavailable. Try again shortly.",
+    # Distinct from "unavailable" (issue #280): a connection-level refusal
+    # means the service couldn't even be reached, but this means a request
+    # WAS sent and never got a correlated response back in time -- usually a
+    # slow/unresponsive backend, though a known mcp SDK gap (fixed upstream
+    # in mcp>=2.0, not yet in the pinned 1.x line) can also produce this
+    # exact symptom for a malformed response, hence "may be slow, or may
+    # have sent something unexpected" rather than claiming certainty.
+    "timeout": (
+        "This service did not respond in time. It may be slow or "
+        "temporarily down, or it may have returned something unexpected — "
+        "contact the AF admins if this persists."
+    ),
     "permission_required": (
         "Your account doesn't have the access this service requires. "
         "Contact the AF admins."

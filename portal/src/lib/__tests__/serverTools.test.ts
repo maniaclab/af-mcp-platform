@@ -80,6 +80,17 @@ describe('resolveToolListing', () => {
     });
   });
 
+  it('renders timeout as a plain message with no call to action (af-mcp-platform#280)', () => {
+    const view = resolveToolListing(
+      listing({ status: 'timeout', status_detail: 'This service did not respond in time.' }),
+    );
+    expect(view).toEqual({
+      kind: 'blocked',
+      message: 'This service did not respond in time.',
+      cta: null,
+    });
+  });
+
   it('renders permission_required as a plain message with no call to action', () => {
     const view = resolveToolListing(
       listing({ status: 'permission_required', status_detail: 'Contact the AF admins.' }),

@@ -6,6 +6,7 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 from fastapi import HTTPException
 from fastmcp import FastMCP
@@ -21,6 +22,8 @@ from fastmcp.server.providers.proxy import (
     default_proxy_log_handler,
     default_proxy_progress_handler,
 )
+from mcp.shared.exceptions import McpError
+from mcp.types import ErrorData
 
 from af_mcp_broker.authorization import EntitlementPolicy
 from af_mcp_broker.config import BrokerIssuedProviderConfig
@@ -34,6 +37,7 @@ from af_mcp_broker.credentials import (
 )
 from af_mcp_broker.mcp import aggregator
 from af_mcp_broker.mcp.aggregator import (
+    _classify_failure,
     _make_client_factory,
     _require_linked,
     build_aggregator,
@@ -1457,3 +1461,59 @@ async def test_client_factory_x509_elicitation_accepted_now_linked_proceeds(
     claims = issuer.verify(auth.removeprefix("Bearer "))
     assert claims is not None
     assert claims["sub"] == "sub-abc"
+
+
+class TestClassifyFailureTimeout:
+    """issue #280: a request that never got a correlated response within its
+    deadline is "timeout", distinct from "unavailable" -- see
+    _classify_failure's docstring for why this can't (pre mcp>=2.0) promise
+    to distinguish a genuinely slow backend from one whose malformed
+    response orphaned the request until the same deadline."""
+
+    def test_mcp_error_request_timeout_is_classified_as_timeout(self) -> None:
+        exc = McpError(
+            ErrorData(
+                code=httpx.codes.REQUEST_TIMEOUT,
+                message="Timed out while waiting for response to CallToolRequest. Waited 30.0 seconds.",
+            )
+        )
+        assert _classify_failure(exc, injected=False, skip_reason=None) == "timeout"
+
+    def test_mcp_error_other_code_is_still_unavailable(self) -> None:
+        """Only the specific REQUEST_TIMEOUT code means "orphaned request" --
+        an ordinary McpError (e.g. a tool-reported failure) must not be
+        misclassified."""
+        exc = McpError(
+            ErrorData(code=httpx.codes.INTERNAL_SERVER_ERROR, message="boom")
+        )
+        assert _classify_failure(exc, injected=False, skip_reason=None) == "unavailable"
+
+    def test_connect_error_is_unavailable_not_timeout(self) -> None:
+        """A connection-level refusal (never even reached send_request) stays
+        "unavailable" -- "timeout" specifically means a request WAS sent."""
+        exc = httpx.ConnectError("connection refused")
+        assert _classify_failure(exc, injected=False, skip_reason=None) == "unavailable"
+
+    def test_timeout_wrapped_in_exception_group_is_still_detected(self) -> None:
+        """Mirrors the existing 401-in-a-BaseExceptionGroup coverage this
+        function already has -- fastmcp's client runs I/O in anyio task
+        groups, so the McpError can arrive wrapped."""
+        exc = BaseExceptionGroup(
+            "unhandled",
+            [
+                McpError(
+                    ErrorData(code=httpx.codes.REQUEST_TIMEOUT, message="timed out")
+                )
+            ],
+        )
+        assert _classify_failure(exc, injected=False, skip_reason=None) == "timeout"
+
+    def test_skip_reason_still_takes_priority_over_timeout(self) -> None:
+        """A deliberately-skipped credential mint is the precise reason
+        regardless of what the resulting uncredentialed connection raised --
+        same rule the docstring already states for "unavailable"."""
+        exc = McpError(ErrorData(code=httpx.codes.REQUEST_TIMEOUT, message="timed out"))
+        assert (
+            _classify_failure(exc, injected=False, skip_reason="not_linked")
+            == "not_linked"
+        )

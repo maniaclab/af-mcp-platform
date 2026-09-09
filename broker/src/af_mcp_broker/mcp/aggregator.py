@@ -28,6 +28,7 @@ from fastmcp.server.providers.proxy import (
     default_proxy_log_handler,
     default_proxy_progress_handler,
 )
+from mcp.shared.exceptions import McpError
 from mcp.types import ClientCapabilities, ElicitationCapability
 from starlette.middleware import Middleware
 
@@ -182,9 +183,20 @@ def _classify_failure(
     "unauthorized" -- meaning the stored credential itself was rejected,
     bad/expired, the caller should re-link -- when a credential actually was
     injected for this attempt; a 401 with nothing injected (e.g. a
-    "none"/"x509" service unexpectedly requiring auth), a connection
-    refusal, a timeout, or any other error all fall back to "unavailable",
-    an operational/config problem rather than a "go re-link" prompt.
+    "none"/"x509" service unexpectedly requiring auth) falls back to
+    "unavailable", an operational/config problem rather than a "go re-link"
+    prompt.
+
+    A request that never got a correlated response within its deadline
+    (``McpError`` with ``code == httpx.codes.REQUEST_TIMEOUT``) is "timeout",
+    distinct from "unavailable" (a connection-level refusal/reset before the
+    request was even sent) -- see #280. This is a genuinely slow/unresponsive
+    backend in the common case, but the mcp SDK's client (as pinned here;
+    fixed upstream in mcp>=2.0, not yet in the 1.x line -- see #280's
+    comments) also orphans a request this same way if the backend's response
+    body failed to parse, so "timeout" is deliberately honest about that
+    ambiguity rather than claiming a precision this classification doesn't
+    have pre-upgrade.
     """
     if not injected and skip_reason is not None:
         return skip_reason
@@ -193,6 +205,11 @@ def _classify_failure(
         for leaf in _iter_leaf_exceptions(exc)
     ):
         return "unauthorized"
+    if any(
+        isinstance(leaf, McpError) and leaf.error.code == httpx.codes.REQUEST_TIMEOUT
+        for leaf in _iter_leaf_exceptions(exc)
+    ):
+        return "timeout"
     return "unavailable"
 
 
