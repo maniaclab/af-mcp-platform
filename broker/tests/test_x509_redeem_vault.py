@@ -33,8 +33,8 @@ from test_x509_service_mode import FakeVomsClient, FakeX509Store
 
 from af_mcp_broker.credentials.voms_service import (
     VomsServiceBadPassphraseError,
-    VomsServiceCertificateExpiredError,
     VomsServiceMintError,
+    VomsServiceRejectedError,
 )
 
 if TYPE_CHECKING:
@@ -311,7 +311,7 @@ class TestRedeemHandsFreeRenewal:
         the bad-passphrase case above."""
         client, store, _, state = service_app
         client.app.state.x509_provider._voms_client = FakeVomsClient(
-            VomsServiceCertificateExpiredError("Your grid certificate has expired.")
+            VomsServiceRejectedError("Your grid certificate has expired.")
         )
         await _seed_link(store)
 
@@ -356,10 +356,10 @@ class TestUnlockEndpointServiceMode:
         and 502 (infra failure) cases above -- an expired certificate is
         user-actionable, not a passphrase problem, and retrying can't help.
         The detail is safe to relay verbatim (see
-        VomsServiceCertificateExpiredError's docstring)."""
+        VomsServiceRejectedError's docstring)."""
         client, store, _, _ = service_app
         client.app.state.x509_provider._voms_client = FakeVomsClient(
-            VomsServiceCertificateExpiredError("Your grid certificate has expired.")
+            VomsServiceRejectedError("Your grid certificate has expired.")
         )
 
         resp = client.post(_UNLOCK, json={"passphrase": "hunter2"})

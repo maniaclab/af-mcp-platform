@@ -9,10 +9,14 @@ body. This client authenticates to it with an AF Broker Identity Token
 (``aud=voms-token-service`` — issue #162's internal protocol, the same one
 condor-token-service consumes) minted via the existing ``BrokerTokenIssuer``.
 
-The two failure classes matter to callers exactly the way the legacy
-k8s-Job mint path's did (see ``ProxyHarvestError``): a 400 from the service
-means the passphrase was wrong (``VomsServiceBadPassphraseError`` — count it
-against the unlock rate limiter), while 401/403/5xx, timeouts, and
+Three failure classes matter to callers: a 400 from the service means the
+passphrase was wrong (``VomsServiceBadPassphraseError`` — count it against
+the unlock rate limiter, the same distinction the legacy mint path's
+``ProxyHarvestError`` draws); a 422 means the request itself was rejected
+for a specific, user-actionable, non-passphrase reason — an expired
+certificate, bad key file permissions, an out-of-policy ``valid``/``voms``
+— none of which the caller can fix by retrying or re-entering their
+passphrase (``VomsServiceRejectedError``); while 401/403/5xx, timeouts, and
 connection failures are infra failures (``VomsServiceMintError``) that must
 NOT consume the user's unlock budget.
 
@@ -81,27 +85,35 @@ class VomsServiceBadPassphraseError(ValueError):
         )
 
 
-_CERTIFICATE_EXPIRED_FALLBACK_DETAIL = (
-    "Your grid certificate has expired. Obtain a renewed certificate from "
-    "your certificate authority and try again."
+_REJECTED_FALLBACK_DETAIL = (
+    "voms-token-service rejected the request. Check your grid certificate "
+    "and the requested voms/valid, then try again."
 )
 
 
-class VomsServiceCertificateExpiredError(ValueError):
-    """Raised when the service answered 422: the user's own end-entity certificate (``~/.globus/usercert.pem``) has expired.
+class VomsServiceRejectedError(ValueError):
+    """Raised when the service answered 422: the request was rejected for a specific, user-actionable, non-passphrase reason.
 
-    Distinct from both siblings above: not a passphrase problem (must NOT
-    count against the unlock rate limiter, like ``VomsServiceBadPassphraseError``
-    does) and not an infra failure either (retrying cannot help until the
-    user gets a new certificate, unlike ``VomsServiceMintError``) — see
-    af-mcp-platform#288.
+    voms-token-service returns 422 for several distinct causes that all
+    share the same shape — none is a passphrase problem (must NOT count
+    against the unlock rate limiter, unlike ``VomsServiceBadPassphraseError``)
+    and none is an infra failure either (retrying cannot help until the
+    user or an operator acts, unlike ``VomsServiceMintError``): the user's
+    own end-entity certificate (``~/.globus/usercert.pem``) has expired
+    (``CertificateExpiredError``, maniaclab/voms-token-service#16 —
+    af-mcp-platform#288's original repro), the key file's ownership/mode is
+    wrong (``CredentialPermissionsError``), or the caller-supplied
+    ``valid``/``voms`` violates the service's mint policy
+    (``ValidTooLongError``/``VomsNotAllowedError``,
+    maniaclab/voms-token-service#18). This class does not distinguish
+    between them — see below.
 
     Unlike every other failure in this module, the service's own ``detail``
-    IS safe to relay to the caller verbatim: voms-token-service's
-    ``CertificateExpiredError`` (maniaclab/voms-token-service#16) is a
-    fixed, non-sensitive, user-actionable string by design, never
-    voms-proxy-init's raw stderr (which would include the certificate's
-    exact expiry timestamp).
+    IS safe to relay to the caller verbatim for every one of these causes:
+    each is a fixed or template-built, non-sensitive, user-actionable
+    string by design, never voms-proxy-init's raw stderr (which, for the
+    expired-certificate case, would include the certificate's exact expiry
+    timestamp).
     """
 
     def __init__(self, detail: str) -> None:
@@ -188,10 +200,12 @@ class VomsTokenServiceClient:
         Raises:
             VomsServiceBadPassphraseError: the service answered 400 — the
                 passphrase was wrong. Count against the unlock rate limiter.
-            VomsServiceCertificateExpiredError: the service answered 422 —
-                the user's own grid certificate has expired. Not a
-                passphrase problem and not an infra failure; do NOT count
-                against the rate limiter.
+            VomsServiceRejectedError: the service answered 422 — a
+                specific, user-actionable, non-passphrase reason (expired
+                certificate, bad key permissions, an out-of-policy
+                valid/voms — see the class docstring). Not a passphrase
+                problem and not an infra failure; do NOT count against the
+                rate limiter.
             VomsServiceMintError: any other failure (unreachable, timeout,
                 401/403/5xx). Do NOT count against the rate limiter.
 
@@ -225,18 +239,15 @@ class VomsTokenServiceClient:
             raise VomsServiceBadPassphraseError
         if resp.status_code == httpx.codes.UNPROCESSABLE_ENTITY:
             # Unlike every other non-200 branch here, this body's `detail`
-            # is safe to read and relay -- see
-            # VomsServiceCertificateExpiredError's docstring. A malformed or
-            # unexpected body still degrades to a safe fixed string rather
-            # than raising here.
+            # is safe to read and relay -- see VomsServiceRejectedError's
+            # docstring. A malformed or unexpected body still degrades to a
+            # safe fixed string rather than raising here.
             try:
                 detail = resp.json().get("detail")
             except ValueError:
                 detail = None
-            raise VomsServiceCertificateExpiredError(
-                detail
-                if isinstance(detail, str)
-                else _CERTIFICATE_EXPIRED_FALLBACK_DETAIL
+            raise VomsServiceRejectedError(
+                detail if isinstance(detail, str) else _REJECTED_FALLBACK_DETAIL
             )
         if resp.status_code != httpx.codes.OK:
             # Status code only — the response body may carry service
