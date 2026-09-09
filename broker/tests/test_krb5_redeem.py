@@ -599,6 +599,8 @@ class TestRedeemHandsFreeRenewal:
             )
         assert resp.status_code == 404
         assert "/v1/krb5/ticket" in resp.json()["detail"]
+        # af-mcp-platform#288: correlation_id is a 5xx-only addition.
+        assert "correlation_id" not in resp.json()
 
     def test_renewal_infra_failure_with_no_keytab_is_502(
         self, krb5_redeem_env, app_client_factory
@@ -625,6 +627,9 @@ class TestRedeemHandsFreeRenewal:
                 _REDEEM, json={}, headers={"Authorization": f"Bearer {token}"}
             )
         assert resp.status_code == 502
+        # af-mcp-platform#288: the request's correlation_id rides along on
+        # any 5xx, so the user has something to quote back to AF support.
+        assert resp.json()["correlation_id"]
 
     def test_renewal_infra_failure_falls_through_to_keytab_remint(
         self, krb5_redeem_env, app_client_factory

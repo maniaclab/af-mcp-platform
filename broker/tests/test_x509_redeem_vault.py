@@ -33,6 +33,7 @@ from test_x509_service_mode import FakeVomsClient, FakeX509Store
 
 from af_mcp_broker.credentials.voms_service import (
     VomsServiceBadPassphraseError,
+    VomsServiceCertificateExpiredError,
     VomsServiceMintError,
 )
 
@@ -294,9 +295,36 @@ class TestRedeemHandsFreeRenewal:
         assert resp.status_code == 502
         assert store.deleted == []
         assert await store.get_link("sub-abc") is not None
+        # af-mcp-platform#288: a 5xx gets the request's correlation_id folded
+        # into the body, so the user has something to quote back to support.
+        assert resp.json()["correlation_id"]
 
         releases = _release_audit_records(state)
         assert [rec["outcome"] for rec in releases] == ["error"]
+
+    async def test_renewal_certificate_expired_is_422_and_keeps_the_link(
+        self, service_app
+    ) -> None:
+        """af-mcp-platform#288: an expired certificate found during
+        hands-free renewal is user-actionable (get a new cert), not a
+        rejected stored passphrase -- the Globus link is untouched, unlike
+        the bad-passphrase case above."""
+        client, store, _, state = service_app
+        client.app.state.x509_provider._voms_client = FakeVomsClient(
+            VomsServiceCertificateExpiredError("Your grid certificate has expired.")
+        )
+        await _seed_link(store)
+
+        resp = _redeem(client, _mint_token(client))
+
+        assert resp.status_code == 422
+        assert resp.json()["detail"] == "Your grid certificate has expired."
+        assert store.deleted == []
+        assert await store.get_link("sub-abc") is not None
+
+        releases = _release_audit_records(state)
+        assert [rec["outcome"] for rec in releases] == ["error"]
+        assert releases[0]["error"] == "Your grid certificate has expired."
 
 
 class TestUnlockEndpointServiceMode:
@@ -309,6 +337,9 @@ class TestUnlockEndpointServiceMode:
         resp = client.post(_UNLOCK, json={"passphrase": "wrong"})
 
         assert resp.status_code == 400
+        # af-mcp-platform#288: correlation_id is a 5xx-only addition -- a 4xx
+        # detail is already meant to be user-actionable on its own.
+        assert "correlation_id" not in resp.json()
 
     def test_infra_failure_is_502(self, service_app) -> None:
         client, _, _, _ = service_app
@@ -319,6 +350,26 @@ class TestUnlockEndpointServiceMode:
         resp = client.post(_UNLOCK, json={"passphrase": "hunter2"})
 
         assert resp.status_code == 502
+
+    def test_certificate_expired_is_422_with_the_real_detail(self, service_app) -> None:
+        """af-mcp-platform#288: distinct from both the 400 (bad passphrase)
+        and 502 (infra failure) cases above -- an expired certificate is
+        user-actionable, not a passphrase problem, and retrying can't help.
+        The detail is safe to relay verbatim (see
+        VomsServiceCertificateExpiredError's docstring)."""
+        client, store, _, _ = service_app
+        client.app.state.x509_provider._voms_client = FakeVomsClient(
+            VomsServiceCertificateExpiredError("Your grid certificate has expired.")
+        )
+
+        resp = client.post(_UNLOCK, json={"passphrase": "hunter2"})
+
+        assert resp.status_code == 422
+        assert resp.json()["detail"] == "Your grid certificate has expired."
+        assert "correlation_id" not in resp.json()
+        # Nothing persisted -- same "validate before storing" rule a bad
+        # passphrase already gets.
+        assert "sub-abc" not in store.records
 
     def test_successful_unlock_links_and_returns_metadata(self, service_app) -> None:
         client, store, voms_client, _ = service_app

@@ -26,9 +26,17 @@ from af_mcp_broker.credentials.broker_issued import BrokerTokenIssuer
 from af_mcp_broker.credentials.voms_service import (
     MintedProxy,
     VomsServiceBadPassphraseError,
+    VomsServiceCertificateExpiredError,
     VomsServiceMintError,
     VomsServicePreflightError,
     VomsTokenServiceClient,
+)
+
+_CERTIFICATE_EXPIRED_DETAIL = (
+    "Your grid certificate (~/.globus/usercert.pem) has expired. Obtain a "
+    "renewed certificate from your certificate authority, replace "
+    "~/.globus/usercert.pem (and userkey.pem if it was reissued too), and "
+    "try again."
 )
 
 if TYPE_CHECKING:
@@ -240,6 +248,49 @@ class TestMintFailures:
         with pytest.raises(VomsServiceMintError) as excinfo:
             await _mint(client)
         assert not isinstance(excinfo.value, VomsServiceBadPassphraseError)
+
+    async def test_422_is_certificate_expired(self, make_client) -> None:
+        client, _ = make_client(
+            httpx.Response(422, json={"detail": _CERTIFICATE_EXPIRED_DETAIL})
+        )
+        with pytest.raises(VomsServiceCertificateExpiredError):
+            await _mint(client)
+
+    async def test_422_relays_the_service_detail_verbatim(self, make_client) -> None:
+        """Unlike every other non-200 status, a 422's detail IS safe to
+        relay -- voms-token-service's CertificateExpiredError is a fixed,
+        non-sensitive string by design (maniaclab/voms-token-service#16)."""
+        client, _ = make_client(
+            httpx.Response(422, json={"detail": _CERTIFICATE_EXPIRED_DETAIL})
+        )
+        with pytest.raises(VomsServiceCertificateExpiredError) as excinfo:
+            await _mint(client)
+        assert excinfo.value.detail == _CERTIFICATE_EXPIRED_DETAIL
+        assert str(excinfo.value) == _CERTIFICATE_EXPIRED_DETAIL
+
+    async def test_422_certificate_expired_is_not_an_infra_failure(
+        self, make_client
+    ) -> None:
+        """The two failure types must stay disjoint, same reasoning as
+        test_infra_failure_is_not_a_bad_passphrase above."""
+        client, _ = make_client(
+            httpx.Response(422, json={"detail": _CERTIFICATE_EXPIRED_DETAIL})
+        )
+        with pytest.raises(VomsServiceCertificateExpiredError) as excinfo:
+            await _mint(client)
+        assert not isinstance(excinfo.value, VomsServiceMintError)
+        assert not isinstance(excinfo.value, VomsServiceBadPassphraseError)
+
+    async def test_422_with_malformed_body_falls_back_to_a_fixed_detail(
+        self, make_client
+    ) -> None:
+        """A 422 with no parseable `detail` (a service contract drift, not
+        expected in practice) must still raise the specific error type with
+        a safe fixed message, never crash trying to read a missing key."""
+        client, _ = make_client(httpx.Response(422, text="not json"))
+        with pytest.raises(VomsServiceCertificateExpiredError) as excinfo:
+            await _mint(client)
+        assert excinfo.value.detail
 
     async def test_connection_error_is_infra_failure(self, make_client) -> None:
         client, _ = make_client(httpx.ConnectError("connection refused"))

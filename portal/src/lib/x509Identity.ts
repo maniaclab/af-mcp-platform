@@ -17,11 +17,21 @@ import { APIError, SessionExpiredError } from './api';
  * Generic APIError-detail parsing with nothing x509-specific in it — exported
  * so krb5Identity.ts's krb5LinkErrorMessage can reuse it rather than
  * duplicating it.
+ *
+ * af-mcp-platform#288: a 5xx response now also carries a `correlation_id`
+ * alongside `detail` (app.py's `_http_exception_handler`) — appended here so
+ * every caller of this function gets it for free, as something a user can
+ * quote back to AF support, rather than every per-status branch needing its
+ * own copy of this formatting.
  */
 export function apiErrorDetail(err: APIError): string | null {
   try {
-    const parsed = JSON.parse(err.body) as { detail?: unknown };
-    return typeof parsed.detail === 'string' ? parsed.detail : null;
+    const parsed = JSON.parse(err.body) as { detail?: unknown; correlation_id?: unknown };
+    if (typeof parsed.detail !== 'string') return null;
+    if (typeof parsed.correlation_id === 'string') {
+      return `${parsed.detail} (reference: ${parsed.correlation_id})`;
+    }
+    return parsed.detail;
   } catch {
     return null;
   }
