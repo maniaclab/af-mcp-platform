@@ -30,6 +30,10 @@ class CredentialKind(StrEnum):
     # provider-type plumbing; the downstream aggregator.services consumer is
     # a separate, not-yet-made decision (see the provider-type's own docs).
     KRB5_CCACHE = "krb5_ccache"
+    # A ServiceX access token persisted in Vault (issue #295): no local
+    # file, redeemed by the backend via POST /v1/credentials/servicex/redeem
+    # -- same "deliverable, not local" shape as X509_PROXY_REDEEM.
+    SERVICEX_ACCESS_TOKEN_REDEEM = "servicex_access_token_redeem"
     NONE = "none"
 
 
@@ -57,6 +61,7 @@ class IssuedCredential:
     # x509 (proxy_redeem): {"proxy_handle": ..., "delivery": "redeem"}
     # service:{"access_token": ..., "on_behalf_of": ..., "token_type": "Bearer"}
     # krb5_ccache: {"ccache_b64": ..., "principal": ..., "realm": ..., "renew_until": float | None}
+    # servicex_access_token_redeem: {"delivery": "redeem"}
     payload: dict
     audit_id: str
     source: str  # which provider backend produced this credential

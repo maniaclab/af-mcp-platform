@@ -34,6 +34,16 @@ from af_mcp_broker.credentials.oauth21 import (
 )
 from af_mcp_broker.credentials.oidc import OIDCProvider
 from af_mcp_broker.credentials.service import ServiceProvider
+from af_mcp_broker.credentials.servicex import ServiceXProvider
+from af_mcp_broker.credentials.servicex_service import (
+    ServiceXBadRefreshTokenError,
+    ServiceXServiceMintError,
+    ServiceXTokenServiceClient,
+)
+from af_mcp_broker.credentials.servicex_vault import (
+    StoredServiceXCredential,
+    VaultServiceXStore,
+)
 from af_mcp_broker.credentials.vault import VaultTokenStore
 from af_mcp_broker.credentials.voms_service import (
     VomsServiceBadPassphraseError,
@@ -75,10 +85,16 @@ __all__ = [
     "PosixIdentityRequiredError",
     "ProxyHarvestError",
     "ServiceProvider",
+    "ServiceXBadRefreshTokenError",
+    "ServiceXProvider",
+    "ServiceXServiceMintError",
+    "ServiceXTokenServiceClient",
     "StoredOAuthCredential",
+    "StoredServiceXCredential",
     "StoredX509Credential",
     "TokenStore",
     "VaultError",
+    "VaultServiceXStore",
     "VaultTokenStore",
     "VaultX509Store",
     "VersionConflict",
