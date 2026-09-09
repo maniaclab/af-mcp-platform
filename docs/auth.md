@@ -966,6 +966,80 @@ the `/v1/credentials/krb5/redeem` endpoint above, and the aggregator/
 list-time dispatch) for a consumer that hasn't been chosen yet. That
 remains a separate, not-yet-made decision.
 
+### ServiceXProvider: ServiceX access tokens (issue #295)
+
+ServiceX has no OAuth 2.1 authorization server to redirect through
+(`oauth21-direct` does not apply here — verified against
+`servicex.servicex_adapter.ServiceXAdapter._get_token`, which does a
+bespoke `POST {backend}/token/refresh` with the refresh token as a bearer
+header, not an RFC 6749 `grant_type=refresh_token` token-endpoint call).
+Its personal refresh token is instead a long-lived secret the user pastes
+in once, closer in shape to x509's Globus passphrase than to any OAuth
+flow — so `ServiceXProvider` (`credentials/servicex.py`) mirrors
+`X509Provider`'s voms-token-service mode: the refresh token is captured via
+`POST /v1/servicex/link` (a Keycloak-authenticated portal form, one
+secret field — same `LinkMechanism` as x509's passphrase) and persisted in
+Vault (`VaultServiceXStore`, `credentials/servicex_vault.py`) alongside the
+last-redeemed access token. `issue()` serves the stored access token while
+it has enough remaining validity, else redeems a fresh one via
+`ServiceXTokenServiceClient` (`credentials/servicex_service.py`) — an AF
+Broker Identity Token with `aud=servicex-token-service` (default),
+exchanged at servicex-token-service's `POST /v1/redeem`
+(maniaclab/servicex-token-service) for `{access_token, expires_in}`. A
+rejected refresh token (the service's 400) unlinks the identity — the
+same bad-passphrase-unlinks-and-prompts-a-re-link rule x509's hands-free
+renewal follows — since a stale token is a link problem, not a
+transient-failure problem; every other failure (unreachable, timeout,
+401/403/429/5xx) leaves the link untouched. Unlike x509 there is no POSIX
+identity requirement at all: a ServiceX access token is a pure bearer
+credential, not tied to a unix account.
+
+Configuration is one `identity_providers` entry of type `servicex-token`
+with a required `service_url` (the servicex-token-service deployment's
+base URL — the provider appends `/v1/redeem`) and an `audience` defaulting
+to `servicex-token-service`:
+
+```yaml
+broker:
+  identityProviders:
+    - type: servicex-token
+      alias: servicex
+      displayName: "ServiceX access token"
+      targets: ["servicex-mcp"]
+      serviceUrl: http://servicex-token-service.servicex-token.svc:8080
+```
+
+A `servicex-token` entry always requires Vault (same reasoning as
+`krb5-token`: `service_url` is mandatory on every entry, and the refresh
+token it vaults has no in-memory fallback), and always requires the
+broker's signing key (same fail-closed rule as `broker-issued`/
+`condor-token`/`krb5-token` — the provider mints identity tokens both for
+the servicex-token-service redeem call and for the aggregator's mint-and-
+inject delivery below).
+
+Delivery to a backend is the same redeem-pull pattern x509/krb5 use for
+a backend that needs the raw credential material itself (not header
+injection): the aggregator's `mcp/aggregator.py` carries a `servicex`
+branch identical in shape to the existing `x509`/`krb5` ones — mint an AF
+Broker Identity Token (`aud` = the service's `effective_audience`) and
+inject it as `Authorization: Bearer`, mint-and-inject only. The backend
+(servicex-mcp, in a future broker-mode client factory — not yet built, see
+maniaclab/servicex-mcp#2) redeems the actual access token itself via
+`POST /v1/credentials/servicex/redeem`; no access token material ever
+transits the aggregator. `resolve_list_time_credential` folds `"servicex"`
+into the same `auth_type in ("x509", "krb5", "servicex")` best-effort
+list-time branch, for the same reason: never call `provider.issue()` from
+an unauthenticated tool listing.
+
+**No `services.yaml` entry uses `auth_type: servicex` yet, and no backend
+calls `POST /v1/credentials/servicex/redeem`.** This is provider-type
+plumbing (the link/redeem endpoints, the Vault store, the aggregator/
+list-time dispatch) for two consumers that don't exist yet: servicex-mcp's
+own broker-mode client factory (maniaclab/servicex-mcp#2) and a ServiceX-
+redeem client in the shared `af-credentials` library
+(maniaclab/af-credentials#9) that factory would use to call this
+provider's redeem endpoint. Both are separate, cross-repo changes.
+
 ---
 
 ## Programmatic client bootstrap

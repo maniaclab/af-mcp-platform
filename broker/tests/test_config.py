@@ -511,6 +511,63 @@ def test_krb5_kv_path_prefix_default():
     assert Settings().krb5_kv_path_prefix == "mcp/krb5"
 
 
+# servicex-token identity providers (issue #295) -- ServiceXProvider's config.
+def test_servicex_token_provider_config_parses():
+    settings = Settings(
+        identity_providers=[
+            {
+                "type": "servicex-token",
+                "alias": "servicex",
+                "display_name": "ServiceX access token",
+                "enables": "ServiceX on-demand data delivery",
+                "targets": ["some-service"],
+                "service_url": "http://servicex-token-service.invalid",
+            }
+        ],
+        **_VAULT_ENV,
+    )
+    (cfg,) = settings.identity_providers
+    assert cfg.type == "servicex-token"
+    assert cfg.alias == "servicex"
+    assert cfg.targets == ["some-service"]
+    assert str(cfg.service_url) == "http://servicex-token-service.invalid/"
+    assert cfg.audience == "servicex-token-service"  # default
+
+
+def test_servicex_token_provider_config_requires_service_url():
+    valid_entry = {
+        "type": "servicex-token",
+        "alias": "servicex",
+        "display_name": "ServiceX access token",
+        "enables": "ServiceX on-demand data delivery",
+        "targets": ["some-service"],
+        "service_url": "http://servicex-token-service.invalid",
+    }
+    entry = {k: v for k, v in valid_entry.items() if k != "service_url"}
+    with pytest.raises(ValueError, match="service_url"):
+        Settings(identity_providers=[entry], **_VAULT_ENV)
+
+
+def test_vault_config_required_by_servicex_token_entry():
+    """Same reasoning as krb5-token: service_url is mandatory on every
+    entry, and the refresh token it vaults has no in-memory fallback, so
+    Vault is required unconditionally."""
+    entry = {
+        "type": "servicex-token",
+        "alias": "servicex",
+        "targets": ["some-service"],
+        "service_url": "http://servicex-token-service.invalid",
+    }
+    with pytest.raises(ValueError, match="vault_addr"):
+        Settings(identity_providers=[entry])
+    with pytest.raises(ValueError, match="vault_auth_role"):
+        Settings(identity_providers=[entry], vault_addr="https://vault.example")
+
+
+def test_servicex_kv_path_prefix_default():
+    assert Settings().servicex_kv_path_prefix == "mcp/servicex"
+
+
 # ---------------------------------------------------------------------------
 # x509 identity providers — X509Provider's config surface, replacing the
 # global VOMS_TOKEN_SERVICE_URL special case (which crash-looped a broker

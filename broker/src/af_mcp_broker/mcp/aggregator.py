@@ -241,13 +241,15 @@ async def resolve_list_time_credential(
     a tools/list through /mcp would have injected:
 
     - "none": no per-user credential concept at all -> ``({}, None)``.
-    - "x509"/"krb5": share one code path here -- a locally-signed AF Broker
-      Identity Token, mirroring ``_x509_factory``'s/``_krb5_factory``'s
-      identical list-time branches; with no issuer configured the connection
-      proceeds bare (``(None, None)``), same as the aggregator. The backend
-      redeems the actual proxy/ticket itself via ``POST /v1/credentials/
-      x509/redeem`` or ``.../krb5/redeem`` respectively; this function must
-      never call ``provider.issue()`` for either.
+    - "x509"/"krb5"/"servicex": share one code path here -- a locally-signed
+      AF Broker Identity Token, mirroring ``_x509_factory``'s/
+      ``_krb5_factory``'s/``_servicex_factory``'s identical list-time
+      branches; with no issuer configured the connection proceeds bare
+      (``(None, None)``), same as the aggregator. The backend redeems the
+      actual proxy/ticket/access-token itself via ``POST /v1/credentials/
+      x509/redeem``, ``.../krb5/redeem``, or ``.../servicex/redeem``
+      respectively; this function must never call ``provider.issue()`` for
+      any of the three.
     - "bearer": ``_resolve_list_time_headers`` (the issue #121 best-effort
       mint), unchanged -- ``skip_reason`` ("not_linked" | "unavailable")
       is set whenever no credential could be attached.
@@ -259,7 +261,7 @@ async def resolve_list_time_credential(
     """
     if spec.auth_type == "none":
         return {}, None
-    if spec.auth_type in ("x509", "krb5"):
+    if spec.auth_type in ("x509", "krb5", "servicex"):
         if broker_token_issuer is None:
             return None, None
         token, _ = broker_token_issuer.mint(principal.subject, spec.effective_audience)
@@ -761,6 +763,78 @@ def _make_client_factory(
             )
 
         return _krb5_factory
+
+    if spec.auth_type == "servicex":
+
+        async def _servicex_factory() -> Client:
+            ctx = get_context()
+            if await ctx.get_state("authorized_call_target") != spec.name:
+                # tools/list (or a stale-cache refresh): best-effort identity
+                # header, mirroring the krb5/x509 branches -- but minting is
+                # a local signature, so there is no network to fail and no
+                # skip_reason machinery to thread through.
+                principal = await ctx.get_state("principal")
+                if principal is None or broker_token_issuer is None:
+                    return _build_client(spec, transport_cls)
+                if not _might_be_entitled(principal, spec, policy):
+                    return _build_client(spec, transport_cls)
+                token, _ = broker_token_issuer.mint(
+                    principal.subject, spec.effective_audience
+                )
+                await ctx.set_state(
+                    f"__list_credential_status__:{spec.name}",
+                    (True, None),
+                    serializable=False,
+                )
+                return _build_client(
+                    spec, transport_cls, headers={"Authorization": f"Bearer {token}"}
+                )
+
+            principal = await ctx.get_state("principal")
+            if principal is None:
+                raise ToolError(
+                    "No authenticated principal available for this tool call"
+                )
+            if broker_token_issuer is None:
+                raise ToolError(
+                    f"Service '{spec.name}' is a servicex service, which needs "
+                    "the broker to sign AF Broker Identity Tokens, but no "
+                    "signing key is configured (chart: broker.identityToken."
+                    "existingSigningKeySecret)."
+                )
+
+            try:
+                provider = await credential_registry.resolve(spec.name)
+            except KeyError as exc:
+                raise ToolError(str(exc)) from exc
+
+            # Same linkage gate _bearer_factory applies BEFORE minting --
+            # without it an unlinked caller got a broker identity token
+            # unconditionally, and the failure only ever surfaced as
+            # whatever generic error the service's own redeem call happened
+            # to produce (e.g. a bare 404 from POST /v1/credentials/
+            # servicex/redeem), never a "go link your identity" message. Now
+            # also tries a real elicitation before giving up -- see
+            # _require_linked's docstring.
+            await _require_linked(
+                provider,
+                principal,
+                spec,
+                settings,
+                target_to_alias,
+                identity_provider_configs,
+            )
+
+            # Identity assertion only (sub/aud): the service redeems the
+            # access token with this token; it has no use for POSIX claims.
+            token, _ = broker_token_issuer.mint(
+                principal.subject, spec.effective_audience
+            )
+            return _build_client(
+                spec, transport_cls, headers={"Authorization": f"Bearer {token}"}
+            )
+
+        return _servicex_factory
 
     async def _bearer_factory() -> Client:
         ctx = get_context()

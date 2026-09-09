@@ -31,15 +31,16 @@ router.include_router(identities.router, dependencies=_maintenance_gated)
 router.include_router(permissions.router, dependencies=_maintenance_gated)
 router.include_router(catalog_tools.router, dependencies=_maintenance_gated)
 router.include_router(credentials.router, dependencies=_maintenance_gated)
-# credentials.backend_router carries only /credentials/x509/redeem, which
-# authenticates callers with an AF Broker Identity Token, never a Keycloak
-# one -- require_not_in_maintenance's admin-bypass check resolves the
-# caller via keycloak_dependency, which a broker identity token can never
-# satisfy, so gating this route the same way as the rest of
-# credentials.router 401'd every backend redeem call regardless of
-# maintenance state. Left ungated for the same reason as admin.router
-# below: not consulting maintenance state at all, rather than being
-# unconditionally exempt from it.
+# credentials.backend_router carries the backend-facing redeem routes
+# (/credentials/x509/redeem, /credentials/krb5/redeem,
+# /credentials/servicex/redeem), which authenticate callers with an AF
+# Broker Identity Token, never a Keycloak one -- require_not_in_maintenance's
+# admin-bypass check resolves the caller via keycloak_dependency, which a
+# broker identity token can never satisfy, so gating these routes the same
+# way as the rest of credentials.router 401'd every backend redeem call
+# regardless of maintenance state. Left ungated for the same reason as
+# admin.router below: not consulting maintenance state at all, rather than
+# being unconditionally exempt from it.
 router.include_router(credentials.backend_router)
 router.include_router(oauth21.router, dependencies=_maintenance_gated)
 router.include_router(tokens.router, dependencies=_maintenance_gated)

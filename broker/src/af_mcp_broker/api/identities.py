@@ -40,6 +40,9 @@ router = APIRouter(prefix="/identities", tags=["identities"])
 # "krb5-token" — Kerberos-authenticated tokens minted via KrbTokenProvider
 # (issue #274), an ordinary `identity_providers` entry linked by the user
 # submitting a username + password to the portal rather than a redirect.
+# "servicex-token" — ServiceX access tokens minted via ServiceXProvider
+# (issue #295), linked by the user pasting a single ServiceX personal
+# refresh token to the portal (same single-field shape as x509).
 ProviderType = Literal[
     "keycloak-brokered",
     "oauth21-direct",
@@ -47,18 +50,21 @@ ProviderType = Literal[
     "condor-token",
     "krb5-token",
     "x509",
+    "servicex-token",
 ]
 
 # How the portal starts a linking flow for an entry: "redirect" — a browser
 # navigation (keycloak-brokered's client-side startIdpLink() flow, or
 # oauth21-direct's `link_url`); "passphrase" — an in-portal form that POSTs
-# the user's Globus passphrase to /v1/x509/proxy (x509 only — there is no
-# URL to redirect to, so this is deliberately a distinct mechanism rather
-# than an overloaded `link_url`); "credential" — an in-portal form that POSTs
-# a username + password (krb5-token only — distinct from "passphrase" since
-# it is two fields, not one, and the portal form must reflect that); "none"
-# — no linking step exists (broker-issued, condor-token: the broker is
-# authoritative).
+# the user's Globus passphrase to /v1/x509/proxy (x509 only, and
+# servicex-token — an in-portal form that POSTs a single ServiceX personal
+# refresh token to /v1/servicex/link, the same single-secret-field shape as
+# x509's passphrase — there is no URL to redirect to, so this is
+# deliberately a distinct mechanism rather than an overloaded `link_url`);
+# "credential" — an in-portal form that POSTs a username + password
+# (krb5-token only — distinct from "passphrase" since it is two fields, not
+# one, and the portal form must reflect that); "none" — no linking step
+# exists (broker-issued, condor-token: the broker is authoritative).
 LinkMechanism = Literal["redirect", "passphrase", "credential", "none"]
 
 _LINK_MECHANISM_BY_TYPE: dict[str, LinkMechanism] = {
@@ -68,6 +74,7 @@ _LINK_MECHANISM_BY_TYPE: dict[str, LinkMechanism] = {
     "condor-token": "none",
     "krb5-token": "credential",
     "x509": "passphrase",
+    "servicex-token": "passphrase",
 }
 
 

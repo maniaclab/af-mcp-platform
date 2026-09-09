@@ -22,6 +22,9 @@ from af_mcp_broker.credentials import (
     KrbTokenProvider,
     NeedsUnlock,
     PosixIdentityRequiredError,
+    ServiceXBadRefreshTokenError,
+    ServiceXProvider,
+    ServiceXServiceMintError,
     VomsServiceBadPassphraseError,
     VomsServiceMintError,
     VomsServicePreflightError,
@@ -221,6 +224,43 @@ class ProxyRedeemResponse(BaseModel):
     nickname: str | None = None
 
 
+class ServiceXLinkRequest(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    # SecretStr prevents the refresh token from appearing in repr/logs.
+    refresh_token: SecretStr
+    # Which servicex-token target to link for; defaults to the first
+    # configured servicex-token target.
+    target: str | None = None
+
+
+class ServiceXTokenMetadata(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    target: str
+    expires_at: str  # ISO-8601
+    remaining_seconds: int
+    # access_token is intentionally absent — the token is stored server-side.
+
+
+class ServiceXRedeemResponse(BaseModel):
+    """The one response that carries a ServiceX access token out of the broker.
+
+    Served only by ``POST /credentials/servicex/redeem`` to callers
+    presenting a valid AF Broker Identity Token whose ``aud`` is a
+    configured servicex target — the ServiceX analogue of
+    ``ProxyRedeemResponse``/``KrbTicketRedeemResponse`` (issue #112's
+    "backend calls back" wire format, mirrored here for a future
+    ``af_credentials`` ServiceX client — see af-mcp-platform#295).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    access_token: str
+    expires_at: str  # ISO-8601
+    remaining_seconds: int
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -319,6 +359,42 @@ def _resolve_krb5_target(request: Request, target: str | None) -> str:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No krb5-token target is configured",
+        )
+    return targets[0]
+
+
+async def _servicex_provider(request: Request, target: str) -> ServiceXProvider:
+    """Resolve the ``ServiceXProvider`` registered for *target*.
+
+    Mirrors ``_x509_provider``/``_krb5_provider``: each servicex-token
+    ``identity_providers`` entry constructs its own provider with its own
+    servicex-token-service client, so the /v1/servicex surfaces must
+    redeem via the entry that actually services the requested target.
+    """
+    registry = _registry(request)
+    try:
+        provider = await registry.resolve(target)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No servicex-token credential provider is configured for '{target}'",
+        ) from exc
+    if not isinstance(provider, ServiceXProvider):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Target '{target}' is not a servicex-token target",
+        )
+    return provider
+
+
+def _resolve_servicex_target(request: Request, target: str | None) -> str:
+    if target is not None:
+        return target
+    targets: list[str] = getattr(request.app.state, "servicex_targets", [])
+    if not targets:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No servicex-token target is configured",
         )
     return targets[0]
 
@@ -498,6 +574,52 @@ async def create_proxy(
         voms_attributes=meta.voms_attributes,
         expires_at=_iso(meta.not_after),
         remaining_seconds=max(0, int(meta.not_after - time.time())),
+    )
+
+
+@router.post(
+    "/servicex/link",
+    response_model=ServiceXTokenMetadata,
+    status_code=status.HTTP_201_CREATED,
+    summary="Link a ServiceX personal refresh token",
+)
+async def link_servicex(
+    body: ServiceXLinkRequest,
+    request: Request,
+    principal: Annotated[Principal, Depends(keycloak_dependency)],
+) -> ServiceXTokenMetadata:
+    """Store *principal*'s ServiceX personal refresh token, verified with one redeem first.
+
+    A bad refresh token is never persisted: ``ServiceXProvider.link`` redeems
+    once before writing anything to Vault, so a rejected token surfaces as a
+    400 here rather than a silently-stored, never-usable link.
+    """
+    target = _resolve_servicex_target(request, body.target)
+    provider = await _servicex_provider(request, target)
+    try:
+        await provider.link(principal.subject, body.refresh_token)
+    except ServiceXBadRefreshTokenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except ServiceXServiceMintError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="ServiceX token redemption is temporarily unavailable — retry later.",
+        ) from exc
+
+    record = await provider.vault_store.get_token(principal.subject)
+    if record is None:  # pragma: no cover - link succeeded but nothing cached
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="ServiceX token linked but no metadata was cached",
+        )
+    assert record.expires_at is not None  # get_token only returns records with a token
+    return ServiceXTokenMetadata(
+        target=target,
+        expires_at=_iso(record.expires_at),
+        remaining_seconds=max(0, int(record.expires_at - time.time())),
     )
 
 
@@ -782,6 +904,17 @@ _REDEEM_RELINK_HINT = (
 _KRB5_REDEEM_MINT_HINT = (
     "No Kerberos ticket is cached for this account — "
     "mint one via POST /v1/krb5/ticket and retry."
+)
+
+_SERVICEX_REDEEM_MINT_HINT = (
+    "No ServiceX refresh token is linked for this account — "
+    "link one via POST /v1/servicex/link and retry."
+)
+
+_SERVICEX_REDEEM_RELINK_HINT = (
+    "The stored ServiceX refresh token was rejected (revoked/expired?) — "
+    "the ServiceX identity has been unlinked. Re-link it via "
+    "POST /v1/servicex/link and retry."
 )
 
 
@@ -1219,4 +1352,168 @@ async def redeem_krb5_ticket(request: Request) -> KrbTicketRedeemResponse:
         expires_at=_iso(cred.expires_at),
         remaining_seconds=max(0, int(cred.expires_at - now)),
         renew_until=_iso(renew_until) if renew_until is not None else None,
+    )
+
+
+@backend_router.post(
+    "/credentials/servicex/redeem",
+    response_model=ServiceXRedeemResponse,
+    summary="Redeem the caller's cached ServiceX access token (backend-facing)",
+)
+async def redeem_servicex_token(request: Request) -> ServiceXRedeemResponse:
+    """Release the caller's cached ServiceX access token to a servicex backend.
+
+    Authenticated by an AF Broker Identity Token (NOT a Keycloak token),
+    exactly like ``redeem_x509_proxy``/``redeem_krb5_ticket`` above: the
+    broker verifies its own RS256 signature and requires ``aud`` to be a
+    configured servicex target. The path is deliberately under
+    ``/credentials/`` for the same reason x509's/krb5's is -- to match the
+    wire contract a future ``af_credentials`` ServiceX client would code
+    against (``POST /v1/credentials/servicex/redeem`` -- see
+    af-mcp-platform#295).
+
+    Serves the Vault-stored access token if still valid, else redeems
+    hands-free from the stored refresh token (``ServiceXProvider.
+    redeem_from_link``) -- no principal is available here (only a
+    broker-token subject), which is exactly what that method is built for.
+    """
+    issuer = getattr(request.app.state, "broker_token_issuer", None)
+    if issuer is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Broker identity tokens are not configured",
+        )
+
+    auth = request.headers.get("authorization", "")
+    if not auth.lower().startswith("bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing Bearer token in Authorization header",
+        )
+    claims = issuer.verify(auth[7:].strip())
+    if claims is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired broker identity token",
+        )
+
+    subject: str = claims["sub"]
+    token_aud: str = claims["aud"]
+    request_id = claims.get("jti", "")
+
+    # Same effective_audience -> target reverse map as x509_audiences/
+    # krb5_audiences above (issue #257) -- the aud a servicex backend
+    # presents may differ from the servicex target name the token/provider
+    # are keyed under.
+    servicex_audiences: dict[str, str] = getattr(
+        request.app.state, "servicex_audiences", {}
+    )
+    target = servicex_audiences.get(token_aud)
+    if target is None:
+        # Mirrors redeem_x509_proxy's/redeem_krb5_ticket's audience-not-
+        # mapped audit exactly (same inline AuditRecord shape, action
+        # renamed for servicex) -- this is security-relevant on its own:
+        # servicex_audiences is empty until a real services.yaml consumer
+        # is configured, so this 403 is the ONLY outcome this route reaches
+        # in any real deployment today.
+        await write_audit(
+            AuditRecord(
+                principal_sub=subject,
+                principal_uid=claims.get("uid"),
+                permission=None,
+                target=token_aud,
+                action="servicex_token_release",
+                action_type="read",
+                args_summary="redeem denied: audience is not a servicex target",
+                timestamp=time.time(),
+                request_id=request_id,
+                outcome="denied",
+                error=f"audience {token_aud!r} is not a configured servicex target",
+            )
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Audience {token_aud!r} is not a configured servicex target",
+        )
+
+    provider = await _servicex_provider(request, target)
+    record = await provider.vault_store.get_token(subject)
+    renewed = False
+    if record is None:
+        try:
+            record = await provider.redeem_from_link(subject, target)
+        except NeedsUnlock as exc:
+            if exc.reason == "not_linked":
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=_SERVICEX_REDEEM_MINT_HINT,
+                ) from exc
+            await write_audit(
+                AuditRecord(
+                    principal_sub=subject,
+                    principal_uid=claims.get("uid"),
+                    permission=None,
+                    target=target,
+                    action="servicex_token_release",
+                    action_type="read",
+                    args_summary="hands-free redeem failed: stored refresh token rejected; identity unlinked",
+                    timestamp=time.time(),
+                    request_id=request_id,
+                    outcome="error",
+                    error="stored ServiceX refresh token rejected by servicex-token-service",
+                )
+            )
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=_SERVICEX_REDEEM_RELINK_HINT,
+            ) from exc
+        except ServiceXServiceMintError as exc:
+            await write_audit(
+                AuditRecord(
+                    principal_sub=subject,
+                    principal_uid=claims.get("uid"),
+                    permission=None,
+                    target=target,
+                    action="servicex_token_release",
+                    action_type="read",
+                    args_summary="hands-free redeem failed: servicex-token-service unavailable",
+                    timestamp=time.time(),
+                    request_id=request_id,
+                    outcome="error",
+                    error=str(exc),
+                )
+            )
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="ServiceX token redemption is temporarily unavailable — retry later.",
+            ) from exc
+        renewed = True
+
+    assert record.access_token is not None  # get_token/redeem_from_link guarantee this
+    assert record.expires_at is not None
+    now = time.time()
+
+    await write_audit(
+        AuditRecord(
+            principal_sub=subject,
+            principal_uid=claims.get("uid"),
+            permission=None,
+            target=target,
+            action="servicex_token_release",
+            action_type="read",
+            args_summary=(
+                f"access token redeemed hands-free and released to backend {target!r}"
+                if renewed
+                else f"access token released to backend {target!r}"
+            ),
+            timestamp=time.time(),
+            request_id=request_id,
+            outcome="success",
+        )
+    )
+
+    return ServiceXRedeemResponse(
+        access_token=record.access_token.get_secret_value(),
+        expires_at=_iso(record.expires_at),
+        remaining_seconds=max(0, int(record.expires_at - now)),
     )
