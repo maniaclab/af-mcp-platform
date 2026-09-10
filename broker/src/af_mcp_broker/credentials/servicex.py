@@ -214,6 +214,19 @@ class ServiceXProvider(CredentialProvider):
         """
         await self._vault_store.clear_token(principal.subject)
 
+    async def unlink(self, principal: Principal) -> None:
+        """Delete the stored refresh token (link), fully forgetting this identity.
+
+        Distinct from ``revoke()``, which only drops the cached/Vault-stored
+        access token and leaves the refresh token in place so the next
+        ``issue()`` can still redeem hands-free -- ``unlink()`` is the
+        stronger, user-initiated "forget me" operation: it deletes the
+        entire Vault record (refresh token AND any cached access token),
+        mirroring ``KrbTokenProvider.unlink()``. Called by ``DELETE
+        /v1/identities/link/{provider}``'s servicex-token branch.
+        """
+        await self._vault_store.delete(principal.subject)
+
     async def _serve_stored_token(
         self, subject: str, target: str, min_remaining_seconds: int
     ) -> IssuedCredential | None:

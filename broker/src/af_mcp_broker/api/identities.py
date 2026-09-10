@@ -10,7 +10,12 @@ from pydantic import BaseModel, ConfigDict
 
 from af_mcp_broker.authorization import is_admin
 from af_mcp_broker.config import get_settings
-from af_mcp_broker.credentials import KrbTokenProvider, OIDCProvider, X509Provider
+from af_mcp_broker.credentials import (
+    KrbTokenProvider,
+    OIDCProvider,
+    ServiceXProvider,
+    X509Provider,
+)
 from af_mcp_broker.identity import Principal, keycloak_dependency
 
 if TYPE_CHECKING:
@@ -42,7 +47,12 @@ router = APIRouter(prefix="/identities", tags=["identities"])
 # submitting a username + password to the portal rather than a redirect.
 # "servicex-token" — ServiceX access tokens minted via ServiceXProvider
 # (issue #295), linked by the user pasting a single ServiceX personal
-# refresh token to the portal (same single-field shape as x509).
+# refresh token to the portal. Its own link_mechanism ("servicex-token",
+# not a reuse of x509's "passphrase") gets a dedicated ServiceXIdentityCard:
+# although both are a single-secret-field POST, x509's card carries Globus/
+# VOMS-proxy-specific copy and a proxy-expiry/custody-mode concept that
+# don't apply here, and this card additionally needs an external_login_url
+# link-out that x509 has no equivalent of.
 ProviderType = Literal[
     "keycloak-brokered",
     "oauth21-direct",
@@ -56,16 +66,21 @@ ProviderType = Literal[
 # How the portal starts a linking flow for an entry: "redirect" — a browser
 # navigation (keycloak-brokered's client-side startIdpLink() flow, or
 # oauth21-direct's `link_url`); "passphrase" — an in-portal form that POSTs
-# the user's Globus passphrase to /v1/x509/proxy (x509 only, and
-# servicex-token — an in-portal form that POSTs a single ServiceX personal
-# refresh token to /v1/servicex/link, the same single-secret-field shape as
-# x509's passphrase — there is no URL to redirect to, so this is
-# deliberately a distinct mechanism rather than an overloaded `link_url`);
-# "credential" — an in-portal form that POSTs a username + password
-# (krb5-token only — distinct from "passphrase" since it is two fields, not
-# one, and the portal form must reflect that); "none" — no linking step
-# exists (broker-issued, condor-token: the broker is authoritative).
-LinkMechanism = Literal["redirect", "passphrase", "credential", "none"]
+# the user's Globus passphrase to /v1/x509/proxy (x509 only); "servicex-token"
+# — an in-portal form that POSTs a single ServiceX personal refresh token to
+# /v1/servicex/link, plus an optional external_login_url link-out to where
+# the user obtains that token (ServiceXIdentityCard) — a single-secret-field
+# POST like "passphrase", but kept as its own mechanism since neither the
+# x509-specific copy nor the proxy-expiry/custody-mode concept in
+# X509IdentityCard applies, and it carries a field (external_login_url) x509
+# doesn't have; "credential" — an in-portal form that POSTs a username +
+# password (krb5-token only — distinct from "passphrase" since it is two
+# fields, not one, and the portal form must reflect that); "none" — no
+# linking step exists (broker-issued, condor-token: the broker is
+# authoritative).
+LinkMechanism = Literal[
+    "redirect", "passphrase", "credential", "servicex-token", "none"
+]
 
 _LINK_MECHANISM_BY_TYPE: dict[str, LinkMechanism] = {
     "keycloak-brokered": "redirect",
@@ -74,7 +89,7 @@ _LINK_MECHANISM_BY_TYPE: dict[str, LinkMechanism] = {
     "condor-token": "none",
     "krb5-token": "credential",
     "x509": "passphrase",
-    "servicex-token": "passphrase",
+    "servicex-token": "servicex-token",
 }
 
 
@@ -137,6 +152,11 @@ class IdentityProvider(BaseModel):
     # that a missing role, not a missing link, is the actual blocker.
     # Always False for every other provider type.
     link_permission_denied: bool = False
+    # Populated only on a "servicex-token" entry from its
+    # ServiceXTokenProviderConfig.external_login_url -- the URL
+    # ServiceXIdentityCard's "Get your ServiceX token" button links out to.
+    # Null when unconfigured (hides the button) and on every other entry.
+    external_login_url: str | None = None
 
 
 class IdentitiesResponse(BaseModel):
@@ -239,6 +259,11 @@ async def _build_providers(
             linked = await provider.is_linked(principal)
             x509_link_mode = None
             proxy_expires_at = None
+        external_login_url = (
+            str(cfg.external_login_url)
+            if cfg.type == "servicex-token" and cfg.external_login_url
+            else None
+        )
         providers.append(
             IdentityProvider(
                 id=alias,
@@ -248,6 +273,7 @@ async def _build_providers(
                 linked=linked,
                 link_url=link_url,
                 link_mechanism=_LINK_MECHANISM_BY_TYPE[cfg.type],
+                external_login_url=external_login_url,
                 proxy_expires_at=proxy_expires_at,
                 x509_link_mode=x509_link_mode,
                 krb5_has_keytab=krb5_has_keytab,
@@ -348,6 +374,27 @@ async def unlink_identity(
         krb5_provider = identity_providers[provider]
         assert isinstance(krb5_provider, KrbTokenProvider)  # cfg.type guarantees this
         await krb5_provider.unlink(principal)
+
+        credential_cache = getattr(request.app.state, "credential_cache", None)
+        if credential_cache is not None:
+            for target in cfg.targets:
+                await credential_cache.revoke(principal.subject, target)
+
+        logger.info(
+            "identity_unlink_completed",
+            subject=principal.subject,
+            provider=provider,
+        )
+        return
+
+    if cfg.type == "servicex-token":
+        identity_providers = (
+            getattr(request.app.state, "identity_providers", None) or {}
+        )
+        servicex_provider = identity_providers[provider]
+        # cfg.type guarantees this
+        assert isinstance(servicex_provider, ServiceXProvider)
+        await servicex_provider.unlink(principal)
 
         credential_cache = getattr(request.app.state, "credential_cache", None)
         if credential_cache is not None:

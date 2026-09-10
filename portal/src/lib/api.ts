@@ -177,16 +177,26 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
  * via `link_mechanism: "passphrase"` below, never a `link_url`. "krb5-token"
  * is the synthetic Kerberos-ticket entry the broker appends when any backend
  * authenticates with a krb5 ticket; it links via `link_mechanism:
- * "credential"` below, never a `link_url`. */
-export type ProviderType = 'keycloak-brokered' | 'oauth21-direct' | 'krb5-token' | 'x509';
+ * "credential"` below, never a `link_url`. "servicex-token" is the synthetic
+ * ServiceX-access-token entry the broker appends when any backend
+ * authenticates via ServiceXProvider; it links via `link_mechanism:
+ * "servicex-token"` below (ServiceXIdentityCard.vue), never a `link_url`. */
+export type ProviderType =
+  'keycloak-brokered' | 'oauth21-direct' | 'krb5-token' | 'x509' | 'servicex-token';
 
 /** How a linking flow starts: "redirect" — a browser navigation (the
  * keycloak-brokered client-side flow or an oauth21-direct `link_url`);
  * "passphrase" — an in-portal form that POSTs the user's Globus passphrase
  * to /v1/x509/proxy (X509IdentityCard.vue); "credential" — an in-portal form
- * that POSTs the user's username/password to /v1/krb5/ticket; "none" — no
- * linking step exists (broker-authoritative AF-native entries). */
-export type LinkMechanism = 'redirect' | 'passphrase' | 'credential' | 'none';
+ * that POSTs the user's username/password to /v1/krb5/ticket; "servicex-token"
+ * — an in-portal form that POSTs a single ServiceX personal refresh token to
+ * /v1/servicex/link, plus an optional external_login_url link-out
+ * (ServiceXIdentityCard.vue) — kept distinct from "passphrase" since neither
+ * X509IdentityCard's Globus/VOMS-specific copy nor its proxy-expiry/
+ * custody-mode concept applies here, and this mechanism carries a field
+ * (external_login_url) x509 doesn't have; "none" — no linking step exists
+ * (broker-authoritative AF-native entries). */
+export type LinkMechanism = 'redirect' | 'passphrase' | 'credential' | 'servicex-token' | 'none';
 
 export interface IdentityProvider {
   /** Portal-facing stable identifier (e.g. "atlas-iam", or an OAuth 2.1 provider's alias). */
@@ -219,6 +229,11 @@ export interface IdentityProvider {
    * distinct from an ordinary not-yet-linked `linked: false`. Only ever
    * set on a "keycloak-brokered" entry. */
   link_permission_denied?: boolean;
+  /** Only ever set on a "servicex-token" entry: the URL
+   * ServiceXIdentityCard.vue's "Get your ServiceX token" button links out
+   * to (operator-configured, e.g. "https://servicex.af.uchicago.edu/api-token").
+   * Null/absent hides the button. */
+  external_login_url?: string | null;
 }
 
 export interface IdentitiesResponse {
@@ -659,6 +674,41 @@ export async function linkKrb5Keytab(
       lifetime,
       renewable_lifetime: renewableLifetime,
     }),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// ServiceX personal refresh token — POST /v1/servicex/link
+// ---------------------------------------------------------------------------
+
+/** POST /v1/servicex/link response (the access token itself is never
+ * returned -- it is stored server-side and redeemed per-call). */
+export interface ServiceXTokenMetadata {
+  target: string;
+  expires_at: string;
+  remaining_seconds: number;
+}
+
+/**
+ * Store the caller's ServiceX personal refresh token.
+ *
+ * The broker verifies it with one redeem against servicex-token-service
+ * before persisting anything (see api/credentials.py::link_servicex) — a
+ * bad token surfaces as `APIError(400)` and nothing is stored.
+ *
+ * `target` selects which servicex-token entry to link for; omitted, the
+ * broker's configured default is used.
+ *
+ * IMPORTANT: The caller MUST clear the refresh token from Vue state
+ * immediately after this call returns — regardless of success or failure.
+ */
+export async function linkServiceXToken(
+  refreshToken: string,
+  target?: string,
+): Promise<ServiceXTokenMetadata> {
+  return apiFetch<ServiceXTokenMetadata>('/servicex/link', {
+    method: 'POST',
+    body: JSON.stringify({ refresh_token: refreshToken, target }),
   });
 }
 

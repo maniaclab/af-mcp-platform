@@ -59,6 +59,16 @@ const IDENTITIES: IdentitiesResponse = {
       link_url: null,
       link_mechanism: 'credential',
     },
+    {
+      id: 'servicex',
+      type: 'servicex-token',
+      display_name: 'ServiceX',
+      enables: 'On-demand data delivery via servicex-mcp',
+      linked: false,
+      link_url: null,
+      link_mechanism: 'servicex-token',
+      external_login_url: 'https://servicex.example.org/api-token',
+    },
   ],
 };
 
@@ -100,5 +110,19 @@ describe('IdentitiesPage provider card anchors', () => {
     expect(anchor.find('.kc').exists()).toBe(true);
     expect(anchor.find('.il').exists()).toBe(false);
     expect(anchor.find('.xc').exists()).toBe(false);
+  });
+
+  it('renders ServiceXIdentityCard for a servicex-token-mechanism provider, passing external_login_url through', async () => {
+    const wrapper = mount(IdentitiesPage);
+    await flushPromises();
+
+    const anchor = wrapper.find('#identity-card-servicex');
+    expect(anchor.exists()).toBe(true);
+    expect(anchor.find('.sc').exists()).toBe(true);
+    expect(anchor.find('.il').exists()).toBe(false);
+    expect(anchor.find('.xc').exists()).toBe(false);
+    expect(anchor.find('.kc').exists()).toBe(false);
+    const link = anchor.find('a.sc__btn--external');
+    expect(link.attributes('href')).toBe('https://servicex.example.org/api-token');
   });
 });

@@ -17,6 +17,7 @@ import json
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from pydantic import SecretStr
 from test_broker_issued import _make_rsa_key, _private_pem
 from test_servicex import FakeServiceXStore
 
@@ -176,6 +177,70 @@ def test_identities_lists_servicex_token_provider_as_linked(
     assert row["type"] == "servicex-token"
     assert row["linked"] is False
     assert row["link_url"] is None
-    # A single-field paste (refresh token), same shape as x509's passphrase
-    # -- distinct from krb5-token's two-field "credential" mechanism.
-    assert row["link_mechanism"] == "passphrase"
+    # A single-field paste (refresh token) like x509's passphrase, but its
+    # own mechanism -- not a reuse of "passphrase" -- since ServiceXIdentityCard
+    # carries no proxy-expiry/custody-mode concept and does carry
+    # external_login_url, neither of which apply to X509IdentityCard.
+    assert row["link_mechanism"] == "servicex-token"
+    assert row["external_login_url"] is None
+
+
+def test_identities_reports_configured_external_login_url(
+    monkeypatch: pytest.MonkeyPatch, servicex_token_env, app_client_factory
+) -> None:
+    """external_login_url is populated from the servicex-token entry's
+    externalLoginUrl config -- null (as covered above) only when the
+    operator leaves it unset."""
+    providers = json.loads(json.dumps(_SERVICEX_TOKEN_PROVIDERS))
+    providers[0]["external_login_url"] = "https://servicex.example.org/api-token"
+    servicex_token_env()
+    monkeypatch.setenv("IDENTITY_PROVIDERS", json.dumps(providers))
+
+    with app_client_factory() as (client, _):
+        client.app.state.identity_providers[
+            "servicex"
+        ]._vault_store = FakeServiceXStore()
+        resp = client.get("/v1/identities")
+
+    assert resp.status_code == 200, resp.text
+    rows: list[dict[str, Any]] = resp.json()["providers"]
+    (row,) = [r for r in rows if r["id"] == "servicex"]
+    assert row["external_login_url"] == "https://servicex.example.org/api-token"
+
+
+# ---------------------------------------------------------------------------
+# DELETE /v1/identities/link/servicex
+# ---------------------------------------------------------------------------
+
+
+def test_unlink_servicex_token_alias_deletes_stored_link_and_revokes_cache(
+    servicex_token_env, app_client_factory
+) -> None:
+    """Mirrors test_krb5_token_app.py's
+    test_unlink_krb5_token_alias_deletes_stored_link_and_revokes_cache:
+    deleting the stored link (here, the Vault-stored refresh token) AND
+    revoking the credential cache for every one of the entry's targets, not
+    just returning 204."""
+    servicex_token_env()
+
+    with app_client_factory() as (client, state):
+        subject = state["principal"].subject
+        app_state = client.app.state
+        fake_vault_store = FakeServiceXStore()
+        app_state.identity_providers["servicex"]._vault_store = fake_vault_store
+        asyncio.run(
+            fake_vault_store.store_link(
+                subject, refresh_token=SecretStr("a-refresh-token")
+            )
+        )
+
+        cache = app_state.credential_cache
+        asyncio.run(cache.put(subject, "servicex-target", "fake-cached-credential"))
+        assert asyncio.run(cache.get(subject, "servicex-target")) is not None
+
+        resp = client.delete("/v1/identities/link/servicex")
+
+        assert resp.status_code == 204, resp.text
+        assert fake_vault_store.deleted == [subject]
+        assert asyncio.run(fake_vault_store.get_link(subject)) is None
+        assert asyncio.run(cache.get(subject, "servicex-target")) is None

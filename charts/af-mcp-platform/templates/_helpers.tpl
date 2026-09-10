@@ -148,7 +148,9 @@ their serviceUrl/voms/valid/audience (serviceUrl omitted =
 the legacy k8s-Job mint path; replaces the removed global
 broker.env.VOMS_TOKEN_SERVICE_URL -- every auth_type: x509 backend now
 needs an explicit entry, there is no synthesized fallback), and
-servicex-token entries their serviceUrl/audience (issue #295).
+servicex-token entries their serviceUrl/audience/externalLoginUrl (issue
+#295; externalLoginUrl is the portal's ServiceXIdentityCard "Get your
+ServiceX token" link, optional).
 */}}
 {{- define "af-mcp-platform.identityProviders" -}}
 {{- $providers := list -}}
@@ -214,6 +216,7 @@ servicex-token entries their serviceUrl/audience (issue #295).
       "enables" (.enables | default "")
       "service_url" .serviceUrl
       "audience" (.audience | default "servicex-token-service")
+      "external_login_url" (.externalLoginUrl | default nil)
     ) -}}
 {{- else -}}
 {{- $providers = append $providers (dict
