@@ -143,11 +143,12 @@ oauth21-direct entries additionally carry the endpoint/issuer/scope fields,
 broker-issued entries carry nothing more -- each target's aud/POSIX options
 now live on the service entry (aggregator.services' audience/requires_posix,
 issue #257), condor-token entries their serviceUrl/audience (issue #169),
-krb5-token entries their serviceUrl/audience (issue #274), and x509 entries
+krb5-token entries their serviceUrl/audience (issue #274), x509 entries
 their serviceUrl/voms/valid/audience (serviceUrl omitted =
 the legacy k8s-Job mint path; replaces the removed global
 broker.env.VOMS_TOKEN_SERVICE_URL -- every auth_type: x509 backend now
-needs an explicit entry, there is no synthesized fallback).
+needs an explicit entry, there is no synthesized fallback), and
+servicex-token entries their serviceUrl/audience (issue #295).
 */}}
 {{- define "af-mcp-platform.identityProviders" -}}
 {{- $providers := list -}}
@@ -204,6 +205,16 @@ needs an explicit entry, there is no synthesized fallback).
       "valid" (.valid | default "192:00")
       "audience" (.audience | default "voms-token-service")
     ) -}}
+{{- else if eq .type "servicex-token" -}}
+{{- $providers = append $providers (dict
+      "type" .type
+      "alias" .alias
+      "targets" (.targets | default (list))
+      "display_name" (.displayName | default "")
+      "enables" (.enables | default "")
+      "service_url" .serviceUrl
+      "audience" (.audience | default "servicex-token-service")
+    ) -}}
 {{- else -}}
 {{- $providers = append $providers (dict
       "type" .type
@@ -240,10 +251,10 @@ True when at least one broker.identityProviders entry requires the Vault
 connection settings independent of oauth21.tokenStore/tokenRegistry/
 principalCache.backend being "vault" — mirrors config.py's
 _validate_vault_config: a service-mode x509 entry (type "x509" with a
-non-empty serviceUrl) implies the x509 Vault store, and a krb5-token entry
-always implies the krb5 Vault store (no legacy/no-Vault mode for krb5-token,
-unlike x509). Used to gate VAULT_ADDR/etc. rendering below alongside the
-three backend checks.
+non-empty serviceUrl) implies the x509 Vault store, and krb5-token/
+servicex-token entries always imply their own Vault store (no legacy/
+no-Vault mode for either, unlike x509). Used to gate VAULT_ADDR/etc.
+rendering below alongside the three backend checks.
 */}}
 {{- define "af-mcp-platform.identityProvidersNeedVault" -}}
 {{- $needs := false -}}
@@ -252,6 +263,9 @@ three backend checks.
 {{- $needs = true -}}
 {{- end -}}
 {{- if eq .type "krb5-token" -}}
+{{- $needs = true -}}
+{{- end -}}
+{{- if eq .type "servicex-token" -}}
 {{- $needs = true -}}
 {{- end -}}
 {{- end -}}
