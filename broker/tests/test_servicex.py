@@ -374,3 +374,20 @@ class TestRevoke:
 
         assert await store.get_token("user-123") is None
         assert await store.get_link("user-123") is not None
+
+
+# ---------------------------------------------------------------------------
+# unlink
+# ---------------------------------------------------------------------------
+
+
+class TestUnlink:
+    async def test_unlink_deletes_link_and_token(self) -> None:
+        provider, _, store, _ = _make_provider()
+        await provider.link("user-123", SecretStr(_REFRESH_TOKEN))
+
+        await provider.unlink(_principal())
+
+        assert store.deleted == ["user-123"]
+        assert await store.get_link("user-123") is None
+        assert await store.get_token("user-123") is None

@@ -209,6 +209,13 @@ class ServiceXTokenProviderConfig(BaseModel):
     display_name: str = ""
     enables: str = ""
 
+    # Where the portal's ServiceXIdentityCard links out to for the user to
+    # obtain/copy their personal ServiceX refresh token (e.g.
+    # "https://servicex.af.uchicago.edu/api-token"). The broker has no
+    # ServiceX-specific route knowledge -- this is an opaque, operator-
+    # configured URL. None hides the "Get your ServiceX token" button.
+    external_login_url: AnyHttpUrl | None = None
+
 
 IdentityProviderConfig = Annotated[
     KeycloakBrokeredProviderConfig

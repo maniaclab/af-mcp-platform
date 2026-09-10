@@ -10,6 +10,7 @@ import {
   type IdentityProvider,
   type KrbTicketMetadata,
   type ProxyMetadata,
+  type ServiceXTokenMetadata,
 } from '../lib/api';
 import { groupServersByAlias } from '../lib/catalog';
 import {
@@ -20,6 +21,7 @@ import {
 } from '../lib/linkedBanner';
 import IdentityLink from './IdentityLink.vue';
 import Krb5IdentityCard from './Krb5IdentityCard.vue';
+import ServiceXIdentityCard from './ServiceXIdentityCard.vue';
 import X509IdentityCard from './X509IdentityCard.vue';
 
 const providers = ref<IdentityProvider[]>([]);
@@ -214,6 +216,28 @@ function handleKrb5Revoked(id: string) {
   }
   clearIdentitiesCache();
 }
+
+// Called on ServiceXIdentityCard's `linked` event, once POST
+// /v1/servicex/link has already succeeded — same reflect-locally-and-drop-
+// cache pattern as handleKrb5Linked. servicex-token has no separate
+// custody mode (always the hands-free-renewal shape), so only `linked`
+// flips.
+function handleServiceXLinked(id: string, meta: ServiceXTokenMetadata) {
+  const provider = providers.value.find((p) => p.id === id);
+  if (provider) provider.linked = true;
+  clearIdentitiesCache();
+}
+
+// Called on ServiceXIdentityCard's `revoked` event, once DELETE
+// /v1/identities/link/{alias} has already succeeded — mirrors
+// handleKrb5Revoked: "Forget" always deletes the whole Vault record (both
+// the refresh token and any cached access token), so it always flips
+// `linked` back to false.
+function handleServiceXRevoked(id: string) {
+  const provider = providers.value.find((p) => p.id === id);
+  if (provider) provider.linked = false;
+  clearIdentitiesCache();
+}
 </script>
 
 <template>
@@ -282,7 +306,9 @@ function handleKrb5Revoked(id: string) {
            (keycloak-brokered, oauth21-direct) render uniformly via
            IdentityLink; the passphrase-mechanism x509 entry gets its own
            card with the in-page passphrase form; the credential-mechanism
-           krb5-token entry gets its own card with the in-page ticket form. -->
+           krb5-token entry gets its own card with the in-page ticket form;
+           the servicex-token entry gets its own card with the in-page
+           refresh-token paste form and an external-link-out button. -->
       <div v-if="providers.length > 0" class="ip__list">
         <template v-for="p in providers" :key="p.id">
           <!--
@@ -319,6 +345,17 @@ function handleKrb5Revoked(id: string) {
               @keytab-linked="handleKrb5KeytabLinked(p.id)"
               @keytab-unlinked="handleKrb5KeytabUnlinked(p.id)"
               @revoked="handleKrb5Revoked(p.id)"
+            />
+            <ServiceXIdentityCard
+              v-else-if="p.link_mechanism === 'servicex-token'"
+              :id="p.id"
+              :linked="p.linked"
+              :display_name="p.display_name"
+              :enables="p.enables"
+              :powers="powersForAlias(p.id)"
+              :external_login_url="p.external_login_url"
+              @linked="(meta) => handleServiceXLinked(p.id, meta)"
+              @revoked="handleServiceXRevoked(p.id)"
             />
             <IdentityLink
               v-else
