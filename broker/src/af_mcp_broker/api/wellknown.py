@@ -110,10 +110,17 @@ class AuthorizationServerMetadataResponse(BaseModel):
 
 def _protected_resource_metadata(request: Request) -> ProtectedResourceMetadataResponse:
     settings = _require_settings(request)
-    origin = _require_public_origin(settings)
+    authorization_server = _require_public_origin(settings)
+    # ``resource`` must self-identify the host this particular request
+    # arrived on, not the broker's fixed OAuth-canonical origin -- /mcp is
+    # reachable on more than one Ingress host (mcpHost and portalHost both
+    # route to it, see docs/architecture.md), and a client validates
+    # ``resource`` against the URL it actually queried. Mirrors get_cimd's
+    # self-referential client_id above, for the same reason.
+    resource_origin = str(request.base_url).rstrip("/")
     return ProtectedResourceMetadataResponse(
-        resource=f"{origin}/mcp",
-        authorization_servers=[origin],
+        resource=f"{resource_origin}/mcp",
+        authorization_servers=[authorization_server],
     )
 
 

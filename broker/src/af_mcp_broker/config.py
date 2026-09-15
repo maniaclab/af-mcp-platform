@@ -460,8 +460,11 @@ class Settings(BaseSettings):
     # contains an oauth21-direct entry, or the MCP OAuth discovery bootstrap
     # flow (`keycloak_login_client_id` below) is configured; enforced by
     # `_validate_oauth21_config`/`_validate_mcp_oauth_config` respectively.
-    # It is also the AS/resource identifier the broker advertises in its own
-    # RFC 8414/RFC 9728 discovery metadata (api/wellknown.py, issue #140).
+    # It is also the AS identifier the broker advertises in its own RFC 8414
+    # discovery metadata (`issuer`/`authorization_servers`, api/wellknown.py,
+    # issue #140) -- but NOT the RFC 9728 `resource` field or the /mcp 401's
+    # `resource_metadata` pointer, which self-derive from each request's own
+    # host instead, since /mcp answers on more than one Ingress host.
     broker_public_origin: str = ""
 
     # Confidential Keycloak client the broker authenticates as (authorization_

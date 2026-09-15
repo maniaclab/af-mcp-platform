@@ -252,6 +252,13 @@ broker:
   # request arrived through. Empty default — no AF-specific hardcode in the
   # public chart. Required (the broker refuses to start otherwise) whenever
   # identityProviders has an oauth21-direct entry.
+  #
+  # Unlike broker.identityToken.issuer below, this value does NOT need to be
+  # mcpHost even though /mcp is served on both Ingress hosts: the RFC 9728
+  # protected-resource metadata's `resource` field and the `WWW-Authenticate`
+  # resource_metadata pointer both self-derive from the incoming request's
+  # own host (api/wellknown.py, mcp/middleware/identity_mw.py) rather than
+  # from this setting — only `authorization_servers`/`issuer` come from here.
   publicOrigin: ""
 
   # Identity providers — one entry per identity provider the broker can link

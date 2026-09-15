@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from fastmcp.exceptions import AuthorizationError
 from fastmcp.server.dependencies import get_http_request
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
+from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from af_mcp_broker.identity import (
@@ -108,7 +109,7 @@ async def _send_error(
     await response(scope, receive, send)
 
 
-def _www_authenticate_header(settings: Settings) -> str:
+def _www_authenticate_header(scope: Scope, settings: Settings) -> str:
     """Build the ``WWW-Authenticate`` header value for /mcp's 401 responses.
 
     Carries a ``resource_metadata`` pointer (RFC 9728, MCP spec's 2025-11-25
@@ -119,10 +120,19 @@ def _www_authenticate_header(settings: Settings) -> str:
     the pre-#140 behavior) when ``broker_public_origin`` is unset, since no
     resolvable metadata URL exists to point at -- a client without the
     header still falls back to the well-known root path per spec.
+
+    Pointed at *this request's own* origin, not ``broker_public_origin`` --
+    /mcp is reachable on more than one Ingress host (mcpHost and portalHost
+    both route to it, see docs/architecture.md), and
+    ``_protected_resource_metadata`` (api/wellknown.py) reports whichever
+    host actually served *that* request as ``resource``. Pointing this at a
+    different, fixed origin would send the client to fetch metadata for a
+    host it never queried, whose ``resource`` then fails the client's match
+    against the URL it originally connected to.
     """
     if not settings.broker_public_origin:
         return "Bearer"
-    origin = settings.broker_public_origin.rstrip("/")
+    origin = str(Request(scope).base_url).rstrip("/")
     return (
         f'Bearer resource_metadata="{origin}/.well-known/oauth-protected-resource/mcp"'
     )
@@ -137,7 +147,7 @@ async def _send_401(
         send,
         401,
         detail,
-        headers={"WWW-Authenticate": _www_authenticate_header(settings)},
+        headers={"WWW-Authenticate": _www_authenticate_header(scope, settings)},
     )
 
 
