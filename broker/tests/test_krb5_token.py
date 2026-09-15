@@ -353,6 +353,30 @@ async def test_is_linked_true_from_renewable_ticket_alone():
     assert await provider.is_linked(principal) is True
 
 
+async def test_is_linked_true_from_valid_stored_ticket_with_no_renew_until():
+    """Vault-ticket route: a currently-valid ticket half with renew_until=None
+    (the KDC didn't grant a renewable ticket -- a real, account-policy-driven
+    case, not hypothetical) and an empty in-process cache must still report
+    linked. Reproduces af-mcp-platform's krb5 is_linked() gap: is_linked()
+    checked cache / stored link / stored *renewable* ticket, but never the
+    plain still-valid Vault ticket X509Provider.link_status()'s proxy_valid
+    check has an equivalent for -- so a broker replica whose in-process cache
+    never saw this ticket (e.g. a second replica behind the same Service)
+    reported a linked user as unlinked."""
+    vault_store = FakeKrb5VaultStore()
+    principal = make_principal()
+    await vault_store.store_ticket(
+        principal.subject,
+        ccache_b64=SecretStr("dmFsaWRjY2FjaGU="),
+        principal="alice@CERN.CH",
+        realm="CERN.CH",
+        not_after=time.time() + 3600,
+        renew_until=None,
+    )
+    provider, _, _ = provider_factory(_FakeClient(), vault_store=vault_store)
+    assert await provider.is_linked(principal) is True
+
+
 async def test_revoke_drops_cached_ticket():
     client = _FakeClient(ticket=_ticket())
     provider, cache, _ = provider_factory(client)
