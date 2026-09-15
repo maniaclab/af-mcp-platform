@@ -118,7 +118,14 @@ def test_protected_resource_metadata_root_names_broker_as_as(
     monkeypatch.setenv("BROKER_PUBLIC_ORIGIN", BROKER_ORIGIN)
 
     with app_client_factory() as (client, _):
-        resp: Any = client.get("/.well-known/oauth-protected-resource")
+        # Single-origin deployment: the request's own host matches
+        # BROKER_PUBLIC_ORIGIN. See
+        # test_protected_resource_metadata_resource_is_request_host_not_public_origin
+        # for the split-host (mcpHost != portalHost) case this must NOT do.
+        resp: Any = client.get(
+            "/.well-known/oauth-protected-resource",
+            headers={"Host": "mcp.af.example.org", "X-Forwarded-Proto": "https"},
+        )
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
@@ -137,6 +144,34 @@ def test_protected_resource_metadata_mcp_suffixed_matches_root(
 
     assert suffixed.status_code == 200, suffixed.text
     assert suffixed.json() == root.json()
+
+
+def test_protected_resource_metadata_resource_is_request_host_not_public_origin(
+    monkeypatch: pytest.MonkeyPatch, app_client_factory: Callable[..., Any]
+) -> None:
+    """Regression: AF's real deployment serves /mcp on two Ingress hosts
+    (mcpHost and portalHost, see docs/architecture.md) behind a single
+    BROKER_PUBLIC_ORIGIN pointed at the portal (values.yaml's
+    broker.publicOrigin comment -- it must be the portal SPA's own origin for
+    the OAuth nonce cookie). RFC 9728's ``resource`` must identify the host
+    the client actually queried, not the broker's fixed OAuth-canonical
+    origin: a client that connected to mcpHost and validates ``resource``
+    against that URL must not get portalHost back, or discovery fails
+    closed -- exactly the mismatch reported against the live deployment.
+    """
+    portal_origin = "https://mcp-portal.af.example.org"
+    monkeypatch.setenv("BROKER_PUBLIC_ORIGIN", portal_origin)
+
+    with app_client_factory() as (client, _):
+        resp: Any = client.get(
+            "/.well-known/oauth-protected-resource",
+            headers={"Host": "mcp.af.example.org", "X-Forwarded-Proto": "https"},
+        )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["resource"] == "https://mcp.af.example.org/mcp"
+    assert body["authorization_servers"] == [portal_origin]
 
 
 def test_protected_resource_metadata_503_when_unconfigured(
@@ -169,6 +204,13 @@ def test_mcp_401_carries_resolvable_resource_metadata(
     monkeypatch: pytest.MonkeyPatch, app_client_factory: Callable[..., Any]
 ) -> None:
     monkeypatch.setenv("BROKER_PUBLIC_ORIGIN", BROKER_ORIGIN)
+    # Single-origin deployment: the request's own host matches
+    # BROKER_PUBLIC_ORIGIN, so the WWW-Authenticate pointer (built from this
+    # request's own host, not the static BROKER_PUBLIC_ORIGIN -- see
+    # identity_mw.py's _www_authenticate_header) resolves to the same value
+    # either way. Both requests below must carry it, since each is
+    # independently host-derived.
+    request_headers = {"Host": "mcp.af.example.org", "X-Forwarded-Proto": "https"}
 
     with app_client_factory() as (client, _):
         resp: Any = client.post(
@@ -186,6 +228,7 @@ def test_mcp_401_carries_resolvable_resource_metadata(
             headers={
                 "Accept": "application/json, text/event-stream",
                 "Content-Type": "application/json",
+                **request_headers,
             },
         )
         assert resp.status_code == 401, resp.text
@@ -196,7 +239,9 @@ def test_mcp_401_carries_resolvable_resource_metadata(
             metadata_url == f"{BROKER_ORIGIN}/.well-known/oauth-protected-resource/mcp"
         )
 
-        metadata_resp: Any = client.get(urlparse(metadata_url).path)
+        metadata_resp: Any = client.get(
+            urlparse(metadata_url).path, headers=request_headers
+        )
 
     assert metadata_resp.status_code == 200, metadata_resp.text
     assert metadata_resp.json()["resource"] == f"{BROKER_ORIGIN}/mcp"

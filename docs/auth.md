@@ -1132,13 +1132,22 @@ is why introspection, RFC 7662, exists at all).
 
 1. **Discovery.** An unauthenticated `/mcp` request now returns a genuine
    HTTP 401 (issue maniaclab/af-mcp-platform#138/maniaclab/af-mcp-platform#144 step 1) carrying
-   `WWW-Authenticate: Bearer resource_metadata="…/.well-known/oauth-protected-resource/mcp"`.
-   That URL, and its un-suffixed root form (both served identically —
-   `api/wellknown.py`), are RFC 9728 protected-resource metadata naming
-   **the broker itself** — not the Keycloak realm — as the authorization
-   server: `{"resource": "https://mcp.af.uchicago.edu/mcp",
-   "authorization_servers": ["https://mcp.af.uchicago.edu"]}`. The broker in
-   turn serves its own RFC 8414 metadata at
+   `WWW-Authenticate: Bearer resource_metadata="…/.well-known/oauth-protected-resource/mcp"`,
+   with the metadata URL's own host matching whichever Ingress host the
+   `/mcp` request itself arrived on. That URL, and its un-suffixed root form
+   (both served identically — `api/wellknown.py`), are RFC 9728
+   protected-resource metadata naming **the broker itself** — not the
+   Keycloak realm — as the authorization server: `{"resource":
+   "https://mcp.af.uchicago.edu/mcp", "authorization_servers":
+   ["https://mcp-portal.af.uchicago.edu"]}`. `resource` self-identifies
+   whichever host served that request (`/mcp` and this metadata are
+   reachable on both `ingress.mcpHost` and `ingress.portalHost` — see
+   `docs/architecture.md`'s "Full Data Flow for a Tool Call"), while
+   `authorization_servers` is always `broker.publicOrigin` (the portal
+   origin at UChicago AF) regardless of which host is asked — the two must
+   never be conflated into a single fixed value, or a client that validates
+   `resource` against the URL it actually queried sees the wrong host back.
+   The broker in turn serves its own RFC 8414 metadata at
    `/.well-known/oauth-authorization-server`, describing
    `/v1/oauth/authorize`/`/v1/oauth/token` and advertising
    `client_id_metadata_document_supported: true`.
