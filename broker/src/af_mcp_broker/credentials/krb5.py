@@ -135,12 +135,27 @@ class KrbTokenProvider(CredentialProvider):
         cached ticket (``CredentialCache.peek()``, so this status probe
         doesn't skew the cache hit/miss metrics ``get()`` records), then
         whether Vault holds a stored keytab, then whether Vault holds a
+        currently-valid ticket half, then whether Vault holds a
         still-renewable ticket half -- returning True on the first hit.
         Note this checks the cache with ``min_remaining=0`` while ``issue()``
         defaults to a 300s buffer (``min_remaining_seconds``) -- a ticket
         reported as "linked" here can still trigger a further fallback tier
         from an immediately-following ``issue()`` call, since the two use
         different staleness thresholds.
+
+        The Vault-valid-ticket check (``get_ticket()``) matters on its own,
+        distinct from the renewable-ticket one below: ``renew_until`` is
+        ``None`` whenever the KDC didn't grant a renewable ticket at all (a
+        real per-account krb5 policy outcome, not a hypothetical -- see
+        ``Krb5TokenServiceClient.mint``'s docstring), in which case a
+        perfectly valid, unexpired ticket would otherwise be invisible to
+        every check here except the in-process cache. Since that cache is
+        per-replica, a caller whose request lands on a broker pod that never
+        itself served this subject's mint/redeem would then see "not linked"
+        despite Vault holding a fine ticket -- mirrors
+        ``X509Provider.link_status()``'s ``proxy_valid`` check, which reads
+        the shared Vault record directly rather than relying on any
+        replica-local cache for this same reason.
         """
         for target in self._targets:
             if (
@@ -149,6 +164,11 @@ class KrbTokenProvider(CredentialProvider):
             ):
                 return True
         if await self._vault_store.get_link(principal.subject) is not None:
+            return True
+        if (
+            await self._vault_store.get_ticket(principal.subject, min_remaining=0)
+            is not None
+        ):
             return True
         return (
             await self._vault_store.get_renewable_ticket(principal.subject) is not None
