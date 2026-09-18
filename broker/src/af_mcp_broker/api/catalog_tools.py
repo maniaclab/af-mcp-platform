@@ -10,6 +10,10 @@ from typing import TYPE_CHECKING, Annotated, Literal
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
+
+# Runtime import (not TYPE_CHECKING): pydantic must resolve
+# ServiceTool.annotations' annotation when the model class is built.
+from mcp.types import ToolAnnotations  # noqa: TC002
 from pydantic import BaseModel, ConfigDict
 
 from af_mcp_broker.api.permissions import (
@@ -25,6 +29,7 @@ from af_mcp_broker.authorization import (
 )
 from af_mcp_broker.identity import Principal, keycloak_dependency
 from af_mcp_broker.mcp.aggregator import (
+    ToolListingEntry,
     fetch_service_tool_listing,
     resolve_list_time_credential,
 )
@@ -84,7 +89,12 @@ class ServiceTool(BaseModel):
     permission this tool requires (a dict-form required_permission can vary
     per tool -- see ServiceRegistry.required_permission_for) -- never the
     full input schema (the payload stays light; schemas belong to the MCP
-    client, not the catalog).
+    client, not the catalog). ``annotations`` and ``has_output_schema``
+    (issue #238 B.7) are the same metadata a real ``tools/list`` through
+    /mcp carries, forwarded here so the portal can show a read/write badge
+    (annotations.read_only_hint) once a backend declares one; ``policy.yaml``
+    stays authoritative for actual enforcement (``action_type``/
+    ``permission`` above) -- annotations are visibility only.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -99,6 +109,8 @@ class ServiceTool(BaseModel):
     # (denied, or DISABLED_PERMISSION) is never included in the response at
     # all -- see _respond's filtering.
     permission: str
+    annotations: ToolAnnotations | None
+    has_output_schema: bool
 
 
 class ServiceToolsResponse(BaseModel):
@@ -136,10 +148,10 @@ class ToolListingCache:
     """
 
     def __init__(self) -> None:
-        # service name -> (monotonic fetch time, [(tool name, description)])
-        self._entries: dict[str, tuple[float, list[tuple[str, str]]]] = {}
+        # service name -> (monotonic fetch time, [ToolListingEntry, ...])
+        self._entries: dict[str, tuple[float, list[ToolListingEntry]]] = {}
 
-    def get(self, service: str, ttl: float) -> list[tuple[str, str]] | None:
+    def get(self, service: str, ttl: float) -> list[ToolListingEntry] | None:
         if ttl <= 0:
             return None
         entry = self._entries.get(service)
@@ -150,7 +162,7 @@ class ToolListingCache:
             return None
         return tools
 
-    def put(self, service: str, tools: list[tuple[str, str]]) -> None:
+    def put(self, service: str, tools: list[ToolListingEntry]) -> None:
         self._entries[service] = (time.monotonic(), tools)
 
 
@@ -167,7 +179,7 @@ def _get_cache(request: Request) -> ToolListingCache:
 def _respond(
     spec: ServiceSpec,
     status: str,
-    tools: list[tuple[str, str]],
+    tools: list[ToolListingEntry],
     policy: EntitlementPolicy,
     registry: ServiceRegistry,
     caps: set[str],
@@ -181,8 +193,8 @@ def _respond(
     fetching *tools*.
     """
     visible: list[ServiceTool] = []
-    for name, description in tools:
-        permission = registry.required_permission_for(name, spec)
+    for entry in tools:
+        permission = registry.required_permission_for(entry.name, spec)
         if permission == DISABLED_PERMISSION:
             continue
         if (
@@ -191,13 +203,15 @@ def _respond(
             and permission not in caps
         ):
             continue  # a real permission this caller doesn't hold
-        action_type = get_action_type(spec.name, name, permission, policy)
+        action_type = get_action_type(spec.name, entry.name, permission, policy)
         visible.append(
             ServiceTool(
-                name=name,
-                description=description,
+                name=entry.name,
+                description=entry.description,
                 action_type=action_type,  # type: ignore[arg-type]
                 permission=permission if permission is not None else "__none__",
+                annotations=entry.annotations,
+                has_output_schema=entry.has_output_schema,
             )
         )
     return ServiceToolsResponse(
@@ -256,7 +270,18 @@ async def get_service_tools(
         if aggregator is None:
             return _respond(spec, "unavailable", [], policy, registry, caps)
         local_tools = await aggregator.local_provider.list_tools()
-        tools = sorted((tool.name, tool.description or "") for tool in local_tools)
+        tools = sorted(
+            (
+                ToolListingEntry(
+                    name=tool.name,
+                    description=tool.description or "",
+                    annotations=tool.annotations,
+                    has_output_schema=tool.output_schema is not None,
+                )
+                for tool in local_tools
+            ),
+            key=lambda entry: entry.name,
+        )
         return _respond(spec, "ok", tools, policy, registry, caps)
 
     credential_registry = _get_credential_registry(request)
