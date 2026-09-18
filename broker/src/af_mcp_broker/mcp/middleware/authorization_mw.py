@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import time
 import uuid
 from typing import TYPE_CHECKING
@@ -265,6 +266,34 @@ class AuthorizationMiddleware(Middleware):
                     )
                 )
                 raise AuthorizationError(f"Authorization denied: {reason}")
+
+            if not service.builtin:
+                # Warm this service's ProxyProvider tool-schema cache BEFORE
+                # authorized_call_target is stamped below, while client_factory
+                # still takes its safe, never-raising list-time branch (see that
+                # branch's own docstring in aggregator.py). Without this, a cold
+                # cache (first call ever, or after the cache's TTL expiry) makes
+                # FastMCP.call_tool()'s own get_tool() resolution -- which runs
+                # downstream of this middleware, so with authorized_call_target
+                # already set -- trigger the SAME client_factory from inside
+                # ProxyProvider._get_tool()'s cache-miss refresh, taking the
+                # real/authorized branch instead and raising _require_linked's
+                # friendly error there. AggregateProvider._get_tool() swallows
+                # any non-NotFoundError exception from a per-provider lookup
+                # (logs a warning, treats it as "this provider doesn't have the
+                # tool"), so that friendly error never reaches the caller --
+                # FastMCP.call_tool() instead raises a bare NotFoundError
+                # ("Unknown tool"). Pre-warming here means the downstream
+                # get_tool() finds a fresh cache and never calls client_factory
+                # again during resolution -- only the real tool._run() does,
+                # once authorized_call_target is set, where the friendly error
+                # surfaces cleanly instead of being swallowed. See issue #311.
+                # Best-effort: a genuine backend failure here (not a credential
+                # problem, since this branch never raises for one) is silently
+                # ignored -- the downstream resolution hits the same failure
+                # through its own, already-handled path.
+                with contextlib.suppress(Exception):
+                    await fastmcp_context.fastmcp.get_tool(tool_name)
 
             # Signal to the aggregator's client_factory (aggregator.py) that this
             # in-flight request is a genuine, authorized tools/call targeting
