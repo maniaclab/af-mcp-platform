@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 import time
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
 from unittest.mock import AsyncMock
 
 import httpx
@@ -23,7 +23,7 @@ from fastmcp.server.providers.proxy import (
     default_proxy_progress_handler,
 )
 from mcp.shared.exceptions import McpError
-from mcp.types import ErrorData
+from mcp.types import METHOD_NOT_FOUND, ErrorData
 
 from af_mcp_broker.authorization import EntitlementPolicy
 from af_mcp_broker.config import BrokerIssuedProviderConfig
@@ -69,6 +69,17 @@ def _spec(**overrides: Any) -> ServiceSpec:
     }
     defaults.update(overrides)
     return ServiceSpec(**defaults)
+
+
+def _mcp_error(code: int, message: str) -> McpError:
+    """Build an ``McpError`` from a status code and message.
+
+    mcp SDK v1's ``McpError`` takes an ``ErrorData`` wrapper; v2's
+    ``MCPError.__init__(self, code, message, data=None)`` drops it.
+    Isolating the construction here means the SDK v2 migration only ever
+    needs to touch this one function, not every call site below.
+    """
+    return McpError(ErrorData(code=code, message=message))
 
 
 # Every direct _make_client_factory() call below cares about credential
@@ -1471,11 +1482,9 @@ class TestClassifyFailureTimeout:
     response orphaned the request until the same deadline."""
 
     def test_mcp_error_request_timeout_is_classified_as_timeout(self) -> None:
-        exc = McpError(
-            ErrorData(
-                code=httpx.codes.REQUEST_TIMEOUT,
-                message="Timed out while waiting for response to CallToolRequest. Waited 30.0 seconds.",
-            )
+        exc = _mcp_error(
+            httpx.codes.REQUEST_TIMEOUT,
+            "Timed out while waiting for response to CallToolRequest. Waited 30.0 seconds.",
         )
         assert _classify_failure(exc, injected=False, skip_reason=None) == "timeout"
 
@@ -1483,9 +1492,7 @@ class TestClassifyFailureTimeout:
         """Only the specific REQUEST_TIMEOUT code means "orphaned request" --
         an ordinary McpError (e.g. a tool-reported failure) must not be
         misclassified."""
-        exc = McpError(
-            ErrorData(code=httpx.codes.INTERNAL_SERVER_ERROR, message="boom")
-        )
+        exc = _mcp_error(httpx.codes.INTERNAL_SERVER_ERROR, "boom")
         assert _classify_failure(exc, injected=False, skip_reason=None) == "unavailable"
 
     def test_connect_error_is_unavailable_not_timeout(self) -> None:
@@ -1500,11 +1507,7 @@ class TestClassifyFailureTimeout:
         groups, so the McpError can arrive wrapped."""
         exc = BaseExceptionGroup(
             "unhandled",
-            [
-                McpError(
-                    ErrorData(code=httpx.codes.REQUEST_TIMEOUT, message="timed out")
-                )
-            ],
+            [_mcp_error(httpx.codes.REQUEST_TIMEOUT, "timed out")],
         )
         assert _classify_failure(exc, injected=False, skip_reason=None) == "timeout"
 
@@ -1512,8 +1515,102 @@ class TestClassifyFailureTimeout:
         """A deliberately-skipped credential mint is the precise reason
         regardless of what the resulting uncredentialed connection raised --
         same rule the docstring already states for "unavailable"."""
-        exc = McpError(ErrorData(code=httpx.codes.REQUEST_TIMEOUT, message="timed out"))
+        exc = _mcp_error(httpx.codes.REQUEST_TIMEOUT, "timed out")
         assert (
             _classify_failure(exc, injected=False, skip_reason="not_linked")
             == "not_linked"
         )
+
+
+class TestClassifyFailureChainedWrapping:
+    """fastmcp v4 wraps a proxy transport failure as a plain chained
+    exception (``raise _proxy_upstream_error(error) from error``), not a
+    ``BaseExceptionGroup`` like fastmcp's client I/O failures today --
+    ``_iter_leaf_exceptions`` must walk ``__cause__``/``__context__`` too, or
+    a 401 (or any other leaf classification cares about) reachable only via
+    a chain stays invisible to ``_classify_failure``. These tests build the
+    chained shape directly rather than depending on a real v4 proxy call, so
+    they already pass on fastmcp 3.4.7 today; after B.3/B.4 they are the
+    regression guard for the real thing."""
+
+    def test_401_reachable_only_via_cause_chain_is_detected(self) -> None:
+        request = httpx.Request("GET", "http://example.invalid")
+        response = httpx.Response(401, request=request)
+        inner = httpx.HTTPStatusError(
+            "unauthorized", request=request, response=response
+        )
+        outer = RuntimeError("proxy upstream error")
+        outer.__cause__ = inner
+        assert (
+            _classify_failure(outer, injected=True, skip_reason=None) == "unauthorized"
+        )
+
+    def test_401_reachable_only_via_context_chain_is_detected(self) -> None:
+        """``__context__`` (an implicit "while handling this, another
+        exception occurred"), not just ``__cause__`` (an explicit ``raise
+        ... from err``) -- ``_iter_leaf_exceptions`` must walk whichever one
+        is actually set."""
+        request = httpx.Request("GET", "http://example.invalid")
+        response = httpx.Response(401, request=request)
+        inner = httpx.HTTPStatusError(
+            "unauthorized", request=request, response=response
+        )
+        outer = RuntimeError("proxy upstream error")
+        outer.__context__ = inner
+        assert (
+            _classify_failure(outer, injected=True, skip_reason=None) == "unauthorized"
+        )
+
+    def test_uninjected_401_via_chain_stays_unavailable(self) -> None:
+        """Same chain shape, but no credential was injected for this
+        attempt -- must stay "unavailable", not "unauthorized" (a stored
+        credential can't have been rejected if none was ever sent)."""
+        request = httpx.Request("GET", "http://example.invalid")
+        response = httpx.Response(401, request=request)
+        inner = httpx.HTTPStatusError(
+            "unauthorized", request=request, response=response
+        )
+        outer = RuntimeError("proxy upstream error")
+        outer.__cause__ = inner
+        assert (
+            _classify_failure(outer, injected=False, skip_reason=None) == "unavailable"
+        )
+
+
+async def test_observable_proxy_provider_method_not_found_is_empty_not_a_failure() -> (
+    None
+):
+    """A backend whose tools/list itself raises ``McpError(METHOD_NOT_FOUND)``
+    (e.g. it declares no tools at all) is treated as "zero tools", not a
+    listing failure: fastmcp's ``ProxyProvider._list_tools()`` already
+    catches exactly this code and returns an empty list rather than raising.
+
+    Verified against the installed fastmcp 3.4.7 source this is already
+    true today, not a new behavior mcp SDK v2/fastmcp v4 introduces (a
+    correction to this plan step's original framing, which claimed it was
+    new in v4). Pinning it regardless: no exception ever reaches
+    ``_ObservableProxyProvider`` for this case, so ``record_list_failure``
+    must never fire and any previously recorded failure must still clear,
+    identically before and after the SDK bump."""
+    registry = ServiceRegistry()
+    registry.register(_spec())
+    registry.record_list_failure("example", "unavailable")
+
+    class _FakeClient:
+        async def __aenter__(self) -> Self:
+            return self
+
+        async def __aexit__(self, *exc_info: object) -> None:
+            return None
+
+        async def list_tools(self) -> list[Any]:
+            raise _mcp_error(METHOD_NOT_FOUND, "Method not found")
+
+    provider = aggregator._ObservableProxyProvider(
+        "example", _FakeClient, registry=registry
+    )
+
+    tools = await provider._list_tools()
+
+    assert tools == []
+    assert registry.recent_list_failure("example") is None
