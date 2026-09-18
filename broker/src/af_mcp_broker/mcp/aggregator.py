@@ -155,8 +155,7 @@ async def _resolve_list_time_headers(
 def _iter_leaf_exceptions(
     exc: BaseException, *, _seen: set[int] | None = None
 ) -> Iterator[BaseException]:
-    """Yield *exc* itself, its ``ExceptionGroup`` leaves, and its
-    ``__cause__``/``__context__`` chain.
+    """Yield *exc* itself, its ``ExceptionGroup`` leaves, and its ``__cause__``/``__context__`` chain.
 
     A transport failure inside fastmcp's client (which runs its I/O in anyio
     task groups) can surface wrapped in a ``BaseExceptionGroup`` rather than
