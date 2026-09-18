@@ -154,11 +154,7 @@ def get_action_type(
 def annotation_disagrees_with_policy(
     read_only_hint: bool | None, action_type: str
 ) -> bool:
-    """Whether a tool's declared ``read_only_hint`` disagrees with the
-    policy-resolved ``action_type`` (issue #238 B.8's "forward + lint"
-    decision: warn on disagreement, never trust the backend's own
-    self-declared annotation for an authorization decision -- policy.yaml
-    stays authoritative for that; see get_action_type above).
+    """Whether a tool's declared ``read_only_hint`` disagrees with the policy-resolved ``action_type`` (issue #238 B.8's "forward + lint" decision: warn on disagreement, never trust the backend's own self-declared annotation for an authorization decision -- policy.yaml stays authoritative for that; see get_action_type above).
 
     ``None`` (the tool declared no annotation at all) is never a
     disagreement -- there is nothing to check against. Otherwise
