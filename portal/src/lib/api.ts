@@ -967,3 +967,33 @@ export async function setMaintenanceStatus(
     body: JSON.stringify({ enabled, ...(reason ? { reason } : {}) }),
   });
 }
+
+// ---------------------------------------------------------------------------
+// Annotation/policy lint — GET /v1/admin/annotation-mismatches
+// ---------------------------------------------------------------------------
+
+/**
+ * One tool whose declared read_only_hint annotation disagrees with
+ * policy.yaml's resolved action_type (see broker api/admin.py /
+ * mcp/registry.py::AnnotationMismatch). Visibility only — policy.yaml stays
+ * authoritative for actual enforcement; this just makes a mismatch checked
+ * and visible instead of only a structlog warning + Prometheus counter an
+ * operator has to go looking for.
+ */
+export interface AnnotationMismatch {
+  service: string;
+  tool: string;
+  declared_read_only_hint: boolean;
+  resolved_action_type: string;
+  permission: string;
+}
+
+/**
+ * Admin-only (require_admin, 403 otherwise). Empty until at least one
+ * caller has listed the affected service's tools through /mcp since this
+ * broker process started — the lint is observed as callers list tools, not
+ * probed live by this endpoint (see EntitlementMiddleware.on_list_tools).
+ */
+export async function fetchAnnotationMismatches(): Promise<AnnotationMismatch[]> {
+  return apiFetch<AnnotationMismatch[]>('/admin/annotation-mismatches');
+}

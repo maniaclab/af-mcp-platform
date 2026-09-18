@@ -202,3 +202,56 @@ def test_get_fails_open_when_store_is_unreachable(maintenance_client):
     body = resp.json()
     assert body["enabled"] is False
     assert body["reason"] is None
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/admin/annotation-mismatches (issue #238 B.8)
+# ---------------------------------------------------------------------------
+
+
+def test_annotation_mismatches_requires_admin(maintenance_client):
+    client, _state = maintenance_client  # default principal has no admin group
+    resp = client.get("/v1/admin/annotation-mismatches")
+    assert resp.status_code == 403
+
+
+def test_annotation_mismatches_empty_by_default(maintenance_client, make_principal):
+    client, state = maintenance_client
+    state["principal"] = make_principal(groups=["af-admins"])
+
+    resp = client.get("/v1/admin/annotation-mismatches")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_annotation_mismatches_reflects_registry_state(
+    maintenance_client, make_principal
+):
+    """The endpoint exposes exactly what EntitlementMiddleware's lint
+    already recorded (mcp/registry.py's ServiceRegistry.record_annotation_
+    mismatch) -- no second, separately-probed comparison."""
+    from af_mcp_broker.mcp.registry import AnnotationMismatch
+
+    client, state = maintenance_client
+    state["principal"] = make_principal(groups=["af-admins"])
+    client.app.state.service_registry.record_annotation_mismatch(
+        AnnotationMismatch(
+            service="rucio",
+            tool="rucio_list_dids",
+            declared_read_only_hint=False,
+            resolved_action_type="read",
+            permission="read_data",
+        )
+    )
+
+    resp = client.get("/v1/admin/annotation-mismatches")
+    assert resp.status_code == 200
+    assert resp.json() == [
+        {
+            "service": "rucio",
+            "tool": "rucio_list_dids",
+            "declared_read_only_hint": False,
+            "resolved_action_type": "read",
+            "permission": "read_data",
+        }
+    ]

@@ -30,6 +30,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from af_mcp_broker import metrics
+from af_mcp_broker.api.permissions import _get_registry
 from af_mcp_broker.identity import Principal, require_admin
 from af_mcp_broker.maintenance import (
     MaintenanceModeStore,
@@ -208,3 +209,54 @@ async def set_maintenance_status(
         enabled_by_unixname=unixname,
         enabled_by_email=email,
     )
+
+
+class AnnotationMismatchResponse(BaseModel):
+    """One tool whose declared read_only_hint disagrees with policy.yaml's
+    resolved action_type (issue #238 B.8) -- see mcp/registry.py's
+    AnnotationMismatch, which this mirrors field-for-field."""
+
+    model_config = ConfigDict(frozen=True)
+
+    service: str
+    tool: str
+    declared_read_only_hint: bool
+    resolved_action_type: str
+    permission: str
+
+
+@router.get(
+    "/annotation-mismatches",
+    response_model=list[AnnotationMismatchResponse],
+    summary="List tools whose declared annotations disagree with policy.yaml (admin only)",
+    description=(
+        "Every tool whose declared read_only_hint annotation disagrees with "
+        "policy.yaml's resolved action_type, as observed the last time a "
+        "caller listed that service's tools through /mcp -- this is a "
+        "read of EntitlementMiddleware's own lint (mcp/middleware/"
+        "entitlement_mw.py), not a second, separately-probed comparison, so "
+        "it can never disagree with what the structlog warning/Prometheus "
+        "counter already recorded. Visibility only: policy.yaml stays "
+        "authoritative for actual enforcement (issue #238 B.8's "
+        "'forward + lint' decision) -- a mismatch here means the "
+        "hand-maintained policy glob and the backend's own declaration "
+        "disagree, not that either side is necessarily wrong. Empty until "
+        "at least one caller has listed the affected service's tools since "
+        "this broker process started."
+    ),
+)
+async def get_annotation_mismatches(
+    request: Request,
+    _principal: Annotated[Principal, Depends(require_admin)],
+) -> list[AnnotationMismatchResponse]:
+    registry = _get_registry(request)
+    return [
+        AnnotationMismatchResponse(
+            service=m.service,
+            tool=m.tool,
+            declared_read_only_hint=m.declared_read_only_hint,
+            resolved_action_type=m.resolved_action_type,
+            permission=m.permission,
+        )
+        for m in registry.annotation_mismatches()
+    ]

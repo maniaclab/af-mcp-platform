@@ -178,3 +178,14 @@ maintenance_store_unavailable_total = Counter(
     "silently stopped enforcing and needs operator attention. No labels "
     "-- see module docstring.",
 )
+
+annotation_policy_mismatches_total = Counter(
+    "af_mcp_annotation_policy_mismatches_total",
+    "A tool's declared read_only_hint annotation disagreed with policy.yaml's "
+    "resolved action_type, by service and tool (issue #238 B.8's "
+    "'forward + lint' decision -- visibility only, policy.yaml stays "
+    "authoritative for enforcement; see GET /v1/admin/annotation-mismatches "
+    "for the current set). Incremented once per newly observed disagreement, "
+    "not once per tools/list request that re-observes an already-known one.",
+    ["service", "tool"],
+)
