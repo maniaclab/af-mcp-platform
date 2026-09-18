@@ -306,8 +306,7 @@ def _might_be_entitled(
 
 
 class ToolListingEntry(NamedTuple):
-    """One tool as ``fetch_service_tool_listing`` and the builtin-service
-    listing (``api/catalog_tools.py``) both see it (issue #238 B.7).
+    """One tool as ``fetch_service_tool_listing`` and the builtin-service listing (``api/catalog_tools.py``) both see it (issue #238 B.7).
 
     A bare ``(name, description)`` pair used to be all either path kept, so
     ``/v1/catalog``'s per-service tool listing could never show a read/write
