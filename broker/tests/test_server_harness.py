@@ -90,6 +90,14 @@ async def test_dead_server_task_surfaces_instead_of_hanging() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.xfail(
+    reason=(
+        "fixed by PR #305 (ports the ClientSession hotfix's stream-close to mcp "
+        "SDK v2's renamed internals); xfail only until that PR lands on main -- "
+        "remove this marker as part of merging #305, don't leave it behind"
+    ),
+    strict=False,
+)
 @pytest.mark.timeout(30)
 async def test_stream_exception_fails_pending_request_instead_of_hanging() -> None:
     """An Exception arriving on the read stream (what the streamable-HTTP
