@@ -428,6 +428,14 @@ async def test_linked_caller_lists_auth_gated_tools(
     assert "secure_whoami" in {t["name"] for t in body["tools"]}
 
 
+@pytest.mark.xfail(
+    reason=(
+        "mcp SDK v2's streamable-HTTP client normalizes a 401 with a non-JSON-RPC "
+        "body into a generic INTERNAL_ERROR with no recoverable status code, so "
+        "this can no longer be classified as 'unauthorized' -- see issue #314"
+    ),
+    strict=False,
+)
 async def test_unauthorized_when_injected_credential_is_rejected(
     policy: EntitlementPolicy,
     make_principal: Callable[..., Any],
