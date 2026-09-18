@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import inspect
 import time
-from datetime import timedelta
 from typing import TYPE_CHECKING, Any, Self
 from unittest.mock import AsyncMock
 
@@ -12,7 +11,7 @@ from fastapi import HTTPException
 from fastmcp import FastMCP
 from fastmcp.client import Client
 from fastmcp.client.transports import SSETransport, StreamableHttpTransport
-from fastmcp.exceptions import ToolError
+from fastmcp.exceptions import McpError, ToolError
 from fastmcp.server.elicitation import (
     AcceptedElicitation,
     CancelledElicitation,
@@ -22,8 +21,7 @@ from fastmcp.server.providers.proxy import (
     default_proxy_log_handler,
     default_proxy_progress_handler,
 )
-from mcp.shared.exceptions import McpError
-from mcp.types import METHOD_NOT_FOUND, ErrorData
+from mcp.types import METHOD_NOT_FOUND
 
 from af_mcp_broker.authorization import EntitlementPolicy
 from af_mcp_broker.config import BrokerIssuedProviderConfig
@@ -74,12 +72,12 @@ def _spec(**overrides: Any) -> ServiceSpec:
 def _mcp_error(code: int, message: str) -> McpError:
     """Build an ``McpError`` from a status code and message.
 
-    mcp SDK v1's ``McpError`` takes an ``ErrorData`` wrapper; v2's
-    ``MCPError.__init__(self, code, message, data=None)`` drops it.
-    Isolating the construction here means the SDK v2 migration only ever
-    needs to touch this one function, not every call site below.
+    mcp SDK v2's ``MCPError.__init__(self, code, message, data=None)``
+    drops the v1 ``ErrorData`` wrapper. Isolating the construction here
+    meant the SDK v2 migration only ever had to touch this one function,
+    not every call site below.
     """
-    return McpError(ErrorData(code=code, message=message))
+    return McpError(code, message)
 
 
 # Every direct _make_client_factory() call below cares about credential
@@ -476,14 +474,18 @@ def test_client_factory_selects_transport_by_spec(
     # The security property this whole factory exists for: plain Client +
     # an explicit transport object never sets forward_incoming_headers,
     # unlike fastmcp's ProxyClient convenience wrapper (which this code
-    # deliberately avoids using).
-    assert client.transport.forward_incoming_headers is False
+    # deliberately avoids using). fastmcp v4 moved forward_incoming_headers
+    # off the transport instance and onto the client's TransportOptions
+    # bundle (client/transports/base.py); a plain Client never populates
+    # it, so it stays None here and TransportOptions()'s own default
+    # (False) applies -- only ProxyClient sets it True.
+    assert client._transport_options is None
 
 
 def test_client_factory_none_auth_type_applies_backend_timeout(settings: Any) -> None:
     spec = _spec(auth_type="none", timeout_seconds=5.0)
     client = _make_client_factory(spec, CredentialRegistry(), settings, _OPEN_POLICY)()
-    assert client._session_kwargs["read_timeout_seconds"] == timedelta(seconds=5.0)
+    assert client._session_kwargs["read_timeout_seconds"] == 5.0
 
 
 async def test_client_factory_x509_auth_type_applies_backend_timeout(
@@ -497,7 +499,7 @@ async def test_client_factory_x509_auth_type_applies_backend_timeout(
     client = await _make_client_factory(
         spec, CredentialRegistry(), settings, _OPEN_POLICY
     )()
-    assert client._session_kwargs["read_timeout_seconds"] == timedelta(seconds=5.0)
+    assert client._session_kwargs["read_timeout_seconds"] == 5.0
 
 
 async def test_client_factory_bearer_auth_type_applies_backend_timeout(
@@ -508,7 +510,7 @@ async def test_client_factory_bearer_auth_type_applies_backend_timeout(
     client = await _make_client_factory(
         spec, CredentialRegistry(), settings, _OPEN_POLICY
     )()
-    assert client._session_kwargs["read_timeout_seconds"] == timedelta(seconds=5.0)
+    assert client._session_kwargs["read_timeout_seconds"] == 5.0
 
 
 def test_client_factory_installs_progress_and_log_forwarding_handlers(
@@ -587,7 +589,9 @@ async def test_client_factory_bearer_injects_minted_token_not_inbound(
         client.transport.headers["Authorization"]
         != f"Bearer {principal.raw_token.get_secret_value()}"
     )
-    assert client.transport.forward_incoming_headers is False
+    # See test_client_factory_selects_transport_by_spec for why this is
+    # _transport_options rather than a transport-level attribute in v4.
+    assert client._transport_options is None
 
 
 async def test_client_factory_bearer_per_user_isolation(
@@ -1107,7 +1111,7 @@ async def test_client_factory_krb5_auth_type_applies_backend_timeout(
     client = await _make_client_factory(
         spec, CredentialRegistry(), settings, _OPEN_POLICY
     )()
-    assert client._session_kwargs["read_timeout_seconds"] == timedelta(seconds=5.0)
+    assert client._session_kwargs["read_timeout_seconds"] == 5.0
 
 
 async def test_client_factory_krb5_call_without_principal_raises(

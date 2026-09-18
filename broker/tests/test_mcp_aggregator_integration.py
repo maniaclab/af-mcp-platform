@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-import httpx
+import httpx2
 import pytest
 from conftest import AUDIENCE, ISSUER, make_claims, run_asgi_app
 from fastmcp import Client, FastMCP
@@ -222,14 +222,34 @@ async def test_missing_bearer_rejected(running_broker):
     step 1), not the pre-fix HTTP 200 carrying a JSON-RPC -32602 error --
     MCP client OAuth discovery is gated on the real status code, and a
     generic JSON-RPC error gave users no actionable signal for an expired
-    token either."""
-    async with run_asgi_app(running_broker) as base_url:
-        with pytest.raises(httpx.HTTPStatusError) as exc_info:
-            async with Client(f"{base_url}/mcp/") as client:
-                await client.list_tools()
+    token either.
 
-    assert exc_info.value.response.status_code == 401
-    assert exc_info.value.response.headers.get("www-authenticate") == "Bearer"
+    Verified directly over the wire with a bare httpx2 request rather than
+    through ``fastmcp.Client``: mcp SDK v2's streamable-HTTP client (used by
+    ``fastmcp.Client``) normalizes *any* non-2xx, non-404 HTTP response
+    without a JSON-RPC-shaped body into a generic
+    ``MCPError(INTERNAL_ERROR, "Server returned an error response")`` --
+    the real status code and headers are not recoverable from that
+    exception at all, so asserting through the client would no longer
+    prove what this test exists to prove.
+    """
+    async with (
+        run_asgi_app(running_broker) as base_url,
+        httpx2.AsyncClient() as http_client,
+    ):
+        resp = await http_client.post(
+            f"{base_url}/mcp/",
+            headers={"Accept": "application/json, text/event-stream"},
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/list",
+                "params": {},
+            },
+        )
+
+    assert resp.status_code == 401
+    assert resp.headers.get("www-authenticate") == "Bearer"
 
 
 async def test_tool_call_round_trips_to_backend(running_broker, sig_key):

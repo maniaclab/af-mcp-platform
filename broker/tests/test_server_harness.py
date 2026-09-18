@@ -97,8 +97,8 @@ async def test_stream_exception_fails_pending_request_instead_of_hanging() -> No
     pending request promptly -- the hotfix closes the read stream, letting
     the receive loop's own teardown deliver CONNECTION_CLOSED to waiters."""
     import anyio
+    from fastmcp.exceptions import McpError
     from mcp.client.session import ClientSession
-    from mcp.shared.exceptions import McpError
 
     srv_send, cli_recv = anyio.create_memory_object_stream(8)
     cli_send, _srv_recv = anyio.create_memory_object_stream(8)
@@ -125,13 +125,11 @@ async def test_dead_connection_times_out_instead_of_hanging(
     """A session whose server never answers (dead-but-open connection -- the
     CI hang observed on #237) must fail at the injected default read timeout
     rather than wait forever."""
-    from datetime import timedelta
-
     import anyio
+    from fastmcp.exceptions import McpError
     from mcp.client.session import ClientSession
-    from mcp.shared.exceptions import McpError
 
-    monkeypatch.setitem(_CLIENT_SESSION_HOTFIX, "read_timeout", timedelta(seconds=0.5))
+    monkeypatch.setitem(_CLIENT_SESSION_HOTFIX, "read_timeout", 0.5)
     _srv_send, cli_recv = anyio.create_memory_object_stream(8)
     cli_send, _srv_recv = anyio.create_memory_object_stream(8)
     async with ClientSession(cli_recv, cli_send) as session:
