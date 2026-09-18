@@ -14,12 +14,13 @@
 import { ref, onMounted } from 'vue';
 import {
   AccessDeniedError,
+  fetchAnnotationMismatches,
   fetchMaintenanceStatus,
   fetchUsageSubjects,
   SessionExpiredError,
   setMaintenanceStatus,
 } from '../lib/api';
-import type { MaintenanceStatus, UsageSubject } from '../lib/api';
+import type { AnnotationMismatch, MaintenanceStatus, UsageSubject } from '../lib/api';
 import { maintenanceErrorMessage } from '../lib/maintenanceBanner';
 import UsagePage from './UsagePage.vue';
 
@@ -143,6 +144,32 @@ function formatEnabledAt(epochSeconds: number): string {
     timeZoneName: 'short',
   });
 }
+
+// ── Annotation/policy mismatches (issue #238 B.8) ───────────────────────
+// Admin-only (require_admin), same as fetchUsageSubjects above, so the
+// same AccessDeniedError/SessionExpiredError handling applies.
+const mismatches = ref<AnnotationMismatch[]>([]);
+const mismatchesLoading = ref(true);
+const mismatchesError = ref<string | null>(null);
+const mismatchesSessionExpired = ref(false);
+const mismatchesAccessDenied = ref<AccessDeniedError | null>(null);
+
+onMounted(async () => {
+  try {
+    mismatches.value = await fetchAnnotationMismatches();
+  } catch (err) {
+    if (err instanceof AccessDeniedError) {
+      mismatchesAccessDenied.value = err;
+    } else if (err instanceof SessionExpiredError) {
+      mismatchesSessionExpired.value = true;
+    } else {
+      mismatchesError.value =
+        err instanceof Error ? err.message : 'Failed to load annotation mismatches.';
+    }
+  } finally {
+    mismatchesLoading.value = false;
+  }
+});
 </script>
 
 <template>
@@ -283,6 +310,61 @@ function formatEnabledAt(epochSeconds: number): string {
           </button>
         </div>
       </template>
+    </section>
+
+    <section class="ap__section" aria-label="Annotation/policy mismatches">
+      <h2 class="ap__section-title">Annotation mismatches</h2>
+
+      <div
+        v-if="mismatchesLoading"
+        class="ap__loading"
+        aria-live="polite"
+        aria-label="Loading annotation mismatches"
+      >
+        Loading annotation mismatches…
+      </div>
+
+      <div v-else-if="mismatchesSessionExpired" class="ap__error" role="alert">
+        <span class="ap__error-title">Session expired</span>
+        <span class="ap__error-body">
+          Your session has expired.
+          <button type="button" class="ap__reload" @click="reload">Reload</button>
+          to re-authenticate.
+        </span>
+      </div>
+
+      <div v-else-if="mismatchesAccessDenied" class="ap__error" role="alert">
+        <span class="ap__error-title">Access not yet granted</span>
+        <span class="ap__error-body">{{ mismatchesAccessDenied.message }}</span>
+      </div>
+
+      <div v-else-if="mismatchesError" class="ap__error" role="alert">
+        <span class="ap__error-title">Could not load annotation mismatches</span>
+        <span class="ap__error-body">{{ mismatchesError }}</span>
+      </div>
+
+      <div v-else-if="mismatches.length === 0" class="ap__placeholder">No mismatches.</div>
+
+      <table v-else class="ap__mismatch-table">
+        <thead>
+          <tr>
+            <th scope="col">Service</th>
+            <th scope="col">Tool</th>
+            <th scope="col">Declared</th>
+            <th scope="col">Resolved</th>
+            <th scope="col">Permission</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="m in mismatches" :key="`${m.service}.${m.tool}`">
+            <td>{{ m.service }}</td>
+            <td>{{ m.tool }}</td>
+            <td>{{ m.declared_read_only_hint ? 'read-only' : 'not read-only' }}</td>
+            <td>{{ m.resolved_action_type }}</td>
+            <td>{{ m.permission }}</td>
+          </tr>
+        </tbody>
+      </table>
     </section>
   </div>
 </template>
@@ -480,5 +562,28 @@ function formatEnabledAt(epochSeconds: number): string {
 .ap__btn--confirm:not(:disabled):hover {
   background: rgb(from var(--color-af-teal) r g b / 0.2);
   border-color: rgb(from var(--color-af-teal) r g b / 0.5);
+}
+
+.ap__mismatch-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+.ap__mismatch-table th {
+  text-align: left;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-af-dim);
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--color-af-border);
+}
+.ap__mismatch-table td {
+  padding: 0.5rem 0.75rem;
+  color: var(--color-af-text);
+  border-bottom: 1px solid var(--color-af-border);
+  word-break: break-word;
 }
 </style>

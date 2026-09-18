@@ -11,13 +11,19 @@
  */
 import { flushPromises, mount } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { MaintenanceStatus, UsageResponse, UsageSubjectsResponse } from '../../lib/api';
+import type {
+  AnnotationMismatch,
+  MaintenanceStatus,
+  UsageResponse,
+  UsageSubjectsResponse,
+} from '../../lib/api';
 
 vi.mock('../../lib/api', () => ({
   fetchUsage: vi.fn(),
   fetchUsageSubjects: vi.fn(),
   fetchMaintenanceStatus: vi.fn(),
   setMaintenanceStatus: vi.fn(),
+  fetchAnnotationMismatches: vi.fn(),
   SessionExpiredError: class SessionExpiredError extends Error {},
   AccessDeniedError: class AccessDeniedError extends Error {},
   APIError: class APIError extends Error {
@@ -33,9 +39,12 @@ vi.mock('../../lib/api', () => ({
 }));
 
 import {
+  AccessDeniedError,
+  fetchAnnotationMismatches,
   fetchMaintenanceStatus,
   fetchUsage,
   fetchUsageSubjects,
+  SessionExpiredError,
   setMaintenanceStatus,
 } from '../../lib/api';
 import AdminPage from '../AdminPage.vue';
@@ -84,6 +93,11 @@ const USAGE: UsageResponse = {
 
 beforeEach(() => {
   vi.restoreAllMocks();
+  // Every test mounts the full AdminPage, which always fetches annotation
+  // mismatches on mount regardless of which section a given test is
+  // exercising -- default to the empty-and-harmless case so tests focused
+  // on the usage/maintenance sections don't have to know about this one.
+  vi.mocked(fetchAnnotationMismatches).mockResolvedValue([]);
 });
 
 describe('AdminPage', () => {
@@ -309,6 +323,72 @@ describe('AdminPage maintenance mode', () => {
     await flushPromises();
 
     await wrapper.find('[data-af-maintenance-enable]').trigger('click');
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('Session expired');
+    expect(wrapper.find('.ap__reload').exists()).toBe(true);
+  });
+});
+
+describe('AdminPage annotation mismatches', () => {
+  const MISMATCH: AnnotationMismatch = {
+    service: 'rucio',
+    tool: 'rucio_list_dids',
+    declared_read_only_hint: false,
+    resolved_action_type: 'read',
+    permission: 'read_data',
+  };
+
+  beforeEach(() => {
+    // These tests don't exercise the usage/maintenance sections -- keep
+    // them harmless empty states so their own assertions can't bleed in.
+    vi.mocked(fetchUsageSubjects).mockResolvedValue({ subjects: [] });
+    vi.mocked(fetchMaintenanceStatus).mockResolvedValue(DISABLED);
+  });
+
+  it('shows the empty-state placeholder when there are no mismatches', async () => {
+    vi.mocked(fetchAnnotationMismatches).mockResolvedValue([]);
+    const wrapper = mount(AdminPage);
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('No mismatches');
+  });
+
+  it('renders a row per mismatch with the declared/resolved/permission columns', async () => {
+    vi.mocked(fetchAnnotationMismatches).mockResolvedValue([MISMATCH]);
+    const wrapper = mount(AdminPage);
+    await flushPromises();
+
+    const text = wrapper.text();
+    expect(text).toContain('rucio');
+    expect(text).toContain('rucio_list_dids');
+    expect(text).toContain('not read-only');
+    expect(text).toContain('read');
+    expect(text).toContain('read_data');
+  });
+
+  it('renders an error state when fetchAnnotationMismatches fails', async () => {
+    vi.mocked(fetchAnnotationMismatches).mockRejectedValue(new Error('boom'));
+    const wrapper = mount(AdminPage);
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('Could not load annotation mismatches');
+  });
+
+  it('surfaces a 403 as an access-not-yet-granted message', async () => {
+    vi.mocked(fetchAnnotationMismatches).mockRejectedValue(
+      new AccessDeniedError('admin group required', 'corr-1'),
+    );
+    const wrapper = mount(AdminPage);
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('Access not yet granted');
+    expect(wrapper.text()).toContain('admin group required');
+  });
+
+  it('shows the dedicated Reload UI on a session-expired fetch', async () => {
+    vi.mocked(fetchAnnotationMismatches).mockRejectedValue(new SessionExpiredError());
+    const wrapper = mount(AdminPage);
     await flushPromises();
 
     expect(wrapper.text()).toContain('Session expired');

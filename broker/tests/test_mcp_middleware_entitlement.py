@@ -4,7 +4,9 @@ from typing import Any
 
 import pytest
 from fastmcp.tools.base import Tool
+from mcp.types import ToolAnnotations
 
+from af_mcp_broker import metrics
 from af_mcp_broker.authorization import EntitlementPolicy
 from af_mcp_broker.mcp.middleware.entitlement_mw import EntitlementMiddleware
 from af_mcp_broker.mcp.registry import (
@@ -27,8 +29,17 @@ class _FakeMiddlewareContext:
         self.fastmcp_context = fastmcp_context
 
 
-def _tool(name: str) -> Tool:
-    return Tool(name=name, parameters={"type": "object", "properties": {}})
+def _tool(name: str, *, read_only_hint: bool | None = None) -> Tool:
+    annotations = (
+        ToolAnnotations(read_only_hint=read_only_hint)
+        if read_only_hint is not None
+        else None
+    )
+    return Tool(
+        name=name,
+        parameters={"type": "object", "properties": {}},
+        annotations=annotations,
+    )
 
 
 @pytest.fixture
@@ -246,3 +257,101 @@ async def test_registry_and_policy_are_mutable_attributes(
     result = await mw.on_list_tools(context, _call_next_factory(tools))
 
     assert {t.name for t in result} == {"rucio_list_dids"}
+
+
+# ---------------------------------------------------------------------------
+# Annotation/policy lint (issue #238 B.8): "rucio" requires "read_data",
+# which PERMISSIONS resolves to action_type "read".
+# ---------------------------------------------------------------------------
+
+
+async def test_read_only_hint_agreeing_with_policy_records_no_mismatch(
+    registry, policy, make_principal
+):
+    mw = EntitlementMiddleware(registry, policy)
+    principal = make_principal(groups=["atlas"])
+    context = _FakeMiddlewareContext(_FakeFastMCPContext({"principal": principal}))
+    tools = [_tool("rucio_list_dids", read_only_hint=True)]
+
+    await mw.on_list_tools(context, _call_next_factory(tools))
+
+    assert registry.get_annotation_mismatch("rucio", "rucio_list_dids") is None
+
+
+async def test_undeclared_annotation_records_no_mismatch(
+    registry, policy, make_principal
+):
+    """No annotation at all is never a disagreement -- nothing to check."""
+    mw = EntitlementMiddleware(registry, policy)
+    principal = make_principal(groups=["atlas"])
+    context = _FakeMiddlewareContext(_FakeFastMCPContext({"principal": principal}))
+    tools = [_tool("rucio_list_dids")]
+
+    await mw.on_list_tools(context, _call_next_factory(tools))
+
+    assert registry.get_annotation_mismatch("rucio", "rucio_list_dids") is None
+
+
+async def test_read_only_hint_disagreeing_with_policy_records_mismatch(
+    registry, policy, make_principal
+):
+    """rucio_list_dids resolves to action_type "read" (required_permission
+    "read_data"), but declares read_only_hint=False -- a real disagreement,
+    worth an operator's attention regardless of which side is "right"."""
+    mw = EntitlementMiddleware(registry, policy)
+    principal = make_principal(groups=["atlas"])
+    context = _FakeMiddlewareContext(_FakeFastMCPContext({"principal": principal}))
+    tools = [_tool("rucio_list_dids", read_only_hint=False)]
+
+    counter = metrics.annotation_policy_mismatches_total.labels(
+        service="rucio", tool="rucio_list_dids"
+    )
+    before = counter._value.get()
+
+    await mw.on_list_tools(context, _call_next_factory(tools))
+
+    mismatch = registry.get_annotation_mismatch("rucio", "rucio_list_dids")
+    assert mismatch is not None
+    assert mismatch.declared_read_only_hint is False
+    assert mismatch.resolved_action_type == "read"
+    assert mismatch.permission == "read_data"
+    assert counter._value.get() == before + 1
+
+
+async def test_repeat_mismatch_is_not_logged_or_metered_twice(
+    registry, policy, make_principal
+):
+    mw = EntitlementMiddleware(registry, policy)
+    principal = make_principal(groups=["atlas"])
+    context = _FakeMiddlewareContext(_FakeFastMCPContext({"principal": principal}))
+    tools = [_tool("rucio_list_dids", read_only_hint=False)]
+    counter = metrics.annotation_policy_mismatches_total.labels(
+        service="rucio", tool="rucio_list_dids"
+    )
+    before = counter._value.get()
+
+    await mw.on_list_tools(context, _call_next_factory(tools))
+    await mw.on_list_tools(context, _call_next_factory(tools))
+    await mw.on_list_tools(context, _call_next_factory(tools))
+
+    assert counter._value.get() == before + 1
+
+
+async def test_fixed_mismatch_is_cleared_on_a_later_listing(
+    registry, policy, make_principal
+):
+    """A corrected declaration (or a policy.yaml fix) must not linger
+    forever once a subsequent listing shows the two agreeing again."""
+    mw = EntitlementMiddleware(registry, policy)
+    principal = make_principal(groups=["atlas"])
+    context = _FakeMiddlewareContext(_FakeFastMCPContext({"principal": principal}))
+
+    await mw.on_list_tools(
+        context, _call_next_factory([_tool("rucio_list_dids", read_only_hint=False)])
+    )
+    assert registry.get_annotation_mismatch("rucio", "rucio_list_dids") is not None
+
+    await mw.on_list_tools(
+        context, _call_next_factory([_tool("rucio_list_dids", read_only_hint=True)])
+    )
+    assert registry.get_annotation_mismatch("rucio", "rucio_list_dids") is None

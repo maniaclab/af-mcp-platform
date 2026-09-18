@@ -296,6 +296,26 @@ def _builtin_service_spec(name: str = BUILTIN_SERVICE_NAME) -> ServiceSpec:
     )
 
 
+@dataclass(frozen=True)
+class AnnotationMismatch:
+    """One tool whose declared ``read_only_hint`` annotation disagrees with ``policy.yaml``'s resolved ``action_type`` (issue #238 B.8, the "forward + lint" decision).
+
+    Visibility only -- ``policy.yaml`` stays
+    authoritative for the actual enforcement decision; a mismatch means the
+    hand-maintained policy glob and the backend's own declaration disagree,
+    which is worth an operator's attention either way, not a security event
+    on its own (see authorization.annotation_disagrees_with_policy's
+    docstring for the spec's own caveat against trusting an untrusted
+    server's self-declared annotations for enforcement).
+    """
+
+    service: str
+    tool: str
+    declared_read_only_hint: bool
+    resolved_action_type: str
+    permission: str
+
+
 class ServiceRegistry:
     """Config-driven service registry. Adding a service = one YAML entry, no code change."""
 
@@ -308,6 +328,12 @@ class ServiceRegistry:
         # lets /v1/catalog's status derivation (issue #123) factor in a recent
         # listing failure without an extra live probe of its own.
         self._recent_list_failures: dict[str, str] = {}
+        # (service, tool) -> most recently observed annotation/policy
+        # mismatch (issue #238 B.8). Populated by EntitlementMiddleware.
+        # on_list_tools as callers list tools -- observed over time, not by
+        # a live probe of every registered service, same discovery model as
+        # _recent_list_failures above.
+        self._annotation_mismatches: dict[tuple[str, str], AnnotationMismatch] = {}
         # Merged, O(1)-lookup permission map built by register(): a dict-form
         # required_permission's per-tool entries insert under their namespaced
         # wire name; a plain string, or a dict's "__default__", insert under
@@ -452,3 +478,23 @@ class ServiceRegistry:
     def recent_list_failure(self, name: str) -> str | None:
         """Return the most recently recorded tools/list failure reason for *name*, or None if none has been recorded (the healthy default)."""
         return self._recent_list_failures.get(name)
+
+    def record_annotation_mismatch(self, mismatch: AnnotationMismatch) -> None:
+        """Record (or overwrite) *mismatch* for its (service, tool). Called by EntitlementMiddleware.on_list_tools whenever it observes one, so GET /v1/admin/annotation-mismatches can surface it without a live probe of its own -- see AnnotationMismatch."""
+        self._annotation_mismatches[(mismatch.service, mismatch.tool)] = mismatch
+
+    def clear_annotation_mismatch(self, service: str, tool: str) -> None:
+        """Clear a previously recorded mismatch for (service, tool). Called once a listing shows the tool's annotation and the resolved action_type agree again, so a corrected declaration (or a policy.yaml fix) doesn't linger forever. No-op if nothing was recorded."""
+        self._annotation_mismatches.pop((service, tool), None)
+
+    def get_annotation_mismatch(
+        self, service: str, tool: str
+    ) -> AnnotationMismatch | None:
+        """Return the currently recorded mismatch for (service, tool), or None. Used to tell a newly observed mismatch from one already logged/counted, so EntitlementMiddleware only emits the warning/metric once per distinct disagreement rather than on every tools/list request."""
+        return self._annotation_mismatches.get((service, tool))
+
+    def annotation_mismatches(self) -> list[AnnotationMismatch]:
+        """All currently recorded annotation/policy mismatches, sorted by (service, tool) for a stable admin-page listing."""
+        return sorted(
+            self._annotation_mismatches.values(), key=lambda m: (m.service, m.tool)
+        )
