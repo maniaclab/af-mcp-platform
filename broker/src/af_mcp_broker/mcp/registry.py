@@ -298,15 +298,16 @@ def _builtin_service_spec(name: str = BUILTIN_SERVICE_NAME) -> ServiceSpec:
 
 @dataclass(frozen=True)
 class AnnotationMismatch:
-    """One tool whose declared ``read_only_hint`` annotation disagrees with
-    ``policy.yaml``'s resolved ``action_type`` (issue #238 B.8, the
-    "forward + lint" decision). Visibility only -- ``policy.yaml`` stays
+    """One tool whose declared ``read_only_hint`` annotation disagrees with ``policy.yaml``'s resolved ``action_type`` (issue #238 B.8, the "forward + lint" decision).
+
+    Visibility only -- ``policy.yaml`` stays
     authoritative for the actual enforcement decision; a mismatch means the
     hand-maintained policy glob and the backend's own declaration disagree,
     which is worth an operator's attention either way, not a security event
     on its own (see authorization.annotation_disagrees_with_policy's
     docstring for the spec's own caveat against trusting an untrusted
-    server's self-declared annotations for enforcement)."""
+    server's self-declared annotations for enforcement).
+    """
 
     service: str
     tool: str
