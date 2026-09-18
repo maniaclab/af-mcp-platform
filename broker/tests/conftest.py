@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
     from fastmcp import FastMCP
 
+import fastmcp
 import jwt
 import pytest
 import uvicorn
@@ -31,6 +32,15 @@ from af_mcp_broker import identity
 from af_mcp_broker.audit import measure
 from af_mcp_broker.config import Settings, get_settings
 from af_mcp_broker.mcp.aggregator import build_asgi_auth_middleware
+
+# fastmcp v4's camelCase compat bridge (mcp_camelcase_compat, default True)
+# lets legacy reads like `tool.inputSchema`/`result.isError` keep working
+# after mcp SDK v2's rename to snake_case, each emitting a
+# FastMCPDeprecationWarning. Disabled for the whole test session (issue
+# #238 B.2/B.10) to prove no camelCase read survives anywhere in the
+# broker or its tests: with the bridge off, a lingering camelCase access
+# raises AttributeError outright instead of silently warning.
+fastmcp.settings.mcp_camelcase_compat = False
 
 ISSUER = "https://keycloak.test/realms/connect"
 AUDIENCE = "mcp-gateway"

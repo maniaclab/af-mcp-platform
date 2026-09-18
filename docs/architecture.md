@@ -549,9 +549,14 @@ Every tool call gets a `tools/call <name>` server span opened by
 included — carrying identity, authorization, and outcome attributes:
 `user.id` (the principal's subject), `af.service`, `af.permission`,
 `af.action_type`, and `af.outcome` (`success` / `denied` / `error`; the
-error path also records the exception and sets span status ERROR). fastmcp
-3.4.4's own `tools/call` span (plus its per-delegation and client spans
-toward the backend service) nests underneath as children.
+error path also records the exception and sets span status ERROR).
+fastmcp's own `tools/call` span nests underneath as a child, itself
+wrapping a client-side span fastmcp v4 added around each proxied backend
+call (`ProxyTool.run`'s `client_span`, plus one in `call_tool_mcp`) — one
+more nesting layer than fastmcp 3.4.4 produced. Same trace either way;
+nothing keyed on `trace_id` is affected, but a dashboard keyed on exact
+span counts/structure will need updating after the fastmcp v4 migration
+(`maniaclab/af-mcp-platform#238`).
 
 **The trace ↔ audit join.** Spans carry identity/outcome/timing;
 measurements (`result_bytes`, `result_tokens_est`) stay in the audit log —
