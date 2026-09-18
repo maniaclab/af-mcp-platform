@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import anyio
-import httpx
+import httpx2
 
 # Transient-vs-genuine classification of a failed backend tool call (issue
 # #216 A.3). This is OBSERVABILITY ONLY: it names an error for the audit log's
@@ -36,26 +36,34 @@ ERROR_CLASS_TOOL_REPORTED = "tool_reported"
 # the connection itself fails, as opposed to the backend running and returning
 # an application error. Deliberately scoped to the three categories issue #216
 # names -- connection reset, socket EOF / "closed connection", connect timeout
-# -- and no wider: an HTTP 5xx (httpx.HTTPStatusError) or a read timeout on an
+# -- and no wider: an HTTP 5xx (httpx2.HTTPStatusError) or a read timeout on an
 # already-established connection is a backend problem, not a transient dial
 # failure, and stays ERROR_CLASS_BACKEND.
 #
-#   - httpx.ConnectError / ConnectTimeout: the dial failed (refused/reset) or
+# fastmcp v4 / mcp SDK v2 are httpx2-only (httpx2.ConnectError is NOT a
+# subclass of httpx (1.x)'s ConnectError -- they're unrelated classes), so
+# these must be the httpx2 types or none of them ever match again. fastmcp's
+# ``ProxyTool.run()`` wraps a proxy transport failure as ``raise
+# _proxy_upstream_error(error) from error`` -- a plain chained exception that
+# preserves the original httpx2/anyio exception on ``__cause__`` -- so the
+# chain walk below still finds it.
+#
+#   - httpx2.ConnectError / ConnectTimeout: the dial failed (refused/reset) or
 #     timed out before a connection was established.
-#   - httpx.ReadError / WriteError: the socket failed mid-exchange ("No more
+#   - httpx2.ReadError / WriteError: the socket failed mid-exchange ("No more
 #     data to read from socket").
-#   - httpx.RemoteProtocolError: the server closed the connection without a
+#   - httpx2.RemoteProtocolError: the server closed the connection without a
 #     complete response (EOF / "Closed Connection").
 #   - anyio.EndOfStream / ClosedResourceError / BrokenResourceError: the same
 #     failures surfaced at the anyio stream layer fastmcp's client rides on.
 #   - builtin ConnectionError: covers ConnectionReset/Aborted/RefusedError
-#     when a raw socket op raises rather than httpx.
+#     when a raw socket op raises rather than httpx2.
 _TRANSIENT_CONNECTION_EXC_TYPES: tuple[type[BaseException], ...] = (
-    httpx.ConnectError,
-    httpx.ConnectTimeout,
-    httpx.ReadError,
-    httpx.WriteError,
-    httpx.RemoteProtocolError,
+    httpx2.ConnectError,
+    httpx2.ConnectTimeout,
+    httpx2.ReadError,
+    httpx2.WriteError,
+    httpx2.RemoteProtocolError,
     anyio.EndOfStream,
     anyio.ClosedResourceError,
     anyio.BrokenResourceError,
@@ -70,7 +78,7 @@ def classify_backend_error(exc: BaseException) -> str:
     cause/context chain -- is one of the known-transient connection types,
     else ``ERROR_CLASS_BACKEND``. The chain walk matters because fastmcp's
     core ``call_tool`` re-raises a backend exception as ``ToolError(...) from
-    e`` (mask_error_details defaults to False), so the original httpx/anyio
+    e`` (mask_error_details defaults to False), so the original httpx2/anyio
     connection error survives only on ``__cause__`` (or ``__context__`` for a
     bare re-raise), never as the top-level type the middleware catches.
     """

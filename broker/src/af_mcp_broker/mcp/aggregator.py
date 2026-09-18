@@ -13,13 +13,13 @@ from __future__ import annotations
 # inbound Authorization header to a service; see its docstring.
 from typing import TYPE_CHECKING
 
-import httpx
+import httpx2
 import structlog
 from fastapi import HTTPException
 from fastmcp import FastMCP
 from fastmcp.client import Client
 from fastmcp.client.transports import SSETransport, StreamableHttpTransport
-from fastmcp.exceptions import McpError, ToolError
+from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_context
 from fastmcp.server.elicitation import AcceptedElicitation
 from fastmcp.server.providers.proxy import (
@@ -199,29 +199,35 @@ def _classify_failure(
     "unavailable", an operational/config problem rather than a "go re-link"
     prompt.
 
-    A request that never got a correlated response within its deadline
-    (``McpError`` with ``code == httpx.codes.REQUEST_TIMEOUT``) is "timeout",
-    distinct from "unavailable" (a connection-level refusal/reset before the
-    request was even sent) -- see #280. This is a genuinely slow/unresponsive
-    backend in the common case, but the mcp SDK's client (as pinned here;
-    fixed upstream in mcp>=2.0, not yet in the 1.x line -- see #280's
-    comments) also orphans a request this same way if the backend's response
-    body failed to parse, so "timeout" is deliberately honest about that
-    ambiguity rather than claiming a precision this classification doesn't
-    have pre-upgrade.
+    A request that never got a correlated response within its deadline used
+    to be distinguished as "timeout" (``McpError`` with ``code ==
+    httpx.codes.REQUEST_TIMEOUT``) from "unavailable" (a connection-level
+    refusal/reset before the request was even sent) -- see #280, which also
+    explains why that distinction was never precise pre-mcp-v2: the same
+    code covered both a genuinely slow backend and one whose malformed
+    response orphaned the request. mcp SDK v2 fixed the latter (#292), but
+    also stopped producing ``REQUEST_TIMEOUT`` at all -- fastmcp v4's
+    ``server/providers/proxy.py._proxy_upstream_error`` normalizes
+    every proxy transport failure, timeouts included, to a plain
+    ``INTERNAL_ERROR``. That probe is dead code post-migration and has been
+    removed rather than kept as an unreachable branch; "timeout" is no
+    longer a ``_classify_failure`` outcome, which makes
+    ``api/catalog_tools.py``'s dedicated "timeout" status message dead code
+    too -- flagged for a follow-up decision (retire the status, or detect a
+    real client-side timeout by chain-walking for ``TimeoutError`` instead,
+    which fastmcp still preserves on ``__cause__``) rather than silently
+    left as-is.
+
+    Note: httpx2, not httpx (1.x) -- fastmcp v4 / mcp SDK v2 are httpx2-only,
+    and httpx2.HTTPStatusError is not a subclass of httpx (1.x)'s.
     """
     if not injected and skip_reason is not None:
         return skip_reason
     if injected and any(
-        isinstance(leaf, httpx.HTTPStatusError) and leaf.response.status_code == 401
+        isinstance(leaf, httpx2.HTTPStatusError) and leaf.response.status_code == 401
         for leaf in _iter_leaf_exceptions(exc)
     ):
         return "unauthorized"
-    if any(
-        isinstance(leaf, McpError) and leaf.error.code == httpx.codes.REQUEST_TIMEOUT
-        for leaf in _iter_leaf_exceptions(exc)
-    ):
-        return "timeout"
     return "unavailable"
 
 

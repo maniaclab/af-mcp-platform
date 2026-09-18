@@ -5,7 +5,7 @@ import time
 from typing import TYPE_CHECKING, Any, Self
 from unittest.mock import AsyncMock
 
-import httpx
+import httpx2
 import pytest
 from fastapi import HTTPException
 from fastmcp import FastMCP
@@ -1478,48 +1478,46 @@ async def test_client_factory_x509_elicitation_accepted_now_linked_proceeds(
     assert claims["sub"] == "sub-abc"
 
 
-class TestClassifyFailureTimeout:
-    """issue #280: a request that never got a correlated response within its
-    deadline is "timeout", distinct from "unavailable" -- see
-    _classify_failure's docstring for why this can't (pre mcp>=2.0) promise
-    to distinguish a genuinely slow backend from one whose malformed
-    response orphaned the request until the same deadline."""
+class TestClassifyFailureUnavailable:
+    """issue #280 / B.3: a request that never got a correlated response used
+    to be distinguished as "timeout" from a connection-level "unavailable"
+    via ``McpError.error.code == httpx.codes.REQUEST_TIMEOUT``. fastmcp v4 /
+    mcp SDK v2 no longer produce that code at all -- every proxy transport
+    failure, timeouts included, normalizes to a plain ``INTERNAL_ERROR``
+    (``_proxy_upstream_error``) -- so that probe is gone and every case
+    below (including what used to be the "timeout" cases) is "unavailable"
+    now. See _classify_failure's docstring for the full removal rationale."""
 
-    def test_mcp_error_request_timeout_is_classified_as_timeout(self) -> None:
+    def test_mcp_error_is_unavailable(self) -> None:
         exc = _mcp_error(
-            httpx.codes.REQUEST_TIMEOUT,
+            httpx2.codes.INTERNAL_SERVER_ERROR,
             "Timed out while waiting for response to CallToolRequest. Waited 30.0 seconds.",
         )
-        assert _classify_failure(exc, injected=False, skip_reason=None) == "timeout"
-
-    def test_mcp_error_other_code_is_still_unavailable(self) -> None:
-        """Only the specific REQUEST_TIMEOUT code means "orphaned request" --
-        an ordinary McpError (e.g. a tool-reported failure) must not be
-        misclassified."""
-        exc = _mcp_error(httpx.codes.INTERNAL_SERVER_ERROR, "boom")
         assert _classify_failure(exc, injected=False, skip_reason=None) == "unavailable"
 
-    def test_connect_error_is_unavailable_not_timeout(self) -> None:
-        """A connection-level refusal (never even reached send_request) stays
-        "unavailable" -- "timeout" specifically means a request WAS sent."""
-        exc = httpx.ConnectError("connection refused")
+    def test_mcp_error_other_code_is_also_unavailable(self) -> None:
+        exc = _mcp_error(httpx2.codes.INTERNAL_SERVER_ERROR, "boom")
         assert _classify_failure(exc, injected=False, skip_reason=None) == "unavailable"
 
-    def test_timeout_wrapped_in_exception_group_is_still_detected(self) -> None:
+    def test_connect_error_is_unavailable(self) -> None:
+        exc = httpx2.ConnectError("connection refused")
+        assert _classify_failure(exc, injected=False, skip_reason=None) == "unavailable"
+
+    def test_mcp_error_wrapped_in_exception_group_is_still_unavailable(self) -> None:
         """Mirrors the existing 401-in-a-BaseExceptionGroup coverage this
         function already has -- fastmcp's client runs I/O in anyio task
         groups, so the McpError can arrive wrapped."""
         exc = BaseExceptionGroup(
             "unhandled",
-            [_mcp_error(httpx.codes.REQUEST_TIMEOUT, "timed out")],
+            [_mcp_error(httpx2.codes.INTERNAL_SERVER_ERROR, "boom")],
         )
-        assert _classify_failure(exc, injected=False, skip_reason=None) == "timeout"
+        assert _classify_failure(exc, injected=False, skip_reason=None) == "unavailable"
 
-    def test_skip_reason_still_takes_priority_over_timeout(self) -> None:
+    def test_skip_reason_still_takes_priority(self) -> None:
         """A deliberately-skipped credential mint is the precise reason
         regardless of what the resulting uncredentialed connection raised --
         same rule the docstring already states for "unavailable"."""
-        exc = _mcp_error(httpx.codes.REQUEST_TIMEOUT, "timed out")
+        exc = _mcp_error(httpx2.codes.INTERNAL_SERVER_ERROR, "boom")
         assert (
             _classify_failure(exc, injected=False, skip_reason="not_linked")
             == "not_linked"
@@ -1538,9 +1536,9 @@ class TestClassifyFailureChainedWrapping:
     regression guard for the real thing."""
 
     def test_401_reachable_only_via_cause_chain_is_detected(self) -> None:
-        request = httpx.Request("GET", "http://example.invalid")
-        response = httpx.Response(401, request=request)
-        inner = httpx.HTTPStatusError(
+        request = httpx2.Request("GET", "http://example.invalid")
+        response = httpx2.Response(401, request=request)
+        inner = httpx2.HTTPStatusError(
             "unauthorized", request=request, response=response
         )
         outer = RuntimeError("proxy upstream error")
@@ -1554,9 +1552,9 @@ class TestClassifyFailureChainedWrapping:
         exception occurred"), not just ``__cause__`` (an explicit ``raise
         ... from err``) -- ``_iter_leaf_exceptions`` must walk whichever one
         is actually set."""
-        request = httpx.Request("GET", "http://example.invalid")
-        response = httpx.Response(401, request=request)
-        inner = httpx.HTTPStatusError(
+        request = httpx2.Request("GET", "http://example.invalid")
+        response = httpx2.Response(401, request=request)
+        inner = httpx2.HTTPStatusError(
             "unauthorized", request=request, response=response
         )
         outer = RuntimeError("proxy upstream error")
@@ -1569,9 +1567,9 @@ class TestClassifyFailureChainedWrapping:
         """Same chain shape, but no credential was injected for this
         attempt -- must stay "unavailable", not "unauthorized" (a stored
         credential can't have been rejected if none was ever sent)."""
-        request = httpx.Request("GET", "http://example.invalid")
-        response = httpx.Response(401, request=request)
-        inner = httpx.HTTPStatusError(
+        request = httpx2.Request("GET", "http://example.invalid")
+        response = httpx2.Response(401, request=request)
+        inner = httpx2.HTTPStatusError(
             "unauthorized", request=request, response=response
         )
         outer = RuntimeError("proxy upstream error")
