@@ -44,6 +44,17 @@ inline fallback) is still written and still counts as a call — its
 measurement fields are just `null`, contributing 0 to usage sums. Nothing
 is ever dropped.
 
+**Error-rate step change to expect as backends adopt `isError`**
+(`maniaclab/af-mcp-platform#238` A.2): the broker already audits a result
+that sets `isError` as `outcome=error` / `error_class=tool_reported`
+(fixed in `9034858`) — a call that "failed" only in plain text, with no
+`isError`, was silently counted as a success before that fix, and still
+is for any backend that hasn't adopted the convention yet (see
+`docs/adding-a-service.md`'s Tool-authoring conventions). Expect a
+visible step up in a given backend's error rate the day it starts
+setting `isError` correctly; that's the fix finally seeing what was
+always failing, not a new regression to chase.
+
 ## Self-service usage: `GET /v1/usage`
 
 Every user can query their own usage — and nobody else's: the subject
@@ -238,6 +249,7 @@ from `prometheus-fastapi-instrumentator`, the broker defines these
 | `af_mcp_broker_identity_tokens_issued_total` | counter | `target` | AF Broker Identity Tokens actually minted (cache hits not counted). |
 | `af_mcp_condor_tokens_issued_total` | counter | `target` | HTCondor IDTOKENs actually obtained from condor-token-service (cache hits not counted). |
 | `af_mcp_krb5_tickets_issued_total` | counter | `target` | Kerberos tickets actually obtained from krb5-token-service (cache hits not counted). |
+| `af_mcp_annotation_policy_mismatches_total` | counter | `service`, `tool` | A tool's declared `read_only_hint` disagreed with `policy.yaml`'s resolved `action_type` (issue #238 B.8's "forward + lint" decision — visibility only, `policy.yaml` stays authoritative for enforcement). Incremented once per newly observed disagreement; see `GET /v1/admin/annotation-mismatches` for the current set. |
 
 The six `af_mcp_metering_*` metrics are the pipeline's health signal, and
 three of them are also its scaling trigger: a rising
