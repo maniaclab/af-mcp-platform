@@ -62,13 +62,13 @@ class EntitlementMiddleware(Middleware):
         return [tool for tool in tools if self._tool_is_allowed(tool, principal_caps)]
 
     def _lint_annotations(self, tools: Sequence[Tool]) -> None:
-        """Warn (log + metric) when a tool's declared read_only_hint
-        disagrees with the policy-resolved action_type (issue #238 B.8's
-        "forward + lint" decision). Runs on every tools/list request's full
+        """Warn (log + metric) when a tool's declared read_only_hint disagrees with the policy-resolved action_type (issue #238 B.8's "forward + lint" decision).
+
+        Runs on every tools/list request's full
         (pre-filter) tool set, independent of which caller triggered it --
         this is about the server's own declared config, not caller identity.
-        Recorded onto the registry (ServiceRegistry.record_annotation_
-        mismatch) so GET /v1/admin/annotation-mismatches can surface the
+        Recorded onto the registry (ServiceRegistry.record_annotation_mismatch)
+        so GET /v1/admin/annotation-mismatches can surface the
         current set without a live probe of its own; the warning/metric
         only fire the first time a given (service, tool) mismatch is
         observed, not on every request that re-observes an already-known
