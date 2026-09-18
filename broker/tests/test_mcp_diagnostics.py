@@ -123,6 +123,48 @@ async def test_af_tools_declare_a_proper_object_output_schema(
         )
 
 
+async def test_af_tools_declare_read_only_annotations(
+    settings: Any, sig_key: Any, prime_jwks: Any, static_principal_cache: Any
+) -> None:
+    """Every af_* tool declares annotations, and all five are read-only
+    (issue #238 B.6): none of them mutates anything server-side --
+    af_link_identity returns a portal deep link, it doesn't perform the
+    link itself -- so every one gets read_only_hint=True, matching "the
+    gateway's own tools are the reference implementation" for the new
+    annotations convention too."""
+    principal_cache, directory = static_principal_cache
+    directory.groups_by_subject["user-123"] = []
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+
+    mcp = build_aggregator(
+        ServiceRegistry(),
+        settings,
+        EntitlementPolicy(),
+        CredentialRegistry(),
+        principal_cache=principal_cache,
+    )
+
+    async with run_aggregator_async(mcp, path="/mcp") as agg_url:
+        transport = StreamableHttpTransport(
+            agg_url, headers={"Authorization": f"Bearer {token}"}
+        )
+        async with Client(transport) as client:
+            tools = await client.list_tools()
+
+    by_name = {t.name: t for t in tools}
+    for name in (
+        WHOAMI_TOOL_NAME,
+        LIST_IDENTITIES_TOOL_NAME,
+        LIST_MCP_SERVERS_TOOL_NAME,
+        LINK_IDENTITY_TOOL_NAME,
+        USAGE_TOOL_NAME,
+    ):
+        annotations = by_name[name].annotations
+        assert annotations is not None, f"{name} has no annotations"
+        assert annotations.read_only_hint is True, f"{name} is not read_only_hint=True"
+
+
 async def test_af_whoami_returns_subject_groups_and_permissions(
     settings: Any, sig_key: Any, prime_jwks: Any, static_principal_cache: Any
 ) -> None:

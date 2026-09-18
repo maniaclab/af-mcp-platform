@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Annotated
 
 from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_context
+from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field
 
 from af_mcp_broker.api.permissions import ServiceStatus, _service_status
@@ -186,7 +187,14 @@ def register_diagnostic_tools(
         with contextlib.suppress(KeyError):
             mcp.local_provider.remove_tool(name)
 
-    @mcp.tool(name=WHOAMI_TOOL_NAME)
+    @mcp.tool(
+        name=WHOAMI_TOOL_NAME,
+        annotations=ToolAnnotations(
+            title="Who am I",
+            read_only_hint=True,
+            open_world_hint=False,
+        ),
+    )
     async def _whoami() -> WhoamiResult:
         """Return the caller's own subject, groups, and effective permissions.
 
@@ -205,7 +213,14 @@ def register_diagnostic_tools(
             permissions=sorted(caps),
         )
 
-    @mcp.tool(name=LIST_IDENTITIES_TOOL_NAME)
+    @mcp.tool(
+        name=LIST_IDENTITIES_TOOL_NAME,
+        annotations=ToolAnnotations(
+            title="List identity providers",
+            read_only_hint=True,
+            open_world_hint=False,
+        ),
+    )
     async def _list_identities() -> ListIdentitiesResult:
         """List the broker's configured identity providers and whether the caller has linked each one.
 
@@ -229,7 +244,14 @@ def register_diagnostic_tools(
             )
         return ListIdentitiesResult(identities=providers)
 
-    @mcp.tool(name=LINK_IDENTITY_TOOL_NAME)
+    @mcp.tool(
+        name=LINK_IDENTITY_TOOL_NAME,
+        annotations=ToolAnnotations(
+            title="Link an identity provider",
+            read_only_hint=True,
+            open_world_hint=False,
+        ),
+    )
     async def _link_identity(provider: str) -> LinkIdentityResult:
         """Return the portal URL to link (or re-link) one identity provider.
 
@@ -258,7 +280,14 @@ def register_diagnostic_tools(
             already_linked=await identity_providers[provider].is_linked(principal),
         )
 
-    @mcp.tool(name=USAGE_TOOL_NAME)
+    @mcp.tool(
+        name=USAGE_TOOL_NAME,
+        annotations=ToolAnnotations(
+            title="Usage summary",
+            read_only_hint=True,
+            open_world_hint=False,
+        ),
+    )
     async def _usage(
         days: Annotated[int, Field(ge=1, le=365)] = 30,
         model: str | None = None,
@@ -296,7 +325,14 @@ def register_diagnostic_tools(
             # shape (never enumerates the table's thousands of keys).
             raise ToolError(str(exc)) from exc
 
-    @mcp.tool(name=LIST_MCP_SERVERS_TOOL_NAME)
+    @mcp.tool(
+        name=LIST_MCP_SERVERS_TOOL_NAME,
+        annotations=ToolAnnotations(
+            title="List MCP servers",
+            read_only_hint=True,
+            open_world_hint=False,
+        ),
+    )
     async def _list_mcp_servers() -> ListMcpServersResult:
         """List every configured MCP service, the identity that powers it, and whether it's currently available to the caller.
 
