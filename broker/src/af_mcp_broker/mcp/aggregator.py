@@ -152,20 +152,33 @@ async def _resolve_list_time_headers(
     return headers, None
 
 
-def _iter_leaf_exceptions(exc: BaseException) -> Iterator[BaseException]:
-    """Yield *exc* itself, or its leaves when it is an ``ExceptionGroup``.
+def _iter_leaf_exceptions(
+    exc: BaseException, *, _seen: set[int] | None = None
+) -> Iterator[BaseException]:
+    """Yield *exc* itself, its ``ExceptionGroup`` leaves, and its ``__cause__``/``__context__`` chain.
 
     A transport failure inside fastmcp's client (which runs its I/O in anyio
     task groups) can surface wrapped in a ``BaseExceptionGroup`` rather than
     as the raw ``httpx`` exception -- classification below must look through
     that wrapping or an injected-credential 401 would misclassify as
-    "unavailable".
+    "unavailable". Separately, fastmcp v4 wraps a proxy transport failure as
+    a plain chained exception (``raise _proxy_upstream_error(error) from
+    error``), not a group, so the chain must be walked too or the same 401
+    would stay unreachable when it arrives that way instead. ``_seen``
+    guards against a pathological cause/context cycle; callers never pass it.
     """
+    seen = _seen if _seen is not None else set()
+    if id(exc) in seen:
+        return
+    seen.add(id(exc))
     if isinstance(exc, BaseExceptionGroup):
         for sub in exc.exceptions:
-            yield from _iter_leaf_exceptions(sub)
-    else:
-        yield exc
+            yield from _iter_leaf_exceptions(sub, _seen=seen)
+        return
+    yield exc
+    chained = exc.__cause__ or exc.__context__
+    if chained is not None:
+        yield from _iter_leaf_exceptions(chained, _seen=seen)
 
 
 def _classify_failure(
