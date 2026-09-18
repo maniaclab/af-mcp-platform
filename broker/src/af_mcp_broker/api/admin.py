@@ -212,9 +212,11 @@ async def set_maintenance_status(
 
 
 class AnnotationMismatchResponse(BaseModel):
-    """One tool whose declared read_only_hint disagrees with policy.yaml's
-    resolved action_type (issue #238 B.8) -- see mcp/registry.py's
-    AnnotationMismatch, which this mirrors field-for-field."""
+    """One tool whose declared read_only_hint disagrees with policy.yaml's resolved action_type (issue #238 B.8).
+
+    See mcp/registry.py's
+    AnnotationMismatch, which this mirrors field-for-field.
+    """
 
     model_config = ConfigDict(frozen=True)
 
