@@ -11,7 +11,7 @@ from __future__ import annotations
 # once SERVICES_FILE/POLICY_FILE/the credential subsystem have actually been
 # loaded. The client_factory below deliberately never forwards the caller's
 # inbound Authorization header to a service; see its docstring.
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import httpx2
 import structlog
@@ -68,6 +68,67 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 
+# mcp SDK v2's streamable-HTTP client normalizes ANY non-2xx response whose
+# body isn't already JSON-RPC-shaped into a generic MCPError(INTERNAL_ERROR),
+# delivered as a JSON-RPC error reply on the read stream -- never raised as an
+# httpx2-family exception (mcp/client/streamable_http.py's
+# _handle_request_response, the `response.status_code >= 400` branch). The
+# real HTTP status code is otherwise unrecoverable by the time _classify_failure
+# sees the resulting exception, so a rejected stored credential (401) can no
+# longer be told apart from any other backend failure -- see issue #314.
+#
+# A ContextVar set from a response event hook does NOT work around this: the
+# POST that receives the response runs inside a *child* task the SDK spawns
+# with `task_group.start_soon()` (mcp/client/streamable_http.py's
+# streamable_http_client), which gets its own copy of the current context --
+# a ContextVar.set() there is invisible once that task group's `async with`
+# block returns control to the caller. Verified by direct repro before
+# settling on the approach below.
+#
+# Instead, this hook raises httpx2.HTTPStatusError itself, for a 401 only --
+# every other status is left to the SDK's own handling (its JSON-RPC-shaped-
+# body parse, its dedicated 404 mapping, etc.), unchanged. Raising inside a
+# response hook propagates like any exception from httpx2.AsyncClient.send()
+# (httpx2/_client.py's _send_handling_redirects loop awaits each hook
+# in-line, no special-casing); since it originates inside the SDK's spawned
+# task, it surfaces wrapped in an anyio ExceptionGroup exactly like the
+# proxy transport failures _iter_leaf_exceptions already exists to walk
+# through -- so the existing, already-tested 401-leaf check below needs no
+# further change to recognize it.
+async def _raise_for_401(response: httpx2.Response) -> None:
+    if response.status_code == 401:
+        response.raise_for_status()
+
+
+def _unauthorized_raising_httpx_client_factory(
+    headers: dict[str, str] | None = None,
+    timeout: httpx2.Timeout | None = None,
+    auth: httpx2.Auth | None = None,
+    **kwargs: Any,
+) -> httpx2.AsyncClient:
+    """``McpHttpClientFactory`` that adds ``_raise_for_401`` to the client's response hooks.
+
+    Mirrors ``mcp.shared._httpx_utils.create_mcp_http_client``'s defaults
+    (30s connect/write/pool, 300s read, for a backend that holds a response
+    stream open) rather than importing that private module directly.
+    ``**kwargs`` absorbs ``follow_redirects`` (passed by both
+    ``StreamableHttpTransport`` and ``SSETransport``'s ``connect_session``,
+    but not part of the documented factory signature -- see their
+    ``httpx_client_factory`` docstrings recommending ``**kwargs`` for exactly
+    this forward-compatibility reason).
+    """
+    if timeout is None:
+        timeout = httpx2.Timeout(30.0, read=300.0)
+    client_kwargs: dict[str, Any] = {"timeout": timeout, **kwargs}
+    if headers is not None:
+        client_kwargs["headers"] = headers
+    if auth is not None:
+        client_kwargs["auth"] = auth
+    client = httpx2.AsyncClient(**client_kwargs)
+    client.event_hooks.setdefault("response", []).append(_raise_for_401)
+    return client
+
+
 def _build_client(
     spec: ServiceSpec,
     transport_cls: type[SSETransport | StreamableHttpTransport],
@@ -88,7 +149,11 @@ def _build_client(
     credentials.
     """
     return Client(
-        transport_cls(spec.url, headers=headers),
+        transport_cls(
+            spec.url,
+            headers=headers,
+            httpx_client_factory=_unauthorized_raising_httpx_client_factory,
+        ),
         timeout=spec.timeout_seconds,
         progress_handler=default_proxy_progress_handler,
         log_handler=default_proxy_log_handler,
@@ -220,6 +285,14 @@ def _classify_failure(
 
     Note: httpx2, not httpx (1.x) -- fastmcp v4 / mcp SDK v2 are httpx2-only,
     and httpx2.HTTPStatusError is not a subclass of httpx (1.x)'s.
+
+    mcp SDK v2's streamable-HTTP client normally never raises this at all for
+    a 401: a non-2xx response whose body isn't already JSON-RPC-shaped is
+    normalized into a generic ``MCPError(INTERNAL_ERROR)`` delivered on the
+    read stream, discarding the real status code. ``_build_client``'s
+    ``_unauthorized_raising_httpx_client_factory`` forces a 401 specifically
+    back into a raised ``httpx2.HTTPStatusError`` at the httpx layer so this
+    check can still find it -- see issue #314.
     """
     if not injected and skip_reason is not None:
         return skip_reason
