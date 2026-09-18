@@ -82,11 +82,13 @@ async def test_dead_server_task_surfaces_instead_of_hanging() -> None:
 
 # ---------------------------------------------------------------------------
 # ClientSession hotfix (conftest's autouse client_session_hotfix fixture):
-# modelcontextprotocol/python-sdk#1144 -- fixed upstream in mcp v2, which
-# needs fastmcp v4 (beta). Until that migration, an MCP client whose
-# streamable-HTTP response dies mid-flight waits forever: an Exception object
-# sent into the session's read stream is handled by a no-op, and a connection
-# that goes dead without ever delivering anything produces no event at all.
+# modelcontextprotocol/python-sdk#1144. Still required on mcp SDK v2 /
+# fastmcp v4 -- see conftest.py's _CLIENT_SESSION_HOTFIX comment for why v2's
+# new on_stream_exception hook doesn't close this on its own. An MCP client
+# whose streamable-HTTP response dies mid-flight waits forever: an Exception
+# object sent into the session's read stream is handled by a no-op by
+# default, and a connection that goes dead without ever delivering anything
+# produces no event at all.
 # ---------------------------------------------------------------------------
 
 

@@ -234,19 +234,28 @@ def prime_jwks(settings: Settings):
 
 
 # --- ClientSession hotfix -- modelcontextprotocol/python-sdk#1144 ----------
-# An MCP streamable-HTTP client whose response dies mid-flight hangs forever
-# on mcp v1: an Exception object the transport sends into the session's read
-# stream is handled by a default no-op (the receive loop keeps iterating, so
-# its teardown -- which WOULD fail all pending requests with
-# CONNECTION_CLOSED -- never runs), and a connection that goes dead without
-# delivering anything produces no event at all. Fixed upstream in mcp v2,
-# which only fastmcp v4 (still beta) can use; until that migration this
-# keeps a flaky server abort from wedging the suite (it caused the historic
-# silent CI hangs, e.g. run 32922473653). Two halves:
+# An MCP streamable-HTTP client whose response dies mid-flight hangs forever:
+# an Exception object the transport sends into the session's read stream is
+# handled by a default no-op (the receive loop keeps iterating, so its
+# teardown -- which WOULD fail all pending requests with CONNECTION_CLOSED --
+# never runs), and a connection that goes dead without delivering anything
+# produces no event at all (it caused the historic silent CI hangs, e.g. run
+# 32922473653). **Still required on mcp SDK v2 / fastmcp v4** -- verified
+# directly, contradicting this migration's own working assumption that
+# v2's new ``JSONRPCDispatcher.on_stream_exception`` hook closed this bug on
+# its own: that hook only *delivers* a transport exception to whichever
+# ``message_handler`` the caller supplied (a bare ``ClientSession`` with no
+# handler still hangs forever -- ``_default_message_handler`` is a no-op,
+# same as v1). Two halves, both still needed:
 #   - a wrapping message_handler closes the read stream when an Exception
 #     arrives, so the receive loop exits NORMALLY and its own teardown
 #     delivers CONNECTION_CLOSED to every waiter (cleaner than cancelling
-#     the session task group, which races that same teardown);
+#     the session task group, which races that same teardown). v2 no longer
+#     stores the read stream as ``ClientSession._read_stream`` directly --
+#     ``ClientSession.__init__`` now wraps it into a ``JSONRPCDispatcher`` at
+#     ``self._dispatcher`` (``shared/jsonrpc_dispatcher.py``), which keeps
+#     its own ``self._read_stream`` -- so the hotfix closes
+#     ``self._dispatcher._read_stream`` instead;
 #   - sessions with no read timeout get a default one, covering the
 #     dead-but-open-connection case where no event ever arrives.
 # Mutable so tests of the hotfix itself can shrink the timeout.
@@ -270,8 +279,9 @@ def client_session_hotfix(monkeypatch: pytest.MonkeyPatch) -> None:
         async def close_on_stream_exception(message: Any) -> None:
             if isinstance(message, Exception):
                 # Ends the receive loop's `async for`; its finally block then
-                # fails every pending request with CONNECTION_CLOSED.
-                await self._read_stream.aclose()
+                # fails every pending request with CONNECTION_CLOSED. v2:
+                # the read stream lives on the dispatcher, not the session.
+                await self._dispatcher._read_stream.aclose()
                 return
             if inner is not None:
                 await inner(message)
