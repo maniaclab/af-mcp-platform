@@ -3,22 +3,32 @@ name = "af-mcp-platform"
 version = "0.2.0"
 channels = ["conda-forge"]
 platforms = ["linux-64", "osx-arm64", "osx-64"]
-exclude-newer = "7d"
+# Pinned to an explicit date rather than a rolling window: fastmcp 4.0.4
+# (2026-09-17), mcp 2.2.0 (2026-09-12), and httpx2 2.13.0 (2026-09-16) would
+# otherwise fall outside a rolling "7d" window and the solver would report
+# "no newer version" for the fastmcp v4 bump below. This affects every
+# package's solve, not just the MCP stack -- bump the date deliberately.
+exclude-newer = "2026-09-18"
 
 [dependencies]
 python = ">=3.12,<3.13"
 
 [feature.broker.dependencies]
-fastapi = ">=0.115"
-uvicorn = ">=0.30"
-pydantic = ">=2.7"
+# fastapi floor raised so the solver can't pick an old fastapi whose own
+# starlette pin would conflict with fastmcp's starlette>=1.0.1 (fastmcp 4
+# has no runtime fastapi dependency of its own -- this is solver hygiene,
+# not a fastmcp requirement).
+fastapi = ">=0.133"
+uvicorn = ">=0.35"
+pydantic = ">=2.12"
 pydantic-settings = ">=2.3"
 pyjwt = ">=2.8"
 cryptography = ">=42"
 httpx2 = ">=2.7.0,<3"
 structlog = ">=24.4"
-fastmcp = ">=3.4.4,<4"
-prometheus-fastapi-instrumentator = ">=7.0"
+fastmcp = ">=4.0.4,<5"
+# 7.x pins starlette<1.0.0, which conflicts with fastmcp's starlette>=1.0.1.
+prometheus-fastapi-instrumentator = ">=8.0"
 kubernetes_asyncio = ">=30.0"
 pyyaml = ">=6.0"
 tiktoken = ">=0.14.0"

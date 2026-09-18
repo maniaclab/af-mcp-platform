@@ -157,7 +157,8 @@ def parent_context_from_meta(meta: Any) -> Context:
     """OTel context carrying the inbound MCP ``_meta`` traceparent, if any.
 
     *meta* is the request's ``_meta`` -- either a plain mapping or the MCP
-    SDK's pydantic ``RequestParams.Meta`` model (both convert via ``dict()``,
+    SDK's ``RequestParams.meta`` (a ``TypedDict`` as of mcp SDK v2, a
+    plain dict at runtime either way, so ``dict()`` still round-trips it,
     mirroring how fastmcp's own server-side extraction handles it).
 
     SEP-414: an MCP client tracing its own agent sends ``traceparent`` /
