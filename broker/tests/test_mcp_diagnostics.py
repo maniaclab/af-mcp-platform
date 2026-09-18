@@ -114,7 +114,7 @@ async def test_af_tools_declare_a_proper_object_output_schema(
         LINK_IDENTITY_TOOL_NAME,
         USAGE_TOOL_NAME,
     ):
-        schema = by_name[name].outputSchema
+        schema = by_name[name].output_schema
         assert schema is not None, f"{name} has no outputSchema"
         assert schema.get("type") == "object", f"{name} outputSchema is not an object"
         assert not schema.get("x-fastmcp-wrap-result"), (

@@ -10,7 +10,6 @@ import subprocess
 import time
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
-from datetime import timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -251,7 +250,9 @@ def prime_jwks(settings: Settings):
 #   - sessions with no read timeout get a default one, covering the
 #     dead-but-open-connection case where no event ever arrives.
 # Mutable so tests of the hotfix itself can shrink the timeout.
-_CLIENT_SESSION_HOTFIX: dict[str, Any] = {"read_timeout": timedelta(seconds=30)}
+# mcp SDK v2's ClientSession.read_timeout_seconds is a bare float | None, not
+# the v1 timedelta -- store the float directly, matching the real signature.
+_CLIENT_SESSION_HOTFIX: dict[str, Any] = {"read_timeout": 30.0}
 
 
 @pytest.fixture(autouse=True)

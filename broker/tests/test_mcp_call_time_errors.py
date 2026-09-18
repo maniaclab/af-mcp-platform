@@ -137,7 +137,7 @@ async def test_upstream_mcp_level_error_passes_through_unchanged(
             async with Client(transport) as client:
                 result = await client.call_tool_mcp("toy_boom", {})
 
-    assert result.isError is True
+    assert result.is_error is True
     assert len(result.content) == 1
     assert result.content[0].text == "boom from backend"
 
@@ -192,7 +192,12 @@ async def test_slow_backend_call_times_out_cleanly_instead_of_hanging(
             )
             async with Client(transport) as client:
                 started = time.monotonic()
-                with pytest.raises(ToolError, match="Timed out"):
+                # fastmcp v4 normalizes a proxy transport timeout to its own
+                # "Upstream request timed out" message (raised via
+                # _proxy_upstream_error), replacing mcp v1's raw "Timed out
+                # while waiting for response to..." text -- match
+                # case-insensitively on the substring both wordings share.
+                with pytest.raises(ToolError, match=r"(?i)timed out"):
                     await client.call_tool("slow_slow", {})
                 elapsed = time.monotonic() - started
 
