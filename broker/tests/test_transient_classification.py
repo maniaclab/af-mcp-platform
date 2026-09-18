@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import anyio
-import httpx
+import httpx2
 import pytest
 from fastmcp.exceptions import ToolError
 
@@ -20,11 +20,11 @@ from af_mcp_broker.mcp.errors import (
 @pytest.mark.parametrize(
     "exc",
     [
-        httpx.ConnectError("connection refused"),
-        httpx.ConnectTimeout("connect timed out"),
-        httpx.ReadError("no more data to read from socket"),
-        httpx.WriteError("failed to write to socket"),
-        httpx.RemoteProtocolError("server disconnected without sending a response"),
+        httpx2.ConnectError("connection refused"),
+        httpx2.ConnectTimeout("connect timed out"),
+        httpx2.ReadError("no more data to read from socket"),
+        httpx2.WriteError("failed to write to socket"),
+        httpx2.RemoteProtocolError("server disconnected without sending a response"),
         anyio.EndOfStream(),
         anyio.ClosedResourceError(),
         anyio.BrokenResourceError(),
@@ -44,12 +44,12 @@ def test_transient_connection_exceptions_are_classified_transient(
         RuntimeError("credential provider unreachable"),
         ValueError("bad argument"),
         ToolError("boom from backend"),
-        httpx.HTTPStatusError(
+        httpx2.HTTPStatusError(
             "500",
-            request=httpx.Request("GET", "http://x"),
-            response=httpx.Response(500),
+            request=httpx2.Request("GET", "http://x"),
+            response=httpx2.Response(500),
         ),
-        httpx.LocalProtocolError("we sent a malformed request"),
+        httpx2.LocalProtocolError("we sent a malformed request"),
     ],
 )
 def test_non_transient_exceptions_are_classified_backend_error(
@@ -65,7 +65,7 @@ def test_transient_cause_wrapped_in_tool_error_is_seen_through_the_chain() -> No
     the chain, not just inspect the top-level type. Setting ``__cause__``
     directly is exactly what ``raise ... from`` records."""
     exc = ToolError("Error calling tool 'ami_get_dataset_info'")
-    exc.__cause__ = httpx.RemoteProtocolError("Closed Connection")
+    exc.__cause__ = httpx2.RemoteProtocolError("Closed Connection")
     assert classify_backend_error(exc) == ERROR_CLASS_TRANSIENT
 
 

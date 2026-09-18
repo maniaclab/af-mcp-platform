@@ -4,7 +4,7 @@ import io
 import json
 from typing import TYPE_CHECKING, Any
 
-import httpx
+import httpx2
 import mcp.types as mt
 import pytest
 from fastmcp.exceptions import AuthorizationError, ToolError
@@ -516,7 +516,7 @@ def _tool_error_from_transient() -> ToolError:
     broker->backend call's socket fails mid-response. Setting ``__cause__``
     directly is what ``raise ... from`` records."""
     err = ToolError("Error calling tool 'ami_get_dataset_info'")
-    err.__cause__ = httpx.RemoteProtocolError(
+    err.__cause__ = httpx2.RemoteProtocolError(
         "Server disconnected -- Closed Connection"
     )
     return err
