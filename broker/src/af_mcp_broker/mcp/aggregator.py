@@ -11,7 +11,7 @@ from __future__ import annotations
 # once SERVICES_FILE/POLICY_FILE/the credential subsystem have actually been
 # loaded. The client_factory below deliberately never forwards the caller's
 # inbound Authorization header to a service; see its docstring.
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 import httpx2
 import structlog
@@ -28,7 +28,7 @@ from fastmcp.server.providers.proxy import (
     default_proxy_log_handler,
     default_proxy_progress_handler,
 )
-from mcp.types import ClientCapabilities, ElicitationCapability
+from mcp.types import ClientCapabilities, ElicitationCapability, ToolAnnotations
 from starlette.middleware import Middleware
 
 from af_mcp_broker.authorization import get_principal_permissions
@@ -305,18 +305,37 @@ def _might_be_entitled(
     return not required or bool(required & get_principal_permissions(principal, policy))
 
 
+class ToolListingEntry(NamedTuple):
+    """One tool as ``fetch_service_tool_listing`` and the builtin-service listing (``api/catalog_tools.py``) both see it (issue #238 B.7).
+
+    A bare ``(name, description)`` pair used to be all either path kept, so
+    ``/v1/catalog``'s per-service tool listing could never show a read/write
+    badge even once a backend declared one, and a client comparing
+    ``GET /v1/catalog/{service}/tools`` against a real ``tools/list`` saw
+    less than the latter carries. ``annotations`` is forwarded verbatim (or
+    ``None`` if the tool declared none); ``has_output_schema`` is a bare
+    presence flag, not the schema itself -- the payload stays light, schemas
+    belong to the MCP client.
+    """
+
+    name: str
+    description: str
+    annotations: ToolAnnotations | None
+    has_output_schema: bool
+
+
 async def fetch_service_tool_listing(
     spec: ServiceSpec,
     headers: dict[str, str] | None,
     skip_reason: str | None,
-) -> tuple[str, list[tuple[str, str]]]:
+) -> tuple[str, list[ToolListingEntry]]:
     """Connect to *spec* once and list its tools.
 
     *headers*/*skip_reason* come from ``resolve_list_time_credential``.
     Returns ``(status, tools)``: status is "ok" or a ``_classify_failure``
     reason ("not_linked" | "unauthorized" | "unavailable"), and tools are
-    ``(name, description)`` pairs with ``ServiceSpec.apply_namespace``
-    already applied -- the names a caller actually sees through /mcp.
+    ``ToolListingEntry``s with ``ServiceSpec.apply_namespace`` already
+    applied to the name -- the names a caller actually sees through /mcp.
     Deliberately built on ``_build_client`` (same transport choice, per-call
     timeout, and notification handlers as the aggregator's own factories)
     rather than a second HTTP code path.
@@ -330,7 +349,12 @@ async def fetch_service_tool_listing(
         reason = _classify_failure(exc, injected=bool(headers), skip_reason=skip_reason)
         return reason, []
     return "ok", [
-        (namespaced_tool_name(spec, tool.name), tool.description or "")
+        ToolListingEntry(
+            name=namespaced_tool_name(spec, tool.name),
+            description=tool.description or "",
+            annotations=tool.annotations,
+            has_output_schema=tool.output_schema is not None,
+        )
         for tool in tools
     ]
 

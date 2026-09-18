@@ -23,6 +23,7 @@ from fastmcp import FastMCP
 from fastmcp.server.dependencies import get_http_headers
 from fastmcp.utilities.http import find_available_port
 from fastmcp.utilities.tests import run_server_async
+from mcp.types import ToolAnnotations
 from starlette.middleware import Middleware
 from starlette.responses import JSONResponse
 
@@ -97,9 +98,33 @@ def _open_backend() -> FastMCP:
     return mcp
 
 
+def _annotated_backend() -> FastMCP:
+    """A backend declaring the annotations/outputSchema metadata issue #238
+    B.7 forwards through GET /v1/catalog/{service}/tools."""
+    mcp = FastMCP(name="annotated-backend")
+
+    @mcp.tool(annotations=ToolAnnotations(read_only_hint=True, open_world_hint=True))
+    def read_thing() -> str:
+        """Read something, declaring an outputSchema and read_only_hint."""
+        return "value"
+
+    @mcp.tool
+    def bare_thing():  # deliberately untyped: no return annotation, no outputSchema
+        """No annotations, no return type annotation, so no outputSchema."""
+        return "untyped"
+
+    return mcp
+
+
 @pytest.fixture
 async def open_backend_url() -> AsyncIterator[str]:
     async with run_server_async(_open_backend(), path="/mcp") as url:
+        yield url
+
+
+@pytest.fixture
+async def annotated_backend_url() -> AsyncIterator[str]:
+    async with run_server_async(_annotated_backend(), path="/mcp") as url:
         yield url
 
 
@@ -278,6 +303,38 @@ async def test_open_backend_lists_namespaced_tools(
     # Light payload by design: never a tool's full input schema.
     assert "inputSchema" not in resp.text
     assert "input_schema" not in resp.text
+
+
+async def test_tool_listing_carries_annotations_and_output_schema_presence(
+    policy: EntitlementPolicy,
+    make_principal: Callable[..., Any],
+    annotated_backend_url: str,
+) -> None:
+    """issue #238 B.7: GET /v1/catalog/{service}/tools must carry the same
+    annotations/outputSchema-presence metadata a real tools/list through
+    /mcp does, not just name/description/permission -- otherwise the portal
+    can never show a read/write badge even once a backend declares one."""
+    registry = ServiceRegistry()
+    registry.register(_spec("annotated", annotated_backend_url))
+    app, state = _make_app(registry, policy)
+    state["principal"] = make_principal(groups=[])
+
+    resp = await _get_tools(app, "annotated")
+    assert resp.status_code == 200, resp.text
+    tools = {t["name"]: t for t in resp.json()["tools"]}
+
+    # ToolAnnotations serializes over the wire the same way MCP's own JSON-RPC
+    # wire format does -- camelCase -- even though the SDK's Python-side
+    # field names are snake_case (see mcp/diagnostics.py's ToolAnnotations
+    # construction); FastAPI's response_model_by_alias default matches that.
+    read_thing = tools["annotated_read_thing"]
+    assert read_thing["annotations"]["readOnlyHint"] is True
+    assert read_thing["annotations"]["openWorldHint"] is True
+    assert read_thing["has_output_schema"] is True
+
+    bare_thing = tools["annotated_bare_thing"]
+    assert bare_thing["annotations"] is None
+    assert bare_thing["has_output_schema"] is False
 
 
 async def test_display_name_falls_back_to_service_name(
@@ -815,6 +872,11 @@ async def test_builtin_service_lists_the_af_methods_locally(
     for tool in tools.values():
         assert tool["description"]
         assert tool["action_type"] == "read"
+        # issue #238 B.6/B.7: every af_* tool declares read_only_hint=True,
+        # and this local (non-network) listing path must carry it through
+        # too, not just the remote fetch_service_tool_listing path.
+        assert tool["annotations"]["readOnlyHint"] is True
+        assert tool["has_output_schema"] is True
     # Light payload by design, same as every other service's listing.
     assert "inputSchema" not in resp.text
 
