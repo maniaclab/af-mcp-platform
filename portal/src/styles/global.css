@@ -1,6 +1,6 @@
 /*
  * global.css — Tailwind v4 entrypoint and single source of truth for the
- * AF palette, fonts, and type scale.
+ * AF palette, fonts, type scale, and light/dark theming.
  *
  * Tailwind 4 is CSS-first: the JS `tailwind.config.mjs` is gone. Design tokens
  * are declared here in a `@theme` block. Tailwind generates matching utility
@@ -9,29 +9,103 @@
  * .vue / .astro files reference them via `var(--color-af-teal)`.
  *
  * If you change a color here, that is the ONLY place it needs to change.
+ *
+ * ---------------------------------------------------------------------
+ * Theming — "the void becomes the ink"
+ * ---------------------------------------------------------------------
+ * Two themes share one token set. DARK is the detector-console's native
+ * look (see DESIGN.md's "Creative North Star"); LIGHT is not an inversion —
+ * it's a cool blue-grey blueprint-paper page where the near-black `af-void`
+ * that used to be the dark page's *ground* becomes `af-text`, the light
+ * page's *ink*. Same cold undertone in both, so they read as one instrument
+ * in two lighting conditions.
+ *
+ * Mechanism: the `@theme` block below holds the LIGHT values as the
+ * unconditional default (matching Basecoat's own convention: its `:root` is
+ * light, its `.dark` is the override). The `.dark { ... }` block further
+ * down holds DARK overrides for the same custom properties, unlayered — an
+ * unlayered rule beats any rule inside a `@layer` (which is what `@theme`
+ * compiles into) regardless of specificity or source order, the same
+ * mechanism the `dialog:modal` rule at the bottom of this file already
+ * relies on. Because every `var(--color-af-*)` reference re-resolves live
+ * against the cascade, `.dark`'s presence or absence on `<html>` is the only
+ * thing that needs to change for every consumer — the ~700 scoped `<style>`
+ * blocks across the app, the Basecoat bridge below, and the two canvas
+ * palettes in src/lib/particleTracks.ts — to follow.
+ *
+ * `.dark` on `<html>` specifically (not any other element) is required by
+ * Basecoat's own `@custom-variant dark (&:is(html.dark *))` — its shipped
+ * component CSS uses `dark:` Tailwind utilities throughout (e.g.
+ * `dark:bg-input/30`), so our AF tokens and Basecoat's own dark-mode
+ * utilities have to key off the exact same class in the exact same place or
+ * they'll desync. src/lib/theme.ts and themeInitScript.js both toggle
+ * `.dark` on `document.documentElement` for this reason.
+ *
+ * A hover "lift" wash (previously three separate `rgba(255, 255, 255, …)`
+ * literals) has no token of its own — `rgb(from var(--color-af-text) r g b
+ * / <alpha>)` already inverts correctly per theme (af-text is near-white in
+ * dark mode, near-black/ink in light mode), matching the derivation pattern
+ * ~180 other rules in this codebase already use, so a dedicated token would
+ * only duplicate it.
+ *
+ * Contrast (WCAG 2.1, sRGB relative luminance): every text-bearing light
+ * token clears AA (4.5:1) against both its card (#fff) and page (#e9edf2)
+ * ground — af-dim 7.56:1/6.43:1, af-label 5.84:1/4.97:1, af-text
+ * 19.25:1/16.38:1, af-teal 6.20:1/5.28:1, af-amber 5.33:1/4.54:1, af-red
+ * 6.47:1/5.50:1, af-green 5.86:1/4.99:1 — see
+ * src/lib/__tests__/globalCssContrast.test.ts, which parses this file and
+ * re-checks these ratios so they can't silently regress.
  */
 
 @import 'tailwindcss';
+@import 'basecoat-css';
 
 @plugin '@tailwindcss/forms';
 @plugin '@tailwindcss/typography';
 
 @theme {
   /* --------------------------------------------------------------------
-   * Ground palette — drawn from detector visualization: the void of a
-   * collision event display and the Cherenkov radiation track spectrum.
+   * Ground palette (LIGHT — the default; see the theming note above).
+   * "Blueprint paper": a cool blue-grey page and white cards, both drawn
+   * from the same cold undertone as the dark theme's void/Cherenkov teal.
    * ------------------------------------------------------------------ */
-  --color-af-void: #0a0e1a; /* near-black ground */
-  --color-af-surface: #111827; /* elevated surface (cards, panels) */
-  --color-af-border: #1f2937; /* structural dividers */
-  --color-af-muted: #374151; /* muted borders and disabled states -- never text, fails contrast */
-  --color-af-dim: #9ca3af; /* secondary text, labels -- 6.99:1 on surface, 7.58:1 on void (WCAG AA) */
-  --color-af-label: #838d99; /* tertiary/label text (eyebrows, uppercase labels) -- 5.27:1 on surface, 5.72:1 on void */
-  --color-af-text: #e8ecf0; /* primary text */
-  --color-af-teal: #00d4c8; /* Cherenkov accent — primary action */
-  --color-af-amber: #f59e0b; /* calorimeter heat — warnings, state-change */
-  --color-af-red: #ef4444; /* error, revoke */
-  --color-af-green: #10b981; /* active/healthy status */
+  --color-af-void: #e9edf2; /* page ground — blueprint paper */
+  --color-af-surface: #ffffff; /* elevated surface (cards, panels) */
+  --color-af-border: #cdd5df; /* structural dividers -- 1.48:1 on card, non-text */
+  --color-af-muted: #7d8a99; /* muted borders and disabled states -- never text; 3.52:1 on card (WCAG 1.4.11 non-text) */
+  --color-af-dim: #4b5563; /* secondary text, labels -- 7.56:1 on card, 6.43:1 on page (WCAG AA) */
+  --color-af-label: #5b6673; /* tertiary/label text (eyebrows, uppercase labels) -- 5.84:1 on card, 4.97:1 on page */
+  --color-af-text: #0a0e1a; /* primary text -- the dark theme's void, now the ink */
+  --color-af-teal: #046d66; /* Cherenkov accent — primary action -- 6.20:1 on card */
+  --color-af-amber: #92610a; /* calorimeter heat — warnings, state-change -- 5.33:1 on card */
+  --color-af-red: #b91c1c; /* error, revoke -- 6.47:1 on card */
+  --color-af-green: #0a7350; /* active/healthy status -- 5.86:1 on card */
+  --color-af-on-accent: #ffffff; /* text/icon color over a filled teal/amber/red/green control */
+
+  /* A fixed dark scrim/shadow in BOTH themes, not a per-theme pair: a
+   * backdrop's job is to dim what's behind it regardless of the app's own
+   * theme (native <dialog>::backdrop and Basecoat's own
+   * `.dialog::backdrop { @apply bg-black/10 }` both default to a fixed
+   * black wash the same way) -- named here rather than left as a magic
+   * literal at each call site. */
+  --color-af-scrim: rgb(0 0 0 / 0.5); /* backdrop behind an off-canvas panel */
+  --color-af-panel-shadow: rgb(
+    0 0 0 / 0.4
+  ); /* the one directional shadow (a floating/overlaying surface) */
+
+  /* Particle-track canvas palette (src/lib/particleTracks.ts) — "R G B"
+   * channel triplets, since canvas fillStyle/strokeStyle can't resolve CSS
+   * custom properties and the module composes rgb(<triplet> / alpha)
+   * strings from these at draw time. LIGHT: ink tracks on paper — deepened
+   * teal/amber plus a slate ink in place of the dark theme's near-white,
+   * and a higher alpha floor/span since the dark-tuned 0.15 floor is
+   * invisible on a pale ground. */
+  --af-canvas-track-a: 0 98 93; /* deepened teal */
+  --af-canvas-track-b: 146 97 10; /* deepened amber */
+  --af-canvas-track-c: 51 65 85; /* slate ink, replacing the dark theme's near-white */
+  --af-canvas-grid: 195 204 216; /* barrel-ring stroke */
+  --af-canvas-alpha-floor: 0.25;
+  --af-canvas-alpha-span: 0.5;
 
   /* --------------------------------------------------------------------
    * Fonts — self-hosted IBM Plex woff2 files live in portal/public/fonts/.
@@ -66,6 +140,70 @@
   --text-label--line-height: 1;
   --text-label--letter-spacing: 0.1em;
   --text-label--font-weight: 600;
+}
+
+/*
+ * DARK overrides — today's original detector-console values, unchanged,
+ * now scoped under .dark instead of being the unconditional default. See
+ * the "Theming" note at the top of this file for why this has to be
+ * unlayered and keyed on this exact class.
+ */
+.dark {
+  --color-af-void: #0a0e1a; /* near-black ground */
+  --color-af-surface: #111827; /* elevated surface (cards, panels) */
+  --color-af-border: #1f2937; /* structural dividers */
+  --color-af-muted: #374151; /* muted borders and disabled states -- never text, fails contrast */
+  --color-af-dim: #9ca3af; /* secondary text, labels -- 6.99:1 on surface, 7.58:1 on void (WCAG AA) */
+  --color-af-label: #838d99; /* tertiary/label text (eyebrows, uppercase labels) -- 5.27:1 on surface, 5.72:1 on void */
+  --color-af-text: #e8ecf0; /* primary text */
+  --color-af-teal: #00d4c8; /* Cherenkov accent — primary action */
+  --color-af-amber: #f59e0b; /* calorimeter heat — warnings, state-change */
+  --color-af-red: #ef4444; /* error, revoke */
+  --color-af-green: #10b981; /* active/healthy status */
+  --color-af-on-accent: #0a0e1a;
+
+  --af-canvas-track-a: 0 212 200;
+  --af-canvas-track-b: 245 158 11;
+  --af-canvas-track-c: 232 236 240;
+  --af-canvas-grid: 31 41 55;
+  --af-canvas-alpha-floor: 0.15;
+  --af-canvas-alpha-span: 0.45;
+
+  color-scheme: dark;
+}
+
+/*
+ * Basecoat bridge — drives shadcn's variable set from the AF tokens above
+ * instead of the other way around, one-directionally, so AF stays the
+ * source of truth and this whole block could be deleted without any AF
+ * token losing meaning. Every value here is a var() reference (not a
+ * literal), so it re-resolves automatically under .dark without needing to
+ * be repeated there — only `color-scheme` (a literal keyword) needs the
+ * explicit override above.
+ *
+ * Only the variables this build actually exercises today are bridged:
+ * Basecoat's base-layer universal-selector border/ring reset, body's
+ * background/foreground, and the tooltip component's foreground/background.
+ * --muted, --accent, --secondary, --sidebar-*, --popover-foreground and
+ * --card-foreground are deliberately left at Basecoat defaults for now:
+ * nothing shipped in this change uses them, and mapping them ahead of the
+ * component-migration PRs risks a bridge value nobody has actually checked
+ * against real content.
+ */
+:root {
+  --radius: 4px; /* DESIGN.md's Sharp-Not-Round rule, not Basecoat's own 0.625rem default */
+  --background: var(--color-af-void);
+  --foreground: var(--color-af-text);
+  --card: var(--color-af-surface);
+  --popover: var(--color-af-surface);
+  --border: var(--color-af-border);
+  --input: var(--color-af-muted);
+  --ring: var(--color-af-teal);
+  --primary: var(--color-af-teal);
+  --primary-foreground: var(--color-af-on-accent);
+  --muted-foreground: var(--color-af-dim);
+  --destructive: var(--color-af-red);
+  color-scheme: light;
 }
 
 /*

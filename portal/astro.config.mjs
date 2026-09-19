@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'astro/config';
 import vue from '@astrojs/vue';
 import tailwindcss from '@tailwindcss/vite';
+import { THEME_INIT_SCRIPT } from './src/lib/themeInitScript.js';
 
 // `astro dev` proxies /v1/* to the broker on :8080 so the Vue islands can hit
 // the real API in local dev. In production oauth2-proxy fronts both surfaces
@@ -37,6 +38,17 @@ if (!authSplashStyleMatch) {
 const authSplashStyleHash =
   'sha256-' + createHash('sha256').update(authSplashStyleMatch[1], 'utf8').digest('base64');
 
+// The anti-flash-of-wrong-theme bootstrap (Base.astro and PublicBase.astro
+// both render it via `<script is:inline set:html={THEME_INIT_SCRIPT} />`)
+// is is:inline for the same reason as the auth splash style above — it must
+// run before Astro's own stylesheet <link>, which opts it out of Astro's
+// CSP auto-hashing too. Unlike that style block, its content isn't literal
+// text in either .astro file (set:html injects it from this imported
+// constant at build time), so there's nothing for a source-file regex to
+// find — hashing the constant directly is both simpler and exact.
+const themeInitScriptHash =
+  'sha256-' + createHash('sha256').update(THEME_INIT_SCRIPT, 'utf8').digest('base64');
+
 export default defineConfig({
   integrations: [vue()],
   vite: {
@@ -51,6 +63,9 @@ export default defineConfig({
   server: { port: 4321 },
   security: {
     csp: {
+      scriptDirective: {
+        hashes: [themeInitScriptHash],
+      },
       styleDirective: {
         hashes: [authSplashStyleHash],
       },

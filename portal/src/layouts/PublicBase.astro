@@ -13,6 +13,7 @@
 import '../styles/global.css';
 import Fonts from '../components/Fonts.astro';
 import Footer from '../components/Footer.astro';
+import { THEME_INIT_SCRIPT } from '../lib/themeInitScript.js';
 
 interface Props {
   title?: string;
@@ -25,6 +26,9 @@ const { title = 'AF MCP Platform' } = Astro.props;
 <html lang="en" class="h-full">
   <head>
     <meta charset="UTF-8" />
+    <!-- Must run before any stylesheet -- see Base.astro's matching comment
+         and global.css's "Theming" docstring for why. -->
+    <script is:inline set:html={THEME_INIT_SCRIPT} />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title} — AF MCP Platform</title>
 
@@ -82,7 +86,7 @@ const { title = 'AF MCP Platform' } = Astro.props;
         <slot />
       </main>
 
-      <Footer />
+      <Footer showThemeToggle />
     </div>
   </body>
 </html>
