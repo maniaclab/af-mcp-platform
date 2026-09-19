@@ -62,6 +62,25 @@ def test_postgres_store_satisfies_the_abc() -> None:
     assert issubclass(PostgresUsageStore, UsageStore)
 
 
+async def test_start_bounds_the_pool_instead_of_asyncpgs_defaults(
+    postgres_dsn: str,
+) -> None:
+    """asyncpg.create_pool()'s own defaults (min_size=10, max_size=10) eagerly
+    open 10 connections per replica regardless of load -- with this store's
+    DSN commonly sharing a small Postgres instance with the maintenance-mode
+    store and a second broker deployment, that exhausted the instance's
+    max_connections during a routine rolling restart (issue: 2026-09-19
+    production incident). start() must request a much smaller pool."""
+    s = PostgresUsageStore(postgres_dsn)
+    await s.start()
+    try:
+        assert s._pool is not None
+        assert s._pool.get_min_size() <= 2
+        assert s._pool.get_max_size() <= 5
+    finally:
+        await s.aclose()
+
+
 async def test_start_ddl_is_idempotent(postgres_dsn: str) -> None:
     """start() runs CREATE TABLE/INDEX IF NOT EXISTS -- a second broker
     start (or a second replica) against the same database must not fail."""

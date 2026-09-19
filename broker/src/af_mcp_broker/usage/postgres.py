@@ -99,6 +99,20 @@ WHERE (ts AT TIME ZONE 'UTC')::date >= $1
 """
 
 
+# asyncpg.create_pool()'s own defaults are min_size=10, max_size=10 --
+# eagerly opening 10 connections per replica at start(), regardless of
+# actual load. This DSN commonly shares one small Postgres instance with
+# PostgresMaintenanceModeStore's own pool (maintenance.py) and, in
+# production, with a second broker deployment pointed at a sibling database
+# on the same server -- the unbounded defaults exhausted the instance's
+# max_connections during a routine rolling restart, once a second platform
+# instance (sharing the same Postgres server) was stood up alongside this
+# one (2026-09-19 production incident). Bounded down here rather than left
+# at the driver's default.
+_POOL_MIN_SIZE = 1
+_POOL_MAX_SIZE = 5
+
+
 class PostgresUsageStore(UsageStore):
     """asyncpg-pooled usage store over the ``af_mcp_usage_events`` table."""
 
@@ -107,7 +121,9 @@ class PostgresUsageStore(UsageStore):
         self._pool: asyncpg.Pool | None = None
 
     async def start(self) -> None:
-        self._pool = await asyncpg.create_pool(self._dsn)
+        self._pool = await asyncpg.create_pool(
+            self._dsn, min_size=_POOL_MIN_SIZE, max_size=_POOL_MAX_SIZE
+        )
         async with self._pool.acquire() as conn:
             await conn.execute(_DDL)
 
