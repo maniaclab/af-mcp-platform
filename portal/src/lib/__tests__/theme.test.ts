@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   applyResolvedTheme,
   cycleMode,
@@ -146,15 +146,23 @@ describe('THEME_MODES', () => {
 });
 
 describe('initTheme', () => {
-  beforeEach(() => {
-    document.documentElement.classList.remove('dark');
-    window.localStorage.clear();
-  });
-
-  afterEach(() => {
-    document.documentElement.classList.remove('dark');
-    window.localStorage.clear();
-  });
+  // A self-contained fake, not window.localStorage/document.documentElement --
+  // real browser storage turned out to be unreliably provided by this
+  // suite's jsdom environment depending on the Node runtime (undefined in
+  // CI's Node 26 even via window.localStorage, though it worked locally on
+  // Node 24), and a fresh element/Map per test needs no beforeEach/afterEach
+  // cleanup at all, matching the setMode tests' own fakeStorage() above.
+  function fakeStorage(): Storage {
+    const data = new Map<string, string>();
+    return {
+      getItem: (k: string) => data.get(k) ?? null,
+      setItem: (k: string, v: string) => void data.set(k, v),
+      removeItem: (k: string) => void data.delete(k),
+      clear: () => data.clear(),
+      key: () => null,
+      length: 0,
+    };
+  }
 
   it('re-applies the resolved theme when the system preference changes while in auto mode', () => {
     let listener: ((e: Pick<MediaQueryListEvent, 'matches'>) => void) | undefined;
@@ -166,16 +174,18 @@ describe('initTheme', () => {
       removeEventListener: vi.fn(),
     };
     const win = { matchMedia: vi.fn().mockReturnValue(mql) } as unknown as Window;
+    const root = document.createElement('html');
 
-    initTheme({ root: document.documentElement, win, storage: window.localStorage });
-    expect(document.documentElement.classList.contains('dark')).toBe(false);
+    initTheme({ root, win, storage: fakeStorage() });
+    expect(root.classList.contains('dark')).toBe(false);
 
     listener?.({ matches: true });
-    expect(document.documentElement.classList.contains('dark')).toBe(true);
+    expect(root.classList.contains('dark')).toBe(true);
   });
 
   it('does not react to system changes once an explicit mode is stored', () => {
-    window.localStorage.setItem(THEME_STORAGE_KEY, 'light');
+    const storage = fakeStorage();
+    storage.setItem(THEME_STORAGE_KEY, 'light');
     let listener: ((e: Pick<MediaQueryListEvent, 'matches'>) => void) | undefined;
     const mql = {
       matches: false,
@@ -185,10 +195,11 @@ describe('initTheme', () => {
       removeEventListener: vi.fn(),
     };
     const win = { matchMedia: vi.fn().mockReturnValue(mql) } as unknown as Window;
+    const root = document.createElement('html');
 
-    initTheme({ root: document.documentElement, win, storage: window.localStorage });
+    initTheme({ root, win, storage });
     listener?.({ matches: true });
     // Explicit "light" wins even though the system now reports dark.
-    expect(document.documentElement.classList.contains('dark')).toBe(false);
+    expect(root.classList.contains('dark')).toBe(false);
   });
 });
