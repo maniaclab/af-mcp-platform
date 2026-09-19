@@ -1,0 +1,117 @@
+---
+/**
+ * ThemeToggle.astro — the AUTO / DARK / LIGHT theme control. Self-contained:
+ * its own scoped styles and its own bundled <script> wire up ARIA state,
+ * click, and arrow-key handling, so both Base.astro's topbar and Footer.astro
+ * (for the unauthenticated public pages) can render it without either layout
+ * knowing anything about theme state.
+ *
+ * A real `role="radiogroup"` rather than a single cycling button: AUTO,
+ * DARK, and LIGHT are three genuinely distinct, always-visible states (not
+ * a click-through cycle where "back to AUTO" is hidden), matching how a
+ * physical mode switch on an instrument panel reads.
+ */
+const MODES: { value: 'auto' | 'dark' | 'light'; label: string }[] = [
+  { value: 'auto', label: 'Auto' },
+  { value: 'dark', label: 'Dark' },
+  { value: 'light', label: 'Light' },
+];
+---
+
+<div class="theme-toggle" role="radiogroup" aria-label="Theme" data-theme-toggle>
+  {
+    MODES.map(({ value, label }) => (
+      <button
+        type="button"
+        class="theme-toggle__option"
+        role="radio"
+        aria-checked="false"
+        tabindex="-1"
+        data-theme-value={value}
+      >
+        {label}
+      </button>
+    ))
+  }
+</div>
+
+<style>
+  .theme-toggle {
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid var(--color-af-border);
+    border-radius: 4px;
+    padding: 2px;
+    gap: 2px;
+  }
+
+  .theme-toggle__option {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-af-dim);
+    background: transparent;
+    border: none;
+    border-radius: 2px;
+    padding: 0.25rem 0.5rem;
+    cursor: pointer;
+    transition:
+      color 150ms,
+      background-color 150ms;
+  }
+
+  .theme-toggle__option:hover {
+    color: var(--color-af-text);
+  }
+
+  .theme-toggle__option:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px rgb(from var(--color-af-teal) r g b / 0.15);
+  }
+
+  .theme-toggle__option[aria-checked='true'] {
+    color: var(--color-af-on-accent);
+    background: var(--color-af-teal);
+  }
+</style>
+
+<script>
+  import { getStoredMode, initTheme, setMode, type ThemeMode } from '../lib/theme';
+
+  initTheme();
+
+  for (const group of document.querySelectorAll<HTMLElement>('[data-theme-toggle]')) {
+    const options = Array.from(group.querySelectorAll<HTMLButtonElement>('[data-theme-value]'));
+
+    function syncChecked(mode: ThemeMode): void {
+      for (const option of options) {
+        const checked = option.dataset.themeValue === mode;
+        option.setAttribute('aria-checked', String(checked));
+        option.tabIndex = checked ? 0 : -1;
+      }
+    }
+
+    function choose(mode: ThemeMode): void {
+      setMode(mode);
+      syncChecked(mode);
+    }
+
+    syncChecked(getStoredMode(window.localStorage));
+
+    options.forEach((option, index) => {
+      option.addEventListener('click', () => choose(option.dataset.themeValue as ThemeMode));
+
+      // Roving-tabindex arrow-key navigation, standard for role="radiogroup".
+      option.addEventListener('keydown', (event) => {
+        if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+        event.preventDefault();
+        const delta = event.key === 'ArrowRight' ? 1 : -1;
+        const next = options[(index + delta + options.length) % options.length];
+        next.focus();
+        choose(next.dataset.themeValue as ThemeMode);
+      });
+    });
+  }
+</script>

@@ -5,7 +5,7 @@ import type { CatalogServer, ServerToolsResponse } from '../lib/api';
 import type { PoweredBy } from '../lib/catalog';
 import { resolveServiceStatus, resolvePoweredByLinked } from '../lib/serviceStatus';
 import { resolveToolListing, toolCountLabel } from '../lib/serverTools';
-import InfoTooltip from './InfoTooltip.vue';
+import PopoverTooltip from './PopoverTooltip.vue';
 import ToolTable from './ToolTable.vue';
 
 const props = defineProps<{
@@ -14,6 +14,11 @@ const props = defineProps<{
 }>();
 
 const actionLabel = props.server.action_type === 'state_change' ? 'write' : 'read';
+// Computed once, alongside actionLabel, rather than re-evaluated in the template.
+const actionTooltip =
+  props.server.action_type === 'state_change'
+    ? 'Has at least one state-changing tool — use with care'
+    : 'Read-only — no side effects';
 const statusView = computed(() => resolveServiceStatus(props.server));
 // "link_required" is authoritative over the identities response's own
 // linked flag -- see resolvePoweredByLinked's docstring for why the two can
@@ -74,7 +79,7 @@ async function toggleTools() {
              with no configured display_name would otherwise show the same
              string twice, once in each style. -->
         <span v-if="server.name !== server.display_name" class="bc__prefix">{{ server.name }}</span>
-        <InfoTooltip v-if="server.description" :tooltip-id="`bc-desc-${server.name}`">
+        <PopoverTooltip v-if="server.description" :tooltip-id="`bc-desc-${server.name}`" side="top">
           <button
             type="button"
             class="bc__info-icon"
@@ -84,7 +89,7 @@ async function toggleTools() {
             <span aria-hidden="true">ⓘ</span>
           </button>
           <template #tooltip>{{ server.description }}</template>
-        </InfoTooltip>
+        </PopoverTooltip>
       </div>
 
       <div class="bc__header-right">
@@ -98,7 +103,11 @@ async function toggleTools() {
              one badge that could truthfully summarize that, so this shows
              "mixed" and points at the per-tool Methods list below instead of
              either guessing or rendering an empty badge. -->
-        <InfoTooltip v-if="server.permission === null" :tooltip-id="`bc-cap-${server.name}`">
+        <PopoverTooltip
+          v-if="server.permission === null"
+          :tooltip-id="`bc-cap-${server.name}`"
+          side="top"
+        >
           <button
             type="button"
             class="bc__cap-badge bc__cap-badge--mixed"
@@ -106,29 +115,31 @@ async function toggleTools() {
           >
             mixed
           </button>
-          <template #tooltip>
-            Different methods require different permissions — see Methods below for each one.
-          </template>
-        </InfoTooltip>
-        <InfoTooltip
+          <template #tooltip
+            >Different methods require different permissions — see Methods below for each
+            one.</template
+          >
+        </PopoverTooltip>
+        <PopoverTooltip
           v-else-if="server.permission !== '__none__'"
           :tooltip-id="`bc-cap-${server.name}`"
+          side="top"
         >
           <button type="button" class="bc__cap-badge" :aria-describedby="`bc-cap-${server.name}`">
             {{ server.permission }}
           </button>
           <template #tooltip>Requires permission: {{ server.permission }}</template>
-        </InfoTooltip>
+        </PopoverTooltip>
 
         <!-- The builtin af-mcp entry (issue #240) has no per-user credential
              concept at all -- a "none" credential-type badge would read like
              a state to fix, so it renders no badge instead. -->
-        <InfoTooltip v-if="!server.builtin" :tooltip-id="`bc-auth-${server.name}`">
+        <PopoverTooltip v-if="!server.builtin" :tooltip-id="`bc-auth-${server.name}`" side="top">
           <button type="button" class="bc__auth-badge" :aria-describedby="`bc-auth-${server.name}`">
             {{ server.auth_type }}
           </button>
           <template #tooltip>Credential type: {{ server.auth_type }}</template>
-        </InfoTooltip>
+        </PopoverTooltip>
 
         <span
           v-if="server.status !== 'available'"
@@ -139,7 +150,7 @@ async function toggleTools() {
           {{ statusView.label }}
         </span>
 
-        <InfoTooltip :tooltip-id="`bc-count-${server.name}`">
+        <PopoverTooltip :tooltip-id="`bc-count-${server.name}`" side="top">
           <button
             type="button"
             class="bc__count"
@@ -148,14 +159,8 @@ async function toggleTools() {
           >
             {{ actionLabel }}
           </button>
-          <template #tooltip>
-            {{
-              server.action_type === 'state_change'
-                ? 'Has at least one state-changing tool — use with care'
-                : 'Read-only — no side effects'
-            }}
-          </template>
-        </InfoTooltip>
+          <template #tooltip>{{ actionTooltip }}</template>
+        </PopoverTooltip>
       </div>
     </div>
 

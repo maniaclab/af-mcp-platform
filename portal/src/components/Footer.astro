@@ -4,6 +4,16 @@
  * authenticated app shell) and PublicBase.astro (the unauthenticated
  * landing page) so the two layouts don't each carry their own copy.
  */
+import ThemeToggle from './ThemeToggle.astro';
+
+interface Props {
+  // Base.astro's topbar already renders its own ThemeToggle -- PublicBase.astro
+  // has no chrome at all, so it opts into this one instead. Defaulting to
+  // false keeps Base.astro's page from rendering the control twice.
+  showThemeToggle?: boolean;
+}
+
+const { showThemeToggle = false } = Astro.props;
 const appVersion = import.meta.env.PUBLIC_APP_VERSION || 'dev';
 ---
 
@@ -23,6 +33,7 @@ const appVersion = import.meta.env.PUBLIC_APP_VERSION || 'dev';
   >
     © Giordon Stark
   </a>
+  {showThemeToggle && <ThemeToggle />}
 </footer>
 
 <style>

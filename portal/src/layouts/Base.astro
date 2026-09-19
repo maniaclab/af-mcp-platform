@@ -17,6 +17,8 @@
 import '../styles/global.css';
 import Fonts from '../components/Fonts.astro';
 import Footer from '../components/Footer.astro';
+import ThemeToggle from '../components/ThemeToggle.astro';
+import { THEME_INIT_SCRIPT } from '../lib/themeInitScript.js';
 
 interface Props {
   title?: string;
@@ -100,6 +102,17 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
 <html lang="en" class="h-full">
   <head>
     <meta charset="UTF-8" />
+    <!--
+      Must run before any stylesheet -- global.css's LIGHT default and
+      Basecoat's own dark: utilities both key off .dark on this exact
+      element (see global.css's "Theming" docstring), so it has to be
+      applied before CSS is evaluated for layout, not after. is:inline (like
+      the auth-splash <style> further down) keeps this a literal, unbundled,
+      render-blocking script instead of the deferred module Astro would
+      normally turn a <script> into -- see astro.config.mjs for how its hash
+      reaches the CSP without regex-scanning this file.
+    -->
+    <script is:inline set:html={THEME_INIT_SCRIPT} />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title} — AF MCP Platform</title>
 
@@ -410,7 +423,7 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
         }
         .af-sidebar.is-open {
           transform: translateX(0);
-          box-shadow: 4px 0 24px rgb(0 0 0 / 0.4);
+          box-shadow: 4px 0 24px var(--color-af-panel-shadow);
         }
 
         .af-sidebar-overlay {
@@ -418,7 +431,7 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
           position: fixed;
           inset: 0;
           z-index: 90;
-          background: rgb(0 0 0 / 0.5);
+          background: var(--color-af-scrim);
         }
         .af-sidebar-overlay[hidden] {
           display: none;
@@ -616,6 +629,8 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
           </a>
 
           <div class="af-topbar__spacer" aria-hidden="true"></div>
+
+          <ThemeToggle />
 
           <div class="af-topbar__user-group" data-af-user-holder hidden>
             <span class="af-topbar__user" data-af-identity aria-label="Signed in"></span>

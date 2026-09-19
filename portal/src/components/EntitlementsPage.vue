@@ -24,7 +24,7 @@ import {
   SessionExpiredError,
   type PermissionsResponse,
 } from '../lib/api';
-import InfoTooltip from './InfoTooltip.vue';
+import PopoverTooltip from './PopoverTooltip.vue';
 
 const groupPermissions = ref<Record<string, string[]>>({});
 const myGroups = ref<string[]>([]);
@@ -276,7 +276,7 @@ function meHasPermission(permission: string): boolean {
              horizontally now -- no writing-mode rotation anywhere. -->
         <div v-else class="ep__matrix-scroll">
           <table class="ep__matrix">
-            <caption class="ep__sr-only">
+            <caption class="sr-only">
               Permission to group entitlement matrix, with your resolved access pinned as the first
               column
             </caption>
@@ -317,18 +317,15 @@ function meHasPermission(permission: string): boolean {
                 :class="{ 'ep__matrix-row--divider': i === firstWriteIndex }"
               >
                 <th scope="row" class="ep__matrix-rowhead">
-                  <!-- The last row's tooltip opens upward: nothing below it
-                       in the table to visually extend into, so a downward
-                       bubble (present in the DOM at full size even hidden)
-                       inflated .ep__matrix-scroll's scrollable overflow past
-                       the table's own bottom edge -- the same phantom-
-                       scrollbar bug the group-header tooltips had
-                       horizontally, just vertically and on this one row. -->
-                  <InfoTooltip
-                    v-if="col.description"
-                    :tooltip-id="`ep-perm-${col.name}`"
-                    :placement="i === columns.length - 1 ? 'above' : 'below'"
-                  >
+                  <!-- No per-row side override needed for the last row:
+                       PopoverTooltip.vue's placement math flips to the
+                       opposite side on its own when the requested one has no
+                       room (computeTooltipPosition), and its bubble is a
+                       native [popover] -- top-layer, position: fixed -- so
+                       it never counts toward .ep__matrix-scroll's scrollable
+                       overflow the way an ordinary position: absolute
+                       element would. -->
+                  <PopoverTooltip v-if="col.description" :tooltip-id="`ep-perm-${col.name}`">
                     <button
                       type="button"
                       class="ep__matrix-rowhead-btn"
@@ -337,7 +334,7 @@ function meHasPermission(permission: string): boolean {
                       {{ col.name }}
                     </button>
                     <template #tooltip>{{ col.description }}</template>
-                  </InfoTooltip>
+                  </PopoverTooltip>
                   <span v-else class="ep__matrix-rowhead-plain">{{ col.name }}</span>
                 </th>
                 <td class="ep__matrix-cell ep__matrix-cell--you">
@@ -486,18 +483,6 @@ function meHasPermission(permission: string): boolean {
   border: 1px solid var(--color-af-border);
 }
 
-.ep__sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-}
-
 /* Matrix table */
 
 .ep__matrix-scroll {
@@ -604,10 +589,8 @@ function meHasPermission(permission: string): boolean {
   position: sticky;
   left: 0;
   /* Higher than .ep__matrix-colhead--you / .ep__matrix-cell--you (z-index 2
-     and 1): this cell's own InfoTooltip bubble overflows rightward past its
-     11rem width into the You column's box, and the two are tied siblings in
-     the row -- without this, the later-in-DOM You cell painted over the
-     open tooltip instead of the tooltip showing on top of it. */
+     and 1): this sticky left column needs to paint over the sticky You
+     column, not the other way around, as the table scrolls horizontally. */
   z-index: 3;
   background: var(--color-af-void);
   text-align: left;
@@ -618,14 +601,6 @@ function meHasPermission(permission: string): boolean {
   border-bottom: 1px solid var(--color-af-border);
   border-right: 1px solid var(--color-af-border);
   white-space: nowrap;
-}
-
-/* InfoTooltip's own root element (leaked into this scope via Vue's scoped
-   CSS, which reaches a child component's root node) defaults to
-   inline-flex -- block here so the button inside fills the cell the same
-   way .ep__matrix-rowhead-plain does in the no-description branch. */
-.ep__matrix-rowhead :deep(.info-tooltip) {
-  display: block;
 }
 
 .ep__matrix-rowhead-btn {

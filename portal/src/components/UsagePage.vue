@@ -279,7 +279,7 @@ function barHeight(calls: number): string {
 }
 .up__window-btn:hover {
   color: var(--color-af-text);
-  background: rgba(255, 255, 255, 0.04);
+  background: rgb(from var(--color-af-text) r g b / 0.04);
 }
 .up__window-btn:focus-visible {
   outline: 2px solid var(--color-af-teal);
