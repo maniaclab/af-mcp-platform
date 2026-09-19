@@ -2,7 +2,6 @@
 import { computed, ref } from 'vue';
 import type { CatalogTool } from '../lib/api';
 import { parseToolDescription } from '../lib/toolDescription';
-import InfoTooltip from './InfoTooltip.vue';
 
 const props = defineProps<{
   tools: CatalogTool[];
@@ -24,7 +23,14 @@ const rows = computed(() =>
     const teaser = paragraphs[0] ?? '';
     const restSummary = paragraphs.slice(1).join('\n\n');
     const hasMore = restSummary !== '' || parsed.args.length > 0 || parsed.returns !== null;
-    return { tool, parsed, teaser, restSummary, hasMore };
+    // Computed once per row rather than duplicated between the badge's
+    // data-tooltip attribute and its sr-only aria-describedby target below.
+    const badgeTooltip = `${
+      tool.action_type === 'state_change'
+        ? 'Modifies state — use with care.'
+        : 'Read-only — no side effects.'
+    } ${permissionNote(tool.permission)}`;
+    return { tool, parsed, teaser, restSummary, hasMore, badgeTooltip };
   }),
 );
 
@@ -58,39 +64,33 @@ function permissionNote(permission: string): string {
   -->
   <div class="tool-table" role="list" aria-label="Available methods">
     <div
-      v-for="{ tool, parsed, teaser, restSummary, hasMore } in rows"
+      v-for="{ tool, parsed, teaser, restSummary, hasMore, badgeTooltip } in rows"
       :key="tool.name"
       class="tool-table__row"
       role="listitem"
     >
       <div class="tool-table__row-header">
         <code class="tool-table__code">{{ tool.name }}</code>
-        <!-- Focusable button + aria-describedby tooltip, not a bare title
-             attribute -- same pattern as ServiceCard.vue's badges and
-             TokensPage.vue's note icon: keyboard-reachable and always
-             present in the DOM for assistive tech. -->
-        <InfoTooltip :tooltip-id="`tt-badge-${tool.name}`">
-          <button
-            type="button"
-            class="tool-table__badge"
-            :class="
-              tool.action_type === 'state_change'
-                ? 'tool-table__badge--state'
-                : 'tool-table__badge--read'
-            "
-            :aria-describedby="`tt-badge-${tool.name}`"
-          >
-            {{ tool.action_type === 'state_change' ? 'write' : 'read' }}
-          </button>
-          <template #tooltip>
-            {{
-              tool.action_type === 'state_change'
-                ? 'Modifies state — use with care.'
-                : 'Read-only — no side effects.'
-            }}
-            {{ permissionNote(tool.permission) }}
-          </template>
-        </InfoTooltip>
+        <!-- Basecoat's data-tooltip is CSS-only with no ARIA of its own --
+             the focusable trigger + aria-describedby pointing at an always-
+             present sr-only span (same pattern as ServiceCard.vue's badges
+             and TokensPage.vue's note icon) keeps the tooltip's meaning
+             reachable by keyboard and assistive tech, not just on hover. -->
+        <button
+          type="button"
+          class="tool-table__badge"
+          :class="
+            tool.action_type === 'state_change'
+              ? 'tool-table__badge--state'
+              : 'tool-table__badge--read'
+          "
+          :data-tooltip="badgeTooltip"
+          data-side="top"
+          :aria-describedby="`tt-badge-${tool.name}`"
+        >
+          {{ tool.action_type === 'state_change' ? 'write' : 'read' }}
+        </button>
+        <span :id="`tt-badge-${tool.name}`" class="sr-only">{{ badgeTooltip }}</span>
       </div>
 
       <p class="tool-table__summary">{{ teaser }}</p>

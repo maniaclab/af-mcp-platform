@@ -244,7 +244,7 @@ function poweredByFor(server: CatalogServer) {
 }
 .cp__filter-btn:hover {
   color: var(--color-af-text);
-  background: rgba(255, 255, 255, 0.04);
+  background: rgb(from var(--color-af-text) r g b / 0.04);
 }
 .cp__filter-btn:focus-visible {
   outline: 2px solid var(--color-af-teal);
@@ -383,15 +383,4 @@ function poweredByFor(server: CatalogServer) {
   text-decoration: underline;
 }
 
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-}
 </style>

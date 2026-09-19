@@ -36,7 +36,6 @@ import {
   pythonMintAndConnectSnippet,
 } from '../lib/tokenCliSnippets';
 import { getBrokerOrigin } from '../lib/auth';
-import InfoTooltip from './InfoTooltip.vue';
 
 const tokens = ref<TokenSummary[]>([]);
 const loading = ref(true);
@@ -411,21 +410,21 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
               <td class="tp__td">
                 <div class="tp__td-name-wrap">
                   <span class="tp__td-name">{{ row.name }}</span>
-                  <InfoTooltip
-                    v-if="row.note"
-                    :tooltip-id="`tp-note-${row.lookup_id}`"
-                    max-width="18rem"
-                  >
+                  <template v-if="row.note">
                     <button
                       type="button"
                       class="tp__note-icon"
+                      :data-tooltip="truncateNote(row.note)"
+                      data-side="top"
                       :aria-describedby="`tp-note-${row.lookup_id}`"
                       aria-label="Show note"
                     >
                       <span aria-hidden="true">ⓘ</span>
                     </button>
-                    <template #tooltip>{{ truncateNote(row.note) }}</template>
-                  </InfoTooltip>
+                    <span :id="`tp-note-${row.lookup_id}`" class="sr-only">{{
+                      truncateNote(row.note)
+                    }}</span>
+                  </template>
                 </div>
               </td>
               <td
@@ -764,18 +763,6 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
   max-width: 52rem;
 }
 
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-}
-
 /* Toolbar */
 .tp__toolbar {
   display: flex;
@@ -850,7 +837,7 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
    box rather than a compact list.
    overflow-y: hidden, set explicitly rather than left to its default --
    overflow-x: auto alone makes overflow-y compute to 'auto' too, and each
-   row's (invisible, opacity:0/visibility:hidden) InfoTooltip bubble is
+   row's (invisible, opacity:0) Basecoat tooltip `::before` is
    `position: absolute`, which doesn't affect this box's own auto-height
    but DOES count toward its *scrollable overflow* once it's a scroll
    container -- which is what was inflating this box well past its actual
@@ -897,7 +884,7 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
   transition: background 120ms;
 }
 .tp__row:hover {
-  background: rgba(255, 255, 255, 0.025);
+  background: rgb(from var(--color-af-text) r g b / 0.025);
 }
 .tp__row:last-child {
   border-bottom: none;

@@ -5,7 +5,6 @@ import type { CatalogServer, ServerToolsResponse } from '../lib/api';
 import type { PoweredBy } from '../lib/catalog';
 import { resolveServiceStatus, resolvePoweredByLinked } from '../lib/serviceStatus';
 import { resolveToolListing, toolCountLabel } from '../lib/serverTools';
-import InfoTooltip from './InfoTooltip.vue';
 import ToolTable from './ToolTable.vue';
 
 const props = defineProps<{
@@ -14,6 +13,13 @@ const props = defineProps<{
 }>();
 
 const actionLabel = props.server.action_type === 'state_change' ? 'write' : 'read';
+// Computed once, alongside actionLabel, rather than duplicated between the
+// count badge's data-tooltip attribute and its sr-only aria-describedby
+// target below.
+const actionTooltip =
+  props.server.action_type === 'state_change'
+    ? 'Has at least one state-changing tool — use with care'
+    : 'Read-only — no side effects';
 const statusView = computed(() => resolveServiceStatus(props.server));
 // "link_required" is authoritative over the identities response's own
 // linked flag -- see resolvePoweredByLinked's docstring for why the two can
@@ -74,17 +80,19 @@ async function toggleTools() {
              with no configured display_name would otherwise show the same
              string twice, once in each style. -->
         <span v-if="server.name !== server.display_name" class="bc__prefix">{{ server.name }}</span>
-        <InfoTooltip v-if="server.description" :tooltip-id="`bc-desc-${server.name}`">
+        <template v-if="server.description">
           <button
             type="button"
             class="bc__info-icon"
+            :data-tooltip="server.description"
+            data-side="top"
             :aria-describedby="`bc-desc-${server.name}`"
             aria-label="About this service"
           >
             <span aria-hidden="true">ⓘ</span>
           </button>
-          <template #tooltip>{{ server.description }}</template>
-        </InfoTooltip>
+          <span :id="`bc-desc-${server.name}`" class="sr-only">{{ server.description }}</span>
+        </template>
       </div>
 
       <div class="bc__header-right">
@@ -98,37 +106,52 @@ async function toggleTools() {
              one badge that could truthfully summarize that, so this shows
              "mixed" and points at the per-tool Methods list below instead of
              either guessing or rendering an empty badge. -->
-        <InfoTooltip v-if="server.permission === null" :tooltip-id="`bc-cap-${server.name}`">
+        <template v-if="server.permission === null">
           <button
             type="button"
             class="bc__cap-badge bc__cap-badge--mixed"
+            data-tooltip="Different methods require different permissions — see Methods below for each one."
+            data-side="top"
             :aria-describedby="`bc-cap-${server.name}`"
           >
             mixed
           </button>
-          <template #tooltip>
+          <span :id="`bc-cap-${server.name}`" class="sr-only">
             Different methods require different permissions — see Methods below for each one.
-          </template>
-        </InfoTooltip>
-        <InfoTooltip
-          v-else-if="server.permission !== '__none__'"
-          :tooltip-id="`bc-cap-${server.name}`"
-        >
-          <button type="button" class="bc__cap-badge" :aria-describedby="`bc-cap-${server.name}`">
+          </span>
+        </template>
+        <template v-else-if="server.permission !== '__none__'">
+          <button
+            type="button"
+            class="bc__cap-badge"
+            :data-tooltip="`Requires permission: ${server.permission}`"
+            data-side="top"
+            :aria-describedby="`bc-cap-${server.name}`"
+          >
             {{ server.permission }}
           </button>
-          <template #tooltip>Requires permission: {{ server.permission }}</template>
-        </InfoTooltip>
+          <span :id="`bc-cap-${server.name}`" class="sr-only"
+            >Requires permission: {{ server.permission }}</span
+          >
+        </template>
 
         <!-- The builtin af-mcp entry (issue #240) has no per-user credential
              concept at all -- a "none" credential-type badge would read like
              a state to fix, so it renders no badge instead. -->
-        <InfoTooltip v-if="!server.builtin" :tooltip-id="`bc-auth-${server.name}`">
-          <button type="button" class="bc__auth-badge" :aria-describedby="`bc-auth-${server.name}`">
+        <template v-if="!server.builtin">
+          <button
+            type="button"
+            class="bc__auth-badge"
+            :data-tooltip="`Credential type: ${server.auth_type}`"
+            data-side="top"
+            :aria-describedby="`bc-auth-${server.name}`"
+          >
             {{ server.auth_type }}
           </button>
-          <template #tooltip>Credential type: {{ server.auth_type }}</template>
-        </InfoTooltip>
+          <span :id="`bc-auth-${server.name}`" class="sr-only"
+            >Credential type: {{ server.auth_type }}</span
+          >
+        </template>
 
         <span
           v-if="server.status !== 'available'"
@@ -139,23 +162,17 @@ async function toggleTools() {
           {{ statusView.label }}
         </span>
 
-        <InfoTooltip :tooltip-id="`bc-count-${server.name}`">
-          <button
-            type="button"
-            class="bc__count"
-            :class="server.action_type === 'state_change' ? 'bc__count--state' : 'bc__count--read'"
-            :aria-describedby="`bc-count-${server.name}`"
-          >
-            {{ actionLabel }}
-          </button>
-          <template #tooltip>
-            {{
-              server.action_type === 'state_change'
-                ? 'Has at least one state-changing tool — use with care'
-                : 'Read-only — no side effects'
-            }}
-          </template>
-        </InfoTooltip>
+        <button
+          type="button"
+          class="bc__count"
+          :class="server.action_type === 'state_change' ? 'bc__count--state' : 'bc__count--read'"
+          :data-tooltip="actionTooltip"
+          data-side="top"
+          :aria-describedby="`bc-count-${server.name}`"
+        >
+          {{ actionLabel }}
+        </button>
+        <span :id="`bc-count-${server.name}`" class="sr-only">{{ actionTooltip }}</span>
       </div>
     </div>
 
