@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue';
 import type { CatalogTool } from '../lib/api';
 import { parseToolDescription } from '../lib/toolDescription';
+import PopoverTooltip from './PopoverTooltip.vue';
 
 const props = defineProps<{
   tools: CatalogTool[];
@@ -23,8 +24,7 @@ const rows = computed(() =>
     const teaser = paragraphs[0] ?? '';
     const restSummary = paragraphs.slice(1).join('\n\n');
     const hasMore = restSummary !== '' || parsed.args.length > 0 || parsed.returns !== null;
-    // Computed once per row rather than duplicated between the badge's
-    // data-tooltip attribute and its sr-only aria-describedby target below.
+    // Computed once per row rather than re-evaluated in the template.
     const badgeTooltip = `${
       tool.action_type === 'state_change'
         ? 'Modifies state — use with care.'
@@ -71,26 +71,21 @@ function permissionNote(permission: string): string {
     >
       <div class="tool-table__row-header">
         <code class="tool-table__code">{{ tool.name }}</code>
-        <!-- Basecoat's data-tooltip is CSS-only with no ARIA of its own --
-             the focusable trigger + aria-describedby pointing at an always-
-             present sr-only span (same pattern as ServiceCard.vue's badges
-             and TokensPage.vue's note icon) keeps the tooltip's meaning
-             reachable by keyboard and assistive tech, not just on hover. -->
-        <button
-          type="button"
-          class="tool-table__badge"
-          :class="
-            tool.action_type === 'state_change'
-              ? 'tool-table__badge--state'
-              : 'tool-table__badge--read'
-          "
-          :data-tooltip="badgeTooltip"
-          data-side="top"
-          :aria-describedby="`tt-badge-${tool.name}`"
-        >
-          {{ tool.action_type === 'state_change' ? 'write' : 'read' }}
-        </button>
-        <span :id="`tt-badge-${tool.name}`" class="sr-only">{{ badgeTooltip }}</span>
+        <PopoverTooltip :tooltip-id="`tt-badge-${tool.name}`" side="top">
+          <button
+            type="button"
+            class="tool-table__badge"
+            :class="
+              tool.action_type === 'state_change'
+                ? 'tool-table__badge--state'
+                : 'tool-table__badge--read'
+            "
+            :aria-describedby="`tt-badge-${tool.name}`"
+          >
+            {{ tool.action_type === 'state_change' ? 'write' : 'read' }}
+          </button>
+          <template #tooltip>{{ badgeTooltip }}</template>
+        </PopoverTooltip>
       </div>
 
       <p class="tool-table__summary">{{ teaser }}</p>

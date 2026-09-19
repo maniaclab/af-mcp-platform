@@ -5,6 +5,7 @@ import type { CatalogServer, ServerToolsResponse } from '../lib/api';
 import type { PoweredBy } from '../lib/catalog';
 import { resolveServiceStatus, resolvePoweredByLinked } from '../lib/serviceStatus';
 import { resolveToolListing, toolCountLabel } from '../lib/serverTools';
+import PopoverTooltip from './PopoverTooltip.vue';
 import ToolTable from './ToolTable.vue';
 
 const props = defineProps<{
@@ -13,9 +14,7 @@ const props = defineProps<{
 }>();
 
 const actionLabel = props.server.action_type === 'state_change' ? 'write' : 'read';
-// Computed once, alongside actionLabel, rather than duplicated between the
-// count badge's data-tooltip attribute and its sr-only aria-describedby
-// target below.
+// Computed once, alongside actionLabel, rather than re-evaluated in the template.
 const actionTooltip =
   props.server.action_type === 'state_change'
     ? 'Has at least one state-changing tool — use with care'
@@ -80,19 +79,17 @@ async function toggleTools() {
              with no configured display_name would otherwise show the same
              string twice, once in each style. -->
         <span v-if="server.name !== server.display_name" class="bc__prefix">{{ server.name }}</span>
-        <template v-if="server.description">
+        <PopoverTooltip v-if="server.description" :tooltip-id="`bc-desc-${server.name}`" side="top">
           <button
             type="button"
             class="bc__info-icon"
-            :data-tooltip="server.description"
-            data-side="top"
             :aria-describedby="`bc-desc-${server.name}`"
             aria-label="About this service"
           >
             <span aria-hidden="true">ⓘ</span>
           </button>
-          <span :id="`bc-desc-${server.name}`" class="sr-only">{{ server.description }}</span>
-        </template>
+          <template #tooltip>{{ server.description }}</template>
+        </PopoverTooltip>
       </div>
 
       <div class="bc__header-right">
@@ -106,52 +103,43 @@ async function toggleTools() {
              one badge that could truthfully summarize that, so this shows
              "mixed" and points at the per-tool Methods list below instead of
              either guessing or rendering an empty badge. -->
-        <template v-if="server.permission === null">
+        <PopoverTooltip
+          v-if="server.permission === null"
+          :tooltip-id="`bc-cap-${server.name}`"
+          side="top"
+        >
           <button
             type="button"
             class="bc__cap-badge bc__cap-badge--mixed"
-            data-tooltip="Different methods require different permissions — see Methods below for each one."
-            data-side="top"
             :aria-describedby="`bc-cap-${server.name}`"
           >
             mixed
           </button>
-          <span :id="`bc-cap-${server.name}`" class="sr-only">
-            Different methods require different permissions — see Methods below for each one.
-          </span>
-        </template>
-        <template v-else-if="server.permission !== '__none__'">
-          <button
-            type="button"
-            class="bc__cap-badge"
-            :data-tooltip="`Requires permission: ${server.permission}`"
-            data-side="top"
-            :aria-describedby="`bc-cap-${server.name}`"
+          <template #tooltip
+            >Different methods require different permissions — see Methods below for each
+            one.</template
           >
+        </PopoverTooltip>
+        <PopoverTooltip
+          v-else-if="server.permission !== '__none__'"
+          :tooltip-id="`bc-cap-${server.name}`"
+          side="top"
+        >
+          <button type="button" class="bc__cap-badge" :aria-describedby="`bc-cap-${server.name}`">
             {{ server.permission }}
           </button>
-          <span :id="`bc-cap-${server.name}`" class="sr-only"
-            >Requires permission: {{ server.permission }}</span
-          >
-        </template>
+          <template #tooltip>Requires permission: {{ server.permission }}</template>
+        </PopoverTooltip>
 
         <!-- The builtin af-mcp entry (issue #240) has no per-user credential
              concept at all -- a "none" credential-type badge would read like
              a state to fix, so it renders no badge instead. -->
-        <template v-if="!server.builtin">
-          <button
-            type="button"
-            class="bc__auth-badge"
-            :data-tooltip="`Credential type: ${server.auth_type}`"
-            data-side="top"
-            :aria-describedby="`bc-auth-${server.name}`"
-          >
+        <PopoverTooltip v-if="!server.builtin" :tooltip-id="`bc-auth-${server.name}`" side="top">
+          <button type="button" class="bc__auth-badge" :aria-describedby="`bc-auth-${server.name}`">
             {{ server.auth_type }}
           </button>
-          <span :id="`bc-auth-${server.name}`" class="sr-only"
-            >Credential type: {{ server.auth_type }}</span
-          >
-        </template>
+          <template #tooltip>Credential type: {{ server.auth_type }}</template>
+        </PopoverTooltip>
 
         <span
           v-if="server.status !== 'available'"
@@ -162,17 +150,17 @@ async function toggleTools() {
           {{ statusView.label }}
         </span>
 
-        <button
-          type="button"
-          class="bc__count"
-          :class="server.action_type === 'state_change' ? 'bc__count--state' : 'bc__count--read'"
-          :data-tooltip="actionTooltip"
-          data-side="top"
-          :aria-describedby="`bc-count-${server.name}`"
-        >
-          {{ actionLabel }}
-        </button>
-        <span :id="`bc-count-${server.name}`" class="sr-only">{{ actionTooltip }}</span>
+        <PopoverTooltip :tooltip-id="`bc-count-${server.name}`" side="top">
+          <button
+            type="button"
+            class="bc__count"
+            :class="server.action_type === 'state_change' ? 'bc__count--state' : 'bc__count--read'"
+            :aria-describedby="`bc-count-${server.name}`"
+          >
+            {{ actionLabel }}
+          </button>
+          <template #tooltip>{{ actionTooltip }}</template>
+        </PopoverTooltip>
       </div>
     </div>
 

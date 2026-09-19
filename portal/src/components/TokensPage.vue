@@ -36,6 +36,7 @@ import {
   pythonMintAndConnectSnippet,
 } from '../lib/tokenCliSnippets';
 import { getBrokerOrigin } from '../lib/auth';
+import PopoverTooltip from './PopoverTooltip.vue';
 
 const tokens = ref<TokenSummary[]>([]);
 const loading = ref(true);
@@ -410,21 +411,21 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
               <td class="tp__td">
                 <div class="tp__td-name-wrap">
                   <span class="tp__td-name">{{ row.name }}</span>
-                  <template v-if="row.note">
+                  <PopoverTooltip
+                    v-if="row.note"
+                    :tooltip-id="`tp-note-${row.lookup_id}`"
+                    side="top"
+                  >
                     <button
                       type="button"
                       class="tp__note-icon"
-                      :data-tooltip="truncateNote(row.note)"
-                      data-side="top"
                       :aria-describedby="`tp-note-${row.lookup_id}`"
                       aria-label="Show note"
                     >
                       <span aria-hidden="true">ⓘ</span>
                     </button>
-                    <span :id="`tp-note-${row.lookup_id}`" class="sr-only">{{
-                      truncateNote(row.note)
-                    }}</span>
-                  </template>
+                    <template #tooltip>{{ truncateNote(row.note) }}</template>
+                  </PopoverTooltip>
                 </div>
               </td>
               <td
@@ -835,22 +836,17 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
    full 52rem) -- with few short-content columns the boxed border otherwise
    stretched well past the actual table content, reading as a mostly-empty
    box rather than a compact list.
-   overflow-y: hidden, set explicitly rather than left to its default --
-   overflow-x: auto alone makes overflow-y compute to 'auto' too, and each
-   row's (invisible, opacity:0) Basecoat tooltip `::before` is
-   `position: absolute`, which doesn't affect this box's own auto-height
-   but DOES count toward its *scrollable overflow* once it's a scroll
-   container -- which is what was inflating this box well past its actual
-   rows. Tradeoff: a note tooltip on one of the last rows, if shown, can
-   no longer float past this box's own bottom edge -- an acceptable cost
-   for a hover-only affordance, versus a table that reads as mostly empty
-   space by default. */
+   overflow-y left to its default (which overflow-x: auto computes to
+   'auto' anyway) -- a note tooltip's bubble (PopoverTooltip.vue) is a
+   native [popover], promoted to the browser's top layer once shown and
+   position: fixed to the viewport, so it never contributes to this box's
+   scrollable overflow the way an ordinary position: absolute element
+   would, and can float past this box's own edges freely. */
 .tp__table {
   width: fit-content;
   max-width: 100%;
   height: fit-content;
   overflow-x: auto;
-  overflow-y: hidden;
   border: 1px solid var(--color-af-border);
   border-radius: 4px;
 }

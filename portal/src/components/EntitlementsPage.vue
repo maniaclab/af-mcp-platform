@@ -24,6 +24,7 @@ import {
   SessionExpiredError,
   type PermissionsResponse,
 } from '../lib/api';
+import PopoverTooltip from './PopoverTooltip.vue';
 
 const groupPermissions = ref<Record<string, string[]>>({});
 const myGroups = ref<string[]>([]);
@@ -316,25 +317,24 @@ function meHasPermission(permission: string): boolean {
                 :class="{ 'ep__matrix-row--divider': i === firstWriteIndex }"
               >
                 <th scope="row" class="ep__matrix-rowhead">
-                  <!-- The last row's tooltip opens upward: nothing below it
-                       in the table to visually extend into, so a downward
-                       bubble (present in the DOM at full size even hidden)
-                       inflated .ep__matrix-scroll's scrollable overflow past
-                       the table's own bottom edge -- the same phantom-
-                       scrollbar bug the group-header tooltips had
-                       horizontally, just vertically and on this one row. -->
-                  <template v-if="col.description">
+                  <!-- No per-row side override needed for the last row:
+                       PopoverTooltip.vue's placement math flips to the
+                       opposite side on its own when the requested one has no
+                       room (computeTooltipPosition), and its bubble is a
+                       native [popover] -- top-layer, position: fixed -- so
+                       it never counts toward .ep__matrix-scroll's scrollable
+                       overflow the way an ordinary position: absolute
+                       element would. -->
+                  <PopoverTooltip v-if="col.description" :tooltip-id="`ep-perm-${col.name}`">
                     <button
                       type="button"
                       class="ep__matrix-rowhead-btn"
-                      :data-tooltip="col.description"
-                      :data-side="i === columns.length - 1 ? 'top' : 'bottom'"
                       :aria-describedby="`ep-perm-${col.name}`"
                     >
                       {{ col.name }}
                     </button>
-                    <span :id="`ep-perm-${col.name}`" class="sr-only">{{ col.description }}</span>
-                  </template>
+                    <template #tooltip>{{ col.description }}</template>
+                  </PopoverTooltip>
                   <span v-else class="ep__matrix-rowhead-plain">{{ col.name }}</span>
                 </th>
                 <td class="ep__matrix-cell ep__matrix-cell--you">
@@ -589,10 +589,8 @@ function meHasPermission(permission: string): boolean {
   position: sticky;
   left: 0;
   /* Higher than .ep__matrix-colhead--you / .ep__matrix-cell--you (z-index 2
-     and 1): this cell's own Basecoat tooltip overflows rightward past its
-     11rem width into the You column's box, and the two are tied siblings in
-     the row -- without this, the later-in-DOM You cell painted over the
-     open tooltip instead of the tooltip showing on top of it. */
+     and 1): this sticky left column needs to paint over the sticky You
+     column, not the other way around, as the table scrolls horizontally. */
   z-index: 3;
   background: var(--color-af-void);
   text-align: left;
