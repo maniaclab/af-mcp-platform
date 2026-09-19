@@ -148,12 +148,12 @@ describe('THEME_MODES', () => {
 describe('initTheme', () => {
   beforeEach(() => {
     document.documentElement.classList.remove('dark');
-    localStorage.clear();
+    window.localStorage.clear();
   });
 
   afterEach(() => {
     document.documentElement.classList.remove('dark');
-    localStorage.clear();
+    window.localStorage.clear();
   });
 
   it('re-applies the resolved theme when the system preference changes while in auto mode', () => {
@@ -167,7 +167,7 @@ describe('initTheme', () => {
     };
     const win = { matchMedia: vi.fn().mockReturnValue(mql) } as unknown as Window;
 
-    initTheme({ root: document.documentElement, win, storage: localStorage });
+    initTheme({ root: document.documentElement, win, storage: window.localStorage });
     expect(document.documentElement.classList.contains('dark')).toBe(false);
 
     listener?.({ matches: true });
@@ -175,7 +175,7 @@ describe('initTheme', () => {
   });
 
   it('does not react to system changes once an explicit mode is stored', () => {
-    localStorage.setItem(THEME_STORAGE_KEY, 'light');
+    window.localStorage.setItem(THEME_STORAGE_KEY, 'light');
     let listener: ((e: Pick<MediaQueryListEvent, 'matches'>) => void) | undefined;
     const mql = {
       matches: false,
@@ -186,7 +186,7 @@ describe('initTheme', () => {
     };
     const win = { matchMedia: vi.fn().mockReturnValue(mql) } as unknown as Window;
 
-    initTheme({ root: document.documentElement, win, storage: localStorage });
+    initTheme({ root: document.documentElement, win, storage: window.localStorage });
     listener?.({ matches: true });
     // Explicit "light" wins even though the system now reports dark.
     expect(document.documentElement.classList.contains('dark')).toBe(false);
