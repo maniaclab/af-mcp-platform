@@ -37,7 +37,10 @@ export const TRACK_COUNT = 18;
  * cross-section. `random` defaults to `Math.random` and is a seam for
  * deterministic tests.
  */
-export function buildTracks(count: number = TRACK_COUNT, random: () => number = Math.random): Track[] {
+export function buildTracks(
+  count: number = TRACK_COUNT,
+  random: () => number = Math.random,
+): Track[] {
   const tracks: Track[] = [];
   const goldenAngle = Math.PI * (3 - Math.sqrt(5));
   for (let i = 0; i < count; i++) {
@@ -76,9 +79,12 @@ const DEFAULT_PALETTE: ParticleTrackPalette = {
   alphaSpan: 0.45,
 };
 
-export function readParticleTrackPalette(root: HTMLElement = document.documentElement): ParticleTrackPalette {
+export function readParticleTrackPalette(
+  root: HTMLElement = document.documentElement,
+): ParticleTrackPalette {
   const style = getComputedStyle(root);
-  const triplet = (name: string, fallback: string) => style.getPropertyValue(name).trim() || fallback;
+  const triplet = (name: string, fallback: string) =>
+    style.getPropertyValue(name).trim() || fallback;
   const num = (name: string, fallback: number) => {
     const parsed = parseFloat(style.getPropertyValue(name));
     return Number.isNaN(parsed) ? fallback : parsed;

@@ -65,7 +65,9 @@ describe.each([
 
   it('af-on-accent clears AA (4.5:1) against a filled af-teal control', () => {
     const ratio = contrastRatio(tokens['on-accent'], tokens['teal']);
-    expect(ratio, `${themeName}: on-accent (${tokens['on-accent']}) vs teal (${tokens['teal']})`)
-      .toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+    expect(
+      ratio,
+      `${themeName}: on-accent (${tokens['on-accent']}) vs teal (${tokens['teal']})`,
+    ).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
   });
 });

@@ -83,9 +83,7 @@ const MODES: { value: 'auto' | 'dark' | 'light'; label: string }[] = [
   initTheme();
 
   for (const group of document.querySelectorAll<HTMLElement>('[data-theme-toggle]')) {
-    const options = Array.from(
-      group.querySelectorAll<HTMLButtonElement>('[data-theme-value]'),
-    );
+    const options = Array.from(group.querySelectorAll<HTMLButtonElement>('[data-theme-value]'));
 
     function syncChecked(mode: ThemeMode): void {
       for (const option of options) {

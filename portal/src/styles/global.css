@@ -89,7 +89,9 @@
    * black wash the same way) -- named here rather than left as a magic
    * literal at each call site. */
   --color-af-scrim: rgb(0 0 0 / 0.5); /* backdrop behind an off-canvas panel */
-  --color-af-panel-shadow: rgb(0 0 0 / 0.4); /* the one directional shadow (a floating/overlaying surface) */
+  --color-af-panel-shadow: rgb(
+    0 0 0 / 0.4
+  ); /* the one directional shadow (a floating/overlaying surface) */
 
   /* Particle-track canvas palette (src/lib/particleTracks.ts) — "R G B"
    * channel triplets, since canvas fillStyle/strokeStyle can't resolve CSS

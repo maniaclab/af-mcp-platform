@@ -382,5 +382,4 @@ function poweredByFor(server: CatalogServer) {
 .cp__empty-cta:hover {
   text-decoration: underline;
 }
-
 </style>

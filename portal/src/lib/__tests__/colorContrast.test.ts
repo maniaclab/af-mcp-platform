@@ -32,9 +32,6 @@ describe('contrastRatio', () => {
   });
 
   it('is order-independent', () => {
-    expect(contrastRatio('#0a0e1a', '#e9edf2')).toBeCloseTo(
-      contrastRatio('#e9edf2', '#0a0e1a'),
-      5,
-    );
+    expect(contrastRatio('#0a0e1a', '#e9edf2')).toBeCloseTo(contrastRatio('#e9edf2', '#0a0e1a'), 5);
   });
 });
