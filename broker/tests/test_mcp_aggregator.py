@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 import time
 from typing import TYPE_CHECKING, Any, Self
@@ -990,6 +991,369 @@ async def test_observable_proxy_provider_warns_on_tool_prefix_mismatch(
     assert mismatch_events[0]["service"] == "example"
     assert mismatch_events[0]["tool"] == "servicex_list_datasets"
     assert mismatch_events[0]["prefix"] == "ami"
+
+
+# ---------------------------------------------------------------------------
+# Per-(subject, service) tools/list cache (issue #320)
+# ---------------------------------------------------------------------------
+
+
+class _FakeClock:
+    """Stand-in for the ``time`` module's ``monotonic()``, patched in as
+    ``aggregator.time`` -- mirrors ``_patch_context``'s "patch the name
+    aggregator imports it under" pattern, so only aggregator.py's own
+    ``time.monotonic()`` calls are affected, not asyncio's internals or any
+    other module's. Lets TTL/negative-cache tests advance the clock
+    deterministically instead of sleeping real seconds."""
+
+    def __init__(self) -> None:
+        self._now = 0.0
+
+    def monotonic(self) -> float:
+        return self._now
+
+    def advance(self, seconds: float) -> None:
+        self._now += seconds
+
+
+class _CountingListClient:
+    """Client double for ``_ObservableProxyProvider``'s ``client_factory``: records every ``list_tools()`` call, returning a fixed tool list or raising a fixed error.
+
+    ``wait_for``, when set, is awaited before returning/raising -- lets a
+    test hold multiple concurrent ``_list_tools()`` calls open at once to
+    prove single-flight collapses them into one ``list_tools()`` call.
+    """
+
+    def __init__(
+        self,
+        *,
+        tools: list[McpTool] | None = None,
+        error: Exception | None = None,
+        wait_for: asyncio.Event | None = None,
+    ) -> None:
+        self.tools = tools if tools is not None else []
+        self.error = error
+        self.wait_for = wait_for
+        self.call_count = 0
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        return None
+
+    async def list_tools(self) -> list[McpTool]:
+        self.call_count += 1
+        if self.wait_for is not None:
+            await self.wait_for.wait()
+        if self.error is not None:
+            raise self.error
+        return self.tools
+
+
+def _tool(name: str) -> McpTool:
+    return McpTool(name=name, input_schema={"type": "object"})
+
+
+async def test_list_tools_cache_hit_within_ttl_skips_second_upstream_call(
+    monkeypatch: pytest.MonkeyPatch, make_principal
+) -> None:
+    client = _CountingListClient(tools=[_tool("widget_a")])
+    registry = ServiceRegistry()
+    registry.register(_spec())
+    provider = aggregator._ObservableProxyProvider(
+        "example", lambda: client, registry=registry, cache_ttl=300.0
+    )
+    _patch_context(monkeypatch, make_principal(subject="alice"), active_backend=None)
+
+    first = await provider._list_tools()
+    second = await provider._list_tools()
+
+    assert [t.name for t in first] == ["widget_a"]
+    assert [t.name for t in second] == ["widget_a"]
+    assert client.call_count == 1
+
+
+async def test_list_tools_per_subject_isolation_one_401_one_success(
+    monkeypatch: pytest.MonkeyPatch, make_principal
+) -> None:
+    """Two principals against the same service: alice's upstream listing
+    401s, bob's succeeds -- neither may be served the other's cached
+    outcome."""
+    request = httpx2.Request("GET", "http://example.invalid")
+    response = httpx2.Response(401, request=request)
+    unauthorized = httpx2.HTTPStatusError(
+        "unauthorized", request=request, response=response
+    )
+    alice_client = _CountingListClient(error=unauthorized)
+    bob_client = _CountingListClient(tools=[_tool("widget_a")])
+
+    registry = ServiceRegistry()
+    registry.register(_spec())
+    clients = {"alice": alice_client, "bob": bob_client}
+
+    def _factory() -> Any:
+        raise AssertionError("unused -- clients selected per call below")
+
+    provider = aggregator._ObservableProxyProvider(
+        "example", _factory, registry=registry, cache_ttl=300.0
+    )
+
+    for subject, client in clients.items():
+        ctx = _patch_context(
+            monkeypatch, make_principal(subject=subject), active_backend=None
+        )
+        ctx.recorded_state["__list_credential_status__:example"] = (True, None)
+        monkeypatch.setattr(provider, "client_factory", lambda c=client: c)
+        if subject == "alice":
+            with pytest.raises(McpError):
+                await provider._list_tools()
+        else:
+            tools = await provider._list_tools()
+            assert [t.name for t in tools] == ["widget_a"]
+
+    # Re-querying each subject again must still reflect their own outcome --
+    # bob's success must never leak into alice's still-cached failure, and
+    # vice versa.
+    _patch_context(monkeypatch, make_principal(subject="alice"), active_backend=None)
+    with pytest.raises(McpError):
+        await provider._list_tools()
+    assert alice_client.call_count == 1  # still cached, no retry yet
+
+    _patch_context(monkeypatch, make_principal(subject="bob"), active_backend=None)
+    tools = await provider._list_tools()
+    assert [t.name for t in tools] == ["widget_a"]
+    assert bob_client.call_count == 1  # still cached
+
+
+async def test_list_tools_per_service_independent(
+    monkeypatch: pytest.MonkeyPatch, make_principal
+) -> None:
+    """Two providers (two services) for the same subject cache independently
+    -- one backend's listing never counts against another's cache."""
+    registry = ServiceRegistry()
+    registry.register(_spec(name="svc-a", prefix="a"))
+    registry.register(_spec(name="svc-b", prefix="b"))
+    client_a = _CountingListClient(tools=[_tool("a_widget")])
+    client_b = _CountingListClient(tools=[_tool("b_widget")])
+    provider_a = aggregator._ObservableProxyProvider(
+        "svc-a", lambda: client_a, registry=registry, cache_ttl=300.0
+    )
+    provider_b = aggregator._ObservableProxyProvider(
+        "svc-b", lambda: client_b, registry=registry, cache_ttl=300.0
+    )
+    _patch_context(monkeypatch, make_principal(subject="alice"), active_backend=None)
+
+    await provider_a._list_tools()
+    await provider_b._list_tools()
+    await provider_a._list_tools()
+    await provider_b._list_tools()
+
+    assert client_a.call_count == 1
+    assert client_b.call_count == 1
+
+
+async def test_list_tools_ttl_expiry_refetches(
+    monkeypatch: pytest.MonkeyPatch, make_principal
+) -> None:
+    clock = _FakeClock()
+    monkeypatch.setattr(aggregator, "time", clock)
+    client = _CountingListClient(tools=[_tool("widget_a")])
+    registry = ServiceRegistry()
+    registry.register(_spec())
+    provider = aggregator._ObservableProxyProvider(
+        "example", lambda: client, registry=registry, cache_ttl=100.0
+    )
+    _patch_context(monkeypatch, make_principal(subject="alice"), active_backend=None)
+
+    await provider._list_tools()
+    clock.advance(50.0)
+    await provider._list_tools()
+    assert client.call_count == 1  # still within TTL
+
+    clock.advance(51.0)  # total 101s elapsed since the first fetch
+    await provider._list_tools()
+    assert client.call_count == 2
+
+
+async def test_list_tools_cache_ttl_zero_disables_cache(
+    monkeypatch: pytest.MonkeyPatch, make_principal
+) -> None:
+    client = _CountingListClient(tools=[_tool("widget_a")])
+    registry = ServiceRegistry()
+    registry.register(_spec())
+    provider = aggregator._ObservableProxyProvider(
+        "example", lambda: client, registry=registry, cache_ttl=0.0
+    )
+    _patch_context(monkeypatch, make_principal(subject="alice"), active_backend=None)
+
+    await provider._list_tools()
+    await provider._list_tools()
+
+    assert client.call_count == 2
+
+
+async def test_list_tools_negative_cache_reraises_without_relogging_then_retries_after_expiry(
+    monkeypatch: pytest.MonkeyPatch, make_principal
+) -> None:
+    clock = _FakeClock()
+    monkeypatch.setattr(aggregator, "time", clock)
+    error = ConnectionError("connection refused")
+    client = _CountingListClient(error=error)
+    registry = ServiceRegistry()
+    registry.register(_spec())
+    provider = aggregator._ObservableProxyProvider(
+        "example", lambda: client, registry=registry, cache_ttl=300.0
+    )
+    ctx = _patch_context(
+        monkeypatch, make_principal(subject="alice"), active_backend=None
+    )
+    ctx.recorded_state["__list_credential_status__:example"] = (False, "unavailable")
+
+    with structlog.testing.capture_logs() as logs:
+        with pytest.raises(ConnectionError):
+            await provider._list_tools()
+        with pytest.raises(ConnectionError):
+            await provider._list_tools()
+
+    assert client.call_count == 1  # second call served from the negative cache
+    failure_logs = [
+        entry for entry in logs if entry["event"] == "aggregator.service_list_failed"
+    ]
+    assert len(failure_logs) == 1  # not re-logged on the cached re-raise
+    assert registry.recent_list_failure("example") == "unavailable"
+
+    # Past the negative TTL (30s): retried, not served stale.
+    clock.advance(31.0)
+    with pytest.raises(ConnectionError):
+        await provider._list_tools()
+    assert client.call_count == 2
+
+
+async def test_list_tools_single_flight_concurrent_calls_one_upstream_listing(
+    monkeypatch: pytest.MonkeyPatch, make_principal
+) -> None:
+    release = asyncio.Event()
+    client = _CountingListClient(tools=[_tool("widget_a")], wait_for=release)
+    registry = ServiceRegistry()
+    registry.register(_spec())
+    provider = aggregator._ObservableProxyProvider(
+        "example", lambda: client, registry=registry, cache_ttl=300.0
+    )
+    _patch_context(monkeypatch, make_principal(subject="alice"), active_backend=None)
+
+    tasks = [asyncio.create_task(provider._list_tools()) for _ in range(5)]
+    await asyncio.sleep(0)  # let every task reach the (shared) upstream call
+    assert client.call_count == 1  # single-flight: one in-flight listing
+    release.set()
+    results = await asyncio.gather(*tasks)
+
+    assert client.call_count == 1
+    for tools in results:
+        assert [t.name for t in tools] == ["widget_a"]
+
+
+async def test_list_tools_bypasses_cache_without_principal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _CountingListClient(tools=[_tool("widget_a")])
+    registry = ServiceRegistry()
+    registry.register(_spec())
+    provider = aggregator._ObservableProxyProvider(
+        "example", lambda: client, registry=registry, cache_ttl=300.0
+    )
+    _patch_context(monkeypatch, None, active_backend=None)
+
+    await provider._list_tools()
+    await provider._list_tools()
+
+    assert client.call_count == 2
+
+
+async def test_invalidate_subject_drops_only_that_subject(
+    monkeypatch: pytest.MonkeyPatch, make_principal
+) -> None:
+    client = _CountingListClient(tools=[_tool("widget_a")])
+    registry = ServiceRegistry()
+    registry.register(_spec())
+    provider = aggregator._ObservableProxyProvider(
+        "example", lambda: client, registry=registry, cache_ttl=300.0
+    )
+    _patch_context(monkeypatch, make_principal(subject="alice"), active_backend=None)
+    await provider._list_tools()
+    _patch_context(monkeypatch, make_principal(subject="bob"), active_backend=None)
+    await provider._list_tools()
+    assert client.call_count == 2
+
+    provider.invalidate_subject("alice")
+
+    _patch_context(monkeypatch, make_principal(subject="bob"), active_backend=None)
+    await provider._list_tools()
+    assert client.call_count == 2  # bob still cached
+
+    _patch_context(monkeypatch, make_principal(subject="alice"), active_backend=None)
+    await provider._list_tools()
+    assert client.call_count == 3  # alice's entry was dropped, refetched
+
+
+async def test_invalidate_subject_cache_helper_targets_one_service(
+    monkeypatch: pytest.MonkeyPatch, make_principal
+) -> None:
+    registry = ServiceRegistry()
+    registry.register(_spec(name="svc-a", prefix="a"))
+    registry.register(_spec(name="svc-b", prefix="b"))
+    client_a = _CountingListClient(tools=[_tool("a_widget")])
+    client_b = _CountingListClient(tools=[_tool("b_widget")])
+    provider_a = aggregator._ObservableProxyProvider(
+        "svc-a", lambda: client_a, registry=registry, cache_ttl=300.0
+    )
+    provider_b = aggregator._ObservableProxyProvider(
+        "svc-b", lambda: client_b, registry=registry, cache_ttl=300.0
+    )
+    mcp = FastMCP(name="test")
+    mcp.add_provider(provider_a)
+    mcp.add_provider(provider_b)
+    _patch_context(monkeypatch, make_principal(subject="alice"), active_backend=None)
+    await provider_a._list_tools()
+    await provider_b._list_tools()
+
+    aggregator.invalidate_subject_cache(mcp, "alice", target="svc-a")
+
+    await provider_a._list_tools()
+    await provider_b._list_tools()
+
+    assert client_a.call_count == 2  # svc-a's cache was dropped
+    assert client_b.call_count == 1  # svc-b untouched
+
+
+async def test_invalidate_subject_cache_helper_targets_all_services_when_none(
+    monkeypatch: pytest.MonkeyPatch, make_principal
+) -> None:
+    registry = ServiceRegistry()
+    registry.register(_spec(name="svc-a", prefix="a"))
+    registry.register(_spec(name="svc-b", prefix="b"))
+    client_a = _CountingListClient(tools=[_tool("a_widget")])
+    client_b = _CountingListClient(tools=[_tool("b_widget")])
+    provider_a = aggregator._ObservableProxyProvider(
+        "svc-a", lambda: client_a, registry=registry, cache_ttl=300.0
+    )
+    provider_b = aggregator._ObservableProxyProvider(
+        "svc-b", lambda: client_b, registry=registry, cache_ttl=300.0
+    )
+    mcp = FastMCP(name="test")
+    mcp.add_provider(provider_a)
+    mcp.add_provider(provider_b)
+    _patch_context(monkeypatch, make_principal(subject="alice"), active_backend=None)
+    await provider_a._list_tools()
+    await provider_b._list_tools()
+
+    aggregator.invalidate_subject_cache(mcp, "alice")
+
+    await provider_a._list_tools()
+    await provider_b._list_tools()
+
+    assert client_a.call_count == 2
+    assert client_b.call_count == 2
 
 
 # ---------------------------------------------------------------------------

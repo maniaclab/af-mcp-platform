@@ -8,6 +8,7 @@ from conftest import AUDIENCE, ISSUER, make_claims, run_asgi_app
 from fastmcp import Client, FastMCP
 from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.server.dependencies import get_http_headers
+from fastmcp.server.providers.proxy import ProxyProvider
 from fastmcp.utilities.http import find_available_port
 from fastmcp.utilities.tests import run_server_async
 
@@ -278,3 +279,51 @@ async def test_authorization_header_not_forwarded_to_backend(running_broker, sig
         result = await client.call_tool("toy_seen_headers", {})
 
     assert "authorization" not in result.data
+
+
+async def test_two_tools_calls_list_each_backend_once_not_per_call(
+    running_broker, sig_key, monkeypatch: pytest.MonkeyPatch
+):
+    """issue #320: on the mcp SDK's modern (``2026-07-28``) protocol, a
+    ``tools/call`` carrying arguments triggers a full server-side
+    ``tools/list`` to validate ``Mcp-Param-*`` headers against the called
+    tool's schema (SEP-2243, ``mcp/server/_streamable_http_modern.py``'s
+    ``_mcp_param_rejection``). Before the per-(subject, service) cache, THAT
+    ran fastmcp's uncached ``ProxyProvider._list_tools()`` against every
+    backend on every single ``tools/call``. Force the modern protocol
+    (``mode="2026-07-28"``) so this path is actually exercised, then prove
+    two ``tools/call`` requests from the same user list each backend once
+    total, not once per call -- counted by wrapping the base
+    ``ProxyProvider._list_tools`` (below ``_ObservableProxyProvider``'s own
+    cache) rather than trusting a fake backend's own request log.
+    """
+    token = sig_key.sign(make_claims())
+    _TEST_PRINCIPAL_GROUPS["user-123"] = ["atlas"]
+
+    call_counts: dict[str, int] = {}
+    original_list_tools = ProxyProvider._list_tools
+
+    async def _counting_list_tools(self: Any) -> Any:
+        call_counts[self._service_name] = call_counts.get(self._service_name, 0) + 1
+        return await original_list_tools(self)
+
+    monkeypatch.setattr(ProxyProvider, "_list_tools", _counting_list_tools)
+
+    async with (
+        run_asgi_app(running_broker) as base_url,
+        Client(
+            StreamableHttpTransport(
+                f"{base_url}/mcp/", headers={"Authorization": f"Bearer {token}"}
+            ),
+            mode="2026-07-28",
+        ) as client,
+    ):
+        assert client.protocol_version == "2026-07-28"
+        await client.call_tool("toy_echo", {"message": "hello"})
+        await client.call_tool("toy_echo", {"message": "world"})
+
+    # At least one backend must have been listed at all (a vacuously empty
+    # call_counts would mean the SEP-2243 path never fired) -- and every
+    # backend that was, was listed exactly once across both calls.
+    assert call_counts
+    assert all(count == 1 for count in call_counts.values())
