@@ -414,9 +414,11 @@ async def fetch_service_tool_listing(
     reason ("not_linked" | "unauthorized" | "unavailable"), and tools are
     ``ToolListingEntry``s with ``ServiceSpec.apply_namespace`` already
     applied to the name -- the names a caller actually sees through /mcp.
-    Deliberately built on ``_build_client`` (same transport choice, per-call
-    timeout, and notification handlers as the aggregator's own factories)
-    rather than a second HTTP code path.
+    ``spec.exclude_tools`` (native names, issue #173) is filtered out here
+    too, so this listing can never show a tool a real ``tools/list`` through
+    /mcp hides. Deliberately built on ``_build_client`` (same transport
+    choice, per-call timeout, and notification handlers as the aggregator's
+    own factories) rather than a second HTTP code path.
     """
     transport_cls = SSETransport if spec.transport == "sse" else StreamableHttpTransport
     client = _build_client(spec, transport_cls, headers=headers)
@@ -434,6 +436,7 @@ async def fetch_service_tool_listing(
             has_output_schema=tool.output_schema is not None,
         )
         for tool in tools
+        if tool.name not in spec.exclude_tools
     ]
 
 
@@ -1148,6 +1151,18 @@ class _ObservableProxyProvider(ProxyProvider):
     above stays tools-only (fastmcp's ``ProxyProvider`` has no equivalent
     failure-classification hook for the other three kinds) -- only the
     per-subject caching mechanics are shared.
+
+    ``exclude_tools`` (issue #173) omits configured native tool names from
+    ``_list_tools_uncached``'s return -- so they're absent from every kind of
+    tools/list, cached or not -- AND makes ``_get_tool()`` return ``None`` for
+    them before delegating, exactly like ``_route_prefix``'s short-circuit
+    above. Both are necessary: fastmcp's base ``_get_tool()`` (which
+    ``super()._get_tool()`` below calls) reads ``self._tools_cache`` directly,
+    a plain instance attribute the base ``_list_tools()`` writes with the
+    *unfiltered* upstream listing as a side effect -- filtering only this
+    class's own ``_list_tools()`` return value never touches that attribute,
+    so a direct ``tools/call`` for an excluded name would still resolve it
+    from the untouched cache.
     """
 
     def __init__(
@@ -1157,6 +1172,7 @@ class _ObservableProxyProvider(ProxyProvider):
         registry: ServiceRegistry,
         cache_ttl: float | None = None,
         route_prefix: str | None = None,
+        exclude_tools: frozenset[str] = frozenset(),
     ) -> None:
         super().__init__(client_factory, cache_ttl=cache_ttl)
         self._service_name = service_name
@@ -1166,6 +1182,12 @@ class _ObservableProxyProvider(ProxyProvider):
         # un-namespaced mount, so this provider is asked about EVERY tool
         # name in an aggregate tools/call, not just its own.
         self._route_prefix = route_prefix
+        self._exclude_tools = exclude_tools
+        # Set the first time _list_tools_uncached finds an exclude_tools name
+        # missing from the backend's own listing (likely a typo) -- so that
+        # warning fires once per service for the life of this provider
+        # instance, not on every uncached tools/list.
+        self._warned_missing_exclude_tools = False
         # Per-(kind, subject) listing cache (issue #320, generalized to every
         # listing kind -- tools/resources/resource templates/prompts -- see
         # _cached_list's docstring). Pruned opportunistically on every write
@@ -1193,6 +1215,12 @@ class _ObservableProxyProvider(ProxyProvider):
         if self._route_prefix is not None and not name.startswith(
             f"{self._route_prefix}_"
         ):
+            return None
+        # Configured off (issue #173): return None BEFORE delegating, so a
+        # direct tools/call resolves this name exactly like one that was
+        # never advertised at all -- see this class's docstring on why
+        # filtering _list_tools()'s return value alone isn't enough.
+        if name in self._exclude_tools:
             return None
         return await super()._get_tool(name, version)
 
@@ -1391,7 +1419,23 @@ class _ObservableProxyProvider(ProxyProvider):
                             tool=tool.name,
                             prefix=self._route_prefix,
                         )
+            if self._exclude_tools:
+                self._warn_on_missing_exclude_tools(tools)
+                tools = [t for t in tools if t.name not in self._exclude_tools]
             return tools
+
+    def _warn_on_missing_exclude_tools(self, tools: Sequence[Tool]) -> None:
+        """Warn once per service (per process, for this provider instance) if a configured ``exclude_tools`` name never appears in *tools* -- the raw upstream listing, before filtering. Likely a typo (issue #173): an excluded name that never existed excludes nothing, silently. Only called from a genuine upstream fetch (``_list_tools_uncached``), never from a per-subject cache hit, so a persistently mistyped name doesn't spam a warning on every cached ``tools/list``."""
+        if self._warned_missing_exclude_tools:
+            return
+        missing = self._exclude_tools - {t.name for t in tools}
+        if missing:
+            logger.warning(
+                "aggregator.exclude_tools_not_found",
+                service=self._service_name,
+                tools=sorted(missing),
+            )
+            self._warned_missing_exclude_tools = True
 
 
 def invalidate_subject_cache(
@@ -1638,6 +1682,7 @@ def _register_services(
             registry=registry,
             cache_ttl=spec.tools_cache_ttl,
             route_prefix=None if spec.apply_namespace else spec.prefix,
+            exclude_tools=spec.exclude_tools,
         )
         namespace = spec.prefix if spec.apply_namespace else ""
         mcp.add_provider(provider, namespace=namespace)

@@ -568,6 +568,12 @@ aggregator:
   #     tools_cache_ttl: 300  # optional; 0 disables the by-name lookup cache
   #                           # for a service whose tool list personalizes
   #                           # per caller -- see docs/adding-a-service.md
+  #     exclude_tools: ["advertise_to_collector"]  # optional; native (pre-
+  #                           # namespace) tool names hidden from tools/list
+  #                           # AND refused on tools/call, as if the backend
+  #                           # never advertised them -- for infrastructure-
+  #                           # facing tools with no user story behind the
+  #                           # broker. See docs/adding-a-service.md.
   # For x509/broker-issued (AF-native) services, two more fields carry the
   # token contract (issue #257):
   #     audience: my-tool-mcp   # the exact `aud` the backend validates the AF
