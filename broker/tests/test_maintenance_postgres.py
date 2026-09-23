@@ -25,6 +25,25 @@ async def test_default_state_is_disabled(store: PostgresMaintenanceModeStore) ->
     assert state.enabled is False
 
 
+async def test_start_bounds_the_pool_instead_of_asyncpgs_defaults(
+    postgres_dsn: str,
+) -> None:
+    """asyncpg.create_pool()'s own defaults (min_size=10, max_size=10) eagerly
+    open 10 connections per replica regardless of load -- with this store's
+    DSN commonly sharing a small Postgres instance with the usage store and a
+    second broker deployment, that exhausted the instance's max_connections
+    during a routine rolling restart (2026-09-19 production incident).
+    start() must request a much smaller pool."""
+    s = PostgresMaintenanceModeStore(postgres_dsn)
+    await s.start()
+    try:
+        assert s._pool is not None
+        assert s._pool.get_min_size() <= 2
+        assert s._pool.get_max_size() <= 5
+    finally:
+        await s.aclose()
+
+
 async def test_set_then_get_roundtrips(store: PostgresMaintenanceModeStore) -> None:
     written = MaintenanceState(
         enabled=True, reason="upgrading", enabled_by="admin-sub", enabled_at=1234.0
