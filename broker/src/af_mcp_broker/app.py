@@ -66,6 +66,7 @@ from af_mcp_broker.maintenance import (
 from af_mcp_broker.mcp.aggregator import (
     build_aggregator,
     build_asgi_auth_middleware,
+    invalidate_subject_cache,
     populate_aggregator,
 )
 from af_mcp_broker.mcp.registry import ServiceRegistry
@@ -401,9 +402,23 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     )
 
     # --- Credential subsystem: cache + janitor + provider registry.
+    #
+    # on_revoke wires issue #320's per-(subject, service) tools/list cache
+    # invalidation to every revoke() (and, by delegation, revoke_all()) call
+    # -- covering api/identities.py's unlink_identity (oauth21-direct/
+    # krb5-token/servicex-token, all three revoke through this cache) and
+    # api/credentials.py's `DELETE /v1/credential` (revoke_all) alike,
+    # without either module needing its own aggregator-cache-invalidation
+    # code. _mcp_aggregator is the module-level FastMCP instance built below
+    # (before this lifespan runs) -- referenced here as a plain global, so
+    # the closure always sees whatever populate_aggregator() has since
+    # pushed into it, same as this lifespan's own later reference to it.
     credential_cache = CredentialCache(
         max_failed_unlocks=settings.credential_unlock_max_failures,
         unlock_window_seconds=settings.credential_unlock_window_seconds,
+        on_revoke=lambda subject, target: invalidate_subject_cache(
+            _mcp_aggregator, subject, target
+        ),
     )
     credential_cache.start_janitor()
 
