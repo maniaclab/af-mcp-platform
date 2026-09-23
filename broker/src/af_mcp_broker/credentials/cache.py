@@ -156,6 +156,9 @@ class CredentialCache:
         # when a subject's linked identity is revoked. Kept generic (no
         # af_mcp_broker.mcp import here) so this module stays unaware of the
         # aggregator layer; app.py wires the real callback at construction.
+        # Deliberately NOT called by the janitor's _expire() -- a credential
+        # merely expiring is bookkeeping, not an identity change, and must
+        # not drop that warm listing cache (see _expire()'s docstring).
         self._on_revoke = on_revoke
 
     # ------------------------------------------------------------------
@@ -333,8 +336,37 @@ class CredentialCache:
             expires_at=expires_at,
         )
 
+    async def _pop_and_cleanup(self, subject: str, target: str) -> _CacheEntry | None:
+        """Remove and return the cache entry for *(subject, target)*, if any -- securely deleting its x509 proxy file first.
+
+        Shared body for ``revoke()`` and ``_expire()``: both need to drop the
+        entry and scrub any on-disk proxy material before it disappears from
+        the cache; they differ only in whether the identity-change signal
+        (``on_revoke``) follows.
+        """
+        key = (subject, target)
+        entry = self._entries.pop(key, None)
+        # proxy_path is None for Vault-persisted proxies (no local file to
+        # delete; X509Provider.revoke clears the Vault copy itself).
+        if (
+            entry is not None
+            and entry.proxy_meta is not None
+            and entry.proxy_meta.proxy_path is not None
+        ):
+            await _secure_delete_proxy(entry.proxy_meta.proxy_path)
+        return entry
+
+    @staticmethod
+    def _cred_class(entry: _CacheEntry) -> str:
+        """Return a loggable class name for *entry*'s stored credential."""
+        return (
+            entry.credential.cred_class
+            if isinstance(entry.credential, IssuedCredential)
+            else type(entry.credential).__name__
+        )
+
     async def revoke(self, subject: str, target: str) -> None:
-        """Revoke a single cached credential.
+        """Revoke a single cached credential -- an identity-affecting event, unlike plain expiry.
 
         For x509 credentials, zero-overwrites and unlinks the proxy file on
         the broker's tmpfs before removing the cache entry.  This prevents
@@ -345,27 +377,42 @@ class CredentialCache:
         can change (issue #320) even when this cache holds nothing for it
         right now, and a stale aggregator tools/list cache entry from an
         earlier credential state must not survive that change either way.
+        Contrast with ``_expire()``, called only by the janitor sweep: it
+        shares this method's cleanup but never calls ``on_revoke``, because a
+        credential merely expiring is bookkeeping, not an identity change.
         """
-        key = (subject, target)
-        entry = self._entries.pop(key, None)
+        entry = await self._pop_and_cleanup(subject, target)
         if entry is not None:
-            # proxy_path is None for Vault-persisted proxies (no local file to
-            # delete; X509Provider.revoke clears the Vault copy itself).
-            if entry.proxy_meta is not None and entry.proxy_meta.proxy_path is not None:
-                await _secure_delete_proxy(entry.proxy_meta.proxy_path)
-            cred_class = (
-                entry.credential.cred_class
-                if isinstance(entry.credential, IssuedCredential)
-                else type(entry.credential).__name__
-            )
             self._log.info(
                 "credential_cache.revoked",
                 subject=subject,
                 target=target,
-                cred_class=cred_class,
+                cred_class=self._cred_class(entry),
             )
         if self._on_revoke is not None:
             self._on_revoke(subject, target)
+
+    async def _expire(self, subject: str, target: str) -> None:
+        """Drop an expired cache entry -- bookkeeping, not an identity change.
+
+        Called only by the janitor sweep (``_sweep_expired``). Shares
+        ``revoke()``'s cleanup (drops the entry, securely deletes an x509
+        proxy file) but deliberately does NOT call ``on_revoke``: a
+        credential merely expiring says nothing about whether the subject's
+        linked identity changed, so it must not drop the aggregator's
+        per-subject listing cache for that service the way an actual revoke
+        does (see ``revoke()``'s docstring). Logs
+        ``credential_cache.expired`` rather than ``credential_cache.revoked``
+        so the two are distinguishable in the audit trail.
+        """
+        entry = await self._pop_and_cleanup(subject, target)
+        if entry is not None:
+            self._log.info(
+                "credential_cache.expired",
+                subject=subject,
+                target=target,
+                cred_class=self._cred_class(entry),
+            )
 
     async def revoke_all(self, subject: str) -> None:
         """Revoke all cached credentials for *subject* — call on logout."""
@@ -465,7 +512,7 @@ class CredentialCache:
                 uid=uid,
                 target=target,
             )
-            await self.revoke(uid, target)
+            await self._expire(uid, target)
 
     async def sweep_expired(self) -> None:
         """Public alias for the janitor sweep — useful in tests and admin tooling."""

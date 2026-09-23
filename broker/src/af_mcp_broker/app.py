@@ -409,7 +409,10 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # krb5-token/servicex-token, all three revoke through this cache) and
     # api/credentials.py's `DELETE /v1/credential` (revoke_all) alike,
     # without either module needing its own aggregator-cache-invalidation
-    # code. _mcp_aggregator is the module-level FastMCP instance built below
+    # code. The janitor's own expiry sweep does NOT go through revoke() (see
+    # CredentialCache._expire()), so a credential simply expiring never fires
+    # this hook -- only an actual identity-affecting revoke does.
+    # _mcp_aggregator is the module-level FastMCP instance built below
     # (before this lifespan runs) -- referenced here as a plain global, so
     # the closure always sees whatever populate_aggregator() has since
     # pushed into it, same as this lifespan's own later reference to it.
