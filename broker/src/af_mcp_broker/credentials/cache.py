@@ -382,10 +382,9 @@ class CredentialCache:
         credential merely expiring is bookkeeping, not an identity change.
 
         Always logs ``credential_cache.revoked``, with ``had_entry`` recording
-        whether anything was actually cached -- a revoke that found nothing
-        cached used to log nothing at all, which made a real production
-        investigation of over-invalidation (issue #320) harder than it needed
-        to be.
+        whether anything was actually cached -- ``on_revoke`` fires either
+        way, so a revoke that finds nothing cached still invalidates
+        downstream state and must still be visible in the logs.
         """
         entry = await self._pop_and_cleanup(subject, target)
         self._log.info(
