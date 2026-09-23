@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import logging
 import sys
+import time
 import uuid
 from typing import TYPE_CHECKING, Any
 
 import structlog
 
 if TYPE_CHECKING:
+    from structlog.stdlib import BoundLogger
     from structlog.types import EventDict, WrappedLogger
 
 
@@ -106,3 +108,46 @@ def bind_subject(subject: str) -> None:
     resolution, on either surface, carries who made the call.
     """
     structlog.contextvars.bind_contextvars(subject=subject)
+
+
+def log_request_received(bound_logger: BoundLogger, *, method: str, path: str) -> float:
+    """Log ``http.request.received`` and return a ``time.monotonic()`` start mark for ``log_request_finished`` (issue #322).
+
+    Call once at each ASGI entry point (/v1's ``_bind_request_logging_context``
+    middleware, /mcp's ``AsgiAuthMiddleware.__call__``), immediately after
+    ``bind_new_correlation_id()`` and before any auth/credential/routing
+    work -- so a request that stalls or dies downstream (queued behind other
+    work, stuck in auth/principal resolution, or a connection that never
+    completes) still leaves this line. Only ``method`` and ``path`` are
+    logged -- no query string, headers, or body, matching the audit log's
+    handling of sensitive data.
+    """
+    bound_logger.info("http.request.received", method=method, path=path)
+    return time.monotonic()
+
+
+def log_request_finished(
+    bound_logger: BoundLogger,
+    *,
+    start_time: float,
+    status_code: int | None,
+    exc_type: str | None = None,
+) -> None:
+    """Log ``http.request.finished`` -- success, exception, or client disconnect (issue #322).
+
+    Call once, in a ``finally`` block, paired with the ``log_request_received``
+    call that returned *start_time*. ``duration_ms`` is wall time since that
+    call, measured with the monotonic clock (not wall-clock time, which can
+    jump). ``subject`` is deliberately not a parameter here: it's bound into
+    structlog's contextvars by ``bind_subject`` once identity resolves, and
+    ``configure_logging``'s ``merge_contextvars`` processor merges it into
+    this line automatically whenever it's present by the time this is
+    called -- threading it through by hand would just duplicate that.
+    """
+    duration_ms = (time.monotonic() - start_time) * 1000
+    bound_logger.info(
+        "http.request.finished",
+        status_code=status_code,
+        duration_ms=round(duration_ms, 2),
+        exc_type=exc_type,
+    )

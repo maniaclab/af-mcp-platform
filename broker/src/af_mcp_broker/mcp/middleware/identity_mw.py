@@ -17,7 +17,12 @@ from af_mcp_broker.identity import (
     get_principal,
     issuer_is_local,
 )
-from af_mcp_broker.logging import bind_new_correlation_id, bind_subject
+from af_mcp_broker.logging import (
+    bind_new_correlation_id,
+    bind_subject,
+    log_request_finished,
+    log_request_received,
+)
 from af_mcp_broker.maintenance import (
     MaintenanceModeStore,
     check_not_maintenance_or_fail_open,
@@ -26,7 +31,7 @@ from af_mcp_broker.pat import PAT_PREFIX
 from af_mcp_broker.pat_auth import LastUsedTracker, resolve_pat_principal
 
 if TYPE_CHECKING:
-    from starlette.types import Receive, Scope, Send
+    from starlette.types import Message, Receive, Scope, Send
 
     from af_mcp_broker.config import Settings
     from af_mcp_broker.principal_cache import PrincipalCache
@@ -182,6 +187,43 @@ class AsgiAuthMiddleware:
         # correlation_id for this surface (issue #281).
         bind_new_correlation_id()
 
+        # issue #322: there is no Response object at this ASGI layer to read
+        # a status code off (unlike /v1's call_next-based middleware), so
+        # capture it off the outgoing ``http.response.start`` message
+        # instead. Logging "finished" happens in the ``finally`` block below,
+        # which only runs once ``_authenticate_and_dispatch`` (or an early
+        # ``_send_401``/``_send_error`` reply within it) has actually
+        # returned -- for a streaming (SSE) /mcp response that's when the
+        # stream ends, not when headers go out, since headers are just one
+        # of the messages this wrapper passes through on the way there.
+        start_time = log_request_received(
+            logger, method=scope.get("method", ""), path=scope.get("path", "")
+        )
+        status_code: int | None = None
+        exc_type: str | None = None
+
+        async def wrapped_send(message: Message) -> None:
+            nonlocal status_code
+            if message["type"] == "http.response.start":
+                status_code = message["status"]
+            await send(message)
+
+        try:
+            await self._authenticate_and_dispatch(scope, receive, wrapped_send)
+        except Exception as exc:
+            exc_type = type(exc).__name__
+            raise
+        finally:
+            log_request_finished(
+                logger,
+                start_time=start_time,
+                status_code=status_code,
+                exc_type=exc_type,
+            )
+
+    async def _authenticate_and_dispatch(
+        self, scope: Scope, receive: Receive, send: Send
+    ) -> None:
         settings = self._identity_mw.settings
         revoked_jti_cache = self._identity_mw.revoked_jti_cache
         pat_backend = self._identity_mw.pat_backend

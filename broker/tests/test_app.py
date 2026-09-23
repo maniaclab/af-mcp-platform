@@ -4,6 +4,7 @@ FastAPI app (see test_dev_bypass.py / test_api.py for full-boot coverage).
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -285,13 +286,19 @@ async def test_bind_request_logging_context_binds_a_fresh_correlation_id() -> No
     resolves identity, so this is where every request -- even one whose
     credentials never validate -- gets a correlation_id to log by."""
     structlog.contextvars.clear_contextvars()
+    # A SimpleNamespace stand-in for Request is enough here: issue #322's
+    # http.request.received/finished logging (exercised in full by
+    # test_request_logging.py) only reads request.method/request.url.path,
+    # never anything requiring a real Starlette Request.
+    request = SimpleNamespace(method="GET", url=SimpleNamespace(path="/v1/whoami"))
+    response = SimpleNamespace(status_code=200)
 
-    async def call_next(request: Any) -> str:
-        return "response"
+    async def call_next(request: Any) -> Any:
+        return response
 
-    result = await app_module._bind_request_logging_context(None, call_next)
+    result = await app_module._bind_request_logging_context(request, call_next)
 
-    assert result == "response"
+    assert result is response
     assert structlog.contextvars.get_contextvars()["correlation_id"]
 
 
