@@ -911,6 +911,98 @@ def test_required_permission_for_dict_keys_are_native_names_regardless_of_apply_
     assert registry2.required_permission_for("list_dids", unnamespaced) == "read_data"
 
 
+# ---------------------------------------------------------------------------
+# exclude_tools (issue #173): native (pre-namespace) tool names a service's
+# ProxyProvider omits from tools/list and refuses on tools/call, as if the
+# backend never advertised them -- e.g. condor-mcp's infrastructure-facing
+# advertise_to_collector, which has no user story behind the broker.
+# ---------------------------------------------------------------------------
+
+
+def test_exclude_tools_defaults_to_empty_frozenset() -> None:
+    spec = ServiceSpec(
+        name="example",
+        prefix="example",
+        url="http://example.invalid/mcp",
+        transport="http",
+        required_permission="__none__",
+    )
+    assert spec.exclude_tools == frozenset()
+
+
+def test_load_parses_exclude_tools(tmp_path: Path) -> None:
+    services_file = tmp_path / "services.yaml"
+    services_file.write_text(
+        """
+services:
+  - name: condor_service
+    prefix: condor
+    url: "http://condor.invalid/mcp"
+    required_permission: __none__
+    exclude_tools: ["advertise_to_collector"]
+"""
+    )
+    registry = ServiceRegistry()
+    registry.load(str(services_file))
+    spec = registry.get("condor_service")
+    assert spec is not None
+    assert spec.exclude_tools == frozenset({"advertise_to_collector"})
+
+
+def test_load_defaults_exclude_tools_empty_when_absent(tmp_path: Path) -> None:
+    services_file = tmp_path / "services.yaml"
+    services_file.write_text(
+        """
+services:
+  - name: example
+    prefix: example
+    url: "http://example.invalid/mcp"
+    required_permission: __none__
+"""
+    )
+    registry = ServiceRegistry()
+    registry.load(str(services_file))
+    spec = registry.get("example")
+    assert spec is not None
+    assert spec.exclude_tools == frozenset()
+
+
+def test_load_rejects_non_list_exclude_tools(tmp_path: Path) -> None:
+    """A bare string is iterable -- without this check it would silently
+    become a frozenset of individual characters instead of failing loudly."""
+    services_file = tmp_path / "services.yaml"
+    services_file.write_text(
+        """
+services:
+  - name: condor_service
+    prefix: condor
+    url: "http://condor.invalid/mcp"
+    required_permission: __none__
+    exclude_tools: "advertise_to_collector"
+"""
+    )
+    registry = ServiceRegistry()
+    with pytest.raises(ValueError, match="exclude_tools"):
+        registry.load(str(services_file))
+
+
+def test_load_rejects_exclude_tools_with_non_string_items(tmp_path: Path) -> None:
+    services_file = tmp_path / "services.yaml"
+    services_file.write_text(
+        """
+services:
+  - name: condor_service
+    prefix: condor
+    url: "http://condor.invalid/mcp"
+    required_permission: __none__
+    exclude_tools: [123]
+"""
+    )
+    registry = ServiceRegistry()
+    with pytest.raises(ValueError, match="exclude_tools"):
+        registry.load(str(services_file))
+
+
 def test_register_rejects_colliding_tool_permission_keys_across_services() -> None:
     """Two services whose merged per-tool/default keys collide would make one
     service's permission silently win over the other's -- fail loud instead."""

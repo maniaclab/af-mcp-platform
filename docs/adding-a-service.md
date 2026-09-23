@@ -210,6 +210,32 @@ permission, auth type); the individual tool names live one level down at
 `GET /v1/catalog/{service}/tools`, which the portal fetches when a server
 card's Tools section is expanded.
 
+### `exclude_tools` — hiding backend tools entirely
+
+`exclude_tools` is a list of native (pre-namespace) tool names a backend
+should never be exposed for, at all — not "gated behind a permission", but
+absent from `tools/list` and refused on `tools/call` exactly as if the
+backend never advertised them:
+
+```yaml
+- name: condor_service
+  prefix: condor
+  url: "http://condor-mcp:8000/mcp"
+  required_permission: manage_jobs
+  exclude_tools: ["advertise_to_collector"]
+```
+
+Use this for a backend tool that's infrastructure-facing with no user story
+behind the broker (condor-mcp's `advertise_to_collector`, the shipped
+example), not for something you merely want fewer callers to reach — that's
+what per-tool `required_permission` (Step 2 below) is for. Names are
+whatever the provider itself sees, which follows `apply_namespace` the same
+way `required_permission`'s dict keys do: the backend's own name for the
+(default) namespaced case, or the raw name including its self-declared
+prefix when `apply_namespace: false`. A name that never appears in the
+backend's own listing logs a one-time `aggregator.exclude_tools_not_found`
+warning — almost always a typo.
+
 ### Naming conventions
 
 New services are named `<backend>_service` per the Elwood v5 glossary (e.g.

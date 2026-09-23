@@ -193,6 +193,22 @@ class ServiceSpec:
     # whether that resolved identity is forwarded to this backend. Only the
     # bearer/broker-issued mint path honors it; x509 mints identity-only tokens.
     requires_posix: bool = False
+    # Native tool names this service's ProxyProvider omits from tools/list
+    # AND refuses on tools/call, as if the backend never advertised them at
+    # all (issue #173). Concrete use case: hiding condor-mcp's
+    # infrastructure-facing advertise_to_collector, which has no user story
+    # behind the broker.
+    #
+    # "Native" here means the exact name the provider itself sees, which
+    # depends on apply_namespace exactly the way required_permission's dict
+    # keys do (see that field's docstring above): for the (default)
+    # namespaced case, that's the backend's own name, since fastmcp's
+    # Namespace transform prepends "<prefix>_" from OUTSIDE the provider
+    # (see namespaced_tool_name below); for an apply_namespace: false
+    # service, the native name already carries whatever prefix the backend
+    # self-declares (e.g. rucio-mcp's "rucio_list_dids"), so an entry here
+    # must include that prefix too.
+    exclude_tools: frozenset[str] = frozenset()
 
     @property
     def effective_audience(self) -> str:
@@ -359,6 +375,15 @@ class ServiceRegistry:
         with Path(path).open() as fh:
             raw = yaml.safe_load(fh) or {}
         for entry in raw.get("services", []):
+            exclude_tools = entry.get("exclude_tools", [])
+            if not isinstance(exclude_tools, list) or not all(
+                isinstance(tool, str) for tool in exclude_tools
+            ):
+                msg = (
+                    f"service '{entry['name']}' exclude_tools must be a list "
+                    "of native tool name strings"
+                )
+                raise ValueError(msg)
             spec = ServiceSpec(
                 name=entry["name"],
                 prefix=entry.get("prefix", entry["name"]),
@@ -375,6 +400,7 @@ class ServiceRegistry:
                 trust_tier=entry.get("trust_tier"),
                 agent_policy=entry.get("agent_policy"),
                 requires_posix=entry.get("requires_posix", False),
+                exclude_tools=frozenset(exclude_tools),
             )
             self.register(spec)
 

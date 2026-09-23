@@ -997,6 +997,232 @@ async def test_observable_proxy_provider_warns_on_tool_prefix_mismatch(
 
 
 # ---------------------------------------------------------------------------
+# exclude_tools (issue #173): a service's ProxyProvider must omit configured
+# native tool names from tools/list AND refuse them on tools/call exactly
+# like a name the backend never advertised -- e.g. condor-mcp's
+# infrastructure-facing advertise_to_collector.
+# ---------------------------------------------------------------------------
+
+
+async def test_observable_proxy_provider_get_tool_returns_none_for_excluded_tool_before_delegating(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A tools/call resolving an excluded name must fail exactly like one for
+    a name the backend never advertised at all. fastmcp's base _get_tool()
+    reads self._tools_cache directly -- populated unfiltered by the base
+    _list_tools() -- so filtering only the tools/list response is not
+    enough; a direct _get_tool() lookup would still resolve it. The
+    exclusion must short-circuit _get_tool() itself, before any cold-cache
+    tools/list round trip (and the credential mint inside client_factory a
+    real one would trigger)."""
+    list_tools = AsyncMock(return_value=[])
+    monkeypatch.setattr(aggregator._ObservableProxyProvider, "_list_tools", list_tools)
+
+    async def _factory() -> Client:
+        raise AssertionError("client_factory must not be called for an excluded tool")
+
+    registry = ServiceRegistry()
+    registry.register(_spec())
+    provider = aggregator._ObservableProxyProvider(
+        "example",
+        _factory,
+        registry=registry,
+        exclude_tools=frozenset({"advertise_to_collector"}),
+    )
+
+    tool = await provider._get_tool("advertise_to_collector")
+
+    assert tool is None
+    list_tools.assert_not_awaited()
+
+
+async def test_observable_proxy_provider_get_tool_still_resolves_non_excluded_tool() -> (
+    None
+):
+    """exclude_tools only rules out its own names -- exercised through a fake
+    client (not a mocked _list_tools) so the real cache-population path in
+    fastmcp's base _get_tool()/_list_tools() runs unmodified."""
+    mcp_tool = McpTool(name="query_jobs", input_schema={"type": "object"})
+
+    class _FakeClient:
+        async def __aenter__(self) -> Self:
+            return self
+
+        async def __aexit__(self, *exc_info: object) -> None:
+            return None
+
+        async def list_tools(self) -> list[McpTool]:
+            return [mcp_tool]
+
+    registry = ServiceRegistry()
+    registry.register(_spec())
+    provider = aggregator._ObservableProxyProvider(
+        "example",
+        _FakeClient,
+        registry=registry,
+        exclude_tools=frozenset({"advertise_to_collector"}),
+    )
+
+    tool = await provider._get_tool("query_jobs")
+
+    assert tool is not None
+    assert tool.name == "query_jobs"
+
+
+async def test_observable_proxy_provider_list_tools_omits_excluded_tool_namespaced(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """tools/list must omit an excluded native name for a namespaced service
+    (apply_namespace defaults true, route_prefix=None) -- the provider always
+    sees native (pre-namespace) names regardless of namespacing, since
+    fastmcp's Namespace transform adds the "<prefix>_" prefix from outside,
+    after the provider (see registry.py's namespaced_tool_name docstring)."""
+    kept = ProxyTool.from_mcp_tool(
+        lambda: None, McpTool(name="query_jobs", input_schema={"type": "object"})
+    )
+    excluded = ProxyTool.from_mcp_tool(
+        lambda: None,
+        McpTool(name="advertise_to_collector", input_schema={"type": "object"}),
+    )
+    monkeypatch.setattr(
+        aggregator.ProxyProvider,
+        "_list_tools",
+        AsyncMock(return_value=[kept, excluded]),
+    )
+
+    registry = ServiceRegistry()
+    registry.register(_spec())
+
+    async def _factory() -> Client:
+        raise AssertionError("ProxyProvider._list_tools is stubbed above")
+
+    provider = aggregator._ObservableProxyProvider(
+        "example",
+        _factory,
+        registry=registry,
+        exclude_tools=frozenset({"advertise_to_collector"}),
+    )
+
+    tools = await provider._list_tools()
+
+    assert [t.name for t in tools] == ["query_jobs"]
+
+
+async def test_observable_proxy_provider_list_tools_omits_excluded_tool_unnamespaced(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Same omission for an apply_namespace: false service, where native
+    names already carry the backend's own self-declared prefix -- an
+    exclude_tools entry must match the exact name the provider sees, prefix
+    included."""
+    kept = ProxyTool.from_mcp_tool(
+        lambda: None,
+        McpTool(name="condor_query_jobs", input_schema={"type": "object"}),
+    )
+    excluded = ProxyTool.from_mcp_tool(
+        lambda: None,
+        McpTool(name="condor_advertise_to_collector", input_schema={"type": "object"}),
+    )
+    monkeypatch.setattr(
+        aggregator.ProxyProvider,
+        "_list_tools",
+        AsyncMock(return_value=[kept, excluded]),
+    )
+
+    registry = ServiceRegistry()
+    registry.register(_spec())
+
+    async def _factory() -> Client:
+        raise AssertionError("ProxyProvider._list_tools is stubbed above")
+
+    provider = aggregator._ObservableProxyProvider(
+        "example",
+        _factory,
+        registry=registry,
+        route_prefix="condor",
+        exclude_tools=frozenset({"condor_advertise_to_collector"}),
+    )
+
+    tools = await provider._list_tools()
+
+    assert [t.name for t in tools] == ["condor_query_jobs"]
+
+
+async def test_observable_proxy_provider_warns_once_on_exclude_tools_typo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A configured exclude_tools name that never appears in the backend's
+    listing is likely a typo -- warn so it's visible in logs, but only once
+    per service per process, not on every uncached tools/list."""
+    tool = ProxyTool.from_mcp_tool(
+        lambda: None, McpTool(name="query_jobs", input_schema={"type": "object"})
+    )
+    monkeypatch.setattr(
+        aggregator.ProxyProvider, "_list_tools", AsyncMock(return_value=[tool])
+    )
+
+    registry = ServiceRegistry()
+    registry.register(_spec())
+
+    async def _factory() -> Client:
+        raise AssertionError("ProxyProvider._list_tools is stubbed above")
+
+    provider = aggregator._ObservableProxyProvider(
+        "example",
+        _factory,
+        registry=registry,
+        exclude_tools=frozenset({"advertsie_to_collector"}),  # deliberate typo
+    )
+
+    with structlog.testing.capture_logs() as logs:
+        await provider._list_tools()
+        await provider._list_tools()
+
+    typo_events = [
+        entry
+        for entry in logs
+        if entry["event"] == "aggregator.exclude_tools_not_found"
+    ]
+    assert len(typo_events) == 1
+    assert typo_events[0]["service"] == "example"
+    assert typo_events[0]["tools"] == ["advertsie_to_collector"]
+
+
+async def test_observable_proxy_provider_no_typo_warning_when_exclude_tools_all_present(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tool = ProxyTool.from_mcp_tool(
+        lambda: None,
+        McpTool(name="advertise_to_collector", input_schema={"type": "object"}),
+    )
+    monkeypatch.setattr(
+        aggregator.ProxyProvider, "_list_tools", AsyncMock(return_value=[tool])
+    )
+
+    registry = ServiceRegistry()
+    registry.register(_spec())
+
+    async def _factory() -> Client:
+        raise AssertionError("ProxyProvider._list_tools is stubbed above")
+
+    provider = aggregator._ObservableProxyProvider(
+        "example",
+        _factory,
+        registry=registry,
+        exclude_tools=frozenset({"advertise_to_collector"}),
+    )
+
+    with structlog.testing.capture_logs() as logs:
+        await provider._list_tools()
+
+    assert not [
+        entry
+        for entry in logs
+        if entry["event"] == "aggregator.exclude_tools_not_found"
+    ]
+
+
+# ---------------------------------------------------------------------------
 # Per-(subject, service) tools/list cache (issue #320)
 # ---------------------------------------------------------------------------
 

@@ -371,6 +371,29 @@ async def test_apply_namespace_false_keeps_raw_tool_names(
     assert "open_ping" not in names
 
 
+async def test_exclude_tools_omits_the_configured_tool(
+    policy: EntitlementPolicy,
+    make_principal: Callable[..., Any],
+    open_backend_url: str,
+) -> None:
+    """issue #173: a service's exclude_tools entry must be invisible here too
+    -- fetch_service_tool_listing feeds this endpoint the same native-name
+    filtering _ObservableProxyProvider applies for a real tools/list through
+    /mcp, so the portal's catalog can never show a tool /mcp itself hides."""
+    registry = ServiceRegistry()
+    registry.register(
+        _spec("open", open_backend_url, exclude_tools=frozenset({"submit"}))
+    )
+    app, state = _make_app(registry, policy)
+    state["principal"] = make_principal(groups=[])
+
+    resp = await _get_tools(app, "open")
+    assert resp.status_code == 200, resp.text
+    names = {t["name"] for t in resp.json()["tools"]}
+    assert "open_ping" in names
+    assert "open_submit" not in names
+
+
 async def test_action_type_reflects_policy_tool_overrides(
     make_principal: Callable[..., Any],
     open_backend_url: str,

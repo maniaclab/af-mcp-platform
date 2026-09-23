@@ -7,6 +7,7 @@ import pytest
 from conftest import AUDIENCE, ISSUER, make_claims, run_asgi_app
 from fastmcp import Client, FastMCP
 from fastmcp.client.transports import StreamableHttpTransport
+from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_http_headers
 from fastmcp.server.providers.proxy import ProxyProvider
 from fastmcp.utilities.http import find_available_port
@@ -39,6 +40,13 @@ def _toy_backend() -> FastMCP:
         received, so the test can assert "authorization" is absent."""
         return sorted(get_http_headers(include_all=True).keys())
 
+    @mcp.tool
+    def advertise_to_collector() -> str:
+        """Mirrors condor-mcp's real infrastructure-facing tool (issue #173)
+        -- unused by the shared running_broker fixture's tests, only excluded
+        by running_broker_with_excluded_tools below."""
+        return "advertised"
+
     return mcp
 
 
@@ -49,6 +57,13 @@ def _self_prefixed_backend() -> FastMCP:
     @mcp.tool
     def selfpfx_ping() -> str:
         return "pong"
+
+    @mcp.tool
+    def selfpfx_advertise_to_collector() -> str:
+        """An apply_namespace: false counterpart to _toy_backend's tool
+        above, so exclude_tools is exercised for both namespace conventions
+        -- only excluded by running_broker_with_excluded_tools below."""
+        return "advertised"
 
     return mcp
 
@@ -96,48 +111,70 @@ async def _fake_directory_resolve(self: Any, principal_id: str) -> Any:
     )
 
 
-@pytest.fixture
-def running_broker(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    toy_backend_url: str,
-    selfpfx_backend_url: str,
-    dead_backend_url: str,
-    sig_key: Any,
-    prime_jwks: Any,
-):
-    """Boot the real af_mcp_broker.app.app (module-level singleton, same
-    object every test module shares) behind a real HTTP server, wired to
-    three test backends via a temp services.yaml/policy.yaml."""
-    services_file = tmp_path / "services.yaml"
-    # auth_type: none on all three -- these tests exercise aggregator
-    # plumbing (namespacing, entitlement filtering, dead-backend tolerance,
-    # header non-forwarding), not credential injection, which has its own
-    # dedicated tests/fixtures registering real credential providers.
-    services_file.write_text(
-        f"""
+def _services_yaml(
+    toy_url: str,
+    selfpfx_url: str,
+    dead_url: str,
+    *,
+    toy_exclude_tools: list[str] | None = None,
+    selfpfx_exclude_tools: list[str] | None = None,
+) -> str:
+    """Render the services.yaml body shared by running_broker and
+    running_broker_with_excluded_tools -- the only difference between the
+    two fixtures is an optional exclude_tools list on the namespaced (toy)
+    and un-namespaced (selfpfx) entries, so the mount/permission/auth_type
+    wiring itself lives in exactly one place.
+
+    auth_type: none throughout -- these tests exercise aggregator plumbing
+    (namespacing, entitlement filtering, dead-backend tolerance, header
+    non-forwarding, exclude_tools), not credential injection, which has its
+    own dedicated tests/fixtures registering real credential providers.
+    """
+    toy_exclude = (
+        f"\n    exclude_tools: {toy_exclude_tools!r}" if toy_exclude_tools else ""
+    )
+    selfpfx_exclude = (
+        f"\n    exclude_tools: {selfpfx_exclude_tools!r}"
+        if selfpfx_exclude_tools
+        else ""
+    )
+    return f"""
 services:
   - name: toy
     prefix: toy
-    url: "{toy_backend_url}"
+    url: "{toy_url}"
     transport: http
     required_permission: read_data
-    auth_type: none
+    auth_type: none{toy_exclude}
   - name: selfpfx
     prefix: selfpfx
-    url: "{selfpfx_backend_url}"
+    url: "{selfpfx_url}"
     transport: http
     required_permission: __none__
     apply_namespace: false
-    auth_type: none
+    auth_type: none{selfpfx_exclude}
   - name: dead
     prefix: dead
-    url: "{dead_backend_url}"
+    url: "{dead_url}"
     transport: http
     required_permission: __none__
     auth_type: none
 """
-    )
+
+
+def _boot_broker(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    services_yaml_text: str,
+    sig_key: Any,
+    prime_jwks: Any,
+) -> Any:
+    """Write *services_yaml_text* plus the shared policy.yaml, wire up the
+    env vars/monkeypatches every running_broker* fixture needs, and return
+    the real af_mcp_broker.app.app singleton -- split out so the fixtures
+    below differ only in the services.yaml body they boot with."""
+    services_file = tmp_path / "services.yaml"
+    services_file.write_text(services_yaml_text)
     policy_file = tmp_path / "policy.yaml"
     policy_file.write_text(
         """
@@ -171,6 +208,57 @@ group_permissions:
     from af_mcp_broker.app import app
 
     return app
+
+
+@pytest.fixture
+def running_broker(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    toy_backend_url: str,
+    selfpfx_backend_url: str,
+    dead_backend_url: str,
+    sig_key: Any,
+    prime_jwks: Any,
+):
+    """Boot the real af_mcp_broker.app.app (module-level singleton, same
+    object every test module shares) behind a real HTTP server, wired to
+    three test backends via a temp services.yaml/policy.yaml."""
+    return _boot_broker(
+        monkeypatch,
+        tmp_path,
+        _services_yaml(toy_backend_url, selfpfx_backend_url, dead_backend_url),
+        sig_key,
+        prime_jwks,
+    )
+
+
+@pytest.fixture
+def running_broker_with_excluded_tools(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    toy_backend_url: str,
+    selfpfx_backend_url: str,
+    dead_backend_url: str,
+    sig_key: Any,
+    prime_jwks: Any,
+):
+    """Same wiring as running_broker, but toy's (namespaced) and selfpfx's
+    (un-namespaced, apply_namespace: false) entries each exclude one native
+    tool name (issue #173) -- exercises exclude_tools under both namespace
+    conventions in one broker instance."""
+    return _boot_broker(
+        monkeypatch,
+        tmp_path,
+        _services_yaml(
+            toy_backend_url,
+            selfpfx_backend_url,
+            dead_backend_url,
+            toy_exclude_tools=["advertise_to_collector"],
+            selfpfx_exclude_tools=["selfpfx_advertise_to_collector"],
+        ),
+        sig_key,
+        prime_jwks,
+    )
 
 
 def _bearer_client(url: str, token: str) -> Client:
@@ -394,3 +482,78 @@ async def test_second_session_same_user_lists_every_kind_from_cache(
     # The second session for the same subject must be served entirely from
     # cache -- no key's count may have grown past the first round.
     assert counts == counts_after_first_session
+
+
+# ---------------------------------------------------------------------------
+# exclude_tools end to end (issue #173): a service's excluded native tool
+# name must be invisible to tools/list AND refused on tools/call exactly
+# like a name the backend never advertised -- for both a namespaced service
+# (toy) and an apply_namespace: false one (selfpfx).
+# ---------------------------------------------------------------------------
+
+
+async def test_exclude_tools_omits_the_tool_from_tools_list(
+    running_broker_with_excluded_tools, sig_key
+):
+    token = sig_key.sign(make_claims())
+    _TEST_PRINCIPAL_GROUPS["user-123"] = ["atlas"]
+
+    async with run_asgi_app(running_broker_with_excluded_tools) as base_url:
+        names = await _list_tool_names(base_url, token)
+
+    # Excluded from both the namespaced (toy) and un-namespaced (selfpfx)
+    # service's listing ...
+    assert "toy_advertise_to_collector" not in names
+    assert "selfpfx_advertise_to_collector" not in names
+    # ... while each service's other tool is unaffected.
+    assert "toy_echo" in names
+    assert "selfpfx_ping" in names
+
+
+async def test_call_of_excluded_tool_fails_exactly_like_an_unknown_tool(
+    running_broker_with_excluded_tools, sig_key
+):
+    """The whole point of exclusion (issue #173): a direct tools/call for the
+    excluded name must be indistinguishable from one for a name that was
+    never advertised at all -- same exception type, same message -- so a
+    caller can never tell the backend has more surface than tools/list
+    showed."""
+    token = sig_key.sign(make_claims())
+    _TEST_PRINCIPAL_GROUPS["user-123"] = ["atlas"]
+
+    async with (
+        run_asgi_app(running_broker_with_excluded_tools) as base_url,
+        _bearer_client(f"{base_url}/mcp/", token) as client,
+    ):
+        with pytest.raises(ToolError) as excluded_exc_info:
+            await client.call_tool("toy_advertise_to_collector", {})
+        with pytest.raises(ToolError) as unknown_exc_info:
+            await client.call_tool("toy_this_tool_was_never_advertised", {})
+
+    assert type(excluded_exc_info.value) is type(unknown_exc_info.value)
+    assert str(excluded_exc_info.value) == str(unknown_exc_info.value).replace(
+        "toy_this_tool_was_never_advertised", "toy_advertise_to_collector"
+    )
+
+
+async def test_call_of_excluded_unnamespaced_tool_fails_exactly_like_an_unknown_tool(
+    running_broker_with_excluded_tools, sig_key
+):
+    """Same as above, for the apply_namespace: false (selfpfx) service --
+    exclude_tools must behave identically regardless of namespacing."""
+    token = sig_key.sign(make_claims())
+    _TEST_PRINCIPAL_GROUPS["user-123"] = ["atlas"]
+
+    async with (
+        run_asgi_app(running_broker_with_excluded_tools) as base_url,
+        _bearer_client(f"{base_url}/mcp/", token) as client,
+    ):
+        with pytest.raises(ToolError) as excluded_exc_info:
+            await client.call_tool("selfpfx_advertise_to_collector", {})
+        with pytest.raises(ToolError) as unknown_exc_info:
+            await client.call_tool("selfpfx_this_tool_was_never_advertised", {})
+
+    assert type(excluded_exc_info.value) is type(unknown_exc_info.value)
+    assert str(excluded_exc_info.value) == str(unknown_exc_info.value).replace(
+        "selfpfx_this_tool_was_never_advertised", "selfpfx_advertise_to_collector"
+    )
