@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 
 import httpx2
 import pytest
+import structlog
 from fastapi import HTTPException
 from fastmcp import FastMCP
 from fastmcp.client import Client
@@ -18,10 +19,12 @@ from fastmcp.server.elicitation import (
     DeclinedElicitation,
 )
 from fastmcp.server.providers.proxy import (
+    ProxyTool,
     default_proxy_log_handler,
     default_proxy_progress_handler,
 )
 from mcp.types import METHOD_NOT_FOUND
+from mcp.types import Tool as McpTool
 
 from af_mcp_broker.authorization import EntitlementPolicy
 from af_mcp_broker.config import BrokerIssuedProviderConfig
@@ -855,6 +858,138 @@ async def test_observable_proxy_provider_clears_list_failure_on_success(
     await provider._list_tools()
 
     assert registry.recent_list_failure("example") is None
+
+
+async def test_observable_proxy_provider_get_tool_short_circuits_on_prefix_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A ``route_prefix``-carrying provider (apply_namespace: false) is asked
+    about every tool name in an aggregate tools/call, since fastmcp only
+    pre-filters by prefix for namespaced mounts. A name that doesn't start
+    with this backend's own prefix can never be one of its tools, so
+    ``_get_tool`` must return None immediately -- without a cold-cache
+    ``_list_tools()`` round trip (and the credential mint inside
+    client_factory that a real one would trigger)."""
+    list_tools = AsyncMock(return_value=[])
+    monkeypatch.setattr(aggregator._ObservableProxyProvider, "_list_tools", list_tools)
+
+    async def _factory() -> Client:
+        raise AssertionError("client_factory must not be called for a prefix mismatch")
+
+    registry = ServiceRegistry()
+    registry.register(_spec())
+    provider = aggregator._ObservableProxyProvider(
+        "example", _factory, registry=registry, route_prefix="ami"
+    )
+
+    tool = await provider._get_tool("servicex_get_dataset")
+
+    assert tool is None
+    list_tools.assert_not_awaited()
+
+
+async def test_observable_proxy_provider_get_tool_delegates_on_prefix_match() -> None:
+    """A name that DOES start with the un-namespaced provider's own prefix
+    must still resolve normally -- the short-circuit only rules out names
+    that can't belong to this backend. Exercised through a fake client
+    (rather than mocking ``_list_tools``) so the real cache-population path
+    in fastmcp's base ``_get_tool``/``_list_tools`` runs unmodified."""
+    mcp_tool = McpTool(name="ami_get_dataset_info", input_schema={"type": "object"})
+
+    class _FakeClient:
+        async def __aenter__(self) -> Self:
+            return self
+
+        async def __aexit__(self, *exc_info: object) -> None:
+            return None
+
+        async def list_tools(self) -> list[McpTool]:
+            return [mcp_tool]
+
+    registry = ServiceRegistry()
+    registry.register(_spec())
+    provider = aggregator._ObservableProxyProvider(
+        "example", _FakeClient, registry=registry, route_prefix="ami"
+    )
+
+    tool = await provider._get_tool("ami_get_dataset_info")
+
+    assert tool is not None
+    assert tool.name == "ami_get_dataset_info"
+
+
+async def test_observable_proxy_provider_get_tool_namespaced_unaffected() -> None:
+    """A namespaced provider (``route_prefix=None``, the default -- fastmcp
+    itself already restricts which names it's ever asked about) must keep
+    delegating to the base ``_get_tool`` for any name, exactly as before this
+    change."""
+    mcp_tool = McpTool(name="anything_at_all", input_schema={"type": "object"})
+
+    class _FakeClient:
+        async def __aenter__(self) -> Self:
+            return self
+
+        async def __aexit__(self, *exc_info: object) -> None:
+            return None
+
+        async def list_tools(self) -> list[McpTool]:
+            return [mcp_tool]
+
+    registry = ServiceRegistry()
+    registry.register(_spec())
+    provider = aggregator._ObservableProxyProvider(
+        "example", _FakeClient, registry=registry
+    )
+
+    tool = await provider._get_tool("anything_at_all")
+
+    assert tool is not None
+    assert tool.name == "anything_at_all"
+
+
+async def test_observable_proxy_provider_warns_on_tool_prefix_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """route_prefix set means a tool this backend advertises without that
+    prefix is listable (it survives entitlement filtering in tools/list) but
+    can never be reached through _get_tool's short-circuit above -- warn so
+    the mismatch is visible in logs instead of leaving the tool silently
+    dead on arrival."""
+    matching_tool = ProxyTool.from_mcp_tool(
+        lambda: None,
+        McpTool(name="ami_get_dataset_info", input_schema={"type": "object"}),
+    )
+    mismatched_tool = ProxyTool.from_mcp_tool(
+        lambda: None,
+        McpTool(name="servicex_list_datasets", input_schema={"type": "object"}),
+    )
+    monkeypatch.setattr(
+        aggregator.ProxyProvider,
+        "_list_tools",
+        AsyncMock(return_value=[matching_tool, mismatched_tool]),
+    )
+
+    registry = ServiceRegistry()
+    registry.register(_spec())
+
+    async def _factory() -> Client:
+        raise AssertionError("ProxyProvider._list_tools is stubbed above")
+
+    provider = aggregator._ObservableProxyProvider(
+        "example", _factory, registry=registry, route_prefix="ami"
+    )
+
+    with structlog.testing.capture_logs() as logs:
+        tools = await provider._list_tools()
+
+    assert tools == [matching_tool, mismatched_tool]
+    mismatch_events = [
+        entry for entry in logs if entry["event"] == "aggregator.tool_prefix_mismatch"
+    ]
+    assert len(mismatch_events) == 1
+    assert mismatch_events[0]["service"] == "example"
+    assert mismatch_events[0]["tool"] == "servicex_list_datasets"
+    assert mismatch_events[0]["prefix"] == "ami"
 
 
 # ---------------------------------------------------------------------------
