@@ -56,7 +56,12 @@ from af_mcp_broker.credentials.krb5_vault import Krb5VaultStore
 from af_mcp_broker.credentials.servicex_vault import VaultServiceXStore
 from af_mcp_broker.http import aclose_http_client
 from af_mcp_broker.identity import build_dev_principal, get_jwks, issuer_is_local
-from af_mcp_broker.logging import bind_new_correlation_id, configure_logging
+from af_mcp_broker.logging import (
+    bind_new_correlation_id,
+    configure_logging,
+    log_request_finished,
+    log_request_received,
+)
 from af_mcp_broker.maintenance import (
     InMemoryMaintenanceModeStore,
     MaintenanceModeStore,
@@ -1133,9 +1138,19 @@ app.include_router(wellknown_router)
 instrument_fastapi(app, _mcp_aggregator_placeholder_settings)
 
 
+# Kubelet's liveness/readiness probes hit these every few seconds; logging
+# http.request.received/finished for them would flood the log for no
+# operational benefit (no subject, no interesting failure mode) -- same
+# reasoning as tracing.py's _EXCLUDED_URLS, which exempts them from HTTP
+# spans for the same reason. Skipped entirely rather than logged at debug,
+# since a busy broker would still mean a debug-level log configuration
+# drowns in them.
+_REQUEST_LOGGING_EXCLUDED_PATHS = frozenset({"/v1/healthz", "/v1/readyz"})
+
+
 @app.middleware("http")
 async def _bind_request_logging_context(request: Request, call_next):  # type: ignore[no-untyped-def]
-    """Binds a fresh correlation_id to structlog's contextvars for every /v1 request (issue #281).
+    """Binds a fresh correlation_id to structlog's contextvars for every /v1 request (issue #281) and logs its receipt/completion (issue #322).
 
     ``keycloak_dependency`` binds ``subject`` alongside it once the caller's
     identity resolves (see identity.py's ``get_principal``/its own
@@ -1145,9 +1160,35 @@ async def _bind_request_logging_context(request: Request, call_next):  # type: i
     the /mcp mount entirely (see the mount comment above), which is why
     identity_mw.AsgiAuthMiddleware binds its own correlation_id the same
     way for that surface.
+
+    ``http.request.received``/``http.request.finished`` are the only trace
+    of a request that stalls or dies before anything downstream logs -- see
+    ``logging.log_request_received``/``log_request_finished``'s docstrings
+    for why and what they carry. The ``finally`` block below fires whether
+    ``call_next`` returns normally or raises, so ``finished`` is always
+    logged exactly once per request.
     """
     bind_new_correlation_id()
-    return await call_next(request)
+    if request.url.path in _REQUEST_LOGGING_EXCLUDED_PATHS:
+        return await call_next(request)
+
+    start_time = log_request_received(
+        logger, method=request.method, path=request.url.path
+    )
+    status_code: int | None = None
+    exc_type: str | None = None
+    try:
+        response = await call_next(request)
+    except Exception as exc:
+        exc_type = type(exc).__name__
+        raise
+    else:
+        status_code = response.status_code
+        return response
+    finally:
+        log_request_finished(
+            logger, start_time=start_time, status_code=status_code, exc_type=exc_type
+        )
 
 
 @app.middleware("http")
