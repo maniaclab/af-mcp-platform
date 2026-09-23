@@ -129,6 +129,7 @@ class CredentialCache:
         self,
         max_failed_unlocks: int = 5,
         unlock_window_seconds: int = 15 * 60,
+        on_revoke: Callable[[str, str], None] | None = None,
     ) -> None:
         # (subject, target) -> _CacheEntry
         self._entries: dict[tuple[str, str], _CacheEntry] = {}
@@ -149,6 +150,13 @@ class CredentialCache:
         self._unlock_window_seconds = unlock_window_seconds
         self._janitor_task: asyncio.Task | None = None
         self._log = structlog.get_logger(__name__).bind(component="CredentialCache")
+        # Called at the end of revoke() (and, by delegation, revoke_all())
+        # with (subject, target) -- issue #320's hook for dropping the
+        # aggregator's per-subject tools/list cache entries for that service
+        # when a subject's linked identity is revoked. Kept generic (no
+        # af_mcp_broker.mcp import here) so this module stays unaware of the
+        # aggregator layer; app.py wires the real callback at construction.
+        self._on_revoke = on_revoke
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -331,26 +339,33 @@ class CredentialCache:
         For x509 credentials, zero-overwrites and unlinks the proxy file on
         the broker's tmpfs before removing the cache entry.  This prevents
         the proxy from being read by another process even briefly after revoke.
+
+        Calls ``on_revoke(subject, target)`` (if configured) regardless of
+        whether anything was actually cached -- a subject's linked identity
+        can change (issue #320) even when this cache holds nothing for it
+        right now, and a stale aggregator tools/list cache entry from an
+        earlier credential state must not survive that change either way.
         """
         key = (subject, target)
         entry = self._entries.pop(key, None)
-        if entry is None:
-            return
-        # proxy_path is None for Vault-persisted proxies (no local file to
-        # delete; X509Provider.revoke clears the Vault copy itself).
-        if entry.proxy_meta is not None and entry.proxy_meta.proxy_path is not None:
-            await _secure_delete_proxy(entry.proxy_meta.proxy_path)
-        cred_class = (
-            entry.credential.cred_class
-            if isinstance(entry.credential, IssuedCredential)
-            else type(entry.credential).__name__
-        )
-        self._log.info(
-            "credential_cache.revoked",
-            subject=subject,
-            target=target,
-            cred_class=cred_class,
-        )
+        if entry is not None:
+            # proxy_path is None for Vault-persisted proxies (no local file to
+            # delete; X509Provider.revoke clears the Vault copy itself).
+            if entry.proxy_meta is not None and entry.proxy_meta.proxy_path is not None:
+                await _secure_delete_proxy(entry.proxy_meta.proxy_path)
+            cred_class = (
+                entry.credential.cred_class
+                if isinstance(entry.credential, IssuedCredential)
+                else type(entry.credential).__name__
+            )
+            self._log.info(
+                "credential_cache.revoked",
+                subject=subject,
+                target=target,
+                cred_class=cred_class,
+            )
+        if self._on_revoke is not None:
+            self._on_revoke(subject, target)
 
     async def revoke_all(self, subject: str) -> None:
         """Revoke all cached credentials for *subject* — call on logout."""
