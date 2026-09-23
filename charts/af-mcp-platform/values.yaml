@@ -587,7 +587,9 @@ aggregator:
   # prevent cross-service tool-name collisions; set false only for a service
   # whose tools are already self-prefixed at the source, and only when no
   # other configured service can advertise an overlapping name -- otherwise
-  # one silently shadows the other. See docs/adding-a-service.md.
+  # one silently shadows the other. Calls are then routed by that prefix, so
+  # every tool the service advertises must be named <prefix>_<tool>. See
+  # docs/adding-a-service.md.
   # Each registered service's trust tier (Elwood v5 / Shannon) is declared
   # alongside its deployment manifests in the GitOps repo;
   # required_permission: __none__ is only for user-tier read-only services.

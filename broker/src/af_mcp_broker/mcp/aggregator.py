@@ -54,6 +54,7 @@ if TYPE_CHECKING:
 
     from fastmcp import Context
     from fastmcp.tools.base import Tool
+    from fastmcp.utilities.versions import VersionSpec
 
     from af_mcp_broker.authorization import EntitlementPolicy
     from af_mcp_broker.config import IdentityProviderConfig, Settings
@@ -1090,10 +1091,29 @@ class _ObservableProxyProvider(ProxyProvider):
         client_factory: ClientFactoryT,
         registry: ServiceRegistry,
         cache_ttl: float | None = None,
+        route_prefix: str | None = None,
     ) -> None:
         super().__init__(client_factory, cache_ttl=cache_ttl)
         self._service_name = service_name
         self._registry = registry
+        # Set only for an un-namespaced service (apply_namespace: false):
+        # fastmcp's prefix-based dispatch skips that filtering for an
+        # un-namespaced mount, so this provider is asked about EVERY tool
+        # name in an aggregate tools/call, not just its own.
+        self._route_prefix = route_prefix
+
+    async def _get_tool(
+        self, name: str, version: VersionSpec | None = None
+    ) -> Tool | None:
+        # A name that doesn't start with this un-namespaced service's own
+        # prefix can never be one of its tools -- return None without the
+        # cold-cache tools/list round trip (and the per-user credential mint
+        # inside client_factory) that asking anyway would otherwise cost.
+        if self._route_prefix is not None and not name.startswith(
+            f"{self._route_prefix}_"
+        ):
+            return None
+        return await super()._get_tool(name, version)
 
     async def _list_tools(self) -> Sequence[Tool]:
         try:
@@ -1114,6 +1134,20 @@ class _ObservableProxyProvider(ProxyProvider):
             # af_list_mcp_servers stop reporting "unavailable" for a service
             # that's actually fine again.
             self._registry.clear_list_failure(self._service_name)
+            if self._route_prefix is not None:
+                # A listed tool that doesn't match the route prefix would be
+                # visible in tools/list but unreachable via _get_tool's
+                # short-circuit above -- warn rather than filter, so the
+                # mismatch is on record instead of silently dead on arrival.
+                prefix = f"{self._route_prefix}_"
+                for tool in tools:
+                    if not tool.name.startswith(prefix):
+                        logger.warning(
+                            "aggregator.tool_prefix_mismatch",
+                            service=self._service_name,
+                            tool=tool.name,
+                            prefix=self._route_prefix,
+                        )
             return tools
 
 
@@ -1341,6 +1375,7 @@ def _register_services(
             ),
             registry=registry,
             cache_ttl=spec.tools_cache_ttl,
+            route_prefix=None if spec.apply_namespace else spec.prefix,
         )
         namespace = spec.prefix if spec.apply_namespace else ""
         mcp.add_provider(provider, namespace=namespace)
