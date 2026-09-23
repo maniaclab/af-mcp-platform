@@ -327,3 +327,70 @@ async def test_two_tools_calls_list_each_backend_once_not_per_call(
     # backend that was, was listed exactly once across both calls.
     assert call_counts
     assert all(count == 1 for count in call_counts.values())
+
+
+async def test_second_session_same_user_lists_every_kind_from_cache(
+    running_broker, sig_key, monkeypatch: pytest.MonkeyPatch
+):
+    """issue #320 follow-up: ``resources/list``, ``resources/templates/list``,
+    and ``prompts/list`` fan out to every backend uncached exactly like
+    ``tools/list`` did before the per-(subject, service) cache -- fastmcp's
+    ``ProxyProvider._list_resources``/``_list_resource_templates``/
+    ``_list_prompts`` (``server/providers/proxy.py``) never consult their own
+    freshness cache (only the per-lookup ``_get_resource``/etc. do), same as
+    ``_list_tools`` before it was wrapped by ``_ObservableProxyProvider``.
+
+    Confirmed by measuring base ``ProxyProvider._list_*`` call counts across
+    two client sessions for the same subject before this cache existed: a
+    fresh session's connect alone triggers no listing at all, one full round
+    of all four listings hits every backend exactly once per kind, and a
+    second session's round leaves ``_list_tools`` at 1 (already cached by
+    issue #320) while ``_list_resources``/``_list_resource_templates``/
+    ``_list_prompts`` each climb to 2 -- re-fanning-out on every reconnect.
+    This test now asserts the fixed behavior: a second session's full round
+    adds zero further base calls for any of the four kinds.
+    """
+    token = sig_key.sign(make_claims())
+    _TEST_PRINCIPAL_GROUPS["user-123"] = ["atlas"]
+
+    counts: dict[str, int] = {}
+
+    def _wrap(name: str) -> Any:
+        original = getattr(ProxyProvider, name)
+
+        async def _counting(self: Any, *a: Any, **kw: Any) -> Any:
+            key = f"{self._service_name}.{name}"
+            counts[key] = counts.get(key, 0) + 1
+            return await original(self, *a, **kw)
+
+        return _counting
+
+    for name in (
+        "_list_tools",
+        "_list_resources",
+        "_list_resource_templates",
+        "_list_prompts",
+    ):
+        monkeypatch.setattr(ProxyProvider, name, _wrap(name))
+
+    async def _list_everything(client: Client) -> None:
+        await client.list_tools()
+        await client.list_resources()
+        await client.list_resource_templates()
+        await client.list_prompts()
+
+    async with run_asgi_app(running_broker) as base_url:
+        async with _bearer_client(f"{base_url}/mcp/", token) as client:
+            await _list_everything(client)
+
+        counts_after_first_session = dict(counts)
+
+        async with _bearer_client(f"{base_url}/mcp/", token) as client:
+            await _list_everything(client)
+
+    # Every backend was listed exactly once per kind on the first (cold) round.
+    assert counts_after_first_session
+    assert all(count == 1 for count in counts_after_first_session.values())
+    # The second session for the same subject must be served entirely from
+    # cache -- no key's count may have grown past the first round.
+    assert counts == counts_after_first_session

@@ -25,6 +25,9 @@ from fastmcp.server.providers.proxy import (
     default_proxy_progress_handler,
 )
 from mcp.types import METHOD_NOT_FOUND
+from mcp.types import Prompt as McpPrompt
+from mcp.types import Resource as McpResource
+from mcp.types import ResourceTemplate as McpResourceTemplate
 from mcp.types import Tool as McpTool
 
 from af_mcp_broker.authorization import EntitlementPolicy
@@ -1017,21 +1020,34 @@ class _FakeClock:
 
 
 class _CountingListClient:
-    """Client double for ``_ObservableProxyProvider``'s ``client_factory``: records every ``list_tools()`` call, returning a fixed tool list or raising a fixed error.
+    """Client double for ``_ObservableProxyProvider``'s ``client_factory``: records every list call (tools/resources/resource templates/prompts), returning a fixed list or raising a fixed error.
 
     ``wait_for``, when set, is awaited before returning/raising -- lets a
-    test hold multiple concurrent ``_list_tools()`` calls open at once to
-    prove single-flight collapses them into one ``list_tools()`` call.
+    test hold multiple concurrent list calls open at once to prove
+    single-flight collapses them into one upstream call. One shared
+    ``call_count`` across all four ``list_*`` methods is enough for every
+    test using this double: each test only ever exercises one kind at a
+    time, and the per-(subject, kind) cache under test (``_cached_list``)
+    keeps each kind's misses independent regardless of this double sharing a
+    single counter.
     """
 
     def __init__(
         self,
         *,
         tools: list[McpTool] | None = None,
+        resources: list[Any] | None = None,
+        resource_templates: list[Any] | None = None,
+        prompts: list[Any] | None = None,
         error: Exception | None = None,
         wait_for: asyncio.Event | None = None,
     ) -> None:
         self.tools = tools if tools is not None else []
+        self.resources = resources if resources is not None else []
+        self.resource_templates = (
+            resource_templates if resource_templates is not None else []
+        )
+        self.prompts = prompts if prompts is not None else []
         self.error = error
         self.wait_for = wait_for
         self.call_count = 0
@@ -1042,17 +1058,53 @@ class _CountingListClient:
     async def __aexit__(self, *exc_info: object) -> None:
         return None
 
-    async def list_tools(self) -> list[McpTool]:
+    async def _respond(self, items: list[Any]) -> list[Any]:
         self.call_count += 1
         if self.wait_for is not None:
             await self.wait_for.wait()
         if self.error is not None:
             raise self.error
-        return self.tools
+        return items
+
+    async def list_tools(self) -> list[McpTool]:
+        return await self._respond(self.tools)
+
+    async def list_resources(self) -> list[Any]:
+        return await self._respond(self.resources)
+
+    async def list_resource_templates(self) -> list[Any]:
+        return await self._respond(self.resource_templates)
+
+    async def list_prompts(self) -> list[Any]:
+        return await self._respond(self.prompts)
 
 
 def _tool(name: str) -> McpTool:
     return McpTool(name=name, input_schema={"type": "object"})
+
+
+def _resource(name: str) -> McpResource:
+    return McpResource(uri=f"mem://{name}", name=name)
+
+
+def _resource_template(name: str) -> McpResourceTemplate:
+    return McpResourceTemplate(uri_template=f"mem://{name}/{{id}}", name=name)
+
+
+def _prompt(name: str) -> McpPrompt:
+    return McpPrompt(name=name)
+
+
+# Builds a raw item of the right shape for each ``_LIST_KIND_CASES``
+# ``client_attr`` -- fastmcp's own ``ProxyResource``/``ProxyTemplate``/
+# ``ProxyPrompt.from_mcp_*`` factories expect real mcp_types objects, not
+# plain strings, so the generic every-kind tests below build one per kind.
+_ITEM_BUILDERS: dict[str, Any] = {
+    "tools": _tool,
+    "resources": _resource,
+    "resource_templates": _resource_template,
+    "prompts": _prompt,
+}
 
 
 async def test_list_tools_cache_hit_within_ttl_skips_second_upstream_call(
@@ -1354,6 +1406,137 @@ async def test_invalidate_subject_cache_helper_targets_all_services_when_none(
 
     assert client_a.call_count == 2
     assert client_b.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# Per-(subject, service) listing cache generalized to every kind
+# (tools/resources/resource templates/prompts) -- production symptom:
+# resources/prompts fanned out to every backend uncached on every reconnect,
+# exactly like tools/list before issue #320's cache. All four kinds now share
+# one mechanism (_ObservableProxyProvider._cached_list); these tests pin that
+# resources/resource-templates/prompts get identical semantics to tools
+# without re-testing every tools-specific edge case four times over -- the
+# classify/log/record_list_failure behavior stays tools-only (see
+# _list_tools_uncached), so it is not exercised here.
+# ---------------------------------------------------------------------------
+
+_LIST_KIND_CASES = [
+    ("_list_tools", "tools"),
+    ("_list_resources", "resources"),
+    ("_list_resource_templates", "resource_templates"),
+    ("_list_prompts", "prompts"),
+]
+
+
+@pytest.mark.parametrize(("method_name", "client_attr"), _LIST_KIND_CASES)
+async def test_list_cache_hit_within_ttl_skips_second_upstream_call_every_kind(
+    monkeypatch: pytest.MonkeyPatch,
+    make_principal,
+    method_name: str,
+    client_attr: str,
+) -> None:
+    items = [_ITEM_BUILDERS[client_attr]("widget_a")]
+    client = _CountingListClient(**{client_attr: items})
+    registry = ServiceRegistry()
+    registry.register(_spec())
+    provider = aggregator._ObservableProxyProvider(
+        "example", lambda: client, registry=registry, cache_ttl=300.0
+    )
+    _patch_context(monkeypatch, make_principal(subject="alice"), active_backend=None)
+
+    first = await getattr(provider, method_name)()
+    second = await getattr(provider, method_name)()
+
+    # fastmcp's fetch wraps each raw mcp_types item into its Proxy* domain
+    # object (ProxyTool/ProxyResource/etc), so compare by name rather than
+    # full equality against the raw items passed into the client double.
+    assert [item.name for item in first] == ["widget_a"]
+    assert [item.name for item in second] == ["widget_a"]
+    assert client.call_count == 1
+
+
+@pytest.mark.parametrize(("method_name", "client_attr"), _LIST_KIND_CASES)
+async def test_list_ttl_expiry_refetches_every_kind(
+    monkeypatch: pytest.MonkeyPatch,
+    make_principal,
+    method_name: str,
+    client_attr: str,
+) -> None:
+    clock = _FakeClock()
+    monkeypatch.setattr(aggregator, "time", clock)
+    items = [_ITEM_BUILDERS[client_attr]("widget_a")]
+    client = _CountingListClient(**{client_attr: items})
+    registry = ServiceRegistry()
+    registry.register(_spec())
+    provider = aggregator._ObservableProxyProvider(
+        "example", lambda: client, registry=registry, cache_ttl=100.0
+    )
+    _patch_context(monkeypatch, make_principal(subject="alice"), active_backend=None)
+
+    await getattr(provider, method_name)()
+    clock.advance(50.0)
+    await getattr(provider, method_name)()
+    assert client.call_count == 1  # still within TTL
+
+    clock.advance(51.0)  # total 101s elapsed since the first fetch
+    await getattr(provider, method_name)()
+    assert client.call_count == 2
+
+
+@pytest.mark.parametrize(("method_name", "client_attr"), _LIST_KIND_CASES)
+async def test_list_single_flight_concurrent_calls_one_upstream_listing_every_kind(
+    monkeypatch: pytest.MonkeyPatch,
+    make_principal,
+    method_name: str,
+    client_attr: str,
+) -> None:
+    release = asyncio.Event()
+    items = [_ITEM_BUILDERS[client_attr]("widget_a")]
+    client = _CountingListClient(wait_for=release, **{client_attr: items})
+    registry = ServiceRegistry()
+    registry.register(_spec())
+    provider = aggregator._ObservableProxyProvider(
+        "example", lambda: client, registry=registry, cache_ttl=300.0
+    )
+    _patch_context(monkeypatch, make_principal(subject="alice"), active_backend=None)
+
+    tasks = [asyncio.create_task(getattr(provider, method_name)()) for _ in range(5)]
+    await asyncio.sleep(0)  # let every task reach the (shared) upstream call
+    assert client.call_count == 1  # single-flight: one in-flight listing
+    release.set()
+    results = await asyncio.gather(*tasks)
+
+    assert client.call_count == 1
+    for result in results:
+        assert [item.name for item in result] == ["widget_a"]
+
+
+async def test_invalidate_subject_drops_every_kind_not_just_tools(
+    monkeypatch: pytest.MonkeyPatch, make_principal
+) -> None:
+    client = _CountingListClient(
+        tools=[_tool("widget_a")],
+        resources=[_resource("r1")],
+        prompts=[_prompt("p1")],
+    )
+    registry = ServiceRegistry()
+    registry.register(_spec())
+    provider = aggregator._ObservableProxyProvider(
+        "example", lambda: client, registry=registry, cache_ttl=300.0
+    )
+    _patch_context(monkeypatch, make_principal(subject="alice"), active_backend=None)
+    await provider._list_tools()
+    await provider._list_resources()
+    await provider._list_prompts()
+    assert client.call_count == 3
+
+    provider.invalidate_subject("alice")
+
+    await provider._list_tools()
+    await provider._list_resources()
+    await provider._list_prompts()
+
+    assert client.call_count == 6  # every kind was dropped, all refetched
 
 
 # ---------------------------------------------------------------------------
