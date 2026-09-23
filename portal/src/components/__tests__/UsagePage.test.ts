@@ -109,15 +109,23 @@ describe('UsagePage', () => {
   });
 
   it('renders per-day activity bars for the days with calls', async () => {
-    vi.mocked(fetchUsage).mockResolvedValue(USAGE);
-    const wrapper = mount(UsagePage);
-    await flushPromises();
+    // Pin "today" so the fixture's hard-coded by_day dates stay inside the
+    // 30-day window the component builds back from the current UTC date.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-08-26T12:00:00Z'));
+    try {
+      vi.mocked(fetchUsage).mockResolvedValue(USAGE);
+      const wrapper = mount(UsagePage);
+      await flushPromises();
 
-    const bars = wrapper.findAll('[data-testid="usage-day-bar"]');
-    // One bar per calendar day in the 30-day window, zero-height for the
-    // days without calls.
-    expect(bars).toHaveLength(30);
-    expect(bars.some((b) => Number(b.attributes('data-calls')) === 30)).toBe(true);
+      const bars = wrapper.findAll('[data-testid="usage-day-bar"]');
+      // One bar per calendar day in the 30-day window, zero-height for the
+      // days without calls.
+      expect(bars).toHaveLength(30);
+      expect(bars.some((b) => Number(b.attributes('data-calls')) === 30)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('refetches when the window selector changes', async () => {
