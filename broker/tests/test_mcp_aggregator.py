@@ -1539,6 +1539,54 @@ async def test_invalidate_subject_drops_every_kind_not_just_tools(
     assert client.call_count == 6  # every kind was dropped, all refetched
 
 
+async def test_list_cache_bypass_logs_debug_event_when_no_principal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _CountingListClient(resources=[_resource("r1")])
+    registry = ServiceRegistry()
+    registry.register(_spec())
+    provider = aggregator._ObservableProxyProvider(
+        "example", lambda: client, registry=registry, cache_ttl=300.0
+    )
+    _patch_context(monkeypatch, None, active_backend=None)
+
+    with structlog.testing.capture_logs() as logs:
+        await provider._list_resources()
+
+    bypass_logs = [
+        entry for entry in logs if entry["event"] == "aggregator.list_cache_bypass"
+    ]
+    assert len(bypass_logs) == 1
+    assert bypass_logs[0]["service"] == "example"
+    assert bypass_logs[0]["kind"] == "resources"
+    assert bypass_logs[0]["reason"] == "no_principal"
+
+
+async def test_list_cache_bypass_logs_debug_event_when_no_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No ``_patch_context`` here at all -- ``get_context()`` runs for real
+    outside of any active fastmcp request and raises ``RuntimeError``,
+    exercising the other bypass reason."""
+    client = _CountingListClient(prompts=[_prompt("p1")])
+    registry = ServiceRegistry()
+    registry.register(_spec())
+    provider = aggregator._ObservableProxyProvider(
+        "example", lambda: client, registry=registry, cache_ttl=300.0
+    )
+
+    with structlog.testing.capture_logs() as logs:
+        await provider._list_prompts()
+
+    bypass_logs = [
+        entry for entry in logs if entry["event"] == "aggregator.list_cache_bypass"
+    ]
+    assert len(bypass_logs) == 1
+    assert bypass_logs[0]["service"] == "example"
+    assert bypass_logs[0]["kind"] == "prompts"
+    assert bypass_logs[0]["reason"] == "no_context"
+
+
 # ---------------------------------------------------------------------------
 # x509 branch: broker-issued identity JWT injection (issue #112)
 # ---------------------------------------------------------------------------

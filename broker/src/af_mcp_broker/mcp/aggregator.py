@@ -1224,21 +1224,41 @@ class _ObservableProxyProvider(ProxyProvider):
         for key in expired:
             del self._subject_list_cache[key]
 
-    async def _caller_subject(self) -> str | None:
+    async def _caller_subject(self, kind: str) -> str | None:
         """Best-effort ``Principal.subject`` from the current fastmcp request context, or ``None``.
 
         ``None`` covers both "no active context at all" (``get_context()``
         raises ``RuntimeError`` outside a request -- exercised directly by
         several existing tests that call ``_list_tools()`` without patching
         it) and "context exists but carries no principal" -- both mean
-        "bypass the per-subject cache" to ``_cached_list``.
+        "bypass the per-subject cache" to ``_cached_list``. Either bypass
+        reason is logged at debug level (``aggregator.list_cache_bypass``,
+        with this service and the listing *kind* involved) since it would
+        otherwise be invisible -- a caller silently falling through this path
+        loses the caching this class exists to provide, and that was exactly
+        the kind of thing that made issue #320's production investigation
+        hard.
         """
         try:
             ctx = get_context()
         except RuntimeError:
+            logger.debug(
+                "aggregator.list_cache_bypass",
+                service=self._service_name,
+                kind=kind,
+                reason="no_context",
+            )
             return None
         principal = await ctx.get_state("principal")
-        return principal.subject if principal is not None else None
+        if principal is None:
+            logger.debug(
+                "aggregator.list_cache_bypass",
+                service=self._service_name,
+                kind=kind,
+                reason="no_principal",
+            )
+            return None
+        return principal.subject
 
     def _fresh_subject_entry(
         self, key: tuple[str, str]
@@ -1284,7 +1304,7 @@ class _ObservableProxyProvider(ProxyProvider):
         own ``super()._list_resources``/etc, since those have no equivalent
         failure-classification hook to preserve.
         """
-        subject = await self._caller_subject()
+        subject = await self._caller_subject(kind)
         if subject is None or self._cache_ttl <= 0:
             return await fetch()
 

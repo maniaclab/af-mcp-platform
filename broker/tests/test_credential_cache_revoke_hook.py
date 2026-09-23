@@ -193,3 +193,35 @@ async def test_janitor_expiry_logs_expired_not_revoked():
     events = [entry["event"] for entry in logs]
     assert "credential_cache.expired" in events
     assert "credential_cache.revoked" not in events
+
+
+async def test_revoke_logs_revoked_event_with_had_entry_true_when_cached():
+    cache = CredentialCache()
+    await cache.put("sub-1", TARGET, _cred(TARGET))
+
+    with structlog.testing.capture_logs() as logs:
+        await cache.revoke("sub-1", TARGET)
+
+    revoked_logs = [
+        entry for entry in logs if entry["event"] == "credential_cache.revoked"
+    ]
+    assert len(revoked_logs) == 1
+    assert revoked_logs[0]["had_entry"] is True
+    assert revoked_logs[0]["cred_class"] == "test"
+
+
+async def test_revoke_logs_revoked_event_with_had_entry_false_when_nothing_cached():
+    """Production diagnosis of issue #320's over-invalidation was made harder
+    by revoke() staying silent whenever nothing happened to be cached -- it
+    must now log every call, regardless."""
+    cache = CredentialCache()
+
+    with structlog.testing.capture_logs() as logs:
+        await cache.revoke("sub-1", TARGET)
+
+    revoked_logs = [
+        entry for entry in logs if entry["event"] == "credential_cache.revoked"
+    ]
+    assert len(revoked_logs) == 1
+    assert revoked_logs[0]["had_entry"] is False
+    assert revoked_logs[0]["cred_class"] is None

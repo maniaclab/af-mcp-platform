@@ -380,15 +380,21 @@ class CredentialCache:
         Contrast with ``_expire()``, called only by the janitor sweep: it
         shares this method's cleanup but never calls ``on_revoke``, because a
         credential merely expiring is bookkeeping, not an identity change.
+
+        Always logs ``credential_cache.revoked``, with ``had_entry`` recording
+        whether anything was actually cached -- a revoke that found nothing
+        cached used to log nothing at all, which made a real production
+        investigation of over-invalidation (issue #320) harder than it needed
+        to be.
         """
         entry = await self._pop_and_cleanup(subject, target)
-        if entry is not None:
-            self._log.info(
-                "credential_cache.revoked",
-                subject=subject,
-                target=target,
-                cred_class=self._cred_class(entry),
-            )
+        self._log.info(
+            "credential_cache.revoked",
+            subject=subject,
+            target=target,
+            had_entry=entry is not None,
+            cred_class=self._cred_class(entry) if entry is not None else None,
+        )
         if self._on_revoke is not None:
             self._on_revoke(subject, target)
 
