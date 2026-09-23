@@ -52,9 +52,11 @@ from af_mcp_broker.mcp.registry import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Awaitable, Callable, Iterator, Sequence
 
     from fastmcp import Context
+    from fastmcp.prompts import Prompt
+    from fastmcp.resources import Resource, ResourceTemplate
     from fastmcp.tools.base import Tool
     from fastmcp.utilities.versions import VersionSpec
 
@@ -1065,34 +1067,37 @@ def _make_client_factory(
     return _bearer_factory
 
 
-# Negative-cache TTL for a failed per-subject tools/list (issue #320): short
+# Negative-cache TTL for a failed per-subject listing (issue #320): short
 # enough that an outage recovers quickly, long enough that a client hammering
-# tools/call (the SEP-2243 per-call listing path this cache exists for)
-# doesn't re-hit a backend that just 401'd or timed out on every single call.
+# tools/call (the SEP-2243 per-call listing path this cache originally
+# existed for) doesn't re-hit a backend that just 401'd or timed out on
+# every single call. Shared by all four listing kinds (tools, resources,
+# resource templates, prompts) -- a failed listing is a failed listing
+# regardless of which kind fetched it.
 _NEGATIVE_LIST_CACHE_TTL_SECONDS: float = 30.0
 
 
 class _SubjectListCacheEntry:
-    """One subject's cached ``tools/list`` outcome against one service -- either a successful listing or a failure to re-raise.
+    """One subject's cached listing outcome against one service and one kind (tools/resources/resource templates/prompts) -- either a successful listing or a failure to re-raise.
 
-    Exactly one of ``tools``/``error`` is set. ``timestamp`` is a
+    Exactly one of ``items``/``error`` is set. ``timestamp`` is a
     ``time.monotonic()`` reading, compared against the provider's
     ``_cache_ttl`` (success) or ``_NEGATIVE_LIST_CACHE_TTL_SECONDS`` (failure)
     by ``is_fresh`` -- mirroring fastmcp's own ``_CacheEntry`` in
     ``server/providers/proxy.py``, which this cache sits above rather than
-    replaces (see ``_ObservableProxyProvider._list_tools``'s docstring).
+    replaces (see ``_ObservableProxyProvider._cached_list``'s docstring).
     """
 
-    __slots__ = ("error", "timestamp", "tools")
+    __slots__ = ("error", "items", "timestamp")
 
     def __init__(
         self,
         *,
-        tools: Sequence[Tool] | None = None,
+        items: Sequence[Any] | None = None,
         error: Exception | None = None,
         timestamp: float,
     ) -> None:
-        self.tools = tools
+        self.items = items
         self.error = error
         self.timestamp = timestamp
 
@@ -1132,6 +1137,17 @@ class _ObservableProxyProvider(ProxyProvider):
     listing, because a listing's outcome can depend on the caller's
     credential (rucio-mcp 401s an unlinked caller); see ``_list_tools``'s own
     docstring for the caching mechanics.
+
+    ``_list_resources()``/``_list_resource_templates()``/``_list_prompts()``
+    are cached the same way, via the shared ``_cached_list()`` helper: fastmcp's
+    base implementations of those three never consult their own freshness
+    caches either (same "only the per-lookup ``_get_*`` does" gap as
+    ``_list_tools``), so a client reconnecting and re-listing resources or
+    prompts fanned out to every backend uncached exactly like tools/list did
+    before issue #320. The classify/log/``record_list_failure`` behavior
+    above stays tools-only (fastmcp's ``ProxyProvider`` has no equivalent
+    failure-classification hook for the other three kinds) -- only the
+    per-subject caching mechanics are shared.
     """
 
     def __init__(
@@ -1150,19 +1166,22 @@ class _ObservableProxyProvider(ProxyProvider):
         # un-namespaced mount, so this provider is asked about EVERY tool
         # name in an aggregate tools/call, not just its own.
         self._route_prefix = route_prefix
-        # Per-subject tools/list cache (issue #320) -- see _list_tools's
-        # docstring. Pruned opportunistically on every write
+        # Per-(kind, subject) listing cache (issue #320, generalized to every
+        # listing kind -- tools/resources/resource templates/prompts -- see
+        # _cached_list's docstring). Pruned opportunistically on every write
         # (_prune_subject_list_cache), never on a timer, so memory stays
-        # bounded by recently active subjects without a separate cleanup task.
-        self._subject_list_cache: dict[str, _SubjectListCacheEntry] = {}
-        # One asyncio.Lock per subject, created on first use and never
-        # removed -- cheap (naturally bounded by the number of distinct
-        # subjects this service has ever listed for), and lets N concurrent
-        # cache-miss callers for the SAME subject share one upstream listing
-        # instead of each triggering their own (single-flight). Different
-        # subjects, and different services (each provider has its own lock
-        # dict), never block each other.
-        self._subject_list_locks: dict[str, asyncio.Lock] = {}
+        # bounded by recently active (kind, subject) pairs without a separate
+        # cleanup task.
+        self._subject_list_cache: dict[tuple[str, str], _SubjectListCacheEntry] = {}
+        # One asyncio.Lock per (kind, subject), created on first use and
+        # never removed -- cheap (naturally bounded by the number of distinct
+        # kinds x subjects this service has ever listed for), and lets N
+        # concurrent cache-miss callers for the SAME kind+subject share one
+        # upstream listing instead of each triggering their own
+        # (single-flight). Different kinds, different subjects, and
+        # different services (each provider has its own lock dict), never
+        # block each other.
+        self._subject_list_locks: dict[tuple[str, str], asyncio.Lock] = {}
 
     async def _get_tool(
         self, name: str, version: VersionSpec | None = None
@@ -1178,7 +1197,7 @@ class _ObservableProxyProvider(ProxyProvider):
         return await super()._get_tool(name, version)
 
     def invalidate_subject(self, subject: str) -> None:
-        """Drop *subject*'s cached ``tools/list`` entry (success or failure) for this service.
+        """Drop *subject*'s cached listing entries (success or failure), for every kind (tools, resources, resource templates, prompts), for this service.
 
         Called when *subject*'s linked identity changes -- see
         ``invalidate_subject_cache`` (module-level, below) for the wiring
@@ -1187,41 +1206,65 @@ class _ObservableProxyProvider(ProxyProvider):
         ``_subject_list_locks`` alone: an in-flight refresh for *subject* (if
         any) is unaffected, and the next cache miss just creates a fresh lock.
         """
-        self._subject_list_cache.pop(subject, None)
+        stale = [key for key in self._subject_list_cache if key[1] == subject]
+        for key in stale:
+            del self._subject_list_cache[key]
 
     def _prune_subject_list_cache(self) -> None:
-        """Drop every expired entry, so the cache dict never grows past recently active subjects."""
+        """Drop every expired entry, so the cache dict never grows past recently active (kind, subject) pairs."""
         expired = [
-            subject
-            for subject, entry in self._subject_list_cache.items()
+            key
+            for key, entry in self._subject_list_cache.items()
             if not entry.is_fresh(
                 self._cache_ttl
                 if entry.error is None
                 else _NEGATIVE_LIST_CACHE_TTL_SECONDS
             )
         ]
-        for subject in expired:
-            del self._subject_list_cache[subject]
+        for key in expired:
+            del self._subject_list_cache[key]
 
-    async def _caller_subject(self) -> str | None:
+    async def _caller_subject(self, kind: str) -> str | None:
         """Best-effort ``Principal.subject`` from the current fastmcp request context, or ``None``.
 
         ``None`` covers both "no active context at all" (``get_context()``
         raises ``RuntimeError`` outside a request -- exercised directly by
         several existing tests that call ``_list_tools()`` without patching
         it) and "context exists but carries no principal" -- both mean
-        "bypass the per-subject cache" to ``_list_tools``.
+        "bypass the per-subject cache" to ``_cached_list``. Either bypass
+        reason is logged at debug level (``aggregator.list_cache_bypass``,
+        with this service and the listing *kind* involved) since it would
+        otherwise be invisible -- a caller silently falling through this path
+        loses the caching this class exists to provide, and that was exactly
+        the kind of thing that made issue #320's production investigation
+        hard.
         """
         try:
             ctx = get_context()
         except RuntimeError:
+            logger.debug(
+                "aggregator.list_cache_bypass",
+                service=self._service_name,
+                kind=kind,
+                reason="no_context",
+            )
             return None
         principal = await ctx.get_state("principal")
-        return principal.subject if principal is not None else None
+        if principal is None:
+            logger.debug(
+                "aggregator.list_cache_bypass",
+                service=self._service_name,
+                kind=kind,
+                reason="no_principal",
+            )
+            return None
+        return principal.subject
 
-    def _fresh_subject_entry(self, subject: str) -> _SubjectListCacheEntry | None:
-        """Return *subject*'s cache entry if it's still fresh under its own TTL (success: ``_cache_ttl``; failure: the negative TTL), else ``None``."""
-        entry = self._subject_list_cache.get(subject)
+    def _fresh_subject_entry(
+        self, key: tuple[str, str]
+    ) -> _SubjectListCacheEntry | None:
+        """Return the *(kind, subject)* cache entry if it's still fresh under its own TTL (success: ``_cache_ttl``; failure: the negative TTL), else ``None``."""
+        entry = self._subject_list_cache.get(key)
         if entry is None:
             return None
         ttl = (
@@ -1230,58 +1273,84 @@ class _ObservableProxyProvider(ProxyProvider):
         return entry if entry.is_fresh(ttl) else None
 
     @staticmethod
-    def _serve_or_raise(entry: _SubjectListCacheEntry) -> Sequence[Tool]:
-        """Return a cached success's tools, or re-raise a cached failure -- without repeating the classify/log/record_list_failure side effects ``_list_tools_uncached`` already ran once, when the failure was first cached."""
+    def _serve_or_raise(entry: _SubjectListCacheEntry) -> Sequence[Any]:
+        """Return a cached success's items, or re-raise a cached failure -- without repeating any side effects the original fetch already ran once, when the failure was first cached."""
         if entry.error is not None:
             raise entry.error
-        assert entry.tools is not None  # invariant: exactly one of tools/error is set
-        return entry.tools
+        assert entry.items is not None  # invariant: exactly one of items/error is set
+        return entry.items
 
-    async def _list_tools(self) -> Sequence[Tool]:
-        """List this service's tools, cached per (caller subject, this service) -- issue #320.
+    async def _cached_list(
+        self, kind: str, fetch: Callable[[], Awaitable[Sequence[Any]]]
+    ) -> Sequence[Any]:
+        """Serve *fetch*'s result from the per-(subject, kind) cache for this service, single-flighted per (kind, subject) -- issue #320, generalized beyond tools.
 
-        No active request context, no principal on it, or
-        ``ServiceSpec.tools_cache_ttl: 0`` (``self._cache_ttl <= 0``) --
-        bypass the cache entirely: call straight through to
-        ``_list_tools_uncached`` every time, exactly fastmcp's own uncached
-        behavior.
+        Shared mechanics for all four listing kinds this provider caches
+        (tools, resources, resource templates, prompts): no active request
+        context, no principal on it, or ``ServiceSpec.tools_cache_ttl: 0``
+        (``self._cache_ttl <= 0``) bypass the cache entirely, calling *fetch*
+        straight through every time, exactly fastmcp's own uncached
+        behavior. Otherwise, a fresh cached entry (success or failure) is
+        served directly by ``_serve_or_raise``. A cache miss or expired entry
+        takes an ``asyncio.Lock`` keyed by *(kind, subject)* before
+        refreshing, so concurrent callers for the same kind+subject share
+        one upstream listing (single-flight) rather than each triggering
+        their own; the entry is re-checked after acquiring the lock in case
+        another task already refreshed it while this one was waiting.
 
-        Otherwise, a fresh cached entry (success or failure) is served
-        directly by ``_serve_or_raise``. A cache miss or expired entry takes
-        an ``asyncio.Lock`` keyed by subject before refreshing, so concurrent
-        callers for the same subject share one upstream listing
-        (single-flight) rather than each triggering their own; the entry is
-        re-checked after acquiring the lock in case another task already
-        refreshed it while this one was waiting.
+        *fetch* is the only thing that differs across kinds -- for tools
+        it's ``_list_tools_uncached`` (classify/log/record_list_failure on
+        top of the upstream call); for the other three it's simply fastmcp's
+        own ``super()._list_resources``/etc, since those have no equivalent
+        failure-classification hook to preserve.
         """
-        subject = await self._caller_subject()
+        subject = await self._caller_subject(kind)
         if subject is None or self._cache_ttl <= 0:
-            return await self._list_tools_uncached()
+            return await fetch()
 
-        entry = self._fresh_subject_entry(subject)
+        key = (kind, subject)
+        entry = self._fresh_subject_entry(key)
         if entry is not None:
             return self._serve_or_raise(entry)
 
-        lock = self._subject_list_locks.setdefault(subject, asyncio.Lock())
+        lock = self._subject_list_locks.setdefault(key, asyncio.Lock())
         async with lock:
-            entry = self._fresh_subject_entry(subject)
+            entry = self._fresh_subject_entry(key)
             if entry is not None:
                 return self._serve_or_raise(entry)
 
             try:
-                tools = await self._list_tools_uncached()
+                items = await fetch()
             except Exception as exc:
-                self._subject_list_cache[subject] = _SubjectListCacheEntry(
+                self._subject_list_cache[key] = _SubjectListCacheEntry(
                     error=exc, timestamp=time.monotonic()
                 )
                 self._prune_subject_list_cache()
                 raise
             else:
-                self._subject_list_cache[subject] = _SubjectListCacheEntry(
-                    tools=tools, timestamp=time.monotonic()
+                self._subject_list_cache[key] = _SubjectListCacheEntry(
+                    items=items, timestamp=time.monotonic()
                 )
                 self._prune_subject_list_cache()
-                return tools
+                return items
+
+    async def _list_tools(self) -> Sequence[Tool]:
+        """List this service's tools, cached per (caller subject, this service) -- issue #320. See ``_cached_list`` for the caching mechanics; ``_list_tools_uncached`` is the tools-specific fetch (classify/log/record_list_failure)."""
+        return await self._cached_list("tools", self._list_tools_uncached)
+
+    async def _list_resources(self) -> Sequence[Resource]:
+        """List this service's resources, cached the same way as ``_list_tools`` (see ``_cached_list``) -- no classify/log/record_list_failure side effects (tools-only)."""
+        return await self._cached_list("resources", super()._list_resources)
+
+    async def _list_resource_templates(self) -> Sequence[ResourceTemplate]:
+        """List this service's resource templates, cached the same way as ``_list_tools`` (see ``_cached_list``) -- no classify/log/record_list_failure side effects (tools-only)."""
+        return await self._cached_list(
+            "resource_templates", super()._list_resource_templates
+        )
+
+    async def _list_prompts(self) -> Sequence[Prompt]:
+        """List this service's prompts, cached the same way as ``_list_tools`` (see ``_cached_list``) -- no classify/log/record_list_failure side effects (tools-only)."""
+        return await self._cached_list("prompts", super()._list_prompts)
 
     async def _list_tools_uncached(self) -> Sequence[Tool]:
         """Do the actual upstream ``tools/list`` -- classify/log/record on failure, clear/warn-on-mismatch on success.
@@ -1328,11 +1397,11 @@ class _ObservableProxyProvider(ProxyProvider):
 def invalidate_subject_cache(
     mcp: FastMCP, subject: str, target: str | None = None
 ) -> None:
-    """Drop *subject*'s cached ``tools/list`` entries across ``mcp``'s providers -- one service (*target*) or every service.
+    """Drop *subject*'s cached listing entries (every kind: tools, resources, resource templates, prompts) across ``mcp``'s providers -- one service (*target*) or every service.
 
     Called wherever a subject's linked identity changes (unlink, or a
     credential revocation -- see app.py's ``CredentialCache`` construction)
-    so a stale per-subject listing (``_ObservableProxyProvider._list_tools``)
+    so a stale per-subject listing (``_ObservableProxyProvider.invalidate_subject``)
     is never served past that change. *target* narrows to the one
     ``ServiceSpec.name`` affected; omitted, every service's cache entry for
     *subject* is dropped.
