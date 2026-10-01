@@ -323,6 +323,14 @@ remaining job is mapping permissions to Keycloak groups via
   permission — `GET /v1/catalog`'s single `permission` field is `null` for a
   dict form with no `__default__`, since there's no one value to summarize.
 
+  If a backend renames or adds tools, the dict and the backend's listing
+  drift apart: **unmapped** tools (advertised, no key, no `__default__`) are
+  silently disabled, and **stale** keys map nothing. The broker logs
+  `entitlement.tool_mapping_drift` once per change, counts them in
+  `af_mcp_tool_mapping_drift_total`, and lists them at
+  `GET /v1/admin/tool-mapping-drift` (the portal's admin page), as observed
+  when a caller lists the service's tools.
+
 **Permission names must be built-in or declared.** Besides the built-in
 permissions (`read_data`, `submit_jobs`, ... see `PERMISSIONS` in
 `authorization/base.py`), a site can invent its own, but it must declare the
@@ -339,6 +347,23 @@ The broker **refuses to start** if a service requires a permission that is
 neither built-in nor listed in `custom_permissions` (an unknown name could
 otherwise only be labelled `read`). Declaring it does not grant it to anyone;
 Step 3 still applies.
+
+**Overriding a tool's action type.** A tool's `action_type` (`read` or
+`state_change`) comes from its permission. To override it for specific tools,
+use `entitlements.target_action_types`. Keys are **service names** (the
+`name` in `services.yaml`, not the `prefix`), and the globs match the **wire
+tool name** a caller sees, including the `<prefix>_` namespace unless the
+service sets `apply_namespace: false`:
+
+```yaml
+entitlements:
+  target_action_types:
+    condor_service:
+      "condor_exec_*": state_change
+```
+
+A key naming no registered service, or a glob matching no tool, silently
+overrides nothing.
 
 If an existing permission already covers the new service (e.g. a generic
 `read_metadata` that several services already require), reuse it and skip to
