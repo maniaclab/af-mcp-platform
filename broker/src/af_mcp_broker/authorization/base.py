@@ -181,7 +181,7 @@ def get_action_type(
     permission: str | None,
     policy: EntitlementPolicy,
 ) -> str:
-    """The action type half of resolve_action_type, for callers that don't need to know how it was resolved."""
+    """Return the action type half of resolve_action_type, for callers that don't need to know how it was resolved."""
     return resolve_action_type(target, tool_name, permission, policy)[0]
 
 
