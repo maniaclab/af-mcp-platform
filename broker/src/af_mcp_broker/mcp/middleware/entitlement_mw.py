@@ -10,8 +10,8 @@ from af_mcp_broker.authorization import (
     DISABLED_PERMISSION,
     EntitlementPolicy,
     annotation_disagrees_with_policy,
-    get_action_type,
     get_principal_permissions,
+    resolve_action_type,
 )
 from af_mcp_broker.mcp.registry import AnnotationMismatch, ToolMappingDrift
 
@@ -85,7 +85,7 @@ class EntitlementMiddleware(Middleware):
                 # fallback; comparing it to the backend's hint is noise.
                 self.registry.clear_annotation_mismatch(service.name, tool.name)
                 continue
-            action_type = get_action_type(
+            action_type, resolved_via = resolve_action_type(
                 service.name, tool.name, permission, self.policy
             )
             read_only_hint = (
@@ -100,6 +100,7 @@ class EntitlementMiddleware(Middleware):
                 tool=tool.name,
                 declared_read_only_hint=read_only_hint,
                 resolved_action_type=action_type,
+                resolved_via=resolved_via,
                 permission=permission if permission is not None else "__none__",
             )
             if (
@@ -112,6 +113,7 @@ class EntitlementMiddleware(Middleware):
                     tool=mismatch.tool,
                     declared_read_only_hint=mismatch.declared_read_only_hint,
                     resolved_action_type=mismatch.resolved_action_type,
+                    resolved_via=mismatch.resolved_via,
                     permission=mismatch.permission,
                 )
                 metrics.annotation_policy_mismatches_total.labels(

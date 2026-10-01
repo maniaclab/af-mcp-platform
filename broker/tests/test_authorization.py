@@ -12,6 +12,7 @@ from af_mcp_broker.authorization import (
     get_principal_permissions,
     is_admin,
     load_policy,
+    resolve_action_type,
 )
 from af_mcp_broker.config import Settings
 
@@ -198,6 +199,27 @@ def test_action_type_glob_override_beats_custom_permission() -> None:
         get_action_type("condor_service", "condor_peek_job", "exec_jobs", policy)
         == "read"
     )
+
+
+@pytest.mark.parametrize(
+    ("tool", "permission", "expected"),
+    [
+        ("condor_peek_job", "exec_jobs", ("read", "target_action_types")),
+        ("condor_exec_in_job", "exec_jobs", ("state_change", "permission")),
+        ("condor_query_jobs", "read_data", ("read", "permission")),
+        ("condor_x", None, ("read", "default")),
+        ("condor_x", DISABLED_PERMISSION, ("read", "default")),
+        ("condor_x", "unknown_perm", ("read", "default")),
+    ],
+)
+def test_resolve_action_type_reports_how_it_resolved(
+    tool: str, permission: str | None, expected: tuple[str, str]
+) -> None:
+    policy = EntitlementPolicy(
+        custom_permissions={"exec_jobs": "state_change"},
+        target_action_types={"condor_service": {"condor_peek_*": "read"}},
+    )
+    assert resolve_action_type("condor_service", tool, permission, policy) == expected
 
 
 def test_load_policy_reads_custom_permissions(tmp_path: Path) -> None:

@@ -240,6 +240,7 @@ def test_annotation_mismatches_reflects_registry_state(
             tool="rucio_list_dids",
             declared_read_only_hint=False,
             resolved_action_type="read",
+            resolved_via="permission",
             permission="read_data",
         )
     )
@@ -252,6 +253,7 @@ def test_annotation_mismatches_reflects_registry_state(
             "tool": "rucio_list_dids",
             "declared_read_only_hint": False,
             "resolved_action_type": "read",
+            "resolved_via": "permission",
             "permission": "read_data",
         }
     ]

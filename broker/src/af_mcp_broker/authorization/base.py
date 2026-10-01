@@ -144,13 +144,13 @@ def is_admin(principal: Principal, settings: Settings) -> bool:
     return bool(settings.admin_group) and settings.admin_group in principal.groups
 
 
-def get_action_type(
+def resolve_action_type(
     target: str,
     tool_name: str,
     permission: str | None,
     policy: EntitlementPolicy,
-) -> str:
-    """Resolve the action type for a specific tool on a target.
+) -> tuple[str, str]:
+    """Resolve the action type for a specific tool on a target, and say how.
 
     ``permission`` is the target's required permission as declared by the
     service registry (``ServiceSpec.required_permission``) -- the fallback
@@ -158,17 +158,31 @@ def get_action_type(
     parameter instead of looking it up in ``policy.target_permissions``
     (deleted; the service registry is now the sole source for what permission
     a target requires -- see issue #60).
+
+    Returns ``(action_type, via)`` where ``via`` is ``"target_action_types"``
+    (a tool-glob override), ``"permission"`` (the built-in or custom
+    permission's action type), or ``"default"`` (nothing applied; ``"read"``).
     """
     overrides = policy.target_action_types.get(target, {})
     for pattern, action_type in overrides.items():
         if fnmatch.fnmatch(tool_name, pattern):
-            return action_type
+            return action_type, "target_action_types"
     # Default: look up from the permission
     if permission in PERMISSIONS:
-        return PERMISSIONS[permission].action_type
+        return PERMISSIONS[permission].action_type, "permission"
     if permission in policy.custom_permissions:
-        return policy.custom_permissions[permission]
-    return "read"
+        return policy.custom_permissions[permission], "permission"
+    return "read", "default"
+
+
+def get_action_type(
+    target: str,
+    tool_name: str,
+    permission: str | None,
+    policy: EntitlementPolicy,
+) -> str:
+    """The action type half of resolve_action_type, for callers that don't need to know how it was resolved."""
+    return resolve_action_type(target, tool_name, permission, policy)[0]
 
 
 def annotation_disagrees_with_policy(

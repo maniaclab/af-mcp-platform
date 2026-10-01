@@ -329,6 +329,10 @@ class AnnotationMismatch:
     tool: str
     declared_read_only_hint: bool
     resolved_action_type: str
+    # How resolved_action_type was reached: "target_action_types" (a glob
+    # override), "permission", or "default" (the "read" fallback) -- see
+    # authorization.resolve_action_type.
+    resolved_via: str
     permission: str
 
 

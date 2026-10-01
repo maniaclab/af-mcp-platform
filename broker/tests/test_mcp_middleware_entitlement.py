@@ -314,6 +314,7 @@ async def test_read_only_hint_disagreeing_with_policy_records_mismatch(
     assert mismatch is not None
     assert mismatch.declared_read_only_hint is False
     assert mismatch.resolved_action_type == "read"
+    assert mismatch.resolved_via == "permission"
     assert mismatch.permission == "read_data"
     assert counter._value.get() == before + 1
 

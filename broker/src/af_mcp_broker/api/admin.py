@@ -224,6 +224,7 @@ class AnnotationMismatchResponse(BaseModel):
     tool: str
     declared_read_only_hint: bool
     resolved_action_type: str
+    resolved_via: str
     permission: str
 
 
@@ -258,6 +259,7 @@ async def get_annotation_mismatches(
             tool=m.tool,
             declared_read_only_hint=m.declared_read_only_hint,
             resolved_action_type=m.resolved_action_type,
+            resolved_via=m.resolved_via,
             permission=m.permission,
         )
         for m in registry.annotation_mismatches()
