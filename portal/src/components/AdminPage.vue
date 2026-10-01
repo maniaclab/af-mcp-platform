@@ -16,11 +16,17 @@ import {
   AccessDeniedError,
   fetchAnnotationMismatches,
   fetchMaintenanceStatus,
+  fetchToolMappingDrift,
   fetchUsageSubjects,
   SessionExpiredError,
   setMaintenanceStatus,
 } from '../lib/api';
-import type { AnnotationMismatch, MaintenanceStatus, UsageSubject } from '../lib/api';
+import type {
+  AnnotationMismatch,
+  MaintenanceStatus,
+  ToolMappingDrift,
+  UsageSubject,
+} from '../lib/api';
 import { maintenanceErrorMessage } from '../lib/maintenanceBanner';
 import UsagePage from './UsagePage.vue';
 
@@ -170,6 +176,30 @@ onMounted(async () => {
     mismatchesLoading.value = false;
   }
 });
+
+function resolvedViaLabel(m: AnnotationMismatch): string {
+  if (m.resolved_via === 'target_action_types') return 'target_action_types glob override';
+  if (m.resolved_via === 'permission') return `permission ${m.permission}`;
+  return 'default fallback (read)';
+}
+
+// ── Tool mapping drift (issue #330) ─────────────────────────────────────
+// Admin-only like the sections above; one error string is enough here since
+// the mismatches section already shows the dedicated session/access states
+// for the same credential.
+const drifts = ref<ToolMappingDrift[]>([]);
+const driftsLoading = ref(true);
+const driftsError = ref<string | null>(null);
+
+onMounted(async () => {
+  try {
+    drifts.value = await fetchToolMappingDrift();
+  } catch (err) {
+    driftsError.value = err instanceof Error ? err.message : 'Failed to load tool mapping drift.';
+  } finally {
+    driftsLoading.value = false;
+  }
+});
 </script>
 
 <template>
@@ -314,6 +344,14 @@ onMounted(async () => {
 
     <section class="ap__section" aria-label="Annotation/policy mismatches">
       <h2 class="ap__section-title">Annotation mismatches</h2>
+      <p class="ap__legend">
+        Visibility only; enforcement is unchanged. A row means the backend's
+        <code>readOnlyHint</code> disagrees with the broker's <code>action_type</code>. To resolve
+        it, set a <code>target_action_types</code> glob for the service (keys are service names;
+        globs match the prefixed tool name), declare the permission under
+        <code>custom_permissions</code> if it is site-defined, or ask the backend to correct its
+        annotation.
+      </p>
 
       <div
         v-if="mismatchesLoading"
@@ -350,8 +388,9 @@ onMounted(async () => {
           <tr>
             <th scope="col">Service</th>
             <th scope="col">Tool</th>
-            <th scope="col">Declared</th>
-            <th scope="col">Resolved</th>
+            <th scope="col">Backend readOnlyHint</th>
+            <th scope="col">Broker action_type</th>
+            <th scope="col">Resolved via</th>
             <th scope="col">Permission</th>
           </tr>
         </thead>
@@ -359,9 +398,54 @@ onMounted(async () => {
           <tr v-for="m in mismatches" :key="`${m.service}.${m.tool}`">
             <td>{{ m.service }}</td>
             <td>{{ m.tool }}</td>
-            <td>{{ m.declared_read_only_hint ? 'read-only' : 'not read-only' }}</td>
+            <td>readOnlyHint={{ m.declared_read_only_hint }}</td>
             <td>{{ m.resolved_action_type }}</td>
+            <td>{{ resolvedViaLabel(m) }}</td>
             <td>{{ m.permission }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="ap__section" aria-label="Tool mapping drift">
+      <h2 class="ap__section-title">Tool mapping drift</h2>
+      <p class="ap__legend">
+        Visibility only. <strong>Unmapped</strong> tools are advertised by the backend but have no
+        <code>required_permission</code> entry and no <code>__default__</code>, so they are
+        disabled: add them to the service's <code>required_permission</code>.
+        <strong>Stale</strong> entries are mapped keys the backend no longer advertises (usually a
+        backend rename): rename or remove them.
+      </p>
+
+      <div
+        v-if="driftsLoading"
+        class="ap__loading"
+        aria-live="polite"
+        aria-label="Loading tool mapping drift"
+      >
+        Loading tool mapping drift…
+      </div>
+
+      <div v-else-if="driftsError" class="ap__error" role="alert">
+        <span class="ap__error-title">Could not load tool mapping drift</span>
+        <span class="ap__error-body">{{ driftsError }}</span>
+      </div>
+
+      <div v-else-if="drifts.length === 0" class="ap__placeholder">No tool mapping drift.</div>
+
+      <table v-else class="ap__mismatch-table">
+        <thead>
+          <tr>
+            <th scope="col">Service</th>
+            <th scope="col">Unmapped (advertised, disabled)</th>
+            <th scope="col">Stale (mapped, not advertised)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="d in drifts" :key="d.service">
+            <td>{{ d.service }}</td>
+            <td>{{ d.unmapped.join(', ') }}</td>
+            <td>{{ d.stale.join(', ') }}</td>
           </tr>
         </tbody>
       </table>
@@ -562,6 +646,12 @@ onMounted(async () => {
 .ap__btn--confirm:not(:disabled):hover {
   background: rgb(from var(--color-af-teal) r g b / 0.2);
   border-color: rgb(from var(--color-af-teal) r g b / 0.5);
+}
+
+.ap__legend {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--color-af-dim);
 }
 
 .ap__mismatch-table {
