@@ -332,6 +332,22 @@ class AnnotationMismatch:
     permission: str
 
 
+@dataclass(frozen=True)
+class ToolMappingDrift:
+    """Where a dict-form ``required_permission`` and the tools its backend actually advertises have drifted apart (issue #330).
+
+    Both lists hold wire (namespaced) tool names, sorted. ``unmapped`` tools
+    are advertised but have no entry and no ``__default__``, so they are
+    implicitly ``__disabled__``. ``stale`` entries are keys the backend no
+    longer advertises (typically a rename), which leaves every new tool
+    ``unmapped``. Visibility only.
+    """
+
+    service: str
+    unmapped: tuple[str, ...]
+    stale: tuple[str, ...]
+
+
 class ServiceRegistry:
     """Config-driven service registry. Adding a service = one YAML entry, no code change."""
 
@@ -350,6 +366,9 @@ class ServiceRegistry:
         # a live probe of every registered service, same discovery model as
         # _recent_list_failures above.
         self._annotation_mismatches: dict[tuple[str, str], AnnotationMismatch] = {}
+        # service name -> most recently observed tool-mapping drift (issue
+        # #330); same observed-over-time model as _annotation_mismatches.
+        self._tool_mapping_drifts: dict[str, ToolMappingDrift] = {}
         # Merged, O(1)-lookup permission map built by register(): a dict-form
         # required_permission's per-tool entries insert under their namespaced
         # wire name; a plain string, or a dict's "__default__", insert under
@@ -479,6 +498,33 @@ class ServiceRegistry:
         if service.name in self._tool_permissions:
             return self._tool_permissions[service.name]
         return None if service.required_permission is None else DISABLED_PERMISSION
+
+    def mapped_tool_names(self, service: ServiceSpec) -> set[str]:
+        """Wire names of the tools *service*'s dict-form ``required_permission`` maps explicitly (``__default__`` excluded); empty for any other form. Tools in ``exclude_tools`` are left out, since the backend's listing never reaches the broker with them."""
+        rp = service.required_permission
+        if not isinstance(rp, dict):
+            return set()
+        return {
+            namespaced_tool_name(service, tool)
+            for tool in rp
+            if tool != "__default__" and tool not in service.exclude_tools
+        }
+
+    def record_tool_mapping_drift(self, drift: ToolMappingDrift) -> None:
+        """Record (or overwrite) *drift* for its service. Called by EntitlementMiddleware.on_list_tools whenever it observes one."""
+        self._tool_mapping_drifts[drift.service] = drift
+
+    def clear_tool_mapping_drift(self, service: str) -> None:
+        """Clear a previously recorded drift for *service*, once a listing shows its tools and ``required_permission`` agree again. No-op if nothing was recorded."""
+        self._tool_mapping_drifts.pop(service, None)
+
+    def get_tool_mapping_drift(self, service: str) -> ToolMappingDrift | None:
+        """Return the currently recorded drift for *service*, or None. Used to log/meter only newly observed drift rather than on every tools/list request."""
+        return self._tool_mapping_drifts.get(service)
+
+    def tool_mapping_drifts(self) -> list[ToolMappingDrift]:
+        """All currently recorded tool-mapping drifts, sorted by service for a stable admin-page listing."""
+        return sorted(self._tool_mapping_drifts.values(), key=lambda d: d.service)
 
     def all_services(self) -> list[ServiceSpec]:
         return list(self._services.values())

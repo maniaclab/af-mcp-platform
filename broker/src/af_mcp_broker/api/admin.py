@@ -262,3 +262,45 @@ async def get_annotation_mismatches(
         )
         for m in registry.annotation_mismatches()
     ]
+
+
+class ToolMappingDriftResponse(BaseModel):
+    """One service whose dict-form required_permission and advertised tools have drifted apart (issue #330).
+
+    See mcp/registry.py's ToolMappingDrift, which this mirrors field-for-field.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    service: str
+    unmapped: list[str]
+    stale: list[str]
+
+
+@router.get(
+    "/tool-mapping-drift",
+    response_model=list[ToolMappingDriftResponse],
+    summary="List services whose tools and required_permission mapping have drifted (admin only)",
+    description=(
+        "Per service with a dict-form required_permission: 'unmapped' tools "
+        "the backend advertises that have no entry and no __default__ (so "
+        "they are implicitly disabled), and 'stale' keys the backend no "
+        "longer advertises (typically a backend rename, which leaves every "
+        "new tool unmapped). Names are wire (namespaced) tool names. Read "
+        "from EntitlementMiddleware's own lint, as observed the last time a "
+        "caller listed that service's tools through /mcp, so it is empty "
+        "until at least one caller has done so since this broker process "
+        "started. Visibility only."
+    ),
+)
+async def get_tool_mapping_drift(
+    request: Request,
+    _principal: Annotated[Principal, Depends(require_admin)],
+) -> list[ToolMappingDriftResponse]:
+    registry = _get_registry(request)
+    return [
+        ToolMappingDriftResponse(
+            service=d.service, unmapped=list(d.unmapped), stale=list(d.stale)
+        )
+        for d in registry.tool_mapping_drifts()
+    ]

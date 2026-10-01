@@ -250,6 +250,7 @@ from `prometheus-fastapi-instrumentator`, the broker defines these
 | `af_mcp_condor_tokens_issued_total` | counter | `target` | HTCondor IDTOKENs actually obtained from condor-token-service (cache hits not counted). |
 | `af_mcp_krb5_tickets_issued_total` | counter | `target` | Kerberos tickets actually obtained from krb5-token-service (cache hits not counted). |
 | `af_mcp_annotation_policy_mismatches_total` | counter | `service`, `tool` | A tool's declared `read_only_hint` disagreed with `policy.yaml`'s resolved `action_type` (issue #238 B.8's "forward + lint" decision — visibility only, `policy.yaml` stays authoritative for enforcement). Incremented once per newly observed disagreement; see `GET /v1/admin/annotation-mismatches` for the current set. |
+| `af_mcp_tool_mapping_drift_total` | counter | `service`, `kind` | Tools where a service's dict-form `required_permission` and its backend's advertised tools disagree (issue #330). `kind` is `unmapped` (advertised, no key and no `__default__`, so implicitly disabled) or `stale` (a mapped key the backend no longer advertises, typically a rename). Incremented once per newly observed tool; see `GET /v1/admin/tool-mapping-drift` for the current set. |
 
 The six `af_mcp_metering_*` metrics are the pipeline's health signal, and
 three of them are also its scaling trigger: a rising

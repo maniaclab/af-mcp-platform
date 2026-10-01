@@ -13,7 +13,7 @@ from af_mcp_broker.authorization import (
     get_action_type,
     get_principal_permissions,
 )
-from af_mcp_broker.mcp.registry import AnnotationMismatch
+from af_mcp_broker.mcp.registry import AnnotationMismatch, ToolMappingDrift
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -47,6 +47,7 @@ class EntitlementMiddleware(Middleware):
     ) -> Sequence[Tool]:
         tools = await call_next(context)
         self._lint_annotations(tools)
+        self._lint_tool_mapping(tools)
 
         principal = (
             await context.fastmcp_context.get_state("principal")
@@ -117,6 +118,57 @@ class EntitlementMiddleware(Middleware):
                     service=mismatch.service, tool=mismatch.tool
                 ).inc()
             self.registry.record_annotation_mismatch(mismatch)
+
+    def _lint_tool_mapping(self, tools: Sequence[Tool]) -> None:
+        """Record (log + metric) drift between each dict-form ``required_permission`` and the tools its backend advertises (issue #330).
+
+        Like _lint_annotations, runs on the full pre-filter tool set. A
+        service advertising no tools in this listing is skipped: that is
+        indistinguishable from an unreachable backend or a caller with no
+        linked credential, and would flag every key as stale.
+        """
+        advertised: dict[str, set[str]] = {}
+        for tool in tools:
+            service = self.registry.get_by_tool_prefix(tool.name)
+            if service is not None:
+                advertised.setdefault(service.name, set()).add(tool.name)
+        for service in self.registry.all_services():
+            if service.builtin or not isinstance(service.required_permission, dict):
+                continue
+            names = advertised.get(service.name)
+            if not names:
+                continue
+            unmapped = {
+                name
+                for name in names
+                if self.registry.required_permission_for(name, service)
+                == DISABLED_PERMISSION
+            }
+            stale = self.registry.mapped_tool_names(service) - names
+            if not unmapped and not stale:
+                self.registry.clear_tool_mapping_drift(service.name)
+                continue
+            drift = ToolMappingDrift(
+                service=service.name,
+                unmapped=tuple(sorted(unmapped)),
+                stale=tuple(sorted(stale)),
+            )
+            previous = self.registry.get_tool_mapping_drift(service.name)
+            if previous != drift:
+                logger.warning(
+                    "entitlement.tool_mapping_drift",
+                    service=drift.service,
+                    unmapped=drift.unmapped,
+                    stale=drift.stale,
+                )
+                for kind, current, before in (
+                    ("unmapped", drift.unmapped, previous.unmapped if previous else ()),
+                    ("stale", drift.stale, previous.stale if previous else ()),
+                ):
+                    metrics.tool_mapping_drift_total.labels(
+                        service=drift.service, kind=kind
+                    ).inc(len(set(current) - set(before)))
+            self.registry.record_tool_mapping_drift(drift)
 
     def _tool_is_allowed(self, tool: Tool, principal_caps: set[str]) -> bool:
         # The broker's own af_* methods (issue #153) route here too, via the
