@@ -11,6 +11,8 @@ from af_mcp_broker.authorization import (
     get_action_type,
     get_principal_permissions,
     is_admin,
+    load_policy,
+    resolve_action_type,
 )
 from af_mcp_broker.config import Settings
 
@@ -176,6 +178,76 @@ def test_action_type_resolution_omitted_permission_defaults_to_read(
     """A target with no glob override and no declared permission (None) has
     no action-type signal to derive from, so it defaults to "read"."""
     assert get_action_type("mystery", "list_things", None, policy) == "read"
+
+
+def test_action_type_resolution_uses_custom_permission() -> None:
+    """A site-defined permission carries its action_type via
+    ``custom_permissions`` instead of silently defaulting to "read"."""
+    policy = EntitlementPolicy(custom_permissions={"exec_jobs": "state_change"})
+    assert (
+        get_action_type("condor_service", "condor_exec_in_job", "exec_jobs", policy)
+        == "state_change"
+    )
+
+
+def test_action_type_glob_override_beats_custom_permission() -> None:
+    policy = EntitlementPolicy(
+        custom_permissions={"exec_jobs": "state_change"},
+        target_action_types={"condor_service": {"condor_peek_*": "read"}},
+    )
+    assert (
+        get_action_type("condor_service", "condor_peek_job", "exec_jobs", policy)
+        == "read"
+    )
+
+
+@pytest.mark.parametrize(
+    ("tool", "permission", "expected"),
+    [
+        ("condor_peek_job", "exec_jobs", ("read", "target_action_types")),
+        ("condor_exec_in_job", "exec_jobs", ("state_change", "permission")),
+        ("condor_query_jobs", "read_data", ("read", "permission")),
+        ("condor_x", None, ("read", "default")),
+        ("condor_x", DISABLED_PERMISSION, ("read", "default")),
+        ("condor_x", "unknown_perm", ("read", "default")),
+    ],
+)
+def test_resolve_action_type_reports_how_it_resolved(
+    tool: str, permission: str | None, expected: tuple[str, str]
+) -> None:
+    policy = EntitlementPolicy(
+        custom_permissions={"exec_jobs": "state_change"},
+        target_action_types={"condor_service": {"condor_peek_*": "read"}},
+    )
+    assert resolve_action_type("condor_service", tool, permission, policy) == expected
+
+
+def test_load_policy_reads_custom_permissions(tmp_path: Path) -> None:
+    path = _write_policy(
+        tmp_path,
+        "group_permissions: {}\ncustom_permissions:\n  exec_jobs: state_change\n",
+    )
+    assert load_policy(path).custom_permissions == {"exec_jobs": "state_change"}
+
+
+def test_load_policy_custom_permissions_default_empty(tmp_path: Path) -> None:
+    path = _write_policy(tmp_path, "group_permissions: {}\n")
+    assert load_policy(path).custom_permissions == {}
+
+
+@pytest.mark.parametrize(
+    ("body", "needle"),
+    [
+        ("exec_jobs: write", "action_type"),
+        ("read_data: state_change", "built-in"),
+    ],
+)
+def test_load_policy_rejects_bad_custom_permissions(
+    tmp_path: Path, body: str, needle: str
+) -> None:
+    path = _write_policy(tmp_path, f"custom_permissions:\n  {body}\n")
+    with pytest.raises(ValueError, match=needle):
+        load_policy(path)
 
 
 # ---------------------------------------------------------------------------
@@ -401,6 +473,83 @@ def test_startup_stays_quiet_with_empty_group_permissions_and_no_gated_backends(
             "    prefix: ami\n"
             "    url: http://ami.invalid/mcp\n"
             "    auth_type: x509\n",
+        ),
+    )
+
+    with app_client_factory() as (client, _):
+        resp = client.get("/v1/healthz")
+
+    assert resp.status_code == 200, resp.text
+
+
+def test_startup_refuses_to_start_for_unknown_permission(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    app_client_factory: Callable[..., Any],
+) -> None:
+    """A required_permission that is neither built-in nor declared in
+    custom_permissions has no action_type to resolve, so it would silently
+    be labelled "read" -- refuse to start, naming the service and the
+    permission."""
+    monkeypatch.setenv("IDENTITY_PROVIDERS", "[]")
+    monkeypatch.setenv(
+        "SERVICES_FILE",
+        _write_services(
+            tmp_path,
+            "services:\n"
+            "  - name: condor_service\n"
+            "    prefix: condor\n"
+            "    url: http://condor.invalid/mcp\n"
+            "    auth_type: none\n"
+            "    required_permission:\n"
+            "      __default__: __none__\n"
+            "      exec_in_job: exec_jobs\n",
+        ),
+    )
+    monkeypatch.setenv(
+        "POLICY_FILE",
+        _write_policy(
+            tmp_path,
+            "group_permissions:\n  atlas: [exec_jobs]\ntarget_action_types: {}\n",
+        ),
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:  # noqa: SIM117
+        with app_client_factory():
+            pass
+
+    message = str(exc_info.value)
+    assert "condor_service" in message, message
+    assert "exec_jobs" in message, message
+    assert "custom_permissions" in message, message
+
+
+def test_startup_accepts_declared_custom_permission(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    app_client_factory: Callable[..., Any],
+) -> None:
+    monkeypatch.setenv("IDENTITY_PROVIDERS", "[]")
+    monkeypatch.setenv(
+        "SERVICES_FILE",
+        _write_services(
+            tmp_path,
+            "services:\n"
+            "  - name: condor_service\n"
+            "    prefix: condor\n"
+            "    url: http://condor.invalid/mcp\n"
+            "    auth_type: none\n"
+            "    required_permission:\n"
+            "      __default__: __none__\n"
+            "      exec_in_job: exec_jobs\n",
+        ),
+    )
+    monkeypatch.setenv(
+        "POLICY_FILE",
+        _write_policy(
+            tmp_path,
+            "group_permissions:\n  atlas: [exec_jobs]\n"
+            "custom_permissions:\n  exec_jobs: state_change\n",
         ),
     )
 

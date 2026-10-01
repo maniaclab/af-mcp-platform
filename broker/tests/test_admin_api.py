@@ -240,6 +240,7 @@ def test_annotation_mismatches_reflects_registry_state(
             tool="rucio_list_dids",
             declared_read_only_hint=False,
             resolved_action_type="read",
+            resolved_via="permission",
             permission="read_data",
         )
     )
@@ -252,6 +253,51 @@ def test_annotation_mismatches_reflects_registry_state(
             "tool": "rucio_list_dids",
             "declared_read_only_hint": False,
             "resolved_action_type": "read",
+            "resolved_via": "permission",
             "permission": "read_data",
+        }
+    ]
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/admin/tool-mapping-drift (issue #330)
+# ---------------------------------------------------------------------------
+
+
+def test_tool_mapping_drift_requires_admin(maintenance_client):
+    client, _state = maintenance_client
+    resp = client.get("/v1/admin/tool-mapping-drift")
+    assert resp.status_code == 403
+
+
+def test_tool_mapping_drift_empty_by_default(maintenance_client, make_principal):
+    client, state = maintenance_client
+    state["principal"] = make_principal(groups=["af-admins"])
+
+    resp = client.get("/v1/admin/tool-mapping-drift")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_tool_mapping_drift_reflects_registry_state(maintenance_client, make_principal):
+    from af_mcp_broker.mcp.registry import ToolMappingDrift
+
+    client, state = maintenance_client
+    state["principal"] = make_principal(groups=["af-admins"])
+    client.app.state.service_registry.record_tool_mapping_drift(
+        ToolMappingDrift(
+            service="condor_service",
+            unmapped=("condor_submit_job",),
+            stale=("condor_old_tool",),
+        )
+    )
+
+    resp = client.get("/v1/admin/tool-mapping-drift")
+    assert resp.status_code == 200
+    assert resp.json() == [
+        {
+            "service": "condor_service",
+            "unmapped": ["condor_submit_job"],
+            "stale": ["condor_old_tool"],
         }
     ]

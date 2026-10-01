@@ -43,13 +43,24 @@ data:
     # `required_permission` in services.yaml, not here -- services.yaml is
     # the sole source of truth for that mapping (see issue #60).
 
+    # Site-defined permissions (name -> read|state_change) that a
+    # `required_permission` in services.yaml uses but the broker doesn't
+    # ship. The broker refuses to start if a service requires a permission
+    # that is neither built-in nor listed here. Remember to also grant it
+    # to a group in group_permissions.
+    custom_permissions:
+    {{- if .Values.entitlements.custom_permissions }}
+      {{- toYaml .Values.entitlements.custom_permissions | nindent 6 }}
+    {{- else }} {}
+    {{- end }}
+
     # Action type overrides per service (tool glob pattern -> action type).
-    # Anything not listed defaults to "read".
+    # Keys are service names (services.yaml `name`); globs match the wire
+    # (prefixed) tool name a caller sees. Anything not listed resolves from
+    # the service's required_permission. No default: the chart ships no
+    # services, so any default key would match nothing.
     target_action_types:
     {{- if .Values.entitlements.target_action_types }}
       {{- toYaml .Values.entitlements.target_action_types | nindent 6 }}
-    {{- else }}
-      af-jupyterlab-mcp:
-        "create_*": state_change
-        "delete_*": state_change
+    {{- else }} {}
     {{- end }}

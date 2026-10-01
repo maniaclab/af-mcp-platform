@@ -314,6 +314,7 @@ async def test_read_only_hint_disagreeing_with_policy_records_mismatch(
     assert mismatch is not None
     assert mismatch.declared_read_only_hint is False
     assert mismatch.resolved_action_type == "read"
+    assert mismatch.resolved_via == "permission"
     assert mismatch.permission == "read_data"
     assert counter._value.get() == before + 1
 
@@ -355,3 +356,122 @@ async def test_fixed_mismatch_is_cleared_on_a_later_listing(
         context, _call_next_factory([_tool("rucio_list_dids", read_only_hint=True)])
     )
     assert registry.get_annotation_mismatch("rucio", "rucio_list_dids") is None
+
+
+async def test_disabled_tool_records_no_annotation_mismatch(
+    registry, policy, make_principal
+):
+    """condor_submit_job has no required_permission entry and there is no
+    __default__, so it is __disabled__ (denied outright); its "read" action
+    type is a fallback, not a policy statement to compare the backend's
+    read_only_hint=False against. It is reported as mapping drift instead."""
+    mw = EntitlementMiddleware(registry, policy)
+    principal = make_principal(groups=["atlas"])
+    context = _FakeMiddlewareContext(_FakeFastMCPContext({"principal": principal}))
+    tools = [_tool("condor_submit_job", read_only_hint=False)]
+
+    await mw.on_list_tools(context, _call_next_factory(tools))
+
+    assert (
+        registry.get_annotation_mismatch("condor_service", "condor_submit_job") is None
+    )
+
+
+# ---------------------------------------------------------------------------
+# Tool-mapping drift (issue #330): for a dict-form required_permission,
+# "unmapped" tools are advertised but implicitly __disabled__, "stale" keys
+# are mapped but no longer advertised. "condor_service" maps only query_jobs.
+# ---------------------------------------------------------------------------
+
+
+async def _list(mw, make_principal, tools):
+    principal = make_principal(groups=["atlas"])
+    context = _FakeMiddlewareContext(_FakeFastMCPContext({"principal": principal}))
+    await mw.on_list_tools(context, _call_next_factory(tools))
+
+
+async def test_unmapped_tool_is_recorded_as_drift(registry, policy, make_principal):
+    mw = EntitlementMiddleware(registry, policy)
+    counter = metrics.tool_mapping_drift_total.labels(
+        service="condor_service", kind="unmapped"
+    )
+    before = counter._value.get()
+
+    await _list(
+        mw, make_principal, [_tool("condor_query_jobs"), _tool("condor_submit_job")]
+    )
+
+    drift = registry.get_tool_mapping_drift("condor_service")
+    assert drift is not None
+    assert drift.unmapped == ("condor_submit_job",)
+    assert drift.stale == ()
+    assert counter._value.get() == before + 1
+
+
+async def test_stale_key_is_recorded_as_drift(registry, policy, make_principal):
+    """query_jobs is mapped but the backend now only advertises other_tool."""
+    mw = EntitlementMiddleware(registry, policy)
+
+    await _list(mw, make_principal, [_tool("condor_other_tool")])
+
+    drift = registry.get_tool_mapping_drift("condor_service")
+    assert drift is not None
+    assert drift.unmapped == ("condor_other_tool",)
+    assert drift.stale == ("condor_query_jobs",)
+
+
+async def test_fully_mapped_service_records_no_drift(registry, policy, make_principal):
+    mw = EntitlementMiddleware(registry, policy)
+
+    await _list(mw, make_principal, [_tool("condor_query_jobs")])
+
+    assert registry.get_tool_mapping_drift("condor_service") is None
+
+
+async def test_service_with_no_advertised_tools_is_not_stale(
+    registry, policy, make_principal
+):
+    """An unreachable backend (or a caller with no linked credential)
+    advertises nothing; that must not flag every key as stale."""
+    mw = EntitlementMiddleware(registry, policy)
+
+    await _list(mw, make_principal, [_tool("rucio_list_dids")])
+
+    assert registry.get_tool_mapping_drift("condor_service") is None
+
+
+async def test_excluded_tool_key_is_not_stale(make_principal, policy):
+    reg = ServiceRegistry()
+    reg.register(
+        ServiceSpec(
+            name="condor_service",
+            prefix="condor",
+            url="http://condor.invalid/mcp",
+            transport="http",
+            required_permission={"query_jobs": "read_monitoring", "hidden": "admin"},
+            exclude_tools=frozenset({"hidden"}),
+        )
+    )
+    mw = EntitlementMiddleware(reg, policy)
+
+    await _list(mw, make_principal, [_tool("condor_query_jobs")])
+
+    assert reg.get_tool_mapping_drift("condor_service") is None
+
+
+async def test_repeat_drift_is_not_metered_twice_and_clears_when_fixed(
+    registry, policy, make_principal
+):
+    mw = EntitlementMiddleware(registry, policy)
+    counter = metrics.tool_mapping_drift_total.labels(
+        service="condor_service", kind="unmapped"
+    )
+    before = counter._value.get()
+    drifted = [_tool("condor_query_jobs"), _tool("condor_submit_job")]
+
+    await _list(mw, make_principal, drifted)
+    await _list(mw, make_principal, drifted)
+    assert counter._value.get() == before + 1
+
+    await _list(mw, make_principal, [_tool("condor_query_jobs")])
+    assert registry.get_tool_mapping_drift("condor_service") is None

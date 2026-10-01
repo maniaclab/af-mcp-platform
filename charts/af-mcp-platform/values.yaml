@@ -628,10 +628,23 @@ entitlements:
   group_permissions: {}
   # group_permissions:
   #   my-experiment-users: [read_data, read_metadata, submit_jobs]
+  # Permissions your services.yaml `required_permission` uses that the
+  # broker doesn't ship, each with its action type (read | state_change).
+  # The broker refuses to start if a service requires a permission that is
+  # neither built-in nor declared here; an undeclared one could otherwise
+  # only be labelled "read". Also grant it to a group in group_permissions.
+  custom_permissions: {}
+  # custom_permissions:
+  #   exec_jobs: state_change
+  # Per-tool action_type overrides (read | state_change). Keys are service
+  # NAMES (services.yaml `name`, not `prefix`); globs are fnmatch patterns
+  # matched against the WIRE tool name, i.e. including the `<prefix>_`
+  # namespace unless the service sets `apply_namespace: false`. A match wins
+  # over the action type of the service's required_permission.
   target_action_types: {}
   # target_action_types:
-  #   condor-mcp:
-  #     "submit_*": state_change
+  #   condor_service:            # service name
+  #     "condor_submit_*": state_change   # prefixed wire name
 
 # ---------------------------------------------------------------------------
 # Portal: static Astro site

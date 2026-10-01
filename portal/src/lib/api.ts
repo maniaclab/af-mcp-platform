@@ -985,6 +985,8 @@ export interface AnnotationMismatch {
   tool: string;
   declared_read_only_hint: boolean;
   resolved_action_type: string;
+  /** How resolved_action_type was reached: target_action_types | permission | default. */
+  resolved_via: string;
   permission: string;
 }
 
@@ -996,4 +998,25 @@ export interface AnnotationMismatch {
  */
 export async function fetchAnnotationMismatches(): Promise<AnnotationMismatch[]> {
   return apiFetch<AnnotationMismatch[]>('/admin/annotation-mismatches');
+}
+
+// ---------------------------------------------------------------------------
+// Tool mapping drift — GET /v1/admin/tool-mapping-drift
+// ---------------------------------------------------------------------------
+
+/**
+ * One service whose dict-form required_permission and advertised tools have
+ * drifted apart (see broker mcp/registry.py::ToolMappingDrift). `unmapped`
+ * tools are advertised but implicitly disabled; `stale` entries are mapped
+ * keys the backend no longer advertises. Wire (namespaced) tool names.
+ */
+export interface ToolMappingDrift {
+  service: string;
+  unmapped: string[];
+  stale: string[];
+}
+
+/** Admin-only (require_admin, 403 otherwise); observed as callers list tools, like fetchAnnotationMismatches. */
+export async function fetchToolMappingDrift(): Promise<ToolMappingDrift[]> {
+  return apiFetch<ToolMappingDrift[]>('/admin/tool-mapping-drift');
 }

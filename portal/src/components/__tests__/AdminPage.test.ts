@@ -14,6 +14,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   AnnotationMismatch,
   MaintenanceStatus,
+  ToolMappingDrift,
   UsageResponse,
   UsageSubjectsResponse,
 } from '../../lib/api';
@@ -24,6 +25,7 @@ vi.mock('../../lib/api', () => ({
   fetchMaintenanceStatus: vi.fn(),
   setMaintenanceStatus: vi.fn(),
   fetchAnnotationMismatches: vi.fn(),
+  fetchToolMappingDrift: vi.fn(),
   SessionExpiredError: class SessionExpiredError extends Error {},
   AccessDeniedError: class AccessDeniedError extends Error {},
   APIError: class APIError extends Error {
@@ -42,6 +44,7 @@ import {
   AccessDeniedError,
   fetchAnnotationMismatches,
   fetchMaintenanceStatus,
+  fetchToolMappingDrift,
   fetchUsage,
   fetchUsageSubjects,
   SessionExpiredError,
@@ -98,6 +101,7 @@ beforeEach(() => {
   // exercising -- default to the empty-and-harmless case so tests focused
   // on the usage/maintenance sections don't have to know about this one.
   vi.mocked(fetchAnnotationMismatches).mockResolvedValue([]);
+  vi.mocked(fetchToolMappingDrift).mockResolvedValue([]);
 });
 
 describe('AdminPage', () => {
@@ -336,6 +340,7 @@ describe('AdminPage annotation mismatches', () => {
     tool: 'rucio_list_dids',
     declared_read_only_hint: false,
     resolved_action_type: 'read',
+    resolved_via: 'default',
     permission: 'read_data',
   };
 
@@ -362,9 +367,31 @@ describe('AdminPage annotation mismatches', () => {
     const text = wrapper.text();
     expect(text).toContain('rucio');
     expect(text).toContain('rucio_list_dids');
-    expect(text).toContain('not read-only');
-    expect(text).toContain('read');
+    expect(text).toContain('readOnlyHint=false');
     expect(text).toContain('read_data');
+  });
+
+  it.each([
+    ['target_action_types', 'target_action_types glob override'],
+    ['permission', 'permission read_data'],
+    ['default', 'default fallback'],
+  ])('describes how %s was resolved', async (via, label) => {
+    vi.mocked(fetchAnnotationMismatches).mockResolvedValue([{ ...MISMATCH, resolved_via: via }]);
+    const wrapper = mount(AdminPage);
+    await flushPromises();
+
+    expect(wrapper.text()).toContain(label);
+  });
+
+  it('labels the columns by what they hold and explains the table', async () => {
+    vi.mocked(fetchAnnotationMismatches).mockResolvedValue([MISMATCH]);
+    const wrapper = mount(AdminPage);
+    await flushPromises();
+
+    const text = wrapper.text();
+    expect(text).toContain('Backend readOnlyHint');
+    expect(text).toContain('Broker action_type');
+    expect(text).toContain('Visibility only');
   });
 
   it('renders an error state when fetchAnnotationMismatches fails', async () => {
@@ -393,5 +420,44 @@ describe('AdminPage annotation mismatches', () => {
 
     expect(wrapper.text()).toContain('Session expired');
     expect(wrapper.find('.ap__reload').exists()).toBe(true);
+  });
+});
+
+describe('AdminPage tool mapping drift', () => {
+  const DRIFT: ToolMappingDrift = {
+    service: 'condor_service',
+    unmapped: ['condor_submit_job'],
+    stale: ['condor_old_tool'],
+  };
+
+  beforeEach(() => {
+    vi.mocked(fetchUsageSubjects).mockResolvedValue({ subjects: [] });
+    vi.mocked(fetchMaintenanceStatus).mockResolvedValue(DISABLED);
+  });
+
+  it('shows the empty-state placeholder when nothing has drifted', async () => {
+    const wrapper = mount(AdminPage);
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('No tool mapping drift');
+  });
+
+  it('renders unmapped and stale tools per service', async () => {
+    vi.mocked(fetchToolMappingDrift).mockResolvedValue([DRIFT]);
+    const wrapper = mount(AdminPage);
+    await flushPromises();
+
+    const text = wrapper.text();
+    expect(text).toContain('condor_service');
+    expect(text).toContain('condor_submit_job');
+    expect(text).toContain('condor_old_tool');
+  });
+
+  it('renders an error state when fetchToolMappingDrift fails', async () => {
+    vi.mocked(fetchToolMappingDrift).mockRejectedValue(new Error('boom'));
+    const wrapper = mount(AdminPage);
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('Could not load tool mapping drift');
   });
 });

@@ -179,6 +179,17 @@ maintenance_store_unavailable_total = Counter(
     "-- see module docstring.",
 )
 
+tool_mapping_drift_total = Counter(
+    "af_mcp_tool_mapping_drift_total",
+    "Tools whose backend listing and services.yaml's dict-form "
+    "required_permission disagree, by service and kind ('unmapped': "
+    "advertised but implicitly disabled; 'stale': a mapped key the backend "
+    "no longer advertises) -- see GET /v1/admin/tool-mapping-drift for the "
+    "current set. Incremented once per newly observed tool, not once per "
+    "tools/list request that re-observes it.",
+    ["service", "kind"],
+)
+
 annotation_policy_mismatches_total = Counter(
     "af_mcp_annotation_policy_mismatches_total",
     "A tool's declared read_only_hint annotation disagreed with policy.yaml's "

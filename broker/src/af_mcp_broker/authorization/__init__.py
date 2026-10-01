@@ -11,6 +11,7 @@ from af_mcp_broker.authorization.base import (
     get_principal_permissions,
     is_admin,
     load_policy,
+    resolve_action_type,
 )
 
 __all__ = [
@@ -24,4 +25,5 @@ __all__ = [
     "get_principal_permissions",
     "is_admin",
     "load_policy",
+    "resolve_action_type",
 ]
