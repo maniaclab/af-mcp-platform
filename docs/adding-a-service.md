@@ -323,6 +323,23 @@ remaining job is mapping permissions to Keycloak groups via
   permission — `GET /v1/catalog`'s single `permission` field is `null` for a
   dict form with no `__default__`, since there's no one value to summarize.
 
+**Permission names must be built-in or declared.** Besides the built-in
+permissions (`read_data`, `submit_jobs`, ... see `PERMISSIONS` in
+`authorization/base.py`), a site can invent its own, but it must declare the
+permission's action type (`read` or `state_change`) so the catalog and audit
+labels are right:
+
+```yaml
+entitlements:
+  custom_permissions:
+    exec_jobs: state_change
+```
+
+The broker **refuses to start** if a service requires a permission that is
+neither built-in nor listed in `custom_permissions` (an unknown name could
+otherwise only be labelled `read`). Declaring it does not grant it to anyone;
+Step 3 still applies.
+
 If an existing permission already covers the new service (e.g. a generic
 `read_metadata` that several services already require), reuse it and skip to
 Step 4 — no policy change needed. Only continue to Step 3 if you're

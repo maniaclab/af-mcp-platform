@@ -23,6 +23,9 @@ if TYPE_CHECKING:
 DISABLED_PERMISSION = "__disabled__"
 
 
+ACTION_TYPES = frozenset({"read", "state_change"})
+
+
 @dataclass(frozen=True)
 class Permission:
     name: str
@@ -68,6 +71,10 @@ class EntitlementPolicy:
     group_permissions: dict[str, list[str]] = field(default_factory=dict)
     # target_name -> {tool_glob_pattern -> "read"|"state_change"}
     target_action_types: dict[str, dict[str, str]] = field(default_factory=dict)
+    # Site-defined permission name -> "read"|"state_change", for permissions
+    # a services.yaml required_permission uses that PERMISSIONS doesn't
+    # know. Without an entry, get_action_type could only guess "read".
+    custom_permissions: dict[str, str] = field(default_factory=dict)
 
 
 def load_policy(path: str) -> EntitlementPolicy:
@@ -76,6 +83,17 @@ def load_policy(path: str) -> EntitlementPolicy:
     policy = EntitlementPolicy()
     policy.group_permissions = raw.get("group_permissions", {})
     policy.target_action_types = raw.get("target_action_types", {})
+    policy.custom_permissions = raw.get("custom_permissions", {})
+    for name, action_type in policy.custom_permissions.items():
+        if name in PERMISSIONS:
+            msg = f"custom_permissions '{name}' shadows a built-in permission"
+            raise ValueError(msg)
+        if action_type not in ACTION_TYPES:
+            msg = (
+                f"custom_permissions '{name}' has action_type "
+                f"'{action_type}'; must be one of {sorted(ACTION_TYPES)}"
+            )
+            raise ValueError(msg)
     return policy
 
 
@@ -148,6 +166,8 @@ def get_action_type(
     # Default: look up from the permission
     if permission in PERMISSIONS:
         return PERMISSIONS[permission].action_type
+    if permission in policy.custom_permissions:
+        return policy.custom_permissions[permission]
     return "read"
 
 

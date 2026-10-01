@@ -30,7 +30,12 @@ from af_mcp_broker.audit.pipeline import (
     aclose_metering_pipeline,
     init_metering_pipeline,
 )
-from af_mcp_broker.authorization import EntitlementPolicy, load_policy
+from af_mcp_broker.authorization import (
+    DISABLED_PERMISSION,
+    PERMISSIONS,
+    EntitlementPolicy,
+    load_policy,
+)
 from af_mcp_broker.config import Settings
 from af_mcp_broker.credentials import (
     BrokerIssuedProvider,
@@ -287,6 +292,30 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     services = [spec for spec in service_registry.all_services() if not spec.builtin]
     if not services:
         logger.warning("no_services_configured")
+
+    # A required_permission that is neither built-in nor declared under
+    # custom_permissions has no action_type to resolve (get_action_type
+    # would silently label it "read"), so refuse to start rather than
+    # mislabel a state-changing tool. "__none__" is not a permission, and
+    # "__disabled__" is the explicit opt-out sentinel.
+    unknown_permissions: list[tuple[str, str]] = [
+        (spec.name, permission)
+        for spec in services
+        for permission in spec.all_required_permissions()
+        if permission not in PERMISSIONS
+        and permission not in entitlement_policy.custom_permissions
+        and permission != DISABLED_PERMISSION
+    ]
+    if unknown_permissions:
+        msg = (
+            "The following services require a permission that is neither "
+            "built-in nor declared in custom_permissions, so its action "
+            "type (read vs. state_change) is unknown: "
+            f"{sorted(unknown_permissions)}. Declare each in "
+            "entitlements.custom_permissions (chart) / policy.yaml (local "
+            "dev), e.g. `exec_jobs: state_change`, or fix the typo."
+        )
+        raise RuntimeError(msg)
 
     # A service's required_permission that no group in group_permissions
     # grants makes that service unusable by every principal -- e.g. the
