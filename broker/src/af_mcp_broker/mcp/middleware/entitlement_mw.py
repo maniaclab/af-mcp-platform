@@ -79,6 +79,11 @@ class EntitlementMiddleware(Middleware):
             if service is None:
                 continue  # unmapped; _tool_is_allowed already denies it
             permission = self.registry.required_permission_for(tool.name, service)
+            if permission == DISABLED_PERMISSION:
+                # Denied outright, so its "read" action type is only a
+                # fallback; comparing it to the backend's hint is noise.
+                self.registry.clear_annotation_mismatch(service.name, tool.name)
+                continue
             action_type = get_action_type(
                 service.name, tool.name, permission, self.policy
             )

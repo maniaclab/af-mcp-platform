@@ -355,3 +355,22 @@ async def test_fixed_mismatch_is_cleared_on_a_later_listing(
         context, _call_next_factory([_tool("rucio_list_dids", read_only_hint=True)])
     )
     assert registry.get_annotation_mismatch("rucio", "rucio_list_dids") is None
+
+
+async def test_disabled_tool_records_no_annotation_mismatch(
+    registry, policy, make_principal
+):
+    """condor_submit_job has no required_permission entry and there is no
+    __default__, so it is __disabled__ (denied outright); its "read" action
+    type is a fallback, not a policy statement to compare the backend's
+    read_only_hint=False against. It is reported as mapping drift instead."""
+    mw = EntitlementMiddleware(registry, policy)
+    principal = make_principal(groups=["atlas"])
+    context = _FakeMiddlewareContext(_FakeFastMCPContext({"principal": principal}))
+    tools = [_tool("condor_submit_job", read_only_hint=False)]
+
+    await mw.on_list_tools(context, _call_next_factory(tools))
+
+    assert (
+        registry.get_annotation_mismatch("condor_service", "condor_submit_job") is None
+    )
