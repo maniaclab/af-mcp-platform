@@ -57,6 +57,26 @@ jobs:
             --set image.portal.tag=sha-test \
             | grep -q 'name: VAULT_ADDR'
 
+      # Content assertion for ci/credmon-values.yaml: the HTCondor credmon
+      # storer needs CREDMON_ENABLED, its htcondor-api token file and the
+      # token Secret mount to all render together (docs/credmon.md).
+      - name: Verify credmon rendering includes its env and token mount
+        run: |
+          rendered=$(helm template af-mcp-platform charts/af-mcp-platform \
+            -f charts/af-mcp-platform/ci/credmon-values.yaml \
+            --set image.broker.tag=sha-test \
+            --set image.portal.tag=sha-test)
+          for needle in \
+            'name: CREDMON_ENABLED' \
+            'name: CREDMON_HTCONDOR_API_TOKEN_FILE' \
+            'secretName: "example-credmon-htcondor-api-token"' \
+            'alert: AfMcpCredmonSyncStale'; do
+            echo "$rendered" | grep -qF "$needle" || {
+              echo "Missing from credmon rendering: $needle" >&2
+              exit 1
+            }
+          done
+
       # Regression guard: portalHost is where the broker actually tells MCP
       # clients to fetch OAuth discovery documents (broker.publicOrigin is
       # deliberately the portal origin at AF, not mcpHost -- see

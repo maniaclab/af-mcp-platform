@@ -1,0 +1,35 @@
+# Exercises the HTCondor credmon storer rendering (docs/credmon.md): the
+# CREDMON_* env, the htcondor-api token Secret mount, and the stale-sync
+# PrometheusRule. `ct lint`/`helm template` only prove this renders; the
+# content assertion is a separate `helm template | grep` step in
+# chart-lint.yaml.
+oidc:
+  issuer: "https://keycloak.example.com/realms/example"
+portal:
+  oidc:
+    clientId: "example-portal-client"
+    scope: "openid profile email example-audience"
+  brokerOrigin: "https://mcp.example.com"
+
+broker:
+  identityToken:
+    existingSigningKeySecret: "example-broker-signing-key"
+  identityProviders:
+    - type: krb5-token
+      alias: krb5-example
+      targets: ["example_krb5_service"]
+      serviceUrl: "http://krb5-token-service.example.svc.cluster.local:8080"
+      displayName: "CERN Kerberos ticket (example)"
+  oauth21:
+    tokenStore:
+      vault:
+        addr: "https://vault.example.com"
+        authRole: "af-mcp-broker-example"
+  credmon:
+    enabled: true
+    htcondorApiUrl: "http://condor-mcp.example.svc.cluster.local:8080"
+    existingHtcondorApiTokenSecret: "example-credmon-htcondor-api-token"
+    kinds: ["krb5"]
+    syncIntervalSeconds: "14400"
+    prometheusRule:
+      enabled: true

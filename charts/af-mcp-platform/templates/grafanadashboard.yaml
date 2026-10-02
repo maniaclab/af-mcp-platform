@@ -135,6 +135,49 @@ data:
           ],
           "title": "Tool Invocations (state_change) per Hour",
           "type": "timeseries"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "description": "Time since any broker replica last finished an HTCondor credmon sync (docs/credmon.md). Empty when the integration is disabled.",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 14400 }, { "color": "red", "value": 28800 } ] }
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 8, "w": 6, "x": 0, "y": 24 },
+          "id": 7,
+          "options": { "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } },
+          "targets": [
+            {
+              "expr": "time() - max(af_mcp_credmon_sync_last_success_timestamp_seconds > 0)",
+              "legendFormat": "since last success",
+              "refId": "A"
+            }
+          ],
+          "title": "Credmon Sync: Time Since Last Success",
+          "type": "stat"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "description": "Per-user credmon sync outcomes per hour by credential kind -- 'stored' top tokens pushed to credd, 'failed' stores, users skipped as 'not_linked' or 'no_posix'.",
+          "fieldConfig": {
+            "defaults": { "color": { "mode": "palette-classic" }, "unit": "short" },
+            "overrides": []
+          },
+          "gridPos": { "h": 8, "w": 18, "x": 6, "y": 24 },
+          "id": 8,
+          "options": { "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "right" }, "tooltip": { "mode": "multi" } },
+          "targets": [
+            {
+              "expr": "sum(increase(af_mcp_credmon_sync_credentials_total[1h])) by (kind, outcome)",
+              "legendFormat": "{{`{{kind}}`}} {{`{{outcome}}`}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Credmon Sync Outcomes per Hour",
+          "type": "timeseries"
         }
       ],
       "refresh": "30s",
