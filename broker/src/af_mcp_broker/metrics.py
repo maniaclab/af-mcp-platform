@@ -200,3 +200,36 @@ annotation_policy_mismatches_total = Counter(
     "not once per tools/list request that re-observes an already-known one.",
     ["service", "tool"],
 )
+
+credmon_sync_runs_total = Counter(
+    "af_mcp_credmon_sync_runs_total",
+    "HTCondor credmon sync cycles attempted by this replica, by outcome "
+    "('success', 'partial' -- completed with some per-user failures, "
+    "'failed' -- the cycle itself raised, 'skipped_lease' -- another replica "
+    "holds the cycle lease) and trigger ('timer' or 'manual'). See "
+    "GET /v1/admin/credmon for the last cycle's detail (docs/credmon.md).",
+    ["outcome", "trigger"],
+)
+
+credmon_sync_last_success_timestamp_seconds = Gauge(
+    "af_mcp_credmon_sync_last_success_timestamp_seconds",
+    "Unix time this replica last finished a 'success' or 'partial' credmon "
+    "sync cycle. Only the lease holder runs a cycle, so alert on the max "
+    "across replicas: time() - max(...) > 2x the sync interval means no "
+    "replica is pushing top tokens to credd. No labels.",
+)
+
+credmon_sync_credentials_total = Counter(
+    "af_mcp_credmon_sync_credentials_total",
+    "Per-user credmon sync outcomes, by credential kind (x509/krb5/servicex "
+    "-- configuration-bound) and outcome ('stored', 'failed', 'not_linked', "
+    "'no_posix'). Per-user detail lives in the audit log, never here -- see "
+    "module docstring.",
+    ["kind", "outcome"],
+)
+
+credmon_sync_duration_seconds = Histogram(
+    "af_mcp_credmon_sync_duration_seconds",
+    "Wall-clock duration of credmon sync cycles this replica ran.",
+    buckets=(1, 5, 15, 30, 60, 120, 300, 600, 1800),
+)
