@@ -687,6 +687,16 @@ class Settings(BaseSettings):
     # but defeating the cache entirely. Keep this comfortably above 300.
     broker_token_ttl_seconds: int = 600
 
+    # HTCondor credmon integration (docs/credmon.md). When enabled, each
+    # credential redeem endpoint also accepts a credmon top token -- an AF
+    # Broker Identity Token with aud ``{credmon_audience_prefix}{kind}``
+    # (e.g. ``af-credmon/krb5``) -- and serves the caller's credential from
+    # that kind's first configured identity target, the same default the
+    # user-facing /v1 surfaces use. Off by default: most deployments have no
+    # HTCondor credd.
+    credmon_enabled: bool = False
+    credmon_audience_prefix: str = "af-credmon/"
+
     # KV-v2 path prefix for the per-subject x509 link/proxy records
     # ({prefix}/{subject}/x509 -- see credentials/x509_vault.py), distinct
     # from vault_kv_path_prefix/token_registry_kv_path_prefix/

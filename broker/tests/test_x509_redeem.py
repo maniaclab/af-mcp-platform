@@ -366,3 +366,39 @@ class TestKeylessBoot:
                 _REDEEM, json={}, headers={"Authorization": "Bearer whatever"}
             )
         assert resp.status_code == 503
+
+
+class TestCredmonTopToken:
+    """A credmon top token (aud ``af-credmon/x509``) redeems the caller's x509
+    identity from the first configured x509 target -- see
+    test_krb5_redeem.py's TestCredmonTopToken for the krb5 counterpart."""
+
+    def test_credmon_audience_redeems_default_x509_target_when_enabled(
+        self,
+        x509_redeem_env,
+        app_client_factory,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        x509_redeem_env()
+        monkeypatch.setenv("CREDMON_ENABLED", "true")
+        with app_client_factory() as (client, _):
+            _seed_proxy(client, tmp_path, subject="sub-abc")
+            token = _mint(client, audience="af-credmon/x509")
+            resp = client.post(
+                _REDEEM, json={}, headers={"Authorization": f"Bearer {token}"}
+            )
+        assert resp.status_code == 200, resp.text
+        assert "FAKE PROXY PEM" in resp.json()["pem"]
+
+    def test_credmon_audience_is_403_when_disabled(
+        self, x509_redeem_env, app_client_factory, tmp_path: Path
+    ) -> None:
+        x509_redeem_env()
+        with app_client_factory() as (client, _):
+            _seed_proxy(client, tmp_path, subject="sub-abc")
+            token = _mint(client, audience="af-credmon/x509")
+            resp = client.post(
+                _REDEEM, json={}, headers={"Authorization": f"Bearer {token}"}
+            )
+        assert resp.status_code == 403

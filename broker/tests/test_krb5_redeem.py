@@ -726,3 +726,54 @@ class TestKeylessBoot:
                 _REDEEM, json={}, headers={"Authorization": "Bearer whatever"}
             )
         assert resp.status_code == 503
+
+
+class TestCredmonTopToken:
+    """A credmon top token (aud ``af-credmon/krb5``) redeems the caller's krb5
+    identity through this same endpoint -- no service mapping, just the
+    first configured krb5-token target, the same default the /v1 krb5
+    surfaces use. Only registered when CREDMON_ENABLED is set."""
+
+    def test_credmon_audience_redeems_default_krb5_target_when_enabled(
+        self, krb5_redeem_env, app_client_factory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        krb5_redeem_env()
+        monkeypatch.setenv("CREDMON_ENABLED", "true")
+        with app_client_factory() as (client, _):
+            _fake_vault_store(client)
+            cred = _seed_cache_ticket(client, subject="sub-abc")
+            token = _mint(client, audience="af-credmon/krb5")
+            resp = client.post(
+                _REDEEM, json={}, headers={"Authorization": f"Bearer {token}"}
+            )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["ccache_b64"] == cred.payload["ccache_b64"]
+
+    def test_credmon_audience_is_403_when_disabled(
+        self, krb5_redeem_env, app_client_factory
+    ) -> None:
+        krb5_redeem_env()
+        with app_client_factory() as (client, _):
+            _fake_vault_store(client)
+            _seed_cache_ticket(client, subject="sub-abc")
+            token = _mint(client, audience="af-credmon/krb5")
+            resp = client.post(
+                _REDEEM, json={}, headers={"Authorization": f"Bearer {token}"}
+            )
+        assert resp.status_code == 403
+
+    def test_credmon_audience_for_another_kind_is_403(
+        self, krb5_redeem_env, app_client_factory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A top token is scoped to one kind by its aud: an x509 top token
+        must never release a krb5 ticket."""
+        krb5_redeem_env()
+        monkeypatch.setenv("CREDMON_ENABLED", "true")
+        with app_client_factory() as (client, _):
+            _fake_vault_store(client)
+            _seed_cache_ticket(client, subject="sub-abc")
+            token = _mint(client, audience="af-credmon/x509")
+            resp = client.post(
+                _REDEEM, json={}, headers={"Authorization": f"Bearer {token}"}
+            )
+        assert resp.status_code == 403

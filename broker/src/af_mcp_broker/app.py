@@ -414,6 +414,20 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         for spec in services
         if spec.auth_type == "servicex"
     }
+    # HTCondor credmon top tokens (docs/credmon.md): the credmon redeems a
+    # user's *identity*, not any particular service's credential, so its
+    # per-kind audience maps to that kind's first configured target -- the
+    # same default the user-facing /v1 surfaces resolve to. No condor
+    # service entry is involved; the identity just gains one more consumer.
+    if settings.credmon_enabled:
+        prefix = settings.credmon_audience_prefix
+        for kind, audiences, targets in (
+            ("x509", x509_audiences, x509_targets),
+            ("krb5", krb5_audiences, krb5_targets),
+            ("servicex", servicex_audiences, servicex_targets),
+        ):
+            if targets:
+                audiences[f"{prefix}{kind}"] = targets[0]
     identity_provider_cfg_list = list(settings.identity_providers)
     _validate_x509_provider_targets(settings.identity_providers, set(x509_targets))
     has_service_mode_x509_cfg = any(
