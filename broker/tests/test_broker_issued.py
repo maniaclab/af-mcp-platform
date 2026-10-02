@@ -196,6 +196,24 @@ def test_mint_respects_configured_ttl(rsa_key: rsa.RSAPrivateKey) -> None:
     assert expires_at == claims["exp"]
 
 
+def test_mint_per_call_ttl_overrides_configured_ttl(
+    issuer: BrokerTokenIssuer,
+) -> None:
+    """Credmon top tokens live in credd for hours, not the issuer-wide 600s
+    default every per-request backend token uses -- the override applies to
+    that one token only and leaves the claim set unchanged."""
+    token, expires_at = issuer.mint("user-123", "af-credmon/krb5", ttl_seconds=86400)
+    claims = jwt.decode(token, options={"verify_signature": False})
+
+    assert claims["exp"] - claims["iat"] == 86400
+    assert expires_at == claims["exp"]
+    assert set(claims) == _BASE_CLAIMS
+
+    default_token, _ = issuer.mint("user-123", "condor-token-service")
+    default_claims = jwt.decode(default_token, options={"verify_signature": False})
+    assert default_claims["exp"] - default_claims["iat"] == 600
+
+
 # ---------------------------------------------------------------------------
 # BrokerTokenIssuer: kid / JWKS
 # ---------------------------------------------------------------------------

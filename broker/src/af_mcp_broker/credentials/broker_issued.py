@@ -164,6 +164,7 @@ class BrokerTokenIssuer:
         uid: int | None = None,
         gid: int | None = None,
         unixname: str | None = None,
+        ttl_seconds: int | None = None,
     ) -> tuple[str, int]:
         """Sign an identity-assertion JWT for *(subject, audience)*.
 
@@ -172,9 +173,15 @@ class BrokerTokenIssuer:
         ``uid``/``gid``/``unixname`` when passed (the caller gates those on
         per-target config) -- never a permission, group, or any other
         authorization claim (issue #162).
+
+        *ttl_seconds* overrides the issuer-wide lifetime for this one token
+        -- credmon top tokens sit in credd for hours, unlike the per-request
+        backend tokens the default is sized for.
         """
         now = int(time.time())
-        expires_at = now + self._ttl_seconds
+        expires_at = now + (
+            ttl_seconds if ttl_seconds is not None else self._ttl_seconds
+        )
         claims: dict[str, Any] = {
             "iss": self._issuer,
             "sub": subject,
