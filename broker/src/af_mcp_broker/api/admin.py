@@ -23,7 +23,7 @@ missed.
 from __future__ import annotations
 
 import time
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated, Literal
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -38,6 +38,9 @@ from af_mcp_broker.maintenance import (
     MaintenanceStateConflict,
 )
 from af_mcp_broker.principal_cache import PrincipalUnavailableError
+
+if TYPE_CHECKING:
+    from af_mcp_broker.credmon.sync import CredmonSyncService
 
 logger = structlog.get_logger(__name__)
 
@@ -306,3 +309,118 @@ async def get_tool_mapping_drift(
         )
         for d in registry.tool_mapping_drifts()
     ]
+
+
+# ---------------------------------------------------------------------------
+# HTCondor credmon sync (docs/credmon.md)
+# ---------------------------------------------------------------------------
+
+
+class CredmonRunResponse(BaseModel):
+    """The last credmon sync cycle, as recorded by whichever replica held the cycle lease (credmon/sync.py)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    outcome: Literal["success", "partial", "failed"]
+    trigger: Literal["timer", "manual"]
+    holder: str
+    started_at: float
+    finished_at: float
+    # Last 'success' or 'partial' cycle -- None until the first one; a
+    # 'failed' cycle never moves it forward.
+    last_success_at: float | None
+    stored: dict[str, int]
+    not_linked: dict[str, int]
+    skipped_no_posix: dict[str, int]
+    failed: dict[str, int]
+    errors: list[str]
+    errors_truncated: int
+
+
+class CredmonStatusResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    enabled: bool
+    kinds: list[str]
+    service_prefix: str
+    interval_seconds: float | None
+    # False when an external scheduler drives cycles via POST
+    # /v1/admin/credmon/sync rather than the broker's own timer.
+    internal_timer: bool
+    last_run: CredmonRunResponse | None
+
+
+def _credmon_sync(request: Request) -> CredmonSyncService | None:
+    return getattr(request.app.state, "credmon_sync", None)
+
+
+@router.get(
+    "/credmon",
+    response_model=CredmonStatusResponse,
+    summary="HTCondor credmon sync status (admin only)",
+    description=(
+        "Whether the credmon integration is enabled and the last sync "
+        "cycle's outcome: per-kind counts of top tokens stored in credd, "
+        "users skipped (identity not linked, no POSIX unixname) and failed, "
+        "plus the first errors. Every replica serves the same record -- only "
+        "the replica holding the cycle lease writes it."
+    ),
+)
+async def get_credmon_status(
+    request: Request,
+    _principal: Annotated[Principal, Depends(require_admin)],
+) -> CredmonStatusResponse:
+    settings = request.app.state.settings
+    sync = _credmon_sync(request)
+    if sync is None:
+        return CredmonStatusResponse(
+            enabled=False,
+            kinds=[],
+            service_prefix=settings.credmon_service_prefix,
+            interval_seconds=None,
+            internal_timer=settings.credmon_sync_internal_timer,
+            last_run=None,
+        )
+    status_record = await sync.read_status()
+    return CredmonStatusResponse(
+        enabled=True,
+        kinds=sync.kinds,
+        service_prefix=settings.credmon_service_prefix,
+        interval_seconds=sync.interval_seconds,
+        internal_timer=settings.credmon_sync_internal_timer,
+        last_run=CredmonRunResponse.model_validate(status_record)
+        if status_record is not None
+        else None,
+    )
+
+
+@router.post(
+    "/credmon/sync",
+    response_model=CredmonRunResponse,
+    summary="Run an HTCondor credmon sync cycle now (admin only)",
+    description=(
+        "Runs one cycle immediately on the replica that receives the "
+        "request, skipping the interval check. 409 when another replica "
+        "holds the cycle lease (a cycle is already running). Also the hook "
+        "an external scheduler (e.g. the chart's optional CronJob) calls "
+        "when the broker's internal timer is turned off."
+    ),
+)
+async def run_credmon_sync(
+    request: Request,
+    principal: Annotated[Principal, Depends(require_admin)],
+) -> CredmonRunResponse:
+    sync = _credmon_sync(request)
+    if sync is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="The HTCondor credmon integration is not enabled (CREDMON_ENABLED).",
+        )
+    logger.info("credmon_sync.manual_trigger", triggered_by=principal.subject)
+    result = await sync.run_now()
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A credmon sync cycle is already running on another replica -- retry shortly.",
+        )
+    return CredmonRunResponse.model_validate(result)

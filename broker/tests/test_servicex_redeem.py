@@ -337,16 +337,30 @@ class TestRedeem:
         assert resp.status_code == 502
 
 
+def _enable_credmon(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Turn on the credmon integration with a valid htcondor-api config and the internal timer off, so booting the app starts no background sync against the network."""
+    token_file = tmp_path / "credmon-htcondor-api-token"
+    token_file.write_text("storer-idtoken\n")
+    monkeypatch.setenv("CREDMON_ENABLED", "true")
+    monkeypatch.setenv("CREDMON_HTCONDOR_API_URL", "https://htcondor-api.invalid")
+    monkeypatch.setenv("CREDMON_HTCONDOR_API_TOKEN_FILE", str(token_file))
+    monkeypatch.setenv("CREDMON_SYNC_INTERNAL_TIMER", "false")
+
+
 class TestCredmonTopToken:
     """A credmon top token (aud ``af-credmon/servicex``) redeems the caller's
     ServiceX identity from the first configured servicex-token target -- see
     test_krb5_redeem.py's TestCredmonTopToken for the krb5 counterpart."""
 
     def test_credmon_audience_redeems_default_servicex_target_when_enabled(
-        self, servicex_redeem_env, app_client_factory, monkeypatch: pytest.MonkeyPatch
+        self,
+        servicex_redeem_env,
+        app_client_factory,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
     ) -> None:
         servicex_redeem_env()
-        monkeypatch.setenv("CREDMON_ENABLED", "true")
+        _enable_credmon(monkeypatch, tmp_path)
         with app_client_factory() as (client, _):
             store = _fake_vault_store(client)
             asyncio.run(store.store_link("sub-abc", refresh_token=SecretStr("rt")))

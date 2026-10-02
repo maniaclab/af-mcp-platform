@@ -19,6 +19,7 @@ import pytest
 from test_broker_issued import _make_rsa_key, _private_pem
 
 from af_mcp_broker.credentials.cache import ProxyMeta
+from af_mcp_broker.vault_kv import VaultKV
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -368,6 +369,30 @@ class TestKeylessBoot:
         assert resp.status_code == 503
 
 
+def _enable_credmon(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Turn on the credmon integration with a valid htcondor-api config and the internal timer off, so booting the app starts no background sync against the network.
+
+    The credmon storer requires a Vault client at boot (it enumerates linked
+    users from the Vault-backed stores), so one is forced into existence via
+    the Vault token store with authentication stubbed; the legacy x509 redeem
+    path under test never touches it.
+    """
+
+    async def _fake_authenticate(self: VaultKV) -> str:
+        return "vault-test-token"
+
+    monkeypatch.setattr(VaultKV, "_authenticate", _fake_authenticate)
+    monkeypatch.setenv("VAULT_ADDR", "https://vault.invalid")
+    monkeypatch.setenv("VAULT_AUTH_ROLE", "af-mcp-broker")
+    monkeypatch.setenv("TOKEN_STORE_BACKEND", "vault")
+    token_file = tmp_path / "credmon-htcondor-api-token"
+    token_file.write_text("storer-idtoken\n")
+    monkeypatch.setenv("CREDMON_ENABLED", "true")
+    monkeypatch.setenv("CREDMON_HTCONDOR_API_URL", "https://htcondor-api.invalid")
+    monkeypatch.setenv("CREDMON_HTCONDOR_API_TOKEN_FILE", str(token_file))
+    monkeypatch.setenv("CREDMON_SYNC_INTERNAL_TIMER", "false")
+
+
 class TestCredmonTopToken:
     """A credmon top token (aud ``af-credmon/x509``) redeems the caller's x509
     identity from the first configured x509 target -- see
@@ -381,7 +406,7 @@ class TestCredmonTopToken:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         x509_redeem_env()
-        monkeypatch.setenv("CREDMON_ENABLED", "true")
+        _enable_credmon(monkeypatch, tmp_path)
         with app_client_factory() as (client, _):
             _seed_proxy(client, tmp_path, subject="sub-abc")
             token = _mint(client, audience="af-credmon/x509")

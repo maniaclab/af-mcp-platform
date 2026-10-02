@@ -105,6 +105,10 @@ class CredmonStorer:
         self._service_prefix = service_prefix
         self._ttl = top_token_ttl_seconds
 
+    @property
+    def kind_names(self) -> list[str]:
+        return [kind.name for kind in self._kinds]
+
     async def run_once(self) -> SyncReport:
         """Run one full sync cycle; per-subject failures are recorded, never raised."""
         report = SyncReport(started_at=time.time())

@@ -728,6 +728,16 @@ class TestKeylessBoot:
         assert resp.status_code == 503
 
 
+def _enable_credmon(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Turn on the credmon integration with a valid htcondor-api config and the internal timer off, so booting the app starts no background sync against the network."""
+    token_file = tmp_path / "credmon-htcondor-api-token"
+    token_file.write_text("storer-idtoken\n")
+    monkeypatch.setenv("CREDMON_ENABLED", "true")
+    monkeypatch.setenv("CREDMON_HTCONDOR_API_URL", "https://htcondor-api.invalid")
+    monkeypatch.setenv("CREDMON_HTCONDOR_API_TOKEN_FILE", str(token_file))
+    monkeypatch.setenv("CREDMON_SYNC_INTERNAL_TIMER", "false")
+
+
 class TestCredmonTopToken:
     """A credmon top token (aud ``af-credmon/krb5``) redeems the caller's krb5
     identity through this same endpoint -- no service mapping, just the
@@ -735,10 +745,14 @@ class TestCredmonTopToken:
     surfaces use. Only registered when CREDMON_ENABLED is set."""
 
     def test_credmon_audience_redeems_default_krb5_target_when_enabled(
-        self, krb5_redeem_env, app_client_factory, monkeypatch: pytest.MonkeyPatch
+        self,
+        krb5_redeem_env,
+        app_client_factory,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
     ) -> None:
         krb5_redeem_env()
-        monkeypatch.setenv("CREDMON_ENABLED", "true")
+        _enable_credmon(monkeypatch, tmp_path)
         with app_client_factory() as (client, _):
             _fake_vault_store(client)
             cred = _seed_cache_ticket(client, subject="sub-abc")
@@ -763,12 +777,16 @@ class TestCredmonTopToken:
         assert resp.status_code == 403
 
     def test_credmon_audience_for_another_kind_is_403(
-        self, krb5_redeem_env, app_client_factory, monkeypatch: pytest.MonkeyPatch
+        self,
+        krb5_redeem_env,
+        app_client_factory,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
     ) -> None:
         """A top token is scoped to one kind by its aud: an x509 top token
         must never release a krb5 ticket."""
         krb5_redeem_env()
-        monkeypatch.setenv("CREDMON_ENABLED", "true")
+        _enable_credmon(monkeypatch, tmp_path)
         with app_client_factory() as (client, _):
             _fake_vault_store(client)
             _seed_cache_ticket(client, subject="sub-abc")
@@ -777,3 +795,31 @@ class TestCredmonTopToken:
                 _REDEEM, json={}, headers={"Authorization": f"Bearer {token}"}
             )
         assert resp.status_code == 403
+
+
+class TestCredmonWiring:
+    """app.py's lifespan builds the credmon sync service only when enabled,
+    and only for kinds that actually have an identity provider configured."""
+
+    def test_enabled_builds_sync_service_for_configured_kinds(
+        self,
+        krb5_redeem_env,
+        app_client_factory,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        krb5_redeem_env()
+        _enable_credmon(monkeypatch, tmp_path)
+        monkeypatch.setenv("CREDMON_KINDS", '["krb5", "servicex"]')
+        with app_client_factory() as (client, _):
+            sync = client.app.state.credmon_sync
+            assert sync is not None
+            # servicex is requested but has no servicex-token provider here.
+            assert sync.kinds == ["krb5"]
+
+    def test_disabled_leaves_no_sync_service(
+        self, krb5_redeem_env, app_client_factory
+    ) -> None:
+        krb5_redeem_env()
+        with app_client_factory() as (client, _):
+            assert client.app.state.credmon_sync is None

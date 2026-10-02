@@ -67,6 +67,10 @@ class CredmonSyncService:
     def interval_seconds(self) -> float:
         return self._interval
 
+    @property
+    def kinds(self) -> list[str]:
+        return self._storer.kind_names
+
     async def tick(self) -> dict[str, Any] | None:
         """Run a timer cycle if one is due and the lease is ours; return the new status, or None when nothing ran."""
         status = await self._state.read_status()
