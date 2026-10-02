@@ -1020,3 +1020,56 @@ export interface ToolMappingDrift {
 export async function fetchToolMappingDrift(): Promise<ToolMappingDrift[]> {
   return apiFetch<ToolMappingDrift[]>('/admin/tool-mapping-drift');
 }
+
+// ---------------------------------------------------------------------------
+// HTCondor credmon sync — GET /v1/admin/credmon, POST /v1/admin/credmon/sync
+// ---------------------------------------------------------------------------
+
+/**
+ * One cycle of the broker's credd push loop. Per-kind counts are keyed by
+ * credential kind (e.g. "krb5", "x509"); a kind with nothing to report may
+ * be absent from a given map rather than present as 0. `errors` is capped
+ * broker-side (20 entries) with `errors_truncated` counting the rest.
+ */
+export interface CredmonRun {
+  outcome: 'success' | 'partial' | 'failed';
+  trigger: 'timer' | 'manual';
+  /** Which broker replica ran the cycle. */
+  holder: string;
+  /** Unix seconds, like every timestamp below. */
+  started_at: number;
+  finished_at: number;
+  last_success_at: number | null;
+  stored: Record<string, number>;
+  not_linked: Record<string, number>;
+  skipped_no_posix: Record<string, number>;
+  failed: Record<string, number>;
+  errors: string[];
+  errors_truncated: number;
+}
+
+export interface CredmonStatus {
+  enabled: boolean;
+  /** Kinds actually being synced; the credd service name is service_prefix + kind. */
+  kinds: string[];
+  service_prefix: string;
+  /** null when the integration is disabled. */
+  interval_seconds: number | null;
+  /** false => an external scheduler (CronJob) drives cycles, not the broker's own timer. */
+  internal_timer: boolean;
+  last_run: CredmonRun | null;
+}
+
+/** Admin-only (require_admin, 403 otherwise). 200 for an admin even when CREDMON_ENABLED is off (`enabled: false`). */
+export async function fetchCredmonStatus(): Promise<CredmonStatus> {
+  return apiFetch<CredmonStatus>('/admin/credmon');
+}
+
+/**
+ * Admin-only: runs one credmon sync cycle now and returns its result. 404
+ * when the integration is disabled; 409 when another replica is mid-cycle
+ * (the broker's `detail` says to retry shortly).
+ */
+export async function runCredmonSync(): Promise<CredmonRun> {
+  return apiFetch<CredmonRun>('/admin/credmon/sync', { method: 'POST' });
+}

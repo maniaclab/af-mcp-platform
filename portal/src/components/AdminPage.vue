@@ -15,19 +15,30 @@ import { ref, onMounted } from 'vue';
 import {
   AccessDeniedError,
   fetchAnnotationMismatches,
+  fetchCredmonStatus,
   fetchMaintenanceStatus,
   fetchToolMappingDrift,
   fetchUsageSubjects,
+  runCredmonSync,
   SessionExpiredError,
   setMaintenanceStatus,
 } from '../lib/api';
 import type {
   AnnotationMismatch,
+  CredmonStatus,
   MaintenanceStatus,
   ToolMappingDrift,
   UsageSubject,
 } from '../lib/api';
+import {
+  credmonHealth,
+  credmonKindRows,
+  credmonNextRunAt,
+  credmonSyncErrorMessage,
+} from '../lib/credmonStatus';
+import type { CredmonHealth } from '../lib/credmonStatus';
 import { maintenanceErrorMessage } from '../lib/maintenanceBanner';
+import { formatRelative } from '../lib/relativeTime';
 import UsagePage from './UsagePage.vue';
 
 const subjects = ref<UsageSubject[]>([]);
@@ -200,6 +211,56 @@ onMounted(async () => {
     driftsLoading.value = false;
   }
 });
+
+// ── HTCondor credmon sync (docs/credmon.md) ─────────────────────────────
+// Admin-only like the sections above; the mismatches section already shows
+// the dedicated session/access states for the same credential, so a load
+// failure here is one error string.
+const credmon = ref<CredmonStatus | null>(null);
+const credmonLoading = ref(true);
+const credmonError = ref<string | null>(null);
+const credmonSyncing = ref(false);
+const credmonSyncError = ref<string | null>(null);
+// Errors list starts expanded only when short enough to scan at a glance.
+const CREDMON_ERRORS_OPEN_MAX = 3;
+
+async function loadCredmon(): Promise<void> {
+  try {
+    credmon.value = await fetchCredmonStatus();
+    credmonError.value = null;
+  } catch (err) {
+    credmonError.value = err instanceof Error ? err.message : 'Failed to load credmon status.';
+  } finally {
+    credmonLoading.value = false;
+  }
+}
+
+onMounted(loadCredmon);
+
+async function syncCredmonNow(): Promise<void> {
+  credmonSyncing.value = true;
+  credmonSyncError.value = null;
+  try {
+    await runCredmonSync();
+    await loadCredmon();
+  } catch (err) {
+    credmonSyncError.value = credmonSyncErrorMessage(err);
+  } finally {
+    credmonSyncing.value = false;
+  }
+}
+
+const CREDMON_HEALTH_LABELS: Record<CredmonHealth, string> = {
+  disabled: 'Disabled',
+  pending: 'No runs yet',
+  healthy: 'Healthy',
+  warning: 'Needs attention',
+  error: 'Failing',
+};
+
+function nowSeconds(): number {
+  return Date.now() / 1000;
+}
 </script>
 
 <template>
@@ -450,6 +511,131 @@ onMounted(async () => {
         </tbody>
       </table>
     </section>
+
+    <section class="ap__section" aria-label="HTCondor credmon sync">
+      <h2 class="ap__section-title">HTCondor credmon sync</h2>
+      <p class="ap__legend">
+        The broker stores a short-lived token per user and credential type in the facility's credd,
+        so jobs that request <code>use_oauth_services = af_krb5, af_x509</code> get the user's
+        credentials on the worker node. Only one broker replica runs each sync.
+      </p>
+
+      <div
+        v-if="credmonLoading"
+        class="ap__loading"
+        aria-live="polite"
+        aria-label="Loading credmon status"
+      >
+        Loading credmon status…
+      </div>
+
+      <div v-else-if="credmonError" class="ap__error" role="alert">
+        <span class="ap__error-title">Could not load credmon status</span>
+        <span class="ap__error-body">{{ credmonError }}</span>
+      </div>
+
+      <div v-else-if="credmon && !credmon.enabled" class="ap__placeholder">
+        Not enabled on this broker (<code>CREDMON_ENABLED</code>).
+      </div>
+
+      <template v-else-if="credmon">
+        <div class="ap__credmon-summary">
+          <span
+            class="ap__credmon-pill"
+            :class="`ap__credmon-pill--${credmonHealth(credmon, nowSeconds())}`"
+            data-af-credmon-health
+          >
+            {{ CREDMON_HEALTH_LABELS[credmonHealth(credmon, nowSeconds())] }}
+          </span>
+          <button
+            type="button"
+            data-af-credmon-sync
+            class="ap__btn ap__btn--confirm"
+            :disabled="credmonSyncing"
+            @click="syncCredmonNow"
+          >
+            {{ credmonSyncing ? 'Syncing…' : 'Run sync now' }}
+          </button>
+        </div>
+
+        <div v-if="credmonSyncError" class="ap__error" role="alert">
+          <span class="ap__error-body">{{ credmonSyncError }}</span>
+        </div>
+
+        <dl class="ap__maintenance-details">
+          <dt>Last run</dt>
+          <dd v-if="credmon.last_run">
+            <span :title="formatEnabledAt(credmon.last_run.finished_at)">
+              {{ formatRelative(credmon.last_run.finished_at * 1000) }}
+            </span>
+            ({{ credmon.last_run.trigger === 'manual' ? 'run by an admin' : 'scheduled' }}, on
+            {{ credmon.last_run.holder }})
+          </dd>
+          <dd v-else>No sync has run yet.</dd>
+          <dt>Last success</dt>
+          <dd>
+            <span
+              v-if="credmon.last_run?.last_success_at"
+              :title="formatEnabledAt(credmon.last_run.last_success_at)"
+            >
+              {{ formatRelative(credmon.last_run.last_success_at * 1000) }}
+            </span>
+            <template v-else>Never</template>
+          </dd>
+          <dt>Next run</dt>
+          <dd v-if="!credmon.internal_timer">Driven by an external scheduler.</dd>
+          <dd v-else-if="credmonNextRunAt(credmon) !== null">
+            <span :title="formatEnabledAt(credmonNextRunAt(credmon) as number)">
+              {{ formatRelative((credmonNextRunAt(credmon) as number) * 1000) }}
+            </span>
+          </dd>
+          <dd v-else>Within a minute of startup.</dd>
+        </dl>
+
+        <table class="ap__mismatch-table">
+          <thead>
+            <tr>
+              <th scope="col">Credential</th>
+              <th scope="col">credd service</th>
+              <th scope="col">Stored</th>
+              <th scope="col">Skipped: not linked</th>
+              <th scope="col">Skipped: no POSIX user</th>
+              <th scope="col">Failed</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="row in credmonKindRows(credmon)" :key="row.kind">
+              <td>{{ row.kind }}</td>
+              <td>
+                <code>{{ row.service }}</code>
+              </td>
+              <td>{{ row.stored }}</td>
+              <td>{{ row.notLinked }}</td>
+              <td>{{ row.noPosix }}</td>
+              <td>{{ row.failed }}</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <details
+          v-if="credmon.last_run && credmon.last_run.errors.length > 0"
+          class="ap__credmon-errors"
+          :open="credmon.last_run.errors.length <= CREDMON_ERRORS_OPEN_MAX"
+        >
+          <summary>
+            Errors from the last run ({{
+              credmon.last_run.errors.length + credmon.last_run.errors_truncated
+            }})
+          </summary>
+          <ul>
+            <li v-for="(e, i) in credmon.last_run.errors" :key="i">{{ e }}</li>
+          </ul>
+          <p v-if="credmon.last_run.errors_truncated > 0" class="ap__legend">
+            +{{ credmon.last_run.errors_truncated }} more not shown.
+          </p>
+        </details>
+      </template>
+    </section>
   </div>
 </template>
 
@@ -674,6 +860,59 @@ onMounted(async () => {
   padding: 0.5rem 0.75rem;
   color: var(--color-af-text);
   border-bottom: 1px solid var(--color-af-border);
+  word-break: break-word;
+}
+.ap__credmon-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.ap__credmon-pill {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 0.1875rem 0.5rem;
+  border-radius: 2px;
+  border: 1px solid;
+}
+.ap__credmon-pill--healthy {
+  background: rgb(from var(--color-af-green) r g b / 0.08);
+  color: var(--color-af-green);
+  border-color: rgb(from var(--color-af-green) r g b / 0.2);
+}
+.ap__credmon-pill--pending,
+.ap__credmon-pill--disabled {
+  background: rgb(from var(--color-af-teal) r g b / 0.08);
+  color: var(--color-af-teal);
+  border-color: rgb(from var(--color-af-teal) r g b / 0.2);
+}
+.ap__credmon-pill--warning {
+  background: rgb(from var(--color-af-amber) r g b / 0.08);
+  color: var(--color-af-amber);
+  border-color: rgb(from var(--color-af-amber) r g b / 0.2);
+}
+.ap__credmon-pill--error {
+  background: rgb(from var(--color-af-red) r g b / 0.08);
+  color: var(--color-af-red);
+  border-color: rgb(from var(--color-af-red) r g b / 0.2);
+}
+
+.ap__credmon-errors {
+  font-size: 0.8125rem;
+  color: var(--color-af-text);
+}
+.ap__credmon-errors summary {
+  cursor: pointer;
+  color: var(--color-af-red);
+}
+.ap__credmon-errors ul {
+  margin: 0.5rem 0 0;
+  padding-left: 1.25rem;
+  font-family: 'IBM Plex Mono', monospace;
   word-break: break-word;
 }
 </style>
