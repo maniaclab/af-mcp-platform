@@ -263,3 +263,18 @@ async def test_background_loop_runs_and_survives_storage_errors() -> None:
 
     assert state.reads >= 2
     assert storer.calls == 1
+
+
+async def test_tick_publishes_shared_last_success_even_when_not_due() -> None:
+    """After a restart no cycle may be due for hours; every replica must still
+    report the shared last success, or a stale-sync alert on max() across
+    replicas would fire on every rollout."""
+    state = InMemoryCredmonSyncState()
+    await state.write_status(
+        {"finished_at": 5000.0, "last_success_at": 4990.0, "outcome": "success"}
+    )
+    credmon_sync_gauge = "af_mcp_credmon_sync_last_success_timestamp_seconds"
+    service = _service(_FakeStorer(_report()), state, _Clock(5100.0), holder="pod-z")
+
+    assert await service.tick() is None
+    assert _sample(credmon_sync_gauge) == 4990.0

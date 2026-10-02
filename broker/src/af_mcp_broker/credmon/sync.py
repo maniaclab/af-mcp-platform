@@ -74,6 +74,14 @@ class CredmonSyncService:
     async def tick(self) -> dict[str, Any] | None:
         """Run a timer cycle if one is due and the lease is ours; return the new status, or None when nothing ran."""
         status = await self._state.read_status()
+        # Publish the shared last success on every tick, not only on the
+        # replica that ran it: after a rollout no cycle may be due for hours,
+        # and a fresh pod's gauge would otherwise read 0 and trip a
+        # stale-sync alert on max() across replicas.
+        if status is not None and status.get("last_success_at") is not None:
+            credmon_sync_last_success_timestamp_seconds.set(
+                float(status["last_success_at"])
+            )
         if (
             status is not None
             and self._clock() - float(status["finished_at"]) < self._interval
