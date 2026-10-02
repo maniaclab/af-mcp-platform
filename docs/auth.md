@@ -1042,6 +1042,17 @@ provider's redeem endpoint. Both are separate, cross-repo changes.
 
 ---
 
+### Credmon top tokens: credentials on HTCondor worker nodes
+
+When `CREDMON_ENABLED`, the broker also mints long-lived (default 24h) AF
+Broker Identity Tokens with `aud=af-credmon/<kind>` and stores them in
+HTCondor's credd; an AP-side credmon presents them to the existing
+`POST /v1/credentials/<kind>/redeem` endpoints, which map that audience to
+the kind's first configured identity target. The claim set is unchanged
+(identity only, issue #162) -- the kind lives in the audience. The broker
+keeps no copy. See [HTCondor Credmon](credmon.md) for the full chain,
+configuration and AP prerequisites.
+
 ## Programmatic client bootstrap
 
 The chain above ("Full Auth Chain") describes the interactive path: the
