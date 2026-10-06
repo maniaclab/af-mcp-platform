@@ -36,7 +36,6 @@ function status(overrides: Partial<CredmonStatus> = {}): CredmonStatus {
     kinds: ['krb5', 'x509'],
     service_prefix: 'af_',
     interval_seconds: INTERVAL,
-    internal_timer: true,
     last_run: run(),
     ...overrides,
   };
@@ -101,12 +100,8 @@ describe('credmonKindRows', () => {
 });
 
 describe('credmonNextRunAt', () => {
-  it('is the last finish plus the interval when the broker timer drives cycles', () => {
+  it('is the last finish plus the interval', () => {
     expect(credmonNextRunAt(status())).toBe(NOW - 97 + INTERVAL);
-  });
-
-  it('is null when an external scheduler drives cycles', () => {
-    expect(credmonNextRunAt(status({ internal_timer: false }))).toBeNull();
   });
 
   it('is null before the first cycle', () => {

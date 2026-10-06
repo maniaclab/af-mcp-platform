@@ -1055,8 +1055,6 @@ export interface CredmonStatus {
   service_prefix: string;
   /** null when the integration is disabled. */
   interval_seconds: number | null;
-  /** false => an external scheduler (CronJob) drives cycles, not the broker's own timer. */
-  internal_timer: boolean;
   last_run: CredmonRun | null;
 }
 

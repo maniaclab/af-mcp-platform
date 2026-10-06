@@ -106,7 +106,6 @@ async def build_credmon_sync(
     log.info(
         "credmon.wired",
         kinds=[k.name for k in kinds],
-        internal_timer=settings.credmon_sync_internal_timer,
         interval_seconds=settings.credmon_sync_interval_seconds,
     )
     return CredmonSyncService(

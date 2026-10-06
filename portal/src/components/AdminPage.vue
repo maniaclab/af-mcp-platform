@@ -583,8 +583,7 @@ function nowSeconds(): number {
             <template v-else>Never</template>
           </dd>
           <dt>Next run</dt>
-          <dd v-if="!credmon.internal_timer">Driven by an external scheduler.</dd>
-          <dd v-else-if="credmonNextRunAt(credmon) !== null">
+          <dd v-if="credmonNextRunAt(credmon) !== null">
             <span :title="formatEnabledAt(credmonNextRunAt(credmon) as number)">
               {{ formatRelative((credmonNextRunAt(credmon) as number) * 1000) }}
             </span>

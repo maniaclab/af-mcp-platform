@@ -1115,7 +1115,6 @@ describe('fetchCredmonStatus()', () => {
       kinds: ['krb5'],
       service_prefix: 'af_',
       interval_seconds: 14400.0,
-      internal_timer: true,
       last_run: null,
     };
     globalThis.fetch = mockJson(200, body);

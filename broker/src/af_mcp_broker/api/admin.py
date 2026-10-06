@@ -344,9 +344,6 @@ class CredmonStatusResponse(BaseModel):
     kinds: list[str]
     service_prefix: str
     interval_seconds: float | None
-    # False when an external scheduler drives cycles via POST
-    # /v1/admin/credmon/sync rather than the broker's own timer.
-    internal_timer: bool
     last_run: CredmonRunResponse | None
 
 
@@ -378,7 +375,6 @@ async def get_credmon_status(
             kinds=[],
             service_prefix=settings.credmon_service_prefix,
             interval_seconds=None,
-            internal_timer=settings.credmon_sync_internal_timer,
             last_run=None,
         )
     status_record = await sync.read_status()
@@ -387,7 +383,6 @@ async def get_credmon_status(
         kinds=sync.kinds,
         service_prefix=settings.credmon_service_prefix,
         interval_seconds=sync.interval_seconds,
-        internal_timer=settings.credmon_sync_internal_timer,
         last_run=CredmonRunResponse.model_validate(status_record)
         if status_record is not None
         else None,
@@ -401,9 +396,7 @@ async def get_credmon_status(
     description=(
         "Runs one cycle immediately on the replica that receives the "
         "request, skipping the interval check. 409 when another replica "
-        "holds the cycle lease (a cycle is already running). Also the hook "
-        "an external scheduler (e.g. the chart's optional CronJob) calls "
-        "when the broker's internal timer is turned off."
+        "holds the cycle lease (a cycle is already running)."
     ),
 )
 async def run_credmon_sync(

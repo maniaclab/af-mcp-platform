@@ -719,9 +719,6 @@ class Settings(BaseSettings):
     # (htcondor-api briefly down) never strands running jobs.
     credmon_top_token_ttl_seconds: int = 86400
     credmon_sync_interval_seconds: int = 14400
-    # False when an external scheduler (e.g. the chart's optional CronJob)
-    # drives cycles through POST /v1/admin/credmon/sync instead.
-    credmon_sync_internal_timer: bool = True
     credmon_state_kv_path_prefix: str = "mcp/credmon"
 
     # KV-v2 path prefix for the per-subject x509 link/proxy records

@@ -179,6 +179,10 @@ class CredmonSyncService:
 
     async def _loop(self) -> None:
         while True:
+            # Sleep first: a pod that just booted (or a test app) must not hit
+            # Vault/htcondor-api at the instant of startup; the shared status
+            # record, not this replica, decides whether a cycle is due.
+            await asyncio.sleep(self._poll)
             try:
                 await self.tick()
             except Exception:
@@ -186,4 +190,3 @@ class CredmonSyncService:
                 # and keep polling -- the stale last-success gauge is what
                 # tells the operator, not a dead task.
                 log.exception("credmon_sync.tick_failed")
-            await asyncio.sleep(self._poll)

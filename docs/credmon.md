@@ -62,8 +62,7 @@ broker:
 The equivalent env vars are `CREDMON_ENABLED`, `CREDMON_HTCONDOR_API_URL`,
 `CREDMON_HTCONDOR_API_TOKEN_FILE`, `CREDMON_SERVICE_PREFIX` (default `af_`),
 `CREDMON_KINDS`, `CREDMON_TOP_TOKEN_TTL_SECONDS`,
-`CREDMON_SYNC_INTERVAL_SECONDS`, `CREDMON_SYNC_INTERNAL_TIMER` and
-`CREDMON_STATE_KV_PATH_PREFIX`.
+`CREDMON_SYNC_INTERVAL_SECONDS` and `CREDMON_STATE_KV_PATH_PREFIX`.
 
 The broker refuses to boot when credmon is enabled without a signing key,
 without Vault (users are enumerated from the Vault-backed identity stores,
@@ -149,8 +148,11 @@ ShadowLog.
 
 ## Operating it
 
-Only the replica holding the per-cycle lease runs a sync; every replica
-answers status queries identically from the shared Vault record.
+The sync runs inside the broker on its own timer -- no CronJob or other
+scheduler to deploy. Every replica checks once a minute (the first check one
+minute after startup) whether a cycle is due; only the replica holding the
+per-cycle lease runs it, and every replica answers status queries
+identically from the shared Vault record.
 
 - **Portal → Admin**: the HTCondor credmon panel shows the last cycle, its
   per-kind counts and errors, and a "Run sync now" button.
@@ -177,5 +179,3 @@ a success for alerting; its errors are in the status record.
   token expires within its TTL and stops redeeming immediately.
 - A failed cycle is retried at the next interval, not sooner; the top-token
   TTL (default 6× the interval) covers missed cycles.
-- There is no shipped CronJob alternative to the internal timer yet:
-  `POST /v1/admin/credmon/sync` needs an admin Keycloak JWT.

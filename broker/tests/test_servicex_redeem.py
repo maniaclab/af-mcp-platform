@@ -338,13 +338,12 @@ class TestRedeem:
 
 
 def _enable_credmon(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Turn on the credmon integration with a valid htcondor-api config and the internal timer off, so booting the app starts no background sync against the network."""
+    """Turn on the credmon integration with a valid htcondor-api config. The sync loop sleeps one poll interval (60s) before its first tick, so booting the app in a test starts no background sync against the network."""
     token_file = tmp_path / "credmon-htcondor-api-token"
     token_file.write_text("storer-idtoken\n")
     monkeypatch.setenv("CREDMON_ENABLED", "true")
     monkeypatch.setenv("CREDMON_HTCONDOR_API_URL", "https://htcondor-api.invalid")
     monkeypatch.setenv("CREDMON_HTCONDOR_API_TOKEN_FILE", str(token_file))
-    monkeypatch.setenv("CREDMON_SYNC_INTERNAL_TIMER", "false")
 
 
 class TestCredmonTopToken:

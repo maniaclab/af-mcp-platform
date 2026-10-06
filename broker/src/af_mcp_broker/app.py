@@ -1082,8 +1082,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
             vault_kv=vault_kv,
             principal_cache=principal_cache,
         )
-        if settings.credmon_sync_internal_timer:
-            credmon_sync.start()
+        credmon_sync.start()
     application.state.credmon_sync = credmon_sync
 
     # Prime the JWKS cache at startup so the first request does not pay the

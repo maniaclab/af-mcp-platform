@@ -59,9 +59,9 @@ export function credmonKindRows(status: CredmonStatus): CredmonKindRow[] {
   }));
 }
 
-/** When the broker's own timer next makes a cycle due (unix seconds), or null when there is no last run yet or an external scheduler drives cycles. */
+/** When the broker's timer next makes a cycle due (unix seconds), or null before the first run. */
 export function credmonNextRunAt(status: CredmonStatus): number | null {
-  if (!status.internal_timer || !status.last_run || status.interval_seconds === null) {
+  if (!status.last_run || status.interval_seconds === null) {
     return null;
   }
   return status.last_run.finished_at + status.interval_seconds;

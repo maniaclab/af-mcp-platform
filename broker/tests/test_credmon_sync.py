@@ -278,3 +278,33 @@ async def test_tick_publishes_shared_last_success_even_when_not_due() -> None:
 
     assert await service.tick() is None
     assert _sample(credmon_sync_gauge) == 4990.0
+
+
+async def test_background_loop_waits_one_poll_before_first_tick() -> None:
+    """A freshly started broker must not touch Vault/htcondor-api at the
+    instant of boot -- the first tick comes one poll interval later."""
+
+    class _CountingState(InMemoryCredmonSyncState):
+        def __init__(self) -> None:
+            super().__init__()
+            self.reads = 0
+
+        async def read_status(self) -> dict[str, Any] | None:
+            self.reads += 1
+            return await super().read_status()
+
+    state = _CountingState()
+    service = CredmonSyncService(
+        storer=_FakeStorer(_report()),  # type: ignore[arg-type]
+        state=state,
+        holder="pod-a",
+        interval_seconds=_INTERVAL,
+        lease_ttl_seconds=600.0,
+        poll_seconds=60.0,
+    )
+
+    service.start()
+    await asyncio.sleep(0.05)
+    await service.stop()
+
+    assert state.reads == 0

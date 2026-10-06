@@ -370,7 +370,7 @@ class TestKeylessBoot:
 
 
 def _enable_credmon(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Turn on the credmon integration with a valid htcondor-api config and the internal timer off, so booting the app starts no background sync against the network.
+    """Turn on the credmon integration with a valid htcondor-api config. The sync loop sleeps one poll interval (60s) before its first tick, so booting the app in a test starts no background sync against the network.
 
     The credmon storer requires a Vault client at boot (it enumerates linked
     users from the Vault-backed stores), so one is forced into existence via
@@ -390,7 +390,6 @@ def _enable_credmon(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("CREDMON_ENABLED", "true")
     monkeypatch.setenv("CREDMON_HTCONDOR_API_URL", "https://htcondor-api.invalid")
     monkeypatch.setenv("CREDMON_HTCONDOR_API_TOKEN_FILE", str(token_file))
-    monkeypatch.setenv("CREDMON_SYNC_INTERNAL_TIMER", "false")
 
 
 class TestCredmonTopToken:
