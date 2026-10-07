@@ -11,6 +11,7 @@ if TYPE_CHECKING:
 
     from af_mcp_broker.config import IdentityProviderConfig
     from af_mcp_broker.credentials import CredentialProvider
+    from af_mcp_broker.credmon.sync import CredmonSyncService
 
 import structlog
 from cryptography.fernet import Fernet
@@ -59,6 +60,7 @@ from af_mcp_broker.credentials import (
 from af_mcp_broker.credentials.cache import RateLimitError
 from af_mcp_broker.credentials.krb5_vault import Krb5VaultStore
 from af_mcp_broker.credentials.servicex_vault import VaultServiceXStore
+from af_mcp_broker.credmon.factory import build_credmon_sync
 from af_mcp_broker.http import aclose_http_client
 from af_mcp_broker.identity import build_dev_principal, get_jwks, issuer_is_local
 from af_mcp_broker.logging import (
@@ -414,6 +416,20 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         for spec in services
         if spec.auth_type == "servicex"
     }
+    # HTCondor credmon top tokens (docs/credmon.md): the credmon redeems a
+    # user's *identity*, not any particular service's credential, so its
+    # per-kind audience maps to that kind's first configured target -- the
+    # same default the user-facing /v1 surfaces resolve to. No condor
+    # service entry is involved; the identity just gains one more consumer.
+    if settings.credmon_enabled:
+        prefix = settings.credmon_audience_prefix
+        for kind, audiences, targets in (
+            ("x509", x509_audiences, x509_targets),
+            ("krb5", krb5_audiences, krb5_targets),
+            ("servicex", servicex_audiences, servicex_targets),
+        ):
+            if targets:
+                audiences[f"{prefix}{kind}"] = targets[0]
     identity_provider_cfg_list = list(settings.identity_providers)
     _validate_x509_provider_targets(settings.identity_providers, set(x509_targets))
     has_service_mode_x509_cfg = any(
@@ -1035,6 +1051,40 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     application.state.krb5_vault_store = krb5_vault_store
     application.state.servicex_vault_store = servicex_vault_store
 
+    # HTCondor credmon storer (docs/credmon.md): built only when enabled, for
+    # the kinds whose identity provider (and, for enumeration, Vault store)
+    # is actually wired. Set unconditionally so a disabled deployment reads
+    # None rather than whatever a previous app instance left behind.
+    credmon_sync: CredmonSyncService | None = None
+    if settings.credmon_enabled:
+        credmon_sync = await build_credmon_sync(
+            settings,
+            issuer=broker_token_issuer,
+            credential_registry=credential_registry,
+            targets_by_kind={
+                "x509": x509_targets,
+                "krb5": krb5_targets,
+                "servicex": servicex_targets,
+            },
+            store_prefixes={
+                kind: prefix
+                for kind, store, prefix in (
+                    ("x509", x509_vault_store, settings.x509_kv_path_prefix),
+                    ("krb5", krb5_vault_store, settings.krb5_kv_path_prefix),
+                    (
+                        "servicex",
+                        servicex_vault_store,
+                        settings.servicex_kv_path_prefix,
+                    ),
+                )
+                if store is not None
+            },
+            vault_kv=vault_kv,
+            principal_cache=principal_cache,
+        )
+        credmon_sync.start()
+    application.state.credmon_sync = credmon_sync
+
     # Prime the JWKS cache at startup so the first request does not pay the
     # latency cost of a remote fetch.
     try:
@@ -1057,6 +1107,8 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
 
     yield
 
+    if credmon_sync is not None:
+        await credmon_sync.stop()
     await credential_cache.stop_janitor()
     await aclose_http_client()
     # Shutdown drains pending metering (records still queued for measurement

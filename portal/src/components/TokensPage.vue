@@ -36,6 +36,7 @@ import {
   pythonMintAndConnectSnippet,
 } from '../lib/tokenCliSnippets';
 import { getBrokerOrigin } from '../lib/auth';
+import { formatRelative } from '../lib/relativeTime';
 import PopoverTooltip from './PopoverTooltip.vue';
 
 const tokens = ref<TokenSummary[]>([]);
@@ -306,15 +307,8 @@ async function handleRevoke() {
 }
 
 // ── Formatting ───────────────────────────────────────────────────────────
-const relativeFormatter = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
-
-function formatRelative(iso: string): string {
-  const deltaSeconds = Math.round((Date.parse(iso) - Date.now()) / 1000);
-  const abs = Math.abs(deltaSeconds);
-  if (abs < 60) return relativeFormatter.format(deltaSeconds, 'second');
-  if (abs < 3600) return relativeFormatter.format(Math.round(deltaSeconds / 60), 'minute');
-  if (abs < 86400) return relativeFormatter.format(Math.round(deltaSeconds / 3600), 'hour');
-  return relativeFormatter.format(Math.round(deltaSeconds / 86400), 'day');
+function formatRelativeIso(iso: string): string {
+  return formatRelative(Date.parse(iso));
 }
 
 function formatAbsolute(iso: string): string {
@@ -448,14 +442,14 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
               >
                 <template v-if="row.expires_at === null">Never</template>
                 <template v-else>
-                  {{ isExpired(row.expires_at) ? 'expired' : formatRelative(row.expires_at) }}
+                  {{ isExpired(row.expires_at) ? 'expired' : formatRelativeIso(row.expires_at) }}
                 </template>
               </td>
               <td
                 class="tp__td tp__td--secondary"
                 :title="row.last_used_at ? formatAbsolute(row.last_used_at) : 'Never used'"
               >
-                {{ row.last_used_at ? formatRelative(row.last_used_at) : 'Never' }}
+                {{ row.last_used_at ? formatRelativeIso(row.last_used_at) : 'Never' }}
               </td>
               <td class="tp__td">
                 <span class="tp__badge" :class="`tp__badge--status-${tokenStatus(row)}`">

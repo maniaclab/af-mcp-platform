@@ -109,6 +109,33 @@ spec:
             - name: BROKER_TOKEN_TTL_SECONDS
               value: {{ .Values.broker.identityToken.ttlSeconds | quote }}
             {{- end }}
+            # HTCondor credmon storer (docs/credmon.md). Deployment-only like
+            # the identity-token settings above: the token-sweep CronJob never
+            # stores to credd, and the token Secret is only mounted here.
+            {{- if .Values.broker.credmon.enabled }}
+            - name: CREDMON_ENABLED
+              value: "true"
+            - name: CREDMON_HTCONDOR_API_URL
+              value: {{ required "broker.credmon.htcondorApiUrl is required when broker.credmon.enabled" .Values.broker.credmon.htcondorApiUrl | quote }}
+            - name: CREDMON_HTCONDOR_API_TOKEN_FILE
+              value: "/etc/af-mcp/credmon/token"
+            {{- with .Values.broker.credmon.servicePrefix }}
+            - name: CREDMON_SERVICE_PREFIX
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.broker.credmon.kinds }}
+            - name: CREDMON_KINDS
+              value: {{ toJson . | quote }}
+            {{- end }}
+            {{- with .Values.broker.credmon.topTokenTtlSeconds }}
+            - name: CREDMON_TOP_TOKEN_TTL_SECONDS
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.broker.credmon.syncIntervalSeconds }}
+            - name: CREDMON_SYNC_INTERVAL_SECONDS
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /v1/healthz
@@ -155,6 +182,11 @@ spec:
               mountPath: /etc/af-mcp/identity-token-public-keys
               readOnly: true
             {{- end }}
+            {{- if .Values.broker.credmon.enabled }}
+            - name: credmon-htcondor-api-token
+              mountPath: /etc/af-mcp/credmon
+              readOnly: true
+            {{- end }}
       volumes:
         - name: policy
           configMap:
@@ -197,4 +229,12 @@ spec:
         - name: identity-token-public-keys
           secret:
             secretName: {{ .Values.broker.identityToken.existingAdditionalPublicKeysSecret | quote }}
+        {{- end }}
+        {{- if .Values.broker.credmon.enabled }}
+        - name: credmon-htcondor-api-token
+          secret:
+            secretName: {{ required "broker.credmon.existingHtcondorApiTokenSecret is required when broker.credmon.enabled" .Values.broker.credmon.existingHtcondorApiTokenSecret | quote }}
+            items:
+              - key: token
+                path: token
         {{- end }}

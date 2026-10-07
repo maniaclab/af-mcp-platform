@@ -1,0 +1,44 @@
+{{- if and .Values.broker.credmon.enabled .Values.broker.credmon.prometheusRule.enabled }}
+# Stale-sync alert for the HTCondor credmon storer (docs/credmon.md). Only
+# the replica holding the cycle lease runs a sync, so the rule takes the max
+# of the last-success gauge across replicas: nobody succeeding for 2x the
+# interval means credd stopped receiving fresh top tokens, and jobs will
+# lose their credentials once the stored ones expire.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "af-mcp-platform.fullname" . }}-credmon
+  namespace: {{ .Values.broker.credmon.prometheusRule.namespace | default .Release.Namespace | quote }}
+  labels:
+    {{- include "af-mcp-platform.labels" . | nindent 4 }}
+    {{- with .Values.broker.credmon.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: af-mcp-credmon
+      rules:
+        - alert: AfMcpCredmonSyncStale
+          expr: |
+            time() - max(af_mcp_credmon_sync_last_success_timestamp_seconds) > 2 * {{ .Values.broker.credmon.syncIntervalSeconds | default 14400 }}
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: HTCondor credmon sync has not succeeded recently
+            description: >-
+              No broker replica has finished a credmon sync in over twice the
+              sync interval. Check GET /v1/admin/credmon (or the portal Admin
+              page) for the last cycle's errors.
+        - alert: AfMcpCredmonSyncNeverSucceeded
+          expr: |
+            absent(af_mcp_credmon_sync_last_success_timestamp_seconds) or max(af_mcp_credmon_sync_last_success_timestamp_seconds) == 0
+          for: {{ mul 2 (.Values.broker.credmon.syncIntervalSeconds | default 14400 | int) }}s
+          labels:
+            severity: warning
+          annotations:
+            summary: HTCondor credmon sync has never succeeded
+            description: >-
+              The credmon integration is enabled but no replica has completed
+              a sync since the last restart. Check GET /v1/admin/credmon.
+{{- end }}

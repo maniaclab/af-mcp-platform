@@ -335,3 +335,55 @@ class TestRedeem:
                 _REDEEM, json={}, headers={"Authorization": f"Bearer {token}"}
             )
         assert resp.status_code == 502
+
+
+def _enable_credmon(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Turn on the credmon integration with a valid htcondor-api config. The sync loop sleeps one poll interval (60s) before its first tick, so booting the app in a test starts no background sync against the network."""
+    token_file = tmp_path / "credmon-htcondor-api-token"
+    token_file.write_text("storer-idtoken\n")
+    monkeypatch.setenv("CREDMON_ENABLED", "true")
+    monkeypatch.setenv("CREDMON_HTCONDOR_API_URL", "https://htcondor-api.invalid")
+    monkeypatch.setenv("CREDMON_HTCONDOR_API_TOKEN_FILE", str(token_file))
+
+
+class TestCredmonTopToken:
+    """A credmon top token (aud ``af-credmon/servicex``) redeems the caller's
+    ServiceX identity from the first configured servicex-token target -- see
+    test_krb5_redeem.py's TestCredmonTopToken for the krb5 counterpart."""
+
+    def test_credmon_audience_redeems_default_servicex_target_when_enabled(
+        self,
+        servicex_redeem_env,
+        app_client_factory,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        servicex_redeem_env()
+        _enable_credmon(monkeypatch, tmp_path)
+        with app_client_factory() as (client, _):
+            store = _fake_vault_store(client)
+            asyncio.run(store.store_link("sub-abc", refresh_token=SecretStr("rt")))
+            asyncio.run(
+                store.store_token(
+                    "sub-abc",
+                    access_token="cached-access-token",
+                    expires_at=time.time() + 3600,
+                )
+            )
+            token = _mint(client, audience="af-credmon/servicex")
+            resp = client.post(
+                _REDEEM, json={}, headers={"Authorization": f"Bearer {token}"}
+            )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["access_token"] == "cached-access-token"
+
+    def test_credmon_audience_is_403_when_disabled(
+        self, servicex_redeem_env, app_client_factory
+    ) -> None:
+        servicex_redeem_env()
+        with app_client_factory() as (client, _):
+            token = _mint(client, audience="af-credmon/servicex")
+            resp = client.post(
+                _REDEEM, json={}, headers={"Authorization": f"Bearer {token}"}
+            )
+        assert resp.status_code == 403

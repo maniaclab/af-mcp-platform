@@ -754,3 +754,45 @@ def test_maintenance_mode_postgres_raises_when_no_dsn_available():
 def test_maintenance_mode_rejects_unknown_backend():
     with pytest.raises(ValueError, match="maintenance_mode_backend"):
         Settings(maintenance_mode_backend="mysql")
+
+
+# ---------------------------------------------------------------------------
+# HTCondor credmon integration (docs/credmon.md)
+# ---------------------------------------------------------------------------
+
+
+def test_credmon_disabled_needs_no_htcondor_api_settings():
+    Settings(credmon_enabled=False)  # must not raise
+
+
+def test_credmon_enabled_with_htcondor_api_settings_is_ok():
+    Settings(
+        credmon_enabled=True,
+        credmon_htcondor_api_url="https://htcondor-api.example",
+        credmon_htcondor_api_token_file="/var/run/secrets/credmon/token",
+    )  # must not raise
+
+
+def test_credmon_enabled_raises_without_htcondor_api_url():
+    with pytest.raises(ValueError, match="credmon_htcondor_api_url"):
+        Settings(
+            credmon_enabled=True,
+            credmon_htcondor_api_token_file="/var/run/secrets/credmon/token",
+        )
+
+
+def test_credmon_enabled_raises_without_htcondor_api_token_file():
+    with pytest.raises(ValueError, match="credmon_htcondor_api_token_file"):
+        Settings(
+            credmon_enabled=True,
+            credmon_htcondor_api_url="https://htcondor-api.example",
+        )
+
+
+def test_credmon_top_token_ttl_must_exceed_sync_interval():
+    """A top token that expires before the next cycle replaces it would leave
+    every job without credentials for the gap."""
+    with pytest.raises(ValueError, match="credmon_top_token_ttl_seconds"):
+        Settings(
+            credmon_top_token_ttl_seconds=3600, credmon_sync_interval_seconds=14400
+        )

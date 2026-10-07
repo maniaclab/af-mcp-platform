@@ -217,6 +217,12 @@ class ServiceXTokenProviderConfig(BaseModel):
     external_login_url: AnyHttpUrl | None = None
 
 
+# Credential kinds the HTCondor credmon integration can serve -- each has a
+# redeem endpoint (POST /v1/credentials/<kind>/redeem) -- see docs/credmon.md.
+CredmonKindName = Literal["x509", "krb5", "servicex"]
+_DEFAULT_CREDMON_KINDS: tuple[CredmonKindName, ...] = ("x509", "krb5", "servicex")
+
+
 IdentityProviderConfig = Annotated[
     KeycloakBrokeredProviderConfig
     | OAuth21DirectProviderConfig
@@ -687,6 +693,34 @@ class Settings(BaseSettings):
     # but defeating the cache entirely. Keep this comfortably above 300.
     broker_token_ttl_seconds: int = 600
 
+    # HTCondor credmon integration (docs/credmon.md). When enabled, each
+    # credential redeem endpoint also accepts a credmon top token -- an AF
+    # Broker Identity Token with aud ``{credmon_audience_prefix}{kind}``
+    # (e.g. ``af-credmon/krb5``) -- and serves the caller's credential from
+    # that kind's first configured identity target, the same default the
+    # user-facing /v1 surfaces use. Off by default: most deployments have no
+    # HTCondor credd.
+    credmon_enabled: bool = False
+    credmon_audience_prefix: str = "af-credmon/"
+    # The storer (credmon/storer.py) pushes each linked user's top token to
+    # credd through golang-htcondor's htcondor-api. The bearer token read
+    # from credmon_htcondor_api_token_file must map to an identity listed in
+    # credd's CRED_SUPER_USERS, since it stores on behalf of other users.
+    # Both are required when credmon_enabled (validated below).
+    credmon_htcondor_api_url: AnyHttpUrl | None = None
+    credmon_htcondor_api_token_file: str | None = None
+    # credd service name = credmon_service_prefix + kind (af_krb5, ...): the
+    # names jobs list in use_oauth_services and find in $_CONDOR_CREDS.
+    credmon_service_prefix: str = "af_"
+    credmon_kinds: list[CredmonKindName] = Field(
+        default_factory=lambda: list(_DEFAULT_CREDMON_KINDS)
+    )
+    # Top tokens outlive a sync interval comfortably so one missed cycle
+    # (htcondor-api briefly down) never strands running jobs.
+    credmon_top_token_ttl_seconds: int = 86400
+    credmon_sync_interval_seconds: int = 14400
+    credmon_state_kv_path_prefix: str = "mcp/credmon"
+
     # KV-v2 path prefix for the per-subject x509 link/proxy records
     # ({prefix}/{subject}/x509 -- see credentials/x509_vault.py), distinct
     # from vault_kv_path_prefix/token_registry_kv_path_prefix/
@@ -751,6 +785,32 @@ class Settings(BaseSettings):
     def oidc_jwks_uri(self) -> str:
         """JWKS endpoint at the standard OIDC discovery path."""
         return f"{self.oidc_backchannel_url.rstrip('/')}/protocol/openid-connect/certs"
+
+    @model_validator(mode="after")
+    def _validate_credmon_config(self) -> Settings:
+        """Fail startup loudly when the credmon integration is half-configured (docs/credmon.md) -- the storer would otherwise only fail at its first cycle, after the broker reported healthy."""
+        if self.credmon_top_token_ttl_seconds <= self.credmon_sync_interval_seconds:
+            raise ValueError(
+                "credmon_top_token_ttl_seconds (CREDMON_TOP_TOKEN_TTL_SECONDS) "
+                "must exceed credmon_sync_interval_seconds "
+                "(CREDMON_SYNC_INTERVAL_SECONDS): a top token that expires "
+                "before the next cycle replaces it leaves jobs without "
+                "credentials for the gap."
+            )
+        if not self.credmon_enabled:
+            return self
+        for field_name, env_name in (
+            ("credmon_htcondor_api_url", "CREDMON_HTCONDOR_API_URL"),
+            ("credmon_htcondor_api_token_file", "CREDMON_HTCONDOR_API_TOKEN_FILE"),
+        ):
+            if not getattr(self, field_name):
+                log.error("credmon_config_invalid", missing=field_name)
+                raise ValueError(
+                    f"{field_name} ({env_name}) must be set when "
+                    "credmon_enabled is true -- the storer pushes top tokens "
+                    "to credd through htcondor-api."
+                )
+        return self
 
     @field_validator("broker_token_ttl_seconds")
     @classmethod

@@ -11,6 +11,7 @@ import {
   AccessDeniedError,
   SessionExpiredError,
   clearIdentitiesCache,
+  fetchCredmonStatus,
   fetchEntitlements,
   fetchPermissions,
   fetchDashboardSummary,
@@ -27,6 +28,7 @@ import {
   mintToken,
   revokeAllCredentials,
   revokeToken,
+  runCredmonSync,
   setMaintenanceStatus,
   unlinkIdentity,
 } from '../api';
@@ -1102,6 +1104,71 @@ describe('setMaintenanceStatus()', () => {
     await expect(setMaintenanceStatus(true)).rejects.toMatchObject({
       name: 'APIError',
       status: 409,
+    });
+  });
+});
+
+describe('fetchCredmonStatus()', () => {
+  it('GETs /admin/credmon with a Bearer and returns the status verbatim', async () => {
+    const body = {
+      enabled: true,
+      kinds: ['krb5'],
+      service_prefix: 'af_',
+      interval_seconds: 14400.0,
+      last_run: null,
+    };
+    globalThis.fetch = mockJson(200, body);
+    await expect(fetchCredmonStatus()).resolves.toEqual(body);
+    const [url, init] = vi.mocked(globalThis.fetch).mock.calls[0] as [string, RequestInit];
+    expect(url).toContain('/admin/credmon');
+    expect(init?.method ?? 'GET').toBe('GET');
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer test-token');
+  });
+
+  it('raises APIError on a 403 (non-admin caller)', async () => {
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValue(
+        new Response('{"detail":"forbidden"}', { status: 403, statusText: 'Forbidden' }),
+      );
+    await expect(fetchCredmonStatus()).rejects.toMatchObject({ name: 'APIError', status: 403 });
+  });
+});
+
+describe('runCredmonSync()', () => {
+  it('POSTs /admin/credmon/sync with a Bearer and returns the cycle result', async () => {
+    const body = {
+      outcome: 'success',
+      trigger: 'manual',
+      holder: 'broker-pod-abc:1',
+      started_at: 1759420000.0,
+      finished_at: 1759420003.2,
+      last_success_at: 1759420003.2,
+      stored: { krb5: 12 },
+      not_linked: { krb5: 3 },
+      skipped_no_posix: {},
+      failed: {},
+      errors: [],
+      errors_truncated: 0,
+    };
+    globalThis.fetch = mockJson(200, body);
+    await expect(runCredmonSync()).resolves.toEqual(body);
+    const [url, init] = vi.mocked(globalThis.fetch).mock.calls[0] as [string, RequestInit];
+    expect(url).toContain('/admin/credmon/sync');
+    expect(init.method).toBe('POST');
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer test-token');
+  });
+
+  it.each([
+    [404, 'Not Found'],
+    [409, 'Conflict'],
+  ])('raises APIError carrying the body on a %i', async (status, statusText) => {
+    const detail = '{"detail":"A credmon sync cycle is already running on another replica"}';
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response(detail, { status, statusText }));
+    await expect(runCredmonSync()).rejects.toMatchObject({
+      name: 'APIError',
+      status,
+      body: detail,
     });
   });
 });

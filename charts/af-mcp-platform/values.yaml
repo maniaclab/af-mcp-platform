@@ -376,6 +376,42 @@ broker:
     # see the broker's BROKER_TOKEN_TTL_SECONDS comment.
     ttlSeconds: ""
 
+  # HTCondor credmon integration (docs/credmon.md). When enabled, the broker
+  # periodically stores a per-user, per-kind "top token" in the facility's
+  # credd (through golang-htcondor's htcondor-api), and each credential
+  # redeem endpoint accepts it, so an AP-side credmon can place the user's
+  # x509/krb5/servicex credential on worker nodes as
+  # $_CONDOR_CREDS/<servicePrefix><kind>.use. Off by default: most
+  # deployments have no HTCondor. Requires identityToken.existingSigningKeySecret
+  # and a Vault-backed identity store (the broker refuses to boot otherwise).
+  credmon:
+    enabled: false
+    # htcondor-api base URL, e.g. http://condor-mcp.mcp.svc.cluster.local:8080
+    htcondorApiUrl: ""
+    # Name of a pre-existing Secret with key `token`: the bearer token the
+    # broker presents to htcondor-api. It must map to an identity listed in
+    # credd's CRED_SUPER_USERS (it stores on behalf of other users).
+    # Create via SealedSecret externally; the chart does NOT create it.
+    existingHtcondorApiTokenSecret: ""
+    # credd service name prefix: jobs request `use_oauth_services =
+    # af_krb5, af_x509`. Empty means the broker default ("af_").
+    servicePrefix: ""
+    # Kinds to sync (subset of x509, krb5, servicex). Empty means all three;
+    # kinds without a configured identity provider are skipped either way.
+    kinds: []
+    # Empty means broker defaults: 86400s top-token TTL, 14400s interval.
+    # The TTL must exceed the interval.
+    topTokenTtlSeconds: ""
+    syncIntervalSeconds: ""
+    # Alert when no replica has finished a sync for 2x the interval.
+    # Requires the Prometheus Operator (PrometheusRule CRD).
+    prometheusRule:
+      enabled: false
+      # Namespace for the PrometheusRule; defaults to the release namespace.
+      namespace: ""
+      # Extra labels so your Prometheus' ruleSelector picks the rule up.
+      labels: {}
+
   # OAuth 2.1 credential-brokering infrastructure shared by every
   # oauth21-direct entry in identityProviders above.
   oauth21:
