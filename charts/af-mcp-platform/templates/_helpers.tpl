@@ -139,7 +139,10 @@ JSON-serialized IDENTITY_PROVIDERS env var value, converting
 `broker.identityProviders`' camelCase chart-value keys into the snake_case
 field names `IdentityProviderConfig` (broker/src/af_mcp_broker/config.py)
 parses from JSON. Every entry carries alias/type/targets/displayName/enables;
-oauth21-direct entries additionally carry the endpoint/issuer/scope fields,
+oauth21-direct entries additionally carry the endpoint/issuer/scope fields
+plus clientId and `confidential` (true iff existingClientSecretSecret is set
+-- the secret itself is rendered separately as an env var by
+af-mcp-platform.oauth21ClientSecretEnv, never into this JSON),
 broker-issued entries carry nothing more -- each target's aud/POSIX options
 now live on the service entry (aggregator.services' audience/requires_posix,
 issue #257), condor-token entries their serviceUrl/audience (issue #169),
@@ -166,6 +169,8 @@ ServiceX token" link, optional).
       "token_endpoint" .tokenEndpoint
       "issuer" .issuer
       "scope" (.scope | default "openid profile email")
+      "client_id" (.clientId | default nil)
+      "confidential" (not (empty .existingClientSecretSecret))
     ) -}}
 {{- else if eq .type "broker-issued" -}}
 {{- $providers = append $providers (dict
@@ -229,6 +234,29 @@ ServiceX token" link, optional).
 {{- end -}}
 {{- end -}}
 {{- $providers | toJson -}}
+{{- end }}
+
+{{/*
+One OAUTH21_CLIENT_SECRET_<ALIAS> env var per oauth21-direct
+broker.identityProviders entry with existingClientSecretSecret set, read from
+that Secret's `client-secret` key. <ALIAS> is the alias uppercased with every
+non-alphanumeric character replaced by "_" -- it must stay in lockstep with
+OAuth21DirectProviderConfig.client_secret_env_var (broker config.py), which
+reads it back. Part of the shared broker env (not deployment-only like
+TOKEN_MINT_CLIENT_SECRET) because every pod that parses IDENTITY_PROVIDERS
+runs the same startup validation, which refuses a confidential provider
+whose secret is missing.
+*/}}
+{{- define "af-mcp-platform.oauth21ClientSecretEnv" -}}
+{{- range .Values.broker.identityProviders -}}
+{{- if and (eq .type "oauth21-direct") .existingClientSecretSecret }}
+- name: {{ printf "OAUTH21_CLIENT_SECRET_%s" (regexReplaceAll "[^A-Za-z0-9]" .alias "_" | upper) }}
+  valueFrom:
+    secretKeyRef:
+      name: {{ .existingClientSecretSecret | quote }}
+      key: client-secret
+{{- end -}}
+{{- end -}}
 {{- end }}
 
 {{/*
@@ -352,6 +380,9 @@ Callers pipe this through `nindent` at whatever depth their container's
 - name: IDENTITY_PROVIDERS
   value: {{ include "af-mcp-platform.identityProviders" . | quote }}
 {{- end }}
+# Confidential oauth21-direct client secrets, one env var per provider with
+# existingClientSecretSecret set (see af-mcp-platform.oauth21ClientSecretEnv).
+{{- include "af-mcp-platform.oauth21ClientSecretEnv" . }}
 # OAuth 2.1 direct-linking-flow infrastructure — only needed when at
 # least one identityProviders entry is oauth21-direct.
 {{- if eq (include "af-mcp-platform.hasOAuth21Provider" .) "true" }}
