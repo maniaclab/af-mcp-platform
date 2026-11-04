@@ -460,6 +460,39 @@ async def test_is_linked_true_when_future() -> None:
     assert await provider.is_linked(_principal()) is True
 
 
+async def test_is_linked_false_when_no_refresh_token_and_within_skew() -> None:
+    """A token with no refresh_token that is about to expire can never be
+    refreshed, so it must already read as unlinked -- consistent with
+    ``issue()`` refusing it -- rather than as linked-but-unusable."""
+    store = InMemoryTokenStore()
+    await store.write_cas(
+        SUBJECT,
+        ALIAS,
+        _make_cred(
+            refresh_token=None, expires_at=datetime.now(UTC) + timedelta(seconds=10)
+        ),
+        expected_version=None,
+    )
+    provider = _make_provider(store)
+
+    assert await provider.is_linked(_principal()) is False
+
+
+async def test_is_linked_true_when_no_refresh_token_inside_refresh_window() -> None:
+    store = InMemoryTokenStore()
+    await store.write_cas(
+        SUBJECT,
+        ALIAS,
+        _make_cred(
+            refresh_token=None, expires_at=datetime.now(UTC) + timedelta(seconds=120)
+        ),
+        expected_version=None,
+    )
+    provider = _make_provider(store)
+
+    assert await provider.is_linked(_principal()) is True
+
+
 # ---------------------------------------------------------------------------
 # OAuth21Provider.issue
 # ---------------------------------------------------------------------------
@@ -572,6 +605,28 @@ async def test_issue_raises_401_when_no_refresh_token() -> None:
         await provider.issue(_principal(), ALIAS)
 
     assert exc_info.value.status_code == 401
+
+
+async def test_issue_returns_token_without_refresh_token_inside_refresh_window() -> (
+    None
+):
+    """An AS that never issues refresh tokens (e.g. JupyterHub) must not have
+    its token 401 five minutes early: with nothing to refresh, the stored token
+    stays usable right up to its expiry minus a small skew."""
+    store = InMemoryTokenStore()
+    await store.write_cas(
+        SUBJECT,
+        ALIAS,
+        _make_cred(
+            refresh_token=None, expires_at=datetime.now(UTC) + timedelta(seconds=120)
+        ),
+        expected_version=None,
+    )
+    provider = _make_provider(store)
+
+    issued = await provider.issue(_principal(), ALIAS, min_remaining_seconds=600)
+
+    assert issued.payload["access_token"] == "access-token-1"
 
 
 async def test_issue_handles_version_conflict_during_refresh(

@@ -31,6 +31,19 @@ log = structlog.get_logger(__name__)
 # before a slow downstream call can use it.
 _MIN_REFRESH_WINDOW_SECONDS = 300
 
+# A stored token with no refresh_token cannot be renewed, so the 5-minute
+# refresh window above would only make it unusable early. Such a token is
+# instead served until this many seconds before its expiry -- enough to
+# absorb clock skew and one downstream round trip -- and then requires a
+# re-link.
+_NO_REFRESH_EXPIRY_SKEW_SECONDS = 60
+
+# Lifetime assumed when a token response omits `expires_in` (it is only
+# RECOMMENDED by RFC 6749 §5.1). Deliberately short: a token whose real
+# lifetime is unknown is refreshed -- or, with no refresh_token, re-linked --
+# soon, rather than being trusted indefinitely.
+_DEFAULT_EXPIRES_IN_SECONDS = 300
+
 
 class StoredOAuthCredential(BaseModel):
     """Normalized OAuth 2.1 token pair persisted in a ``TokenStore``.
@@ -163,7 +176,7 @@ def normalize_token_response(
     the initial authorization_code exchange in ``api/oauth21.py``.
     """
     now = datetime.now(UTC)
-    expires_in = int(data.get("expires_in", _MIN_REFRESH_WINDOW_SECONDS))
+    expires_in = int(data.get("expires_in", _DEFAULT_EXPIRES_IN_SECONDS))
     expires_at = now + timedelta(seconds=expires_in)
 
     refresh_token_raw = data.get("refresh_token")
@@ -278,12 +291,25 @@ class OAuth21Provider(CredentialProvider):
             params["client_secret"] = self._client_secret.get_secret_value()
         return params
 
+    @staticmethod
+    def _usable_seconds(cred: StoredOAuthCredential) -> float:
+        """Seconds the stored access token can still be handed out for.
+
+        A token with a refresh_token is usable until ``expires_at`` (``issue``
+        refreshes it ahead of that); one without can never be renewed, so it
+        stops being usable ``_NO_REFRESH_EXPIRY_SKEW_SECONDS`` early.
+        """
+        remaining = (cred.expires_at - datetime.now(UTC)).total_seconds()
+        if cred.refresh_token is None:
+            return remaining - _NO_REFRESH_EXPIRY_SKEW_SECONDS
+        return remaining
+
     async def is_linked(self, principal: Principal) -> bool:
         entry = await self._store.get(principal.subject, self._alias)
         if entry is None:
             return False
         cred, _version = entry
-        return cred.expires_at > datetime.now(UTC)
+        return self._usable_seconds(cred) > 0
 
     async def issue(
         self,
@@ -316,14 +342,12 @@ class OAuth21Provider(CredentialProvider):
             )
         cred, version = entry
 
-        # Refresh window is 5 minutes or the caller's requested
-        # min_remaining_seconds, whichever is larger — issue #66 decision D4.
-        threshold = max(min_remaining_seconds, _MIN_REFRESH_WINDOW_SECONDS)
-        remaining = (cred.expires_at - datetime.now(UTC)).total_seconds()
-        if remaining > threshold:
-            return self._to_issued(cred, target)
-
         if cred.refresh_token is None:
+            # Nothing to refresh, so neither the refresh window nor the
+            # caller's min_remaining_seconds can be met any better than by
+            # the stored token itself: serve it for as long as it is usable.
+            if self._usable_seconds(cred) > 0:
+                return self._to_issued(cred, target)
             raise HTTPException(
                 status_code=401,
                 detail=(
@@ -332,6 +356,12 @@ class OAuth21Provider(CredentialProvider):
                     "account from the portal's Identities page."
                 ),
             )
+
+        # Refresh window is 5 minutes or the caller's requested
+        # min_remaining_seconds, whichever is larger — issue #66 decision D4.
+        threshold = max(min_remaining_seconds, _MIN_REFRESH_WINDOW_SECONDS)
+        if self._usable_seconds(cred) > threshold:
+            return self._to_issued(cred, target)
 
         refreshed = await self._refresh(cred)
         try:
