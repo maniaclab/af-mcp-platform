@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import re
 from functools import lru_cache
 from typing import Annotated, Any, Literal
 
@@ -8,6 +10,7 @@ from pydantic import (
     AnyHttpUrl,
     BaseModel,
     Field,
+    PrivateAttr,
     SecretStr,
     ValidationError,
     ValidationInfo,
@@ -64,12 +67,74 @@ class OAuth21DirectProviderConfig(BaseModel):
     # deletes the locally-stored token (see docs/auth.md and issue #86).
     revocation_endpoint: AnyHttpUrl | None = None
 
+    # The client_id this backend AS registered the broker under. None means
+    # the AS identifies the broker by its shared CIMD URL
+    # (Settings.oauth21_client_id) instead -- the right choice for an AS that
+    # supports CIMD; an AS with a static client registry (e.g. JupyterHub's
+    # services) needs its own id here.
+    client_id: str | None = None
+
+    # True when the backend AS registered `client_id` as a confidential
+    # client: the broker then authenticates every token-endpoint and
+    # revocation call with client_secret_post. The secret itself is never part
+    # of this config (IDENTITY_PROVIDERS is a plain env value) -- it is read
+    # from the `client_secret_env_var` environment variable, and startup
+    # fails when it is missing.
+    confidential: bool = False
+
+    # Private so it can only be populated from the environment by
+    # `_resolve_client_secret`, never from the IDENTITY_PROVIDERS JSON.
+    _client_secret: SecretStr | None = PrivateAttr(default=None)
+
     # Portal-facing metadata for GET /v1/identities. Optional so a minimal
     # provider config still parses; an operator who leaves these blank just
     # gets an empty label/description on the Identities page until they fill
     # them in.
     display_name: str = ""
     enables: str = ""
+
+    @property
+    def client_secret_env_var(self) -> str:
+        """Environment variable holding this provider's client secret: ``OAUTH21_CLIENT_SECRET_<ALIAS>``, with the alias uppercased and every non-alphanumeric character replaced by ``_`` (aliases may contain ``-``/``.``, env var names may not)."""
+        return (
+            "OAUTH21_CLIENT_SECRET_" + re.sub(r"[^A-Za-z0-9]", "_", self.alias).upper()
+        )
+
+    @property
+    def client_secret(self) -> SecretStr | None:
+        """The confidential client secret, or None for a public client."""
+        return self._client_secret
+
+    @model_validator(mode="after")
+    def _resolve_client_secret(self) -> OAuth21DirectProviderConfig:
+        """Fail startup loudly when a confidential provider is missing its own ``client_id`` or its secret -- the backend AS would otherwise reject the first token exchange instead of the broker refusing to boot."""
+        if not self.confidential:
+            return self
+        if self.client_id is None:
+            log.error(
+                "oauth21_config_invalid",
+                alias=self.alias,
+                reason="confidential is true but client_id is unset",
+            )
+            raise ValueError(
+                f"oauth21-direct provider {self.alias!r} sets confidential: "
+                "true but no client_id -- a client secret only makes sense "
+                "for a client_id the backend AS registered for the broker."
+            )
+        secret = os.environ.get(self.client_secret_env_var, "")
+        if not secret:
+            log.error(
+                "oauth21_config_invalid",
+                alias=self.alias,
+                reason=f"{self.client_secret_env_var} is unset or empty",
+            )
+            raise ValueError(
+                f"{self.client_secret_env_var} must be set when oauth21-direct "
+                f"provider {self.alias!r} sets confidential: true -- it is the "
+                "client secret the broker authenticates to the backend AS with."
+            )
+        self._client_secret = SecretStr(secret)
+        return self
 
 
 class BrokerIssuedProviderConfig(BaseModel):
@@ -854,19 +919,44 @@ class Settings(BaseSettings):
                 "identity_providers contains an oauth21-direct entry — it "
                 "protects in-flight OAuth 2.1 linking flows."
             )
-        if not self.oauth21_client_id:
+        oauth21_providers = [
+            p for p in self.identity_providers if p.type == "oauth21-direct"
+        ]
+        if not self.oauth21_client_id and any(
+            p.client_id is None for p in oauth21_providers
+        ):
             log.error(
                 "oauth21_config_invalid",
                 reason=(
                     "oauth21_client_id is empty but an oauth21-direct "
-                    "identity provider is configured"
+                    "identity provider without its own client_id is configured"
                 ),
             )
             raise ValueError(
                 "oauth21_client_id (OAUTH21_CLIENT_ID) must be set when "
-                "identity_providers contains an oauth21-direct entry — it "
-                "identifies the broker as an OAuth 2.1 client via its CIMD "
-                "document."
+                "identity_providers contains an oauth21-direct entry without "
+                "its own client_id — it identifies the broker as an OAuth 2.1 "
+                "client via its CIMD document."
+            )
+        # Two aliases differing only in non-alphanumeric characters map to
+        # the same secret env var; sharing one secret between two backend
+        # ASes is never intended, so refuse rather than guess.
+        secret_env_vars = [
+            p.client_secret_env_var for p in oauth21_providers if p.confidential
+        ]
+        duplicates = sorted(
+            {name for name in secret_env_vars if secret_env_vars.count(name) > 1}
+        )
+        if duplicates:
+            log.error(
+                "oauth21_config_invalid",
+                reason="confidential oauth21-direct aliases share a secret env var",
+                env_vars=duplicates,
+            )
+            raise ValueError(
+                f"confidential oauth21-direct providers share {duplicates} -- "
+                "rename one alias so each maps to its own "
+                "OAUTH21_CLIENT_SECRET_<ALIAS> env var."
             )
         if not self.broker_public_origin:
             log.error(

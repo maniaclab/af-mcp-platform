@@ -57,6 +57,27 @@ jobs:
             --set image.portal.tag=sha-test \
             | grep -q 'name: VAULT_ADDR'
 
+      # Content assertion for ci/test-values.yaml's confidential
+      # oauth21-direct entry: its secret must render as an env var named the
+      # way the broker reads it back (OAuth21DirectProviderConfig.
+      # client_secret_env_var), and IDENTITY_PROVIDERS must mark it
+      # confidential with its own client_id.
+      - name: Verify confidential oauth21-direct client secret rendering
+        run: |
+          rendered=$(helm template af-mcp-platform charts/af-mcp-platform \
+            -f charts/af-mcp-platform/ci/test-values.yaml \
+            --set image.broker.tag=sha-test \
+            --set image.portal.tag=sha-test)
+          for needle in \
+            'name: OAUTH21_CLIENT_SECRET_JUPYTERHUB_EXAMPLE' \
+            'name: "example-jupyterhub-client-secret"' \
+            '\"client_id\":\"service-af-mcp-platform\",\"confidential\":true'; do
+            echo "$rendered" | grep -qF "$needle" || {
+              echo "Missing from confidential oauth21 rendering: $needle" >&2
+              exit 1
+            }
+          done
+
       # Content assertion for ci/credmon-values.yaml: the HTCondor credmon
       # storer needs CREDMON_ENABLED, its htcondor-api token file and the
       # token Secret mount to all render together (docs/credmon.md).

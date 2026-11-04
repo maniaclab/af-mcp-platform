@@ -176,6 +176,144 @@ def test_identity_providers_oauth21_direct_raises_when_public_origin_not_http():
 
 
 # ---------------------------------------------------------------------------
+# oauth21-direct per-provider client registration (client_id + confidential)
+# ---------------------------------------------------------------------------
+
+_OWN_CLIENT_ENTRY = {**_OAUTH21_ENTRY, "alias": "own", "client_id": "own-client"}
+
+_CONFIDENTIAL_ENTRY = {
+    **_OAUTH21_ENTRY,
+    "alias": "jupyter-hub.af",
+    "targets": ["jupyterhub_service"],
+    "client_id": "service-af-mcp-platform",
+    "confidential": True,
+}
+
+
+def test_oauth21_direct_client_id_defaults_to_none():
+    settings = Settings(
+        broker_state_key="fake-key",
+        oauth21_client_id="https://mcp.example/.well-known/cimd",
+        broker_public_origin=_PUBLIC_ORIGIN,
+        identity_providers=[_OAUTH21_ENTRY],
+    )
+    provider = settings.identity_providers[0]
+    assert provider.type == "oauth21-direct"
+    assert provider.client_id is None
+    assert provider.confidential is False
+    assert provider.client_secret is None
+
+
+def test_oauth21_direct_own_client_id_needs_no_cimd_client_id():
+    # Every oauth21-direct entry brings its own client_id, so the shared CIMD
+    # client_id (OAUTH21_CLIENT_ID) is never used and must not be required.
+    settings = Settings(
+        broker_state_key="fake-key",
+        broker_public_origin=_PUBLIC_ORIGIN,
+        identity_providers=[_OWN_CLIENT_ENTRY],
+    )
+    provider = settings.identity_providers[0]
+    assert provider.type == "oauth21-direct"
+    assert provider.client_id == "own-client"
+    assert provider.client_secret is None
+
+
+def test_oauth21_direct_cimd_client_id_required_when_any_entry_lacks_client_id():
+    with pytest.raises(ValueError, match="oauth21_client_id"):
+        Settings(
+            broker_state_key="fake-key",
+            broker_public_origin=_PUBLIC_ORIGIN,
+            identity_providers=[_OWN_CLIENT_ENTRY, _OAUTH21_ENTRY],
+        )
+
+
+def test_oauth21_direct_confidential_reads_secret_from_alias_env_var(monkeypatch):
+    # alias "jupyter-hub.af": uppercased, every non-alphanumeric -> "_".
+    monkeypatch.setenv("OAUTH21_CLIENT_SECRET_JUPYTER_HUB_AF", "s3cret")
+    settings = Settings(
+        broker_state_key="fake-key",
+        broker_public_origin=_PUBLIC_ORIGIN,
+        identity_providers=[_CONFIDENTIAL_ENTRY],
+    )
+    provider = settings.identity_providers[0]
+    assert provider.type == "oauth21-direct"
+    assert provider.client_secret_env_var == "OAUTH21_CLIENT_SECRET_JUPYTER_HUB_AF"
+    assert provider.client_secret is not None
+    assert provider.client_secret.get_secret_value() == "s3cret"
+
+
+@pytest.mark.parametrize("secret", [None, ""])
+def test_oauth21_direct_confidential_raises_when_secret_env_missing(
+    monkeypatch, secret
+):
+    if secret is None:
+        monkeypatch.delenv("OAUTH21_CLIENT_SECRET_JUPYTER_HUB_AF", raising=False)
+    else:
+        monkeypatch.setenv("OAUTH21_CLIENT_SECRET_JUPYTER_HUB_AF", secret)
+    with pytest.raises(ValueError, match="OAUTH21_CLIENT_SECRET_JUPYTER_HUB_AF"):
+        Settings(
+            broker_state_key="fake-key",
+            broker_public_origin=_PUBLIC_ORIGIN,
+            identity_providers=[_CONFIDENTIAL_ENTRY],
+        )
+
+
+def test_oauth21_direct_confidential_raises_without_own_client_id(monkeypatch):
+    monkeypatch.setenv("OAUTH21_CLIENT_SECRET_A", "s3cret")
+    with pytest.raises(ValueError, match="client_id"):
+        Settings(
+            broker_state_key="fake-key",
+            oauth21_client_id="https://mcp.example/.well-known/cimd",
+            broker_public_origin=_PUBLIC_ORIGIN,
+            identity_providers=[{**_OAUTH21_ENTRY, "confidential": True}],
+        )
+
+
+def test_oauth21_direct_public_ignores_secret_env(monkeypatch):
+    # Only `confidential: true` opts a provider into client authentication --
+    # a stray env var never silently turns a public client confidential.
+    monkeypatch.setenv("OAUTH21_CLIENT_SECRET_OWN", "s3cret")
+    settings = Settings(
+        broker_state_key="fake-key",
+        broker_public_origin=_PUBLIC_ORIGIN,
+        identity_providers=[_OWN_CLIENT_ENTRY],
+    )
+    provider = settings.identity_providers[0]
+    assert provider.type == "oauth21-direct"
+    assert provider.client_secret is None
+
+
+def test_oauth21_direct_client_secret_is_not_accepted_from_json():
+    # The secret only ever comes from the environment, never from the
+    # IDENTITY_PROVIDERS JSON, which the chart renders as a plain env value.
+    settings = Settings(
+        broker_state_key="fake-key",
+        broker_public_origin=_PUBLIC_ORIGIN,
+        identity_providers=[{**_OWN_CLIENT_ENTRY, "client_secret": "leaked"}],
+    )
+    provider = settings.identity_providers[0]
+    assert provider.type == "oauth21-direct"
+    assert provider.client_secret is None
+
+
+def test_oauth21_direct_raises_when_two_confidential_aliases_share_env_var(
+    monkeypatch,
+):
+    # "jupyter-hub.af" and "jupyter_hub-af" both map to the same env var;
+    # silently sharing one secret between two providers is never intended.
+    monkeypatch.setenv("OAUTH21_CLIENT_SECRET_JUPYTER_HUB_AF", "s3cret")
+    with pytest.raises(ValueError, match="OAUTH21_CLIENT_SECRET_JUPYTER_HUB_AF"):
+        Settings(
+            broker_state_key="fake-key",
+            broker_public_origin=_PUBLIC_ORIGIN,
+            identity_providers=[
+                _CONFIDENTIAL_ENTRY,
+                {**_CONFIDENTIAL_ENTRY, "alias": "jupyter_hub-af"},
+            ],
+        )
+
+
+# ---------------------------------------------------------------------------
 # Vault TokenStore backend config
 # ---------------------------------------------------------------------------
 

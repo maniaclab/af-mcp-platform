@@ -35,6 +35,20 @@ broker:
       issuer: "https://rucio-mcp.example.com"
       displayName: "Rucio (example)"
       enables: "Example Rucio operations via rucio-mcp"
+    # Exercises the confidential oauth21-direct branch: clientId lands in
+    # IDENTITY_PROVIDERS, the secret renders as OAUTH21_CLIENT_SECRET_<ALIAS>
+    # (here OAUTH21_CLIENT_SECRET_JUPYTERHUB_EXAMPLE) from secretKeyRef.
+    - type: oauth21-direct
+      alias: jupyterhub-example
+      targets: []
+      authorizationEndpoint: "https://jupyterhub.example.com/hub/api/oauth2/authorize"
+      tokenEndpoint: "https://jupyterhub.example.com/hub/api/oauth2/token"
+      issuer: "https://jupyterhub.example.com"
+      scope: "servers!user access:servers!user read:users:name!user"
+      clientId: "service-af-mcp-platform"
+      existingClientSecretSecret: "example-jupyterhub-client-secret"
+      displayName: "JupyterHub (example)"
+      enables: "Example JupyterHub server management"
     # Exercises the broker-issued identityProviders branch (issue #162) so a
     # broken IDENTITY_PROVIDERS render is caught by `helm template`. Per-target
     # aud/POSIX options now live on the service entry (audience/requires_posix
