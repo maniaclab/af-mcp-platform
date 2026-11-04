@@ -184,7 +184,7 @@ async def authorize(
     redirect_uri = _callback_url(settings, alias)
     query = urlencode(
         {
-            "client_id": settings.oauth21_client_id,
+            "client_id": provider.client_id,
             "code_challenge": challenge,
             "code_challenge_method": "S256",
             "state": state,
@@ -324,7 +324,7 @@ async def callback(
             "code": code,
             "redirect_uri": redirect_uri,
             "code_verifier": payload.pkce_verifier,
-            "client_id": settings.oauth21_client_id,
+            **provider.client_auth_params(),
         },
         timeout=10.0,
     )

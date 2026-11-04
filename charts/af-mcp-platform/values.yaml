@@ -286,6 +286,27 @@ broker:
   #   scope: "openid profile email"
   #   displayName: "Rucio (ATLAS)"
   #   enables: "ATLAS Rucio operations via rucio-mcp"
+  # # An oauth21-direct AS with a static client registry (e.g. JupyterHub)
+  # # instead of CIMD: `clientId` is the id it registered the broker under
+  # # (omit it to identify by the broker's CIMD URL). Setting
+  # # `existingClientSecretSecret` makes it a confidential client
+  # # (client_secret_post): the named pre-existing Secret's `client-secret`
+  # # key is rendered as env OAUTH21_CLIENT_SECRET_<ALIAS> (alias uppercased,
+  # # non-alphanumerics -> "_"), never into IDENTITY_PROVIDERS, and the
+  # # broker refuses to start if it is missing. Create the Secret via
+  # # SealedSecret externally; the chart does NOT create it. See
+  # # docs/adding-a-service.md.
+  # - type: oauth21-direct
+  #   alias: jupyterhub
+  #   targets: ["jupyterhub_service"]
+  #   authorizationEndpoint: "https://jupyterhub.example/hub/api/oauth2/authorize"
+  #   tokenEndpoint: "https://jupyterhub.example/hub/api/oauth2/token"
+  #   issuer: "https://jupyterhub.example"
+  #   scope: "servers!user access:servers!user read:users:name!user"
+  #   clientId: "service-af-mcp-platform"
+  #   existingClientSecretSecret: "af-mcp-platform-jupyterhub-client"
+  #   displayName: "JupyterHub"
+  #   enables: "Launching and driving your JupyterHub servers"
   # - type: broker-issued
   #   alias: af-native
   #   displayName: "AF-native services"
