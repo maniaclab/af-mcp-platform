@@ -61,6 +61,11 @@ PROVIDER_ISSUER = "https://backend-as.example"
 CLIENT_ID = "https://mcp.af.uchicago.edu/.well-known/cimd"
 REVOCATION_ENDPOINT = "https://backend-as.example/revoke"
 
+# A statically-registered confidential client (e.g. a JupyterHub service),
+# as opposed to the broker's shared CIMD client_id above.
+CONFIDENTIAL_CLIENT_ID = "service-af-mcp-platform"
+CONFIDENTIAL_CLIENT_SECRET = "confidential-s3cret"
+
 # The canonical origin every outgoing OAuth 2.1 redirect_uri is built from
 # (see api/oauth21.py's `_callback_url`) — deliberately different from
 # TestClient's default request host ("testserver") so a test asserting on
@@ -104,7 +109,10 @@ def _principal(subject: str = SUBJECT) -> Principal:
 
 
 def _make_provider(
-    store: InMemoryTokenStore, revocation_endpoint: str | None = None
+    store: InMemoryTokenStore,
+    revocation_endpoint: str | None = None,
+    client_id: str = CLIENT_ID,
+    client_secret: SecretStr | None = None,
 ) -> OAuth21Provider:
     return OAuth21Provider(
         alias=ALIAS,
@@ -114,7 +122,8 @@ def _make_provider(
         issuer=PROVIDER_ISSUER,
         scope="openid profile",
         store=store,
-        client_id=CLIENT_ID,
+        client_id=client_id,
+        client_secret=client_secret,
         revocation_endpoint=revocation_endpoint,
     )
 
@@ -150,7 +159,11 @@ def _run(coro: Any) -> Any:
     return asyncio.run(coro)
 
 
-def _configure_oauth21_env(monkeypatch: pytest.MonkeyPatch, fernet_key: str) -> None:
+def _configure_oauth21_env(
+    monkeypatch: pytest.MonkeyPatch,
+    fernet_key: str,
+    provider_overrides: dict[str, Any] | None = None,
+) -> None:
     monkeypatch.setenv("BROKER_STATE_KEY", fernet_key)
     monkeypatch.setenv("OAUTH21_CLIENT_ID", CLIENT_ID)
     monkeypatch.setenv("BROKER_PUBLIC_ORIGIN", PUBLIC_ORIGIN)
@@ -168,6 +181,7 @@ def _configure_oauth21_env(monkeypatch: pytest.MonkeyPatch, fernet_key: str) -> 
                     "scope": "openid profile",
                     "display_name": "Rucio (ATLAS)",
                     "enables": "ATLAS Rucio operations via rucio-mcp",
+                    **(provider_overrides or {}),
                 },
                 # This override replaces conftest's default entirely (or,
                 # for tests that boot the app directly via _fresh_app, is
@@ -446,6 +460,39 @@ async def test_is_linked_true_when_future() -> None:
     assert await provider.is_linked(_principal()) is True
 
 
+async def test_is_linked_false_when_no_refresh_token_and_within_skew() -> None:
+    """A token with no refresh_token that is about to expire can never be
+    refreshed, so it must already read as unlinked -- consistent with
+    ``issue()`` refusing it -- rather than as linked-but-unusable."""
+    store = InMemoryTokenStore()
+    await store.write_cas(
+        SUBJECT,
+        ALIAS,
+        _make_cred(
+            refresh_token=None, expires_at=datetime.now(UTC) + timedelta(seconds=10)
+        ),
+        expected_version=None,
+    )
+    provider = _make_provider(store)
+
+    assert await provider.is_linked(_principal()) is False
+
+
+async def test_is_linked_true_when_no_refresh_token_inside_refresh_window() -> None:
+    store = InMemoryTokenStore()
+    await store.write_cas(
+        SUBJECT,
+        ALIAS,
+        _make_cred(
+            refresh_token=None, expires_at=datetime.now(UTC) + timedelta(seconds=120)
+        ),
+        expected_version=None,
+    )
+    provider = _make_provider(store)
+
+    assert await provider.is_linked(_principal()) is True
+
+
 # ---------------------------------------------------------------------------
 # OAuth21Provider.issue
 # ---------------------------------------------------------------------------
@@ -560,6 +607,28 @@ async def test_issue_raises_401_when_no_refresh_token() -> None:
     assert exc_info.value.status_code == 401
 
 
+async def test_issue_returns_token_without_refresh_token_inside_refresh_window() -> (
+    None
+):
+    """An AS that never issues refresh tokens (e.g. JupyterHub) must not have
+    its token 401 five minutes early: with nothing to refresh, the stored token
+    stays usable right up to its expiry minus a small skew."""
+    store = InMemoryTokenStore()
+    await store.write_cas(
+        SUBJECT,
+        ALIAS,
+        _make_cred(
+            refresh_token=None, expires_at=datetime.now(UTC) + timedelta(seconds=120)
+        ),
+        expected_version=None,
+    )
+    provider = _make_provider(store)
+
+    issued = await provider.issue(_principal(), ALIAS, min_remaining_seconds=600)
+
+    assert issued.payload["access_token"] == "access-token-1"
+
+
 async def test_issue_handles_version_conflict_during_refresh(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -608,6 +677,69 @@ async def test_issue_handles_version_conflict_during_refresh(
     assert issued.payload["access_token"] == "winning-racer-token"
 
 
+def test_provider_exposes_client_id() -> None:
+    provider = _make_provider(InMemoryTokenStore(), client_id=CONFIDENTIAL_CLIENT_ID)
+
+    assert provider.client_id == CONFIDENTIAL_CLIENT_ID
+
+
+async def test_issue_refresh_sends_client_secret_when_confidential(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = InMemoryTokenStore()
+    await store.write_cas(
+        SUBJECT,
+        ALIAS,
+        _make_cred(expires_at=datetime.now(UTC) + timedelta(seconds=60)),
+        expected_version=None,
+    )
+    provider = _make_provider(
+        store,
+        client_id=CONFIDENTIAL_CLIENT_ID,
+        client_secret=SecretStr(CONFIDENTIAL_CLIENT_SECRET),
+    )
+
+    fake_client = _FakeTokenClient(
+        status_code=200,
+        json_body={"access_token": "access-token-2", "expires_in": 3600},
+    )
+    monkeypatch.setattr(
+        "af_mcp_broker.credentials.oauth21.get_http_client", lambda: fake_client
+    )
+
+    await provider.issue(_principal(), ALIAS)
+
+    assert len(fake_client.calls) == 1
+    sent = fake_client.calls[0]["data"]
+    assert sent["client_id"] == CONFIDENTIAL_CLIENT_ID
+    assert sent["client_secret"] == CONFIDENTIAL_CLIENT_SECRET
+
+
+async def test_issue_refresh_omits_client_secret_when_public(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = InMemoryTokenStore()
+    await store.write_cas(
+        SUBJECT,
+        ALIAS,
+        _make_cred(expires_at=datetime.now(UTC) + timedelta(seconds=60)),
+        expected_version=None,
+    )
+    provider = _make_provider(store)
+
+    fake_client = _FakeTokenClient(
+        status_code=200,
+        json_body={"access_token": "access-token-2", "expires_in": 3600},
+    )
+    monkeypatch.setattr(
+        "af_mcp_broker.credentials.oauth21.get_http_client", lambda: fake_client
+    )
+
+    await provider.issue(_principal(), ALIAS)
+
+    assert "client_secret" not in fake_client.calls[0]["data"]
+
+
 # ---------------------------------------------------------------------------
 # OAuth21Provider.revoke
 # ---------------------------------------------------------------------------
@@ -654,6 +786,31 @@ async def test_revoke_with_revocation_endpoint_posts_token_and_deletes(
     assert call["data"]["token_type_hint"] == "refresh_token"
     assert call["data"]["client_id"] == CLIENT_ID
     assert await store.get(SUBJECT, ALIAS) is None
+
+
+async def test_revoke_sends_client_secret_when_confidential(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = InMemoryTokenStore()
+    await store.write_cas(SUBJECT, ALIAS, _make_cred(), expected_version=None)
+    provider = _make_provider(
+        store,
+        revocation_endpoint=REVOCATION_ENDPOINT,
+        client_id=CONFIDENTIAL_CLIENT_ID,
+        client_secret=SecretStr(CONFIDENTIAL_CLIENT_SECRET),
+    )
+
+    fake_client = _FakeTokenClient(status_code=200)
+    monkeypatch.setattr(
+        "af_mcp_broker.credentials.oauth21.get_http_client", lambda: fake_client
+    )
+
+    await provider.revoke(_principal(), ALIAS)
+
+    assert len(fake_client.calls) == 1
+    sent = fake_client.calls[0]["data"]
+    assert sent["client_id"] == CONFIDENTIAL_CLIENT_ID
+    assert sent["client_secret"] == CONFIDENTIAL_CLIENT_SECRET
 
 
 async def test_revoke_falls_back_to_access_token_when_no_refresh_token(
@@ -981,6 +1138,117 @@ def test_callback_completes_flow_and_stores_credential(
         cred, version = stored
         assert version == 1
         assert cred.access_token.get_secret_value() == "linked-access-token"
+
+
+def _configure_confidential_oauth21_env(
+    monkeypatch: pytest.MonkeyPatch, fernet_key: str
+) -> None:
+    """Same provider, registered as a confidential client with its own id."""
+    _configure_oauth21_env(
+        monkeypatch,
+        fernet_key,
+        provider_overrides={"client_id": CONFIDENTIAL_CLIENT_ID, "confidential": True},
+    )
+    # ALIAS "rucio-mcp-atlas" -> uppercased, "-" -> "_".
+    monkeypatch.setenv(
+        "OAUTH21_CLIENT_SECRET_RUCIO_MCP_ATLAS", CONFIDENTIAL_CLIENT_SECRET
+    )
+
+
+def _link_through_callback(client: Any) -> Any:
+    """Drive authorize -> callback in one TestClient; return the callback response."""
+    authorize_resp = client.get(f"/v1/oauth/authorize/{ALIAS}", follow_redirects=False)
+    state_token = parse_qs(urlparse(authorize_resp.headers["location"]).query)["state"][
+        0
+    ]
+    # See test_callback_completes_flow_and_stores_credential for why the
+    # Secure nonce cookie is propagated into the jar by hand.
+    nonce_cookie = authorize_resp.cookies.get(NONCE_COOKIE_NAME)
+    assert nonce_cookie is not None
+    client.cookies.set(NONCE_COOKIE_NAME, nonce_cookie, path=NONCE_COOKIE_PATH)
+    return client.get(
+        f"/v1/oauth/callback/{ALIAS}",
+        params={"code": "auth-code-xyz", "state": state_token},
+        follow_redirects=False,
+    )
+
+
+def test_authorize_uses_provider_own_client_id(
+    monkeypatch: pytest.MonkeyPatch, app_client_factory: Any
+) -> None:
+    fernet_key = Fernet.generate_key().decode()
+    _configure_confidential_oauth21_env(monkeypatch, fernet_key)
+
+    with app_client_factory() as (client, _state):
+        resp = client.get(f"/v1/oauth/authorize/{ALIAS}", follow_redirects=False)
+
+    assert resp.status_code == 302, resp.text
+    query = parse_qs(urlparse(resp.headers["location"]).query)
+    assert query["client_id"] == [CONFIDENTIAL_CLIENT_ID]
+    # The secret only ever travels on the back channel.
+    assert "client_secret" not in query
+    # PKCE is still sent: harmless for an AS that ignores it, and required by
+    # OAuth 2.1 for one that doesn't.
+    assert query["code_challenge_method"] == ["S256"]
+
+
+def test_callback_sends_client_secret_post_when_confidential(
+    monkeypatch: pytest.MonkeyPatch, app_client_factory: Any
+) -> None:
+    fernet_key = Fernet.generate_key().decode()
+    _configure_confidential_oauth21_env(monkeypatch, fernet_key)
+
+    # No refresh_token, the shape JupyterHub's token endpoint returns.
+    fake_token_client = _FakeTokenClient(
+        status_code=200,
+        json_body={
+            "access_token": "linked-access-token",
+            "token_type": "Bearer",
+            "expires_in": 1209600,
+        },
+    )
+    monkeypatch.setattr(
+        "af_mcp_broker.api.oauth21.get_http_client", lambda: fake_token_client
+    )
+
+    with app_client_factory() as (client, _state):
+        callback_resp = _link_through_callback(client)
+
+        assert callback_resp.status_code == 302, callback_resp.text
+        assert len(fake_token_client.calls) == 1
+        sent = fake_token_client.calls[0]["data"]
+        assert sent["grant_type"] == "authorization_code"
+        assert sent["client_id"] == CONFIDENTIAL_CLIENT_ID
+        assert sent["client_secret"] == CONFIDENTIAL_CLIENT_SECRET
+
+        store = broker_app.state.oauth21_token_store
+        stored = _run(store.get("sub-abc", ALIAS))
+        assert stored is not None
+        cred, _version = stored
+        assert cred.refresh_token is None
+
+
+def test_callback_omits_client_secret_when_public(
+    monkeypatch: pytest.MonkeyPatch, app_client_factory: Any
+) -> None:
+    fernet_key = Fernet.generate_key().decode()
+    _configure_oauth21_env(monkeypatch, fernet_key)
+
+    fake_token_client = _FakeTokenClient(
+        status_code=200,
+        json_body={"access_token": "linked-access-token", "expires_in": 3600},
+    )
+    monkeypatch.setattr(
+        "af_mcp_broker.api.oauth21.get_http_client", lambda: fake_token_client
+    )
+
+    with app_client_factory() as (client, _state):
+        callback_resp = _link_through_callback(client)
+
+    assert callback_resp.status_code == 302, callback_resp.text
+    sent = fake_token_client.calls[0]["data"]
+    assert sent["client_id"] == CLIENT_ID
+    assert "client_secret" not in sent
 
 
 def test_callback_400_when_nonce_cookie_missing(

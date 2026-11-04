@@ -43,6 +43,11 @@ the portal's Identities page — no separate mapping to keep in sync.
   `<publicOrigin>/v1/oauth/callback/<alias>` as its redirect_uri whitelist
   entry (or point it at the CIMD document, which advertises the same URL).
 
+  If the authorization server only accepts pre-registered clients (e.g.
+  JupyterHub), see
+  [Confidential oauth21-direct clients](#confidential-oauth21-direct-clients)
+  below.
+
 - **`type: keycloak-brokered`** — use this when the service is (or can be
   registered as) an OIDC identity provider. This *does* require configuring
   the service as an Identity Provider in Keycloak (Settings → Identity
@@ -92,6 +97,76 @@ the portal's Identities page — no separate mapping to keep in sync.
   ```
 
 See `docs/auth.md#identity-provider-types` for how the types differ.
+
+### Confidential oauth21-direct clients
+
+Some authorization servers cannot identify the broker by its CIMD URL
+because they only accept clients registered ahead of time, often as
+confidential clients. JupyterHub is one: every OAuth client is a hub
+service with a fixed `oauth_client_id`, and its token endpoint requires a
+`client_secret`. For these, give the entry its own `clientId` and, if the
+client is confidential, an `existingClientSecretSecret`:
+
+```yaml
+broker:
+  publicOrigin: "https://mcp.af.uchicago.edu"
+  identityProviders:
+    - type: oauth21-direct
+      alias: jupyterhub
+      targets: ["jupyterhub_service"]
+      authorizationEndpoint: "https://jupyterhub.af.uchicago.edu/hub/api/oauth2/authorize"
+      tokenEndpoint: "https://jupyterhub.af.uchicago.edu/hub/api/oauth2/token"
+      issuer: "https://jupyterhub.af.uchicago.edu"
+      # JupyterHub scopes are space-separated in the OAuth `scope` param.
+      scope: "servers!user access:servers!user read:users:name!user"
+      clientId: "service-af-mcp-platform"
+      existingClientSecretSecret: "af-mcp-platform-jupyterhub-client"
+      displayName: "JupyterHub"
+      enables: "Launching and driving your JupyterHub servers via af-jupyterhub-mcp"
+```
+
+- **`clientId`**: the id the AS registered the broker under. If you leave
+  it out, the broker uses its CIMD URL. If every oauth21-direct entry has
+  its own `clientId`, the CIMD id is never used. Entries with their own
+  `clientId` are also left out of the CIMD document's `redirect_uris`.
+- **`existingClientSecretSecret`**: the name of a pre-existing Secret
+  (create it with a SealedSecret; the chart does not create it) whose
+  `client-secret` key holds the client secret. Setting it makes the entry
+  confidential. The chart passes the secret to the broker as the env var
+  `OAUTH21_CLIENT_SECRET_<ALIAS>`, never in `IDENTITY_PROVIDERS`.
+  `<ALIAS>` is the alias uppercased with each non-alphanumeric character
+  replaced by `_`, so `jupyterhub` becomes `OAUTH21_CLIENT_SECRET_JUPYTERHUB`.
+  The broker sends the secret with `client_secret_post` on the code
+  exchange, refresh and revocation calls. It refuses to start if a
+  confidential entry's secret is missing or empty, or if the entry has no
+  `clientId`.
+- **PKCE** is always sent. An AS that ignores it, as JupyterHub does,
+  still works.
+
+On the JupyterHub side, register the broker as a hub service whose
+`api_token` is the same value as the Secret above. JupyterHub uses a
+service's `api_token` as its OAuth client secret.
+
+```yaml
+jupyterhub:
+  hub:
+    services:
+      af-mcp-platform:
+        oauth_client_id: service-af-mcp-platform
+        oauth_redirect_uri: https://mcp.af.uchicago.edu/v1/oauth/callback/jupyterhub
+        oauth_no_confirm: true
+        oauth_client_allowed_scopes:
+          - servers!user
+          - access:servers!user
+          - read:users:name!user
+```
+
+JupyterHub never issues refresh tokens, and its tokens last 14 days by
+default. The broker serves the linked token until 60 seconds before it
+expires. After that the user re-links from the portal's Identities page.
+JupyterHub has no revocation endpoint either, so unlinking deletes only
+the broker's stored copy, and the token stays valid at the hub until it
+expires. See [Token Lifetime and Refresh](auth.md#token-lifetime-and-refresh).
 
 ### Migrating from the pre-unification chart values
 
