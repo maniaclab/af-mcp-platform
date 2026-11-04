@@ -38,6 +38,15 @@ log = structlog.get_logger(__name__)
 
 router = APIRouter(tags=["oauth21"])
 
+# The callback lives on its own router, mounted in api/router.py WITHOUT the
+# maintenance-mode dependency -- that dependency resolves its caller via
+# keycloak_dependency to check for admin-bypass, and the browser redirect
+# back from a backend AS can never carry a Keycloak bearer token, so every
+# callback 401'd as "Not authenticated" before the handler ran when this
+# route was still on the gated router. See callback()'s docstring for how
+# the route authenticates the flow instead.
+callback_router = APIRouter(tags=["oauth21"])
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -214,7 +223,7 @@ async def authorize(
     return response
 
 
-@router.get(
+@callback_router.get(
     "/oauth/callback/{alias}",
     name="oauth21_callback",
     summary="Complete an OAuth 2.1 account-linking flow",

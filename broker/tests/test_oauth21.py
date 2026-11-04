@@ -31,7 +31,7 @@ from af_mcp_broker.credentials.oauth21 import (
     StoredOAuthCredential,
     VersionConflict,
 )
-from af_mcp_broker.identity import Principal
+from af_mcp_broker.identity import Principal, keycloak_dependency
 from af_mcp_broker.oauth_state import (
     NONCE_COOKIE_NAME,
     NONCE_COOKIE_PATH,
@@ -1138,6 +1138,57 @@ def test_callback_completes_flow_and_stores_credential(
         cred, version = stored
         assert version == 1
         assert cred.access_token.get_secret_value() == "linked-access-token"
+
+
+def test_callback_never_calls_keycloak_dependency(
+    monkeypatch: pytest.MonkeyPatch, app_client_factory: Any
+) -> None:
+    """Regression: the callback is a browser redirect back from the backend
+    AS, which can never carry the user's Keycloak bearer token (see the
+    route's own docstring), so it must never be wired behind a dependency
+    that itself requires one -- as api/router.py's maintenance-gated
+    oauth21.router inclusion did since b98af52, 401ing every link attempt
+    with "Not authenticated" before the handler ran.
+
+    Every other callback test here runs through app_client_factory's blanket
+    keycloak_dependency override, which masks exactly that. This test keeps
+    the override for /authorize (which legitimately requires the user's
+    Keycloak identity) and removes it for the callback, so a credential-less
+    request is what drives the callback's response.
+    """
+    fernet_key = Fernet.generate_key().decode()
+    _configure_oauth21_env(monkeypatch, fernet_key)
+    fake_token_client = _FakeTokenClient(
+        status_code=200,
+        json_body={"access_token": "linked-access-token", "expires_in": 3600},
+    )
+    monkeypatch.setattr(
+        "af_mcp_broker.api.oauth21.get_http_client", lambda: fake_token_client
+    )
+
+    with app_client_factory() as (client, _state):
+        authorize_resp = client.get(
+            f"/v1/oauth/authorize/{ALIAS}", follow_redirects=False
+        )
+        state_token = parse_qs(urlparse(authorize_resp.headers["location"]).query)[
+            "state"
+        ][0]
+        # See test_callback_completes_flow_and_stores_credential for why the
+        # Secure nonce cookie is propagated into the jar by hand.
+        nonce_cookie = authorize_resp.cookies.get(NONCE_COOKIE_NAME)
+        assert nonce_cookie is not None
+        client.cookies.set(NONCE_COOKIE_NAME, nonce_cookie, path=NONCE_COOKIE_PATH)
+
+        client.app.dependency_overrides.pop(keycloak_dependency, None)
+        callback_resp = client.get(
+            f"/v1/oauth/callback/{ALIAS}",
+            params={"code": "auth-code-xyz", "state": state_token},
+            follow_redirects=False,
+        )
+
+    assert callback_resp.status_code == 302, callback_resp.text
+    assert callback_resp.headers["location"] == f"/?linked={ALIAS}"
+    assert len(fake_token_client.calls) == 1
 
 
 def _configure_confidential_oauth21_env(

@@ -43,6 +43,11 @@ router.include_router(credentials.router, dependencies=_maintenance_gated)
 # being unconditionally exempt from it.
 router.include_router(credentials.backend_router)
 router.include_router(oauth21.router, dependencies=_maintenance_gated)
+# oauth21.callback_router carries /oauth/callback/{alias}, the browser
+# redirect back from a backend AS, which authenticates via the encrypted
+# state token + nonce cookie + PKCE, never a Keycloak bearer token. Left
+# ungated for the same reason as credentials.backend_router above.
+router.include_router(oauth21.callback_router)
 router.include_router(tokens.router, dependencies=_maintenance_gated)
 # mcp_oauth.router carries the credential-less MCP OAuth bootstrap flow
 # (issue #140): /oauth/authorize, /oauth/keycloak-login/callback, and
