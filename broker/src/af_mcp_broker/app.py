@@ -783,7 +783,10 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
                 issuer=cfg.issuer,
                 scope=cfg.scope,
                 store=oauth21_token_store,
-                client_id=settings.oauth21_client_id,
+                # A provider registered under its own client_id uses it;
+                # otherwise the broker identifies itself by its CIMD URL.
+                client_id=cfg.client_id or settings.oauth21_client_id,
+                client_secret=cfg.client_secret,
                 revocation_endpoint=(
                     str(cfg.revocation_endpoint) if cfg.revocation_endpoint else None
                 ),

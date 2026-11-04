@@ -162,3 +162,56 @@ def test_cimd_client_id_honors_x_forwarded_proto(
     assert resp.status_code == 200, resp.text
     client_id = resp.json()["client_id"]
     assert client_id.startswith("https://"), client_id
+
+
+def test_cimd_redirect_uris_exclude_providers_with_own_client_id(
+    monkeypatch: pytest.MonkeyPatch,
+    app_client_factory: Callable[..., Any],
+) -> None:
+    """A provider registered under its own client_id (e.g. a JupyterHub
+    service) never identifies the broker by this CIMD document, so its
+    callback must not be advertised here."""
+    monkeypatch.setenv("BROKER_STATE_KEY", Fernet.generate_key().decode())
+    monkeypatch.setenv("OAUTH21_CLIENT_ID", "https://mcp.example.com/.well-known/cimd")
+    monkeypatch.setenv("BROKER_PUBLIC_ORIGIN", "https://mcp-portal.example.com")
+    monkeypatch.setenv("OAUTH21_CLIENT_SECRET_JUPYTERHUB", "s3cret")
+    monkeypatch.setenv(
+        "IDENTITY_PROVIDERS",
+        json.dumps(
+            [
+                {
+                    "type": "oauth21-direct",
+                    "alias": "rucio-atlas",
+                    "targets": ["rucio-atlas"],
+                    "authorization_endpoint": "https://backend-as.example/authorize",
+                    "token_endpoint": "https://backend-as.example/token",
+                    "issuer": "https://backend-as.example",
+                },
+                {
+                    "type": "oauth21-direct",
+                    "alias": "jupyterhub",
+                    "targets": ["jupyterhub_service"],
+                    "authorization_endpoint": "https://hub.example/hub/api/oauth2/authorize",
+                    "token_endpoint": "https://hub.example/hub/api/oauth2/token",
+                    "issuer": "https://hub.example",
+                    "client_id": "service-af-mcp-platform",
+                    "confidential": True,
+                },
+                # The shipped services.yaml's "ami" (auth_type: x509) still
+                # needs an explicit entry or the broker refuses to start.
+                {
+                    "type": "x509",
+                    "alias": "x509",
+                    "targets": ["ami"],
+                },
+            ]
+        ),
+    )
+
+    with app_client_factory() as (client, _):
+        resp: Any = client.get("/.well-known/cimd")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["redirect_uris"] == [
+        "https://mcp-portal.example.com/v1/oauth/callback/rucio-atlas",
+    ]

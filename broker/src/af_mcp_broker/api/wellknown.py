@@ -57,10 +57,13 @@ async def get_cimd(request: Request) -> CimdResponse:
     )
 
     public_origin = settings.broker_public_origin.rstrip("/")
+    # A provider registered under its own client_id never identifies the
+    # broker by this document, so only CIMD-identified providers' callbacks
+    # are advertised here.
     redirect_uris = [
         f"{public_origin}/v1/oauth/callback/{p.alias}"
         for p in settings.identity_providers
-        if p.type == "oauth21-direct"
+        if p.type == "oauth21-direct" and p.client_id is None
     ]
 
     return CimdResponse(

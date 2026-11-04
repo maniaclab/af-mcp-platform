@@ -225,6 +225,7 @@ class OAuth21Provider(CredentialProvider):
         scope: str,
         store: TokenStore,
         client_id: str,
+        client_secret: SecretStr | None = None,
         revocation_endpoint: str | None = None,
     ) -> None:
         self._alias = alias
@@ -235,6 +236,7 @@ class OAuth21Provider(CredentialProvider):
         self._scope = scope
         self._store = store
         self._client_id = client_id
+        self._client_secret = client_secret
         self._revocation_endpoint = revocation_endpoint
         self._log = structlog.get_logger(__name__).bind(
             provider="OAuth21Provider", alias=alias
@@ -259,6 +261,22 @@ class OAuth21Provider(CredentialProvider):
     @property
     def scope(self) -> str:
         return self._scope
+
+    @property
+    def client_id(self) -> str:
+        return self._client_id
+
+    def client_auth_params(self) -> dict[str, str]:
+        """Client identification for a token-endpoint or revocation request body.
+
+        Always ``client_id`` (OAuth 2.1 requires a public client to send it on
+        every token request too, see issue #68); plus ``client_secret`` for a
+        confidential client, i.e. ``client_secret_post`` (RFC 6749 §2.3.1).
+        """
+        params = {"client_id": self._client_id}
+        if self._client_secret is not None:
+            params["client_secret"] = self._client_secret.get_secret_value()
+        return params
 
     async def is_linked(self, principal: Principal) -> bool:
         entry = await self._store.get(principal.subject, self._alias)
@@ -368,7 +386,7 @@ class OAuth21Provider(CredentialProvider):
                     data={
                         "token": token.get_secret_value(),
                         "token_type_hint": token_type_hint,
-                        "client_id": self._client_id,
+                        **self.client_auth_params(),
                     },
                     timeout=10.0,
                 )
@@ -398,7 +416,7 @@ class OAuth21Provider(CredentialProvider):
             data={
                 "grant_type": "refresh_token",
                 "refresh_token": cred.refresh_token.get_secret_value(),
-                "client_id": self._client_id,
+                **self.client_auth_params(),
             },
             timeout=10.0,
         )
