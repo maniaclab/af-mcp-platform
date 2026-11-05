@@ -13,6 +13,8 @@ from af_mcp_broker.mcp.registry import (
     DIAGNOSTIC_TOOL_NAMES,
     ServiceRegistry,
     ServiceSpec,
+    ToolMappingDrift,
+    ToolRouting,
 )
 
 
@@ -475,3 +477,127 @@ async def test_repeat_drift_is_not_metered_twice_and_clears_when_fixed(
 
     await _list(mw, make_principal, [_tool("condor_query_jobs")])
     assert registry.get_tool_mapping_drift("condor_service") is None
+
+
+async def test_unmapped_gauge_tracks_current_drift(registry, policy, make_principal):
+    mw = EntitlementMiddleware(registry, policy)
+    gauge = metrics.service_tools_unmapped.labels(service="condor_service")
+
+    await _list(
+        mw, make_principal, [_tool("condor_query_jobs"), _tool("condor_submit_job")]
+    )
+    assert gauge._value.get() == 1
+
+    await _list(mw, make_principal, [_tool("condor_query_jobs")])
+    assert gauge._value.get() == 0
+
+
+# ---------------------------------------------------------------------------
+# Unroutable (prefix-mismatched) tools: an apply_namespace: false service
+# whose backend renamed its tools away from the configured prefix. The
+# provider records them (ToolRouting); get_by_tool_prefix can't attribute
+# them to any service, so drift comes from that record instead.
+# ---------------------------------------------------------------------------
+
+_AOS_TOOLS = ("aos_aggregate", "aos_describe", "aos_inspect", "aos_query", "aos_search")
+_OLD_AOS_KEYS = {
+    "atlas_opensearch_inspect": "read_data",
+    "atlas_opensearch_query": "read_data",
+    "atlas_opensearch_search": "read_data",
+}
+
+
+@pytest.fixture
+def renamed_backend_registry() -> ServiceRegistry:
+    """The production config that broke: prefix atlas_opensearch, no
+    namespacing, per-tool keys under the old names -- while the backend
+    advertises aos_* instead (as its provider has recorded)."""
+    reg = ServiceRegistry()
+    reg.register(
+        ServiceSpec(
+            name="atlas_search_service",
+            prefix="atlas_opensearch",
+            url="http://atlas-search.invalid/mcp",
+            transport="http",
+            required_permission=dict(_OLD_AOS_KEYS),
+            apply_namespace=False,
+        )
+    )
+    reg.record_tool_routing(
+        ToolRouting(
+            service="atlas_search_service",
+            advertised=len(_AOS_TOOLS),
+            unroutable=_AOS_TOOLS,
+        )
+    )
+    return reg
+
+
+async def test_unroutable_tools_are_recorded_as_drift_with_stale_keys(
+    renamed_backend_registry, policy, make_principal
+):
+    mw = EntitlementMiddleware(renamed_backend_registry, policy)
+    counter = metrics.tool_mapping_drift_total.labels(
+        service="atlas_search_service", kind="unroutable"
+    )
+    before = counter._value.get()
+
+    await _list(mw, make_principal, [_tool(name) for name in _AOS_TOOLS])
+
+    drift = renamed_backend_registry.get_tool_mapping_drift("atlas_search_service")
+    assert drift == ToolMappingDrift(
+        service="atlas_search_service",
+        prefix="atlas_opensearch",
+        advertised=5,
+        routable=0,
+        unmapped=(),
+        stale=tuple(sorted(_OLD_AOS_KEYS)),
+        unroutable=_AOS_TOOLS,
+    )
+    assert counter._value.get() == before + 5
+
+
+async def test_unroutable_tools_are_drift_for_a_scalar_permission_service(
+    policy, make_principal
+):
+    """Unroutable tools are drift whatever form required_permission takes --
+    the prefix mismatch, not the permission map, is what drops them."""
+    reg = ServiceRegistry()
+    reg.register(
+        ServiceSpec(
+            name="atlas_search_service",
+            prefix="atlas_opensearch",
+            url="http://atlas-search.invalid/mcp",
+            transport="http",
+            required_permission="read_data",
+            apply_namespace=False,
+        )
+    )
+    reg.record_tool_routing(
+        ToolRouting(
+            service="atlas_search_service", advertised=1, unroutable=("aos_search",)
+        )
+    )
+    mw = EntitlementMiddleware(reg, policy)
+
+    await _list(mw, make_principal, [_tool("aos_search")])
+
+    drift = reg.get_tool_mapping_drift("atlas_search_service")
+    assert drift is not None
+    assert drift.unroutable == ("aos_search",)
+    assert drift.stale == ()
+
+
+async def test_recorded_unroutable_tools_absent_from_this_listing_are_ignored(
+    renamed_backend_registry, policy, make_principal
+):
+    """Like a service advertising nothing, a listing that doesn't carry the
+    recorded unroutable tools (e.g. this caller's listing of the service
+    failed) says nothing about them -- no drift, and no stale keys."""
+    mw = EntitlementMiddleware(renamed_backend_registry, policy)
+
+    await _list(mw, make_principal, [_tool("rucio_list_dids")])
+
+    assert (
+        renamed_backend_registry.get_tool_mapping_drift("atlas_search_service") is None
+    )

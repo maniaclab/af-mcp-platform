@@ -278,8 +278,12 @@ class ToolMappingDriftResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     service: str
+    prefix: str
+    advertised: int
+    routable: int
     unmapped: list[str]
     stale: list[str]
+    unroutable: list[str]
 
 
 @router.get(
@@ -291,7 +295,11 @@ class ToolMappingDriftResponse(BaseModel):
         "the backend advertises that have no entry and no __default__ (so "
         "they are implicitly disabled), and 'stale' keys the backend no "
         "longer advertises (typically a backend rename, which leaves every "
-        "new tool unmapped). Names are wire (namespaced) tool names. Read "
+        "new tool unmapped). Per service of any form: 'unroutable' tools the "
+        "backend advertises without the service's 'prefix' (an "
+        "apply_namespace: false backend that renamed its tools), which no "
+        "caller can reach; 'advertised'/'routable' count the listing with "
+        "and without them. Names are wire (namespaced) tool names. Read "
         "from EntitlementMiddleware's own lint, as observed the last time a "
         "caller listed that service's tools through /mcp, so it is empty "
         "until at least one caller has done so since this broker process "
@@ -305,7 +313,13 @@ async def get_tool_mapping_drift(
     registry = _get_registry(request)
     return [
         ToolMappingDriftResponse(
-            service=d.service, unmapped=list(d.unmapped), stale=list(d.stale)
+            service=d.service,
+            prefix=d.prefix,
+            advertised=d.advertised,
+            routable=d.routable,
+            unmapped=list(d.unmapped),
+            stale=list(d.stale),
+            unroutable=list(d.unroutable),
         )
         for d in registry.tool_mapping_drifts()
     ]

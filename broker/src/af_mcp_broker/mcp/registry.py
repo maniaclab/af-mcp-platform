@@ -340,16 +340,48 @@ class AnnotationMismatch:
 class ToolMappingDrift:
     """Where a dict-form ``required_permission`` and the tools its backend actually advertises have drifted apart (issue #330).
 
-    Both lists hold wire (namespaced) tool names, sorted. ``unmapped`` tools
-    are advertised but have no entry and no ``__default__``, so they are
-    implicitly ``__disabled__``. ``stale`` entries are keys the backend no
-    longer advertises (typically a rename), which leaves every new tool
-    ``unmapped``. Visibility only.
+    All three lists hold wire (namespaced) tool names, sorted. ``unmapped``
+    tools are advertised but have no entry and no ``__default__``, so they
+    are implicitly ``__disabled__``. ``stale`` entries are keys the backend
+    no longer advertises (typically a rename), which leaves every new tool
+    ``unmapped``. ``unroutable`` tools are advertised by an
+    ``apply_namespace: false`` service's backend without its ``prefix``, so
+    no caller can reach them whatever ``required_permission`` says (see
+    ToolRouting); they count toward ``advertised`` but not ``routable``, and
+    are never also reported ``unmapped``. Visibility only.
     """
 
     service: str
+    prefix: str
+    advertised: int
+    routable: int
     unmapped: tuple[str, ...]
     stale: tuple[str, ...]
+    unroutable: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ToolRouting:
+    """How many tools one service's backend advertised on its last successful ``tools/list``, and which of them its prefix can't route.
+
+    Recorded by aggregator.py's ``_ObservableProxyProvider`` on every
+    upstream (uncached) listing. Only an ``apply_namespace: false`` service
+    can have ``unroutable`` tools: routing (``get_by_tool_prefix``, the
+    provider's own ``_get_tool`` short-circuit) matches its tools on
+    ``<prefix>_``, which a namespaced service's tools always carry but a
+    self-prefixed backend's only carry until it renames them. Lets drift
+    (EntitlementMiddleware), service status (api/permissions.py's
+    ``_service_status``) and metrics attribute those tools to their service,
+    which no prefix match can.
+    """
+
+    service: str
+    advertised: int
+    unroutable: tuple[str, ...]
+
+    @property
+    def routable(self) -> int:
+        return self.advertised - len(self.unroutable)
 
 
 class ServiceRegistry:
@@ -373,6 +405,10 @@ class ServiceRegistry:
         # service name -> most recently observed tool-mapping drift (issue
         # #330); same observed-over-time model as _annotation_mismatches.
         self._tool_mapping_drifts: dict[str, ToolMappingDrift] = {}
+        # service name -> its backend's last successful upstream listing's
+        # routing outcome (see ToolRouting); last-write-wins like
+        # _recent_list_failures, and kept across a failed listing.
+        self._tool_routings: dict[str, ToolRouting] = {}
         # Merged, O(1)-lookup permission map built by register(): a dict-form
         # required_permission's per-tool entries insert under their namespaced
         # wire name; a plain string, or a dict's "__default__", insert under
@@ -529,6 +565,14 @@ class ServiceRegistry:
     def tool_mapping_drifts(self) -> list[ToolMappingDrift]:
         """All currently recorded tool-mapping drifts, sorted by service for a stable admin-page listing."""
         return sorted(self._tool_mapping_drifts.values(), key=lambda d: d.service)
+
+    def record_tool_routing(self, routing: ToolRouting) -> None:
+        """Record (or overwrite) *routing* for its service. Called by aggregator.py's _ObservableProxyProvider on every successful upstream tools/list."""
+        self._tool_routings[routing.service] = routing
+
+    def tool_routing(self, service: str) -> ToolRouting | None:
+        """Return *service*'s most recently recorded ToolRouting, or None if its backend hasn't been listed successfully since this process started."""
+        return self._tool_routings.get(service)
 
     def all_services(self) -> list[ServiceSpec]:
         return list(self._services.values())

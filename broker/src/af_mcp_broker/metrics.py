@@ -184,10 +184,41 @@ tool_mapping_drift_total = Counter(
     "Tools whose backend listing and services.yaml's dict-form "
     "required_permission disagree, by service and kind ('unmapped': "
     "advertised but implicitly disabled; 'stale': a mapped key the backend "
-    "no longer advertises) -- see GET /v1/admin/tool-mapping-drift for the "
+    "no longer advertises; 'unroutable': advertised without the service's "
+    "prefix, so unreachable whatever required_permission's form) -- see GET "
+    "/v1/admin/tool-mapping-drift for the "
     "current set. Incremented once per newly observed tool, not once per "
     "tools/list request that re-observes it.",
     ["service", "kind"],
+)
+
+service_tools_advertised = Gauge(
+    "af_mcp_service_tools_advertised",
+    "Tools the service's backend advertised on its last successful upstream "
+    "tools/list (after exclude_tools), by service. Set by aggregator.py's "
+    "_ObservableProxyProvider on every uncached listing.",
+    ["service"],
+)
+
+service_tools_routable = Gauge(
+    "af_mcp_service_tools_routable",
+    "Of af_mcp_service_tools_advertised, the tools whose names carry the "
+    "service's prefix and so can actually be routed to it, by service. "
+    "Below advertised only for an apply_namespace: false service whose "
+    "backend renamed its tools; routable == 0 with advertised > 0 means "
+    "callers see none of the service's tools (see GET "
+    "/v1/admin/tool-mapping-drift's 'unroutable').",
+    ["service"],
+)
+
+service_tools_unmapped = Gauge(
+    "af_mcp_service_tools_unmapped",
+    "Routable tools implicitly disabled because the service's dict-form "
+    "required_permission has no entry for them and no __default__, as of "
+    "the last tools/list EntitlementMiddleware observed listing the "
+    "service, by service. The current-state counterpart of "
+    "af_mcp_tool_mapping_drift_total{kind='unmapped'}.",
+    ["service"],
 )
 
 annotation_policy_mismatches_total = Counter(

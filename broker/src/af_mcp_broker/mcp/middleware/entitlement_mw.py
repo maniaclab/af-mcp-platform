@@ -128,32 +128,54 @@ class EntitlementMiddleware(Middleware):
         service advertising no tools in this listing is skipped: that is
         indistinguishable from an unreachable backend or a caller with no
         linked credential, and would flag every key as stale.
+
+        Also records, for any service form, the tools its backend advertised
+        without the service's prefix (``unroutable``). Those match no
+        service in get_by_tool_prefix, so they are attributed from the
+        provider's own ToolRouting record instead -- restricted to names in
+        this listing, so drift still reflects what was observed here.
+        Without that, a backend rename under ``apply_namespace: false``
+        looks like a service advertising nothing and reports no drift at
+        all.
         """
+        listed = {tool.name for tool in tools}
         advertised: dict[str, set[str]] = {}
         for tool in tools:
             service = self.registry.get_by_tool_prefix(tool.name)
             if service is not None:
                 advertised.setdefault(service.name, set()).add(tool.name)
         for service in self.registry.all_services():
-            if service.builtin or not isinstance(service.required_permission, dict):
+            if service.builtin:
                 continue
-            names = advertised.get(service.name)
-            if not names:
+            routing = self.registry.tool_routing(service.name)
+            unroutable = set(routing.unroutable) & listed if routing else set()
+            routable = advertised.get(service.name, set())
+            if not routable and not unroutable:
                 continue
+            # Scalar/omitted required_permission never resolves to
+            # DISABLED_PERMISSION and maps no tool names, so only a dict
+            # form can contribute unmapped/stale entries here.
             unmapped = {
                 name
-                for name in names
+                for name in routable
                 if self.registry.required_permission_for(name, service)
                 == DISABLED_PERMISSION
             }
-            stale = self.registry.mapped_tool_names(service) - names
-            if not unmapped and not stale:
+            stale = self.registry.mapped_tool_names(service) - routable
+            metrics.service_tools_unmapped.labels(service=service.name).set(
+                len(unmapped)
+            )
+            if not unmapped and not stale and not unroutable:
                 self.registry.clear_tool_mapping_drift(service.name)
                 continue
             drift = ToolMappingDrift(
                 service=service.name,
+                prefix=service.prefix,
+                advertised=len(routable) + len(unroutable),
+                routable=len(routable),
                 unmapped=tuple(sorted(unmapped)),
                 stale=tuple(sorted(stale)),
+                unroutable=tuple(sorted(unroutable)),
             )
             previous = self.registry.get_tool_mapping_drift(service.name)
             if previous != drift:
@@ -162,10 +184,16 @@ class EntitlementMiddleware(Middleware):
                     service=drift.service,
                     unmapped=drift.unmapped,
                     stale=drift.stale,
+                    unroutable=drift.unroutable,
                 )
                 for kind, current, before in (
                     ("unmapped", drift.unmapped, previous.unmapped if previous else ()),
                     ("stale", drift.stale, previous.stale if previous else ()),
+                    (
+                        "unroutable",
+                        drift.unroutable,
+                        previous.unroutable if previous else (),
+                    ),
                 ):
                     metrics.tool_mapping_drift_total.labels(
                         service=drift.service, kind=kind

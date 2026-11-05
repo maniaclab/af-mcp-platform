@@ -30,6 +30,7 @@ from mcp.types import Resource as McpResource
 from mcp.types import ResourceTemplate as McpResourceTemplate
 from mcp.types import Tool as McpTool
 
+from af_mcp_broker import metrics
 from af_mcp_broker.authorization import EntitlementPolicy
 from af_mcp_broker.config import BrokerIssuedProviderConfig
 from af_mcp_broker.credentials import (
@@ -58,6 +59,7 @@ from af_mcp_broker.mcp.registry import (
     WHOAMI_TOOL_NAME,
     ServiceRegistry,
     ServiceSpec,
+    ToolRouting,
 )
 
 if TYPE_CHECKING:
@@ -951,26 +953,59 @@ async def test_observable_proxy_provider_get_tool_namespaced_unaffected() -> Non
     assert tool.name == "anything_at_all"
 
 
-async def test_observable_proxy_provider_warns_on_tool_prefix_mismatch(
+def _proxy_tools(*names: str) -> list[ProxyTool]:
+    return [
+        ProxyTool.from_mcp_tool(
+            lambda: None, McpTool(name=name, input_schema={"type": "object"})
+        )
+        for name in names
+    ]
+
+
+@pytest.mark.parametrize(
+    ("advertised", "expected_unroutable"),
+    [
+        # One stray tool among routable ones.
+        (
+            ("ami_get_dataset_info", "servicex_list_datasets"),
+            ("servicex_list_datasets",),
+        ),
+        # A backend rename: every tool lost the configured prefix, more of
+        # them than the warning's sample holds.
+        (
+            (
+                "aos_inspect",
+                "aos_query",
+                "aos_search",
+                "aos_aggregate",
+                "aos_describe",
+                "aos_extra",
+            ),
+            (
+                "aos_aggregate",
+                "aos_describe",
+                "aos_extra",
+                "aos_inspect",
+                "aos_query",
+                "aos_search",
+            ),
+        ),
+    ],
+)
+async def test_observable_proxy_provider_summarizes_tool_prefix_mismatch(
     monkeypatch: pytest.MonkeyPatch,
+    advertised: tuple[str, ...],
+    expected_unroutable: tuple[str, ...],
 ) -> None:
     """route_prefix set means a tool this backend advertises without that
-    prefix is listable (it survives entitlement filtering in tools/list) but
-    can never be reached through _get_tool's short-circuit above -- warn so
-    the mismatch is visible in logs instead of leaving the tool silently
-    dead on arrival."""
-    matching_tool = ProxyTool.from_mcp_tool(
-        lambda: None,
-        McpTool(name="ami_get_dataset_info", input_schema={"type": "object"}),
-    )
-    mismatched_tool = ProxyTool.from_mcp_tool(
-        lambda: None,
-        McpTool(name="servicex_list_datasets", input_schema={"type": "object"}),
-    )
+    prefix can never be reached through _get_tool's short-circuit above (and
+    EntitlementMiddleware denies it for matching no service prefix) -- warn
+    so the mismatch is visible in logs instead of leaving the tool silently
+    dead on arrival. One summary event per refresh, not one per tool, and the
+    routing outcome is recorded on the registry for drift/status/metrics."""
+    tools_in = _proxy_tools(*advertised)
     monkeypatch.setattr(
-        aggregator.ProxyProvider,
-        "_list_tools",
-        AsyncMock(return_value=[matching_tool, mismatched_tool]),
+        aggregator.ProxyProvider, "_list_tools", AsyncMock(return_value=tools_in)
     )
 
     registry = ServiceRegistry()
@@ -986,14 +1021,57 @@ async def test_observable_proxy_provider_warns_on_tool_prefix_mismatch(
     with structlog.testing.capture_logs() as logs:
         tools = await provider._list_tools()
 
-    assert tools == [matching_tool, mismatched_tool]
+    assert tools == tools_in
     mismatch_events = [
         entry for entry in logs if entry["event"] == "aggregator.tool_prefix_mismatch"
     ]
     assert len(mismatch_events) == 1
     assert mismatch_events[0]["service"] == "example"
-    assert mismatch_events[0]["tool"] == "servicex_list_datasets"
     assert mismatch_events[0]["prefix"] == "ami"
+    assert mismatch_events[0]["count"] == len(expected_unroutable)
+    assert mismatch_events[0]["sample"] == list(expected_unroutable[:5])
+
+    routing = registry.tool_routing("example")
+    assert routing == ToolRouting(
+        service="example", advertised=len(advertised), unroutable=expected_unroutable
+    )
+    assert routing.routable == len(advertised) - len(expected_unroutable)
+    assert metrics.service_tools_advertised.labels(
+        service="example"
+    )._value.get() == len(advertised)
+    assert (
+        metrics.service_tools_routable.labels(service="example")._value.get()
+        == routing.routable
+    )
+
+
+async def test_observable_proxy_provider_records_routing_without_warning_when_healthy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every tool matches the route prefix (or the service is namespaced):
+    no mismatch warning, and the recorded routing has nothing unroutable."""
+    tools_in = _proxy_tools("ami_get_dataset_info", "ami_list_datasets")
+    monkeypatch.setattr(
+        aggregator.ProxyProvider, "_list_tools", AsyncMock(return_value=tools_in)
+    )
+
+    registry = ServiceRegistry()
+    registry.register(_spec())
+
+    async def _factory() -> Client:
+        raise AssertionError("ProxyProvider._list_tools is stubbed above")
+
+    provider = aggregator._ObservableProxyProvider(
+        "example", _factory, registry=registry, route_prefix="ami"
+    )
+
+    with structlog.testing.capture_logs() as logs:
+        await provider._list_tools()
+
+    assert not [e for e in logs if e["event"] == "aggregator.tool_prefix_mismatch"]
+    assert registry.tool_routing("example") == ToolRouting(
+        service="example", advertised=2, unroutable=()
+    )
 
 
 # ---------------------------------------------------------------------------

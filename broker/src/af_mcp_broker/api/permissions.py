@@ -65,6 +65,14 @@ _RELINK_DETAIL = (
     "to see which identity provider to re-link."
 )
 
+# "misconfigured" for a service whose backend advertises tools but none the
+# broker can route (see _service_status) -- distinct from the generic
+# sentence so the catalog says why the service shows no tools.
+_NO_ROUTABLE_TOOLS_DETAIL = (
+    "No routable tools: the service advertises tools the gateway cannot "
+    "route ({advertised} advertised, 0 routable). Contact the AF admins."
+)
+
 router = APIRouter(tags=["permissions"])
 
 # ---------------------------------------------------------------------------
@@ -318,6 +326,27 @@ async def _service_status(
         return (
             "permission_required",
             _STATUS_DETAILS["permission_required"],
+            correlation_id,
+        )
+
+    # A backend whose every advertised tool lost the service's prefix (a
+    # rename under apply_namespace: false -- ToolRouting, recorded by
+    # aggregator.py's _ObservableProxyProvider) leaves callers with zero
+    # tools however linked they are: a platform misconfiguration, checked
+    # before the credential like the missing-provider case below.
+    routing = registry.tool_routing(spec.name)
+    if routing is not None and routing.advertised > 0 and routing.routable == 0:
+        correlation_id = uuid.uuid4().hex
+        logger.info(
+            "catalog.service_status_flagged",
+            subject=principal.subject,
+            target=spec.name,
+            status="misconfigured",
+            request_id=correlation_id,
+        )
+        return (
+            "misconfigured",
+            _NO_ROUTABLE_TOOLS_DETAIL.format(advertised=routing.advertised),
             correlation_id,
         )
 
