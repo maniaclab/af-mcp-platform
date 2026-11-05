@@ -820,6 +820,20 @@ serviceMonitor:
   namespace: ""
 
 # ---------------------------------------------------------------------------
+# Prometheus alert rules for backend services
+# ---------------------------------------------------------------------------
+# Alerts when a backend advertises tools but none of them carry its
+# service's prefix (callers see zero tools; see docs/adding-a-service.md).
+# Requires the Prometheus Operator (PrometheusRule CRD). The credmon alerts
+# have their own switch under broker.credmon.prometheusRule.
+prometheusRule:
+  enabled: false
+  # Namespace for the PrometheusRule; defaults to the release namespace.
+  namespace: ""
+  # Extra labels so your Prometheus' ruleSelector picks the rule up.
+  labels: {}
+
+# ---------------------------------------------------------------------------
 # Grafana Dashboard ConfigMap
 # ---------------------------------------------------------------------------
 grafanaDashboard:
