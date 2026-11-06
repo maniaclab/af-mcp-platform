@@ -260,8 +260,9 @@ tools already named `rucio_list_dids`, `rucio_whoami`, etc., so leaving
 `apply_namespace: false` on its `rucio` entry, and callers see the plain
 `rucio_list_dids` name. The aggregator routes calls to an `apply_namespace:
 false` service by that same prefix, so every tool it advertises must be
-named `<prefix>_<tool>` -- a tool name missing the prefix is unreachable
-even though it can still appear in `tools/list`.
+named `<prefix>_<tool>` -- a tool name missing the prefix is unreachable,
+and it is hidden from `tools/list` unless its name happens to match another
+service's prefix (in which case it is attributed to that service instead).
 
 `false` is only safe when no other configured service can advertise an
 overlapping tool name — with one rucio site configured, that holds. It

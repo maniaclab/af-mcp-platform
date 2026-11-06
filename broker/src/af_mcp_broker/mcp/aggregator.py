@@ -1422,10 +1422,12 @@ class _ObservableProxyProvider(ProxyProvider):
         """Record how many of *tools* (one upstream listing, after ``exclude_tools``) this service's prefix can route -- onto the registry (ToolRouting) and the per-service advertised/routable gauges -- and warn once for the whole listing if any can't."""
         unroutable: tuple[str, ...] = ()
         if self._route_prefix is not None:
-            # A listed tool that doesn't match the route prefix would be
-            # visible in tools/list but unreachable via _get_tool's
-            # short-circuit above -- warn rather than filter, so the
-            # mismatch is on record instead of silently dead on arrival.
+            # A listed tool that doesn't match the route prefix is
+            # unreachable via _get_tool's short-circuit above, and
+            # EntitlementMiddleware hides it from tools/list unless its name
+            # happens to match another service's prefix -- warn rather than
+            # filter, so the mismatch is on record instead of silently dead
+            # on arrival.
             prefix = f"{self._route_prefix}_"
             unroutable = tuple(
                 sorted(tool.name for tool in tools if not tool.name.startswith(prefix))
