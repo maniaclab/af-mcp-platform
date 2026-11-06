@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING
 import pytest
 from cryptography.fernet import Fernet
 
+from af_mcp_broker.mcp.registry import ToolRouting
+
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
@@ -469,6 +471,40 @@ def test_catalog_status_unauthorized_failure_prompts_relink(
     assert resp.status_code == 200, resp.text
     rucio = {s["name"]: s for s in resp.json()["servers"]}["rucio"]
     assert rucio["status"] == "link_required"
+
+
+@pytest.mark.parametrize(
+    ("advertised", "unroutable", "expected_status"),
+    [
+        # Every advertised tool lost the configured prefix (a backend
+        # rename under apply_namespace: false) -- nothing is callable.
+        (2, ("aos_query", "aos_search"), "misconfigured"),
+        # Some tools still route: degraded per tool (drift), not per service.
+        (2, ("aos_search",), "available"),
+        (2, (), "available"),
+        # A backend advertising nothing at all is not a routing problem.
+        (0, (), "available"),
+    ],
+)
+def test_catalog_status_reflects_recorded_tool_routing(
+    app_client: tuple[TestClient, dict],
+    make_principal: Callable[..., object],
+    advertised: int,
+    unroutable: tuple[str, ...],
+    expected_status: str,
+) -> None:
+    """A recorded ToolRouting (aggregator.py's _ObservableProxyProvider)
+    with tools advertised but none routable must not read "available"."""
+    client, state = app_client
+    state["principal"] = make_principal(groups=[])
+    client.app.state.service_registry.record_tool_routing(
+        ToolRouting(service="docs", advertised=advertised, unroutable=unroutable)
+    )
+    resp = client.get("/v1/catalog", headers=_AUTH)
+    assert resp.status_code == 200, resp.text
+    docs = {s["name"]: s for s in resp.json()["servers"]}["docs"]
+    assert docs["status"] == expected_status
+    assert (docs["correlation_id"] is not None) == (expected_status == "misconfigured")
 
 
 @pytest.mark.parametrize(

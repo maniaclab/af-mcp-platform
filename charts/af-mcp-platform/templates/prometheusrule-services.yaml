@@ -1,0 +1,38 @@
+{{- if .Values.prometheusRule.enabled }}
+# Backend-routing alert (docs/adding-a-service.md, "apply_namespace: false
+# and prefix"). A backend that advertises tools none of which carry its
+# service's prefix -- typically a backend-side tool rename under
+# apply_namespace: false -- is reachable but exposes zero tools to callers.
+# Each replica sets these gauges from its own upstream listings, so the rule
+# takes the max per service across replicas.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "af-mcp-platform.fullname" . }}-services
+  namespace: {{ .Values.prometheusRule.namespace | default .Release.Namespace | quote }}
+  labels:
+    {{- include "af-mcp-platform.labels" . | nindent 4 }}
+    {{- with .Values.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: af-mcp-services
+      rules:
+        - alert: AfMcpServiceNoRoutableTools
+          expr: |
+            max by (service) (af_mcp_service_tools_routable) == 0
+            and max by (service) (af_mcp_service_tools_advertised) > 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "MCP service {{ "{{" }} $labels.service {{ "}}" }} advertises tools but none are routable"
+            description: >-
+              The backend advertises tools, but none carry the service's
+              configured prefix, so callers see none of them (usually a
+              backend tool rename with apply_namespace: false). Check GET
+              /v1/admin/tool-mapping-drift (or the portal Admin page's Tool
+              mapping drift table) for the unroutable names and update the
+              service's prefix and required_permission keys.
+{{- end }}

@@ -2,7 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
 import pytest
+import structlog
+from fastmcp.server.providers.proxy import ProxyTool
+from mcp.types import Tool as McpTool
 
 from af_mcp_broker.maintenance import (
     InMemoryMaintenanceModeStore,
@@ -10,6 +17,10 @@ from af_mcp_broker.maintenance import (
     MaintenanceState,
     MaintenanceStateConflict,
 )
+from af_mcp_broker.mcp import aggregator
+from af_mcp_broker.mcp.middleware import entitlement_mw
+from af_mcp_broker.mcp.middleware.entitlement_mw import EntitlementMiddleware
+from af_mcp_broker.mcp.registry import ServiceSpec
 
 
 @pytest.fixture
@@ -287,8 +298,12 @@ def test_tool_mapping_drift_reflects_registry_state(maintenance_client, make_pri
     client.app.state.service_registry.record_tool_mapping_drift(
         ToolMappingDrift(
             service="condor_service",
+            prefix="condor",
+            advertised=2,
+            routable=2,
             unmapped=("condor_submit_job",),
             stale=("condor_old_tool",),
+            unroutable=(),
         )
     )
 
@@ -297,7 +312,141 @@ def test_tool_mapping_drift_reflects_registry_state(maintenance_client, make_pri
     assert resp.json() == [
         {
             "service": "condor_service",
+            "prefix": "condor",
+            "advertised": 2,
+            "routable": 2,
             "unmapped": ["condor_submit_job"],
             "stale": ["condor_old_tool"],
+            "unroutable": [],
         }
     ]
+
+
+# ---------------------------------------------------------------------------
+# A backend renamed its tools away from an apply_namespace: false service's
+# prefix (atlas-search-mcp-bridge's atlas_opensearch_* -> aos_*, twice in
+# production). Driven through the real provider and middleware rather than
+# by seeding registry state, so the test fails if either stops recording.
+# ---------------------------------------------------------------------------
+
+_AOS_TOOLS = ("aos_aggregate", "aos_describe", "aos_inspect", "aos_query", "aos_search")
+_OLD_AOS_KEYS = (
+    "atlas_opensearch_aggregate",
+    "atlas_opensearch_describe",
+    "atlas_opensearch_inspect",
+    "atlas_opensearch_query",
+    "atlas_opensearch_search",
+)
+
+
+def _list_renamed_backend(
+    client, monkeypatch, advertised: tuple[str, ...]
+) -> list[dict]:
+    """Register the old atlas_search_service config, then list its backend
+    (advertising *advertised*) through its provider and EntitlementMiddleware.
+
+    Returns the captured log events. Both modules' loggers are swapped for
+    throwaway ones: the booted app configures structlog with
+    cache_logger_on_first_use, so the real module loggers' first use here
+    would pin them to this app boot's processor list, which the next boot
+    replaces -- and capture_logs in every later test (test_mcp_aggregator.py)
+    would then stop seeing their events.
+    """
+    monkeypatch.setattr(aggregator, "logger", structlog.get_logger(aggregator.__name__))
+    monkeypatch.setattr(
+        entitlement_mw, "logger", structlog.get_logger(entitlement_mw.__name__)
+    )
+    registry = client.app.state.service_registry
+    registry.register(
+        ServiceSpec(
+            name="atlas_search_service",
+            prefix="atlas_opensearch",
+            url="http://atlas-search.invalid/mcp",
+            transport="http",
+            required_permission=dict.fromkeys(_OLD_AOS_KEYS, "read_data"),
+            # No credential needed, so nothing but routing can make this
+            # service anything other than "available".
+            auth_type="none",
+            apply_namespace=False,
+        )
+    )
+    upstream = [
+        ProxyTool.from_mcp_tool(
+            lambda: None, McpTool(name=name, input_schema={"type": "object"})
+        )
+        for name in advertised
+    ]
+    monkeypatch.setattr(
+        aggregator.ProxyProvider, "_list_tools", AsyncMock(return_value=upstream)
+    )
+
+    async def _factory():
+        raise AssertionError("ProxyProvider._list_tools is stubbed above")
+
+    provider = aggregator._ObservableProxyProvider(
+        "atlas_search_service",
+        _factory,
+        registry=registry,
+        route_prefix="atlas_opensearch",
+    )
+    mw = EntitlementMiddleware(registry, client.app.state.entitlement_policy)
+
+    async def _run() -> None:
+        tools = await provider._list_tools()
+
+        async def _call_next(_context):
+            return tools
+
+        # No fastmcp context: the lint still runs on the full listing, and
+        # the (fail-closed) filtered result is irrelevant here.
+        await mw.on_list_tools(SimpleNamespace(fastmcp_context=None), _call_next)
+
+    with structlog.testing.capture_logs() as logs:
+        asyncio.run(_run())
+    return logs
+
+
+def test_renamed_backend_is_drift_and_not_available(
+    maintenance_client, make_principal, monkeypatch
+):
+    client, state = maintenance_client
+    state["principal"] = make_principal(groups=["af-admins", "atlas"])
+
+    logs = _list_renamed_backend(client, monkeypatch, _AOS_TOOLS)
+
+    mismatch_events = [
+        e for e in logs if e["event"] == "aggregator.tool_prefix_mismatch"
+    ]
+    assert len(mismatch_events) == 1
+    assert mismatch_events[0]["count"] == 5
+
+    drift = {d["service"]: d for d in client.get("/v1/admin/tool-mapping-drift").json()}
+    assert drift["atlas_search_service"] == {
+        "service": "atlas_search_service",
+        "prefix": "atlas_opensearch",
+        "advertised": 5,
+        "routable": 0,
+        "unmapped": [],
+        "stale": list(_OLD_AOS_KEYS),
+        "unroutable": list(_AOS_TOOLS),
+    }
+
+    servers = {s["name"]: s for s in client.get("/v1/catalog").json()["servers"]}
+    service = servers["atlas_search_service"]
+    assert service["status"] == "misconfigured"
+    assert "5 advertised, 0 routable" in service["status_detail"]
+    assert service["correlation_id"]
+
+
+def test_matching_backend_has_no_drift_and_is_available(
+    maintenance_client, make_principal, monkeypatch
+):
+    client, state = maintenance_client
+    state["principal"] = make_principal(groups=["af-admins", "atlas"])
+
+    logs = _list_renamed_backend(client, monkeypatch, _OLD_AOS_KEYS)
+
+    assert not [e for e in logs if e["event"] == "aggregator.tool_prefix_mismatch"]
+    assert client.get("/v1/admin/tool-mapping-drift").json() == []
+    servers = {s["name"]: s for s in client.get("/v1/catalog").json()["servers"]}
+    assert servers["atlas_search_service"]["status"] == "available"

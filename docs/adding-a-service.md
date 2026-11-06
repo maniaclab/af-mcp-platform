@@ -260,8 +260,9 @@ tools already named `rucio_list_dids`, `rucio_whoami`, etc., so leaving
 `apply_namespace: false` on its `rucio` entry, and callers see the plain
 `rucio_list_dids` name. The aggregator routes calls to an `apply_namespace:
 false` service by that same prefix, so every tool it advertises must be
-named `<prefix>_<tool>` -- a tool name missing the prefix is unreachable
-even though it can still appear in `tools/list`.
+named `<prefix>_<tool>` -- a tool name missing the prefix is unreachable,
+and it is hidden from `tools/list` unless its name happens to match another
+service's prefix (in which case it is attributed to that service instead).
 
 `false` is only safe when no other configured service can advertise an
 overlapping tool name — with one rucio site configured, that holds. It
@@ -276,6 +277,50 @@ double-prefixed names (`rucio_atlas_rucio_whoami`, `rucio_escape_rucio_whoami`)
 — ugly, but unambiguous and requires no upstream rucio-mcp change. See
 maniaclab/af-mcp-platform#113 for the
 full tradeoff discussion.
+
+#### `apply_namespace: false` couples `prefix` to the backend's tool names
+
+With `apply_namespace: false`, `prefix` is no longer a name the broker
+chooses: it has to match the prefix the backend puts on its own tool
+names. The same goes for every per-tool `required_permission` key and
+every `exclude_tools` entry, since those are written with the backend's
+names too. Routing, entitlement and audit all find a tool's service from
+`<prefix>_`. A tool without that prefix belongs to no service, so callers
+never see it.
+
+So a backend-side rename breaks the service even though the broker config
+never changed. When atlas-search-mcp-bridge renamed `atlas_opensearch_*` to
+`aos_*` while the deployment still had `prefix: atlas_opensearch`, all of
+the service's tools disappeared for every caller. This happened twice. Each
+time the backend was reachable and listed its tools without error, so
+nothing looked broken. The fix is config-only: set `prefix` to the
+backend's new prefix (`aos`) and rename the `required_permission` and
+`exclude_tools` keys to match. Upgrade the backend and the service entry in
+the same change.
+
+The broker reports the mismatch in the following places, as of the last
+time any caller listed the service's tools:
+
+- **Tool mapping drift** (`GET /v1/admin/tool-mapping-drift`, also the
+  portal Admin page): the service appears with its expected `prefix`,
+  `routable` / `advertised` counts, and an **unroutable** list of the
+  backend's offending tool names. A dict-form `required_permission` also
+  shows every old key as **stale**.
+- **Service status**: if the backend advertises tools and none of them can
+  be routed, `GET /v1/catalog` and `af_list_mcp_servers` report the service
+  as `misconfigured` ("No routable tools ...") rather than `available`.
+- **Metrics**: `af_mcp_service_tools_advertised` and
+  `af_mcp_service_tools_routable` (gauges, by `service`), and
+  `af_mcp_tool_mapping_drift_total{kind="unroutable"}`. The chart's optional
+  `prometheusRule` (`prometheusRule.enabled: true`) alerts as
+  `AfMcpServiceNoRoutableTools` once routable stays at 0 with advertised
+  above 0 for 15 minutes.
+- **Logs**: one `aggregator.tool_prefix_mismatch` warning per upstream
+  listing per service, carrying `service`, `prefix`, `count` and a `sample`
+  of the offending names.
+
+If only some of the tools are unroutable, the service stays `available`
+(the rest still work), but drift still lists the unroutable ones.
 
 Whatever you choose, the deployed tool names are what callers actually see
 via `tools/list` on `/mcp` — confirm the names you expect show up there (see
@@ -400,7 +445,9 @@ remaining job is mapping permissions to Keycloak groups via
 
   If a backend renames or adds tools, the dict and the backend's listing
   drift apart: **unmapped** tools (advertised, no key, no `__default__`) are
-  silently disabled, and **stale** keys map nothing. The broker logs
+  silently disabled, and **stale** keys map nothing (for an
+  `apply_namespace: false` service a rename can also make the tools
+  **unroutable** — see the `apply_namespace` section above). The broker logs
   `entitlement.tool_mapping_drift` once per change, counts them in
   `af_mcp_tool_mapping_drift_total`, and lists them at
   `GET /v1/admin/tool-mapping-drift` (the portal's admin page), as observed

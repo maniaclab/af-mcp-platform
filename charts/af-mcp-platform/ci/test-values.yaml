@@ -132,6 +132,11 @@ broker:
 tokenSweep:
   enabled: true
 
+# Exercises the backend-routing PrometheusRule template path in CI
+# (`helm template` only -- no Prometheus Operator needed to render it).
+prometheusRule:
+  enabled: true
+
 # Exercises the ranged networkPolicy.broker.servicePorts template path in CI
 # (a non-default port alongside the chart's defaults) so a broken render is
 # caught by `helm template`, not just by eyeballing the diff.

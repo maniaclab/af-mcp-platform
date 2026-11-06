@@ -33,6 +33,7 @@ from fastmcp.server.providers.proxy import (
 from mcp.types import ClientCapabilities, ElicitationCapability, ToolAnnotations
 from starlette.middleware import Middleware
 
+from af_mcp_broker import metrics
 from af_mcp_broker.authorization import get_principal_permissions
 from af_mcp_broker.credentials import CredentialKind, NeedsUnlock
 from af_mcp_broker.mcp.diagnostics import register_diagnostic_tools
@@ -47,6 +48,7 @@ from af_mcp_broker.mcp.registry import (
     LINK_IDENTITY_TOOL_NAME,
     LIST_IDENTITIES_TOOL_NAME,
     LIST_MCP_SERVERS_TOOL_NAME,
+    ToolRouting,
     identity_provider_url,
     namespaced_tool_name,
 )
@@ -1108,6 +1110,11 @@ class _SubjectListCacheEntry:
         return (time.monotonic() - self.timestamp) < ttl
 
 
+# How many unroutable tool names one aggregator.tool_prefix_mismatch warning
+# carries; the full set is on GET /v1/admin/tool-mapping-drift.
+_PREFIX_MISMATCH_LOG_SAMPLE = 5
+
+
 class _ObservableProxyProvider(ProxyProvider):
     """ProxyProvider that structured-logs a classified reason when its ``tools/list`` fails, then re-raises so ``AggregateProvider``'s existing ``provider_error_strategy="warn"`` still drops this service's contribution and keeps every other service's listing unaffected -- exactly today's degrade-gracefully behavior, just with an ``aggregator.service_list_failed`` structlog event on record instead of only fastmcp's own unparseable stdlib WARNING (see issue #121).
 
@@ -1405,24 +1412,46 @@ class _ObservableProxyProvider(ProxyProvider):
             # af_list_mcp_servers stop reporting "unavailable" for a service
             # that's actually fine again.
             self._registry.clear_list_failure(self._service_name)
-            if self._route_prefix is not None:
-                # A listed tool that doesn't match the route prefix would be
-                # visible in tools/list but unreachable via _get_tool's
-                # short-circuit above -- warn rather than filter, so the
-                # mismatch is on record instead of silently dead on arrival.
-                prefix = f"{self._route_prefix}_"
-                for tool in tools:
-                    if not tool.name.startswith(prefix):
-                        logger.warning(
-                            "aggregator.tool_prefix_mismatch",
-                            service=self._service_name,
-                            tool=tool.name,
-                            prefix=self._route_prefix,
-                        )
             if self._exclude_tools:
                 self._warn_on_missing_exclude_tools(tools)
                 tools = [t for t in tools if t.name not in self._exclude_tools]
+            self._record_tool_routing(tools)
             return tools
+
+    def _record_tool_routing(self, tools: Sequence[Tool]) -> None:
+        """Record how many of *tools* (one upstream listing, after ``exclude_tools``) this service's prefix can route -- onto the registry (ToolRouting) and the per-service advertised/routable gauges -- and warn once for the whole listing if any can't."""
+        unroutable: tuple[str, ...] = ()
+        if self._route_prefix is not None:
+            # A listed tool that doesn't match the route prefix is
+            # unreachable via _get_tool's short-circuit above, and
+            # EntitlementMiddleware hides it from tools/list unless its name
+            # happens to match another service's prefix -- warn rather than
+            # filter, so the mismatch is on record instead of silently dead
+            # on arrival.
+            prefix = f"{self._route_prefix}_"
+            unroutable = tuple(
+                sorted(tool.name for tool in tools if not tool.name.startswith(prefix))
+            )
+            if unroutable:
+                # One summary per upstream listing rather than one event per
+                # tool: a backend rename makes every tool mismatch at once.
+                logger.warning(
+                    "aggregator.tool_prefix_mismatch",
+                    service=self._service_name,
+                    prefix=self._route_prefix,
+                    count=len(unroutable),
+                    sample=list(unroutable[:_PREFIX_MISMATCH_LOG_SAMPLE]),
+                )
+        routing = ToolRouting(
+            service=self._service_name, advertised=len(tools), unroutable=unroutable
+        )
+        self._registry.record_tool_routing(routing)
+        metrics.service_tools_advertised.labels(service=self._service_name).set(
+            routing.advertised
+        )
+        metrics.service_tools_routable.labels(service=self._service_name).set(
+            routing.routable
+        )
 
     def _warn_on_missing_exclude_tools(self, tools: Sequence[Tool]) -> None:
         """Warn once per service (per process, for this provider instance) if a configured ``exclude_tools`` name never appears in *tools* -- the raw upstream listing, before filtering. Likely a typo (issue #173): an excluded name that never existed excludes nothing, silently. Only called from a genuine upstream fetch (``_list_tools_uncached``), never from a per-subject cache hit, so a persistently mistyped name doesn't spam a warning on every cached ``tools/list``."""

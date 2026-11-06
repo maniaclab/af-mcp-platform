@@ -426,8 +426,23 @@ describe('AdminPage annotation mismatches', () => {
 describe('AdminPage tool mapping drift', () => {
   const DRIFT: ToolMappingDrift = {
     service: 'condor_service',
+    prefix: 'condor',
+    advertised: 2,
+    routable: 2,
     unmapped: ['condor_submit_job'],
     stale: ['condor_old_tool'],
+    unroutable: [],
+  };
+  // An apply_namespace: false backend that renamed every tool away from the
+  // configured prefix: nothing routes, every mapped key is stale.
+  const RENAMED: ToolMappingDrift = {
+    service: 'atlas_search_service',
+    prefix: 'atlas_opensearch',
+    advertised: 2,
+    routable: 0,
+    unmapped: [],
+    stale: ['atlas_opensearch_query', 'atlas_opensearch_search'],
+    unroutable: ['aos_query', 'aos_search'],
   };
 
   beforeEach(() => {
@@ -451,6 +466,19 @@ describe('AdminPage tool mapping drift', () => {
     expect(text).toContain('condor_service');
     expect(text).toContain('condor_submit_job');
     expect(text).toContain('condor_old_tool');
+  });
+
+  it('renders unroutable tools with the expected prefix and routable count', async () => {
+    vi.mocked(fetchToolMappingDrift).mockResolvedValue([RENAMED]);
+    const wrapper = mount(AdminPage);
+    await flushPromises();
+
+    const text = wrapper.text();
+    expect(text).toContain('Unroutable (prefix mismatch)');
+    expect(text).toContain('atlas_search_service');
+    expect(text).toContain('expected atlas_opensearch_*');
+    expect(text).toContain('aos_query, aos_search');
+    expect(text).toContain('0 / 2');
   });
 
   it('renders an error state when fetchToolMappingDrift fails', async () => {

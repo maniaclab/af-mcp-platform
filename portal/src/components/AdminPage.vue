@@ -475,7 +475,10 @@ function nowSeconds(): number {
         <code>required_permission</code> entry and no <code>__default__</code>, so they are
         disabled: add them to the service's <code>required_permission</code>.
         <strong>Stale</strong> entries are mapped keys the backend no longer advertises (usually a
-        backend rename): rename or remove them.
+        backend rename): rename or remove them. <strong>Unroutable</strong> tools are advertised
+        without the service's <code>prefix</code> (an <code>apply_namespace: false</code> backend
+        that renamed its tools), so no caller sees them: update the service's
+        <code>prefix</code> and <code>required_permission</code> keys to the backend's names.
       </p>
 
       <div
@@ -498,6 +501,8 @@ function nowSeconds(): number {
         <thead>
           <tr>
             <th scope="col">Service</th>
+            <th scope="col">Routable / advertised</th>
+            <th scope="col">Unroutable (prefix mismatch)</th>
             <th scope="col">Unmapped (advertised, disabled)</th>
             <th scope="col">Stale (mapped, not advertised)</th>
           </tr>
@@ -505,6 +510,12 @@ function nowSeconds(): number {
         <tbody>
           <tr v-for="d in drifts" :key="d.service">
             <td>{{ d.service }}</td>
+            <td>{{ d.routable }} / {{ d.advertised }}</td>
+            <td>
+              <template v-if="d.unroutable.length > 0">
+                expected {{ d.prefix }}_*: {{ d.unroutable.join(', ') }}
+              </template>
+            </td>
             <td>{{ d.unmapped.join(', ') }}</td>
             <td>{{ d.stale.join(', ') }}</td>
           </tr>

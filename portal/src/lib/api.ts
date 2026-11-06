@@ -1008,12 +1008,20 @@ export async function fetchAnnotationMismatches(): Promise<AnnotationMismatch[]>
  * One service whose dict-form required_permission and advertised tools have
  * drifted apart (see broker mcp/registry.py::ToolMappingDrift). `unmapped`
  * tools are advertised but implicitly disabled; `stale` entries are mapped
- * keys the backend no longer advertises. Wire (namespaced) tool names.
+ * keys the backend no longer advertises; `unroutable` tools are advertised
+ * without the service's `prefix` (an apply_namespace: false backend that
+ * renamed its tools), so no caller can reach them. `advertised`/`routable`
+ * count the listing with and without `unroutable`. Wire (namespaced) tool
+ * names.
  */
 export interface ToolMappingDrift {
   service: string;
+  prefix: string;
+  advertised: number;
+  routable: number;
   unmapped: string[];
   stale: string[];
+  unroutable: string[];
 }
 
 /** Admin-only (require_admin, 403 otherwise); observed as callers list tools, like fetchAnnotationMismatches. */
