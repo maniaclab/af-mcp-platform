@@ -30,6 +30,7 @@ from af_mcp_broker.credentials.oauth21 import (
     OAuth21Provider,
     StoredOAuthCredential,
     VersionConflict,
+    normalize_token_response,
 )
 from af_mcp_broker.identity import Principal, keycloak_dependency
 from af_mcp_broker.oauth_state import (
@@ -493,6 +494,53 @@ async def test_is_linked_true_when_no_refresh_token_inside_refresh_window() -> N
     assert await provider.is_linked(_principal()) is True
 
 
+async def test_is_linked_true_when_no_expiry_and_no_refresh_token() -> None:
+    store = InMemoryTokenStore()
+    await store.write_cas(
+        SUBJECT,
+        ALIAS,
+        _make_cred(refresh_token=None, expires_at=None, refresh_expires_at=None),
+        expected_version=None,
+    )
+    provider = _make_provider(store)
+
+    assert await provider.is_linked(_principal()) is True
+
+
+# ---------------------------------------------------------------------------
+# normalize_token_response
+# ---------------------------------------------------------------------------
+
+
+def _normalize(data: dict[str, Any]) -> StoredOAuthCredential:
+    return normalize_token_response(
+        data,
+        alias=ALIAS,
+        subject=SUBJECT,
+        issuer=PROVIDER_ISSUER,
+        token_endpoint=TOKEN_ENDPOINT,
+    )
+
+
+def test_normalize_token_response_without_expires_in_has_no_expiry() -> None:
+    """RFC 6749 §5.1 makes ``expires_in`` only RECOMMENDED; Indico and GitHub
+    OAuth Apps omit it because their tokens do not expire -- issue #344."""
+    cred = _normalize(
+        {"access_token": "tok", "token_type": "Bearer", "scope": "read:user"}
+    )
+
+    assert cred.expires_at is None
+
+
+def test_normalize_token_response_with_expires_in_sets_expiry() -> None:
+    before = datetime.now(UTC)
+
+    cred = _normalize({"access_token": "tok", "expires_in": 3600})
+
+    assert cred.expires_at is not None
+    assert (cred.expires_at - before).total_seconds() == pytest.approx(3600, abs=5)
+
+
 # ---------------------------------------------------------------------------
 # OAuth21Provider.issue
 # ---------------------------------------------------------------------------
@@ -627,6 +675,48 @@ async def test_issue_returns_token_without_refresh_token_inside_refresh_window()
     issued = await provider.issue(_principal(), ALIAS, min_remaining_seconds=600)
 
     assert issued.payload["access_token"] == "access-token-1"
+
+
+async def test_issue_serves_token_without_expiry_and_reports_no_expiry() -> None:
+    """An AS that issues non-expiring tokens (Indico, GitHub OAuth Apps) gives
+    no expiry to report: the issued credential must say so rather than
+    invent one -- issue #344."""
+    store = InMemoryTokenStore()
+    await store.write_cas(
+        SUBJECT,
+        ALIAS,
+        _make_cred(refresh_token=None, expires_at=None, refresh_expires_at=None),
+        expected_version=None,
+    )
+    provider = _make_provider(store)
+
+    issued = await provider.issue(_principal(), ALIAS, min_remaining_seconds=600)
+
+    assert issued.payload["access_token"] == "access-token-1"
+    assert issued.expires_at is None
+
+
+async def test_issue_never_refreshes_token_without_expiry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A token with no known expiry is never inside the refresh window, even
+    when a refresh token happens to be stored alongside it."""
+    store = InMemoryTokenStore()
+    await store.write_cas(
+        SUBJECT, ALIAS, _make_cred(expires_at=None), expected_version=None
+    )
+    provider = _make_provider(store)
+    fake_client = _FakeTokenClient(
+        status_code=200, json_body={"access_token": "access-token-2"}
+    )
+    monkeypatch.setattr(
+        "af_mcp_broker.credentials.oauth21.get_http_client", lambda: fake_client
+    )
+
+    issued = await provider.issue(_principal(), ALIAS)
+
+    assert issued.payload["access_token"] == "access-token-1"
+    assert fake_client.calls == []
 
 
 async def test_issue_handles_version_conflict_during_refresh(

@@ -224,6 +224,22 @@ async def test_get_round_trips_secret_str_values(sa_token_path: Path) -> None:
     assert stored_data["refresh_token"] == "refresh-token-1"
 
 
+async def test_get_round_trips_credential_without_expiry(sa_token_path: Path) -> None:
+    fake = _FakeVault()
+    store = _make_store(fake, sa_token_path)
+
+    await store.write_cas(
+        SUBJECT,
+        ALIAS,
+        _make_cred(refresh_token=None, expires_at=None, refresh_expires_at=None),
+        expected_version=None,
+    )
+    got = await store.get(SUBJECT, ALIAS)
+
+    assert got is not None
+    assert got[0].expires_at is None
+
+
 # ---------------------------------------------------------------------------
 # write_cas() CAS semantics
 # ---------------------------------------------------------------------------

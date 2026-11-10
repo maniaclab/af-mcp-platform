@@ -69,8 +69,10 @@ class IssuedCredential(BaseModel):
     target: str
     kind: str  # "bearer" | "x509_proxy_ref" | "none"
     credential_type: str  # provider cred_class
-    expires_at: str  # ISO-8601
-    remaining_seconds: int
+    # ISO-8601; both None when the issuing AS reported no expiry
+    # (non-expiring oauth21 tokens, issue #344)
+    expires_at: str | None
+    remaining_seconds: int | None
     # bearer credentials carry a token the aggregator injects server-side.
     # x509 credentials return only handle/path metadata — never the PEM.
     token: str | None = None
@@ -400,12 +402,17 @@ def _resolve_servicex_target(request: Request, target: str | None) -> str:
 
 
 def _to_response(cred: _IssuedCredential) -> IssuedCredential:
-    remaining = max(0, int(cred.expires_at - time.time()))
+    if cred.expires_at is None:
+        expires_at: str | None = None
+        remaining: int | None = None
+    else:
+        expires_at = _iso(cred.expires_at)
+        remaining = max(0, int(cred.expires_at - time.time()))
     common: dict[str, Any] = {
         "target": cred.target,
         "kind": cred.kind.value,
         "credential_type": cred.cred_class,
-        "expires_at": _iso(cred.expires_at),
+        "expires_at": expires_at,
         "remaining_seconds": remaining,
     }
     if cred.kind == CredentialKind.BEARER:
@@ -693,6 +700,7 @@ async def create_krb5_ticket(
 
     payload = cred.payload
     renew_until = payload.get("renew_until")
+    assert cred.expires_at is not None  # a krb5 ticket always has an end time
     return KrbTicketMetadata(
         target=target,
         principal=payload["principal"],
@@ -753,6 +761,7 @@ async def link_krb5_keytab(
 
     payload = cred.payload
     renew_until = payload.get("renew_until")
+    assert cred.expires_at is not None  # a krb5 ticket always has an end time
     return KrbTicketMetadata(
         target=target,
         principal=payload["principal"],
@@ -1345,6 +1354,7 @@ async def redeem_krb5_ticket(request: Request) -> KrbTicketRedeemResponse:
         )
     )
 
+    assert cred.expires_at is not None  # a krb5 ticket always has an end time
     return KrbTicketRedeemResponse(
         ccache_b64=payload["ccache_b64"],
         principal=payload["principal"],

@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING
 import pytest
 from cryptography.fernet import Fernet
 
+from af_mcp_broker.credentials.base import CredentialKind, IssuedCredential
+from af_mcp_broker.credentials.oidc import OIDCProvider
 from af_mcp_broker.mcp.registry import ToolRouting
 
 if TYPE_CHECKING:
@@ -744,3 +746,43 @@ def test_credential_linked_provider_proceeds_to_issue(
 
     assert resp.status_code == 200, resp.text
     assert resp.json()["token"] == "fake-iam-token"
+
+
+def test_credential_without_expiry_reports_null_expiry(
+    app_client: tuple[TestClient, dict], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A credential the issuing AS reported no expiry for (non-expiring
+    oauth21 tokens, issue #344) has no expiry or remaining time to render."""
+
+    async def _linked(self, principal) -> bool:
+        return True
+
+    async def _fake_issue(
+        self,
+        principal,
+        target: str,
+        min_remaining_seconds: int = 300,
+        passphrase=None,
+    ) -> IssuedCredential:
+        return IssuedCredential(
+            cred_class=self.cred_class,
+            target=target,
+            kind=CredentialKind.BEARER,
+            expires_at=None,
+            payload={"access_token": "non-expiring-token", "token_type": "Bearer"},
+            audit_id="test-audit",
+            source="test",
+            execution_model=self.execution_model,
+        )
+
+    monkeypatch.setattr(OIDCProvider, "is_linked", _linked)
+    monkeypatch.setattr(OIDCProvider, "issue", _fake_issue)
+
+    client, _ = app_client
+    resp = client.post("/v1/credential", json={"target": "rucio"}, headers=_AUTH)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["token"] == "non-expiring-token"
+    assert body["expires_at"] is None
+    assert body["remaining_seconds"] is None

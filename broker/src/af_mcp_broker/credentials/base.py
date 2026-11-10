@@ -55,7 +55,9 @@ class IssuedCredential:
     cred_class: str  # "oidc_native" | "service_account" | "user_x509"
     target: str
     kind: CredentialKind
-    expires_at: float  # epoch seconds (UTC)
+    # epoch seconds (UTC); None when the issuing AS reported no expiry
+    # (non-expiring oauth21 tokens, issue #344)
+    expires_at: float | None
     # bearer: {"access_token": ..., "token_type": "Bearer"}
     # x509 (proxy_ref):    {"proxy_handle": ..., "proxy_path": ..., "delivery": "direct"}
     # x509 (proxy_redeem): {"proxy_handle": ..., "delivery": "redeem"}

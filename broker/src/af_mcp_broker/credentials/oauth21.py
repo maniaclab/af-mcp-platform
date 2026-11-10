@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol
@@ -38,11 +39,6 @@ _MIN_REFRESH_WINDOW_SECONDS = 300
 # re-link.
 _NO_REFRESH_EXPIRY_SKEW_SECONDS = 60
 
-# Lifetime assumed when a token response omits `expires_in` (it is only
-# RECOMMENDED by RFC 6749 §5.1). Deliberately short: a token whose real
-# lifetime is unknown is refreshed -- or, with no refresh_token, re-linked --
-# soon, rather than being trusted indefinitely.
-_DEFAULT_EXPIRES_IN_SECONDS = 300
 
 
 class StoredOAuthCredential(BaseModel):
@@ -57,7 +53,11 @@ class StoredOAuthCredential(BaseModel):
     subject: str
     access_token: SecretStr
     refresh_token: SecretStr | None
-    expires_at: datetime
+    # None when the token response omitted `expires_in` (only RECOMMENDED by
+    # RFC 6749 §5.1): an AS such as Indico or a GitHub OAuth App issues
+    # tokens that do not expire, and the token is served until a backend
+    # rejects it -- see issue #344.
+    expires_at: datetime | None
     refresh_expires_at: datetime | None
     scope: list[str]
     issuer: str
@@ -176,8 +176,10 @@ def normalize_token_response(
     the initial authorization_code exchange in ``api/oauth21.py``.
     """
     now = datetime.now(UTC)
-    expires_in = int(data.get("expires_in", _DEFAULT_EXPIRES_IN_SECONDS))
-    expires_at = now + timedelta(seconds=expires_in)
+    expires_in = data.get("expires_in")
+    expires_at = (
+        now + timedelta(seconds=int(expires_in)) if expires_in is not None else None
+    )
 
     refresh_token_raw = data.get("refresh_token")
     if refresh_token_raw is not None:
@@ -297,8 +299,12 @@ class OAuth21Provider(CredentialProvider):
 
         A token with a refresh_token is usable until ``expires_at`` (``issue``
         refreshes it ahead of that); one without can never be renewed, so it
-        stops being usable ``_NO_REFRESH_EXPIRY_SKEW_SECONDS`` early.
+        stops being usable ``_NO_REFRESH_EXPIRY_SKEW_SECONDS`` early. A token
+        with no known expiry is usable indefinitely, so it is never inside
+        any refresh window.
         """
+        if cred.expires_at is None:
+            return math.inf
         remaining = (cred.expires_at - datetime.now(UTC)).total_seconds()
         if cred.refresh_token is None:
             return remaining - _NO_REFRESH_EXPIRY_SKEW_SECONDS
@@ -479,7 +485,9 @@ class OAuth21Provider(CredentialProvider):
             cred_class=self.cred_class,
             target=target,
             kind=CredentialKind.BEARER,
-            expires_at=cred.expires_at.timestamp(),
+            expires_at=(
+                cred.expires_at.timestamp() if cred.expires_at is not None else None
+            ),
             payload={
                 "access_token": cred.access_token.get_secret_value(),
                 "token_type": "Bearer",
