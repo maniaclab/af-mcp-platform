@@ -18,6 +18,7 @@ from urllib.parse import parse_qs, urlparse
 
 import httpx
 import pytest
+import structlog
 from cryptography.fernet import Fernet
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
@@ -725,10 +726,13 @@ async def test_issue_never_refreshes_token_without_expiry(
 
 
 async def test_mark_rejected_unlinks_but_keeps_the_token() -> None:
-    """A backend rejecting the stored token marks it rejected rather than
-    deleting it: the user re-links (and re-consents) themselves -- issue #344."""
+    """A backend rejecting a stored token that cannot be refreshed marks it
+    rejected rather than deleting it: the user re-links (and re-consents)
+    themselves -- issue #344."""
     store = InMemoryTokenStore()
-    await store.write_cas(SUBJECT, ALIAS, _make_cred(), expected_version=None)
+    await store.write_cas(
+        SUBJECT, ALIAS, _make_cred(refresh_token=None), expected_version=None
+    )
     provider = _make_provider(store)
 
     await provider.mark_rejected(_principal(), "access-token-1")
@@ -794,13 +798,146 @@ async def test_mark_rejected_loses_a_write_race_quietly() -> None:
 
     store = _RacingStore()
     await InMemoryTokenStore.write_cas(
-        store, SUBJECT, ALIAS, _make_cred(), expected_version=None
+        store, SUBJECT, ALIAS, _make_cred(refresh_token=None), expected_version=None
     )
     provider = _make_provider(store)
 
     await provider.mark_rejected(_principal(), "access-token-1")
 
     assert await provider.is_linked(_principal()) is True
+
+
+async def test_mark_rejected_refreshes_once_instead_of_rejecting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With a refresh token, a 401 first earns one refresh: the AS may still
+    honor the refresh token, so the user need not re-link."""
+    store = InMemoryTokenStore()
+    await store.write_cas(SUBJECT, ALIAS, _make_cred(), expected_version=None)
+    provider = _make_provider(store)
+    fake_client = _FakeTokenClient(
+        status_code=200,
+        json_body={"access_token": "access-token-2", "expires_in": 3600},
+    )
+    monkeypatch.setattr(
+        "af_mcp_broker.credentials.oauth21.get_http_client", lambda: fake_client
+    )
+
+    await provider.mark_rejected(_principal(), "access-token-1")
+
+    assert [c["data"]["grant_type"] for c in fake_client.calls] == ["refresh_token"]
+    assert await provider.is_linked(_principal()) is True
+    stored = await store.get(SUBJECT, ALIAS)
+    assert stored is not None
+    assert stored[0].access_token.get_secret_value() == "access-token-2"
+    assert stored[0].rejected_at is None
+    assert stored[0].refreshed_after_rejection is True
+
+
+async def test_mark_rejected_rejects_a_token_already_refreshed_after_a_401(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A second 401, for the token that refresh produced, rejects it: one
+    refresh per rejection, never a refresh loop against a backend that
+    rejects everything."""
+    store = InMemoryTokenStore()
+    await store.write_cas(
+        SUBJECT,
+        ALIAS,
+        _make_cred(refreshed_after_rejection=True),
+        expected_version=None,
+    )
+    provider = _make_provider(store)
+    fake_client = _FakeTokenClient(
+        status_code=200, json_body={"access_token": "access-token-2"}
+    )
+    monkeypatch.setattr(
+        "af_mcp_broker.credentials.oauth21.get_http_client", lambda: fake_client
+    )
+
+    await provider.mark_rejected(_principal(), "access-token-1")
+
+    assert fake_client.calls == []
+    assert await provider.is_linked(_principal()) is False
+
+
+async def test_mark_rejected_rejects_when_the_as_refuses_the_refresh(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = InMemoryTokenStore()
+    await store.write_cas(SUBJECT, ALIAS, _make_cred(), expected_version=None)
+    provider = _make_provider(store)
+    fake_client = _FakeTokenClient(
+        status_code=400, json_body={"error": "invalid_grant"}
+    )
+    monkeypatch.setattr(
+        "af_mcp_broker.credentials.oauth21.get_http_client", lambda: fake_client
+    )
+
+    await provider.mark_rejected(_principal(), "access-token-1")
+
+    assert await provider.is_linked(_principal()) is False
+    stored = await store.get(SUBJECT, ALIAS)
+    assert stored is not None
+    assert stored[0].access_token.get_secret_value() == "access-token-1"
+
+
+async def test_mark_rejected_leaves_the_token_alone_when_the_as_is_unreachable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 5xx from the AS says nothing about the refresh token: leave the
+    credential as it was, so the next 401 tries again, rather than forcing a
+    re-link over an AS outage."""
+    store = InMemoryTokenStore()
+    await store.write_cas(SUBJECT, ALIAS, _make_cred(), expected_version=None)
+    provider = _make_provider(store)
+    fake_client = _FakeTokenClient(status_code=503, json_body={})
+    monkeypatch.setattr(
+        "af_mcp_broker.credentials.oauth21.get_http_client", lambda: fake_client
+    )
+
+    with structlog.testing.capture_logs() as logs:
+        await provider.mark_rejected(_principal(), "access-token-1")
+
+    assert await provider.is_linked(_principal()) is True
+    stored = await store.get(SUBJECT, ALIAS)
+    assert stored is not None
+    assert stored[0].access_token.get_secret_value() == "access-token-1"
+    assert stored[0].refreshed_after_rejection is False
+    assert [e["event"] for e in logs] == ["oauth21.mark_rejected.refresh_failed"]
+    assert logs[0]["log_level"] == "warning"
+
+
+async def test_issue_refresh_clears_refreshed_after_rejection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A routine refresh starts a fresh token lifetime, so a later 401 earns
+    its own refresh again."""
+    store = InMemoryTokenStore()
+    await store.write_cas(
+        SUBJECT,
+        ALIAS,
+        _make_cred(
+            expires_at=datetime.now(UTC) + timedelta(seconds=60),
+            refreshed_after_rejection=True,
+        ),
+        expected_version=None,
+    )
+    provider = _make_provider(store)
+    fake_client = _FakeTokenClient(
+        status_code=200,
+        json_body={"access_token": "access-token-2", "expires_in": 3600},
+    )
+    monkeypatch.setattr(
+        "af_mcp_broker.credentials.oauth21.get_http_client", lambda: fake_client
+    )
+
+    await provider.issue(_principal(), ALIAS)
+
+    stored = await store.get(SUBJECT, ALIAS)
+    assert stored is not None
+    assert stored[0].access_token.get_secret_value() == "access-token-2"
+    assert stored[0].refreshed_after_rejection is False
 
 
 async def test_issue_handles_version_conflict_during_refresh(

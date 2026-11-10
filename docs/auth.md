@@ -1387,13 +1387,32 @@ expired entries, triggering a fresh mint on the next request.
 
 When an MCP server answers HTTP 401 to a request carrying an injected
 `oauth21-direct` token, on `tools/list`, `tools/call` or the portal's
-per-service tool listing, the broker records `rejected_at` on the stored
-credential (issue #344). From then on the account shows as unlinked, and
-`issue()` answers 401 with a re-link hint. The broker keeps the rejected
-token and never re-links on the user's behalf, because the AS may need the
-user's consent again. Re-linking from the portal's Identities page replaces
-the token. A 401 only counts against the token that was actually sent, so a
-late 401 for a token that has since been refreshed or re-linked is ignored.
+per-service tool listing, the broker reacts in one of three ways (issue #344):
+
+- **The token has a refresh token** (Rucio): the broker refreshes once, since
+  the AS may still honor the refresh token, and the user does nothing. The
+  refreshed token is flagged `refreshed_after_rejection`. If it also gets a
+  401, it is rejected (below), so a backend that rejects every token never
+  causes a refresh loop. A routine refresh or a re-link clears the flag.
+- **No refresh token** (Indico, JupyterHub), **the AS refuses the refresh**,
+  or **the refreshed token also gets a 401**: the broker records
+  `rejected_at` on the stored credential. From then on the account shows as
+  unlinked, and `issue()` answers 401 with a re-link hint. The broker keeps
+  the rejected token and never re-links on the user's behalf, because the
+  AS may need the user's consent again. Re-linking from the portal's
+  Identities page replaces the token.
+- **The AS can't be reached during that refresh** (network error or 5xx):
+  the broker leaves the credential as it was and logs
+  `oauth21.mark_rejected.refresh_failed`. The next 401 tries again. An AS
+  outage never forces a re-link.
+
+A 401 only counts against the token that was actually sent, so a late 401
+for a token that has since been refreshed or re-linked is ignored. A request
+that got a 401 is never replayed, because a tool call may have side effects.
+When the 401 lands on the listing that runs ahead of a tool call, the call
+itself already uses the refreshed token. That's because a listing that
+failed this way is not negative-cached like other listing failures, so the
+next listing tries again.
 
 This is what ends a token with no expiry, so the MCP server must answer
 HTTP 401 when the AS rejects the bearer. See

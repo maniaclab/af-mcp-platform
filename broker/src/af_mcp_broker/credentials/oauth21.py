@@ -67,6 +67,12 @@ class StoredOAuthCredential(BaseModel):
     # the AS may need their consent again. Defaults to None so records
     # written before this field existed load as not rejected.
     rejected_at: datetime | None = None
+    # Set when this token came from the one refresh a backend 401 earns
+    # (``OAuth21Provider.mark_rejected``), so a 401 for it rejects instead of
+    # refreshing again. A routine refresh or a re-link builds a fresh
+    # credential, which resets it. Defaults to False for the same reason as
+    # rejected_at.
+    refreshed_after_rejection: bool = False
 
     @field_validator("expires_at", "refresh_expires_at", "rejected_at")
     @classmethod
@@ -326,12 +332,20 @@ class OAuth21Provider(CredentialProvider):
         return self._usable_seconds(cred) > 0
 
     async def mark_rejected(self, principal: Principal, access_token: str) -> None:
-        """Mark the stored credential rejected if *access_token* is still the one stored.
+        """Handle a backend's 401 for *access_token*: refresh once, else mark it rejected.
 
-        Comparing tokens keeps a late 401 for a superseded token (since
-        refreshed, or re-linked) from rejecting its replacement. A lost CAS
-        race means something newer was written, so it is dropped the same
-        way.
+        Acts only if *access_token* is still the one stored, so a late 401
+        for a superseded token (since refreshed, or re-linked) leaves its
+        replacement alone. A lost CAS race means something newer was
+        written, so it is dropped the same way.
+
+        A credential with a refresh token first gets one refresh, since the
+        AS may still honor the refresh token. The refreshed token is flagged
+        ``refreshed_after_rejection``, so a 401 for it rejects rather than
+        refreshing again. Only a definite refusal from the AS rejects; if
+        the AS can't be reached the credential is left as it was and the
+        next 401 tries again. The request that got the 401 is never
+        replayed, since a tool call may have side effects.
         """
         entry = await self._store.get(principal.subject, self._alias)
         if entry is None:
@@ -339,17 +353,48 @@ class OAuth21Provider(CredentialProvider):
         cred, version = entry
         if cred.access_token.get_secret_value() != access_token:
             return
+
+        if cred.refresh_token is not None and not cred.refreshed_after_rejection:
+            try:
+                refreshed = await self._refresh(cred)
+            except HTTPException:
+                pass  # the AS refused the refresh token: reject below
+            except httpx.HTTPError as exc:
+                self._log.warning(
+                    "oauth21.mark_rejected.refresh_failed",
+                    subject=principal.subject,
+                    error=str(exc),
+                )
+                return
+            else:
+                flagged = refreshed.model_copy(
+                    update={"refreshed_after_rejection": True}
+                )
+                if await self._write_unless_superseded(principal, flagged, version):
+                    self._log.info(
+                        "oauth21.refreshed_after_rejection",
+                        subject=principal.subject,
+                    )
+                return
+
         rejected = cred.model_copy(update={"rejected_at": datetime.now(UTC)})
+        if await self._write_unless_superseded(principal, rejected, version):
+            self._log.warning("oauth21.credential_rejected", subject=principal.subject)
+
+    async def _write_unless_superseded(
+        self, principal: Principal, cred: StoredOAuthCredential, version: int
+    ) -> bool:
+        """CAS-write *cred* over *version*; False if something newer was written first."""
         try:
             await self._store.write_cas(
-                principal.subject, self._alias, rejected, expected_version=version
+                principal.subject, self._alias, cred, expected_version=version
             )
         except VersionConflict:
             self._log.info(
                 "oauth21.mark_rejected.superseded", subject=principal.subject
             )
-            return
-        self._log.warning("oauth21.credential_rejected", subject=principal.subject)
+            return False
+        return True
 
     async def issue(
         self,

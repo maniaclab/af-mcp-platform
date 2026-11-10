@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -13,6 +14,7 @@ from fastmcp.server.auth.providers.jwt import StaticTokenVerifier
 from fastmcp.server.dependencies import get_http_headers
 from fastmcp.utilities.tests import run_server_async
 from pydantic import SecretStr
+from starlette.responses import JSONResponse
 
 from af_mcp_broker.authorization import EntitlementPolicy
 from af_mcp_broker.credentials import (
@@ -28,11 +30,14 @@ from af_mcp_broker.credentials.oauth21 import (
     OAuth21Provider,
     StoredOAuthCredential,
 )
+from af_mcp_broker.http import aclose_http_client
 from af_mcp_broker.mcp.aggregator import build_aggregator
 from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
+
+    from starlette.requests import Request
 
     from af_mcp_broker.identity import Principal
 
@@ -326,25 +331,61 @@ async def test_auth_type_none_skips_credential_resolution(
 _ACCEPTED_TOKEN = "still-valid-token"
 
 
+@dataclass
+class _VerifyingBackend:
+    """A toy MCP backend that is also the toy authorization server."""
+
+    mcp_url: str
+    token_endpoint: str
+    # What the token endpoint hands out on the next refresh_token grant.
+    next_access_token: str = _ACCEPTED_TOKEN
+    refresh_grants: int = 0
+
+
 @pytest.fixture
-async def verifying_backend_url() -> AsyncIterator[str]:
-    """A toy backend that answers HTTP 401 to any bearer but _ACCEPTED_TOKEN."""
+async def verifying_backend() -> AsyncIterator[_VerifyingBackend]:
+    """Answers HTTP 401 on /mcp to any bearer but _ACCEPTED_TOKEN, and serves
+    a real refresh_token grant on /oauth/token."""
     mcp = FastMCP(
         name="verifying-backend",
         auth=StaticTokenVerifier(
             tokens={_ACCEPTED_TOKEN: {"client_id": "toy-user", "scopes": []}}
         ),
     )
+    backend: _VerifyingBackend | None = None
 
     @mcp.tool
     def ping() -> str:
         return "pong"
 
+    @mcp.custom_route("/oauth/token", methods=["POST"])
+    async def token(request: Request) -> JSONResponse:
+        assert backend is not None
+        form = await request.form()
+        assert form["grant_type"] == "refresh_token"
+        backend.refresh_grants += 1
+        return JSONResponse(
+            {"access_token": backend.next_access_token, "token_type": "Bearer"}
+        )
+
     async with run_server_async(mcp, path="/mcp") as url:
-        yield url
+        backend = _VerifyingBackend(
+            mcp_url=url, token_endpoint=url.removesuffix("/mcp") + "/oauth/token"
+        )
+        yield backend
+    # A refresh against /oauth/token goes through the process-wide shared
+    # client, which then holds connections bound to this test's event loop.
+    # Close it here, on that loop; otherwise the next test whose app
+    # lifespan closes it does so from another loop ("Event loop is closed").
+    await aclose_http_client()
 
 
-async def _oauth21_provider_holding(access_token: str) -> OAuth21Provider:
+async def _oauth21_provider_holding(
+    access_token: str,
+    *,
+    token_endpoint: str,
+    refresh_token: str | None = None,
+) -> OAuth21Provider:
     """A real OAuth21Provider whose store holds a non-expiring token for user-123."""
     store = InMemoryTokenStore()
     await store.write_cas(
@@ -354,12 +395,12 @@ async def _oauth21_provider_holding(access_token: str) -> OAuth21Provider:
             alias="toy-oauth",
             subject="user-123",
             access_token=SecretStr(access_token),
-            refresh_token=None,
+            refresh_token=SecretStr(refresh_token) if refresh_token else None,
             expires_at=None,
             refresh_expires_at=None,
             scope=["read:user"],
             issuer="https://toy-as.example",
-            token_endpoint="https://toy-as.example/oauth/token",
+            token_endpoint=token_endpoint,
         ),
         expected_version=None,
     )
@@ -367,7 +408,7 @@ async def _oauth21_provider_holding(access_token: str) -> OAuth21Provider:
         alias="toy-oauth",
         targets=frozenset({"toy"}),
         authorization_endpoint="https://toy-as.example/oauth/authorize",
-        token_endpoint="https://toy-as.example/oauth/token",
+        token_endpoint=token_endpoint,
         issuer="https://toy-as.example",
         scope="read:user",
         store=store,
@@ -376,14 +417,19 @@ async def _oauth21_provider_holding(access_token: str) -> OAuth21Provider:
 
 
 async def test_backend_401_marks_the_oauth21_credential_rejected(
-    aggregator_app_url, verifying_backend_url, sig_key, prime_jwks, make_principal
+    aggregator_app_url, verifying_backend, sig_key, prime_jwks, make_principal
 ) -> None:
+    """No refresh token (Indico, JupyterHub): the first 401 rejects."""
     prime_jwks([sig_key.jwk])
-    provider = await _oauth21_provider_holding("revoked-token")
+    provider = await _oauth21_provider_holding(
+        "revoked-token", token_endpoint=verifying_backend.token_endpoint
+    )
     aggregator_app_url.directory.groups_by_subject["user-123"] = ["atlas"]
     token = sig_key.sign(make_claims())
 
-    async for base_url in aggregator_app_url(provider, toy_url=verifying_backend_url):
+    async for base_url in aggregator_app_url(
+        provider, toy_url=verifying_backend.mcp_url
+    ):
         async with _bearer_client(base_url, token) as client:
             with pytest.raises(ToolError):
                 await client.call_tool("toy_ping", {})
@@ -392,20 +438,80 @@ async def test_backend_401_marks_the_oauth21_credential_rejected(
     assert await provider.is_linked(principal) is False
     with pytest.raises(HTTPException, match="rejected"):
         await provider.issue(principal, "toy")
+    assert verifying_backend.refresh_grants == 0
 
 
 async def test_backend_accepting_the_credential_leaves_it_linked(
-    aggregator_app_url, verifying_backend_url, sig_key, prime_jwks, make_principal
+    aggregator_app_url, verifying_backend, sig_key, prime_jwks, make_principal
 ) -> None:
     prime_jwks([sig_key.jwk])
-    provider = await _oauth21_provider_holding(_ACCEPTED_TOKEN)
+    provider = await _oauth21_provider_holding(
+        _ACCEPTED_TOKEN, token_endpoint=verifying_backend.token_endpoint
+    )
     aggregator_app_url.directory.groups_by_subject["user-123"] = ["atlas"]
     token = sig_key.sign(make_claims())
 
-    async for base_url in aggregator_app_url(provider, toy_url=verifying_backend_url):
+    async for base_url in aggregator_app_url(
+        provider, toy_url=verifying_backend.mcp_url
+    ):
         async with _bearer_client(base_url, token) as client:
             result = await client.call_tool("toy_ping", {})
 
     assert result.data == "pong"
     principal = make_principal(subject="user-123")
     assert await provider.is_linked(principal) is True
+
+
+async def test_backend_401_refreshes_a_refreshable_credential_instead(
+    aggregator_app_url, verifying_backend, sig_key, prime_jwks, make_principal
+) -> None:
+    """With a refresh token (Rucio), a 401 earns one refresh instead of a
+    rejection. The 401 lands on the listing that precedes the call in the same
+    request, and that failed listing is not negative-cached, so the call
+    itself already carries the refreshed token: the user sees no error."""
+    prime_jwks([sig_key.jwk])
+    provider = await _oauth21_provider_holding(
+        "stale-token",
+        token_endpoint=verifying_backend.token_endpoint,
+        refresh_token="refresh-1",
+    )
+    aggregator_app_url.directory.groups_by_subject["user-123"] = ["atlas"]
+    token = sig_key.sign(make_claims())
+
+    async for base_url in aggregator_app_url(
+        provider, toy_url=verifying_backend.mcp_url
+    ):
+        async with _bearer_client(base_url, token) as client:
+            result = await client.call_tool("toy_ping", {})
+
+    assert result.data == "pong"
+    principal = make_principal(subject="user-123")
+    assert await provider.is_linked(principal) is True
+    assert verifying_backend.refresh_grants == 1
+
+
+async def test_backend_401_for_the_refreshed_token_rejects_it(
+    aggregator_app_url, verifying_backend, sig_key, prime_jwks, make_principal
+) -> None:
+    """A backend that rejects the refreshed token too gets no second refresh."""
+    prime_jwks([sig_key.jwk])
+    verifying_backend.next_access_token = "also-revoked-token"
+    provider = await _oauth21_provider_holding(
+        "stale-token",
+        token_endpoint=verifying_backend.token_endpoint,
+        refresh_token="refresh-1",
+    )
+    aggregator_app_url.directory.groups_by_subject["user-123"] = ["atlas"]
+    token = sig_key.sign(make_claims())
+
+    for _ in range(2):
+        async for base_url in aggregator_app_url(
+            provider, toy_url=verifying_backend.mcp_url
+        ):
+            async with _bearer_client(base_url, token) as client:
+                with pytest.raises(ToolError):
+                    await client.call_tool("toy_ping", {})
+
+    principal = make_principal(subject="user-123")
+    assert await provider.is_linked(principal) is False
+    assert verifying_backend.refresh_grants == 1
