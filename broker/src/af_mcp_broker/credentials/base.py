@@ -139,6 +139,15 @@ class CredentialProvider(ABC):
         unlinking it, then removes the cache entry.
         """
 
+    async def mark_rejected(self, principal: Principal, access_token: str) -> None:  # noqa: B027
+        """Record that a backend answered HTTP 401 to *access_token*.  Default is a no-op.
+
+        Called by the aggregator for an injected bearer credential (issue
+        #344). OAuth21Provider overrides this so a rejected token stops
+        reading as linked until the user re-links; it must never re-link on
+        the user's behalf.
+        """
+
 
 def _new_audit_id() -> str:
     """Generate a short, collision-resistant audit correlation ID."""

@@ -240,6 +240,22 @@ async def test_get_round_trips_credential_without_expiry(sa_token_path: Path) ->
     assert got[0].expires_at is None
 
 
+async def test_get_reads_a_record_stored_without_rejected_at(
+    sa_token_path: Path,
+) -> None:
+    """Records linked before ``rejected_at`` existed must still load, as not
+    rejected -- otherwise every existing link would break on upgrade."""
+    fake = _FakeVault()
+    store = _make_store(fake, sa_token_path)
+    await store.write_cas(SUBJECT, ALIAS, _make_cred(), expected_version=None)
+    fake.entries[(SUBJECT, ALIAS)]["data"].pop("rejected_at")
+
+    got = await store.get(SUBJECT, ALIAS)
+
+    assert got is not None
+    assert got[0].rejected_at is None
+
+
 # ---------------------------------------------------------------------------
 # write_cas() CAS semantics
 # ---------------------------------------------------------------------------

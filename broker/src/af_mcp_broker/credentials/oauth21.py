@@ -63,12 +63,19 @@ class StoredOAuthCredential(BaseModel):
     issuer: str
     token_endpoint: AnyHttpUrl
     metadata: dict[str, Any] = {}
+    # Set when a backend answered HTTP 401 to this access token (issue #344).
+    # The token is kept rather than deleted: only the user can re-link, since
+    # the AS may need their consent again. Defaults to None so records
+    # written before this field existed load as not rejected.
+    rejected_at: datetime | None = None
 
-    @field_validator("expires_at", "refresh_expires_at")
+    @field_validator("expires_at", "refresh_expires_at", "rejected_at")
     @classmethod
     def _require_tz_aware(cls, value: datetime | None) -> datetime | None:
         if value is not None and value.tzinfo is None:
-            raise ValueError("expires_at/refresh_expires_at must be tz-aware (UTC)")
+            raise ValueError(
+                "expires_at/refresh_expires_at/rejected_at must be tz-aware (UTC)"
+            )
         return value
 
 
@@ -315,7 +322,35 @@ class OAuth21Provider(CredentialProvider):
         if entry is None:
             return False
         cred, _version = entry
+        if cred.rejected_at is not None:
+            return False
         return self._usable_seconds(cred) > 0
+
+    async def mark_rejected(self, principal: Principal, access_token: str) -> None:
+        """Mark the stored credential rejected if *access_token* is still the one stored.
+
+        Comparing tokens keeps a late 401 for a superseded token (since
+        refreshed, or re-linked) from rejecting its replacement. A lost CAS
+        race means something newer was written, so it is dropped the same
+        way.
+        """
+        entry = await self._store.get(principal.subject, self._alias)
+        if entry is None:
+            return
+        cred, version = entry
+        if cred.access_token.get_secret_value() != access_token:
+            return
+        rejected = cred.model_copy(update={"rejected_at": datetime.now(UTC)})
+        try:
+            await self._store.write_cas(
+                principal.subject, self._alias, rejected, expected_version=version
+            )
+        except VersionConflict:
+            self._log.info(
+                "oauth21.mark_rejected.superseded", subject=principal.subject
+            )
+            return
+        self._log.warning("oauth21.credential_rejected", subject=principal.subject)
 
     async def issue(
         self,
@@ -347,6 +382,16 @@ class OAuth21Provider(CredentialProvider):
                 ),
             )
         cred, version = entry
+
+        if cred.rejected_at is not None:
+            raise HTTPException(
+                status_code=401,
+                detail=(
+                    f"OAuth 2.1 token for alias {self._alias!r} was rejected "
+                    "by the service. Please re-link this account from the "
+                    "portal's Identities page."
+                ),
+            )
 
         if cred.refresh_token is None:
             # Nothing to refresh, so neither the refresh window nor the
