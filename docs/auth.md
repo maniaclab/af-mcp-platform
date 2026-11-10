@@ -1376,12 +1376,28 @@ inspect.
 | AF access token (portal SPA) | 5 minutes | `oidc-client-ts` silent renew via refresh_token grant (see [Portal auth](#portal-auth-oidc-public-client)) |
 | Broker-issued PAT (most MCP clients) | 90 days by default, or never-expiring by explicit opt-in | Not refreshed — revoke and re-mint (manually, or via [MCP OAuth discovery](#mcp-oauth-discovery-pat-bootstrap-issue-140) again) |
 | ATLAS IAM token (brokered) | 1 hour | Broker re-fetches from Keycloak on cache miss |
-| `oauth21-direct` backend token | Whatever the backend AS's `expires_in` says (300 seconds is assumed when the response omits it); e.g. 14 days for JupyterHub's default | With a refresh token: `refresh_token` grant once under 5 minutes (or the caller's `min_remaining_seconds`) remain. **Without one** (JupyterHub never issues them): served as-is until 60 seconds before expiry, after which the account shows as unlinked and the user re-links from the portal's Identities page |
+| `oauth21-direct` backend token | Whatever the backend AS's `expires_in` says; e.g. 14 days for JupyterHub's default. **No expiry** when the response omits `expires_in` (Indico, GitHub OAuth Apps): the token is treated as valid until a backend rejects it | With a refresh token: `refresh_token` grant once under 5 minutes (or the caller's `min_remaining_seconds`) remain. **Without one** (JupyterHub never issues them): served as-is until 60 seconds before expiry, after which the account shows as unlinked and the user re-links from the portal's Identities page. A token with no expiry is never refreshed. In every case, a backend answering HTTP 401 marks the token rejected (see below) |
 | x509 VOMS proxy | 12–192 hours (configurable) | voms-token-service mode: hands-free re-mint with the Vault-stored passphrase when the stored proxy expires. Legacy mode: re-mint Job on the next portal unlock |
 
 The `CredentialCache` stores each credential with its `expires_at` timestamp.
 A background janitor coroutine sweeps the cache every 60 seconds and evicts
 expired entries, triggering a fresh mint on the next request.
+
+### Rejected `oauth21-direct` tokens
+
+When an MCP server answers HTTP 401 to a request carrying an injected
+`oauth21-direct` token, on `tools/list`, `tools/call` or the portal's
+per-service tool listing, the broker records `rejected_at` on the stored
+credential (issue #344). From then on the account shows as unlinked, and
+`issue()` answers 401 with a re-link hint. The broker keeps the rejected
+token and never re-links on the user's behalf, because the AS may need the
+user's consent again. Re-linking from the portal's Identities page replaces
+the token. A 401 only counts against the token that was actually sent, so a
+late 401 for a token that has since been refreshed or re-linked is ignored.
+
+This is what ends a token with no expiry, so the MCP server must answer
+HTTP 401 when the AS rejects the bearer. See
+[Adding a Service](adding-a-service.md#backends-must-reject-a-bad-bearer-with-http-401).
 
 ---
 
