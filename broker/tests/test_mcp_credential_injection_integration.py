@@ -5,13 +5,13 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from conftest import make_claims, run_aggregator_async
+from fastapi import HTTPException
 from fastmcp import Client, FastMCP
 from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.exceptions import ToolError
-from fastmcp.server.dependencies import get_http_headers
 from fastmcp.server.auth.providers.jwt import StaticTokenVerifier
+from fastmcp.server.dependencies import get_http_headers
 from fastmcp.utilities.tests import run_server_async
-from fastapi import HTTPException
 from pydantic import SecretStr
 
 from af_mcp_broker.authorization import EntitlementPolicy

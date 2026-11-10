@@ -230,7 +230,9 @@ def _bearer_injection(
     reject the token that was actually sent (see ``mark_rejected``). Both
     are empty when *cred* carries no bearer token.
     """
-    token = cred.payload.get("access_token") if cred.kind == CredentialKind.BEARER else None
+    token = (
+        cred.payload.get("access_token") if cred.kind == CredentialKind.BEARER else None
+    )
     if not token:
         return {}, None
 

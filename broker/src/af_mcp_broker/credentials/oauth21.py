@@ -40,7 +40,6 @@ _MIN_REFRESH_WINDOW_SECONDS = 300
 _NO_REFRESH_EXPIRY_SKEW_SECONDS = 60
 
 
-
 class StoredOAuthCredential(BaseModel):
     """Normalized OAuth 2.1 token pair persisted in a ``TokenStore``.
 
