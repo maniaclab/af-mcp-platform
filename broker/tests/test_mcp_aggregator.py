@@ -1568,12 +1568,44 @@ async def test_list_tools_cache_hit_within_ttl_skips_second_upstream_call(
     assert client.call_count == 1
 
 
+def _injected_401_error() -> httpx2.HTTPStatusError:
+    request = httpx2.Request("GET", "http://example.invalid")
+    return httpx2.HTTPStatusError(
+        "unauthorized", request=request, response=httpx2.Response(401, request=request)
+    )
+
+
+async def test_list_tools_still_caches_a_401_with_no_credential_injected(
+    monkeypatch: pytest.MonkeyPatch, make_principal
+) -> None:
+    """An unlinked caller's uncredentialed 401 (rucio-mcp) stays
+    negative-cached: nothing changed that a retry could pick up."""
+    client = _CountingListClient(error=_injected_401_error())
+    registry = ServiceRegistry()
+    registry.register(_spec())
+    provider = aggregator._ObservableProxyProvider(
+        "example", lambda: client, registry=registry, cache_ttl=300.0
+    )
+    ctx = _patch_context(
+        monkeypatch, make_principal(subject="alice"), active_backend=None
+    )
+    ctx.recorded_state["__list_credential_status__:example"] = (False, "not_linked")
+
+    for _ in range(2):
+        with pytest.raises(McpError):
+            await provider._list_tools()
+
+    assert client.call_count == 1
+
+
 async def test_list_tools_per_subject_isolation_one_401_one_success(
     monkeypatch: pytest.MonkeyPatch, make_principal
 ) -> None:
     """Two principals against the same service: alice's upstream listing
     401s, bob's succeeds -- neither may be served the other's cached
-    outcome."""
+    outcome. Alice is unlinked (no credential injected, the rucio-mcp case),
+    so her 401 is negative-cached; an injected credential's 401 is not (see
+    test_list_tools_does_not_cache_a_401_for_an_injected_credential)."""
     request = httpx2.Request("GET", "http://example.invalid")
     response = httpx2.Response(401, request=request)
     unauthorized = httpx2.HTTPStatusError(
@@ -1597,7 +1629,9 @@ async def test_list_tools_per_subject_isolation_one_401_one_success(
         ctx = _patch_context(
             monkeypatch, make_principal(subject=subject), active_backend=None
         )
-        ctx.recorded_state["__list_credential_status__:example"] = (True, None)
+        ctx.recorded_state["__list_credential_status__:example"] = (
+            (False, "not_linked") if subject == "alice" else (True, None)
+        )
         monkeypatch.setattr(provider, "client_factory", lambda c=client: c)
         if subject == "alice":
             with pytest.raises(McpError):
@@ -1868,6 +1902,34 @@ _LIST_KIND_CASES = [
     ("_list_resource_templates", "resource_templates"),
     ("_list_prompts", "prompts"),
 ]
+
+
+@pytest.mark.parametrize(("method_name", "client_attr"), _LIST_KIND_CASES)
+async def test_list_does_not_cache_a_401_for_an_injected_credential(
+    monkeypatch: pytest.MonkeyPatch,
+    make_principal,
+    method_name: str,
+    client_attr: str,
+) -> None:
+    """A 401 for an injected credential has just refreshed or rejected it
+    (issue #344), so the next listing must try again rather than replay the
+    cached failure for 30 seconds."""
+    client = _CountingListClient(error=_injected_401_error())
+    registry = ServiceRegistry()
+    registry.register(_spec())
+    provider = aggregator._ObservableProxyProvider(
+        "example", lambda: client, registry=registry, cache_ttl=300.0
+    )
+    ctx = _patch_context(
+        monkeypatch, make_principal(subject="alice"), active_backend=None
+    )
+    ctx.recorded_state["__list_credential_status__:example"] = (True, None)
+
+    for _ in range(2):
+        with pytest.raises(McpError):
+            await getattr(provider, method_name)()
+
+    assert client.call_count == 2
 
 
 @pytest.mark.parametrize(("method_name", "client_attr"), _LIST_KIND_CASES)

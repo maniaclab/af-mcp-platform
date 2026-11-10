@@ -1440,10 +1440,16 @@ class _ObservableProxyProvider(ProxyProvider):
             try:
                 items = await fetch()
             except Exception as exc:
-                self._subject_list_cache[key] = _SubjectListCacheEntry(
-                    error=exc, timestamp=time.monotonic()
-                )
-                self._prune_subject_list_cache()
+                # A 401 for an injected credential has just made its
+                # provider refresh or reject it (issue #344, _report_401), so
+                # the next listing must try again rather than replay this
+                # failure; every other failure is negative-cached.
+                reason, _ = await _classify_list_failure(exc, self._service_name)
+                if reason != "unauthorized":
+                    self._subject_list_cache[key] = _SubjectListCacheEntry(
+                        error=exc, timestamp=time.monotonic()
+                    )
+                    self._prune_subject_list_cache()
                 raise
             else:
                 self._subject_list_cache[key] = _SubjectListCacheEntry(
