@@ -9,7 +9,10 @@ from fastmcp import Client, FastMCP
 from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_http_headers
+from fastmcp.server.auth.providers.jwt import StaticTokenVerifier
 from fastmcp.utilities.tests import run_server_async
+from fastapi import HTTPException
+from pydantic import SecretStr
 
 from af_mcp_broker.authorization import EntitlementPolicy
 from af_mcp_broker.credentials import (
@@ -19,6 +22,11 @@ from af_mcp_broker.credentials import (
     ExecutionModel,
     IssuedCredential,
     NeedsUnlock,
+)
+from af_mcp_broker.credentials.oauth21 import (
+    InMemoryTokenStore,
+    OAuth21Provider,
+    StoredOAuthCredential,
 )
 from af_mcp_broker.mcp.aggregator import build_aggregator
 from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
@@ -120,29 +128,31 @@ def aggregator_app_url(settings, toy_backend_url, policy, static_principal_cache
     before calling ``aggregator_app_url(provider)``.
     """
     principal_cache, directory = static_principal_cache
-    registry = ServiceRegistry()
-    registry.register(
-        ServiceSpec(
-            name="toy",
-            prefix="toy",
-            url=toy_backend_url,
-            transport="http",
-            required_permission="read_data",
-            auth_type="bearer",
-        )
-    )
-    registry.register(
-        ServiceSpec(
-            name="open",
-            prefix="open",
-            url=toy_backend_url,
-            transport="http",
-            required_permission="__none__",
-            auth_type="none",
-        )
-    )
 
-    async def _run(provider: _FakeProvider):
+    async def _run(provider: CredentialProvider, toy_url: str | None = None):
+        """*toy_url* points the "toy" service at a different backend (e.g. one
+        that verifies the injected bearer) instead of the toy backend above."""
+        registry = ServiceRegistry()
+        registry.register(
+            ServiceSpec(
+                name="toy",
+                prefix="toy",
+                url=toy_url or toy_backend_url,
+                transport="http",
+                required_permission="read_data",
+                auth_type="bearer",
+            )
+        )
+        registry.register(
+            ServiceSpec(
+                name="open",
+                prefix="open",
+                url=toy_backend_url,
+                transport="http",
+                required_permission="__none__",
+                auth_type="none",
+            )
+        )
         credential_registry = CredentialRegistry()
         credential_registry.register("toy", provider)
         mcp = build_aggregator(
@@ -305,3 +315,97 @@ async def test_auth_type_none_skips_credential_resolution(
     # backend) proves credential resolution was skipped entirely.
     assert result.data is None
     assert provider.issue_calls == []
+
+
+# ---------------------------------------------------------------------------
+# A backend rejecting the injected credential (issue #344): a real backend
+# that verifies the bearer at the transport, the way af-jupyterhub-mcp does,
+# and a real OAuth21Provider over an in-memory token store.
+# ---------------------------------------------------------------------------
+
+_ACCEPTED_TOKEN = "still-valid-token"
+
+
+@pytest.fixture
+async def verifying_backend_url() -> AsyncIterator[str]:
+    """A toy backend that answers HTTP 401 to any bearer but _ACCEPTED_TOKEN."""
+    mcp = FastMCP(
+        name="verifying-backend",
+        auth=StaticTokenVerifier(
+            tokens={_ACCEPTED_TOKEN: {"client_id": "toy-user", "scopes": []}}
+        ),
+    )
+
+    @mcp.tool
+    def ping() -> str:
+        return "pong"
+
+    async with run_server_async(mcp, path="/mcp") as url:
+        yield url
+
+
+async def _oauth21_provider_holding(access_token: str) -> OAuth21Provider:
+    """A real OAuth21Provider whose store holds a non-expiring token for user-123."""
+    store = InMemoryTokenStore()
+    await store.write_cas(
+        "user-123",
+        "toy-oauth",
+        StoredOAuthCredential(
+            alias="toy-oauth",
+            subject="user-123",
+            access_token=SecretStr(access_token),
+            refresh_token=None,
+            expires_at=None,
+            refresh_expires_at=None,
+            scope=["read:user"],
+            issuer="https://toy-as.example",
+            token_endpoint="https://toy-as.example/oauth/token",
+        ),
+        expected_version=None,
+    )
+    return OAuth21Provider(
+        alias="toy-oauth",
+        targets=frozenset({"toy"}),
+        authorization_endpoint="https://toy-as.example/oauth/authorize",
+        token_endpoint="https://toy-as.example/oauth/token",
+        issuer="https://toy-as.example",
+        scope="read:user",
+        store=store,
+        client_id="toy-client",
+    )
+
+
+async def test_backend_401_marks_the_oauth21_credential_rejected(
+    aggregator_app_url, verifying_backend_url, sig_key, prime_jwks, make_principal
+) -> None:
+    prime_jwks([sig_key.jwk])
+    provider = await _oauth21_provider_holding("revoked-token")
+    aggregator_app_url.directory.groups_by_subject["user-123"] = ["atlas"]
+    token = sig_key.sign(make_claims())
+
+    async for base_url in aggregator_app_url(provider, toy_url=verifying_backend_url):
+        async with _bearer_client(base_url, token) as client:
+            with pytest.raises(ToolError):
+                await client.call_tool("toy_ping", {})
+
+    principal = make_principal(subject="user-123")
+    assert await provider.is_linked(principal) is False
+    with pytest.raises(HTTPException, match="rejected"):
+        await provider.issue(principal, "toy")
+
+
+async def test_backend_accepting_the_credential_leaves_it_linked(
+    aggregator_app_url, verifying_backend_url, sig_key, prime_jwks, make_principal
+) -> None:
+    prime_jwks([sig_key.jwk])
+    provider = await _oauth21_provider_holding(_ACCEPTED_TOKEN)
+    aggregator_app_url.directory.groups_by_subject["user-123"] = ["atlas"]
+    token = sig_key.sign(make_claims())
+
+    async for base_url in aggregator_app_url(provider, toy_url=verifying_backend_url):
+        async with _bearer_client(base_url, token) as client:
+            result = await client.call_tool("toy_ping", {})
+
+    assert result.data == "pong"
+    principal = make_principal(subject="user-123")
+    assert await provider.is_linked(principal) is True
