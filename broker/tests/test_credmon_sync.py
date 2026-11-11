@@ -337,3 +337,31 @@ async def test_lease_is_released_when_a_cycle_raises() -> None:
     assert await _service(
         _FakeStorer(_report()), state, clock, holder="pod-b"
     ).run_now()
+
+
+async def test_cycle_that_stored_nothing_but_failed_is_failed() -> None:
+    """Every store rejected (e.g. credd refusing them all) is a broken credmon,
+    not a partial success: it must not advance last_success_at, or the
+    stale-sync alert would never fire."""
+    state = InMemoryCredmonSyncState()
+    await state.write_status(
+        {"finished_at": 1.0, "last_success_at": 500.0, "outcome": "success"}
+    )
+    labels = {"outcome": "failed", "trigger": "timer"}
+    before = _sample("af_mcp_credmon_sync_runs_total", labels)
+    storer = _FakeStorer(
+        _report(
+            stored={"x509": 0, "krb5": 0},
+            failed={"x509": 6, "krb5": 7},
+            errors=["krb5: store failed for kratsg: credd code 8"],
+        )
+    )
+    service = _service(storer, state, _Clock(1.0 + _INTERVAL + 1))
+
+    status = await service.tick()
+
+    assert status is not None
+    assert status["outcome"] == "failed"
+    assert status["last_success_at"] == 500.0
+    assert status["failed"] == {"x509": 6, "krb5": 7}
+    assert _sample("af_mcp_credmon_sync_runs_total", labels) == before + 1

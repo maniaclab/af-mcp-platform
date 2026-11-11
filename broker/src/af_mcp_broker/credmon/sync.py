@@ -142,7 +142,7 @@ class CredmonSyncService:
                 "last_success_at": last_success_at,
             }
         else:
-            status = self._status_from_report(report, trigger)
+            status = self._status_from_report(report, trigger, last_success_at)
 
         credmon_sync_runs_total.labels(outcome=status["outcome"], trigger=trigger).inc()
         credmon_sync_duration_seconds.observe(
@@ -153,7 +153,9 @@ class CredmonSyncService:
         await self._state.write_status(status)
         return status
 
-    def _status_from_report(self, report: SyncReport, trigger: str) -> dict[str, Any]:
+    def _status_from_report(
+        self, report: SyncReport, trigger: str, last_success_at: float | None
+    ) -> dict[str, Any]:
         for metric_outcome, counts in (
             ("stored", report.stored),
             ("failed", report.failed),
@@ -167,14 +169,25 @@ class CredmonSyncService:
                     ).inc(count)
         data = asdict(report)
         errors: list[str] = data.pop("errors")
+        if not report.failed:
+            outcome = "success"
+        elif any(report.stored.values()):
+            outcome = "partial"
+        else:
+            # Nothing stored and something failed: the credmon is broken,
+            # not partly working. Counting it as a success would keep the
+            # stale-sync alert quiet while every store is rejected.
+            outcome = "failed"
         return {
             **data,
-            "outcome": "partial" if report.failed else "success",
+            "outcome": outcome,
             "trigger": trigger,
             "holder": self._holder,
             "errors": errors[:_MAX_STATUS_ERRORS],
             "errors_truncated": max(0, len(errors) - _MAX_STATUS_ERRORS),
-            "last_success_at": report.finished_at,
+            "last_success_at": report.finished_at
+            if outcome != "failed"
+            else last_success_at,
         }
 
     def start(self) -> None:
