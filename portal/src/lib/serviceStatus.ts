@@ -8,10 +8,9 @@
  * harnesses, so component logic stays thin and this module carries the
  * actual decisions.
  */
-import type { ServiceStatus, CatalogServer, IdentityProvider } from './api';
-import { identityLinkAnchor, identityLinkLabel } from './identityLinkLabel';
+import type { ServiceStatus, CatalogServer } from './api';
 
-export type StatusSeverity = 'ok' | 'info' | 'warning' | 'error';
+export type StatusSeverity = 'ok' | 'off' | 'info' | 'warning' | 'error';
 
 export interface StatusCta {
   label: string;
@@ -43,7 +42,9 @@ const LABELS: Record<ServiceStatus, string> = {
 
 const SEVERITIES: Record<ServiceStatus, StatusSeverity> = {
   available: 'ok',
-  link_required: 'warning',
+  // Not linking an account is the user's choice, not a fault: it only keeps
+  // that service's tools from being used.
+  link_required: 'off',
   permission_required: 'warning',
   unavailable: 'warning',
   misconfigured: 'error',
@@ -111,11 +112,9 @@ export function summarizeServices(servers: Pick<CatalogServer, 'status'>[]): Ser
 }
 
 export interface ServicesBanner {
-  tone: 'bad' | 'warn';
+  tone: 'bad';
   title: string;
   body: string;
-  /** One button, only when a single account fixes every service the banner counts. */
-  cta: StatusCta | null;
 }
 
 function countOf(n: number, singular: string, plural: string): string {
@@ -123,50 +122,42 @@ function countOf(n: number, singular: string, plural: string): string {
 }
 
 /**
- * The Services page's single banner. A failing or misconfigured service is a
- * problem; a service that only needs the user to link an account is a
- * warning, never counted as a failure. "Access required" needs an
- * administrator, so it never raises a banner of its own.
+ * The Services page's single banner, raised only for a failing or
+ * misconfigured service. A service that needs a linked account is the user's
+ * choice and "Access required" needs an administrator, so neither raises one.
  */
 export function resolveServicesBanner(
-  servers: Pick<CatalogServer, 'status' | 'credential_provider'>[],
-  providers: Pick<IdentityProvider, 'id' | 'display_name' | 'link_mechanism'>[],
+  servers: Pick<CatalogServer, 'status'>[],
 ): ServicesBanner | null {
   const failing = servers.filter((s) => s.status === 'unavailable' || s.status === 'misconfigured');
-  if (failing.length > 0) {
-    const misconfigured = failing.some((s) => s.status === 'misconfigured');
-    const unavailable = failing.some((s) => s.status === 'unavailable');
-    return {
-      tone: 'bad',
-      title: `${countOf(failing.length, 'service is', 'services are')} unavailable`,
-      body:
-        misconfigured && unavailable
-          ? 'Some are not responding and some are misconfigured. Try again later, then contact an administrator.'
-          : misconfigured
-            ? 'An administrator needs to fix the configuration.'
-            : 'The backend is not responding. Try again later.',
-      cta: null,
-    };
-  }
-
-  const unlinked = servers.filter((s) => s.status === 'link_required');
-  if (unlinked.length === 0) return null;
-  const aliases = new Set(unlinked.map((s) => s.credential_provider));
-  const [alias] = aliases;
-  const provider = providers.find((p) => p.id === alias);
-  const cta =
-    aliases.size === 1 && alias != null
-      ? {
-          label: identityLinkLabel(provider ?? { link_mechanism: 'redirect', display_name: alias }),
-          href: identityLinkAnchor(alias),
-        }
-      : null;
+  if (failing.length === 0) return null;
+  const misconfigured = failing.some((s) => s.status === 'misconfigured');
+  const unavailable = failing.some((s) => s.status === 'unavailable');
   return {
-    tone: 'warn',
-    title: `${countOf(unlinked.length, 'service needs', 'services need')} a linked account`,
-    body: cta
-      ? 'Link the account to unlock them.'
-      : 'Each one lists the account it needs. Link them on the Identities page.',
-    cta,
+    tone: 'bad',
+    title: `${countOf(failing.length, 'service is', 'services are')} unavailable`,
+    body:
+      misconfigured && unavailable
+        ? 'Some are not responding and some are misconfigured. Try again later, then contact an administrator.'
+        : misconfigured
+          ? 'An administrator needs to fix the configuration.'
+          : 'The backend is not responding. Try again later.',
   };
+}
+
+// What can I use, and what is actually wrong: problems first, then what works,
+// then what the user cannot use yet (access, then an unlinked account).
+const ORDER: Record<ServiceStatus, number> = {
+  unavailable: 0,
+  misconfigured: 0,
+  available: 1,
+  permission_required: 2,
+  link_required: 3,
+};
+
+/** Orders services by status group, alphabetically by name within a group. */
+export function sortServices<T extends Pick<CatalogServer, 'name' | 'status'>>(servers: T[]): T[] {
+  return [...servers].sort(
+    (a, b) => ORDER[a.status] - ORDER[b.status] || a.name.localeCompare(b.name),
+  );
 }

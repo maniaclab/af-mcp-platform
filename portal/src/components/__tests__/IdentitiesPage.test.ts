@@ -197,30 +197,28 @@ describe('IdentitiesPage banner', () => {
     expect(wrapper.find('.af-banner').exists()).toBe(false);
   });
 
-  it('names the one unlinked account and its link target', async () => {
+  it('raises no banner for an unlinked account', async () => {
     const wrapper = await mountWith([linkedProvider({ linked: false })]);
-    const banner = wrapper.find('.af-banner.warn');
-    expect(banner.text()).toContain('ATLAS IAM is not linked');
-    expect(banner.find('a.af-btn').attributes('href')).toBe('#identity-card-atlas-iam');
+    expect(wrapper.find('.af-banner').exists()).toBe(false);
   });
 
-  it('counts several unlinked accounts without offering a single target', async () => {
+  it('raises no banner for several unlinked accounts, and marks each as not linked', async () => {
     const wrapper = await mountWith([
       linkedProvider({ linked: false }),
       linkedProvider({ id: 'other', display_name: 'Other', linked: false }),
     ]);
-    const banner = wrapper.find('.af-banner.warn');
-    expect(banner.text()).toContain('2 accounts are not linked');
-    expect(banner.find('a.af-btn').exists()).toBe(false);
+    expect(wrapper.find('.af-banner').exists()).toBe(false);
+    expect(wrapper.findAll('.af-mark.off').length).toBeGreaterThanOrEqual(2);
+    expect(wrapper.find('.af-mark.warn').exists()).toBe(false);
+    expect(wrapper.find('.af-mark.bad').exists()).toBe(false);
   });
 
-  it('reports an account that needs access instead of offering to link it', async () => {
+  it('raises no banner for an account that needs access, which the card reports itself', async () => {
     const wrapper = await mountWith([
       linkedProvider({ linked: false, link_permission_denied: true }),
     ]);
-    const banner = wrapper.find('.af-banner.warn');
-    expect(banner.text()).toContain('ATLAS IAM needs access');
-    expect(banner.find('a.af-btn').exists()).toBe(false);
+    expect(wrapper.find('.af-banner').exists()).toBe(false);
+    expect(wrapper.text()).toContain('Access required');
   });
 
   it('shows the most urgent problem only: an expired proxy beats an unlinked account', async () => {

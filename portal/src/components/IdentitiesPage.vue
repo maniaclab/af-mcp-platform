@@ -131,8 +131,9 @@ interface StateBanner {
 
 // The one most urgent state problem, or null. Only an until-expiry x509 link
 // is judged by its proxy expiry: an auto-renewing link re-mints hands-free.
-// Problem beats warning: an expired proxy, then an expiring one, then an
-// account that needs access, then accounts that are simply not linked.
+// Problem beats warning: an expired proxy, then an expiring one. An account
+// that is not linked is the user's choice, and one that needs access is for an
+// administrator to fix, so neither raises a banner; each card says so itself.
 const stateBanner = computed<StateBanner | null>(() => {
   const now = new Date();
   const x509 = providers.value.find(
@@ -162,33 +163,6 @@ const stateBanner = computed<StateBanner | null>(() => {
     }
   }
 
-  const needsAccess = providers.value.filter((p) => !p.linked && p.link_permission_denied);
-  if (needsAccess.length > 0) {
-    const names = needsAccess.map((p) => p.display_name).join(', ');
-    return {
-      tone: 'warn',
-      title: needsAccess.length === 1 ? `${names} needs access` : `${names} need access`,
-      text: "Your account isn't authorized to link it yet. Contact the platform team to request access.",
-    };
-  }
-
-  const unlinked = providers.value.filter((p) => !p.linked && !p.link_permission_denied);
-  if (unlinked.length === 1) {
-    return {
-      tone: 'warn',
-      title: `${unlinked[0].display_name} is not linked`,
-      text: 'Link it so the tools that depend on it work with your account.',
-      targetId: unlinked[0].id,
-      button: `Link ${unlinked[0].display_name}`,
-    };
-  }
-  if (unlinked.length > 1) {
-    return {
-      tone: 'warn',
-      title: `${unlinked.length} accounts are not linked`,
-      text: 'Link each one below to use the tools it powers.',
-    };
-  }
   return null;
 });
 

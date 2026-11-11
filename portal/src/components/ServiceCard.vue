@@ -18,8 +18,9 @@ const props = defineProps<{
   poweredBy: PoweredBy;
 }>();
 
-const TONE: Record<StatusSeverity, 'ok' | 'info' | 'warn' | 'bad'> = {
+const TONE: Record<StatusSeverity, 'ok' | 'off' | 'info' | 'warn' | 'bad'> = {
   ok: 'ok',
+  off: 'off',
   info: 'info',
   warning: 'warn',
   error: 'bad',
@@ -53,6 +54,9 @@ const showStatusDetail = computed(
 const poweredByLinked = computed(() =>
   resolvePoweredByLinked(props.server.status, props.poweredBy.linked),
 );
+// A service whose only obstacle is an unlinked account reads as disabled, not
+// broken: the user chose not to link it, and that only keeps its tools unused.
+const isDisabled = computed(() => props.server.status === 'link_required');
 
 // Methods list -- fetched on expand, never on page load: the catalog's job is
 // a quick scan of reachable backends, and each listing fans the broker out to
@@ -70,7 +74,7 @@ const toolsView = computed(() =>
 </script>
 
 <template>
-  <div class="bc">
+  <div class="bc" :class="{ 'bc--off': isDisabled }">
     <div class="bc__main">
       <div class="bc__title">
         <span class="bc__name">{{ server.display_name }}</span>
@@ -180,8 +184,9 @@ const toolsView = computed(() =>
         <template v-else>
           Powered by
           <a :href="poweredBy.linkHref ?? '#'" class="bc__powered-by-link">{{ poweredBy.label }}</a>
+          <!-- The status line already says "Not linked" for a disabled row. -->
           <StatusMark
-            v-if="poweredByLinked !== null"
+            v-if="poweredByLinked !== null && !isDisabled"
             :tone="poweredByLinked ? 'ok' : 'off'"
             :label="poweredByLinked ? 'Linked' : 'Not linked'"
           />
@@ -258,6 +263,12 @@ const toolsView = computed(() =>
   color: var(--color-af-text);
   font-size: var(--text-16);
   font-weight: 500;
+}
+
+/* Secondary ink still meets AA contrast; the row just stops competing with
+ * the services the user can use. */
+.bc--off .bc__name {
+  color: var(--color-af-text-secondary);
 }
 
 .bc__prefix {

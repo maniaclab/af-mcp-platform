@@ -3,6 +3,7 @@ import {
   resolveServiceStatus,
   resolvePoweredByLinked,
   resolveServicesBanner,
+  sortServices,
   summarizeServices,
 } from '../serviceStatus';
 import type { ServiceStatus, CatalogServer } from '../api';
@@ -30,12 +31,12 @@ describe('resolveServiceStatus', () => {
     });
   });
 
-  it('reports "link_required" as "Not linked", a warning, with a link-identity CTA', () => {
+  it('reports "link_required" as "Not linked", a quiet off severity, with a link-identity CTA', () => {
     const view = resolveServiceStatus(
       statusFields('link_required', { status_detail: 'Link your identity to use this service.' }),
     );
     expect(view.label).toBe('Not linked');
-    expect(view.severity).toBe('warning');
+    expect(view.severity).toBe('off');
     expect(view.cta).toEqual({ label: 'Link identity', href: '/identities/' });
     expect(view.correlationId).toBeNull();
   });
@@ -93,62 +94,57 @@ describe('resolvePoweredByLinked', () => {
 });
 
 describe('resolveServicesBanner', () => {
-  const providers = [
-    { id: 'atlas-oidc', display_name: 'CERN', link_mechanism: 'redirect' as const },
-    { id: 'x509', display_name: 'Grid certificate', link_mechanism: 'passphrase' as const },
-  ];
-  const svc = (status: ServiceStatus, credential_provider: string | null = 'atlas-oidc') => ({
-    status,
-    credential_provider,
-  });
+  const svc = (status: ServiceStatus) => ({ status });
 
   it('is absent when every service is available or only needs an administrator', () => {
+    expect(resolveServicesBanner([svc('available'), svc('permission_required')])).toBeNull();
+  });
+
+  it('never raises a banner for services that only need a linked account', () => {
     expect(
-      resolveServicesBanner([svc('available'), svc('permission_required')], providers),
+      resolveServicesBanner([svc('available'), svc('link_required'), svc('link_required')]),
     ).toBeNull();
   });
 
   it('reports failing services as a problem naming how many are unavailable', () => {
-    const banner = resolveServicesBanner(
-      [svc('available'), svc('unavailable'), svc('misconfigured'), svc('link_required')],
-      providers,
-    );
+    const banner = resolveServicesBanner([
+      svc('available'),
+      svc('unavailable'),
+      svc('misconfigured'),
+      svc('link_required'),
+    ]);
     expect(banner?.tone).toBe('bad');
     expect(banner?.title).toBe('2 services are unavailable');
-    expect(banner?.cta).toBeNull();
   });
 
   it('uses the singular for one failing service', () => {
-    const banner = resolveServicesBanner([svc('misconfigured')], providers);
+    const banner = resolveServicesBanner([svc('misconfigured')]);
     expect(banner?.title).toBe('1 service is unavailable');
   });
+});
 
-  it('warns that services need a linked account, with one button when they share the account', () => {
-    const banner = resolveServicesBanner(
-      [svc('available'), svc('link_required'), svc('link_required')],
-      providers,
-    );
-    expect(banner?.tone).toBe('warn');
-    expect(banner?.title).toBe('2 services need a linked account');
-    expect(banner?.cta).toEqual({
-      label: 'Link CERN account',
-      href: '/identities/#identity-card-atlas-oidc',
-    });
+describe('sortServices', () => {
+  const named = (name: string, status: ServiceStatus) => ({ name, status });
+
+  it('puts failing services first, then available, then access required, then not linked', () => {
+    const sorted = sortServices([
+      named('a-link', 'link_required'),
+      named('b-ok', 'available'),
+      named('c-perm', 'permission_required'),
+      named('d-down', 'unavailable'),
+      named('e-bad', 'misconfigured'),
+    ]);
+    expect(sorted.map((s) => s.name)).toEqual(['d-down', 'e-bad', 'b-ok', 'c-perm', 'a-link']);
   });
 
-  it('uses the singular for one service needing a linked account', () => {
-    const banner = resolveServicesBanner([svc('link_required', 'x509')], providers);
-    expect(banner?.title).toBe('1 service needs a linked account');
-    expect(banner?.cta?.label).toBe('Link certificate');
-  });
-
-  it('offers no button when the services need different accounts', () => {
-    const banner = resolveServicesBanner(
-      [svc('link_required', 'atlas-oidc'), svc('link_required', 'x509')],
-      providers,
-    );
-    expect(banner?.tone).toBe('warn');
-    expect(banner?.cta).toBeNull();
+  it('keeps alphabetical order within a group', () => {
+    const sorted = sortServices([
+      named('zeta', 'available'),
+      named('alpha', 'available'),
+      named('mid', 'link_required'),
+      named('beta', 'link_required'),
+    ]);
+    expect(sorted.map((s) => s.name)).toEqual(['alpha', 'zeta', 'beta', 'mid']);
   });
 });
 

@@ -4,7 +4,8 @@
  * information; null means nothing is wrong and the slot stays empty.
  *
  * Priority: expired proxy, failing services, proxy expiring, token expiring,
- * services that need a linked account, no linked accounts.
+ * no linked accounts. Services that need a linked account never raise a
+ * banner: leaving an account unlinked is the user's choice.
  */
 import type { DashboardSummary } from './api';
 import { formatRelative } from './relativeTime';
@@ -30,7 +31,7 @@ export function overviewBanner(
   summary: DashboardSummary,
   now: number = Date.now(),
 ): OverviewBanner | null {
-  const { proxyStatus, linkedCount, failingCount, needsLinkCount, soonestExpiringToken } = summary;
+  const { proxyStatus, linkedCount, failingCount, soonestExpiringToken } = summary;
   const remaining = proxyStatus.cached ? proxyStatus.remaining_seconds : null;
 
   if (remaining != null && remaining <= 0) {
@@ -63,14 +64,6 @@ export function overviewBanner(
       title: `${soonestExpiringToken.name} expires ${expiresIn(soonestExpiringToken.expires_at, now)}`,
       body: 'Create a replacement and update the client.',
       action: { label: 'New token', href: '/tokens/' },
-    };
-  }
-  if (needsLinkCount > 0) {
-    return {
-      tone: 'warn',
-      title: `${countOf(needsLinkCount, 'service needs', 'services need')} a linked account`,
-      body: 'Link the account to use them.',
-      action: { label: 'Link an account', href: IDENTITIES_HREF },
     };
   }
   if (linkedCount === 0) {

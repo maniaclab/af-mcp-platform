@@ -80,13 +80,21 @@ describe('overviewBanner', () => {
     ).toBeNull();
   });
 
-  it('suggests linking an account when none is linked', () => {
+  it('gently suggests linking an account when none is linked', () => {
     const banner = overviewBanner(
       summary({ linkedCount: 0, proxyStatus: { cached: false, voms_attributes: [] } }),
       NOW,
     );
-    expect(banner?.tone).toBe('info');
-    expect(banner?.action).toEqual({ label: 'Link an account', href: '/identities/' });
+    expect(banner).toEqual({
+      tone: 'info',
+      title: 'No accounts are linked yet',
+      body: 'Link an account to use the services that need one.',
+      action: { label: 'Link an account', href: '/identities/' },
+    });
+  });
+
+  it('keeps the first-time hint even when services need a linked account', () => {
+    expect(overviewBanner(summary({ linkedCount: 0, needsLinkCount: 3 }), NOW)?.tone).toBe('info');
   });
 
   it('puts an expired proxy ahead of an unlinked account', () => {
@@ -179,32 +187,7 @@ describe('overviewBanner', () => {
     expect(banner?.title).toContain('grid proxy');
   });
 
-  it('warns that services need a linked account', () => {
-    const banner = overviewBanner(summary({ needsLinkCount: 2 }), NOW);
-    expect(banner?.tone).toBe('warn');
-    expect(banner?.title).toBe('2 services need a linked account');
-    expect(banner?.action).toEqual({ label: 'Link an account', href: '/identities/' });
-  });
-
-  it('uses the singular for one service needing a linked account', () => {
-    expect(overviewBanner(summary({ needsLinkCount: 1 }), NOW)?.title).toBe(
-      '1 service needs a linked account',
-    );
-  });
-
-  it('puts an expiring token ahead of services needing a linked account', () => {
-    const banner = overviewBanner(
-      summary({
-        needsLinkCount: 1,
-        soonestExpiringToken: { name: 'ci', expires_at: IN_3_DAYS },
-      }),
-      NOW,
-    );
-    expect(banner?.title).toBe('ci expires in 3 days');
-  });
-
-  it('puts services needing a linked account ahead of having no linked accounts', () => {
-    const banner = overviewBanner(summary({ needsLinkCount: 1, linkedCount: 0 }), NOW);
-    expect(banner?.tone).toBe('warn');
+  it('raises no banner for services that need a linked account', () => {
+    expect(overviewBanner(summary({ needsLinkCount: 2 }), NOW)).toBeNull();
   });
 });

@@ -359,6 +359,19 @@ describe('status line', () => {
     expect(wrapper.find('.bc__status-detail').exists()).toBe(false);
   });
 
+  it('shows "Not linked" once and marks the row as quiet', () => {
+    const wrapper = mountWith({ status: 'link_required' });
+    expect(wrapper.text().match(/Not linked/g)).toHaveLength(1);
+    expect(wrapper.find('.af-mark.off').exists()).toBe(true);
+    expect(wrapper.find('.af-mark.warn').exists()).toBe(false);
+    expect(wrapper.classes()).toContain('bc--off');
+  });
+
+  it('leaves an available service at full emphasis', () => {
+    const wrapper = mountWith({ status: 'available' });
+    expect(wrapper.classes()).not.toContain('bc--off');
+  });
+
   it('drops the sentence for an unavailable service, whose word already says it', () => {
     const wrapper = mountWith({
       status: 'unavailable',

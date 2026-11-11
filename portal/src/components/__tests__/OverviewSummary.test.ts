@@ -117,7 +117,7 @@ describe('OverviewSummary usage', () => {
     expect(usageRow?.text()).toContain('Status unavailable');
     expect(usageRow?.find('a').attributes('href')).toBe('/usage/');
     expect(wrapper.text()).not.toContain('Loading…');
-    expect(wrapper.text()).toContain('8 of 8 reachable');
+    expect(wrapper.text()).toContain('8 of 8 available');
   });
 });
 
@@ -136,7 +136,7 @@ describe('OverviewSummary status list', () => {
       expect(row.find('.af-mark').attributes('aria-hidden')).toBe('true');
       expect(row.find('svg').attributes('aria-hidden')).toBe('true');
     }
-    expect(rows[0]!.text()).toContain('8 of 8 reachable');
+    expect(rows[0]!.text()).toContain('8 of 8 available');
     expect(rows[0]!.find('.af-mark').classes()).toContain('ok');
     expect(rows[1]!.text()).toContain('3 linked');
     expect(rows[1]!.text()).toContain('grid certificate active');
@@ -188,7 +188,7 @@ describe('OverviewSummary status list', () => {
 });
 
 describe('OverviewSummary services and tokens rows', () => {
-  it('warns when some services need a linked account', async () => {
+  it('keeps the ok mark when some services are only not linked', async () => {
     vi.mocked(fetchDashboardSummary).mockResolvedValue({
       ...SUMMARY,
       reachableCount: 6,
@@ -197,8 +197,8 @@ describe('OverviewSummary services and tokens rows', () => {
     const wrapper = await mountSummary();
 
     const row = wrapper.findAll('.ov__row')[0]!;
-    expect(row.text()).toContain('6 of 8 reachable');
-    expect(row.find('.af-mark').classes()).toContain('warn');
+    expect(row.text()).toContain('6 of 8 available · 2 not linked');
+    expect(row.find('.af-mark').classes()).toContain('ok');
   });
 
   it('marks failing services as a problem', async () => {
@@ -210,7 +210,20 @@ describe('OverviewSummary services and tokens rows', () => {
     });
     const wrapper = await mountSummary();
 
-    expect(wrapper.findAll('.ov__row')[0]!.find('.af-mark').classes()).toContain('bad');
+    const row = wrapper.findAll('.ov__row')[0]!;
+    expect(row.find('.af-mark').classes()).toContain('bad');
+    expect(row.text()).toContain('6 of 8 available · 1 unavailable · 1 not linked');
+  });
+
+  it('shows the identities row as off, not a warning, when nothing is linked', async () => {
+    vi.mocked(fetchDashboardSummary).mockResolvedValue({
+      ...SUMMARY,
+      linkedCount: 0,
+      proxyStatus: { cached: false, voms_attributes: [] },
+    });
+    const wrapper = await mountSummary();
+    const mark = wrapper.findAll('.ov__row')[1]!.find('.af-mark');
+    expect(mark.classes()).toContain('off');
   });
 
   it('says when a token expires soon, as a warning', async () => {

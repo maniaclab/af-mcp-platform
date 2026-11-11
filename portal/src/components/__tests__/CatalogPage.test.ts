@@ -59,24 +59,13 @@ describe('services banner', () => {
     expect(wrapper.find('.af-banner').exists()).toBe(false);
   });
 
-  it('warns about services needing a linked account with one button to the fix', async () => {
+  it('raises no banner for services that need a linked account', async () => {
     const wrapper = await mountPage([
       server(),
       server({ name: 'panda', display_name: 'PanDA', ...BLOCKED }),
       server({ name: 'ami', display_name: 'AMI', ...BLOCKED }),
     ]);
-    const banner = wrapper.find('.af-banner');
-    expect(banner.classes()).toContain('warn');
-    expect(banner.text()).toContain('2 services need a linked account');
-    const buttons = banner.findAll('a.af-btn');
-    expect(buttons).toHaveLength(1);
-    expect(buttons[0].attributes('href')).toBe('/identities/#identity-card-atlas-oidc');
-    expect(buttons[0].text()).toBe('Link ATLAS IAM account');
-  });
-
-  it('uses the singular for one service needing a linked account', async () => {
-    const wrapper = await mountPage([server(), server({ name: 'ami', ...BLOCKED })]);
-    expect(wrapper.find('.af-banner').text()).toContain('1 service needs a linked account');
+    expect(wrapper.find('.af-banner').exists()).toBe(false);
   });
 
   it('reports a failing service as a problem, ahead of services needing a link', async () => {
@@ -92,6 +81,19 @@ describe('services banner', () => {
     expect(banner.classes()).toContain('bad');
     expect(banner.text()).toContain('1 service is unavailable');
     expect(banner.find('a.af-btn').exists()).toBe(false);
+  });
+});
+
+describe('service order', () => {
+  it('lists failing services first, then available, then not linked, alphabetically within each', async () => {
+    const wrapper = await mountPage([
+      server({ name: 'zz-ok', display_name: 'Zeta', status: 'available' }),
+      server({ name: 'aa-link', display_name: 'Alpha', ...BLOCKED }),
+      server({ name: 'mm-ok', display_name: 'Mu', status: 'available' }),
+      server({ name: 'bb-down', display_name: 'Beta', status: 'unavailable' }),
+    ]);
+    const names = wrapper.findAll('.bc__name').map((n) => n.text());
+    expect(names).toEqual(['Beta', 'Mu', 'Zeta', 'Alpha']);
   });
 });
 

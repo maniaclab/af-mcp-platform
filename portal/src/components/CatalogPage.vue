@@ -3,7 +3,7 @@ import { ref, computed, onMounted } from 'vue';
 import { fetchCatalog, fetchIdentities } from '../lib/api';
 import type { CatalogServer, IdentityProvider } from '../lib/api';
 import { resolvePoweredBy } from '../lib/catalog';
-import { resolveServicesBanner } from '../lib/serviceStatus';
+import { resolveServicesBanner, sortServices } from '../lib/serviceStatus';
 import { useLoadState } from '../lib/useLoadState';
 import ServiceCard from './ServiceCard.vue';
 import AsyncState from './ui/AsyncState.vue';
@@ -29,9 +29,7 @@ onMounted(() =>
   }, 'Failed to load catalog. Check that your identities are linked.'),
 );
 
-const sortedServers = computed<CatalogServer[]>(() =>
-  [...servers.value].sort((a, b) => a.name.localeCompare(b.name)),
-);
+const sortedServers = computed<CatalogServer[]>(() => sortServices(servers.value));
 
 const filteredServers = computed<CatalogServer[]>(() => {
   let result = sortedServers.value;
@@ -58,7 +56,7 @@ function poweredByFor(server: CatalogServer) {
   return resolvePoweredBy(server.credential_provider, providers.value);
 }
 
-const banner = computed(() => resolveServicesBanner(servers.value, providers.value));
+const banner = computed(() => resolveServicesBanner(servers.value));
 </script>
 
 <template>
@@ -94,9 +92,6 @@ const banner = computed(() => resolveServicesBanner(servers.value, providers.val
           <b>{{ banner.title }}</b>
           {{ banner.body }}
         </div>
-        <a v-if="banner.cta" :href="banner.cta.href" class="af-btn s">
-          {{ banner.cta.label }}
-        </a>
       </div>
 
       <section class="af-sect" aria-labelledby="cp-heading">

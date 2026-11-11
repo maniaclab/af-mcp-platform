@@ -70,10 +70,12 @@ const servicesStatus = computed(() => {
   const s = summary.value;
   if (!s) return pending(summaryLoading.value);
   if (s.serverCount === 0) return { tone: 'off', state: 'No services' } as const;
-  // Failing services are a problem; any other unreachable one (needs a linked
-  // account, or access) is a warning.
-  const tone: Tone = s.failingCount > 0 ? 'bad' : s.reachableCount < s.serverCount ? 'warn' : 'ok';
-  return { tone, state: `${s.reachableCount} of ${s.serverCount} reachable` };
+  // Only a failing service degrades the tone: a service that needs a linked
+  // account (or access) is not a fault.
+  const parts = [`${s.reachableCount} of ${s.serverCount} available`];
+  if (s.failingCount > 0) parts.push(`${s.failingCount} unavailable`);
+  if (s.needsLinkCount > 0) parts.push(`${s.needsLinkCount} not linked`);
+  return { tone: (s.failingCount > 0 ? 'bad' : 'ok') as Tone, state: parts.join(' · ') };
 });
 
 const identitiesStatus = computed(() => {
