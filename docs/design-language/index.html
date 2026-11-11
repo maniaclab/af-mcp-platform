@@ -10,7 +10,7 @@
 @font-face { font-family: "IBM Plex Mono"; src: url("fonts/ibm-plex-mono-latin-400-normal.woff2") format("woff2"); font-weight: 400; font-display: swap; }
 @font-face { font-family: "IBM Plex Mono"; src: url("fonts/ibm-plex-mono-latin-500-normal.woff2") format("woff2"); font-weight: 500; font-display: swap; }
 
-/* ---------- Layer 1: primitives. Never referenced by components. ---------- */
+/* ---------- Layer 1: primitives, which components never reference directly. ---------- */
 :root {
   --grey-0: #ffffff; --grey-50: #f6f6f6; --grey-100: #ececec; --grey-200: #e0e0e0; --grey-300: #c6c6c6;
   --grey-500: #8d8d8d; --grey-600: #5c5c5c; --grey-700: #3d3d42; --grey-800: #2a2a2d; --grey-900: #18181a;
@@ -201,7 +201,7 @@ table.tbl { width: 100%; border-collapse: collapse; }
 .check { display: inline-flex; gap: var(--space-8); align-items: center; }
 .check input { width: 16px; height: 16px; accent-color: var(--accent); margin: 0; }
 
-/* Tag: a neutral label for a category. Never a status. */
+/* Tag: a neutral label for a category, which is different from a status. */
 .tag { display: inline-flex; align-items: center; height: 20px; padding: 0 var(--space-8); border-radius: var(--radius-full); background: transparent; border: 1px solid var(--border); font: 500 var(--text-12)/1 var(--font-text); }
 
 /* Segmented control */
@@ -492,7 +492,7 @@ table.tbl { width: 100%; border-collapse: collapse; }
     <tr><td><code>--radius-4</code></td><td>4px</td><td><span class="chip" style="border-radius:4px"></span></td><td>Popover tooltips, chart indicators.</td></tr>
     <tr><td><code>--radius-8</code></td><td>8px</td><td><span class="chip" style="border-radius:8px"></span></td><td>Buttons, inputs, nav items, copy fields (Basecoat's <code>rounded-md</code>, <code>--radius</code> minus 2px).</td></tr>
     <tr><td><code>--radius-10</code></td><td>10px</td><td><span class="chip" style="border-radius:10px"></span></td><td>Containers: table boxes, row lists, banners, notes, fields, empty states. Basecoat's dialog panel is 14px.</td></tr>
-    <tr><td><code>--radius-full</code></td><td>999px</td><td><span class="chip" style="border-radius:999px"></span></td><td>Badges (tags) and round icon buttons. Not status pills.</td></tr>
+    <tr><td><code>--radius-full</code></td><td>999px</td><td><span class="chip" style="border-radius:999px"></span></td><td>Badges (tags) and round icon buttons; status uses the status mark.</td></tr>
     <tr><td><code>--border</code></td><td>1px</td><td></td><td>Container outlines, row rules.</td></tr>
     <tr><td><code>--border-strong</code></td><td>1px</td><td></td><td>Anything a person can type in or press.</td></tr>
   </table></div>
@@ -633,7 +633,7 @@ table.tbl { width: 100%; border-collapse: collapse; }
     <tr><td>Fill</td><td>Solid status colour.</td><td>Tinted status colour with a border.</td></tr>
     <tr><td>Action</td><td>At most one button, naming the fix.</td><td>A link in the sentence.</td></tr>
     <tr><td>Announced as</td><td><code>role="alert"</code> for a problem or warning; <code>role="status"</code> for information.</td><td><code>role="status"</code> for a hint.</td></tr>
-    <tr><td>Colour</td><td colspan="2">Always a status colour. Never the facility accent.</td></tr>
+    <tr><td>Colour</td><td colspan="2">A status colour in every case, so the facility accent is never a message.</td></tr>
   </table></div>
   <p class="used"><b>Used on:</b> Overview, Services, Identities, Tokens, Admin (drift); the maintenance bar on every page. Hints: Overview and Services.</p>
 </section>
@@ -662,7 +662,7 @@ table.tbl { width: 100%; border-collapse: collapse; }
     <li>First column is the name, in the text face at normal weight and full ink. It is the darkest thing in the row.</li>
     <li>Numbers are right-aligned with tabular figures. Dates and secondary facts are <code>--text-secondary</code>.</li>
     <li>Row actions are small buttons at the right edge. More than two go into a menu.</li>
-    <li>Header is unfilled, 13px, secondary colour. No capitals.</li>
+    <li>Header is unfilled, 13px, secondary colour and sentence case.</li>
     <li>Under 600px the table scrolls sideways inside its box; the page does not.</li>
   </ul></div>
   <p class="used"><b>Used on:</b> Tokens, Usage, Entitlements, Admin. Services and Identities are row lists (one bordered list, a rule between rows, a name and a status on each), not tables.</p>
@@ -723,7 +723,7 @@ table.tbl { width: 100%; border-collapse: collapse; }
   <p class="def">Basecoat's <code>chart</code> component, which wraps Chart.js, through <code>BarChart.vue</code>. Used for the daily activity on the Usage page.</p></header>
   <div class="stage"><div class="chart-demo" role="img" aria-label="Calls per day, example"><i style="height:62%"></i><i style="height:70%"></i><i style="height:48%"></i><i style="height:75%"></i><i style="height:30%"></i><i style="height:0"></i><i style="height:12%"></i><i style="height:55%"></i><i style="height:68%"></i><i style="height:80%"></i><i style="height:58%"></i><i style="height:44%"></i></div></div>
   <div class="prose"><ul>
-    <li>Bars are <code>--chart-1</code> (secondary text) and their hover is <code>--chart-2</code> (text): neutral steps, legible in both themes, never status colours. The grid is <code>--border</code>; axis labels are 12px in secondary text in IBM Plex Sans. No gradient, no shadow.</li>
+    <li>Bars are <code>--chart-1</code> (secondary text) and their hover is <code>--chart-2</code> (text): neutral steps, legible in both themes, never status colours. The grid is <code>--border</code>; axis labels are 12px in secondary text in IBM Plex Sans, with flat bars and no gradient or shadow.</li>
     <li>A canvas is opaque to assistive technology, so the chart is <code>role="img"</code> with a summary label and every value is repeated in a visually hidden table.</li>
     <li>It draws without animation when reduced motion is requested, and redraws with the new colours when the theme changes. Chart.js and Basecoat's chart script load only on the page that draws a chart.</li>
   </ul></div>
