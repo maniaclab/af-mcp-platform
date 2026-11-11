@@ -550,17 +550,39 @@
     max-width: 52ch;
   }
 
-  /* Page pattern: header with the one primary action, then titled sections. */
+  /* Page pattern: header with the one primary action, then titled sections.
+   * .af-page is the page root: it stacks the banner and the sections
+   * --af-page-gap apart (32px on comfortable pages, 24px with .compact, per
+   * the contract's density table). The header always leaves 24px below it,
+   * whether it sits outside the root (an .astro page) or inside it. */
+  .af-page {
+    --af-page-gap: var(--space-32);
+    display: flex;
+    flex-direction: column;
+    gap: var(--af-page-gap);
+  }
+  .af-page.compact {
+    --af-page-gap: var(--space-24);
+  }
   .af-page-head {
     display: flex;
     flex-wrap: wrap;
     gap: var(--space-12);
     justify-content: space-between;
     align-items: flex-end;
+    margin-bottom: var(--space-24);
   }
+  .af-page > .af-page-head {
+    margin-bottom: calc(var(--space-24) - var(--af-page-gap));
+  }
+  .af-page-head > div {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+  }
+  .af-page-head h1,
   .af-page-head h4 {
-    font-size: var(--text-24);
-    line-height: 1.3;
+    font: 600 var(--text-24) / 1.3 var(--font-sans);
   }
   .af-page-head p {
     color: var(--color-af-text-secondary);
@@ -570,9 +592,9 @@
     flex-direction: column;
     gap: var(--space-12);
   }
-  .af-sect h5 {
+  .af-sect > h2,
+  .af-sect > h5 {
     font: 600 var(--text-16) / 1.4 var(--font-sans);
-    margin: 0;
   }
 
   /* Page shell, shared by the signed-in and public layouts.
@@ -633,6 +655,29 @@
   }
   .skip-link:focus {
     top: var(--space-16);
+  }
+
+  /* Every af- class that sets display would otherwise override [hidden]. */
+  :is(
+    .af-st,
+    .af-btn,
+    .af-banner,
+    .af-note,
+    .af-field,
+    .af-check,
+    .af-tag,
+    .af-seg,
+    .af-copy,
+    .af-kv,
+    .af-stats,
+    .af-stat,
+    .af-menu,
+    .af-empty,
+    .af-page,
+    .af-page-head,
+    .af-sect
+  )[hidden] {
+    display: none;
   }
 
   @media (prefers-reduced-motion: reduce) {

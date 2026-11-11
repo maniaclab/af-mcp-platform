@@ -304,7 +304,7 @@ function handleServiceXRevoked(id: string) {
 </script>
 
 <template>
-  <div class="ip">
+  <div class="af-page">
     <!-- Banner slot: one message. A just-finished link attempt outranks the
          standing state, which returns once it is dismissed or fades. -->
     <div v-if="linkedErrorBanner" class="af-banner bad" role="alert">
@@ -446,12 +446,6 @@ function handleServiceXRevoked(id: string) {
 </template>
 
 <style scoped>
-.ip {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-24);
-}
-
 .ip__list {
   display: flex;
   flex-direction: column;

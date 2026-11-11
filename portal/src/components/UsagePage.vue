@@ -94,7 +94,7 @@ function barHeight(calls: number): string {
 </script>
 
 <template>
-  <div class="up">
+  <div class="af-page">
     <div class="up__toolbar">
       <SegmentedControl
         :model-value="String(days)"
@@ -153,7 +153,7 @@ function barHeight(calls: number): string {
         </div>
 
         <section class="af-sect" aria-labelledby="up-daily">
-          <h2 id="up-daily" class="up__heading">Daily activity</h2>
+          <h2 id="up-daily">Daily activity</h2>
           <div class="up__chart-box">
             <span class="up__chart-max">{{ formatTokens(maxDayCalls) }} calls</span>
             <div class="up__chart" role="group" aria-label="Calls per day over the window">
@@ -178,7 +178,7 @@ function barHeight(calls: number): string {
         </section>
 
         <section class="af-sect" aria-labelledby="up-service">
-          <h2 id="up-service" class="up__heading">By service</h2>
+          <h2 id="up-service">By service</h2>
           <div class="af-tbl-box">
             <table class="af-tbl">
               <thead>
@@ -217,12 +217,6 @@ function barHeight(calls: number): string {
 </template>
 
 <style scoped>
-.up {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-24);
-}
-
 .up__toolbar {
   display: flex;
   align-items: center;
@@ -237,11 +231,6 @@ function barHeight(calls: number): string {
 }
 .up__model code {
   font-family: var(--font-mono);
-}
-
-.up__heading {
-  font: 600 var(--text-16) / 1.4 var(--font-sans);
-  margin: 0;
 }
 
 /* Daily activity: plain CSS bars, a 1px baseline and a 1px line at the

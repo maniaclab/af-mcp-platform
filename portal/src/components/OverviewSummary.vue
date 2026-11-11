@@ -164,7 +164,7 @@ const showStats = computed(() => usage.value !== null && usage.value.totals.call
   </div>
 
   <section class="af-sect" aria-labelledby="ov-access-heading">
-    <h2 id="ov-access-heading" class="ov__heading">Your access</h2>
+    <h2 id="ov-access-heading">Your access</h2>
     <ul class="af-tbl-box ov__rows">
       <li v-for="row in rows" :key="row.key" class="ov__row">
         <div class="ov__area">
@@ -184,9 +184,7 @@ const showStats = computed(() => usage.value !== null && usage.value.totals.call
   </section>
 
   <section v-if="showStats && usage" class="af-sect" aria-labelledby="ov-usage-heading">
-    <h2 id="ov-usage-heading" class="ov__heading">
-      Usage in the last {{ usage.window_days }} days
-    </h2>
+    <h2 id="ov-usage-heading">Usage in the last {{ usage.window_days }} days</h2>
     <div class="af-stats">
       <div class="af-stat">
         <span>Tool calls</span>

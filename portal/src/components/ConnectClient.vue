@@ -30,7 +30,7 @@ curl -H "Authorization: Bearer $MCP_PAT" \\
 
 <template>
   <section class="af-sect" aria-labelledby="ov-connect-heading">
-    <h2 id="ov-connect-heading" class="ov__heading">Connect to this endpoint</h2>
+    <h2 id="ov-connect-heading">Connect to this endpoint</h2>
     <p class="ov__body">
       Add this server URL to Claude Desktop, Gemini Advanced, or any MCP-compatible client. Your
       account signs in automatically the first time you connect — you never paste a credential by

@@ -111,7 +111,7 @@ const blockedBanner = computed(() => {
       <a href="/identities/" class="af-btn secondary">Link identities</a>
     </template>
 
-    <div class="cp">
+    <div class="af-page">
       <div v-if="blockedBanner" class="af-banner bad" role="status">
         <span class="af-mark bad" aria-hidden="true"></span>
         <div>
@@ -168,12 +168,6 @@ const blockedBanner = computed(() => {
 </template>
 
 <style scoped>
-.cp {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-32);
-}
-
 .cp__hint {
   display: block;
 }

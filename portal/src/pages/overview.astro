@@ -16,7 +16,7 @@ import OverviewSummary from '../components/OverviewSummary.vue';
 ---
 
 <Base title="Overview">
-  <div class="ov">
+  <div class="af-page">
     <!-- ── Page header: title and identity beside the particle-track canvas ── -->
     <header class="ov-head">
       <div class="ov-head__text">
@@ -61,18 +61,6 @@ import OverviewSummary from '../components/OverviewSummary.vue';
 </script>
 
 <style is:global>
-  .ov {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-32);
-  }
-
-  /* Section and body styles shared by the islands rendered inside .ov. */
-  .ov .ov__heading {
-    font: 600 var(--text-16) / 1.4 var(--font-sans);
-    margin: 0;
-  }
-
   /* ── Header ──────────────────────────────────────────────────────────── */
   .ov-head {
     display: grid;

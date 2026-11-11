@@ -278,11 +278,6 @@ function meHasPermission(permission: string): boolean {
 </template>
 
 <style scoped>
-.ep h2 {
-  font: 600 var(--text-16) / 1.4 var(--font-sans);
-  margin: 0;
-}
-
 .ep__desc,
 .ep__summary,
 .ep__legend {

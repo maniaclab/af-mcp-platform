@@ -272,10 +272,10 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
 </script>
 
 <template>
-  <div class="tp">
+  <div class="af-page tp">
     <div class="af-page-head">
       <div>
-        <h1 class="tp__title">Tokens</h1>
+        <h1>Tokens</h1>
         <p>Create and revoke tokens for clients that can't sign in with a browser.</p>
       </div>
       <button
@@ -312,7 +312,7 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
     </div>
 
     <section class="af-sect" aria-labelledby="tp-list-heading">
-      <h2 id="tp-list-heading" class="tp__sect-title">Your tokens</h2>
+      <h2 id="tp-list-heading">Your tokens</h2>
       <AsyncState
         :loading="loading"
         :error="error"
@@ -430,7 +430,7 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
 
     <!-- issue #122: copy-paste snippets for minting/using a token outside the browser. -->
     <section class="af-sect" aria-labelledby="tp-cli-heading">
-      <h2 id="tp-cli-heading" class="tp__sect-title">Use from the command line</h2>
+      <h2 id="tp-cli-heading">Use from the command line</h2>
       <p class="tp__help">
         Create and use a token without opening a browser, for scripts or CI. See
         <a
@@ -613,24 +613,6 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
 </template>
 
 <style scoped>
-.tp {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-24);
-}
-
-.tp__title {
-  margin: 0;
-  font-size: var(--text-24);
-  line-height: 1.3;
-}
-
-.tp__sect-title {
-  margin: 0;
-  font-size: var(--text-16);
-  line-height: 1.4;
-}
-
 .tp__label {
   margin: 0;
   font-size: var(--text-13);
@@ -663,13 +645,6 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
   display: flex;
   flex-direction: column;
   gap: var(--space-12);
-}
-
-/* `.af-dialog` sets display: flex, which would override the UA's
- * display: none on a native <dialog> that is not open. Covers both the
- * mint dialog and the ConfirmDialog child. */
-.tp :deep(dialog:not([open])) {
-  display: none;
 }
 
 .tp__dialog {

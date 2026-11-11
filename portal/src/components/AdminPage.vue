@@ -238,7 +238,7 @@ const maintenanceBannerText = computed(() => {
 </script>
 
 <template>
-  <div class="ap">
+  <div class="af-page compact ap">
     <!-- Page banner: the single most urgent message. -->
     <div v-if="issueCount > 0" class="af-banner warn" role="status" data-af-admin-banner>
       <span class="af-mark warn" aria-hidden="true"></span>
@@ -269,7 +269,7 @@ const maintenanceBannerText = computed(() => {
     </div>
 
     <section class="af-sect" aria-labelledby="ap-usage-title">
-      <h2 id="ap-usage-title" class="ap__title">Usage across users</h2>
+      <h2 id="ap-usage-title">Usage across users</h2>
       <AsyncState
         inline
         :loading="usageState.loading.value"
@@ -302,7 +302,7 @@ const maintenanceBannerText = computed(() => {
     </section>
 
     <section id="ap-maintenance" class="af-sect" aria-labelledby="ap-maintenance-title">
-      <h2 id="ap-maintenance-title" class="ap__title">Maintenance mode</h2>
+      <h2 id="ap-maintenance-title">Maintenance mode</h2>
       <AsyncState
         inline
         :loading="maintenanceState.loading.value"
@@ -389,7 +389,6 @@ const maintenanceBannerText = computed(() => {
 
           <ConfirmDialog
             v-model:open="confirmingEnable"
-            class="ap__dialog"
             title="Enable maintenance mode?"
             confirm-label="Enable maintenance mode"
             busy-label="Enabling…"
@@ -412,7 +411,7 @@ const maintenanceBannerText = computed(() => {
     </section>
 
     <section id="ap-mismatches" class="af-sect" aria-labelledby="ap-mismatches-title">
-      <h2 id="ap-mismatches-title" class="ap__title">Annotation mismatches</h2>
+      <h2 id="ap-mismatches-title">Annotation mismatches</h2>
       <p class="ap__legend">
         Visibility only; enforcement is unchanged. A row means the backend's
         <code>readOnlyHint</code> disagrees with the broker's <code>action_type</code>. To resolve
@@ -463,7 +462,7 @@ const maintenanceBannerText = computed(() => {
     </section>
 
     <section id="ap-drift" class="af-sect" aria-labelledby="ap-drift-title">
-      <h2 id="ap-drift-title" class="ap__title">Tool mapping drift</h2>
+      <h2 id="ap-drift-title">Tool mapping drift</h2>
       <p class="ap__legend">
         Visibility only. <strong>Unmapped</strong> tools are advertised by the backend but have no
         <code>required_permission</code> entry and no <code>__default__</code>, so they are
@@ -520,7 +519,7 @@ const maintenanceBannerText = computed(() => {
     </section>
 
     <section class="af-sect" aria-labelledby="ap-credmon-title">
-      <h2 id="ap-credmon-title" class="ap__title">HTCondor credmon sync</h2>
+      <h2 id="ap-credmon-title">HTCondor credmon sync</h2>
       <p class="ap__legend">
         The broker stores a short-lived token per user and credential type in the facility's credd,
         so jobs that request <code>use_oauth_services = af_krb5, af_x509</code> get the user's
@@ -647,18 +646,6 @@ const maintenanceBannerText = computed(() => {
 </template>
 
 <style scoped>
-/* Admin is the compact page: sections sit 24px apart. */
-.ap {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-24);
-}
-
-.ap__title {
-  font: 600 var(--text-16) / 1.4 var(--font-sans);
-  margin: 0;
-}
-
 .ap__legend {
   margin: 0;
   max-width: 80ch;
@@ -701,11 +688,6 @@ const maintenanceBannerText = computed(() => {
 
 .ap__summary {
   justify-content: space-between;
-}
-
-/* .af-dialog sets display, which keeps a closed dialog on screen. */
-.ap__dialog:not([open]) {
-  display: none;
 }
 
 /* Lists of tool names wrap inside the cell instead of widening the table. */
