@@ -475,6 +475,11 @@
     flex-direction: column;
     gap: var(--space-16);
   }
+  /* A closed native <dialog> is hidden by the browser's own display: none,
+   * which the display: flex above would otherwise override. */
+  dialog.af-dialog:not([open]) {
+    display: none;
+  }
   .af-dialog h4 {
     font-size: var(--text-16);
   }
