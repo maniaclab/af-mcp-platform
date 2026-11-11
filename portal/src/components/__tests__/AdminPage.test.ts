@@ -123,7 +123,7 @@ beforeEach(() => {
 /** Click Enable, then the dialog's confirm button (enabling affects every user). */
 async function enableAndConfirm(wrapper: VueWrapper): Promise<void> {
   await wrapper.get('[data-af-maintenance-enable]').trigger('click');
-  await wrapper.get('dialog .af-btn.danger').trigger('click');
+  await wrapper.get('dialog .btn.af-danger').trigger('click');
   await flushPromises();
 }
 
@@ -531,7 +531,7 @@ describe('AdminPage maintenance confirmation', () => {
     expect(dialog.text()).toContain('Enable maintenance mode?');
     expect(dialog.text()).toContain('"Postgres upgrade"');
 
-    await dialog.get('.af-btn.danger').trigger('click');
+    await dialog.get('.btn.af-danger').trigger('click');
     await flushPromises();
     expect(setMaintenanceStatus).toHaveBeenCalledWith(true, 'Postgres upgrade');
   });
@@ -541,7 +541,7 @@ describe('AdminPage maintenance confirmation', () => {
     await flushPromises();
 
     await wrapper.get('[data-af-maintenance-enable]').trigger('click');
-    await wrapper.get('dialog .af-btn.quiet').trigger('click');
+    await wrapper.get('dialog .btn[data-variant="ghost"]').trigger('click');
 
     expect(setMaintenanceStatus).not.toHaveBeenCalled();
   });

@@ -29,7 +29,9 @@ describe('CopyField', () => {
     const btn = w.find('button');
     expect(btn.attributes('type')).toBe('button');
     expect(btn.text()).toBe('Copy');
-    expect(btn.classes()).toEqual(expect.arrayContaining(['af-btn', 'secondary', 's']));
+    expect(btn.classes()).toContain('btn');
+    expect(btn.attributes('data-variant')).toBe('outline');
+    expect(btn.attributes('data-size')).toBe('sm');
     expect(w.find('svg').attributes('aria-hidden')).toBe('true');
   });
 

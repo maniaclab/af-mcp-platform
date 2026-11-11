@@ -62,8 +62,8 @@ function permissionNote(permission: string): string {
     horizontal scroll); the box scrolls sideways only for a very narrow
     viewport.
   -->
-  <div class="af-tbl-box">
-    <table class="af-tbl tool-table" aria-label="Available methods">
+  <div class="table-container af-box">
+    <table class="tool-table table" aria-label="Available methods">
       <thead>
         <tr>
           <th scope="col">Method</th>
@@ -84,7 +84,8 @@ function permissionNote(permission: string): string {
             <PopoverTooltip :tooltip-id="`tt-badge-${tool.name}`" side="top">
               <button
                 type="button"
-                class="af-tag tool-table__badge"
+                class="badge tool-table__badge"
+                data-variant="outline"
                 :class="
                   tool.action_type === 'state_change'
                     ? 'tool-table__badge--state'
@@ -105,7 +106,9 @@ function permissionNote(permission: string): string {
             <button
               v-if="hasMore"
               type="button"
-              class="af-btn quiet s tool-table__more-toggle"
+              class="btn tool-table__more-toggle"
+              data-variant="ghost"
+              data-size="sm"
               :aria-expanded="expanded.has(tool.name)"
               @click="toggleExpanded(tool.name)"
             >

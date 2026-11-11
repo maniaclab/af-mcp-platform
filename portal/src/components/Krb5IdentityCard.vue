@@ -393,11 +393,11 @@ async function handleForget() {
       <p v-if="sourceNote" class="kc__source-note">{{ sourceNote }}</p>
     </template>
 
-    <p v-if="forgetError" class="af-note bad kc__error" role="alert">{{ forgetError }}</p>
+    <p v-if="forgetError" class="alert af-note bad kc__error" role="alert">{{ forgetError }}</p>
     <!-- A failed hands-free refresh that wasn't a 409 (see
          attemptHandsFreeRefresh()) -- a 409 opens the password form
          instead of landing here. -->
-    <p v-if="refreshError" class="af-note bad kc__error" role="alert">{{ refreshError }}</p>
+    <p v-if="refreshError" class="alert af-note bad kc__error" role="alert">{{ refreshError }}</p>
 
     <template #actions>
       <!-- While linked, this click attempts a hands-free mint before ever
@@ -406,7 +406,9 @@ async function handleForget() {
       <button
         v-if="!formOpen"
         type="button"
-        class="af-btn secondary s kc__btn kc__btn--link"
+        class="btn kc__btn kc__btn--link"
+        data-variant="outline"
+        data-size="sm"
         :disabled="busy"
         @click="handleMintClick"
       >
@@ -422,7 +424,9 @@ async function handleForget() {
       <button
         v-if="!keytabFormOpen"
         type="button"
-        class="af-btn secondary s kc__btn kc__btn--keytab"
+        class="btn kc__btn kc__btn--keytab"
+        data-variant="outline"
+        data-size="sm"
         :disabled="keytabBusy"
         @click="openKeytabForm"
       >
@@ -459,18 +463,18 @@ async function handleForget() {
              class (rather than relying on text matching) is what tests
              target to tell this apart from the unconditional password hint
              below. -->
-        <p v-if="refreshFallbackNotice" class="af-note warn kc__fallback-notice">
+        <p v-if="refreshFallbackNotice" class="alert af-note warn kc__fallback-notice">
           {{ refreshFallbackNotice }}
         </p>
 
-        <div class="af-field">
+        <div class="field af-narrow">
           <label for="krb5-link-username">CERN username</label>
           <input
             id="krb5-link-username"
             ref="usernameInput"
             v-model="username"
             type="text"
-            class="af-input"
+            class="input"
             autocomplete="username"
             :disabled="busy"
             required
@@ -478,31 +482,32 @@ async function handleForget() {
           />
         </div>
 
-        <div class="af-field">
+        <div class="field af-narrow">
           <label for="krb5-link-password">CERN password</label>
           <input
             id="krb5-link-password"
             v-model="password"
             type="password"
-            class="af-input"
+            class="input"
             autocomplete="current-password"
             :disabled="busy"
             required
             aria-required="true"
             aria-describedby="krb5-link-password-hint"
           />
-          <span id="krb5-link-password-hint" class="hint">
+          <p id="krb5-link-password-hint">
             Your CERN password is used once to create this ticket and is never stored — you'll need
             to re-enter it after the ticket expires.
-          </span>
+          </p>
         </div>
 
-        <p v-if="error" class="af-note bad kc__error" role="alert">{{ error }}</p>
+        <p v-if="error" class="alert af-note bad kc__error" role="alert">{{ error }}</p>
 
         <div class="ids__form-actions">
           <button
             type="button"
-            class="af-btn quiet kc__btn kc__btn--cancel"
+            class="btn kc__btn kc__btn--cancel"
+            data-variant="ghost"
             :disabled="busy"
             @click="closeForm"
           >
@@ -510,7 +515,8 @@ async function handleForget() {
           </button>
           <button
             type="submit"
-            class="af-btn secondary kc__btn kc__btn--submit"
+            class="btn kc__btn kc__btn--submit"
+            data-variant="outline"
             :disabled="busy || !username || !password"
             :aria-busy="busy"
           >
@@ -537,14 +543,14 @@ echo $?                                          # should print 0</code></pre>
           below.
         </p>
 
-        <div class="af-field">
+        <div class="field af-narrow">
           <label for="krb5-keytab-username">CERN username</label>
           <input
             id="krb5-keytab-username"
             ref="keytabUsernameInput"
             v-model="keytabUsername"
             type="text"
-            class="af-input"
+            class="input"
             autocomplete="username"
             :disabled="keytabBusy"
             required
@@ -552,13 +558,13 @@ echo $?                                          # should print 0</code></pre>
           />
         </div>
 
-        <div class="af-field">
+        <div class="field af-narrow">
           <label for="krb5-keytab-file">Keytab file</label>
           <input
             id="krb5-keytab-file"
             ref="keytabFileInput"
             type="file"
-            class="af-input"
+            class="input"
             :disabled="keytabBusy"
             required
             aria-required="true"
@@ -566,12 +572,13 @@ echo $?                                          # should print 0</code></pre>
           />
         </div>
 
-        <p v-if="keytabError" class="af-note bad kc__error" role="alert">{{ keytabError }}</p>
+        <p v-if="keytabError" class="alert af-note bad kc__error" role="alert">{{ keytabError }}</p>
 
         <div class="ids__form-actions">
           <button
             type="button"
-            class="af-btn quiet kc__btn kc__btn--cancel"
+            class="btn kc__btn kc__btn--cancel"
+            data-variant="ghost"
             :disabled="keytabBusy"
             @click="closeKeytabForm"
           >
@@ -579,7 +586,8 @@ echo $?                                          # should print 0</code></pre>
           </button>
           <button
             type="submit"
-            class="af-btn secondary kc__btn kc__btn--submit"
+            class="btn kc__btn kc__btn--submit"
+            data-variant="outline"
             :disabled="keytabBusy || !keytabUsername || !keytabFile"
             :aria-busy="keytabBusy"
           >

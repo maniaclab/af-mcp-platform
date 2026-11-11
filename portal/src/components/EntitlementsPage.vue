@@ -175,7 +175,10 @@ function meHasPermission(permission: string): boolean {
     loading-label="Loading entitlements…"
   >
     <template #empty>
-      <p>No permissions are declared in the policy yet.</p>
+      <header>
+        <h2>No permissions declared</h2>
+        <p>No permissions are declared in the policy yet.</p>
+      </header>
     </template>
 
     <section class="af-sect ep" aria-labelledby="ep-table-heading">
@@ -216,8 +219,8 @@ function meHasPermission(permission: string): boolean {
            grow the page down, which is a normal scroll; columns growing
            sideways scroll inside the box, with the permission column pinned
            so every mark stays readable against its row. -->
-      <div class="af-tbl-box">
-        <table class="af-tbl compact ep__matrix">
+      <div class="table-container af-box">
+        <table class="af-compact ep__matrix table">
           <caption class="sr-only">
             Permission to group entitlement matrix, with your resolved access as the first column
           </caption>
@@ -233,7 +236,7 @@ function meHasPermission(permission: string): boolean {
                 :class="{ ep__mine: isMineGroup(group) }"
               >
                 {{ groupLabel(group) }}
-                <span v-if="isMineGroup(group)" class="af-tag">you</span>
+                <span v-if="isMineGroup(group)" class="badge" data-variant="outline">you</span>
               </th>
             </tr>
           </thead>

@@ -199,11 +199,11 @@ function remainingText(seconds?: number | null): string {
         <p v-if="preflightLoading" class="xc__section-note" aria-live="polite">
           Checking certificate files…
         </p>
-        <p v-else-if="preflightError" class="af-note bad xc__error" role="alert">
+        <p v-else-if="preflightError" class="alert af-note bad xc__error" role="alert">
           {{ preflightError }}
         </p>
-        <div v-else-if="preflight" class="af-tbl-box">
-          <table class="af-tbl compact">
+        <div v-else-if="preflight" class="table-container af-box">
+          <table class="af-compact table">
             <thead>
               <tr>
                 <th>Check</th>
@@ -245,7 +245,7 @@ function remainingText(seconds?: number | null): string {
                 <!-- The actionable fix (e.g. the chmod 400 command) for a
                      failing check gets its own full-width row. -->
                 <tr v-if="!check.ok && check.detail" class="xc__detail-row">
-                  <td colspan="5" class="sub">{{ check.detail }}</td>
+                  <td colspan="5" class="af-sub">{{ check.detail }}</td>
                 </tr>
               </template>
             </tbody>
@@ -267,7 +267,9 @@ function remainingText(seconds?: number | null): string {
         <p v-if="proxyLoading" class="xc__section-note" aria-live="polite">
           Checking proxy status…
         </p>
-        <p v-else-if="proxyError" class="af-note bad xc__error" role="alert">{{ proxyError }}</p>
+        <p v-else-if="proxyError" class="alert af-note bad xc__error" role="alert">
+          {{ proxyError }}
+        </p>
         <template v-else-if="proxyStatus">
           <template v-if="proxyStatus.cached">
             <dl class="af-kv xc__proxy">
@@ -314,7 +316,9 @@ function remainingText(seconds?: number | null): string {
       <button
         v-if="!formOpen && !linked"
         type="button"
-        class="af-btn secondary s xc__btn xc__btn--link"
+        class="btn xc__btn xc__btn--link"
+        data-variant="outline"
+        data-size="sm"
         :disabled="busy"
         @click="openForm"
       >
@@ -326,7 +330,9 @@ function remainingText(seconds?: number | null): string {
       <button
         v-else-if="!formOpen && linked"
         type="button"
-        class="af-btn secondary s xc__btn xc__btn--relink"
+        class="btn xc__btn xc__btn--relink"
+        data-variant="outline"
+        data-size="sm"
         :disabled="busy"
         @click="openForm"
       >
@@ -339,50 +345,53 @@ function remainingText(seconds?: number | null): string {
          below, to store for renewal). -->
     <template v-if="formOpen" #form>
       <form novalidate @submit.prevent="handleSubmit">
-        <div class="af-field">
+        <div class="field af-narrow">
           <label for="x509-link-passphrase">Grid certificate passphrase</label>
           <input
             id="x509-link-passphrase"
             ref="passphraseInput"
             v-model="passphrase"
             type="password"
-            class="af-input"
+            class="input"
             autocomplete="current-password"
             :disabled="busy"
             required
             aria-required="true"
             aria-describedby="x509-link-passphrase-hint"
           />
-          <span id="x509-link-passphrase-hint" class="hint">
+          <p id="x509-link-passphrase-hint">
             Sent once to create the proxy — cleared from this page immediately after submission.
-          </span>
+          </p>
         </div>
 
         <!-- Custody consent: storing the passphrase is the user's explicit
              choice, defaulting to the hands-free-renewal behavior. -->
-        <div class="af-field">
-          <label class="af-check xc__consent">
+        <div class="field af-narrow">
+          <div class="field xc__consent" data-orientation="horizontal">
             <input
+              id="x509-link-remember"
               v-model="remember"
               type="checkbox"
+              class="input"
               :disabled="busy"
               aria-describedby="x509-consent-hint"
             />
-            <span>
+            <label for="x509-link-remember">
               Remember my passphrase for automatic renewal (stored encrypted in the AF vault)
-            </span>
-          </label>
-          <span v-if="!remember" id="x509-consent-hint" class="hint">
+            </label>
+          </div>
+          <p v-if="!remember" id="x509-consent-hint">
             Your proxy will work for its validity window, then you'll re-link here.
-          </span>
+          </p>
         </div>
 
-        <p v-if="error" class="af-note bad xc__error" role="alert">{{ error }}</p>
+        <p v-if="error" class="alert af-note bad xc__error" role="alert">{{ error }}</p>
 
         <div class="ids__form-actions">
           <button
             type="button"
-            class="af-btn quiet xc__btn xc__btn--cancel"
+            class="btn xc__btn xc__btn--cancel"
+            data-variant="ghost"
             :disabled="busy"
             @click="closeForm"
           >
@@ -390,7 +399,8 @@ function remainingText(seconds?: number | null): string {
           </button>
           <button
             type="submit"
-            class="af-btn secondary xc__btn xc__btn--submit"
+            class="btn xc__btn xc__btn--submit"
+            data-variant="outline"
             :disabled="busy || !passphrase"
             :aria-busy="busy"
           >

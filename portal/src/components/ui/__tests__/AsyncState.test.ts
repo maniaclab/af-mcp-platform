@@ -31,7 +31,7 @@ describe('AsyncState', () => {
     const w = render();
     expect(w.find('.content').exists()).toBe(true);
     expect(w.find('[role="alert"]').exists()).toBe(false);
-    expect(w.find('.af-empty').exists()).toBe(false);
+    expect(w.find('.empty').exists()).toBe(false);
   });
 
   it('shows only the loading row, with the default label, while loading', () => {
@@ -82,9 +82,9 @@ describe('AsyncState', () => {
     expect(banner.find('button').exists()).toBe(false);
   });
 
-  it('shows the empty slot inside .af-empty only when empty', () => {
+  it('shows the empty slot inside .empty only when empty', () => {
     const w = render({ empty: true });
-    expect(w.find('.af-empty .none').exists()).toBe(true);
+    expect(w.find('.empty .none').exists()).toBe(true);
     expect(w.find('.content').exists()).toBe(false);
   });
 
@@ -99,14 +99,14 @@ describe('AsyncState', () => {
   ])('%s takes precedence over lower states', (_name, props, selector) => {
     const w = render({ ...props, empty: true });
     expect(w.find(selector).exists()).toBe(true);
-    expect(w.find('.af-empty').exists()).toBe(false);
+    expect(w.find('.empty').exists()).toBe(false);
     expect(w.find('.content').exists()).toBe(false);
   });
 
   it('error takes precedence over empty', () => {
     const w = render({ error: 'x', empty: true });
     expect(w.find('.af-banner.bad').exists()).toBe(true);
-    expect(w.find('.af-empty').exists()).toBe(false);
+    expect(w.find('.empty').exists()).toBe(false);
   });
 
   it('renders the error-hint slot inside the error banner only', () => {

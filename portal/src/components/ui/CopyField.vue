@@ -53,7 +53,14 @@ onBeforeUnmount(() => clearTimeout(resetTimer));
   <div class="af-copy" :class="{ 'copy--multiline': multiline }">
     <pre v-if="multiline" class="copy__pre"><code class="copy__value">{{ value }}</code></pre>
     <code v-else class="copy__value">{{ value }}</code>
-    <button type="button" class="af-btn secondary s" :aria-label="label" @click="copy">
+    <button
+      type="button"
+      class="btn"
+      data-variant="outline"
+      data-size="sm"
+      :aria-label="label"
+      @click="copy"
+    >
       <Copy class="af-icon" :size="16" aria-hidden="true" />
       {{ copied ? 'Copied' : 'Copy' }}
     </button>

@@ -48,22 +48,23 @@ describe('ConfirmDialog', () => {
   it('renders title, body, and buttons with the confirming action last', () => {
     const w = mountDialog();
     const dialog = w.find('dialog');
-    expect(dialog.classes()).toContain('af-dialog');
-    expect(dialog.attributes('aria-labelledby')).toBe(w.find('h4').attributes('id'));
-    expect(w.find('h4').text()).toBe('Revoke token?');
+    expect(dialog.classes()).toContain('dialog');
+    expect(dialog.attributes('aria-labelledby')).toBe(w.find('h2').attributes('id'));
+    expect(w.find('h2').text()).toBe('Revoke token?');
     expect(w.find('.body').exists()).toBe(true);
     const buttons = w.findAll('footer button');
     expect(buttons.map((b) => b.text())).toEqual(['Cancel', 'Revoke']);
-    expect(buttons[0].classes()).toContain('quiet');
-    expect(buttons[1].classes()).toContain('primary');
+    expect(buttons[0].attributes('data-variant')).toBe('ghost');
+    expect(buttons[1].attributes('data-variant')).toBeUndefined();
+    expect(buttons[1].classes()).not.toContain('af-danger');
   });
 
   it('uses the danger style and custom cancel label', () => {
     const w = mountDialog({ danger: true, cancelLabel: 'Keep it' });
     const buttons = w.findAll('footer button');
     expect(buttons[0].text()).toBe('Keep it');
-    expect(buttons[1].classes()).toContain('danger');
-    expect(buttons[1].classes()).not.toContain('primary');
+    expect(buttons[1].classes()).toContain('af-danger');
+    expect(buttons[1].attributes('data-variant')).toBe('outline');
   });
 
   it('opens modally and focuses Cancel when open becomes true', async () => {

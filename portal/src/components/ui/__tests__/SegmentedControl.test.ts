@@ -13,7 +13,7 @@ describe('SegmentedControl', () => {
     const w = mount(SegmentedControl, {
       props: { modelValue: '30', options, ariaLabel: 'Trailing window' },
     });
-    expect(w.classes()).toContain('af-seg');
+    expect(w.classes()).toContain('button-group');
     expect(w.attributes('role')).toBe('group');
     expect(w.attributes('aria-label')).toBe('Trailing window');
     expect(w.findAll('button').map((b) => b.text())).toEqual(['7d', '30d', '90d']);

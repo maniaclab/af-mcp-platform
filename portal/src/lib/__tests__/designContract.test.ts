@@ -4,7 +4,10 @@
  * file and line, on anything that re-introduces a look the contract removed:
  * literal colours, transitional alias tokens, raw type sizes, off-contract
  * fonts, uppercase/letter-spaced labels, glass blur, ad-hoc shadows and radii,
- * and text glyphs used as icons.
+ * and text glyphs used as icons. It also keeps the component vocabulary on
+ * Basecoat: the retired hand-rolled `af-*` classes may not be used or defined,
+ * and no CSS rule may redefine a Basecoat class (extend it with an `af-` class
+ * instead, as in `.btn.af-danger`).
  *
  * Only token primitives may hold literal colours, and those live in
  * src/styles/global.css (the `@theme` and `.dark` blocks), which is exempt
@@ -102,6 +105,104 @@ const RULES = {
     fix: 'Use a lucide icon. An arrow is allowed only inside prose; add it to ALLOWLIST with the reason.',
   },
 } satisfies Record<string, Rule>;
+
+/**
+ * Hand-rolled classes that Basecoat replaces, with the Basecoat class to use.
+ * `af-btn-xl` (the landing page's Sign in) is not retired; the lookahead in
+ * RETIRED_RE keeps it out of the `af-btn` match.
+ */
+const RETIRED_CLASSES: Record<string, string> = {
+  'af-btn': '`btn` with data-variant (outline, ghost) and data-size (sm, lg, icon*)',
+  'af-input': '`input` (text fields), `native-select` (selects) or `textarea`',
+  'af-field': '`field`',
+  'af-check': '`field` with `data-orientation="horizontal"` around an `input type="checkbox"`',
+  'af-tbl-box': '`table-container` with the `af-box` extension',
+  'af-tbl': '`table` (density and numeric cells: `af-compact`, `af-num`, `af-act`, `af-sub`)',
+  'af-tag': '`badge` with `data-variant="outline"`',
+  'af-dialog': '`dialog` on the native <dialog> (backdrop and shadow: `af-modal`)',
+  'af-empty': '`empty`',
+  'af-seg': '`button-group` of `btn`s with aria-pressed',
+  'af-menu': "Basecoat's `dropdown-menu`",
+  'af-tip': 'PopoverTooltip.vue (native Popover API)',
+};
+
+const RETIRED_RULES: Record<string, Rule> = Object.fromEntries(
+  Object.entries(RETIRED_CLASSES).map(([name, use]) => [
+    name,
+    { id: `retired-class:${name}`, fix: `\`${name}\` is retired. Use ${use}.` },
+  ]),
+);
+
+const RETIRED_RE = new RegExp(
+  `(?<![\\w-])(${Object.keys(RETIRED_CLASSES).join('|')})(?![\\w-])`,
+  'g',
+);
+
+/**
+ * Classes Basecoat ships. A rule whose selector names one of these without an
+ * `af-` class beside it redefines the component instead of extending it.
+ */
+const BASECOAT_CLASSES = new Set([
+  'accordion',
+  'alert',
+  'alert-dialog',
+  'avatar',
+  'badge',
+  'breadcrumb',
+  'btn',
+  'button-group',
+  'card',
+  'checkbox',
+  'collapsible',
+  'combobox',
+  'command',
+  'dialog',
+  'drawer',
+  'dropdown-menu',
+  'empty',
+  'field',
+  'fieldset',
+  'input',
+  'input-group',
+  'item',
+  'kbd',
+  'label',
+  'popover',
+  'progress',
+  'radio',
+  'range',
+  'select',
+  'sidebar',
+  'skeleton',
+  'switch',
+  'table',
+  'table-container',
+  'tabs',
+  'textarea',
+  'toast',
+]);
+
+const REDEFINED_RULE: Rule = {
+  id: 'basecoat-redefined',
+  fix: 'A selector may not redefine a Basecoat class. Extend it with a separate af- class (`.btn.af-danger`, `.alert.af-note.warn`) or re-theme through the token bridge in global.css.',
+};
+
+/** Splits a selector list on the commas that are not inside parentheses. */
+function splitSelectors(list: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < list.length; i++) {
+    if (list[i] === '(') depth++;
+    else if (list[i] === ')') depth--;
+    else if (list[i] === ',' && depth === 0) {
+      out.push(list.slice(start, i));
+      start = i + 1;
+    }
+  }
+  out.push(list.slice(start));
+  return out;
+}
 
 /** Replaces every character except newlines with a space, keeping line numbers. */
 function blank(text: string): string {
@@ -243,6 +344,27 @@ export function scanSource(path: string, source: string): Violation[] {
     },
   );
 
+  // Retired hand-rolled classes: style, markup and script strings alike.
+  for (const text of [style, markup, script]) {
+    for (const m of text.matchAll(RETIRED_RE)) report(RETIRED_RULES[m[1]], m[0], m.index);
+  }
+
+  // Basecoat classes redefined in a style block (a rule head is the text
+  // before each `{` that is not an at-rule).
+  for (const m of style.matchAll(/(?:^|[{};])\s*([^{};@]+)\{/g)) {
+    const head = m[1];
+    const at = m.index + m[0].indexOf(head);
+    for (const selector of splitSelectors(head)) {
+      const classes = [...selector.matchAll(/\.([\w-]+)/g)].map((c) => c[1]);
+      if (
+        classes.some((c) => BASECOAT_CLASSES.has(c)) &&
+        !classes.some((c) => c.startsWith('af-'))
+      ) {
+        report(REDEFINED_RULE, selector.trim(), at);
+      }
+    }
+  }
+
   // Tailwind utilities in markup and script strings.
   for (const text of [markup, script]) {
     find(text, /(?<![\w-])uppercase(?![\w-])(?=[^<>]*>|['"`])/g, RULES.uppercase, (m) => {
@@ -350,6 +472,37 @@ describe('design contract scanner', () => {
     '/* the old --color-af-teal and #fff and uppercase glyph × */ a { color: inherit; }',
   ])('accepts %s', (body) => {
     expect(css(body)).toEqual([]);
+  });
+
+  it.each([
+    ['a { } .af-btn.primary { color: red; }', 'retired-class:af-btn'],
+    ['.af-tbl td { color: red; }', 'retired-class:af-tbl'],
+    ['.af-tag, .x { color: red; }', 'retired-class:af-tag'],
+    ['.btn { height: 1px; }', 'basecoat-redefined'],
+    ['.x, .table td:hover { color: red; }', 'basecoat-redefined'],
+    ['@layer components { .badge[data-variant="x"] { color: red; } }', 'basecoat-redefined'],
+    ['.parent :is(.btn, .y) { color: red; }', 'basecoat-redefined'],
+  ])('flags %s', (body, rule) => {
+    expect(css(body)).toContain(rule);
+  });
+
+  it.each([
+    '.btn.af-danger { color: red; }',
+    '.alert.af-banner.warn { color: red; }',
+    '.af-box .table th { color: red; }',
+    '.table.af-compact td { color: red; }',
+    '.af-btn-xl { color: red; }',
+    '.my-label, .tp__input { color: red; }',
+    '/* the retired .af-btn and .btn { } are only named here */ a { color: inherit; }',
+  ])('accepts %s', (body) => {
+    expect(css(body)).toEqual([]);
+  });
+
+  it('flags a retired class in markup and names the line', () => {
+    const vue = '<template>\n  <button class="af-btn secondary s">x</button>\n</template>';
+    expect(scanSource('src/c.vue', vue).map((v) => [v.rule.id, v.line])).toEqual([
+      ['retired-class:af-btn', 2],
+    ]);
   });
 
   it('flags glyph icons and utility aliases in a template and names the line', () => {

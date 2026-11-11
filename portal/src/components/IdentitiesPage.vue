@@ -281,7 +281,7 @@ function handleServiceXRevoked(id: string) {
   <div class="af-page">
     <!-- Banner slot: one message. A just-finished link attempt outranks the
          standing state, which returns once it is dismissed or fades. -->
-    <div v-if="linkedErrorBanner" class="af-banner bad" role="alert">
+    <div v-if="linkedErrorBanner" class="alert af-banner bad" role="alert">
       <span class="af-mark bad" aria-hidden="true"></span>
       <div>
         <b>Linking failed</b>
@@ -289,7 +289,9 @@ function handleServiceXRevoked(id: string) {
       </div>
       <button
         type="button"
-        class="af-btn quiet s"
+        class="btn"
+        data-variant="ghost"
+        data-size="sm"
         aria-label="Dismiss"
         @click="dismissLinkedErrorBanner"
       >
@@ -297,14 +299,16 @@ function handleServiceXRevoked(id: string) {
       </button>
     </div>
 
-    <div v-else-if="linkedBanner" class="af-banner ok" role="status">
+    <div v-else-if="linkedBanner" class="alert af-banner ok" role="status">
       <span class="af-mark ok" aria-hidden="true"></span>
       <div>
         <b>{{ linkedBanner }} linked</b>
       </div>
       <button
         type="button"
-        class="af-btn quiet s"
+        class="btn"
+        data-variant="ghost"
+        data-size="sm"
         aria-label="Dismiss"
         @click="dismissLinkedBanner"
       >
@@ -312,7 +316,7 @@ function handleServiceXRevoked(id: string) {
       </button>
     </div>
 
-    <div v-else-if="stateBanner" class="af-banner" :class="stateBanner.tone" role="status">
+    <div v-else-if="stateBanner" class="alert af-banner" :class="stateBanner.tone" role="status">
       <span class="af-mark" :class="stateBanner.tone" aria-hidden="true"></span>
       <div>
         <b>{{ stateBanner.title }}</b>
@@ -320,7 +324,9 @@ function handleServiceXRevoked(id: string) {
       </div>
       <a
         v-if="stateBanner.targetId"
-        class="af-btn s"
+        class="btn"
+        data-variant="outline"
+        data-size="sm"
         :href="`#identity-card-${stateBanner.targetId}`"
       >
         {{ stateBanner.button }}
@@ -411,8 +417,10 @@ function handleServiceXRevoked(id: string) {
 
         <!-- No providers returned at all -->
         <template #empty>
-          <p><b>No identity providers configured</b></p>
-          <p>Contact your facility administrator to enable external identity providers.</p>
+          <header>
+            <h3>No identity providers configured</h3>
+            <p>Contact your facility administrator to enable external identity providers.</p>
+          </header>
         </template>
       </AsyncState>
     </section>
@@ -428,14 +436,14 @@ function handleServiceXRevoked(id: string) {
 
 /* A deep link (#identity-card-<id>) lands with the row clear of the sticky
    top bar. That bar exists only under 860px, where it is 52px tall
-   (--control-l + --space-8); above it nothing is sticky. */
+   (--control-m + --space-16); above it nothing is sticky. */
 .ip__card-anchor {
   scroll-margin-top: var(--space-16);
 }
 
 @media (max-width: 859px) {
   .ip__card-anchor {
-    scroll-margin-top: calc(var(--control-l) + var(--space-8) + var(--space-16));
+    scroll-margin-top: calc(var(--control-m) + var(--space-16) + var(--space-16));
   }
 }
 </style>

@@ -17,7 +17,9 @@ describe('ArmedConfirmButton', () => {
     const buttons = w.findAll('button');
     expect(buttons).toHaveLength(1);
     expect(buttons[0].text()).toBe('Forget this ticket');
-    expect(buttons[0].classes()).toEqual(expect.arrayContaining(['af-btn', 'danger', 's']));
+    expect(buttons[0].classes()).toEqual(expect.arrayContaining(['btn', 'af-danger']));
+    expect(buttons[0].attributes('data-variant')).toBe('outline');
+    expect(buttons[0].attributes('data-size')).toBe('sm');
     expect(buttons[0].attributes('type')).toBe('button');
   });
 
@@ -26,7 +28,9 @@ describe('ArmedConfirmButton', () => {
     await w.find('button').trigger('click');
     const buttons = w.findAll('button');
     expect(buttons.map((b) => b.text())).toEqual(['Confirm forget', 'Cancel']);
-    expect(buttons[1].classes()).toEqual(expect.arrayContaining(['af-btn', 'quiet', 's']));
+    expect(buttons[1].classes()).toContain('btn');
+    expect(buttons[1].attributes('data-variant')).toBe('ghost');
+    expect(buttons[1].attributes('data-size')).toBe('sm');
     expect(w.emitted('confirm')).toBeUndefined();
   });
 

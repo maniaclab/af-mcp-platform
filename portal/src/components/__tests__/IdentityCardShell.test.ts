@@ -34,11 +34,11 @@ describe('IdentityCardShell', () => {
       props: { ...baseProps, powers: ['Rucio', 'PanDA'] },
     });
     expect(withPowers.text()).toContain('Powers');
-    expect(withPowers.findAll('.af-tag').map((t) => t.text())).toEqual(['Rucio', 'PanDA']);
+    expect(withPowers.findAll('.badge').map((t) => t.text())).toEqual(['Rucio', 'PanDA']);
 
     const none = mount(IdentityCardShell, { props: { ...baseProps, powers: [] } });
     expect(none.text()).not.toContain('Powers');
-    expect(none.find('.af-tag').exists()).toBe(false);
+    expect(none.find('.badge').exists()).toBe(false);
   });
 
   it('renders an optional icon hidden from assistive tech', () => {

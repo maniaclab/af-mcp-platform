@@ -110,11 +110,11 @@ async function handleLink() {
           : 'il__status il__status--unlinked'
     "
   >
-    <p v-if="!linked && link_permission_denied" class="af-note warn il__notice" role="status">
+    <p v-if="!linked && link_permission_denied" class="alert af-note warn il__notice" role="status">
       Your account isn't authorized to use this identity yet. Contact the platform team to request
       access.
     </p>
-    <p v-if="error" class="af-note bad il__error" role="alert">{{ error }}</p>
+    <p v-if="error" class="alert af-note bad il__error" role="alert">{{ error }}</p>
 
     <ConfirmDialog
       v-model:open="unlinkOpen"
@@ -133,7 +133,9 @@ async function handleLink() {
       <button
         v-if="!linked && canLink"
         type="button"
-        class="af-btn secondary s il__btn il__btn--link"
+        class="btn il__btn il__btn--link"
+        data-variant="outline"
+        data-size="sm"
         :disabled="busy"
         :aria-busy="busy"
         @click="handleLink"
@@ -151,7 +153,9 @@ async function handleLink() {
       <template v-else-if="linked && canLink">
         <button
           type="button"
-          class="af-btn secondary s il__btn il__btn--reconnect"
+          class="btn il__btn il__btn--reconnect"
+          data-variant="outline"
+          data-size="sm"
           :disabled="busy"
           :aria-busy="busy"
           @click="handleLink"
@@ -161,7 +165,9 @@ async function handleLink() {
         <button
           v-if="canUnlink"
           type="button"
-          class="af-btn danger s il__btn il__btn--unlink"
+          class="btn af-danger il__btn il__btn--unlink"
+          data-variant="outline"
+          data-size="sm"
           :disabled="busy"
           :aria-busy="busy"
           @click="unlinkOpen = true"

@@ -152,7 +152,7 @@ async function handleForget() {
       <dd>{{ formatDateTime(new Date(result.expires_at)) }}</dd>
     </dl>
 
-    <p v-if="forgetError" class="af-note bad sc__error" role="alert">{{ forgetError }}</p>
+    <p v-if="forgetError" class="alert af-note bad sc__error" role="alert">{{ forgetError }}</p>
 
     <template #actions>
       <a
@@ -160,7 +160,9 @@ async function handleForget() {
         :href="external_login_url"
         target="_blank"
         rel="noopener"
-        class="af-btn secondary s sc__btn sc__btn--external"
+        class="btn sc__btn sc__btn--external"
+        data-variant="outline"
+        data-size="sm"
       >
         Get your ServiceX token
         <ExternalLink class="af-icon" :size="16" aria-hidden="true" />
@@ -169,7 +171,9 @@ async function handleForget() {
       <button
         v-if="!formOpen && !linked"
         type="button"
-        class="af-btn secondary s sc__btn sc__btn--link"
+        class="btn sc__btn sc__btn--link"
+        data-variant="outline"
+        data-size="sm"
         :disabled="busy"
         @click="openForm"
       >
@@ -181,7 +185,9 @@ async function handleForget() {
       <button
         v-else-if="!formOpen && linked"
         type="button"
-        class="af-btn secondary s sc__btn sc__btn--relink"
+        class="btn sc__btn sc__btn--relink"
+        data-variant="outline"
+        data-size="sm"
         :disabled="busy"
         @click="openForm"
       >
@@ -217,32 +223,33 @@ async function handleForget() {
           then paste it below.
         </p>
 
-        <div class="af-field">
+        <div class="field af-narrow">
           <label for="servicex-link-token">ServiceX personal token</label>
           <input
             id="servicex-link-token"
             ref="tokenInput"
             v-model="refreshToken"
             type="password"
-            class="af-input"
+            class="input"
             autocomplete="off"
             :disabled="busy"
             required
             aria-required="true"
             aria-describedby="servicex-link-token-hint"
           />
-          <span id="servicex-link-token-hint" class="hint">
+          <p id="servicex-link-token-hint">
             Verified with one redeem before it's stored — cleared from this page immediately after
             submission.
-          </span>
+          </p>
         </div>
 
-        <p v-if="error" class="af-note bad sc__error" role="alert">{{ error }}</p>
+        <p v-if="error" class="alert af-note bad sc__error" role="alert">{{ error }}</p>
 
         <div class="ids__form-actions">
           <button
             type="button"
-            class="af-btn quiet sc__btn sc__btn--cancel"
+            class="btn sc__btn sc__btn--cancel"
+            data-variant="ghost"
             :disabled="busy"
             @click="closeForm"
           >
@@ -250,7 +257,8 @@ async function handleForget() {
           </button>
           <button
             type="submit"
-            class="af-btn secondary sc__btn sc__btn--submit"
+            class="btn sc__btn sc__btn--submit"
+            data-variant="outline"
             :disabled="busy || !refreshToken"
             :aria-busy="busy"
           >

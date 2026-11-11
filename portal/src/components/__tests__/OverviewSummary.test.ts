@@ -299,7 +299,7 @@ describe('OverviewSummary banner', () => {
     expect(banners[0]!.classes()).toContain('bad');
     expect(banners[0]!.attributes('role')).toBe('alert');
     expect(banners[0]!.text()).toContain('Your grid proxy has expired');
-    const action = banners[0]!.find('a.af-btn');
+    const action = banners[0]!.find('a.btn');
     expect(action.text()).toBe('Renew proxy');
     expect(action.attributes('href')).toBe('/identities/');
   });

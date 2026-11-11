@@ -42,7 +42,9 @@ function onClick(): void {
   <span class="armed-confirm">
     <button
       type="button"
-      class="af-btn danger s"
+      class="btn af-danger"
+      data-variant="outline"
+      data-size="sm"
       :class="armed ? confirmClass : triggerClass"
       :disabled="busy"
       :aria-busy="busy"
@@ -53,7 +55,9 @@ function onClick(): void {
     <button
       v-if="armed && !busy"
       type="button"
-      class="af-btn quiet s"
+      class="btn"
+      data-variant="ghost"
+      data-size="sm"
       :class="cancelClass"
       @click="armed = false"
     >

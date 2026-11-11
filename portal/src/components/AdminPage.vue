@@ -230,7 +230,7 @@ const driftBannerText = computed(() => {
 <template>
   <div class="af-page compact ap">
     <!-- Page banner: the single most urgent message. -->
-    <div v-if="issueCount > 0" class="af-banner warn" role="status" data-af-admin-banner>
+    <div v-if="issueCount > 0" class="alert af-banner warn" role="status" data-af-admin-banner>
       <span class="af-mark warn" aria-hidden="true"></span>
       <div>
         <b
@@ -241,7 +241,11 @@ const driftBannerText = computed(() => {
         >
         {{ driftBannerText }}
       </div>
-      <a class="af-btn s" :href="mismatches.length > 0 ? '#ap-mismatches' : '#ap-drift'"
+      <a
+        class="btn"
+        data-variant="outline"
+        data-size="sm"
+        :href="mismatches.length > 0 ? '#ap-mismatches' : '#ap-drift'"
         >Review issues</a
       >
     </div>
@@ -261,9 +265,9 @@ const driftBannerText = computed(() => {
           <StatusMark tone="off">No subjects with recorded usage yet.</StatusMark>
         </p>
         <template v-else>
-          <div class="af-field">
+          <div class="field af-narrow">
             <label for="ap-usage-subject">Subject</label>
-            <select id="ap-usage-subject" v-model="selectedSubject" class="af-input">
+            <select id="ap-usage-subject" v-model="selectedSubject" class="select w-full">
               <option value="" disabled>Select a subject…</option>
               <option v-for="s in subjects" :key="s.subject" :value="s.subject">
                 {{ subjectLabel(s) }}
@@ -321,14 +325,14 @@ const driftBannerText = computed(() => {
             </template>
           </dl>
 
-          <div class="af-field ap__message">
+          <div class="field af-narrow ap__message">
             <label for="ap-maintenance-reason">Message shown to users</label>
             <input
               id="ap-maintenance-reason"
               v-model="maintenanceReason"
               data-af-maintenance-reason
               type="text"
-              class="af-input"
+              class="input"
               placeholder="e.g. Scheduled Postgres upgrade, back by 14:00 UTC"
             />
           </div>
@@ -349,7 +353,8 @@ const driftBannerText = computed(() => {
               v-if="!maintenanceStatus.enabled"
               type="button"
               data-af-maintenance-enable
-              class="af-btn danger"
+              class="btn af-danger"
+              data-variant="outline"
               :disabled="maintenanceSaving"
               @click="confirmingEnable = true"
             >
@@ -359,7 +364,8 @@ const driftBannerText = computed(() => {
               v-else
               type="button"
               data-af-maintenance-disable
-              class="af-btn secondary"
+              class="btn"
+              data-variant="outline"
               :disabled="maintenanceSaving"
               @click="disableMaintenance"
             >
@@ -412,8 +418,8 @@ const driftBannerText = computed(() => {
         <p v-if="mismatches.length === 0" class="ap__none">
           <StatusMark tone="ok">No mismatches.</StatusMark>
         </p>
-        <div v-else class="af-tbl-box">
-          <table class="af-tbl compact">
+        <div v-else class="table-container af-box">
+          <table class="af-compact table">
             <thead>
               <tr>
                 <th scope="col">Service</th>
@@ -432,8 +438,8 @@ const driftBannerText = computed(() => {
                 </td>
                 <td>readOnlyHint={{ m.declared_read_only_hint }}</td>
                 <td>{{ m.resolved_action_type }}</td>
-                <td class="sub">{{ resolvedViaLabel(m) }}</td>
-                <td class="sub">{{ m.permission }}</td>
+                <td class="af-sub">{{ resolvedViaLabel(m) }}</td>
+                <td class="af-sub">{{ m.permission }}</td>
               </tr>
             </tbody>
           </table>
@@ -465,12 +471,12 @@ const driftBannerText = computed(() => {
         <p v-if="drifts.length === 0" class="ap__none">
           <StatusMark tone="ok">No tool mapping drift.</StatusMark>
         </p>
-        <div v-else class="af-tbl-box">
-          <table class="af-tbl compact">
+        <div v-else class="table-container af-box">
+          <table class="af-compact table">
             <thead>
               <tr>
                 <th scope="col">Service</th>
-                <th scope="col" class="num">Routable / advertised</th>
+                <th scope="col" class="af-num">Routable / advertised</th>
                 <th scope="col">Unroutable (prefix mismatch)</th>
                 <th scope="col">Unmapped (advertised, disabled)</th>
                 <th scope="col">Stale (mapped, not advertised)</th>
@@ -479,7 +485,7 @@ const driftBannerText = computed(() => {
             <tbody>
               <tr v-for="d in drifts" :key="d.service">
                 <td>{{ d.service }}</td>
-                <td class="num">{{ d.routable }} / {{ d.advertised }}</td>
+                <td class="af-num">{{ d.routable }} / {{ d.advertised }}</td>
                 <td class="ap__wrap">
                   <code v-if="d.unroutable.length > 0">
                     expected {{ d.prefix }}_*: {{ d.unroutable.join(', ') }}
@@ -531,7 +537,9 @@ const driftBannerText = computed(() => {
             <button
               type="button"
               data-af-credmon-sync
-              class="af-btn secondary s"
+              class="btn"
+              data-variant="outline"
+              data-size="sm"
               :disabled="credmonSyncing"
               :aria-busy="credmonSyncing"
               @click="syncCredmonNow"
@@ -578,16 +586,16 @@ const driftBannerText = computed(() => {
             <dd v-else>Within a minute of startup.</dd>
           </dl>
 
-          <div class="af-tbl-box">
-            <table class="af-tbl compact">
+          <div class="table-container af-box">
+            <table class="af-compact table">
               <thead>
                 <tr>
                   <th scope="col">Credential</th>
                   <th scope="col">credd service</th>
-                  <th scope="col" class="num">Stored</th>
-                  <th scope="col" class="num">Skipped: not linked</th>
-                  <th scope="col" class="num">Skipped: no POSIX user</th>
-                  <th scope="col" class="num">Failed</th>
+                  <th scope="col" class="af-num">Stored</th>
+                  <th scope="col" class="af-num">Skipped: not linked</th>
+                  <th scope="col" class="af-num">Skipped: no POSIX user</th>
+                  <th scope="col" class="af-num">Failed</th>
                 </tr>
               </thead>
               <tbody>
@@ -596,10 +604,10 @@ const driftBannerText = computed(() => {
                   <td>
                     <code>{{ row.service }}</code>
                   </td>
-                  <td class="num">{{ row.stored }}</td>
-                  <td class="num">{{ row.notLinked }}</td>
-                  <td class="num">{{ row.noPosix }}</td>
-                  <td class="num">{{ row.failed }}</td>
+                  <td class="af-num">{{ row.stored }}</td>
+                  <td class="af-num">{{ row.notLinked }}</td>
+                  <td class="af-num">{{ row.noPosix }}</td>
+                  <td class="af-num">{{ row.failed }}</td>
                 </tr>
               </tbody>
             </table>

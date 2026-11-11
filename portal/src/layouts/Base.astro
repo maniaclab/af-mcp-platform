@@ -218,11 +218,6 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
         display: none;
       }
 
-      .af-menu-btn {
-        width: var(--control-m);
-        padding: 0;
-      }
-
       .af-main {
         flex: 1;
         padding-block: var(--space-32);
@@ -393,7 +388,14 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
         <div class="af-sidebar__foot">
           <div class="af-sidebar__account" data-af-user-holder hidden>
             <span class="af-sidebar__user" data-af-identity aria-label="Signed in"></span>
-            <button type="button" class="af-btn quiet s" data-af-signout hidden>
+            <button
+              type="button"
+              class="btn"
+              data-variant="ghost"
+              data-size="sm"
+              data-af-signout
+              hidden
+            >
               <LogOut class="af-icon" size={16} aria-hidden="true" />
               Sign out
             </button>
@@ -409,7 +411,9 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
           <div class="af-wrap af-topbar__in">
             <button
               type="button"
-              class="af-btn quiet af-menu-btn"
+              class="btn"
+              data-variant="ghost"
+              data-size="icon"
               data-af-sidebar-toggle
               aria-controls="af-sidebar"
               aria-expanded="false"
@@ -430,7 +434,7 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
         </header>
 
         <main id="main-content" class="af-main af-wrap">
-          <div data-af-maintenance-banner class="af-banner info slim" role="alert" hidden>
+          <div data-af-maintenance-banner class="alert af-banner info slim" role="alert" hidden>
             <span class="af-mark info" aria-hidden="true"></span>
             <div data-af-maintenance-text></div>
           </div>

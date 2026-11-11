@@ -42,12 +42,32 @@
  * banner pairs is asserted by src/lib/__tests__/globalCssContrast.test.ts,
  * which parses this file so the ratios cannot silently regress.
  *
- * Shared component classes (`.af-btn`, `.af-banner`, ...) live in
- * components.css and use only the tokens defined here.
+ * Components come from Basecoat (`.btn`, `.input`, `.table`, `.badge`,
+ * `.dialog`, ...), re-themed only through the bridge block below. The `af-*`
+ * classes in components.css cover what Basecoat does not ship and use only the
+ * tokens defined here.
  */
 
 @import 'tailwindcss';
-@import 'basecoat-css';
+/* Basecoat, imported per component (the package exports each file) instead of
+ * through `basecoat-css`, which pulls in all 38 components for about 30% more
+ * CSS. The structure files come first, then the vega style that gives them
+ * their look. A component the portal starts to use needs its line here. */
+@import 'basecoat-css/base/base.css';
+@import 'basecoat-css/components/alert';
+@import 'basecoat-css/components/badge';
+@import 'basecoat-css/components/button';
+@import 'basecoat-css/components/button-group';
+@import 'basecoat-css/components/checkbox';
+@import 'basecoat-css/components/dialog';
+@import 'basecoat-css/components/empty';
+@import 'basecoat-css/components/field';
+@import 'basecoat-css/components/input';
+@import 'basecoat-css/components/label';
+@import 'basecoat-css/components/native-select';
+@import 'basecoat-css/components/table';
+@import 'basecoat-css/components/textarea';
+@import 'basecoat-css/styles/vega';
 @import './components.css';
 
 @plugin '@tailwindcss/forms';
@@ -136,6 +156,18 @@
   --radius-8: 8px;
   --radius-10: 10px;
   --radius-full: 999px;
+
+  /* Basecoat's component styles are written with Tailwind utilities
+   * (`text-lg`, `shadow-xs`, `backdrop-blur-xs`, `tracking-tight`). These
+   * overrides keep what they resolve to inside the contract: headings on the
+   * type scale, no shadow or blur on in-page surfaces, no letter-spacing.
+   * `text-xs/sm/base` already resolve to 12/14/16px. */
+  --text-lg: 1.25rem;
+  --text-lg--line-height: 1.75rem;
+  --shadow-xs: 0 0 #0000;
+  --shadow-sm: 0 0 #0000;
+  --blur-xs: 0px;
+  --tracking-tight: normal;
 }
 
 /*
@@ -154,14 +186,16 @@
   --space-48: 48px;
   --space-64: 64px;
 
-  --control-s: 28px;
+  /* Basecoat's button heights: data-size="sm", default and "lg". */
+  --control-s: 32px;
   --control-m: 36px;
-  --control-l: 44px;
+  --control-l: 40px;
 
   --time-fast: 100ms;
   --time-base: 200ms;
   --time-slow: 300ms;
   --ease: cubic-bezier(0.2, 0, 0, 1);
+  color-scheme: light;
 }
 
 /*
@@ -205,36 +239,61 @@
 }
 
 /*
- * Basecoat bridge — drives shadcn's variable set from the AF tokens above
- * instead of the other way around, one-directionally, so AF stays the
- * source of truth and this whole block could be deleted without any AF
- * token losing meaning. Every value here is a var() reference (not a
- * literal), so it re-resolves automatically under .dark without needing to
- * be repeated there — only `color-scheme` (a literal keyword) needs the
- * explicit override above.
+ * Basecoat bridge — drives shadcn's whole variable set from the AF tokens
+ * above instead of the other way around, one-directionally, so AF stays the
+ * source of truth and this whole block could be deleted without any AF token
+ * losing meaning. Every value is a var() reference (not a literal), so it
+ * re-resolves automatically under .dark without being repeated there.
  *
- * Only the variables this build actually exercises are bridged:
- * Basecoat's base-layer universal-selector border/ring reset, body's
- * background/foreground, and the tooltip component's foreground/background.
- * --muted, --accent, --secondary, --sidebar-*, --popover-foreground and
- * --card-foreground are deliberately left at Basecoat defaults: nothing
- * shipped uses them, and a bridge value nobody has checked against real
- * content is worse than the default.
+ * Basecoat's own `:root` and `.dark` blocks are unlayered, like this one, so
+ * `@layer` cannot decide between them. `:root:root` (two pseudo-classes)
+ * outranks Basecoat's single-class `.dark { --primary: ... }` by specificity
+ * whatever the import order, so the AF values win in both themes.
+ *
+ * Naming trap: shadcn's `--accent` is a hover surface, NOT the AF accent. The
+ * AF accent (a facility's brand colour) reaches Basecoat only as `--primary`,
+ * which is the primary button, checked controls and Basecoat's link colour.
+ *
+ * `--radius` is 10px so that Basecoat's control radius (`rounded-md` =
+ * `--radius` - 2px) is 8px, its alert and field radius (`rounded-lg`) is 10px.
+ *
+ * The `--chevron-down-icon*` and `--check-icon` data URIs Basecoat defines for
+ * native selects keep their neutral grey stroke: an SVG data URI cannot read a
+ * custom property.
  */
-:root {
-  --radius: 8px;
+:root:root {
+  --radius: 10px;
   --background: var(--color-af-bg);
   --foreground: var(--color-af-text);
   --card: var(--color-af-bg);
+  --card-foreground: var(--color-af-text);
   --popover: var(--color-af-bg);
+  --popover-foreground: var(--color-af-text);
+  --primary: var(--color-af-accent);
+  --primary-foreground: var(--color-af-on-accent);
+  --secondary: var(--color-af-bg-subtle);
+  --secondary-foreground: var(--color-af-text);
+  --muted: var(--color-af-bg-subtle);
+  --muted-foreground: var(--color-af-text-secondary);
+  --accent: var(--color-af-bg-hover);
+  --accent-foreground: var(--color-af-text);
+  --destructive: var(--color-af-bad);
   --border: var(--color-af-border);
   --input: var(--color-af-border-strong);
   --ring: var(--color-af-text);
-  --primary: var(--color-af-accent);
-  --primary-foreground: var(--color-af-on-accent);
-  --muted-foreground: var(--color-af-text-secondary);
-  --destructive: var(--color-af-bad);
-  color-scheme: light;
+  --chart-1: var(--color-af-text-secondary);
+  --chart-2: var(--color-af-text);
+  --chart-3: var(--color-af-border-strong);
+  --chart-4: var(--color-af-text-disabled);
+  --chart-5: var(--color-af-border);
+  --sidebar: var(--color-af-bg);
+  --sidebar-foreground: var(--color-af-text);
+  --sidebar-primary: var(--color-af-accent);
+  --sidebar-primary-foreground: var(--color-af-on-accent);
+  --sidebar-accent: var(--color-af-bg-hover);
+  --sidebar-accent-foreground: var(--color-af-text);
+  --sidebar-border: var(--color-af-border);
+  --sidebar-ring: var(--color-af-text);
 }
 
 /*
@@ -255,9 +314,12 @@ dialog:modal {
 }
 
 /*
- * Base element styles: body text, headings and the one focus ring every
- * focusable element shares. In `@layer base` so component classes and
- * Tailwind utilities override them.
+ * Base element styles: body text, headings and the focus outline of the
+ * portal's own interactive elements (links, nav items, summaries). In
+ * `@layer base` so component classes and Tailwind utilities override them.
+ * Basecoat's controls set `outline-none` in `@layer components` and draw their
+ * own ring from the same `--ring` token (border + 3px halo), so no element
+ * shows both.
  */
 @layer base {
   body {
@@ -278,7 +340,7 @@ dialog:modal {
     font-weight: 600;
   }
   :focus-visible {
-    outline: 2px solid var(--color-af-text);
+    outline: 2px solid var(--ring);
     outline-offset: 2px;
   }
 }

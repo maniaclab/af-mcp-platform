@@ -38,8 +38,8 @@ withDefaults(
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: var(--control-s);
-  height: var(--control-s);
+  width: calc(var(--space-24) + var(--space-4));
+  height: calc(var(--space-24) + var(--space-4));
   padding: 0;
   border: 0;
   border-radius: var(--radius-full);

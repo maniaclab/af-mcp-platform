@@ -117,11 +117,13 @@ function barHeight(calls: number): string {
       loading-label="Loading usage…"
     >
       <template #empty>
-        <b>No tool calls in the last {{ usage?.window_days }} days</b>
-        <p>
-          Once your AI assistant calls tools through this platform, its estimated context usage
-          shows up here. Try a wider window above.
-        </p>
+        <header>
+          <h2>No tool calls in the last {{ usage?.window_days }} days</h2>
+          <p>
+            Once your AI assistant calls tools through this platform, its estimated context usage
+            shows up here. Try a wider window above.
+          </p>
+        </header>
       </template>
 
       <template v-if="usage">
@@ -184,26 +186,26 @@ function barHeight(calls: number): string {
             as estimated tokens and priced, for scale, at a reference model's input rate. Estimates
             only: this is not your provider bill.
           </p>
-          <div class="af-tbl-box">
-            <table class="af-tbl">
+          <div class="table-container af-box">
+            <table class="table">
               <thead>
                 <tr>
                   <th scope="col">Service</th>
-                  <th scope="col" class="num">Calls</th>
-                  <th scope="col" class="num">Errors</th>
-                  <th scope="col" class="num">Result size</th>
-                  <th scope="col" class="num">Tokens (est.)</th>
-                  <th scope="col" class="num">Cost (est.)</th>
+                  <th scope="col" class="af-num">Calls</th>
+                  <th scope="col" class="af-num">Errors</th>
+                  <th scope="col" class="af-num">Result size</th>
+                  <th scope="col" class="af-num">Tokens (est.)</th>
+                  <th scope="col" class="af-num">Cost (est.)</th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-for="svc in usage.by_service" :key="svc.service">
                   <td>{{ svc.service }}</td>
-                  <td class="num">{{ formatTokens(svc.calls) }}</td>
-                  <td class="num sub">{{ formatTokens(svc.errors) }}</td>
-                  <td class="num sub">{{ formatBytes(svc.result_bytes) }}</td>
-                  <td class="num">{{ formatTokens(svc.result_tokens_est) }}</td>
-                  <td class="num">{{ formatCost(svc.estimated_cost_usd) }}</td>
+                  <td class="af-num">{{ formatTokens(svc.calls) }}</td>
+                  <td class="af-num af-sub">{{ formatTokens(svc.errors) }}</td>
+                  <td class="af-num af-sub">{{ formatBytes(svc.result_bytes) }}</td>
+                  <td class="af-num">{{ formatTokens(svc.result_tokens_est) }}</td>
+                  <td class="af-num">{{ formatCost(svc.estimated_cost_usd) }}</td>
                 </tr>
               </tbody>
             </table>

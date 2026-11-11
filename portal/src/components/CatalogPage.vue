@@ -77,16 +77,20 @@ const banner = computed(() => resolveServicesBanner(servers.value));
     </template>
 
     <template #empty>
-      <b>No services available</b>
-      <p>
-        Your account doesn't have any granted permissions yet. Link your external identities to
-        unlock access.
-      </p>
-      <a href="/identities/" class="af-btn secondary">Link identities</a>
+      <header>
+        <h2>No services available</h2>
+        <p>
+          Your account doesn't have any granted permissions yet. Link your external identities to
+          unlock access.
+        </p>
+      </header>
+      <section>
+        <a href="/identities/" class="btn" data-variant="outline">Link identities</a>
+      </section>
     </template>
 
     <div class="af-page">
-      <div v-if="banner" class="af-banner" :class="banner.tone" role="status">
+      <div v-if="banner" class="alert af-banner" :class="banner.tone" role="status">
         <span class="af-mark" :class="banner.tone" aria-hidden="true"></span>
         <div>
           <b>{{ banner.title }}</b>
@@ -98,13 +102,13 @@ const banner = computed(() => resolveServicesBanner(servers.value));
         <h2 id="cp-heading">Your services</h2>
 
         <div class="cp__toolbar">
-          <div class="af-field cp__search">
+          <div class="field af-narrow cp__search">
             <label for="catalog-search">Search services</label>
             <input
               id="catalog-search"
               v-model="search"
               type="search"
-              class="af-input"
+              class="input"
               placeholder="Name, description or permission"
             />
           </div>
@@ -120,12 +124,14 @@ const banner = computed(() => resolveServicesBanner(servers.value));
           </span>
         </div>
 
-        <div v-if="filteredServers.length === 0" class="af-empty">
-          <b>No matches</b>
-          <p>
-            No services match "{{ search }}" with the current filter. Try a different search term or
-            clear the filter.
-          </p>
+        <div v-if="filteredServers.length === 0" class="empty border-input border">
+          <header>
+            <h2>No matches</h2>
+            <p>
+              No services match "{{ search }}" with the current filter. Try a different search term
+              or clear the filter.
+            </p>
+          </header>
         </div>
 
         <ul v-else class="cp__list" aria-label="Available services">

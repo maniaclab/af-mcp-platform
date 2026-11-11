@@ -166,7 +166,7 @@ const showStats = computed(() => usage.value !== null && usage.value.totals.call
 <template>
   <div
     v-if="banner"
-    class="af-banner"
+    class="alert af-banner"
     :class="banner.tone"
     :role="banner.tone === 'bad' ? 'alert' : 'status'"
   >
@@ -175,12 +175,14 @@ const showStats = computed(() => usage.value !== null && usage.value.totals.call
       <b>{{ banner.title }}</b
       >{{ banner.body }}
     </div>
-    <a class="af-btn s" :href="banner.action.href">{{ banner.action.label }}</a>
+    <a class="btn" data-variant="outline" data-size="sm" :href="banner.action.href">{{
+      banner.action.label
+    }}</a>
   </div>
 
   <section class="af-sect" aria-labelledby="ov-access-heading">
     <h2 id="ov-access-heading">Your access</h2>
-    <ul class="af-tbl-box ov__rows">
+    <ul class="af-box ov__rows">
       <li v-for="row in rows" :key="row.key" class="ov__row">
         <div class="ov__area">
           <component :is="row.icon" class="af-icon" :size="16" aria-hidden="true" />
@@ -190,7 +192,7 @@ const showStats = computed(() => usage.value !== null && usage.value.totals.call
           </div>
         </div>
         <StatusMark :tone="row.tone" :label="row.state" class="ov__state" />
-        <a class="af-btn quiet s" :href="row.href">
+        <a class="btn" data-variant="ghost" data-size="sm" :href="row.href">
           {{ row.linkLabel }}
           <ArrowRight class="af-icon" :size="16" aria-hidden="true" />
         </a>

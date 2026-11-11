@@ -80,7 +80,7 @@ describe('services banner', () => {
     const banner = wrapper.find('.af-banner');
     expect(banner.classes()).toContain('bad');
     expect(banner.text()).toContain('1 service is misconfigured');
-    expect(banner.find('a.af-btn').exists()).toBe(false);
+    expect(banner.find('a.btn').exists()).toBe(false);
   });
 });
 
@@ -104,7 +104,7 @@ describe('filter and search', () => {
   ];
 
   async function filterTo(wrapper: Awaited<ReturnType<typeof mountPage>>, label: string) {
-    const button = wrapper.findAll('.af-seg button').find((b) => b.text() === label);
+    const button = wrapper.findAll('.button-group button').find((b) => b.text() === label);
     expect(button).toBeDefined();
     await button!.trigger('click');
   }
@@ -134,7 +134,7 @@ describe('filter and search', () => {
 describe('empty states', () => {
   it('points at the Identities page when there are no services at all', async () => {
     const wrapper = await mountPage([]);
-    const empty = wrapper.find('.af-empty');
+    const empty = wrapper.find('.empty');
     expect(empty.exists()).toBe(true);
     expect(empty.text()).toContain('No services available');
     expect(empty.find('a').attributes('href')).toBe('/identities/');
@@ -143,7 +143,7 @@ describe('empty states', () => {
   it('says nothing matches when the filter hides every service', async () => {
     const wrapper = await mountPage([server()]);
     await wrapper.find('input[type="search"]').setValue('zzz');
-    const empty = wrapper.find('.af-empty');
+    const empty = wrapper.find('.empty');
     expect(empty.text()).toContain('No matches');
     expect(empty.text()).toContain('zzz');
   });

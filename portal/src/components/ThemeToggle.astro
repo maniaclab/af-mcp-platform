@@ -25,7 +25,9 @@ const MODES: { value: 'auto' | 'dark' | 'light'; label: string; Icon: typeof Sun
     MODES.map(({ value, label, Icon }) => (
       <button
         type="button"
-        class="theme-toggle__option"
+        class="btn theme-toggle__option"
+        data-variant="ghost"
+        data-size="icon-sm"
         role="radio"
         aria-checked="false"
         aria-label={label}
@@ -49,34 +51,20 @@ const MODES: { value: 'auto' | 'dark' | 'light'; label: string; Icon: typeof Sun
     gap: var(--space-2);
   }
 
+  /* Basecoat's ghost icon button supplies size, shape and the focus ring; the
+     radiogroup adds the secondary resting colour and the selected state. */
   .theme-toggle__option {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: var(--control-s);
-    height: var(--control-s);
     color: var(--color-af-text-secondary);
-    background: transparent;
-    border: 0;
     border-radius: var(--radius-4);
-    cursor: pointer;
-    transition: background var(--time-fast) var(--ease);
   }
 
   .theme-toggle__option:hover {
-    background: var(--color-af-bg-hover);
     color: var(--color-af-text);
   }
 
   .theme-toggle__option[aria-checked='true'] {
     color: var(--color-af-text);
     background: var(--color-af-bg-subtle);
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .theme-toggle__option {
-      transition: none;
-    }
   }
 </style>
 

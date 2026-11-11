@@ -28,13 +28,13 @@ import Base from '../layouts/Base.astro';
       <span>Completing sign-in…</span>
     </div>
 
-    <div id="callback-error" class="af-banner bad cb__error" role="alert" hidden>
+    <div id="callback-error" class="alert af-banner bad cb__error" role="alert" hidden>
       <span class="af-mark bad" aria-hidden="true"></span>
       <div>
         <b>Sign-in failed</b>
         <span id="callback-error-message"></span>
       </div>
-      <a href="/overview/" class="af-btn s">Try again</a>
+      <a href="/overview/" class="btn" data-variant="outline" data-size="sm">Try again</a>
     </div>
   </div>
 </Base>

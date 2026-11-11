@@ -84,7 +84,7 @@ describe('TokensPage', () => {
     const wrapper = await mountPage([token({})]);
 
     expect(wrapper.find('h1').text()).toBe('Tokens');
-    expect(wrapper.find('.af-page-head .af-btn.primary').text()).toContain('New token');
+    expect(wrapper.find('.af-page-head .btn:not([data-variant])').text()).toContain('New token');
   });
 
   it('renders one row per token with its status as a word', async () => {
@@ -112,7 +112,7 @@ describe('TokensPage', () => {
 
     const rows = wrapper.findAll('tbody tr');
     const revokeIn = (name: string) =>
-      rows.find((r) => r.text().includes(name))!.find('button.danger');
+      rows.find((r) => r.text().includes(name))!.find('button.af-danger');
     expect(revokeIn('active-one').attributes('disabled')).toBeUndefined();
     expect(revokeIn('revoked-one').attributes('disabled')).toBeDefined();
   });
@@ -145,12 +145,12 @@ describe('TokensPage', () => {
   it('shows an empty state that carries the New token button', async () => {
     const wrapper = await mountPage([]);
 
-    const empty = wrapper.find('.af-empty');
+    const empty = wrapper.find('.empty');
     expect(empty.exists()).toBe(true);
     expect(empty.text()).toContain('No tokens yet');
-    expect(empty.find('.af-btn.primary').text()).toContain('New token');
+    expect(empty.find('.btn:not([data-variant])').text()).toContain('New token');
     // The page header does not repeat the primary button.
-    expect(wrapper.find('.af-page-head .af-btn').exists()).toBe(false);
+    expect(wrapper.find('.af-page-head .btn').exists()).toBe(false);
   });
 
   it('shows an alert when the list fails to load', async () => {
@@ -166,15 +166,15 @@ describe('TokensPage', () => {
       vi.mocked(revokeToken).mockResolvedValue(undefined);
       const wrapper = await mountPage([token({ lookup_id: 'A', name: 'active-one' })]);
 
-      await wrapper.find('tbody button.danger').trigger('click');
+      await wrapper.find('tbody button.af-danger').trigger('click');
       await flushPromises();
 
       expect(revokeToken).not.toHaveBeenCalled();
-      const dialog = wrapper.find('dialog.af-dialog[open]');
+      const dialog = wrapper.find('dialog.dialog[open]');
       expect(dialog.exists()).toBe(true);
       expect(dialog.text()).toContain('active-one');
 
-      await dialog.find('footer .af-btn.danger').trigger('click');
+      await dialog.find('footer .btn.af-danger').trigger('click');
       await flushPromises();
 
       expect(revokeToken).toHaveBeenCalledExactlyOnceWith('A');
@@ -184,9 +184,9 @@ describe('TokensPage', () => {
     it('does not call the API when the confirmation is cancelled', async () => {
       const wrapper = await mountPage([token({ lookup_id: 'A', name: 'active-one' })]);
 
-      await wrapper.find('tbody button.danger').trigger('click');
+      await wrapper.find('tbody button.af-danger').trigger('click');
       await flushPromises();
-      await wrapper.find('dialog.af-dialog[open] footer .af-btn.quiet').trigger('click');
+      await wrapper.find('dialog.dialog[open] footer .btn[data-variant="ghost"]').trigger('click');
       await flushPromises();
 
       expect(revokeToken).not.toHaveBeenCalled();
@@ -196,9 +196,9 @@ describe('TokensPage', () => {
       vi.mocked(revokeToken).mockRejectedValue(new Error('nope'));
       const wrapper = await mountPage([token({ lookup_id: 'A', name: 'active-one' })]);
 
-      await wrapper.find('tbody button.danger').trigger('click');
+      await wrapper.find('tbody button.af-danger').trigger('click');
       await flushPromises();
-      await wrapper.find('dialog.af-dialog[open] footer .af-btn.danger').trigger('click');
+      await wrapper.find('dialog.dialog[open] footer .btn.af-danger').trigger('click');
       await flushPromises();
 
       expect(wrapper.find('[role="alert"]').text()).toContain('nope');
@@ -217,7 +217,7 @@ describe('TokensPage', () => {
       } as never);
       const wrapper = await mountPage([token({})]);
 
-      await wrapper.find('.af-page-head .af-btn.primary').trigger('click');
+      await wrapper.find('.af-page-head .btn:not([data-variant])').trigger('click');
       await flushPromises();
       expect(wrapper.find('dialog[open] #tp-name').exists()).toBe(true);
 

@@ -28,8 +28,8 @@ import PublicBase from '../layouts/PublicBase.astro';
         </p>
 
         <div class="hero__cta">
-          <a href="/overview/" class="af-btn primary xl">Sign in</a>
-          <a href="#benefits" class="af-btn quiet">How it works</a>
+          <a href="/overview/" class="btn af-btn-xl">Sign in</a>
+          <a href="#benefits" class="btn" data-variant="ghost">How it works</a>
         </div>
       </div>
 
@@ -57,19 +57,19 @@ import PublicBase from '../layouts/PublicBase.astro';
           <div class="diagram__node diagram__node--gateway" data-pulse-node="gateway">
             <span class="diagram__gateway-name">MCP gateway</span>
             <div class="diagram__gateway-tags">
-              <span class="af-tag diagram__tag" data-gateway-tag="auth">
+              <span class="badge diagram__tag" data-variant="outline" data-gateway-tag="auth">
                 Auth
                 <GatewayStatusIcon />
               </span>
-              <span class="af-tag diagram__tag" data-gateway-tag="policy">
+              <span class="badge diagram__tag" data-variant="outline" data-gateway-tag="policy">
                 Policy
                 <GatewayStatusIcon />
               </span>
-              <span class="af-tag diagram__tag" data-gateway-tag="audit">
+              <span class="badge diagram__tag" data-variant="outline" data-gateway-tag="audit">
                 Audit
                 <GatewayStatusIcon />
               </span>
-              <span class="af-tag diagram__tag" data-gateway-tag="broker">
+              <span class="badge diagram__tag" data-variant="outline" data-gateway-tag="broker">
                 Broker
                 <GatewayStatusIcon />
               </span>
@@ -191,7 +191,7 @@ import PublicBase from '../layouts/PublicBase.astro';
           Connect your assistant to datasets, compute, notebooks, and tools, without giving it your
           credentials.
         </p>
-        <a href="/overview/" class="af-btn secondary">Sign in</a>
+        <a href="/overview/" class="btn final-cta__btn" data-variant="outline">Sign in</a>
       </div>
     </div>
   </section>
@@ -616,7 +616,7 @@ import PublicBase from '../layouts/PublicBase.astro';
     background: var(--color-af-bg-subtle);
   }
 
-  .final-cta .af-btn {
+  .final-cta__btn {
     margin-top: var(--space-12);
   }
 

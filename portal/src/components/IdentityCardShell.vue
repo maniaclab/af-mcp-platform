@@ -43,7 +43,9 @@ const nameId = useId();
 
       <div v-if="powers && powers.length" class="ids__powers">
         <span class="ids__powers-label">Powers</span>
-        <span v-for="power in powers" :key="power" class="af-tag">{{ power }}</span>
+        <span v-for="power in powers" :key="power" class="badge" data-variant="outline">{{
+          power
+        }}</span>
       </div>
 
       <slot />

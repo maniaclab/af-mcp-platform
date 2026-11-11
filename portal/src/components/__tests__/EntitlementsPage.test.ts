@@ -108,7 +108,7 @@ describe('EntitlementsPage', () => {
     const wrapper = mount(EntitlementsPage);
     await flushPromises();
 
-    expect(wrapper.find('.af-empty').text()).toContain('No permissions are declared');
+    expect(wrapper.find('.empty').text()).toContain('No permissions are declared');
     expect(wrapper.find('table').exists()).toBe(false);
   });
 });

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * ConfirmDialog.vue — a modal confirm on the native <dialog> (`.af-dialog`):
+ * ConfirmDialog.vue — a modal confirm on the native <dialog> (Basecoat's `.dialog`):
  * the platform supplies the focus trap, inert page behind it, and Escape.
  *
  * Confirm only emits; the caller decides when to close (it may need to show
@@ -77,23 +77,28 @@ function onClose(): void {
 </script>
 
 <template>
-  <dialog ref="dialog" class="af-dialog" :aria-labelledby="titleId" @close="onClose">
-    <h4 :id="titleId">{{ title }}</h4>
-    <div><slot /></div>
-    <footer>
-      <button ref="cancelButton" type="button" class="af-btn quiet" @click="cancel">
-        {{ cancelLabel }}
-      </button>
-      <button
-        type="button"
-        class="af-btn"
-        :class="danger ? 'danger' : 'primary'"
-        :disabled="busy"
-        :aria-busy="busy"
-        @click="emit('confirm')"
-      >
-        {{ busy && busyLabel ? busyLabel : confirmLabel }}
-      </button>
-    </footer>
+  <dialog ref="dialog" class="dialog af-modal" :aria-labelledby="titleId" @close="onClose">
+    <div>
+      <header>
+        <h2 :id="titleId">{{ title }}</h2>
+      </header>
+      <section><slot /></section>
+      <footer>
+        <button ref="cancelButton" type="button" class="btn" data-variant="ghost" @click="cancel">
+          {{ cancelLabel }}
+        </button>
+        <button
+          type="button"
+          class="btn"
+          :class="{ 'af-danger': danger }"
+          :data-variant="danger ? 'outline' : undefined"
+          :disabled="busy"
+          :aria-busy="busy"
+          @click="emit('confirm')"
+        >
+          {{ busy && busyLabel ? busyLabel : confirmLabel }}
+        </button>
+      </footer>
+    </div>
   </dialog>
 </template>

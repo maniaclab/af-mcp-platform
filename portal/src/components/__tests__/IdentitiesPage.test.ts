@@ -175,7 +175,7 @@ describe('IdentitiesPage banner', () => {
     ]);
     const banner = wrapper.find('.af-banner.bad');
     expect(banner.text()).toContain('Your grid proxy has expired');
-    expect(banner.find('a.af-btn').attributes('href')).toBe('#identity-card-x509');
+    expect(banner.find('a.btn').attributes('href')).toBe('#identity-card-x509');
   });
 
   it('shows a warning banner when an until-expiry proxy is about to expire', async () => {
@@ -187,7 +187,7 @@ describe('IdentitiesPage banner', () => {
     ]);
     const banner = wrapper.find('.af-banner.warn');
     expect(banner.text()).toContain('Your grid proxy expires soon');
-    expect(banner.find('a.af-btn').attributes('href')).toBe('#identity-card-x509');
+    expect(banner.find('a.btn').attributes('href')).toBe('#identity-card-x509');
   });
 
   it('does not warn about a proxy that cannot renew while it has over an hour left', async () => {

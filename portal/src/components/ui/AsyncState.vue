@@ -37,7 +37,7 @@ function reload(): void {
 
   <div
     v-else-if="sessionExpired"
-    :class="[inline ? 'af-note' : 'af-banner', 'bad', { async__inline: inline }]"
+    :class="['alert', inline ? 'af-note' : 'af-banner', 'bad', { async__inline: inline }]"
     role="alert"
   >
     <span class="af-mark bad" aria-hidden="true"></span>
@@ -45,7 +45,7 @@ function reload(): void {
       <b>Session expired</b>
       Your session has expired. Reload to re-authenticate.
     </div>
-    <button type="button" class="af-btn s" :class="{ secondary: inline }" @click="reload">
+    <button type="button" class="btn" data-variant="outline" data-size="sm" @click="reload">
       Reload
     </button>
   </div>
@@ -54,7 +54,7 @@ function reload(): void {
        cannot fix it, only an administrator granting access can. -->
   <div
     v-else-if="accessDenied"
-    :class="[inline ? 'af-note' : 'af-banner', 'warn', { async__inline: inline }]"
+    :class="['alert', inline ? 'af-note' : 'af-banner', 'warn', { async__inline: inline }]"
     role="alert"
   >
     <span class="af-mark warn" aria-hidden="true"></span>
@@ -66,7 +66,7 @@ function reload(): void {
 
   <div
     v-else-if="error"
-    :class="[inline ? 'af-note' : 'af-banner', 'bad', { async__inline: inline }]"
+    :class="['alert', inline ? 'af-note' : 'af-banner', 'bad', { async__inline: inline }]"
     role="alert"
   >
     <span class="af-mark bad" aria-hidden="true"></span>
@@ -77,7 +77,7 @@ function reload(): void {
     </div>
   </div>
 
-  <div v-else-if="empty" class="af-empty">
+  <div v-else-if="empty" class="empty border-input border">
     <slot name="empty" />
   </div>
 

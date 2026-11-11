@@ -122,7 +122,8 @@ const toolsView = computed(() =>
         >
           <button
             type="button"
-            class="af-tag bc__tag bc__cap-badge bc__cap-badge--mixed"
+            class="badge bc__tag bc__cap-badge bc__cap-badge--mixed"
+            data-variant="outline"
             :aria-describedby="`bc-cap-${server.name}`"
           >
             mixed
@@ -139,7 +140,8 @@ const toolsView = computed(() =>
         >
           <button
             type="button"
-            class="af-tag bc__tag bc__cap-badge"
+            class="badge bc__tag bc__cap-badge"
+            data-variant="outline"
             :aria-describedby="`bc-cap-${server.name}`"
           >
             {{ server.permission }}
@@ -153,7 +155,8 @@ const toolsView = computed(() =>
         <PopoverTooltip v-if="!server.builtin" :tooltip-id="`bc-auth-${server.name}`" side="top">
           <button
             type="button"
-            class="af-tag bc__tag bc__auth-badge"
+            class="badge bc__tag bc__auth-badge"
+            data-variant="outline"
             :aria-describedby="`bc-auth-${server.name}`"
           >
             {{ server.auth_type }}
@@ -164,7 +167,8 @@ const toolsView = computed(() =>
         <PopoverTooltip :tooltip-id="`bc-count-${server.name}`" side="top">
           <button
             type="button"
-            class="af-tag bc__tag bc__count"
+            class="badge bc__tag bc__count"
+            data-variant="outline"
             :class="isWrite ? 'bc__count--state' : 'bc__count--read'"
             :aria-describedby="`bc-count-${server.name}`"
           >
@@ -205,13 +209,17 @@ const toolsView = computed(() =>
     >
       <template #label>Methods</template>
       <template #badge>
-        <span v-if="toolsView && toolsView.kind !== 'blocked'" class="af-tag bc__tools-count">
+        <span
+          v-if="toolsView && toolsView.kind !== 'blocked'"
+          class="badge bc__tools-count"
+          data-variant="outline"
+        >
           {{ toolCountLabel(toolsView.kind === 'tools' ? toolsView.tools.length : 0) }}
         </span>
       </template>
       <div class="bc__tools-body">
         <p v-if="toolsLoading" class="bc__tools-note" aria-live="polite">Loading methods…</p>
-        <div v-else-if="toolsError" class="af-note bad bc__tools-error" role="alert">
+        <div v-else-if="toolsError" class="alert af-note bad bc__tools-error" role="alert">
           <span class="af-mark bad" aria-hidden="true"></span>
           <span>{{ toolsError }}</span>
         </div>
@@ -312,13 +320,19 @@ const toolsView = computed(() =>
   gap: var(--space-8);
 }
 
-/* Tags are categories, so they stay neutral; the button reset keeps them
- * looking like the plain .af-tag while remaining focusable for the tooltip. */
+/* Tags are categories, so they stay neutral; as buttons they stay focusable
+ * for the tooltip. Basecoat's `.badge` draws its own focus ring (border plus
+ * halo) but, unlike `.btn`, does not switch off the global outline, so the
+ * outline is dropped here to leave exactly one focus treatment. */
 .bc__tag {
   gap: var(--space-4);
   color: inherit;
   font-family: var(--font-sans);
   cursor: help;
+}
+
+.bc__tag:focus-visible {
+  outline: none;
 }
 
 .bc__powered-by {

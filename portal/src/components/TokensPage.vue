@@ -279,7 +279,7 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
       <button
         v-if="loading || tokens.length > 0 || error || sessionExpired || accessDenied"
         type="button"
-        class="af-btn primary"
+        class="btn"
         @click="openMintDialog"
       >
         <Plus class="af-icon" :size="16" aria-hidden="true" />
@@ -288,14 +288,14 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
     </div>
 
     <!-- Banner slot: a failed revoke beats an expiring token. -->
-    <div v-if="revokeError" class="af-banner bad" role="alert">
+    <div v-if="revokeError" class="alert af-banner bad" role="alert">
       <span class="af-mark bad" aria-hidden="true"></span>
       <div>
         <b>Revoke failed</b>
         {{ revokeError }}
       </div>
     </div>
-    <div v-else-if="expiringTokens.length > 0" class="af-banner warn">
+    <div v-else-if="expiringTokens.length > 0" class="alert af-banner warn">
       <span class="af-mark warn" aria-hidden="true"></span>
       <div>
         <b>{{ expiringTokens[0].name }} expires {{ expiresIn(expiringTokens[0].expires_at!) }}</b>
@@ -306,7 +306,15 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
           {{ EXPIRY_WARNING_DAYS }} days.
         </template>
       </div>
-      <button type="button" class="af-btn s" @click="openMintDialog">New token</button>
+      <button
+        type="button"
+        class="btn"
+        data-variant="outline"
+        data-size="sm"
+        @click="openMintDialog"
+      >
+        New token
+      </button>
     </div>
 
     <section class="af-sect" aria-labelledby="tp-list-heading">
@@ -321,20 +329,24 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
         loading-label="Loading tokens…"
       >
         <template #empty>
-          <b>No tokens yet</b>
-          <p>
-            Tokens let clients that can't sign in with a browser, such as Claude Desktop, reach the
-            gateway as you. Most clients don't need one: they sign in themselves the first time you
-            connect them.
-          </p>
-          <button type="button" class="af-btn primary" @click="openMintDialog">
-            <Plus class="af-icon" :size="16" aria-hidden="true" />
-            New token
-          </button>
+          <header>
+            <h3>No tokens yet</h3>
+            <p>
+              Tokens let clients that can't sign in with a browser, such as Claude Desktop, reach
+              the gateway as you. Most clients don't need one: they sign in themselves the first
+              time you connect them.
+            </p>
+          </header>
+          <section>
+            <button type="button" class="btn" @click="openMintDialog">
+              <Plus class="af-icon" :size="16" aria-hidden="true" />
+              New token
+            </button>
+          </section>
         </template>
 
-        <div class="af-tbl-box" role="region" aria-label="Issued tokens" tabindex="0">
-          <table class="af-tbl" aria-label="Your issued tokens">
+        <div class="table-container af-box" role="region" aria-label="Issued tokens" tabindex="0">
+          <table class="table" aria-label="Your issued tokens">
             <thead>
               <tr>
                 <th scope="col">Name</th>
@@ -344,7 +356,7 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
                 <th scope="col">Created</th>
                 <th scope="col">Expires</th>
                 <th scope="col">Last used</th>
-                <th scope="col" class="act"><span class="sr-only">Actions</span></th>
+                <th scope="col" class="af-act"><span class="sr-only">Actions</span></th>
               </tr>
             </thead>
             <tbody>
@@ -372,13 +384,15 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
                     :label="statusLabel[tokenStatus(row)]"
                   />
                 </td>
-                <td class="sub tp__scope">{{ permissionGrantLabel(row.permission_grant) }}</td>
-                <td class="sub tp__id" :title="row.lookup_id">
+                <td class="af-sub tp__scope">{{ permissionGrantLabel(row.permission_grant) }}</td>
+                <td class="af-sub tp__id" :title="row.lookup_id">
                   <span class="tp__idbox">
                     {{ shortLookupId(row.lookup_id) }}
                     <button
                       type="button"
-                      class="af-btn quiet s tp__copy"
+                      class="btn tp__copy"
+                      data-variant="ghost"
+                      data-size="icon-sm"
                       :aria-label="`Copy token ID ${row.lookup_id}`"
                       @click="copyTokenId(row.lookup_id)"
                     >
@@ -392,25 +406,27 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
                     </button>
                   </span>
                 </td>
-                <td class="sub" :title="formatExact(row.created_at)">
+                <td class="af-sub" :title="formatExact(row.created_at)">
                   {{ formatRelativeIso(row.created_at) }}
                 </td>
                 <td
-                  class="sub"
+                  class="af-sub"
                   :title="row.expires_at ? formatExact(row.expires_at) : 'Never expires'"
                 >
                   {{ row.expires_at ? formatRelativeIso(row.expires_at) : 'Never' }}
                 </td>
                 <td
-                  class="sub"
+                  class="af-sub"
                   :title="row.last_used_at ? formatExact(row.last_used_at) : 'Never used'"
                 >
                   {{ row.last_used_at ? formatRelativeIso(row.last_used_at) : 'Never' }}
                 </td>
-                <td class="act">
+                <td class="af-act">
                   <button
                     type="button"
-                    class="af-btn danger s"
+                    class="btn af-danger"
+                    data-variant="outline"
+                    data-size="sm"
                     :aria-label="`Revoke ${row.name}`"
                     :disabled="revokingLookupId === row.lookup_id || tokenStatus(row) !== 'active'"
                     @click="openRevokeConfirm(row.lookup_id, row.name)"
@@ -425,7 +441,7 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
       </AsyncState>
     </section>
 
-    <div class="af-note info">
+    <div class="alert af-note info">
       <span class="af-mark info" aria-hidden="true"></span>
       <span>
         A token only grants access to the AF MCP platform. It is not the same as your identities
@@ -474,22 +490,24 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
     <!-- New token dialog -->
     <dialog
       ref="mintDialog"
-      class="af-dialog tp__dialog"
+      class="dialog af-modal"
       aria-labelledby="tp-modal-title"
       @close="onMintDialogClose"
     >
-      <template v-if="!mintedToken">
-        <h4 id="tp-modal-title">New token</h4>
-        <p class="af-help">
-          A personal access token is a long-lived credential you paste into a client's config, such
-          as Claude Desktop, that can't sign in with a browser. It is shown once, so copy it before
-          you close this dialog.
-        </p>
+      <form v-if="!mintedToken" class="tp__panel" novalidate @submit.prevent="handleMint">
+        <header>
+          <h2 id="tp-modal-title">New token</h2>
+          <p>
+            A personal access token is a long-lived credential you paste into a client's config,
+            such as Claude Desktop, that can't sign in with a browser. It is shown once, so copy it
+            before you close this dialog.
+          </p>
+        </header>
 
-        <form class="tp__form" novalidate @submit.prevent="handleMint">
-          <div class="af-field">
+        <section class="tp__fields">
+          <div class="field">
             <label for="tp-ttl">Expires after</label>
-            <select id="tp-ttl" v-model="expiryOption" class="af-input" :disabled="minting">
+            <select id="tp-ttl" v-model="expiryOption" class="select w-full" :disabled="minting">
               <option value="30">30 days</option>
               <option value="90">90 days (default)</option>
               <option value="365">1 year</option>
@@ -497,25 +515,25 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
             </select>
           </div>
 
-          <div class="af-field">
+          <div class="field">
             <label for="tp-name">Name (optional)</label>
             <input
               id="tp-name"
               v-model="name"
               type="text"
-              class="af-input"
+              class="input"
               placeholder="e.g. claude-desktop"
               maxlength="200"
               :disabled="minting"
             />
           </div>
 
-          <div class="af-field">
+          <div class="field">
             <label for="tp-note">Note (optional)</label>
             <textarea
               id="tp-note"
               v-model="note"
-              class="af-input tp__textarea"
+              class="textarea tp__textarea"
               placeholder="e.g. used by the CI bot for nightly runs"
               :maxlength="NOTE_MAX_LENGTH"
               rows="2"
@@ -527,89 +545,108 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
                the caller's own CURRENT permissions. Hidden entirely when
                availablePermissions is empty (e.g. the /v1/permissions fetch
                failed) -- an identity PAT remains mintable regardless. -->
-          <div v-if="availablePermissions.length > 0" class="af-field">
-            <label class="af-check">
-              <input v-model="restrictPermissions" type="checkbox" :disabled="minting" />
-              Restrict permissions (optional)
-            </label>
-            <span class="hint">
+          <div v-if="availablePermissions.length > 0" class="field">
+            <div class="field" data-orientation="horizontal">
+              <input
+                id="tp-restrict"
+                v-model="restrictPermissions"
+                type="checkbox"
+                class="input"
+                :disabled="minting"
+              />
+              <label for="tp-restrict">Restrict permissions (optional)</label>
+            </div>
+            <p>
               Leave this unchecked for a token with your full account access. Check it to limit the
               token to the permissions you select below, which suits CI or scripts.
-            </span>
+            </p>
             <fieldset v-if="restrictPermissions" class="tp__perms">
               <legend class="sr-only">Permissions to grant</legend>
-              <label v-for="cap in availablePermissions" :key="cap" class="af-check">
+              <div
+                v-for="cap in availablePermissions"
+                :key="cap"
+                class="field"
+                data-orientation="horizontal"
+              >
                 <input
+                  :id="`tp-perm-${cap}`"
                   type="checkbox"
+                  class="input"
                   :checked="selectedPermissions.has(cap)"
                   :disabled="minting"
                   @change="
                     toggleSelectedPermission(cap, ($event.target as HTMLInputElement).checked)
                   "
                 />
-                {{ cap }}
-              </label>
+                <label :for="`tp-perm-${cap}`">{{ cap }}</label>
+              </div>
             </fieldset>
           </div>
 
-          <div v-if="mintError" class="af-note bad" role="alert">
+          <div v-if="mintError" class="alert af-note bad" role="alert">
             <span class="af-mark bad" aria-hidden="true"></span>
             <span>{{ mintError }}</span>
           </div>
-
-          <footer>
-            <button type="button" class="af-btn quiet" @click="mintDialog?.close()">Cancel</button>
-            <button type="submit" class="af-btn primary" :disabled="minting" :aria-busy="minting">
-              {{ minting ? 'Creating…' : 'Create token' }}
-            </button>
-          </footer>
-        </form>
-      </template>
-
-      <template v-else>
-        <h4 id="tp-modal-title">Token created</h4>
-
-        <div class="af-note warn" role="alert">
-          <span class="af-mark warn" aria-hidden="true"></span>
-          <span>This is the only time this token is shown. Copy it now.</span>
-        </div>
-
-        <CopyField :value="mintedToken.token" label="Copy token" multiline />
-
-        <h3 class="tp__label">Claude (Claude.ai, Claude Desktop) without OAuth support</h3>
-        <CopyField :value="claudeHeaderValue" label="Copy request header value" multiline />
-        <p class="af-help">
-          In the custom connector's <strong>Request headers</strong>, add name
-          <code>Authorization</code> and paste the value above. Skip this if your client supports
-          OAuth discovery: add just the server URL instead and it authenticates itself.
-        </p>
-
-        <h3 class="tp__label">Register with Claude Code</h3>
-        <CopyField :value="claudeAddCommand" label="Copy Claude Code command" multiline />
-        <p class="af-help">
-          This command embeds the token above, so pasting it into a terminal puts a working
-          credential in your shell history. For the safer pattern (token read into an env var via
-          <code>read -s</code>, never a literal), see the <strong>Claude Code</strong> section of
-          <code>docs/connecting-a-client.md</code>.
-        </p>
-
-        <dl class="af-kv">
-          <dt>Name</dt>
-          <dd>{{ mintedToken.name }}</dd>
-          <template v-if="mintedToken.note">
-            <dt>Note</dt>
-            <dd>{{ mintedToken.note }}</dd>
-          </template>
-          <dt>Scope</dt>
-          <dd>{{ permissionGrantLabel(mintedToken.permission_grant) }}</dd>
-          <dt>Expires</dt>
-          <dd>{{ mintedToken.expires_at ? formatExact(mintedToken.expires_at) : 'Never' }}</dd>
-        </dl>
+        </section>
 
         <footer>
-          <button type="button" class="af-btn primary" @click="handleDone">Done</button>
+          <button type="button" class="btn" data-variant="ghost" @click="mintDialog?.close()">
+            Cancel
+          </button>
+          <button type="submit" class="btn" :disabled="minting" :aria-busy="minting">
+            {{ minting ? 'Creating…' : 'Create token' }}
+          </button>
         </footer>
-      </template>
+      </form>
+
+      <div v-else class="tp__panel">
+        <header>
+          <h2 id="tp-modal-title">Token created</h2>
+        </header>
+
+        <section class="tp__fields">
+          <div class="alert af-note warn" role="alert">
+            <span class="af-mark warn" aria-hidden="true"></span>
+            <span>This is the only time this token is shown. Copy it now.</span>
+          </div>
+
+          <CopyField :value="mintedToken.token" label="Copy token" multiline />
+
+          <h3 class="tp__label">Claude (Claude.ai, Claude Desktop) without OAuth support</h3>
+          <CopyField :value="claudeHeaderValue" label="Copy request header value" multiline />
+          <p class="af-help">
+            In the custom connector's <strong>Request headers</strong>, add name
+            <code>Authorization</code> and paste the value above. Skip this if your client supports
+            OAuth discovery: add just the server URL instead and it authenticates itself.
+          </p>
+
+          <h3 class="tp__label">Register with Claude Code</h3>
+          <CopyField :value="claudeAddCommand" label="Copy Claude Code command" multiline />
+          <p class="af-help">
+            This command embeds the token above, so pasting it into a terminal puts a working
+            credential in your shell history. For the safer pattern (token read into an env var via
+            <code>read -s</code>, never a literal), see the <strong>Claude Code</strong> section of
+            <code>docs/connecting-a-client.md</code>.
+          </p>
+
+          <dl class="af-kv">
+            <dt>Name</dt>
+            <dd>{{ mintedToken.name }}</dd>
+            <template v-if="mintedToken.note">
+              <dt>Note</dt>
+              <dd>{{ mintedToken.note }}</dd>
+            </template>
+            <dt>Scope</dt>
+            <dd>{{ permissionGrantLabel(mintedToken.permission_grant) }}</dd>
+            <dt>Expires</dt>
+            <dd>{{ mintedToken.expires_at ? formatExact(mintedToken.expires_at) : 'Never' }}</dd>
+          </dl>
+        </section>
+
+        <footer>
+          <button type="button" class="btn" @click="handleDone">Done</button>
+        </footer>
+      </div>
     </dialog>
 
     <ConfirmDialog
@@ -649,11 +686,6 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
   gap: var(--space-4);
 }
 
-.tp__copy {
-  height: var(--space-24);
-  padding: 0 var(--space-4);
-}
-
 /* A scope can list several permissions; let it wrap instead of widening the table. */
 .tp__scope {
   white-space: normal;
@@ -666,23 +698,24 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
   gap: var(--space-12);
 }
 
-.tp__dialog {
-  width: min(100%, 560px);
+/* The dialog panel is wider than Basecoat's default, and scrolls inside its
+   own bounds when the form or the minted token outgrows a short window. */
+.tp__panel {
+  max-width: 560px;
 }
 
-.tp__form {
+.tp__panel > section {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.tp__fields {
   display: flex;
   flex-direction: column;
   gap: var(--space-16);
 }
 
-.tp__dialog .af-field {
-  max-width: none;
-}
-
 .tp__textarea {
-  height: auto;
-  padding-block: var(--space-8);
   resize: vertical;
 }
 
