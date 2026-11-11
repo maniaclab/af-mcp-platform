@@ -43,9 +43,9 @@ describe('IdentityCardShell', () => {
 
   it('renders an optional icon hidden from assistive tech', () => {
     const w = mount(IdentityCardShell, { props: { ...baseProps, icon: KeyRound } });
-    expect(w.find('h3').element.parentElement?.querySelector('svg')?.getAttribute('aria-hidden')).toBe(
-      'true',
-    );
+    expect(
+      w.find('h3').element.parentElement?.querySelector('svg')?.getAttribute('aria-hidden'),
+    ).toBe('true');
   });
 
   it('renders the status-extra, default, actions and form slots', () => {
