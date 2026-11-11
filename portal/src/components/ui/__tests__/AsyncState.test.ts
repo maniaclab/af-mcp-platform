@@ -108,4 +108,14 @@ describe('AsyncState', () => {
     expect(w.find('.af-banner.bad').exists()).toBe(true);
     expect(w.find('.af-empty').exists()).toBe(false);
   });
+  it('renders the error-hint slot inside the error banner only', () => {
+    const slots = {
+      default: '<p class="content">c</p>',
+      'error-hint': '<span class="hint">h</span>',
+    };
+    const failed = mount(AsyncState, { props: { ...base, error: 'boom' }, slots });
+    expect(failed.find('.af-banner.bad .hint').exists()).toBe(true);
+    const fine = mount(AsyncState, { props: base, slots });
+    expect(fine.find('.hint').exists()).toBe(false);
+  });
 });

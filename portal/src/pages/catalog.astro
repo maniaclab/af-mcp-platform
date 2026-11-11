@@ -4,13 +4,10 @@ import CatalogPage from '../components/CatalogPage.vue';
 ---
 
 <Base title="Services">
-  <div class="page-header">
-    <div class="page-header__text">
-      <h1 class="page-title">Services</h1>
-      <p class="page-subtitle">
-        Services (MCP servers) your account can reach, each exposing a set of methods (MCP "tools").
-        Access is determined by your linked identities and granted permissions.
-      </p>
+  <div class="af-page-head page-head">
+    <div>
+      <h1>Services</h1>
+      <p>Which backends and methods your account can reach, and what to do about the rest.</p>
     </div>
   </div>
 
@@ -18,24 +15,16 @@ import CatalogPage from '../components/CatalogPage.vue';
 </Base>
 
 <style>
-  .page-header {
-    margin-bottom: 1.75rem;
+  .page-head {
+    margin-bottom: var(--space-24);
   }
 
-  .page-title {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 1.5rem;
-    font-weight: 700;
-    letter-spacing: 0.02em;
-    color: var(--color-af-text);
-    margin: 0 0 0.5rem;
+  .page-head h1 {
+    font-size: var(--text-24);
+    line-height: 1.3;
   }
 
-  .page-subtitle {
-    font-size: 0.9375rem;
-    color: var(--color-af-dim);
-    line-height: 1.6;
+  .page-head p {
     margin: 0;
-    max-width: 52rem;
   }
 </style>

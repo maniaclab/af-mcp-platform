@@ -3,7 +3,8 @@
  * AsyncState.vue — the ladder every data page renders: loading, session
  * expired, access denied, error, optional empty, then the content. Pair it
  * with useLoadState(). The first state that applies wins, so a page never
- * shows a stale empty state under an error.
+ * shows a stale empty state under an error. The optional `error-hint` slot
+ * adds a pointer (e.g. a link to where the fix lives) inside the error banner.
  */
 import type { AccessDeniedError } from '../../lib/api';
 
@@ -56,6 +57,7 @@ function reload(): void {
     <div>
       <b>{{ errorTitle }}</b>
       {{ error }}
+      <slot name="error-hint" />
     </div>
   </div>
 

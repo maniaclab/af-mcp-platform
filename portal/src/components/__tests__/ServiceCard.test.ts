@@ -113,7 +113,7 @@ function mountBuiltinCard(): VueWrapper {
 }
 
 function toolsToggle(wrapper: VueWrapper) {
-  const button = wrapper.find('button.bc__tools-toggle');
+  const button = wrapper.find('button.disclosure__toggle');
   expect(button.exists()).toBe(true);
   return button;
 }
