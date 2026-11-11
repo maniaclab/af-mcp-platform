@@ -799,6 +799,8 @@ export interface DashboardSummary {
   linkedCount: number;
   serverCount: number;
   proxyStatus: ProxyStatus;
+  /** Whether the x509 link renews the proxy hands-free (x509_link_mode "auto-renew"). */
+  proxyAutoRenews: boolean;
   activeTokenCount: number;
   /** Services that are available, per the same statuses the Services page shows. */
   reachableCount: number;
@@ -836,6 +838,12 @@ export async function fetchDashboardSummary(): Promise<DashboardSummary> {
       ? identityData.value.providers.filter((p) => p.linked).length
       : 0;
 
+  const proxyAutoRenews =
+    identityData.status === 'fulfilled' &&
+    identityData.value.providers.some(
+      (p) => p.link_mechanism === 'passphrase' && p.x509_link_mode === 'auto-renew',
+    );
+
   const services = summarizeServices(catalog.status === 'fulfilled' ? catalog.value.servers : []);
 
   const proxy: ProxyStatus =
@@ -850,6 +858,7 @@ export async function fetchDashboardSummary(): Promise<DashboardSummary> {
     linkedCount,
     serverCount: services.total,
     proxyStatus: proxy,
+    proxyAutoRenews,
     activeTokenCount,
     reachableCount: services.reachable,
     needsLinkCount: services.needsLink,

@@ -622,6 +622,45 @@ describe('fetchDashboardSummary() service and token details', () => {
   });
 });
 
+describe('fetchDashboardSummary() proxy renewal', () => {
+  const identities = (providers: unknown[]) =>
+    vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      let body: unknown = { cached: false, voms_attributes: [] };
+      if (url.includes('/identities')) body = { providers };
+      else if (url.includes('/catalog')) body = { servers: [] };
+      else if (url.includes('/tokens')) body = [];
+      return Promise.resolve(
+        new Response(JSON.stringify(body), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+    });
+  const x509 = (mode: string | null) => ({
+    id: 'x509',
+    link_mechanism: 'passphrase',
+    linked: true,
+    x509_link_mode: mode,
+  });
+
+  it('reports that the proxy renews itself when the x509 link is auto-renew', async () => {
+    globalThis.fetch = identities([x509('auto-renew')]);
+    expect((await fetchDashboardSummary()).proxyAutoRenews).toBe(true);
+  });
+
+  it('reports that it does not for an until-expiry link, a legacy entry or no x509 provider', async () => {
+    globalThis.fetch = identities([x509('until-expiry')]);
+    expect((await fetchDashboardSummary()).proxyAutoRenews).toBe(false);
+    window.sessionStorage.clear();
+    globalThis.fetch = identities([x509(null)]);
+    expect((await fetchDashboardSummary()).proxyAutoRenews).toBe(false);
+    window.sessionStorage.clear();
+    globalThis.fetch = identities([]);
+    expect((await fetchDashboardSummary()).proxyAutoRenews).toBe(false);
+  });
+});
+
 describe('permissions client (issue #144 step 4: permission PATs)', () => {
   it('fetchPermissions returns the parsed grants and the callers raw groups', async () => {
     globalThis.fetch = mockJson(200, {

@@ -10,9 +10,7 @@
 import type { DashboardSummary } from './api';
 import { formatRelative } from './relativeTime';
 import { expiresIn, expiresSoon } from './tokenDisplay';
-
-/** A proxy with less than this left is worth a warning: it will not last a working day. */
-export const EXPIRY_WARNING_SECONDS = 6 * 3600;
+import { proxyExpiryState } from './x509Identity';
 
 export interface OverviewBanner {
   tone: 'bad' | 'warn' | 'info';
@@ -31,10 +29,11 @@ export function overviewBanner(
   summary: DashboardSummary,
   now: number = Date.now(),
 ): OverviewBanner | null {
-  const { proxyStatus, linkedCount, failingCount, soonestExpiringToken } = summary;
+  const { proxyStatus, proxyAutoRenews, linkedCount, failingCount, soonestExpiringToken } = summary;
   const remaining = proxyStatus.cached ? proxyStatus.remaining_seconds : null;
+  const proxy = remaining != null ? proxyExpiryState(remaining, proxyAutoRenews) : 'ok';
 
-  if (remaining != null && remaining <= 0) {
+  if (remaining != null && proxy === 'expired') {
     return {
       tone: 'bad',
       title: 'Your grid proxy has expired',
@@ -50,7 +49,7 @@ export function overviewBanner(
       action: { label: 'View services', href: '/catalog/' },
     };
   }
-  if (remaining != null && remaining < EXPIRY_WARNING_SECONDS) {
+  if (remaining != null && proxy === 'expiring') {
     return {
       tone: 'warn',
       title: `Your grid proxy expires ${formatRelative(now + remaining * 1000, now)}`,

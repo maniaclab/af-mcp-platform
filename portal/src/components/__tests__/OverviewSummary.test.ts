@@ -28,6 +28,7 @@ const SUMMARY: DashboardSummary = {
   reachableCount: 8,
   needsLinkCount: 0,
   failingCount: 0,
+  proxyAutoRenews: false,
   soonestExpiringToken: null,
   proxyStatus: { cached: true, voms_attributes: [], remaining_seconds: 48 * 3600 },
 };
@@ -166,6 +167,31 @@ describe('OverviewSummary status list', () => {
     const identities = wrapper.findAll('.ov__row')[1]!;
     expect(identities.text()).toContain('grid certificate expired');
     expect(identities.find('.af-mark').classes()).toContain('bad');
+  });
+
+  it('warns in the identities row when a proxy that cannot renew has under an hour left', async () => {
+    vi.mocked(fetchDashboardSummary).mockResolvedValue({
+      ...SUMMARY,
+      proxyStatus: { cached: true, voms_attributes: [], remaining_seconds: 1800 },
+    });
+    const wrapper = await mountSummary();
+
+    const identities = wrapper.findAll('.ov__row')[1]!;
+    expect(identities.text()).toContain('grid certificate expiring');
+    expect(identities.find('.af-mark').classes()).toContain('warn');
+  });
+
+  it('keeps an auto-renewing proxy under an hour from expiry as active', async () => {
+    vi.mocked(fetchDashboardSummary).mockResolvedValue({
+      ...SUMMARY,
+      proxyAutoRenews: true,
+      proxyStatus: { cached: true, voms_attributes: [], remaining_seconds: 1800 },
+    });
+    const wrapper = await mountSummary();
+
+    const identities = wrapper.findAll('.ov__row')[1]!;
+    expect(identities.text()).toContain('grid certificate active');
+    expect(identities.find('.af-mark').classes()).toContain('ok');
   });
 
   it('shows a loading state until the fetches settle', () => {

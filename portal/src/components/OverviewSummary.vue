@@ -17,6 +17,7 @@ import { computed, onMounted, ref } from 'vue';
 import { fetchDashboardSummary, fetchUsage } from '../lib/api';
 import type { DashboardSummary, UsageResponse } from '../lib/api';
 import { overviewBanner } from '../lib/overviewBanner';
+import { proxyExpiryState } from '../lib/x509Identity';
 import { expiresIn, expiresSoon } from '../lib/tokenDisplay';
 import { formatCost, formatTokens } from '../lib/usageFormat';
 import StatusMark from './ui/StatusMark.vue';
@@ -60,10 +61,11 @@ function pending(loading: boolean): { tone: Tone; state: string } {
     : { tone: 'off', state: 'Status unavailable' };
 }
 
-function gridCertificate(s: DashboardSummary): 'not linked' | 'expired' | 'active' {
+function gridCertificate(s: DashboardSummary): 'not linked' | 'expired' | 'expiring' | 'active' {
   const { cached, remaining_seconds: remaining } = s.proxyStatus;
   if (!cached) return 'not linked';
-  return remaining != null && remaining <= 0 ? 'expired' : 'active';
+  const state = remaining != null ? proxyExpiryState(remaining, s.proxyAutoRenews) : 'ok';
+  return state === 'ok' ? 'active' : state;
 }
 
 const servicesStatus = computed(() => {
@@ -83,8 +85,9 @@ const identitiesStatus = computed(() => {
   if (!s) return pending(summaryLoading.value);
   const cert = gridCertificate(s);
   // A certificate that is not linked is absent by choice, not a problem; an
-  // expired one is.
-  const tone: Tone = cert === 'expired' ? 'bad' : s.linkedCount > 0 ? 'ok' : 'off';
+  // expired one is, and one about to lapse that cannot renew is a warning.
+  const tone: Tone =
+    cert === 'expired' ? 'bad' : cert === 'expiring' ? 'warn' : s.linkedCount > 0 ? 'ok' : 'off';
   return { tone, state: `${s.linkedCount} linked · grid certificate ${cert}` };
 });
 

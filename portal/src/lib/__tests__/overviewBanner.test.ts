@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { DashboardSummary } from '../api';
-import { EXPIRY_WARNING_SECONDS, overviewBanner } from '../overviewBanner';
+import { overviewBanner } from '../overviewBanner';
 
 const HOUR = 3600;
 const NOW = Date.UTC(2026, 10, 11, 12, 0, 0);
@@ -18,6 +18,7 @@ function summary(overrides: Partial<DashboardSummary> = {}): DashboardSummary {
     reachableCount: 8,
     needsLinkCount: 0,
     failingCount: 0,
+    proxyAutoRenews: false,
     soonestExpiringToken: null,
     proxyStatus: { cached: true, voms_attributes: [], remaining_seconds: 48 * HOUR },
     ...overrides,
@@ -45,12 +46,12 @@ describe('overviewBanner', () => {
   it('reports a proxy close to expiry as a warning with the time left', () => {
     const banner = overviewBanner(
       summary({
-        proxyStatus: { cached: true, voms_attributes: [], remaining_seconds: 3 * HOUR },
+        proxyStatus: { cached: true, voms_attributes: [], remaining_seconds: 40 * 60 },
       }),
       NOW,
     );
     expect(banner?.tone).toBe('warn');
-    expect(banner?.title).toBe('Your grid proxy expires in 3 hours');
+    expect(banner?.title).toBe('Your grid proxy expires in 40 minutes');
     expect(banner?.action).toEqual({ label: 'Renew proxy', href: '/identities/' });
   });
 
@@ -60,12 +61,35 @@ describe('overviewBanner', () => {
         proxyStatus: {
           cached: true,
           voms_attributes: [],
-          remaining_seconds: EXPIRY_WARNING_SECONDS,
+          remaining_seconds: HOUR,
         },
       }),
       NOW,
     );
     expect(banner).toBeNull();
+  });
+
+  it('stays quiet about a proxy under an hour from expiry when it renews itself', () => {
+    expect(
+      overviewBanner(
+        summary({
+          proxyAutoRenews: true,
+          proxyStatus: { cached: true, voms_attributes: [], remaining_seconds: 600 },
+        }),
+        NOW,
+      ),
+    ).toBeNull();
+  });
+
+  it('still reports an expired proxy that renews itself, since renewal has failed', () => {
+    const banner = overviewBanner(
+      summary({
+        proxyAutoRenews: true,
+        proxyStatus: { cached: true, voms_attributes: [], remaining_seconds: 0 },
+      }),
+      NOW,
+    );
+    expect(banner?.title).toBe('Your grid proxy has expired');
   });
 
   it('ignores a proxy that was never minted', () => {
@@ -112,7 +136,7 @@ describe('overviewBanner', () => {
     const banner = overviewBanner(
       summary({
         linkedCount: 0,
-        proxyStatus: { cached: true, voms_attributes: [], remaining_seconds: HOUR },
+        proxyStatus: { cached: true, voms_attributes: [], remaining_seconds: HOUR / 2 },
       }),
       NOW,
     );
@@ -150,7 +174,7 @@ describe('overviewBanner', () => {
     const banner = overviewBanner(
       summary({
         failingCount: 1,
-        proxyStatus: { cached: true, voms_attributes: [], remaining_seconds: HOUR },
+        proxyStatus: { cached: true, voms_attributes: [], remaining_seconds: HOUR / 2 },
       }),
       NOW,
     );
@@ -180,7 +204,7 @@ describe('overviewBanner', () => {
     const banner = overviewBanner(
       summary({
         soonestExpiringToken: { name: 'ci', expires_at: IN_3_DAYS },
-        proxyStatus: { cached: true, voms_attributes: [], remaining_seconds: HOUR },
+        proxyStatus: { cached: true, voms_attributes: [], remaining_seconds: HOUR / 2 },
       }),
       NOW,
     );

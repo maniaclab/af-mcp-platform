@@ -160,3 +160,19 @@ export function x509PreflightErrorMessage(err: unknown): string {
   if (err instanceof Error && err.message) return err.message;
   return 'Could not load the certificate checklist. Try again.';
 }
+
+/** A grid proxy with less than this left, and no way to renew itself, is worth a warning. */
+export const PROXY_EXPIRY_WARNING_SECONDS = 3600;
+
+export type ProxyExpiryState = 'ok' | 'expiring' | 'expired';
+
+/**
+ * The one rule for how a grid proxy's remaining lifetime is judged, shared by
+ * every page. An auto-renewing proxy re-mints itself hands-free, so it is
+ * never "expiring"; it is "expired" only once renewal has actually failed.
+ */
+export function proxyExpiryState(remainingSeconds: number, autoRenews: boolean): ProxyExpiryState {
+  if (remainingSeconds <= 0) return 'expired';
+  if (!autoRenews && remainingSeconds < PROXY_EXPIRY_WARNING_SECONDS) return 'expiring';
+  return 'ok';
+}

@@ -182,7 +182,7 @@ describe('IdentitiesPage banner', () => {
     const wrapper = await mountWith([
       x509({
         x509_link_mode: 'until-expiry',
-        proxy_expires_at: new Date(Date.now() + 3600_000).toISOString(),
+        proxy_expires_at: new Date(Date.now() + 30 * 60_000).toISOString(),
       }),
     ]);
     const banner = wrapper.find('.af-banner.warn');
@@ -190,9 +190,19 @@ describe('IdentitiesPage banner', () => {
     expect(banner.find('a.af-btn').attributes('href')).toBe('#identity-card-x509');
   });
 
+  it('does not warn about a proxy that cannot renew while it has over an hour left', async () => {
+    const wrapper = await mountWith([
+      x509({
+        x509_link_mode: 'until-expiry',
+        proxy_expires_at: new Date(Date.now() + 90 * 60_000).toISOString(),
+      }),
+    ]);
+    expect(wrapper.find('.af-banner').exists()).toBe(false);
+  });
+
   it('does not warn about an auto-renewing proxy that is near expiry', async () => {
     const wrapper = await mountWith([
-      x509({ proxy_expires_at: new Date(Date.now() + 3600_000).toISOString() }),
+      x509({ proxy_expires_at: new Date(Date.now() + 10 * 60_000).toISOString() }),
     ]);
     expect(wrapper.find('.af-banner').exists()).toBe(false);
   });

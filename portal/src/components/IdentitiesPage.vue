@@ -19,6 +19,7 @@ import {
   resolveLinkedErrorBanner,
 } from '../lib/linkedBanner';
 import { formatDateTime, formatRemaining } from '../lib/relativeTime';
+import { proxyExpiryState } from '../lib/x509Identity';
 import { useLoadState } from '../lib/useLoadState';
 import IdentityLink from './IdentityLink.vue';
 import Krb5IdentityCard from './Krb5IdentityCard.vue';
@@ -114,10 +115,6 @@ onMounted(async () => {
   }
 });
 
-// A VOMS proxy is minted for 12 hours, so under two hours left is the point
-// at which a person who declined passphrase custody should re-link.
-const PROXY_EXPIRING_MS = 2 * 3600_000;
-
 interface StateBanner {
   tone: 'bad' | 'warn';
   title: string;
@@ -129,19 +126,22 @@ interface StateBanner {
   button?: string;
 }
 
-// The one most urgent state problem, or null. Only an until-expiry x509 link
-// is judged by its proxy expiry: an auto-renewing link re-mints hands-free.
+// The one most urgent state problem, or null. The proxy is judged by
+// proxyExpiryState: an auto-renewing link re-mints hands-free, so it never
+// warns of expiry.
 // Problem beats warning: an expired proxy, then an expiring one. An account
 // that is not linked is the user's choice, and one that needs access is for an
 // administrator to fix, so neither raises a banner; each card says so itself.
 const stateBanner = computed<StateBanner | null>(() => {
   const now = new Date();
-  const x509 = providers.value.find(
-    (p) => p.link_mechanism === 'passphrase' && p.x509_link_mode === 'until-expiry',
-  );
+  const x509 = providers.value.find((p) => p.link_mechanism === 'passphrase');
   const expiry = x509?.proxy_expires_at ? new Date(x509.proxy_expires_at) : null;
   if (x509 && expiry && !Number.isNaN(expiry.getTime())) {
-    if (expiry.getTime() <= now.getTime()) {
+    const state = proxyExpiryState(
+      (expiry.getTime() - now.getTime()) / 1000,
+      x509.x509_link_mode === 'auto-renew',
+    );
+    if (state === 'expired') {
       return {
         tone: 'bad',
         title: 'Your grid proxy has expired',
@@ -151,7 +151,7 @@ const stateBanner = computed<StateBanner | null>(() => {
         button: 'Link certificate',
       };
     }
-    if (x509.linked && expiry.getTime() - now.getTime() < PROXY_EXPIRING_MS) {
+    if (x509.linked && state === 'expiring') {
       return {
         tone: 'warn',
         title: 'Your grid proxy expires soon',
