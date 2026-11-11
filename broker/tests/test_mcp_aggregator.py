@@ -831,7 +831,7 @@ async def test_observable_proxy_provider_records_list_failure_on_registry(
     with pytest.raises(ConnectionError):
         await provider._list_tools()
 
-    assert registry.recent_list_failure("example") == "unavailable"
+    assert registry.recent_list_failure("example", "alice") == "unavailable"
 
 
 async def test_observable_proxy_provider_clears_list_failure_on_success(
@@ -850,7 +850,7 @@ async def test_observable_proxy_provider_clears_list_failure_on_success(
 
     registry = ServiceRegistry()
     registry.register(_spec())
-    registry.record_list_failure("example", "unavailable")
+    registry.record_list_failure("example", "unavailable", "alice")
 
     async def _factory() -> Client:
         raise AssertionError(
@@ -863,7 +863,68 @@ async def test_observable_proxy_provider_clears_list_failure_on_success(
 
     await provider._list_tools()
 
-    assert registry.recent_list_failure("example") is None
+    assert registry.recent_list_failure("example", "alice") is None
+
+
+async def test_observable_proxy_provider_records_unauthorized_per_subject(
+    monkeypatch: pytest.MonkeyPatch, make_principal
+) -> None:
+    """A caller-specific failure ("unauthorized") is recorded against the
+    subject whose listing failed -- not against the whole service, where
+    every other caller's catalog status would pick it up."""
+    ctx = _patch_context(
+        monkeypatch, make_principal(subject="alice"), active_backend=None
+    )
+    ctx.recorded_state["__list_credential_status__:example"] = (True, None)
+
+    request = httpx2.Request("GET", "http://example.invalid")
+    unauthorized = httpx2.HTTPStatusError(
+        "unauthorized", request=request, response=httpx2.Response(401, request=request)
+    )
+
+    async def _factory() -> Client:
+        raise unauthorized
+
+    registry = ServiceRegistry()
+    registry.register(_spec())
+    provider = aggregator._ObservableProxyProvider(
+        "example", _factory, registry=registry
+    )
+
+    with pytest.raises(Exception):  # noqa: B017, PT011 -- fastmcp rewraps the 401
+        await provider._list_tools()
+
+    assert registry.recent_list_failure("example", "alice") == "unauthorized"
+    assert registry.recent_list_failure("example", "bob") is None
+
+
+async def test_observable_proxy_provider_success_clears_only_own_subject_record(
+    monkeypatch: pytest.MonkeyPatch, make_principal
+) -> None:
+    """A successful listing by one subject clears that subject's own
+    caller-specific record, leaving another subject's rejected credential
+    on record."""
+    monkeypatch.setattr(
+        aggregator.ProxyProvider, "_list_tools", AsyncMock(return_value=[])
+    )
+    _patch_context(monkeypatch, make_principal(subject="alice"), active_backend=None)
+
+    registry = ServiceRegistry()
+    registry.register(_spec())
+    registry.record_list_failure("example", "unauthorized", "alice")
+    registry.record_list_failure("example", "unauthorized", "bob")
+
+    async def _factory() -> Client:
+        raise AssertionError("ProxyProvider._list_tools is stubbed")
+
+    provider = aggregator._ObservableProxyProvider(
+        "example", _factory, registry=registry
+    )
+
+    await provider._list_tools()
+
+    assert registry.recent_list_failure("example", "alice") is None
+    assert registry.recent_list_failure("example", "bob") == "unauthorized"
 
 
 async def test_observable_proxy_provider_get_tool_short_circuits_on_prefix_mismatch(
@@ -1577,7 +1638,7 @@ async def test_list_tools_negative_cache_reraises_without_relogging_then_retries
         entry for entry in logs if entry["event"] == "aggregator.service_list_failed"
     ]
     assert len(failure_logs) == 1  # not re-logged on the cached re-raise
-    assert registry.recent_list_failure("example") == "unavailable"
+    assert registry.recent_list_failure("example", "alice") == "unavailable"
 
     # Past the negative TTL (30s): retried, not served stale.
     clock.advance(31.0)
@@ -2630,7 +2691,7 @@ async def test_observable_proxy_provider_method_not_found_is_empty_not_a_failure
     identically before and after the SDK bump."""
     registry = ServiceRegistry()
     registry.register(_spec())
-    registry.record_list_failure("example", "unavailable")
+    registry.record_list_failure("example", "unavailable", "alice")
 
     class _FakeClient:
         async def __aenter__(self) -> Self:
@@ -2649,4 +2710,4 @@ async def test_observable_proxy_provider_method_not_found_is_empty_not_a_failure
     tools = await provider._list_tools()
 
     assert tools == []
-    assert registry.recent_list_failure("example") is None
+    assert registry.recent_list_failure("example", "alice") is None

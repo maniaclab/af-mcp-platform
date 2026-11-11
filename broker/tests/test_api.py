@@ -436,7 +436,7 @@ def test_catalog_status_unavailable_when_recent_list_failure_recorded(
         return True
 
     monkeypatch.setattr(OIDCProvider, "is_linked", _linked)
-    app.state.service_registry.record_list_failure("rucio", "unavailable")
+    app.state.service_registry.record_list_failure("rucio", "unavailable", "sub-abc")
 
     client, state = app_client
     state["principal"] = make_principal(groups=["atlas"])
@@ -463,7 +463,7 @@ def test_catalog_status_unauthorized_failure_prompts_relink(
         return True
 
     monkeypatch.setattr(OIDCProvider, "is_linked", _linked)
-    app.state.service_registry.record_list_failure("rucio", "unauthorized")
+    app.state.service_registry.record_list_failure("rucio", "unauthorized", "sub-abc")
 
     client, state = app_client
     state["principal"] = make_principal(groups=["atlas"])
@@ -471,6 +471,60 @@ def test_catalog_status_unauthorized_failure_prompts_relink(
     assert resp.status_code == 200, resp.text
     rucio = {s["name"]: s for s in resp.json()["servers"]}["rucio"]
     assert rucio["status"] == "link_required"
+
+
+def test_catalog_status_ignores_another_subjects_unauthorized_failure(
+    app_client: tuple[TestClient, dict],
+    make_principal: Callable[..., object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An "unauthorized" listing failure is about the one caller whose
+    credential the backend rejected: it must not reach another caller's
+    catalog, while the affected caller still sees their own."""
+    from af_mcp_broker.app import app
+    from af_mcp_broker.credentials.oidc import OIDCProvider
+
+    async def _linked(self, principal) -> bool:
+        return True
+
+    monkeypatch.setattr(OIDCProvider, "is_linked", _linked)
+    app.state.service_registry.record_list_failure("rucio", "unauthorized", "sub-a")
+
+    client, state = app_client
+    state["principal"] = make_principal(groups=["atlas"], subject="sub-b")
+    resp = client.get("/v1/catalog", headers=_AUTH)
+    assert resp.status_code == 200, resp.text
+    rucio = {s["name"]: s for s in resp.json()["servers"]}["rucio"]
+    assert rucio["status"] == "available"
+
+    state["principal"] = make_principal(groups=["atlas"], subject="sub-a")
+    resp = client.get("/v1/catalog", headers=_AUTH)
+    assert resp.status_code == 200, resp.text
+    rucio = {s["name"]: s for s in resp.json()["servers"]}["rucio"]
+    assert rucio["status"] == "link_required"
+
+
+def test_catalog_status_shows_service_wide_unavailable_to_every_subject(
+    app_client: tuple[TestClient, dict],
+    make_principal: Callable[..., object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from af_mcp_broker.app import app
+    from af_mcp_broker.credentials.oidc import OIDCProvider
+
+    async def _linked(self, principal) -> bool:
+        return True
+
+    monkeypatch.setattr(OIDCProvider, "is_linked", _linked)
+    app.state.service_registry.record_list_failure("rucio", "unavailable", "sub-a")
+
+    client, state = app_client
+    for subject in ("sub-a", "sub-b"):
+        state["principal"] = make_principal(groups=["atlas"], subject=subject)
+        resp = client.get("/v1/catalog", headers=_AUTH)
+        assert resp.status_code == 200, resp.text
+        rucio = {s["name"]: s for s in resp.json()["servers"]}["rucio"]
+        assert rucio["status"] == "unavailable"
 
 
 @pytest.mark.parametrize(

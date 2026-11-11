@@ -1399,7 +1399,8 @@ class _ObservableProxyProvider(ProxyProvider):
             tools = await super()._list_tools()
         except Exception as exc:
             reason, detail = await _classify_list_failure(exc, self._service_name)
-            self._registry.record_list_failure(self._service_name, reason)
+            subject = await self._caller_subject("tools")
+            self._registry.record_list_failure(self._service_name, reason, subject)
             logger.warning(
                 "aggregator.service_list_failed",
                 service=self._service_name,
@@ -1409,10 +1410,12 @@ class _ObservableProxyProvider(ProxyProvider):
             raise
         else:
             # A successful listing means the service has recovered from any
-            # previously recorded failure -- clear it so /v1/catalog and
-            # af_list_mcp_servers stop reporting "unavailable" for a service
-            # that's actually fine again.
-            self._registry.clear_list_failure(self._service_name)
+            # recorded service-wide failure, and this caller from their own
+            # -- clear both so /v1/catalog and af_list_mcp_servers stop
+            # reporting them.
+            self._registry.clear_list_failure(
+                self._service_name, await self._caller_subject("tools")
+            )
             if self._exclude_tools:
                 self._warn_on_missing_exclude_tools(tools)
                 tools = [t for t in tools if t.name not in self._exclude_tools]
