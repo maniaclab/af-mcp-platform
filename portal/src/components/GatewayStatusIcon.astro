@@ -1,0 +1,75 @@
+---
+/**
+ * GatewayStatusIcon.astro — the status slot inside each node of the landing
+ * page's gateway diagram. Three pre-rendered states (spinner, check, x) are
+ * toggled by the parent node's data-state attribute, which gatewayPulse.ts
+ * sets, so the script only ever changes one attribute per state change.
+ * Decorative: the diagram's own labels carry the content.
+ */
+import { Check, X } from '@lucide/astro';
+---
+
+<span class="diagram__tag-icon" data-tag-icon aria-hidden="true">
+  <span class="diagram__tag-spinner"></span>
+  <span class="diagram__tag-check"><Check size={12} /></span>
+  <span class="diagram__tag-x"><X size={12} /></span>
+</span>
+
+<style>
+  .diagram__tag-icon {
+    position: relative;
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    flex-shrink: 0;
+  }
+
+  .diagram__tag-spinner,
+  .diagram__tag-check,
+  .diagram__tag-x {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    opacity: 0;
+    transition: opacity var(--time-base) var(--ease);
+  }
+
+  .diagram__tag-spinner {
+    border: 1.5px solid var(--color-af-border-strong);
+    border-top-color: var(--color-af-text-secondary);
+    border-radius: 50%;
+  }
+
+  .diagram__tag-check {
+    color: var(--color-af-ok);
+  }
+
+  .diagram__tag-x {
+    color: var(--color-af-bad);
+  }
+
+  :global([data-state='checking']) .diagram__tag-spinner {
+    opacity: 1;
+    animation: diagram-tag-spin 550ms linear infinite;
+  }
+
+  :global([data-state='ok']) .diagram__tag-check {
+    opacity: 1;
+  }
+
+  :global([data-state='fail']) .diagram__tag-x {
+    opacity: 1;
+  }
+
+  @keyframes diagram-tag-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .diagram__tag-spinner {
+      animation: none;
+    }
+  }
+</style>

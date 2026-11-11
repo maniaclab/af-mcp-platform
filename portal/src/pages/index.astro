@@ -5,9 +5,10 @@
 //
 // This page is deliberately public: it uses PublicBase.astro, not Base.astro,
 // so it renders with no Keycloak session and no app-shell chrome. The
-// authenticated dashboard (identical hero, live status, connect
-// instructions) lives at /overview/ -- see Base.astro's nav and
+// authenticated dashboard (live status, connect instructions) lives at /overview/ -- see Base.astro's nav and
 // portal/src/pages/overview.astro.
+import { Shield, Server, CircleCheck, ExternalLink } from '@lucide/astro';
+import GatewayStatusIcon from '../components/GatewayStatusIcon.astro';
 import PublicBase from '../layouts/PublicBase.astro';
 ---
 
@@ -16,294 +17,140 @@ import PublicBase from '../layouts/PublicBase.astro';
   <section class="hero" aria-label="AF MCP Platform">
     <canvas id="track-canvas" class="hero__canvas" aria-hidden="true"></canvas>
 
-    <div class="hero__content">
-      <div class="hero__eyebrow">Federated Identity MCP Gateway</div>
-      <h1 class="hero__title">Give AI access to your analysis facility.</h1>
-      <p class="hero__sub">
-        Securely connect AI assistants to datasets, compute, notebooks, and analysis tools through <a
-          href="https://modelcontextprotocol.io/"
-          target="_blank"
-          rel="noopener noreferrer">MCP</a
-        >, without giving them your credentials.
-      </p>
+    <div class="af-wrap">
+      <div class="hero__content">
+        <h1 class="hero__title">Give AI access to your analysis facility.</h1>
+        <p class="hero__sub">
+          Securely connect AI assistants to datasets, compute, notebooks, and analysis tools through <a
+            href="https://modelcontextprotocol.io/"
+            target="_blank"
+            rel="noopener noreferrer">MCP</a
+          >, without giving them your credentials.
+        </p>
 
-      <div class="hero__cta">
-        <a href="/overview/" class="hero__cta-primary">Sign in →</a>
-        <a href="#benefits" class="hero__cta-secondary">Explore the platform →</a>
+        <div class="hero__cta">
+          <a href="/overview/" class="af-btn primary l">Sign in</a>
+          <a href="#benefits" class="af-btn quiet l">How it works</a>
+        </div>
       </div>
     </div>
   </section>
 
   <!-- ── What it does ──────────────────────────────────────────────────── -->
   <section id="benefits" class="benefits" aria-label="What this platform does">
-    <h2 class="benefits__heading">One gateway. Your entire facility.</h2>
+    <div class="af-wrap">
+      <h2 class="benefits__heading">One gateway. Your entire facility.</h2>
 
-    <div class="benefits-layout">
-      <div class="diagram" aria-label="How AI assistants reach the facility" data-pulse-diagram>
-        <div class="diagram__node diagram__node--client" data-pulse-node="client">
-          AI Assistant
-          <span class="diagram__tag-icon" data-tag-icon aria-hidden="true">
-            <span class="diagram__tag-spinner"></span>
-            <svg class="diagram__tag-check" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-              ><path
-                d="M5 13l4 4L19 7"
-                stroke-width="3"
-                stroke-linecap="round"
-                stroke-linejoin="round"></path></svg
-            >
-            <svg class="diagram__tag-x" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-              ><path d="M6 6l12 12M18 6L6 18" stroke-width="3" stroke-linecap="round"></path></svg
-            >
-          </span>
-        </div>
+      <div class="benefits-layout">
+        <div class="diagram" aria-label="How AI assistants reach the facility" data-pulse-diagram>
+          <div class="diagram__node diagram__node--client" data-pulse-node="client">
+            AI assistant
+            <GatewayStatusIcon />
+          </div>
 
-        <div class="diagram__link">
-          <span class="diagram__link-label">MCP</span>
-        </div>
+          <div class="diagram__link">
+            <span class="diagram__link-label">MCP</span>
+          </div>
 
-        <div class="diagram__node diagram__node--gateway" data-pulse-node="gateway">
-          <span class="diagram__gateway-name">MCP Gateway</span>
-          <div class="diagram__gateway-tags">
-            <span class="diagram__tag" data-gateway-tag="auth">
-              Auth
-              <span class="diagram__tag-icon" data-tag-icon aria-hidden="true">
-                <span class="diagram__tag-spinner"></span>
-                <svg
-                  class="diagram__tag-check"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  ><path
-                    d="M5 13l4 4L19 7"
-                    stroke-width="3"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"></path></svg
-                >
-                <svg class="diagram__tag-x" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                  ><path d="M6 6l12 12M18 6L6 18" stroke-width="3" stroke-linecap="round"
-                  ></path></svg
-                >
+          <div class="diagram__node diagram__node--gateway" data-pulse-node="gateway">
+            <span class="diagram__gateway-name">MCP gateway</span>
+            <div class="diagram__gateway-tags">
+              <span class="af-tag diagram__tag" data-gateway-tag="auth">
+                Auth
+                <GatewayStatusIcon />
               </span>
-            </span>
-            <span class="diagram__tag" data-gateway-tag="policy">
-              Policy
-              <span class="diagram__tag-icon" data-tag-icon aria-hidden="true">
-                <span class="diagram__tag-spinner"></span>
-                <svg
-                  class="diagram__tag-check"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  ><path
-                    d="M5 13l4 4L19 7"
-                    stroke-width="3"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"></path></svg
-                >
-                <svg class="diagram__tag-x" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                  ><path d="M6 6l12 12M18 6L6 18" stroke-width="3" stroke-linecap="round"
-                  ></path></svg
-                >
+              <span class="af-tag diagram__tag" data-gateway-tag="policy">
+                Policy
+                <GatewayStatusIcon />
               </span>
-            </span>
-            <span class="diagram__tag" data-gateway-tag="audit">
-              Audit
-              <span class="diagram__tag-icon" data-tag-icon aria-hidden="true">
-                <span class="diagram__tag-spinner"></span>
-                <svg
-                  class="diagram__tag-check"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  ><path
-                    d="M5 13l4 4L19 7"
-                    stroke-width="3"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"></path></svg
-                >
-                <svg class="diagram__tag-x" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                  ><path d="M6 6l12 12M18 6L6 18" stroke-width="3" stroke-linecap="round"
-                  ></path></svg
-                >
+              <span class="af-tag diagram__tag" data-gateway-tag="audit">
+                Audit
+                <GatewayStatusIcon />
               </span>
-            </span>
-            <span class="diagram__tag" data-gateway-tag="broker">
-              Broker
-              <span class="diagram__tag-icon" data-tag-icon aria-hidden="true">
-                <span class="diagram__tag-spinner"></span>
-                <svg
-                  class="diagram__tag-check"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  ><path
-                    d="M5 13l4 4L19 7"
-                    stroke-width="3"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"></path></svg
-                >
-                <svg class="diagram__tag-x" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                  ><path d="M6 6l12 12M18 6L6 18" stroke-width="3" stroke-linecap="round"
-                  ></path></svg
-                >
+              <span class="af-tag diagram__tag" data-gateway-tag="broker">
+                Broker
+                <GatewayStatusIcon />
               </span>
-            </span>
+            </div>
           </div>
-        </div>
 
-        <div class="diagram__stem" aria-hidden="true"></div>
+          <div class="diagram__stem" aria-hidden="true"></div>
 
-        <div class="diagram__fanout">
-          <div class="diagram__branch" data-pulse-node="rucio">
-            Rucio
-            <span class="diagram__tag-icon" data-tag-icon aria-hidden="true">
-              <span class="diagram__tag-spinner"></span>
-              <svg class="diagram__tag-check" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                ><path
-                  d="M5 13l4 4L19 7"
-                  stroke-width="3"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"></path></svg
-              >
-              <svg class="diagram__tag-x" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                ><path d="M6 6l12 12M18 6L6 18" stroke-width="3" stroke-linecap="round"></path></svg
-              >
-            </span>
+          <div class="diagram__fanout">
+            <div class="diagram__branch" data-pulse-node="rucio">
+              Rucio
+              <GatewayStatusIcon />
+            </div>
+            <div class="diagram__branch" data-pulse-node="htcondor">
+              HTCondor
+              <GatewayStatusIcon />
+            </div>
+            <div class="diagram__branch">
+              Jupyter
+              <GatewayStatusIcon />
+            </div>
+            <div class="diagram__branch">
+              Storage
+              <GatewayStatusIcon />
+            </div>
           </div>
-          <div class="diagram__branch" data-pulse-node="htcondor">
-            HTCondor
-            <span class="diagram__tag-icon" data-tag-icon aria-hidden="true">
-              <span class="diagram__tag-spinner"></span>
-              <svg class="diagram__tag-check" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                ><path
-                  d="M5 13l4 4L19 7"
-                  stroke-width="3"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"></path></svg
-              >
-              <svg class="diagram__tag-x" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                ><path d="M6 6l12 12M18 6L6 18" stroke-width="3" stroke-linecap="round"></path></svg
-              >
-            </span>
-          </div>
-          <div class="diagram__branch">
-            Jupyter
-            <span class="diagram__tag-icon" data-tag-icon aria-hidden="true">
-              <span class="diagram__tag-spinner"></span>
-              <svg class="diagram__tag-check" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                ><path
-                  d="M5 13l4 4L19 7"
-                  stroke-width="3"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"></path></svg
-              >
-              <svg class="diagram__tag-x" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                ><path d="M6 6l12 12M18 6L6 18" stroke-width="3" stroke-linecap="round"></path></svg
-              >
-            </span>
-          </div>
-          <div class="diagram__branch">
-            Storage
-            <span class="diagram__tag-icon" data-tag-icon aria-hidden="true">
-              <span class="diagram__tag-spinner"></span>
-              <svg class="diagram__tag-check" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                ><path
-                  d="M5 13l4 4L19 7"
-                  stroke-width="3"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"></path></svg
-              >
-              <svg class="diagram__tag-x" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                ><path d="M6 6l12 12M18 6L6 18" stroke-width="3" stroke-linecap="round"></path></svg
-              >
-            </span>
-          </div>
-        </div>
 
-        <!-- Decorative -- the "how it works" motion moment (gatewayPulse.ts). -->
-        <div class="diagram__pulse" data-pulse-dot aria-hidden="true"></div>
-        <div
-          class="diagram__node diagram__node--credential"
-          data-pulse-node="credential"
-          aria-hidden="true"
-        >
-          <span data-credential-label>x509</span>
-        </div>
-        <div class="diagram__chat" data-pulse-chat aria-hidden="true">
-          <div class="diagram__chat-line" data-chat-line="0">
-            <span class="diagram__chat-role">user</span>
-            <span class="diagram__chat-text" data-chat-text></span>
-          </div>
-          <div class="diagram__chat-line" data-chat-line="1">
-            <span class="diagram__chat-role">ai</span>
-            <span class="diagram__chat-text" data-chat-text></span>
-          </div>
-          <div class="diagram__chat-line" data-chat-line="2">
-            <span class="diagram__chat-role">ai</span>
-            <span class="diagram__chat-text" data-chat-text></span>
-          </div>
-        </div>
-      </div>
-
-      <div class="benefit-list">
-        <div class="benefit-item">
-          <svg
-            class="benefit-item__icon"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.5"
+          <!-- Decorative -- the "how it works" motion moment (gatewayPulse.ts). -->
+          <div class="diagram__pulse" data-pulse-dot aria-hidden="true"></div>
+          <div
+            class="diagram__node diagram__node--credential"
+            data-pulse-node="credential"
             aria-hidden="true"
           >
-            <path d="M12 3l7 3v5.2c0 4.3-2.9 8.2-7 9.8-4.1-1.6-7-5.5-7-9.8V6l7-3z"></path>
-          </svg>
-          <div class="benefit-item__body">
-            <h3 class="benefit-item__title">Credentials stay behind the broker</h3>
-            <p class="benefit-item__desc">
-              Short-lived credentials are issued per call. Raw tokens and certificates never reach
-              the AI assistant.
-            </p>
+            <span data-credential-label>x509</span>
+          </div>
+          <div class="diagram__chat" data-pulse-chat aria-hidden="true">
+            <div class="diagram__chat-line" data-chat-line="0">
+              <span class="diagram__chat-role">User</span>
+              <span class="diagram__chat-text" data-chat-text></span>
+            </div>
+            <div class="diagram__chat-line" data-chat-line="1">
+              <span class="diagram__chat-role">AI</span>
+              <span class="diagram__chat-text" data-chat-text></span>
+            </div>
+            <div class="diagram__chat-line" data-chat-line="2">
+              <span class="diagram__chat-role">AI</span>
+              <span class="diagram__chat-text" data-chat-text></span>
+            </div>
           </div>
         </div>
 
-        <div class="benefit-item">
-          <svg
-            class="benefit-item__icon"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.5"
-            aria-hidden="true"
-          >
-            <path d="M4 4.5h16v6.5H4z"></path><path d="M4 13h16v6.5H4z"></path><path
-              d="M7.5 7.75h.01"></path><path d="M7.5 16.25h.01"></path>
-          </svg>
-          <div class="benefit-item__body">
-            <h3 class="benefit-item__title">Add methods, not complexity</h3>
-            <p class="benefit-item__desc">
-              Add MCP services through configuration. Give users one endpoint for datasets, jobs,
-              notebooks, storage, and more.
-            </p>
+        <div class="benefit-list">
+          <div class="benefit-item">
+            <Shield class="af-icon" aria-hidden="true" />
+            <div class="benefit-item__body">
+              <h3 class="benefit-item__title">Credentials stay behind the broker</h3>
+              <p class="benefit-item__desc">
+                Short-lived credentials are issued per call. Raw tokens and certificates never reach
+                the AI assistant.
+              </p>
+            </div>
           </div>
-        </div>
 
-        <div class="benefit-item">
-          <svg
-            class="benefit-item__icon"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.5"
-            aria-hidden="true"
-          >
-            <path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z"></path><path d="M8.5 12.5l2.5 2.5 4.5-5"
-            ></path>
-          </svg>
-          <div class="benefit-item__body">
-            <h3 class="benefit-item__title">Authorize every call</h3>
-            <p class="benefit-item__desc">
-              Group-based access controls and audit logging govern every method invocation.
-            </p>
+          <div class="benefit-item">
+            <Server class="af-icon" aria-hidden="true" />
+            <div class="benefit-item__body">
+              <h3 class="benefit-item__title">Add methods, not complexity</h3>
+              <p class="benefit-item__desc">
+                Add MCP services through configuration. Give users one endpoint for datasets, jobs,
+                notebooks, storage, and more.
+              </p>
+            </div>
+          </div>
+
+          <div class="benefit-item">
+            <CircleCheck class="af-icon" aria-hidden="true" />
+            <div class="benefit-item__body">
+              <h3 class="benefit-item__title">Authorize every call</h3>
+              <p class="benefit-item__desc">
+                Group-based access controls and audit logging govern every method invocation.
+              </p>
+            </div>
           </div>
         </div>
       </div>
@@ -312,30 +159,39 @@ import PublicBase from '../layouts/PublicBase.astro';
 
   <!-- ── Ecosystem proof ───────────────────────────────────────────────── -->
   <section class="proof" aria-label="Deployed today">
-    <h2 class="proof__heading">Already running at UChicago</h2>
-    <p class="proof__lead">This isn't a demo.</p>
-    <p class="proof__body">
-      The UChicago ATLAS Analysis Facility uses MCP Platform today to securely expose Rucio, AMI,
-      HTCondor, JupyterLab, and filesystem access to AI-powered workflows.
-    </p>
-    <a
-      href="https://maniaclab.github.io/af-mcp-platform/ecosystem/"
-      class="proof__link"
-      target="_blank"
-      rel="noopener noreferrer"
-    >
-      See the deployed ecosystem →
-    </a>
+    <div class="af-wrap">
+      <div class="landing-col">
+        <h2 class="proof__heading">Already running at UChicago</h2>
+        <p class="proof__body">
+          The UChicago ATLAS Analysis Facility uses MCP Platform today to securely expose Rucio,
+          AMI, HTCondor, JupyterLab, and filesystem access to AI-powered workflows.
+        </p>
+        <a
+          href="https://maniaclab.github.io/af-mcp-platform/ecosystem/"
+          class="proof__link"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          See the deployed ecosystem
+          <ExternalLink class="af-icon" aria-hidden="true" />
+        </a>
+      </div>
+    </div>
   </section>
 
-  <!-- ── Final CTA ─────────────────────────────────────────────────────── -->
+  <!-- Closing action: secondary weight, because the page's one primary
+       button is the hero's Sign in. -->
   <section class="final-cta" aria-label="Get started">
-    <h2 class="final-cta__heading">Bring AI to your analysis facility.</h2>
-    <p class="final-cta__sub">
-      Connect your assistant to datasets, compute, notebooks, and tools, without giving it your
-      credentials.
-    </p>
-    <a href="/overview/" class="hero__cta-primary">Sign in →</a>
+    <div class="af-wrap">
+      <div class="landing-col">
+        <h2 class="final-cta__heading">Bring AI to your analysis facility.</h2>
+        <p class="final-cta__sub">
+          Connect your assistant to datasets, compute, notebooks, and tools, without giving it your
+          credentials.
+        </p>
+        <a href="/overview/" class="af-btn secondary">Sign in</a>
+      </div>
+    </div>
   </section>
 </PublicBase>
 
@@ -378,159 +234,106 @@ import PublicBase from '../layouts/PublicBase.astro';
   /* ── Hero ──────────────────────────────────────────────────────────── */
   .hero {
     position: relative;
-    min-height: 320px;
     overflow: hidden;
     border-bottom: 1px solid var(--color-af-border);
-    background: var(--color-af-void);
-    display: flex;
-    align-items: center;
-    padding: 0 2rem;
+    padding-block: var(--space-64);
   }
 
+  /* A quiet backdrop: faint enough that text keeps AA contrast over it. */
   .hero__canvas {
     position: absolute;
     inset: 0;
     width: 100%;
     height: 100%;
+    opacity: 0.35;
     pointer-events: none;
   }
 
   .hero__content {
     position: relative;
     z-index: 1;
-    max-width: 42rem;
-    margin: 0 auto;
-    padding: 3rem 0;
-  }
-
-  .hero__eyebrow {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.6875rem;
-    font-weight: 600;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: var(--color-af-teal);
-    margin-bottom: 0.75rem;
+    max-width: 720px;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-16);
   }
 
   .hero__title {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 3rem;
-    font-weight: 700;
-    letter-spacing: 0.03em;
-    color: var(--color-af-text);
-    line-height: 1.05;
-    margin: 0 0 1rem;
+    font-size: var(--text-32);
+    line-height: 1.25;
+    margin: 0;
   }
 
   .hero__sub {
-    font-family: 'IBM Plex Sans', system-ui, sans-serif;
-    font-size: 1rem;
-    color: var(--color-af-dim);
-    line-height: 1.65;
-    margin: 0 0 1.75rem;
+    font-size: var(--text-16);
+    line-height: 1.55;
+    color: var(--color-af-text-secondary);
+    margin: 0;
   }
 
   .hero__sub a {
-    color: var(--color-af-teal);
+    color: var(--color-af-text);
+    text-underline-offset: 3px;
   }
 
   .hero__cta {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 1.25rem;
-  }
-
-  .hero__cta-primary {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.8125rem;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    color: var(--color-af-void);
-    background: var(--color-af-teal);
-    padding: 0.625rem 1.25rem;
-    border-radius: 4px;
-    text-decoration: none;
-    transition: opacity 150ms;
-  }
-  .hero__cta-primary:hover,
-  .hero__cta-primary:focus-visible {
-    opacity: 0.85;
-  }
-
-  .hero__cta-secondary {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.8125rem;
-    color: var(--color-af-dim);
-    text-decoration: none;
-    transition: color 150ms;
-  }
-  .hero__cta-secondary:hover,
-  .hero__cta-secondary:focus-visible {
-    color: var(--color-af-teal);
+    gap: var(--space-12);
+    margin-top: var(--space-16);
   }
 
   /* ── Benefits ──────────────────────────────────────────────────────── */
   .benefits {
-    max-width: 68rem;
-    margin: 0 auto;
-    padding: 3.5rem 2rem;
+    padding-block: var(--space-64);
   }
 
   .benefits__heading {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 1.375rem;
-    font-weight: 600;
-    color: var(--color-af-text);
-    text-align: center;
-    margin: 0 0 2.5rem;
+    font-size: var(--text-24);
+    line-height: 1.3;
+    margin: 0 0 var(--space-48);
   }
 
   .benefits-layout {
     display: grid;
-    grid-template-columns: 3fr 2fr;
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
     align-items: center;
-    gap: 3rem;
+    gap: var(--space-48);
   }
 
   .benefit-list {
     display: flex;
     flex-direction: column;
-    gap: 2rem;
+    gap: var(--space-24);
   }
 
   .benefit-item {
     display: flex;
     align-items: flex-start;
-    gap: 0.875rem;
+    gap: var(--space-12);
   }
 
-  .benefit-item__icon {
-    width: 22px;
-    height: 22px;
-    color: var(--color-af-teal);
-    flex-shrink: 0;
-    margin-top: 0.125rem;
+  /* Centres the 16px icon on the first 24px line of the heading. */
+  .benefit-item > .af-icon {
+    margin-top: var(--space-4);
   }
 
   .benefit-item__body {
     display: flex;
     flex-direction: column;
-    gap: 0.375rem;
+    gap: var(--space-4);
   }
 
   .benefit-item__title {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.9375rem;
-    font-weight: 600;
-    color: var(--color-af-text);
+    font-size: var(--text-16);
+    line-height: 1.5;
     margin: 0;
   }
 
   .benefit-item__desc {
-    font-size: 0.875rem;
-    color: var(--color-af-dim);
-    line-height: 1.6;
+    font-size: var(--text-14);
+    color: var(--color-af-text-secondary);
     margin: 0;
   }
 
@@ -544,19 +347,20 @@ import PublicBase from '../layouts/PublicBase.astro';
     flex-direction: column;
     align-items: center;
     width: 100%;
+    max-width: 560px;
+    margin-inline: auto;
   }
 
   .diagram__node {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.8125rem;
+    font-size: var(--text-14);
     color: var(--color-af-text);
-    background: var(--color-af-surface);
-    border: 1px solid var(--color-af-border);
-    border-radius: 4px;
-    padding: 0.625rem 1.5rem;
+    background: var(--color-af-bg);
+    border: 1px solid var(--color-af-border-strong);
+    border-radius: var(--radius-8);
+    padding: var(--space-8) var(--space-16);
     transition:
-      border-color 200ms,
-      box-shadow 200ms;
+      border-color var(--time-base) var(--ease),
+      background var(--time-base) var(--ease);
   }
 
   /* Toggled by gatewayPulse.ts as the light passes through each box --
@@ -564,26 +368,26 @@ import PublicBase from '../layouts/PublicBase.astro';
      just a binary highlight/unhighlight. */
   .diagram__node.is-pulse-active,
   .diagram__branch.is-pulse-active {
-    border-color: var(--color-af-teal);
-    box-shadow: 0 0 16px 2px rgb(from var(--color-af-teal) r g b / 0.3);
+    border-color: var(--color-af-text);
+    background: var(--color-af-bg-subtle);
   }
 
   /* The denied-request cycle's gateway state -- swapped in for
-     is-pulse-active once Policy/Audit fail, swapped back out before the
-     dot returns to the AI Assistant box. */
+     is-pulse-active once Policy/Audit fail (their x icons show the same
+     outcome), swapped back out before the dot returns to the AI assistant
+     box. */
   .diagram__node.is-pulse-denied {
-    border-color: var(--color-af-red);
-    box-shadow: 0 0 16px 2px rgb(from var(--color-af-red) r g b / 0.3);
+    border-color: var(--color-af-bad);
     animation: diagram-denied-buzz 160ms ease-in-out 3;
   }
 
   @keyframes diagram-denied-buzz {
     0%,
     100% {
-      box-shadow: 0 0 16px 2px rgb(from var(--color-af-red) r g b / 0.3);
+      transform: translateX(0);
     }
     50% {
-      box-shadow: 0 0 24px 4px rgb(from var(--color-af-red) r g b / 0.65);
+      transform: translateX(var(--space-4));
     }
   }
 
@@ -596,175 +400,94 @@ import PublicBase from '../layouts/PublicBase.astro';
   .diagram__node--client {
     display: inline-flex;
     align-items: center;
-    gap: 0.4375rem;
-    color: var(--color-af-dim);
+    gap: var(--space-8);
   }
 
   .diagram__node--gateway {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 0.625rem;
-    padding: 1rem 2rem;
-    border-color: var(--color-af-teal);
+    gap: var(--space-12);
+    padding: var(--space-16) var(--space-32);
+    border-radius: var(--radius-10);
   }
 
   .diagram__gateway-name {
-    font-weight: 700;
-    font-size: 0.9375rem;
-    letter-spacing: 0.02em;
+    font-weight: 600;
+    font-size: var(--text-16);
   }
 
   .diagram__gateway-tags {
     display: flex;
     flex-wrap: wrap;
     justify-content: center;
-    gap: 0.5rem;
+    gap: var(--space-8);
   }
 
   .diagram__tag {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.3125rem;
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.625rem;
-    font-weight: 600;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--color-af-label);
-    border: 1px solid var(--color-af-border);
-    border-radius: 2px;
-    padding: 0.1875rem 0.5rem;
-  }
-
-  /* Status slot shared by the four gateway tags and the Rucio/HTCondor
-     leaf boxes -- three pre-rendered states (spinner/check/x), toggled via
-     the parent's data-state attribute rather than swapping DOM/innerHTML,
-     so gatewayPulse.ts only ever sets one attribute per state change. The
-     spinner reuses this app's established loading-spinner construct
-     (a bordered circle, one side recolored, rotated) rather than a glyph --
-     DESIGN.md bans unicode/emoji standing in for icons. */
-  .diagram__tag-icon {
-    position: relative;
-    display: inline-block;
-    width: 11px;
-    height: 11px;
-    flex-shrink: 0;
-  }
-
-  .diagram__tag-spinner,
-  .diagram__tag-check,
-  .diagram__tag-x {
-    position: absolute;
-    inset: 0;
-    opacity: 0;
-    transition: opacity 150ms;
-  }
-
-  .diagram__tag-spinner {
-    border: 1.5px solid var(--color-af-border);
-    border-top-color: var(--color-af-teal);
-    border-radius: 50%;
-  }
-
-  .diagram__tag-check {
-    color: var(--color-af-green);
-  }
-
-  .diagram__tag-x {
-    color: var(--color-af-red);
-  }
-
-  [data-state='checking'] .diagram__tag-spinner {
-    opacity: 1;
-    animation: diagram-tag-spin 550ms linear infinite;
-  }
-
-  [data-state='ok'] .diagram__tag-check {
-    opacity: 1;
-  }
-
-  [data-state='fail'] .diagram__tag-x {
-    opacity: 1;
-  }
-
-  @keyframes diagram-tag-spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .diagram__tag-spinner {
-      animation: none;
-    }
+    gap: var(--space-4);
   }
 
   .diagram__link {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 0.375rem;
-    padding: 0.5rem 0;
+    gap: var(--space-4);
+    padding: var(--space-8) 0;
   }
 
   .diagram__link::before,
   .diagram__link::after {
     content: '';
     width: 1px;
-    height: 0.875rem;
-    background: var(--color-af-border);
+    height: var(--space-16);
+    background: var(--color-af-border-strong);
   }
 
   .diagram__link-label {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.625rem;
-    font-weight: 600;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--color-af-teal);
+    font-size: var(--text-12);
+    color: var(--color-af-text-secondary);
   }
 
   .diagram__stem {
     width: 1px;
-    height: 1.5rem;
-    background: var(--color-af-border);
+    height: var(--space-24);
+    background: var(--color-af-border-strong);
   }
 
   .diagram__fanout {
     display: flex;
     justify-content: center;
-    gap: 1.5rem;
+    gap: var(--space-16);
     width: 100%;
-    padding-top: 1.5rem;
-    border-top: 1px solid var(--color-af-border);
+    padding-top: var(--space-24);
+    border-top: 1px solid var(--color-af-border-strong);
   }
 
   .diagram__branch {
     position: relative;
     display: inline-flex;
     align-items: center;
-    gap: 0.4375rem;
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.75rem;
+    gap: var(--space-8);
+    font-size: var(--text-14);
     color: var(--color-af-text);
-    background: var(--color-af-surface);
-    border: 1px solid var(--color-af-border);
-    border-radius: 4px;
-    padding: 0.5rem 1rem;
+    background: var(--color-af-bg);
+    border: 1px solid var(--color-af-border-strong);
+    border-radius: var(--radius-8);
+    padding: var(--space-8) var(--space-12);
     transition:
-      border-color 200ms,
-      box-shadow 200ms;
+      border-color var(--time-base) var(--ease),
+      background var(--time-base) var(--ease);
   }
 
   .diagram__branch::before {
     content: '';
     position: absolute;
-    top: -1.5rem;
+    top: calc(-1 * var(--space-24));
     left: 50%;
     width: 1px;
-    height: 1.5rem;
-    background: var(--color-af-border);
+    height: var(--space-24);
+    background: var(--color-af-border-strong);
   }
 
   /* Decorative pulse dot + callouts (gatewayPulse.ts) -- positioned via JS
@@ -780,8 +503,7 @@ import PublicBase from '../layouts/PublicBase.astro';
     height: 8px;
     margin: -4px;
     border-radius: 50%;
-    background: var(--color-af-teal);
-    box-shadow: 0 0 10px 2px rgb(from var(--color-af-teal) r g b / 0.7);
+    background: var(--color-af-text);
     opacity: 0;
     pointer-events: none;
   }
@@ -794,13 +516,18 @@ import PublicBase from '../layouts/PublicBase.astro';
     position: absolute;
     top: 0;
     left: 0;
-    font-size: 0.6875rem;
-    padding: 0.5rem 0.875rem;
+    font-size: var(--text-12);
+    padding: var(--space-4) var(--space-8);
     opacity: 0;
     pointer-events: none;
   }
 
-  /* The growing "chat log" beside the AI Assistant box -- one to three
+  /* The label is a literal credential type (x509, condor-token). */
+  .diagram__node--credential [data-credential-label] {
+    font-family: var(--font-mono);
+  }
+
+  /* The growing "chat log" beside the AI assistant box -- one to three
      lines revealed in sequence and held on screen for the rest of the
      cycle, then collapsed together at the reset. height: 0 -> 'auto'
      (not max-height) is what lets GSAP measure and animate each line's
@@ -808,7 +535,7 @@ import PublicBase from '../layouts/PublicBase.astro';
   .diagram__chat {
     position: absolute;
     top: 0;
-    right: -40px;
+    right: calc(-1 * var(--space-32));
     display: flex;
     flex-direction: column;
     width: 15rem;
@@ -818,120 +545,85 @@ import PublicBase from '../layouts/PublicBase.astro';
   .diagram__chat-line {
     display: flex;
     align-items: baseline;
-    gap: 0.375rem;
+    gap: var(--space-8);
     height: 0;
     overflow: hidden;
     opacity: 0;
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.6875rem;
-    padding: 0 0.5rem;
-    border-left: 1px solid var(--color-af-border);
+    font-size: var(--text-12);
+    padding: 0 var(--space-8);
+    border-left: 1px solid var(--color-af-border-strong);
   }
 
   .diagram__chat-role {
     flex-shrink: 0;
-    color: var(--color-af-teal);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    font-weight: 600;
+    font-weight: 500;
   }
 
   .diagram__chat-text {
-    color: var(--color-af-dim);
+    color: var(--color-af-text-secondary);
   }
 
-  /* ── Proof ─────────────────────────────────────────────────────────── */
+  /* ── Proof and closing action ──────────────────────────────────────── */
   .proof {
-    max-width: 42rem;
-    margin: 0 auto;
-    padding: 2rem 2rem 3rem;
-    text-align: center;
+    padding-block: var(--space-48);
   }
 
-  .proof__heading {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 1.125rem;
-    font-weight: 600;
-    color: var(--color-af-text);
-    margin: 0 0 0.75rem;
+  .landing-col {
+    max-width: 720px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-12);
   }
 
-  .proof__lead {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.9375rem;
-    font-weight: 600;
-    color: var(--color-af-text);
-    margin: 0 0 0.5rem;
+  .proof__heading,
+  .final-cta__heading {
+    font-size: var(--text-20);
+    line-height: 1.3;
+    margin: 0;
   }
 
-  .proof__body {
-    font-size: 0.9375rem;
-    color: var(--color-af-dim);
-    line-height: 1.65;
-    margin: 0 0 1rem;
+  .proof__body,
+  .final-cta__sub {
+    font-size: var(--text-16);
+    line-height: 1.55;
+    color: var(--color-af-text-secondary);
+    margin: 0;
   }
 
   .proof__link {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.8125rem;
-    color: var(--color-af-teal);
-    text-decoration: none;
-  }
-  .proof__link:hover,
-  .proof__link:focus-visible {
-    text-decoration: underline;
-  }
-
-  /* ── Final CTA ─────────────────────────────────────────────────────── */
-  .final-cta {
-    display: flex;
-    flex-direction: column;
+    display: inline-flex;
     align-items: center;
-    gap: 1.25rem;
-    padding: 3rem 2rem 4rem;
-    border-top: 1px solid var(--color-af-border);
-  }
-
-  .final-cta__heading {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 1.375rem;
-    font-weight: 600;
+    gap: var(--space-8);
     color: var(--color-af-text);
-    margin: 0;
-    text-align: center;
+    text-underline-offset: 3px;
   }
 
-  .final-cta__sub {
-    font-size: 0.9375rem;
-    color: var(--color-af-dim);
-    margin: -0.75rem 0 0;
-    text-align: center;
+  .final-cta {
+    padding-block: var(--space-48) var(--space-64);
+  }
+
+  .final-cta .af-btn {
+    margin-top: var(--space-12);
   }
 
   /* ── Responsive ────────────────────────────────────────────────────── */
   @media (max-width: 900px) {
     .benefits-layout {
-      grid-template-columns: 1fr;
-      gap: 2.5rem;
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--space-48);
     }
   }
 
   @media (max-width: 640px) {
-    .hero {
-      min-height: 260px;
-      padding: 0 1.5rem;
-    }
-    .hero__title {
-      font-size: 2rem;
-    }
-    .hero__cta {
-      flex-direction: column;
-      align-items: flex-start;
-      gap: 0.75rem;
+    .hero,
+    .benefits {
+      padding-block: var(--space-48);
     }
     .diagram__fanout {
       flex-direction: column;
-      gap: 1.25rem;
+      align-items: center;
+      gap: var(--space-24);
     }
     /* The chat log and credential box assume horizontal room beside the
        diagram's centerline that a single narrow column doesn't have -- the
