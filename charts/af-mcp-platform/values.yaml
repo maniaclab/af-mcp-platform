@@ -776,6 +776,12 @@ portal:
     fullName: ""
     # Facility/institution name shown in the overview hero and footer.
     facilityName: ""
+    # Optional accent colour as "#rrggbb", e.g. "#800000". Leave empty to keep
+    # the default neutral ink theme; nothing is overridden until you set it.
+    accentColor: ""
+    # Optional accent colour for the dark theme, as "#rrggbb". If omitted it is
+    # derived by lightening accentColor until it reads clearly on the dark page.
+    accentColorDark: ""
 
 # ---------------------------------------------------------------------------
 # Ingress

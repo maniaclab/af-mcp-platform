@@ -7,6 +7,7 @@ import {
   resolveTheme,
   setMode,
   systemPrefersDark,
+  THEME_CHANGE_EVENT,
   THEME_MODES,
   THEME_STORAGE_KEY,
 } from '../theme';
@@ -86,6 +87,14 @@ describe('applyResolvedTheme', () => {
     applyResolvedTheme(root, 'light');
     expect(root.classList.contains('dark')).toBe(false);
     expect(root.style.colorScheme).toBe('light');
+  });
+
+  it('dispatches THEME_CHANGE_EVENT on the root after applying', () => {
+    const root = document.createElement('html');
+    const listener = vi.fn(() => expect(root.classList.contains('dark')).toBe(true));
+    root.addEventListener(THEME_CHANGE_EVENT, listener);
+    applyResolvedTheme(root, 'dark');
+    expect(listener).toHaveBeenCalledTimes(1);
   });
 });
 

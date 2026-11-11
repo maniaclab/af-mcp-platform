@@ -79,7 +79,10 @@ const appVersion = import.meta.env.PUBLIC_APP_VERSION || 'dev';
   // landing page never runs that script, and this is the only place its
   // Footer instance's facility name would otherwise get patched.
   import { getBranding } from '../lib/auth';
+  import { watchAccent } from '../lib/accent';
   import { applyBranding } from '../lib/branding';
 
-  applyBranding(await getBranding());
+  const branding = await getBranding();
+  applyBranding(branding);
+  watchAccent(branding);
 </script>

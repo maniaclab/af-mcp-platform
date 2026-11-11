@@ -17,6 +17,10 @@ export interface BrandingConfig {
   fullName: string;
   /** Facility/institution name shown in the overview hero and footer. */
   facilityName: string;
+  /** Optional `#rrggbb` accent for the light theme. Empty/absent keeps the neutral ink default (see accent.ts). */
+  accentColor?: string;
+  /** Optional `#rrggbb` accent for the dark theme. Empty/absent derives it from accentColor (see accent.ts). */
+  accentColorDark?: string;
 }
 
 export const DEFAULT_BRANDING: BrandingConfig = {
@@ -35,14 +39,14 @@ export const DEFAULT_BRANDING: BrandingConfig = {
  * as their accessible label, not their visible text.
  */
 export function applyBranding(config: BrandingConfig, doc: Document = document): void {
-  const merged: BrandingConfig = {
+  const merged: Pick<BrandingConfig, 'shortName' | 'fullName' | 'facilityName'> = {
     shortName: config.shortName || DEFAULT_BRANDING.shortName,
     fullName: config.fullName || DEFAULT_BRANDING.fullName,
     facilityName: config.facilityName || DEFAULT_BRANDING.facilityName,
   };
 
   doc.querySelectorAll<HTMLElement>('[data-af-brand]').forEach((el) => {
-    const field = el.dataset.afBrand as keyof BrandingConfig | undefined;
+    const field = el.dataset.afBrand as keyof typeof merged | undefined;
     if (!field || !(field in merged)) return;
     const value = merged[field];
     if (el.dataset.afBrandTarget === 'aria-label') {
