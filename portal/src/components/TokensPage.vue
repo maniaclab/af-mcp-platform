@@ -16,7 +16,9 @@
 import { ref, computed, onBeforeUnmount, onMounted, nextTick } from 'vue';
 import { Check, Copy, Plus } from '@lucide/vue';
 import { mintToken, listTokens, revokeToken, fetchPermissions } from '../lib/api';
-import type { MintedToken, TokenSummary } from '../lib/api';
+import type { MintedToken, PermissionGrant, TokenSummary } from '../lib/api';
+import { permissionKind } from '../lib/permissionKinds';
+import type { PermissionKind } from '../lib/permissionKinds';
 import {
   EXPIRY_WARNING_DAYS,
   NOTE_MAX_LENGTH,
@@ -101,29 +103,47 @@ const mintError = ref<string | null>(null);
 const mintedToken = ref<MintedToken | null>(null);
 
 // ── Permission PATs (issue #144 step 4) ─────────────────────────────────
-// `availablePermissions` is the caller's CURRENT permissions (GET
+// `availableGrants` is the caller's CURRENT permissions (GET
 // /v1/permissions), fetched once on mount -- never a static list, since
 // the whole point of a permission PAT is that it can only ever narrow what
 // its owner already holds *right now*. `restrictPermissions` is the mint
 // form's opt-in: unchecked (the default) mints an ordinary identity PAT,
 // exactly as before this field existed; checked reveals the checkbox list
 // below and mints a permission PAT scoped to whatever's selected.
-const availablePermissions = ref<string[]>([]);
+const availableGrants = ref<PermissionGrant[]>([]);
 const restrictPermissions = ref(false);
 const selectedPermissions = ref<Set<string>>(new Set());
 
 onMounted(async () => {
   try {
     const { grants } = await fetchPermissions();
-    availablePermissions.value = grants.map((g) => g.permission).sort();
+    availableGrants.value = grants;
   } catch {
     // Best-effort: if this fails, the mint dialog simply offers no
     // permission restriction (identity PATs remain fully mintable, which
     // is the more important path to keep working) rather than blocking
     // the page load or the dialog itself over a secondary feature.
-    availablePermissions.value = [];
+    availableGrants.value = [];
   }
 });
+
+// The picker lists read permissions apart from state-changing ones, each group
+// sorted by name, and leaves out a group with nothing in it.
+const PERMISSION_GROUPS: { kind: PermissionKind; label: string }[] = [
+  { kind: 'read', label: 'Read' },
+  { kind: 'write', label: 'State-changing' },
+];
+
+const permissionGroups = computed(() =>
+  PERMISSION_GROUPS.map(({ kind, label }) => ({
+    kind,
+    label,
+    permissions: availableGrants.value
+      .filter((g) => permissionKind(g.permission, g.action_types) === kind)
+      .map((g) => g.permission)
+      .sort(),
+  })).filter((group) => group.permissions.length > 0),
+);
 
 function toggleSelectedPermission(permission: string, checked: boolean) {
   if (checked) {
@@ -544,9 +564,9 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
 
           <!-- Permission PATs (issue #144 step 4): optional restriction below
                the caller's own CURRENT permissions. Hidden entirely when
-               availablePermissions is empty (e.g. the /v1/permissions fetch
+               availableGrants is empty (e.g. the /v1/permissions fetch
                failed) -- an identity PAT remains mintable regardless. -->
-          <div v-if="availablePermissions.length > 0" class="field">
+          <div v-if="availableGrants.length > 0" class="field">
             <div class="field" data-orientation="horizontal">
               <input
                 id="tp-restrict"
@@ -561,27 +581,29 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
               Leave this unchecked for a token with your full account access. Check it to limit the
               token to the permissions you select below, which suits CI or scripts.
             </p>
-            <fieldset v-if="restrictPermissions" class="tp__perms">
-              <legend class="sr-only">Permissions to grant</legend>
-              <div
-                v-for="cap in availablePermissions"
-                :key="cap"
-                class="field"
-                data-orientation="horizontal"
-              >
-                <input
-                  :id="`tp-perm-${cap}`"
-                  type="checkbox"
-                  class="input"
-                  :checked="selectedPermissions.has(cap)"
-                  :disabled="minting"
-                  @change="
-                    toggleSelectedPermission(cap, ($event.target as HTMLInputElement).checked)
-                  "
-                />
-                <label :for="`tp-perm-${cap}`">{{ cap }}</label>
-              </div>
-            </fieldset>
+            <div v-if="restrictPermissions" class="tp__permgrid">
+              <fieldset v-for="group in permissionGroups" :key="group.kind" class="tp__perms">
+                <legend>{{ group.label }}</legend>
+                <div
+                  v-for="cap in group.permissions"
+                  :key="cap"
+                  class="field"
+                  data-orientation="horizontal"
+                >
+                  <input
+                    :id="`tp-perm-${cap}`"
+                    type="checkbox"
+                    class="input"
+                    :checked="selectedPermissions.has(cap)"
+                    :disabled="minting"
+                    @change="
+                      toggleSelectedPermission(cap, ($event.target as HTMLInputElement).checked)
+                    "
+                  />
+                  <label :for="`tp-perm-${cap}`">{{ cap }}</label>
+                </div>
+              </fieldset>
+            </div>
           </div>
 
           <div v-if="mintError" class="alert af-note bad" role="alert">
@@ -717,7 +739,7 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
 /* The dialog panel is wider than Basecoat's default, and scrolls inside its
    own bounds when the form or the minted token outgrows a short window. */
 .tp__panel {
-  max-width: 560px;
+  max-width: 40rem;
 }
 
 .tp__panel > section {
@@ -735,12 +757,27 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
   resize: vertical;
 }
 
-.tp__perms {
+/* Read and state-changing permissions are two labelled groups, each a grid
+   that fills the dialog width, so a typical permission count fits a laptop
+   window without scrolling inside the dialog. */
+.tp__permgrid {
   display: flex;
   flex-direction: column;
+  gap: var(--space-12);
+}
+
+.tp__perms {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr));
   gap: var(--space-8);
   margin: 0;
   padding: 0;
   border: 0;
+}
+
+.tp__perms legend {
+  margin-bottom: var(--space-8);
+  font-size: var(--text-13);
+  color: var(--color-af-text-secondary);
 }
 </style>

@@ -5,6 +5,10 @@
 //
 // Usage: node scripts/design-screenshots.mjs --out <dir> [--pages a,b] [--scenarios a,b]
 //          [--chrome <path>] [--accent RRGGBB] [--widths 1440,1024,400]
+//          [--height N] [--query a=b&c=d]
+// --height overrides the window height (a dialog is fixed to the window, so 800 shows
+// whether it fits a laptop); --query adds URL parameters, e.g. dialog=new-token (see
+// design-preview.mjs).
 // Chromium comes from --chrome, then $CHROME_BIN, then the Playwright cache.
 // Files are named <scenario>-<page>-<width>-<theme>.png.
 
@@ -39,8 +43,8 @@ const PAGES = {
 const PHONE_MAX_WIDTH = 600;
 const DEFAULT_WIDTHS = [1440, 400];
 
-function viewportFor(width) {
-  return { width, height: width <= PHONE_MAX_WIDTH ? 3200 : 2400 };
+function viewportFor(width, height) {
+  return { width, height: height ?? (width <= PHONE_MAX_WIDTH ? 3200 : 2400) };
 }
 const THEMES = ['light', 'dark'];
 const VIRTUAL_TIME_BUDGET_MS = 20000;
@@ -99,6 +103,8 @@ async function main() {
       chrome: { type: 'string' },
       accent: { type: 'string' },
       widths: { type: 'string' },
+      height: { type: 'string' },
+      query: { type: 'string' },
     },
   });
   if (!values.out) throw new Error('--out <dir> is required');
@@ -114,7 +120,8 @@ async function main() {
   if (widths.some((w) => !Number.isInteger(w) || w <= 0)) {
     throw new Error(`--widths takes comma-separated pixel widths, got ${values.widths}`);
   }
-  const viewports = widths.map(viewportFor);
+  const height = values.height ? Number(values.height) : undefined;
+  const viewports = widths.map((w) => viewportFor(w, height));
   const outDir = values.out;
   mkdirSync(outDir, { recursive: true });
 
@@ -125,7 +132,7 @@ async function main() {
       for (const page of pages) {
         for (const viewport of viewports) {
           for (const theme of THEMES) {
-            const query = `?theme=${theme}${values.accent ? `&accent=${values.accent}` : ''}`;
+            const query = `?theme=${theme}${values.accent ? `&accent=${values.accent}` : ''}${values.query ? `&${values.query}` : ''}`;
             const file = join(outDir, `${scenario}-${page}-${viewport.width}-${theme}.png`);
             tasks.push(async () => {
               await capture(chrome, `${url}${PAGES[page]}${query}`, file, viewport);

@@ -13,6 +13,9 @@
 //
 // Per-request overrides, usable from the URL alone:
 //   ?theme=light|dark  stored under the portal's theme key by an injected inline script
+//   ?dialog=new-token  opens the New token dialog once the page has hydrated (add &restrict=1 to
+//                      tick "Restrict permissions"); ?dialog=revoke opens the first Revoke
+//                      confirmation. A static screenshot cannot click, so this clicks for it.
 //   ?accent=RRGGBB     remembered in a cookie, which /config.json turns into branding.accentColor
 //                      (the config request carries no query string of its own); an empty
 //                      value (?accent=) clears it.
@@ -57,6 +60,9 @@ const CONTENT_TYPES = {
 // own theme init (themeInitScript.js) runs, because this script is the first
 // thing in <head>.
 const THEME_OVERRIDE_SCRIPT = `<script>(function(){try{var t=new URLSearchParams(location.search).get('theme');if(t==='light'||t==='dark')localStorage.setItem('themeMode',t);}catch(e){}})();</script>`;
+// Polls until the page's islands have hydrated, then clicks through to the
+// requested dialog. Runs in the design preview only; the portal has no such hook.
+const DIALOG_OPEN_SCRIPT = `<script>(function(){var q=new URLSearchParams(location.search);var d=q.get('dialog');if(!d)return;var tries=0;var t=setInterval(function(){if(++tries>400){clearInterval(t);return;}var open=document.querySelector('dialog[open]');if(!open){var b=d==='revoke'?document.querySelector('tbody .af-danger:not([disabled])'):document.querySelector('.af-page-head .btn:not([data-variant])');if(b)b.click();return;}if(d==='new-token'&&q.get('restrict')==='1'){var c=document.getElementById('tp-restrict');if(c&&!c.checked)c.click();else if(c&&document.getElementById('tp-perm-admin'))clearInterval(t);}else clearInterval(t);},50);})();</script>`;
 const CSP_META = /<meta[^>]*http-equiv=["']content-security-policy["'][^>]*>/gi;
 
 const ACCENT_COOKIE = 'af_preview_accent';
@@ -299,7 +305,7 @@ function serveStatic(req, res, url) {
   }
   const html = readFileSync(file, 'utf8')
     .replace(CSP_META, '')
-    .replace(/<head[^>]*>/i, (head) => head + THEME_OVERRIDE_SCRIPT);
+    .replace(/<head[^>]*>/i, (head) => head + THEME_OVERRIDE_SCRIPT + DIALOG_OPEN_SCRIPT);
   res.writeHead(200, headers);
   res.end(html);
 }

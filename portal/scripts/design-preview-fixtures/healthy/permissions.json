@@ -3,28 +3,78 @@
   "groups": ["example-atlas-users", "example-operators"],
   "grants": [
     {
-      "permission": "read_data",
-      "targets": ["rucio", "servicex"],
+      "permission": "admin",
+      "targets": ["example-service"],
       "action_types": ["read", "state_change"]
     },
     {
-      "permission": "read_metadata",
-      "targets": ["ami"],
+      "permission": "exec_jobs",
+      "targets": ["example-service"],
+      "action_types": ["read", "state_change"]
+    },
+    {
+      "permission": "launch_compute",
+      "targets": ["example-service"],
+      "action_types": ["read", "state_change"]
+    },
+    {
+      "permission": "manage_data",
+      "targets": ["example-service"],
+      "action_types": ["read", "state_change"]
+    },
+    {
+      "permission": "manage_gitlab",
+      "targets": ["example-service"],
+      "action_types": ["read", "state_change"]
+    },
+    {
+      "permission": "manage_jobs",
+      "targets": ["example-service"],
+      "action_types": ["read", "state_change"]
+    },
+    {
+      "permission": "manage_jupyter",
+      "targets": ["example-service"],
+      "action_types": ["read", "state_change"]
+    },
+    {
+      "permission": "read_data",
+      "targets": ["example-service"],
       "action_types": ["read"]
     },
     {
+      "permission": "read_files",
+      "targets": ["example-service"],
+      "action_types": ["read"]
+    },
+    {
+      "permission": "read_gitlab",
+      "targets": ["example-service"],
+      "action_types": ["read"]
+    },
+    {
+      "permission": "read_metadata",
+      "targets": ["example-service"],
+      "action_types": ["read"]
+    },
+    {
+      "permission": "read_search",
+      "targets": ["example-service"],
+      "action_types": ["read"]
+    },
+    {
+      "permission": "servicex_access",
+      "targets": ["example-service"],
+      "action_types": ["read", "state_change"]
+    },
+    {
       "permission": "submit_jobs",
-      "targets": ["panda", "condor"],
+      "targets": ["example-service"],
       "action_types": ["read", "state_change"]
     },
     {
       "permission": "use_notebooks",
-      "targets": ["jhub"],
-      "action_types": ["read", "state_change"]
-    },
-    {
-      "permission": "servicex_access",
-      "targets": ["servicex"],
+      "targets": ["example-service"],
       "action_types": ["read", "state_change"]
     }
   ]

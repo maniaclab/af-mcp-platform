@@ -251,6 +251,11 @@
   .dialog.af-modal > * {
     box-shadow: var(--shadow-af-2);
   }
+  /* Basecoat's `dialog` leaves its header title at body size and weight 500;
+   * the contract's dialog title is the 16px section-title step, weight 600. */
+  .dialog.af-modal > * > header > h2 {
+    font: 600 var(--text-16) / 1.5 var(--font-sans);
+  }
 
   /* Sidebar nav */
   .af-nav {

@@ -18,6 +18,7 @@
  */
 import { computed, onMounted, ref } from 'vue';
 import { fetchEntitlements, fetchPermissions, type PermissionsResponse } from '../lib/api';
+import { KNOWN_PERMISSION_ORDER } from '../lib/permissionKinds';
 import { useLoadState } from '../lib/useLoadState';
 import EntitlementMark from './EntitlementMark.vue';
 import AsyncState from './ui/AsyncState.vue';
@@ -69,48 +70,6 @@ const sortedGroups = computed(() => {
     return mineA !== mineB ? mineA - mineB : a.localeCompare(b);
   });
 });
-
-// Column order/coloring/description mirrors authorization/base.py's
-// PERMISSIONS dict (action_type classification and description text)
-// purely for display -- cosmetic only, not an enforcement decision. A
-// permission the broker adds later that isn't in this list still renders
-// correctly: it's appended alphabetically at the end, styled as "read", with
-// no tooltip (there's no description to show for it here).
-const KNOWN_PERMISSION_ORDER: Array<{ name: string; kind: 'read' | 'write'; description: string }> =
-  [
-    { name: 'read_data', kind: 'read', description: 'Read datasets from data stores.' },
-    { name: 'read_metadata', kind: 'read', description: 'Read metadata catalogs.' },
-    {
-      name: 'read_monitoring',
-      kind: 'read',
-      description: 'Read monitoring dashboards and metrics.',
-    },
-    {
-      name: 'read_gitlab',
-      kind: 'read',
-      description: 'Browse GitLab repos, issues, MRs, and pipelines.',
-    },
-    {
-      name: 'read_files',
-      kind: 'read',
-      description: 'Browse and read files in a POSIX home directory.',
-    },
-    { name: 'submit_jobs', kind: 'write', description: 'Submit compute jobs.' },
-    { name: 'manage_jobs', kind: 'write', description: 'Cancel or modify compute jobs.' },
-    {
-      name: 'launch_compute',
-      kind: 'write',
-      description: 'Launch interactive compute sessions.',
-    },
-    {
-      name: 'manage_jupyter',
-      kind: 'write',
-      description: 'Start, stop, and configure Jupyter servers.',
-    },
-    { name: 'manage_gitlab', kind: 'write', description: 'Create MRs, open issues, retry CI.' },
-    { name: 'manage_data', kind: 'write', description: 'Write or delete data (gated).' },
-    { name: 'admin', kind: 'write', description: 'Platform administration.' },
-  ];
 
 interface Column {
   name: string;

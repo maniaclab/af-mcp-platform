@@ -66,6 +66,7 @@
 @import 'basecoat-css/components/input';
 @import 'basecoat-css/components/label';
 @import 'basecoat-css/components/native-select';
+@import 'basecoat-css/components/scrollbar';
 @import 'basecoat-css/components/table';
 @import 'basecoat-css/components/textarea';
 @import 'basecoat-css/styles/vega';
@@ -260,6 +261,12 @@
  * `--radius` is 10px so that Basecoat's control radius (`rounded-md` =
  * `--radius` - 2px) is 8px, its alert and field radius (`rounded-lg`) is 10px.
  *
+ * Scrollbars: Basecoat's `scrollbar` class (on `<html>` in both layouts, since
+ * `scrollbar-color` inherits) draws every scroll box from the tokens, so the
+ * track and thumb follow the theme in Firefox as well as Chromium. Its default
+ * thumb is `--border`, which is nearly invisible on the dark page; the thumb
+ * here is the stronger border token.
+ *
  * The `--chevron-down-icon*` and `--check-icon` data URIs Basecoat defines for
  * native selects keep their neutral grey stroke: an SVG data URI cannot read a
  * custom property.
@@ -284,6 +291,7 @@
   --border: var(--color-af-border);
   --input: var(--color-af-border-strong);
   --ring: var(--color-af-text);
+  --scrollbar-thumb: var(--color-af-border-strong);
   --chart-1: var(--color-af-text-secondary);
   --chart-2: var(--color-af-text);
   --chart-3: var(--color-af-border-strong);

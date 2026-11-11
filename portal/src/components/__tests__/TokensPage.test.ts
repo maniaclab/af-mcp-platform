@@ -233,6 +233,64 @@ describe('TokensPage', () => {
   });
 });
 
+describe('TokensPage permission picker', () => {
+  const GRANTS = [
+    { permission: 'use_notebooks', targets: ['jhub'], action_types: ['read', 'state_change'] },
+    { permission: 'read_data', targets: ['rucio'], action_types: ['read', 'state_change'] },
+    { permission: 'manage_jobs', targets: ['condor'], action_types: ['read', 'state_change'] },
+    { permission: 'read_search', targets: ['aos'], action_types: ['read'] },
+  ];
+
+  async function openPicker() {
+    vi.mocked(fetchPermissions).mockResolvedValue({ grants: GRANTS } as never);
+    const wrapper = await mountPage([token({})]);
+    await wrapper.find('.af-page-head .btn:not([data-variant])').trigger('click');
+    await flushPromises();
+    await wrapper.get('dialog[open] #tp-restrict').setValue(true);
+    return wrapper;
+  }
+
+  it('groups the permissions into read and state-changing fieldsets', async () => {
+    const wrapper = await openPicker();
+
+    const groups = wrapper.findAll('dialog[open] fieldset.tp__perms');
+    expect(groups.map((g) => g.get('legend').text())).toEqual(['Read', 'State-changing']);
+    const names = (g: (typeof groups)[number]) => g.findAll('label').map((l) => l.text());
+    expect(names(groups[0])).toEqual(['read_data', 'read_search']);
+    // use_notebooks is not in the shared known list; its state-changing action type decides.
+    expect(names(groups[1])).toEqual(['manage_jobs', 'use_notebooks']);
+  });
+
+  it('omits a group that has no permissions', async () => {
+    vi.mocked(fetchPermissions).mockResolvedValue({ grants: [GRANTS[1]] } as never);
+    const wrapper = await mountPage([token({})]);
+    await wrapper.find('.af-page-head .btn:not([data-variant])').trigger('click');
+    await flushPromises();
+    await wrapper.get('dialog[open] #tp-restrict').setValue(true);
+
+    expect(wrapper.findAll('dialog[open] fieldset.tp__perms')).toHaveLength(1);
+  });
+
+  it('mints with the permissions ticked across both groups', async () => {
+    vi.mocked(mintToken).mockResolvedValue({
+      token: 'mcp_pat_SECRET',
+      lookup_id: 'NEW1',
+      name: 'x',
+      note: null,
+      expires_at: iso(90),
+      permission_grant: ['manage_jobs', 'read_data'],
+    } as never);
+    const wrapper = await openPicker();
+
+    await wrapper.get('#tp-perm-read_data').setValue(true);
+    await wrapper.get('#tp-perm-manage_jobs').setValue(true);
+    await wrapper.get('dialog[open] form').trigger('submit');
+    await flushPromises();
+
+    expect(vi.mocked(mintToken).mock.calls[0][4]).toEqual(['read_data', 'manage_jobs']);
+  });
+});
+
 describe('TokensPage table layout', () => {
   it('has only the columns that fit a 900px content width, with the action last', async () => {
     const wrapper = await mountPage([token({})]);
