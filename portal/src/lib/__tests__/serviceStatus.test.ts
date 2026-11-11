@@ -3,7 +3,7 @@ import {
   resolveServiceStatus,
   resolvePoweredByLinked,
   failureSummary,
-  resolveServicesBanner,
+  resolveServicesMessage,
   sortServices,
   summarizeServices,
 } from '../serviceStatus';
@@ -94,42 +94,85 @@ describe('resolvePoweredByLinked', () => {
   });
 });
 
-describe('resolveServicesBanner', () => {
-  const svc = (status: ServiceStatus) => ({ status });
+describe('resolveServicesMessage', () => {
+  const svc = (status: ServiceStatus, credential_provider: string | null = 'atlas-oidc') => ({
+    status,
+    credential_provider,
+  });
 
   it('is absent when every service is available or only needs an administrator', () => {
-    expect(resolveServicesBanner([svc('available'), svc('permission_required')])).toBeNull();
+    expect(resolveServicesMessage([svc('available'), svc('permission_required')])).toBeNull();
   });
 
-  it('never raises a banner for services that only need a linked account', () => {
-    expect(
-      resolveServicesBanner([svc('available'), svc('link_required'), svc('link_required')]),
-    ).toBeNull();
-  });
-
-  it('says a misconfigured service is misconfigured, as a problem', () => {
-    const banner = resolveServicesBanner([svc('available'), svc('misconfigured')]);
-    expect(banner?.tone).toBe('bad');
-    expect(banner?.title).toBe('1 service is misconfigured');
-    expect(banner?.body).toContain('administrator');
+  it('says a misconfigured service is misconfigured, as a problem banner', () => {
+    const message = resolveServicesMessage([svc('available'), svc('misconfigured')]);
+    expect(message?.kind).toBe('banner');
+    expect(message).toMatchObject({ tone: 'bad', title: '1 service is misconfigured' });
+    expect(message?.body).toContain('administrator');
   });
 
   it('says unavailable services are unavailable, as a warning that only asks for patience', () => {
-    const banner = resolveServicesBanner([svc('unavailable'), svc('unavailable')]);
-    expect(banner?.tone).toBe('warn');
-    expect(banner?.title).toBe('2 services are unavailable');
-    expect(banner?.body).toContain('Try again later');
+    const message = resolveServicesMessage([svc('unavailable'), svc('unavailable')]);
+    expect(message?.kind).toBe('banner');
+    expect(message).toMatchObject({ tone: 'warn', title: '2 services are unavailable' });
+    expect(message?.body).toContain('Try again later');
   });
 
   it('keeps the two apart when both occur', () => {
-    const banner = resolveServicesBanner([
+    const message = resolveServicesMessage([
       svc('misconfigured'),
       svc('unavailable'),
       svc('unavailable'),
       svc('link_required'),
     ]);
-    expect(banner?.tone).toBe('bad');
-    expect(banner?.title).toBe('1 service is misconfigured and 2 are unavailable');
+    expect(message).toMatchObject({
+      kind: 'banner',
+      tone: 'bad',
+      title: '1 service is misconfigured and 2 are unavailable',
+    });
+  });
+
+  it('hints, never alarms, when services only need a linked account', () => {
+    const message = resolveServicesMessage([
+      svc('available'),
+      svc('link_required'),
+      svc('link_required', 'x509'),
+    ]);
+    expect(message).toEqual({
+      kind: 'hint',
+      title: '2 services are not linked',
+      body: 'Link an account on the Identities page to use them.',
+      action: null,
+    });
+  });
+
+  it('uses the singular for one service', () => {
+    const message = resolveServicesMessage([svc('link_required')]);
+    expect(message).toMatchObject({
+      kind: 'hint',
+      title: '1 service is not linked',
+      body: 'Link an account on the Identities page to use it.',
+    });
+  });
+
+  it('offers one action only when every unlinked service needs the same account', () => {
+    const message = resolveServicesMessage(
+      [svc('link_required'), svc('link_required'), svc('available')],
+      [{ id: 'atlas-oidc', display_name: 'ATLAS IAM', link_mechanism: 'redirect' }],
+    );
+    expect(message).toMatchObject({
+      kind: 'hint',
+      action: { label: 'Link ATLAS IAM account', href: '/identities/#identity-card-atlas-oidc' },
+    });
+  });
+
+  it('puts a failing service ahead of a hint', () => {
+    const message = resolveServicesMessage([svc('link_required'), svc('unavailable')]);
+    expect(message?.kind).toBe('banner');
+  });
+
+  it('does not count a service that needs no credential, such as the gateway itself', () => {
+    expect(resolveServicesMessage([svc('available', null), svc('link_required', null)])).toBeNull();
   });
 });
 
@@ -169,21 +212,45 @@ describe('sortServices', () => {
 });
 
 describe('summarizeServices', () => {
-  const statuses = (...list: ServiceStatus[]) => list.map((status) => ({ status }));
+  const services = (...list: [ServiceStatus, (string | null)?][]) =>
+    list.map(([status, credential_provider = 'atlas-oidc']) => ({ status, credential_provider }));
 
   it('counts reachable, unavailable, misconfigured and unlinked services using the Services page statuses', () => {
     expect(
       summarizeServices(
-        statuses(
-          'available',
-          'available',
-          'link_required',
-          'unavailable',
-          'misconfigured',
-          'permission_required',
+        services(
+          ['available'],
+          ['available'],
+          ['link_required'],
+          ['unavailable'],
+          ['misconfigured'],
+          ['permission_required'],
         ),
       ),
-    ).toEqual({ total: 6, reachable: 2, needsLink: 1, unavailable: 1, misconfigured: 1 });
+    ).toEqual({
+      total: 6,
+      reachable: 2,
+      needsLink: 1,
+      unavailable: 1,
+      misconfigured: 1,
+      needsLinkProviders: ['atlas-oidc'],
+    });
+  });
+
+  it('never counts a service that needs no credential as unlinked', () => {
+    // The gateway's own service has no credential provider: it is available,
+    // and even a stray link_required status has nothing a user could link.
+    const counts = summarizeServices(services(['available', null], ['link_required', null]));
+    expect(counts.needsLink).toBe(0);
+    expect(counts.needsLinkProviders).toEqual([]);
+  });
+
+  it('lists each account the unlinked services need once', () => {
+    const counts = summarizeServices(
+      services(['link_required', 'a'], ['link_required', 'b'], ['link_required', 'a']),
+    );
+    expect(counts.needsLink).toBe(3);
+    expect(counts.needsLinkProviders).toEqual(['a', 'b']);
   });
 
   it('is all zeros for no services', () => {
@@ -193,6 +260,7 @@ describe('summarizeServices', () => {
       needsLink: 0,
       unavailable: 0,
       misconfigured: 0,
+      needsLinkProviders: [],
     });
   });
 });

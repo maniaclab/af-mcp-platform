@@ -59,13 +59,35 @@ describe('services banner', () => {
     expect(wrapper.find('.af-banner').exists()).toBe(false);
   });
 
-  it('raises no banner for services that need a linked account', async () => {
+  it('hints, without a banner, when services need a linked account', async () => {
     const wrapper = await mountPage([
       server(),
       server({ name: 'panda', display_name: 'PanDA', ...BLOCKED }),
       server({ name: 'ami', display_name: 'AMI', ...BLOCKED }),
     ]);
     expect(wrapper.find('.af-banner').exists()).toBe(false);
+    const hint = wrapper.get('.af-note.info');
+    expect(hint.attributes('role')).toBe('status');
+    expect(hint.text()).toContain('2 services are not linked');
+    // Both need the same account, so the hint names the one action.
+    const action = hint.get('a.btn');
+    expect(action.text()).toBe('Link ATLAS IAM account');
+    expect(action.attributes('href')).toBe('/identities/#identity-card-atlas-oidc');
+  });
+
+  it('offers no action when the unlinked services need different accounts', async () => {
+    const wrapper = await mountPage([
+      server({ name: 'panda', ...BLOCKED }),
+      server({ name: 'condor', credential_provider: 'x509', ...BLOCKED }),
+    ]);
+    expect(wrapper.get('.af-note.info').find('a.btn').exists()).toBe(false);
+  });
+
+  it('does not hint for a service that needs no credential', async () => {
+    const wrapper = await mountPage([
+      server({ name: 'af', credential_provider: null, auth_type: 'none', builtin: true }),
+    ]);
+    expect(wrapper.find('.af-note').exists()).toBe(false);
   });
 
   it('reports a failing service as a problem, ahead of services needing a link', async () => {
@@ -79,6 +101,8 @@ describe('services banner', () => {
     ]);
     const banner = wrapper.find('.af-banner');
     expect(banner.classes()).toContain('bad');
+    expect(banner.attributes('role')).toBe('alert');
+    expect(wrapper.find('.af-note').exists()).toBe(false);
     expect(banner.text()).toContain('1 service is misconfigured');
     expect(banner.find('a.btn').exists()).toBe(false);
   });

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * OverviewSummary.vue — the Overview page's banner slot, status list and
+ * OverviewSummary.vue — the Overview page's banner or hint slot, status list and
  * usage stats, in one island.
  *
  * The list has one row per area a new user needs to understand (services,
@@ -16,10 +16,11 @@ import type { Component } from 'vue';
 import { computed, onMounted, ref } from 'vue';
 import { fetchDashboardSummary, fetchUsage } from '../lib/api';
 import type { DashboardSummary, UsageResponse } from '../lib/api';
-import { overviewBanner } from '../lib/overviewBanner';
+import { overviewMessage } from '../lib/overviewBanner';
 import { proxyExpiryState } from '../lib/x509Identity';
 import { expiresIn, expiresSoon } from '../lib/tokenDisplay';
 import { formatCost, formatTokens } from '../lib/usageFormat';
+import PageMessage from './ui/PageMessage.vue';
 import StatusMark from './ui/StatusMark.vue';
 
 type Tone = InstanceType<typeof StatusMark>['$props']['tone'];
@@ -53,7 +54,7 @@ onMounted(() => {
     .finally(() => (usageLoading.value = false));
 });
 
-const banner = computed(() => (summary.value ? overviewBanner(summary.value) : null));
+const message = computed(() => (summary.value ? overviewMessage(summary.value) : null));
 
 function pending(loading: boolean): { tone: Tone; state: string } {
   return loading
@@ -164,21 +165,7 @@ const showStats = computed(() => usage.value !== null && usage.value.totals.call
 </script>
 
 <template>
-  <div
-    v-if="banner"
-    class="alert af-banner"
-    :class="banner.tone"
-    :role="banner.tone === 'bad' ? 'alert' : 'status'"
-  >
-    <span class="af-mark" :class="banner.tone" aria-hidden="true"></span>
-    <div>
-      <b>{{ banner.title }}</b
-      >{{ banner.body }}
-    </div>
-    <a class="btn" data-variant="outline" data-size="sm" :href="banner.action.href">{{
-      banner.action.label
-    }}</a>
-  </div>
+  <PageMessage v-if="message" :message="message" />
 
   <section class="af-sect" aria-labelledby="ov-access-heading">
     <h2 id="ov-access-heading">Your access</h2>

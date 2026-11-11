@@ -8,7 +8,8 @@
  * harnesses, so component logic stays thin and this module carries the
  * actual decisions.
  */
-import type { ServiceStatus, CatalogServer } from './api';
+import type { ServiceStatus, CatalogServer, IdentityProvider } from './api';
+import { identityLinkAnchor, identityLinkLabel } from './identityLinkLabel';
 
 export type StatusSeverity = 'ok' | 'off' | 'info' | 'warning' | 'error';
 
@@ -94,8 +95,11 @@ export interface ServiceCounts {
   total: number;
   /** Services that are available. */
   reachable: number;
-  /** Services that only need the user to link an account. */
+  /** Services that only need the user to link an account. A service that
+   * needs no credential never counts: there is nothing to link. */
   needsLink: number;
+  /** The distinct accounts those services need, in catalog order. */
+  needsLinkProviders: string[];
   /** Services that are temporarily unreachable. */
   unavailable: number;
   /** Services an operator must fix. */
@@ -103,22 +107,45 @@ export interface ServiceCounts {
 }
 
 /** Counts services the way the Services page presents them. */
-export function summarizeServices(servers: Pick<CatalogServer, 'status'>[]): ServiceCounts {
+export function summarizeServices(
+  servers: Pick<CatalogServer, 'status' | 'credential_provider'>[],
+): ServiceCounts {
   const statuses = servers.map((s) => s.status);
+  const unlinked = servers.filter(
+    (s) => s.status === 'link_required' && s.credential_provider !== null,
+  );
   return {
     total: servers.length,
     reachable: statuses.filter((s) => SEVERITIES[s] === 'ok').length,
-    needsLink: statuses.filter((s) => s === 'link_required').length,
+    needsLink: unlinked.length,
+    needsLinkProviders: [...new Set(unlinked.map((s) => s.credential_provider as string))],
     unavailable: statuses.filter((s) => s === 'unavailable').length,
     misconfigured: statuses.filter((s) => s === 'misconfigured').length,
   };
 }
 
-export interface ServicesBanner {
+/**
+ * What a page puts in its banner slot. A banner is a problem or a warning and
+ * announces itself as an alert. A hint is quiet information that never alarms
+ * (an account left unlinked is the user's choice) and is rendered as an inline
+ * note; a banner always outranks it.
+ */
+export interface BannerMessage {
+  kind: 'banner';
   tone: 'bad' | 'warn';
   title: string;
   body: string;
+  action: StatusCta | null;
 }
+
+export interface HintMessage {
+  kind: 'hint';
+  title: string;
+  body: string;
+  action: StatusCta | null;
+}
+
+export type PageMessage = BannerMessage | HintMessage;
 
 function countOf(n: number, singular: string, plural: string): string {
   return `${n} ${n === 1 ? singular : plural}`;
@@ -139,29 +166,67 @@ export function failureSummary(misconfigured: number, unavailable: number): stri
   return null;
 }
 
+/** The hint for services that are not linked; the same words on every page. */
+export function unlinkedHint(count: number, action: StatusCta | null): HintMessage {
+  return {
+    kind: 'hint',
+    title: `${countOf(count, 'service is', 'services are')} not linked`,
+    body: `Link an account on the Identities page to use ${count === 1 ? 'it' : 'them'}.`,
+    action,
+  };
+}
+
 /**
- * The Services page's single banner, raised only for a misconfigured service
- * (a problem) or an unavailable one (a warning: nothing to do but wait). A
- * service that needs a linked account is the user's choice and "Access
- * required" needs an administrator, so neither raises one.
+ * The Services page's single message. A misconfigured service (a problem) or
+ * an unavailable one (a warning: nothing to do but wait) raises a banner.
+ * Otherwise services that only need a linked account raise a hint, with an
+ * action only when they all need the same account. "Access required" needs an
+ * administrator and raises nothing.
  */
-export function resolveServicesBanner(
-  servers: Pick<CatalogServer, 'status'>[],
-): ServicesBanner | null {
-  const { misconfigured, unavailable } = summarizeServices(servers);
+export function resolveServicesMessage(
+  servers: Pick<CatalogServer, 'status' | 'credential_provider'>[],
+  providers: Pick<IdentityProvider, 'id' | 'display_name' | 'link_mechanism'>[] = [],
+): PageMessage | null {
+  const { misconfigured, unavailable, needsLink, needsLinkProviders } = summarizeServices(servers);
   const title = failureSummary(misconfigured, unavailable);
-  if (title === null) return null;
+  if (title === null) {
+    if (needsLink === 0) return null;
+    const [only, ...others] = needsLinkProviders;
+    const provider = providers.find((p) => p.id === only);
+    const action =
+      only !== undefined && others.length === 0
+        ? {
+            label: provider ? identityLinkLabel(provider) : 'Link identity',
+            href: identityLinkAnchor(only),
+          }
+        : null;
+    return unlinkedHint(needsLink, action);
+  }
   if (misconfigured > 0 && unavailable > 0) {
     return {
+      kind: 'banner',
       tone: 'bad',
       title,
       body: 'Try again later for the unavailable ones. An administrator needs to fix the misconfigured ones.',
+      action: null,
     };
   }
   if (misconfigured > 0) {
-    return { tone: 'bad', title, body: 'An administrator needs to fix the configuration.' };
+    return {
+      kind: 'banner',
+      tone: 'bad',
+      title,
+      body: 'An administrator needs to fix the configuration.',
+      action: null,
+    };
   }
-  return { tone: 'warn', title, body: 'The backend is not responding. Try again later.' };
+  return {
+    kind: 'banner',
+    tone: 'warn',
+    title,
+    body: 'The backend is not responding. Try again later.',
+    action: null,
+  };
 }
 
 // What can I use, and what is actually wrong: problems first, then what works,

@@ -3,10 +3,11 @@ import { ref, computed, onMounted } from 'vue';
 import { fetchCatalog, fetchIdentities } from '../lib/api';
 import type { CatalogServer, IdentityProvider } from '../lib/api';
 import { resolvePoweredBy } from '../lib/catalog';
-import { resolveServicesBanner, sortServices } from '../lib/serviceStatus';
+import { resolveServicesMessage, sortServices } from '../lib/serviceStatus';
 import { useLoadState } from '../lib/useLoadState';
 import ServiceCard from './ServiceCard.vue';
 import AsyncState from './ui/AsyncState.vue';
+import PageMessage from './ui/PageMessage.vue';
 import SegmentedControl from './ui/SegmentedControl.vue';
 
 const servers = ref<CatalogServer[]>([]);
@@ -56,7 +57,7 @@ function poweredByFor(server: CatalogServer) {
   return resolvePoweredBy(server.credential_provider, providers.value);
 }
 
-const banner = computed(() => resolveServicesBanner(servers.value));
+const message = computed(() => resolveServicesMessage(servers.value, providers.value));
 </script>
 
 <template>
@@ -90,13 +91,7 @@ const banner = computed(() => resolveServicesBanner(servers.value));
     </template>
 
     <div class="af-page">
-      <div v-if="banner" class="alert af-banner" :class="banner.tone" role="status">
-        <span class="af-mark" :class="banner.tone" aria-hidden="true"></span>
-        <div>
-          <b>{{ banner.title }}</b>
-          {{ banner.body }}
-        </div>
-      </div>
+      <PageMessage v-if="message" :message="message" />
 
       <section class="af-sect" aria-labelledby="cp-heading">
         <h2 id="cp-heading">Your services</h2>

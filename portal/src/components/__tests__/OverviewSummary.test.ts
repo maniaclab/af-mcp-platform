@@ -303,4 +303,36 @@ describe('OverviewSummary banner', () => {
     expect(action.text()).toBe('Renew proxy');
     expect(action.attributes('href')).toBe('/identities/');
   });
+
+  it('hints, as a quiet note, when no account is linked', async () => {
+    vi.mocked(fetchDashboardSummary).mockResolvedValue({ ...SUMMARY, linkedCount: 0 });
+    const wrapper = await mountSummary();
+
+    expect(wrapper.find('.af-banner').exists()).toBe(false);
+    const hint = wrapper.get('.af-note.info');
+    expect(hint.attributes('role')).toBe('status');
+    expect(hint.text()).toContain('No accounts are linked yet');
+    expect(hint.get('a.btn').attributes('href')).toBe('/identities/');
+  });
+
+  it('hints that services are not linked when some accounts are', async () => {
+    vi.mocked(fetchDashboardSummary).mockResolvedValue({ ...SUMMARY, needsLinkCount: 1 });
+    const wrapper = await mountSummary();
+
+    const hint = wrapper.get('.af-note.info');
+    expect(hint.text()).toContain('1 service is not linked');
+    expect(hint.text()).toContain('Link an account on the Identities page to use it.');
+  });
+
+  it('shows a failing service instead of the hint', async () => {
+    vi.mocked(fetchDashboardSummary).mockResolvedValue({
+      ...SUMMARY,
+      needsLinkCount: 1,
+      unavailableCount: 1,
+    });
+    const wrapper = await mountSummary();
+
+    expect(wrapper.find('.af-note').exists()).toBe(false);
+    expect(wrapper.get('.af-banner').attributes('role')).toBe('alert');
+  });
 });

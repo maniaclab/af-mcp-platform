@@ -1,11 +1,11 @@
 /**
- * overviewBanner() picks the single most urgent message for the Overview
+ * overviewMessage() picks the single most urgent message for the Overview
  * page from the dashboard summary: problem beats warning beats information,
  * and nothing is shown when nothing is wrong.
  */
 import { describe, expect, it } from 'vitest';
 import type { DashboardSummary } from '../api';
-import { overviewBanner } from '../overviewBanner';
+import { overviewMessage } from '../overviewBanner';
 
 const HOUR = 3600;
 const NOW = Date.UTC(2026, 10, 11, 12, 0, 0);
@@ -26,17 +26,18 @@ function summary(overrides: Partial<DashboardSummary> = {}): DashboardSummary {
   };
 }
 
-describe('overviewBanner', () => {
+describe('overviewMessage', () => {
   it('returns null when nothing is wrong', () => {
-    expect(overviewBanner(summary(), NOW)).toBeNull();
+    expect(overviewMessage(summary(), NOW)).toBeNull();
   });
 
   it('reports an expired grid proxy as a problem with a renew action', () => {
-    const banner = overviewBanner(
+    const banner = overviewMessage(
       summary({ proxyStatus: { cached: true, voms_attributes: [], remaining_seconds: 0 } }),
       NOW,
     );
     expect(banner).toEqual({
+      kind: 'banner',
       tone: 'bad',
       title: 'Your grid proxy has expired',
       body: 'Renew it to keep grid services working.',
@@ -45,19 +46,19 @@ describe('overviewBanner', () => {
   });
 
   it('reports a proxy close to expiry as a warning with the time left', () => {
-    const banner = overviewBanner(
+    const banner = overviewMessage(
       summary({
         proxyStatus: { cached: true, voms_attributes: [], remaining_seconds: 40 * 60 },
       }),
       NOW,
     );
-    expect(banner?.tone).toBe('warn');
+    expect(banner).toMatchObject({ kind: 'banner', tone: 'warn' });
     expect(banner?.title).toBe('Your grid proxy expires in 40 minutes');
     expect(banner?.action).toEqual({ label: 'Renew proxy', href: '/identities/' });
   });
 
   it('stays quiet at the warning threshold boundary', () => {
-    const banner = overviewBanner(
+    const banner = overviewMessage(
       summary({
         proxyStatus: {
           cached: true,
@@ -72,7 +73,7 @@ describe('overviewBanner', () => {
 
   it('stays quiet about a proxy under an hour from expiry when it renews itself', () => {
     expect(
-      overviewBanner(
+      overviewMessage(
         summary({
           proxyAutoRenews: true,
           proxyStatus: { cached: true, voms_attributes: [], remaining_seconds: 600 },
@@ -83,7 +84,7 @@ describe('overviewBanner', () => {
   });
 
   it('still reports an expired proxy that renews itself, since renewal has failed', () => {
-    const banner = overviewBanner(
+    const banner = overviewMessage(
       summary({
         proxyAutoRenews: true,
         proxyStatus: { cached: true, voms_attributes: [], remaining_seconds: 0 },
@@ -95,23 +96,23 @@ describe('overviewBanner', () => {
 
   it('ignores a proxy that was never minted', () => {
     expect(
-      overviewBanner(summary({ proxyStatus: { cached: false, voms_attributes: [] } }), NOW),
+      overviewMessage(summary({ proxyStatus: { cached: false, voms_attributes: [] } }), NOW),
     ).toBeNull();
   });
 
   it('ignores a cached proxy that reports no remaining time', () => {
     expect(
-      overviewBanner(summary({ proxyStatus: { cached: true, voms_attributes: [] } }), NOW),
+      overviewMessage(summary({ proxyStatus: { cached: true, voms_attributes: [] } }), NOW),
     ).toBeNull();
   });
 
-  it('gently suggests linking an account when none is linked', () => {
-    const banner = overviewBanner(
+  it('hints at linking an account when none is linked', () => {
+    const message = overviewMessage(
       summary({ linkedCount: 0, proxyStatus: { cached: false, voms_attributes: [] } }),
       NOW,
     );
-    expect(banner).toEqual({
-      tone: 'info',
+    expect(message).toEqual({
+      kind: 'hint',
       title: 'No accounts are linked yet',
       body: 'Link an account to use the services that need one.',
       action: { label: 'Link an account', href: '/identities/' },
@@ -119,55 +120,80 @@ describe('overviewBanner', () => {
   });
 
   it('keeps the first-time hint even when services need a linked account', () => {
-    expect(overviewBanner(summary({ linkedCount: 0, needsLinkCount: 3 }), NOW)?.tone).toBe('info');
+    expect(overviewMessage(summary({ linkedCount: 0, needsLinkCount: 3 }), NOW)).toMatchObject({
+      kind: 'hint',
+      title: 'No accounts are linked yet',
+    });
+  });
+
+  it('hints that services are not linked when some accounts are linked', () => {
+    expect(overviewMessage(summary({ needsLinkCount: 4 }), NOW)).toEqual({
+      kind: 'hint',
+      title: '4 services are not linked',
+      body: 'Link an account on the Identities page to use them.',
+      action: { label: 'Link an account', href: '/identities/' },
+    });
+  });
+
+  it('uses the singular for one unlinked service', () => {
+    expect(overviewMessage(summary({ needsLinkCount: 1 }), NOW)).toMatchObject({
+      title: '1 service is not linked',
+      body: 'Link an account on the Identities page to use it.',
+    });
+  });
+
+  it('puts a failing service ahead of the unlinked hint', () => {
+    expect(overviewMessage(summary({ needsLinkCount: 2, unavailableCount: 1 }), NOW)?.kind).toBe(
+      'banner',
+    );
   });
 
   it('puts an expired proxy ahead of an unlinked account', () => {
-    const banner = overviewBanner(
+    const banner = overviewMessage(
       summary({
         linkedCount: 0,
         proxyStatus: { cached: true, voms_attributes: [], remaining_seconds: 0 },
       }),
       NOW,
     );
-    expect(banner?.tone).toBe('bad');
+    expect(banner).toMatchObject({ kind: 'banner', tone: 'bad' });
   });
 
   it('puts an expiring proxy ahead of an unlinked account', () => {
-    const banner = overviewBanner(
+    const banner = overviewMessage(
       summary({
         linkedCount: 0,
         proxyStatus: { cached: true, voms_attributes: [], remaining_seconds: HOUR / 2 },
       }),
       NOW,
     );
-    expect(banner?.tone).toBe('warn');
+    expect(banner).toMatchObject({ kind: 'banner', tone: 'warn' });
   });
 
   const IN_3_DAYS = new Date(NOW + 3 * 24 * 3600 * 1000).toISOString();
   const IN_30_DAYS = new Date(NOW + 30 * 24 * 3600 * 1000).toISOString();
 
   it('reports misconfigured services as a problem, apart from unavailable ones', () => {
-    const banner = overviewBanner(summary({ misconfiguredCount: 1 }), NOW);
-    expect(banner?.tone).toBe('bad');
+    const banner = overviewMessage(summary({ misconfiguredCount: 1 }), NOW);
+    expect(banner).toMatchObject({ kind: 'banner', tone: 'bad' });
     expect(banner?.title).toBe('1 service is misconfigured');
     expect(banner?.action).toEqual({ label: 'View services', href: '/catalog/' });
   });
 
   it('reports unavailable services as a warning naming how many', () => {
-    const banner = overviewBanner(summary({ unavailableCount: 2 }), NOW);
-    expect(banner?.tone).toBe('warn');
+    const banner = overviewMessage(summary({ unavailableCount: 2 }), NOW);
+    expect(banner).toMatchObject({ kind: 'banner', tone: 'warn' });
     expect(banner?.title).toBe('2 services are unavailable');
   });
 
   it('keeps misconfigured and unavailable apart when both occur', () => {
-    const banner = overviewBanner(summary({ misconfiguredCount: 1, unavailableCount: 2 }), NOW);
-    expect(banner?.tone).toBe('bad');
+    const banner = overviewMessage(summary({ misconfiguredCount: 1, unavailableCount: 2 }), NOW);
+    expect(banner).toMatchObject({ kind: 'banner', tone: 'bad' });
     expect(banner?.title).toBe('1 service is misconfigured and 2 are unavailable');
   });
 
   it('puts an expired proxy ahead of failing services', () => {
-    const banner = overviewBanner(
+    const banner = overviewMessage(
       summary({
         misconfiguredCount: 1,
         proxyStatus: { cached: true, voms_attributes: [], remaining_seconds: 0 },
@@ -178,29 +204,29 @@ describe('overviewBanner', () => {
   });
 
   it('puts failing services ahead of an expiring proxy', () => {
-    const banner = overviewBanner(
+    const banner = overviewMessage(
       summary({
         misconfiguredCount: 1,
         proxyStatus: { cached: true, voms_attributes: [], remaining_seconds: HOUR / 2 },
       }),
       NOW,
     );
-    expect(banner?.tone).toBe('bad');
+    expect(banner).toMatchObject({ kind: 'banner', tone: 'bad' });
   });
 
   it('warns when a token expires within 7 days, naming it', () => {
-    const banner = overviewBanner(
+    const banner = overviewMessage(
       summary({ soonestExpiringToken: { name: 'ci-pipeline', expires_at: IN_3_DAYS } }),
       NOW,
     );
-    expect(banner?.tone).toBe('warn');
+    expect(banner).toMatchObject({ kind: 'banner', tone: 'warn' });
     expect(banner?.title).toBe('ci-pipeline expires in 3 days');
     expect(banner?.action).toEqual({ label: 'New token', href: '/tokens/' });
   });
 
   it('ignores a token that expires after 7 days', () => {
     expect(
-      overviewBanner(
+      overviewMessage(
         summary({ soonestExpiringToken: { name: 'ci', expires_at: IN_30_DAYS } }),
         NOW,
       ),
@@ -208,7 +234,7 @@ describe('overviewBanner', () => {
   });
 
   it('puts an expiring proxy ahead of an expiring token', () => {
-    const banner = overviewBanner(
+    const banner = overviewMessage(
       summary({
         soonestExpiringToken: { name: 'ci', expires_at: IN_3_DAYS },
         proxyStatus: { cached: true, voms_attributes: [], remaining_seconds: HOUR / 2 },
@@ -218,7 +244,7 @@ describe('overviewBanner', () => {
     expect(banner?.title).toContain('grid proxy');
   });
 
-  it('raises no banner for services that need a linked account', () => {
-    expect(overviewBanner(summary({ needsLinkCount: 2 }), NOW)).toBeNull();
+  it('never raises a banner for services that need a linked account', () => {
+    expect(overviewMessage(summary({ needsLinkCount: 2 }), NOW)?.kind).toBe('hint');
   });
 });
