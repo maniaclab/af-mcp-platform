@@ -75,7 +75,7 @@ URL without multiplying the number of places a client must trust with credential
       clients like Claude Desktop.
     - Usage (`/usage`): the signed-in user's own calls, errors, tokens, and estimated
       cost per service over 7/30/90 days.
-    - Entitlements (`/entitlements`): the permission × group matrix.
+    - Entitlements (`/entitlements`): the permission × group matrix, with each permission's kind and description taken from the broker's `GET /v1/entitlements` catalog.
     - Admin (`/admin`): operators only (see **Users**).
 - Users first reach the portal for setup (link an identity, mint a token), and it is
   becoming something they check regularly (service status, proxy state, usage). This is
