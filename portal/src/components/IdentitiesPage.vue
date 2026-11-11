@@ -78,8 +78,10 @@ function dismissLinkedErrorBanner() {
 
 // The row a `#identity-card-<id>` hash points at. The rows render after the
 // identities fetch, so the target is derived from the loaded providers: a hash
-// that arrives first takes effect once its row exists.
-const urlHash = ref(window.location.hash);
+// that arrives first takes effect once its row exists. Read on mount, not
+// during setup: setup also runs when Astro renders this island on the server,
+// where there is no window.
+const urlHash = ref('');
 const targetId = computed(() =>
   identityTargetFromHash(
     urlHash.value,
@@ -113,7 +115,10 @@ watch(
   { immediate: true },
 );
 
-onMounted(() => window.addEventListener('hashchange', syncUrlHash));
+onMounted(() => {
+  syncUrlHash();
+  window.addEventListener('hashchange', syncUrlHash);
+});
 onBeforeUnmount(() => window.removeEventListener('hashchange', syncUrlHash));
 
 onMounted(async () => {
