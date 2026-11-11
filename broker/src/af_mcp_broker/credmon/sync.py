@@ -107,6 +107,18 @@ class CredmonSyncService:
             ).inc()
             return None
 
+        try:
+            return await self._run_holding_lease(trigger, previous=previous)
+        finally:
+            # Release as soon as the cycle is over, so another replica's
+            # manual run is not refused ("already running") for the rest of
+            # the lease TTL while nothing runs. The TTL still covers a holder
+            # that crashes mid-cycle.
+            await self._state.release_lease(self._holder, now=self._clock())
+
+    async def _run_holding_lease(
+        self, trigger: str, *, previous: dict[str, Any] | None
+    ) -> dict[str, Any]:
         started_at = self._clock()
         last_success_at = previous.get("last_success_at") if previous else None
         try:

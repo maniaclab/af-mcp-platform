@@ -308,3 +308,32 @@ async def test_background_loop_waits_one_poll_before_first_tick() -> None:
     await service.stop()
 
     assert state.reads == 0
+
+
+async def test_lease_is_released_when_a_cycle_finishes() -> None:
+    """A finished cycle must not block another replica's manual run for the
+    rest of the lease TTL ("already running on another replica" while
+    nothing runs)."""
+    state = InMemoryCredmonSyncState()
+    clock = _Clock(1000.0)
+    await _service(_FakeStorer(_report()), state, clock, holder="pod-a").tick()
+
+    clock.now = 1010.0
+    status = await _service(
+        _FakeStorer(_report()), state, clock, holder="pod-b"
+    ).run_now()
+
+    assert status is not None
+    assert status["holder"] == "pod-b"
+
+
+async def test_lease_is_released_when_a_cycle_raises() -> None:
+    state = InMemoryCredmonSyncState()
+    clock = _Clock(1000.0)
+    failing = _FakeStorer(error=RuntimeError("vault list failed"))
+    await _service(failing, state, clock, holder="pod-a").tick()
+
+    clock.now = 1010.0
+    assert await _service(
+        _FakeStorer(_report()), state, clock, holder="pod-b"
+    ).run_now()
