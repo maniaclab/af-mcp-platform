@@ -247,7 +247,7 @@ export function scanSource(path: string, source: string): Violation[] {
   for (const text of [markup, script]) {
     find(text, /(?<![\w-])uppercase(?![\w-])(?=[^<>]*>|['"`])/g, RULES.uppercase, (m) => {
       // Only a class list (inside quotes) counts, not prose containing the word.
-      const before = text.slice(Math.max(0, m.index - 80), m.index);
+      const before = text.slice(Math.max(0, (m.index ?? 0) - 80), m.index);
       return !/class(?:Name)?\s*=\s*["'][^"']*$|:class\s*=\s*"[^"]*$|\bclass\b[^>]*$/.test(before);
     });
     find(text, /(?<![\w-])tracking-[\w[\]./-]+/g, RULES.letterSpacing);
