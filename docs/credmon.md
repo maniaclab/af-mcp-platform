@@ -141,6 +141,21 @@ head04, which also runs the pool's collector -- apply config changes with
 `condor_reconfig` (it starts newly listed daemons) rather than restarting the
 master.
 
+**Submit hosts without a local credd** (e.g. login nodes that submit to the
+AP's schedd through `SCHEDD_HOST`) also need:
+
+```
+CREDD_HOST = <AP hostname>      # e.g. head04.af.uchicago.edu
+```
+
+`condor_submit` checks `use_oauth_services` credentials against credd before
+it submits. In HTCondor 25.0 that check always uses the default credd lookup
+(`CREDD_HOST`, otherwise the local host) rather than the credd the schedd
+advertises, so without it a login-node submit fails with
+`CRED: locate(credd) failed!` even though the AP's schedd advertises its
+credd. Submits made on the AP itself, and jobs submitted through condor-mcp,
+don't need it.
+
 **Coexisting with an existing `condor_credmon_oauth`.** Which credmon writes a
 `.use` file is decided by configuration, not timing. The Local, Client and
 Pelican credmons only claim names listed in their `*_PROVIDER_NAMES`, and
