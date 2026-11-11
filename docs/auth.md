@@ -948,7 +948,17 @@ above; no ccache material ever transits the aggregator. On a
 match), it falls back to the same best-effort identity-header mint the
 x509 branch uses, gated by `_might_be_entitled`, so a listing never
 hard-fails or eats a wasted mint attempt just because a krb5 service is
-in the catalog. `resolve_list_time_credential` — the portal's
+in the catalog. The header is attached even when the caller has no usable
+ticket (`is_linked()` is false), because the backend, not the broker,
+decides what an identity-only listing may show; a backend that redeems at
+connect time then answers that caller with a 401 (its redeem call got the
+404 "No Kerberos ticket is cached"). The branch records the caller's
+linkage as the listing's `skip_reason`, so `_classify_failure` reports that
+401 as `not_linked` (logged at INFO as `aggregator.service_list_failed`,
+catalog status "Link your identity…"), reserving `unauthorized` ("Your
+linked credential was rejected") for a caller who is linked and whose
+credential the backend rejected. The x509 and servicex branches do the
+same. `resolve_list_time_credential` — the portal's
 per-service tool-listing entry point into this same logic
 (`api/catalog_tools.py`) — folds `"x509"` and `"krb5"` into one shared
 `auth_type in ("x509", "krb5")` branch, since the two were byte-identical:

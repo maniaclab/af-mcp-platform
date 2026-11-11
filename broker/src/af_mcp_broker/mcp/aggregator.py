@@ -262,9 +262,12 @@ def _classify_failure(
     path) and ``fetch_service_tool_listing`` (the /v1 per-service tool
     listing), so the two can never disagree on what a failure means.
 
-    If a credential mint was deliberately skipped (``skip_reason`` set),
-    that's the precise reason regardless of what the resulting
-    uncredentialed connection raised. Otherwise, a raw upstream 401 is only
+    If the caller's credential state already explains the failure
+    (``skip_reason`` set: a mint deliberately skipped, or a mint-and-inject
+    caller with no credential for the backend to redeem), that's the precise
+    reason regardless of what the resulting connection raised -- including
+    the 401 a backend returns to an identity header it can redeem nothing
+    for. Otherwise, a raw upstream 401 is only
     "unauthorized" -- meaning the stored credential itself was rejected,
     bad/expired, the caller should re-link -- when a credential actually was
     injected for this attempt; a 401 with nothing injected (e.g. a
@@ -302,7 +305,7 @@ def _classify_failure(
     back into a raised ``httpx2.HTTPStatusError`` at the httpx layer so this
     check can still find it -- see issue #314.
     """
-    if not injected and skip_reason is not None:
+    if skip_reason is not None:
         return skip_reason
     if injected and any(
         isinstance(leaf, httpx2.HTTPStatusError) and leaf.response.status_code == 401
@@ -324,6 +327,26 @@ async def _classify_list_failure(exc: Exception, service_name: str) -> tuple[str
     status = await ctx.get_state(f"__list_credential_status__:{service_name}")
     injected, skip_reason = status if status is not None else (False, None)
     return _classify_failure(exc, injected=injected, skip_reason=skip_reason), str(exc)
+
+
+async def _list_time_skip_reason(
+    spec: ServiceSpec, credential_registry: CredentialRegistry, principal: Principal
+) -> str | None:
+    """``"not_linked"`` if *principal* has no usable credential for a mint-and-inject service (x509/krb5/servicex), else ``None``.
+
+    These services get an identity header at list time regardless, since the
+    backend (not the broker) redeems the real credential and decides what an
+    identity-only listing may show. A caller with nothing to redeem is turned
+    away by the backend with a 401 all the same; recording that they are not
+    linked lets ``_classify_failure`` call it "not_linked" rather than a
+    rejected credential. A provider that doesn't resolve is a platform
+    misconfiguration reported elsewhere, so it adds no skip reason here.
+    """
+    try:
+        provider = await credential_registry.resolve(spec.name)
+    except KeyError:
+        return None
+    return None if await provider.is_linked(principal) else "not_linked"
 
 
 async def resolve_list_time_credential(
@@ -348,7 +371,9 @@ async def resolve_list_time_credential(
       actual proxy/ticket/access-token itself via ``POST /v1/credentials/
       x509/redeem``, ``.../krb5/redeem``, or ``.../servicex/redeem``
       respectively; this function must never call ``provider.issue()`` for
-      any of the three.
+      any of the three. ``skip_reason`` is ``"not_linked"`` when the caller
+      has no credential for the backend to redeem (the header is still
+      returned), else ``None``.
     - "bearer": ``_resolve_list_time_headers`` (the issue #121 best-effort
       mint), unchanged -- ``skip_reason`` ("not_linked" | "unavailable")
       is set whenever no credential could be attached.
@@ -363,8 +388,9 @@ async def resolve_list_time_credential(
     if spec.auth_type in ("x509", "krb5", "servicex"):
         if broker_token_issuer is None:
             return None, None
+        skip_reason = await _list_time_skip_reason(spec, credential_registry, principal)
         token, _ = broker_token_issuer.mint(principal.subject, spec.effective_audience)
-        return {"Authorization": f"Bearer {token}"}, None
+        return {"Authorization": f"Bearer {token}"}, skip_reason
     return await _resolve_list_time_headers(spec, credential_registry, principal)
 
 
@@ -777,20 +803,25 @@ def _make_client_factory(
             ctx = get_context()
             if await ctx.get_state("authorized_call_target") != spec.name:
                 # tools/list (or a stale-cache refresh): best-effort identity
-                # header, mirroring the bearer branch -- but minting is a
-                # local signature, so there is no network to fail and no
-                # skip_reason machinery to thread through.
+                # header, mirroring the bearer branch -- minting is a local
+                # signature, so there is no network to fail. The header is
+                # attached even for a caller with no credential for the
+                # backend to redeem; _list_time_skip_reason records that, so
+                # the backend's resulting 401 is classified "not_linked".
                 principal = await ctx.get_state("principal")
                 if principal is None or broker_token_issuer is None:
                     return _build_client(spec, transport_cls)
                 if not _might_be_entitled(principal, spec, policy):
                     return _build_client(spec, transport_cls)
+                skip_reason = await _list_time_skip_reason(
+                    spec, credential_registry, principal
+                )
                 token, _ = broker_token_issuer.mint(
                     principal.subject, spec.effective_audience
                 )
                 await ctx.set_state(
                     f"__list_credential_status__:{spec.name}",
-                    (True, None),
+                    (True, skip_reason),
                     serializable=False,
                 )
                 return _build_client(
@@ -849,20 +880,25 @@ def _make_client_factory(
             ctx = get_context()
             if await ctx.get_state("authorized_call_target") != spec.name:
                 # tools/list (or a stale-cache refresh): best-effort identity
-                # header, mirroring the bearer branch -- but minting is a
-                # local signature, so there is no network to fail and no
-                # skip_reason machinery to thread through.
+                # header, mirroring the bearer branch -- minting is a local
+                # signature, so there is no network to fail. The header is
+                # attached even for a caller with no credential for the
+                # backend to redeem; _list_time_skip_reason records that, so
+                # the backend's resulting 401 is classified "not_linked".
                 principal = await ctx.get_state("principal")
                 if principal is None or broker_token_issuer is None:
                     return _build_client(spec, transport_cls)
                 if not _might_be_entitled(principal, spec, policy):
                     return _build_client(spec, transport_cls)
+                skip_reason = await _list_time_skip_reason(
+                    spec, credential_registry, principal
+                )
                 token, _ = broker_token_issuer.mint(
                     principal.subject, spec.effective_audience
                 )
                 await ctx.set_state(
                     f"__list_credential_status__:{spec.name}",
-                    (True, None),
+                    (True, skip_reason),
                     serializable=False,
                 )
                 return _build_client(
@@ -921,20 +957,25 @@ def _make_client_factory(
             ctx = get_context()
             if await ctx.get_state("authorized_call_target") != spec.name:
                 # tools/list (or a stale-cache refresh): best-effort identity
-                # header, mirroring the krb5/x509 branches -- but minting is
-                # a local signature, so there is no network to fail and no
-                # skip_reason machinery to thread through.
+                # header, mirroring the bearer branch -- minting is a local
+                # signature, so there is no network to fail. The header is
+                # attached even for a caller with no credential for the
+                # backend to redeem; _list_time_skip_reason records that, so
+                # the backend's resulting 401 is classified "not_linked".
                 principal = await ctx.get_state("principal")
                 if principal is None or broker_token_issuer is None:
                     return _build_client(spec, transport_cls)
                 if not _might_be_entitled(principal, spec, policy):
                     return _build_client(spec, transport_cls)
+                skip_reason = await _list_time_skip_reason(
+                    spec, credential_registry, principal
+                )
                 token, _ = broker_token_issuer.mint(
                     principal.subject, spec.effective_audience
                 )
                 await ctx.set_state(
                     f"__list_credential_status__:{spec.name}",
-                    (True, None),
+                    (True, skip_reason),
                     serializable=False,
                 )
                 return _build_client(
@@ -1401,7 +1442,9 @@ class _ObservableProxyProvider(ProxyProvider):
             reason, detail = await _classify_list_failure(exc, self._service_name)
             subject = await self._caller_subject("tools")
             self._registry.record_list_failure(self._service_name, reason, subject)
-            logger.warning(
+            # An unlinked caller is an expected state, not a fault.
+            log = logger.info if reason == "not_linked" else logger.warning
+            log(
                 "aggregator.service_list_failed",
                 service=self._service_name,
                 reason=reason,

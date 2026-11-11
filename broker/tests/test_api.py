@@ -527,6 +527,41 @@ def test_catalog_status_shows_service_wide_unavailable_to_every_subject(
         assert rucio["status"] == "unavailable"
 
 
+def test_catalog_unlinked_caller_is_told_to_link_not_that_a_credential_was_rejected(
+    app_client: tuple[TestClient, dict],
+    make_principal: Callable[..., object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A caller with no linked identity is asked to link, even with a
+    caller-specific listing failure on record for them; only a linked caller
+    whose credential was rejected is told it was rejected."""
+    from af_mcp_broker.app import app
+    from af_mcp_broker.credentials.oidc import OIDCProvider
+
+    linked: dict[str, bool] = {"value": False}
+
+    async def _is_linked(self, principal) -> bool:
+        return linked["value"]
+
+    monkeypatch.setattr(OIDCProvider, "is_linked", _is_linked)
+    app.state.service_registry.record_list_failure("rucio", "not_linked", "sub-a")
+    app.state.service_registry.record_list_failure("rucio", "unauthorized", "sub-a")
+
+    client, state = app_client
+    state["principal"] = make_principal(groups=["atlas"], subject="sub-a")
+
+    resp = client.get("/v1/catalog", headers=_AUTH)
+    rucio = {s["name"]: s for s in resp.json()["servers"]}["rucio"]
+    assert rucio["status"] == "link_required"
+    assert rucio["status_detail"].startswith("Link your identity")
+
+    linked["value"] = True
+    resp = client.get("/v1/catalog", headers=_AUTH)
+    rucio = {s["name"]: s for s in resp.json()["servers"]}["rucio"]
+    assert rucio["status"] == "link_required"
+    assert rucio["status_detail"].startswith("Your linked credential was rejected")
+
+
 @pytest.mark.parametrize(
     ("advertised", "unroutable", "expected_status"),
     [

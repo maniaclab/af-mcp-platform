@@ -927,6 +927,51 @@ async def test_observable_proxy_provider_success_clears_only_own_subject_record(
     assert registry.recent_list_failure("example", "bob") == "unauthorized"
 
 
+@pytest.mark.parametrize(
+    ("skip_reason", "expected_reason", "expected_level"),
+    [("not_linked", "not_linked", "info"), (None, "unauthorized", "warning")],
+)
+async def test_observable_proxy_provider_logs_unlinked_listing_failure_at_info(
+    monkeypatch: pytest.MonkeyPatch,
+    make_principal,
+    skip_reason: str | None,
+    expected_reason: str,
+    expected_level: str,
+) -> None:
+    """A backend 401 for a caller with an identity header attached is
+    "not_linked" -- an expected state, logged at INFO and recorded against
+    that caller -- when the caller has no credential, and "unauthorized"
+    (WARNING) only when they do and it was rejected."""
+    ctx = _patch_context(
+        monkeypatch, make_principal(subject="alice"), active_backend=None
+    )
+    ctx.recorded_state["__list_credential_status__:example"] = (True, skip_reason)
+    request = httpx2.Request("GET", "http://example.invalid")
+    unauthorized = httpx2.HTTPStatusError(
+        "unauthorized", request=request, response=httpx2.Response(401, request=request)
+    )
+
+    async def _factory() -> Client:
+        raise unauthorized
+
+    registry = ServiceRegistry()
+    registry.register(_spec())
+    provider = aggregator._ObservableProxyProvider(
+        "example", _factory, registry=registry
+    )
+
+    with (
+        structlog.testing.capture_logs() as logs,
+        pytest.raises(Exception),  # noqa: B017, PT011 -- fastmcp rewraps the 401
+    ):
+        await provider._list_tools()
+
+    [entry] = [e for e in logs if e["event"] == "aggregator.service_list_failed"]
+    assert entry["reason"] == expected_reason
+    assert entry["log_level"] == expected_level
+    assert registry.recent_list_failure("example", "alice") == expected_reason
+
+
 async def test_observable_proxy_provider_get_tool_short_circuits_on_prefix_mismatch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2095,6 +2140,71 @@ async def test_client_factory_x509_list_time_injects_header_best_effort(
     assert client.transport.headers["Authorization"].startswith("Bearer ")
 
 
+_MINT_AND_INJECT_AUTH_TYPES = ["x509", "krb5", "servicex"]
+
+
+@pytest.mark.parametrize("auth_type", _MINT_AND_INJECT_AUTH_TYPES)
+@pytest.mark.parametrize(
+    ("linked", "expected_skip_reason"), [(True, None), (False, "not_linked")]
+)
+async def test_client_factory_mint_and_inject_list_time_records_linkage(
+    settings: Any,
+    make_principal,
+    monkeypatch: pytest.MonkeyPatch,
+    auth_type: str,
+    linked: bool,
+    expected_skip_reason: str | None,
+) -> None:
+    """A caller with no usable credential still gets the identity header at
+    list time (the backend decides what an identity-only listing may show),
+    but the factory records that they are not linked so a failed listing is
+    classified as "not_linked" instead of a rejected credential."""
+    ctx = _patch_context(
+        monkeypatch, make_principal(subject="sub-abc"), active_backend=None
+    )
+    spec = _spec(auth_type=auth_type)
+    registry = CredentialRegistry()
+    registry.register(spec.name, _FakeProvider(linked=linked))
+
+    client = await _make_client_factory(
+        spec,
+        registry,
+        settings,
+        _OPEN_POLICY,
+        broker_token_issuer=_make_issuer(),
+    )()
+
+    assert client.transport.headers["Authorization"].startswith("Bearer ")
+    assert ctx.recorded_state[f"__list_credential_status__:{spec.name}"] == (
+        True,
+        expected_skip_reason,
+    )
+
+
+@pytest.mark.parametrize("auth_type", _MINT_AND_INJECT_AUTH_TYPES)
+@pytest.mark.parametrize(
+    ("linked", "expected_skip_reason"), [(True, None), (False, "not_linked")]
+)
+async def test_resolve_list_time_credential_mint_and_inject_reports_linkage(
+    make_principal, auth_type: str, linked: bool, expected_skip_reason: str | None
+) -> None:
+    """The /v1 per-service listing must agree with the /mcp listing: same
+    header, same "not_linked" skip reason for a caller without a credential."""
+    spec = _spec(auth_type=auth_type)
+    registry = CredentialRegistry()
+    registry.register(spec.name, _FakeProvider(linked=linked))
+
+    headers, skip_reason = await resolve_list_time_credential(
+        spec,
+        registry,
+        make_principal(subject="sub-abc"),
+        broker_token_issuer=_make_issuer(),
+    )
+
+    assert headers is not None
+    assert skip_reason == expected_skip_reason
+
+
 async def test_client_factory_x509_list_time_aud_uses_effective_audience(
     settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2607,6 +2717,23 @@ class TestClassifyFailureUnavailable:
             [_mcp_error(httpx2.codes.INTERNAL_SERVER_ERROR, "boom")],
         )
         assert _classify_failure(exc, injected=False, skip_reason=None) == "unavailable"
+
+    def test_not_linked_takes_priority_over_a_401_on_an_injected_identity(
+        self,
+    ) -> None:
+        """A mint-and-inject backend answers a caller with no credential to
+        redeem with a 401 even though the identity header was attached; that
+        is "not_linked", not a rejected credential."""
+        request = httpx2.Request("GET", "http://example.invalid")
+        exc = httpx2.HTTPStatusError(
+            "unauthorized",
+            request=request,
+            response=httpx2.Response(401, request=request),
+        )
+        assert (
+            _classify_failure(exc, injected=True, skip_reason="not_linked")
+            == "not_linked"
+        )
 
     def test_skip_reason_still_takes_priority(self) -> None:
         """A deliberately-skipped credential mint is the precise reason

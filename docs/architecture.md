@@ -636,7 +636,7 @@ status it can change:
 |---|---|---|---|
 | `unavailable` | the backend (down, timing out, or an unexplained 401) | the service, seen by every caller | `unavailable` |
 | `unauthorized` | one caller's credential, which the backend rejected | that caller and service only | `link_required` ("re-link") |
-| `not_linked` | one caller, who has no credential for the service | that caller and service only | `link_required` ("link") |
+| `not_linked` | one caller, who has no credential for the service (including a backend 401 to a mint-and-inject caller whose `is_linked()` is false); logged at INFO | that caller and service only | `link_required` ("link") |
 
 A successful listing by a caller clears that caller's own record and the
 service-wide one, never another caller's. Caller-specific records are held

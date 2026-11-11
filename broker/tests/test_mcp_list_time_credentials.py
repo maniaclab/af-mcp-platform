@@ -303,13 +303,13 @@ async def test_unlinked_principal_missing_secure_tools_rest_of_list_works(
     token = sig_key.sign(_token_for(333, 333, "carol"))
 
     events: list[tuple[str, dict[str, Any]]] = []
-    original_warning = aggregator_module.logger.warning
+    original_info = aggregator_module.logger.info
 
     def _capture(event: str, **kwargs: Any) -> Any:
         events.append((event, kwargs))
-        return original_warning(event, **kwargs)
+        return original_info(event, **kwargs)
 
-    monkeypatch.setattr(aggregator_module.logger, "warning", _capture)
+    monkeypatch.setattr(aggregator_module.logger, "info", _capture)
 
     async with _bearer_client(aggregator_url, token) as client:
         names = {t.name for t in await client.list_tools()}
