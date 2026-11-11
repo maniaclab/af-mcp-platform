@@ -344,6 +344,7 @@ def _enable_credmon(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("CREDMON_ENABLED", "true")
     monkeypatch.setenv("CREDMON_HTCONDOR_API_URL", "https://htcondor-api.invalid")
     monkeypatch.setenv("CREDMON_HTCONDOR_API_TOKEN_FILE", str(token_file))
+    monkeypatch.setenv("CREDMON_USER_DOMAIN", "af.example.org")
 
 
 class TestCredmonTopToken:

@@ -73,6 +73,7 @@ async def build_credmon_sync(
         )
     assert settings.credmon_htcondor_api_url is not None  # Settings validator
     assert settings.credmon_htcondor_api_token_file is not None  # Settings validator
+    assert settings.credmon_user_domain is not None  # Settings validator
     try:
         api_token = Path(settings.credmon_htcondor_api_token_file).read_text().strip()
     except OSError as exc:
@@ -102,6 +103,7 @@ async def build_credmon_sync(
         audience_prefix=settings.credmon_audience_prefix,
         service_prefix=settings.credmon_service_prefix,
         top_token_ttl_seconds=settings.credmon_top_token_ttl_seconds,
+        user_domain=settings.credmon_user_domain,
     )
     log.info(
         "credmon.wired",

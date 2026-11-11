@@ -774,6 +774,10 @@ class Settings(BaseSettings):
     # Both are required when credmon_enabled (validated below).
     credmon_htcondor_api_url: AnyHttpUrl | None = None
     credmon_htcondor_api_token_file: str | None = None
+    # The pool's user domain (HTCondor UID_DOMAIN, e.g. "af.uchicago.edu"):
+    # credd only accepts the user a credential is stored for as
+    # <unixname>@<domain>. Required when credmon_enabled.
+    credmon_user_domain: str | None = None
     # credd service name = credmon_service_prefix + kind (af_krb5, ...): the
     # names jobs list in use_oauth_services and find in $_CONDOR_CREDS.
     credmon_service_prefix: str = "af_"
@@ -867,13 +871,14 @@ class Settings(BaseSettings):
         for field_name, env_name in (
             ("credmon_htcondor_api_url", "CREDMON_HTCONDOR_API_URL"),
             ("credmon_htcondor_api_token_file", "CREDMON_HTCONDOR_API_TOKEN_FILE"),
+            ("credmon_user_domain", "CREDMON_USER_DOMAIN"),
         ):
             if not getattr(self, field_name):
                 log.error("credmon_config_invalid", missing=field_name)
                 raise ValueError(
                     f"{field_name} ({env_name}) must be set when "
-                    "credmon_enabled is true -- the storer pushes top tokens "
-                    "to credd through htcondor-api."
+                    "credmon_enabled is true -- the storer needs it to store "
+                    "top tokens in credd through htcondor-api."
                 )
         return self
 

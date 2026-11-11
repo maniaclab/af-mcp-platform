@@ -908,7 +908,18 @@ def test_credmon_enabled_with_htcondor_api_settings_is_ok():
         credmon_enabled=True,
         credmon_htcondor_api_url="https://htcondor-api.example",
         credmon_htcondor_api_token_file="/var/run/secrets/credmon/token",
+        credmon_user_domain="af.example.org",
     )  # must not raise
+
+
+def test_credmon_enabled_raises_without_user_domain():
+    """credd rejects a bare unixname with "not in user@domain format"."""
+    with pytest.raises(ValueError, match="credmon_user_domain"):
+        Settings(
+            credmon_enabled=True,
+            credmon_htcondor_api_url="https://htcondor-api.example",
+            credmon_htcondor_api_token_file="/var/run/secrets/credmon/token",
+        )
 
 
 def test_credmon_enabled_raises_without_htcondor_api_url():
@@ -916,6 +927,7 @@ def test_credmon_enabled_raises_without_htcondor_api_url():
         Settings(
             credmon_enabled=True,
             credmon_htcondor_api_token_file="/var/run/secrets/credmon/token",
+            credmon_user_domain="af.example.org",
         )
 
 
@@ -924,6 +936,7 @@ def test_credmon_enabled_raises_without_htcondor_api_token_file():
         Settings(
             credmon_enabled=True,
             credmon_htcondor_api_url="https://htcondor-api.example",
+            credmon_user_domain="af.example.org",
         )
 
 
