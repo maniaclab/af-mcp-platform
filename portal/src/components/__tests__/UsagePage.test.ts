@@ -136,7 +136,7 @@ describe('UsagePage', () => {
     // `undefined` -- fetchUsage treats that identically to omitting it.
     expect(fetchUsage).toHaveBeenCalledWith(30, undefined);
 
-    const ninety = wrapper.findAll('button').find((b) => b.text() === '90d');
+    const ninety = wrapper.findAll('button').find((b) => b.text() === '90 days');
     expect(ninety).toBeDefined();
     await ninety!.trigger('click');
     await flushPromises();
