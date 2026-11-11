@@ -79,7 +79,7 @@ describe('services banner', () => {
     ]);
     const banner = wrapper.find('.af-banner');
     expect(banner.classes()).toContain('bad');
-    expect(banner.text()).toContain('1 service is unavailable');
+    expect(banner.text()).toContain('1 service is misconfigured');
     expect(banner.find('a.af-btn').exists()).toBe(false);
   });
 });

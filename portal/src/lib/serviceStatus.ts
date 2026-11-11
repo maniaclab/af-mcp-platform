@@ -96,8 +96,10 @@ export interface ServiceCounts {
   reachable: number;
   /** Services that only need the user to link an account. */
   needsLink: number;
-  /** Services that are unavailable or misconfigured. */
-  failing: number;
+  /** Services that are temporarily unreachable. */
+  unavailable: number;
+  /** Services an operator must fix. */
+  misconfigured: number;
 }
 
 /** Counts services the way the Services page presents them. */
@@ -107,12 +109,13 @@ export function summarizeServices(servers: Pick<CatalogServer, 'status'>[]): Ser
     total: servers.length,
     reachable: statuses.filter((s) => SEVERITIES[s] === 'ok').length,
     needsLink: statuses.filter((s) => s === 'link_required').length,
-    failing: statuses.filter((s) => s === 'unavailable' || s === 'misconfigured').length,
+    unavailable: statuses.filter((s) => s === 'unavailable').length,
+    misconfigured: statuses.filter((s) => s === 'misconfigured').length,
   };
 }
 
 export interface ServicesBanner {
-  tone: 'bad';
+  tone: 'bad' | 'warn';
   title: string;
   body: string;
 }
@@ -122,27 +125,43 @@ function countOf(n: number, singular: string, plural: string): string {
 }
 
 /**
- * The Services page's single banner, raised only for a failing or
- * misconfigured service. A service that needs a linked account is the user's
- * choice and "Access required" needs an administrator, so neither raises one.
+ * Words the failing services for a banner. Misconfigured (an operator must
+ * fix it) and unavailable (temporarily unreachable) stay separate: they ask
+ * the user to do different things. Null when nothing is failing.
+ */
+export function failureSummary(misconfigured: number, unavailable: number): string | null {
+  if (misconfigured > 0 && unavailable > 0) {
+    return `${countOf(misconfigured, 'service is', 'services are')} misconfigured and ${countOf(unavailable, 'is', 'are')} unavailable`;
+  }
+  if (misconfigured > 0)
+    return `${countOf(misconfigured, 'service is', 'services are')} misconfigured`;
+  if (unavailable > 0) return `${countOf(unavailable, 'service is', 'services are')} unavailable`;
+  return null;
+}
+
+/**
+ * The Services page's single banner, raised only for a misconfigured service
+ * (a problem) or an unavailable one (a warning: nothing to do but wait). A
+ * service that needs a linked account is the user's choice and "Access
+ * required" needs an administrator, so neither raises one.
  */
 export function resolveServicesBanner(
   servers: Pick<CatalogServer, 'status'>[],
 ): ServicesBanner | null {
-  const failing = servers.filter((s) => s.status === 'unavailable' || s.status === 'misconfigured');
-  if (failing.length === 0) return null;
-  const misconfigured = failing.some((s) => s.status === 'misconfigured');
-  const unavailable = failing.some((s) => s.status === 'unavailable');
-  return {
-    tone: 'bad',
-    title: `${countOf(failing.length, 'service is', 'services are')} unavailable`,
-    body:
-      misconfigured && unavailable
-        ? 'Some are not responding and some are misconfigured. Try again later, then contact an administrator.'
-        : misconfigured
-          ? 'An administrator needs to fix the configuration.'
-          : 'The backend is not responding. Try again later.',
-  };
+  const { misconfigured, unavailable } = summarizeServices(servers);
+  const title = failureSummary(misconfigured, unavailable);
+  if (title === null) return null;
+  if (misconfigured > 0 && unavailable > 0) {
+    return {
+      tone: 'bad',
+      title,
+      body: 'Try again later for the unavailable ones. An administrator needs to fix the misconfigured ones.',
+    };
+  }
+  if (misconfigured > 0) {
+    return { tone: 'bad', title, body: 'An administrator needs to fix the configuration.' };
+  }
+  return { tone: 'warn', title, body: 'The backend is not responding. Try again later.' };
 }
 
 // What can I use, and what is actually wrong: problems first, then what works,

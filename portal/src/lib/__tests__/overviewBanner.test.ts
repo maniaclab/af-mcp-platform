@@ -17,7 +17,8 @@ function summary(overrides: Partial<DashboardSummary> = {}): DashboardSummary {
     activeTokenCount: 1,
     reachableCount: 8,
     needsLinkCount: 0,
-    failingCount: 0,
+    unavailableCount: 0,
+    misconfiguredCount: 0,
     proxyAutoRenews: false,
     soonestExpiringToken: null,
     proxyStatus: { cached: true, voms_attributes: [], remaining_seconds: 48 * HOUR },
@@ -146,23 +147,29 @@ describe('overviewBanner', () => {
   const IN_3_DAYS = new Date(NOW + 3 * 24 * 3600 * 1000).toISOString();
   const IN_30_DAYS = new Date(NOW + 30 * 24 * 3600 * 1000).toISOString();
 
-  it('reports failing services as a problem naming how many', () => {
-    const banner = overviewBanner(summary({ failingCount: 2 }), NOW);
+  it('reports misconfigured services as a problem, apart from unavailable ones', () => {
+    const banner = overviewBanner(summary({ misconfiguredCount: 1 }), NOW);
     expect(banner?.tone).toBe('bad');
-    expect(banner?.title).toBe('2 services are unavailable');
+    expect(banner?.title).toBe('1 service is misconfigured');
     expect(banner?.action).toEqual({ label: 'View services', href: '/catalog/' });
   });
 
-  it('uses the singular for one failing service', () => {
-    expect(overviewBanner(summary({ failingCount: 1 }), NOW)?.title).toBe(
-      '1 service is unavailable',
-    );
+  it('reports unavailable services as a warning naming how many', () => {
+    const banner = overviewBanner(summary({ unavailableCount: 2 }), NOW);
+    expect(banner?.tone).toBe('warn');
+    expect(banner?.title).toBe('2 services are unavailable');
+  });
+
+  it('keeps misconfigured and unavailable apart when both occur', () => {
+    const banner = overviewBanner(summary({ misconfiguredCount: 1, unavailableCount: 2 }), NOW);
+    expect(banner?.tone).toBe('bad');
+    expect(banner?.title).toBe('1 service is misconfigured and 2 are unavailable');
   });
 
   it('puts an expired proxy ahead of failing services', () => {
     const banner = overviewBanner(
       summary({
-        failingCount: 1,
+        misconfiguredCount: 1,
         proxyStatus: { cached: true, voms_attributes: [], remaining_seconds: 0 },
       }),
       NOW,
@@ -173,7 +180,7 @@ describe('overviewBanner', () => {
   it('puts failing services ahead of an expiring proxy', () => {
     const banner = overviewBanner(
       summary({
-        failingCount: 1,
+        misconfiguredCount: 1,
         proxyStatus: { cached: true, voms_attributes: [], remaining_seconds: HOUR / 2 },
       }),
       NOW,

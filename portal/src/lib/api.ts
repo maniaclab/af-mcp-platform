@@ -806,8 +806,10 @@ export interface DashboardSummary {
   reachableCount: number;
   /** Services that only need the user to link an account. */
   needsLinkCount: number;
-  /** Services that are unavailable or misconfigured. */
-  failingCount: number;
+  /** Services that are temporarily unreachable. */
+  unavailableCount: number;
+  /** Services an operator must fix. */
+  misconfiguredCount: number;
   /** The active token that expires first; null when none expires. */
   soonestExpiringToken: { name: string; expires_at: string } | null;
 }
@@ -862,7 +864,8 @@ export async function fetchDashboardSummary(): Promise<DashboardSummary> {
     activeTokenCount,
     reachableCount: services.reachable,
     needsLinkCount: services.needsLink,
-    failingCount: services.failing,
+    unavailableCount: services.unavailable,
+    misconfiguredCount: services.misconfigured,
     soonestExpiringToken: tokens.status === 'fulfilled' ? soonestExpiringToken(tokens.value) : null,
   };
 }

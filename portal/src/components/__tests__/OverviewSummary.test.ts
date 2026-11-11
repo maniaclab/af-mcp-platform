@@ -27,7 +27,8 @@ const SUMMARY: DashboardSummary = {
   activeTokenCount: 2,
   reachableCount: 8,
   needsLinkCount: 0,
-  failingCount: 0,
+  unavailableCount: 0,
+  misconfiguredCount: 0,
   proxyAutoRenews: false,
   soonestExpiringToken: null,
   proxyStatus: { cached: true, voms_attributes: [], remaining_seconds: 48 * 3600 },
@@ -227,18 +228,32 @@ describe('OverviewSummary services and tokens rows', () => {
     expect(row.find('.af-mark').classes()).toContain('ok');
   });
 
-  it('marks failing services as a problem', async () => {
+  it('marks an unavailable service as a warning and names it apart from not linked', async () => {
     vi.mocked(fetchDashboardSummary).mockResolvedValue({
       ...SUMMARY,
       reachableCount: 6,
       needsLinkCount: 1,
-      failingCount: 1,
+      unavailableCount: 1,
+    });
+    const wrapper = await mountSummary();
+
+    const row = wrapper.findAll('.ov__row')[0]!;
+    expect(row.find('.af-mark').classes()).toContain('warn');
+    expect(row.text()).toContain('6 of 8 available · 1 unavailable · 1 not linked');
+  });
+
+  it('marks a misconfigured service as a problem and keeps it apart from unavailable', async () => {
+    vi.mocked(fetchDashboardSummary).mockResolvedValue({
+      ...SUMMARY,
+      reachableCount: 5,
+      misconfiguredCount: 1,
+      unavailableCount: 2,
     });
     const wrapper = await mountSummary();
 
     const row = wrapper.findAll('.ov__row')[0]!;
     expect(row.find('.af-mark').classes()).toContain('bad');
-    expect(row.text()).toContain('6 of 8 available · 1 unavailable · 1 not linked');
+    expect(row.text()).toContain('5 of 8 available · 1 misconfigured · 2 unavailable');
   });
 
   it('shows the identities row as off, not a warning, when nothing is linked', async () => {

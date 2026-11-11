@@ -15,7 +15,9 @@ const healthy: DashboardSummary = {
   activeTokenCount: 4,
   reachableCount: 3,
   needsLinkCount: 0,
-  failingCount: 0,
+  unavailableCount: 0,
+  misconfiguredCount: 0,
+  proxyAutoRenews: false,
   soonestExpiringToken: null,
 };
 
@@ -26,7 +28,9 @@ const empty: DashboardSummary = {
   activeTokenCount: 0,
   reachableCount: 0,
   needsLinkCount: 0,
-  failingCount: 0,
+  unavailableCount: 0,
+  misconfiguredCount: 0,
+  proxyAutoRenews: false,
   soonestExpiringToken: null,
 };
 

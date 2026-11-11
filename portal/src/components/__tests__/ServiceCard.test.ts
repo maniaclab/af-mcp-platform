@@ -380,6 +380,16 @@ describe('status line', () => {
     expect(wrapper.find('.bc__status-detail').exists()).toBe(false);
   });
 
+  it('marks unavailable as a warning and misconfigured as a problem, in different words', () => {
+    const down = mountWith({ status: 'unavailable' });
+    expect(down.get('.bc__status-line').text()).toContain('Unavailable');
+    expect(down.get('.bc__status-line .af-mark').classes()).toContain('warn');
+    const bad = mountWith({ status: 'misconfigured', correlation_id: 'abc123' });
+    expect(bad.get('.bc__status-line').text()).toContain('Misconfigured');
+    expect(bad.get('.bc__status-line .af-mark').classes()).toContain('bad');
+    expect(bad.get('.bc__status-detail code').text()).toBe('abc123');
+  });
+
   it('keeps the sentence and reference id when they add information', () => {
     const wrapper = mountWith({
       status: 'misconfigured',

@@ -617,7 +617,8 @@ describe('fetchDashboardSummary() service and token details', () => {
     expect(summary.serverCount).toBe(4);
     expect(summary.reachableCount).toBe(2);
     expect(summary.needsLinkCount).toBe(1);
-    expect(summary.failingCount).toBe(1);
+    expect(summary.misconfiguredCount).toBe(1);
+    expect(summary.unavailableCount).toBe(0);
     expect(summary.soonestExpiringToken).toEqual({ name: 'soon', expires_at: soon });
   });
 });

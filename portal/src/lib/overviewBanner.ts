@@ -8,6 +8,7 @@
  * banner: leaving an account unlinked is the user's choice.
  */
 import type { DashboardSummary } from './api';
+import { failureSummary } from './serviceStatus';
 import { formatRelative } from './relativeTime';
 import { expiresIn, expiresSoon } from './tokenDisplay';
 import { proxyExpiryState } from './x509Identity';
@@ -21,15 +22,11 @@ export interface OverviewBanner {
 
 const IDENTITIES_HREF = '/identities/';
 
-function countOf(n: number, singular: string, plural: string): string {
-  return `${n} ${n === 1 ? singular : plural}`;
-}
-
 export function overviewBanner(
   summary: DashboardSummary,
   now: number = Date.now(),
 ): OverviewBanner | null {
-  const { proxyStatus, proxyAutoRenews, linkedCount, failingCount, soonestExpiringToken } = summary;
+  const { proxyStatus, proxyAutoRenews, linkedCount, soonestExpiringToken } = summary;
   const remaining = proxyStatus.cached ? proxyStatus.remaining_seconds : null;
   const proxy = remaining != null ? proxyExpiryState(remaining, proxyAutoRenews) : 'ok';
 
@@ -41,10 +38,11 @@ export function overviewBanner(
       action: { label: 'Renew proxy', href: IDENTITIES_HREF },
     };
   }
-  if (failingCount > 0) {
+  const failures = failureSummary(summary.misconfiguredCount, summary.unavailableCount);
+  if (failures !== null) {
     return {
-      tone: 'bad',
-      title: `${countOf(failingCount, 'service is', 'services are')} unavailable`,
+      tone: summary.misconfiguredCount > 0 ? 'bad' : 'warn',
+      title: failures,
       body: 'Open Services to see which ones and why.',
       action: { label: 'View services', href: '/catalog/' },
     };

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   resolveServiceStatus,
   resolvePoweredByLinked,
+  failureSummary,
   resolveServicesBanner,
   sortServices,
   summarizeServices,
@@ -106,20 +107,39 @@ describe('resolveServicesBanner', () => {
     ).toBeNull();
   });
 
-  it('reports failing services as a problem naming how many are unavailable', () => {
+  it('says a misconfigured service is misconfigured, as a problem', () => {
+    const banner = resolveServicesBanner([svc('available'), svc('misconfigured')]);
+    expect(banner?.tone).toBe('bad');
+    expect(banner?.title).toBe('1 service is misconfigured');
+    expect(banner?.body).toContain('administrator');
+  });
+
+  it('says unavailable services are unavailable, as a warning that only asks for patience', () => {
+    const banner = resolveServicesBanner([svc('unavailable'), svc('unavailable')]);
+    expect(banner?.tone).toBe('warn');
+    expect(banner?.title).toBe('2 services are unavailable');
+    expect(banner?.body).toContain('Try again later');
+  });
+
+  it('keeps the two apart when both occur', () => {
     const banner = resolveServicesBanner([
-      svc('available'),
-      svc('unavailable'),
       svc('misconfigured'),
+      svc('unavailable'),
+      svc('unavailable'),
       svc('link_required'),
     ]);
     expect(banner?.tone).toBe('bad');
-    expect(banner?.title).toBe('2 services are unavailable');
+    expect(banner?.title).toBe('1 service is misconfigured and 2 are unavailable');
   });
+});
 
-  it('uses the singular for one failing service', () => {
-    const banner = resolveServicesBanner([svc('misconfigured')]);
-    expect(banner?.title).toBe('1 service is unavailable');
+describe('failureSummary', () => {
+  it('words each failure kind separately', () => {
+    expect(failureSummary(1, 0)).toBe('1 service is misconfigured');
+    expect(failureSummary(2, 0)).toBe('2 services are misconfigured');
+    expect(failureSummary(0, 1)).toBe('1 service is unavailable');
+    expect(failureSummary(0, 3)).toBe('3 services are unavailable');
+    expect(failureSummary(2, 1)).toBe('2 services are misconfigured and 1 is unavailable');
   });
 });
 
@@ -151,7 +171,7 @@ describe('sortServices', () => {
 describe('summarizeServices', () => {
   const statuses = (...list: ServiceStatus[]) => list.map((status) => ({ status }));
 
-  it('counts reachable, failing and unlinked services using the Services page statuses', () => {
+  it('counts reachable, unavailable, misconfigured and unlinked services using the Services page statuses', () => {
     expect(
       summarizeServices(
         statuses(
@@ -163,10 +183,16 @@ describe('summarizeServices', () => {
           'permission_required',
         ),
       ),
-    ).toEqual({ total: 6, reachable: 2, needsLink: 1, failing: 2 });
+    ).toEqual({ total: 6, reachable: 2, needsLink: 1, unavailable: 1, misconfigured: 1 });
   });
 
   it('is all zeros for no services', () => {
-    expect(summarizeServices([])).toEqual({ total: 0, reachable: 0, needsLink: 0, failing: 0 });
+    expect(summarizeServices([])).toEqual({
+      total: 0,
+      reachable: 0,
+      needsLink: 0,
+      unavailable: 0,
+      misconfigured: 0,
+    });
   });
 });
