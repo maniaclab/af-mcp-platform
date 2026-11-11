@@ -11,9 +11,8 @@
  * via UsagePage.vue's existing rendering (its `subject` prop), rather than
  * duplicating any of that markup here.
  */
-import { ref, onMounted } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import {
-  AccessDeniedError,
   fetchAnnotationMismatches,
   fetchCredmonStatus,
   fetchMaintenanceStatus,
@@ -38,15 +37,13 @@ import {
 } from '../lib/credmonStatus';
 import type { CredmonHealth } from '../lib/credmonStatus';
 import { maintenanceErrorMessage } from '../lib/maintenanceBanner';
-import { formatRelative } from '../lib/relativeTime';
+import { formatDateTime, formatRelative } from '../lib/relativeTime';
+import { useLoadState } from '../lib/useLoadState';
+import AsyncState from './ui/AsyncState.vue';
+import ConfirmDialog from './ui/ConfirmDialog.vue';
+import Disclosure from './ui/Disclosure.vue';
+import StatusMark from './ui/StatusMark.vue';
 import UsagePage from './UsagePage.vue';
-
-const subjects = ref<UsageSubject[]>([]);
-const loading = ref(true);
-const error = ref<string | null>(null);
-const sessionExpired = ref(false);
-const accessDenied = ref<AccessDeniedError | null>(null);
-const selectedSubject = ref<string>('');
 
 /** unixname is the most recognizable label to an operator; fall back to
  * email, then the bare subject, for a principal the cache couldn't resolve. */
@@ -61,59 +58,48 @@ function enabledByLabel(status: MaintenanceStatus): string {
   return status.enabled_by_unixname || status.enabled_by_email || status.enabled_by || '';
 }
 
-onMounted(async () => {
-  try {
-    const res = await fetchUsageSubjects();
-    subjects.value = res.subjects;
-  } catch (err) {
-    if (err instanceof AccessDeniedError) {
-      accessDenied.value = err;
-    } else if (err instanceof SessionExpiredError) {
-      sessionExpired.value = true;
-    } else {
-      error.value = err instanceof Error ? err.message : 'Failed to load subjects.';
-    }
-  } finally {
-    loading.value = false;
-  }
-});
-
-function reload(): void {
-  location.reload();
+/** Exact local time for a unix-seconds timestamp, shown on hover next to a relative one. */
+function exactTime(epochSeconds: number): string {
+  return formatDateTime(new Date(epochSeconds * 1000), { year: true });
 }
 
+function plural(n: number, one: string, many: string): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
+function nowSeconds(): number {
+  return Date.now() / 1000;
+}
+
+// One load state per independently fetched panel, so one failing endpoint
+// leaves the others usable.
+const usageState = useLoadState();
+const maintenanceState = useLoadState();
+const mismatchState = useLoadState();
+const driftState = useLoadState();
+const credmonState = useLoadState();
+
+// ── Usage by subject ────────────────────────────────────────────────────
+const subjects = ref<UsageSubject[]>([]);
+const selectedSubject = ref<string>('');
+
 // ── Maintenance mode ────────────────────────────────────────────────────
-// GET is unauthenticated (see fetchMaintenanceStatus's docstring), so this
-// onMounted never sees AccessDeniedError/SessionExpiredError -- only a
-// generic fetch failure, surfaced the same way `error` above is. The POST
-// (setMaintenanceStatus) DOES require a real Bearer, so its own errors are
-// handled separately below.
+// GET is unauthenticated (see fetchMaintenanceStatus's docstring), so its
+// load never sees AccessDeniedError/SessionExpiredError -- only a generic
+// fetch failure. The POST (setMaintenanceStatus) DOES require a real Bearer,
+// so its own errors are handled separately below.
 const maintenanceStatus = ref<MaintenanceStatus | null>(null);
-const maintenanceLoading = ref(true);
-const maintenanceError = ref<string | null>(null);
 const maintenanceReason = ref('');
 const maintenanceSaving = ref(false);
 const maintenanceToggleError = ref<string | null>(null);
 const maintenanceSessionExpired = ref(false);
-
-onMounted(async () => {
-  try {
-    maintenanceStatus.value = await fetchMaintenanceStatus();
-  } catch (err) {
-    maintenanceError.value =
-      err instanceof Error ? err.message : 'Could not load maintenance status.';
-  } finally {
-    maintenanceLoading.value = false;
-  }
-});
+const confirmingEnable = ref(false);
 
 /**
  * Shared by enable/disableMaintenance: a SessionExpiredError from
  * setMaintenanceStatus (apiFetch's silent-renew-then-401 path, e.g. an
- * admin's token expiring mid-edit) gets the Usage section's own dedicated
- * "Reload" button UI rather than maintenanceErrorMessage's plain sentence --
- * same distinct-state treatment the sessionExpired ref above already gives
- * the identical condition on the usage-subjects fetch.
+ * admin's token expiring mid-edit) gets AsyncState's dedicated "Reload"
+ * button rather than maintenanceErrorMessage's plain sentence.
  */
 function handleMaintenanceToggleError(err: unknown): void {
   if (err instanceof SessionExpiredError) {
@@ -126,6 +112,7 @@ function handleMaintenanceToggleError(err: unknown): void {
 async function enableMaintenance(): Promise<void> {
   maintenanceSaving.value = true;
   maintenanceToggleError.value = null;
+  maintenanceSessionExpired.value = false;
   try {
     maintenanceStatus.value = await setMaintenanceStatus(
       true,
@@ -135,12 +122,14 @@ async function enableMaintenance(): Promise<void> {
     handleMaintenanceToggleError(err);
   } finally {
     maintenanceSaving.value = false;
+    confirmingEnable.value = false;
   }
 }
 
 async function disableMaintenance(): Promise<void> {
   maintenanceSaving.value = true;
   maintenanceToggleError.value = null;
+  maintenanceSessionExpired.value = false;
   try {
     maintenanceStatus.value = await setMaintenanceStatus(false);
     maintenanceReason.value = '';
@@ -151,42 +140,8 @@ async function disableMaintenance(): Promise<void> {
   }
 }
 
-function formatEnabledAt(epochSeconds: number): string {
-  return new Date(epochSeconds * 1000).toLocaleString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    timeZoneName: 'short',
-  });
-}
-
 // ── Annotation/policy mismatches (issue #238 B.8) ───────────────────────
-// Admin-only (require_admin), same as fetchUsageSubjects above, so the
-// same AccessDeniedError/SessionExpiredError handling applies.
 const mismatches = ref<AnnotationMismatch[]>([]);
-const mismatchesLoading = ref(true);
-const mismatchesError = ref<string | null>(null);
-const mismatchesSessionExpired = ref(false);
-const mismatchesAccessDenied = ref<AccessDeniedError | null>(null);
-
-onMounted(async () => {
-  try {
-    mismatches.value = await fetchAnnotationMismatches();
-  } catch (err) {
-    if (err instanceof AccessDeniedError) {
-      mismatchesAccessDenied.value = err;
-    } else if (err instanceof SessionExpiredError) {
-      mismatchesSessionExpired.value = true;
-    } else {
-      mismatchesError.value =
-        err instanceof Error ? err.message : 'Failed to load annotation mismatches.';
-    }
-  } finally {
-    mismatchesLoading.value = false;
-  }
-});
 
 function resolvedViaLabel(m: AnnotationMismatch): string {
   if (m.resolved_via === 'target_action_types') return 'target_action_types glob override';
@@ -195,54 +150,27 @@ function resolvedViaLabel(m: AnnotationMismatch): string {
 }
 
 // ── Tool mapping drift (issue #330) ─────────────────────────────────────
-// Admin-only like the sections above; one error string is enough here since
-// the mismatches section already shows the dedicated session/access states
-// for the same credential.
 const drifts = ref<ToolMappingDrift[]>([]);
-const driftsLoading = ref(true);
-const driftsError = ref<string | null>(null);
-
-onMounted(async () => {
-  try {
-    drifts.value = await fetchToolMappingDrift();
-  } catch (err) {
-    driftsError.value = err instanceof Error ? err.message : 'Failed to load tool mapping drift.';
-  } finally {
-    driftsLoading.value = false;
-  }
-});
 
 // ── HTCondor credmon sync (docs/credmon.md) ─────────────────────────────
-// Admin-only like the sections above; the mismatches section already shows
-// the dedicated session/access states for the same credential, so a load
-// failure here is one error string.
 const credmon = ref<CredmonStatus | null>(null);
-const credmonLoading = ref(true);
-const credmonError = ref<string | null>(null);
 const credmonSyncing = ref(false);
 const credmonSyncError = ref<string | null>(null);
 // Errors list starts expanded only when short enough to scan at a glance.
 const CREDMON_ERRORS_OPEN_MAX = 3;
+const credmonErrorsOpen = ref(false);
 
-async function loadCredmon(): Promise<void> {
-  try {
-    credmon.value = await fetchCredmonStatus();
-    credmonError.value = null;
-  } catch (err) {
-    credmonError.value = err instanceof Error ? err.message : 'Failed to load credmon status.';
-  } finally {
-    credmonLoading.value = false;
-  }
+async function refreshCredmon(): Promise<void> {
+  credmon.value = await fetchCredmonStatus();
+  credmonErrorsOpen.value = (credmon.value.last_run?.errors.length ?? 0) <= CREDMON_ERRORS_OPEN_MAX;
 }
-
-onMounted(loadCredmon);
 
 async function syncCredmonNow(): Promise<void> {
   credmonSyncing.value = true;
   credmonSyncError.value = null;
   try {
     await runCredmonSync();
-    await loadCredmon();
+    await refreshCredmon();
   } catch (err) {
     credmonSyncError.value = credmonSyncErrorMessage(err);
   } finally {
@@ -258,153 +186,233 @@ const CREDMON_HEALTH_LABELS: Record<CredmonHealth, string> = {
   error: 'Failing',
 };
 
-function nowSeconds(): number {
-  return Date.now() / 1000;
-}
+const CREDMON_HEALTH_TONES: Record<CredmonHealth, 'ok' | 'busy' | 'off' | 'warn' | 'bad'> = {
+  disabled: 'off',
+  pending: 'busy',
+  healthy: 'ok',
+  warning: 'warn',
+  error: 'bad',
+};
+
+onMounted(() => {
+  void usageState.run(async () => {
+    subjects.value = (await fetchUsageSubjects()).subjects;
+  }, 'Failed to load subjects.');
+  void maintenanceState.run(async () => {
+    maintenanceStatus.value = await fetchMaintenanceStatus();
+  }, 'Could not load maintenance status.');
+  void mismatchState.run(async () => {
+    mismatches.value = await fetchAnnotationMismatches();
+  }, 'Failed to load annotation mismatches.');
+  void driftState.run(async () => {
+    drifts.value = await fetchToolMappingDrift();
+  }, 'Failed to load tool mapping drift.');
+  void credmonState.run(refreshCredmon, 'Failed to load credmon status.');
+});
+
+// ── Page banner: the single most urgent message ─────────────────────────
+// Problem beats warning beats information; whichever loses still shows in
+// its own section below.
+const issueCount = computed(() => mismatches.value.length + drifts.value.length);
+
+const driftBannerText = computed(() => {
+  const parts: string[] = [];
+  if (mismatches.value.length > 0) {
+    parts.push(plural(mismatches.value.length, 'annotation mismatch', 'annotation mismatches'));
+  }
+  if (drifts.value.length > 0) {
+    parts.push(`${plural(drifts.value.length, 'service', 'services')} with tool mapping drift`);
+  }
+  return `${parts.join(' and ')}. Enforcement is unchanged; review them below.`;
+});
+
+const maintenanceBannerText = computed(() => {
+  const status = maintenanceStatus.value;
+  if (!status || !status.enabled) return '';
+  const since = status.enabled_at ? `Since ${exactTime(status.enabled_at)}. ` : '';
+  const shown = status.reason
+    ? `Everyone outside the admin group is refused and sees: ${status.reason}`
+    : 'Everyone outside the admin group is refused and sees that the broker is in maintenance mode.';
+  return since + shown;
+});
 </script>
 
 <template>
   <div class="ap">
-    <section class="ap__section" aria-label="Usage by subject">
-      <h2 class="ap__section-title">Usage</h2>
-
-      <div v-if="loading" class="ap__loading" aria-live="polite" aria-label="Loading subjects">
-        Loading subjects…
+    <!-- Page banner: the single most urgent message. -->
+    <div v-if="issueCount > 0" class="af-banner warn" role="status" data-af-admin-banner>
+      <span class="af-mark warn" aria-hidden="true"></span>
+      <div>
+        <b
+          >{{
+            plural(issueCount, 'tool configuration issue', 'tool configuration issues')
+          }}
+          found</b
+        >
+        {{ driftBannerText }}
       </div>
-
-      <!-- Session expired -->
-      <div v-else-if="sessionExpired" class="ap__error" role="alert">
-        <span class="ap__error-title">Session expired</span>
-        <span class="ap__error-body">
-          Your session has expired.
-          <button type="button" class="ap__reload" @click="reload">Reload</button>
-          to re-authenticate.
-        </span>
-      </div>
-
-      <!-- Access denied: covers a stale client-side is_admin (the broker's
-           require_admin 403s a caller demoted out of the admin group since
-           the nav last checked), same wording as sibling pages. -->
-      <div v-else-if="accessDenied" class="ap__error" role="alert">
-        <span class="ap__error-title">Access not yet granted</span>
-        <span class="ap__error-body">{{ accessDenied.message }}</span>
-      </div>
-
-      <!-- Error -->
-      <div v-else-if="error" class="ap__error" role="alert">
-        <span class="ap__error-title">Could not load subjects</span>
-        <span class="ap__error-body">{{ error }}</span>
-      </div>
-
-      <div v-else-if="subjects.length === 0" class="ap__placeholder">
-        No subjects with recorded usage yet.
-      </div>
-
-      <template v-else>
-        <div class="ap__form-group">
-          <label for="ap-usage-subject" class="ap__form-label">Subject</label>
-          <select id="ap-usage-subject" v-model="selectedSubject" class="ap__select">
-            <option value="" disabled>Select a subject…</option>
-            <option v-for="s in subjects" :key="s.subject" :value="s.subject">
-              {{ subjectLabel(s) }}
-            </option>
-          </select>
-        </div>
-
-        <!-- Keyed on the selection so switching subjects remounts UsagePage,
-             the same way it already reloads when its own window selector
-             changes -- no separate refetch wiring needed here. -->
-        <UsagePage v-if="selectedSubject" :key="selectedSubject" :subject="selectedSubject" />
-      </template>
-    </section>
-
-    <section class="ap__section" aria-label="Maintenance mode">
-      <h2 class="ap__section-title">Maintenance mode</h2>
-
-      <div
-        v-if="maintenanceLoading"
-        class="ap__loading"
-        aria-live="polite"
-        aria-label="Loading maintenance status"
+      <a class="af-btn s" :href="mismatches.length > 0 ? '#ap-mismatches' : '#ap-drift'"
+        >Review issues</a
       >
-        Loading maintenance status…
+    </div>
+    <div
+      v-else-if="maintenanceStatus?.enabled"
+      class="af-banner info"
+      role="status"
+      data-af-admin-banner
+    >
+      <span class="af-mark info" aria-hidden="true"></span>
+      <div>
+        <b>Maintenance mode is on</b>
+        {{ maintenanceBannerText }}
       </div>
+    </div>
 
-      <div v-else-if="maintenanceError" class="ap__error" role="alert">
-        <span class="ap__error-title">Could not load maintenance status</span>
-        <span class="ap__error-body">{{ maintenanceError }}</span>
-      </div>
-
-      <template v-else-if="maintenanceStatus">
-        <p class="ap__maintenance-status">
-          Status:
-          <strong>{{ maintenanceStatus.enabled ? 'Enabled' : 'Disabled' }}</strong>
+    <section class="af-sect" aria-labelledby="ap-usage-title">
+      <h2 id="ap-usage-title" class="ap__title">Usage across users</h2>
+      <AsyncState
+        inline
+        :loading="usageState.loading.value"
+        :error="usageState.error.value"
+        error-title="Could not load subjects"
+        :session-expired="usageState.sessionExpired.value"
+        :access-denied="usageState.accessDenied.value"
+        loading-label="Loading subjects…"
+      >
+        <p v-if="subjects.length === 0" class="ap__none">
+          <StatusMark tone="off">No subjects with recorded usage yet.</StatusMark>
         </p>
-        <dl v-if="maintenanceStatus.enabled" class="ap__maintenance-details">
-          <dt>Reason</dt>
-          <dd>{{ maintenanceStatus.reason || '(none given)' }}</dd>
-          <dt>Enabled by</dt>
-          <dd>{{ enabledByLabel(maintenanceStatus) }}</dd>
-          <dt>Enabled at</dt>
-          <dd>
-            {{ maintenanceStatus.enabled_at ? formatEnabledAt(maintenanceStatus.enabled_at) : '—' }}
-          </dd>
-        </dl>
+        <template v-else>
+          <div class="af-field">
+            <label for="ap-usage-subject">Subject</label>
+            <select id="ap-usage-subject" v-model="selectedSubject" class="af-input">
+              <option value="" disabled>Select a subject…</option>
+              <option v-for="s in subjects" :key="s.subject" :value="s.subject">
+                {{ subjectLabel(s) }}
+              </option>
+            </select>
+          </div>
 
-        <div class="ap__form-group">
-          <label for="ap-maintenance-reason" class="ap__form-label"
-            >Reason (shown to every visitor)</label
-          >
-          <input
-            id="ap-maintenance-reason"
-            v-model="maintenanceReason"
-            data-af-maintenance-reason
-            type="text"
-            class="ap__input"
-            placeholder="e.g. Scheduled Postgres upgrade, back by 14:00 UTC"
-          />
-        </div>
-
-        <!-- Session expired mid-edit: same dedicated "Reload" UI as the
-             Usage section's identical condition above. -->
-        <div v-if="maintenanceSessionExpired" class="ap__error" role="alert">
-          <span class="ap__error-title">Session expired</span>
-          <span class="ap__error-body">
-            Your session has expired.
-            <button type="button" class="ap__reload" @click="reload">Reload</button>
-            to re-authenticate.
-          </span>
-        </div>
-
-        <div v-else-if="maintenanceToggleError" class="ap__error" role="alert">
-          <span class="ap__error-body">{{ maintenanceToggleError }}</span>
-        </div>
-
-        <div class="ap__maintenance-actions">
-          <button
-            type="button"
-            data-af-maintenance-enable
-            class="ap__btn ap__btn--danger"
-            :disabled="maintenanceSaving || maintenanceStatus.enabled"
-            @click="enableMaintenance"
-          >
-            Enable maintenance mode
-          </button>
-          <button
-            type="button"
-            data-af-maintenance-disable
-            class="ap__btn ap__btn--confirm"
-            :disabled="maintenanceSaving || !maintenanceStatus.enabled"
-            @click="disableMaintenance"
-          >
-            Disable maintenance mode
-          </button>
-        </div>
-      </template>
+          <!-- Keyed on the selection so switching subjects remounts UsagePage,
+               the same way it already reloads when its own window selector
+               changes -- no separate refetch wiring needed here. -->
+          <UsagePage v-if="selectedSubject" :key="selectedSubject" :subject="selectedSubject" />
+        </template>
+      </AsyncState>
     </section>
 
-    <section class="ap__section" aria-label="Annotation/policy mismatches">
-      <h2 class="ap__section-title">Annotation mismatches</h2>
+    <section id="ap-maintenance" class="af-sect" aria-labelledby="ap-maintenance-title">
+      <h2 id="ap-maintenance-title" class="ap__title">Maintenance mode</h2>
+      <AsyncState
+        inline
+        :loading="maintenanceState.loading.value"
+        :error="maintenanceState.error.value"
+        error-title="Could not load maintenance status"
+        :session-expired="maintenanceState.sessionExpired.value"
+        :access-denied="maintenanceState.accessDenied.value"
+        loading-label="Loading maintenance status…"
+      >
+        <template v-if="maintenanceStatus">
+          <dl class="af-kv ap__kv">
+            <dt>Status</dt>
+            <dd data-af-maintenance-status>
+              <StatusMark :tone="maintenanceStatus.enabled ? 'info' : 'off'">{{
+                maintenanceStatus.enabled ? 'On' : 'Off'
+              }}</StatusMark>
+              <span
+                v-if="maintenanceStatus.enabled && maintenanceStatus.enabled_at"
+                class="ap__sub"
+              >
+                since
+                <span :title="exactTime(maintenanceStatus.enabled_at)">{{
+                  formatRelative(maintenanceStatus.enabled_at * 1000)
+                }}</span>
+              </span>
+            </dd>
+            <template v-if="maintenanceStatus.enabled">
+              <dt>Reason</dt>
+              <dd>{{ maintenanceStatus.reason || '(none given)' }}</dd>
+              <dt>Enabled by</dt>
+              <dd>{{ enabledByLabel(maintenanceStatus) }}</dd>
+              <dt>Enabled at</dt>
+              <dd>
+                {{ maintenanceStatus.enabled_at ? exactTime(maintenanceStatus.enabled_at) : '—' }}
+              </dd>
+            </template>
+          </dl>
+
+          <div class="af-field ap__message">
+            <label for="ap-maintenance-reason">Message shown to users</label>
+            <input
+              id="ap-maintenance-reason"
+              v-model="maintenanceReason"
+              data-af-maintenance-reason
+              type="text"
+              class="af-input"
+              placeholder="e.g. Scheduled Postgres upgrade, back by 14:00 UTC"
+            />
+          </div>
+
+          <!-- A toggle failure (session expired mid-edit, 403, 409) shows in
+               the same note AsyncState gives every panel. -->
+          <AsyncState
+            inline
+            :loading="false"
+            :error="maintenanceToggleError"
+            error-title="Could not change maintenance mode"
+            :session-expired="maintenanceSessionExpired"
+            :access-denied="null"
+          />
+
+          <div class="ap__actions">
+            <button
+              v-if="!maintenanceStatus.enabled"
+              type="button"
+              data-af-maintenance-enable
+              class="af-btn danger"
+              :disabled="maintenanceSaving"
+              @click="confirmingEnable = true"
+            >
+              Enable maintenance mode
+            </button>
+            <button
+              v-else
+              type="button"
+              data-af-maintenance-disable
+              class="af-btn secondary"
+              :disabled="maintenanceSaving"
+              @click="disableMaintenance"
+            >
+              {{ maintenanceSaving ? 'Disabling…' : 'Disable maintenance mode' }}
+            </button>
+          </div>
+
+          <ConfirmDialog
+            v-model:open="confirmingEnable"
+            class="ap__dialog"
+            title="Enable maintenance mode?"
+            confirm-label="Enable maintenance mode"
+            busy-label="Enabling…"
+            :busy="maintenanceSaving"
+            danger
+            @confirm="enableMaintenance"
+          >
+            <p>
+              Everyone outside the admin group is refused on the portal API and the MCP endpoint,
+              and sees
+              {{
+                maintenanceReason.trim()
+                  ? `"${maintenanceReason.trim()}"`
+                  : 'that the broker is in maintenance mode'
+              }}. Their clients stop working until you disable it.
+            </p>
+          </ConfirmDialog>
+        </template>
+      </AsyncState>
+    </section>
+
+    <section id="ap-mismatches" class="af-sect" aria-labelledby="ap-mismatches-title">
+      <h2 id="ap-mismatches-title" class="ap__title">Annotation mismatches</h2>
       <p class="ap__legend">
         Visibility only; enforcement is unchanged. A row means the backend's
         <code>readOnlyHint</code> disagrees with the broker's <code>action_type</code>. To resolve
@@ -413,63 +421,49 @@ function nowSeconds(): number {
         <code>custom_permissions</code> if it is site-defined, or ask the backend to correct its
         annotation.
       </p>
-
-      <div
-        v-if="mismatchesLoading"
-        class="ap__loading"
-        aria-live="polite"
-        aria-label="Loading annotation mismatches"
+      <AsyncState
+        inline
+        :loading="mismatchState.loading.value"
+        :error="mismatchState.error.value"
+        error-title="Could not load annotation mismatches"
+        :session-expired="mismatchState.sessionExpired.value"
+        :access-denied="mismatchState.accessDenied.value"
+        loading-label="Loading annotation mismatches…"
       >
-        Loading annotation mismatches…
-      </div>
-
-      <div v-else-if="mismatchesSessionExpired" class="ap__error" role="alert">
-        <span class="ap__error-title">Session expired</span>
-        <span class="ap__error-body">
-          Your session has expired.
-          <button type="button" class="ap__reload" @click="reload">Reload</button>
-          to re-authenticate.
-        </span>
-      </div>
-
-      <div v-else-if="mismatchesAccessDenied" class="ap__error" role="alert">
-        <span class="ap__error-title">Access not yet granted</span>
-        <span class="ap__error-body">{{ mismatchesAccessDenied.message }}</span>
-      </div>
-
-      <div v-else-if="mismatchesError" class="ap__error" role="alert">
-        <span class="ap__error-title">Could not load annotation mismatches</span>
-        <span class="ap__error-body">{{ mismatchesError }}</span>
-      </div>
-
-      <div v-else-if="mismatches.length === 0" class="ap__placeholder">No mismatches.</div>
-
-      <table v-else class="ap__mismatch-table">
-        <thead>
-          <tr>
-            <th scope="col">Service</th>
-            <th scope="col">Tool</th>
-            <th scope="col">Backend readOnlyHint</th>
-            <th scope="col">Broker action_type</th>
-            <th scope="col">Resolved via</th>
-            <th scope="col">Permission</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="m in mismatches" :key="`${m.service}.${m.tool}`">
-            <td>{{ m.service }}</td>
-            <td>{{ m.tool }}</td>
-            <td>readOnlyHint={{ m.declared_read_only_hint }}</td>
-            <td>{{ m.resolved_action_type }}</td>
-            <td>{{ resolvedViaLabel(m) }}</td>
-            <td>{{ m.permission }}</td>
-          </tr>
-        </tbody>
-      </table>
+        <p v-if="mismatches.length === 0" class="ap__none">
+          <StatusMark tone="ok">No mismatches.</StatusMark>
+        </p>
+        <div v-else class="af-tbl-box">
+          <table class="af-tbl compact">
+            <thead>
+              <tr>
+                <th scope="col">Service</th>
+                <th scope="col">Tool</th>
+                <th scope="col">Backend readOnlyHint</th>
+                <th scope="col">Broker action_type</th>
+                <th scope="col">Resolved via</th>
+                <th scope="col">Permission</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="m in mismatches" :key="`${m.service}.${m.tool}`">
+                <td>{{ m.service }}</td>
+                <td>
+                  <code>{{ m.tool }}</code>
+                </td>
+                <td>readOnlyHint={{ m.declared_read_only_hint }}</td>
+                <td>{{ m.resolved_action_type }}</td>
+                <td class="sub">{{ resolvedViaLabel(m) }}</td>
+                <td class="sub">{{ m.permission }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </AsyncState>
     </section>
 
-    <section class="ap__section" aria-label="Tool mapping drift">
-      <h2 class="ap__section-title">Tool mapping drift</h2>
+    <section id="ap-drift" class="af-sect" aria-labelledby="ap-drift-title">
+      <h2 id="ap-drift-title" class="ap__title">Tool mapping drift</h2>
       <p class="ap__legend">
         Visibility only. <strong>Unmapped</strong> tools are advertised by the backend but have no
         <code>required_permission</code> entry and no <code>__default__</code>, so they are
@@ -480,449 +474,251 @@ function nowSeconds(): number {
         that renamed its tools), so no caller sees them: update the service's
         <code>prefix</code> and <code>required_permission</code> keys to the backend's names.
       </p>
-
-      <div
-        v-if="driftsLoading"
-        class="ap__loading"
-        aria-live="polite"
-        aria-label="Loading tool mapping drift"
+      <AsyncState
+        inline
+        :loading="driftState.loading.value"
+        :error="driftState.error.value"
+        error-title="Could not load tool mapping drift"
+        :session-expired="driftState.sessionExpired.value"
+        :access-denied="driftState.accessDenied.value"
+        loading-label="Loading tool mapping drift…"
       >
-        Loading tool mapping drift…
-      </div>
-
-      <div v-else-if="driftsError" class="ap__error" role="alert">
-        <span class="ap__error-title">Could not load tool mapping drift</span>
-        <span class="ap__error-body">{{ driftsError }}</span>
-      </div>
-
-      <div v-else-if="drifts.length === 0" class="ap__placeholder">No tool mapping drift.</div>
-
-      <table v-else class="ap__mismatch-table">
-        <thead>
-          <tr>
-            <th scope="col">Service</th>
-            <th scope="col">Routable / advertised</th>
-            <th scope="col">Unroutable (prefix mismatch)</th>
-            <th scope="col">Unmapped (advertised, disabled)</th>
-            <th scope="col">Stale (mapped, not advertised)</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="d in drifts" :key="d.service">
-            <td>{{ d.service }}</td>
-            <td>{{ d.routable }} / {{ d.advertised }}</td>
-            <td>
-              <template v-if="d.unroutable.length > 0">
-                expected {{ d.prefix }}_*: {{ d.unroutable.join(', ') }}
-              </template>
-            </td>
-            <td>{{ d.unmapped.join(', ') }}</td>
-            <td>{{ d.stale.join(', ') }}</td>
-          </tr>
-        </tbody>
-      </table>
+        <p v-if="drifts.length === 0" class="ap__none">
+          <StatusMark tone="ok">No tool mapping drift.</StatusMark>
+        </p>
+        <div v-else class="af-tbl-box">
+          <table class="af-tbl compact">
+            <thead>
+              <tr>
+                <th scope="col">Service</th>
+                <th scope="col" class="num">Routable / advertised</th>
+                <th scope="col">Unroutable (prefix mismatch)</th>
+                <th scope="col">Unmapped (advertised, disabled)</th>
+                <th scope="col">Stale (mapped, not advertised)</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="d in drifts" :key="d.service">
+                <td>{{ d.service }}</td>
+                <td class="num">{{ d.routable }} / {{ d.advertised }}</td>
+                <td class="ap__wrap">
+                  <code v-if="d.unroutable.length > 0">
+                    expected {{ d.prefix }}_*: {{ d.unroutable.join(', ') }}
+                  </code>
+                </td>
+                <td class="ap__wrap">
+                  <code>{{ d.unmapped.join(', ') }}</code>
+                </td>
+                <td class="ap__wrap">
+                  <code>{{ d.stale.join(', ') }}</code>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </AsyncState>
     </section>
 
-    <section class="ap__section" aria-label="HTCondor credmon sync">
-      <h2 class="ap__section-title">HTCondor credmon sync</h2>
+    <section class="af-sect" aria-labelledby="ap-credmon-title">
+      <h2 id="ap-credmon-title" class="ap__title">HTCondor credmon sync</h2>
       <p class="ap__legend">
         The broker stores a short-lived token per user and credential type in the facility's credd,
         so jobs that request <code>use_oauth_services = af_krb5, af_x509</code> get the user's
         credentials on the worker node. Only one broker replica runs each sync.
       </p>
-
-      <div
-        v-if="credmonLoading"
-        class="ap__loading"
-        aria-live="polite"
-        aria-label="Loading credmon status"
+      <AsyncState
+        inline
+        :loading="credmonState.loading.value"
+        :error="credmonState.error.value"
+        error-title="Could not load credmon status"
+        :session-expired="credmonState.sessionExpired.value"
+        :access-denied="credmonState.accessDenied.value"
+        loading-label="Loading credmon status…"
       >
-        Loading credmon status…
-      </div>
+        <p v-if="credmon && !credmon.enabled" class="ap__none">
+          <StatusMark tone="off">
+            Not enabled on this broker (<code>CREDMON_ENABLED</code>).
+          </StatusMark>
+        </p>
 
-      <div v-else-if="credmonError" class="ap__error" role="alert">
-        <span class="ap__error-title">Could not load credmon status</span>
-        <span class="ap__error-body">{{ credmonError }}</span>
-      </div>
-
-      <div v-else-if="credmon && !credmon.enabled" class="ap__placeholder">
-        Not enabled on this broker (<code>CREDMON_ENABLED</code>).
-      </div>
-
-      <template v-else-if="credmon">
-        <div class="ap__credmon-summary">
-          <span
-            class="ap__credmon-pill"
-            :class="`ap__credmon-pill--${credmonHealth(credmon, nowSeconds())}`"
-            data-af-credmon-health
-          >
-            {{ CREDMON_HEALTH_LABELS[credmonHealth(credmon, nowSeconds())] }}
-          </span>
-          <button
-            type="button"
-            data-af-credmon-sync
-            class="ap__btn ap__btn--confirm"
-            :disabled="credmonSyncing"
-            @click="syncCredmonNow"
-          >
-            {{ credmonSyncing ? 'Syncing…' : 'Run sync now' }}
-          </button>
-        </div>
-
-        <div v-if="credmonSyncError" class="ap__error" role="alert">
-          <span class="ap__error-body">{{ credmonSyncError }}</span>
-        </div>
-
-        <dl class="ap__maintenance-details">
-          <dt>Last run</dt>
-          <dd v-if="credmon.last_run">
-            <span :title="formatEnabledAt(credmon.last_run.finished_at)">
-              {{ formatRelative(credmon.last_run.finished_at * 1000) }}
+        <template v-else-if="credmon">
+          <div class="ap__summary">
+            <span data-af-credmon-health>
+              <StatusMark
+                :tone="CREDMON_HEALTH_TONES[credmonHealth(credmon, nowSeconds())]"
+                :label="CREDMON_HEALTH_LABELS[credmonHealth(credmon, nowSeconds())]"
+              />
             </span>
-            ({{ credmon.last_run.trigger === 'manual' ? 'run by an admin' : 'scheduled' }}, on
-            {{ credmon.last_run.holder }})
-          </dd>
-          <dd v-else>No sync has run yet.</dd>
-          <dt>Last success</dt>
-          <dd>
-            <span
-              v-if="credmon.last_run?.last_success_at"
-              :title="formatEnabledAt(credmon.last_run.last_success_at)"
+            <button
+              type="button"
+              data-af-credmon-sync
+              class="af-btn secondary s"
+              :disabled="credmonSyncing"
+              :aria-busy="credmonSyncing"
+              @click="syncCredmonNow"
             >
-              {{ formatRelative(credmon.last_run.last_success_at * 1000) }}
-            </span>
-            <template v-else>Never</template>
-          </dd>
-          <dt>Next run</dt>
-          <dd v-if="credmonNextRunAt(credmon) !== null">
-            <span :title="formatEnabledAt(credmonNextRunAt(credmon) as number)">
-              {{ formatRelative((credmonNextRunAt(credmon) as number) * 1000) }}
-            </span>
-          </dd>
-          <dd v-else>Within a minute of startup.</dd>
-        </dl>
+              {{ credmonSyncing ? 'Syncing…' : 'Run sync now' }}
+            </button>
+          </div>
 
-        <table class="ap__mismatch-table">
-          <thead>
-            <tr>
-              <th scope="col">Credential</th>
-              <th scope="col">credd service</th>
-              <th scope="col">Stored</th>
-              <th scope="col">Skipped: not linked</th>
-              <th scope="col">Skipped: no POSIX user</th>
-              <th scope="col">Failed</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="row in credmonKindRows(credmon)" :key="row.kind">
-              <td>{{ row.kind }}</td>
-              <td>
-                <code>{{ row.service }}</code>
-              </td>
-              <td>{{ row.stored }}</td>
-              <td>{{ row.notLinked }}</td>
-              <td>{{ row.noPosix }}</td>
-              <td>{{ row.failed }}</td>
-            </tr>
-          </tbody>
-        </table>
+          <AsyncState
+            inline
+            :loading="false"
+            :error="credmonSyncError"
+            error-title="Could not run sync"
+            :session-expired="false"
+            :access-denied="null"
+          />
 
-        <details
-          v-if="credmon.last_run && credmon.last_run.errors.length > 0"
-          class="ap__credmon-errors"
-          :open="credmon.last_run.errors.length <= CREDMON_ERRORS_OPEN_MAX"
-        >
-          <summary>
-            Errors from the last run ({{
+          <dl class="af-kv ap__kv">
+            <dt>Last run</dt>
+            <dd v-if="credmon.last_run">
+              <span :title="exactTime(credmon.last_run.finished_at)">
+                {{ formatRelative(credmon.last_run.finished_at * 1000) }}
+              </span>
+              ({{ credmon.last_run.trigger === 'manual' ? 'run by an admin' : 'scheduled' }}, on
+              {{ credmon.last_run.holder }})
+            </dd>
+            <dd v-else>No sync has run yet.</dd>
+            <dt>Last success</dt>
+            <dd>
+              <span
+                v-if="credmon.last_run?.last_success_at"
+                :title="exactTime(credmon.last_run.last_success_at)"
+              >
+                {{ formatRelative(credmon.last_run.last_success_at * 1000) }}
+              </span>
+              <template v-else>Never</template>
+            </dd>
+            <dt>Next run</dt>
+            <dd v-if="credmonNextRunAt(credmon) !== null">
+              <span :title="exactTime(credmonNextRunAt(credmon) as number)">
+                {{ formatRelative((credmonNextRunAt(credmon) as number) * 1000) }}
+              </span>
+            </dd>
+            <dd v-else>Within a minute of startup.</dd>
+          </dl>
+
+          <div class="af-tbl-box">
+            <table class="af-tbl compact">
+              <thead>
+                <tr>
+                  <th scope="col">Credential</th>
+                  <th scope="col">credd service</th>
+                  <th scope="col" class="num">Stored</th>
+                  <th scope="col" class="num">Skipped: not linked</th>
+                  <th scope="col" class="num">Skipped: no POSIX user</th>
+                  <th scope="col" class="num">Failed</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in credmonKindRows(credmon)" :key="row.kind">
+                  <td>{{ row.kind }}</td>
+                  <td>
+                    <code>{{ row.service }}</code>
+                  </td>
+                  <td class="num">{{ row.stored }}</td>
+                  <td class="num">{{ row.notLinked }}</td>
+                  <td class="num">{{ row.noPosix }}</td>
+                  <td class="num">{{ row.failed }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <Disclosure
+            v-if="credmon.last_run && credmon.last_run.errors.length > 0"
+            v-model:open="credmonErrorsOpen"
+            :label="`Errors from the last run (${
               credmon.last_run.errors.length + credmon.last_run.errors_truncated
-            }})
-          </summary>
-          <ul>
-            <li v-for="(e, i) in credmon.last_run.errors" :key="i">{{ e }}</li>
-          </ul>
-          <p v-if="credmon.last_run.errors_truncated > 0" class="ap__legend">
-            +{{ credmon.last_run.errors_truncated }} more not shown.
-          </p>
-        </details>
-      </template>
+            })`"
+          >
+            <ul class="ap__errors">
+              <li v-for="(e, i) in credmon.last_run.errors" :key="i">{{ e }}</li>
+            </ul>
+            <p v-if="credmon.last_run.errors_truncated > 0" class="ap__legend">
+              +{{ credmon.last_run.errors_truncated }} more not shown.
+            </p>
+          </Disclosure>
+        </template>
+      </AsyncState>
     </section>
   </div>
 </template>
 
 <style scoped>
+/* Admin is the compact page: sections sit 24px apart. */
 .ap {
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
+  gap: var(--space-24);
 }
 
-.ap__section {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.ap__section-title {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.8125rem;
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--color-af-text);
+.ap__title {
+  font: 600 var(--text-16) / 1.4 var(--font-sans);
   margin: 0;
-}
-
-.ap__form-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.375rem;
-  max-width: 24rem;
-}
-
-.ap__form-label {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.6875rem;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--color-af-dim);
-}
-
-.ap__select {
-  background: var(--color-af-void);
-  border: 1px solid var(--color-af-muted);
-  border-radius: 3px;
-  color: var(--color-af-text);
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.875rem;
-  padding: 0.5rem 0.75rem;
-  transition: border-color 150ms;
-  width: 100%;
-}
-.ap__select:focus {
-  outline: none;
-  border-color: var(--color-af-teal);
-  box-shadow: 0 0 0 2px rgb(from var(--color-af-teal) r g b / 0.15);
-}
-
-.ap__loading {
-  padding: 2rem;
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.8125rem;
-  color: var(--color-af-dim);
-}
-
-.ap__error {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  padding: 1.25rem;
-  border: 1px solid rgb(from var(--color-af-red) r g b / 0.2);
-  border-radius: 4px;
-  background: rgb(from var(--color-af-red) r g b / 0.05);
-}
-
-.ap__error-title {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.8125rem;
-  font-weight: 600;
-  color: var(--color-af-red);
-}
-
-.ap__error-body {
-  font-size: 0.875rem;
-  color: var(--color-af-dim);
-}
-
-.ap__reload {
-  font: inherit;
-  color: var(--color-af-teal);
-  background: none;
-  border: none;
-  padding: 0;
-  cursor: pointer;
-  text-decoration: underline;
-}
-
-.ap__placeholder {
-  padding: 3rem 1.5rem;
-  text-align: center;
-  border: 1px dashed var(--color-af-border);
-  border-radius: 4px;
-  color: var(--color-af-dim);
-  font-size: 0.875rem;
-  margin: 0;
-}
-
-.ap__maintenance-status {
-  font-size: 0.875rem;
-  color: var(--color-af-text);
-  margin: 0;
-}
-
-.ap__maintenance-details {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 0.375rem 1rem;
-  margin: 0;
-  font-size: 0.875rem;
-}
-.ap__maintenance-details dt {
-  color: var(--color-af-dim);
-}
-.ap__maintenance-details dd {
-  margin: 0;
-  color: var(--color-af-text);
-  word-break: break-word;
-}
-
-.ap__input {
-  background: var(--color-af-void);
-  border: 1px solid var(--color-af-muted);
-  border-radius: 3px;
-  color: var(--color-af-text);
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.875rem;
-  padding: 0.5rem 0.75rem;
-  transition: border-color 150ms;
-  width: 100%;
-}
-.ap__input:focus {
-  outline: none;
-  border-color: var(--color-af-teal);
-  box-shadow: 0 0 0 2px rgb(from var(--color-af-teal) r g b / 0.15);
-}
-
-.ap__maintenance-actions {
-  display: flex;
-  gap: 0.75rem;
-}
-
-.ap__btn {
-  display: inline-flex;
-  align-items: center;
-  padding: 0.5rem 1rem;
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.6875rem;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  border-radius: 3px;
-  border: 1px solid;
-  cursor: pointer;
-  transition:
-    background 120ms,
-    color 120ms,
-    border-color 120ms;
-  white-space: nowrap;
-}
-.ap__btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-.ap__btn:focus-visible {
-  outline: 2px solid var(--color-af-teal);
-  outline-offset: 2px;
-}
-
-.ap__btn--danger {
-  background: rgb(from var(--color-af-red) r g b / 0.1);
-  color: var(--color-af-red);
-  border-color: rgb(from var(--color-af-red) r g b / 0.3);
-}
-.ap__btn--danger:not(:disabled):hover {
-  background: rgb(from var(--color-af-red) r g b / 0.18);
-}
-
-.ap__btn--confirm {
-  background: rgb(from var(--color-af-teal) r g b / 0.12);
-  color: var(--color-af-teal);
-  border-color: rgb(from var(--color-af-teal) r g b / 0.3);
-}
-.ap__btn--confirm:not(:disabled):hover {
-  background: rgb(from var(--color-af-teal) r g b / 0.2);
-  border-color: rgb(from var(--color-af-teal) r g b / 0.5);
 }
 
 .ap__legend {
   margin: 0;
-  font-size: 0.8125rem;
-  color: var(--color-af-dim);
+  max-width: 80ch;
+  font-size: var(--text-13);
+  color: var(--color-af-text-secondary);
 }
 
-.ap__mismatch-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.875rem;
+.ap__none {
+  margin: 0;
+  font-size: var(--text-13);
 }
-.ap__mismatch-table th {
-  text-align: left;
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.6875rem;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--color-af-dim);
-  padding: 0.5rem 0.75rem;
-  border-bottom: 1px solid var(--color-af-border);
+
+.ap__sub {
+  margin-left: var(--space-8);
+  color: var(--color-af-text-secondary);
 }
-.ap__mismatch-table td {
-  padding: 0.5rem 0.75rem;
-  color: var(--color-af-text);
-  border-bottom: 1px solid var(--color-af-border);
-  word-break: break-word;
+
+.ap code {
+  font-family: var(--font-mono);
+  font-size: var(--text-13);
 }
-.ap__credmon-summary {
+
+/* Key-value rows sit tighter than the shared 12px: operators read many. */
+.ap__kv dt,
+.ap__kv dd {
+  padding: var(--space-4) 0;
+}
+
+.ap__message {
+  max-width: 560px;
+}
+
+.ap__actions,
+.ap__summary {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  gap: var(--space-12);
+}
+
+.ap__summary {
   justify-content: space-between;
-  gap: 0.75rem;
 }
 
-.ap__credmon-pill {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.6875rem;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  padding: 0.1875rem 0.5rem;
-  border-radius: 2px;
-  border: 1px solid;
-}
-.ap__credmon-pill--healthy {
-  background: rgb(from var(--color-af-green) r g b / 0.08);
-  color: var(--color-af-green);
-  border-color: rgb(from var(--color-af-green) r g b / 0.2);
-}
-.ap__credmon-pill--pending,
-.ap__credmon-pill--disabled {
-  background: rgb(from var(--color-af-teal) r g b / 0.08);
-  color: var(--color-af-teal);
-  border-color: rgb(from var(--color-af-teal) r g b / 0.2);
-}
-.ap__credmon-pill--warning {
-  background: rgb(from var(--color-af-amber) r g b / 0.08);
-  color: var(--color-af-amber);
-  border-color: rgb(from var(--color-af-amber) r g b / 0.2);
-}
-.ap__credmon-pill--error {
-  background: rgb(from var(--color-af-red) r g b / 0.08);
-  color: var(--color-af-red);
-  border-color: rgb(from var(--color-af-red) r g b / 0.2);
+/* .af-dialog sets display, which keeps a closed dialog on screen. */
+.ap__dialog:not([open]) {
+  display: none;
 }
 
-.ap__credmon-errors {
-  font-size: 0.8125rem;
-  color: var(--color-af-text);
+/* Lists of tool names wrap inside the cell instead of widening the table. */
+.ap__wrap {
+  white-space: normal;
+  min-width: 14rem;
+  overflow-wrap: anywhere;
 }
-.ap__credmon-errors summary {
-  cursor: pointer;
-  color: var(--color-af-red);
-}
-.ap__credmon-errors ul {
-  margin: 0.5rem 0 0;
-  padding-left: 1.25rem;
-  font-family: 'IBM Plex Mono', monospace;
-  word-break: break-word;
+
+.ap__errors {
+  margin: 0;
+  padding-left: var(--space-16);
+  font: var(--text-13) / 1.5 var(--font-mono);
+  overflow-wrap: anywhere;
 }
 </style>

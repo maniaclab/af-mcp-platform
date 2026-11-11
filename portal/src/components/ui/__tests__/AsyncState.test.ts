@@ -108,6 +108,7 @@ describe('AsyncState', () => {
     expect(w.find('.af-banner.bad').exists()).toBe(true);
     expect(w.find('.af-empty').exists()).toBe(false);
   });
+
   it('renders the error-hint slot inside the error banner only', () => {
     const slots = {
       default: '<p class="content">c</p>',
@@ -117,5 +118,41 @@ describe('AsyncState', () => {
     expect(failed.find('.af-banner.bad .hint').exists()).toBe(true);
     const fine = mount(AsyncState, { props: base, slots });
     expect(fine.find('.hint').exists()).toBe(false);
+  });
+
+  describe('inline', () => {
+    it('renders the error as a note, not a banner', () => {
+      const w = render({ inline: true, error: 'boom' });
+      const note = w.find('.af-note.bad');
+      expect(note.attributes('role')).toBe('alert');
+      expect(note.find('b').text()).toBe('Services unavailable');
+      expect(note.text()).toContain('boom');
+      expect(w.find('.af-banner').exists()).toBe(false);
+    });
+
+    it('renders session expired as a note with a Reload button', async () => {
+      const reload = vi.fn();
+      vi.stubGlobal('location', { reload });
+      const w = render({ inline: true, sessionExpired: true });
+      const note = w.find('.af-note.bad');
+      expect(note.attributes('role')).toBe('alert');
+      expect(note.text()).toContain('Session expired');
+      await note.find('button').trigger('click');
+      expect(reload).toHaveBeenCalledTimes(1);
+      expect(w.find('.af-banner').exists()).toBe(false);
+    });
+
+    it('renders access denied as a warning note carrying the message', () => {
+      const w = render({ inline: true, accessDenied: new AccessDeniedError('Ask an admin.', 'c') });
+      const note = w.find('.af-note.warn');
+      expect(note.attributes('role')).toBe('alert');
+      expect(note.text()).toContain('Access not yet granted');
+      expect(note.text()).toContain('Ask an admin.');
+      expect(w.find('.af-banner').exists()).toBe(false);
+    });
+
+    it('still renders the content when nothing is wrong', () => {
+      expect(render({ inline: true }).find('.content').exists()).toBe(true);
+    });
   });
 });

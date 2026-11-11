@@ -18,8 +18,10 @@ withDefaults(
     accessDenied: AccessDeniedError | null;
     empty?: boolean;
     loadingLabel?: string;
+    /** Render the failure states as an in-section `.af-note` instead of a page `.af-banner`. */
+    inline?: boolean;
   }>(),
-  { empty: false, loadingLabel: 'Loading…' },
+  { empty: false, loadingLabel: 'Loading…', inline: false },
 );
 
 function reload(): void {
@@ -33,18 +35,28 @@ function reload(): void {
     <span>{{ loadingLabel }}</span>
   </div>
 
-  <div v-else-if="sessionExpired" class="af-banner bad" role="alert">
+  <div
+    v-else-if="sessionExpired"
+    :class="[inline ? 'af-note' : 'af-banner', 'bad', { async__inline: inline }]"
+    role="alert"
+  >
     <span class="af-mark bad" aria-hidden="true"></span>
     <div>
       <b>Session expired</b>
       Your session has expired. Reload to re-authenticate.
     </div>
-    <button type="button" class="af-btn s" @click="reload">Reload</button>
+    <button type="button" class="af-btn s" :class="{ secondary: inline }" @click="reload">
+      Reload
+    </button>
   </div>
 
   <!-- A valid session that lacks the audience this platform needs: reloading
        cannot fix it, only an administrator granting access can. -->
-  <div v-else-if="accessDenied" class="af-banner warn" role="alert">
+  <div
+    v-else-if="accessDenied"
+    :class="[inline ? 'af-note' : 'af-banner', 'warn', { async__inline: inline }]"
+    role="alert"
+  >
     <span class="af-mark warn" aria-hidden="true"></span>
     <div>
       <b>Access not yet granted</b>
@@ -52,7 +64,11 @@ function reload(): void {
     </div>
   </div>
 
-  <div v-else-if="error" class="af-banner bad" role="alert">
+  <div
+    v-else-if="error"
+    :class="[inline ? 'af-note' : 'af-banner', 'bad', { async__inline: inline }]"
+    role="alert"
+  >
     <span class="af-mark bad" aria-hidden="true"></span>
     <div>
       <b>{{ errorTitle }}</b>
@@ -69,6 +85,18 @@ function reload(): void {
 </template>
 
 <style scoped>
+/* A note lays its mark, text and button out in one row; the title runs into
+   the sentence rather than stacking like a banner's. */
+.async__inline > div {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.async__inline b {
+  margin-right: var(--space-8);
+  font-weight: 600;
+}
+
 .async__loading {
   display: flex;
   align-items: center;
