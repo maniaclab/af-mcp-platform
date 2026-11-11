@@ -9,8 +9,8 @@
  * provider, regardless of which card component (IdentityLink vs.
  * X509IdentityCard) renders it.
  */
-import { flushPromises, mount } from '@vue/test-utils';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { IdentitiesResponse, IdentityProvider } from '../../lib/api';
 
 vi.mock('../../lib/api', () => ({
@@ -72,6 +72,10 @@ const IDENTITIES: IdentitiesResponse = {
     },
   ],
 };
+
+// A mounted page listens for hashchange on window; unmounting keeps one test's
+// page from reacting to the next test's hash.
+enableAutoUnmount(afterEach);
 
 beforeEach(() => {
   vi.restoreAllMocks();
@@ -244,5 +248,76 @@ describe('IdentitiesPage banner', () => {
     ]);
     expect(wrapper.findAll('.af-banner')).toHaveLength(1);
     expect(wrapper.find('.af-banner.bad').exists()).toBe(true);
+  });
+});
+
+describe('IdentitiesPage deep-link highlight', () => {
+  const TARGET_CLASS = 'ip__card-anchor--target';
+
+  beforeEach(() => {
+    window.location.hash = '';
+    Element.prototype.scrollIntoView = vi.fn();
+  });
+
+  async function mountAt(hash: string) {
+    window.location.hash = hash;
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const wrapper = mount(IdentitiesPage, { attachTo: host });
+    await flushPromises();
+    return wrapper;
+  }
+
+  const marked = (wrapper: ReturnType<typeof mount>) =>
+    wrapper.findAll(`.${TARGET_CLASS}`).map((w) => w.attributes('id'));
+
+  it('marks only the targeted row, exposes aria-current, scrolls to it and focuses its heading', async () => {
+    const wrapper = await mountAt('#identity-card-krb5');
+    expect(marked(wrapper)).toEqual(['identity-card-krb5']);
+    const row = wrapper.find('#identity-card-krb5');
+    expect(row.attributes('aria-current')).toBe('true');
+    expect(wrapper.findAll('[aria-current="true"]')).toHaveLength(1);
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).toBe(row.find('h3').element);
+  });
+
+  it('highlights nothing and leaves focus alone with no hash', async () => {
+    const wrapper = await mountAt('');
+    expect(marked(wrapper)).toEqual([]);
+    expect(wrapper.find('[aria-current]').exists()).toBe(false);
+    expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it('highlights nothing and leaves focus alone for an unknown id', async () => {
+    const wrapper = await mountAt('#identity-card-nope');
+    expect(marked(wrapper)).toEqual([]);
+    expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it('highlights once the rows render when the hash arrived before the data', async () => {
+    let resolve!: (v: IdentitiesResponse) => void;
+    vi.mocked(fetchIdentities).mockReturnValue(new Promise((r) => (resolve = r)));
+    window.location.hash = '#identity-card-x509';
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const wrapper = mount(IdentitiesPage, { attachTo: host });
+    await flushPromises();
+    expect(marked(wrapper)).toEqual([]);
+    resolve(IDENTITIES);
+    await flushPromises();
+    expect(marked(wrapper)).toEqual(['identity-card-x509']);
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalledTimes(1);
+  });
+
+  it('moves the highlight when the hash changes', async () => {
+    const wrapper = await mountAt('#identity-card-krb5');
+    window.location.hash = '#identity-card-servicex';
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+    await flushPromises();
+    expect(marked(wrapper)).toEqual(['identity-card-servicex']);
+    expect(wrapper.find('#identity-card-krb5').attributes('aria-current')).toBeUndefined();
+    expect(document.activeElement).toBe(wrapper.find('#identity-card-servicex h3').element);
   });
 });

@@ -5,7 +5,7 @@
 //
 // Usage: node scripts/design-screenshots.mjs --out <dir> [--pages a,b] [--scenarios a,b]
 //          [--chrome <path>] [--accent RRGGBB] [--widths 1440,1024,400]
-//          [--height N] [--query a=b&c=d]
+//          [--height N] [--query a=b&c=d] [--hash fragment]
 // --height overrides the window height (a dialog is fixed to the window, so 800 shows
 // whether it fits a laptop); --query adds URL parameters, e.g. dialog=new-token (see
 // design-preview.mjs).
@@ -105,6 +105,7 @@ async function main() {
       widths: { type: 'string' },
       height: { type: 'string' },
       query: { type: 'string' },
+      hash: { type: 'string' },
     },
   });
   if (!values.out) throw new Error('--out <dir> is required');
@@ -135,7 +136,12 @@ async function main() {
             const query = `?theme=${theme}${values.accent ? `&accent=${values.accent}` : ''}${values.query ? `&${values.query}` : ''}`;
             const file = join(outDir, `${scenario}-${page}-${viewport.width}-${theme}.png`);
             tasks.push(async () => {
-              await capture(chrome, `${url}${PAGES[page]}${query}`, file, viewport);
+              await capture(
+                chrome,
+                `${url}${PAGES[page]}${query}${values.hash ? `#${values.hash}` : ''}`,
+                file,
+                viewport,
+              );
               console.log(file);
             });
           }

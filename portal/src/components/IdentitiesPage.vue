@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { X } from '@lucide/vue';
-import { computed, onMounted, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import {
   clearIdentitiesCache,
   fetchCatalog,
@@ -12,6 +12,7 @@ import {
   type ServiceXTokenMetadata,
 } from '../lib/api';
 import { groupServersByAlias } from '../lib/catalog';
+import { identityTargetFromHash } from '../lib/identityTarget';
 import {
   extractLinkedErrorParams,
   extractLinkedParam,
@@ -74,6 +75,46 @@ function dismissLinkedErrorBanner() {
   linkedErrorBanner.value = null;
   clearTimeout(linkedErrorBannerTimer);
 }
+
+// The row a `#identity-card-<id>` hash points at. The rows render after the
+// identities fetch, so the target is derived from the loaded providers: a hash
+// that arrives first takes effect once its row exists.
+const urlHash = ref(window.location.hash);
+const targetId = computed(() =>
+  identityTargetFromHash(
+    urlHash.value,
+    providers.value.map((p) => p.id),
+  ),
+);
+const listRoot = ref<HTMLElement | null>(null);
+
+function syncUrlHash() {
+  urlHash.value = window.location.hash;
+}
+
+// Bring the target row into view and move focus to its heading, so keyboard
+// and screen-reader users land there too. The browser's own hash scroll fires
+// before the rows exist, so it is repeated here once they do. Runs only for a
+// target, so a visit without a hash never moves focus.
+watch(
+  [targetId, loading],
+  async ([id, isLoading]) => {
+    if (!id || isLoading) return;
+    await nextTick();
+    const row = listRoot.value?.querySelector<HTMLElement>(`[id="identity-card-${id}"]`);
+    if (!row) return;
+    row.scrollIntoView({ block: 'start' });
+    const heading = row.querySelector<HTMLElement>('h3');
+    if (heading) {
+      heading.tabIndex = -1;
+      heading.focus({ preventScroll: true });
+    }
+  },
+  { immediate: true },
+);
+
+onMounted(() => window.addEventListener('hashchange', syncUrlHash));
+onBeforeUnmount(() => window.removeEventListener('hashchange', syncUrlHash));
 
 onMounted(async () => {
   const { linkedId, remainingSearch: afterLinked } = extractLinkedParam(window.location.search);
@@ -351,7 +392,7 @@ function handleServiceXRevoked(id: string) {
              krb5-token entry gets its own card with the in-page ticket form;
              the servicex-token entry gets its own card with the in-page
              refresh-token paste form and an external-link-out button. -->
-        <div class="ip__list">
+        <div ref="listRoot" class="ip__list">
           <template v-for="p in providers" :key="p.id">
             <!--
               Stable per-provider anchor -- af_link_identity (and the broker's
@@ -363,7 +404,12 @@ function handleServiceXRevoked(id: string) {
               through to startIdpLink() and its dialog's aria ids), so
               reusing it for the DOM anchor would collide.
             -->
-            <div :id="`identity-card-${p.id}`" class="ip__card-anchor">
+            <div
+              :id="`identity-card-${p.id}`"
+              class="ip__card-anchor"
+              :class="{ 'ip__card-anchor--target': p.id === targetId }"
+              :aria-current="p.id === targetId ? 'true' : undefined"
+            >
               <X509IdentityCard
                 v-if="p.link_mechanism === 'passphrase'"
                 :linked="p.linked"
@@ -439,6 +485,25 @@ function handleServiceXRevoked(id: string) {
    (--control-m + --space-16); above it nothing is sticky. */
 .ip__card-anchor {
   scroll-margin-top: var(--space-16);
+}
+
+/* The row a link points at: a 2px outline (outlines take no layout space, so
+   neighbouring rows do not move) and a subtle fill that fades in. No accent;
+   that is reserved for the primary action. */
+.ip__card-anchor {
+  border-radius: var(--radius-10);
+  transition: background-color var(--time-base) var(--ease);
+}
+
+.ip__card-anchor--target {
+  outline: 2px solid var(--color-af-text);
+  background-color: var(--color-af-bg-subtle);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ip__card-anchor {
+    transition: none;
+  }
 }
 
 @media (max-width: 859px) {
