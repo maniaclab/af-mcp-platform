@@ -250,6 +250,7 @@ describe('permission badge', () => {
     const badge = wrapper.find('.bc__cap-badge');
     expect(badge.exists()).toBe(true);
     expect(badge.text()).toBe('read_data');
+    expect(badge.attributes('aria-label')).toBe('Permission: read_data');
     expect(wrapper.find('.bc__cap-badge--mixed').exists()).toBe(false);
   });
 
@@ -275,8 +276,34 @@ describe('permission badge', () => {
 
     const badge = wrapper.find('.bc__cap-badge--mixed');
     expect(badge.exists()).toBe(true);
-    expect(badge.text()).toBe('mixed');
+    expect(badge.text()).toBe('Several permissions');
     expect(wrapper.text()).toContain('Different methods require different permissions');
+  });
+});
+
+describe('credential-type badge', () => {
+  it('is left out when a Powered by identity already names the credential', () => {
+    const wrapper = mountCard(); // SERVER.auth_type 'bearer', powered by ATLAS IAM
+
+    expect(wrapper.find('.bc__powered-by').text()).toContain('ATLAS IAM');
+    expect(wrapper.find('.bc__auth-badge').exists()).toBe(false);
+  });
+
+  it('is kept when there is no identity to name, so the credential type is still shown', () => {
+    const wrapper = mount(ServiceCard, {
+      props: {
+        server: { ...SERVER, auth_type: 'none', credential_provider: null },
+        poweredBy: {
+          kind: 'none' as const,
+          label: 'No credential required',
+          linked: null,
+          linkHref: null,
+          linkLabel: null,
+        },
+      },
+    });
+
+    expect(wrapper.find('.bc__auth-badge').text()).toBe('none');
   });
 });
 

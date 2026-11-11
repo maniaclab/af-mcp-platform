@@ -120,7 +120,7 @@ const toolsView = computed(() =>
            different permissions from each other (services.yaml's dict-form
            required_permission with no single "__default__") -- there is no
            one tag that could truthfully summarize that, so this shows
-           "mixed" and points at the per-tool Methods list instead of either
+           "Several permissions" and points at the per-tool Methods list instead of either
            guessing or rendering an empty tag. -->
         <PopoverTooltip
           v-if="server.permission === null"
@@ -133,7 +133,7 @@ const toolsView = computed(() =>
             data-variant="outline"
             :aria-describedby="`bc-cap-${server.name}`"
           >
-            mixed
+            Several permissions
           </button>
           <template #tooltip
             >Different methods require different permissions — see Methods below for each
@@ -149,6 +149,7 @@ const toolsView = computed(() =>
             type="button"
             class="badge bc__tag bc__cap-badge"
             data-variant="outline"
+            :aria-label="`Permission: ${server.permission}`"
             :aria-describedby="`bc-cap-${server.name}`"
           >
             {{ server.permission }}
@@ -158,8 +159,15 @@ const toolsView = computed(() =>
 
         <!-- The builtin af-mcp entry (issue #240) has no per-user credential
            concept at all -- a "none" credential-type tag would read like
-           a state to fix, so it renders no tag instead. -->
-        <PopoverTooltip v-if="!server.builtin" :tooltip-id="`bc-auth-${server.name}`" side="top">
+           a state to fix, so it renders no tag instead. A "Powered by"
+           identity names the credential in words people know ("Grid
+           certificate", "CERN Kerberos ticket"), so the raw type (bearer, x509,
+           krb5) is shown only when there is no identity to name. -->
+        <PopoverTooltip
+          v-if="!server.builtin && poweredBy.kind === 'none'"
+          :tooltip-id="`bc-auth-${server.name}`"
+          side="top"
+        >
           <button
             type="button"
             class="badge bc__tag bc__auth-badge"
