@@ -60,6 +60,7 @@
  * transient base64 string built for the one POST body — also never
  * persisted client-side.
  */
+import { Ticket } from '@lucide/vue';
 import { computed, nextTick, ref } from 'vue';
 import {
   APIError,
@@ -69,7 +70,10 @@ import {
   type KrbTicketMetadata,
 } from '../lib/api';
 import { describeKrb5Source, krb5LinkErrorMessage } from '../lib/krb5Identity';
-import { formatShortDateTime } from '../lib/x509Identity';
+import { formatDateTime } from '../lib/relativeTime';
+import IdentityCardShell from './IdentityCardShell.vue';
+import ArmedConfirmButton from './ui/ArmedConfirmButton.vue';
+import StatusMark from './ui/StatusMark.vue';
 
 const props = defineProps<{
   id: string;
@@ -141,12 +145,11 @@ const result = ref<KrbTicketMetadata | null>(null);
 const sourceNote = computed(() => (result.value ? describeKrb5Source(result.value.source) : ''));
 
 // Two-step "Forget" confirmation (click "Forget this ticket", then "Confirm
-// forget") — same inline armed-button pattern as X509IdentityCard.vue's
-// proxy revoke, chosen over IdentityLink.vue's heavier native-<dialog>
-// confirm since this card has no existing dialog machinery to reuse, and
-// deleting the stored keytab is a comparable-consequence destructive action
-// (losing hands-free renewal, same as revoking a proxy) rather than a
-// lighter one.
+// forget" via ArmedConfirmButton) — same inline pattern as
+// X509IdentityCard.vue's proxy revoke, chosen over IdentityLink.vue's
+// heavier ConfirmDialog since deleting the stored keytab is a
+// comparable-consequence destructive action (losing hands-free renewal,
+// same as revoking a proxy) rather than a lighter one.
 const forgetArmed = ref(false);
 // Separate from `error` above -- that one only renders inside the
 // username/password form, but forgetting can be triggered (and can fail)
@@ -330,10 +333,6 @@ async function handleKeytabSubmit() {
 }
 
 async function handleForget() {
-  if (!forgetArmed.value) {
-    forgetArmed.value = true;
-    return;
-  }
   busy.value = true;
   forgetError.value = null;
   try {
@@ -347,77 +346,66 @@ async function handleForget() {
     busy.value = false;
   }
 }
-
-/**
- * Short human form of an ISO-8601 expiry, e.g. "Sep 4, 12:00 AM GMT" — mint
- * responses always carry a valid `expires_at`, so unlike
- * x509Identity.ts's formatProxyExpiry there is no null/unparseable case to
- * fall back on here.
- */
-function formatExpiry(iso: string): string {
-  return formatShortDateTime(new Date(iso));
-}
 </script>
 
 <template>
-  <div class="kc" :class="{ 'kc--linked': linked }">
-    <!-- Provider icon + identity info — same layout grammar as X509IdentityCard -->
-    <div class="kc__icon" aria-hidden="true">K</div>
+  <IdentityCardShell
+    class="kc"
+    :icon="Ticket"
+    :display-name="display_name"
+    :enables="enables"
+    :powers="powers"
+    :status-tone="linked ? 'ok' : 'off'"
+    :status-label="linked ? 'Linked' : 'Not linked'"
+  >
+    <!-- Distinct from the status beside the name: `linked` alone can mean
+         nothing more durable than a still-renewable ticket, see
+         krb5_has_keytab's prop doc comment. -->
+    <template #status-extra>
+      <StatusMark
+        v-if="krb5_has_keytab"
+        class="kc__status kc__status--keytab"
+        tone="ok"
+        label="Keytab linked"
+      />
+    </template>
 
-    <div class="kc__body">
-      <div class="kc__header">
-        <span class="kc__name">{{ display_name }}</span>
-        <span v-if="linked" class="kc__status kc__status--linked">linked</span>
-        <span v-else class="kc__status kc__status--unlinked">not linked</span>
-        <!-- Distinct from the badge above: `linked` alone can mean nothing
-             more durable than a still-renewable ticket, see krb5_has_keytab's
-             prop doc comment. -->
-        <span v-if="krb5_has_keytab" class="kc__status kc__status--keytab">keytab linked</span>
-      </div>
+    <!-- Transient mint result — local state only, gone on reload. -->
+    <template v-if="result">
+      <dl class="af-kv kc__result">
+        <dt>Principal</dt>
+        <dd>
+          <code>{{ result.principal }}</code>
+        </dd>
+        <dt>Realm</dt>
+        <dd>
+          <code>{{ result.realm }}</code>
+        </dd>
+        <dt>Expires</dt>
+        <dd>{{ formatDateTime(new Date(result.expires_at)) }}</dd>
+      </dl>
+      <!-- af-mcp-platform#286 UI follow-up: says what a "Refresh ticket"
+           click actually did -- cache hit vs. a genuine renew/remint --
+           rather than every outcome rendering identically. Empty (and
+           hidden) for a ticket minted before the broker returned this
+           field. -->
+      <p v-if="sourceNote" class="kc__source-note">{{ sourceNote }}</p>
+    </template>
 
-      <p class="kc__desc">{{ enables }}</p>
-      <div v-if="powers && powers.length" class="kc__powers">
-        <span class="kc__powers-label">Powers</span>
-        <span v-for="power in powers" :key="power" class="kc__power-chip">{{ power }}</span>
-      </div>
+    <p v-if="forgetError" class="af-note bad kc__error" role="alert">{{ forgetError }}</p>
+    <!-- A failed hands-free refresh that wasn't a 409 (see
+         attemptHandsFreeRefresh()) -- a 409 opens the password form
+         instead of landing here. -->
+    <p v-if="refreshError" class="af-note bad kc__error" role="alert">{{ refreshError }}</p>
 
-      <!-- Transient mint result — local state only, gone on reload. -->
-      <div v-if="result" class="kc__result">
-        <div class="kc__field">
-          <span class="kc__label">Principal</span>
-          <code class="kc__path">{{ result.principal }}</code>
-        </div>
-        <div class="kc__field">
-          <span class="kc__label">Realm</span>
-          <code class="kc__path">{{ result.realm }}</code>
-        </div>
-        <div class="kc__field">
-          <span class="kc__label">Expires</span>
-          <span class="kc__val">{{ formatExpiry(result.expires_at) }}</span>
-        </div>
-        <!-- af-mcp-platform#286 UI follow-up: says what a "Refresh ticket"
-             click actually did -- cache hit vs. a genuine renew/remint --
-             rather than every outcome rendering identically. Empty (and
-             hidden) for a ticket minted before the broker returned this
-             field. -->
-        <p v-if="sourceNote" class="kc__source-note">{{ sourceNote }}</p>
-      </div>
-
-      <div v-if="forgetError" class="kc__error" role="alert">{{ forgetError }}</div>
-      <!-- A failed hands-free refresh that wasn't a 409 (see
-           attemptHandsFreeRefresh()) -- a 409 opens the password form
-           instead of landing here. -->
-      <div v-if="refreshError" class="kc__error" role="alert">{{ refreshError }}</div>
-    </div>
-
-    <!-- Action -->
-    <div class="kc__actions">
+    <template #actions>
       <!-- While linked, this click attempts a hands-free mint before ever
            opening the password form below -- see handleMintClick()'s and
            the module doc comment's explanation. -->
       <button
         v-if="!formOpen"
-        class="kc__btn kc__btn--link"
+        type="button"
+        class="af-btn secondary s kc__btn kc__btn--link"
         :disabled="busy"
         @click="handleMintClick"
       >
@@ -433,7 +421,7 @@ function formatExpiry(iso: string): string {
       <button
         v-if="!keytabFormOpen"
         type="button"
-        class="kc__btn kc__btn--keytab"
+        class="af-btn secondary s kc__btn kc__btn--keytab"
         :disabled="keytabBusy"
         @click="openKeytabForm"
       >
@@ -445,524 +433,177 @@ function formatExpiry(iso: string): string {
            linked, with a two-step confirm mirroring X509IdentityCard.vue's
            proxy revoke. -->
       <div v-if="!formOpen && !keytabFormOpen && linked" class="kc__forget-row">
-        <button
-          type="button"
-          class="kc__btn kc__btn--forget"
-          :class="{ 'kc__btn--forget-armed': forgetArmed }"
-          :disabled="busy"
-          @click="handleForget"
-        >
-          {{ forgetArmed ? (busy ? 'Forgetting…' : 'Confirm forget') : 'Forget this ticket' }}
-        </button>
-        <button
-          v-if="forgetArmed && !busy"
-          type="button"
-          class="kc__btn kc__btn--cancel"
-          @click="forgetArmed = false"
-        >
-          Cancel
-        </button>
-      </div>
-    </div>
-
-    <!-- Username/password form — in-page, never a redirect: the broker needs
-         the CERN password once to mint the ticket. Spans the full card
-         width. -->
-    <form v-if="formOpen" class="kc__form" novalidate @submit.prevent="handleSubmit">
-      <!-- Only present when this form opened because a hands-free refresh
-           attempt came back 409 -- see attemptHandsFreeRefresh(). Its own
-           class (rather than relying on text matching) is what tests
-           target to tell this apart from the unconditional password hint
-           below. -->
-      <p v-if="refreshFallbackNotice" class="kc__form-hint kc__fallback-notice">
-        {{ refreshFallbackNotice }}
-      </p>
-
-      <div class="kc__form-group">
-        <label for="krb5-link-username" class="kc__form-label"> CERN username </label>
-        <input
-          id="krb5-link-username"
-          ref="usernameInput"
-          v-model="username"
-          type="text"
-          class="kc__input"
-          placeholder="Enter CERN username"
-          autocomplete="username"
-          :disabled="busy"
-          required
-          aria-required="true"
+        <ArmedConfirmButton
+          v-model:armed="forgetArmed"
+          label="Forget this ticket"
+          armed-label="Confirm forget"
+          busy-label="Forgetting…"
+          :busy="busy"
+          trigger-class="kc__btn kc__btn--forget"
+          confirm-class="kc__btn kc__btn--forget"
+          cancel-class="kc__btn kc__btn--cancel"
+          @confirm="handleForget"
         />
       </div>
+    </template>
 
-      <div class="kc__form-group">
-        <label for="krb5-link-password" class="kc__form-label"> CERN password </label>
-        <input
-          id="krb5-link-password"
-          v-model="password"
-          type="password"
-          class="kc__input"
-          placeholder="Enter password"
-          autocomplete="current-password"
-          :disabled="busy"
-          required
-          aria-required="true"
-          aria-describedby="krb5-link-password-hint"
-        />
-        <span id="krb5-link-password-hint" class="kc__form-hint">
-          Your CERN password is used once to mint this ticket and is never stored — you'll need to
-          re-enter it after the ticket expires.
-        </span>
-      </div>
+    <!-- Username/password form and keytab-upload form are mutually exclusive
+         (see openForm()/openKeytabForm()), so one form region serves both. -->
+    <template v-if="formOpen || keytabFormOpen" #form>
+      <!-- Username/password form — in-page, never a redirect: the broker
+           needs the CERN password once to mint the ticket. -->
+      <form v-if="formOpen" novalidate @submit.prevent="handleSubmit">
+        <!-- Only present when this form opened because a hands-free refresh
+             attempt came back 409 -- see attemptHandsFreeRefresh(). Its own
+             class (rather than relying on text matching) is what tests
+             target to tell this apart from the unconditional password hint
+             below. -->
+        <p v-if="refreshFallbackNotice" class="af-note warn kc__fallback-notice">
+          {{ refreshFallbackNotice }}
+        </p>
 
-      <div v-if="error" class="kc__error" role="alert">{{ error }}</div>
+        <div class="af-field">
+          <label for="krb5-link-username">CERN username</label>
+          <input
+            id="krb5-link-username"
+            ref="usernameInput"
+            v-model="username"
+            type="text"
+            class="af-input"
+            autocomplete="username"
+            :disabled="busy"
+            required
+            aria-required="true"
+          />
+        </div>
 
-      <div class="kc__form-actions">
-        <button type="button" class="kc__btn kc__btn--cancel" :disabled="busy" @click="closeForm">
-          Cancel
-        </button>
-        <button
-          type="submit"
-          class="kc__btn kc__btn--submit"
-          :disabled="busy || !username || !password"
-          :aria-busy="busy"
-        >
-          {{ busy ? 'Minting…' : linked ? 'Refresh ticket' : 'Get ticket' }}
-        </button>
-      </div>
-    </form>
+        <div class="af-field">
+          <label for="krb5-link-password">CERN password</label>
+          <input
+            id="krb5-link-password"
+            v-model="password"
+            type="password"
+            class="af-input"
+            autocomplete="current-password"
+            :disabled="busy"
+            required
+            aria-required="true"
+            aria-describedby="krb5-link-password-hint"
+          />
+          <span id="krb5-link-password-hint" class="hint">
+            Your CERN password is used once to mint this ticket and is never stored — you'll need to
+            re-enter it after the ticket expires.
+          </span>
+        </div>
 
-    <!-- Keytab-upload form -- a separate action from the password-mint form
-         above, never shown at the same time (see openForm()/
-         openKeytabForm()'s mutual exclusion). Spans the full card width. -->
-    <form v-if="keytabFormOpen" class="kc__form" novalidate @submit.prevent="handleKeytabSubmit">
-      <p class="kc__form-hint">
-        Generate a keytab on lxplus, then upload it here so the broker can renew your Kerberos
-        ticket automatically without asking for your password again:
-      </p>
-      <pre class="kc__keytab-steps"><code>ssh &lt;username&gt;@lxplus.cern.ch
+        <p v-if="error" class="af-note bad kc__error" role="alert">{{ error }}</p>
+
+        <div class="ids__form-actions">
+          <button
+            type="button"
+            class="af-btn quiet kc__btn kc__btn--cancel"
+            :disabled="busy"
+            @click="closeForm"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            class="af-btn secondary kc__btn kc__btn--submit"
+            :disabled="busy || !username || !password"
+            :aria-busy="busy"
+          >
+            {{ busy ? 'Minting…' : linked ? 'Refresh ticket' : 'Get ticket' }}
+          </button>
+        </div>
+      </form>
+
+      <!-- Keytab-upload form -- a separate action from the password-mint
+           form above, never shown at the same time. -->
+      <form v-else novalidate @submit.prevent="handleKeytabSubmit">
+        <p class="kc__form-hint">
+          Generate a keytab on lxplus, then upload it here so the broker can renew your Kerberos
+          ticket automatically without asking for your password again:
+        </p>
+        <pre class="kc__keytab-steps"><code>ssh &lt;username&gt;@lxplus.cern.ch
 cern-get-keytab --keytab &lt;username&gt;.keytab --user
 # (enter your CERN password when prompted)
 kinit -kt &lt;username&gt;.keytab &lt;username&gt;@CERN.CH   # verify it works
 echo $?                                          # should print 0</code></pre>
-      <p class="kc__form-hint">
-        Then download <code>&lt;username&gt;.keytab</code> from lxplus (e.g.
-        <code>scp &lt;username&gt;@lxplus.cern.ch:&lt;username&gt;.keytab .</code>) and upload it
-        below.
-      </p>
+        <p class="kc__form-hint">
+          Then download <code>&lt;username&gt;.keytab</code> from lxplus (e.g.
+          <code>scp &lt;username&gt;@lxplus.cern.ch:&lt;username&gt;.keytab .</code>) and upload it
+          below.
+        </p>
 
-      <div class="kc__form-group">
-        <label for="krb5-keytab-username" class="kc__form-label"> CERN username </label>
-        <input
-          id="krb5-keytab-username"
-          ref="keytabUsernameInput"
-          v-model="keytabUsername"
-          type="text"
-          class="kc__input"
-          placeholder="Enter CERN username"
-          autocomplete="username"
-          :disabled="keytabBusy"
-          required
-          aria-required="true"
-        />
-      </div>
+        <div class="af-field">
+          <label for="krb5-keytab-username">CERN username</label>
+          <input
+            id="krb5-keytab-username"
+            ref="keytabUsernameInput"
+            v-model="keytabUsername"
+            type="text"
+            class="af-input"
+            autocomplete="username"
+            :disabled="keytabBusy"
+            required
+            aria-required="true"
+          />
+        </div>
 
-      <div class="kc__form-group">
-        <label for="krb5-keytab-file" class="kc__form-label"> Keytab file </label>
-        <input
-          id="krb5-keytab-file"
-          ref="keytabFileInput"
-          type="file"
-          class="kc__input"
-          :disabled="keytabBusy"
-          required
-          aria-required="true"
-          @change="handleKeytabFileChange"
-        />
-      </div>
+        <div class="af-field">
+          <label for="krb5-keytab-file">Keytab file</label>
+          <input
+            id="krb5-keytab-file"
+            ref="keytabFileInput"
+            type="file"
+            class="af-input"
+            :disabled="keytabBusy"
+            required
+            aria-required="true"
+            @change="handleKeytabFileChange"
+          />
+        </div>
 
-      <div v-if="keytabError" class="kc__error" role="alert">{{ keytabError }}</div>
+        <p v-if="keytabError" class="af-note bad kc__error" role="alert">{{ keytabError }}</p>
 
-      <div class="kc__form-actions">
-        <button
-          type="button"
-          class="kc__btn kc__btn--cancel"
-          :disabled="keytabBusy"
-          @click="closeKeytabForm"
-        >
-          Cancel
-        </button>
-        <button
-          type="submit"
-          class="kc__btn kc__btn--submit"
-          :disabled="keytabBusy || !keytabUsername || !keytabFile"
-          :aria-busy="keytabBusy"
-        >
-          {{ keytabBusy ? 'Linking…' : 'Link keytab' }}
-        </button>
-      </div>
-    </form>
-  </div>
+        <div class="ids__form-actions">
+          <button
+            type="button"
+            class="af-btn quiet kc__btn kc__btn--cancel"
+            :disabled="keytabBusy"
+            @click="closeKeytabForm"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            class="af-btn secondary kc__btn kc__btn--submit"
+            :disabled="keytabBusy || !keytabUsername || !keytabFile"
+            :aria-busy="keytabBusy"
+          >
+            {{ keytabBusy ? 'Linking…' : 'Link keytab' }}
+          </button>
+        </div>
+      </form>
+    </template>
+  </IdentityCardShell>
 </template>
 
 <style scoped>
-.kc {
-  display: grid;
-  grid-template-columns: 2.5rem 1fr minmax(8.5rem, auto);
-  gap: 1rem;
-  align-items: start;
-  padding: 1rem;
-  border: 1px solid var(--color-af-border);
-  border-radius: 4px;
-  background: var(--color-af-surface);
-  transition: border-color 150ms;
-}
-
-.kc--linked {
-  border-color: rgb(from var(--color-af-teal) r g b / 0.2);
-}
-
-.kc__icon {
-  width: 2.5rem;
-  height: 2.5rem;
-  border-radius: 4px;
-  background: var(--color-af-border);
-  border: 1px solid var(--color-af-muted);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 1.125rem;
-  font-weight: 700;
-  color: var(--color-af-dim);
-  flex-shrink: 0;
-}
-
-.kc--linked .kc__icon {
-  background: rgb(from var(--color-af-teal) r g b / 0.08);
-  border-color: rgb(from var(--color-af-teal) r g b / 0.25);
-  color: var(--color-af-teal);
-}
-
-.kc__body {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.375rem;
-}
-
-.kc__header {
-  display: flex;
-  align-items: center;
-  gap: 0.625rem;
-}
-
-.kc__name {
-  font-family: 'IBM Plex Sans', system-ui, sans-serif;
-  font-size: 0.9375rem;
-  font-weight: 600;
-  color: var(--color-af-text);
-}
-
-.kc__status {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.5625rem;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  padding: 0.125rem 0.375rem;
-  border-radius: 2px;
-}
-
-.kc__status--linked {
-  background: rgb(from var(--color-af-green) r g b / 0.16);
-  color: color-mix(in srgb, var(--color-af-green) 70%, var(--color-af-dim));
-  border: 1px solid rgb(from var(--color-af-green) r g b / 0.22);
-}
-
-.kc__status--unlinked {
-  background: rgb(from var(--color-af-dim) r g b / 0.12);
-  color: var(--color-af-dim);
-  border: 1px solid rgb(from var(--color-af-dim) r g b / 0.25);
-}
-
-/* Teal, not green -- distinct from .kc__status--linked so the two badges
-   read as two different facts (linked at all vs. durably keytab-linked)
-   rather than a shade variation of the same one. */
-.kc__status--keytab {
-  background: rgb(from var(--color-af-teal) r g b / 0.12);
-  color: color-mix(in srgb, var(--color-af-teal) 70%, var(--color-af-dim));
-  border: 1px solid rgb(from var(--color-af-teal) r g b / 0.22);
-}
-
-.kc__desc {
-  font-size: 0.8125rem;
-  color: var(--color-af-dim);
-  margin: 0;
-  line-height: 1.5;
-}
-
-.kc__powers {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.375rem;
-  margin: 0.375rem 0 0;
-}
-
-.kc__powers-label {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.6875rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--color-af-label);
-}
-
-.kc__power-chip {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.6875rem;
-  color: var(--color-af-teal);
-  background: rgb(from var(--color-af-teal) r g b / 0.08);
-  border: 1px solid rgb(from var(--color-af-teal) r g b / 0.18);
-  padding: 0.1875rem 0.5rem;
-  border-radius: 2px;
-}
-
-/* Transient mint result — principal/realm/expiry, local-state only. */
-.kc__result {
-  display: flex;
-  flex-direction: column;
-  gap: 0.375rem;
-  margin-top: 0.25rem;
-}
-
-.kc__field {
-  display: flex;
-  align-items: baseline;
-  gap: 0.5rem;
-}
-
-.kc__label {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.5625rem;
-  font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--color-af-dim);
-  flex-shrink: 0;
-}
-
-.kc__val {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.75rem;
-  color: var(--color-af-text);
-}
-
-.kc__path {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.6875rem;
-  color: var(--color-af-dim);
-  word-break: break-all;
-}
-
-/* af-mcp-platform#286 UI follow-up: a quiet aside below the principal/
-   realm/expiry fields, not another field of its own -- same treatment as
-   .kc__form-hint's muted label color. */
-.kc__source-note {
-  font-size: 0.6875rem;
-  color: var(--color-af-label);
-  margin: 0.125rem 0 0;
-}
-
-/* Fixed min-width matching the .kc grid's third column, and left-aligned --
- * same reasoning as X509IdentityCard.vue's .xc__actions, so this card's
- * mint button lands at the same x position as every other identity card's
- * action column. */
-.kc__actions {
-  flex-shrink: 0;
-  padding-top: 0.125rem;
-  min-width: 8.5rem;
-  text-align: left;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0.375rem;
-}
-
-.kc--linked .kc__actions {
-  align-self: center;
-}
-
-.kc__forget-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-/* Username/password form — spans the full card width, below the header row. */
-.kc__form {
-  grid-column: 1 / -1;
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-  max-width: 36rem;
-  padding-top: 0.25rem;
-}
-
-.kc__form-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.375rem;
-}
-
-.kc__form-label {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.6875rem;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--color-af-dim);
-}
-
-.kc__input {
-  background: var(--color-af-void);
-  border: 1px solid var(--color-af-muted);
-  border-radius: 3px;
-  color: var(--color-af-text);
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.875rem;
-  padding: 0.5rem 0.75rem;
-  transition: border-color 150ms;
-  width: 100%;
-}
-
-.kc__input::placeholder {
-  color: var(--color-af-label);
-}
-.kc__input:focus {
-  outline: none;
-  border-color: var(--color-af-teal);
-  box-shadow: 0 0 0 2px rgb(from var(--color-af-teal) r g b / 0.15);
-}
-.kc__input:disabled {
-  opacity: 0.5;
-}
-
+.kc__source-note,
 .kc__form-hint {
-  font-size: 0.6875rem;
-  color: var(--color-af-label);
-}
-
-/* lxplus keytab-generation steps, reproduced verbatim in the keytab-upload form. */
-.kc__keytab-steps {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.75rem;
-  line-height: 1.6;
-  color: var(--color-af-text);
-  background: var(--color-af-void);
-  border: 1px solid var(--color-af-muted);
-  border-radius: 3px;
-  padding: 0.625rem 0.75rem;
   margin: 0;
+  color: var(--color-af-text-secondary);
+}
+
+.kc__keytab-steps {
+  margin: 0;
+  padding: var(--space-12) var(--space-16);
   overflow-x: auto;
-}
-
-.kc__error {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.75rem;
-  color: var(--color-af-red);
-  padding: 0.5rem 0.75rem;
-  border: 1px solid rgb(from var(--color-af-red) r g b / 0.25);
-  border-radius: 3px;
-  background: rgb(from var(--color-af-red) r g b / 0.06);
-}
-
-.kc__form-actions {
-  display: flex;
-  gap: 0.75rem;
-}
-
-/* Buttons */
-.kc__btn {
-  display: inline-flex;
-  align-items: center;
-  padding: 0.4375rem 0.875rem;
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.6875rem;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  border-radius: 3px;
-  border: 1px solid;
-  cursor: pointer;
-  transition:
-    background 120ms,
-    color 120ms,
-    border-color 120ms;
-  white-space: nowrap;
-}
-.kc__btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-.kc__btn:focus-visible {
-  outline: 2px solid var(--color-af-teal);
-  outline-offset: 2px;
-}
-
-.kc__btn--link,
-.kc__btn--submit {
-  background: rgb(from var(--color-af-teal) r g b / 0.1);
-  color: var(--color-af-teal);
-  border-color: rgb(from var(--color-af-teal) r g b / 0.3);
-}
-.kc__btn--link:not(:disabled):hover,
-.kc__btn--submit:not(:disabled):hover {
-  background: rgb(from var(--color-af-teal) r g b / 0.18);
-  border-color: rgb(from var(--color-af-teal) r g b / 0.5);
-}
-
-.kc__btn--cancel,
-.kc__btn--keytab {
-  background: transparent;
-  color: var(--color-af-dim);
-  border-color: var(--color-af-muted);
-}
-.kc__btn--cancel:not(:disabled):hover,
-.kc__btn--keytab:not(:disabled):hover {
-  color: var(--color-af-text);
-  border-color: var(--color-af-dim);
-}
-
-/* Forget: a destructive action -- quiet by default, red on hover/armed,
-   same treatment as X509IdentityCard.vue's .xc__btn--revoke. */
-.kc__btn--forget {
-  background: transparent;
-  color: var(--color-af-dim);
-  border-color: var(--color-af-muted);
-  font-size: 0.625rem;
-  padding: 0.375rem 0.75rem;
-}
-.kc__btn--forget:not(:disabled):hover,
-.kc__btn--forget-armed {
-  color: var(--color-af-red);
-  border-color: rgb(from var(--color-af-red) r g b / 0.35);
-  background: rgb(from var(--color-af-red) r g b / 0.06);
-}
-
-@media (max-width: 640px) {
-  .kc {
-    grid-template-columns: 2rem 1fr;
-    grid-template-rows: auto auto;
-  }
-  .kc__icon {
-    width: 2rem;
-    height: 2rem;
-    font-size: 0.875rem;
-  }
-  .kc__actions {
-    grid-column: 2;
-    padding-top: 0;
-  }
+  border: 1px solid var(--color-af-border);
+  border-radius: var(--radius-8);
+  background: var(--color-af-bg-subtle);
+  font: 400 var(--text-13) / 1.6 var(--font-mono);
 }
 </style>

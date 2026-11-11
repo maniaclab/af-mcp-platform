@@ -82,15 +82,15 @@ beforeEach(() => {
 });
 
 describe('badge and action button', () => {
-  it('renders a "not linked" badge and a Link button when unlinked', () => {
+  it('renders a "Not linked" status and a Link button when unlinked', () => {
     const wrapper = mountCard(false);
-    expect(wrapper.text()).toContain('not linked');
+    expect(wrapper.text()).toContain('Not linked');
     expect(wrapper.find('button.sc__btn--link').text()).toBe('Link ServiceX token');
   });
 
-  it('renders a "linked" badge and a Re-link button when linked', () => {
+  it('renders a "Linked" status and a Re-link button when linked', () => {
     const wrapper = mountCard(true);
-    expect(wrapper.text()).toContain('linked');
+    expect(wrapper.text()).toContain('Linked');
     expect(wrapper.find('button.sc__btn--relink').text()).toBe('Re-link');
   });
 
