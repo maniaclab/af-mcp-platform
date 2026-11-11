@@ -16,14 +16,27 @@ vi.mock('../../lib/api', () => ({
   AccessDeniedError: class AccessDeniedError extends Error {},
 }));
 
-import { fetchEntitlements, fetchPermissions, type PermissionsResponse } from '../../lib/api';
+import {
+  fetchEntitlements,
+  fetchPermissions,
+  type EntitlementsResponse,
+  type PermissionsResponse,
+} from '../../lib/api';
 import EntitlementsPage from '../EntitlementsPage.vue';
 
-const ENTITLEMENTS = {
+// The broker's catalog order is deliberately not "reads first": the page must
+// sort by kind itself, keeping broker order within each kind.
+const ENTITLEMENTS: EntitlementsResponse = {
   group_permissions: {
-    'example-users': ['read_data', 'submit_jobs'],
+    'example-users': ['read_data', 'submit_jobs', 'example_exec_jobs'],
     'example-guests': ['read_data'],
   },
+  permissions: [
+    { name: 'submit_jobs', action_type: 'state_change', description: 'Submit compute jobs' },
+    { name: 'read_data', action_type: 'read', description: 'Read datasets from data stores' },
+    { name: 'example_exec_jobs', action_type: 'state_change', description: null },
+    { name: 'example_peek', action_type: 'read', description: null },
+  ],
 };
 
 const PERMISSIONS: PermissionsResponse = {
@@ -31,7 +44,7 @@ const PERMISSIONS: PermissionsResponse = {
   groups: ['example-users', 'unrelated-group'],
   grants: [
     { permission: 'read_data', targets: ['rucio'], action_types: ['read'] },
-    { permission: 'submit_jobs', targets: ['condor'], action_types: ['read', 'state_change'] },
+    { permission: 'submit_jobs', targets: ['condor'], action_types: ['state_change'] },
   ],
 };
 
@@ -72,7 +85,8 @@ describe('EntitlementsPage', () => {
     const colHeads = wrapper.findAll('thead th[scope="col"]');
     // Permission, You, then one per group.
     expect(colHeads).toHaveLength(4);
-    expect(wrapper.findAll('tbody th[scope="row"]')).toHaveLength(2);
+    // Only permissions some group (or the caller) holds get a row.
+    expect(wrapper.findAll('tbody th[scope="row"]')).toHaveLength(3);
   });
 
   it('lists only the recognized groups in the summary', async () => {
@@ -103,12 +117,70 @@ describe('EntitlementsPage', () => {
   });
 
   it('shows an empty state when the policy declares no permissions', async () => {
-    vi.mocked(fetchEntitlements).mockResolvedValue({ group_permissions: {} });
+    vi.mocked(fetchEntitlements).mockResolvedValue({
+      group_permissions: {},
+      permissions: ENTITLEMENTS.permissions,
+    });
     vi.mocked(fetchPermissions).mockResolvedValue({ ...PERMISSIONS, grants: [] });
     const wrapper = mount(EntitlementsPage);
     await flushPromises();
 
     expect(wrapper.find('.empty').text()).toContain('No permissions are declared');
+    expect(wrapper.find('table').exists()).toBe(false);
+  });
+
+  it('shows a permission the portal has never heard of by the kind the broker sent', async () => {
+    const wrapper = await mountPage();
+
+    expect(
+      wrapper
+        .find('[aria-label="example-users grants example_exec_jobs (state-changing)"]')
+        .exists(),
+    ).toBe(true);
+    expect(
+      wrapper.find('[aria-label="example-guests does not grant example_exec_jobs"]').exists(),
+    ).toBe(true);
+  });
+
+  it('lists reads first, then state-changing, each in broker order', async () => {
+    const wrapper = await mountPage();
+
+    const rows = wrapper.findAll('tbody th[scope="row"] code').map((c) => c.text());
+    expect(rows).toEqual(['read_data', 'submit_jobs', 'example_exec_jobs']);
+  });
+
+  it('puts the heavier rule above the first state-changing row only', async () => {
+    const wrapper = await mountPage();
+
+    const rows = wrapper.findAll('tbody tr');
+    expect(rows.map((r) => r.classes('ep__divider'))).toEqual([false, true, false]);
+  });
+
+  it('gives the broker description to a described permission', async () => {
+    const wrapper = await mountPage();
+
+    const row = wrapper.findAll('tbody tr')[0];
+    expect(row.get('[role="tooltip"]').text()).toBe('Read datasets from data stores');
+  });
+
+  it('gives a permission without a description the site-defined info text', async () => {
+    const wrapper = await mountPage();
+
+    const row = wrapper.findAll('tbody tr')[2];
+    expect(row.find('button[aria-label="About example_exec_jobs"]').exists()).toBe(true);
+    expect(row.get('[role="tooltip"]').text()).toBe('Site-defined permission');
+  });
+
+  it('shows the error state, not a table, when the broker sends no permission catalog', async () => {
+    vi.mocked(fetchEntitlements).mockResolvedValue({
+      group_permissions: ENTITLEMENTS.group_permissions,
+    } as never);
+    vi.mocked(fetchPermissions).mockResolvedValue(PERMISSIONS);
+    const wrapper = mount(EntitlementsPage);
+    await flushPromises();
+
+    const alert = wrapper.find('[role="alert"]');
+    expect(alert.text()).toContain('permission catalog');
     expect(wrapper.find('table').exists()).toBe(false);
   });
 });

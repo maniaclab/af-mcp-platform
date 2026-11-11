@@ -499,6 +499,11 @@ export async function fetchPermissions(): Promise<PermissionsResponse> {
  */
 export interface EntitlementsResponse {
   group_permissions: Record<string, string[]>;
+  /**
+   * Every permission the policy knows, in the broker's display order: its kind
+   * and a description (null for a site-defined permission, which carries none).
+   */
+  permissions: { name: string; action_type: ActionType; description: string | null }[];
 }
 
 export async function fetchEntitlements(): Promise<EntitlementsResponse> {

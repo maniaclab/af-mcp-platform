@@ -236,9 +236,11 @@ describe('TokensPage', () => {
 describe('TokensPage permission picker', () => {
   const GRANTS = [
     { permission: 'use_notebooks', targets: ['jhub'], action_types: ['read', 'state_change'] },
-    { permission: 'read_data', targets: ['rucio'], action_types: ['read', 'state_change'] },
-    { permission: 'manage_jobs', targets: ['condor'], action_types: ['read', 'state_change'] },
+    { permission: 'read_data', targets: ['rucio'], action_types: ['read'] },
+    { permission: 'manage_jobs', targets: ['condor'], action_types: ['state_change'] },
     { permission: 'read_search', targets: ['aos'], action_types: ['read'] },
+    // A site-defined permission no portal list has ever named.
+    { permission: 'example_exec_jobs', targets: ['exec'], action_types: ['state_change'] },
   ];
 
   async function openPicker() {
@@ -257,8 +259,8 @@ describe('TokensPage permission picker', () => {
     expect(groups.map((g) => g.get('legend').text())).toEqual(['Read', 'State-changing']);
     const names = (g: (typeof groups)[number]) => g.findAll('label').map((l) => l.text());
     expect(names(groups[0])).toEqual(['read_data', 'read_search']);
-    // use_notebooks is not in the shared known list; its state-changing action type decides.
-    expect(names(groups[1])).toEqual(['manage_jobs', 'use_notebooks']);
+    // Only the grant's own action types decide; a grant reporting both is state-changing.
+    expect(names(groups[1])).toEqual(['example_exec_jobs', 'manage_jobs', 'use_notebooks']);
   });
 
   it('omits a group that has no permissions', async () => {
@@ -268,7 +270,9 @@ describe('TokensPage permission picker', () => {
     await flushPromises();
     await wrapper.get('dialog[open] #tp-restrict').setValue(true);
 
-    expect(wrapper.findAll('dialog[open] fieldset.tp__perms')).toHaveLength(1);
+    const groups = wrapper.findAll('dialog[open] fieldset.tp__perms');
+    expect(groups).toHaveLength(1);
+    expect(groups[0].get('legend').text()).toBe('Read');
   });
 
   it('mints with the permissions ticked across both groups', async () => {

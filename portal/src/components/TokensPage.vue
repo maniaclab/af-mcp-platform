@@ -17,8 +17,6 @@ import { ref, computed, onBeforeUnmount, onMounted, nextTick } from 'vue';
 import { Check, Copy, Plus } from '@lucide/vue';
 import { mintToken, listTokens, revokeToken, fetchPermissions } from '../lib/api';
 import type { MintedToken, PermissionGrant, TokenSummary } from '../lib/api';
-import { permissionKind } from '../lib/permissionKinds';
-import type { PermissionKind } from '../lib/permissionKinds';
 import {
   EXPIRY_WARNING_DAYS,
   NOTE_MAX_LENGTH,
@@ -128,8 +126,10 @@ onMounted(async () => {
 });
 
 // The picker lists read permissions apart from state-changing ones, each group
-// sorted by name, and leaves out a group with nothing in it.
-const PERMISSION_GROUPS: { kind: PermissionKind; label: string }[] = [
+// sorted by name, and leaves out a group with nothing in it. A grant belongs
+// to the state-changing group when the broker reports any state-changing
+// action type for it, so the grouping rests on broker data alone.
+const PERMISSION_GROUPS: { kind: 'read' | 'write'; label: string }[] = [
   { kind: 'read', label: 'Read' },
   { kind: 'write', label: 'State-changing' },
 ];
@@ -139,7 +139,7 @@ const permissionGroups = computed(() =>
     kind,
     label,
     permissions: availableGrants.value
-      .filter((g) => permissionKind(g.permission, g.action_types) === kind)
+      .filter((g) => (g.action_types.includes('state_change') ? 'write' : 'read') === kind)
       .map((g) => g.permission)
       .sort(),
   })).filter((group) => group.permissions.length > 0),

@@ -17,14 +17,19 @@
  * docs/plans/2026-09-01-ops-platform-usability.md.
  */
 import { computed, onMounted, ref } from 'vue';
-import { fetchEntitlements, fetchPermissions, type PermissionsResponse } from '../lib/api';
-import { KNOWN_PERMISSION_ORDER } from '../lib/permissionKinds';
+import {
+  fetchEntitlements,
+  fetchPermissions,
+  type EntitlementsResponse,
+  type PermissionsResponse,
+} from '../lib/api';
 import { useLoadState } from '../lib/useLoadState';
 import EntitlementMark from './EntitlementMark.vue';
 import AsyncState from './ui/AsyncState.vue';
 import InfoTip from './ui/InfoTip.vue';
 
 const groupPermissions = ref<Record<string, string[]>>({});
+const catalog = ref<EntitlementsResponse['permissions']>([]);
 const myGroups = ref<string[]>([]);
 const myGrants = ref<PermissionsResponse['grants']>([]);
 const { loading, error, sessionExpired, accessDenied, run } = useLoadState();
@@ -41,7 +46,16 @@ onMounted(() =>
       fetchEntitlements(),
       fetchPermissions(),
     ]);
+    // The catalog is the only source of each permission's kind and
+    // description; without it every row would be silently mislabelled, so
+    // refuse to render rather than guess.
+    if (!Array.isArray(entitlements.permissions)) {
+      throw new Error(
+        'The broker did not send its permission catalog (permissions), so permission kinds are unknown. Portal and broker may be out of step.',
+      );
+    }
     groupPermissions.value = entitlements.group_permissions;
+    catalog.value = entitlements.permissions;
     myGroups.value = permissions.groups;
     myGrants.value = permissions.grants;
   }, 'Could not load entitlements.'),
@@ -74,9 +88,15 @@ const sortedGroups = computed(() => {
 interface Column {
   name: string;
   kind: 'read' | 'write';
-  description: string | null;
+  description: string;
 }
 
+// Shown for a permission the broker sends without a description (a
+// site-defined one), so every row has an info affordance.
+const SITE_DEFINED_DESCRIPTION = 'Site-defined permission';
+
+// Rows are the permissions some group (or the caller) holds, taken from the
+// broker's catalog: reads first, then state-changing, each in broker order.
 const columns = computed<Column[]>(() => {
   const used = new Set<string>();
   for (const perms of Object.values(groupPermissions.value)) {
@@ -84,14 +104,14 @@ const columns = computed<Column[]>(() => {
   }
   for (const grant of myGrants.value) used.add(grant.permission);
 
-  const known = KNOWN_PERMISSION_ORDER.filter((p) => used.has(p.name));
-  const knownNames = new Set(known.map((p) => p.name));
-  const extra = [...used]
-    .filter((p) => !knownNames.has(p))
-    .sort()
-    .map((name) => ({ name, kind: 'read' as const, description: null }));
-
-  return [...known, ...extra];
+  const rows = catalog.value
+    .filter((p) => used.has(p.name))
+    .map((p) => ({
+      name: p.name,
+      kind: p.action_type === 'state_change' ? ('write' as const) : ('read' as const),
+      description: p.description ?? SITE_DEFINED_DESCRIPTION,
+    }));
+  return [...rows.filter((c) => c.kind === 'read'), ...rows.filter((c) => c.kind === 'write')];
 });
 
 // First index whose kind differs from the previous column's, so the
@@ -206,13 +226,14 @@ function meHasPermission(permission: string): boolean {
               :class="{ ep__divider: i === firstWriteIndex }"
             >
               <th scope="row" class="ep__pin">
-                <code>{{ col.name }}</code>
-                <InfoTip
-                  v-if="col.description"
-                  :id="`ep-perm-${col.name}`"
-                  :text="col.description"
-                  :label="`About ${col.name}`"
-                />
+                <span class="ep__perm">
+                  <code>{{ col.name }}</code>
+                  <InfoTip
+                    :id="`ep-perm-${col.name}`"
+                    :text="col.description"
+                    :label="`About ${col.name}`"
+                  />
+                </span>
               </th>
               <td class="ep__mark-col ep__you">
                 <EntitlementMark
@@ -272,8 +293,12 @@ function meHasPermission(permission: string): boolean {
   border-right: 1px solid var(--color-af-border);
 }
 
-.ep__pin :deep(.info-tip) {
-  vertical-align: middle;
+/* Centre the info button on the name's own line box; vertical-align cannot,
+   since the tooltip trigger is a flex container. */
+.ep__perm {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
 }
 
 .ep__mark-col {

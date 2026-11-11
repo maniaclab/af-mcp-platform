@@ -76,6 +76,11 @@
       "permission": "use_notebooks",
       "targets": ["example-service"],
       "action_types": ["read", "state_change"]
+    },
+    {
+      "permission": "example_exec_jobs",
+      "targets": ["example-service"],
+      "action_types": ["state_change"]
     }
   ]
 }
