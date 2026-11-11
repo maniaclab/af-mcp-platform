@@ -1,0 +1,26 @@
+{
+  "enabled": true,
+  "kinds": ["krb5", "x509"],
+  "service_prefix": "condor_credd_",
+  "interval_seconds": 300,
+  "last_run": {
+    "outcome": "success",
+    "trigger": "timer",
+    "holder": "example-broker-7d9f-abcde",
+    "started_at": "@unix-4m",
+    "finished_at": "@unix-4m",
+    "last_success_at": "@unix-4m",
+    "stored": {
+      "krb5": 41,
+      "x509": 38
+    },
+    "not_linked": {
+      "krb5": 3,
+      "x509": 6
+    },
+    "skipped_no_posix": {},
+    "failed": {},
+    "errors": [],
+    "errors_truncated": 0
+  }
+}

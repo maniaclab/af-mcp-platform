@@ -1,0 +1,108 @@
+{
+  "servers": [
+    {
+      "name": "af",
+      "display_name": "AF MCP Gateway",
+      "description": "Identity, catalog and usage methods of the gateway itself.",
+      "permission": "__none__",
+      "auth_type": "none",
+      "action_type": "read",
+      "credential_provider": null,
+      "status": "available",
+      "status_detail": "Ready to use.",
+      "correlation_id": null,
+      "builtin": true
+    },
+    {
+      "name": "rucio",
+      "display_name": "Rucio",
+      "description": "Dataset, replica and replication-rule queries for the example data catalogue.",
+      "permission": "read_data",
+      "auth_type": "bearer",
+      "action_type": "state_change",
+      "credential_provider": "example-iam",
+      "status": "available",
+      "status_detail": "Ready to use.",
+      "correlation_id": null,
+      "builtin": false
+    },
+    {
+      "name": "panda",
+      "display_name": "PanDA",
+      "description": "Grid workload submission and task monitoring.",
+      "permission": "submit_jobs",
+      "auth_type": "bearer",
+      "action_type": "state_change",
+      "credential_provider": "example-iam",
+      "status": "available",
+      "status_detail": "Ready to use.",
+      "correlation_id": null,
+      "builtin": false
+    },
+    {
+      "name": "ami",
+      "display_name": "AMI",
+      "description": "Dataset metadata and provenance lookups.",
+      "permission": "read_metadata",
+      "auth_type": "bearer",
+      "action_type": "read",
+      "credential_provider": "example-iam",
+      "status": "available",
+      "status_detail": "Ready to use.",
+      "correlation_id": null,
+      "builtin": false
+    },
+    {
+      "name": "condor",
+      "display_name": "HTCondor",
+      "description": "Batch jobs on the facility pool.",
+      "permission": "submit_jobs",
+      "auth_type": "x509",
+      "action_type": "state_change",
+      "credential_provider": "x509",
+      "status": "available",
+      "status_detail": "Ready to use.",
+      "correlation_id": null,
+      "builtin": false
+    },
+    {
+      "name": "jhub",
+      "display_name": "JupyterHub",
+      "description": "Notebook servers on the facility.",
+      "permission": "use_notebooks",
+      "auth_type": "bearer",
+      "action_type": "state_change",
+      "credential_provider": "example-iam",
+      "status": "available",
+      "status_detail": "Ready to use.",
+      "correlation_id": null,
+      "builtin": false
+    },
+    {
+      "name": "servicex",
+      "display_name": "ServiceX",
+      "description": "Columnar data delivery transforms.",
+      "permission": "servicex_access",
+      "auth_type": "bearer",
+      "action_type": "state_change",
+      "credential_provider": "servicex-token",
+      "status": "available",
+      "status_detail": "Ready to use.",
+      "correlation_id": null,
+      "builtin": false
+    },
+    {
+      "name": "fs",
+      "display_name": "Filesystem",
+      "description": "Read-only view of your home directory.",
+      "permission": null,
+      "auth_type": "none",
+      "action_type": "read",
+      "credential_provider": null,
+      "status": "available",
+      "status_detail": "Ready to use.",
+      "correlation_id": null,
+      "builtin": false
+    }
+  ]
+}

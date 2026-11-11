@@ -1,0 +1,21 @@
+{
+  "subject": "example-subject-0001",
+  "groups": ["example-atlas-users", "example-operators"],
+  "grants": [
+    {
+      "permission": "read_data",
+      "targets": ["rucio", "servicex"],
+      "action_types": ["read"]
+    },
+    {
+      "permission": "read_metadata",
+      "targets": ["ami"],
+      "action_types": ["read"]
+    },
+    {
+      "permission": "submit_jobs",
+      "targets": ["panda", "condor"],
+      "action_types": ["read", "state_change"]
+    }
+  ]
+}

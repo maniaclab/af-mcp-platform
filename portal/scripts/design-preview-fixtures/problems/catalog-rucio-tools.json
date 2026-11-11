@@ -1,0 +1,8 @@
+{
+  "name": "rucio",
+  "display_name": "Rucio",
+  "description": "Dataset, replica and replication-rule queries for the example data catalogue.",
+  "status": "not_linked",
+  "status_detail": "Link your Example IAM account to list these tools.",
+  "tools": []
+}

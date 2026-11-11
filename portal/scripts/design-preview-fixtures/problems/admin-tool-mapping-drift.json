@@ -1,0 +1,11 @@
+[
+  {
+    "service": "panda",
+    "prefix": "panda_",
+    "advertised": 14,
+    "routable": 13,
+    "unmapped": ["panda_get_example_task"],
+    "stale": ["panda_old_example_tool"],
+    "unroutable": ["example_unprefixed_tool"]
+  }
+]

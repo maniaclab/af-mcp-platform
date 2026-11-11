@@ -1,0 +1,15 @@
+{
+  "group_permissions": {
+    "example-atlas-users": ["read_data", "read_metadata", "submit_jobs"],
+    "example-notebook-users": ["use_notebooks", "read_metadata"],
+    "example-servicex-users": ["servicex_access", "read_data"],
+    "example-operators": [
+      "admin_ops",
+      "read_data",
+      "read_metadata",
+      "submit_jobs",
+      "use_notebooks"
+    ],
+    "example-guests": ["read_metadata"]
+  }
+}

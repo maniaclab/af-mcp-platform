@@ -1,0 +1,8 @@
+{
+  "enabled": true,
+  "reason": "Example storage migration; expect brief interruptions.",
+  "enabled_by": "example-subject-0002",
+  "enabled_at": "@unix-2h",
+  "enabled_by_unixname": "example-user-2",
+  "enabled_by_email": "example-user-2@example-facility.org"
+}
