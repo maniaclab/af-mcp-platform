@@ -6,13 +6,15 @@
  * redirects to Keycloak if there isn't one (see its own docstring) --
  * reusing it here would mean an unauthenticated visitor to the public
  * landing page gets bounced straight into a login flow, exactly what this
- * layout exists to avoid. Deliberately minimal: no sidebar, no topbar user
- * controls, no identity-fetching script -- just the shared fonts/tokens and
- * footer, reused from Base.astro's own components.
+ * layout exists to avoid. Deliberately minimal: no sidebar, no user
+ * controls, no identity-fetching script -- just a top bar with the brand and
+ * theme toggle, the shared fonts/tokens, and the footer, reused from
+ * Base.astro's own components.
  */
 import '../styles/global.css';
 import Fonts from '../components/Fonts.astro';
 import Footer from '../components/Footer.astro';
+import ThemeToggle from '../components/ThemeToggle.astro';
 import { THEME_INIT_SCRIPT } from '../lib/themeInitScript.js';
 
 interface Props {
@@ -35,38 +37,6 @@ const { title = 'AF MCP Platform' } = Astro.props;
     <Fonts />
 
     <style>
-      * {
-        box-sizing: border-box;
-      }
-
-      html,
-      body {
-        background: var(--color-af-void);
-        color: var(--color-af-text);
-        font-family: 'IBM Plex Sans', system-ui, sans-serif;
-        font-size: 15px;
-        line-height: 1.6;
-        -webkit-font-smoothing: antialiased;
-        min-height: 100%;
-      }
-
-      .skip-link {
-        position: absolute;
-        top: -100%;
-        left: 1rem;
-        background: var(--color-af-teal);
-        color: var(--color-af-void);
-        padding: 0.5rem 1rem;
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 0.75rem;
-        font-weight: 600;
-        text-decoration: none;
-        z-index: 1000;
-      }
-      .skip-link:focus {
-        top: 1rem;
-      }
-
       .pb-shell {
         display: flex;
         flex-direction: column;
@@ -82,11 +52,19 @@ const { title = 'AF MCP Platform' } = Astro.props;
     <a href="#main-content" class="skip-link">Skip to content</a>
 
     <div class="pb-shell">
+      <header class="af-topbar">
+        <div class="af-wrap af-topbar__in">
+          <a href="/" class="af-brand" data-af-brand="shortName">AF&nbsp;/&nbsp;MCP</a>
+          <div class="af-topbar__spacer" aria-hidden="true"></div>
+          <ThemeToggle />
+        </div>
+      </header>
+
       <main id="main-content" class="pb-main">
         <slot />
       </main>
 
-      <Footer showThemeToggle />
+      <Footer />
     </div>
   </body>
 </html>

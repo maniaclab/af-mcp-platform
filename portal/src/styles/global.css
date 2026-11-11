@@ -269,3 +269,32 @@
 dialog:modal {
   margin: auto;
 }
+
+/*
+ * Base element styles: body text, headings and the one focus ring every
+ * focusable element shares. In `@layer base` so component classes and
+ * Tailwind utilities override them.
+ */
+@layer base {
+  body {
+    background: var(--color-af-bg);
+    color: var(--color-af-text);
+    font-family: var(--font-sans);
+    font-size: var(--text-14);
+    line-height: var(--text-14--line-height);
+    -webkit-font-smoothing: antialiased;
+  }
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: var(--font-sans);
+    font-weight: 600;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-af-text);
+    outline-offset: 2px;
+  }
+}

@@ -2,34 +2,38 @@
 /**
  * ThemeToggle.astro — the AUTO / DARK / LIGHT theme control. Self-contained:
  * its own scoped styles and its own bundled <script> wire up ARIA state,
- * click, and arrow-key handling, so both Base.astro's topbar and Footer.astro
- * (for the unauthenticated public pages) can render it without either layout
- * knowing anything about theme state.
+ * click, and arrow-key handling, so both Base.astro's sidebar and
+ * PublicBase.astro's top bar can render it without either layout knowing
+ * anything about theme state.
  *
  * A real `role="radiogroup"` rather than a single cycling button: AUTO,
  * DARK, and LIGHT are three genuinely distinct, always-visible states (not
  * a click-through cycle where "back to AUTO" is hidden), matching how a
  * physical mode switch on an instrument panel reads.
  */
-const MODES: { value: 'auto' | 'dark' | 'light'; label: string }[] = [
-  { value: 'auto', label: 'Auto' },
-  { value: 'dark', label: 'Dark' },
-  { value: 'light', label: 'Light' },
+import { Monitor, Moon, Sun } from '@lucide/astro';
+
+const MODES: { value: 'auto' | 'dark' | 'light'; label: string; Icon: typeof Sun }[] = [
+  { value: 'auto', label: 'Auto', Icon: Monitor },
+  { value: 'dark', label: 'Dark', Icon: Moon },
+  { value: 'light', label: 'Light', Icon: Sun },
 ];
 ---
 
 <div class="theme-toggle" role="radiogroup" aria-label="Theme" data-theme-toggle>
   {
-    MODES.map(({ value, label }) => (
+    MODES.map(({ value, label, Icon }) => (
       <button
         type="button"
         class="theme-toggle__option"
         role="radio"
         aria-checked="false"
+        aria-label={label}
+        title={label}
         tabindex="-1"
         data-theme-value={value}
       >
-        {label}
+        <Icon class="af-icon" size={16} aria-hidden="true" />
       </button>
     ))
   }
@@ -39,41 +43,40 @@ const MODES: { value: 'auto' | 'dark' | 'light'; label: string }[] = [
   .theme-toggle {
     display: inline-flex;
     align-items: center;
-    border: 1px solid var(--color-af-border);
-    border-radius: 4px;
-    padding: 2px;
-    gap: 2px;
+    border: 1px solid var(--color-af-border-strong);
+    border-radius: var(--radius-8);
+    padding: var(--space-2);
+    gap: var(--space-2);
   }
 
   .theme-toggle__option {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.6875rem;
-    font-weight: 600;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--color-af-dim);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--control-s);
+    height: var(--control-s);
+    color: var(--color-af-text-secondary);
     background: transparent;
-    border: none;
-    border-radius: 2px;
-    padding: 0.25rem 0.5rem;
+    border: 0;
+    border-radius: var(--radius-4);
     cursor: pointer;
-    transition:
-      color 150ms,
-      background-color 150ms;
+    transition: background var(--time-fast) var(--ease);
   }
 
   .theme-toggle__option:hover {
+    background: var(--color-af-bg-hover);
     color: var(--color-af-text);
   }
 
-  .theme-toggle__option:focus-visible {
-    outline: none;
-    box-shadow: 0 0 0 2px rgb(from var(--color-af-teal) r g b / 0.15);
+  .theme-toggle__option[aria-checked='true'] {
+    color: var(--color-af-text);
+    background: var(--color-af-bg-subtle);
   }
 
-  .theme-toggle__option[aria-checked='true'] {
-    color: var(--color-af-on-accent);
-    background: var(--color-af-teal);
+  @media (prefers-reduced-motion: reduce) {
+    .theme-toggle__option {
+      transition: none;
+    }
   }
 </style>
 
