@@ -51,6 +51,7 @@ broker:
   credmon:
     enabled: true
     htcondorApiUrl: http://condor-mcp.mcp.svc.cluster.local:8080
+    userDomain: af.uchicago.edu    # the pool's UID_DOMAIN
     existingHtcondorApiTokenSecret: credmon-htcondor-api-token   # key: token
     kinds: [krb5, x509]          # empty = all three; unconfigured kinds skipped
     # topTokenTtlSeconds: 86400  # must exceed syncIntervalSeconds
@@ -60,7 +61,8 @@ broker:
 ```
 
 The equivalent env vars are `CREDMON_ENABLED`, `CREDMON_HTCONDOR_API_URL`,
-`CREDMON_HTCONDOR_API_TOKEN_FILE`, `CREDMON_SERVICE_PREFIX` (default `af_`),
+`CREDMON_HTCONDOR_API_TOKEN_FILE`, `CREDMON_USER_DOMAIN`,
+`CREDMON_SERVICE_PREFIX` (default `af_`),
 `CREDMON_KINDS`, `CREDMON_TOP_TOKEN_TTL_SECONDS`,
 `CREDMON_SYNC_INTERVAL_SECONDS` and `CREDMON_STATE_KV_PATH_PREFIX`.
 
@@ -71,8 +73,58 @@ principal directory (credd keys credentials by POSIX unixname), or with an
 unreadable htcondor-api token file. A legacy-mode x509 entry (no
 `serviceUrl`) has no Vault store, so x509 users are never enumerated there.
 
-The htcondor-api bearer token must map to an identity in credd's
-`CRED_SUPER_USERS`: the broker stores credentials on behalf of other users.
+### The storer's htcondor-api token
+
+The broker stores top tokens through htcondor-api with one HTCondor token of
+its own (`CREDMON_HTCONDOR_API_TOKEN_FILE`, from the
+`existingHtcondorApiTokenSecret` Secret, key `token`). htcondor-api forwards
+it to credd, so credd authenticates the broker as that token's identity. Mint
+it on a host with the pool signing key:
+
+```bash
+condor_token_create -identity af-mcp-storer@<UID_DOMAIN> -authz WRITE -lifetime 31536000
+```
+
+- **A dedicated identity, no unix account.** credd writes into the *target*
+  user's directory, never the storer's. Pick a name no real account will ever
+  have: credd matches `CRED_SUPER_USERS` against the user part only and
+  ignores the domain (`store_cred.cpp`), so list it bare --
+  `CRED_SUPER_USERS = af-mcp-storer`, not `af-mcp-storer@<domain>`.
+- **`-authz WRITE`** is all credd's `STORE_CRED` command needs (WRITE implies
+  READ).
+- **`-lifetime` is required.** A token minted without it has no `exp` claim,
+  and htcondor-api rejects it: every store fails with `401 ... JWT missing
+  exp claim`.
+- **Rotation needs no restart.** The broker re-reads the token file on every
+  store, and the kubelet rewrites a mounted Secret in place, so re-sealing
+  the Secret is enough. When the token expires, every cycle fails and the
+  stale-sync alert fires -- that is the signal to rotate.
+- **Users are sent as `<unixname>@<domain>`.** credd refuses a bare
+  unixname (`store_cred_handler: user "x" not in user@domain format`, credd
+  code 8), so `broker.credmon.userDomain` (`CREDMON_USER_DOMAIN`) must be the
+  pool's `UID_DOMAIN`.
+
+### Vault paths + policy
+
+The sync loop keeps its cross-replica lease and last-run status at
+`{VAULT_KV_MOUNT}/data/{CREDMON_STATE_KV_PATH_PREFIX}/{lease,status}`
+(default prefix `mcp/credmon`), written check-and-set. Users are enumerated
+by a KV LIST of each identity store's prefix as a *bare* path. On top of the
+stores' own grants, the broker's Vault policy needs:
+
+```hcl
+path "secret/data/mcp/credmon/*" {
+  capabilities = ["create", "read", "update"]
+}
+# one per enumerated store prefix (x509, krb5, servicex)
+path "secret/metadata/mcp/krb5" {
+  capabilities = ["list"]
+}
+```
+
+Missing either shows up as `VaultError ... status=403 ... permission denied`
+in `credmon_sync.tick_failed` (lease/status) or in a failed cycle's error
+(enumeration), and `GET /v1/admin/credmon` cannot read the status record.
 
 ## Access point prerequisites
 
@@ -81,11 +133,13 @@ On the AP (the schedd host), the site needs:
 ```
 DAEMON_LIST = $(DAEMON_LIST) CREDD
 SEC_CREDENTIAL_DIRECTORY_OAUTH = /var/lib/condor/oauth_credentials
-CRED_SUPER_USERS = <identity of the htcondor-api bearer token>
+CRED_SUPER_USERS = af-mcp-storer   # bare user part of the storer token's identity
 ```
 
-plus the AP credmon daemon (see below). UChicago's head01 currently runs
-`DAEMON_LIST = MASTER SCHEDD` -- no credd and no OAuth credential directory.
+plus the AP credmon daemon (see below). At UChicago the access point is
+head04, which also runs the pool's collector -- apply config changes with
+`condor_reconfig` (it starts newly listed daemons) rather than restarting the
+master.
 
 **Coexisting with an existing `condor_credmon_oauth`.** Which credmon writes a
 `.use` file is decided by configuration, not timing. The Local, Client and
@@ -170,8 +224,10 @@ identically from the shared Vault record.
   token itself.
 
 A failing sync never fails `/v1/readyz`: an htcondor-api outage should not
-take the gateway down. A `partial` cycle (some users failed) still counts as
-a success for alerting; its errors are in the status record.
+take the gateway down. A `partial` cycle (some users stored, some failed)
+still counts as a success for alerting; its errors are in the status record.
+A cycle that stored nothing but had failures is `failed`: it does not move
+"Last success", so the stale-sync alert fires when every store is rejected.
 
 ## Known limitations
 

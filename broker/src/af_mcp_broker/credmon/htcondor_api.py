@@ -20,7 +20,7 @@ from af_mcp_broker.credmon.storer import CredentialStoreClient, CredentialStoreE
 from af_mcp_broker.http import get_http_client
 
 if TYPE_CHECKING:
-    from pydantic import SecretStr
+    from pathlib import Path
 
 # Upper bound on how much of an htcondor-api error body is relayed into
 # CredentialStoreError -- enough for credd's reason, never a full dump.
@@ -28,17 +28,22 @@ _MAX_ERROR_DETAIL_CHARS = 300
 
 
 class HTCondorApiCredentialStore(CredentialStoreClient):
-    """Stores OAuth service credentials in credd through htcondor-api, authenticated with a static bearer token."""
+    """Stores OAuth service credentials in credd through htcondor-api, authenticated with the bearer token in *token_file*.
+
+    The file is read on every store rather than once at startup, so a
+    rotated token (a re-sealed Secret, which the kubelet rewrites in the
+    mounted volume) takes effect without restarting the broker.
+    """
 
     def __init__(
         self,
         *,
         api_url: str,
-        token: SecretStr,
+        token_file: Path,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
         self._base_url = api_url.rstrip("/")
-        self._token = token
+        self._token_file = token_file
         self._http_client = http_client
         self._log = structlog.get_logger(__name__).bind(
             component="HTCondorApiCredentialStore"
@@ -55,9 +60,15 @@ class HTCondorApiCredentialStore(CredentialStoreClient):
         # depend on it never happening to parse as base64.
         encoded = base64.b64encode(json.dumps(credential).encode()).decode()
         try:
+            token = self._token_file.read_text().strip()
+        except OSError as exc:
+            raise CredentialStoreError(
+                f"htcondor-api token file {self._token_file} could not be read."
+            ) from exc
+        try:
             resp = await self._http().post(
                 f"{self._base_url}/api/v1/creds/service/{service}",
-                headers={"Authorization": f"Bearer {self._token.get_secret_value()}"},
+                headers={"Authorization": f"Bearer {token}"},
                 json={
                     "cred_type": "oauth",
                     "credential": encoded,

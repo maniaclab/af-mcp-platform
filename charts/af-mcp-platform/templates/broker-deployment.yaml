@@ -117,6 +117,8 @@ spec:
               value: "true"
             - name: CREDMON_HTCONDOR_API_URL
               value: {{ required "broker.credmon.htcondorApiUrl is required when broker.credmon.enabled" .Values.broker.credmon.htcondorApiUrl | quote }}
+            - name: CREDMON_USER_DOMAIN
+              value: {{ required "broker.credmon.userDomain is required when broker.credmon.enabled" .Values.broker.credmon.userDomain | quote }}
             - name: CREDMON_HTCONDOR_API_TOKEN_FILE
               value: "/etc/af-mcp/credmon/token"
             {{- with .Values.broker.credmon.servicePrefix }}

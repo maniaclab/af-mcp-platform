@@ -95,6 +95,7 @@ class CredmonStorer:
         audience_prefix: str,
         service_prefix: str,
         top_token_ttl_seconds: int,
+        user_domain: str,
     ) -> None:
         self._issuer = issuer
         self._kinds = list(kinds)
@@ -104,6 +105,7 @@ class CredmonStorer:
         self._audience_prefix = audience_prefix
         self._service_prefix = service_prefix
         self._ttl = top_token_ttl_seconds
+        self._user_domain = user_domain
 
     @property
     def kind_names(self) -> list[str]:
@@ -167,8 +169,13 @@ class CredmonStorer:
             subject, f"{self._audience_prefix}{kind.name}", ttl_seconds=self._ttl
         )
         try:
+            # credd only accepts the target user as user@domain
+            # (store_cred.cpp: "not in user@domain format" -> code 8); it
+            # keys the credential directory by the part before the '@'.
             await self._client.store_service_credential(
-                user=attrs.unixname, service=service, credential={"access_token": token}
+                user=f"{attrs.unixname}@{self._user_domain}",
+                service=service,
+                credential={"access_token": token},
             )
         except CredentialStoreError as exc:
             report.errors.append(

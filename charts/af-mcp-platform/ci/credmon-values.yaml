@@ -28,6 +28,7 @@ broker:
   credmon:
     enabled: true
     htcondorApiUrl: "http://condor-mcp.example.svc.cluster.local:8080"
+    userDomain: "example.org"
     existingHtcondorApiTokenSecret: "example-credmon-htcondor-api-token"
     kinds: ["krb5"]
     syncIntervalSeconds: "14400"
