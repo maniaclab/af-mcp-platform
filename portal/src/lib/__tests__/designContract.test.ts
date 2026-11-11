@@ -330,7 +330,7 @@ describe('design contract scanner', () => {
     ['a { color: rgba(0 0 0 / 0.5); }', 'colour-function'],
     ['a { color: var(--color-af-teal); }', 'alias-token'],
     ['a { font-size: 11px; }', 'font-size'],
-    ['a { font-family: Arial; }', 'font-family'],
+    ['a { font-family: serif; }', 'font-family'],
     ['a { text-transform: uppercase; }', 'uppercase'],
     ['a { letter-spacing: 0.08em; }', 'letter-spacing'],
     ['a { backdrop-filter: blur(4px); }', 'backdrop-filter'],
