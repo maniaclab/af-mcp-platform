@@ -367,6 +367,21 @@ describe('status line', () => {
     expect(wrapper.classes()).toContain('bc--off');
   });
 
+  it.each(['misconfigured', 'permission_required', 'unavailable'] as const)(
+    'omits the identity link state on a %s row, where it is not the actionable fact',
+    (status) => {
+      const wrapper = mountWith({ status });
+      expect(wrapper.get('.bc__powered-by').text()).toContain('Powered by ATLAS IAM');
+      expect(wrapper.get('.bc__powered-by').text()).not.toContain('Not linked');
+      expect(wrapper.find('.bc__powered-by .af-mark').exists()).toBe(false);
+    },
+  );
+
+  it('shows the identity link state on an available row', () => {
+    const wrapper = mountWith({ status: 'available' });
+    expect(wrapper.get('.bc__powered-by').text()).toContain('Not linked');
+  });
+
   it('leaves an available service at full emphasis', () => {
     const wrapper = mountWith({ status: 'available' });
     expect(wrapper.classes()).not.toContain('bc--off');

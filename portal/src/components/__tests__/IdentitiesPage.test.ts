@@ -174,6 +174,7 @@ describe('IdentitiesPage banner', () => {
       }),
     ]);
     const banner = wrapper.find('.af-banner.bad');
+    expect(banner.attributes('role')).toBe('alert');
     expect(banner.text()).toContain('Your grid proxy has expired');
     expect(banner.find('a.btn').attributes('href')).toBe('#identity-card-x509');
   });
@@ -186,6 +187,7 @@ describe('IdentitiesPage banner', () => {
       }),
     ]);
     const banner = wrapper.find('.af-banner.warn');
+    expect(banner.attributes('role')).toBe('alert');
     expect(banner.text()).toContain('Your grid proxy expires soon');
     expect(banner.find('a.btn').attributes('href')).toBe('#identity-card-x509');
   });

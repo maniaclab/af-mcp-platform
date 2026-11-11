@@ -9,11 +9,14 @@
  * layout exists to avoid. Deliberately minimal: no sidebar, no user
  * controls, no identity-fetching script -- just a top bar with the brand and
  * theme toggle, the shared fonts/tokens, and the footer, reused from
- * Base.astro's own components.
+ * Base.astro's own components. It also shows the maintenance bar: that
+ * status endpoint needs no authentication, so it works for a signed-out
+ * visitor.
  */
 import '../styles/global.css';
 import Fonts from '../components/Fonts.astro';
 import Footer from '../components/Footer.astro';
+import MaintenanceBanner from '../components/MaintenanceBanner.astro';
 import ThemeToggle from '../components/ThemeToggle.astro';
 import { THEME_INIT_SCRIPT } from '../lib/themeInitScript.js';
 
@@ -46,6 +49,12 @@ const { title = 'AF MCP Platform' } = Astro.props;
       .pb-main {
         flex: 1;
       }
+
+      /* A hidden maintenance bar takes no space; a shown one sits under the
+         top bar. */
+      .pb-notice :global(.af-banner) {
+        margin-top: var(--space-16);
+      }
     </style>
   </head>
   <body class="h-full">
@@ -59,6 +68,10 @@ const { title = 'AF MCP Platform' } = Astro.props;
           <ThemeToggle />
         </div>
       </header>
+
+      <div class="af-wrap pb-notice">
+        <MaintenanceBanner />
+      </div>
 
       <main id="main-content" class="pb-main">
         <slot />

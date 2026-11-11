@@ -29,6 +29,7 @@ import {
 } from '@lucide/astro';
 import Fonts from '../components/Fonts.astro';
 import Footer from '../components/Footer.astro';
+import MaintenanceBanner from '../components/MaintenanceBanner.astro';
 import ThemeToggle from '../components/ThemeToggle.astro';
 import { THEME_INIT_SCRIPT } from '../lib/themeInitScript.js';
 
@@ -434,10 +435,7 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
         </header>
 
         <main id="main-content" class="af-main af-wrap">
-          <div data-af-maintenance-banner class="alert af-banner info slim" role="alert" hidden>
-            <span class="af-mark info" aria-hidden="true"></span>
-            <div data-af-maintenance-text></div>
-          </div>
+          <MaintenanceBanner />
           <slot />
         </main>
 
@@ -456,16 +454,14 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
         clearIdentitiesCache,
         fetchDashboardSummary,
         fetchIdentities,
-        fetchMaintenanceStatus,
         revokeAllCredentials,
       } from '../lib/api';
       import { getBranding, getUser, isOidcConfigured, login, logout } from '../lib/auth';
       import { applyBranding } from '../lib/branding';
-      import { maintenanceBannerText } from '../lib/maintenanceBanner';
       import { navBadges } from '../lib/navSummary';
 
-      // Runs independently of the auth check below, same rationale as the
-      // maintenance banner above -- branding is deployment identity, not
+      // Runs independently of the auth check below, same rationale as
+      // MaintenanceBanner.astro's script -- branding is deployment identity, not
       // user-specific, so it applies whether or not this visitor ends up
       // authenticated. Patches every [data-af-brand] element (footer,
       // overview hero) plus the two logo links, which need an "X home"
@@ -478,30 +474,6 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
           el.textContent = branding.shortName;
           el.setAttribute('aria-label', `${branding.fullName} home`);
         });
-      })();
-
-      // Runs independently of the auth check below, and before it -- GET
-      // /v1/admin/maintenance requires no authentication at all (see
-      // fetchMaintenanceStatus's docstring), precisely so a visitor currently
-      // locked out by maintenance mode on every other route -- including one
-      // with no session at all, or one about to be redirected to Keycloak by
-      // the auth check just below -- still sees why.
-      (async () => {
-        const banner = document.querySelector<HTMLElement>('[data-af-maintenance-banner]');
-        const bannerText = banner?.querySelector<HTMLElement>('[data-af-maintenance-text]');
-        if (!banner || !bannerText) return;
-        try {
-          const status = await fetchMaintenanceStatus();
-          const text = maintenanceBannerText(status);
-          if (text) {
-            bannerText.textContent = text;
-            banner.hidden = false;
-          }
-        } catch {
-          // Fails open, same as the broker route itself (api/admin.py) -- an
-          // unreachable maintenance store or a network error must not put a
-          // false banner in front of every visitor.
-        }
       })();
 
       // Off-canvas sidebar toggle (under 860px) — registered before the auth check so the

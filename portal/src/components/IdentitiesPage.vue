@@ -316,7 +316,7 @@ function handleServiceXRevoked(id: string) {
       </button>
     </div>
 
-    <div v-else-if="stateBanner" class="alert af-banner" :class="stateBanner.tone" role="status">
+    <div v-else-if="stateBanner" class="alert af-banner" :class="stateBanner.tone" role="alert">
       <span class="af-mark" :class="stateBanner.tone" aria-hidden="true"></span>
       <div>
         <b>{{ stateBanner.title }}</b>

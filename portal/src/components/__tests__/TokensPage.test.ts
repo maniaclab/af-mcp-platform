@@ -126,6 +126,7 @@ describe('TokensPage', () => {
 
       const banner = wrapper.find('.af-banner.warn');
       expect(banner.exists()).toBe(true);
+      expect(banner.attributes('role')).toBe('alert');
       expect(banner.text()).toContain('soon-one');
     });
 

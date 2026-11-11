@@ -616,6 +616,7 @@ describe('AdminPage banner', () => {
 
     const banner = wrapper.get('[data-af-admin-banner]');
     expect(banner.classes()).toContain('warn');
+    expect(banner.attributes('role')).toBe('alert');
     expect(banner.text()).toContain('1 tool configuration issue found');
     expect(banner.text()).toContain('1 annotation mismatch');
   });

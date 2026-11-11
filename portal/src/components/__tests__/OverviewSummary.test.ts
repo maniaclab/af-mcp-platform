@@ -228,7 +228,21 @@ describe('OverviewSummary services and tokens rows', () => {
     expect(row.find('.af-mark').classes()).toContain('ok');
   });
 
-  it('marks an unavailable service as a warning and names it apart from not linked', async () => {
+  it('leads with the available count and the most important other fact only', async () => {
+    vi.mocked(fetchDashboardSummary).mockResolvedValue({
+      ...SUMMARY,
+      reachableCount: 1,
+      misconfiguredCount: 1,
+      unavailableCount: 1,
+      needsLinkCount: 4,
+    });
+    const wrapper = await mountSummary();
+
+    const row = wrapper.findAll('.ov__row')[0]!;
+    expect(row.find('.ov__state').text()).toBe('1 of 8 available · 1 misconfigured');
+  });
+
+  it('marks an unavailable service as a warning and names it before not linked', async () => {
     vi.mocked(fetchDashboardSummary).mockResolvedValue({
       ...SUMMARY,
       reachableCount: 6,
@@ -239,7 +253,7 @@ describe('OverviewSummary services and tokens rows', () => {
 
     const row = wrapper.findAll('.ov__row')[0]!;
     expect(row.find('.af-mark').classes()).toContain('warn');
-    expect(row.text()).toContain('6 of 8 available · 1 unavailable · 1 not linked');
+    expect(row.find('.ov__state').text()).toBe('6 of 8 available · 1 unavailable');
   });
 
   it('marks a misconfigured service as a problem and keeps it apart from unavailable', async () => {
@@ -253,7 +267,7 @@ describe('OverviewSummary services and tokens rows', () => {
 
     const row = wrapper.findAll('.ov__row')[0]!;
     expect(row.find('.af-mark').classes()).toContain('bad');
-    expect(row.text()).toContain('5 of 8 available · 1 misconfigured · 2 unavailable');
+    expect(row.find('.ov__state').text()).toBe('5 of 8 available · 1 misconfigured');
   });
 
   it('shows the identities row as off, not a warning, when nothing is linked', async () => {

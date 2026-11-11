@@ -295,7 +295,7 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
         {{ revokeError }}
       </div>
     </div>
-    <div v-else-if="expiringTokens.length > 0" class="alert af-banner warn">
+    <div v-else-if="expiringTokens.length > 0" class="alert af-banner warn" role="alert">
       <span class="af-mark warn" aria-hidden="true"></span>
       <div>
         <b>{{ expiringTokens[0].name }} expires {{ expiresIn(expiringTokens[0].expires_at!) }}</b>

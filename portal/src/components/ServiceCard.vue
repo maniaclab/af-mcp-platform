@@ -54,6 +54,13 @@ const showStatusDetail = computed(
 const poweredByLinked = computed(() =>
   resolvePoweredByLinked(props.server.status, props.poweredBy.linked),
 );
+// The identity's link state is shown only on an available row, where it says
+// which account the service is using. On a not-linked row the status line says
+// it, and on a misconfigured, access-required or unavailable row it is noise
+// beside that row's own status.
+const showLinkState = computed(
+  () => props.server.status === 'available' && poweredByLinked.value !== null,
+);
 // A service whose only obstacle is an unlinked account reads as disabled, not
 // broken: the user chose not to link it, and that only keeps its tools unused.
 const isDisabled = computed(() => props.server.status === 'link_required');
@@ -188,9 +195,8 @@ const toolsView = computed(() =>
         <template v-else>
           Powered by
           <a :href="poweredBy.linkHref ?? '#'" class="bc__powered-by-link">{{ poweredBy.label }}</a>
-          <!-- The status line already says "Not linked" for a disabled row. -->
           <StatusMark
-            v-if="poweredByLinked !== null && !isDisabled"
+            v-if="showLinkState"
             :tone="poweredByLinked ? 'ok' : 'off'"
             :label="poweredByLinked ? 'Linked' : 'Not linked'"
           />

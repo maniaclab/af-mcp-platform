@@ -230,7 +230,7 @@ const driftBannerText = computed(() => {
 <template>
   <div class="af-page compact ap">
     <!-- Page banner: the single most urgent message. -->
-    <div v-if="issueCount > 0" class="alert af-banner warn" role="status" data-af-admin-banner>
+    <div v-if="issueCount > 0" class="alert af-banner warn" role="alert" data-af-admin-banner>
       <span class="af-mark warn" aria-hidden="true"></span>
       <div>
         <b
