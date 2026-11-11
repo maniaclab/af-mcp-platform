@@ -29,11 +29,12 @@ vi.mock('basecoat-css/chart', () => ({}));
 
 vi.mock('../../lib/api', () => ({
   fetchUsage: vi.fn(),
+  fetchCatalog: vi.fn(),
   SessionExpiredError: class SessionExpiredError extends Error {},
   AccessDeniedError: class AccessDeniedError extends Error {},
 }));
 
-import { fetchUsage } from '../../lib/api';
+import { fetchCatalog, fetchUsage } from '../../lib/api';
 import UsagePage from '../UsagePage.vue';
 
 const USAGE: UsageResponse = {
@@ -90,8 +91,10 @@ const EMPTY: UsageResponse = {
 
 beforeEach(() => {
   vi.restoreAllMocks();
+  vi.clearAllMocks();
   (window as unknown as { basecoat: unknown }).basecoat = { chart: vi.fn() };
   window.matchMedia = vi.fn().mockReturnValue({ matches: false }) as typeof window.matchMedia;
+  vi.mocked(fetchCatalog).mockResolvedValue({ servers: [] });
 });
 
 describe('UsagePage', () => {
@@ -122,6 +125,70 @@ describe('UsagePage', () => {
     expect(rows[0].text()).toContain('30');
     expect(rows[1].text()).toContain('ami');
     expect(rows[1].text()).toContain('4,000');
+  });
+
+  describe('service names', () => {
+    const server = (name: string, display_name: string) =>
+      ({ name, display_name }) as Awaited<ReturnType<typeof fetchCatalog>>['servers'][number];
+
+    it('shows the catalog display name with the id as secondary text', async () => {
+      vi.mocked(fetchUsage).mockResolvedValue(USAGE);
+      vi.mocked(fetchCatalog).mockResolvedValue({
+        servers: [server('rucio', 'Rucio (ATLAS)'), server('ami', 'ATLAS Metadata Interface')],
+      });
+      const wrapper = mount(UsagePage);
+      await flushPromises();
+
+      const cell = wrapper.findAll('.table-container tbody tr')[0].find('td');
+      expect(cell.find('.up__service').text()).toBe('Rucio (ATLAS)');
+      const id = cell.find('code.af-sub');
+      expect(id.text()).toBe('rucio');
+    });
+
+    it('shows only the id for a service the catalog no longer lists', async () => {
+      vi.mocked(fetchUsage).mockResolvedValue(USAGE);
+      vi.mocked(fetchCatalog).mockResolvedValue({ servers: [server('rucio', 'Rucio (ATLAS)')] });
+      const wrapper = mount(UsagePage);
+      await flushPromises();
+
+      const cell = wrapper.findAll('.table-container tbody tr')[1].find('td');
+      expect(cell.text()).toBe('ami');
+      expect(cell.find('code').exists()).toBe(false);
+    });
+
+    it('shows only the id when the display name equals it', async () => {
+      vi.mocked(fetchUsage).mockResolvedValue(USAGE);
+      vi.mocked(fetchCatalog).mockResolvedValue({ servers: [server('rucio', 'rucio')] });
+      const wrapper = mount(UsagePage);
+      await flushPromises();
+
+      const cell = wrapper.findAll('.table-container tbody tr')[0].find('td');
+      expect(cell.text()).toBe('rucio');
+    });
+
+    it('still lists the ids when the catalog cannot be loaded', async () => {
+      vi.mocked(fetchUsage).mockResolvedValue(USAGE);
+      vi.mocked(fetchCatalog).mockRejectedValue(new Error('catalog down'));
+      const wrapper = mount(UsagePage);
+      await flushPromises();
+
+      const rows = wrapper.findAll('.table-container tbody tr');
+      expect(rows[0].find('td').text()).toBe('rucio');
+      expect(wrapper.find('[role="alert"]').exists()).toBe(false);
+    });
+
+    it('fetches the catalog once, not once per row or per window change', async () => {
+      vi.mocked(fetchUsage).mockResolvedValue(USAGE);
+      const wrapper = mount(UsagePage);
+      await flushPromises();
+      await wrapper
+        .findAll('button')
+        .find((b) => b.text() === '90 days')!
+        .trigger('click');
+      await flushPromises();
+
+      expect(fetchCatalog).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('renders the daily activity as a chart with every day in text', async () => {

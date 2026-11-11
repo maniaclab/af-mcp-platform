@@ -13,7 +13,7 @@
  * usage.astro renders this with no `subject`, unchanged from before.
  */
 import { ref, computed, onMounted } from 'vue';
-import { fetchUsage } from '../lib/api';
+import { fetchCatalog, fetchUsage } from '../lib/api';
 import type { UsageResponse } from '../lib/api';
 import { useLoadState } from '../lib/useLoadState';
 import { formatBytes, formatCost, formatTokens } from '../lib/usageFormat';
@@ -44,7 +44,29 @@ function load(): Promise<void> {
   }, 'Failed to load usage.');
 }
 
-onMounted(load);
+// Display names for the per-service table, keyed by service id. Fetched once:
+// the window selector reloads usage only. A failed fetch leaves the map empty
+// and the table shows ids, since names are a convenience, not the data.
+const displayNames = ref<Map<string, string>>(new Map());
+
+function loadDisplayNames(): Promise<void> {
+  return fetchCatalog()
+    .then((catalog) => {
+      displayNames.value = new Map(catalog.servers.map((s) => [s.name, s.display_name]));
+    })
+    .catch(() => {});
+}
+
+/** The catalog's name for a service, or null when it is unknown or just repeats the id. */
+function displayName(id: string): string | null {
+  const name = displayNames.value.get(id);
+  return name && name !== id ? name : null;
+}
+
+onMounted(() => {
+  void load();
+  void loadDisplayNames();
+});
 
 function selectWindow(value: string): void {
   const n = Number(value);
@@ -188,7 +210,11 @@ const chartLabel = computed<string>(() => {
               </thead>
               <tbody>
                 <tr v-for="svc in usage.by_service" :key="svc.service">
-                  <td>{{ svc.service }}</td>
+                  <td v-if="displayName(svc.service)">
+                    <span class="up__service">{{ displayName(svc.service) }}</span>
+                    <code class="af-sub up__id">{{ svc.service }}</code>
+                  </td>
+                  <td v-else>{{ svc.service }}</td>
                   <td class="af-num">{{ formatTokens(svc.calls) }}</td>
                   <td class="af-num af-sub">{{ formatTokens(svc.errors) }}</td>
                   <td class="af-num af-sub">{{ formatBytes(svc.result_bytes) }}</td>
@@ -217,7 +243,13 @@ const chartLabel = computed<string>(() => {
   color: var(--color-af-text-secondary);
   margin-left: auto;
 }
-.up__model code {
+.up__model code,
+.up__id {
   font-family: var(--font-mono);
+}
+
+.up__id {
+  margin-left: var(--space-8);
+  font-size: var(--text-13);
 }
 </style>

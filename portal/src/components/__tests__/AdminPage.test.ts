@@ -36,6 +36,7 @@ vi.mock('basecoat-css/chart', () => ({}));
 
 vi.mock('../../lib/api', () => ({
   fetchUsage: vi.fn(),
+  fetchCatalog: vi.fn(async () => ({ servers: [] })),
   fetchUsageSubjects: vi.fn(),
   fetchMaintenanceStatus: vi.fn(),
   setMaintenanceStatus: vi.fn(),

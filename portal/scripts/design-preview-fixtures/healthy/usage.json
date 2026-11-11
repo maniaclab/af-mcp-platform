@@ -58,6 +58,14 @@
       "result_bytes": 117456,
       "result_tokens_est": 29364,
       "estimated_cost_usd": 0.0881
+    },
+    {
+      "service": "example_retired_service",
+      "calls": 23,
+      "errors": 1,
+      "result_bytes": 9728,
+      "result_tokens_est": 3399,
+      "estimated_cost_usd": 0.0102
     }
   ],
   "by_day": [
