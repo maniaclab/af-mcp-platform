@@ -42,7 +42,7 @@
   --text-12: 0.75rem; --text-13: 0.8125rem; --text-14: 0.875rem; --text-16: 1rem; --text-20: 1.25rem; --text-24: 1.5rem; --text-32: 2rem;
   --space-2: 2px; --space-4: 4px; --space-8: 8px; --space-12: 12px; --space-16: 16px; --space-24: 24px; --space-32: 32px; --space-48: 48px; --space-64: 64px;
   --radius-4: 4px; --radius-8: 8px; --radius-10: 10px; --radius-full: 999px;
-  --control-s: 28px; --control-m: 36px; --control-l: 44px;
+  --control-s: 32px; --control-m: 36px; --control-l: 40px; --control-xl: 52px;
   --time-fast: 100ms; --time-base: 200ms; --time-slow: 300ms; --ease: cubic-bezier(0.2, 0, 0, 1);
 }
 @media (prefers-color-scheme: dark) {
@@ -142,17 +142,18 @@ table.spec td:first-child { white-space: nowrap; }
 .mark.off { border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--text-secondary); }
 
 /* Button */
-.btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-8); height: var(--control-m); padding: 0 var(--space-16); border-radius: var(--radius-8); border: 1px solid transparent; font: 500 var(--text-14)/1 var(--font-text); cursor: pointer; white-space: nowrap; text-decoration: none; transition: background var(--time-fast) var(--ease), border-color var(--time-fast) var(--ease); }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-8); height: var(--control-m); padding: 0 10px; border-radius: var(--radius-8); border: 1px solid transparent; font: 500 var(--text-14)/1 var(--font-text); cursor: pointer; white-space: nowrap; text-decoration: none; transition: background var(--time-fast) var(--ease), border-color var(--time-fast) var(--ease); }
 .btn.primary { background: var(--accent); color: var(--on-accent); }
 .btn.primary:hover { background: color-mix(in srgb, var(--accent) 86%, var(--on-accent)); }
 .btn.secondary { background: var(--bg); color: var(--text); border-color: var(--border-strong); }
 .btn.secondary:hover { background: var(--bg-hover); }
-.btn.quiet { background: transparent; color: var(--text); padding: 0 var(--space-8); }
+.btn.quiet { background: transparent; color: var(--text); }
 .btn.quiet:hover { background: var(--bg-hover); }
 .btn.danger { background: var(--bg); color: var(--bad-text); border-color: color-mix(in srgb, var(--bad) 55%, var(--bg)); }
 .btn.danger:hover { background: color-mix(in srgb, var(--bad) 10%, var(--bg)); }
-.btn.s { height: var(--control-s); padding: 0 var(--space-12); font-size: var(--text-13); }
-.btn.l { height: var(--control-l); padding: 0 var(--space-24); font-size: var(--text-16); }
+.btn.s { height: var(--control-s); }
+.btn.l { height: var(--control-l); }
+.btn.xl { height: var(--control-xl); padding: 0 var(--space-32); font-size: var(--text-16); }
 .btn[disabled] { background: var(--bg-subtle); color: var(--text-disabled); border-color: var(--border); cursor: not-allowed; }
 
 /* Banner: page level, one per page, always a status colour, never the accent. */
@@ -166,7 +167,11 @@ table.spec td:first-child { white-space: nowrap; }
 .banner.ok { background: var(--banner-ok); color: var(--on-banner-ok); }
 .banner .mark { background: currentColor; }
 
-/* Note: inline, sits inside a section next to the thing it is about. */
+/* Slim: the one-line maintenance bar in the shell. */
+.banner.slim { padding-block: var(--space-8); flex-wrap: nowrap; gap: var(--space-12); }
+.banner.slim > div { flex: 1 1 auto; }
+
+/* Note: inline, sits inside a section next to the thing it is about. A hint is a note.info. */
 .note { display: flex; gap: var(--space-12); padding: var(--space-12) var(--space-16); border-radius: var(--radius-8); border: 1px solid; font-size: var(--text-13); align-items: baseline; }
 .note.warn { background: color-mix(in srgb, var(--warn) 10%, var(--bg)); border-color: color-mix(in srgb, var(--warn) 50%, var(--bg)); }
 .note.bad { background: color-mix(in srgb, var(--bad) 8%, var(--bg)); border-color: color-mix(in srgb, var(--bad) 45%, var(--bg)); }
@@ -197,12 +202,14 @@ table.tbl { width: 100%; border-collapse: collapse; }
 .check input { width: 16px; height: 16px; accent-color: var(--accent); margin: 0; }
 
 /* Tag: a neutral label for a category. Never a status. */
-.tag { display: inline-flex; align-items: center; height: 22px; padding: 0 var(--space-8); border-radius: var(--radius-4); background: var(--bg-subtle); border: 1px solid var(--border); font-size: var(--text-12); }
+.tag { display: inline-flex; align-items: center; height: 20px; padding: 0 var(--space-8); border-radius: var(--radius-full); background: transparent; border: 1px solid var(--border); font: 500 var(--text-12)/1 var(--font-text); }
 
 /* Segmented control */
-.seg { display: inline-flex; border: 1px solid var(--border-strong); border-radius: var(--radius-8); padding: 2px; gap: 2px; }
-.seg button { height: 30px; padding: 0 var(--space-12); border: 0; border-radius: var(--radius-4); background: transparent; color: var(--text-secondary); font: 500 var(--text-13)/1 var(--font-text); cursor: pointer; }
-.seg button[aria-pressed="true"] { background: var(--text); color: var(--bg); }
+.seg { display: inline-flex; }
+.seg button { height: var(--control-s); padding: 0 10px; border: 1px solid var(--border-strong); margin-left: -1px; border-radius: 0; background: var(--bg); color: var(--text); font: 500 var(--text-14)/1 var(--font-text); cursor: pointer; }
+.seg button:first-child { margin-left: 0; border-radius: var(--radius-8) 0 0 var(--radius-8); }
+.seg button:last-child { border-radius: 0 var(--radius-8) var(--radius-8) 0; }
+.seg button[aria-pressed="true"] { background: var(--text); color: var(--bg); border-color: var(--text); position: relative; }
 
 /* Sidebar nav */
 .nav { display: flex; flex-direction: column; gap: 2px; width: 220px; max-width: 100%; }
@@ -231,17 +238,22 @@ table.tbl { width: 100%; border-collapse: collapse; }
 
 /* Dialog, menu, tooltip (shown inline as specimens) */
 .scrim-demo { background: var(--scrim); border-radius: var(--radius-10); padding: var(--space-32) var(--space-16); display: flex; justify-content: center; }
-.dialog { background: var(--bg); border-radius: var(--radius-10); box-shadow: var(--shadow-2); padding: var(--space-24); width: min(100%, 440px); display: flex; flex-direction: column; gap: var(--space-16); }
+.dialog { background: var(--bg); border-radius: 14px; /* Basecoat's dialog panel (rounded-xl) */ box-shadow: var(--shadow-2); padding: var(--space-24); width: min(100%, 440px); display: flex; flex-direction: column; gap: var(--space-16); }
 .dialog h4 { font-size: var(--text-16); }
 .dialog footer { display: flex; justify-content: flex-end; gap: var(--space-8); flex-wrap: wrap; }
-.menu { background: var(--bg); border-radius: var(--radius-8); box-shadow: var(--shadow-1); padding: var(--space-4); width: 200px; display: flex; flex-direction: column; }
-.menu span { padding: var(--space-8) var(--space-12); border-radius: var(--radius-4); }
-.menu span:hover { background: var(--bg-hover); }
-.tip { background: var(--text); color: var(--bg); font-size: var(--text-12); padding: 6px var(--space-8); border-radius: var(--radius-4); max-width: 240px; }
+.chart-tip { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-10); box-shadow: var(--shadow-1); padding: 6px 10px; width: 160px; display: flex; flex-direction: column; gap: var(--space-4); font-size: var(--text-12); }
+.chart-tip div { display: flex; align-items: center; gap: var(--space-8); }
+.chart-tip i { width: 10px; height: 10px; border-radius: 2px; background: var(--text-secondary); }
+.chart-tip b { margin-left: auto; font: 500 var(--text-12)/1 var(--font-mono); font-variant-numeric: tabular-nums; }
+.tip { background: var(--bg); color: var(--text); border: 1px solid var(--border-strong); font-size: var(--text-12); padding: 8px 10px; border-radius: var(--radius-4); max-width: 240px; }
 
 /* Empty state */
-.empty { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-12); padding: var(--space-32) var(--space-24); border: 1px dashed var(--border-strong); border-radius: var(--radius-10); }
+.empty { display: flex; flex-direction: column; align-items: center; text-align: center; text-wrap: balance; gap: var(--space-16); padding: var(--space-48); border: 1px dashed var(--border-strong); border-radius: var(--radius-10); }
+.empty b { font: 500 var(--text-20)/1.4 var(--font-head); }
 .empty p { color: var(--text-secondary); max-width: 52ch; }
+.chart-demo { display: flex; align-items: flex-end; gap: 3px; height: 120px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.chart-demo i { flex: 1; background: var(--text-secondary); }
+.chart-demo i:hover { background: var(--text); }
 
 /* Page pattern */
 .page { border: 1px solid var(--border); border-radius: var(--radius-10); display: grid; grid-template-columns: 220px minmax(0, 1fr); overflow: hidden; }
@@ -286,7 +298,7 @@ table.tbl { width: 100%; border-collapse: collapse; }
 <div class="ref-wrap">
 <nav class="ref-nav" aria-label="Sections">
   <p>Start</p>
-  <a href="#intro">Overview</a><a href="#tokens">Design tokens</a>
+  <a href="#intro">Overview</a><a href="#basecoat">Built on Basecoat</a><a href="#tokens">Design tokens</a>
   <p>Visual styles</p>
   <a href="#colour">Colour</a><a href="#type">Typography</a><a href="#dimensions">Dimensions</a><a href="#grid">Layout grid</a><a href="#border">Border and corner radius</a><a href="#elevation">Elevation</a>
   <p>Expression</p>
@@ -294,7 +306,7 @@ table.tbl { width: 100%; border-collapse: collapse; }
   <p>Content</p>
   <a href="#content">Writing</a>
   <p>Components</p>
-  <a href="#status">Status mark</a><a href="#button">Button</a><a href="#banner">Banner and note</a><a href="#table">Table</a><a href="#field">Form field</a><a href="#copy">Copy field</a><a href="#kv">Key-value list and stat</a><a href="#navc">Navigation and controls</a><a href="#overlay">Dialog, menu, tooltip</a><a href="#empty">Empty state</a>
+  <a href="#status">Status mark</a><a href="#button">Button</a><a href="#banner">Banner and note</a><a href="#table">Table</a><a href="#field">Form field</a><a href="#copy">Copy field</a><a href="#kv">Key-value list and stat</a><a href="#navc">Navigation and controls</a><a href="#chart">Chart</a><a href="#overlay">Dialog and tooltip</a><a href="#empty">Empty state</a>
   <p>Pages</p>
   <a href="#pattern">Page pattern</a><a href="#pages">Per-page specs</a><a href="#open">Open decisions</a>
 </nav>
@@ -316,6 +328,32 @@ table.tbl { width: 100%; border-collapse: collapse; }
   </div>
 </section>
 
+<section id="basecoat">
+  <header><p class="term">Start</p><h2>Built on Basecoat</h2>
+  <p class="def">The portal is built on Basecoat (<code>basecoat-css</code>): plain CSS classes that work the same in <code>.astro</code> pages and <code>.vue</code> components. The standing rule is <b>Basecoat-class-first</b>: if Basecoat ships a component, use its class and attributes and re-theme it through the token bridge; extend it with a separate <code>af-</code> class; never redefine a Basecoat class. Basecoat supplies structure, the portal's tokens supply identity.</p></header>
+  <p class="used">This page is self-contained and draws its examples with short demo classes. This is what each one is in the portal.</p>
+  <div class="scroll"><table class="spec">
+    <tr><th>Demo class here</th><th>Portal markup</th><th>Notes</th></tr>
+    <tr><td><code>.btn.primary</code></td><td><code>class="btn"</code></td><td>Basecoat's default variant is filled with <code>--primary</code>, the accent.</td></tr>
+    <tr><td><code>.btn.secondary</code>, <code>.btn.quiet</code></td><td><code>data-variant="outline"</code>, <code>data-variant="ghost"</code></td><td></td></tr>
+    <tr><td><code>.btn.danger</code></td><td><code>class="btn af-danger" data-variant="outline"</code></td><td><code>af-danger</code> is the portal extension: red outline and label, never a fill.</td></tr>
+    <tr><td><code>.btn.s</code>, <code>.btn.l</code>, <code>.btn.xl</code></td><td><code>data-size="sm"</code> (32px), default (36px), <code>data-size="lg"</code> (40px), <code>af-btn-xl</code> (52px)</td><td>The heights are <code>--control-s/m/l</code>.</td></tr>
+    <tr><td><code>.tag</code></td><td><code>class="badge" data-variant="outline"</code></td><td>A pill, 20px high, 12px text.</td></tr>
+    <tr><td><code>.banner</code>, <code>.note</code></td><td><code>class="alert af-banner warn"</code>, <code>class="alert af-note info"</code></td><td><code>af-banner</code> and <code>af-note</code> are the portal extensions that add status treatments to Basecoat's <code>alert</code>.</td></tr>
+    <tr><td><code>.tbl-box</code> + <code>.tbl</code></td><td><code>class="table-container af-box"</code> + <code>class="table"</code></td><td><code>af-compact</code>, <code>af-num</code>, <code>af-act</code>, <code>af-sub</code> on top.</td></tr>
+    <tr><td><code>.field</code>, <code>.input</code>, <code>.check</code></td><td><code>field</code>, <code>input</code> / <code>native-select</code> / <code>textarea</code>, <code>field</code> with <code>data-orientation="horizontal"</code> around a checkbox</td><td><code>af-narrow</code> caps a field at 360px.</td></tr>
+    <tr><td><code>.seg</code></td><td><code>class="button-group af-toggle"</code> of <code>btn</code>s with <code>aria-pressed</code></td><td><code>af-toggle</code> fills the selected button with ink.</td></tr>
+    <tr><td><code>.dialog</code></td><td><code>&lt;dialog class="dialog af-modal"&gt;</code></td><td><code>af-modal</code> sets the scrim and the overlay shadow.</td></tr>
+    <tr><td><code>.empty</code></td><td><code>class="empty"</code></td><td>Basecoat centres its content, and the portal keeps that.</td></tr>
+    <tr><td><code>.chart-demo</code></td><td><code>BarChart.vue</code> on Basecoat's <code>chart</code></td><td>See Chart.</td></tr>
+    <tr><td><code>.st</code>, <code>.mark</code>, <code>.nav</code>, <code>.copy</code>, <code>.kv</code>, <code>.stats</code></td><td><code>af-st</code>, <code>af-mark</code>, <code>af-nav</code>, <code>af-copy</code>, <code>af-kv</code>, <code>af-stats</code></td><td>Basecoat has no equivalent, so these are portal classes.</td></tr>
+  </table></div>
+  <div class="prose"><ul>
+    <li><b>Documented exceptions.</b> Tooltips use the native Popover API (<code>PopoverTooltip.vue</code>), because Basecoat's <code>data-tooltip</code> is clipped by scrolling ancestors. The shell sidebar is built in <code>Base.astro</code>.</li>
+    <li><b>Token bridge.</b> Basecoat's own variables (<code>--primary</code>, <code>--border</code>, <code>--ring</code>, <code>--chart-1</code> ...) are set from the portal's tokens in <code>global.css</code>, so a colour is changed once. How it is wired is in <code>docs/portal-styling.md</code>.</li>
+  </ul></div>
+</section>
+
 <section id="tokens">
   <header><p class="term">Start</p><h2>Design tokens</h2>
   <p class="def">A token is a named design decision. Code refers to the name, never to the raw value, so a decision is changed in one place. The portal has three layers, the same structure Uber's Base uses.</p></header>
@@ -323,13 +361,13 @@ table.tbl { width: 100%; border-collapse: collapse; }
     <tr><th>Layer</th><th>What it is</th><th>Example</th><th>Who may use it</th></tr>
     <tr><td>1. Primitive</td><td>A raw value with a neutral name.</td><td><code>--grey-200: #e0e0e0</code></td><td>Only the semantic layer.</td></tr>
     <tr><td>2. Semantic</td><td>A role. Changes between light and dark.</td><td><code>--border: var(--grey-200)</code></td><td>Every component and page.</td></tr>
-    <tr><td>3. Component</td><td>A class that combines semantic tokens.</td><td><code>.btn.primary</code></td><td>Pages.</td></tr>
+    <tr><td>3. Component</td><td>A class that combines semantic tokens: Basecoat's, re-themed through the bridge, plus <code>af-</code> extensions.</td><td><code>.btn[data-variant="outline"]</code></td><td>Pages.</td></tr>
   </table></div>
   <div class="dd">
     <div><div class="stage"><code>border: 1px solid var(--border);<br>padding: var(--space-16);<br>font-size: var(--text-14);</code></div><p class="verdict"><span class="mark ok"></span><span><b>Do</b> use a semantic token for every colour, size, radius and duration.</span></p></div>
     <div><div class="stage"><code>border: 1px solid #1e2a3d;<br>padding: 14px;<br>font-size: 9px;</code></div><p class="verdict"><span class="mark bad"></span><span><b>Don't</b> write raw values in a component. The current portal has 16 font sizes and 5 radii because of this.</span></p></div>
   </div>
-  <p class="used"><b>Enforcement:</b> a lint rule rejects hex colours, pixel font sizes and off-scale spacing in <code>portal/src</code>. Without it the written system and the shipped portal drift apart again.</p>
+  <p class="used"><b>Enforcement:</b> a contract test (<code>designContract.test.ts</code>) rejects hex colours, pixel font sizes, off-scale radii and hand-rolled replacements for Basecoat classes in <code>portal/src</code>. Without it the written system and the shipped portal drift apart again.</p>
 </section>
 
 <section id="colour">
@@ -363,8 +401,9 @@ table.tbl { width: 100%; border-collapse: collapse; }
     <tr><td>Problem</td><td><span class="st"><span class="mark bad"></span>Blocked</span></td><td><code>--bad</code></td><td><span class="chip" style="background:var(--banner-bad)"></span></td><td>Not working. Also destructive actions.</td></tr>
     <tr><td>Information</td><td><span class="st"><span class="mark info"></span>Maintenance Friday</span></td><td><code>--info</code></td><td><span class="chip" style="background:var(--banner-info)"></span></td><td>Neutral notice, nothing is wrong.</td></tr>
     <tr><td>In progress</td><td><span class="st"><span class="mark busy"></span>Minting proxy</span></td><td><code>--text-secondary</code></td><td>none</td><td>Waiting on the system.</td></tr>
-    <tr><td>Off</td><td><span class="st"><span class="mark off"></span>Not linked</span></td><td><code>--text-secondary</code></td><td>none</td><td>Absent by choice, not an error.</td></tr>
+    <tr><td>Off</td><td><span class="st"><span class="mark off"></span>Not linked</span></td><td><code>--text-secondary</code></td><td>none</td><td>Absent by choice, not an error. "Not linked" is this mark: it never raises a banner, at most a hint.</td></tr>
   </table></div>
+  <p class="used">Chart colours are Basecoat's <code>--chart-1</code> to <code>--chart-5</code>, bridged to neutral steps (secondary text, text, strong border, disabled text, border), never status colours.</p>
   <p class="used">Status values are Tailwind's palette (green 600/700, amber 400/600, red 600/700, blue 600 in light; the 400 steps in dark). Banner fills are the same in both themes.</p>
 
   <h3>Do and don't</h3>
@@ -384,10 +423,11 @@ table.tbl { width: 100%; border-collapse: collapse; }
     <tr><th>Token</th><th>Size / line</th><th>Weight</th><th>Specimen</th><th>Use</th></tr>
     <tr><td><code>--text-32</code></td><td>32 / 40</td><td>600 head</td><td><span style="font:600 2rem/1.2 var(--font-head)">Sign in</span></td><td>Landing page headline only.</td></tr>
     <tr><td><code>--text-24</code></td><td>24 / 32</td><td>600 head</td><td><span style="font:600 1.5rem/1.3 var(--font-head)">Tokens</span></td><td>Page title. One per page. Large stat values.</td></tr>
+    <tr><td><code>--text-20</code></td><td>20 / 28</td><td>600 head</td><td><span style="font:600 1.25rem/1.4 var(--font-head)">No tokens yet</span></td><td>Landing section headings; empty-state title.</td></tr>
     <tr><td><code>--text-16</code></td><td>16 / 24</td><td>600 head</td><td><span style="font:600 1rem/1.4 var(--font-head)">Linked accounts</span></td><td>Section title, dialog title.</td></tr>
     <tr><td><code>--text-14</code></td><td>14 / 20</td><td>400, 500</td><td>claude-desktop-laptop</td><td>Default. Body, table cells, buttons, inputs.</td></tr>
     <tr><td><code>--text-13</code></td><td>13 / 20</td><td>400, 500</td><td><span style="font-size:var(--text-13);color:var(--text-secondary)">Last used</span></td><td>Column headers, labels, help text, compact tables.</td></tr>
-    <tr><td><code>--text-12</code></td><td>12 / 16</td><td>400</td><td><span style="font-size:var(--text-12);color:var(--text-secondary)">Updated 2 minutes ago</span></td><td>Tags, timestamps under stats. The minimum size.</td></tr>
+    <tr><td><code>--text-12</code></td><td>12 / 16</td><td>400</td><td><span style="font-size:var(--text-12);color:var(--text-secondary)">Updated 2 minutes ago</span></td><td>Badges, chart axes, text under stats. The minimum size.</td></tr>
     <tr><td><code>--font-mono</code></td><td>inherits</td><td>400</td><td><code>mcp_pat_8f2c…a91e</code></td><td>Tokens, hostnames, certificate DNs, commands, IDs.</td></tr>
   </table></div>
   <div class="prose">
@@ -414,9 +454,10 @@ table.tbl { width: 100%; border-collapse: collapse; }
   </table></div>
   <div class="scroll"><table class="spec">
     <tr><th>Size</th><th>Token</th><th>Height</th><th>Use</th></tr>
-    <tr><td>Small</td><td><code>--control-s</code></td><td>28px</td><td>Row actions inside tables, compact pages.</td></tr>
+    <tr><td>Small</td><td><code>--control-s</code></td><td>32px</td><td><code>data-size="sm"</code>: row actions inside tables, buttons in banners, segmented controls.</td></tr>
     <tr><td>Medium</td><td><code>--control-m</code></td><td>36px</td><td>Default for buttons, inputs, nav items.</td></tr>
-    <tr><td>Large</td><td><code>--control-l</code></td><td>44px</td><td>Sign in on the landing page; copy fields.</td></tr>
+    <tr><td>Large</td><td><code>--control-l</code></td><td>40px</td><td><code>data-size="lg"</code>; copy fields.</td></tr>
+    <tr><td>Extra large</td><td>(none)</td><td>52px</td><td><code>af-btn-xl</code>: Sign in on the landing page.</td></tr>
   </table></div>
   <h3>Density</h3>
   <div class="scroll"><table class="spec">
@@ -448,10 +489,10 @@ table.tbl { width: 100%; border-collapse: collapse; }
   <p class="def">Borders separate; they do not decorate. Corners are soft enough that a container feels like a surface holding its content, and consistent enough that nobody notices them.</p></header>
   <div class="scroll"><table class="spec">
     <tr><th>Token</th><th>Value</th><th>Specimen</th><th>Use</th></tr>
-    <tr><td><code>--radius-4</code></td><td>4px</td><td><span class="chip" style="border-radius:4px"></span></td><td>Tags, checkboxes.</td></tr>
-    <tr><td><code>--radius-8</code></td><td>8px</td><td><span class="chip" style="border-radius:8px"></span></td><td>Buttons, inputs, nav items, notes, menus.</td></tr>
-    <tr><td><code>--radius-10</code></td><td>10px</td><td><span class="chip" style="border-radius:10px"></span></td><td>Containers: table boxes, banners, dialogs.</td></tr>
-    <tr><td><code>--radius-full</code></td><td>999px</td><td><span class="chip" style="border-radius:999px"></span></td><td>Avatar and switch only. Not status pills.</td></tr>
+    <tr><td><code>--radius-4</code></td><td>4px</td><td><span class="chip" style="border-radius:4px"></span></td><td>Popover tooltips, chart indicators.</td></tr>
+    <tr><td><code>--radius-8</code></td><td>8px</td><td><span class="chip" style="border-radius:8px"></span></td><td>Buttons, inputs, nav items, copy fields (Basecoat's <code>rounded-md</code>, <code>--radius</code> minus 2px).</td></tr>
+    <tr><td><code>--radius-10</code></td><td>10px</td><td><span class="chip" style="border-radius:10px"></span></td><td>Containers: table boxes, row lists, banners, notes, fields, empty states. Basecoat's dialog panel is 14px.</td></tr>
+    <tr><td><code>--radius-full</code></td><td>999px</td><td><span class="chip" style="border-radius:999px"></span></td><td>Badges (tags) and round icon buttons. Not status pills.</td></tr>
     <tr><td><code>--border</code></td><td>1px</td><td></td><td>Container outlines, row rules.</td></tr>
     <tr><td><code>--border-strong</code></td><td>1px</td><td></td><td>Anything a person can type in or press.</td></tr>
   </table></div>
@@ -466,15 +507,15 @@ table.tbl { width: 100%; border-collapse: collapse; }
   <p class="def">Elevation says what is temporarily on top. Everything that belongs to the page is flat. Only things that appear over the page have a shadow.</p></header>
   <div class="scroll"><table class="spec">
     <tr><th>Level</th><th>Token</th><th>Used by</th><th>Rule</th></tr>
-    <tr><td>0 Flat</td><td>none</td><td>Tables, sections, banners, sidebar, top bar</td><td>Separated by a 1px border, never a shadow.</td></tr>
-    <tr><td>1 Raised</td><td><code>--shadow-1</code></td><td>Menus, popovers, tooltips</td><td>No scrim. Closes on outside click or Escape.</td></tr>
+    <tr><td>0 Flat</td><td>none</td><td>Tables, sections, rows, banners, notes, sidebar, top bar, popover tooltips</td><td>Separated by a 1px border, never a shadow.</td></tr>
+    <tr><td>1 Raised</td><td><code>--shadow-1</code></td><td>The chart tooltip (via Basecoat's <code>--shadow-xl</code>), the open navigation drawer</td><td>No scrim.</td></tr>
     <tr><td>2 Overlay</td><td><code>--shadow-2</code> + <code>--scrim</code></td><td>Dialogs</td><td>Scrim behind. Focus is trapped.</td></tr>
   </table></div>
   <div class="cols">
-    <div class="stage" style="background:var(--bg-subtle)"><span class="stage-label">Level 1</span><div class="menu"><span>Rename</span><span>Copy ID</span><span style="color:var(--bad-text)">Revoke</span></div></div>
+    <div class="stage" style="background:var(--bg-subtle)"><span class="stage-label">Level 1: chart tooltip</span><div class="chart-tip"><span>2026-11-06</span><div><i></i>Calls<b>139</b></div></div></div>
     <div class="stage" style="background:var(--bg-subtle)"><span class="stage-label">Level 2</span><div class="dialog" style="padding:var(--space-16)"><h4>Revoke this token?</h4><p class="used">Dialog on a scrim.</p></div></div>
   </div>
-  <p class="used">No background blur anywhere. In dark mode a shadow is hard to see, so raised surfaces also get a 1px light outline. The current portal has 14 different shadow declarations; this replaces them with two.</p>
+  <p class="used">No background blur anywhere. In dark mode a shadow is hard to see, so raised surfaces also get a 1px light outline. Basecoat's own small shadows (<code>--shadow-xs</code>, <code>--shadow-sm</code>) resolve to none and its backdrop blur to 0.</p>
 </section>
 
 <section id="motion">
@@ -483,14 +524,14 @@ table.tbl { width: 100%; border-collapse: collapse; }
   <div class="scroll"><table class="spec">
     <tr><th>Token</th><th>Value</th><th>Use</th></tr>
     <tr><td><code>--time-fast</code></td><td>100ms</td><td>Hover and press colour changes.</td></tr>
-    <tr><td><code>--time-base</code></td><td>200ms</td><td>Menus, tooltips, disclosure open and close.</td></tr>
-    <tr><td><code>--time-slow</code></td><td>300ms</td><td>Dialog enter. Banner appearing after an action.</td></tr>
+    <tr><td><code>--time-base</code></td><td>200ms</td><td>Disclosure chevron, the navigation drawer, a chart's first draw.</td></tr>
+    <tr><td><code>--time-slow</code></td><td>300ms</td><td>Reserved for a large surface entering; the sign-in spinner.</td></tr>
     <tr><td><code>--ease</code></td><td>cubic-bezier(0.2, 0, 0, 1)</td><td>Everything. Starts fast, settles.</td></tr>
   </table></div>
   <div class="prose"><ul>
     <li>Tables, rows and page content do not animate on load.</li>
     <li>Only opacity and transform are animated.</li>
-    <li>With reduced motion requested, every transition is instant.</li>
+    <li>With reduced motion requested, every transition is instant and charts draw without animation.</li>
     <li><b>Two named exceptions</b> are kept on purpose: the particle-track canvas behind the Overview header, and the gateway diagram on the landing page. Both stop when reduced motion is requested, and neither sits behind text a person needs to read.</li>
   </ul></div>
 </section>
@@ -546,19 +587,19 @@ table.tbl { width: 100%; border-collapse: collapse; }
 
 <section id="button">
   <header><p class="term">Components</p><h2>Button</h2>
-  <p class="def">Four kinds, ranked. A page has at most one primary button; everything else is secondary or quiet.</p></header>
+  <p class="def">Four kinds, ranked, in four sizes (32, 36, 40 and, for Sign in on the landing page, 52px). A page has at most one primary button; everything else is secondary or quiet.</p></header>
   <div class="stage row">
     <button class="btn primary">New token</button><button class="btn secondary">Refresh</button><button class="btn quiet">Cancel</button><button class="btn danger">Revoke</button><button class="btn primary" disabled>New token</button>
   </div>
   <div class="stage row">
-    <button class="btn primary s">Small 28</button><button class="btn primary">Medium 36</button><button class="btn primary l">Sign in</button>
+    <button class="btn primary s">Small 32</button><button class="btn primary">Medium 36</button><button class="btn primary l">Large 40</button><button class="btn primary xl">Sign in</button>
   </div>
   <div class="scroll"><table class="spec">
     <tr><th>Kind</th><th>Looks like</th><th>Use</th></tr>
-    <tr><td>Primary</td><td>Accent fill</td><td>The page's main action. One per page, in the page header.</td></tr>
-    <tr><td>Secondary</td><td>Outline</td><td>Other actions: Refresh, Copy, row actions.</td></tr>
-    <tr><td>Quiet</td><td>Text only</td><td>Cancel, dismiss, low-stakes actions in dense rows.</td></tr>
-    <tr><td>Danger</td><td>Red outline and text</td><td>Revoke, unlink, delete. Never filled, so it cannot be confused with a maroon or red facility accent.</td></tr>
+    <tr><td>Primary (<code>btn</code>)</td><td>Accent fill</td><td>The page's main action. One per page, in the page header.</td></tr>
+    <tr><td>Secondary (<code>outline</code>)</td><td>Outline</td><td>Other actions: Refresh, Copy, row actions.</td></tr>
+    <tr><td>Quiet (<code>ghost</code>)</td><td>Text only</td><td>Cancel, dismiss, low-stakes actions in dense rows.</td></tr>
+    <tr><td>Danger</td><td>Red outline and text (<code>btn af-danger</code> on the <code>outline</code> variant)</td><td>Revoke, unlink, delete. Never filled, so it cannot be confused with a maroon or red facility accent.</td></tr>
   </table></div>
   <div class="dd">
     <div><div class="stage"><div class="page-head"><h4>Tokens</h4><button class="btn primary">New token</button></div><div style="display:flex;justify-content:space-between;align-items:center"><span>claude-desktop-laptop</span><button class="btn danger s">Revoke</button></div></div><p class="verdict"><span class="mark ok"></span><span><b>Do</b> give the page one primary button and keep row actions small.</span></p></div>
@@ -569,7 +610,7 @@ table.tbl { width: 100%; border-collapse: collapse; }
 
 <section id="banner">
   <header><p class="term">Components</p><h2>Banner and note</h2>
-  <p class="def">A banner is the page's one loud message: the most urgent thing about this person's access, with its fix. A note is quiet and sits beside the thing it explains.</p></header>
+  <p class="def">A banner is the page's one loud message: the most urgent thing about this person's access, with its fix. A note is quiet and sits beside the thing it explains. A hint is a note in the banner slot: information that never alarms, such as accounts the person has not linked.</p></header>
   <div class="stage">
     <div class="banner bad"><span class="mark bad"></span><div><b>Rucio is unavailable to your account</b>Link your CERN account to use Rucio, AMI and PanDA.</div><button class="btn s">Link CERN account</button></div>
     <div class="banner warn"><span class="mark warn"></span><div><b>Your grid proxy expires in 2 days</b>Renew it to keep grid services working.</div><button class="btn s">Renew proxy</button></div>
@@ -580,20 +621,26 @@ table.tbl { width: 100%; border-collapse: collapse; }
     <div class="note warn"><span class="mark warn"></span><span>This token expires in 5 days. Clients using it will need a new one.</span></div>
     <div class="note info"><span class="mark info"></span><span>ServiceX uses its own credential. It is not affected by your grid proxy.</span></div>
   </div>
+  <div class="stage"><span class="stage-label">Hint: a note in the banner slot, only when no banner is showing</span>
+    <div class="note info"><span class="mark info"></span><span><b>2 services are not linked.</b> Link an account on the Identities page to use them.</span><button class="btn secondary s" style="margin-left:auto">Link an account</button></div>
+    <span class="stage-label">Maintenance: the slim bar, on every page including the landing page</span>
+    <div class="banner info slim"><span class="mark info"></span><div>Maintenance mode is enabled: storage migration; expect brief interruptions.</div></div>
+  </div>
   <div class="scroll"><table class="spec">
     <tr><th></th><th>Banner</th><th>Note</th></tr>
     <tr><td>Where</td><td>Directly under the page header.</td><td>Inside a section or dialog.</td></tr>
     <tr><td>How many</td><td>One per page. Problem beats warning beats information.</td><td>As needed, but rarely more than one per section.</td></tr>
     <tr><td>Fill</td><td>Solid status colour.</td><td>Tinted status colour with a border.</td></tr>
     <tr><td>Action</td><td>At most one button, naming the fix.</td><td>A link in the sentence.</td></tr>
+    <tr><td>Announced as</td><td><code>role="alert"</code> for a problem or warning; <code>role="status"</code> for information.</td><td><code>role="status"</code> for a hint.</td></tr>
     <tr><td>Colour</td><td colspan="2">Always a status colour. Never the facility accent.</td></tr>
   </table></div>
-  <p class="used"><b>Used on:</b> Overview, Services, Identities, Tokens, Admin (maintenance mode, drift).</p>
+  <p class="used"><b>Used on:</b> Overview, Services, Identities, Tokens, Admin (drift); the maintenance bar on every page. Hints: Overview and Services.</p>
 </section>
 
 <section id="table">
   <header><p class="term">Components</p><h2>Table</h2>
-  <p class="def">The portal's main component. Most pages are a list of things with a state, and a table is the honest shape for that.</p></header>
+  <p class="def">Where several things share the same fields, a table is the honest shape: tokens, usage per service, entitlements, admin data.</p></header>
   <div class="tbl-box"><table class="tbl">
     <thead><tr><th>Name</th><th>Status</th><th>Created</th><th>Last used</th><th class="num">Calls, 30 days</th><th></th></tr></thead>
     <tbody>
@@ -618,7 +665,7 @@ table.tbl { width: 100%; border-collapse: collapse; }
     <li>Header is unfilled, 13px, secondary colour. No capitals.</li>
     <li>Under 600px the table scrolls sideways inside its box; the page does not.</li>
   </ul></div>
-  <p class="used"><b>Used on:</b> Services, Identities, Tokens, Usage, Entitlements, Admin.</p>
+  <p class="used"><b>Used on:</b> Tokens, Usage, Entitlements, Admin. Services and Identities are row lists (one bordered list, a rule between rows, a name and a status on each), not tables.</p>
 </section>
 
 <section id="field">
@@ -662,7 +709,7 @@ table.tbl { width: 100%; border-collapse: collapse; }
 
 <section id="navc">
   <header><p class="term">Components</p><h2>Navigation and controls</h2>
-  <p class="def">The sidebar lists every page, always. The current page is marked by weight plus the accent indicator. Segmented controls switch a view; tags label a category.</p></header>
+  <p class="def">The sidebar lists every page, always. The current page is marked by weight plus the accent indicator. Segmented controls switch a view; tags are pill badges that label a category.</p></header>
   <div class="cols">
     <div class="stage"><div class="nav"><a href="#navc">Overview</a><a href="#navc">Services</a><a href="#navc">Identities</a><a href="#navc" aria-current="page">Tokens</a><a href="#navc">Usage</a><a href="#navc">Entitlements</a><a href="#navc">Admin</a></div></div>
     <div class="stage"><span class="stage-label">Segmented control: Usage range</span><div class="seg"><button aria-pressed="false">7 days</button><button aria-pressed="true">30 days</button><button aria-pressed="false">90 days</button></div>
@@ -671,27 +718,39 @@ table.tbl { width: 100%; border-collapse: collapse; }
   <p class="used">The selected segment is ink, not accent: the accent is reserved for the primary action and the current page. Admin appears in the sidebar only for operators.</p>
 </section>
 
+<section id="chart">
+  <header><p class="term">Components</p><h2>Chart</h2>
+  <p class="def">Basecoat's <code>chart</code> component, which wraps Chart.js, through <code>BarChart.vue</code>. Used for the daily activity on the Usage page.</p></header>
+  <div class="stage"><div class="chart-demo" role="img" aria-label="Calls per day, example"><i style="height:62%"></i><i style="height:70%"></i><i style="height:48%"></i><i style="height:75%"></i><i style="height:30%"></i><i style="height:0"></i><i style="height:12%"></i><i style="height:55%"></i><i style="height:68%"></i><i style="height:80%"></i><i style="height:58%"></i><i style="height:44%"></i></div></div>
+  <div class="prose"><ul>
+    <li>Bars are <code>--chart-1</code> (secondary text) and their hover is <code>--chart-2</code> (text): neutral steps, legible in both themes, never status colours. The grid is <code>--border</code>; axis labels are 12px in secondary text in IBM Plex Sans. No gradient, no shadow.</li>
+    <li>A canvas is opaque to assistive technology, so the chart is <code>role="img"</code> with a summary label and every value is repeated in a visually hidden table.</li>
+    <li>It draws without animation when reduced motion is requested, and redraws with the new colours when the theme changes. Chart.js and Basecoat's chart script load only on the page that draws a chart.</li>
+  </ul></div>
+  <p class="used"><b>Used on:</b> Usage.</p>
+</section>
+
 <section id="overlay">
-  <header><p class="term">Components</p><h2>Dialog, menu, tooltip</h2>
-  <p class="def">A dialog interrupts for a decision that cannot be undone or a short form. A menu holds overflow actions. A tooltip names an icon or shows an exact value.</p></header>
+  <header><p class="term">Components</p><h2>Dialog and tooltip</h2>
+  <p class="def">A dialog interrupts for a decision that cannot be undone or a short form. A tooltip names an icon or shows an exact value.</p></header>
   <div class="scrim-demo"><div class="dialog"><h4>Revoke claude-desktop-laptop?</h4><p>Clients using this token stop working immediately. This cannot be undone.</p><footer><button class="btn quiet">Cancel</button><button class="btn danger">Revoke token</button></footer></div></div>
   <div class="stage row" style="align-items:flex-start;gap:var(--space-32);background:var(--bg-subtle)">
-    <div class="menu"><span>Rename</span><span>Copy ID</span><span style="color:var(--bad-text)">Revoke</span></div>
-    <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-start"><span class="tip">13 November 2026, 09:14 UTC</span><span class="sub">Expires in 2 days</span></div>
+    <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-start"><span class="tip">13 November 2026, 09:14 UTC</span><span class="used">Expires in 2 days</span></div>
   </div>
   <div class="prose"><ul>
     <li>Dialog buttons sit bottom right, with the confirming action last. The confirming button repeats the title's verb.</li>
     <li>A tooltip never holds information a person needs to complete the task. It is not reachable on touch.</li>
     <li>Prefer inline content to a dialog. Do not open a dialog from a dialog.</li>
+    <li>A tooltip is flat: page background, strong border, 4px radius. It uses the native Popover API, so a scrolling ancestor cannot clip it.</li>
   </ul></div>
-  <p class="used"><b>Used on:</b> Tokens (new, revoke), Identities (unlink, consent), Admin (maintenance mode).</p>
+  <p class="used"><b>Used on:</b> Tokens (new, revoke), Identities (unlink, consent), Admin (maintenance mode). Tooltips: tags, dates, icon-only buttons.</p>
 </section>
 
 <section id="empty">
   <header><p class="term">Components</p><h2>Empty state</h2>
   <p class="def">When a list has nothing in it, say what belongs there and offer the action that fills it.</p></header>
   <div class="empty"><b>No tokens yet</b><p>Tokens let clients that can't sign in with a browser, such as Claude Desktop, reach the gateway as you.</p><button class="btn primary">New token</button></div>
-  <p class="used">Here the empty state carries the page's primary button, so the page header does not repeat it. <b>Used on:</b> Tokens, Identities, Usage (no calls in range).</p>
+  <p class="used">This is Basecoat's <code>empty</code>, which centres its content under a dashed border; the portal keeps that layout. Here the empty state carries the page's primary button, so the page header does not repeat it. <b>Used on:</b> Tokens, Identities, Usage (no calls in range).</p>
 </section>
 
 <section id="pattern">
@@ -716,7 +775,7 @@ table.tbl { width: 100%; border-collapse: collapse; }
   <div class="scroll"><table class="spec">
     <tr><th>Part</th><th>Rule</th></tr>
     <tr><td>1. Page header</td><td>Title (24px), one line saying what the page is for, and at most one primary button on the right.</td></tr>
-    <tr><td>2. Banner slot</td><td>Empty when nothing is wrong. Otherwise the single most urgent message for this page.</td></tr>
+    <tr><td>2. Banner slot</td><td>Empty when nothing is wrong. Otherwise the single most urgent message for this page: a banner for a problem or warning, a hint (a quiet note) for information. A banner outranks a hint.</td></tr>
     <tr><td>3. Sections</td><td>Full width, stacked, 32px apart. Each has a 16px title and one component: a table, a key-value list, a row of stats or a copy field.</td></tr>
     <tr><td>4. Sidebar</td><td>Same on every page. Accent indicator on the current page.</td></tr>
   </table></div>
@@ -724,18 +783,28 @@ table.tbl { width: 100%; border-collapse: collapse; }
 
 <section id="pages">
   <header><p class="term">Pages</p><h2>Per-page specs</h2>
-  <p class="def">What each page is for, its one primary action, when its banner appears and which component carries it. These are the specs the rebuild is checked against.</p></header>
+  <p class="def">What each page is for, its one primary action, when its banner or hint appears and which component carries it.</p></header>
   <div class="scroll"><table class="spec">
     <tr><th>Page</th><th>Job</th><th>Primary action</th><th>Banner appears when</th><th>Main components</th><th>Density</th></tr>
-    <tr><td>Landing <code>/</code></td><td>Say what the platform is; get a facility user signed in.</td><td>Sign in, large (44px)</td><td>Maintenance is on (information)</td><td>Headline, one paragraph, gateway diagram, link to About</td><td>Spacious</td></tr>
-    <tr><td>Overview</td><td>Is my access working? How do I connect a client?</td><td>None; Copy on the endpoint</td><td>Any service is blocked or a credential is expiring</td><td>Status list of services, copy field, stats, particle canvas in the header</td><td>Comfortable</td></tr>
-    <tr><td>Services</td><td>Which backends and tools can I reach, and why not the others?</td><td>None</td><td>One or more services are blocked</td><td>Table with status and the fix per row</td><td>Comfortable</td></tr>
-    <tr><td>Identities</td><td>Link external accounts and keep the grid certificate valid.</td><td>Link account</td><td>Proxy expired or expiring; required account not linked</td><td>Table of accounts, key-value list per credential</td><td>Comfortable</td></tr>
-    <tr><td>Tokens</td><td>Create and revoke tokens for clients without browser sign-in.</td><td>New token</td><td>A token expires within 7 days</td><td>Table, dialog with copy field</td><td>Comfortable</td></tr>
-    <tr><td>Usage</td><td>What have my clients been doing?</td><td>None; range control</td><td>Never</td><td>Segmented control, stats, table per service</td><td>Comfortable</td></tr>
+    <tr><td>Landing <code>/</code></td><td>Say what the platform is; get a facility user signed in.</td><td>Sign in, extra large (52px)</td><td>Maintenance is on (the slim information bar)</td><td>Headline, one paragraph, particle canvas, gateway diagram, benefits</td><td>Spacious</td></tr>
+    <tr><td>Overview</td><td>Is my access working? How do I connect a client?</td><td>None; Copy on the endpoint</td><td>In priority order: grid proxy expired (problem); a service misconfigured (problem) or unavailable (warning); grid proxy expiring (warning, only if it cannot auto-renew and has under an hour left); a token expiring within 7 days (warning). Then hints: no account linked; N services not linked</td><td>Status rows, stats, copy field, particle canvas in the header</td><td>Comfortable</td></tr>
+    <tr><td>Services</td><td>Which backends and methods can I reach, and why not the others?</td><td>None</td><td>A service is misconfigured (problem) or unavailable (warning). Otherwise a hint when services are not linked, with one action only when they all need the same account</td><td>Search, filter, a list of service rows with status and the fix</td><td>Comfortable</td></tr>
+    <tr><td>Identities</td><td>Link external accounts and keep the grid certificate valid.</td><td>None in the header; each card has its own</td><td>Grid proxy expired (problem) or expiring (warning); a link attempt failed (problem); an account was just linked (ok). No hint: the rows show what is not linked</td><td>One card per credential, key-value lists</td><td>Comfortable</td></tr>
+    <tr><td>Tokens</td><td>Create and revoke tokens for clients without browser sign-in.</td><td>New token</td><td>A token expires within 7 days (warning); a revoke failed (problem)</td><td>Table, dialog with copy field</td><td>Comfortable</td></tr>
+    <tr><td>Usage</td><td>What have my clients been doing?</td><td>None; range control</td><td>Never</td><td>Stats, bar chart, table per service</td><td>Comfortable</td></tr>
     <tr><td>Entitlements</td><td>Which group grants which permission?</td><td>None</td><td>Never</td><td>Matrix table</td><td>Compact</td></tr>
-    <tr><td>Admin</td><td>Platform state across users; operators only.</td><td>None; maintenance toggle in its section</td><td>Maintenance on; config drift or mismatches found</td><td>Stats, compact tables</td><td>Compact</td></tr>
+    <tr><td>Admin</td><td>Platform state across users; operators only.</td><td>None; maintenance toggle in its section</td><td>Tool configuration issues are found (warning)</td><td>Compact tables, status marks</td><td>Compact</td></tr>
   </table></div>
+  <div class="prose">
+    <h3>State rules that hold on every page</h3>
+    <ul>
+      <li><b>Not linked is off, not wrong.</b> The off mark, the words "Not linked", a quiet row; never a warning or problem banner, at most a hint. A service that needs no credential, such as the gateway's own, is never counted as unlinked.</li>
+      <li><b>A grid proxy warns only when it cannot renew itself and has under an hour left.</b> An auto-renewing proxy never shows as expiring.</li>
+      <li><b>Misconfigured and Unavailable differ.</b> Misconfigured needs an operator: problem mark and a reference id to quote. Unavailable is temporary: warning mark, nothing to do but wait.</li>
+      <li><b>Access required</b> needs an administrator: warning mark and inline detail, never a banner. A service row shows its identity's link state only where that is the actionable fact.</li>
+      <li><b>Maintenance</b> is the slim information bar above the page, not the page banner.</li>
+    </ul>
+  </div>
 </section>
 
 <section id="open">

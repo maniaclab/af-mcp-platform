@@ -10,9 +10,9 @@ about `portal/`.
 
 | File | What it holds |
 | --- | --- |
-| `portal/src/styles/global.css` | The Tailwind v4 entrypoint and the only place token values are defined: colours, shadows, fonts, type scale and radii in `@theme`; spacing, control heights and motion in `:root`; dark overrides in `.dark`. |
-| `portal/src/styles/components.css` | The shared `af-` component classes, in `@layer components`. They use only tokens. |
-| `portal/src/components/ui/` | Shared Vue components built on those classes (`StatusMark`, `CopyField`, `ConfirmDialog`, `AsyncState`, ...). |
+| `portal/src/styles/global.css` | The Tailwind v4 entrypoint and the only place token values are defined: colours, shadows, fonts, type scale and radii in `@theme`; spacing, control heights and motion in `:root`; dark overrides in `.dark`. It also imports Basecoat per component and holds the token bridge. |
+| `portal/src/styles/components.css` | The `af-` classes for what Basecoat does not ship, and the `af-` extensions on Basecoat classes, in `@layer components`. They use only tokens. |
+| `portal/src/components/ui/` | Shared Vue components built on Basecoat and those classes (`StatusMark`, `PageMessage`, `CopyField`, `ConfirmDialog`, `AsyncState`, `BarChart`, ...). |
 | `portal/src/components/Fonts.astro` | The `@font-face` rules. |
 | `portal/src/lib/theme.ts`, `themeInitScript.js` | Theme resolution, persistence and the pre-paint bootstrap. |
 | `portal/src/lib/accent.ts` | The optional facility accent. |
@@ -24,8 +24,9 @@ Tailwind 4 is CSS-first; there is no `tailwind.config`. A token declared in the
 `border-af-border`, `text-af-text`, ...) and a CSS custom property, so scoped
 `<style>` blocks in `.vue` and `.astro` files use `var(--color-af-border)`.
 
-Spacing (`--space-*`), control heights (`--control-*`) and motion (`--time-*`,
-`--ease`) are plain `:root` custom properties rather than `@theme` entries: they
+Spacing (`--space-*`), control heights (`--control-s/m/l`, 32, 36 and 40px: the
+heights of Basecoat's `data-size="sm"`, default and `"lg"` buttons) and motion
+(`--time-*`, `--ease`) are plain `:root` custom properties rather than `@theme` entries: they
 are consumed through `var()`, not as utilities.
 
 ### Adding a token
@@ -78,6 +79,9 @@ The choice is stored in `localStorage` under `themeMode`. `auto` is stored as
 the **absence** of the key, not as a literal value. `localStorage` rather than
 the `sessionStorage` used for tokens in `auth.ts`: a theme preference is not a
 secret, and `sessionStorage` would lose it in every new tab.
+
+Basecoat's chart script also watches the `class` attribute on `<html>`, so a
+chart redraws with the new colours on its own.
 
 The control is `portal/src/components/ThemeToggle.astro`, a three-option
 `role="radiogroup"` (Auto, Dark, Light) with its own script. It is rendered at
@@ -182,6 +186,10 @@ The portal ships a strict CSP with hashes rather than `'unsafe-inline'`.
   one is not covered by a declared hash, and writes the hash union into the
   nginx CSP header (`nginx.conf.generated`).
 
+Chart.js and Basecoat's chart script set styles through the CSSOM only (no
+`<style>` element, no `setAttribute('style', ...)`, no `eval` or
+`new Function`), which the CSP allows.
+
 Consequences for styling: put styles in a component `<style>` block or in the
 shared stylesheets, not in a new `is:inline` block, unless you also add its
 hash. The runtime accent is applied with `style.setProperty` from script, not
@@ -211,36 +219,123 @@ overflow. `InfoTip.vue` wraps it for the icon-only "more information" button.
 
 ## Dialogs
 
-Dialogs are native `<dialog>` elements opened with `showModal()`, which
-supplies the focus trap, the inert page behind and Escape to close.
-Tailwind's Preflight resets `margin: 0` on every element, which also removes
-the `margin: auto` that centres a modal dialog. `global.css` restores it once
-with an unlayered `dialog:modal { margin: auto; }` rule instead of patching
-each dialog.
+Dialogs are native `<dialog class="dialog af-modal">` elements opened with
+`showModal()`, which supplies the focus trap, the inert page behind and Escape
+to close. Tailwind's Preflight resets `margin: 0` on every element, which also
+removes the `margin: auto` that centres a modal dialog. `global.css` restores it
+once with an unlayered `dialog:modal { margin: auto; }` rule instead of patching
+each dialog. `af-modal` swaps Basecoat's backdrop for the `--color-af-scrim`
+token and gives the panel `--shadow-af-2`.
 
-The `af-dialog` class sets `display: flex`, which would override the browser's
-`display: none` on a closed dialog, so `components.css` re-hides
-`dialog.af-dialog:not([open])`. For the same reason one rule re-applies
-`display: none` to every `af-` class that sets `display` when it carries the
-`hidden` attribute.
+Every `af-` class that sets `display` would override the `hidden` attribute, so
+one rule at the end of `components.css` re-applies `display: none` to those
+classes when they carry `hidden`.
 
 ## Basecoat
 
-`global.css` imports `basecoat-css`, and a `:root` block (the "Basecoat
-bridge") sets Basecoat's variable set (`--background`, `--foreground`,
-`--card`, `--popover`, `--border`, `--input`, `--ring`, `--primary`,
-`--primary-foreground`, `--muted-foreground`, `--destructive`, and `--radius`
-at `8px`) from the AF tokens. The bridge is one-directional: AF tokens are the
-source of truth, and every bridged value is a `var()` reference, so it follows
-the theme without being repeated under `.dark`.
+The portal follows one rule: **Basecoat-class-first**. If
+[Basecoat](https://basecoatui.com) ships the component, use its class and
+attributes (`btn`, `badge`, `alert`, `table`, `dialog`, ...), re-theme it through
+the token bridge, and extend it with a separate `af-` class. Never redefine a
+Basecoat class. The reason for Basecoat is that its components are plain CSS
+classes that work the same in `.astro` pages and `.vue` components. What the
+portal looks like is `DESIGN.md`; this section is how it is wired.
 
-As the code stands, no Basecoat component class or `data-` attribute is used
-anywhere in `portal/src`. What the import still contributes is Basecoat's base
-layer (its universal border and ring reset and its `body` colours, which read
-the bridged variables) and the `dark` custom variant described above. The
-`themeMode` storage key also matches the convention of Basecoat's own theme
-helper. The `af-` prefix on the shared classes exists so they cannot collide
-with Basecoat's `.btn`, `.badge` and similar names.
+### Per-component imports
+
+`global.css` does not import `basecoat-css` as a whole (that pulls in all 38
+components for about 30% more CSS). It imports the package's `base/base.css`,
+then one line per component the portal uses, then `styles/vega`, which gives the
+structure its look:
+
+```css
+@import 'basecoat-css/base/base.css';
+@import 'basecoat-css/components/alert';
+@import 'basecoat-css/components/chart';
+/* ... */
+@import 'basecoat-css/styles/vega';
+```
+
+To use another Basecoat component, add its
+`@import 'basecoat-css/components/<name>';` line to that list, before the vega
+import, and add the class to `BASECOAT_CLASSES` in `designContract.test.ts` so
+the test keeps `components.css` from redefining it. Components with behaviour
+(chart, popover, select, ...) also have a script in the package; import it only
+in the component that needs it (see Charts).
+
+### The token bridge
+
+Basecoat is written against shadcn's variable set (`--background`, `--primary`,
+`--border`, `--ring`, `--chart-1` ...). A `:root:root { ... }` block in
+`global.css` sets each from an AF token, so Basecoat supplies structure and the
+portal's tokens supply identity. The bridge is one-directional: AF tokens are the
+source of truth, every bridged value is a `var()` reference and follows the theme
+without being repeated under `.dark`. Basecoat's own `:root` and `.dark` blocks
+are unlayered like the bridge, so `@layer` cannot decide between them;
+`:root:root` (two pseudo-classes) outranks Basecoat's single-class
+`.dark { --primary: ... }` by specificity whatever the import order.
+
+Two traps. shadcn's `--accent` is a hover surface, not the AF accent; the AF
+accent reaches Basecoat only as `--primary` (primary button, checked controls,
+links). `--radius` is 10px so that Basecoat's `rounded-md` (`--radius` minus 2px)
+is 8px for controls and `rounded-lg` is 10px for alerts and fields.
+
+### Tailwind theme values Basecoat resolves through
+
+Basecoat's styles are written with Tailwind utilities (`text-lg`, `shadow-xs`,
+`backdrop-blur-xs`, `tracking-tight`), so the `@theme` block overrides what they
+resolve to, keeping them inside the contract: `--text-lg` is 20px, `--shadow-xs`
+and `--shadow-sm` are none, `--shadow-xl` (the chart tooltip) is
+`--shadow-af-1`, `--blur-xs` is 0 and `--tracking-tight` is normal. `text-xs`,
+`text-sm` and `text-base` already resolve to 12, 14 and 16px.
+
+### Focus
+
+Basecoat's controls set `outline-none` and draw their own focus indication from
+`--ring` (a border plus a 3px halo). The portal's own interactive elements (links,
+nav items, summaries) get a 2px outline in `--ring`, offset 2px, from one
+`:focus-visible` rule in `@layer base` in `global.css`. No element shows both.
+
+### Extending Basecoat
+
+A selector in `components.css` may name a Basecoat class only together with an
+`af-` class (`.btn.af-danger`, `.alert.af-banner.warn`, `.af-box .table`). Where
+the extension must beat a Basecoat rule that has `dark:` variants, the selector
+is prefixed with `:root` for the extra specificity.
+
+### Where the portal does not use Basecoat
+
+- **Tooltips.** `PopoverTooltip.vue` is built on the native Popover API
+  (see Tooltips), because Basecoat's `data-tooltip` is clipped by scrolling
+  ancestors.
+- **The shell sidebar.** `Base.astro` builds it (`af-sidebar`, `af-nav`): a fixed,
+  grouped list with count badges and a drawer under 860px.
+- **Pieces with no Basecoat equivalent.** The status mark, key-value list, stats,
+  copy field, page header and section, nav and the table extensions are `af-`
+  classes in `components.css`.
+
+### Charts
+
+`portal/src/components/ui/BarChart.vue` draws a bar chart on Basecoat's `chart`
+component, which wraps Chart.js. Basecoat's chart script attaches `chart()` to
+`window.basecoat` and takes the Chart.js `Chart` class in its config; it
+registers nothing itself. To add a chart:
+
+1. Use `BarChart` (props `labels`, `series`, `ariaLabel`, optional `formatValue`),
+   or copy its structure for another type. Both libraries are imported
+   dynamically inside the component, so pages without a chart do not load them,
+   and Chart.js is registered piece by piece (named imports, not `chart.js/auto`)
+   so the bundler can drop the chart types that are unused.
+2. Pass colours as CSS variables (`var(--chart-1)`, `var(--border)`,
+   `var(--muted-foreground)`). Basecoat resolves them to computed colours when
+   it draws, and again from the config it kept when `<html>`'s class changes.
+   The font family is read from `--font-sans`, because Chart.js takes a name.
+3. Keep the chart accessible: `role="img"` with an `aria-label` on the `.chart`
+   element, and the values as text in a visually hidden table beside it.
+4. Respect `prefers-reduced-motion` (`animation: false`).
+
+The chart's runtime code uses only the CSSOM (`element.style.x = ...`), so it
+fits the CSP below. A chart colour is a neutral step, never a status colour.
 
 ## Contrast checks
 
@@ -276,6 +371,8 @@ line and fix for each of these:
 | `box-shadow` | Anything other than `var(--shadow-af-1)`, `var(--shadow-af-2)`, `none` or an inset ring in a token colour. |
 | `border-radius` | Anything other than `var(--radius-*)`, `0` or `50%` (`components.css` may also use `1px` and `2px` for the status-mark shapes). |
 | `icon-glyph`, `arrow-glyph` | Text glyphs used as icons. |
+| `retired-class:*` | A hand-rolled class Basecoat replaces (`af-btn`, `af-input`, `af-tbl`, `af-tag`, `af-dialog`, `af-empty`, `af-seg`, ...), used or defined. |
+| `basecoat-redefined` | A CSS selector that names a Basecoat class without an `af-` class beside it. |
 
 A genuine exception goes in the test's `ALLOWLIST` with a reason. A second test
 fails if an allowlist entry is no longer needed.
