@@ -23,6 +23,7 @@
  * success or failure. It is never stored anywhere beyond the controlled
  * ref() within this component's lifecycle.
  */
+import { LINK_ACTION_LABEL } from '../lib/identityLinkLabel';
 import { ShieldCheck } from '@lucide/vue';
 import { nextTick, ref } from 'vue';
 import {
@@ -305,7 +306,7 @@ function remainingText(seconds?: number | null): string {
             />
           </template>
           <p v-else class="xc__section-note">
-            No proxy is currently stored — link (or re-link) above to mint one.
+            No proxy is currently stored — link (or re-link) above to create one.
           </p>
         </template>
       </Disclosure>
@@ -319,7 +320,7 @@ function remainingText(seconds?: number | null): string {
         :disabled="busy"
         @click="openForm"
       >
-        Link certificate
+        {{ LINK_ACTION_LABEL.certificate }}
       </button>
 
       <!-- Re-link re-runs the same passphrase flow, overwriting the stored
@@ -355,7 +356,7 @@ function remainingText(seconds?: number | null): string {
             aria-describedby="x509-link-passphrase-hint"
           />
           <span id="x509-link-passphrase-hint" class="hint">
-            Sent once to mint the proxy — cleared from this page immediately after submission.
+            Sent once to create the proxy — cleared from this page immediately after submission.
           </span>
         </div>
 

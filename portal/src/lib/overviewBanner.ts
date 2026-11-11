@@ -3,12 +3,12 @@
  * page's banner slot from the dashboard summary. Problem beats warning beats
  * information; null means nothing is wrong and the slot stays empty.
  *
- * The summary carries the grid proxy's remaining lifetime and the linked
- * account count. It does not say which services are blocked or when a token
- * expires, so those cases are not decided here.
+ * Priority: expired proxy, failing services, proxy expiring, token expiring,
+ * services that need a linked account, no linked accounts.
  */
 import type { DashboardSummary } from './api';
 import { formatRelative } from './relativeTime';
+import { expiresIn, expiresSoon } from './tokenDisplay';
 
 /** A proxy with less than this left is worth a warning: it will not last a working day. */
 export const EXPIRY_WARNING_SECONDS = 6 * 3600;
@@ -22,11 +22,15 @@ export interface OverviewBanner {
 
 const IDENTITIES_HREF = '/identities/';
 
+function countOf(n: number, singular: string, plural: string): string {
+  return `${n} ${n === 1 ? singular : plural}`;
+}
+
 export function overviewBanner(
   summary: DashboardSummary,
   now: number = Date.now(),
 ): OverviewBanner | null {
-  const { proxyStatus, linkedCount } = summary;
+  const { proxyStatus, linkedCount, failingCount, needsLinkCount, soonestExpiringToken } = summary;
   const remaining = proxyStatus.cached ? proxyStatus.remaining_seconds : null;
 
   if (remaining != null && remaining <= 0) {
@@ -37,12 +41,36 @@ export function overviewBanner(
       action: { label: 'Renew proxy', href: IDENTITIES_HREF },
     };
   }
+  if (failingCount > 0) {
+    return {
+      tone: 'bad',
+      title: `${countOf(failingCount, 'service is', 'services are')} unavailable`,
+      body: 'Open Services to see which ones and why.',
+      action: { label: 'View services', href: '/catalog/' },
+    };
+  }
   if (remaining != null && remaining < EXPIRY_WARNING_SECONDS) {
     return {
       tone: 'warn',
       title: `Your grid proxy expires ${formatRelative(now + remaining * 1000, now)}`,
       body: 'Renew it to keep grid services working.',
       action: { label: 'Renew proxy', href: IDENTITIES_HREF },
+    };
+  }
+  if (soonestExpiringToken && expiresSoon({ revoked_at: null, ...soonestExpiringToken }, now)) {
+    return {
+      tone: 'warn',
+      title: `${soonestExpiringToken.name} expires ${expiresIn(soonestExpiringToken.expires_at, now)}`,
+      body: 'Create a replacement and update the client.',
+      action: { label: 'New token', href: '/tokens/' },
+    };
+  }
+  if (needsLinkCount > 0) {
+    return {
+      tone: 'warn',
+      title: `${countOf(needsLinkCount, 'service needs', 'services need')} a linked account`,
+      body: 'Link the account to use them.',
+      action: { label: 'Link an account', href: IDENTITIES_HREF },
     };
   }
   if (linkedCount === 0) {

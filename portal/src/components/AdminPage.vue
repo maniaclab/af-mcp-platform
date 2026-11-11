@@ -392,7 +392,7 @@ const driftBannerText = computed(() => {
 
     <section id="ap-mismatches" class="af-sect" aria-labelledby="ap-mismatches-title">
       <h2 id="ap-mismatches-title">Annotation mismatches</h2>
-      <p class="ap__legend">
+      <p class="af-help">
         Visibility only; enforcement is unchanged. A row means the backend's
         <code>readOnlyHint</code> disagrees with the broker's <code>action_type</code>. To resolve
         it, set a <code>target_action_types</code> glob for the service (keys are service names;
@@ -443,7 +443,7 @@ const driftBannerText = computed(() => {
 
     <section id="ap-drift" class="af-sect" aria-labelledby="ap-drift-title">
       <h2 id="ap-drift-title">Tool mapping drift</h2>
-      <p class="ap__legend">
+      <p class="af-help">
         Visibility only. <strong>Unmapped</strong> tools are advertised by the backend but have no
         <code>required_permission</code> entry and no <code>__default__</code>, so they are
         disabled: add them to the service's <code>required_permission</code>.
@@ -500,7 +500,7 @@ const driftBannerText = computed(() => {
 
     <section class="af-sect" aria-labelledby="ap-credmon-title">
       <h2 id="ap-credmon-title">HTCondor credmon sync</h2>
-      <p class="ap__legend">
+      <p class="af-help">
         The broker stores a short-lived token per user and credential type in the facility's credd,
         so jobs that request <code>use_oauth_services = af_krb5, af_x509</code> get the user's
         credentials on the worker node. Only one broker replica runs each sync.
@@ -615,7 +615,7 @@ const driftBannerText = computed(() => {
             <ul class="ap__errors">
               <li v-for="(e, i) in credmon.last_run.errors" :key="i">{{ e }}</li>
             </ul>
-            <p v-if="credmon.last_run.errors_truncated > 0" class="ap__legend">
+            <p v-if="credmon.last_run.errors_truncated > 0" class="af-help">
               +{{ credmon.last_run.errors_truncated }} more not shown.
             </p>
           </Disclosure>
@@ -626,13 +626,6 @@ const driftBannerText = computed(() => {
 </template>
 
 <style scoped>
-.ap__legend {
-  margin: 0;
-  max-width: 80ch;
-  font-size: var(--text-13);
-  color: var(--color-af-text-secondary);
-}
-
 .ap__none {
   margin: 0;
   font-size: var(--text-13);

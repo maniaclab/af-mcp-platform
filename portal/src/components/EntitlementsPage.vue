@@ -180,7 +180,7 @@ function meHasPermission(permission: string): boolean {
 
     <section class="af-sect ep" aria-labelledby="ep-table-heading">
       <h2 id="ep-table-heading">Permissions by group</h2>
-      <p class="ep__desc">
+      <p class="af-help">
         Every permission this platform grants, and which groups hold each one. The You column is
         your own resolved access. Columns for your groups are marked “you”. Missing something you
         need? Contact the AF admins.
@@ -278,14 +278,12 @@ function meHasPermission(permission: string): boolean {
 </template>
 
 <style scoped>
-.ep__desc,
 .ep__summary,
 .ep__legend {
   margin: 0;
   font-size: var(--text-13);
 }
 
-.ep__desc,
 .ep__legend {
   color: var(--color-af-text-secondary);
 }

@@ -13,6 +13,10 @@ const healthy: DashboardSummary = {
     expires_at: '2026-08-06T00:00:00Z',
   },
   activeTokenCount: 4,
+  reachableCount: 3,
+  needsLinkCount: 0,
+  failingCount: 0,
+  soonestExpiringToken: null,
 };
 
 const empty: DashboardSummary = {
@@ -20,6 +24,10 @@ const empty: DashboardSummary = {
   serverCount: 0,
   proxyStatus: { cached: false, voms_attributes: [] },
   activeTokenCount: 0,
+  reachableCount: 0,
+  needsLinkCount: 0,
+  failingCount: 0,
+  soonestExpiringToken: null,
 };
 
 describe('navBadges', () => {

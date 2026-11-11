@@ -15,6 +15,10 @@ function summary(overrides: Partial<DashboardSummary> = {}): DashboardSummary {
     linkedCount: 3,
     serverCount: 8,
     activeTokenCount: 1,
+    reachableCount: 8,
+    needsLinkCount: 0,
+    failingCount: 0,
+    soonestExpiringToken: null,
     proxyStatus: { cached: true, voms_attributes: [], remaining_seconds: 48 * HOUR },
     ...overrides,
   };
@@ -104,6 +108,103 @@ describe('overviewBanner', () => {
       }),
       NOW,
     );
+    expect(banner?.tone).toBe('warn');
+  });
+
+  const IN_3_DAYS = new Date(NOW + 3 * 24 * 3600 * 1000).toISOString();
+  const IN_30_DAYS = new Date(NOW + 30 * 24 * 3600 * 1000).toISOString();
+
+  it('reports failing services as a problem naming how many', () => {
+    const banner = overviewBanner(summary({ failingCount: 2 }), NOW);
+    expect(banner?.tone).toBe('bad');
+    expect(banner?.title).toBe('2 services are unavailable');
+    expect(banner?.action).toEqual({ label: 'View services', href: '/catalog/' });
+  });
+
+  it('uses the singular for one failing service', () => {
+    expect(overviewBanner(summary({ failingCount: 1 }), NOW)?.title).toBe(
+      '1 service is unavailable',
+    );
+  });
+
+  it('puts an expired proxy ahead of failing services', () => {
+    const banner = overviewBanner(
+      summary({
+        failingCount: 1,
+        proxyStatus: { cached: true, voms_attributes: [], remaining_seconds: 0 },
+      }),
+      NOW,
+    );
+    expect(banner?.title).toBe('Your grid proxy has expired');
+  });
+
+  it('puts failing services ahead of an expiring proxy', () => {
+    const banner = overviewBanner(
+      summary({
+        failingCount: 1,
+        proxyStatus: { cached: true, voms_attributes: [], remaining_seconds: HOUR },
+      }),
+      NOW,
+    );
+    expect(banner?.tone).toBe('bad');
+  });
+
+  it('warns when a token expires within 7 days, naming it', () => {
+    const banner = overviewBanner(
+      summary({ soonestExpiringToken: { name: 'ci-pipeline', expires_at: IN_3_DAYS } }),
+      NOW,
+    );
+    expect(banner?.tone).toBe('warn');
+    expect(banner?.title).toBe('ci-pipeline expires in 3 days');
+    expect(banner?.action).toEqual({ label: 'New token', href: '/tokens/' });
+  });
+
+  it('ignores a token that expires after 7 days', () => {
+    expect(
+      overviewBanner(
+        summary({ soonestExpiringToken: { name: 'ci', expires_at: IN_30_DAYS } }),
+        NOW,
+      ),
+    ).toBeNull();
+  });
+
+  it('puts an expiring proxy ahead of an expiring token', () => {
+    const banner = overviewBanner(
+      summary({
+        soonestExpiringToken: { name: 'ci', expires_at: IN_3_DAYS },
+        proxyStatus: { cached: true, voms_attributes: [], remaining_seconds: HOUR },
+      }),
+      NOW,
+    );
+    expect(banner?.title).toContain('grid proxy');
+  });
+
+  it('warns that services need a linked account', () => {
+    const banner = overviewBanner(summary({ needsLinkCount: 2 }), NOW);
+    expect(banner?.tone).toBe('warn');
+    expect(banner?.title).toBe('2 services need a linked account');
+    expect(banner?.action).toEqual({ label: 'Link an account', href: '/identities/' });
+  });
+
+  it('uses the singular for one service needing a linked account', () => {
+    expect(overviewBanner(summary({ needsLinkCount: 1 }), NOW)?.title).toBe(
+      '1 service needs a linked account',
+    );
+  });
+
+  it('puts an expiring token ahead of services needing a linked account', () => {
+    const banner = overviewBanner(
+      summary({
+        needsLinkCount: 1,
+        soonestExpiringToken: { name: 'ci', expires_at: IN_3_DAYS },
+      }),
+      NOW,
+    );
+    expect(banner?.title).toBe('ci expires in 3 days');
+  });
+
+  it('puts services needing a linked account ahead of having no linked accounts', () => {
+    const banner = overviewBanner(summary({ needsLinkCount: 1, linkedCount: 0 }), NOW);
     expect(banner?.tone).toBe('warn');
   });
 });

@@ -60,6 +60,7 @@
  * transient base64 string built for the one POST body — also never
  * persisted client-side.
  */
+import { LINK_ACTION_LABEL } from '../lib/identityLinkLabel';
 import { Ticket } from '@lucide/vue';
 import { computed, nextTick, ref } from 'vue';
 import {
@@ -409,7 +410,7 @@ async function handleForget() {
         :disabled="busy"
         @click="handleMintClick"
       >
-        {{ busy ? 'Refreshing…' : linked ? 'Refresh ticket' : 'Get Kerberos ticket' }}
+        {{ busy ? 'Refreshing…' : linked ? 'Refresh ticket' : LINK_ACTION_LABEL.kerberos }}
       </button>
 
       <!-- Separate action from the one-shot mint above: uploads a
@@ -491,8 +492,8 @@ async function handleForget() {
             aria-describedby="krb5-link-password-hint"
           />
           <span id="krb5-link-password-hint" class="hint">
-            Your CERN password is used once to mint this ticket and is never stored — you'll need to
-            re-enter it after the ticket expires.
+            Your CERN password is used once to create this ticket and is never stored — you'll need
+            to re-enter it after the ticket expires.
           </span>
         </div>
 

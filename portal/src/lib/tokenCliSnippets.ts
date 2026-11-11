@@ -1,7 +1,7 @@
 /**
  * tokenCliSnippets.ts — builds the copy-paste command-line snippets shown in
- * TokensPage.vue's "Use from the command line" section (issue #122): mint a
- * token with curl, then mint + connect with a minimal fastmcp Python client.
+ * TokensPage.vue's "Use from the command line" section (issue #122): create a
+ * token with curl, then create + connect with a minimal fastmcp Python client.
  *
  * Pure string builders (no DOM, no fetch) so they're unit-testable
  * independent of how the caller obtained `brokerOrigin` at runtime — see
@@ -55,7 +55,7 @@ resp = httpx.post(
 resp.raise_for_status()
 token = resp.json()["token"]  # save this now -- it is never returned again
 
-# 2. Use the minted token against the MCP aggregator (mirrors
+# 2. Use the new token against the MCP aggregator (mirrors
 #    scripts/verify-mcp-flow.py's Client/transport usage).
 transport = StreamableHttpTransport(
     "${origin}/mcp/",

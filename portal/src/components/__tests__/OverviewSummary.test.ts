@@ -25,6 +25,10 @@ const SUMMARY: DashboardSummary = {
   linkedCount: 3,
   serverCount: 8,
   activeTokenCount: 2,
+  reachableCount: 8,
+  needsLinkCount: 0,
+  failingCount: 0,
+  soonestExpiringToken: null,
   proxyStatus: { cached: true, voms_attributes: [], remaining_seconds: 48 * 3600 },
 };
 
@@ -113,7 +117,7 @@ describe('OverviewSummary usage', () => {
     expect(usageRow?.text()).toContain('Status unavailable');
     expect(usageRow?.find('a').attributes('href')).toBe('/usage/');
     expect(wrapper.text()).not.toContain('Loading…');
-    expect(wrapper.text()).toContain('8 services');
+    expect(wrapper.text()).toContain('8 of 8 reachable');
   });
 });
 
@@ -132,7 +136,8 @@ describe('OverviewSummary status list', () => {
       expect(row.find('.af-mark').attributes('aria-hidden')).toBe('true');
       expect(row.find('svg').attributes('aria-hidden')).toBe('true');
     }
-    expect(rows[0]!.text()).toContain('8 services');
+    expect(rows[0]!.text()).toContain('8 of 8 reachable');
+    expect(rows[0]!.find('.af-mark').classes()).toContain('ok');
     expect(rows[1]!.text()).toContain('3 linked');
     expect(rows[1]!.text()).toContain('grid certificate active');
     expect(rows[2]!.text()).toContain('2 active');
@@ -178,7 +183,47 @@ describe('OverviewSummary status list', () => {
 
     const text = wrapper.findAll('.ov__row')[0]!.text();
     expect(text).toContain('Status unavailable');
-    expect(text).not.toContain('0 services');
+    expect(text).not.toContain('0 of 0');
+  });
+});
+
+describe('OverviewSummary services and tokens rows', () => {
+  it('warns when some services need a linked account', async () => {
+    vi.mocked(fetchDashboardSummary).mockResolvedValue({
+      ...SUMMARY,
+      reachableCount: 6,
+      needsLinkCount: 2,
+    });
+    const wrapper = await mountSummary();
+
+    const row = wrapper.findAll('.ov__row')[0]!;
+    expect(row.text()).toContain('6 of 8 reachable');
+    expect(row.find('.af-mark').classes()).toContain('warn');
+  });
+
+  it('marks failing services as a problem', async () => {
+    vi.mocked(fetchDashboardSummary).mockResolvedValue({
+      ...SUMMARY,
+      reachableCount: 6,
+      needsLinkCount: 1,
+      failingCount: 1,
+    });
+    const wrapper = await mountSummary();
+
+    expect(wrapper.findAll('.ov__row')[0]!.find('.af-mark').classes()).toContain('bad');
+  });
+
+  it('says when a token expires soon, as a warning', async () => {
+    const soon = new Date(Date.now() + 3 * 24 * 3600 * 1000).toISOString();
+    vi.mocked(fetchDashboardSummary).mockResolvedValue({
+      ...SUMMARY,
+      soonestExpiringToken: { name: 'ci', expires_at: soon },
+    });
+    const wrapper = await mountSummary();
+
+    const row = wrapper.findAll('.ov__row')[2]!;
+    expect(row.text()).toContain('2 active · soonest expires in 3 days');
+    expect(row.find('.af-mark').classes()).toContain('warn');
   });
 });
 

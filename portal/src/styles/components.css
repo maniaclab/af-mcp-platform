@@ -127,6 +127,12 @@
     padding: 0 var(--space-24);
     font-size: var(--text-16);
   }
+  /* Extra large: the one call to action on a landing page. */
+  .af-btn.xl {
+    height: calc(var(--control-l) + var(--space-8));
+    padding: 0 var(--space-32);
+    font-size: var(--text-16);
+  }
   .af-btn[disabled] {
     background: var(--color-af-bg-subtle);
     color: var(--color-af-text-disabled);
@@ -543,6 +549,20 @@
     padding: 6px var(--space-8);
     border-radius: var(--radius-4);
     max-width: 240px;
+  }
+
+  /* Help text: a short explanation under a section heading, above what it explains. */
+  .af-help {
+    font-size: var(--text-13);
+    color: var(--color-af-text-secondary);
+    max-width: 80ch;
+  }
+
+  /* Links inside prose and notes are underlined so they read as links. */
+  :is(.af-note, .af-help, .af-banner, .af-empty p, .af-page-head p, .af-field .hint)
+    a:not(.af-btn) {
+    text-decoration: underline;
+    text-underline-offset: 3px;
   }
 
   /* Empty state */

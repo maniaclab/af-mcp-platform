@@ -22,8 +22,8 @@ onMounted(async () => {
 const endpoint = computed(() => (origin.value === null ? null : `${origin.value}/mcp/`));
 
 const curlSnippet = computed(
-  () => `export MCP_PAT="<your PAT>"
-curl -H "Authorization: Bearer $MCP_PAT" \\
+  () => `export MCP_TOKEN="<your token>"
+curl -H "Authorization: Bearer $MCP_TOKEN" \\
      ${endpoint.value}`,
 );
 </script>
@@ -55,17 +55,17 @@ curl -H "Authorization: Bearer $MCP_PAT" \\
           resulting credential itself — you won't see it again.
         </li>
         <li>
-          If your client can't open a browser, skip that step: mint a Personal Access Token (PAT)
-          from the <a href="/tokens/">Tokens page</a> instead, then under
+          If your client can't open a browser, skip that step: create a personal access token from
+          the <a href="/tokens/">Tokens page</a> instead, then under
           <strong>Request headers</strong> add name <code>Authorization</code>, value
-          <code>Bearer &lt;your PAT&gt;</code>.
+          <code>Bearer &lt;your token&gt;</code>.
         </li>
       </ol>
 
       <h3 class="ov__subheading">curl</h3>
       <p class="ov__body">
-        Mint a Personal Access Token (PAT) from the <a href="/tokens/">Tokens page</a> first, then
-        paste it in place of <code>&lt;your PAT&gt;</code> below.
+        Create a personal access token on the <a href="/tokens/">Tokens page</a> first, then paste
+        it in place of <code>&lt;your token&gt;</code> below.
       </p>
       <CopyField :value="curlSnippet" label="Copy curl snippet to clipboard" multiline />
     </template>

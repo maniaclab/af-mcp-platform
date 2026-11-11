@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { LINK_ACTION_LABEL } from '../lib/identityLinkLabel';
 import { Link2 } from '@lucide/vue';
 import { ref } from 'vue';
 import { fetchOAuth21AuthorizeUrl, unlinkIdentity, type ProviderType } from '../lib/api';
@@ -137,7 +138,7 @@ async function handleLink() {
         :aria-busy="busy"
         @click="handleLink"
       >
-        {{ busy ? 'Redirecting…' : 'Link account' }}
+        {{ busy ? 'Redirecting…' : LINK_ACTION_LABEL.account }}
       </button>
 
       <!--

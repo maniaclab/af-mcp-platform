@@ -231,3 +231,17 @@ describe('TokensPage', () => {
     });
   });
 });
+
+describe('TokensPage token id', () => {
+  it('can be copied in full with a button, since the cell shows only the start', async () => {
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    const wrapper = await mountPage([token({ lookup_id: 'LOOKUP0001-FULL-VALUE' })]);
+
+    const button = wrapper.get('button[aria-label="Copy token ID LOOKUP0001-FULL-VALUE"]');
+    await button.trigger('click');
+    await flushPromises();
+
+    expect(writeText).toHaveBeenCalledWith('LOOKUP0001-FULL-VALUE');
+  });
+});

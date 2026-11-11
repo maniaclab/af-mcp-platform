@@ -3,7 +3,7 @@ import { ref, computed, onMounted } from 'vue';
 import { fetchCatalog, fetchIdentities } from '../lib/api';
 import type { CatalogServer, IdentityProvider } from '../lib/api';
 import { resolvePoweredBy } from '../lib/catalog';
-import { resolveServiceStatus } from '../lib/serviceStatus';
+import { resolveServicesBanner } from '../lib/serviceStatus';
 import { useLoadState } from '../lib/useLoadState';
 import ServiceCard from './ServiceCard.vue';
 import AsyncState from './ui/AsyncState.vue';
@@ -58,31 +58,7 @@ function poweredByFor(server: CatalogServer) {
   return resolvePoweredBy(server.credential_provider, providers.value);
 }
 
-// The fix for each blocked status. Only link_required is fixable by the user.
-const FIX_SENTENCE: Record<string, string> = {
-  link_required: 'Link an identity to unlock access.',
-  permission_required: 'An administrator needs to grant access.',
-  unavailable: 'The backend is not responding. Try again later.',
-  misconfigured: 'An administrator needs to fix the configuration.',
-};
-
-const blockedBanner = computed(() => {
-  const blocked = servers.value.filter((s) => s.status !== 'available');
-  if (blocked.length === 0) return null;
-
-  const counts = new Map<string, number>();
-  for (const s of blocked) counts.set(s.status, (counts.get(s.status) ?? 0) + 1);
-  const [topStatus] = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
-  const singleFix = counts.size === 1;
-  const cta = resolveServiceStatus(blocked.find((s) => s.status === topStatus)!).cta;
-
-  return {
-    title: `${blocked.length} ${blocked.length === 1 ? 'service is' : 'services are'} blocked`,
-    body: `${FIX_SENTENCE[topStatus]}${singleFix ? '' : ' Other rows need a different fix.'}`,
-    // A button only when one fix covers every blocked service.
-    cta: singleFix ? cta : null,
-  };
-});
+const banner = computed(() => resolveServicesBanner(servers.value, providers.value));
 </script>
 
 <template>
@@ -112,14 +88,14 @@ const blockedBanner = computed(() => {
     </template>
 
     <div class="af-page">
-      <div v-if="blockedBanner" class="af-banner bad" role="status">
-        <span class="af-mark bad" aria-hidden="true"></span>
+      <div v-if="banner" class="af-banner" :class="banner.tone" role="status">
+        <span class="af-mark" :class="banner.tone" aria-hidden="true"></span>
         <div>
-          <b>{{ blockedBanner.title }}</b>
-          {{ blockedBanner.body }}
+          <b>{{ banner.title }}</b>
+          {{ banner.body }}
         </div>
-        <a v-if="blockedBanner.cta" :href="blockedBanner.cta.href" class="af-btn s">
-          {{ blockedBanner.cta.label }}
+        <a v-if="banner.cta" :href="banner.cta.href" class="af-btn s">
+          {{ banner.cta.label }}
         </a>
       </div>
 

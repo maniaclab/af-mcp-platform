@@ -179,6 +179,11 @@ function barHeight(calls: number): string {
 
         <section class="af-sect" aria-labelledby="up-service">
           <h2 id="up-service">By service</h2>
+          <p class="af-help">
+            What your AI assistant's tool calls put into its context through this platform — counted
+            as estimated tokens and priced, for scale, at a reference model's input rate. Estimates
+            only: this is not your provider bill.
+          </p>
           <div class="af-tbl-box">
             <table class="af-tbl">
               <thead>
@@ -206,13 +211,6 @@ function barHeight(calls: number): string {
         </section>
       </template>
     </AsyncState>
-
-    <!-- Caveat — same wording as the overview's UsageCard -->
-    <p class="up__caveat">
-      What your AI assistant's tool calls put into its context through this platform — counted as
-      estimated tokens and priced, for scale, at a reference model's input rate. Estimates only:
-      this is not your provider bill.
-    </p>
   </div>
 </template>
 
@@ -277,12 +275,5 @@ function barHeight(calls: number): string {
 
 .up__bar-slot:hover .up__bar {
   background: var(--color-af-text);
-}
-
-.up__caveat {
-  margin: 0;
-  font-size: var(--text-13);
-  color: var(--color-af-text-secondary);
-  max-width: 52rem;
 }
 </style>

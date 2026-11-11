@@ -39,6 +39,7 @@ describe('resolvePoweredBy', () => {
       label: 'No credential required',
       linked: null,
       linkHref: null,
+      linkLabel: null,
     });
   });
 
@@ -59,7 +60,8 @@ describe('resolvePoweredBy', () => {
       kind: 'identity',
       label: 'Grid certificate (x509)',
       linked: true,
-      linkHref: '/identities/',
+      linkHref: '/identities/#identity-card-x509',
+      linkLabel: 'Link certificate',
     });
   });
 
@@ -69,7 +71,8 @@ describe('resolvePoweredBy', () => {
       kind: 'identity',
       label: 'ATLAS IAM',
       linked: true,
-      linkHref: '/identities/',
+      linkHref: '/identities/#identity-card-atlas-oidc',
+      linkLabel: 'Link ATLAS IAM account',
     });
   });
 
@@ -81,7 +84,8 @@ describe('resolvePoweredBy', () => {
       kind: 'identity',
       label: 'Rucio (ATLAS)',
       linked: false,
-      linkHref: '/identities/',
+      linkHref: '/identities/#identity-card-rucio-mcp-atlas',
+      linkLabel: 'Link Rucio (ATLAS) account',
     });
   });
 
@@ -90,7 +94,8 @@ describe('resolvePoweredBy', () => {
       kind: 'identity',
       label: 'unknown-alias',
       linked: false,
-      linkHref: '/identities/',
+      linkHref: '/identities/#identity-card-unknown-alias',
+      linkLabel: 'Link unknown-alias account',
     });
   });
 });

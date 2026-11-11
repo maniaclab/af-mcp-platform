@@ -17,6 +17,7 @@ import { computed, onMounted, ref } from 'vue';
 import { fetchDashboardSummary, fetchUsage } from '../lib/api';
 import type { DashboardSummary, UsageResponse } from '../lib/api';
 import { overviewBanner } from '../lib/overviewBanner';
+import { expiresIn, expiresSoon } from '../lib/tokenDisplay';
 import { formatCost, formatTokens } from '../lib/usageFormat';
 import StatusMark from './ui/StatusMark.vue';
 
@@ -68,7 +69,11 @@ function gridCertificate(s: DashboardSummary): 'not linked' | 'expired' | 'activ
 const servicesStatus = computed(() => {
   const s = summary.value;
   if (!s) return pending(summaryLoading.value);
-  return { tone: s.serverCount > 0 ? 'ok' : 'off', state: `${s.serverCount} services` } as const;
+  if (s.serverCount === 0) return { tone: 'off', state: 'No services' } as const;
+  // Failing services are a problem; any other unreachable one (needs a linked
+  // account, or access) is a warning.
+  const tone: Tone = s.failingCount > 0 ? 'bad' : s.reachableCount < s.serverCount ? 'warn' : 'ok';
+  return { tone, state: `${s.reachableCount} of ${s.serverCount} reachable` };
 });
 
 const identitiesStatus = computed(() => {
@@ -84,6 +89,13 @@ const identitiesStatus = computed(() => {
 const tokensStatus = computed(() => {
   const s = summary.value;
   if (!s) return pending(summaryLoading.value);
+  const next = s.soonestExpiringToken;
+  if (next && expiresSoon({ revoked_at: null, expires_at: next.expires_at })) {
+    return {
+      tone: 'warn',
+      state: `${s.activeTokenCount} active · soonest expires ${expiresIn(next.expires_at)}`,
+    } as const;
+  }
   return {
     tone: s.activeTokenCount > 0 ? 'ok' : 'off',
     state: `${s.activeTokenCount} active`,
@@ -107,18 +119,16 @@ const rows = computed<Row[]>(() => [
     key: 'services',
     icon: Server,
     name: 'Services',
-    description:
-      'The backend systems your AI assistant can reach through this platform — dataset lookup, metadata, job submission, and more — all exposed as methods it can call directly.',
+    description: 'Backends your AI assistant can reach',
     ...servicesStatus.value,
     href: '/catalog/',
-    linkLabel: 'Browse the catalog',
+    linkLabel: 'View services',
   },
   {
     key: 'identities',
     icon: UserRound,
     name: 'Identities',
-    description:
-      'The external accounts — your CERN/ATLAS login, your grid certificate — this platform uses to act on your behalf, without ever handing your AI assistant a raw credential.',
+    description: 'Accounts and credentials the platform uses for you',
     ...identitiesStatus.value,
     href: '/identities/',
     linkLabel: 'Manage identities',
@@ -127,8 +137,7 @@ const rows = computed<Row[]>(() => [
     key: 'tokens',
     icon: KeyRound,
     name: 'Tokens',
-    description:
-      "A Personal Access Token (PAT) is what lets a client that can't sign in with a browser on its own — like Claude Desktop — connect on your behalf.",
+    description: "Personal access tokens for clients that can't open a browser",
     ...tokensStatus.value,
     href: '/tokens/',
     linkLabel: 'Manage tokens',
@@ -137,8 +146,7 @@ const rows = computed<Row[]>(() => [
     key: 'usage',
     icon: ChartColumn,
     name: 'Usage',
-    description:
-      "What your AI assistant's tool calls put into its context through this platform — counted as estimated tokens and priced, for scale, at a reference model's input rate. Estimates only: this is not your provider bill.",
+    description: 'Estimated size of your assistant’s tool results',
     ...usageStatus.value,
     href: '/usage/',
     linkLabel: 'View usage details',

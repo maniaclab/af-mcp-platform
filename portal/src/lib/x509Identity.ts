@@ -61,7 +61,7 @@ export function x509LinkErrorMessage(err: unknown): string {
       return 'Too many failed attempts — wait a few minutes and try again.';
     }
     if (err.status === 502) {
-      return 'Proxy minting is temporarily unavailable — try again later.';
+      return 'Creating a proxy is temporarily unavailable — try again later.';
     }
   }
   if (err instanceof Error && err.message) return err.message;

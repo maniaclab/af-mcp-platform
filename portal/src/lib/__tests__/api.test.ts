@@ -567,6 +567,61 @@ describe('fetchDashboardSummary()', () => {
   });
 });
 
+describe('fetchDashboardSummary() service and token details', () => {
+  it('carries service reachability counts and the soonest-expiring active token', async () => {
+    const soon = new Date(Date.now() + 3 * 24 * 3600 * 1000).toISOString();
+    const later = new Date(Date.now() + 60 * 24 * 3600 * 1000).toISOString();
+    const token = (name: string, expires_at: string | null, revoked_at: string | null = null) => ({
+      lookup_id: name,
+      name,
+      note: null,
+      created_at: '2024-01-01T00:00:00Z',
+      expires_at,
+      revoked_at,
+      last_used_at: null,
+      permission_grant: null,
+    });
+    const server = (name: string, status: string) => ({ name, status });
+    const body = (url: string): unknown => {
+      if (url.includes('/identities')) return { providers: [] };
+      if (url.includes('/catalog')) {
+        return {
+          servers: [
+            server('a', 'available'),
+            server('b', 'available'),
+            server('c', 'link_required'),
+            server('d', 'misconfigured'),
+          ],
+        };
+      }
+      if (url.includes('/tokens')) {
+        return [
+          token('later', later),
+          token('soon', soon),
+          token('gone', soon, '2024-02-01T00:00:00Z'),
+        ];
+      }
+      return { cached: false, voms_attributes: [] };
+    };
+    globalThis.fetch = vi.fn((input: RequestInfo | URL) =>
+      Promise.resolve(
+        new Response(JSON.stringify(body(String(input))), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      ),
+    );
+
+    const summary = await fetchDashboardSummary();
+
+    expect(summary.serverCount).toBe(4);
+    expect(summary.reachableCount).toBe(2);
+    expect(summary.needsLinkCount).toBe(1);
+    expect(summary.failingCount).toBe(1);
+    expect(summary.soonestExpiringToken).toEqual({ name: 'soon', expires_at: soon });
+  });
+});
+
 describe('permissions client (issue #144 step 4: permission PATs)', () => {
   it('fetchPermissions returns the parsed grants and the callers raw groups', async () => {
     globalThis.fetch = mockJson(200, {

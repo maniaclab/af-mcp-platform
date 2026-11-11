@@ -53,32 +53,33 @@ beforeEach(() => {
   vi.resetAllMocks();
 });
 
-describe('blocked-services banner', () => {
+describe('services banner', () => {
   it('is absent when every service is available', async () => {
     const wrapper = await mountPage([server(), server({ name: 'ami', display_name: 'AMI' })]);
     expect(wrapper.find('.af-banner').exists()).toBe(false);
   });
 
-  it('counts blocked services and offers one button to the fix', async () => {
+  it('warns about services needing a linked account with one button to the fix', async () => {
     const wrapper = await mountPage([
       server(),
       server({ name: 'panda', display_name: 'PanDA', ...BLOCKED }),
       server({ name: 'ami', display_name: 'AMI', ...BLOCKED }),
     ]);
     const banner = wrapper.find('.af-banner');
-    expect(banner.exists()).toBe(true);
-    expect(banner.text()).toContain('2 services are blocked');
+    expect(banner.classes()).toContain('warn');
+    expect(banner.text()).toContain('2 services need a linked account');
     const buttons = banner.findAll('a.af-btn');
     expect(buttons).toHaveLength(1);
-    expect(buttons[0].attributes('href')).toBe('/identities/');
+    expect(buttons[0].attributes('href')).toBe('/identities/#identity-card-atlas-oidc');
+    expect(buttons[0].text()).toBe('Link ATLAS IAM account');
   });
 
-  it('uses the singular for one blocked service', async () => {
+  it('uses the singular for one service needing a linked account', async () => {
     const wrapper = await mountPage([server(), server({ name: 'ami', ...BLOCKED })]);
-    expect(wrapper.find('.af-banner').text()).toContain('1 service is blocked');
+    expect(wrapper.find('.af-banner').text()).toContain('1 service needs a linked account');
   });
 
-  it('offers no button when the blocked services need different fixes', async () => {
+  it('reports a failing service as a problem, ahead of services needing a link', async () => {
     const wrapper = await mountPage([
       server({ name: 'panda', ...BLOCKED }),
       server({
@@ -88,7 +89,8 @@ describe('blocked-services banner', () => {
       }),
     ]);
     const banner = wrapper.find('.af-banner');
-    expect(banner.exists()).toBe(true);
+    expect(banner.classes()).toContain('bad');
+    expect(banner.text()).toContain('1 service is unavailable');
     expect(banner.find('a.af-btn').exists()).toBe(false);
   });
 });

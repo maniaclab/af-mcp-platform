@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  EXPIRY_WARNING_DAYS,
   NOTE_MAX_LENGTH,
+  expiresIn,
+  expiresSoon,
+  soonestExpiringToken,
   permissionGrantLabel,
   shortLookupId,
   tokenStatus,
@@ -112,5 +116,61 @@ describe('permissionGrantLabel', () => {
 
   it('describes an empty (but non-null) grant distinctly from an identity PAT', () => {
     expect(permissionGrantLabel([])).toBe('No permissions');
+  });
+});
+
+describe('expiry warning', () => {
+  const NOW = Date.parse('2026-07-21T12:00:00Z');
+  const DAY = 24 * 3600 * 1000;
+  const iso = (ms: number) => new Date(NOW + ms).toISOString();
+
+  it('warns for an active token that expires within the window', () => {
+    expect(expiresSoon({ revoked_at: null, expires_at: iso(EXPIRY_WARNING_DAYS * DAY) }, NOW)).toBe(
+      true,
+    );
+  });
+
+  it('stays quiet past the window, for no expiry, and for revoked or expired tokens', () => {
+    expect(
+      expiresSoon({ revoked_at: null, expires_at: iso(EXPIRY_WARNING_DAYS * DAY + 1) }, NOW),
+    ).toBe(false);
+    expect(expiresSoon({ revoked_at: null, expires_at: null }, NOW)).toBe(false);
+    expect(expiresSoon({ revoked_at: iso(-DAY), expires_at: iso(DAY) }, NOW)).toBe(false);
+    expect(expiresSoon({ revoked_at: null, expires_at: iso(-DAY) }, NOW)).toBe(false);
+  });
+
+  it('words the time left in hours up to a day and days after', () => {
+    expect(expiresIn(iso(5 * 3600 * 1000), NOW)).toBe('in 5 hours');
+    expect(expiresIn(iso(1000), NOW)).toBe('in 1 hour');
+    expect(expiresIn(iso(3 * DAY - 1000), NOW)).toBe('in 3 days');
+  });
+});
+
+describe('soonestExpiringToken', () => {
+  const NOW = Date.parse('2026-07-21T12:00:00Z');
+  const row = (name: string, expires_at: string | null, revoked_at: string | null = null) => ({
+    name,
+    expires_at,
+    revoked_at,
+  });
+
+  it('picks the active token that expires first, with its name and expiry', () => {
+    expect(
+      soonestExpiringToken(
+        [
+          row('later', '2026-09-01T00:00:00Z'),
+          row('sooner', '2026-08-01T00:00:00Z'),
+          row('revoked', '2026-07-22T00:00:00Z', '2026-07-20T00:00:00Z'),
+          row('expired', '2026-07-01T00:00:00Z'),
+          row('never', null),
+        ],
+        NOW,
+      ),
+    ).toEqual({ name: 'sooner', expires_at: '2026-08-01T00:00:00Z' });
+  });
+
+  it('is null when no active token expires', () => {
+    expect(soonestExpiringToken([row('never', null)], NOW)).toBeNull();
+    expect(soonestExpiringToken([], NOW)).toBeNull();
   });
 });

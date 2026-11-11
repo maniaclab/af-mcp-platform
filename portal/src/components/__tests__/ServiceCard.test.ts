@@ -90,7 +90,8 @@ function mountCard(): VueWrapper {
         kind: 'identity' as const,
         label: 'ATLAS IAM',
         linked: true,
-        linkHref: '/identities/',
+        linkHref: '/identities/#identity-card-atlas-oidc',
+        linkLabel: 'Link ATLAS IAM account',
       },
     },
   });
@@ -107,6 +108,7 @@ function mountBuiltinCard(): VueWrapper {
         label: 'No credential required',
         linked: null,
         linkHref: null,
+        linkLabel: null,
       },
     },
   });
@@ -239,7 +241,8 @@ describe('permission badge', () => {
           kind: 'identity' as const,
           label: 'ATLAS IAM',
           linked: true,
-          linkHref: '/identities/',
+          linkHref: '/identities/#identity-card-atlas-oidc',
+          linkLabel: 'Link ATLAS IAM account',
         },
       },
     });
@@ -264,7 +267,8 @@ describe('permission badge', () => {
           kind: 'identity' as const,
           label: 'ATLAS IAM',
           linked: true,
-          linkHref: '/identities/',
+          linkHref: '/identities/#identity-card-atlas-oidc',
+          linkLabel: 'Link ATLAS IAM account',
         },
       },
     });
@@ -322,5 +326,55 @@ describe('builtin af-mcp card (issue #240)', () => {
     expect(wrapper.text()).toContain('af_whoami');
     expect(wrapper.text()).toContain('af_usage');
     expect(countChip(wrapper)).toBe('2 methods');
+  });
+});
+
+describe('status line', () => {
+  function mountWith(overrides: Partial<CatalogServer>): VueWrapper {
+    return mount(ServiceCard, {
+      props: {
+        server: { ...SERVER, ...overrides },
+        poweredBy: {
+          kind: 'identity' as const,
+          label: 'ATLAS IAM',
+          linked: false,
+          linkHref: '/identities/#identity-card-atlas-oidc',
+          linkLabel: 'Link ATLAS IAM account',
+        },
+      },
+    });
+  }
+
+  it('says "Not linked" and names the fix once, linking to the identity card', () => {
+    const wrapper = mountWith({
+      status: 'link_required',
+      status_detail: 'Link your ATLAS IAM account to use this service.',
+    });
+    const status = wrapper.get('.bc__status-line');
+    expect(status.text()).toContain('Not linked');
+    const fix = status.get('a');
+    expect(fix.text()).toBe('Link ATLAS IAM account');
+    expect(fix.attributes('href')).toBe('/identities/#identity-card-atlas-oidc');
+    // The status word and the fix already say it; no repeated sentence.
+    expect(wrapper.find('.bc__status-detail').exists()).toBe(false);
+  });
+
+  it('drops the sentence for an unavailable service, whose word already says it', () => {
+    const wrapper = mountWith({
+      status: 'unavailable',
+      status_detail: 'This service is temporarily unreachable.',
+    });
+    expect(wrapper.find('.bc__status-detail').exists()).toBe(false);
+  });
+
+  it('keeps the sentence and reference id when they add information', () => {
+    const wrapper = mountWith({
+      status: 'misconfigured',
+      status_detail: 'This service is not configured correctly. Contact an administrator.',
+      correlation_id: 'abc123',
+    });
+    const detail = wrapper.get('.bc__status-detail');
+    expect(detail.text()).toContain('Contact an administrator');
+    expect(detail.text()).toContain('abc123');
   });
 });

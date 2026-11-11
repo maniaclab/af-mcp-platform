@@ -8,7 +8,8 @@
  * harnesses, so component logic stays thin and this module carries the
  * actual decisions.
  */
-import type { ServiceStatus, CatalogServer } from './api';
+import type { ServiceStatus, CatalogServer, IdentityProvider } from './api';
+import { identityLinkAnchor, identityLinkLabel } from './identityLinkLabel';
 
 export type StatusSeverity = 'ok' | 'info' | 'warning' | 'error';
 
@@ -34,7 +35,7 @@ export interface ServiceStatusView {
 
 const LABELS: Record<ServiceStatus, string> = {
   available: 'Available',
-  link_required: 'Link required',
+  link_required: 'Not linked',
   permission_required: 'Access required',
   unavailable: 'Unavailable',
   misconfigured: 'Misconfigured',
@@ -42,7 +43,7 @@ const LABELS: Record<ServiceStatus, string> = {
 
 const SEVERITIES: Record<ServiceStatus, StatusSeverity> = {
   available: 'ok',
-  link_required: 'info',
+  link_required: 'warning',
   permission_required: 'warning',
   unavailable: 'warning',
   misconfigured: 'error',
@@ -86,4 +87,86 @@ export function resolvePoweredByLinked(
   if (poweredByLinked === null) return null;
   if (status === 'link_required') return false;
   return poweredByLinked;
+}
+
+export interface ServiceCounts {
+  total: number;
+  /** Services that are available. */
+  reachable: number;
+  /** Services that only need the user to link an account. */
+  needsLink: number;
+  /** Services that are unavailable or misconfigured. */
+  failing: number;
+}
+
+/** Counts services the way the Services page presents them. */
+export function summarizeServices(servers: Pick<CatalogServer, 'status'>[]): ServiceCounts {
+  const statuses = servers.map((s) => s.status);
+  return {
+    total: servers.length,
+    reachable: statuses.filter((s) => SEVERITIES[s] === 'ok').length,
+    needsLink: statuses.filter((s) => s === 'link_required').length,
+    failing: statuses.filter((s) => s === 'unavailable' || s === 'misconfigured').length,
+  };
+}
+
+export interface ServicesBanner {
+  tone: 'bad' | 'warn';
+  title: string;
+  body: string;
+  /** One button, only when a single account fixes every service the banner counts. */
+  cta: StatusCta | null;
+}
+
+function countOf(n: number, singular: string, plural: string): string {
+  return `${n} ${n === 1 ? singular : plural}`;
+}
+
+/**
+ * The Services page's single banner. A failing or misconfigured service is a
+ * problem; a service that only needs the user to link an account is a
+ * warning, never counted as a failure. "Access required" needs an
+ * administrator, so it never raises a banner of its own.
+ */
+export function resolveServicesBanner(
+  servers: Pick<CatalogServer, 'status' | 'credential_provider'>[],
+  providers: Pick<IdentityProvider, 'id' | 'display_name' | 'link_mechanism'>[],
+): ServicesBanner | null {
+  const failing = servers.filter((s) => s.status === 'unavailable' || s.status === 'misconfigured');
+  if (failing.length > 0) {
+    const misconfigured = failing.some((s) => s.status === 'misconfigured');
+    const unavailable = failing.some((s) => s.status === 'unavailable');
+    return {
+      tone: 'bad',
+      title: `${countOf(failing.length, 'service is', 'services are')} unavailable`,
+      body:
+        misconfigured && unavailable
+          ? 'Some are not responding and some are misconfigured. Try again later, then contact an administrator.'
+          : misconfigured
+            ? 'An administrator needs to fix the configuration.'
+            : 'The backend is not responding. Try again later.',
+      cta: null,
+    };
+  }
+
+  const unlinked = servers.filter((s) => s.status === 'link_required');
+  if (unlinked.length === 0) return null;
+  const aliases = new Set(unlinked.map((s) => s.credential_provider));
+  const [alias] = aliases;
+  const provider = providers.find((p) => p.id === alias);
+  const cta =
+    aliases.size === 1 && alias != null
+      ? {
+          label: identityLinkLabel(provider ?? { link_mechanism: 'redirect', display_name: alias }),
+          href: identityLinkAnchor(alias),
+        }
+      : null;
+  return {
+    tone: 'warn',
+    title: `${countOf(unlinked.length, 'service needs', 'services need')} a linked account`,
+    body: cta
+      ? 'Link the account to unlock them.'
+      : 'Each one lists the account it needs. Link them on the Identities page.',
+    cta,
+  };
 }

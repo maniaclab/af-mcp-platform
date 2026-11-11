@@ -15,10 +15,9 @@ import PublicBase from '../layouts/PublicBase.astro';
 <PublicBase title="AI access to your facility, without the credentials">
   <!-- ── Hero: particle track canvas + pitch ─────────────────────────── -->
   <section class="hero" aria-label="AF MCP Platform">
-    <canvas id="track-canvas" class="hero__canvas" aria-hidden="true"></canvas>
-
-    <div class="af-wrap">
+    <div class="af-wrap hero__grid">
       <div class="hero__content">
+        <p class="hero__kicker">Federated identity MCP gateway</p>
         <h1 class="hero__title">Give AI access to your analysis facility.</h1>
         <p class="hero__sub">
           Securely connect AI assistants to datasets, compute, notebooks, and analysis tools through <a
@@ -29,10 +28,13 @@ import PublicBase from '../layouts/PublicBase.astro';
         </p>
 
         <div class="hero__cta">
-          <a href="/overview/" class="af-btn primary l">Sign in</a>
-          <a href="#benefits" class="af-btn quiet l">How it works</a>
+          <a href="/overview/" class="af-btn primary xl">Sign in</a>
+          <a href="#benefits" class="af-btn quiet">How it works</a>
         </div>
       </div>
+
+      <!-- The canvas has its own cell so no text is ever drawn over it. -->
+      <canvas id="track-canvas" class="hero__canvas" aria-hidden="true"></canvas>
     </div>
   </section>
 
@@ -233,29 +235,36 @@ import PublicBase from '../layouts/PublicBase.astro';
 <style>
   /* ── Hero ──────────────────────────────────────────────────────────── */
   .hero {
-    position: relative;
-    overflow: hidden;
     border-bottom: 1px solid var(--color-af-border);
     padding-block: var(--space-64);
   }
 
-  /* A quiet backdrop: faint enough that text keeps AA contrast over it. */
+  /* Text left, event display right: the canvas never sits under text. */
+  .hero__grid {
+    display: grid;
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    align-items: center;
+    gap: var(--space-48);
+  }
+
   .hero__canvas {
-    position: absolute;
-    inset: 0;
     width: 100%;
-    height: 100%;
-    opacity: 0.35;
+    height: 280px;
+    border: 1px solid var(--color-af-border);
+    border-radius: var(--radius-10);
     pointer-events: none;
   }
 
   .hero__content {
-    position: relative;
-    z-index: 1;
     max-width: 720px;
     display: flex;
     flex-direction: column;
     gap: var(--space-16);
+  }
+
+  .hero__kicker {
+    margin: 0;
+    color: var(--color-af-text-secondary);
   }
 
   .hero__title {
@@ -292,14 +301,16 @@ import PublicBase from '../layouts/PublicBase.astro';
   .benefits__heading {
     font-size: var(--text-24);
     line-height: 1.3;
-    margin: 0 0 var(--space-48);
+    margin: 0 0 var(--space-32);
   }
 
+  /* The diagram takes up to 640px; the benefits fill the rest of the 1120px
+     column, centred on the diagram's height. */
   .benefits-layout {
     display: grid;
-    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    grid-template-columns: minmax(0, 640px) minmax(0, 1fr);
     align-items: center;
-    gap: var(--space-48);
+    gap: var(--space-64);
   }
 
   .benefit-list {
@@ -347,8 +358,7 @@ import PublicBase from '../layouts/PublicBase.astro';
     flex-direction: column;
     align-items: center;
     width: 100%;
-    max-width: 560px;
-    margin-inline: auto;
+    max-width: 640px;
   }
 
   .diagram__node {
@@ -565,7 +575,8 @@ import PublicBase from '../layouts/PublicBase.astro';
 
   /* ── Proof and closing action ──────────────────────────────────────── */
   .proof {
-    padding-block: var(--space-48);
+    padding-block: var(--space-64);
+    border-top: 1px solid var(--color-af-border);
   }
 
   .landing-col {
@@ -600,7 +611,9 @@ import PublicBase from '../layouts/PublicBase.astro';
   }
 
   .final-cta {
-    padding-block: var(--space-48) var(--space-64);
+    padding-block: var(--space-64);
+    border-top: 1px solid var(--color-af-border);
+    background: var(--color-af-bg-subtle);
   }
 
   .final-cta .af-btn {
@@ -609,6 +622,12 @@ import PublicBase from '../layouts/PublicBase.astro';
 
   /* ── Responsive ────────────────────────────────────────────────────── */
   @media (max-width: 900px) {
+    .hero__grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .hero__canvas {
+      height: 120px;
+    }
     .benefits-layout {
       grid-template-columns: minmax(0, 1fr);
       gap: var(--space-48);

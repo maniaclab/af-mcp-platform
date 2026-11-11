@@ -30,6 +30,7 @@
  * success or failure. It is never stored anywhere beyond the controlled
  * ref() within this component's lifecycle.
  */
+import { LINK_ACTION_LABEL } from '../lib/identityLinkLabel';
 import { Cable, ExternalLink } from '@lucide/vue';
 import { nextTick, ref } from 'vue';
 import { linkServiceXToken, unlinkIdentity, type ServiceXTokenMetadata } from '../lib/api';
@@ -172,7 +173,7 @@ async function handleForget() {
         :disabled="busy"
         @click="openForm"
       >
-        Link ServiceX token
+        {{ LINK_ACTION_LABEL.servicex }}
       </button>
 
       <!-- Re-link overwrites the stored refresh token in place — the fix

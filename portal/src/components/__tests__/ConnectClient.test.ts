@@ -51,7 +51,7 @@ describe('ConnectClient', () => {
     expect(steps[1]!.text()).toContain('opens a browser window');
     expect(steps[2]!.find('a').attributes('href')).toBe('/tokens/');
     expect(steps[2]!.text()).toContain('Authorization');
-    expect(steps[2]!.text()).toContain('Bearer <your PAT>');
+    expect(steps[2]!.text()).toContain('Bearer <your token>');
   });
 
   it('gives the curl snippet its own multiline copy field built from the endpoint', async () => {
@@ -60,8 +60,8 @@ describe('ConnectClient', () => {
     const snippet = wrapper.findAll('.af-copy')[1]!;
     expect(snippet.classes()).toContain('copy--multiline');
     expect(snippet.find('code').text()).toBe(
-      'export MCP_PAT="<your PAT>"\n' +
-        'curl -H "Authorization: Bearer $MCP_PAT" \\\n' +
+      'export MCP_TOKEN="<your token>"\n' +
+        'curl -H "Authorization: Bearer $MCP_TOKEN" \\\n' +
         '     https://mcp.example.org/mcp/',
     );
   });

@@ -13,12 +13,15 @@
  * `close` event) and is never written back into the token list — the list
  * always comes from GET /v1/tokens, which never echoes a token value.
  */
-import { ref, computed, onMounted, nextTick } from 'vue';
-import { Plus } from '@lucide/vue';
+import { ref, computed, onBeforeUnmount, onMounted, nextTick } from 'vue';
+import { Check, Copy, Plus } from '@lucide/vue';
 import { mintToken, listTokens, revokeToken, fetchPermissions } from '../lib/api';
 import type { MintedToken, TokenSummary } from '../lib/api';
 import {
+  EXPIRY_WARNING_DAYS,
   NOTE_MAX_LENGTH,
+  expiresIn,
+  expiresSoon,
   permissionGrantLabel,
   shortLookupId,
   tokenStatus,
@@ -30,6 +33,7 @@ import {
   pythonMintAndConnectSnippet,
 } from '../lib/tokenCliSnippets';
 import { getBrokerOrigin } from '../lib/auth';
+import { copyText } from '../lib/clipboard';
 import { formatDateTime, formatRelative } from '../lib/relativeTime';
 import { useLoadState } from '../lib/useLoadState';
 import AsyncState from './ui/AsyncState.vue';
@@ -54,33 +58,27 @@ function loadTokens() {
 
 onMounted(loadTokens);
 
+// ── Token ID copy ────────────────────────────────────────────────────────
+// The cell shows only the start of the id; the button copies all of it and
+// swaps its icon for a check mark for a moment.
+const COPIED_RESET_MS = 2000;
+const copiedId = ref<string | null>(null);
+let copiedTimer: ReturnType<typeof setTimeout> | undefined;
+
+async function copyTokenId(lookupId: string): Promise<void> {
+  if (!(await copyText(lookupId))) return;
+  copiedId.value = lookupId;
+  clearTimeout(copiedTimer);
+  copiedTimer = setTimeout(() => (copiedId.value = null), COPIED_RESET_MS);
+}
+
+onBeforeUnmount(() => clearTimeout(copiedTimer));
+
 // ── Expiry warning ───────────────────────────────────────────────────────
-const HOUR_MS = 3_600_000;
-const DAY_MS = 24 * HOUR_MS;
-const EXPIRY_WARNING_DAYS = 7;
-
-/** "in 3 days" / "in 5 hours" for an expiry that is still ahead. */
-function expiresIn(iso: string): string {
-  const ms = Date.parse(iso) - Date.now();
-  if (ms <= DAY_MS) {
-    const hours = Math.max(1, Math.ceil(ms / HOUR_MS));
-    return `in ${hours} ${hours === 1 ? 'hour' : 'hours'}`;
-  }
-  return `in ${Math.ceil(ms / DAY_MS)} days`;
-}
-
-function expiresSoon(row: TokenSummary): boolean {
-  return (
-    tokenStatus(row) === 'active' &&
-    row.expires_at !== null &&
-    Date.parse(row.expires_at) - Date.now() <= EXPIRY_WARNING_DAYS * DAY_MS
-  );
-}
-
 // Soonest first, so the banner names the most urgent token.
 const expiringTokens = computed(() =>
   tokens.value
-    .filter(expiresSoon)
+    .filter((row) => expiresSoon(row))
     .sort((a, b) => Date.parse(a.expires_at!) - Date.parse(b.expires_at!)),
 );
 
@@ -376,7 +374,23 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
                 </td>
                 <td class="sub tp__scope">{{ permissionGrantLabel(row.permission_grant) }}</td>
                 <td class="sub tp__id" :title="row.lookup_id">
-                  {{ shortLookupId(row.lookup_id) }}
+                  <span class="tp__idbox">
+                    {{ shortLookupId(row.lookup_id) }}
+                    <button
+                      type="button"
+                      class="af-btn quiet s tp__copy"
+                      :aria-label="`Copy token ID ${row.lookup_id}`"
+                      @click="copyTokenId(row.lookup_id)"
+                    >
+                      <Check
+                        v-if="copiedId === row.lookup_id"
+                        class="af-icon"
+                        :size="16"
+                        aria-hidden="true"
+                      />
+                      <Copy v-else class="af-icon" :size="16" aria-hidden="true" />
+                    </button>
+                  </span>
                 </td>
                 <td class="sub" :title="formatExact(row.created_at)">
                   {{ formatRelativeIso(row.created_at) }}
@@ -428,10 +442,10 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
       </span>
     </div>
 
-    <!-- issue #122: copy-paste snippets for minting/using a token outside the browser. -->
+    <!-- issue #122: copy-paste snippets for creating/using a token outside the browser. -->
     <section class="af-sect" aria-labelledby="tp-cli-heading">
       <h2 id="tp-cli-heading">Use from the command line</h2>
-      <p class="tp__help">
+      <p class="af-help">
         Create and use a token without opening a browser, for scripts or CI. See
         <a
           href="https://maniaclab.github.io/af-mcp-platform/connecting-a-client/"
@@ -449,7 +463,7 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
           <h3 class="tp__label">Create a token and connect from Python</h3>
           <CopyField :value="pythonSnippet" label="Copy Python snippet" multiline />
 
-          <p class="tp__help">
+          <p class="af-help">
             A token created this way appears in the list above like any other, with a name, an
             expiry and a <strong>Revoke</strong> action.
           </p>
@@ -466,10 +480,10 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
     >
       <template v-if="!mintedToken">
         <h4 id="tp-modal-title">New token</h4>
-        <p class="tp__help">
-          A personal access token (PAT) is a long-lived credential you paste into a client's config,
-          such as Claude Desktop, that can't sign in with a browser. It is shown once, so copy it
-          before you close this dialog.
+        <p class="af-help">
+          A personal access token is a long-lived credential you paste into a client's config, such
+          as Claude Desktop, that can't sign in with a browser. It is shown once, so copy it before
+          you close this dialog.
         </p>
 
         <form class="tp__form" novalidate @submit.prevent="handleMint">
@@ -564,7 +578,7 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
 
         <h3 class="tp__label">Claude (Claude.ai, Claude Desktop) without OAuth support</h3>
         <CopyField :value="claudeHeaderValue" label="Copy request header value" multiline />
-        <p class="tp__help">
+        <p class="af-help">
           In the custom connector's <strong>Request headers</strong>, add name
           <code>Authorization</code> and paste the value above. Skip this if your client supports
           OAuth discovery: add just the server URL instead and it authenticates itself.
@@ -572,7 +586,7 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
 
         <h3 class="tp__label">Register with Claude Code</h3>
         <CopyField :value="claudeAddCommand" label="Copy Claude Code command" multiline />
-        <p class="tp__help">
+        <p class="af-help">
           This command embeds the token above, so pasting it into a terminal puts a working
           credential in your shell history. For the safer pattern (token read into an env var via
           <code>read -s</code>, never a literal), see the <strong>Claude Code</strong> section of
@@ -619,12 +633,6 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
   font-weight: 500;
 }
 
-.tp__help {
-  margin: 0;
-  font-size: var(--text-13);
-  color: var(--color-af-text-secondary);
-}
-
 .tp__name {
   display: flex;
   align-items: center;
@@ -633,6 +641,17 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
 
 .tp__id {
   font-family: var(--font-mono);
+}
+
+.tp__idbox {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.tp__copy {
+  height: var(--space-24);
+  padding: 0 var(--space-4);
 }
 
 /* A scope can list several permissions; let it wrap instead of widening the table. */

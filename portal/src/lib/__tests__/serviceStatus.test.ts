@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { resolveServiceStatus, resolvePoweredByLinked } from '../serviceStatus';
+import {
+  resolveServiceStatus,
+  resolvePoweredByLinked,
+  resolveServicesBanner,
+  summarizeServices,
+} from '../serviceStatus';
 import type { ServiceStatus, CatalogServer } from '../api';
 
 function statusFields(
@@ -25,11 +30,12 @@ describe('resolveServiceStatus', () => {
     });
   });
 
-  it('reports "link_required" as info severity with a link-identity CTA', () => {
+  it('reports "link_required" as "Not linked", a warning, with a link-identity CTA', () => {
     const view = resolveServiceStatus(
       statusFields('link_required', { status_detail: 'Link your identity to use this service.' }),
     );
-    expect(view.severity).toBe('info');
+    expect(view.label).toBe('Not linked');
+    expect(view.severity).toBe('warning');
     expect(view.cta).toEqual({ label: 'Link identity', href: '/identities/' });
     expect(view.correlationId).toBeNull();
   });
@@ -83,5 +89,88 @@ describe('resolvePoweredByLinked', () => {
     expect(resolvePoweredByLinked('permission_required', true)).toBe(true);
     expect(resolvePoweredByLinked('unavailable', true)).toBe(true);
     expect(resolvePoweredByLinked('misconfigured', false)).toBe(false);
+  });
+});
+
+describe('resolveServicesBanner', () => {
+  const providers = [
+    { id: 'atlas-oidc', display_name: 'CERN', link_mechanism: 'redirect' as const },
+    { id: 'x509', display_name: 'Grid certificate', link_mechanism: 'passphrase' as const },
+  ];
+  const svc = (status: ServiceStatus, credential_provider: string | null = 'atlas-oidc') => ({
+    status,
+    credential_provider,
+  });
+
+  it('is absent when every service is available or only needs an administrator', () => {
+    expect(
+      resolveServicesBanner([svc('available'), svc('permission_required')], providers),
+    ).toBeNull();
+  });
+
+  it('reports failing services as a problem naming how many are unavailable', () => {
+    const banner = resolveServicesBanner(
+      [svc('available'), svc('unavailable'), svc('misconfigured'), svc('link_required')],
+      providers,
+    );
+    expect(banner?.tone).toBe('bad');
+    expect(banner?.title).toBe('2 services are unavailable');
+    expect(banner?.cta).toBeNull();
+  });
+
+  it('uses the singular for one failing service', () => {
+    const banner = resolveServicesBanner([svc('misconfigured')], providers);
+    expect(banner?.title).toBe('1 service is unavailable');
+  });
+
+  it('warns that services need a linked account, with one button when they share the account', () => {
+    const banner = resolveServicesBanner(
+      [svc('available'), svc('link_required'), svc('link_required')],
+      providers,
+    );
+    expect(banner?.tone).toBe('warn');
+    expect(banner?.title).toBe('2 services need a linked account');
+    expect(banner?.cta).toEqual({
+      label: 'Link CERN account',
+      href: '/identities/#identity-card-atlas-oidc',
+    });
+  });
+
+  it('uses the singular for one service needing a linked account', () => {
+    const banner = resolveServicesBanner([svc('link_required', 'x509')], providers);
+    expect(banner?.title).toBe('1 service needs a linked account');
+    expect(banner?.cta?.label).toBe('Link certificate');
+  });
+
+  it('offers no button when the services need different accounts', () => {
+    const banner = resolveServicesBanner(
+      [svc('link_required', 'atlas-oidc'), svc('link_required', 'x509')],
+      providers,
+    );
+    expect(banner?.tone).toBe('warn');
+    expect(banner?.cta).toBeNull();
+  });
+});
+
+describe('summarizeServices', () => {
+  const statuses = (...list: ServiceStatus[]) => list.map((status) => ({ status }));
+
+  it('counts reachable, failing and unlinked services using the Services page statuses', () => {
+    expect(
+      summarizeServices(
+        statuses(
+          'available',
+          'available',
+          'link_required',
+          'unavailable',
+          'misconfigured',
+          'permission_required',
+        ),
+      ),
+    ).toEqual({ total: 6, reachable: 2, needsLink: 1, failing: 2 });
+  });
+
+  it('is all zeros for no services', () => {
+    expect(summarizeServices([])).toEqual({ total: 0, reachable: 0, needsLink: 0, failing: 0 });
   });
 });

@@ -28,7 +28,8 @@
  * one route, not a template for "public-ish" endpoints in general.
  */
 import { getAccessToken, isOidcConfigured, renewAccessToken } from './auth';
-import { tokenStatus } from './tokenDisplay';
+import { summarizeServices } from './serviceStatus';
+import { soonestExpiringToken, tokenStatus } from './tokenDisplay';
 
 // PUBLIC_BROKER_URL MUST include the `/v1` suffix when overridden
 // (e.g. https://mcp.af.uchicago.edu/v1). It replaces the base wholesale, so a
@@ -799,6 +800,14 @@ export interface DashboardSummary {
   serverCount: number;
   proxyStatus: ProxyStatus;
   activeTokenCount: number;
+  /** Services that are available, per the same statuses the Services page shows. */
+  reachableCount: number;
+  /** Services that only need the user to link an account. */
+  needsLinkCount: number;
+  /** Services that are unavailable or misconfigured. */
+  failingCount: number;
+  /** The active token that expires first; null when none expires. */
+  soonestExpiringToken: { name: string; expires_at: string } | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -827,7 +836,7 @@ export async function fetchDashboardSummary(): Promise<DashboardSummary> {
       ? identityData.value.providers.filter((p) => p.linked).length
       : 0;
 
-  const serverCount = catalog.status === 'fulfilled' ? catalog.value.servers.length : 0;
+  const services = summarizeServices(catalog.status === 'fulfilled' ? catalog.value.servers : []);
 
   const proxy: ProxyStatus =
     proxyStatus.status === 'fulfilled' ? proxyStatus.value : { cached: false, voms_attributes: [] };
@@ -837,7 +846,16 @@ export async function fetchDashboardSummary(): Promise<DashboardSummary> {
       ? tokens.value.filter((t) => tokenStatus(t) === 'active').length
       : 0;
 
-  return { linkedCount, serverCount, proxyStatus: proxy, activeTokenCount };
+  return {
+    linkedCount,
+    serverCount: services.total,
+    proxyStatus: proxy,
+    activeTokenCount,
+    reachableCount: services.reachable,
+    needsLinkCount: services.needsLink,
+    failingCount: services.failing,
+    soonestExpiringToken: tokens.status === 'fulfilled' ? soonestExpiringToken(tokens.value) : null,
+  };
 }
 
 // ---------------------------------------------------------------------------

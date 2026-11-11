@@ -33,12 +33,20 @@ const actionTooltip = isWrite
   : 'Read-only — no side effects';
 const statusView = computed(() => resolveServiceStatus(props.server));
 const statusTone = computed(() => TONE[statusView.value.severity]);
-// The fix reads as "verb + object" naming the account when there is one.
-const fixLabel = computed(() => {
+// The fix names the action the Identities page uses for the same account and
+// links to that account's card.
+const fix = computed(() => {
   const cta = statusView.value.cta;
   if (!cta) return null;
-  return props.poweredBy.kind === 'identity' ? `Link ${props.poweredBy.label} account` : cta.label;
+  const { kind, linkLabel, linkHref } = props.poweredBy;
+  return kind === 'identity' && linkLabel && linkHref ? { label: linkLabel, href: linkHref } : cta;
 });
+// The status word, plus the fix link, already says why a service is not
+// linked or unavailable; the broker's sentence is kept where it adds
+// something (what to do, a reference id).
+const showStatusDetail = computed(
+  () => !['available', 'link_required', 'unavailable'].includes(props.server.status),
+);
 // "link_required" is authoritative over the identities response's own
 // linked flag -- see resolvePoweredByLinked's docstring for why the two can
 // disagree for a moment.
@@ -77,108 +85,109 @@ const toolsView = computed(() =>
       <!-- Reachability, with the fix right beside it when the user can act. -->
       <div class="bc__status-line">
         <StatusMark :tone="statusTone" :label="statusView.label" />
-        <a v-if="statusView.cta && fixLabel" :href="statusView.cta.href" class="bc__status-cta">
-          {{ fixLabel }}
-        </a>
+        <a v-if="fix" :href="fix.href" class="bc__status-cta">{{ fix.label }}</a>
       </div>
     </div>
 
     <p v-if="server.description" class="bc__description">{{ server.description }}</p>
 
-    <!-- Status detail: why this service is not reachable. -->
-    <p v-if="server.status !== 'available'" class="bc__status-detail" role="status">
+    <!-- Status detail: what to do when the status word alone does not say. -->
+    <p v-if="showStatusDetail" class="bc__status-detail" role="status">
       {{ statusView.detail }}
       <span v-if="statusView.correlationId" class="bc__status-ref">
         Reference: <code>{{ statusView.correlationId }}</code>
       </span>
     </p>
 
-    <!-- Categories, not status: neutral tags. The tags are buttons with an
-         aria-describedby tooltip rather than a bare `title`, so their meaning
-         is available on touch and to screen readers. -->
-    <div class="bc__tags">
-      <!-- server.permission is null when this service's tools require
+    <!-- One meta line: category tags, then the identity that powers the
+         service. The tags are neutral (categories, not status) and are
+         buttons with an aria-describedby tooltip rather than a bare `title`,
+         so their meaning is available on touch and to screen readers. -->
+    <div class="bc__meta">
+      <div class="bc__tags">
+        <!-- server.permission is null when this service's tools require
            different permissions from each other (services.yaml's dict-form
            required_permission with no single "__default__") -- there is no
            one tag that could truthfully summarize that, so this shows
            "mixed" and points at the per-tool Methods list instead of either
            guessing or rendering an empty tag. -->
-      <PopoverTooltip
-        v-if="server.permission === null"
-        :tooltip-id="`bc-cap-${server.name}`"
-        side="top"
-      >
-        <button
-          type="button"
-          class="af-tag bc__tag bc__cap-badge bc__cap-badge--mixed"
-          :aria-describedby="`bc-cap-${server.name}`"
+        <PopoverTooltip
+          v-if="server.permission === null"
+          :tooltip-id="`bc-cap-${server.name}`"
+          side="top"
         >
-          mixed
-        </button>
-        <template #tooltip
-          >Different methods require different permissions — see Methods below for each
-          one.</template
+          <button
+            type="button"
+            class="af-tag bc__tag bc__cap-badge bc__cap-badge--mixed"
+            :aria-describedby="`bc-cap-${server.name}`"
+          >
+            mixed
+          </button>
+          <template #tooltip
+            >Different methods require different permissions — see Methods below for each
+            one.</template
+          >
+        </PopoverTooltip>
+        <PopoverTooltip
+          v-else-if="server.permission !== '__none__'"
+          :tooltip-id="`bc-cap-${server.name}`"
+          side="top"
         >
-      </PopoverTooltip>
-      <PopoverTooltip
-        v-else-if="server.permission !== '__none__'"
-        :tooltip-id="`bc-cap-${server.name}`"
-        side="top"
-      >
-        <button
-          type="button"
-          class="af-tag bc__tag bc__cap-badge"
-          :aria-describedby="`bc-cap-${server.name}`"
-        >
-          {{ server.permission }}
-        </button>
-        <template #tooltip>Requires permission: {{ server.permission }}</template>
-      </PopoverTooltip>
+          <button
+            type="button"
+            class="af-tag bc__tag bc__cap-badge"
+            :aria-describedby="`bc-cap-${server.name}`"
+          >
+            {{ server.permission }}
+          </button>
+          <template #tooltip>Requires permission: {{ server.permission }}</template>
+        </PopoverTooltip>
 
-      <!-- The builtin af-mcp entry (issue #240) has no per-user credential
+        <!-- The builtin af-mcp entry (issue #240) has no per-user credential
            concept at all -- a "none" credential-type tag would read like
            a state to fix, so it renders no tag instead. -->
-      <PopoverTooltip v-if="!server.builtin" :tooltip-id="`bc-auth-${server.name}`" side="top">
-        <button
-          type="button"
-          class="af-tag bc__tag bc__auth-badge"
-          :aria-describedby="`bc-auth-${server.name}`"
-        >
-          {{ server.auth_type }}
-        </button>
-        <template #tooltip>Credential type: {{ server.auth_type }}</template>
-      </PopoverTooltip>
+        <PopoverTooltip v-if="!server.builtin" :tooltip-id="`bc-auth-${server.name}`" side="top">
+          <button
+            type="button"
+            class="af-tag bc__tag bc__auth-badge"
+            :aria-describedby="`bc-auth-${server.name}`"
+          >
+            {{ server.auth_type }}
+          </button>
+          <template #tooltip>Credential type: {{ server.auth_type }}</template>
+        </PopoverTooltip>
 
-      <PopoverTooltip :tooltip-id="`bc-count-${server.name}`" side="top">
-        <button
-          type="button"
-          class="af-tag bc__tag bc__count"
-          :class="isWrite ? 'bc__count--state' : 'bc__count--read'"
-          :aria-describedby="`bc-count-${server.name}`"
-        >
-          <Pencil v-if="isWrite" :size="12" aria-hidden="true" />
-          <Eye v-else :size="12" aria-hidden="true" />
-          {{ actionLabel }}
-        </button>
-        <template #tooltip>{{ actionTooltip }}</template>
-      </PopoverTooltip>
-    </div>
+        <PopoverTooltip :tooltip-id="`bc-count-${server.name}`" side="top">
+          <button
+            type="button"
+            class="af-tag bc__tag bc__count"
+            :class="isWrite ? 'bc__count--state' : 'bc__count--read'"
+            :aria-describedby="`bc-count-${server.name}`"
+          >
+            <Pencil v-if="isWrite" :size="12" aria-hidden="true" />
+            <Eye v-else :size="12" aria-hidden="true" />
+            {{ actionLabel }}
+          </button>
+          <template #tooltip>{{ actionTooltip }}</template>
+        </PopoverTooltip>
+      </div>
 
-    <!-- Powered by -- omitted for the builtin af-mcp entry (issue #240):
+      <!-- Powered by -- omitted for the builtin af-mcp entry (issue #240):
          the gateway powers itself, there is no identity to link or
          credential provider to name. -->
-    <p v-if="!server.builtin" class="bc__powered-by">
-      Powered by
-      <span v-if="poweredBy.kind === 'none'">{{ poweredBy.label }}</span>
-      <template v-else>
-        <a :href="poweredBy.linkHref ?? '#'" class="bc__powered-by-link">{{ poweredBy.label }}</a>
-        <StatusMark
-          v-if="poweredByLinked !== null"
-          :tone="poweredByLinked ? 'ok' : 'off'"
-          :label="poweredByLinked ? 'Linked' : 'Not linked'"
-        />
-      </template>
-    </p>
+      <p v-if="!server.builtin" class="bc__powered-by">
+        <span v-if="poweredBy.kind === 'none'">{{ poweredBy.label }}</span>
+        <template v-else>
+          Powered by
+          <a :href="poweredBy.linkHref ?? '#'" class="bc__powered-by-link">{{ poweredBy.label }}</a>
+          <StatusMark
+            v-if="poweredByLinked !== null"
+            :tone="poweredByLinked ? 'ok' : 'off'"
+            :label="poweredByLinked ? 'Linked' : 'Not linked'"
+          />
+        </template>
+      </p>
+    </div>
 
     <!-- Methods -- collapsed by default (a backend can register dozens of
          tools; the catalog's job is a quick scan of reachable backends, not
@@ -277,6 +286,13 @@ const toolsView = computed(() =>
 
 .bc__status-ref {
   white-space: nowrap;
+}
+
+.bc__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4) var(--space-16);
 }
 
 .bc__tags {

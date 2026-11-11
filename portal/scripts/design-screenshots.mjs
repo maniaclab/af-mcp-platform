@@ -24,6 +24,7 @@ const DEFAULT_CHROME = join(
 // page name -> URL path. The public landing page has no name of its own.
 const PAGES = {
   home: '/',
+  callback: '/callback/',
   overview: '/overview/',
   catalog: '/catalog/',
   identities: '/identities/',
