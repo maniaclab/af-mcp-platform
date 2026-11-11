@@ -201,7 +201,7 @@ call fails, without needing anything else to be working first.
 |---|---|
 | `af_whoami` | A call fails with a permission error, to see your own subject, groups, and effective permissions. |
 | `af_list_identities` | A call fails with a "not linked" error, or a backend's tools are missing/non-functional, to see which identity provider it needs and whether you've linked it. |
-| `af_list_mcp_servers` | An expected tool is missing from `tools/list`, or a call fails for a reason that isn't an obviously bad argument — lists every backend, its tool prefix, the identity provider it depends on, and a short reason if it's unavailable. |
+| `af_list_mcp_servers` | An expected tool is missing from `tools/list`, or a call fails for a reason that isn't an obviously bad argument — lists every backend, its tool prefix, the identity provider it depends on, and a short reason if it's unavailable. A `link_required` service also carries `link_state`: `not_linked` (never linked) or `rejected` (linked, but the service rejected the stored credential, so re-link it). |
 | `af_link_identity` | A call fails with a "not linked" error, or `af_list_identities` shows `linked: false` for a provider a backend needs — returns the exact portal URL to visit to link (or re-link) that identity provider. |
 
 An MCP client that lets you invoke tools directly (or an LLM using the

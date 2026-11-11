@@ -601,7 +601,7 @@ Key endpoints:
 | `GET` | `/v1/identities` | Caller identity, linked accounts, linkable providers |
 | `GET` | `/v1/permissions` | Caller's granted permissions |
 | `POST` | `/v1/authorize` | Check one entitlement (used by the aggregator per call) |
-| `GET` | `/v1/catalog` | Tools visible to the caller after entitlement filtering |
+| `GET` | `/v1/catalog` | Services visible to the caller, each with a per-caller `status`; `link_required` services carry `link_state` (`not_linked` or `rejected`, a linked credential the service refused), `null` for every other status |
 | `POST` | `/v1/credential` | Issue or return a cached credential for a target |
 | `POST` | `/v1/x509/proxy` | Mint and cache a VOMS proxy (passphrase unlock) |
 | `GET` | `/v1/x509/proxy/status` | Proxy cache status |

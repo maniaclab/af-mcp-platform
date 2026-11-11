@@ -8,7 +8,7 @@ from fastmcp.server.dependencies import get_context
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field
 
-from af_mcp_broker.api.permissions import ServiceStatus, _service_status
+from af_mcp_broker.api.permissions import LinkState, ServiceStatus, _service_status
 from af_mcp_broker.authorization import get_principal_permissions
 from af_mcp_broker.mcp.registry import (
     LINK_IDENTITY_TOOL_NAME,
@@ -148,6 +148,10 @@ class DiagnosticMcpServer(BaseModel):
     credential_provider: str | None
     status: ServiceStatus
     status_detail: str
+    # Why a link is required (only when status is "link_required"):
+    # "not_linked" or "rejected" (linked, but the backend rejected the stored
+    # credential). None for every other status.
+    link_state: LinkState | None
 
 
 class ListMcpServersResult(BaseModel):
@@ -374,7 +378,10 @@ def register_diagnostic_tools(
         argument, to see each service's tool-name prefix, which identity
         provider (if any) it needs, and a short reason if it's unavailable
         (linking required, permission required, temporarily down, or
-        misconfigured). Needs no permission of its own and never contacts a
+        misconfigured). A service whose status is "link_required" also
+        carries link_state: "not_linked" (the identity was never linked) or
+        "rejected" (it is linked but the service rejected the stored
+        credential, so re-link it). Needs no permission of its own and never contacts a
         service -- the status reported is the broker's own last-known state,
         the same data the portal's Catalog page shows.
         """
@@ -382,7 +389,7 @@ def register_diagnostic_tools(
         caps = get_principal_permissions(principal, policy)
         servers: list[DiagnosticMcpServer] = []
         for spec in registry.all_services():
-            status, status_detail, _correlation_id = await _service_status(
+            status, status_detail, _correlation_id, link_state = await _service_status(
                 spec, principal, caps, credential_registry, registry
             )
             servers.append(
@@ -393,6 +400,7 @@ def register_diagnostic_tools(
                     credential_provider=target_to_alias.get(spec.name),
                     status=status,
                     status_detail=status_detail,
+                    link_state=link_state,
                 )
             )
         return ListMcpServersResult(servers=servers)
