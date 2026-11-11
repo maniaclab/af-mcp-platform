@@ -11,6 +11,7 @@
       "status": "available",
       "status_detail": "Ready to use.",
       "correlation_id": null,
+      "link_state": null,
       "builtin": true
     },
     {
@@ -24,6 +25,7 @@
       "status": "available",
       "status_detail": "Ready to use.",
       "correlation_id": null,
+      "link_state": null,
       "builtin": false
     },
     {
@@ -37,6 +39,7 @@
       "status": "available",
       "status_detail": "Ready to use.",
       "correlation_id": null,
+      "link_state": null,
       "builtin": false
     },
     {
@@ -50,6 +53,7 @@
       "status": "available",
       "status_detail": "Ready to use.",
       "correlation_id": null,
+      "link_state": null,
       "builtin": false
     },
     {
@@ -63,6 +67,7 @@
       "status": "available",
       "status_detail": "Ready to use.",
       "correlation_id": null,
+      "link_state": null,
       "builtin": false
     },
     {
@@ -76,6 +81,7 @@
       "status": "available",
       "status_detail": "Ready to use.",
       "correlation_id": null,
+      "link_state": null,
       "builtin": false
     },
     {
@@ -89,6 +95,7 @@
       "status": "available",
       "status_detail": "Ready to use.",
       "correlation_id": null,
+      "link_state": null,
       "builtin": false
     },
     {
@@ -102,6 +109,7 @@
       "status": "available",
       "status_detail": "Ready to use.",
       "correlation_id": null,
+      "link_state": null,
       "builtin": false
     }
   ]

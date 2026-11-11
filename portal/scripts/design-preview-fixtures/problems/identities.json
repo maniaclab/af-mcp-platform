@@ -52,7 +52,7 @@
       "type": "servicex-token",
       "display_name": "ServiceX token",
       "enables": "Submit ServiceX transforms.",
-      "linked": false,
+      "linked": true,
       "link_url": null,
       "link_mechanism": "servicex-token",
       "external_login_url": "https://servicex.example-facility.org/api-token"

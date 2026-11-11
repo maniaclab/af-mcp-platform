@@ -11,6 +11,7 @@
       "status": "available",
       "status_detail": "Ready to use.",
       "correlation_id": null,
+      "link_state": null,
       "builtin": true
     },
     {
@@ -24,6 +25,7 @@
       "status": "link_required",
       "status_detail": "Link your Example IAM account to use this service.",
       "correlation_id": null,
+      "link_state": "not_linked",
       "builtin": false
     },
     {
@@ -37,6 +39,7 @@
       "status": "link_required",
       "status_detail": "Link your Example IAM account to use this service.",
       "correlation_id": null,
+      "link_state": "not_linked",
       "builtin": false
     },
     {
@@ -50,6 +53,7 @@
       "status": "misconfigured",
       "status_detail": "This service is not configured correctly. Contact an administrator.",
       "correlation_id": "EXAMPLE-CORR-0001",
+      "link_state": null,
       "builtin": false
     },
     {
@@ -63,6 +67,7 @@
       "status": "link_required",
       "status_detail": "Your grid proxy has expired. Renew it on the Identities page.",
       "correlation_id": null,
+      "link_state": "not_linked",
       "builtin": false
     },
     {
@@ -76,6 +81,7 @@
       "status": "permission_required",
       "status_detail": "You are not in a group that grants notebook access.",
       "correlation_id": "EXAMPLE-CORR-0002",
+      "link_state": null,
       "builtin": false
     },
     {
@@ -87,8 +93,9 @@
       "action_type": "state_change",
       "credential_provider": "servicex-token",
       "status": "link_required",
-      "status_detail": "Link your ServiceX token to use this service.",
+      "status_detail": "Your linked credential was rejected. Re-link your identity.",
       "correlation_id": null,
+      "link_state": "rejected",
       "builtin": false
     },
     {
@@ -102,6 +109,7 @@
       "status": "unavailable",
       "status_detail": "This service is temporarily unreachable.",
       "correlation_id": null,
+      "link_state": null,
       "builtin": false
     }
   ]

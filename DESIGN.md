@@ -315,8 +315,8 @@ Every signed-in page has the same parts in the same order.
 | Page | Job | Primary action | Banner slot | Main components |
 | --- | --- | --- | --- | --- |
 | Landing `/` | Say what the platform is; sign in. | Sign in (`af-btn-xl`) | Maintenance bar only | Headline, particle canvas, gateway diagram, benefits |
-| Overview | Is my access working? How do I connect a client? | None | Grid proxy expired (problem); a service misconfigured (problem) or unavailable (warning); proxy expiring (warning); a token expiring within 7 days (warning). Hints: no account linked; N services not linked | Status rows, stats, copy field |
-| Services | Which backends and methods can I reach? | None | Misconfigured (problem), unavailable (warning). Hint: N services not linked, with an action when they share one account | Search, filter, service rows (not a table) |
+| Overview | Is my access working? How do I connect a client? | None | Grid proxy expired (problem); a service misconfigured (problem) or unavailable (warning); a service rejected a linked credential (warning); proxy expiring (warning); a token expiring within 7 days (warning). Hints: no account linked; N services not linked | Status rows, stats, copy field |
+| Services | Which backends and methods can I reach? | None | Misconfigured (problem), unavailable (warning), a credential rejected (warning, with a re-link action when they share one identity). Hint: N services not linked, with an action when they share one account | Search, filter, service rows (not a table) |
 | Identities | Link accounts and keep the grid certificate valid. | Per card | Proxy expired (problem) or expiring (warning); a link failed (problem); a link succeeded (ok, clears after 5 seconds) | One card per credential, key-value lists |
 | Tokens | Create and revoke tokens for clients without a browser. | New token | A token expires within 7 days (warning); a revoke failed (problem) | Table, dialog with copy field |
 | Usage | What have my clients been doing? | None; range control | None | Stats, bar chart, table per service |
@@ -331,6 +331,15 @@ State rules that hold on every page:
   row. It never raises a warning or problem banner; at most a hint. A service
   that needs no credential (the gateway's own) is never counted as unlinked.
   The Identities page needs no hint: its rows show the state and the action.
+- **Credential rejected is a warning, not "Not linked".** The user did link, and
+  the backend refuses what they set up (the broker's `link_state: "rejected"`).
+  Warning mark, the words "Credential rejected", a row at full ink (never the
+  quiet treatment), one sentence ("Your linked <identity> was rejected. Re-link
+  it to use this service.") and a re-link action that names the identity and
+  goes to its card. It raises a warning banner, ranked below misconfigured and
+  unavailable and above a not-linked hint. It sorts with the things that need
+  attention (after misconfigured and unavailable, before available) and is
+  never counted as not linked. Its "Powered by" line shows no link state.
 - **A grid proxy warns only when it cannot renew itself and has under 1 hour
   left.** An auto-renewing proxy never shows as expiring.
 - **Misconfigured and Unavailable differ.** Misconfigured needs an operator:
