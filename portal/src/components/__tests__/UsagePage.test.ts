@@ -139,12 +139,12 @@ describe('UsagePage', () => {
       // One row per calendar day in the 30-day window, zero for the days
       // without calls; each keeps the date, call count and estimated tokens
       // the bars' accessible names carried.
-      const rows = wrapper.findAll('table.sr-only tbody tr');
+      const rows = wrapper.findAll('div.sr-only table tbody tr');
       expect(rows).toHaveLength(30);
       const busiest = rows.find((r) => r.text().includes('2026-08-24'));
       expect(busiest?.text()).toContain('30');
       expect(busiest?.text()).toContain('11,000');
-      expect(wrapper.find('table.sr-only thead').text()).toContain('Tokens (estimated)');
+      expect(wrapper.find('div.sr-only table thead').text()).toContain('Tokens (estimated)');
     } finally {
       vi.useRealTimers();
     }

@@ -89,7 +89,7 @@ describe('BarChart', () => {
     const wrapper = mountChart();
     await flushPromises();
 
-    const table = wrapper.find('table.sr-only');
+    const table = wrapper.find('.sr-only table');
     expect(table.exists()).toBe(true);
     // The data is not inside the role="img" element, which hides its children.
     expect(wrapper.find('.chart table').exists()).toBe(false);
@@ -99,6 +99,26 @@ describe('BarChart', () => {
     expect(rows[0].text()).toContain('2026-08-24');
     expect(rows[0].text()).toContain('30');
     expect(rows[1].text()).toContain('0');
+  });
+
+  it('hides the table with a wrapper, never on the table itself', async () => {
+    const wrapper = mountChart();
+    await flushPromises();
+
+    // Firefox draws a table's caption outside the table box that `sr-only`
+    // clips, so a caption inside `table.sr-only` shows as stray visible text.
+    expect(wrapper.find('table.sr-only').exists()).toBe(false);
+    expect(wrapper.find('.sr-only table caption').exists()).toBe(true);
+  });
+
+  it('shows the chart summary as a visible caption, not as hidden text', async () => {
+    const wrapper = mountChart();
+    await flushPromises();
+
+    const caption = wrapper.get('figure > figcaption');
+    expect(caption.text()).toBe('Calls per day');
+    expect(caption.classes()).not.toContain('sr-only');
+    expect(caption.element.closest('.sr-only')).toBeNull();
   });
 
   it('lists a series marked as not drawn in the table only', async () => {

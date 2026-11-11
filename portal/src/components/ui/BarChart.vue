@@ -16,8 +16,8 @@
  * `var()`.
  *
  * A canvas is opaque to assistive technology, so the chart is `role="img"`
- * with `ariaLabel`, and every value is repeated in a visually hidden table
- * beside it (outside the `role="img"` element, whose children are hidden).
+ * with `ariaLabel` (also shown as a caption), and every value is repeated in a
+ * visually hidden table beside it (outside the `role="img"` element, whose children are hidden).
  */
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
@@ -127,30 +127,36 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="bar-chart">
+  <figure class="bar-chart">
     <div class="chart" role="img" :aria-label="ariaLabel">
       <canvas ref="canvas"></canvas>
     </div>
-    <table class="sr-only">
-      <caption>
-        {{
-          ariaLabel
-        }}
-      </caption>
-      <thead>
-        <tr>
-          <th scope="col">Label</th>
-          <th v-for="s in series" :key="s.label" scope="col">{{ s.label }}</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="(label, i) in labels" :key="label">
-          <th scope="row">{{ label }}</th>
-          <td v-for="s in series" :key="s.label">{{ format(s.values[i]) }}</td>
-        </tr>
-      </tbody>
-    </table>
-  </div>
+    <figcaption class="bar-chart__caption">{{ ariaLabel }}</figcaption>
+    <!-- The wrapper carries `sr-only`, not the table: Firefox lays a table's
+         caption outside the table box that `sr-only` clips, so the caption of a
+         `table.sr-only` stays visible. -->
+    <div class="sr-only">
+      <table>
+        <caption>
+          {{
+            ariaLabel
+          }}
+        </caption>
+        <thead>
+          <tr>
+            <th scope="col">Label</th>
+            <th v-for="s in series" :key="s.label" scope="col">{{ s.label }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="(label, i) in labels" :key="label">
+            <th scope="row">{{ label }}</th>
+            <td v-for="s in series" :key="s.label">{{ format(s.values[i]) }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </figure>
 </template>
 
 <style scoped>
@@ -158,5 +164,11 @@ onBeforeUnmount(() => {
 .bar-chart .chart {
   aspect-ratio: auto;
   height: 200px;
+}
+
+.bar-chart__caption {
+  margin-top: var(--space-8);
+  font-size: var(--text-12);
+  color: var(--color-af-text-secondary);
 }
 </style>
