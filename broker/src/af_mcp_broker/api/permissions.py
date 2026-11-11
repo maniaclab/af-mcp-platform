@@ -100,6 +100,16 @@ class PermissionsResponse(BaseModel):
     grants: list[PermissionGrant]
 
 
+class PermissionCatalogEntry(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    action_type: Literal["read", "state_change"]
+    # None for a permission the policy declares without prose (every
+    # custom_permissions entry).
+    description: str | None
+
+
 class EntitlementsResponse(BaseModel):
     """The static group -> permission table, verbatim from policy.yaml.
 
@@ -112,6 +122,11 @@ class EntitlementsResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     group_permissions: dict[str, list[str]]
+    # Every permission the policy knows, in display order: built-ins in
+    # PERMISSIONS order, then custom_permissions in policy order, then any
+    # name only group_permissions grants. Lets the portal show each one's
+    # kind and description without a hard-coded copy of this list.
+    permissions: list[PermissionCatalogEntry]
 
 
 class AuthorizeRequest(BaseModel):
@@ -211,10 +226,34 @@ def _get_credential_registry(request: Request) -> CredentialRegistry:
 
 
 def _action_type_for_permission(
-    permission: str | None,
+    permission: str, policy: EntitlementPolicy
 ) -> Literal["read", "state_change"]:
-    cap = PERMISSIONS.get(permission) if permission is not None else None
-    return cap.action_type if cap else "read"  # type: ignore[return-value]
+    # No target, so no target_action_types override can apply: this is the
+    # permission's own built-in or custom_permissions action type.
+    return get_action_type("", "", permission, policy)  # type: ignore[return-value]
+
+
+def _permission_catalog(policy: EntitlementPolicy) -> list[PermissionCatalogEntry]:
+    """List built-in, then custom, then group-granted-only permissions.
+
+    startup validation (app.py) only checks the permissions *services*
+    require, so a group may grant a name that is neither built-in nor
+    custom; it is listed last, with the action type the shared resolver
+    yields for an unknown name ("read").
+    """
+    # dict keys: de-duplicate while keeping first-seen order.
+    granted = dict.fromkeys(
+        name for names in policy.group_permissions.values() for name in names
+    )
+    names = dict.fromkeys([*PERMISSIONS, *policy.custom_permissions, *granted])
+    return [
+        PermissionCatalogEntry(
+            name=name,
+            action_type=_action_type_for_permission(name, policy),
+            description=PERMISSIONS[name].description if name in PERMISSIONS else None,
+        )
+        for name in names
+    ]
 
 
 def _action_type_for_service(
@@ -234,7 +273,7 @@ def _action_type_for_service(
     available) — otherwise "read".
     """
     if any(
-        _action_type_for_permission(perm) == "state_change"
+        _action_type_for_permission(perm, policy) == "state_change"
         for perm in spec.all_required_permissions()
     ):
         return "state_change"
@@ -268,7 +307,7 @@ def _grants_for(
             PermissionGrant(
                 permission=cap,
                 targets=targets,
-                action_types=[_action_type_for_permission(cap)],
+                action_types=[_action_type_for_permission(cap, policy)],
             )
         )
     return grants
@@ -424,7 +463,10 @@ async def get_entitlements(
     _principal: Annotated[Principal, Depends(keycloak_dependency)],
 ) -> EntitlementsResponse:
     policy = _get_policy(request)
-    return EntitlementsResponse(group_permissions=policy.group_permissions)
+    return EntitlementsResponse(
+        group_permissions=policy.group_permissions,
+        permissions=_permission_catalog(policy),
+    )
 
 
 @router.post(
