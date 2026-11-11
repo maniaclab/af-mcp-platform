@@ -11,11 +11,18 @@ import { describe, expect, it } from 'vitest';
 const read = (path: string) => readFileSync(resolve(process.cwd(), path), 'utf8');
 
 describe('dialog title', () => {
-  it('is set to the 16px, weight 600 title step on every af-modal dialog', () => {
+  it('is set to the 20px, weight 600 title step on every af-modal dialog', () => {
     const css = read('src/styles/components.css');
     const rule = css.match(/\.dialog\.af-modal > \* > header > h2\s*\{([^}]*)\}/);
     expect(rule, 'rule for .dialog.af-modal > * > header > h2').not.toBeNull();
-    expect(rule![1]).toMatch(/font:\s*600 var\(--text-16\)/);
+    expect(rule![1]).toMatch(/font:\s*600 var\(--text-20\) \/ var\(--text-20--line-height\)/);
+  });
+
+  it('leaves a --space-8 gap between the title and the description', () => {
+    const css = read('src/styles/components.css');
+    const rule = css.match(/\.dialog\.af-modal > \* > header\s*\{([^}]*)\}/);
+    expect(rule, 'rule for .dialog.af-modal > * > header').not.toBeNull();
+    expect(rule![1]).toMatch(/gap:\s*var\(--space-8\)/);
   });
 
   it.each(['src/components/ui/ConfirmDialog.vue', 'src/components/TokensPage.vue'])(

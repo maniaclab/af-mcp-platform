@@ -135,8 +135,8 @@ Three groups with separate jobs.
 | --- | --- | --- | --- |
 | `--text-32` | 32 / 40px | 600 | Landing page headline only. |
 | `--text-24` | 24 / 32px | 600 | Page title, one per page. Stat values. |
-| `--text-20` | 20 / 28px | 600 | Landing section headings; empty-state title. |
-| `--text-16` | 16 / 24px | 600 | Section title, dialog title, card name. |
+| `--text-20` | 20 / 28px | 600 | Landing section headings; empty-state title; dialog title. |
+| `--text-16` | 16 / 24px | 600 | Section title, card name. |
 | `--text-14` | 14 / 20px | 400, 500 | Default: body, cells, buttons, inputs. |
 | `--text-13` | 13 / 20px | 400, 500 | Column headers, help text, notes. |
 | `--text-12` | 12 / 16px | 400 | Badges, nav group labels, chart axes. The minimum. |
