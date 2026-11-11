@@ -4,7 +4,7 @@
 // The pages show EXAMPLE data for design review only.
 //
 // Usage: node scripts/design-screenshots.mjs --out <dir> [--pages a,b] [--scenarios a,b]
-//          [--chrome <path>] [--accent RRGGBB]
+//          [--chrome <path>] [--accent RRGGBB] [--widths 1440,1024,400]
 // Chromium comes from --chrome, then $CHROME_BIN, then the Playwright cache.
 // Files are named <scenario>-<page>-<width>-<theme>.png.
 
@@ -36,10 +36,12 @@ const PAGES = {
 
 // Window height is tall so the capture is effectively full-page; a shorter
 // virtual-time budget produced unstyled captures.
-const VIEWPORTS = [
-  { width: 1440, height: 2400 },
-  { width: 400, height: 3200 },
-];
+const PHONE_MAX_WIDTH = 600;
+const DEFAULT_WIDTHS = [1440, 400];
+
+function viewportFor(width) {
+  return { width, height: width <= PHONE_MAX_WIDTH ? 3200 : 2400 };
+}
 const THEMES = ['light', 'dark'];
 const VIRTUAL_TIME_BUDGET_MS = 20000;
 const CAPTURE_TIMEOUT_MS = 120000;
@@ -96,6 +98,7 @@ async function main() {
       scenarios: { type: 'string' },
       chrome: { type: 'string' },
       accent: { type: 'string' },
+      widths: { type: 'string' },
     },
   });
   if (!values.out) throw new Error('--out <dir> is required');
@@ -107,6 +110,11 @@ async function main() {
   }
   const pages = splitList(values.pages, Object.keys(PAGES), 'page');
   const scenarios = splitList(values.scenarios, listScenarios(), 'scenario');
+  const widths = values.widths ? values.widths.split(',').map(Number) : DEFAULT_WIDTHS;
+  if (widths.some((w) => !Number.isInteger(w) || w <= 0)) {
+    throw new Error(`--widths takes comma-separated pixel widths, got ${values.widths}`);
+  }
+  const viewports = widths.map(viewportFor);
   const outDir = values.out;
   mkdirSync(outDir, { recursive: true });
 
@@ -115,7 +123,7 @@ async function main() {
     try {
       const tasks = [];
       for (const page of pages) {
-        for (const viewport of VIEWPORTS) {
+        for (const viewport of viewports) {
           for (const theme of THEMES) {
             const query = `?theme=${theme}${values.accent ? `&accent=${values.accent}` : ''}`;
             const file = join(outDir, `${scenario}-${page}-${viewport.width}-${theme}.png`);

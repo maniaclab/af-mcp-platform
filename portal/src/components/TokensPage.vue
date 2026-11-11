@@ -352,16 +352,14 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
                 <th scope="col">Name</th>
                 <th scope="col">Status</th>
                 <th scope="col">Scope</th>
-                <th scope="col">Token ID</th>
-                <th scope="col">Created</th>
                 <th scope="col">Expires</th>
                 <th scope="col">Last used</th>
-                <th scope="col" class="af-act"><span class="sr-only">Actions</span></th>
+                <th scope="col" class="af-act af-sticky"><span class="sr-only">Actions</span></th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="row in sortedTokens" :key="row.lookup_id">
-                <td>
+                <td class="tp__namecell">
                   <div class="tp__name">
                     <span>{{ row.name }}</span>
                     <InfoTip
@@ -370,6 +368,33 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
                       :text="truncateNote(row.note) ?? ''"
                       label="Show note"
                     />
+                  </div>
+                  <!-- The id and creation time are secondary facts about the
+                       token, so they sit under its name rather than in columns
+                       of their own, which kept the table wider than the page. -->
+                  <div class="af-sub tp__meta">
+                    <span :title="formatExact(row.created_at)">
+                      Created {{ formatRelativeIso(row.created_at) }}
+                    </span>
+                    <span class="tp__idbox" :title="row.lookup_id">
+                      ID <code>{{ shortLookupId(row.lookup_id) }}</code>
+                      <button
+                        type="button"
+                        class="btn tp__copy"
+                        data-variant="ghost"
+                        data-size="icon-sm"
+                        :aria-label="`Copy token ID ${row.lookup_id}`"
+                        @click="copyTokenId(row.lookup_id)"
+                      >
+                        <Check
+                          v-if="copiedId === row.lookup_id"
+                          class="af-icon"
+                          :size="16"
+                          aria-hidden="true"
+                        />
+                        <Copy v-else class="af-icon" :size="16" aria-hidden="true" />
+                      </button>
+                    </span>
                   </div>
                 </td>
                 <td>
@@ -385,30 +410,6 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
                   />
                 </td>
                 <td class="af-sub tp__scope">{{ permissionGrantLabel(row.permission_grant) }}</td>
-                <td class="af-sub tp__id" :title="row.lookup_id">
-                  <span class="tp__idbox">
-                    {{ shortLookupId(row.lookup_id) }}
-                    <button
-                      type="button"
-                      class="btn tp__copy"
-                      data-variant="ghost"
-                      data-size="icon-sm"
-                      :aria-label="`Copy token ID ${row.lookup_id}`"
-                      @click="copyTokenId(row.lookup_id)"
-                    >
-                      <Check
-                        v-if="copiedId === row.lookup_id"
-                        class="af-icon"
-                        :size="16"
-                        aria-hidden="true"
-                      />
-                      <Copy v-else class="af-icon" :size="16" aria-hidden="true" />
-                    </button>
-                  </span>
-                </td>
-                <td class="af-sub" :title="formatExact(row.created_at)">
-                  {{ formatRelativeIso(row.created_at) }}
-                </td>
                 <td
                   class="af-sub"
                   :title="row.expires_at ? formatExact(row.expires_at) : 'Never expires'"
@@ -421,7 +422,7 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
                 >
                   {{ row.last_used_at ? formatRelativeIso(row.last_used_at) : 'Never' }}
                 </td>
-                <td class="af-act">
+                <td class="af-act af-sticky">
                   <button
                     type="button"
                     class="btn af-danger"
@@ -676,7 +677,20 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
   gap: var(--space-4);
 }
 
-.tp__id {
+.tp__namecell {
+  max-width: 14rem;
+  overflow-wrap: anywhere;
+}
+
+.tp__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 var(--space-12);
+  font-size: var(--text-12);
+}
+
+.tp__meta code {
   font-family: var(--font-mono);
 }
 
@@ -686,10 +700,12 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
   gap: var(--space-4);
 }
 
-/* A scope can list several permissions; let it wrap instead of widening the table. */
+/* A scope can list several permissions; let it wrap between them, within a
+   width range, instead of widening the table or breaking inside a name. */
 .tp__scope {
   white-space: normal;
-  min-width: 10rem;
+  min-width: 9rem;
+  max-width: 12rem;
 }
 
 .tp__cli {

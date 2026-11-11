@@ -218,6 +218,16 @@
   .af-box .table .af-sub {
     color: var(--color-af-text-secondary);
   }
+  /* A row action that stays visible when a narrow window makes the table scroll
+   * sideways; its fill hides the cells that slide beneath it. */
+  .af-box .table .af-sticky {
+    position: sticky;
+    right: 0;
+    background: var(--color-af-bg);
+  }
+  .af-box .table tbody tr:hover .af-sticky {
+    background: var(--color-af-bg-subtle);
+  }
 
   /* A field in a page section stays a readable width. */
   .field.af-narrow {

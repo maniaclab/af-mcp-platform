@@ -233,6 +233,43 @@ describe('TokensPage', () => {
   });
 });
 
+describe('TokensPage table layout', () => {
+  it('has only the columns that fit a 900px content width, with the action last', async () => {
+    const wrapper = await mountPage([token({})]);
+
+    const headers = wrapper.findAll('thead th').map((th) => th.text());
+    expect(headers).toEqual(['Name', 'Status', 'Scope', 'Expires', 'Last used', 'Actions']);
+  });
+
+  it('keeps the token id, its copy button and the created time under the name', async () => {
+    const wrapper = await mountPage([
+      token({ lookup_id: 'LOOKUP0001-FULL-VALUE', name: 'active-one', created_at: iso(-10) }),
+    ]);
+
+    const nameCell = wrapper.get('tbody tr td');
+    expect(nameCell.text()).toContain('active-one');
+    const meta = nameCell.get('.tp__meta');
+    expect(meta.text()).toContain('LOOKUP00…');
+    expect(meta.text()).toContain('Created 10 days ago');
+    expect(meta.get('button[aria-label="Copy token ID LOOKUP0001-FULL-VALUE"]').exists()).toBe(
+      true,
+    );
+  });
+
+  it('pins the action column so it stays visible when the table scrolls', async () => {
+    const wrapper = await mountPage([token({})]);
+
+    expect(wrapper.get('thead th.af-act').classes()).toContain('af-sticky');
+    expect(wrapper.get('tbody td.af-act').classes()).toContain('af-sticky');
+  });
+
+  it('lists every permission of a scoped token in the scope cell', async () => {
+    const wrapper = await mountPage([token({ permission_grant: ['read_data', 'submit_jobs'] })]);
+
+    expect(wrapper.get('tbody td.tp__scope').text()).toBe('read_data, submit_jobs');
+  });
+});
+
 describe('TokensPage token id', () => {
   it('can be copied in full with a button, since the cell shows only the start', async () => {
     const writeText = vi.fn(async () => {});
