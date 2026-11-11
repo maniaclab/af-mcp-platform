@@ -87,7 +87,7 @@ class JobCredentialGuide:
     kinds: frozenset[str]
 
     def for_provider_type(self, provider_type: str) -> JobCredential | None:
-        """The job credential an identity of *provider_type* yields here, or None when that type is not a wired credmon kind."""
+        """Return the job credential an identity of *provider_type* yields here, or None when that type is not a wired credmon kind."""
         kind = PROVIDER_TYPE_KIND.get(provider_type)
         if kind is None or kind not in self.kinds:
             return None
@@ -107,7 +107,7 @@ class JobCredentialGuide:
         )
 
     def instructions(self) -> str:
-        """The kind-agnostic session-instructions section describing the pattern."""
+        """Return the kind-agnostic session-instructions section describing the pattern."""
         p = self.service_prefix
         return (
             "HTCondor jobs can receive the user's linked credentials on the worker "
