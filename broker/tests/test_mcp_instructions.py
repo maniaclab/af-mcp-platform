@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from af_mcp_broker.credmon.guidance import JobCredentialGuide
 from af_mcp_broker.mcp.instructions import compose_agent_instructions
 from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
 
@@ -55,3 +56,27 @@ def test_compose_is_deterministic() -> None:
     registry.register(_spec(name="a", prefix="a", agent_policy="Policy A."))
     registry.register(_spec(name="b", prefix="b", agent_policy="Policy B."))
     assert compose_agent_instructions(registry) == compose_agent_instructions(registry)
+
+
+def test_compose_adds_job_credential_section_when_credmon_is_wired() -> None:
+    guide = JobCredentialGuide(service_prefix="af_", kinds=frozenset({"krb5"}))
+
+    text = compose_agent_instructions(ServiceRegistry(), job_credentials=guide)
+
+    assert guide.instructions() in text
+
+
+def test_compose_has_no_job_credential_section_without_credmon() -> None:
+    """Sites without HTCondor (or with credmon off) never mention it."""
+    text = compose_agent_instructions(ServiceRegistry())
+
+    assert "use_oauth_services" not in text
+    assert "_CONDOR_CREDS" not in text
+
+
+def test_compose_has_no_job_credential_section_when_no_kind_is_wired() -> None:
+    guide = JobCredentialGuide(service_prefix="af_", kinds=frozenset())
+
+    text = compose_agent_instructions(ServiceRegistry(), job_credentials=guide)
+
+    assert "use_oauth_services" not in text
