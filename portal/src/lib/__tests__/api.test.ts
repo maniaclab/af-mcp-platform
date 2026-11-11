@@ -637,6 +637,72 @@ describe('fetchDashboardSummary() service and token details', () => {
   });
 });
 
+describe('fetchDashboardSummary() rejected credentials', () => {
+  const run = async (servers: unknown[]) => {
+    const body = (url: string): unknown => {
+      if (url.includes('/identities')) {
+        return {
+          providers: [
+            { id: 'krb5', display_name: 'Kerberos ticket', link_mechanism: 'credential' },
+            { id: 'atlas-oidc', display_name: 'ATLAS IAM', link_mechanism: 'redirect' },
+          ],
+        };
+      }
+      if (url.includes('/catalog')) return { servers };
+      if (url.includes('/tokens')) return [];
+      return { cached: false, voms_attributes: [] };
+    };
+    globalThis.fetch = vi.fn((input: RequestInfo | URL) =>
+      Promise.resolve(
+        new Response(JSON.stringify(body(String(input))), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      ),
+    );
+    return fetchDashboardSummary();
+  };
+  const server = (name: string, link_state: string | null | undefined, provider = 'krb5') => ({
+    name,
+    display_name: `Display ${name}`,
+    status: 'link_required',
+    link_state,
+    credential_provider: provider,
+  });
+
+  it('counts a rejected service apart from not linked, naming its service, identity and action', async () => {
+    const summary = await run([server('a', 'rejected'), server('b', 'not_linked', 'atlas-oidc')]);
+    expect(summary.rejectedCount).toBe(1);
+    expect(summary.rejectedService).toBe('Display a');
+    expect(summary.rejectedIdentity).toBe('Kerberos ticket');
+    expect(summary.rejectedAction).toEqual({
+      label: 'Refresh ticket',
+      href: '/identities/#identity-card-krb5',
+    });
+    expect(summary.needsLinkCount).toBe(1);
+    expect(summary.needsLinkService).toBe('Display b');
+  });
+
+  it.each([null, undefined])(
+    'treats link_state %s as not linked, never rejected',
+    async (state) => {
+      const summary = await run([server('a', state)]);
+      expect(summary.rejectedCount).toBe(0);
+      expect(summary.rejectedService).toBeNull();
+      expect(summary.rejectedIdentity).toBeNull();
+      expect(summary.rejectedAction).toBeNull();
+      expect(summary.needsLinkCount).toBe(1);
+    },
+  );
+
+  it('offers no action when several rejected services need different identities', async () => {
+    const summary = await run([server('a', 'rejected'), server('b', 'rejected', 'atlas-oidc')]);
+    expect(summary.rejectedCount).toBe(2);
+    expect(summary.rejectedService).toBeNull();
+    expect(summary.rejectedAction).toBeNull();
+  });
+});
+
 describe('fetchDashboardSummary() proxy renewal', () => {
   const identities = (providers: unknown[]) =>
     vi.fn((input: RequestInfo | URL) => {

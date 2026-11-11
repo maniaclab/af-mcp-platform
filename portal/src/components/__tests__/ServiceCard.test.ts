@@ -39,6 +39,7 @@ const SERVER: CatalogServer = {
   status: 'available',
   status_detail: 'Available.',
   correlation_id: null,
+  link_state: null,
   builtin: false,
 };
 
@@ -54,6 +55,7 @@ const BUILTIN_SERVER: CatalogServer = {
   status: 'available',
   status_detail: 'Available.',
   correlation_id: null,
+  link_state: null,
   builtin: true,
 };
 
@@ -92,6 +94,8 @@ function mountCard(): VueWrapper {
         linked: true,
         linkHref: '/identities/#identity-card-atlas-oidc',
         linkLabel: 'Link ATLAS IAM account',
+        relinkLabel: 'Reconnect ATLAS IAM account',
+        noun: 'ATLAS IAM account',
       },
     },
   });
@@ -109,6 +113,8 @@ function mountBuiltinCard(): VueWrapper {
         linked: null,
         linkHref: null,
         linkLabel: null,
+        relinkLabel: null,
+        noun: null,
       },
     },
   });
@@ -243,6 +249,8 @@ describe('permission badge', () => {
           linked: true,
           linkHref: '/identities/#identity-card-atlas-oidc',
           linkLabel: 'Link ATLAS IAM account',
+          relinkLabel: 'Reconnect ATLAS IAM account',
+          noun: 'ATLAS IAM account',
         },
       },
     });
@@ -270,6 +278,8 @@ describe('permission badge', () => {
           linked: true,
           linkHref: '/identities/#identity-card-atlas-oidc',
           linkLabel: 'Link ATLAS IAM account',
+          relinkLabel: 'Reconnect ATLAS IAM account',
+          noun: 'ATLAS IAM account',
         },
       },
     });
@@ -299,6 +309,8 @@ describe('credential-type badge', () => {
           linked: null,
           linkHref: null,
           linkLabel: null,
+          relinkLabel: null,
+          noun: null,
         },
       },
     });
@@ -316,6 +328,8 @@ describe('credential-type badge', () => {
           linked: null,
           linkHref: null,
           linkLabel: null,
+          relinkLabel: null,
+          noun: null,
         },
       },
     });
@@ -385,6 +399,8 @@ describe('status line', () => {
           linked: false,
           linkHref: '/identities/#identity-card-atlas-oidc',
           linkLabel: 'Link ATLAS IAM account',
+          relinkLabel: 'Reconnect ATLAS IAM account',
+          noun: 'ATLAS IAM account',
         },
       },
     });
@@ -459,5 +475,54 @@ describe('status line', () => {
     const detail = wrapper.get('.bc__status-detail');
     expect(detail.text()).toContain('Contact an administrator');
     expect(detail.text()).toContain('abc123');
+  });
+
+  describe('rejected credential', () => {
+    const rejected = () =>
+      mountWith({
+        status: 'link_required',
+        link_state: 'rejected',
+        status_detail: 'Your linked credential was rejected. Re-link your identity.',
+      });
+
+    it('says "Credential rejected" with the warning mark, never "Not linked"', () => {
+      const wrapper = rejected();
+      const status = wrapper.get('.bc__status-line');
+      expect(status.text()).toContain('Credential rejected');
+      expect(status.get('.af-mark').classes()).toContain('warn');
+      expect(wrapper.text()).not.toContain('Not linked');
+      expect(wrapper.find('.af-mark.off').exists()).toBe(false);
+    });
+
+    it('stays at full ink, not the greyed disabled treatment', () => {
+      expect(rejected().classes()).not.toContain('bc--off');
+    });
+
+    it('says what happened in one sentence naming the identity', () => {
+      const detail = rejected().get('.bc__status-detail');
+      expect(detail.text()).toBe(
+        'Your linked ATLAS IAM account was rejected. Re-link it to use this service.',
+      );
+    });
+
+    it('offers the re-link action, named for the identity, linking to its card', () => {
+      const fix = rejected().get('.bc__status-line a');
+      expect(fix.text()).toBe('Reconnect ATLAS IAM account');
+      expect(fix.attributes('href')).toBe('/identities/#identity-card-atlas-oidc');
+    });
+
+    it('does not mark the Powered by identity as Linked or Not linked', () => {
+      const powered = rejected().get('.bc__powered-by');
+      expect(powered.text()).toContain('Powered by ATLAS IAM');
+      expect(powered.find('.af-mark').exists()).toBe(false);
+    });
+  });
+
+  it('keeps a not-linked service quiet when link_state is "not_linked"', () => {
+    const wrapper = mountWith({ status: 'link_required', link_state: 'not_linked' });
+    expect(wrapper.classes()).toContain('bc--off');
+    expect(wrapper.get('.bc__status-line').text()).toContain('Not linked');
+    expect(wrapper.find('.af-mark.warn').exists()).toBe(false);
+    expect(wrapper.find('.bc__status-detail').exists()).toBe(false);
   });
 });

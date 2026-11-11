@@ -29,6 +29,7 @@ function server(overrides: Partial<CatalogServer> = {}): CatalogServer {
     status: 'available',
     status_detail: 'Available.',
     correlation_id: null,
+    link_state: null,
     builtin: false,
     ...overrides,
   };
@@ -36,7 +37,14 @@ function server(overrides: Partial<CatalogServer> = {}): CatalogServer {
 
 const BLOCKED = {
   status: 'link_required' as const,
+  link_state: 'not_linked' as const,
   status_detail: 'Link your ATLAS IAM account to use this service.',
+};
+
+const REJECTED = {
+  status: 'link_required' as const,
+  link_state: 'rejected' as const,
+  status_detail: 'Your linked credential was rejected. Re-link your identity.',
 };
 
 async function mountPage(servers: CatalogServer[]) {
@@ -105,6 +113,58 @@ describe('services banner', () => {
     expect(wrapper.find('.af-note').exists()).toBe(false);
     expect(banner.text()).toContain('1 service is misconfigured');
     expect(banner.find('a.btn').exists()).toBe(false);
+  });
+});
+
+describe('rejected credential', () => {
+  it('raises a warning banner, not a hint, naming the service and the re-link action', async () => {
+    const wrapper = await mountPage([
+      server(),
+      server({ name: 'panda', display_name: 'PanDA', ...REJECTED }),
+    ]);
+    const banner = wrapper.get('.af-banner');
+    expect(banner.classes()).toContain('warn');
+    expect(banner.attributes('role')).toBe('alert');
+    expect(banner.text()).toContain('PanDA rejected your ATLAS IAM account');
+    const action = banner.get('a.btn');
+    expect(action.text()).toBe('Reconnect ATLAS IAM account');
+    expect(action.attributes('href')).toBe('/identities/#identity-card-atlas-oidc');
+    expect(wrapper.find('.af-note').exists()).toBe(false);
+  });
+
+  it('shows the row with the warning mark at full ink, never as not linked', async () => {
+    const wrapper = await mountPage([
+      server({ name: 'panda', display_name: 'PanDA', ...REJECTED }),
+    ]);
+    const card = wrapper.get('.bc');
+    expect(card.classes()).not.toContain('bc--off');
+    expect(card.get('.bc__status-line').text()).toContain('Credential rejected');
+    expect(card.get('.bc__status-line .af-mark').classes()).toContain('warn');
+    expect(card.text()).not.toContain('Not linked');
+  });
+
+  it('puts a failing service ahead of it, and it ahead of the not-linked hint', async () => {
+    const down = await mountPage([
+      server({ name: 'panda', display_name: 'PanDA', ...REJECTED }),
+      server({ name: 'ami', display_name: 'AMI', status: 'unavailable' }),
+    ]);
+    expect(down.get('.af-banner').text()).toContain('1 service is unavailable');
+    const both = await mountPage([
+      server({ name: 'ami', display_name: 'AMI', ...BLOCKED }),
+      server({ name: 'panda', display_name: 'PanDA', ...REJECTED }),
+    ]);
+    expect(both.get('.af-banner').text()).toContain('PanDA rejected your ATLAS IAM account');
+    expect(both.find('.af-note.info').exists()).toBe(false);
+  });
+
+  it('lists it after failing services and before available ones', async () => {
+    const wrapper = await mountPage([
+      server({ name: 'ok', display_name: 'Ok', status: 'available' }),
+      server({ name: 'rej', display_name: 'Rej', ...REJECTED }),
+      server({ name: 'down', display_name: 'Down', status: 'unavailable' }),
+      server({ name: 'nl', display_name: 'Nl', ...BLOCKED }),
+    ]);
+    expect(wrapper.findAll('.bc__name').map((n) => n.text())).toEqual(['Down', 'Rej', 'Ok', 'Nl']);
   });
 });
 

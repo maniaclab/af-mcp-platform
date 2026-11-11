@@ -31,6 +31,10 @@ const SUMMARY: DashboardSummary = {
   needsLinkAction: null,
   unavailableCount: 0,
   misconfiguredCount: 0,
+  rejectedCount: 0,
+  rejectedService: null,
+  rejectedIdentity: null,
+  rejectedAction: null,
   proxyAutoRenews: false,
   soonestExpiringToken: null,
   proxyStatus: { cached: true, voms_attributes: [], remaining_seconds: 48 * 3600 },
@@ -258,6 +262,42 @@ describe('OverviewSummary services and tokens rows', () => {
     expect(row.find('.ov__state').text()).toBe('6 of 8 available · 1 unavailable');
   });
 
+  it('counts a rejected credential with the warning mark, ahead of not linked', async () => {
+    vi.mocked(fetchDashboardSummary).mockResolvedValue({
+      ...SUMMARY,
+      reachableCount: 6,
+      rejectedCount: 1,
+      needsLinkCount: 1,
+    });
+    const wrapper = await mountSummary();
+
+    const row = wrapper.findAll('.ov__row')[0]!;
+    expect(row.find('.ov__state').text()).toBe('6 of 8 available · 1 credential rejected');
+    expect(row.find('.af-mark').classes()).toContain('warn');
+  });
+
+  it('pluralizes rejected credentials, and lets unavailable outrank them', async () => {
+    vi.mocked(fetchDashboardSummary).mockResolvedValue({
+      ...SUMMARY,
+      reachableCount: 5,
+      rejectedCount: 2,
+    });
+    const plural = await mountSummary();
+    expect(plural.findAll('.ov__row')[0]!.find('.ov__state').text()).toBe(
+      '5 of 8 available · 2 credentials rejected',
+    );
+    vi.mocked(fetchDashboardSummary).mockResolvedValue({
+      ...SUMMARY,
+      reachableCount: 4,
+      rejectedCount: 2,
+      unavailableCount: 1,
+    });
+    const down = await mountSummary();
+    expect(down.findAll('.ov__row')[0]!.find('.ov__state').text()).toBe(
+      '4 of 8 available · 1 unavailable',
+    );
+  });
+
   it('marks a misconfigured service as a problem and keeps it apart from unavailable', async () => {
     vi.mocked(fetchDashboardSummary).mockResolvedValue({
       ...SUMMARY,
@@ -318,6 +358,27 @@ describe('OverviewSummary banner', () => {
     const action = banners[0]!.find('a.btn');
     expect(action.text()).toBe('Renew proxy');
     expect(action.attributes('href')).toBe('/identities/');
+  });
+
+  it('raises a warning banner, not a hint, when a service rejected a linked credential', async () => {
+    vi.mocked(fetchDashboardSummary).mockResolvedValue({
+      ...SUMMARY,
+      reachableCount: 7,
+      rejectedCount: 1,
+      rejectedService: 'ATLAS OpenSearch',
+      rejectedIdentity: 'Kerberos ticket',
+      rejectedAction: { label: 'Refresh ticket', href: '/identities/#identity-card-krb5' },
+    });
+    const wrapper = await mountSummary();
+
+    const banner = wrapper.get('.af-banner');
+    expect(banner.classes()).toContain('warn');
+    expect(banner.attributes('role')).toBe('alert');
+    expect(banner.text()).toContain('ATLAS OpenSearch rejected your Kerberos ticket');
+    const action = banner.get('a.btn');
+    expect(action.text()).toBe('Refresh ticket');
+    expect(action.attributes('href')).toBe('/identities/#identity-card-krb5');
+    expect(wrapper.find('.af-note').exists()).toBe(false);
   });
 
   it('hints, as a quiet note, when no account is linked', async () => {

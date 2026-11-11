@@ -21,6 +21,10 @@ function summary(overrides: Partial<DashboardSummary> = {}): DashboardSummary {
     needsLinkAction: null,
     unavailableCount: 0,
     misconfiguredCount: 0,
+    rejectedCount: 0,
+    rejectedService: null,
+    rejectedIdentity: null,
+    rejectedAction: null,
     proxyAutoRenews: false,
     soonestExpiringToken: null,
     proxyStatus: { cached: true, voms_attributes: [], remaining_seconds: 48 * HOUR },
@@ -274,5 +278,55 @@ describe('overviewMessage', () => {
 
   it('never raises a banner for services that need a linked account', () => {
     expect(overviewMessage(summary({ needsLinkCount: 2 }), NOW)?.kind).toBe('hint');
+  });
+
+  describe('rejected credential', () => {
+    const REJECT = {
+      rejectedCount: 1,
+      rejectedService: 'ATLAS OpenSearch',
+      rejectedIdentity: 'Kerberos ticket',
+      rejectedAction: { label: 'Refresh ticket', href: '/identities/#identity-card-krb5' },
+    };
+
+    it('raises a warning banner naming the service and offering the re-link action', () => {
+      expect(overviewMessage(summary({ reachableCount: 7, ...REJECT }), NOW)).toEqual({
+        kind: 'banner',
+        tone: 'warn',
+        title: 'ATLAS OpenSearch rejected your Kerberos ticket',
+        body: 'Re-link it to use this service.',
+        action: { label: 'Refresh ticket', href: '/identities/#identity-card-krb5' },
+      });
+    });
+
+    it('counts several rejected services', () => {
+      expect(
+        overviewMessage(summary({ ...REJECT, rejectedCount: 2, rejectedService: null }), NOW),
+      ).toMatchObject({ kind: 'banner', title: '2 services rejected a linked credential' });
+    });
+
+    it('puts an expired proxy and failing services ahead of it', () => {
+      const expired = summary({
+        ...REJECT,
+        proxyStatus: { cached: true, voms_attributes: [], remaining_seconds: -10 },
+      });
+      expect(overviewMessage(expired, NOW)).toMatchObject({
+        title: 'Your grid proxy has expired',
+      });
+      expect(overviewMessage(summary({ ...REJECT, unavailableCount: 1 }), NOW)).toMatchObject({
+        title: '1 service is unavailable',
+      });
+    });
+
+    it('puts it ahead of an expiring proxy, an expiring token and the unlinked hint', () => {
+      const expiring = summary({
+        ...REJECT,
+        needsLinkCount: 2,
+        proxyStatus: { cached: true, voms_attributes: [], remaining_seconds: 0.5 * HOUR },
+        soonestExpiringToken: { name: 'ci', expires_at: new Date(NOW + HOUR * 1000).toISOString() },
+      });
+      expect(overviewMessage(expiring, NOW)).toMatchObject({
+        title: 'ATLAS OpenSearch rejected your Kerberos ticket',
+      });
+    });
   });
 });

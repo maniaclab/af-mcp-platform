@@ -73,15 +73,25 @@ const servicesStatus = computed(() => {
   const s = summary.value;
   if (!s) return pending(summaryLoading.value);
   if (s.serverCount === 0) return { tone: 'off', state: 'No services' } as const;
-  // A misconfigured service is a problem and an unavailable one a warning; a
+  // A misconfigured service is a problem, an unavailable one or a rejected
+  // credential a warning; a
   // service that needs a linked account (or access) is not a fault. The row
   // names only the most important fact besides the available count so it
   // stays on one line; the Services page has the full breakdown.
   const parts = [`${s.reachableCount} of ${s.serverCount} available`];
   if (s.misconfiguredCount > 0) parts.push(`${s.misconfiguredCount} misconfigured`);
   else if (s.unavailableCount > 0) parts.push(`${s.unavailableCount} unavailable`);
+  else if (s.rejectedCount > 0)
+    parts.push(
+      `${s.rejectedCount} ${s.rejectedCount === 1 ? 'credential' : 'credentials'} rejected`,
+    );
   else if (s.needsLinkCount > 0) parts.push(`${s.needsLinkCount} not linked`);
-  const tone: Tone = s.misconfiguredCount > 0 ? 'bad' : s.unavailableCount > 0 ? 'warn' : 'ok';
+  const tone: Tone =
+    s.misconfiguredCount > 0
+      ? 'bad'
+      : s.unavailableCount > 0 || s.rejectedCount > 0
+        ? 'warn'
+        : 'ok';
   return { tone, state: parts.join(' · ') };
 });
 

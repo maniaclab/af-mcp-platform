@@ -28,7 +28,12 @@
  * one route, not a template for "public-ish" endpoints in general.
  */
 import { getAccessToken, isOidcConfigured, renewAccessToken } from './auth';
-import { summarizeServices, unlinkedAction } from './serviceStatus';
+import {
+  rejectedAction,
+  rejectedIdentityNoun,
+  summarizeServices,
+  unlinkedAction,
+} from './serviceStatus';
 import type { StatusCta } from './serviceStatus';
 import { soonestExpiringToken, tokenStatus } from './tokenDisplay';
 
@@ -397,6 +402,11 @@ export interface CatalogTool {
 export type ServiceStatus =
   'available' | 'link_required' | 'permission_required' | 'unavailable' | 'misconfigured';
 
+/** Why a "link_required" service needs a link: "not_linked" -- the caller
+ * never linked the identity; "rejected" -- it is linked, but the backend
+ * rejected the stored credential. Null for every other status. */
+export type LinkState = 'not_linked' | 'rejected';
+
 export interface CatalogServer {
   name: string;
   display_name: string;
@@ -419,6 +429,10 @@ export interface CatalogServer {
    * misconfigured) -- quote it in a ticket so an admin can grep the audit
    * log. Null otherwise. */
   correlation_id: string | null;
+  /** Why a link is required -- set only when `status` is "link_required".
+   * The broker always sends it; there is deliberately no fallback for one
+   * that omits it. */
+  link_state: LinkState | null;
   /** True only for the broker's own af-mcp entry (issue #240) -- the
    * gateway's identity, catalog, and usage methods. It has no per-user
    * credential, no identity to link, and no backend that could be
@@ -816,6 +830,14 @@ export interface DashboardSummary {
   needsLinkService: string | null;
   /** The action that links every unlinked service, when they all need the same account. */
   needsLinkAction: StatusCta | null;
+  /** Services whose linked credential the backend rejected. */
+  rejectedCount: number;
+  /** The display name of the one service that rejected its credential; null unless exactly one did. */
+  rejectedService: string | null;
+  /** What to call the one identity the rejected services share ("Kerberos ticket"); null when they differ or the identity is unknown. */
+  rejectedIdentity: string | null;
+  /** The action that re-links every rejected credential, when they all belong to the same identity. */
+  rejectedAction: StatusCta | null;
   /** Services that are temporarily unreachable. */
   unavailableCount: number;
   /** Services an operator must fix. */
@@ -856,6 +878,7 @@ export async function fetchDashboardSummary(): Promise<DashboardSummary> {
       (p) => p.link_mechanism === 'passphrase' && p.x509_link_mode === 'auto-renew',
     );
 
+  const providers = identityData.status === 'fulfilled' ? identityData.value.providers : [];
   const services = summarizeServices(catalog.status === 'fulfilled' ? catalog.value.servers : []);
 
   const proxy: ProxyStatus =
@@ -875,10 +898,11 @@ export async function fetchDashboardSummary(): Promise<DashboardSummary> {
     reachableCount: services.reachable,
     needsLinkCount: services.needsLink,
     needsLinkService: services.needsLinkNames.length === 1 ? services.needsLinkNames[0] : null,
-    needsLinkAction: unlinkedAction(
-      services.needsLinkProviders,
-      identityData.status === 'fulfilled' ? identityData.value.providers : [],
-    ),
+    needsLinkAction: unlinkedAction(services.needsLinkProviders, providers),
+    rejectedCount: services.rejected,
+    rejectedService: services.rejectedNames.length === 1 ? services.rejectedNames[0] : null,
+    rejectedIdentity: rejectedIdentityNoun(services.rejectedProviders, providers),
+    rejectedAction: rejectedAction(services.rejectedProviders, providers),
     unavailableCount: services.unavailable,
     misconfiguredCount: services.misconfigured,
     soonestExpiringToken: tokens.status === 'fulfilled' ? soonestExpiringToken(tokens.value) : null,

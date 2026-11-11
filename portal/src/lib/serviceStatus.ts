@@ -8,8 +8,13 @@
  * harnesses, so component logic stays thin and this module carries the
  * actual decisions.
  */
-import type { ServiceStatus, CatalogServer, IdentityProvider } from './api';
-import { identityLinkAnchor, identityLinkLabel } from './identityLinkLabel';
+import type { ServiceStatus, CatalogServer, IdentityProvider, LinkState } from './api';
+import {
+  identityLinkAnchor,
+  identityLinkLabel,
+  identityNoun,
+  identityRelinkLabel,
+} from './identityLinkLabel';
 
 export type StatusSeverity = 'ok' | 'off' | 'info' | 'warning' | 'error';
 
@@ -32,6 +37,19 @@ export interface ServiceStatusView {
    * user to quote in a ticket. */
   correlationId: string | null;
 }
+
+type ProviderRef = Pick<IdentityProvider, 'id' | 'display_name' | 'link_mechanism'>;
+
+/**
+ * A "link_required" service the user did link, whose stored credential the
+ * backend rejected. Only an explicit "rejected" counts: "not_linked", null and
+ * a broker that omits the field all read as the quiet not-linked state.
+ */
+function isRejected(server: Pick<CatalogServer, 'status'> & { link_state?: LinkState | null }) {
+  return server.status === 'link_required' && server.link_state === 'rejected';
+}
+
+const REJECTED_LABEL = 'Credential rejected';
 
 const LABELS: Record<ServiceStatus, string> = {
   available: 'Available',
@@ -60,8 +78,22 @@ const SEVERITIES: Record<ServiceStatus, StatusSeverity> = {
  * wait-and-retry state with nothing to link to.
  */
 export function resolveServiceStatus(
-  server: Pick<CatalogServer, 'status' | 'status_detail' | 'correlation_id'>,
+  server: Pick<CatalogServer, 'status' | 'status_detail' | 'correlation_id'> & {
+    link_state?: LinkState | null;
+  },
+  identityNounText: string | null = null,
 ): ServiceStatusView {
+  if (isRejected(server)) {
+    // A warning, not a quiet "off": the user did link, and what they set up is
+    // being rejected. The sentence replaces the broker's, naming the identity.
+    return {
+      label: REJECTED_LABEL,
+      detail: `Your linked ${identityNounText ?? 'credential'} was rejected. Re-link it to use this service.`,
+      severity: 'warning',
+      cta: { label: 'Re-link identity', href: '/identities/' },
+      correlationId: server.correlation_id,
+    };
+  }
   return {
     label: LABELS[server.status],
     detail: server.status_detail,
@@ -85,9 +117,11 @@ export function resolveServiceStatus(
 export function resolvePoweredByLinked(
   status: ServiceStatus,
   poweredByLinked: boolean | null,
+  linkState: LinkState | null = null,
 ): boolean | null {
   if (poweredByLinked === null) return null;
-  if (status === 'link_required') return false;
+  // A rejected credential is still linked: the identity is not "Not linked".
+  if (status === 'link_required' && linkState !== 'rejected') return false;
   return poweredByLinked;
 }
 
@@ -102,20 +136,27 @@ export interface ServiceCounts {
   needsLinkProviders: string[];
   /** Display names of those services, in catalog order (empty strings never appear). */
   needsLinkNames: string[];
+  /** Services whose linked credential the backend rejected. Never part of needsLink. */
+  rejected: number;
+  /** The distinct accounts those services use, in catalog order. */
+  rejectedProviders: string[];
+  /** Display names of those services, in catalog order (empty strings never appear). */
+  rejectedNames: string[];
   /** Services that are temporarily unreachable. */
   unavailable: number;
   /** Services an operator must fix. */
   misconfigured: number;
 }
 
+type ServiceLike = Pick<CatalogServer, 'status' | 'credential_provider'> &
+  Partial<Pick<CatalogServer, 'display_name'>> & { link_state?: LinkState | null };
+
 /** Counts services the way the Services page presents them. */
-export function summarizeServices(
-  servers: (Pick<CatalogServer, 'status' | 'credential_provider'> &
-    Partial<Pick<CatalogServer, 'display_name'>>)[],
-): ServiceCounts {
+export function summarizeServices(servers: ServiceLike[]): ServiceCounts {
   const statuses = servers.map((s) => s.status);
+  const rejected = servers.filter(isRejected);
   const unlinked = servers.filter(
-    (s) => s.status === 'link_required' && s.credential_provider !== null,
+    (s) => s.status === 'link_required' && !isRejected(s) && s.credential_provider !== null,
   );
   return {
     total: servers.length,
@@ -123,6 +164,11 @@ export function summarizeServices(
     needsLink: unlinked.length,
     needsLinkProviders: [...new Set(unlinked.map((s) => s.credential_provider as string))],
     needsLinkNames: unlinked.flatMap((s) => (s.display_name ? [s.display_name] : [])),
+    rejected: rejected.length,
+    rejectedProviders: [
+      ...new Set(rejected.flatMap((s) => (s.credential_provider ? [s.credential_provider] : []))),
+    ],
+    rejectedNames: rejected.flatMap((s) => (s.display_name ? [s.display_name] : [])),
     unavailable: statuses.filter((s) => s === 'unavailable').length,
     misconfigured: statuses.filter((s) => s === 'misconfigured').length,
   };
@@ -197,7 +243,7 @@ export function unlinkedHint(
  */
 export function unlinkedAction(
   needsLinkProviders: string[],
-  providers: Pick<IdentityProvider, 'id' | 'display_name' | 'link_mechanism'>[] = [],
+  providers: ProviderRef[] = [],
 ): StatusCta | null {
   const [only, ...others] = needsLinkProviders;
   if (only === undefined || others.length > 0) return null;
@@ -209,21 +255,96 @@ export function unlinkedAction(
 }
 
 /**
+ * The one action that re-links every rejected credential, when they all belong
+ * to the same identity; null when they belong to different ones (the user
+ * picks on the Identities page).
+ */
+export function rejectedAction(
+  rejectedProviders: string[],
+  providers: ProviderRef[] = [],
+): StatusCta | null {
+  const [only, ...others] = rejectedProviders;
+  if (only === undefined || others.length > 0) return null;
+  const provider = providers.find((p) => p.id === only);
+  return {
+    label: provider ? identityRelinkLabel(provider) : 'Re-link identity',
+    href: identityLinkAnchor(only),
+  };
+}
+
+/** What to call the one identity the rejected services share; null when they differ or it is unknown. */
+export function rejectedIdentityNoun(
+  rejectedProviders: string[],
+  providers: ProviderRef[] = [],
+): string | null {
+  const [only, ...others] = rejectedProviders;
+  if (only === undefined || others.length > 0) return null;
+  const provider = providers.find((p) => p.id === only);
+  return provider ? identityNoun(provider) : null;
+}
+
+/**
+ * The warning banner for services whose linked credential the backend
+ * rejected: the user did link, and what they set up is being refused, so
+ * unlike an account left unlinked this is a real message. One service is
+ * named with its identity; several are counted, with an action only when
+ * they all need the same identity.
+ */
+export function rejectedBanner(
+  count: number,
+  serviceName: string | null,
+  identity: string | null,
+  action: StatusCta | null,
+): BannerMessage {
+  if (count === 1 && serviceName !== null) {
+    return {
+      kind: 'banner',
+      tone: 'warn',
+      title: `${serviceName} rejected your ${identity ?? 'linked credential'}`,
+      body: 'Re-link it to use this service.',
+      action,
+    };
+  }
+  return {
+    kind: 'banner',
+    tone: 'warn',
+    title: `${countOf(count, 'service', 'services')} rejected a linked credential`,
+    body: 'Re-link the identities they use on the Identities page.',
+    action,
+  };
+}
+
+/**
  * The Services page's single message. A misconfigured service (a problem) or
- * an unavailable one (a warning: nothing to do but wait) raises a banner.
- * Otherwise services that only need a linked account raise a hint, with an
+ * an unavailable one (a warning: nothing to do but wait) raises a banner. A
+ * rejected credential raises a warning banner next. Otherwise services that only need a linked account raise a hint, with an
  * action only when they all need the same account. "Access required" needs an
  * administrator and raises nothing.
  */
 export function resolveServicesMessage(
-  servers: (Pick<CatalogServer, 'status' | 'credential_provider'> &
-    Partial<Pick<CatalogServer, 'display_name'>>)[],
-  providers: Pick<IdentityProvider, 'id' | 'display_name' | 'link_mechanism'>[] = [],
+  servers: ServiceLike[],
+  providers: ProviderRef[] = [],
 ): PageMessage | null {
-  const { misconfigured, unavailable, needsLink, needsLinkProviders, needsLinkNames } =
-    summarizeServices(servers);
+  const {
+    misconfigured,
+    unavailable,
+    needsLink,
+    needsLinkProviders,
+    needsLinkNames,
+    rejected,
+    rejectedProviders,
+    rejectedNames,
+  } = summarizeServices(servers);
   const title = failureSummary(misconfigured, unavailable);
   if (title === null) {
+    if (rejected > 0) {
+      return rejectedBanner(
+        rejected,
+        rejectedNames.length === 1 ? rejectedNames[0] : null,
+        rejectedIdentityNoun(rejectedProviders, providers),
+        rejectedAction(rejectedProviders, providers),
+      );
+    }
     if (needsLink === 0) return null;
     const action = unlinkedAction(needsLinkProviders, providers);
     return unlinkedHint(needsLink, action, needsLinkNames.length === 1 ? needsLinkNames[0] : null);
@@ -255,19 +376,29 @@ export function resolveServicesMessage(
   };
 }
 
-// What can I use, and what is actually wrong: problems first, then what works,
-// then what the user cannot use yet (access, then an unlinked account).
+// What can I use, and what is actually wrong: problems first, then a rejected
+// credential, then what works, then what the user cannot use yet (access, then
+// an unlinked account).
 const ORDER: Record<ServiceStatus, number> = {
   unavailable: 0,
   misconfigured: 0,
-  available: 1,
-  permission_required: 2,
-  link_required: 3,
+  available: 2,
+  permission_required: 3,
+  link_required: 4,
 };
 
+// A rejected credential needs attention: after what is failing, before what works.
+const REJECTED_ORDER = 1;
+
+function orderOf(
+  server: Pick<CatalogServer, 'status'> & { link_state?: LinkState | null },
+): number {
+  return isRejected(server) ? REJECTED_ORDER : ORDER[server.status];
+}
+
 /** Orders services by status group, alphabetically by name within a group. */
-export function sortServices<T extends Pick<CatalogServer, 'name' | 'status'>>(servers: T[]): T[] {
-  return [...servers].sort(
-    (a, b) => ORDER[a.status] - ORDER[b.status] || a.name.localeCompare(b.name),
-  );
+export function sortServices<
+  T extends Pick<CatalogServer, 'name' | 'status'> & { link_state?: LinkState | null },
+>(servers: T[]): T[] {
+  return [...servers].sort((a, b) => orderOf(a) - orderOf(b) || a.name.localeCompare(b.name));
 }

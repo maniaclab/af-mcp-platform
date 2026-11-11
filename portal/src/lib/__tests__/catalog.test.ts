@@ -14,6 +14,7 @@ function makeServer(overrides: Partial<CatalogServer> = {}): CatalogServer {
     status: 'available',
     status_detail: 'Available.',
     correlation_id: null,
+    link_state: null,
     builtin: false,
     ...overrides,
   };
@@ -40,6 +41,8 @@ describe('resolvePoweredBy', () => {
       linked: null,
       linkHref: null,
       linkLabel: null,
+      relinkLabel: null,
+      noun: null,
     });
   });
 
@@ -62,6 +65,8 @@ describe('resolvePoweredBy', () => {
       linked: true,
       linkHref: '/identities/#identity-card-x509',
       linkLabel: 'Link certificate',
+      relinkLabel: 'Re-link certificate',
+      noun: 'Grid certificate (x509)',
     });
   });
 
@@ -73,6 +78,8 @@ describe('resolvePoweredBy', () => {
       linked: true,
       linkHref: '/identities/#identity-card-atlas-oidc',
       linkLabel: 'Link ATLAS IAM account',
+      relinkLabel: 'Reconnect ATLAS IAM account',
+      noun: 'ATLAS IAM account',
     });
   });
 
@@ -86,6 +93,8 @@ describe('resolvePoweredBy', () => {
       linked: false,
       linkHref: '/identities/#identity-card-rucio-mcp-atlas',
       linkLabel: 'Link Rucio (ATLAS) account',
+      relinkLabel: 'Reconnect Rucio (ATLAS) account',
+      noun: 'Rucio (ATLAS) account',
     });
   });
 
@@ -96,6 +105,8 @@ describe('resolvePoweredBy', () => {
       linked: false,
       linkHref: '/identities/#identity-card-unknown-alias',
       linkLabel: 'Link unknown-alias account',
+      relinkLabel: 'Reconnect unknown-alias account',
+      noun: 'unknown-alias account',
     });
   });
 });

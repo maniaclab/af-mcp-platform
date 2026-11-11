@@ -32,27 +32,34 @@ const actionLabel = isWrite ? 'write' : 'read';
 const actionTooltip = isWrite
   ? 'Has at least one state-changing tool — use with care'
   : 'Read-only — no side effects';
-const statusView = computed(() => resolveServiceStatus(props.server));
+const statusView = computed(() => resolveServiceStatus(props.server, props.poweredBy.noun));
+const isRejected = computed(
+  () => props.server.status === 'link_required' && props.server.link_state === 'rejected',
+);
 const statusTone = computed(() => TONE[statusView.value.severity]);
 // The fix names the action the Identities page uses for the same account and
 // links to that account's card.
 const fix = computed(() => {
   const cta = statusView.value.cta;
   if (!cta) return null;
-  const { kind, linkLabel, linkHref } = props.poweredBy;
-  return kind === 'identity' && linkLabel && linkHref ? { label: linkLabel, href: linkHref } : cta;
+  const { kind, linkLabel, relinkLabel, linkHref } = props.poweredBy;
+  // A rejected credential is re-linked, not linked for the first time.
+  const label = isRejected.value ? relinkLabel : linkLabel;
+  return kind === 'identity' && label && linkHref ? { label, href: linkHref } : cta;
 });
 // The status word, plus the fix link, already says why a service is not
 // linked or unavailable; the broker's sentence is kept where it adds
 // something (what to do, a reference id).
 const showStatusDetail = computed(
-  () => !['available', 'link_required', 'unavailable'].includes(props.server.status),
+  () =>
+    isRejected.value ||
+    !['available', 'link_required', 'unavailable'].includes(props.server.status),
 );
 // "link_required" is authoritative over the identities response's own
 // linked flag -- see resolvePoweredByLinked's docstring for why the two can
 // disagree for a moment.
 const poweredByLinked = computed(() =>
-  resolvePoweredByLinked(props.server.status, props.poweredBy.linked),
+  resolvePoweredByLinked(props.server.status, props.poweredBy.linked, props.server.link_state),
 );
 // The identity's link state is shown only on an available row, where it says
 // which account the service is using. On a not-linked row the status line says
@@ -63,7 +70,9 @@ const showLinkState = computed(
 );
 // A service whose only obstacle is an unlinked account reads as disabled, not
 // broken: the user chose not to link it, and that only keeps its tools unused.
-const isDisabled = computed(() => props.server.status === 'link_required');
+// A rejected credential is the opposite: the user did link, so the row stays at
+// full ink with its warning.
+const isDisabled = computed(() => props.server.status === 'link_required' && !isRejected.value);
 
 // Methods list -- fetched on expand, never on page load: the catalog's job is
 // a quick scan of reachable backends, and each listing fans the broker out to

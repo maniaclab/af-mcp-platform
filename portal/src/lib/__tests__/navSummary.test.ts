@@ -19,6 +19,10 @@ const healthy: DashboardSummary = {
   needsLinkAction: null,
   unavailableCount: 0,
   misconfiguredCount: 0,
+  rejectedCount: 0,
+  rejectedService: null,
+  rejectedIdentity: null,
+  rejectedAction: null,
   proxyAutoRenews: false,
   soonestExpiringToken: null,
 };
@@ -34,6 +38,10 @@ const empty: DashboardSummary = {
   needsLinkAction: null,
   unavailableCount: 0,
   misconfiguredCount: 0,
+  rejectedCount: 0,
+  rejectedService: null,
+  rejectedIdentity: null,
+  rejectedAction: null,
   proxyAutoRenews: false,
   soonestExpiringToken: null,
 };

@@ -6,6 +6,7 @@ import {
   resolveServicesMessage,
   sortServices,
   summarizeServices,
+  rejectedBanner,
 } from '../serviceStatus';
 import type { ServiceStatus, CatalogServer } from '../api';
 
@@ -271,6 +272,9 @@ describe('summarizeServices', () => {
       misconfigured: 1,
       needsLinkProviders: ['atlas-oidc'],
       needsLinkNames: [],
+      rejected: 0,
+      rejectedProviders: [],
+      rejectedNames: [],
     });
   });
 
@@ -299,6 +303,186 @@ describe('summarizeServices', () => {
       misconfigured: 0,
       needsLinkProviders: [],
       needsLinkNames: [],
+      rejected: 0,
+      rejectedProviders: [],
+      rejectedNames: [],
     });
+  });
+});
+
+describe('rejected credential', () => {
+  const rejected = (
+    credential_provider: string | null = 'krb5',
+    display_name = 'ATLAS OpenSearch',
+  ) => ({
+    status: 'link_required' as const,
+    link_state: 'rejected' as const,
+    credential_provider,
+    display_name,
+  });
+  const notLinked = (credential_provider: string | null = 'krb5') => ({
+    status: 'link_required' as const,
+    link_state: 'not_linked' as const,
+    credential_provider,
+    display_name: 'Other',
+  });
+  const krb5 = {
+    id: 'krb5',
+    display_name: 'Kerberos ticket',
+    link_mechanism: 'credential' as const,
+  };
+  const iam = { id: 'atlas-oidc', display_name: 'ATLAS IAM', link_mechanism: 'redirect' as const };
+
+  it('resolveServiceStatus words it as a rejected credential, a warning, with a re-link action', () => {
+    const view = resolveServiceStatus(
+      { ...statusFields('link_required'), link_state: 'rejected' },
+      'Kerberos ticket',
+    );
+    expect(view.label).toBe('Credential rejected');
+    expect(view.severity).toBe('warning');
+    expect(view.detail).toBe(
+      'Your linked Kerberos ticket was rejected. Re-link it to use this service.',
+    );
+    expect(view.cta).toEqual({ label: 'Re-link identity', href: '/identities/' });
+  });
+
+  it('resolveServiceStatus names a credential generically when the identity is unknown', () => {
+    const view = resolveServiceStatus({ ...statusFields('link_required'), link_state: 'rejected' });
+    expect(view.detail).toBe(
+      'Your linked credential was rejected. Re-link it to use this service.',
+    );
+  });
+
+  it.each(['not_linked', null] as const)(
+    'resolveServiceStatus leaves link_state %s as "Not linked", quiet',
+    (link_state) => {
+      const view = resolveServiceStatus({ ...statusFields('link_required'), link_state });
+      expect(view.label).toBe('Not linked');
+      expect(view.severity).toBe('off');
+    },
+  );
+
+  it('resolvePoweredByLinked keeps a rejected credential linked: it is not "Not linked"', () => {
+    expect(resolvePoweredByLinked('link_required', true, 'rejected')).toBe(true);
+    expect(resolvePoweredByLinked('link_required', true, 'not_linked')).toBe(false);
+    expect(resolvePoweredByLinked('link_required', true, null)).toBe(false);
+  });
+
+  it('summarizeServices counts it apart from "not linked", and from reachable', () => {
+    const counts = summarizeServices([
+      { status: 'available', link_state: null, credential_provider: 'a', display_name: 'A' },
+      rejected('krb5', 'Search'),
+      rejected('krb5', 'Logs'),
+      notLinked('atlas-oidc'),
+    ]);
+    expect(counts.reachable).toBe(1);
+    expect(counts.rejected).toBe(2);
+    expect(counts.rejectedNames).toEqual(['Search', 'Logs']);
+    expect(counts.rejectedProviders).toEqual(['krb5']);
+    expect(counts.needsLink).toBe(1);
+    expect(counts.needsLinkProviders).toEqual(['atlas-oidc']);
+  });
+
+  it('rejectedBanner names the service and identity for one, with the re-link action', () => {
+    expect(
+      rejectedBanner(1, 'ATLAS OpenSearch', 'Kerberos ticket', {
+        label: 'Refresh ticket',
+        href: '/identities/#identity-card-krb5',
+      }),
+    ).toEqual({
+      kind: 'banner',
+      tone: 'warn',
+      title: 'ATLAS OpenSearch rejected your Kerberos ticket',
+      body: 'Re-link it to use this service.',
+      action: { label: 'Refresh ticket', href: '/identities/#identity-card-krb5' },
+    });
+  });
+
+  it('rejectedBanner counts several, with an action only when given one', () => {
+    expect(rejectedBanner(3, null, null, null)).toEqual({
+      kind: 'banner',
+      tone: 'warn',
+      title: '3 services rejected a linked credential',
+      body: 'Re-link the identities they use on the Identities page.',
+      action: null,
+    });
+  });
+
+  it('rejectedBanner falls back to "linked credential" for one service whose identity is unknown', () => {
+    expect(rejectedBanner(1, 'Search', null, null)).toMatchObject({
+      title: 'Search rejected your linked credential',
+    });
+  });
+
+  it('resolveServicesMessage raises a warning banner, not a hint, for one rejected service', () => {
+    const message = resolveServicesMessage([rejected()], [krb5]);
+    expect(message).toEqual({
+      kind: 'banner',
+      tone: 'warn',
+      title: 'ATLAS OpenSearch rejected your Kerberos ticket',
+      body: 'Re-link it to use this service.',
+      action: { label: 'Refresh ticket', href: '/identities/#identity-card-krb5' },
+    });
+  });
+
+  it('resolveServicesMessage counts several, with one action only when they share an identity', () => {
+    const same = resolveServicesMessage(
+      [rejected('krb5', 'A'), rejected('krb5', 'B')],
+      [krb5, iam],
+    );
+    expect(same).toMatchObject({
+      kind: 'banner',
+      tone: 'warn',
+      title: '2 services rejected a linked credential',
+      action: { label: 'Refresh ticket', href: '/identities/#identity-card-krb5' },
+    });
+    const different = resolveServicesMessage(
+      [rejected('krb5', 'A'), rejected('atlas-oidc', 'B')],
+      [krb5, iam],
+    );
+    expect(different).toMatchObject({
+      title: '2 services rejected a linked credential',
+      action: null,
+    });
+  });
+
+  it('resolveServicesMessage ranks failing services over rejected, and rejected over a not-linked hint', () => {
+    expect(
+      resolveServicesMessage(
+        [rejected(), { ...notLinked(), status: 'unavailable' as const }],
+        [krb5],
+      ),
+    ).toMatchObject({
+      title: '1 service is unavailable',
+    });
+    expect(
+      resolveServicesMessage([rejected(), notLinked('atlas-oidc')], [krb5, iam]),
+    ).toMatchObject({
+      kind: 'banner',
+      title: 'ATLAS OpenSearch rejected your Kerberos ticket',
+    });
+  });
+
+  it('resolveServicesMessage still hints, as before, for a not-linked service', () => {
+    expect(resolveServicesMessage([notLinked()], [krb5])).toMatchObject({
+      kind: 'hint',
+      title: 'Other is not linked',
+    });
+  });
+
+  it('sortServices puts rejected after failing and before available; not linked stays last', () => {
+    const named = (
+      name: string,
+      status: ServiceStatus,
+      link_state: 'rejected' | 'not_linked' | null = null,
+    ) => ({ name, status, link_state });
+    const sorted = sortServices([
+      named('a-link', 'link_required', 'not_linked'),
+      named('b-ok', 'available'),
+      named('c-rej', 'link_required', 'rejected'),
+      named('d-down', 'unavailable'),
+      named('e-bad', 'misconfigured'),
+    ]);
+    expect(sorted.map((s) => s.name)).toEqual(['d-down', 'e-bad', 'c-rej', 'b-ok', 'a-link']);
   });
 });

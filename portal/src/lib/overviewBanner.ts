@@ -3,12 +3,13 @@
  * page's banner slot from the dashboard summary. A problem or warning banner
  * beats a hint; null means nothing is wrong and the slot stays empty.
  *
- * Priority: expired proxy, failing services, proxy expiring, token expiring,
+ * Priority: expired proxy, failing services, rejected credentials, proxy
+ * expiring, token expiring,
  * then the hints: no linked accounts, services not linked. An account left
  * unlinked is the user's choice, so it only ever hints.
  */
 import type { DashboardSummary } from './api';
-import { failureSummary, unlinkedHint } from './serviceStatus';
+import { failureSummary, rejectedBanner, unlinkedHint } from './serviceStatus';
 import type { PageMessage } from './serviceStatus';
 import { formatRelative } from './relativeTime';
 import { expiresIn, expiresSoon } from './tokenDisplay';
@@ -42,6 +43,14 @@ export function overviewMessage(
       body: 'Open Services to see which ones and why.',
       action: { label: 'View services', href: '/catalog/' },
     };
+  }
+  if (summary.rejectedCount > 0) {
+    return rejectedBanner(
+      summary.rejectedCount,
+      summary.rejectedService,
+      summary.rejectedIdentity,
+      summary.rejectedAction,
+    );
   }
   if (remaining != null && proxy === 'expiring') {
     return {
