@@ -58,6 +58,7 @@
 @import 'basecoat-css/components/badge';
 @import 'basecoat-css/components/button';
 @import 'basecoat-css/components/button-group';
+@import 'basecoat-css/components/chart';
 @import 'basecoat-css/components/checkbox';
 @import 'basecoat-css/components/dialog';
 @import 'basecoat-css/components/empty';
@@ -166,6 +167,8 @@
   --text-lg--line-height: 1.75rem;
   --shadow-xs: 0 0 #0000;
   --shadow-sm: 0 0 #0000;
+  /* The chart tooltip is a floating surface: it gets the portal's popover shadow. */
+  --shadow-xl: var(--shadow-af-1);
   --blur-xs: 0px;
   --tracking-tight: normal;
 }

@@ -13,6 +13,20 @@ import { flushPromises, mount } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { UsageResponse } from '../../lib/api';
 
+// jsdom has no canvas; the chart libraries are replaced and BarChart's own test
+// covers the drawing.
+vi.mock('chart.js', () => ({
+  Chart: class {
+    static register = vi.fn();
+  },
+  BarController: {},
+  BarElement: {},
+  CategoryScale: {},
+  LinearScale: {},
+  Tooltip: {},
+}));
+vi.mock('basecoat-css/chart', () => ({}));
+
 vi.mock('../../lib/api', () => ({
   fetchUsage: vi.fn(),
   SessionExpiredError: class SessionExpiredError extends Error {},
@@ -76,6 +90,8 @@ const EMPTY: UsageResponse = {
 
 beforeEach(() => {
   vi.restoreAllMocks();
+  (window as unknown as { basecoat: unknown }).basecoat = { chart: vi.fn() };
+  window.matchMedia = vi.fn().mockReturnValue({ matches: false }) as typeof window.matchMedia;
 });
 
 describe('UsagePage', () => {
@@ -100,7 +116,7 @@ describe('UsagePage', () => {
     const wrapper = mount(UsagePage);
     await flushPromises();
 
-    const rows = wrapper.findAll('tbody tr');
+    const rows = wrapper.findAll('.table-container tbody tr');
     expect(rows).toHaveLength(2);
     expect(rows[0].text()).toContain('rucio');
     expect(rows[0].text()).toContain('30');
@@ -108,7 +124,7 @@ describe('UsagePage', () => {
     expect(rows[1].text()).toContain('4,000');
   });
 
-  it('renders per-day activity bars for the days with calls', async () => {
+  it('renders the daily activity as a chart with every day in text', async () => {
     // Pin "today" so the fixture's hard-coded by_day dates stay inside the
     // 30-day window the component builds back from the current UTC date.
     vi.useFakeTimers({ toFake: ['Date'] });
@@ -118,11 +134,17 @@ describe('UsagePage', () => {
       const wrapper = mount(UsagePage);
       await flushPromises();
 
-      const bars = wrapper.findAll('[data-testid="usage-day-bar"]');
-      // One bar per calendar day in the 30-day window, zero-height for the
-      // days without calls.
-      expect(bars).toHaveLength(30);
-      expect(bars.some((b) => Number(b.attributes('data-calls')) === 30)).toBe(true);
+      const chart = wrapper.find('.chart[role="img"]');
+      expect(chart.attributes('aria-label')).toContain('Calls per day');
+      // One row per calendar day in the 30-day window, zero for the days
+      // without calls; each keeps the date, call count and estimated tokens
+      // the bars' accessible names carried.
+      const rows = wrapper.findAll('table.sr-only tbody tr');
+      expect(rows).toHaveLength(30);
+      const busiest = rows.find((r) => r.text().includes('2026-08-24'));
+      expect(busiest?.text()).toContain('30');
+      expect(busiest?.text()).toContain('11,000');
+      expect(wrapper.find('table.sr-only thead').text()).toContain('Tokens (estimated)');
     } finally {
       vi.useRealTimers();
     }

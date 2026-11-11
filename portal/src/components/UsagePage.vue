@@ -2,7 +2,7 @@
 /**
  * UsagePage.vue — the full /usage page behind the overview's usage summary.
  * Renders GET /v1/usage's whole payload: window totals, the per-service
- * table, and a per-day activity strip, with a 7/30/90-day window selector
+ * table, and a per-day activity chart, with a 7/30/90-day window selector
  * that refetches on change. Everything here is an ESTIMATE (tokenized
  * tool-result text priced at one model's input rate, not provider-reported
  * spend) and is labeled as such — see the broker's GET /v1/usage caveats.
@@ -18,6 +18,7 @@ import type { UsageResponse } from '../lib/api';
 import { useLoadState } from '../lib/useLoadState';
 import { formatBytes, formatCost, formatTokens } from '../lib/usageFormat';
 import AsyncState from './ui/AsyncState.vue';
+import BarChart from './ui/BarChart.vue';
 import SegmentedControl from './ui/SegmentedControl.vue';
 
 const props = defineProps<{ subject?: string }>();
@@ -61,10 +62,6 @@ const errorRate = computed<string | null>(() => {
   return `${((totals.errors / totals.calls) * 100).toLocaleString('en-US', { maximumFractionDigits: 1 })}%`;
 });
 
-function barLabel(bar: { date: string; calls: number; tokens: number }): string {
-  return `${bar.date}: ${formatTokens(bar.calls)} calls, ${formatTokens(bar.tokens)} tokens (estimated)`;
-}
-
 /**
  * One entry per UTC calendar day of the current window (today inclusive),
  * zero-filled — by_day only reports days that had calls, but the activity
@@ -84,13 +81,19 @@ const dayBars = computed<{ date: string; calls: number; tokens: number }[]>(() =
   return bars;
 });
 
-const maxDayCalls = computed<number>(() => Math.max(1, ...dayBars.value.map((b) => b.calls)));
+const dayLabels = computed<string[]>(() => dayBars.value.map((b) => b.date));
 
-function barHeight(calls: number): string {
-  // Bars scale to the busiest day; a nonzero day never rounds below 4% so
-  // it stays visible next to a big spike.
-  return calls === 0 ? '0%' : `${Math.max(4, (calls / maxDayCalls.value) * 100)}%`;
-}
+// Estimated tokens are listed in the chart's text table, not drawn: calls and
+// tokens differ by orders of magnitude and would share one axis.
+const daySeries = computed(() => [
+  { label: 'Calls', values: dayBars.value.map((b) => b.calls) },
+  { label: 'Tokens (estimated)', values: dayBars.value.map((b) => b.tokens), plot: false },
+]);
+
+const chartLabel = computed<string>(() => {
+  const busiest = dayBars.value.reduce((a, b) => (b.calls > a.calls ? b : a), dayBars.value[0]);
+  return `Calls per day over the last ${dayBars.value.length} days; busiest day ${busiest.date} with ${formatTokens(busiest.calls)} calls`;
+});
 </script>
 
 <template>
@@ -156,27 +159,12 @@ function barHeight(calls: number): string {
 
         <section class="af-sect" aria-labelledby="up-daily">
           <h2 id="up-daily">Daily activity</h2>
-          <div class="up__chart-box">
-            <span class="up__chart-max">{{ formatTokens(maxDayCalls) }} calls</span>
-            <div class="up__chart" role="group" aria-label="Calls per day over the window">
-              <div
-                v-for="bar in dayBars"
-                :key="bar.date"
-                class="up__bar-slot"
-                role="img"
-                :aria-label="barLabel(bar)"
-                :title="barLabel(bar)"
-                data-testid="usage-day-bar"
-                :data-calls="bar.calls"
-              >
-                <div class="up__bar" :style="{ height: barHeight(bar.calls) }"></div>
-              </div>
-            </div>
-            <div class="up__chart-axis" aria-hidden="true">
-              <span>{{ dayBars[0]?.date }}</span>
-              <span>{{ dayBars[dayBars.length - 1]?.date }}</span>
-            </div>
-          </div>
+          <BarChart
+            :labels="dayLabels"
+            :series="daySeries"
+            :aria-label="chartLabel"
+            :format-value="formatTokens"
+          />
         </section>
 
         <section class="af-sect" aria-labelledby="up-service">
@@ -231,51 +219,5 @@ function barHeight(calls: number): string {
 }
 .up__model code {
   font-family: var(--font-mono);
-}
-
-/* Daily activity: plain CSS bars, a 1px baseline and a 1px line at the
-   busiest day's value, labelled so the bar heights have a scale. */
-.up__chart-box {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-}
-
-.up__chart-max,
-.up__chart-axis {
-  font-size: var(--text-12);
-  color: var(--color-af-text-secondary);
-  font-variant-numeric: tabular-nums;
-}
-
-.up__chart-axis {
-  display: flex;
-  justify-content: space-between;
-}
-
-.up__chart {
-  display: flex;
-  align-items: flex-end;
-  gap: var(--space-2);
-  height: 120px;
-  border-top: 1px solid var(--color-af-border);
-  border-bottom: 1px solid var(--color-af-border);
-}
-
-.up__bar-slot {
-  flex: 1;
-  height: 100%;
-  display: flex;
-  align-items: flex-end;
-  min-width: 2px;
-}
-
-.up__bar {
-  width: 100%;
-  background: var(--color-af-text-secondary);
-}
-
-.up__bar-slot:hover .up__bar {
-  background: var(--color-af-text);
 }
 </style>

@@ -21,6 +21,19 @@ import type {
   UsageSubjectsResponse,
 } from '../../lib/api';
 
+// The usage view draws a chart; jsdom has no canvas.
+vi.mock('chart.js', () => ({
+  Chart: class {
+    static register = vi.fn();
+  },
+  BarController: {},
+  BarElement: {},
+  CategoryScale: {},
+  LinearScale: {},
+  Tooltip: {},
+}));
+vi.mock('basecoat-css/chart', () => ({}));
+
 vi.mock('../../lib/api', () => ({
   fetchUsage: vi.fn(),
   fetchUsageSubjects: vi.fn(),
@@ -111,6 +124,8 @@ const USAGE: UsageResponse = {
 beforeEach(() => {
   vi.restoreAllMocks();
   vi.clearAllMocks();
+  (window as unknown as { basecoat: unknown }).basecoat = { chart: vi.fn() };
+  window.matchMedia = vi.fn().mockReturnValue({ matches: false }) as typeof window.matchMedia;
   // Every test mounts the full AdminPage, which always fetches annotation
   // mismatches on mount regardless of which section a given test is
   // exercising -- default to the empty-and-harmless case so tests focused
