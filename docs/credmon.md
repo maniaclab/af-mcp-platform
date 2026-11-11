@@ -215,6 +215,37 @@ token never leaves the AP credential directory. Keep
 `SEC_DEBUG_PRINT_KEYS` off on the AP: it writes credentials into the
 ShadowLog.
 
+### What agents see
+
+Agents connected through `/mcp` learn about job credentials from two places,
+both generated -- nothing to configure per site:
+
+- **Session instructions.** When credmon is enabled, the MCP `initialize`
+  instructions gain one kind-agnostic paragraph: request a credential with
+  `use_oauth_services = af_<kind>`, find it at `$_CONDOR_CREDS/af_<kind>.use`,
+  look up the details in `af_list_identities`, never print the files, and
+  route unlinked users to `af_link_identity`. It names no kind, so it never
+  needs editing; sites without credmon get no paragraph.
+- **`af_list_identities`.** Each identity whose provider type is a credmon
+  kind wired at this site carries a `job_credential` -- the credd service to
+  request, the file path, what the file holds, and the environment variable
+  to set -- alongside whether *this* user has it linked:
+
+  ```json
+  "job_credential": {
+    "service": "af_krb5",
+    "path": "$_CONDOR_CREDS/af_krb5.use",
+    "format": "Kerberos credentials cache",
+    "env": "KRB5CCNAME=FILE:$_CONDOR_CREDS/af_krb5.use"
+  }
+  ```
+
+The per-kind `format`/`env` live in code (`credmon/guidance.py`), not
+deployment config: kinds are a closed set fixed by the redeem endpoints, and a
+custom service plugs into an existing identity-provider type and inherits its
+usage. That table must match af-credmon's `.use` rendering; a test fails if a
+kind is added without describing it.
+
 ## Operating it
 
 The sync runs inside the broker on its own timer -- no CronJob or other
