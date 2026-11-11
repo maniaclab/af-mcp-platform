@@ -292,6 +292,23 @@ describe('credential-type badge', () => {
   it('is kept when there is no identity to name, so the credential type is still shown', () => {
     const wrapper = mount(ServiceCard, {
       props: {
+        server: { ...SERVER, auth_type: 'bearer', credential_provider: null },
+        poweredBy: {
+          kind: 'none' as const,
+          label: 'No credential required',
+          linked: null,
+          linkHref: null,
+          linkLabel: null,
+        },
+      },
+    });
+
+    expect(wrapper.find('.bc__auth-badge').text()).toBe('bearer');
+  });
+
+  it('is left out for "none", which "No credential required" already says', () => {
+    const wrapper = mount(ServiceCard, {
+      props: {
         server: { ...SERVER, auth_type: 'none', credential_provider: null },
         poweredBy: {
           kind: 'none' as const,
@@ -303,7 +320,8 @@ describe('credential-type badge', () => {
       },
     });
 
-    expect(wrapper.find('.bc__auth-badge').text()).toBe('none');
+    expect(wrapper.find('.bc__powered-by').text()).toBe('No credential required');
+    expect(wrapper.find('.bc__auth-badge').exists()).toBe(false);
   });
 });
 

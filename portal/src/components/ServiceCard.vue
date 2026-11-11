@@ -162,9 +162,10 @@ const toolsView = computed(() =>
            a state to fix, so it renders no tag instead. A "Powered by"
            identity names the credential in words people know ("Grid
            certificate", "CERN Kerberos ticket"), so the raw type (bearer, x509,
-           krb5) is shown only when there is no identity to name. -->
+           krb5) is shown only when there is no identity to name and the card
+           does not already say "No credential required". -->
         <PopoverTooltip
-          v-if="!server.builtin && poweredBy.kind === 'none'"
+          v-if="!server.builtin && poweredBy.kind === 'none' && server.auth_type !== 'none'"
           :tooltip-id="`bc-auth-${server.name}`"
           side="top"
         >
