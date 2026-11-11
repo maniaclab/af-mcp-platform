@@ -94,7 +94,7 @@ const {
   loading: proxyLoading,
   error: proxyError,
   toggle: fetchProxyDetails,
-} = useFetchOnExpand(fetchProxyStatus, 'Could not load proxy status.');
+} = useFetchOnExpand(() => fetchProxyStatus(), 'Could not load proxy status.');
 // Two-step revoke confirmation (click "Revoke proxy", then "Confirm revoke").
 const revokeArmed = ref(false);
 
@@ -230,7 +230,10 @@ function remainingText(seconds?: number | null): string {
                   <td>{{ check.mode ?? '—' }}</td>
                   <td>
                     <template
-                      v-if="check.readable_by_service === undefined || check.readable_by_service === null"
+                      v-if="
+                        check.readable_by_service === undefined ||
+                        check.readable_by_service === null
+                      "
                       >—</template
                     >
                     <StatusMark

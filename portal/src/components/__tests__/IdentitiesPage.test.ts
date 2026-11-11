@@ -11,13 +11,14 @@
  */
 import { flushPromises, mount } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { IdentitiesResponse } from '../../lib/api';
+import type { IdentitiesResponse, IdentityProvider } from '../../lib/api';
 
 vi.mock('../../lib/api', () => ({
   fetchIdentities: vi.fn(),
   fetchCatalog: vi.fn(),
   clearIdentitiesCache: vi.fn(),
   SessionExpiredError: class SessionExpiredError extends Error {},
+  AccessDeniedError: class AccessDeniedError extends Error {},
 }));
 
 import { fetchCatalog, fetchIdentities } from '../../lib/api';
@@ -124,5 +125,114 @@ describe('IdentitiesPage provider card anchors', () => {
     expect(anchor.find('.kc').exists()).toBe(false);
     const link = anchor.find('a.sc__btn--external');
     expect(link.attributes('href')).toBe('https://servicex.example.org/api-token');
+  });
+});
+
+describe('IdentitiesPage banner', () => {
+  const linkedProvider = (over: Partial<IdentityProvider> = {}): IdentityProvider => ({
+    id: 'atlas-iam',
+    type: 'keycloak-brokered',
+    display_name: 'ATLAS IAM',
+    enables: 'Rucio/PanDA access',
+    linked: true,
+    link_url: null,
+    link_mechanism: 'redirect',
+    ...over,
+  });
+  const x509 = (over: Partial<IdentityProvider> = {}): IdentityProvider => ({
+    id: 'x509',
+    type: 'x509',
+    display_name: 'Grid certificate',
+    enables: 'VOMS proxy minting',
+    linked: true,
+    link_url: null,
+    link_mechanism: 'passphrase',
+    x509_link_mode: 'auto-renew',
+    proxy_expires_at: new Date(Date.now() + 9 * 3600_000).toISOString(),
+    ...over,
+  });
+
+  async function mountWith(providers: IdentityProvider[]) {
+    vi.mocked(fetchIdentities).mockResolvedValue({ ...IDENTITIES, providers });
+    const wrapper = mount(IdentitiesPage);
+    await flushPromises();
+    return wrapper;
+  }
+
+  it('shows no banner when every account is linked and the proxy is valid', async () => {
+    const wrapper = await mountWith([linkedProvider(), x509()]);
+    expect(wrapper.find('.af-banner').exists()).toBe(false);
+  });
+
+  it('shows a problem banner with a link to the certificate when an until-expiry proxy has expired', async () => {
+    const wrapper = await mountWith([
+      linkedProvider(),
+      x509({
+        linked: false,
+        x509_link_mode: 'until-expiry',
+        proxy_expires_at: new Date(Date.now() - 3 * 3600_000).toISOString(),
+      }),
+    ]);
+    const banner = wrapper.find('.af-banner.bad');
+    expect(banner.text()).toContain('Your grid proxy has expired');
+    expect(banner.find('a.af-btn').attributes('href')).toBe('#identity-card-x509');
+  });
+
+  it('shows a warning banner when an until-expiry proxy is about to expire', async () => {
+    const wrapper = await mountWith([
+      x509({
+        x509_link_mode: 'until-expiry',
+        proxy_expires_at: new Date(Date.now() + 3600_000).toISOString(),
+      }),
+    ]);
+    const banner = wrapper.find('.af-banner.warn');
+    expect(banner.text()).toContain('Your grid proxy expires soon');
+    expect(banner.find('a.af-btn').attributes('href')).toBe('#identity-card-x509');
+  });
+
+  it('does not warn about an auto-renewing proxy that is near expiry', async () => {
+    const wrapper = await mountWith([
+      x509({ proxy_expires_at: new Date(Date.now() + 3600_000).toISOString() }),
+    ]);
+    expect(wrapper.find('.af-banner').exists()).toBe(false);
+  });
+
+  it('names the one unlinked account and its link target', async () => {
+    const wrapper = await mountWith([linkedProvider({ linked: false })]);
+    const banner = wrapper.find('.af-banner.warn');
+    expect(banner.text()).toContain('ATLAS IAM is not linked');
+    expect(banner.find('a.af-btn').attributes('href')).toBe('#identity-card-atlas-iam');
+  });
+
+  it('counts several unlinked accounts without offering a single target', async () => {
+    const wrapper = await mountWith([
+      linkedProvider({ linked: false }),
+      linkedProvider({ id: 'other', display_name: 'Other', linked: false }),
+    ]);
+    const banner = wrapper.find('.af-banner.warn');
+    expect(banner.text()).toContain('2 accounts are not linked');
+    expect(banner.find('a.af-btn').exists()).toBe(false);
+  });
+
+  it('reports an account that needs access instead of offering to link it', async () => {
+    const wrapper = await mountWith([
+      linkedProvider({ linked: false, link_permission_denied: true }),
+    ]);
+    const banner = wrapper.find('.af-banner.warn');
+    expect(banner.text()).toContain('ATLAS IAM needs access');
+    expect(banner.find('a.af-btn').exists()).toBe(false);
+  });
+
+  it('shows the most urgent problem only: an expired proxy beats an unlinked account', async () => {
+    const wrapper = await mountWith([
+      linkedProvider({ linked: false }),
+      x509({
+        linked: false,
+        x509_link_mode: 'until-expiry',
+        proxy_expires_at: new Date(Date.now() - 3600_000).toISOString(),
+      }),
+    ]);
+    expect(wrapper.findAll('.af-banner')).toHaveLength(1);
+    expect(wrapper.find('.af-banner.bad').exists()).toBe(true);
   });
 });
