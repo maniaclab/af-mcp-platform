@@ -61,6 +61,7 @@ from af_mcp_broker.credentials.cache import RateLimitError
 from af_mcp_broker.credentials.krb5_vault import Krb5VaultStore
 from af_mcp_broker.credentials.servicex_vault import VaultServiceXStore
 from af_mcp_broker.credmon.factory import build_credmon_sync
+from af_mcp_broker.credmon.guidance import JobCredentialGuide, wired_kinds
 from af_mcp_broker.http import aclose_http_client
 from af_mcp_broker.identity import build_dev_principal, get_jwks, issuer_is_local
 from af_mcp_broker.logging import (
@@ -977,6 +978,23 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # feed the af_* diagnostic tools (issue #153), and maintenance_mode_store
     # feeds AsgiAuthMiddleware's /mcp enforcement (mirroring /v1's
     # require_not_in_maintenance, which reads it straight off app.state).
+    # HTCondor credmon (docs/credmon.md): the identity targets each credmon
+    # kind redeems from, shared by the agent guidance below and the storer
+    # built further down. The guide exists only when credmon is enabled, so
+    # sites without HTCondor never tell agents about job credentials.
+    credmon_targets_by_kind: dict[str, list[str]] = {
+        "x509": x509_targets,
+        "krb5": krb5_targets,
+        "servicex": servicex_targets,
+    }
+    job_credentials = (
+        JobCredentialGuide(
+            service_prefix=settings.credmon_service_prefix,
+            kinds=frozenset(wired_kinds(settings, credmon_targets_by_kind)),
+        )
+        if settings.credmon_enabled
+        else None
+    )
     populate_aggregator(
         _mcp_aggregator,
         service_registry,
@@ -991,6 +1009,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         target_to_alias=target_to_alias,
         broker_token_issuer=broker_token_issuer,
         maintenance_mode_store=maintenance_mode_store,
+        job_credentials=job_credentials,
     )
 
     # --- Audit: without init the module drops every record. Honor AUDIT_LOG_FILE.
@@ -1064,11 +1083,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
             settings,
             issuer=broker_token_issuer,
             credential_registry=credential_registry,
-            targets_by_kind={
-                "x509": x509_targets,
-                "krb5": krb5_targets,
-                "servicex": servicex_targets,
-            },
+            targets_by_kind=credmon_targets_by_kind,
             store_prefixes={
                 kind: prefix
                 for kind, store, prefix in (

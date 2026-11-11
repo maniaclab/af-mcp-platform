@@ -66,6 +66,7 @@ if TYPE_CHECKING:
     from af_mcp_broker.config import IdentityProviderConfig, Settings
     from af_mcp_broker.credentials import CredentialProvider, CredentialRegistry
     from af_mcp_broker.credentials.broker_issued import BrokerTokenIssuer
+    from af_mcp_broker.credmon.guidance import JobCredentialGuide
     from af_mcp_broker.identity import Principal
     from af_mcp_broker.maintenance import MaintenanceModeStore
     from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
@@ -1499,6 +1500,7 @@ def build_aggregator(
     target_to_alias: dict[str, str] | None = None,
     broker_token_issuer: BrokerTokenIssuer | None = None,
     maintenance_mode_store: MaintenanceModeStore | None = None,
+    job_credentials: JobCredentialGuide | None = None,
 ) -> FastMCP:
     """Construct a fully-wired aggregator FastMCP instance.
 
@@ -1550,7 +1552,7 @@ def build_aggregator(
     # the real registry is loaded, mirroring how settings/policy get pushed in.
     mcp = FastMCP(
         name="af-mcp-aggregator",
-        instructions=compose_agent_instructions(registry),
+        instructions=compose_agent_instructions(registry, job_credentials),
     )
     mcp.add_middleware(
         IdentityMiddleware(
@@ -1582,6 +1584,7 @@ def build_aggregator(
         identity_provider_configs or {},
         target_to_alias or {},
         settings,
+        job_credentials,
     )
     return mcp
 
@@ -1617,6 +1620,7 @@ def populate_aggregator(
     target_to_alias: dict[str, str] | None = None,
     broker_token_issuer: BrokerTokenIssuer | None = None,
     maintenance_mode_store: MaintenanceModeStore | None = None,
+    job_credentials: JobCredentialGuide | None = None,
 ) -> None:
     """Refresh an aggregator built by ``build_aggregator`` with a freshly loaded registry/settings/policy/credential_registry/revoked_jti_cache/pat_backend/principal_cache/identity_providers/identity_provider_configs/target_to_alias/maintenance_mode_store.
 
@@ -1635,7 +1639,7 @@ def populate_aggregator(
     # Recompose the model-facing instructions from the real registry: the eager
     # build (app.py) constructed mcp with an empty registry, so its instructions
     # omitted every operator service's agent_policy until now (finding #6).
-    mcp.instructions = compose_agent_instructions(registry)
+    mcp.instructions = compose_agent_instructions(registry, job_credentials)
     identity_mw.settings = settings
     identity_mw.revoked_jti_cache = revoked_jti_cache
     identity_mw.pat_backend = pat_backend
@@ -1664,6 +1668,7 @@ def populate_aggregator(
         identity_provider_configs or {},
         target_to_alias or {},
         settings,
+        job_credentials,
     )
 
 
