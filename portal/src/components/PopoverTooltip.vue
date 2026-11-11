@@ -151,11 +151,11 @@ onBeforeUnmount(() => {
   width: max-content;
   max-width: 16rem;
   padding: 0.5rem 0.625rem;
-  background: var(--color-af-void);
-  border: 1px solid var(--color-af-muted);
-  border-radius: 4px;
-  font-family: 'IBM Plex Sans', system-ui, sans-serif;
-  font-size: 0.75rem;
+  background: var(--color-af-bg);
+  border: 1px solid var(--color-af-border-strong);
+  border-radius: var(--radius-4);
+  font-family: var(--font-sans);
+  font-size: var(--text-12);
   line-height: 1.5;
   color: var(--color-af-text);
   white-space: normal;
