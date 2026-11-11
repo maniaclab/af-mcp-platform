@@ -90,7 +90,7 @@ describe('UsagePage', () => {
     expect(text).toContain('$0.045');
     expect(text).toContain('claude-sonnet-4-20250514');
     // Everything shown is an estimate and must say so — same caveat
-    // wording as the overview's UsageCard.
+    // wording as the overview's usage summary.
     expect(text.toLowerCase()).toContain('estimated');
     expect(text).toContain('this is not your provider bill');
   });

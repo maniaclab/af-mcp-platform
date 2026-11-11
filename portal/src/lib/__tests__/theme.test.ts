@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   applyResolvedTheme,
-  cycleMode,
   getStoredMode,
   initTheme,
   resolveTheme,
@@ -137,14 +136,6 @@ describe('setMode', () => {
     setMode('light', { storage, root, prefersDark: true });
     expect(root.classList.contains('dark')).toBe(false);
     expect(root.style.colorScheme).toBe('light');
-  });
-});
-
-describe('cycleMode', () => {
-  it('cycles auto -> dark -> light -> auto', () => {
-    expect(cycleMode('auto')).toBe('dark');
-    expect(cycleMode('dark')).toBe('light');
-    expect(cycleMode('light')).toBe('auto');
   });
 });
 

@@ -86,11 +86,6 @@ export function setMode(mode: ThemeMode, options: SetModeOptions = {}): void {
   applyResolvedTheme(root, resolveTheme(mode, prefersDark));
 }
 
-/** auto -> dark -> light -> auto, for a single-control cycling affordance (unused by the radiogroup, kept for a future compact toggle). */
-export function cycleMode(current: ThemeMode): ThemeMode {
-  return THEME_MODES[(THEME_MODES.indexOf(current) + 1) % THEME_MODES.length];
-}
-
 export interface InitThemeOptions {
   root?: HTMLElement;
   win?: Window;

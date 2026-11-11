@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * UsagePage.vue — the full /usage page behind the overview's UsageCard.
+ * UsagePage.vue — the full /usage page behind the overview's usage summary.
  * Renders GET /v1/usage's whole payload: window totals, the per-service
  * table, and a per-day activity strip, with a 7/30/90-day window selector
  * that refetches on change. Everything here is an ESTIMATE (tokenized

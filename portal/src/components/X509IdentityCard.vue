@@ -32,8 +32,6 @@ import {
   requestProxy,
   revokeProxy,
   type ProxyMetadata,
-  type ProxyStatus,
-  type X509Preflight,
 } from '../lib/api';
 import {
   formatProxyExpiry,
