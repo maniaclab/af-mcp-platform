@@ -514,9 +514,41 @@ describe('AdminPage tool mapping drift', () => {
     const text = wrapper.text();
     expect(text).toContain('Unroutable (prefix mismatch)');
     expect(text).toContain('atlas_search_service');
-    expect(text).toContain('expected atlas_opensearch_*');
-    expect(text).toContain('aos_query, aos_search');
+    expect(text).toContain('Expected atlas_opensearch_*');
+    expect(wrapper.findAll('[data-af-drift-unroutable] li').map((li) => li.text())).toEqual([
+      'aos_query',
+      'aos_search',
+    ]);
     expect(text).toContain('0 / 2');
+  });
+
+  it('lists every tool name of a drift column as its own item, never joined', async () => {
+    vi.mocked(fetchToolMappingDrift).mockResolvedValue([
+      {
+        ...DRIFT,
+        unmapped: ['condor_create_output_download_url', 'condor_doc_guide'],
+        stale: ['condor_condor_doc_search'],
+      },
+    ]);
+    const wrapper = mount(AdminPage);
+    await flushPromises();
+
+    const items = (selector: string) => wrapper.findAll(`${selector} li`).map((li) => li.text());
+    expect(items('[data-af-drift-unmapped]')).toEqual([
+      'condor_create_output_download_url',
+      'condor_doc_guide',
+    ]);
+    expect(items('[data-af-drift-stale]')).toEqual(['condor_condor_doc_search']);
+  });
+
+  it('collapses a long drift list behind a count', async () => {
+    const many = Array.from({ length: 10 }, (_, i) => `condor_tool_${i}`);
+    vi.mocked(fetchToolMappingDrift).mockResolvedValue([{ ...DRIFT, unmapped: many }]);
+    const wrapper = mount(AdminPage);
+    await flushPromises();
+
+    expect(wrapper.findAll('[data-af-drift-unmapped] li')).toHaveLength(3);
+    expect(wrapper.get('[data-af-drift-unmapped] button').text()).toBe('7 more');
   });
 
   it('renders an error state when fetchToolMappingDrift fails', async () => {

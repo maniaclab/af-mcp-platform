@@ -43,6 +43,7 @@ import AsyncState from './ui/AsyncState.vue';
 import ConfirmDialog from './ui/ConfirmDialog.vue';
 import Disclosure from './ui/Disclosure.vue';
 import StatusMark from './ui/StatusMark.vue';
+import ToolNameList from './ui/ToolNameList.vue';
 import UsagePage from './UsagePage.vue';
 
 /** unixname is the most recognizable label to an operator; fall back to
@@ -486,16 +487,17 @@ const driftBannerText = computed(() => {
               <tr v-for="d in drifts" :key="d.service">
                 <td>{{ d.service }}</td>
                 <td class="af-num">{{ d.routable }} / {{ d.advertised }}</td>
-                <td class="ap__wrap">
-                  <code v-if="d.unroutable.length > 0">
-                    expected {{ d.prefix }}_*: {{ d.unroutable.join(', ') }}
-                  </code>
+                <td data-af-drift-unroutable>
+                  <p v-if="d.unroutable.length > 0" class="ap__expected">
+                    Expected <code>{{ d.prefix }}_*</code>
+                  </p>
+                  <ToolNameList :names="d.unroutable" />
                 </td>
-                <td class="ap__wrap">
-                  <code>{{ d.unmapped.join(', ') }}</code>
+                <td data-af-drift-unmapped>
+                  <ToolNameList :names="d.unmapped" />
                 </td>
-                <td class="ap__wrap">
-                  <code>{{ d.stale.join(', ') }}</code>
+                <td data-af-drift-stale>
+                  <ToolNameList :names="d.stale" />
                 </td>
               </tr>
             </tbody>
@@ -671,11 +673,10 @@ const driftBannerText = computed(() => {
   justify-content: space-between;
 }
 
-/* Lists of tool names wrap inside the cell instead of widening the table. */
-.ap__wrap {
-  white-space: normal;
-  min-width: 14rem;
-  overflow-wrap: anywhere;
+/* The prefix a service's unroutable tools were expected to carry. */
+.ap__expected {
+  margin: var(--space-8) 0 0;
+  color: var(--color-af-text-secondary);
 }
 
 .ap__errors {
