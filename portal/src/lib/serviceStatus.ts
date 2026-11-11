@@ -100,6 +100,8 @@ export interface ServiceCounts {
   needsLink: number;
   /** The distinct accounts those services need, in catalog order. */
   needsLinkProviders: string[];
+  /** Display names of those services, in catalog order (empty strings never appear). */
+  needsLinkNames: string[];
   /** Services that are temporarily unreachable. */
   unavailable: number;
   /** Services an operator must fix. */
@@ -108,7 +110,8 @@ export interface ServiceCounts {
 
 /** Counts services the way the Services page presents them. */
 export function summarizeServices(
-  servers: Pick<CatalogServer, 'status' | 'credential_provider'>[],
+  servers: (Pick<CatalogServer, 'status' | 'credential_provider'> &
+    Partial<Pick<CatalogServer, 'display_name'>>)[],
 ): ServiceCounts {
   const statuses = servers.map((s) => s.status);
   const unlinked = servers.filter(
@@ -119,6 +122,7 @@ export function summarizeServices(
     reachable: statuses.filter((s) => SEVERITIES[s] === 'ok').length,
     needsLink: unlinked.length,
     needsLinkProviders: [...new Set(unlinked.map((s) => s.credential_provider as string))],
+    needsLinkNames: unlinked.flatMap((s) => (s.display_name ? [s.display_name] : [])),
     unavailable: statuses.filter((s) => s === 'unavailable').length,
     misconfigured: statuses.filter((s) => s === 'misconfigured').length,
   };
@@ -166,13 +170,41 @@ export function failureSummary(misconfigured: number, unavailable: number): stri
   return null;
 }
 
-/** The hint for services that are not linked; the same words on every page. */
-export function unlinkedHint(count: number, action: StatusCta | null): HintMessage {
+/**
+ * The hint for services that are not linked; the same words on every page. One
+ * unlinked service is named when its name is known.
+ */
+export function unlinkedHint(
+  count: number,
+  action: StatusCta | null,
+  serviceName: string | null = null,
+): HintMessage {
   return {
     kind: 'hint',
-    title: `${countOf(count, 'service is', 'services are')} not linked`,
+    title:
+      count === 1 && serviceName !== null
+        ? `${serviceName} is not linked`
+        : `${countOf(count, 'service is', 'services are')} not linked`,
     body: `Link an account on the Identities page to use ${count === 1 ? 'it' : 'them'}.`,
     action,
+  };
+}
+
+/**
+ * The one action that links every unlinked service, when they all need the same
+ * account; null when they need different accounts (the user picks on the
+ * Identities page).
+ */
+export function unlinkedAction(
+  needsLinkProviders: string[],
+  providers: Pick<IdentityProvider, 'id' | 'display_name' | 'link_mechanism'>[] = [],
+): StatusCta | null {
+  const [only, ...others] = needsLinkProviders;
+  if (only === undefined || others.length > 0) return null;
+  const provider = providers.find((p) => p.id === only);
+  return {
+    label: provider ? identityLinkLabel(provider) : 'Link identity',
+    href: identityLinkAnchor(only),
   };
 }
 
@@ -184,23 +216,17 @@ export function unlinkedHint(count: number, action: StatusCta | null): HintMessa
  * administrator and raises nothing.
  */
 export function resolveServicesMessage(
-  servers: Pick<CatalogServer, 'status' | 'credential_provider'>[],
+  servers: (Pick<CatalogServer, 'status' | 'credential_provider'> &
+    Partial<Pick<CatalogServer, 'display_name'>>)[],
   providers: Pick<IdentityProvider, 'id' | 'display_name' | 'link_mechanism'>[] = [],
 ): PageMessage | null {
-  const { misconfigured, unavailable, needsLink, needsLinkProviders } = summarizeServices(servers);
+  const { misconfigured, unavailable, needsLink, needsLinkProviders, needsLinkNames } =
+    summarizeServices(servers);
   const title = failureSummary(misconfigured, unavailable);
   if (title === null) {
     if (needsLink === 0) return null;
-    const [only, ...others] = needsLinkProviders;
-    const provider = providers.find((p) => p.id === only);
-    const action =
-      only !== undefined && others.length === 0
-        ? {
-            label: provider ? identityLinkLabel(provider) : 'Link identity',
-            href: identityLinkAnchor(only),
-          }
-        : null;
-    return unlinkedHint(needsLink, action);
+    const action = unlinkedAction(needsLinkProviders, providers);
+    return unlinkedHint(needsLink, action, needsLinkNames.length === 1 ? needsLinkNames[0] : null);
   }
   if (misconfigured > 0 && unavailable > 0) {
     return {

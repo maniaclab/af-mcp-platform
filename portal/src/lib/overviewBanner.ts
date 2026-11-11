@@ -70,10 +70,11 @@ export function overviewMessage(
     };
   }
   if (summary.needsLinkCount > 0) {
-    return unlinkedHint(summary.needsLinkCount, {
-      label: 'Link an account',
-      href: IDENTITIES_HREF,
-    });
+    return unlinkedHint(
+      summary.needsLinkCount,
+      summary.needsLinkAction ?? { label: 'Link an account', href: IDENTITIES_HREF },
+      summary.needsLinkService,
+    );
   }
   return null;
 }

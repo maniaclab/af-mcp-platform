@@ -309,7 +309,7 @@ describe('TokensPage table layout', () => {
     const meta = nameCell.get('.tp__meta');
     expect(meta.text()).toContain('LOOKUP00…');
     expect(meta.text()).toContain('Created 10 days ago');
-    expect(meta.get('button[aria-label="Copy token ID LOOKUP0001-FULL-VALUE"]').exists()).toBe(
+    expect(meta.find('button[aria-label="Copy token ID LOOKUP0001-FULL-VALUE"]').exists()).toBe(
       true,
     );
   });

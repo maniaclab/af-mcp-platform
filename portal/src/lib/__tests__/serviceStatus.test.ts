@@ -94,6 +94,18 @@ describe('resolvePoweredByLinked', () => {
   });
 });
 
+describe('summarizeServices needsLinkNames', () => {
+  it('lists the display names of the services that need a link, in catalog order', () => {
+    const counts = summarizeServices([
+      { status: 'available', credential_provider: 'a', display_name: 'One' },
+      { status: 'link_required', credential_provider: 'a', display_name: 'Two' },
+      { status: 'link_required', credential_provider: null, display_name: 'Three' },
+      { status: 'link_required', credential_provider: 'b', display_name: 'Four' },
+    ]);
+    expect(counts.needsLinkNames).toEqual(['Two', 'Four']);
+  });
+});
+
 describe('resolveServicesMessage', () => {
   const svc = (status: ServiceStatus, credential_provider: string | null = 'atlas-oidc') => ({
     status,
@@ -153,6 +165,30 @@ describe('resolveServicesMessage', () => {
       title: '1 service is not linked',
       body: 'Link an account on the Identities page to use it.',
     });
+  });
+
+  it('names the one unlinked service, and its action, when it has a display name', () => {
+    const message = resolveServicesMessage(
+      [
+        { ...svc('available'), display_name: 'AMI' },
+        { ...svc('link_required', 'krb5'), display_name: 'ATLAS OpenSearch' },
+      ],
+      [{ id: 'krb5', display_name: 'CERN Kerberos', link_mechanism: 'passphrase' }],
+    );
+    expect(message).toMatchObject({
+      kind: 'hint',
+      title: 'ATLAS OpenSearch is not linked',
+      body: 'Link an account on the Identities page to use it.',
+    });
+    expect(message?.action?.href).toBe('/identities/#identity-card-krb5');
+  });
+
+  it('keeps the count when several services are unlinked, even with display names', () => {
+    const message = resolveServicesMessage([
+      { ...svc('link_required'), display_name: 'A' },
+      { ...svc('link_required'), display_name: 'B' },
+    ]);
+    expect(message).toMatchObject({ title: '2 services are not linked' });
   });
 
   it('offers one action only when every unlinked service needs the same account', () => {
@@ -234,6 +270,7 @@ describe('summarizeServices', () => {
       unavailable: 1,
       misconfigured: 1,
       needsLinkProviders: ['atlas-oidc'],
+      needsLinkNames: [],
     });
   });
 
@@ -261,6 +298,7 @@ describe('summarizeServices', () => {
       unavailable: 0,
       misconfigured: 0,
       needsLinkProviders: [],
+      needsLinkNames: [],
     });
   });
 });

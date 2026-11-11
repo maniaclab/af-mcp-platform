@@ -17,6 +17,8 @@ function summary(overrides: Partial<DashboardSummary> = {}): DashboardSummary {
     activeTokenCount: 1,
     reachableCount: 8,
     needsLinkCount: 0,
+    needsLinkService: null,
+    needsLinkAction: null,
     unavailableCount: 0,
     misconfiguredCount: 0,
     proxyAutoRenews: false,
@@ -139,6 +141,32 @@ describe('overviewMessage', () => {
     expect(overviewMessage(summary({ needsLinkCount: 1 }), NOW)).toMatchObject({
       title: '1 service is not linked',
       body: 'Link an account on the Identities page to use it.',
+    });
+  });
+
+  it('names the one unlinked service and offers its specific action', () => {
+    const action = { label: 'Get Kerberos ticket', href: '/identities/#identity-card-krb5' };
+    expect(
+      overviewMessage(
+        summary({
+          needsLinkCount: 1,
+          needsLinkService: 'ATLAS OpenSearch',
+          needsLinkAction: action,
+        }),
+        NOW,
+      ),
+    ).toEqual({
+      kind: 'hint',
+      title: 'ATLAS OpenSearch is not linked',
+      body: 'Link an account on the Identities page to use it.',
+      action,
+    });
+  });
+
+  it('keeps the generic action when the unlinked services need different accounts', () => {
+    expect(overviewMessage(summary({ needsLinkCount: 2 }), NOW)).toMatchObject({
+      title: '2 services are not linked',
+      action: { label: 'Link an account', href: '/identities/' },
     });
   });
 

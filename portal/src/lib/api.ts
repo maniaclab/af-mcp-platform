@@ -28,7 +28,8 @@
  * one route, not a template for "public-ish" endpoints in general.
  */
 import { getAccessToken, isOidcConfigured, renewAccessToken } from './auth';
-import { summarizeServices } from './serviceStatus';
+import { summarizeServices, unlinkedAction } from './serviceStatus';
+import type { StatusCta } from './serviceStatus';
 import { soonestExpiringToken, tokenStatus } from './tokenDisplay';
 
 // PUBLIC_BROKER_URL MUST include the `/v1` suffix when overridden
@@ -806,6 +807,10 @@ export interface DashboardSummary {
   reachableCount: number;
   /** Services that only need the user to link an account. */
   needsLinkCount: number;
+  /** The display name of the one service that needs a link; null unless exactly one does. */
+  needsLinkService: string | null;
+  /** The action that links every unlinked service, when they all need the same account. */
+  needsLinkAction: StatusCta | null;
   /** Services that are temporarily unreachable. */
   unavailableCount: number;
   /** Services an operator must fix. */
@@ -864,6 +869,11 @@ export async function fetchDashboardSummary(): Promise<DashboardSummary> {
     activeTokenCount,
     reachableCount: services.reachable,
     needsLinkCount: services.needsLink,
+    needsLinkService: services.needsLinkNames.length === 1 ? services.needsLinkNames[0] : null,
+    needsLinkAction: unlinkedAction(
+      services.needsLinkProviders,
+      identityData.status === 'fulfilled' ? identityData.value.providers : [],
+    ),
     unavailableCount: services.unavailable,
     misconfiguredCount: services.misconfigured,
     soonestExpiringToken: tokens.status === 'fulfilled' ? soonestExpiringToken(tokens.value) : null,

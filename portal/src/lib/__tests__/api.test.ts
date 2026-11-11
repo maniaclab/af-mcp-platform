@@ -581,9 +581,18 @@ describe('fetchDashboardSummary() service and token details', () => {
       last_used_at: null,
       permission_grant: null,
     });
-    const server = (name: string, status: string) => ({ name, status });
+    const server = (name: string, status: string) => ({
+      name,
+      display_name: `Display ${name}`,
+      status,
+      credential_provider: status === 'link_required' ? 'krb5' : 'atlas-oidc',
+    });
     const body = (url: string): unknown => {
-      if (url.includes('/identities')) return { providers: [] };
+      if (url.includes('/identities')) {
+        return {
+          providers: [{ id: 'krb5', display_name: 'CERN Kerberos', link_mechanism: 'passphrase' }],
+        };
+      }
       if (url.includes('/catalog')) {
         return {
           servers: [
@@ -617,6 +626,11 @@ describe('fetchDashboardSummary() service and token details', () => {
     expect(summary.serverCount).toBe(4);
     expect(summary.reachableCount).toBe(2);
     expect(summary.needsLinkCount).toBe(1);
+    expect(summary.needsLinkService).toBe('Display c');
+    expect(summary.needsLinkAction).toEqual({
+      label: expect.any(String),
+      href: '/identities/#identity-card-krb5',
+    });
     expect(summary.misconfiguredCount).toBe(1);
     expect(summary.unavailableCount).toBe(0);
     expect(summary.soonestExpiringToken).toEqual({ name: 'soon', expires_at: soon });

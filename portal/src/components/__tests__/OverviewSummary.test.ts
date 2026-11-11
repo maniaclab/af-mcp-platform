@@ -27,6 +27,8 @@ const SUMMARY: DashboardSummary = {
   activeTokenCount: 2,
   reachableCount: 8,
   needsLinkCount: 0,
+  needsLinkService: null,
+  needsLinkAction: null,
   unavailableCount: 0,
   misconfiguredCount: 0,
   proxyAutoRenews: false,
@@ -336,6 +338,22 @@ describe('OverviewSummary banner', () => {
     const hint = wrapper.get('.af-note.info');
     expect(hint.text()).toContain('1 service is not linked');
     expect(hint.text()).toContain('Link an account on the Identities page to use it.');
+  });
+
+  it('names the one unlinked service and offers the same action as the Services page', async () => {
+    vi.mocked(fetchDashboardSummary).mockResolvedValue({
+      ...SUMMARY,
+      needsLinkCount: 1,
+      needsLinkService: 'ATLAS OpenSearch',
+      needsLinkAction: { label: 'Get Kerberos ticket', href: '/identities/#identity-card-krb5' },
+    });
+    const wrapper = await mountSummary();
+
+    const hint = wrapper.get('.af-note.info');
+    expect(hint.text()).toContain('ATLAS OpenSearch is not linked');
+    const action = hint.get('a.btn');
+    expect(action.text()).toBe('Get Kerberos ticket');
+    expect(action.attributes('href')).toBe('/identities/#identity-card-krb5');
   });
 
   it('shows a failing service instead of the hint', async () => {
