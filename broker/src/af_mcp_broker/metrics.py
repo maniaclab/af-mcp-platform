@@ -235,8 +235,9 @@ annotation_policy_mismatches_total = Counter(
 credmon_sync_runs_total = Counter(
     "af_mcp_credmon_sync_runs_total",
     "HTCondor credmon sync cycles attempted by this replica, by outcome "
-    "('success', 'partial' -- completed with some per-user failures, "
-    "'failed' -- the cycle itself raised, 'skipped_lease' -- another replica "
+    "('success', 'partial' -- some users stored and some failed, "
+    "'failed' -- the cycle raised, or stored nothing while some users "
+    "failed, 'skipped_lease' -- another replica "
     "holds the cycle lease) and trigger ('timer' or 'manual'). See "
     "GET /v1/admin/credmon for the last cycle's detail (docs/credmon.md).",
     ["outcome", "trigger"],

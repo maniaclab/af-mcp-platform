@@ -51,6 +51,7 @@ broker:
   credmon:
     enabled: true
     htcondorApiUrl: http://condor-mcp.mcp.svc.cluster.local:8080
+    userDomain: af.uchicago.edu    # the pool's UID_DOMAIN
     existingHtcondorApiTokenSecret: credmon-htcondor-api-token   # key: token
     kinds: [krb5, x509]          # empty = all three; unconfigured kinds skipped
     # topTokenTtlSeconds: 86400  # must exceed syncIntervalSeconds
@@ -60,7 +61,8 @@ broker:
 ```
 
 The equivalent env vars are `CREDMON_ENABLED`, `CREDMON_HTCONDOR_API_URL`,
-`CREDMON_HTCONDOR_API_TOKEN_FILE`, `CREDMON_SERVICE_PREFIX` (default `af_`),
+`CREDMON_HTCONDOR_API_TOKEN_FILE`, `CREDMON_USER_DOMAIN`,
+`CREDMON_SERVICE_PREFIX` (default `af_`),
 `CREDMON_KINDS`, `CREDMON_TOP_TOKEN_TTL_SECONDS`,
 `CREDMON_SYNC_INTERVAL_SECONDS` and `CREDMON_STATE_KV_PATH_PREFIX`.
 
@@ -93,11 +95,14 @@ condor_token_create -identity af-mcp-storer@<UID_DOMAIN> -authz WRITE -lifetime 
 - **`-lifetime` is required.** A token minted without it has no `exp` claim,
   and htcondor-api rejects it: every store fails with `401 ... JWT missing
   exp claim`.
-- **Rotation needs a broker restart.** The broker reads the token file once
-  at startup, so after re-sealing the Secret run
-  `kubectl rollout restart deploy/<release>-broker`. When the token expires,
-  every cycle fails and the stale-sync alert fires -- that is the signal to
-  rotate.
+- **Rotation needs no restart.** The broker re-reads the token file on every
+  store, and the kubelet rewrites a mounted Secret in place, so re-sealing
+  the Secret is enough. When the token expires, every cycle fails and the
+  stale-sync alert fires -- that is the signal to rotate.
+- **Users are sent as `<unixname>@<domain>`.** credd refuses a bare
+  unixname (`store_cred_handler: user "x" not in user@domain format`, credd
+  code 8), so `broker.credmon.userDomain` (`CREDMON_USER_DOMAIN`) must be the
+  pool's `UID_DOMAIN`.
 
 ### Vault paths + policy
 
@@ -219,8 +224,10 @@ identically from the shared Vault record.
   token itself.
 
 A failing sync never fails `/v1/readyz`: an htcondor-api outage should not
-take the gateway down. A `partial` cycle (some users failed) still counts as
-a success for alerting; its errors are in the status record.
+take the gateway down. A `partial` cycle (some users stored, some failed)
+still counts as a success for alerting; its errors are in the status record.
+A cycle that stored nothing but had failures is `failed`: it does not move
+"Last success", so the stale-sync alert fires when every store is rejected.
 
 ## Known limitations
 
