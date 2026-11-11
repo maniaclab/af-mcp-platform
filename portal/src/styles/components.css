@@ -1,0 +1,535 @@
+/*
+ * components.css — shared component classes, imported by global.css.
+ *
+ * Every rule uses only the semantic tokens from global.css (colours, type
+ * scale, radii, spacing, control heights, durations); no raw colours or font
+ * sizes. Classes carry an `af-` prefix so they cannot collide with Basecoat's
+ * own `.btn`, `.badge`, ... components. They sit in `@layer components`, so a
+ * Tailwind utility on the same element still wins.
+ *
+ * Reference: docs/design-language/index.html (layer 3).
+ */
+
+@layer components {
+  /* Icon: Lucide SVG at one size, inheriting text colour. */
+  .af-icon {
+    width: 16px;
+    height: 16px;
+    flex: none;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .af-btn.l .af-icon {
+    width: 20px;
+    height: 20px;
+  }
+
+  /* Status mark: shape carries the meaning, colour repeats it, the word states it. */
+  .af-st {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-8);
+    white-space: nowrap;
+  }
+  .af-mark {
+    width: 10px;
+    height: 10px;
+    flex: none;
+    display: inline-block;
+  }
+  .af-mark.ok {
+    background: var(--color-af-ok);
+    border-radius: 50%;
+  }
+  .af-mark.warn {
+    background: var(--color-af-warn);
+    clip-path: polygon(50% 4%, 100% 96%, 0 96%);
+    width: 11px;
+  }
+  .af-mark.bad {
+    background: var(--color-af-bad);
+    border-radius: 2px;
+  }
+  .af-mark.info {
+    background: var(--color-af-info);
+    transform: rotate(45deg) scale(0.82);
+    border-radius: 1px;
+  }
+  .af-mark.busy {
+    border-radius: 50%;
+    background: linear-gradient(90deg, var(--color-af-text-secondary) 50%, transparent 50%);
+    box-shadow: inset 0 0 0 1.5px var(--color-af-text-secondary);
+  }
+  .af-mark.off {
+    border-radius: 50%;
+    box-shadow: inset 0 0 0 1.5px var(--color-af-text-secondary);
+  }
+
+  /* Button */
+  .af-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-8);
+    height: var(--control-m);
+    padding: 0 var(--space-16);
+    border-radius: var(--radius-8);
+    border: 1px solid transparent;
+    font: 500 var(--text-14) / 1 var(--font-sans);
+    cursor: pointer;
+    white-space: nowrap;
+    text-decoration: none;
+    transition:
+      background var(--time-fast) var(--ease),
+      border-color var(--time-fast) var(--ease);
+  }
+  .af-btn.primary {
+    background: var(--color-af-accent);
+    color: var(--color-af-on-accent);
+  }
+  .af-btn.primary:hover {
+    background: color-mix(in srgb, var(--color-af-accent) 86%, var(--color-af-on-accent));
+  }
+  .af-btn.secondary {
+    background: var(--color-af-bg);
+    color: var(--color-af-text);
+    border-color: var(--color-af-border-strong);
+  }
+  .af-btn.secondary:hover {
+    background: var(--color-af-bg-hover);
+  }
+  .af-btn.quiet {
+    background: transparent;
+    color: var(--color-af-text);
+    padding: 0 var(--space-8);
+  }
+  .af-btn.quiet:hover {
+    background: var(--color-af-bg-hover);
+  }
+  .af-btn.danger {
+    background: var(--color-af-bg);
+    color: var(--color-af-bad-text);
+    border-color: color-mix(in srgb, var(--color-af-bad) 55%, var(--color-af-bg));
+  }
+  .af-btn.danger:hover {
+    background: color-mix(in srgb, var(--color-af-bad) 10%, var(--color-af-bg));
+  }
+  .af-btn.s {
+    height: var(--control-s);
+    padding: 0 var(--space-12);
+    font-size: var(--text-13);
+  }
+  .af-btn.l {
+    height: var(--control-l);
+    padding: 0 var(--space-24);
+    font-size: var(--text-16);
+  }
+  .af-btn[disabled] {
+    background: var(--color-af-bg-subtle);
+    color: var(--color-af-text-disabled);
+    border-color: var(--color-af-border);
+    cursor: not-allowed;
+  }
+
+  /* Banner: page level, one per page, always a status colour, never the accent. */
+  .af-banner {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-8) var(--space-16);
+    padding: var(--space-12) var(--space-16);
+    border-radius: var(--radius-10);
+  }
+  .af-banner > div {
+    flex: 1 1 180px;
+    min-width: 0;
+  }
+  .af-banner b {
+    font-weight: 600;
+    display: block;
+  }
+  .af-banner .af-btn {
+    background: var(--color-af-bg);
+    color: var(--color-af-text);
+    border-color: transparent;
+  }
+  .af-banner.warn {
+    background: var(--color-af-banner-warn);
+    color: var(--color-af-on-banner-warn);
+  }
+  .af-banner.bad {
+    background: var(--color-af-banner-bad);
+    color: var(--color-af-on-banner-bad);
+  }
+  .af-banner.info {
+    background: var(--color-af-banner-info);
+    color: var(--color-af-on-banner-info);
+  }
+  .af-banner.ok {
+    background: var(--color-af-banner-ok);
+    color: var(--color-af-on-banner-ok);
+  }
+  .af-banner .af-mark {
+    background: currentColor;
+  }
+
+  /* Note: inline, sits inside a section next to the thing it is about. */
+  .af-note {
+    display: flex;
+    gap: var(--space-12);
+    padding: var(--space-12) var(--space-16);
+    border-radius: var(--radius-8);
+    border: 1px solid;
+    font-size: var(--text-13);
+    align-items: baseline;
+  }
+  .af-note.warn {
+    background: color-mix(in srgb, var(--color-af-warn) 10%, var(--color-af-bg));
+    border-color: color-mix(in srgb, var(--color-af-warn) 50%, var(--color-af-bg));
+  }
+  .af-note.bad {
+    background: color-mix(in srgb, var(--color-af-bad) 8%, var(--color-af-bg));
+    border-color: color-mix(in srgb, var(--color-af-bad) 45%, var(--color-af-bg));
+  }
+  .af-note.info {
+    background: color-mix(in srgb, var(--color-af-info) 8%, var(--color-af-bg));
+    border-color: color-mix(in srgb, var(--color-af-info) 45%, var(--color-af-bg));
+  }
+  .af-note.ok {
+    background: color-mix(in srgb, var(--color-af-ok) 8%, var(--color-af-bg));
+    border-color: color-mix(in srgb, var(--color-af-ok) 45%, var(--color-af-bg));
+  }
+
+  /* Table */
+  .af-tbl-box {
+    border: 1px solid var(--color-af-border);
+    border-radius: var(--radius-10);
+    overflow-x: auto;
+  }
+  table.af-tbl {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .af-tbl th {
+    text-align: left;
+    font-weight: 500;
+    font-size: var(--text-13);
+    color: var(--color-af-text-secondary);
+    padding: 0 var(--space-16);
+    height: calc(var(--space-32) + var(--space-8));
+    border-bottom: 1px solid var(--color-af-border);
+    white-space: nowrap;
+  }
+  .af-tbl td {
+    padding: 0 var(--space-16);
+    height: var(--control-l);
+    border-bottom: 1px solid var(--color-af-border);
+    white-space: nowrap;
+  }
+  .af-tbl tr:last-child td {
+    border-bottom: 0;
+  }
+  .af-tbl tbody tr:hover {
+    background: var(--color-af-bg-subtle);
+  }
+  .af-tbl .num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  .af-tbl .act {
+    text-align: right;
+  }
+  .af-tbl .sub {
+    color: var(--color-af-text-secondary);
+  }
+  .af-tbl.compact td {
+    height: var(--space-32);
+    font-size: var(--text-13);
+  }
+  .af-tbl.compact th {
+    height: var(--space-32);
+    font-size: var(--text-12);
+  }
+
+  /* Field */
+  .af-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-width: 360px;
+  }
+  .af-field label {
+    font-weight: 500;
+    font-size: var(--text-13);
+  }
+  .af-field .hint {
+    font-size: var(--text-13);
+    color: var(--color-af-text-secondary);
+  }
+  .af-field .err {
+    font-size: var(--text-13);
+    color: var(--color-af-bad-text);
+    display: flex;
+    gap: var(--space-8);
+    align-items: center;
+  }
+  .af-input {
+    height: var(--control-m);
+    padding: 0 var(--space-12);
+    border: 1px solid var(--color-af-border-strong);
+    border-radius: var(--radius-8);
+    background: var(--color-af-bg);
+    color: var(--color-af-text);
+    font: inherit;
+    width: 100%;
+  }
+  .af-input[aria-invalid='true'] {
+    border-color: var(--color-af-bad);
+  }
+  .af-check {
+    display: inline-flex;
+    gap: var(--space-8);
+    align-items: center;
+  }
+  .af-check input {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--color-af-accent);
+    margin: 0;
+  }
+
+  /* Tag: a neutral label for a category. Never a status. */
+  .af-tag {
+    display: inline-flex;
+    align-items: center;
+    height: 22px;
+    padding: 0 var(--space-8);
+    border-radius: var(--radius-4);
+    background: var(--color-af-bg-subtle);
+    border: 1px solid var(--color-af-border);
+    font-size: var(--text-12);
+  }
+
+  /* Segmented control */
+  .af-seg {
+    display: inline-flex;
+    border: 1px solid var(--color-af-border-strong);
+    border-radius: var(--radius-8);
+    padding: var(--space-2);
+    gap: var(--space-2);
+  }
+  .af-seg button {
+    height: 30px;
+    padding: 0 var(--space-12);
+    border: 0;
+    border-radius: var(--radius-4);
+    background: transparent;
+    color: var(--color-af-text-secondary);
+    font: 500 var(--text-13) / 1 var(--font-sans);
+    cursor: pointer;
+  }
+  .af-seg button[aria-pressed='true'] {
+    background: var(--color-af-text);
+    color: var(--color-af-bg);
+  }
+
+  /* Sidebar nav */
+  .af-nav {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    width: 220px;
+    max-width: 100%;
+  }
+  .af-nav a {
+    display: flex;
+    align-items: center;
+    height: var(--control-m);
+    padding: 0 var(--space-12);
+    border-radius: var(--radius-8);
+    text-decoration: none;
+    color: var(--color-af-text-secondary);
+    position: relative;
+  }
+  .af-nav a:hover {
+    background: var(--color-af-bg-hover);
+    color: var(--color-af-text);
+  }
+  .af-nav a[aria-current='page'] {
+    color: var(--color-af-text);
+    font-weight: 600;
+    background: var(--color-af-bg-subtle);
+  }
+  .af-nav a[aria-current='page']::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: var(--space-8);
+    bottom: var(--space-8);
+    width: 3px;
+    border-radius: var(--space-2);
+    background: var(--color-af-accent);
+  }
+
+  /* Copy field */
+  .af-copy {
+    display: flex;
+    align-items: center;
+    gap: var(--space-8);
+    border: 1px solid var(--color-af-border-strong);
+    border-radius: var(--radius-8);
+    padding: 0 var(--space-4) 0 var(--space-12);
+    height: var(--control-l);
+    background: var(--color-af-bg-subtle);
+    min-width: 0;
+    max-width: 560px;
+  }
+  .af-copy code {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Key-value list */
+  .af-kv {
+    display: grid;
+    grid-template-columns: minmax(120px, 180px) minmax(0, 1fr);
+    margin: 0;
+  }
+  .af-kv dt,
+  .af-kv dd {
+    padding: var(--space-12) 0;
+    border-bottom: 1px solid var(--color-af-border);
+    margin: 0;
+  }
+  .af-kv dt {
+    color: var(--color-af-text-secondary);
+  }
+  .af-kv dd {
+    overflow-wrap: anywhere;
+  }
+  .af-kv dt:last-of-type,
+  .af-kv dd:last-of-type {
+    border-bottom: 0;
+  }
+
+  /* Stat */
+  .af-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: var(--space-24);
+  }
+  .af-stat {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+  }
+  .af-stat span {
+    font-size: var(--text-13);
+    color: var(--color-af-text-secondary);
+  }
+  .af-stat b {
+    font: 600 var(--text-24) / 1.2 var(--font-sans);
+    font-variant-numeric: tabular-nums;
+  }
+  .af-stat small {
+    font-size: var(--text-12);
+    color: var(--color-af-text-secondary);
+  }
+
+  /* Dialog, menu, tooltip */
+  .af-dialog {
+    background: var(--color-af-bg);
+    border-radius: var(--radius-10);
+    box-shadow: var(--shadow-af-2);
+    padding: var(--space-24);
+    width: min(100%, 440px);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-16);
+  }
+  .af-dialog h4 {
+    font-size: var(--text-16);
+  }
+  .af-dialog footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-8);
+    flex-wrap: wrap;
+  }
+  .af-menu {
+    background: var(--color-af-bg);
+    border-radius: var(--radius-8);
+    box-shadow: var(--shadow-af-1);
+    padding: var(--space-4);
+    width: 200px;
+    display: flex;
+    flex-direction: column;
+  }
+  .af-menu span {
+    padding: var(--space-8) var(--space-12);
+    border-radius: var(--radius-4);
+  }
+  .af-menu span:hover {
+    background: var(--color-af-bg-hover);
+  }
+  .af-tip {
+    background: var(--color-af-text);
+    color: var(--color-af-bg);
+    font-size: var(--text-12);
+    padding: 6px var(--space-8);
+    border-radius: var(--radius-4);
+    max-width: 240px;
+  }
+
+  /* Empty state */
+  .af-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-12);
+    padding: var(--space-32) var(--space-24);
+    border: 1px dashed var(--color-af-border-strong);
+    border-radius: var(--radius-10);
+  }
+  .af-empty p {
+    color: var(--color-af-text-secondary);
+    max-width: 52ch;
+  }
+
+  /* Page pattern: header with the one primary action, then titled sections. */
+  .af-page-head {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-12);
+    justify-content: space-between;
+    align-items: flex-end;
+  }
+  .af-page-head h4 {
+    font-size: var(--text-24);
+    line-height: 1.3;
+  }
+  .af-page-head p {
+    color: var(--color-af-text-secondary);
+  }
+  .af-sect {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-12);
+  }
+  .af-sect h5 {
+    font: 600 var(--text-16) / 1.4 var(--font-sans);
+    margin: 0;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .af-btn {
+      transition: none;
+    }
+  }
+}
