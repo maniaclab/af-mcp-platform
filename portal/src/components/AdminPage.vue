@@ -211,8 +211,8 @@ onMounted(() => {
 });
 
 // ── Page banner: the single most urgent message ─────────────────────────
-// Problem beats warning beats information; whichever loses still shows in
-// its own section below.
+// Problem beats warning; maintenance mode is reported by the shell's bar and
+// in its own section below.
 const issueCount = computed(() => mismatches.value.length + drifts.value.length);
 
 const driftBannerText = computed(() => {
@@ -224,16 +224,6 @@ const driftBannerText = computed(() => {
     parts.push(`${plural(drifts.value.length, 'service', 'services')} with tool mapping drift`);
   }
   return `${parts.join(' and ')}. Enforcement is unchanged; review them below.`;
-});
-
-const maintenanceBannerText = computed(() => {
-  const status = maintenanceStatus.value;
-  if (!status || !status.enabled) return '';
-  const since = status.enabled_at ? `Since ${exactTime(status.enabled_at)}. ` : '';
-  const shown = status.reason
-    ? `Everyone outside the admin group is refused and sees: ${status.reason}`
-    : 'Everyone outside the admin group is refused and sees that the broker is in maintenance mode.';
-  return since + shown;
 });
 </script>
 
@@ -254,18 +244,6 @@ const maintenanceBannerText = computed(() => {
       <a class="af-btn s" :href="mismatches.length > 0 ? '#ap-mismatches' : '#ap-drift'"
         >Review issues</a
       >
-    </div>
-    <div
-      v-else-if="maintenanceStatus?.enabled"
-      class="af-banner info"
-      role="status"
-      data-af-admin-banner
-    >
-      <span class="af-mark info" aria-hidden="true"></span>
-      <div>
-        <b>Maintenance mode is on</b>
-        {{ maintenanceBannerText }}
-      </div>
     </div>
 
     <section class="af-sect" aria-labelledby="ap-usage-title">
@@ -338,6 +316,8 @@ const maintenanceBannerText = computed(() => {
               <dd>
                 {{ maintenanceStatus.enabled_at ? exactTime(maintenanceStatus.enabled_at) : '—' }}
               </dd>
+              <dt>Effect</dt>
+              <dd>Everyone outside the admin group is refused and sees the message above.</dd>
             </template>
           </dl>
 

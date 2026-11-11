@@ -175,6 +175,16 @@
   .af-banner .af-mark {
     background: currentColor;
   }
+  /* Slim: a one-line notice bar for information that applies to the whole
+   * shell (e.g. maintenance), quieter than a page banner. */
+  .af-banner.slim {
+    padding: var(--space-8) var(--space-16);
+    flex-wrap: nowrap;
+    gap: var(--space-12);
+  }
+  .af-banner.slim > div {
+    flex: 1 1 auto;
+  }
 
   /* Note: inline, sits inside a section next to the thing it is about. */
   .af-note {

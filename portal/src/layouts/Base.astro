@@ -233,6 +233,9 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
       .af-main > .af-banner {
         margin-bottom: var(--space-24);
       }
+      .af-main > .af-banner.slim {
+        margin-bottom: var(--space-16);
+      }
 
       /* Under 860px the sidebar becomes an off-canvas drawer opened from the
          top bar. Closed, it is visibility:hidden so its links leave the tab
@@ -427,8 +430,8 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
         </header>
 
         <main id="main-content" class="af-main af-wrap">
-          <div data-af-maintenance-banner class="af-banner warn" role="alert" hidden>
-            <span class="af-mark warn" aria-hidden="true"></span>
+          <div data-af-maintenance-banner class="af-banner info slim" role="alert" hidden>
+            <span class="af-mark info" aria-hidden="true"></span>
             <div data-af-maintenance-text></div>
           </div>
           <slot />

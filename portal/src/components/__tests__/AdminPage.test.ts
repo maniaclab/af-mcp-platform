@@ -580,15 +580,18 @@ describe('AdminPage banner', () => {
     expect(wrapper.find('[data-af-admin-banner]').exists()).toBe(false);
   });
 
-  it('is an information banner when only maintenance is on', async () => {
+  // The shell's maintenance bar (Base.astro) already tells every visitor, so
+  // the page keeps the details in its Maintenance mode section instead of a
+  // second banner.
+  it('has no banner when only maintenance is on; the section carries the details', async () => {
     vi.mocked(fetchMaintenanceStatus).mockResolvedValue(ENABLED);
     const wrapper = mount(AdminPage);
     await flushPromises();
 
-    const banner = wrapper.get('[data-af-admin-banner]');
-    expect(banner.classes()).toContain('info');
-    expect(banner.text()).toContain('Maintenance mode is on');
-    expect(banner.text()).toContain('Scheduled Postgres upgrade');
+    expect(wrapper.find('[data-af-admin-banner]').exists()).toBe(false);
+    const section = wrapper.get('#ap-maintenance');
+    expect(section.text()).toContain('Scheduled Postgres upgrade');
+    expect(section.text()).toContain('Everyone outside the admin group is refused');
   });
 
   it('is a warning with the count when mismatches or drift are found', async () => {
@@ -602,7 +605,7 @@ describe('AdminPage banner', () => {
     expect(banner.text()).toContain('1 annotation mismatch');
   });
 
-  it('shows the warning, not the maintenance notice, when both apply', async () => {
+  it('shows only the warning when maintenance is on and issues exist', async () => {
     vi.mocked(fetchMaintenanceStatus).mockResolvedValue(ENABLED);
     vi.mocked(fetchAnnotationMismatches).mockResolvedValue([MISMATCH]);
     const wrapper = mount(AdminPage);
