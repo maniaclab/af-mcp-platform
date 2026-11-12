@@ -126,6 +126,8 @@ describe('auth — OIDC configured', () => {
         shortName: 'UChicago AF Ops',
         fullName: '',
         facilityName: 'UChicago Analysis Facility',
+        accentColor: '#800000',
+        accentColorDark: '',
       },
     });
     // Plain `function` (not arrow) implementations — auth.ts calls both of
@@ -249,6 +251,7 @@ describe('auth — OIDC configured', () => {
       shortName: 'UChicago AF Ops',
       fullName: DEFAULT_BRANDING.fullName,
       facilityName: 'UChicago Analysis Facility',
+      accentColor: '#800000',
     });
   });
 });

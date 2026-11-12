@@ -8,8 +8,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import structlog
-from pydantic import SecretStr
 
+from af_mcp_broker.credmon.guidance import wired_kinds
 from af_mcp_broker.credmon.htcondor_api import HTCondorApiCredentialStore
 from af_mcp_broker.credmon.storer import CredmonKind, CredmonStorer
 from af_mcp_broker.credmon.sync import CredmonSyncService
@@ -73,21 +73,26 @@ async def build_credmon_sync(
         )
     assert settings.credmon_htcondor_api_url is not None  # Settings validator
     assert settings.credmon_htcondor_api_token_file is not None  # Settings validator
+    assert settings.credmon_user_domain is not None  # Settings validator
+    token_file = Path(settings.credmon_htcondor_api_token_file)
     try:
-        api_token = Path(settings.credmon_htcondor_api_token_file).read_text().strip()
+        # Checked once here so a missing mount refuses to boot; the client
+        # itself re-reads the file on every store, so rotation needs no
+        # restart.
+        token_file.read_text()
     except OSError as exc:
         raise RuntimeError(
             "CREDMON_HTCONDOR_API_TOKEN_FILE could not be read: "
             f"{settings.credmon_htcondor_api_token_file}"
         ) from exc
 
-    kinds: list[CredmonKind] = []
+    wired = wired_kinds(settings, targets_by_kind)
     for kind in settings.credmon_kinds:
-        targets = targets_by_kind.get(kind, ())
-        if not targets:
+        if kind not in wired:
             log.warning("credmon.kind_not_configured", kind=kind)
-            continue
-        provider = await credential_registry.resolve(targets[0])
+    kinds: list[CredmonKind] = []
+    for kind in wired:
+        provider = await credential_registry.resolve(targets_by_kind[kind][0])
         kinds.append(CredmonKind(kind, provider.is_linked))
 
     storer = CredmonStorer(
@@ -97,11 +102,12 @@ async def build_credmon_sync(
         principal_cache=principal_cache,
         client=HTCondorApiCredentialStore(
             api_url=str(settings.credmon_htcondor_api_url),
-            token=SecretStr(api_token),
+            token_file=token_file,
         ),
         audience_prefix=settings.credmon_audience_prefix,
         service_prefix=settings.credmon_service_prefix,
         top_token_ttl_seconds=settings.credmon_top_token_ttl_seconds,
+        user_domain=settings.credmon_user_domain,
     )
     log.info(
         "credmon.wired",

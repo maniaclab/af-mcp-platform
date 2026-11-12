@@ -601,7 +601,7 @@ Key endpoints:
 | `GET` | `/v1/identities` | Caller identity, linked accounts, linkable providers |
 | `GET` | `/v1/permissions` | Caller's granted permissions |
 | `POST` | `/v1/authorize` | Check one entitlement (used by the aggregator per call) |
-| `GET` | `/v1/catalog` | Tools visible to the caller after entitlement filtering |
+| `GET` | `/v1/catalog` | Services visible to the caller, each with a per-caller `status`; `link_required` services carry `link_state` (`not_linked` or `rejected`, a linked credential the service refused), `null` for every other status |
 | `POST` | `/v1/credential` | Issue or return a cached credential for a target |
 | `POST` | `/v1/x509/proxy` | Mint and cache a VOMS proxy (passphrase unlock) |
 | `GET` | `/v1/x509/proxy/status` | Proxy cache status |
@@ -619,6 +619,31 @@ port (9090), not under `/v1`.
 All requests require a valid AF bearer token. External callers can also hit
 `/v1` directly (useful for scripting and debugging) — the `/v1` route bodies
 remain the canonical authorization/credential logic either way.
+
+### Catalog status and listing failures
+
+`GET /v1/catalog` (and `af_list_mcp_servers`) report a per-caller `status`
+for each service, derived by `_service_status` (`api/permissions.py`) from
+data the broker already holds: the caller's permissions, whether their
+credential provider `is_linked()`, and the most recent classified
+`tools/list` failure the aggregator observed
+(`ServiceRegistry.recent_list_failure`). No upstream probe is made.
+
+A listing failure is recorded with a reason, and the reason decides whose
+status it can change:
+
+| Reason | Describes | Recorded against | Catalog status |
+|---|---|---|---|
+| `unavailable` | the backend (down, timing out, or an unexplained 401) | the service, seen by every caller | `unavailable` |
+| `unauthorized` | one caller's credential, which the backend rejected | that caller and service only | `link_required` ("re-link") |
+| `not_linked` | one caller, who has no credential for the service; logged at INFO. A mint-and-inject (`x509`, `krb5`, `servicex`) service's tools are listed only for a caller who has linked the credential, so for an unlinked caller the listing is skipped without minting a token or contacting the backend | that caller and service only | `link_required` ("link") |
+
+A successful listing by a caller clears that caller's own record and the
+service-wide one, never another caller's. Caller-specific records are held
+in process memory, capped at 4096 entries (least recently recorded evicted
+first); each replica keeps its own, so a caller whose requests land on
+different replicas can see the status differ until each replica has
+observed their listing.
 
 ### Reserved paths on the portal host
 

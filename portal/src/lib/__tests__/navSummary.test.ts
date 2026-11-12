@@ -13,6 +13,18 @@ const healthy: DashboardSummary = {
     expires_at: '2026-08-06T00:00:00Z',
   },
   activeTokenCount: 4,
+  reachableCount: 3,
+  needsLinkCount: 0,
+  needsLinkService: null,
+  needsLinkAction: null,
+  unavailableCount: 0,
+  misconfiguredCount: 0,
+  rejectedCount: 0,
+  rejectedService: null,
+  rejectedIdentity: null,
+  rejectedAction: null,
+  proxyAutoRenews: false,
+  soonestExpiringToken: null,
 };
 
 const empty: DashboardSummary = {
@@ -20,6 +32,18 @@ const empty: DashboardSummary = {
   serverCount: 0,
   proxyStatus: { cached: false, voms_attributes: [] },
   activeTokenCount: 0,
+  reachableCount: 0,
+  needsLinkCount: 0,
+  needsLinkService: null,
+  needsLinkAction: null,
+  unavailableCount: 0,
+  misconfiguredCount: 0,
+  rejectedCount: 0,
+  rejectedService: null,
+  rejectedIdentity: null,
+  rejectedAction: null,
+  proxyAutoRenews: false,
+  soonestExpiringToken: null,
 };
 
 describe('navBadges', () => {

@@ -9,15 +9,16 @@
  * provider, regardless of which card component (IdentityLink vs.
  * X509IdentityCard) renders it.
  */
-import { flushPromises, mount } from '@vue/test-utils';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { IdentitiesResponse } from '../../lib/api';
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { IdentitiesResponse, IdentityProvider } from '../../lib/api';
 
 vi.mock('../../lib/api', () => ({
   fetchIdentities: vi.fn(),
   fetchCatalog: vi.fn(),
   clearIdentitiesCache: vi.fn(),
   SessionExpiredError: class SessionExpiredError extends Error {},
+  AccessDeniedError: class AccessDeniedError extends Error {},
 }));
 
 import { fetchCatalog, fetchIdentities } from '../../lib/api';
@@ -72,6 +73,10 @@ const IDENTITIES: IdentitiesResponse = {
   ],
 };
 
+// A mounted page listens for hashchange on window; unmounting keeps one test's
+// page from reacting to the next test's hash.
+enableAutoUnmount(afterEach);
+
 beforeEach(() => {
   vi.restoreAllMocks();
   window.sessionStorage.clear();
@@ -124,5 +129,195 @@ describe('IdentitiesPage provider card anchors', () => {
     expect(anchor.find('.kc').exists()).toBe(false);
     const link = anchor.find('a.sc__btn--external');
     expect(link.attributes('href')).toBe('https://servicex.example.org/api-token');
+  });
+});
+
+describe('IdentitiesPage banner', () => {
+  const linkedProvider = (over: Partial<IdentityProvider> = {}): IdentityProvider => ({
+    id: 'atlas-iam',
+    type: 'keycloak-brokered',
+    display_name: 'ATLAS IAM',
+    enables: 'Rucio/PanDA access',
+    linked: true,
+    link_url: null,
+    link_mechanism: 'redirect',
+    ...over,
+  });
+  const x509 = (over: Partial<IdentityProvider> = {}): IdentityProvider => ({
+    id: 'x509',
+    type: 'x509',
+    display_name: 'Grid certificate',
+    enables: 'VOMS proxy minting',
+    linked: true,
+    link_url: null,
+    link_mechanism: 'passphrase',
+    x509_link_mode: 'auto-renew',
+    proxy_expires_at: new Date(Date.now() + 9 * 3600_000).toISOString(),
+    ...over,
+  });
+
+  async function mountWith(providers: IdentityProvider[]) {
+    vi.mocked(fetchIdentities).mockResolvedValue({ ...IDENTITIES, providers });
+    const wrapper = mount(IdentitiesPage);
+    await flushPromises();
+    return wrapper;
+  }
+
+  it('shows no banner when every account is linked and the proxy is valid', async () => {
+    const wrapper = await mountWith([linkedProvider(), x509()]);
+    expect(wrapper.find('.af-banner').exists()).toBe(false);
+  });
+
+  it('shows a problem banner with a link to the certificate when an until-expiry proxy has expired', async () => {
+    const wrapper = await mountWith([
+      linkedProvider(),
+      x509({
+        linked: false,
+        x509_link_mode: 'until-expiry',
+        proxy_expires_at: new Date(Date.now() - 3 * 3600_000).toISOString(),
+      }),
+    ]);
+    const banner = wrapper.find('.af-banner.bad');
+    expect(banner.attributes('role')).toBe('alert');
+    expect(banner.text()).toContain('Your grid proxy has expired');
+    expect(banner.find('a.btn').attributes('href')).toBe('#identity-card-x509');
+  });
+
+  it('shows a warning banner when an until-expiry proxy is about to expire', async () => {
+    const wrapper = await mountWith([
+      x509({
+        x509_link_mode: 'until-expiry',
+        proxy_expires_at: new Date(Date.now() + 30 * 60_000).toISOString(),
+      }),
+    ]);
+    const banner = wrapper.find('.af-banner.warn');
+    expect(banner.attributes('role')).toBe('alert');
+    expect(banner.text()).toContain('Your grid proxy expires soon');
+    expect(banner.find('a.btn').attributes('href')).toBe('#identity-card-x509');
+  });
+
+  it('does not warn about a proxy that cannot renew while it has over an hour left', async () => {
+    const wrapper = await mountWith([
+      x509({
+        x509_link_mode: 'until-expiry',
+        proxy_expires_at: new Date(Date.now() + 90 * 60_000).toISOString(),
+      }),
+    ]);
+    expect(wrapper.find('.af-banner').exists()).toBe(false);
+  });
+
+  it('does not warn about an auto-renewing proxy that is near expiry', async () => {
+    const wrapper = await mountWith([
+      x509({ proxy_expires_at: new Date(Date.now() + 10 * 60_000).toISOString() }),
+    ]);
+    expect(wrapper.find('.af-banner').exists()).toBe(false);
+  });
+
+  it('raises no banner for an unlinked account', async () => {
+    const wrapper = await mountWith([linkedProvider({ linked: false })]);
+    expect(wrapper.find('.af-banner').exists()).toBe(false);
+  });
+
+  it('raises no banner for several unlinked accounts, and marks each as not linked', async () => {
+    const wrapper = await mountWith([
+      linkedProvider({ linked: false }),
+      linkedProvider({ id: 'other', display_name: 'Other', linked: false }),
+    ]);
+    expect(wrapper.find('.af-banner').exists()).toBe(false);
+    expect(wrapper.findAll('.af-mark.off').length).toBeGreaterThanOrEqual(2);
+    expect(wrapper.find('.af-mark.warn').exists()).toBe(false);
+    expect(wrapper.find('.af-mark.bad').exists()).toBe(false);
+  });
+
+  it('raises no banner for an account that needs access, which the card reports itself', async () => {
+    const wrapper = await mountWith([
+      linkedProvider({ linked: false, link_permission_denied: true }),
+    ]);
+    expect(wrapper.find('.af-banner').exists()).toBe(false);
+    expect(wrapper.text()).toContain('Access required');
+  });
+
+  it('shows the most urgent problem only: an expired proxy beats an unlinked account', async () => {
+    const wrapper = await mountWith([
+      linkedProvider({ linked: false }),
+      x509({
+        linked: false,
+        x509_link_mode: 'until-expiry',
+        proxy_expires_at: new Date(Date.now() - 3600_000).toISOString(),
+      }),
+    ]);
+    expect(wrapper.findAll('.af-banner')).toHaveLength(1);
+    expect(wrapper.find('.af-banner.bad').exists()).toBe(true);
+  });
+});
+
+describe('IdentitiesPage deep-link highlight', () => {
+  const TARGET_CLASS = 'ip__card-anchor--target';
+
+  beforeEach(() => {
+    window.location.hash = '';
+    Element.prototype.scrollIntoView = vi.fn();
+  });
+
+  async function mountAt(hash: string) {
+    window.location.hash = hash;
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const wrapper = mount(IdentitiesPage, { attachTo: host });
+    await flushPromises();
+    return wrapper;
+  }
+
+  const marked = (wrapper: ReturnType<typeof mount>) =>
+    wrapper.findAll(`.${TARGET_CLASS}`).map((w) => w.attributes('id'));
+
+  it('marks only the targeted row, exposes aria-current, scrolls to it and focuses its heading', async () => {
+    const wrapper = await mountAt('#identity-card-krb5');
+    expect(marked(wrapper)).toEqual(['identity-card-krb5']);
+    const row = wrapper.find('#identity-card-krb5');
+    expect(row.attributes('aria-current')).toBe('true');
+    expect(wrapper.findAll('[aria-current="true"]')).toHaveLength(1);
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).toBe(row.find('h3').element);
+  });
+
+  it('highlights nothing and leaves focus alone with no hash', async () => {
+    const wrapper = await mountAt('');
+    expect(marked(wrapper)).toEqual([]);
+    expect(wrapper.find('[aria-current]').exists()).toBe(false);
+    expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it('highlights nothing and leaves focus alone for an unknown id', async () => {
+    const wrapper = await mountAt('#identity-card-nope');
+    expect(marked(wrapper)).toEqual([]);
+    expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it('highlights once the rows render when the hash arrived before the data', async () => {
+    let resolve!: (v: IdentitiesResponse) => void;
+    vi.mocked(fetchIdentities).mockReturnValue(new Promise((r) => (resolve = r)));
+    window.location.hash = '#identity-card-x509';
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const wrapper = mount(IdentitiesPage, { attachTo: host });
+    await flushPromises();
+    expect(marked(wrapper)).toEqual([]);
+    resolve(IDENTITIES);
+    await flushPromises();
+    expect(marked(wrapper)).toEqual(['identity-card-x509']);
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalledTimes(1);
+  });
+
+  it('moves the highlight when the hash changes', async () => {
+    const wrapper = await mountAt('#identity-card-krb5');
+    window.location.hash = '#identity-card-servicex';
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+    await flushPromises();
+    expect(marked(wrapper)).toEqual(['identity-card-servicex']);
+    expect(wrapper.find('#identity-card-krb5').attributes('aria-current')).toBeUndefined();
+    expect(document.activeElement).toBe(wrapper.find('#identity-card-servicex h3').element);
   });
 });

@@ -23,6 +23,10 @@ class CredmonSyncState(ABC):
         """Take (or renew) the lease for *holder* until ``now + ttl_seconds``; False when another holder's lease is still live or a concurrent acquire won."""
 
     @abstractmethod
+    async def release_lease(self, holder: str, *, now: float) -> None:
+        """Give up *holder*'s lease so another replica can run a cycle immediately; a no-op if the lease is held by someone else (or nobody)."""
+
+    @abstractmethod
     async def write_status(self, status: dict[str, Any]) -> None:
         """Replace the last-run status record."""
 
@@ -47,6 +51,10 @@ class InMemoryCredmonSyncState(CredmonSyncState):
         self._holder = holder
         self._expires_at = now + ttl_seconds
         return True
+
+    async def release_lease(self, holder: str, *, now: float) -> None:
+        if self._holder == holder:
+            self._expires_at = now
 
     async def write_status(self, status: dict[str, Any]) -> None:
         self._status = dict(status)

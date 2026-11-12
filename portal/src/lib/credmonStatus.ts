@@ -17,9 +17,10 @@ export type CredmonHealth = 'disabled' | 'pending' | 'healthy' | 'warning' | 'er
  * Overall state of the sync loop at *nowSeconds* (unix seconds).
  *
  * Mirrors the chart's stale-sync alert: a last success older than twice the
- * interval is a warning. A 'partial' cycle (some users failed) still
- * advanced last_success_at broker-side, so it is a warning rather than an
- * error; 'failed' (the cycle itself raised) or no success ever is an error.
+ * interval is a warning. A 'partial' cycle (some users stored, some failed)
+ * still advanced last_success_at broker-side, so it is a warning rather than
+ * an error; 'failed' (the cycle raised, or nothing was stored while some
+ * users failed) or no success ever is an error.
  */
 export function credmonHealth(status: CredmonStatus, nowSeconds: number): CredmonHealth {
   if (!status.enabled) return 'disabled';

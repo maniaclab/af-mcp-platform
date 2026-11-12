@@ -1,31 +1,24 @@
 <script setup lang="ts">
 /**
  * PopoverTooltip.vue — a hover/focus tooltip built on the native Popover
- * API, replacing both the retired hand-rolled InfoTooltip.vue AND
- * Basecoat's own `data-tooltip` (tried first -- see git history and
- * DESIGN.md's Tooltips entry). Basecoat's tooltip is a plain
+ * API. It is a documented exception to using Basecoat's component class: Basecoat's tooltip (`data-tooltip`) is a plain
  * `position: absolute` `::before` anchored inside its trigger's own
- * containing block: it does not escape an `overflow: hidden`/`auto`
+ * containing block, so it does not escape an `overflow: hidden`/`auto`
  * ancestor, and while hidden it still counts toward that ancestor's
- * scrollable overflow -- the exact clipping/scroll-inflation bug
- * TokensPage.vue's and EntitlementsPage.vue's own siting comments describe,
- * unchanged by that swap. A `[popover]` element is promoted to the
- * browser's top layer once shown, genuinely outside any ancestor's
- * containing block or overflow clipping -- this is the one tooltip need
- * Basecoat's shipped component doesn't cover, so building our own here is
- * a deliberate, documented exception to DESIGN.md's Basecoat-class-first
- * rule, not a lapse back into hand-rolling everything.
+ * scrollable overflow (the clipping and scroll-inflation problem that
+ * TokensPage.vue's and EntitlementsPage.vue's siting comments describe).
+ * A `[popover]` element is promoted to the browser's top layer once shown,
+ * outside any ancestor's containing block or overflow clipping.
  *
- * Usage mirrors the retired InfoTooltip.vue: the default slot is the
- * trigger (the caller's own focusable element, describedby `tooltipId`),
- * the #tooltip slot is the tooltip text.
+ * The default slot is the trigger (the caller's own focusable element,
+ * describedby `tooltipId`); the #tooltip slot is the tooltip text.
  */
 import { onBeforeUnmount, onMounted, useTemplateRef } from 'vue';
 import { computeTooltipPosition, type TooltipSide } from '../lib/tooltipPosition';
 
 const props = withDefaults(
   defineProps<{
-    /** id of this tooltip's screen-reader description -- callers point their own trigger's aria-describedby at this id, the same contract InfoTooltip.vue used. */
+    /** id of this tooltip's screen-reader description -- callers point their own trigger's aria-describedby at this id. */
     tooltipId: string;
     side?: TooltipSide;
   }>(),
@@ -151,11 +144,11 @@ onBeforeUnmount(() => {
   width: max-content;
   max-width: 16rem;
   padding: 0.5rem 0.625rem;
-  background: var(--color-af-void);
-  border: 1px solid var(--color-af-muted);
-  border-radius: 4px;
-  font-family: 'IBM Plex Sans', system-ui, sans-serif;
-  font-size: 0.75rem;
+  background: var(--color-af-bg);
+  border: 1px solid var(--color-af-border-strong);
+  border-radius: var(--radius-4);
+  font-family: var(--font-sans);
+  font-size: var(--text-12);
   line-height: 1.5;
   color: var(--color-af-text);
   white-space: normal;

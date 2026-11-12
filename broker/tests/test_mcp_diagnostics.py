@@ -15,12 +15,13 @@ from tokencost import calculate_cost_by_tokens  # type: ignore[import-untyped]
 from af_mcp_broker.audit import AuditRecord
 from af_mcp_broker.audit.logger import init_audit_logger
 from af_mcp_broker.authorization import EntitlementPolicy
-from af_mcp_broker.config import KeycloakBrokeredProviderConfig
+from af_mcp_broker.config import KeycloakBrokeredProviderConfig, KrbTokenProviderConfig
 from af_mcp_broker.credentials import (
     CredentialProvider,
     CredentialRegistry,
     ExecutionModel,
 )
+from af_mcp_broker.credmon.guidance import JobCredentialGuide
 from af_mcp_broker.mcp.aggregator import build_aggregator
 from af_mcp_broker.mcp.registry import (
     LINK_IDENTITY_TOOL_NAME,
@@ -234,9 +235,63 @@ async def test_af_list_identities_reflects_linkage_per_provider(
         "display_name": "Linked IdP",
         "enables": "VOMS proxy generation",
         "linked": True,
+        "job_credential": None,
     }
     assert rows["unlinked-idp"]["linked"] is False
     assert rows["unlinked-idp"]["enables"] == "GitLab access"
+
+
+async def test_af_list_identities_describes_job_credentials_when_credmon_is_wired(
+    settings: Any, sig_key: Any, prime_jwks: Any, static_principal_cache: Any
+) -> None:
+    """With the HTCondor credmon wired, each identity whose provider type is a
+    wired kind tells the agent how a job uses it; other identities don't."""
+    principal_cache, directory = static_principal_cache
+    directory.groups_by_subject["user-123"] = []
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+
+    identity_providers = {
+        "krb5": _FakeIdentityProvider(linked=True),
+        "atlas-oidc": _FakeIdentityProvider(linked=True),
+    }
+    identity_provider_configs = {
+        "krb5": KrbTokenProviderConfig(
+            alias="krb5",
+            service_url="http://krb5-token-service.invalid",
+            display_name="CERN Kerberos ticket",
+        ),
+        "atlas-oidc": _idp_config("ATLAS IAM", "Rucio"),
+    }
+
+    mcp = build_aggregator(
+        ServiceRegistry(),
+        settings,
+        EntitlementPolicy(),
+        CredentialRegistry(),
+        principal_cache=principal_cache,
+        identity_providers=identity_providers,
+        identity_provider_configs=identity_provider_configs,
+        job_credentials=JobCredentialGuide(
+            service_prefix="af_", kinds=frozenset({"krb5", "x509"})
+        ),
+    )
+
+    async with run_aggregator_async(mcp, path="/mcp") as agg_url:
+        transport = StreamableHttpTransport(
+            agg_url, headers={"Authorization": f"Bearer {token}"}
+        )
+        async with Client(transport) as client:
+            result = await client.call_tool(LIST_IDENTITIES_TOOL_NAME, {})
+
+    rows = {row["id"]: row for row in result.structured_content["identities"]}
+    assert rows["krb5"]["job_credential"] == {
+        "service": "af_krb5",
+        "path": "$_CONDOR_CREDS/af_krb5.use",
+        "format": "Kerberos credentials cache",
+        "env": "KRB5CCNAME=FILE:$_CONDOR_CREDS/af_krb5.use",
+    }
+    assert rows["atlas-oidc"]["job_credential"] is None
 
 
 async def test_af_link_identity_returns_portal_url_and_linked_status(
@@ -379,9 +434,22 @@ async def test_af_list_mcp_servers_reuses_service_status_and_identity_join(
             display_name="Needs Link Backend",
         )
     )
+    registry.register(
+        ServiceSpec(
+            name="rejected",
+            prefix="rejected",
+            url="http://rejected.invalid/mcp",
+            transport="http",
+            required_permission="__none__",
+            auth_type="bearer",
+            display_name="Rejected Backend",
+        )
+    )
+    registry.record_list_failure("rejected", "unauthorized", "user-123")
     credential_registry = CredentialRegistry()
     unlinked_provider = _FakeIdentityProvider(linked=False)
     credential_registry.register("needs-link", unlinked_provider)
+    credential_registry.register("rejected", _FakeIdentityProvider(linked=True))
     target_to_alias = {"needs-link": "unlinked-idp"}
 
     mcp = build_aggregator(
@@ -407,6 +475,14 @@ async def test_af_list_mcp_servers_reuses_service_status_and_identity_join(
     assert rows["gated"]["status"] == "permission_required"
     assert rows["needs-link"]["status"] == "link_required"
     assert rows["needs-link"]["credential_provider"] == "unlinked-idp"
+    # link_state says WHY a link is required: never linked vs linked but the
+    # backend rejected the stored credential; null for every other status.
+    assert rows["needs-link"]["link_state"] == "not_linked"
+    assert rows["rejected"]["status"] == "link_required"
+    assert rows["rejected"]["link_state"] == "rejected"
+    assert rows["open"]["link_state"] is None
+    assert rows["gated"]["link_state"] is None
+    assert rows["gateway_service"]["link_state"] is None
     # The gateway lists itself too (issue #240): the builtin af-mcp service
     # is always present and available -- even to this zero-permission caller
     # -- with no identity provider servicing it.

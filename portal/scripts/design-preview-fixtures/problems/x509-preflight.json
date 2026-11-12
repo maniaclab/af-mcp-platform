@@ -1,0 +1,30 @@
+{
+  "unixname": "example-user-1",
+  "root": "/home/example-user-1/.globus",
+  "ok": false,
+  "checks": [
+    {
+      "name": "globus_dir",
+      "path": "/home/example-user-1/.globus",
+      "exists": true,
+      "ok": true
+    },
+    {
+      "name": "usercert",
+      "path": "/home/example-user-1/.globus/usercert.pem",
+      "exists": true,
+      "mode": "0444",
+      "readable_by_service": true,
+      "ok": true
+    },
+    {
+      "name": "userkey",
+      "path": "/home/example-user-1/.globus/userkey.pem",
+      "exists": true,
+      "mode": "0600",
+      "readable_by_service": false,
+      "ok": false,
+      "detail": "Run: chmod 400 ~/.globus/userkey.pem"
+    }
+  ]
+}

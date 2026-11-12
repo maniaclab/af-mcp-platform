@@ -25,6 +25,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from af_mcp_broker.credmon.guidance import JobCredentialGuide
     from af_mcp_broker.mcp.registry import ServiceRegistry
 
 # The platform preamble: guidance that applies to every call through the
@@ -58,7 +59,9 @@ safe reads and which change real facility state and should be confirmed with \
 the user first."""
 
 
-def compose_agent_instructions(registry: ServiceRegistry) -> str:
+def compose_agent_instructions(
+    registry: ServiceRegistry, job_credentials: JobCredentialGuide | None = None
+) -> str:
     """Compose the aggregator's model-facing instructions from *registry*.
 
     Returns the platform preamble followed by one policy line per service that
@@ -66,6 +69,11 @@ def compose_agent_instructions(registry: ServiceRegistry) -> str:
     omitted. Pure function of the registry so ``build_aggregator`` can compose
     at construction and ``populate_aggregator`` can recompose once the real
     registry is loaded (the eager build starts with an empty one -- see app.py).
+
+    *job_credentials*, given only when the HTCondor credmon integration is
+    enabled, adds its kind-agnostic section on using linked credentials in
+    jobs (credmon/guidance.py) -- omitted when no kind is wired, so sites
+    without HTCondor never see it.
     """
     sections = [_PLATFORM_PREAMBLE]
     policy_lines = [
@@ -75,4 +83,6 @@ def compose_agent_instructions(registry: ServiceRegistry) -> str:
     ]
     if policy_lines:
         sections.append("Per-service policies:\n" + "\n".join(policy_lines))
+    if job_credentials is not None and job_credentials.kinds:
+        sections.append(job_credentials.instructions())
     return "\n\n".join(sections)

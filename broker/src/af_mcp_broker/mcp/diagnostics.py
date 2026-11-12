@@ -8,7 +8,7 @@ from fastmcp.server.dependencies import get_context
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field
 
-from af_mcp_broker.api.permissions import ServiceStatus, _service_status
+from af_mcp_broker.api.permissions import LinkState, ServiceStatus, _service_status
 from af_mcp_broker.authorization import get_principal_permissions
 from af_mcp_broker.mcp.registry import (
     LINK_IDENTITY_TOOL_NAME,
@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from af_mcp_broker.authorization import EntitlementPolicy
     from af_mcp_broker.config import IdentityProviderConfig, Settings
     from af_mcp_broker.credentials import CredentialProvider, CredentialRegistry
+    from af_mcp_broker.credmon.guidance import JobCredentialGuide
     from af_mcp_broker.identity import Principal
     from af_mcp_broker.mcp.registry import ServiceRegistry
 
@@ -76,6 +77,21 @@ class WhoamiResult(BaseModel):
     permissions: list[str]
 
 
+class DiagnosticJobCredential(BaseModel):
+    """How an HTCondor job receives and uses this identity's credential (docs/credmon.md)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    # The credd service a job requests: use_oauth_services = <service>.
+    service: str
+    # Where the credential lands on the worker node.
+    path: str
+    # What the file holds, and the environment variable to point at it
+    # (None when tools read the file directly).
+    format: str | None
+    env: str | None
+
+
 class DiagnosticIdentityProvider(BaseModel):
     """One configured identity provider and whether the caller has linked it -- af_list_identities' per-provider row."""
 
@@ -85,6 +101,9 @@ class DiagnosticIdentityProvider(BaseModel):
     display_name: str
     enables: str
     linked: bool
+    # Set only when the HTCondor credmon integration serves this provider's
+    # kind at this site; None everywhere else.
+    job_credential: DiagnosticJobCredential | None = None
 
 
 # af_list_identities/af_list_mcp_servers wrap their rows in these single-field
@@ -129,6 +148,10 @@ class DiagnosticMcpServer(BaseModel):
     credential_provider: str | None
     status: ServiceStatus
     status_detail: str
+    # Why a link is required (only when status is "link_required"):
+    # "not_linked" or "rejected" (linked, but the backend rejected the stored
+    # credential). None for every other status.
+    link_state: LinkState | None
 
 
 class ListMcpServersResult(BaseModel):
@@ -163,6 +186,7 @@ def register_diagnostic_tools(
     identity_provider_configs: dict[str, IdentityProviderConfig],
     target_to_alias: dict[str, str],
     settings: Settings,
+    job_credentials: JobCredentialGuide | None = None,
 ) -> None:
     """(Re)register the af_* diagnostic tools on *mcp*, bound to the given state.
 
@@ -234,12 +258,25 @@ def register_diagnostic_tools(
         providers: list[DiagnosticIdentityProvider] = []
         for alias, provider in identity_providers.items():
             cfg = identity_provider_configs[alias]
+            job_cred = (
+                job_credentials.for_provider_type(cfg.type)
+                if job_credentials is not None
+                else None
+            )
             providers.append(
                 DiagnosticIdentityProvider(
                     id=alias,
                     display_name=cfg.display_name,
                     enables=cfg.enables,
                     linked=await provider.is_linked(principal),
+                    job_credential=DiagnosticJobCredential(
+                        service=job_cred.service,
+                        path=job_cred.path,
+                        format=job_cred.format,
+                        env=job_cred.env,
+                    )
+                    if job_cred is not None
+                    else None,
                 )
             )
         return ListIdentitiesResult(identities=providers)
@@ -341,7 +378,10 @@ def register_diagnostic_tools(
         argument, to see each service's tool-name prefix, which identity
         provider (if any) it needs, and a short reason if it's unavailable
         (linking required, permission required, temporarily down, or
-        misconfigured). Needs no permission of its own and never contacts a
+        misconfigured). A service whose status is "link_required" also
+        carries link_state: "not_linked" (the identity was never linked) or
+        "rejected" (it is linked but the service rejected the stored
+        credential, so re-link it). Needs no permission of its own and never contacts a
         service -- the status reported is the broker's own last-known state,
         the same data the portal's Catalog page shows.
         """
@@ -349,7 +389,7 @@ def register_diagnostic_tools(
         caps = get_principal_permissions(principal, policy)
         servers: list[DiagnosticMcpServer] = []
         for spec in registry.all_services():
-            status, status_detail, _correlation_id = await _service_status(
+            status, status_detail, _correlation_id, link_state = await _service_status(
                 spec, principal, caps, credential_registry, registry
             )
             servers.append(
@@ -360,6 +400,7 @@ def register_diagnostic_tools(
                     credential_provider=target_to_alias.get(spec.name),
                     status=status,
                     status_detail=status_detail,
+                    link_state=link_state,
                 )
             )
         return ListMcpServersResult(servers=servers)

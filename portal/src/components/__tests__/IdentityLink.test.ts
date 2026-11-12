@@ -9,8 +9,15 @@
  * clickable "Link account" button as someone who's never tried — with no
  * indication that the actual blocker is a missing role, not a missing link.
  */
-import { mount } from '@vue/test-utils';
-import { describe, expect, it } from 'vitest';
+import { flushPromises, mount } from '@vue/test-utils';
+import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('../../lib/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../lib/api')>()),
+  unlinkIdentity: vi.fn().mockResolvedValue(undefined),
+}));
+
+import { unlinkIdentity } from '../../lib/api';
 import IdentityLink from '../IdentityLink.vue';
 
 function mountLink(linkPermissionDenied: boolean) {
@@ -33,7 +40,7 @@ describe('IdentityLink permission-denied state', () => {
 
     expect(wrapper.find('.il__status--unlinked').exists()).toBe(false);
     expect(wrapper.find('.il__status--permission-denied').exists()).toBe(true);
-    expect(wrapper.text()).toContain('access required');
+    expect(wrapper.text()).toContain('Access required');
     expect(wrapper.find('.il__notice').exists()).toBe(true);
   });
 
@@ -43,5 +50,38 @@ describe('IdentityLink permission-denied state', () => {
     expect(wrapper.find('.il__status--unlinked').exists()).toBe(true);
     expect(wrapper.find('.il__status--permission-denied').exists()).toBe(false);
     expect(wrapper.find('.il__notice').exists()).toBe(false);
+  });
+});
+
+describe('IdentityLink unlink confirmation', () => {
+  function mountLinked() {
+    return mount(IdentityLink, {
+      props: {
+        id: 'example-oauth',
+        type: 'oauth21-direct',
+        display_name: 'Example Docs Service',
+        enables: 'Docs search',
+        linked: true,
+        link_url: '/v1/oauth/authorize/example-oauth',
+      },
+      attachTo: document.body,
+    });
+  }
+
+  it('asks for confirmation naming the identity before unlinking, then emits unlinked', async () => {
+    const wrapper = mountLinked();
+
+    await wrapper.find('button.il__btn--unlink').trigger('click');
+    expect(unlinkIdentity).not.toHaveBeenCalled();
+    const dialog = wrapper.find('dialog');
+    expect(dialog.text()).toContain('Unlink Example Docs Service?');
+
+    const confirm = dialog.findAll('button').find((b) => b.text() === 'Unlink account');
+    await confirm?.trigger('click');
+    await flushPromises();
+
+    expect(unlinkIdentity).toHaveBeenCalledWith('example-oauth');
+    expect(wrapper.emitted('unlinked')).toEqual([[]]);
+    wrapper.unmount();
   });
 });

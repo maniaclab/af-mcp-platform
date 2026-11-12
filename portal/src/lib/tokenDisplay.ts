@@ -29,6 +29,43 @@ export function tokenStatus(row: TokenStatusInput, now: number = Date.now()): To
   return 'active';
 }
 
+const HOUR_MS = 3_600_000;
+const DAY_MS = 24 * HOUR_MS;
+
+/** An active token with this many days or fewer left is worth a warning. */
+export const EXPIRY_WARNING_DAYS = 7;
+
+/** True for an active token whose expiry is within EXPIRY_WARNING_DAYS. */
+export function expiresSoon(row: TokenStatusInput, now: number = Date.now()): boolean {
+  return (
+    tokenStatus(row, now) === 'active' &&
+    row.expires_at !== null &&
+    Date.parse(row.expires_at) - now <= EXPIRY_WARNING_DAYS * DAY_MS
+  );
+}
+
+/** "in 3 days" / "in 5 hours" for an expiry that is still ahead. */
+export function expiresIn(iso: string, now: number = Date.now()): string {
+  const ms = Date.parse(iso) - now;
+  if (ms <= DAY_MS) {
+    const hours = Math.max(1, Math.ceil(ms / HOUR_MS));
+    return `in ${hours} ${hours === 1 ? 'hour' : 'hours'}`;
+  }
+  return `in ${Math.ceil(ms / DAY_MS)} days`;
+}
+
+/** The active token that expires first, or null when no active token expires. */
+export function soonestExpiringToken(
+  rows: (TokenStatusInput & { name: string })[],
+  now: number = Date.now(),
+): { name: string; expires_at: string } | null {
+  const expiring = rows
+    .filter((r) => tokenStatus(r, now) === 'active' && r.expires_at !== null)
+    .sort((a, b) => Date.parse(a.expires_at!) - Date.parse(b.expires_at!));
+  const first = expiring[0];
+  return first ? { name: first.name, expires_at: first.expires_at! } : null;
+}
+
 /**
  * First 8 characters of a lookup_id plus an ellipsis, for a compact but
  * still recognizable "token id" column. The full lookup_id is always

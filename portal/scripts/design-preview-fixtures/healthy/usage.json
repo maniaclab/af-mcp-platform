@@ -1,0 +1,223 @@
+{
+  "subject": "example-subject-0001",
+  "window_days": 30,
+  "cost_model": "example-model-large",
+  "totals": {
+    "calls": 2251,
+    "errors": 30,
+    "duration_ms": 1890840,
+    "result_bytes": 3915240,
+    "result_tokens_est": 978810,
+    "estimated_cost_usd": 2.9364
+  },
+  "by_service": [
+    {
+      "service": "rucio",
+      "calls": 855,
+      "errors": 10,
+      "result_bytes": 1487792,
+      "result_tokens_est": 371948,
+      "estimated_cost_usd": 1.1158
+    },
+    {
+      "service": "panda",
+      "calls": 495,
+      "errors": 10,
+      "result_bytes": 861352,
+      "result_tokens_est": 215338,
+      "estimated_cost_usd": 0.646
+    },
+    {
+      "service": "ami",
+      "calls": 383,
+      "errors": 4,
+      "result_bytes": 665592,
+      "result_tokens_est": 166398,
+      "estimated_cost_usd": 0.4992
+    },
+    {
+      "service": "condor",
+      "calls": 270,
+      "errors": 3,
+      "result_bytes": 469828,
+      "result_tokens_est": 117457,
+      "estimated_cost_usd": 0.3524
+    },
+    {
+      "service": "servicex",
+      "calls": 180,
+      "errors": 2,
+      "result_bytes": 313220,
+      "result_tokens_est": 78305,
+      "estimated_cost_usd": 0.2349
+    },
+    {
+      "service": "af",
+      "calls": 68,
+      "errors": 1,
+      "result_bytes": 117456,
+      "result_tokens_est": 29364,
+      "estimated_cost_usd": 0.0881
+    },
+    {
+      "service": "example_retired_service",
+      "calls": 23,
+      "errors": 1,
+      "result_bytes": 9728,
+      "result_tokens_est": 3399,
+      "estimated_cost_usd": 0.0102
+    }
+  ],
+  "by_day": [
+    {
+      "date": "@date-29d",
+      "calls": 99,
+      "result_tokens_est": 41890
+    },
+    {
+      "date": "@date-28d",
+      "calls": 104,
+      "result_tokens_est": 42640
+    },
+    {
+      "date": "@date-27d",
+      "calls": 108,
+      "result_tokens_est": 48180
+    },
+    {
+      "date": "@date-26d",
+      "calls": 108,
+      "result_tokens_est": 46880
+    },
+    {
+      "date": "@date-25d",
+      "calls": 104,
+      "result_tokens_est": 43940
+    },
+    {
+      "date": "@date-24d",
+      "calls": 0,
+      "result_tokens_est": 0
+    },
+    {
+      "date": "@date-23d",
+      "calls": 128,
+      "result_tokens_est": 56380
+    },
+    {
+      "date": "@date-22d",
+      "calls": 111,
+      "result_tokens_est": 48110
+    },
+    {
+      "date": "@date-21d",
+      "calls": 90,
+      "result_tokens_est": 38200
+    },
+    {
+      "date": "@date-20d",
+      "calls": 68,
+      "result_tokens_est": 27880
+    },
+    {
+      "date": "@date-19d",
+      "calls": 89,
+      "result_tokens_est": 40390
+    },
+    {
+      "date": "@date-18d",
+      "calls": 66,
+      "result_tokens_est": 29660
+    },
+    {
+      "date": "@date-17d",
+      "calls": 0,
+      "result_tokens_est": 1300
+    },
+    {
+      "date": "@date-16d",
+      "calls": 28,
+      "result_tokens_est": 11480
+    },
+    {
+      "date": "@date-15d",
+      "calls": 15,
+      "result_tokens_est": 10050
+    },
+    {
+      "date": "@date-14d",
+      "calls": 52,
+      "result_tokens_est": 23920
+    },
+    {
+      "date": "@date-13d",
+      "calls": 48,
+      "result_tokens_est": 20980
+    },
+    {
+      "date": "@date-12d",
+      "calls": 48,
+      "result_tokens_est": 19680
+    },
+    {
+      "date": "@date-11d",
+      "calls": 51,
+      "result_tokens_est": 24810
+    },
+    {
+      "date": "@date-10d",
+      "calls": 0,
+      "result_tokens_est": 2600
+    },
+    {
+      "date": "@date-9d",
+      "calls": 107,
+      "result_tokens_est": 45170
+    },
+    {
+      "date": "@date-8d",
+      "calls": 111,
+      "result_tokens_est": 45510
+    },
+    {
+      "date": "@date-7d",
+      "calls": 113,
+      "result_tokens_est": 50230
+    },
+    {
+      "date": "@date-6d",
+      "calls": 111,
+      "result_tokens_est": 48110
+    },
+    {
+      "date": "@date-5d",
+      "calls": 105,
+      "result_tokens_est": 44350
+    },
+    {
+      "date": "@date-4d",
+      "calls": 139,
+      "result_tokens_est": 56990
+    },
+    {
+      "date": "@date-3d",
+      "calls": 0,
+      "result_tokens_est": 3900
+    },
+    {
+      "date": "@date-2d",
+      "calls": 105,
+      "result_tokens_est": 45650
+    },
+    {
+      "date": "@date-1d",
+      "calls": 83,
+      "result_tokens_est": 35330
+    },
+    {
+      "date": "@date-0d",
+      "calls": 60,
+      "result_tokens_est": 24600
+    }
+  ]
+}

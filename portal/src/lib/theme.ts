@@ -23,6 +23,9 @@
 
 export const THEME_STORAGE_KEY = 'themeMode';
 
+/** Dispatched on the root element after a theme is applied, for anything (e.g. the accent colour) that depends on the resolved theme. */
+export const THEME_CHANGE_EVENT = 'af-themechange';
+
 /** Display order for the AUTO / DARK / LIGHT control. */
 export const THEME_MODES = ['auto', 'dark', 'light'] as const;
 
@@ -49,11 +52,13 @@ export function resolveTheme(mode: ThemeMode, prefersDark: boolean): ResolvedThe
  * Applies a resolved theme to the document root: toggles Basecoat's `.dark`
  * class (its `@custom-variant dark (&:is(html.dark *))` requires this
  * specific class on `<html>` for its own `dark:` utilities to fire) and sets
- * `color-scheme` so native form controls/scrollbars follow.
+ * `color-scheme` so native form controls/scrollbars follow. Then dispatches
+ * THEME_CHANGE_EVENT on the root.
  */
 export function applyResolvedTheme(root: HTMLElement, resolved: ResolvedTheme): void {
   root.classList.toggle('dark', resolved === 'dark');
   root.style.colorScheme = resolved;
+  root.dispatchEvent(new Event(THEME_CHANGE_EVENT));
 }
 
 export interface SetModeOptions {
@@ -79,11 +84,6 @@ export function setMode(mode: ThemeMode, options: SetModeOptions = {}): void {
   else storage.setItem(THEME_STORAGE_KEY, mode);
 
   applyResolvedTheme(root, resolveTheme(mode, prefersDark));
-}
-
-/** auto -> dark -> light -> auto, for a single-control cycling affordance (unused by the radiogroup, kept for a future compact toggle). */
-export function cycleMode(current: ThemeMode): ThemeMode {
-  return THEME_MODES[(THEME_MODES.indexOf(current) + 1) % THEME_MODES.length];
 }
 
 export interface InitThemeOptions {

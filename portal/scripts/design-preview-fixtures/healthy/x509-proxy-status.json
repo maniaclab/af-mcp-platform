@@ -1,0 +1,8 @@
+{
+  "cached": true,
+  "dn": "/DC=org/DC=example/CN=Example User",
+  "voms_attributes": ["/atlas/Role=NULL/Capability=NULL"],
+  "expires_at": "@iso+9h",
+  "remaining_seconds": "@secs+9h",
+  "nickname": "example-user-1"
+}

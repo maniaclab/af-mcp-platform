@@ -28,6 +28,7 @@ def _settings(tmp_path: Path, **overrides: Any) -> Settings:
         credmon_enabled=True,
         credmon_htcondor_api_url="https://htcondor-api.example",
         credmon_htcondor_api_token_file=str(token_file),
+        credmon_user_domain="af.example.org",
         **overrides,
     )
 

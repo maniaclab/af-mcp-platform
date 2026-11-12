@@ -96,6 +96,7 @@ def _storer(
         audience_prefix="af-credmon/",
         service_prefix="af_",
         top_token_ttl_seconds=_TTL,
+        user_domain="af.example.org",
     )
 
 
@@ -122,7 +123,8 @@ async def test_stores_top_token_for_linked_subject_with_unixname(
     assert report.stored == {"krb5": 1}
     assert len(client.calls) == 1
     call = client.calls[0]
-    assert call["user"] == "alice"
+    # credd requires user@domain (store_cred.cpp: "not in user@domain format").
+    assert call["user"] == "alice@af.example.org"
     assert call["service"] == "af_krb5"
     claims = issuer.verify(call["credential"]["access_token"])
     assert claims is not None
@@ -215,7 +217,7 @@ async def test_store_failure_is_isolated_to_that_subject(
     cache, directory = static_principal_cache
     directory.posix_by_subject["sub-a"] = {"unixname": "alice"}
     directory.posix_by_subject["sub-b"] = {"unixname": "bob"}
-    client = _FakeStoreClient(fail_for_users={"alice"})
+    client = _FakeStoreClient(fail_for_users={"alice@af.example.org"})
     storer = _storer(
         issuer,
         cache,
@@ -226,7 +228,7 @@ async def test_store_failure_is_isolated_to_that_subject(
 
     report = await storer.run_once()
 
-    assert [c["user"] for c in client.calls] == ["bob"]
+    assert [c["user"] for c in client.calls] == ["bob@af.example.org"]
     assert report.stored == {"krb5": 1}
     assert report.failed == {"krb5": 1}
     assert any("alice" in err for err in report.errors)
@@ -251,5 +253,5 @@ async def test_directory_outage_for_one_subject_is_isolated(
 
     report = await storer.run_once()
 
-    assert [c["user"] for c in client.calls] == ["bob"]
+    assert [c["user"] for c in client.calls] == ["bob@af.example.org"]
     assert report.failed == {"krb5": 1}

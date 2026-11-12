@@ -9,11 +9,13 @@ import pytest
 from conftest import make_claims, run_aggregator_async, run_asgi_app
 from fastmcp import Client, FastMCP
 from fastmcp.client.transports import StreamableHttpTransport
+from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_http_headers
 from fastmcp.utilities.http import find_available_port
 from fastmcp.utilities.tests import run_server_async
 from starlette.middleware import Middleware
 from starlette.responses import JSONResponse
+from test_broker_issued import _make_rsa_key, _private_pem
 
 from af_mcp_broker.authorization import EntitlementPolicy
 from af_mcp_broker.credentials import (
@@ -23,6 +25,7 @@ from af_mcp_broker.credentials import (
     ExecutionModel,
     IssuedCredential,
 )
+from af_mcp_broker.credentials.broker_issued import BrokerTokenIssuer
 from af_mcp_broker.mcp import aggregator as aggregator_module
 from af_mcp_broker.mcp.aggregator import build_aggregator, build_asgi_auth_middleware
 from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
@@ -303,13 +306,13 @@ async def test_unlinked_principal_missing_secure_tools_rest_of_list_works(
     token = sig_key.sign(_token_for(333, 333, "carol"))
 
     events: list[tuple[str, dict[str, Any]]] = []
-    original_warning = aggregator_module.logger.warning
+    original_info = aggregator_module.logger.info
 
     def _capture(event: str, **kwargs: Any) -> Any:
         events.append((event, kwargs))
-        return original_warning(event, **kwargs)
+        return original_info(event, **kwargs)
 
-    monkeypatch.setattr(aggregator_module.logger, "warning", _capture)
+    monkeypatch.setattr(aggregator_module.logger, "info", _capture)
 
     async with _bearer_client(aggregator_url, token) as client:
         names = {t.name for t in await client.list_tools()}
@@ -560,3 +563,180 @@ async def test_replica_split_session_continuity(
         # failure: the client's request lands on a pod that terminates a
         # session it never created.
         assert call_resp.status_code == 404, call_resp.text
+
+
+# ---------------------------------------------------------------------------
+# x509/krb5/servicex ("mint and inject, the backend redeems"): a caller must
+# have the credential linked for the service's tools to be listed. For an
+# unlinked caller the broker neither mints an identity token nor contacts the
+# backend; the service just contributes no tools to that caller's list.
+# ---------------------------------------------------------------------------
+
+
+class _RecordingBackend:
+    """ASGI middleware recording the Authorization header of every request the
+    backend receives, so a test can prove nothing reached it."""
+
+    def __init__(self, app: Any, requests: list[str]) -> None:
+        self.app = app
+        self.requests = requests
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] == "http":
+            headers = dict(scope["headers"])
+            self.requests.append(headers.get(b"authorization", b"").decode())
+        await self.app(scope, receive, send)
+
+
+class _MintAndInjectEnv:
+    """Handles on one aggregator fronting a mint-and-inject backend."""
+
+    def __init__(self) -> None:
+        self.url = ""
+        self.backend_requests: list[str] = []
+        self.minted_subjects: list[str] = []
+        self.registry = ServiceRegistry()
+        self.provider = _FakeListProvider(unlinked_uids=frozenset({333}))
+
+
+@pytest.fixture(params=["x509", "krb5", "servicex"])
+async def mint_and_inject_env(
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Any,
+    policy: EntitlementPolicy,
+    open_backend_url: str,
+    static_principal_cache: Any,
+) -> AsyncIterator[_MintAndInjectEnv]:
+    env = _MintAndInjectEnv()
+    principal_cache, directory = static_principal_cache
+    for uid, gid, unixname in _TEST_PERSONAS:
+        sub = _subject_for(unixname)
+        directory.groups_by_subject[sub] = ["atlas"]
+        directory.posix_by_subject[sub] = {
+            "uid": uid,
+            "gid": gid,
+            "unixname": unixname,
+        }
+
+    issuer = BrokerTokenIssuer(
+        private_key_pem=_private_pem(_make_rsa_key()),
+        issuer="https://mcp.example.com",
+        ttl_seconds=600,
+    )
+    real_mint = issuer.mint
+
+    def _spy_mint(subject: str, audience: str, **kwargs: Any) -> Any:
+        env.minted_subjects.append(subject)
+        return real_mint(subject, audience, **kwargs)
+
+    monkeypatch.setattr(issuer, "mint", _spy_mint)
+
+    backend = _open_backend()
+
+    @backend.tool
+    def whoami() -> str:
+        return "redeemed"
+
+    backend_app = _RecordingBackend(backend.http_app(path="/mcp"), env.backend_requests)
+    async with run_asgi_app(backend_app) as backend_url:
+        env.registry.register(
+            ServiceSpec(
+                name="redeemer",
+                prefix="redeemer",
+                url=f"{backend_url}/mcp",
+                transport="http",
+                required_permission="read_data",
+                auth_type=request.param,
+            )
+        )
+        env.registry.register(
+            ServiceSpec(
+                name="open",
+                prefix="open",
+                url=open_backend_url,
+                transport="http",
+                required_permission="__none__",
+                auth_type="none",
+            )
+        )
+        credential_registry = CredentialRegistry()
+        credential_registry.register("redeemer", env.provider)
+        mcp = build_aggregator(
+            env.registry,
+            settings,
+            policy,
+            credential_registry,
+            principal_cache=principal_cache,
+            broker_token_issuer=issuer,
+        )
+        async with run_aggregator_async(mcp, path="/mcp") as url:
+            env.url = url
+            yield env
+
+
+async def test_unlinked_caller_lists_without_contacting_a_mint_and_inject_backend(
+    mint_and_inject_env: _MintAndInjectEnv,
+    sig_key: Any,
+    prime_jwks: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prime_jwks([sig_key.jwk])
+    env = mint_and_inject_env
+    token = sig_key.sign(_token_for(333, 333, "carol"))  # unlinked
+
+    events: list[tuple[str, str]] = []
+    for level in ("info", "warning"):
+
+        def _capture(event: str, *, _level: str = level, **kwargs: Any) -> None:
+            events.append((_level, event))
+
+        monkeypatch.setattr(aggregator_module.logger, level, _capture)
+
+    async with _bearer_client(env.url, token) as client:
+        names = {t.name for t in await client.list_tools()}
+
+    assert "redeemer_whoami" not in names
+    assert "open_ping" in names
+    assert env.backend_requests == []
+    assert env.minted_subjects == []
+    assert env.provider.issue_calls == []
+    assert env.registry.recent_list_failure("redeemer", "user-carol") == "not_linked"
+    assert env.registry.recent_list_failure("redeemer", "user-alice") is None
+    assert [e for e in events if e[1] == "aggregator.service_list_failed"] == [
+        ("info", "aggregator.service_list_failed")
+    ]
+
+
+async def test_linked_caller_lists_a_mint_and_inject_backend_with_identity_header(
+    mint_and_inject_env: _MintAndInjectEnv, sig_key: Any, prime_jwks: Any
+) -> None:
+    prime_jwks([sig_key.jwk])
+    env = mint_and_inject_env
+    token = sig_key.sign(_token_for(111, 111, "alice"))  # linked
+
+    async with _bearer_client(env.url, token) as client:
+        names = {t.name for t in await client.list_tools()}
+
+    assert "redeemer_whoami" in names
+    assert env.backend_requests
+    assert all(auth.startswith("Bearer ") for auth in env.backend_requests)
+    assert set(env.minted_subjects) == {"user-alice"}
+    assert env.registry.recent_list_failure("redeemer", "user-alice") is None
+
+
+async def test_unlinked_caller_calling_an_unlisted_tool_gets_the_not_linked_error(
+    mint_and_inject_env: _MintAndInjectEnv, sig_key: Any, prime_jwks: Any
+) -> None:
+    """Issue #311's guarantee, for a tool that is no longer listed: the
+    friendly, actionable not-linked error, never "Unknown tool"."""
+    prime_jwks([sig_key.jwk])
+    env = mint_and_inject_env
+    token = sig_key.sign(_token_for(333, 333, "carol"))  # unlinked
+
+    async with _bearer_client(env.url, token) as client:
+        with pytest.raises(ToolError, match="not linked"):
+            await client.call_tool("redeemer_whoami", {})
+
+    assert env.backend_requests == []
+    assert env.minted_subjects == []

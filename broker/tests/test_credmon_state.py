@@ -23,3 +23,14 @@ async def test_status_round_trips_as_a_copy() -> None:
     status["outcome"] = "mutated"
 
     assert await state.read_status() == {"outcome": "success"}
+
+
+async def test_release_frees_own_lease_only() -> None:
+    state = InMemoryCredmonSyncState()
+    await state.try_acquire_lease("pod-a", ttl_seconds=600, now=1000.0)
+
+    await state.release_lease("pod-b", now=1001.0)
+    assert not await state.try_acquire_lease("pod-b", ttl_seconds=600, now=1002.0)
+
+    await state.release_lease("pod-a", now=1003.0)
+    assert await state.try_acquire_lease("pod-b", ttl_seconds=600, now=1004.0)

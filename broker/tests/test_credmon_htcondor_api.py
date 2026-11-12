@@ -17,21 +17,28 @@ from typing import TYPE_CHECKING
 
 import httpx
 import pytest
-from pydantic import SecretStr
 
 from af_mcp_broker.credmon.htcondor_api import HTCondorApiCredentialStore
 from af_mcp_broker.credmon.storer import CredentialStoreError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
 _API_URL = "https://htcondor-api.af.example.org"
 
 
 @pytest.fixture
-def make_store() -> Callable[
-    ..., tuple[HTCondorApiCredentialStore, list[httpx.Request]]
-]:
+def token_file(tmp_path: Path) -> Path:
+    path = tmp_path / "token"
+    path.write_text("storer-idtoken\n")
+    return path
+
+
+@pytest.fixture
+def make_store(
+    token_file: Path,
+) -> Callable[..., tuple[HTCondorApiCredentialStore, list[httpx.Request]]]:
     def _make(
         responder: httpx.Response | Exception | None = None,
         api_url: str = _API_URL,
@@ -48,7 +55,7 @@ def make_store() -> Callable[
 
         store = HTCondorApiCredentialStore(
             api_url=api_url,
-            token=SecretStr("storer-idtoken"),
+            token_file=token_file,
             http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
         )
         return store, requests
@@ -113,3 +120,37 @@ async def test_transport_error_raises_credential_store_error(make_store) -> None
         await store.store_service_credential(
             user="alice", service="af_krb5", credential={"access_token": "t"}
         )
+
+
+async def test_token_file_is_reread_for_every_store(
+    make_store, token_file: Path
+) -> None:
+    """A rotated token (re-sealed Secret, which kubelet rewrites in place)
+    takes effect without restarting the broker."""
+    store, requests = make_store()
+
+    await store.store_service_credential(
+        user="alice@af.example.org", service="af_krb5", credential={"access_token": "t"}
+    )
+    token_file.write_text("rotated-idtoken\n")
+    await store.store_service_credential(
+        user="alice@af.example.org", service="af_krb5", credential={"access_token": "t"}
+    )
+
+    assert requests[0].headers["Authorization"] == "Bearer storer-idtoken"
+    assert requests[1].headers["Authorization"] == "Bearer rotated-idtoken"
+
+
+async def test_unreadable_token_file_raises_credential_store_error(
+    make_store, token_file: Path
+) -> None:
+    store, requests = make_store()
+    token_file.unlink()
+
+    with pytest.raises(CredentialStoreError, match="token file"):
+        await store.store_service_credential(
+            user="alice@af.example.org",
+            service="af_krb5",
+            credential={"access_token": "t"},
+        )
+    assert requests == []

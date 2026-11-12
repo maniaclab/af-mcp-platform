@@ -409,6 +409,10 @@ broker:
     enabled: false
     # htcondor-api base URL, e.g. http://condor-mcp.mcp.svc.cluster.local:8080
     htcondorApiUrl: ""
+    # The pool's user domain (HTCondor UID_DOMAIN, e.g. "af.uchicago.edu"):
+    # credd only accepts the user a credential is stored for as
+    # <unixname>@<domain>. Required when enabled.
+    userDomain: ""
     # Name of a pre-existing Secret with key `token`: the bearer token the
     # broker presents to htcondor-api. It must map to an identity listed in
     # credd's CRED_SUPER_USERS (it stores on behalf of other users).
@@ -772,6 +776,12 @@ portal:
     fullName: ""
     # Facility/institution name shown in the overview hero and footer.
     facilityName: ""
+    # Optional accent colour as "#rrggbb", e.g. "#800000". Leave empty to keep
+    # the default neutral ink theme; nothing is overridden until you set it.
+    accentColor: ""
+    # Optional accent colour for the dark theme, as "#rrggbb". If omitted it is
+    # derived by lightening accentColor until it reads clearly on the dark page.
+    accentColorDark: ""
 
 # ---------------------------------------------------------------------------
 # Ingress

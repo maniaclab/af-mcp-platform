@@ -90,6 +90,7 @@ jobs:
           for needle in \
             'name: CREDMON_ENABLED' \
             'name: CREDMON_HTCONDOR_API_TOKEN_FILE' \
+            'name: CREDMON_USER_DOMAIN' \
             'secretName: "example-credmon-htcondor-api-token"' \
             'alert: AfMcpCredmonSyncStale'; do
             echo "$rendered" | grep -qF "$needle" || {

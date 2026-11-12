@@ -13,18 +13,15 @@
  * `close` event) and is never written back into the token list — the list
  * always comes from GET /v1/tokens, which never echoes a token value.
  */
-import { ref, computed, onMounted, nextTick, type Ref } from 'vue';
+import { ref, computed, onBeforeUnmount, onMounted, nextTick } from 'vue';
+import { Check, Copy, Plus } from '@lucide/vue';
+import { mintToken, listTokens, revokeToken, fetchPermissions } from '../lib/api';
+import type { MintedToken, PermissionGrant, TokenSummary } from '../lib/api';
 import {
-  AccessDeniedError,
-  mintToken,
-  listTokens,
-  revokeToken,
-  fetchPermissions,
-  SessionExpiredError,
-} from '../lib/api';
-import type { MintedToken, TokenSummary } from '../lib/api';
-import {
+  EXPIRY_WARNING_DAYS,
   NOTE_MAX_LENGTH,
+  expiresIn,
+  expiresSoon,
   permissionGrantLabel,
   shortLookupId,
   tokenStatus,
@@ -36,40 +33,54 @@ import {
   pythonMintAndConnectSnippet,
 } from '../lib/tokenCliSnippets';
 import { getBrokerOrigin } from '../lib/auth';
-import { formatRelative } from '../lib/relativeTime';
-import PopoverTooltip from './PopoverTooltip.vue';
+import { copyText } from '../lib/clipboard';
+import { formatDateTime, formatRelative } from '../lib/relativeTime';
+import { useLoadState } from '../lib/useLoadState';
+import AsyncState from './ui/AsyncState.vue';
+import ConfirmDialog from './ui/ConfirmDialog.vue';
+import CopyField from './ui/CopyField.vue';
+import Disclosure from './ui/Disclosure.vue';
+import InfoTip from './ui/InfoTip.vue';
+import StatusMark from './ui/StatusMark.vue';
 
 const tokens = ref<TokenSummary[]>([]);
-const loading = ref(true);
-const error = ref<string | null>(null);
-const sessionExpired = ref(false);
-const accessDenied = ref<AccessDeniedError | null>(null);
+const { loading, error, sessionExpired, accessDenied, run } = useLoadState();
 
 const sortedTokens = computed(() =>
   [...tokens.value].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at)),
 );
 
-async function loadTokens() {
-  try {
+function loadTokens() {
+  return run(async () => {
     tokens.value = await listTokens();
-  } catch (err) {
-    if (err instanceof AccessDeniedError) {
-      accessDenied.value = err;
-    } else if (err instanceof SessionExpiredError) {
-      sessionExpired.value = true;
-    } else {
-      error.value = err instanceof Error ? err.message : 'Could not load tokens.';
-    }
-  } finally {
-    loading.value = false;
-  }
+  }, 'Could not load tokens.');
 }
 
 onMounted(loadTokens);
 
-function reload() {
-  location.reload();
+// ── Token ID copy ────────────────────────────────────────────────────────
+// The cell shows only the start of the id; the button copies all of it and
+// swaps its icon for a check mark for a moment.
+const COPIED_RESET_MS = 2000;
+const copiedId = ref<string | null>(null);
+let copiedTimer: ReturnType<typeof setTimeout> | undefined;
+
+async function copyTokenId(lookupId: string): Promise<void> {
+  if (!(await copyText(lookupId))) return;
+  copiedId.value = lookupId;
+  clearTimeout(copiedTimer);
+  copiedTimer = setTimeout(() => (copiedId.value = null), COPIED_RESET_MS);
 }
+
+onBeforeUnmount(() => clearTimeout(copiedTimer));
+
+// ── Expiry warning ───────────────────────────────────────────────────────
+// Soonest first, so the banner names the most urgent token.
+const expiringTokens = computed(() =>
+  tokens.value
+    .filter((row) => expiresSoon(row))
+    .sort((a, b) => Date.parse(a.expires_at!) - Date.parse(b.expires_at!)),
+);
 
 // ── Mint dialog ──────────────────────────────────────────────────────────
 // Native <dialog> gives a real focus trap, ESC to close, and inert siblings
@@ -88,32 +99,51 @@ const note = ref('');
 const minting = ref(false);
 const mintError = ref<string | null>(null);
 const mintedToken = ref<MintedToken | null>(null);
-const copyLabel = ref('Copy');
 
 // ── Permission PATs (issue #144 step 4) ─────────────────────────────────
-// `availablePermissions` is the caller's CURRENT permissions (GET
+// `availableGrants` is the caller's CURRENT permissions (GET
 // /v1/permissions), fetched once on mount -- never a static list, since
 // the whole point of a permission PAT is that it can only ever narrow what
 // its owner already holds *right now*. `restrictPermissions` is the mint
 // form's opt-in: unchecked (the default) mints an ordinary identity PAT,
 // exactly as before this field existed; checked reveals the checkbox list
 // below and mints a permission PAT scoped to whatever's selected.
-const availablePermissions = ref<string[]>([]);
+const availableGrants = ref<PermissionGrant[]>([]);
 const restrictPermissions = ref(false);
 const selectedPermissions = ref<Set<string>>(new Set());
 
 onMounted(async () => {
   try {
     const { grants } = await fetchPermissions();
-    availablePermissions.value = grants.map((g) => g.permission).sort();
+    availableGrants.value = grants;
   } catch {
     // Best-effort: if this fails, the mint dialog simply offers no
     // permission restriction (identity PATs remain fully mintable, which
     // is the more important path to keep working) rather than blocking
     // the page load or the dialog itself over a secondary feature.
-    availablePermissions.value = [];
+    availableGrants.value = [];
   }
 });
+
+// The picker lists read permissions apart from state-changing ones, each group
+// sorted by name, and leaves out a group with nothing in it. A grant belongs
+// to the state-changing group when the broker reports any state-changing
+// action type for it, so the grouping rests on broker data alone.
+const PERMISSION_GROUPS: { kind: 'read' | 'write'; label: string }[] = [
+  { kind: 'read', label: 'Read' },
+  { kind: 'write', label: 'State-changing' },
+];
+
+const permissionGroups = computed(() =>
+  PERMISSION_GROUPS.map(({ kind, label }) => ({
+    kind,
+    label,
+    permissions: availableGrants.value
+      .filter((g) => (g.action_types.includes('state_change') ? 'write' : 'read') === kind)
+      .map((g) => g.permission)
+      .sort(),
+  })).filter((group) => group.permissions.length > 0),
+);
 
 function toggleSelectedPermission(permission: string, checked: boolean) {
   if (checked) {
@@ -130,7 +160,6 @@ async function openMintDialog(evt: Event) {
   name.value = '';
   note.value = '';
   expiryOption.value = '90';
-  copyLabel.value = 'Copy';
   restrictPermissions.value = false;
   selectedPermissions.value = new Set();
   await nextTick();
@@ -161,32 +190,10 @@ async function handleMint(evt: Event) {
   } catch (err) {
     // Includes the 409 duplicate-name case (api/tokens.py's DuplicateNameError)
     // -- APIError's message already carries the broker's `detail` text.
-    mintError.value = err instanceof Error ? err.message : 'Could not mint a token. Try again.';
+    mintError.value = err instanceof Error ? err.message : 'Could not create the token. Try again.';
   } finally {
     minting.value = false;
   }
-}
-
-const CLIPBOARD_LABEL_RESET_MS = 2000;
-
-// Shared by copyToken() (the minted-token box) and the CLI snippets section
-// below (copyCurlSnippet()/copyPythonSnippet()) -- same "Copy" -> "Copied!" ->
-// reset dance, just against different clipboard text and label refs.
-async function copyToClipboard(text: string, label: Ref<string>) {
-  try {
-    await navigator.clipboard.writeText(text);
-    label.value = 'Copied!';
-    setTimeout(() => {
-      label.value = 'Copy';
-    }, CLIPBOARD_LABEL_RESET_MS);
-  } catch {
-    label.value = 'Copy failed — select and copy manually';
-  }
-}
-
-async function copyToken() {
-  if (!mintedToken.value) return;
-  await copyToClipboard(mintedToken.value.token, copyLabel);
 }
 
 async function handleDone() {
@@ -209,17 +216,7 @@ onMounted(async () => {
 
 const curlSnippet = computed(() => curlMintSnippet(brokerOrigin.value));
 const pythonSnippet = computed(() => pythonMintAndConnectSnippet(brokerOrigin.value));
-
-const curlCopyLabel = ref('Copy');
-const pythonCopyLabel = ref('Copy');
-
-async function copyCurlSnippet() {
-  await copyToClipboard(curlSnippet.value, curlCopyLabel);
-}
-
-async function copyPythonSnippet() {
-  await copyToClipboard(pythonSnippet.value, pythonCopyLabel);
-}
+const cliOpen = ref(false);
 
 // "Register as an MCP client" one-liner shown alongside the raw token in
 // the "Token created" step above (issue #152) -- reuses the same
@@ -230,11 +227,6 @@ async function copyPythonSnippet() {
 const claudeAddCommand = computed(() =>
   mintedToken.value ? claudeMcpAddSnippet(brokerOrigin.value, mintedToken.value.token) : '',
 );
-const claudeAddCopyLabel = ref('Copy');
-
-async function copyClaudeAddCommand() {
-  await copyToClipboard(claudeAddCommand.value, claudeAddCopyLabel);
-}
 
 // "Request headers" value for Claude (Claude.ai, Claude Desktop) clients that
 // predate OAuth discovery -- see docs/connecting-a-client.md's "Claude
@@ -245,51 +237,26 @@ async function copyClaudeAddCommand() {
 const claudeHeaderValue = computed(() =>
   mintedToken.value ? `Bearer ${mintedToken.value.token}` : '',
 );
-const claudeHeaderCopyLabel = ref('Copy');
-
-async function copyClaudeHeaderValue() {
-  await copyToClipboard(claudeHeaderValue.value, claudeHeaderCopyLabel);
-}
 
 // ── Revoke ───────────────────────────────────────────────────────────────
 const revokingLookupId = ref<string | null>(null);
 const revokeError = ref<string | null>(null);
 
-// Revoke-confirm dialog -- same native <dialog> pattern as IdentityLink.vue's
-// revoke-confirm and IdentityLink.vue's unlink-confirm (real focus trap, ESC
-// to close, inert siblings for free). Token revoke previously fired straight
-// from the row's click handler with no confirmation at all, unlike those two
-// other destructive actions in the app.
-const revokeDialog = ref<HTMLDialogElement | null>(null);
-const revokeTrigger = ref<HTMLButtonElement | null>(null);
-const cancelRevokeBtn = ref<HTMLButtonElement | null>(null);
+// Revoke confirmation -- ConfirmDialog supplies the native <dialog> focus
+// trap, ESC to close, Cancel-first focus and focus restore to the row's
+// button, like IdentityLink.vue's revoke-confirm and unlink-confirm.
+const revokeConfirmOpen = ref(false);
 const pendingRevoke = ref<{ lookupId: string; name: string } | null>(null);
 
-async function openRevokeConfirm(evt: Event, lookupId: string, name: string) {
-  revokeTrigger.value = evt.currentTarget as HTMLButtonElement;
+function openRevokeConfirm(lookupId: string, name: string) {
   pendingRevoke.value = { lookupId, name };
-  await nextTick();
-  revokeDialog.value?.showModal();
-  // Move focus off the destructive "Revoke" button — start on Cancel.
-  cancelRevokeBtn.value?.focus();
-}
-
-function closeRevokeConfirm() {
-  revokeDialog.value?.close();
-}
-
-// Native <dialog> fires `close` whether it was closed by ESC, form method="dialog",
-// or an explicit .close() call — this is our single place to restore focus.
-function onRevokeDialogClose() {
-  revokeTrigger.value?.focus();
-  revokeTrigger.value = null;
-  pendingRevoke.value = null;
+  revokeConfirmOpen.value = true;
 }
 
 async function handleRevoke() {
   if (!pendingRevoke.value) return;
   const { lookupId } = pendingRevoke.value;
-  closeRevokeConfirm();
+  revokeConfirmOpen.value = false;
   revokingLookupId.value = lookupId;
   revokeError.value = null;
   try {
@@ -300,7 +267,7 @@ async function handleRevoke() {
     const row = tokens.value.find((t) => t.lookup_id === lookupId);
     if (row) row.revoked_at = new Date().toISOString();
   } catch (err) {
-    revokeError.value = err instanceof Error ? err.message : 'Revoke failed.';
+    revokeError.value = err instanceof Error ? err.message : 'Could not revoke the token.';
   } finally {
     revokingLookupId.value = null;
   }
@@ -311,178 +278,197 @@ function formatRelativeIso(iso: string): string {
   return formatRelative(Date.parse(iso));
 }
 
-function formatAbsolute(iso: string): string {
-  return new Date(iso).toLocaleString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    timeZoneName: 'short',
-  });
-}
-
-function isExpired(iso: string | null): boolean {
-  return iso !== null && Date.parse(iso) <= Date.now();
+function formatExact(iso: string): string {
+  return formatDateTime(new Date(iso), { year: true });
 }
 
 const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
-  active: 'active',
-  revoked: 'revoked',
-  expired: 'expired',
+  active: 'Active',
+  revoked: 'Revoked',
+  expired: 'Expired',
 };
 </script>
 
 <template>
-  <div class="tp">
-    <div class="tp__toolbar">
-      <button ref="mintTrigger" type="button" class="tp__btn tp__btn--mint" @click="openMintDialog">
-        Mint new token
+  <div class="af-page tp">
+    <div class="af-page-head">
+      <div>
+        <h1>Tokens</h1>
+        <p>Create and revoke tokens for clients that can't sign in with a browser.</p>
+      </div>
+      <button
+        v-if="loading || tokens.length > 0 || error || sessionExpired || accessDenied"
+        type="button"
+        class="btn"
+        @click="openMintDialog"
+      >
+        <Plus class="af-icon" :size="16" aria-hidden="true" />
+        New token
       </button>
     </div>
 
-    <!-- Loading -->
-    <div v-if="loading" class="tp__loading" aria-live="polite">
-      <span class="tp__spinner" aria-hidden="true"></span>
-      Loading tokens…
-    </div>
-
-    <!-- Session expired -->
-    <div v-else-if="sessionExpired" class="tp__error" role="alert">
-      <span class="tp__error-title">Session expired</span>
-      <span class="tp__error-body">
-        Your session has expired.
-        <button type="button" class="tp__reload" @click="reload">Reload</button>
-        to re-authenticate.
-      </span>
-    </div>
-
-    <!-- Access denied: a valid, unexpired credential that's missing the
-         audience needed to use this platform -- a reload can't fix it, only
-         an administrator granting access can (see identity.py's
-         TokenAudienceError). -->
-    <div v-else-if="accessDenied" class="tp__error" role="alert">
-      <span class="tp__error-title">Access not yet granted</span>
-      <span class="tp__error-body">{{ accessDenied.message }}</span>
-    </div>
-
-    <!-- Error -->
-    <div v-else-if="error" class="tp__error" role="alert">
-      <span class="tp__error-title">Could not load tokens</span>
-      <span class="tp__error-body">{{ error }}</span>
-    </div>
-
-    <template v-else>
-      <div v-if="revokeError" class="tp__error" role="alert">
-        <span class="tp__error-title">Revoke failed</span>
-        <span class="tp__error-body">{{ revokeError }}</span>
+    <!-- Banner slot: a failed revoke beats an expiring token. -->
+    <div v-if="revokeError" class="alert af-banner bad" role="alert">
+      <span class="af-mark bad" aria-hidden="true"></span>
+      <div>
+        <b>Revoke failed</b>
+        {{ revokeError }}
       </div>
-
-      <!-- Token list -->
-      <div
-        v-if="sortedTokens.length > 0"
-        class="tp__table"
-        role="region"
-        aria-label="Issued tokens"
+    </div>
+    <div v-else-if="expiringTokens.length > 0" class="alert af-banner warn" role="alert">
+      <span class="af-mark warn" aria-hidden="true"></span>
+      <div>
+        <b>{{ expiringTokens[0].name }} expires {{ expiresIn(expiringTokens[0].expires_at!) }}</b>
+        Create a replacement and update the client.
+        <template v-if="expiringTokens.length > 1">
+          {{ expiringTokens.length - 1 }} other
+          {{ expiringTokens.length === 2 ? 'token expires' : 'tokens expire' }} within
+          {{ EXPIRY_WARNING_DAYS }} days.
+        </template>
+      </div>
+      <button
+        type="button"
+        class="btn"
+        data-variant="outline"
+        data-size="sm"
+        @click="openMintDialog"
       >
-        <table class="tp__table-el" aria-label="Your issued tokens">
-          <thead>
-            <tr>
-              <th scope="col" class="tp__th">Name</th>
-              <th scope="col" class="tp__th">Scope</th>
-              <th scope="col" class="tp__th tp__th--secondary">Token ID</th>
-              <th scope="col" class="tp__th tp__th--secondary">Created</th>
-              <th scope="col" class="tp__th">Expires</th>
-              <th scope="col" class="tp__th tp__th--secondary">Last used</th>
-              <th scope="col" class="tp__th">Status</th>
-              <th scope="col" class="tp__th tp__th--action">
-                <span class="sr-only">Actions</span>
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="row in sortedTokens" :key="row.lookup_id" class="tp__row">
-              <td class="tp__td">
-                <div class="tp__td-name-wrap">
-                  <span class="tp__td-name">{{ row.name }}</span>
-                  <PopoverTooltip
-                    v-if="row.note"
-                    :tooltip-id="`tp-note-${row.lookup_id}`"
-                    side="top"
-                  >
-                    <button
-                      type="button"
-                      class="tp__note-icon"
-                      :aria-describedby="`tp-note-${row.lookup_id}`"
-                      aria-label="Show note"
-                    >
-                      <span aria-hidden="true">ⓘ</span>
-                    </button>
-                    <template #tooltip>{{ truncateNote(row.note) }}</template>
-                  </PopoverTooltip>
-                </div>
-              </td>
-              <td
-                class="tp__td tp__td--scope"
-                :class="{ 'tp__td--scope-identity': row.permission_grant === null }"
-                :title="permissionGrantLabel(row.permission_grant)"
-              >
-                {{ permissionGrantLabel(row.permission_grant) }}
-              </td>
-              <td class="tp__td tp__td--jti tp__td--secondary" :title="row.lookup_id">
-                {{ shortLookupId(row.lookup_id) }}
-              </td>
-              <td class="tp__td tp__td--secondary" :title="formatAbsolute(row.created_at)">
-                {{ formatAbsolute(row.created_at) }}
-              </td>
-              <td
-                class="tp__td"
-                :class="{ 'tp__td--expired': isExpired(row.expires_at) }"
-                :title="row.expires_at ? formatAbsolute(row.expires_at) : 'Never expires'"
-              >
-                <template v-if="row.expires_at === null">Never</template>
-                <template v-else>
-                  {{ isExpired(row.expires_at) ? 'expired' : formatRelativeIso(row.expires_at) }}
-                </template>
-              </td>
-              <td
-                class="tp__td tp__td--secondary"
-                :title="row.last_used_at ? formatAbsolute(row.last_used_at) : 'Never used'"
-              >
-                {{ row.last_used_at ? formatRelativeIso(row.last_used_at) : 'Never' }}
-              </td>
-              <td class="tp__td">
-                <span class="tp__badge" :class="`tp__badge--status-${tokenStatus(row)}`">
-                  {{ statusLabel[tokenStatus(row)] }}
-                </span>
-              </td>
-              <td class="tp__td tp__td--action">
-                <button
-                  type="button"
-                  class="tp__btn tp__btn--revoke"
-                  :disabled="revokingLookupId === row.lookup_id || tokenStatus(row) !== 'active'"
-                  @click="openRevokeConfirm($event, row.lookup_id, row.name)"
+        New token
+      </button>
+    </div>
+
+    <section class="af-sect" aria-labelledby="tp-list-heading">
+      <h2 id="tp-list-heading">Your tokens</h2>
+      <AsyncState
+        :loading="loading"
+        :error="error"
+        error-title="Could not load tokens"
+        :session-expired="sessionExpired"
+        :access-denied="accessDenied"
+        :empty="sortedTokens.length === 0"
+        loading-label="Loading tokens…"
+      >
+        <template #empty>
+          <header>
+            <h3>No tokens yet</h3>
+            <p>
+              Tokens let clients that can't sign in with a browser, such as Claude Desktop, reach
+              the gateway as you. Most clients don't need one: they sign in themselves the first
+              time you connect them.
+            </p>
+          </header>
+          <section>
+            <button type="button" class="btn" @click="openMintDialog">
+              <Plus class="af-icon" :size="16" aria-hidden="true" />
+              New token
+            </button>
+          </section>
+        </template>
+
+        <div class="table-container af-box" role="region" aria-label="Issued tokens" tabindex="0">
+          <table class="table" aria-label="Your issued tokens">
+            <thead>
+              <tr>
+                <th scope="col">Name</th>
+                <th scope="col">Status</th>
+                <th scope="col">Scope</th>
+                <th scope="col">Expires</th>
+                <th scope="col">Last used</th>
+                <th scope="col" class="af-act af-sticky"><span class="sr-only">Actions</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in sortedTokens" :key="row.lookup_id">
+                <td class="tp__namecell">
+                  <div class="tp__name">
+                    <span>{{ row.name }}</span>
+                    <InfoTip
+                      v-if="row.note"
+                      :id="`tp-note-${row.lookup_id}`"
+                      :text="truncateNote(row.note) ?? ''"
+                      label="Show note"
+                    />
+                  </div>
+                  <!-- The id and creation time are secondary facts about the
+                       token, so they sit under its name rather than in columns
+                       of their own, which kept the table wider than the page. -->
+                  <div class="af-sub tp__meta">
+                    <span :title="formatExact(row.created_at)">
+                      Created {{ formatRelativeIso(row.created_at) }}
+                    </span>
+                    <span class="tp__idbox" :title="row.lookup_id">
+                      ID <code>{{ shortLookupId(row.lookup_id) }}</code>
+                      <button
+                        type="button"
+                        class="btn tp__copy"
+                        data-variant="ghost"
+                        data-size="icon-sm"
+                        :aria-label="`Copy token ID ${row.lookup_id}`"
+                        @click="copyTokenId(row.lookup_id)"
+                      >
+                        <Check
+                          v-if="copiedId === row.lookup_id"
+                          class="af-icon"
+                          :size="16"
+                          aria-hidden="true"
+                        />
+                        <Copy v-else class="af-icon" :size="16" aria-hidden="true" />
+                      </button>
+                    </span>
+                  </div>
+                </td>
+                <td>
+                  <StatusMark
+                    v-if="expiresSoon(row)"
+                    tone="warn"
+                    :label="`Expires ${expiresIn(row.expires_at!)}`"
+                  />
+                  <StatusMark
+                    v-else
+                    :tone="tokenStatus(row) === 'active' ? 'ok' : 'off'"
+                    :label="statusLabel[tokenStatus(row)]"
+                  />
+                </td>
+                <td class="af-sub tp__scope">{{ permissionGrantLabel(row.permission_grant) }}</td>
+                <td
+                  class="af-sub"
+                  :title="row.expires_at ? formatExact(row.expires_at) : 'Never expires'"
                 >
-                  {{ revokingLookupId === row.lookup_id ? 'Revoking…' : 'Revoke' }}
-                </button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+                  {{ row.expires_at ? formatRelativeIso(row.expires_at) : 'Never' }}
+                </td>
+                <td
+                  class="af-sub"
+                  :title="row.last_used_at ? formatExact(row.last_used_at) : 'Never used'"
+                >
+                  {{ row.last_used_at ? formatRelativeIso(row.last_used_at) : 'Never' }}
+                </td>
+                <td class="af-act af-sticky">
+                  <button
+                    type="button"
+                    class="btn af-danger"
+                    data-variant="outline"
+                    data-size="sm"
+                    :aria-label="`Revoke ${row.name}`"
+                    :disabled="revokingLookupId === row.lookup_id || tokenStatus(row) !== 'active'"
+                    @click="openRevokeConfirm(row.lookup_id, row.name)"
+                  >
+                    {{ revokingLookupId === row.lookup_id ? 'Revoking…' : 'Revoke' }}
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </AsyncState>
+    </section>
 
-      <!-- Empty state -->
-      <div v-else class="tp__empty">
-        <p class="tp__empty-title">No tokens yet</p>
-        <p class="tp__empty-body">
-          Mint one above to connect a client, like Claude Desktop, that can't sign in with a browser
-          on its own.
-        </p>
-      </div>
-
-      <p class="tp__gap-note">
-        This list only shows PATs created through this page or automatically when you connect an MCP
-        client — see
+    <div class="alert af-note info">
+      <span class="af-mark info" aria-hidden="true"></span>
+      <span>
+        A token only grants access to the AF MCP platform. It is not the same as your identities
+        with Rucio, CERN or other backend systems; see the
+        <a href="/identities/">Identities page</a> for those. This list shows tokens created on this
+        page, or automatically when you connect an MCP client. See
         <a
           href="https://maniaclab.github.io/af-mcp-platform/auth/"
           target="_blank"
@@ -490,94 +476,85 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
           >Authentication</a
         >
         for the full credential model.
+      </span>
+    </div>
+
+    <!-- issue #122: copy-paste snippets for creating/using a token outside the browser. -->
+    <section class="af-sect" aria-labelledby="tp-cli-heading">
+      <h2 id="tp-cli-heading">Use from the command line</h2>
+      <p class="af-help">
+        Create and use a token without opening a browser, for scripts or CI. See
+        <a
+          href="https://maniaclab.github.io/af-mcp-platform/connecting-a-client/"
+          target="_blank"
+          rel="noopener noreferrer"
+          >Connecting a client</a
+        >
+        for the full setup guide.
       </p>
+      <Disclosure v-model:open="cliOpen" label="Show curl and Python snippets">
+        <div class="tp__cli">
+          <h3 class="tp__label">Create a token with curl</h3>
+          <CopyField :value="curlSnippet" label="Copy curl snippet" multiline />
 
-      <!-- issue #122: copy-paste snippets for minting/using a token outside the browser.
-           Shown by default, not collapsed -- a returning user setting up a script or CI
-           job needs these on first glance, not behind a click. -->
-      <div class="tp__cli">
-        <h2 class="tp__cli-heading tp__cli-heading--top">Use from the command line</h2>
-        <p class="tp__cli-intro">
-          Mint and use a PAT without opening a browser — handy for scripts or CI. See
-          <a
-            href="https://maniaclab.github.io/af-mcp-platform/connecting-a-client/"
-            target="_blank"
-            rel="noopener noreferrer"
-            >Connecting a Client</a
-          >
-          for the full setup guide.
-        </p>
+          <h3 class="tp__label">Create a token and connect from Python</h3>
+          <CopyField :value="pythonSnippet" label="Copy Python snippet" multiline />
 
-        <h3 class="tp__cli-heading">1. Mint a token with curl</h3>
-        <div class="tp__cli-snippet">
-          <pre class="tp__cli-pre"><code>{{ curlSnippet }}</code></pre>
-          <button type="button" class="tp__btn tp__btn--copy" @click="copyCurlSnippet">
-            {{ curlCopyLabel }}
-          </button>
+          <p class="af-help">
+            A token created this way appears in the list above like any other, with a name, an
+            expiry and a <strong>Revoke</strong> action.
+          </p>
         </div>
+      </Disclosure>
+    </section>
 
-        <h3 class="tp__cli-heading">2. Mint and connect from Python</h3>
-        <div class="tp__cli-snippet">
-          <pre class="tp__cli-pre"><code>{{ pythonSnippet }}</code></pre>
-          <button type="button" class="tp__btn tp__btn--copy" @click="copyPythonSnippet">
-            {{ pythonCopyLabel }}
-          </button>
-        </div>
-
-        <p class="tp__cli-note">
-          A PAT minted this way appears in the list above like any other, with a name, expiry, and a
-          <strong>Revoke</strong> action.
-        </p>
-      </div>
-    </template>
-
-    <!-- Mint dialog -->
+    <!-- New token dialog -->
     <dialog
       ref="mintDialog"
-      class="tp__modal"
+      class="dialog af-modal"
       aria-labelledby="tp-modal-title"
       @close="onMintDialogClose"
     >
-      <template v-if="!mintedToken">
-        <h2 id="tp-modal-title" class="tp__modal-title">Mint a new token</h2>
-        <p class="tp__modal-body">
-          Creates a Personal Access Token (PAT) — a long-lived credential you paste into an MCP
-          client's config (e.g. Claude Desktop) that can't sign in with a browser on its own. It
-          will be shown exactly once, so copy it before closing this dialog.
-        </p>
+      <form v-if="!mintedToken" class="tp__panel" novalidate @submit.prevent="handleMint">
+        <header>
+          <h2 id="tp-modal-title">New token</h2>
+          <p>
+            A personal access token is a long-lived credential you paste into a client's config,
+            such as Claude Desktop, that can't sign in with a browser. It is shown once, so copy it
+            before you close this dialog.
+          </p>
+        </header>
 
-        <form class="tp__form" @submit.prevent="handleMint" novalidate>
-          <div class="tp__form-row">
-            <div class="tp__form-group tp__form-group--inline">
-              <label for="tp-ttl" class="tp__form-label">Valid for</label>
-              <select id="tp-ttl" v-model="expiryOption" class="tp__select" :disabled="minting">
-                <option value="30">30 days</option>
-                <option value="90">90 days (default)</option>
-                <option value="365">1 year</option>
-                <option value="never">Never expires</option>
-              </select>
-            </div>
+        <section class="tp__fields">
+          <div class="field">
+            <label for="tp-ttl">Expires after</label>
+            <select id="tp-ttl" v-model="expiryOption" class="select w-full" :disabled="minting">
+              <option value="30">30 days</option>
+              <option value="90">90 days (default)</option>
+              <option value="365">1 year</option>
+              <option value="never">Never expires</option>
+            </select>
           </div>
 
-          <div class="tp__form-group">
-            <label for="tp-name" class="tp__form-label">Name (optional)</label>
+          <div class="field">
+            <label for="tp-name">Name (optional)</label>
             <input
               id="tp-name"
               v-model="name"
               type="text"
-              class="tp__input"
+              class="input"
               placeholder="e.g. claude-desktop"
               maxlength="200"
               :disabled="minting"
             />
           </div>
 
-          <div class="tp__form-group">
-            <label for="tp-note" class="tp__form-label">Note (optional)</label>
+          <div class="field">
+            <label for="tp-note">Note (optional)</label>
             <textarea
               id="tp-note"
               v-model="note"
-              class="tp__input tp__textarea"
+              class="textarea tp__textarea"
               placeholder="e.g. used by the CI bot for nightly runs"
               :maxlength="NOTE_MAX_LENGTH"
               rows="2"
@@ -587,801 +564,220 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
 
           <!-- Permission PATs (issue #144 step 4): optional restriction below
                the caller's own CURRENT permissions. Hidden entirely when
-               availablePermissions is empty (e.g. the /v1/permissions fetch
+               availableGrants is empty (e.g. the /v1/permissions fetch
                failed) -- an identity PAT remains mintable regardless. -->
-          <div v-if="availablePermissions.length > 0" class="tp__form-group">
-            <label class="tp__checkbox-row">
+          <div v-if="availableGrants.length > 0" class="field">
+            <div class="field" data-orientation="horizontal">
               <input
+                id="tp-restrict"
                 v-model="restrictPermissions"
                 type="checkbox"
-                class="tp__checkbox"
+                class="input"
                 :disabled="minting"
               />
-              <span class="tp__form-label tp__checkbox-label">Restrict permissions (optional)</span>
-            </label>
-            <p class="tp__scope-hint">
-              Unchecked mints a token with your full account access, exactly as before. Checked
-              scopes the token to at most the permissions selected below — least privilege for CI or
-              scripts.
+              <label for="tp-restrict">Restrict permissions (optional)</label>
+            </div>
+            <p>
+              Leave this unchecked for a token with your full account access. Check it to limit the
+              token to the permissions you select below, which suits CI or scripts.
             </p>
-            <fieldset v-if="restrictPermissions" class="tp__scope-fieldset">
-              <legend class="sr-only">Permissions to grant</legend>
-              <label v-for="cap in availablePermissions" :key="cap" class="tp__checkbox-row">
-                <input
-                  type="checkbox"
-                  class="tp__checkbox"
-                  :checked="selectedPermissions.has(cap)"
-                  :disabled="minting"
-                  @change="
-                    toggleSelectedPermission(cap, ($event.target as HTMLInputElement).checked)
-                  "
-                />
-                <span class="tp__scope-cap-name">{{ cap }}</span>
-              </label>
-            </fieldset>
+            <div v-if="restrictPermissions" class="tp__permgrid">
+              <fieldset v-for="group in permissionGroups" :key="group.kind" class="tp__perms">
+                <legend>{{ group.label }}</legend>
+                <div
+                  v-for="cap in group.permissions"
+                  :key="cap"
+                  class="field"
+                  data-orientation="horizontal"
+                >
+                  <input
+                    :id="`tp-perm-${cap}`"
+                    type="checkbox"
+                    class="input"
+                    :checked="selectedPermissions.has(cap)"
+                    :disabled="minting"
+                    @change="
+                      toggleSelectedPermission(cap, ($event.target as HTMLInputElement).checked)
+                    "
+                  />
+                  <label :for="`tp-perm-${cap}`">{{ cap }}</label>
+                </div>
+              </fieldset>
+            </div>
           </div>
 
-          <div v-if="mintError" class="tp__error" role="alert">{{ mintError }}</div>
-
-          <div class="tp__modal-actions">
-            <button type="button" class="tp__btn tp__btn--cancel" @click="mintDialog?.close()">
-              Cancel
-            </button>
-            <button
-              type="submit"
-              class="tp__btn tp__btn--mint"
-              :disabled="minting"
-              :aria-busy="minting"
-            >
-              {{ minting ? 'Minting…' : 'Mint token' }}
-            </button>
+          <div v-if="mintError" class="alert af-note bad" role="alert">
+            <span class="af-mark bad" aria-hidden="true"></span>
+            <span>{{ mintError }}</span>
           </div>
-        </form>
-      </template>
+        </section>
 
-      <template v-else>
-        <h2 id="tp-modal-title" class="tp__modal-title">Token created</h2>
-
-        <div class="tp__warn" role="alert">
-          This is the only time this token will be shown. Copy it now.
-        </div>
-
-        <div class="tp__token-box">
-          <code class="tp__token-value">{{ mintedToken.token }}</code>
-          <button type="button" class="tp__btn tp__btn--copy" @click="copyToken">
-            {{ copyLabel }}
+        <footer>
+          <button type="button" class="btn" data-variant="ghost" @click="mintDialog?.close()">
+            Cancel
           </button>
-        </div>
-
-        <div class="tp__form-label tp__claude-add-label">
-          Claude (Claude.ai, Claude Desktop) without OAuth support
-        </div>
-        <div class="tp__token-box">
-          <code class="tp__token-value">{{ claudeHeaderValue }}</code>
-          <button type="button" class="tp__btn tp__btn--copy" @click="copyClaudeHeaderValue">
-            {{ claudeHeaderCopyLabel }}
+          <button type="submit" class="btn" :disabled="minting" :aria-busy="minting">
+            {{ minting ? 'Creating…' : 'Create token' }}
           </button>
-        </div>
-        <p class="tp__claude-add-warn">
-          In the custom connector's <strong>Request headers</strong>, add name
-          <code>Authorization</code> and paste the value above. Skip this if your client supports
-          OAuth discovery — add just the server URL instead and it authenticates itself.
-        </p>
+        </footer>
+      </form>
 
-        <div class="tp__form-label tp__claude-add-label">Register with Claude Code</div>
-        <div class="tp__token-box">
-          <code class="tp__token-value">{{ claudeAddCommand }}</code>
-          <button type="button" class="tp__btn tp__btn--copy" @click="copyClaudeAddCommand">
-            {{ claudeAddCopyLabel }}
-          </button>
-        </div>
-        <p class="tp__claude-add-warn">
-          This command embeds the token above — pasting it into a terminal puts a working credential
-          in your shell history. For the safer pattern (token read into an env var via
-          <code>read -s</code>, never a literal), see the <strong>Claude Code</strong> section of
-          <code>docs/connecting-a-client.md</code>.
-        </p>
+      <div v-else class="tp__panel">
+        <header>
+          <h2 id="tp-modal-title">Token created</h2>
+        </header>
 
-        <dl class="tp__token-meta">
-          <div class="tp__token-meta-row">
+        <section class="tp__fields">
+          <div class="alert af-note warn" role="alert">
+            <span class="af-mark warn" aria-hidden="true"></span>
+            <span>This is the only time this token is shown. Copy it now.</span>
+          </div>
+
+          <CopyField :value="mintedToken.token" label="Copy token" multiline />
+
+          <h3 class="tp__label">Claude (Claude.ai, Claude Desktop) without OAuth support</h3>
+          <CopyField :value="claudeHeaderValue" label="Copy request header value" multiline />
+          <p class="af-help">
+            In the custom connector's <strong>Request headers</strong>, add name
+            <code>Authorization</code> and paste the value above. Skip this if your client supports
+            OAuth discovery: add just the server URL instead and it authenticates itself.
+          </p>
+
+          <h3 class="tp__label">Register with Claude Code</h3>
+          <CopyField :value="claudeAddCommand" label="Copy Claude Code command" multiline />
+          <p class="af-help">
+            This command embeds the token above, so pasting it into a terminal puts a working
+            credential in your shell history. For the safer pattern (token read into an env var via
+            <code>read -s</code>, never a literal), see the <strong>Claude Code</strong> section of
+            <code>docs/connecting-a-client.md</code>.
+          </p>
+
+          <dl class="af-kv">
             <dt>Name</dt>
             <dd>{{ mintedToken.name }}</dd>
-          </div>
-          <div v-if="mintedToken.note" class="tp__token-meta-row">
-            <dt>Note</dt>
-            <dd>{{ mintedToken.note }}</dd>
-          </div>
-          <div class="tp__token-meta-row">
+            <template v-if="mintedToken.note">
+              <dt>Note</dt>
+              <dd>{{ mintedToken.note }}</dd>
+            </template>
             <dt>Scope</dt>
             <dd>{{ permissionGrantLabel(mintedToken.permission_grant) }}</dd>
-          </div>
-          <div class="tp__token-meta-row">
             <dt>Expires</dt>
-            <dd>
-              {{ mintedToken.expires_at ? formatAbsolute(mintedToken.expires_at) : 'Never' }}
-            </dd>
-          </div>
-        </dl>
+            <dd>{{ mintedToken.expires_at ? formatExact(mintedToken.expires_at) : 'Never' }}</dd>
+          </dl>
+        </section>
 
-        <div class="tp__modal-actions">
-          <button type="button" class="tp__btn tp__btn--mint" @click="handleDone">Done</button>
-        </div>
-      </template>
-    </dialog>
-
-    <!--
-      Revoke confirm dialog -- native <dialog> gives a real focus trap (TAB
-      cycles inside), ESC to close, and inert siblings, same pattern as
-      IdentityLink.vue's unlink-confirm.
-      Focus returns to the row's trigger button in onRevokeDialogClose.
-    -->
-    <dialog
-      ref="revokeDialog"
-      class="tp__modal"
-      aria-labelledby="tp-revoke-title"
-      @close="onRevokeDialogClose"
-    >
-      <h2 id="tp-revoke-title" class="tp__modal-title">Revoke "{{ pendingRevoke?.name }}"?</h2>
-      <p class="tp__modal-body">
-        Any MCP client using this token will stop working immediately. This cannot be undone.
-      </p>
-      <div class="tp__modal-actions">
-        <button
-          ref="cancelRevokeBtn"
-          type="button"
-          class="tp__btn tp__btn--cancel"
-          @click="closeRevokeConfirm"
-        >
-          Cancel
-        </button>
-        <button
-          type="button"
-          class="tp__btn tp__btn--confirm-revoke"
-          :disabled="revokingLookupId !== null"
-          @click="handleRevoke"
-        >
-          {{ revokingLookupId ? 'Revoking…' : 'Revoke' }}
-        </button>
+        <footer>
+          <button type="button" class="btn" @click="handleDone">Done</button>
+        </footer>
       </div>
     </dialog>
+
+    <ConfirmDialog
+      v-model:open="revokeConfirmOpen"
+      :title="pendingRevoke ? `Revoke &quot;${pendingRevoke.name}&quot;?` : ''"
+      confirm-label="Revoke token"
+      busy-label="Revoking…"
+      danger
+      :busy="revokingLookupId !== null"
+      @confirm="handleRevoke"
+    >
+      <p>Clients using this token stop working immediately. This cannot be undone.</p>
+    </ConfirmDialog>
   </div>
 </template>
 
 <style scoped>
-.tp {
-  display: flex;
-  flex-direction: column;
-  gap: 1.25rem;
-  /* Matches tokens.astro's .page-subtitle max-width -- without this the
-     table stretched to the full content column while the intro text above
-     it stayed narrow, reading as oversized and full of dead space. */
-  max-width: 52rem;
+.tp__label {
+  margin: 0;
+  font-size: var(--text-13);
+  font-weight: 500;
 }
 
-/* Toolbar */
-.tp__toolbar {
-  display: flex;
-  justify-content: flex-end;
-}
-
-/* Loading */
-.tp__loading {
+.tp__name {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  padding: 2rem;
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.8125rem;
-  color: var(--color-af-dim);
+  gap: var(--space-4);
 }
 
-.tp__spinner {
-  width: 16px;
-  height: 16px;
-  border: 2px solid var(--color-af-border);
-  border-top-color: var(--color-af-teal);
-  border-radius: 50%;
-  animation: spin 600ms linear infinite;
-}
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .tp__spinner {
-    animation: none;
-    border-top-color: var(--color-af-dim);
-  }
-}
-
-/* Error */
-.tp__error {
-  display: flex;
-  flex-direction: column;
-  gap: 0.375rem;
-  padding: 1rem;
-  border: 1px solid rgb(from var(--color-af-red) r g b / 0.2);
-  border-radius: 4px;
-  background: rgb(from var(--color-af-red) r g b / 0.05);
-}
-.tp__error-title {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.8125rem;
-  font-weight: 600;
-  color: var(--color-af-red);
-}
-.tp__error-body {
-  font-size: 0.875rem;
-  color: var(--color-af-dim);
-}
-.tp__reload {
-  font: inherit;
-  color: var(--color-af-teal);
-  background: none;
-  border: none;
-  padding: 0;
-  cursor: pointer;
-  text-decoration: underline;
-}
-
-/* Table */
-/* width: fit-content (not the block default of stretching to fill .tp's
-   full 52rem) -- with few short-content columns the boxed border otherwise
-   stretched well past the actual table content, reading as a mostly-empty
-   box rather than a compact list.
-   overflow-y left to its default (which overflow-x: auto computes to
-   'auto' anyway) -- a note tooltip's bubble (PopoverTooltip.vue) is a
-   native [popover], promoted to the browser's top layer once shown and
-   position: fixed to the viewport, so it never contributes to this box's
-   scrollable overflow the way an ordinary position: absolute element
-   would, and can float past this box's own edges freely. */
-.tp__table {
-  width: fit-content;
-  max-width: 100%;
-  height: fit-content;
-  overflow-x: auto;
-  border: 1px solid var(--color-af-border);
-  border-radius: 4px;
-}
-
-.tp__table-el {
-  border-collapse: collapse;
-  font-family: 'IBM Plex Sans', system-ui, sans-serif;
-  font-size: 0.8125rem;
-}
-
-.tp__th {
-  text-align: left;
-  padding: 0.625rem 0.875rem;
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.625rem;
-  font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--color-af-dim);
-  border-bottom: 1px solid var(--color-af-border);
-  white-space: nowrap;
-  background: var(--color-af-surface);
-}
-
-.tp__th--action {
-  width: 6rem;
-}
-
-.tp__row {
-  border-bottom: 1px solid var(--color-af-border);
-  transition: background 120ms;
-}
-.tp__row:hover {
-  background: rgb(from var(--color-af-text) r g b / 0.025);
-}
-.tp__row:last-child {
-  border-bottom: none;
-}
-
-.tp__td {
-  padding: 0.625rem 0.875rem;
-  vertical-align: middle;
-  color: var(--color-af-text);
-}
-
-.tp__td-name {
-  color: var(--color-af-text);
-}
-
-/* Name cell + (i) note icon (issue #152) -- the tooltip below is
- * `position: absolute`, so it never participates in table layout the way
- * the old inline note div did (which stretched this column while still
- * truncating its own text -- the bug this replaces).
- */
-.tp__td-name-wrap {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.375rem;
-}
-
-.tp__note-icon {
-  display: inline-flex;
-  align-items: center;
-  background: none;
-  border: none;
-  padding: 0;
-  font-size: 0.75rem;
-  line-height: 1;
-  color: var(--color-af-dim);
-  cursor: help;
-}
-.tp__note-icon:hover,
-.tp__note-icon:focus-visible {
-  color: var(--color-af-teal);
-}
-.tp__note-icon:focus-visible {
-  outline: 2px solid var(--color-af-teal);
-  outline-offset: 2px;
-}
-
-.tp__td--jti {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.75rem;
-  color: var(--color-af-dim);
-}
-
-.tp__td--expired {
-  color: var(--color-af-red);
-}
-
-/* Scope column (issue #144 step 4) -- a permission PAT's grant is
- * comma-joined plain text (permissionGrantLabel), truncated by the column's
- * own max-width with the full value always available via `title`. An
- * identity PAT's "Full account access" is dimmed relative to a named grant,
- * the same visual weight tp__td--jti already uses for secondary detail. */
-.tp__td--scope {
+.tp__namecell {
   max-width: 14rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.tp__td--scope-identity {
-  color: var(--color-af-dim);
+  overflow-wrap: anywhere;
 }
 
-.tp__td--action {
-  text-align: right;
-}
-
-.tp__badge {
-  display: inline-block;
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.5625rem;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  padding: 0.1875rem 0.5rem;
-  border-radius: 2px;
-}
-
-.tp__badge--status-active {
-  background: rgb(from var(--color-af-teal) r g b / 0.12);
-  color: var(--color-af-teal);
-  border: 1px solid rgb(from var(--color-af-teal) r g b / 0.25);
-}
-.tp__badge--status-revoked {
-  background: rgb(from var(--color-af-red) r g b / 0.12);
-  color: var(--color-af-red);
-  border: 1px solid rgb(from var(--color-af-red) r g b / 0.25);
-}
-.tp__badge--status-expired {
-  background: rgb(from var(--color-af-dim) r g b / 0.12);
-  color: var(--color-af-dim);
-  border: 1px solid rgb(from var(--color-af-dim) r g b / 0.25);
-}
-
-/* Empty */
-.tp__empty {
-  padding: 3rem 1.5rem;
-  text-align: center;
-  border: 1px dashed var(--color-af-border);
-  border-radius: 4px;
-}
-.tp__empty-title {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 1rem;
-  color: var(--color-af-label);
-  margin: 0 0 0.5rem;
-}
-.tp__empty-body {
-  font-size: 0.875rem;
-  color: var(--color-af-dim);
-  margin: 0;
-}
-
-.tp__gap-note {
-  font-size: 0.75rem;
-  color: var(--color-af-dim);
-  line-height: 1.6;
-  margin: 0;
-}
-.tp__gap-note a {
-  color: var(--color-af-teal);
-}
-
-/* "Use from the command line" (issue #122) */
-.tp__cli {
-  border: 1px solid var(--color-af-border);
-  border-radius: 4px;
-  padding: 1rem;
+.tp__meta {
   display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-.tp__cli-heading--top {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.75rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  color: var(--color-af-text);
-  margin: 0;
-}
-.tp__cli-intro {
-  font-size: 0.8125rem;
-  color: var(--color-af-dim);
-  line-height: 1.6;
-  margin: 0;
-}
-.tp__cli-intro a {
-  color: var(--color-af-teal);
-}
-.tp__cli-heading {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.75rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  color: var(--color-af-dim);
-  margin: 0.25rem 0 0;
-}
-.tp__cli-snippet {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.625rem;
-}
-.tp__cli-pre {
-  flex: 1;
-  min-width: 0;
-  margin: 0;
-  padding: 0.75rem;
-  background: var(--color-af-void);
-  border: 1px solid var(--color-af-muted);
-  border-radius: 4px;
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.75rem;
-  color: var(--color-af-text);
-  white-space: pre-wrap;
-  word-break: break-word;
-  overflow-x: auto;
-}
-.tp__cli-note {
-  font-size: 0.75rem;
-  color: var(--color-af-dim);
-  line-height: 1.6;
-  margin: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 var(--space-12);
+  font-size: var(--text-12);
 }
 
-/* Buttons (shared shape with IdentityLink.vue) */
-.tp__btn {
+.tp__meta code {
+  font-family: var(--font-mono);
+}
+
+.tp__idbox {
   display: inline-flex;
   align-items: center;
-  padding: 0.5rem 1rem;
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.6875rem;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  border-radius: 3px;
-  border: 1px solid;
-  cursor: pointer;
-  transition:
-    background 120ms,
-    color 120ms,
-    border-color 120ms;
-  white-space: nowrap;
-}
-.tp__btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-.tp__btn:focus-visible {
-  outline: 2px solid var(--color-af-teal);
-  outline-offset: 2px;
+  gap: var(--space-4);
 }
 
-.tp__btn--mint {
-  background: rgb(from var(--color-af-teal) r g b / 0.12);
-  color: var(--color-af-teal);
-  border-color: rgb(from var(--color-af-teal) r g b / 0.3);
-  padding: 0.5625rem 1.25rem;
-}
-.tp__btn--mint:not(:disabled):hover {
-  background: rgb(from var(--color-af-teal) r g b / 0.2);
-  border-color: rgb(from var(--color-af-teal) r g b / 0.5);
+/* A scope can list several permissions; let it wrap between them, within a
+   width range, instead of widening the table or breaking inside a name. */
+.tp__scope {
+  white-space: normal;
+  min-width: 9rem;
+  max-width: 12rem;
 }
 
-.tp__btn--revoke {
-  background: transparent;
-  color: var(--color-af-dim);
-  border-color: var(--color-af-muted);
-  padding: 0.375rem 0.75rem;
-}
-.tp__btn--revoke:not(:disabled):hover {
-  color: var(--color-af-red);
-  border-color: rgb(from var(--color-af-red) r g b / 0.35);
-  background: rgb(from var(--color-af-red) r g b / 0.06);
-}
-
-.tp__btn--confirm-revoke {
-  background: rgb(from var(--color-af-red) r g b / 0.1);
-  color: var(--color-af-red);
-  border-color: rgb(from var(--color-af-red) r g b / 0.3);
-}
-.tp__btn--confirm-revoke:hover {
-  background: rgb(from var(--color-af-red) r g b / 0.18);
-}
-
-.tp__btn--cancel {
-  background: transparent;
-  color: var(--color-af-dim);
-  border-color: var(--color-af-muted);
-}
-.tp__btn--cancel:hover {
-  color: var(--color-af-text);
-  border-color: var(--color-af-dim);
-}
-
-.tp__btn--copy {
-  background: rgb(from var(--color-af-teal) r g b / 0.1);
-  color: var(--color-af-teal);
-  border-color: rgb(from var(--color-af-teal) r g b / 0.3);
-  flex-shrink: 0;
-}
-.tp__btn--copy:hover {
-  background: rgb(from var(--color-af-teal) r g b / 0.18);
-}
-
-/* Form */
-.tp__form {
+.tp__cli {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: var(--space-12);
 }
 
-.tp__form-row {
-  display: flex;
-  gap: 1rem;
-  flex-wrap: wrap;
+/* The dialog panel is wider than Basecoat's default, and scrolls inside its
+   own bounds when the form or the minted token outgrows a short window. */
+.tp__panel {
+  max-width: 40rem;
 }
 
-.tp__form-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.375rem;
-}
-.tp__form-group--inline {
-  flex: 1;
-}
-
-.tp__form-label {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.6875rem;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--color-af-dim);
-}
-
-/* Permission PATs (issue #144 step 4) -- "Restrict permissions" toggle and
- * the checkbox list it reveals. */
-.tp__checkbox-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  cursor: pointer;
-}
-.tp__checkbox {
-  accent-color: var(--color-af-teal);
-  width: 1rem;
-  height: 1rem;
-  flex-shrink: 0;
-}
-.tp__checkbox-label {
-  text-transform: none;
-  letter-spacing: 0.02em;
-}
-.tp__scope-hint {
-  font-size: 0.75rem;
-  color: var(--color-af-dim);
-  line-height: 1.5;
-  margin: 0.375rem 0 0;
-}
-.tp__scope-fieldset {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  margin: 0.625rem 0 0;
-  padding: 0.75rem;
-  border: 1px solid var(--color-af-muted);
-  border-radius: 4px;
-}
-.tp__scope-cap-name {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.8125rem;
-  color: var(--color-af-text);
-}
-
-.tp__input,
-.tp__select {
-  background: var(--color-af-void);
-  border: 1px solid var(--color-af-muted);
-  border-radius: 3px;
-  color: var(--color-af-text);
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.875rem;
-  padding: 0.5rem 0.75rem;
-  transition: border-color 150ms;
-  width: 100%;
-}
-.tp__input:focus,
-.tp__select:focus {
-  outline: none;
-  border-color: var(--color-af-teal);
-  box-shadow: 0 0 0 2px rgb(from var(--color-af-teal) r g b / 0.15);
-}
-
-.tp__textarea {
-  font-family: 'IBM Plex Sans', system-ui, sans-serif;
-  resize: vertical;
-}
-.tp__input:disabled,
-.tp__select:disabled {
-  opacity: 0.5;
-}
-
-/* Modal — the native <dialog> element centers itself when opened via
- * showModal(), via the UA stylesheet's `margin: auto` on `dialog:modal`
- * (restored in global.css, where Tailwind's Preflight otherwise zeroes it
- * out -- see the comment there and issue #152). Here we only override the
- * box chrome and add our own ::backdrop with the AF ground tint.
- */
-.tp__modal {
-  background: var(--color-af-surface);
-  border: 1px solid var(--color-af-muted);
-  border-radius: 6px;
-  padding: 1.75rem;
-  max-width: 32rem;
-  width: calc(100% - 2rem);
-  color: inherit;
-}
-.tp__modal::backdrop {
-  background: rgb(from var(--color-af-void) r g b / 0.85);
-  backdrop-filter: blur(4px);
-}
-
-.tp__modal-title {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 1rem;
-  font-weight: 600;
-  color: var(--color-af-text);
-  margin: 0 0 0.75rem;
-}
-.tp__modal-body {
-  font-size: 0.875rem;
-  color: var(--color-af-dim);
-  line-height: 1.6;
-  margin: 0 0 1.25rem;
-}
-.tp__modal-actions {
-  display: flex;
-  gap: 0.75rem;
-  justify-content: flex-end;
-  margin-top: 1.25rem;
-}
-
-/* "Shown once" warning */
-.tp__warn {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.8125rem;
-  font-weight: 600;
-  color: var(--color-af-amber);
-  background: rgb(from var(--color-af-amber) r g b / 0.1);
-  border: 1px solid rgb(from var(--color-af-amber) r g b / 0.3);
-  border-radius: 4px;
-  padding: 0.75rem 1rem;
-  margin: 0 0 1rem;
-  line-height: 1.5;
-}
-
-.tp__token-box {
-  display: flex;
-  align-items: center;
-  gap: 0.625rem;
-  padding: 0.75rem;
-  background: var(--color-af-void);
-  border: 1px solid var(--color-af-muted);
-  border-radius: 4px;
-  margin-bottom: 1rem;
-}
-
-.tp__token-value {
-  flex: 1;
-  min-width: 0;
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.75rem;
-  color: var(--color-af-text);
-  word-break: break-all;
-  max-height: 8rem;
+.tp__panel > section {
+  min-height: 0;
   overflow-y: auto;
 }
 
-/* "Register with Claude Code" one-liner (issue #152) -- reuses
- * .tp__token-box/.tp__token-value/.tp__btn--copy for the same copy-target
- * shape as the raw token above it. */
-.tp__claude-add-label {
-  margin: 0 0 0.375rem;
-}
-
-.tp__claude-add-warn {
-  font-size: 0.75rem;
-  color: var(--color-af-dim);
-  line-height: 1.6;
-  margin: 0 0 1.25rem;
-}
-.tp__claude-add-warn code {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.6875rem;
-  color: var(--color-af-dim);
-}
-
-.tp__token-meta {
+.tp__fields {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
-  margin: 0;
-  font-size: 0.8125rem;
-}
-.tp__token-meta-row {
-  display: flex;
-  gap: 0.5rem;
-}
-.tp__token-meta-row dt {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.625rem;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--color-af-dim);
-  width: 5rem;
-  flex-shrink: 0;
-}
-.tp__token-meta-row dd {
-  margin: 0;
-  color: var(--color-af-dim);
+  gap: var(--space-16);
 }
 
-@media (max-width: 640px) {
-  .tp__toolbar {
-    justify-content: stretch;
-  }
-  .tp__toolbar .tp__btn {
-    width: 100%;
-    justify-content: center;
-  }
-  /* Hide the columns that matter least for a quick glance or a revoke
-     decision -- same hide-secondary-columns-not-horizontal-scroll pattern
-     ServiceCard.vue already uses. Name/Scope identify the token, Expires/
-     Status are what you'd act on; Token ID/Created/Last used are dropped
-     rather than forcing horizontal scroll for them. */
-  .tp__th--secondary,
-  .tp__td--secondary {
-    display: none;
-  }
+.tp__textarea {
+  resize: vertical;
+}
+
+/* Read and state-changing permissions are two labelled groups, each a grid
+   that fills the dialog width, so a typical permission count fits a laptop
+   window without scrolling inside the dialog. */
+.tp__permgrid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+}
+
+.tp__perms {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr));
+  gap: var(--space-8);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.tp__perms legend {
+  margin-bottom: var(--space-8);
+  font-size: var(--text-13);
+  color: var(--color-af-text-secondary);
 }
 </style>

@@ -7,16 +7,29 @@
  * XSS-exfiltration risk). Instead, on mount the inline script below checks
  * for a valid OIDC session (see ../lib/auth) — initiating the Authorization
  * Code + PKCE redirect if there isn't one — and once authenticated fills the
- * topbar username (and any element tagged `data-af-identity`) from
+ * sidebar username (and any element tagged `data-af-identity`) from
  * GET /v1/identities, sent with the session's Bearer token (see ../lib/api).
  *
- * Shell structure (#166): fixed left sidebar with grouped nav + count badges,
- * slim topbar with the user controls, content column with footer. On narrow
- * viewports the sidebar becomes an off-canvas drawer toggled from the topbar.
+ * Shell structure (#166): fixed left sidebar with grouped nav + count badges
+ * and, at its foot, the user controls and theme toggle; content column with
+ * footer. Under 860px the sidebar becomes an off-canvas drawer toggled from a
+ * top bar.
  */
 import '../styles/global.css';
+import {
+  ChartColumn,
+  House,
+  KeyRound,
+  List,
+  LogOut,
+  Menu,
+  Server,
+  Shield,
+  UserRound,
+} from '@lucide/astro';
 import Fonts from '../components/Fonts.astro';
 import Footer from '../components/Footer.astro';
+import MaintenanceBanner from '../components/MaintenanceBanner.astro';
 import ThemeToggle from '../components/ThemeToggle.astro';
 import { THEME_INIT_SCRIPT } from '../lib/themeInitScript.js';
 
@@ -78,28 +91,22 @@ const navGroups: {
   },
 ];
 
-// Decorative stroke icons (aria-hidden), one or more path `d` strings each,
-// drawn on a 24×24 grid. Inlined so the strict CSP needs no image hosts.
-const icons: Record<string, string[]> = {
-  home: ['M3 10.5 12 3l9 7.5', 'M5.5 8.5V21h13V8.5'],
-  servers: ['M4 4.5h16v6.5H4z', 'M4 13h16v6.5H4z', 'M7.5 7.75h.01', 'M7.5 16.25h.01'],
-  identity: ['M12 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z', 'M4.5 20.5a7.5 7.5 0 0 1 15 0'],
-  key: [
-    'M8 15.5m-3.5 0a3.5 3.5 0 1 0 7 0 3.5 3.5 0 1 0-7 0',
-    'M10.8 13 19.5 4.3',
-    'M16.2 7.6l2.2 2.2',
-  ],
-  shield: ['M12 3l7 3v5.2c0 4.3-2.9 8.2-7 9.8-4.1-1.6-7-5.5-7-9.8V6l7-3z'],
-  // Same bar-chart glyph the overview's UsageCard draws.
-  chart: ['M4 19.5V10', 'M10 19.5V4.5', 'M16 19.5v-8', 'M4 19.5h16'],
-  list: ['M8 6h13', 'M8 12h13', 'M8 18h13', 'M3 6h.01', 'M3 12h.01', 'M3 18h.01'],
+// Decorative Lucide icons (rendered aria-hidden), keyed by navGroups' `icon`.
+const icons: Record<string, typeof House> = {
+  home: House,
+  servers: Server,
+  identity: UserRound,
+  key: KeyRound,
+  shield: Shield,
+  chart: ChartColumn,
+  list: List,
 };
 
 const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
 ---
 
 <!doctype html>
-<html lang="en" class="h-full">
+<html lang="en" class="scrollbar h-full">
   <head>
     <meta charset="UTF-8" />
     <!--
@@ -119,63 +126,10 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
     <Fonts />
 
     <style>
-      /* -----------------------------------------------------------------------
-       All colour tokens live in src/styles/global.css inside the Tailwind
-       `@theme` block. Reference them here as var(--color-af-*).
-    ----------------------------------------------------------------------- */
-      * {
-        box-sizing: border-box;
-      }
+      /* Colour, type, space and motion tokens live in src/styles/global.css;
+         shared shell classes (.af-wrap, .af-topbar, .af-brand, .af-nav,
+         .skip-link) live in src/styles/components.css. */
 
-      html,
-      body {
-        background: var(--color-af-void);
-        color: var(--color-af-text);
-        font-family: 'IBM Plex Sans', system-ui, sans-serif;
-        font-size: 15px;
-        line-height: 1.6;
-        -webkit-font-smoothing: antialiased;
-        min-height: 100%;
-      }
-
-      /* Skip link for keyboard accessibility */
-      .skip-link {
-        position: absolute;
-        top: -100%;
-        left: 1rem;
-        background: var(--color-af-teal);
-        color: var(--color-af-void);
-        padding: 0.5rem 1rem;
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 0.75rem;
-        font-weight: 600;
-        text-decoration: none;
-        z-index: 1000;
-      }
-      .skip-link:focus {
-        top: 1rem;
-      }
-
-      /* Maintenance banner ------------------------------------------------------
-       Revealed on mount (see the mount script below) for EVERY visitor --
-       authenticated or not -- fetched from GET /v1/admin/maintenance, which
-       carries no authentication requirement at all so it stays reachable for
-       whoever is currently blocked by maintenance mode on everything else.
-    ----------------------------------------------------------------------- */
-      .af-maintenance-banner {
-        padding: 0.625rem 2rem;
-        background: rgb(from var(--color-af-amber) r g b / 0.12);
-        border-bottom: 1px solid rgb(from var(--color-af-amber) r g b / 0.3);
-        color: var(--color-af-amber);
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 0.8125rem;
-        text-align: center;
-      }
-
-      /* Shell ------------------------------------------------------------------
-       Sidebar + content column. The sidebar is sticky full-height on desktop
-       and an off-canvas drawer below 900px.
-    ----------------------------------------------------------------------- */
       .af-shell {
         display: flex;
         min-height: 100vh;
@@ -183,7 +137,7 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
 
       /* Sidebar ---------------------------------------------------------------- */
       .af-sidebar {
-        width: 236px;
+        width: 220px;
         flex-shrink: 0;
         position: sticky;
         top: 0;
@@ -191,86 +145,20 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
         overflow-y: auto;
         display: flex;
         flex-direction: column;
-        padding: 0 0.75rem 1.25rem;
-        background: rgb(from var(--color-af-surface) r g b / 0.45);
+        gap: var(--space-16);
+        padding: var(--space-16) var(--space-12);
+        background: var(--color-af-bg);
         border-right: 1px solid var(--color-af-border);
       }
 
-      .af-sidebar__logo {
-        display: flex;
-        align-items: center;
-        flex-shrink: 0;
-        height: 56px;
-        padding: 0 0.75rem;
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 0.875rem;
-        font-weight: 700;
-        letter-spacing: 0.06em;
-        color: var(--color-af-teal);
-        text-decoration: none;
-        white-space: nowrap;
-        text-transform: uppercase;
+      .af-sidebar .af-brand {
+        display: block;
+        padding: var(--space-8) var(--space-12);
       }
 
-      .af-sidebar__group {
-        margin-top: 1rem;
-      }
-
-      .af-sidebar__group-label {
-        /* --text-label from the @theme type scale (0.6875rem / 600 / 0.1em) --
-           af-dim rather than af-label: this is a nav wayfinding cue read at a
-           glance, so it gets the stronger of the two secondary-text tokens. */
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 0.6875rem;
-        font-weight: 600;
-        letter-spacing: 0.1em;
-        text-transform: uppercase;
-        color: var(--color-af-dim);
-        padding: 0 0.75rem;
-        margin: 0 0 0.375rem;
-      }
-
-      .af-sidebar__list {
-        list-style: none;
-        margin: 0;
-        padding: 0;
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
-      }
-
-      .af-sidebar__link {
-        display: flex;
-        align-items: center;
-        gap: 0.625rem;
-        padding: 0.4375rem 0.75rem;
-        border-radius: 4px;
-        font-size: 0.875rem;
-        font-weight: 500;
-        text-decoration: none;
-        color: var(--color-af-dim);
-        transition:
-          color 150ms,
-          background-color 150ms;
-      }
-
-      .af-sidebar__link:hover,
-      .af-sidebar__link:focus-visible {
-        color: var(--color-af-text);
-        background: rgb(from var(--color-af-muted) r g b / 0.3);
-        outline: none;
-      }
-
-      .af-sidebar__link[aria-current='page'] {
-        color: var(--color-af-teal);
-        background: rgb(from var(--color-af-teal) r g b / 0.08);
-      }
-
-      .af-sidebar__icon {
-        width: 18px;
-        height: 18px;
-        flex-shrink: 0;
-        opacity: 0.85;
+      .af-sidebar .af-nav {
+        width: 100%;
+        gap: var(--space-16);
       }
 
       .af-sidebar__label {
@@ -278,21 +166,41 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
         min-width: 0;
       }
 
+      /* Count badges stay plain secondary text; the tone modifier classes the
+         mount script adds carry no extra styling. */
       .af-sidebar__badge {
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 0.625rem;
-        font-weight: 600;
-        line-height: 1.4;
-        padding: 0.0625rem 0.4375rem;
-        border-radius: 999px;
+        font-size: var(--text-12);
+        font-weight: 400;
+        font-variant-numeric: tabular-nums;
+        color: var(--color-af-text-secondary);
       }
-      .af-sidebar__badge--ok {
-        color: var(--color-af-teal);
-        background: rgb(from var(--color-af-teal) r g b / 0.12);
+
+      .af-sidebar__foot {
+        margin-top: auto;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: var(--space-8);
       }
-      .af-sidebar__badge--neutral {
-        color: var(--color-af-dim);
-        background: rgb(from var(--color-af-muted) r g b / 0.35);
+
+      .af-sidebar__account {
+        align-self: stretch;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: var(--space-4);
+        min-width: 0;
+      }
+
+      .af-sidebar__user {
+        max-width: 100%;
+        padding: 0 var(--space-12);
+        font-size: var(--text-13);
+        line-height: var(--text-13--line-height);
+        color: var(--color-af-text-secondary);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
 
       .af-sidebar-overlay {
@@ -307,123 +215,46 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
         flex-direction: column;
       }
 
-      /* Topbar ------------------------------------------------------------------ */
-      .af-topbar {
-        position: sticky;
-        top: 0;
-        z-index: 50;
-        background: rgb(from var(--color-af-void) r g b / 0.92);
-        backdrop-filter: blur(12px);
-        border-bottom: 1px solid var(--color-af-border);
-        display: flex;
-        align-items: center;
-        gap: 1rem;
-        padding: 0 2rem;
-        height: 56px;
-      }
-
-      .af-topbar__menu {
+      .af-app-topbar {
         display: none;
-        align-items: center;
-        justify-content: center;
-        width: 36px;
-        height: 36px;
-        background: transparent;
-        border: 1px solid var(--color-af-border);
-        border-radius: 4px;
-        color: var(--color-af-dim);
-        cursor: pointer;
-        transition:
-          color 150ms,
-          border-color 150ms;
-      }
-      .af-topbar__menu:hover,
-      .af-topbar__menu:focus-visible {
-        color: var(--color-af-text);
-        border-color: var(--color-af-muted);
-        outline: none;
-      }
-      .af-topbar__menu svg {
-        width: 18px;
-        height: 18px;
       }
 
-      .af-topbar__logo {
-        display: none;
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 0.75rem;
-        font-weight: 700;
-        letter-spacing: 0.06em;
-        color: var(--color-af-teal);
-        text-decoration: none;
-        white-space: nowrap;
-        text-transform: uppercase;
-      }
-
-      .af-topbar__spacer {
-        flex: 1;
-      }
-
-      .af-topbar__user-group {
-        display: flex;
-        align-items: center;
-        gap: 1rem;
-      }
-
-      .af-topbar__user {
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 0.6875rem;
-        color: var(--color-af-dim);
-        letter-spacing: 0.04em;
-      }
-
-      .af-topbar__signout {
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 0.6875rem;
-        font-weight: 500;
-        letter-spacing: 0.04em;
-        text-transform: uppercase;
-        color: var(--color-af-dim);
-        background: transparent;
-        border: 1px solid var(--color-af-border);
-        border-radius: 2px;
-        padding: 0.25rem 0.625rem;
-        cursor: pointer;
-        transition:
-          color 150ms,
-          border-color 150ms;
-      }
-      .af-topbar__signout:hover,
-      .af-topbar__signout:focus-visible {
-        color: var(--color-af-red);
-        border-color: rgb(from var(--color-af-red) r g b / 0.4);
-        outline: none;
-      }
-
-      /* Main content --------------------------------------------------------- */
       .af-main {
         flex: 1;
-        padding: 2.5rem 2rem;
-        max-width: 1200px;
-        margin: 0 auto;
-        width: 100%;
+        padding-block: var(--space-32);
       }
 
-      /* Responsive ----------------------------------------------------------- */
-      @media (max-width: 900px) {
+      /* A hidden maintenance banner takes no space; a shown one sits above the
+         page's own content. */
+      .af-main > .af-banner {
+        margin-bottom: var(--space-24);
+      }
+      .af-main > .af-banner.slim {
+        margin-bottom: var(--space-16);
+      }
+
+      /* Under 860px the sidebar becomes an off-canvas drawer opened from the
+         top bar. Closed, it is visibility:hidden so its links leave the tab
+         order; the visibility change waits for the slide-out to finish. */
+      @media (max-width: 859px) {
         .af-sidebar {
           position: fixed;
           left: 0;
           top: 0;
           z-index: 100;
-          width: 248px;
-          background: var(--color-af-surface);
+          visibility: hidden;
           transform: translateX(-100%);
-          transition: transform 200ms ease;
+          transition:
+            transform var(--time-base) var(--ease),
+            visibility 0s linear var(--time-base);
         }
         .af-sidebar.is-open {
+          visibility: visible;
           transform: translateX(0);
-          box-shadow: 4px 0 24px var(--color-af-panel-shadow);
+          box-shadow: var(--shadow-af-1);
+          transition:
+            transform var(--time-base) var(--ease),
+            visibility 0s;
         }
 
         .af-sidebar-overlay {
@@ -437,38 +268,23 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
           display: none;
         }
 
-        .af-topbar {
-          padding: 0 1rem;
-        }
-        .af-topbar__menu {
-          display: flex;
-        }
-        .af-topbar__logo {
+        .af-app-topbar {
           display: block;
-        }
-
-        .af-main {
-          padding: 1.5rem 1rem;
         }
       }
 
       @media (prefers-reduced-motion: reduce) {
-        .af-sidebar {
+        .af-sidebar,
+        .af-sidebar.is-open {
           transition: none;
-        }
-      }
-
-      @media (max-width: 640px) {
-        .af-topbar__user-group {
-          display: none;
         }
       }
     </style>
 
     <!--
     is:inline keeps this literally inline in the HTML instead of Astro
-    bundling it into the external, hashed stylesheet (which is where the two
-    <style> blocks above end up — check dist/*.html after a build if that's
+    bundling it into the external, hashed stylesheet (which is where the
+    <style> block above ends up — check dist/*.html after a build if that's
     surprising). The auth-init script below can remove #af-auth-splash before
     that external stylesheet's <link> has even started fetching, so this
     block's rules need to be present the instant the element is parsed.
@@ -481,31 +297,30 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
         display: flex;
         align-items: center;
         justify-content: center;
-        background: var(--color-af-void);
+        background: var(--color-af-bg);
       }
 
       .af-auth-splash__inner {
         display: flex;
         flex-direction: column;
         align-items: center;
-        gap: 1rem;
+        gap: var(--space-16);
       }
 
       .af-auth-splash__spinner {
         width: 28px;
         height: 28px;
         border: 3px solid var(--color-af-border);
-        border-top-color: var(--color-af-teal);
+        border-top-color: var(--color-af-text);
         border-radius: 50%;
-        animation: af-auth-splash-spin 600ms linear infinite;
+        animation: af-auth-splash-spin calc(var(--time-slow) * 2) linear infinite;
       }
 
       .af-auth-splash__inner p {
         margin: 0;
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 0.8125rem;
-        color: var(--color-af-dim);
-        letter-spacing: 0.04em;
+        font-family: var(--font-sans);
+        font-size: var(--text-14);
+        color: var(--color-af-text-secondary);
       }
 
       @keyframes af-auth-splash-spin {
@@ -517,7 +332,7 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
       @media (prefers-reduced-motion: reduce) {
         .af-auth-splash__spinner {
           animation: none;
-          border-top-color: var(--color-af-dim);
+          border-top-color: var(--color-af-text-secondary);
         }
       }
     </style>
@@ -538,48 +353,25 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
 
     <a href="#main-content" class="skip-link">Skip to content</a>
 
-    <div data-af-maintenance-banner class="af-maintenance-banner" role="alert" hidden></div>
-
     <div class="af-shell">
       <aside class="af-sidebar" id="af-sidebar">
-        <a
-          href="/overview/"
-          class="af-sidebar__logo"
-          aria-label="AF MCP Platform home"
-          data-af-brand-logo
-        >
+        <a href="/overview/" class="af-brand" aria-label="AF MCP Platform home" data-af-brand-logo>
           AF&nbsp;/&nbsp;MCP
         </a>
 
-        <nav aria-label="Primary navigation">
+        <nav class="af-nav" aria-label="Primary navigation">
           {
             navGroups.map((group) => (
-              <div class="af-sidebar__group">
-                {group.label && <p class="af-sidebar__group-label">{group.label}</p>}
-                <ul class="af-sidebar__list" role="list">
+              <div class="af-nav-group">
+                {group.label && <p class="af-nav-label">{group.label}</p>}
+                <ul role="list">
                   {group.items.map(({ href, label, icon, badge, adminOnly }) => {
                     const isActive = currentPath.startsWith(href.replace(/\/$/, ''));
+                    const Icon = icons[icon];
                     return (
                       <li hidden={adminOnly} data-af-admin-nav={adminOnly || undefined}>
-                        <a
-                          href={href}
-                          class="af-sidebar__link"
-                          aria-current={isActive ? 'page' : undefined}
-                        >
-                          <svg
-                            class="af-sidebar__icon"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="1.6"
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                            aria-hidden="true"
-                          >
-                            {icons[icon].map((d) => (
-                              <path d={d} />
-                            ))}
-                          </svg>
+                        <a href={href} aria-current={isActive ? 'page' : undefined}>
+                          <Icon class="af-icon" size={16} aria-hidden="true" />
                           <span class="af-sidebar__label">{label}</span>
                           {badge && (
                             <span class="af-sidebar__badge" data-af-nav-badge={href} hidden />
@@ -593,53 +385,57 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
             ))
           }
         </nav>
+
+        <div class="af-sidebar__foot">
+          <div class="af-sidebar__account" data-af-user-holder hidden>
+            <span class="af-sidebar__user" data-af-identity aria-label="Signed in"></span>
+            <button
+              type="button"
+              class="btn"
+              data-variant="ghost"
+              data-size="sm"
+              data-af-signout
+              hidden
+            >
+              <LogOut class="af-icon" size={16} aria-hidden="true" />
+              Sign out
+            </button>
+          </div>
+          <ThemeToggle />
+        </div>
       </aside>
 
       <div class="af-sidebar-overlay" data-af-sidebar-overlay role="presentation" hidden></div>
 
       <div class="af-content">
-        <header class="af-topbar">
-          <button
-            type="button"
-            class="af-topbar__menu"
-            data-af-sidebar-toggle
-            aria-controls="af-sidebar"
-            aria-expanded="false"
-            aria-label="Toggle navigation"
-          >
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.6"
-              stroke-linecap="round"
-              aria-hidden="true"
+        <header class="af-topbar af-app-topbar">
+          <div class="af-wrap af-topbar__in">
+            <button
+              type="button"
+              class="btn"
+              data-variant="ghost"
+              data-size="icon"
+              data-af-sidebar-toggle
+              aria-controls="af-sidebar"
+              aria-expanded="false"
+              aria-label="Toggle navigation"
             >
-              <path d="M4 6.5h16M4 12h16M4 17.5h16"></path>
-            </svg>
-          </button>
+              <Menu class="af-icon" size={16} aria-hidden="true" />
+            </button>
 
-          <a
-            href="/overview/"
-            class="af-topbar__logo"
-            aria-label="AF MCP Platform home"
-            data-af-brand-logo
-          >
-            AF&nbsp;/&nbsp;MCP
-          </a>
-
-          <div class="af-topbar__spacer" aria-hidden="true"></div>
-
-          <ThemeToggle />
-
-          <div class="af-topbar__user-group" data-af-user-holder hidden>
-            <span class="af-topbar__user" data-af-identity aria-label="Signed in"></span>
-            <button type="button" class="af-topbar__signout" data-af-signout hidden>Sign out</button
+            <a
+              href="/overview/"
+              class="af-brand"
+              aria-label="AF MCP Platform home"
+              data-af-brand-logo
             >
+              AF&nbsp;/&nbsp;MCP
+            </a>
           </div>
         </header>
 
-        <main id="main-content" class="af-main">
+        <main id="main-content" class="af-main af-wrap">
+          <MaintenanceBanner />
           <slot />
         </main>
 
@@ -649,7 +445,7 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
 
     <!--
     On mount: ensure an OIDC session exists (redirecting to Keycloak if not),
-    then populate every [data-af-identity] element (topbar username, hero
+    then populate every [data-af-identity] element (sidebar username, hero
     greeting) from the broker, and pin the nav badges from the dashboard
     summary. This is the only identity source in a static build.
   -->
@@ -658,16 +454,14 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
         clearIdentitiesCache,
         fetchDashboardSummary,
         fetchIdentities,
-        fetchMaintenanceStatus,
         revokeAllCredentials,
       } from '../lib/api';
       import { getBranding, getUser, isOidcConfigured, login, logout } from '../lib/auth';
       import { applyBranding } from '../lib/branding';
-      import { maintenanceBannerText } from '../lib/maintenanceBanner';
       import { navBadges } from '../lib/navSummary';
 
-      // Runs independently of the auth check below, same rationale as the
-      // maintenance banner above -- branding is deployment identity, not
+      // Runs independently of the auth check below, same rationale as
+      // MaintenanceBanner.astro's script -- branding is deployment identity, not
       // user-specific, so it applies whether or not this visitor ends up
       // authenticated. Patches every [data-af-brand] element (footer,
       // overview hero) plus the two logo links, which need an "X home"
@@ -682,30 +476,7 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
         });
       })();
 
-      // Runs independently of the auth check below, and before it -- GET
-      // /v1/admin/maintenance requires no authentication at all (see
-      // fetchMaintenanceStatus's docstring), precisely so a visitor currently
-      // locked out by maintenance mode on every other route -- including one
-      // with no session at all, or one about to be redirected to Keycloak by
-      // the auth check just below -- still sees why.
-      (async () => {
-        const banner = document.querySelector<HTMLElement>('[data-af-maintenance-banner]');
-        if (!banner) return;
-        try {
-          const status = await fetchMaintenanceStatus();
-          const text = maintenanceBannerText(status);
-          if (text) {
-            banner.textContent = text;
-            banner.hidden = false;
-          }
-        } catch {
-          // Fails open, same as the broker route itself (api/admin.py) -- an
-          // unreachable maintenance store or a network error must not put a
-          // false banner in front of every visitor.
-        }
-      })();
-
-      // Off-canvas sidebar toggle — registered before the auth check so the
+      // Off-canvas sidebar toggle (under 860px) — registered before the auth check so the
       // drawer works even when the page renders unauthenticated (dev bypass).
       (() => {
         const sidebar = document.getElementById('af-sidebar');
@@ -717,6 +488,9 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
           sidebar.classList.toggle('is-open', open);
           overlay.hidden = !open;
           toggle.setAttribute('aria-expanded', String(open));
+          // Move focus into the drawer so keyboard users land on the nav;
+          // closing is handled by the caller (Escape returns focus to toggle).
+          if (open) sidebar.querySelector<HTMLElement>('a[href]')?.focus();
         };
 
         toggle.addEventListener('click', () => {
@@ -788,7 +562,7 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
             else el.hidden = false;
           });
 
-          // Sign-out control is topbar-only and OIDC-only — dev-bypass mode
+          // Sign-out control is OIDC-only — dev-bypass mode
           // has no Keycloak session to end, so it stays hidden there.
           if (await isOidcConfigured()) {
             const signOutBtn = document.querySelector<HTMLButtonElement>('[data-af-signout]');

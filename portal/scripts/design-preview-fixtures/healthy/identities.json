@@ -1,0 +1,60 @@
+{
+  "subject": "example-subject-0001",
+  "email": "example-user-1@example-facility.org",
+  "unixname": "example-user-1",
+  "uid": 100001,
+  "gid": 100001,
+  "groups": ["example-atlas-users", "example-operators"],
+  "is_admin": true,
+  "providers": [
+    {
+      "id": "example-iam",
+      "type": "keycloak-brokered",
+      "display_name": "Example IAM",
+      "enables": "Rucio, PanDA, AMI and JupyterHub on your behalf.",
+      "linked": true,
+      "link_url": null,
+      "link_mechanism": "redirect"
+    },
+    {
+      "id": "x509",
+      "type": "x509",
+      "display_name": "Grid certificate",
+      "enables": "HTCondor jobs and grid data access with a VOMS proxy.",
+      "linked": true,
+      "link_url": null,
+      "link_mechanism": "passphrase",
+      "proxy_expires_at": "@iso+9h",
+      "x509_link_mode": "auto-renew"
+    },
+    {
+      "id": "krb5-token",
+      "type": "krb5-token",
+      "display_name": "Kerberos ticket",
+      "enables": "Access to Kerberos-protected storage.",
+      "linked": true,
+      "link_url": null,
+      "link_mechanism": "credential",
+      "krb5_has_keytab": true
+    },
+    {
+      "id": "servicex-token",
+      "type": "servicex-token",
+      "display_name": "ServiceX token",
+      "enables": "Submit ServiceX transforms.",
+      "linked": true,
+      "link_url": null,
+      "link_mechanism": "servicex-token",
+      "external_login_url": "https://servicex.example-facility.org/api-token"
+    },
+    {
+      "id": "example-oauth",
+      "type": "oauth21-direct",
+      "display_name": "Example Docs Service",
+      "enables": "Search the example documentation index.",
+      "linked": true,
+      "link_url": "/v1/oauth/authorize/example-oauth",
+      "link_mechanism": "redirect"
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+[
+  {
+    "service": "condor",
+    "prefix": "condor",
+    "advertised": 55,
+    "routable": 45,
+    "unmapped": [
+      "condor_analyze_issues",
+      "condor_create_output_download_url",
+      "condor_doc_config_variables",
+      "condor_doc_guide",
+      "condor_doc_job_attributes",
+      "condor_doc_machine_attributes",
+      "condor_doc_search",
+      "condor_doc_submit_syntax",
+      "condor_query_pool",
+      "condor_submit_dag"
+    ],
+    "stale": [
+      "condor_condor_doc_config_variables",
+      "condor_condor_doc_job_attributes",
+      "condor_condor_doc_machine_attributes",
+      "condor_condor_doc_search",
+      "condor_condor_doc_submit_syntax"
+    ],
+    "unroutable": ["example_unprefixed_tool", "example_unprefixed_tool_two"]
+  }
+]

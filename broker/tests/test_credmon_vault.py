@@ -146,3 +146,37 @@ async def test_status_round_trips(fake_vault: FakeVault, tmp_path: Path) -> None
     await state.write_status({"outcome": "failed", "stored": {}})
 
     assert await state.read_status() == {"outcome": "failed", "stored": {}}
+
+
+async def test_released_lease_can_be_taken_immediately(
+    fake_vault: FakeVault, tmp_path: Path
+) -> None:
+    state = _state(fake_vault, tmp_path)
+    await state.try_acquire_lease("pod-a", ttl_seconds=600, now=1000.0)
+
+    await state.release_lease("pod-a", now=1005.0)
+
+    assert await state.try_acquire_lease("pod-b", ttl_seconds=600, now=1006.0)
+
+
+async def test_release_never_clears_another_holders_lease(
+    fake_vault: FakeVault, tmp_path: Path
+) -> None:
+    """pod-a's lease expired and pod-b took it over; pod-a finishing late must
+    not hand pod-b's lease to a third replica."""
+    state = _state(fake_vault, tmp_path)
+    await state.try_acquire_lease("pod-a", ttl_seconds=60, now=1000.0)
+    await state.try_acquire_lease("pod-b", ttl_seconds=600, now=1061.0)
+
+    await state.release_lease("pod-a", now=1070.0)
+
+    assert fake_vault.entries["mcp/credmon/lease"]["data"]["holder"] == "pod-b"
+    assert not await state.try_acquire_lease("pod-c", ttl_seconds=600, now=1071.0)
+
+
+async def test_release_without_a_lease_is_a_noop(
+    fake_vault: FakeVault, tmp_path: Path
+) -> None:
+    await _state(fake_vault, tmp_path).release_lease("pod-a", now=1000.0)
+
+    assert "mcp/credmon/lease" not in fake_vault.entries

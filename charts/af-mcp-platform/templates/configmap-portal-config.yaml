@@ -24,6 +24,8 @@ data:
       "branding": {
         "shortName": {{ .Values.portal.branding.shortName | default "" | quote }},
         "fullName": {{ .Values.portal.branding.fullName | default "" | quote }},
-        "facilityName": {{ .Values.portal.branding.facilityName | default "" | quote }}
+        "facilityName": {{ .Values.portal.branding.facilityName | default "" | quote }},
+        "accentColor": {{ .Values.portal.branding.accentColor | default "" | quote }},
+        "accentColorDark": {{ .Values.portal.branding.accentColorDark | default "" | quote }}
       }
     }

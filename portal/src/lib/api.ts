@@ -28,7 +28,14 @@
  * one route, not a template for "public-ish" endpoints in general.
  */
 import { getAccessToken, isOidcConfigured, renewAccessToken } from './auth';
-import { tokenStatus } from './tokenDisplay';
+import {
+  rejectedAction,
+  rejectedIdentityNoun,
+  summarizeServices,
+  unlinkedAction,
+} from './serviceStatus';
+import type { StatusCta } from './serviceStatus';
+import { soonestExpiringToken, tokenStatus } from './tokenDisplay';
 
 // PUBLIC_BROKER_URL MUST include the `/v1` suffix when overridden
 // (e.g. https://mcp.af.uchicago.edu/v1). It replaces the base wholesale, so a
@@ -395,6 +402,11 @@ export interface CatalogTool {
 export type ServiceStatus =
   'available' | 'link_required' | 'permission_required' | 'unavailable' | 'misconfigured';
 
+/** Why a "link_required" service needs a link: "not_linked" -- the caller
+ * never linked the identity; "rejected" -- it is linked, but the backend
+ * rejected the stored credential. Null for every other status. */
+export type LinkState = 'not_linked' | 'rejected';
+
 export interface CatalogServer {
   name: string;
   display_name: string;
@@ -417,6 +429,10 @@ export interface CatalogServer {
    * misconfigured) -- quote it in a ticket so an admin can grep the audit
    * log. Null otherwise. */
   correlation_id: string | null;
+  /** Why a link is required -- set only when `status` is "link_required".
+   * The broker always sends it; there is deliberately no fallback for one
+   * that omits it. */
+  link_state: LinkState | null;
   /** True only for the broker's own af-mcp entry (issue #240) -- the
    * gateway's identity, catalog, and usage methods. It has no per-user
    * credential, no identity to link, and no backend that could be
@@ -497,6 +513,11 @@ export async function fetchPermissions(): Promise<PermissionsResponse> {
  */
 export interface EntitlementsResponse {
   group_permissions: Record<string, string[]>;
+  /**
+   * Every permission the policy knows, in the broker's display order: its kind
+   * and a description (null for a site-defined permission, which carries none).
+   */
+  permissions: { name: string; action_type: ActionType; description: string | null }[];
 }
 
 export async function fetchEntitlements(): Promise<EntitlementsResponse> {
@@ -798,7 +819,31 @@ export interface DashboardSummary {
   linkedCount: number;
   serverCount: number;
   proxyStatus: ProxyStatus;
+  /** Whether the x509 link renews the proxy hands-free (x509_link_mode "auto-renew"). */
+  proxyAutoRenews: boolean;
   activeTokenCount: number;
+  /** Services that are available, per the same statuses the Services page shows. */
+  reachableCount: number;
+  /** Services that only need the user to link an account. */
+  needsLinkCount: number;
+  /** The display name of the one service that needs a link; null unless exactly one does. */
+  needsLinkService: string | null;
+  /** The action that links every unlinked service, when they all need the same account. */
+  needsLinkAction: StatusCta | null;
+  /** Services whose linked credential the backend rejected. */
+  rejectedCount: number;
+  /** The display name of the one service that rejected its credential; null unless exactly one did. */
+  rejectedService: string | null;
+  /** What to call the one identity the rejected services share ("Kerberos ticket"); null when they differ or the identity is unknown. */
+  rejectedIdentity: string | null;
+  /** The action that re-links every rejected credential, when they all belong to the same identity. */
+  rejectedAction: StatusCta | null;
+  /** Services that are temporarily unreachable. */
+  unavailableCount: number;
+  /** Services an operator must fix. */
+  misconfiguredCount: number;
+  /** The active token that expires first; null when none expires. */
+  soonestExpiringToken: { name: string; expires_at: string } | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -827,7 +872,14 @@ export async function fetchDashboardSummary(): Promise<DashboardSummary> {
       ? identityData.value.providers.filter((p) => p.linked).length
       : 0;
 
-  const serverCount = catalog.status === 'fulfilled' ? catalog.value.servers.length : 0;
+  const proxyAutoRenews =
+    identityData.status === 'fulfilled' &&
+    identityData.value.providers.some(
+      (p) => p.link_mechanism === 'passphrase' && p.x509_link_mode === 'auto-renew',
+    );
+
+  const providers = identityData.status === 'fulfilled' ? identityData.value.providers : [];
+  const services = summarizeServices(catalog.status === 'fulfilled' ? catalog.value.servers : []);
 
   const proxy: ProxyStatus =
     proxyStatus.status === 'fulfilled' ? proxyStatus.value : { cached: false, voms_attributes: [] };
@@ -837,7 +889,24 @@ export async function fetchDashboardSummary(): Promise<DashboardSummary> {
       ? tokens.value.filter((t) => tokenStatus(t) === 'active').length
       : 0;
 
-  return { linkedCount, serverCount, proxyStatus: proxy, activeTokenCount };
+  return {
+    linkedCount,
+    serverCount: services.total,
+    proxyStatus: proxy,
+    proxyAutoRenews,
+    activeTokenCount,
+    reachableCount: services.reachable,
+    needsLinkCount: services.needsLink,
+    needsLinkService: services.needsLinkNames.length === 1 ? services.needsLinkNames[0] : null,
+    needsLinkAction: unlinkedAction(services.needsLinkProviders, providers),
+    rejectedCount: services.rejected,
+    rejectedService: services.rejectedNames.length === 1 ? services.rejectedNames[0] : null,
+    rejectedIdentity: rejectedIdentityNoun(services.rejectedProviders, providers),
+    rejectedAction: rejectedAction(services.rejectedProviders, providers),
+    unavailableCount: services.unavailable,
+    misconfiguredCount: services.misconfigured,
+    soonestExpiringToken: tokens.status === 'fulfilled' ? soonestExpiringToken(tokens.value) : null,
+  };
 }
 
 // ---------------------------------------------------------------------------

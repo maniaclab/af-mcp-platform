@@ -8,6 +8,12 @@
  * trivially unit-testable, same pattern as lib/linkedBanner.ts.
  */
 import type { CatalogServer, IdentityProvider } from './api';
+import {
+  identityLinkAnchor,
+  identityLinkLabel,
+  identityNoun,
+  identityRelinkLabel,
+} from './identityLinkLabel';
 
 /** What a server card's "Powered by" affordance should show. */
 export interface PoweredBy {
@@ -21,6 +27,16 @@ export interface PoweredBy {
   /** Where the card's affordance should link to, or null when there's
    *  nothing to link to ("none"). */
   linkHref: string | null;
+  /** The name of the action that links this identity (shared with the
+   *  Identities page), or null when there is nothing to link. */
+  linkLabel: string | null;
+  /** The name of the action that links this identity again once its stored
+   *  credential was rejected (shared with the Identities page), or null when
+   *  there is nothing to link. */
+  relinkLabel: string | null;
+  /** What to call the identity in a sentence ("ATLAS IAM account", "Grid
+   *  certificate"), or null when there is none. */
+  noun: string | null;
 }
 
 export function resolvePoweredBy(
@@ -28,14 +44,27 @@ export function resolvePoweredBy(
   providers: IdentityProvider[],
 ): PoweredBy {
   if (credentialProvider === null) {
-    return { kind: 'none', label: 'No credential required', linked: null, linkHref: null };
+    return {
+      kind: 'none',
+      label: 'No credential required',
+      linked: null,
+      linkHref: null,
+      linkLabel: null,
+      relinkLabel: null,
+      noun: null,
+    };
   }
   const provider = providers.find((p) => p.id === credentialProvider);
+  const label = provider?.display_name ?? credentialProvider;
+  const named = { link_mechanism: provider?.link_mechanism ?? 'redirect', display_name: label };
   return {
     kind: 'identity',
-    label: provider?.display_name ?? credentialProvider,
+    label,
     linked: provider?.linked ?? false,
-    linkHref: '/identities/',
+    linkHref: identityLinkAnchor(credentialProvider),
+    linkLabel: identityLinkLabel(named),
+    relinkLabel: identityRelinkLabel(named),
+    noun: identityNoun(named),
   };
 }
 

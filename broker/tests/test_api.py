@@ -5,6 +5,7 @@ import time
 from typing import TYPE_CHECKING
 
 import pytest
+import structlog.testing
 from cryptography.fernet import Fernet
 
 from af_mcp_broker.credentials.base import CredentialKind, IssuedCredential
@@ -277,6 +278,7 @@ def test_catalog_status_available_for_open_backend(
     assert docs["status"] == "available"
     assert docs["status_detail"]
     assert docs["correlation_id"] is None
+    assert docs["link_state"] is None
 
 
 def test_catalog_status_link_required_when_not_linked(
@@ -295,6 +297,33 @@ def test_catalog_status_link_required_when_not_linked(
     assert rucio["status"] == "link_required"
     assert rucio["status_detail"]
     assert rucio["correlation_id"] is None
+    assert rucio["link_state"] == "not_linked"
+
+
+def test_catalog_unlinked_mint_and_inject_caller_is_told_to_link(
+    app_client: tuple[TestClient, dict],
+    make_principal: Callable[..., object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ "ami" is an x509 ("mint and inject") service: a caller who has not
+    linked it is told to link, from the live is_linked() check alone -- no
+    listing failure is logged for them."""
+    from af_mcp_broker.credentials.x509 import X509Provider
+
+    async def _unlinked(self, principal) -> bool:
+        return False
+
+    monkeypatch.setattr(X509Provider, "is_linked", _unlinked)
+
+    client, state = app_client
+    state["principal"] = make_principal(groups=["atlas"])
+    with structlog.testing.capture_logs() as logs:
+        resp = client.get("/v1/catalog", headers=_AUTH)
+    assert resp.status_code == 200, resp.text
+    ami = {s["name"]: s for s in resp.json()["servers"]}["ami"]
+    assert ami["status"] == "link_required"
+    assert ami["status_detail"].startswith("Link your identity")
+    assert [e for e in logs if e["event"] == "aggregator.service_list_failed"] == []
 
 
 def test_catalog_status_available_when_permission_and_linked(
@@ -317,6 +346,7 @@ def test_catalog_status_available_when_permission_and_linked(
     rucio = {s["name"]: s for s in resp.json()["servers"]}["rucio"]
     assert rucio["status"] == "available"
     assert rucio["correlation_id"] is None
+    assert rucio["link_state"] is None
 
 
 def test_catalog_status_permission_required_includes_correlation_id(
@@ -334,6 +364,7 @@ def test_catalog_status_permission_required_includes_correlation_id(
     assert rucio["status"] == "permission_required"
     assert rucio["status_detail"]
     assert rucio["correlation_id"]
+    assert rucio["link_state"] is None
 
 
 def test_catalog_status_detail_names_the_af_mcp_methods(
@@ -438,7 +469,7 @@ def test_catalog_status_unavailable_when_recent_list_failure_recorded(
         return True
 
     monkeypatch.setattr(OIDCProvider, "is_linked", _linked)
-    app.state.service_registry.record_list_failure("rucio", "unavailable")
+    app.state.service_registry.record_list_failure("rucio", "unavailable", "sub-abc")
 
     client, state = app_client
     state["principal"] = make_principal(groups=["atlas"])
@@ -447,6 +478,7 @@ def test_catalog_status_unavailable_when_recent_list_failure_recorded(
     rucio = {s["name"]: s for s in resp.json()["servers"]}["rucio"]
     assert rucio["status"] == "unavailable"
     assert rucio["correlation_id"] is None
+    assert rucio["link_state"] is None
 
 
 def test_catalog_status_unauthorized_failure_prompts_relink(
@@ -465,7 +497,7 @@ def test_catalog_status_unauthorized_failure_prompts_relink(
         return True
 
     monkeypatch.setattr(OIDCProvider, "is_linked", _linked)
-    app.state.service_registry.record_list_failure("rucio", "unauthorized")
+    app.state.service_registry.record_list_failure("rucio", "unauthorized", "sub-abc")
 
     client, state = app_client
     state["principal"] = make_principal(groups=["atlas"])
@@ -473,6 +505,98 @@ def test_catalog_status_unauthorized_failure_prompts_relink(
     assert resp.status_code == 200, resp.text
     rucio = {s["name"]: s for s in resp.json()["servers"]}["rucio"]
     assert rucio["status"] == "link_required"
+    # Linked but rejected is a different fact from never having linked: the
+    # explicit field is what lets the portal and agents tell them apart.
+    assert rucio["link_state"] == "rejected"
+
+
+def test_catalog_status_ignores_another_subjects_unauthorized_failure(
+    app_client: tuple[TestClient, dict],
+    make_principal: Callable[..., object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An "unauthorized" listing failure is about the one caller whose
+    credential the backend rejected: it must not reach another caller's
+    catalog, while the affected caller still sees their own."""
+    from af_mcp_broker.app import app
+    from af_mcp_broker.credentials.oidc import OIDCProvider
+
+    async def _linked(self, principal) -> bool:
+        return True
+
+    monkeypatch.setattr(OIDCProvider, "is_linked", _linked)
+    app.state.service_registry.record_list_failure("rucio", "unauthorized", "sub-a")
+
+    client, state = app_client
+    state["principal"] = make_principal(groups=["atlas"], subject="sub-b")
+    resp = client.get("/v1/catalog", headers=_AUTH)
+    assert resp.status_code == 200, resp.text
+    rucio = {s["name"]: s for s in resp.json()["servers"]}["rucio"]
+    assert rucio["status"] == "available"
+
+    state["principal"] = make_principal(groups=["atlas"], subject="sub-a")
+    resp = client.get("/v1/catalog", headers=_AUTH)
+    assert resp.status_code == 200, resp.text
+    rucio = {s["name"]: s for s in resp.json()["servers"]}["rucio"]
+    assert rucio["status"] == "link_required"
+
+
+def test_catalog_status_shows_service_wide_unavailable_to_every_subject(
+    app_client: tuple[TestClient, dict],
+    make_principal: Callable[..., object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from af_mcp_broker.app import app
+    from af_mcp_broker.credentials.oidc import OIDCProvider
+
+    async def _linked(self, principal) -> bool:
+        return True
+
+    monkeypatch.setattr(OIDCProvider, "is_linked", _linked)
+    app.state.service_registry.record_list_failure("rucio", "unavailable", "sub-a")
+
+    client, state = app_client
+    for subject in ("sub-a", "sub-b"):
+        state["principal"] = make_principal(groups=["atlas"], subject=subject)
+        resp = client.get("/v1/catalog", headers=_AUTH)
+        assert resp.status_code == 200, resp.text
+        rucio = {s["name"]: s for s in resp.json()["servers"]}["rucio"]
+        assert rucio["status"] == "unavailable"
+
+
+def test_catalog_unlinked_caller_is_told_to_link_not_that_a_credential_was_rejected(
+    app_client: tuple[TestClient, dict],
+    make_principal: Callable[..., object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A caller with no linked identity is asked to link, even with a
+    caller-specific listing failure on record for them; only a linked caller
+    whose credential was rejected is told it was rejected."""
+    from af_mcp_broker.app import app
+    from af_mcp_broker.credentials.oidc import OIDCProvider
+
+    linked: dict[str, bool] = {"value": False}
+
+    async def _is_linked(self, principal) -> bool:
+        return linked["value"]
+
+    monkeypatch.setattr(OIDCProvider, "is_linked", _is_linked)
+    app.state.service_registry.record_list_failure("rucio", "not_linked", "sub-a")
+    app.state.service_registry.record_list_failure("rucio", "unauthorized", "sub-a")
+
+    client, state = app_client
+    state["principal"] = make_principal(groups=["atlas"], subject="sub-a")
+
+    resp = client.get("/v1/catalog", headers=_AUTH)
+    rucio = {s["name"]: s for s in resp.json()["servers"]}["rucio"]
+    assert rucio["status"] == "link_required"
+    assert rucio["status_detail"].startswith("Link your identity")
+
+    linked["value"] = True
+    resp = client.get("/v1/catalog", headers=_AUTH)
+    rucio = {s["name"]: s for s in resp.json()["servers"]}["rucio"]
+    assert rucio["status"] == "link_required"
+    assert rucio["status_detail"].startswith("Your linked credential was rejected")
 
 
 @pytest.mark.parametrize(
@@ -507,6 +631,7 @@ def test_catalog_status_reflects_recorded_tool_routing(
     docs = {s["name"]: s for s in resp.json()["servers"]}["docs"]
     assert docs["status"] == expected_status
     assert (docs["correlation_id"] is not None) == (expected_status == "misconfigured")
+    assert docs["link_state"] is None
 
 
 @pytest.mark.parametrize(

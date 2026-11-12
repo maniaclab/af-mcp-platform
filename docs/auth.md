@@ -948,9 +948,23 @@ above; no ccache material ever transits the aggregator. On a
 match), it falls back to the same best-effort identity-header mint the
 x509 branch uses, gated by `_might_be_entitled`, so a listing never
 hard-fails or eats a wasted mint attempt just because a krb5 service is
-in the catalog. `resolve_list_time_credential` — the portal's
+in the catalog. A caller must have linked the credential (a stored ticket,
+`is_linked()` true) for the service's tools to be listed: for an unlinked
+caller the branch raises `NotLinkedForListing` before anything is minted,
+so no identity header is attached and the backend is never contacted. The
+service then contributes no tools to that caller's list (the rest of the
+list is unaffected), the outcome is recorded as `not_linked` for that
+caller (logged at INFO as `aggregator.service_list_failed`, catalog status
+"Link your identity…"), and a direct `tools/call` of one of its tools
+still gets the friendly not-linked error rather than "Unknown tool"
+(`_ObservableProxyProvider._get_tool` resolves it to a stand-in whose run
+reaches the authorized branch above). `unauthorized` ("Your linked
+credential was rejected") is reserved for a linked caller whose injected
+credential the backend rejected. The x509 and servicex branches do the
+same. `resolve_list_time_credential` — the portal's
 per-service tool-listing entry point into this same logic
-(`api/catalog_tools.py`) — folds `"x509"` and `"krb5"` into one shared
+(`api/catalog_tools.py`, which reports `not_linked` for the unlinked caller
+without contacting the backend) — folds `"x509"` and `"krb5"` into one shared
 `auth_type in ("x509", "krb5")` branch, since the two were byte-identical:
 mint an identity token, return it as an `Authorization` header, and
 — critically — never call `provider.issue()` for either, since minting

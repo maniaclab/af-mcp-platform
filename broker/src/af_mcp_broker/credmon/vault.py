@@ -73,6 +73,27 @@ class VaultCredmonSyncState(CredmonSyncState):
             return False
         return True
 
+    async def release_lease(self, holder: str, *, now: float) -> None:
+        current = await self._vault_kv.get(self._lease_path)
+        if current is None:
+            return
+        data, version = current
+        if data.get("holder") != holder:
+            # Our lease expired and another replica took over: theirs to keep.
+            return
+        # Expire it in place rather than deleting the entry: a check-and-set
+        # write needs only the create/update grant the lease already uses,
+        # and a lost race (someone took over between read and write) simply
+        # leaves their lease intact.
+        try:
+            await self._vault_kv.write_cas(
+                self._lease_path,
+                {"holder": holder, "expires_at": now},
+                expected_version=version,
+            )
+        except CasConflict:
+            return
+
     async def write_status(self, status: dict[str, Any]) -> None:
         # Only the lease holder writes, so a conflict here means a stale
         # read raced our own previous write -- re-read once and retry.

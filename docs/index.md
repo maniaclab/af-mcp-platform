@@ -72,6 +72,9 @@ broker subsystems and the `/v1` contract, and
 - [Admin Capabilities](admin.md) — configuring the admin group, the
   usage-for-other-users view, and maintenance mode (including its
   fail-open-on-store-outage limitation).
+- [Portal Styling](portal-styling.md) — how the portal's styling is built:
+  tokens, light and dark themes, the facility accent, icons, and the tests
+  and preview tooling that keep it on the design contract.
 - [Phase 1 Acceptance Checklist](phase1-acceptance-checklist.md) — what's
   verified by automated tests vs. what still needs a live-deploy check.
 - [agentgateway Spike](agentgateway-spike.md) — the acceptance test that

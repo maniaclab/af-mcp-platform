@@ -22,7 +22,7 @@ vi.mock('../../lib/api', () => ({
   revokeProxy: vi.fn(),
 }));
 
-import { fetchProxyStatus, fetchX509Preflight } from '../../lib/api';
+import { fetchProxyStatus, fetchX509Preflight, revokeProxy } from '../../lib/api';
 import X509IdentityCard from '../X509IdentityCard.vue';
 
 /** A promise whose resolution the test controls — stands in for a slow HTTP response. */
@@ -64,12 +64,12 @@ function mountCard(): VueWrapper {
 
 /** The two accordion toggle rows, in template order. */
 function toggles(wrapper: VueWrapper) {
-  const buttons = wrapper.findAll('button.xc__section-toggle');
+  const buttons = wrapper.findAll('button.disclosure__toggle');
   expect(buttons).toHaveLength(2);
   return { preflightToggle: buttons[0], proxyToggle: buttons[1] };
 }
 
-/** The proxy accordion's status chip text ("active" / "no proxy"), or null when no chip is rendered. */
+/** The proxy accordion's status chip text ("Active" / "No proxy"), or null when no chip is rendered. */
 function proxyChip(wrapper: VueWrapper): string | null {
   const chip = toggles(wrapper).proxyToggle.find('.xc__chip');
   return chip.exists() ? chip.text() : null;
@@ -89,7 +89,7 @@ describe('VOMS proxy details accordion', () => {
     d1.resolve(ACTIVE);
     await flushPromises();
 
-    expect(proxyChip(wrapper)).toBe('active');
+    expect(proxyChip(wrapper)).toBe('Active');
     expect(wrapper.text()).toContain('Subject DN');
   });
 
@@ -161,7 +161,7 @@ describe('VOMS proxy details accordion', () => {
     await flushPromises();
 
     // Fetch #2 belongs to the current open period and must win.
-    expect(proxyChip(wrapper)).toBe('active');
+    expect(proxyChip(wrapper)).toBe('Active');
   });
 
   it('never flips the chip at a collapse click (the deployed alternation repro)', async () => {
@@ -184,11 +184,11 @@ describe('VOMS proxy details accordion', () => {
     await proxyToggle.trigger('click'); // click 3: expand — fetch #2 (active)
     d2.resolve(ACTIVE); // lands while open — applied
     await flushPromises();
-    expect(proxyChip(wrapper)).toBe('active');
+    expect(proxyChip(wrapper)).toBe('Active');
 
     await proxyToggle.trigger('click'); // click 4: collapse
     await flushPromises();
-    expect(proxyChip(wrapper)).toBe('active'); // no rewrite at collapse
+    expect(proxyChip(wrapper)).toBe('Active'); // no rewrite at collapse
   });
 });
 
@@ -205,5 +205,27 @@ describe('Grid Certificates accordion', () => {
     await flushPromises();
 
     expect(preflightToggle.find('.xc__chip').exists()).toBe(false);
+  });
+});
+
+describe('proxy revoke confirmation', () => {
+  it('needs a second click, then revokes, emits revoked and shows the no-proxy state', async () => {
+    vi.mocked(fetchProxyStatus).mockResolvedValueOnce(ACTIVE);
+    vi.mocked(revokeProxy).mockResolvedValueOnce(undefined);
+    const wrapper = mountCard();
+
+    await toggles(wrapper).proxyToggle.trigger('click');
+    await flushPromises();
+
+    await wrapper.find('button.xc__btn--revoke').trigger('click');
+    expect(revokeProxy).not.toHaveBeenCalled();
+    expect(wrapper.find('button.xc__btn--revoke').text()).toBe('Confirm revoke');
+
+    await wrapper.find('button.xc__btn--revoke').trigger('click');
+    await flushPromises();
+
+    expect(revokeProxy).toHaveBeenCalledTimes(1);
+    expect(wrapper.emitted('revoked')).toEqual([[]]);
+    expect(proxyChip(wrapper)).toBe('No proxy');
   });
 });

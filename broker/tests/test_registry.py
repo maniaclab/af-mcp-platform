@@ -6,7 +6,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
+from af_mcp_broker.mcp.registry import (
+    _MAX_CALLER_LIST_FAILURES,
+    ServiceRegistry,
+    ServiceSpec,
+)
 
 SHIPPED_SERVICES = (
     Path(__file__).resolve().parents[1]
@@ -92,7 +96,7 @@ def test_recent_list_failure_absent_by_default() -> None:
     """A backend with no recorded tools/list failure reports None -- the
     common case for a healthy backend (issue #123's /v1/catalog status)."""
     registry = ServiceRegistry()
-    assert registry.recent_list_failure("rucio") is None
+    assert registry.recent_list_failure("rucio", "alice") is None
 
 
 def test_recent_list_failure_reflects_last_recorded_reason() -> None:
@@ -102,10 +106,10 @@ def test_recent_list_failure_reflects_last_recorded_reason() -> None:
     without an extra live probe (issue #123). Last write wins -- no history
     is kept, only the most recent reason."""
     registry = ServiceRegistry()
-    registry.record_list_failure("rucio", "unauthorized")
-    assert registry.recent_list_failure("rucio") == "unauthorized"
-    registry.record_list_failure("rucio", "unavailable")
-    assert registry.recent_list_failure("rucio") == "unavailable"
+    registry.record_list_failure("rucio", "unauthorized", "alice")
+    assert registry.recent_list_failure("rucio", "alice") == "unauthorized"
+    registry.record_list_failure("rucio", "unavailable", "alice")
+    assert registry.recent_list_failure("rucio", "alice") == "unavailable"
 
 
 def test_clear_list_failure_removes_a_recorded_reason() -> None:
@@ -114,12 +118,74 @@ def test_clear_list_failure_removes_a_recorded_reason() -> None:
     recovers -- without it, recent_list_failure() would report a backend
     "unavailable" forever after a single transient blip."""
     registry = ServiceRegistry()
-    registry.record_list_failure("rucio", "unavailable")
-    registry.clear_list_failure("rucio")
-    assert registry.recent_list_failure("rucio") is None
+    registry.record_list_failure("rucio", "unavailable", "alice")
+    registry.clear_list_failure("rucio", "alice")
+    assert registry.recent_list_failure("rucio", "alice") is None
 
 
 def test_clear_list_failure_is_a_noop_when_nothing_was_recorded() -> None:
     registry = ServiceRegistry()
-    registry.clear_list_failure("rucio")  # must not raise
-    assert registry.recent_list_failure("rucio") is None
+    registry.clear_list_failure("rucio", "alice")  # must not raise
+    assert registry.recent_list_failure("rucio", "alice") is None
+
+
+def test_caller_specific_list_failure_is_not_visible_to_other_subjects() -> None:
+    """ "unauthorized"/"not_linked" describe one caller's credential, so a
+    record made for alice must never be reported for bob."""
+    registry = ServiceRegistry()
+    registry.record_list_failure("rucio", "unauthorized", "alice")
+    assert registry.recent_list_failure("rucio", "alice") == "unauthorized"
+    assert registry.recent_list_failure("rucio", "bob") is None
+
+
+def test_caller_specific_list_failure_is_scoped_to_its_service() -> None:
+    registry = ServiceRegistry()
+    registry.record_list_failure("rucio", "not_linked", "alice")
+    assert registry.recent_list_failure("panda", "alice") is None
+
+
+def test_service_wide_list_failure_is_visible_to_every_subject() -> None:
+    """ "unavailable" is about the backend, true for every caller."""
+    registry = ServiceRegistry()
+    registry.record_list_failure("rucio", "unavailable", "alice")
+    assert registry.recent_list_failure("rucio", "alice") == "unavailable"
+    assert registry.recent_list_failure("rucio", "bob") == "unavailable"
+
+
+def test_successful_listing_clears_only_that_subjects_caller_specific_record() -> None:
+    registry = ServiceRegistry()
+    registry.record_list_failure("rucio", "unauthorized", "alice")
+    registry.record_list_failure("rucio", "unauthorized", "bob")
+    registry.clear_list_failure("rucio", "alice")
+    assert registry.recent_list_failure("rucio", "alice") is None
+    assert registry.recent_list_failure("rucio", "bob") == "unauthorized"
+
+
+def test_successful_listing_clears_the_service_wide_record_for_everyone() -> None:
+    registry = ServiceRegistry()
+    registry.record_list_failure("rucio", "unavailable", "alice")
+    registry.clear_list_failure("rucio", "bob")
+    assert registry.recent_list_failure("rucio", "alice") is None
+
+
+def test_caller_specific_list_failure_without_a_subject_is_not_recorded() -> None:
+    """A listing with no identifiable caller has nobody to show a
+    caller-specific reason to; recording it service-wide would reintroduce
+    the cross-caller leak."""
+    registry = ServiceRegistry()
+    registry.record_list_failure("rucio", "unauthorized", None)
+    assert registry.recent_list_failure("rucio", "alice") is None
+
+
+def test_caller_specific_list_failures_are_bounded() -> None:
+    """Per-subject records are in-process memory keyed by subject, so they
+    are capped; the least recently recorded entry is evicted first."""
+    registry = ServiceRegistry()
+    for i in range(_MAX_CALLER_LIST_FAILURES + 1):
+        registry.record_list_failure("rucio", "unauthorized", f"user-{i}")
+    assert registry.recent_list_failure("rucio", "user-0") is None
+    assert (
+        registry.recent_list_failure("rucio", f"user-{_MAX_CALLER_LIST_FAILURES}")
+        == "unauthorized"
+    )
+    assert registry.recent_list_failure("rucio", "user-1") == "unauthorized"

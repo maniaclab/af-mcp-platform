@@ -1,0 +1,32 @@
+{
+  "enabled": true,
+  "kinds": ["krb5", "x509"],
+  "service_prefix": "condor_credd_",
+  "interval_seconds": 300,
+  "last_run": {
+    "outcome": "partial",
+    "trigger": "timer",
+    "holder": "example-broker-7d9f-abcde",
+    "started_at": "@unix-37m",
+    "finished_at": "@unix-37m",
+    "last_success_at": "@unix-3h",
+    "stored": {
+      "krb5": 30,
+      "x509": 22
+    },
+    "not_linked": {
+      "krb5": 3,
+      "x509": 6
+    },
+    "skipped_no_posix": {},
+    "failed": {
+      "krb5": 4,
+      "x509": 9
+    },
+    "errors": [
+      "example-user-5: credd at credd.example-facility.org refused the credential",
+      "example-user-9: ticket renewal window elapsed"
+    ],
+    "errors_truncated": 11
+  }
+}

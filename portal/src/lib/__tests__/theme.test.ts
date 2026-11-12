@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   applyResolvedTheme,
-  cycleMode,
   getStoredMode,
   initTheme,
   resolveTheme,
   setMode,
   systemPrefersDark,
+  THEME_CHANGE_EVENT,
   THEME_MODES,
   THEME_STORAGE_KEY,
 } from '../theme';
@@ -87,6 +87,14 @@ describe('applyResolvedTheme', () => {
     expect(root.classList.contains('dark')).toBe(false);
     expect(root.style.colorScheme).toBe('light');
   });
+
+  it('dispatches THEME_CHANGE_EVENT on the root after applying', () => {
+    const root = document.createElement('html');
+    const listener = vi.fn(() => expect(root.classList.contains('dark')).toBe(true));
+    root.addEventListener(THEME_CHANGE_EVENT, listener);
+    applyResolvedTheme(root, 'dark');
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('setMode', () => {
@@ -128,14 +136,6 @@ describe('setMode', () => {
     setMode('light', { storage, root, prefersDark: true });
     expect(root.classList.contains('dark')).toBe(false);
     expect(root.style.colorScheme).toBe('light');
-  });
-});
-
-describe('cycleMode', () => {
-  it('cycles auto -> dark -> light -> auto', () => {
-    expect(cycleMode('auto')).toBe('dark');
-    expect(cycleMode('dark')).toBe('light');
-    expect(cycleMode('light')).toBe('auto');
   });
 });
 

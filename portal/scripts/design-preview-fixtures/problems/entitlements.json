@@ -1,0 +1,108 @@
+{
+  "group_permissions": {
+    "example-atlas-users": ["read_data", "read_metadata", "submit_jobs"],
+    "example-notebook-users": ["use_notebooks", "read_metadata"],
+    "example-servicex-users": ["servicex_access", "read_data"],
+    "example-operators": [
+      "admin_ops",
+      "read_data",
+      "read_metadata",
+      "submit_jobs",
+      "use_notebooks",
+      "example_exec_jobs"
+    ],
+    "example-guests": ["read_metadata"]
+  },
+  "permissions": [
+    {
+      "name": "read_data",
+      "action_type": "read",
+      "description": "Read datasets from data stores"
+    },
+    {
+      "name": "read_metadata",
+      "action_type": "read",
+      "description": "Read metadata catalogs"
+    },
+    {
+      "name": "read_monitoring",
+      "action_type": "read",
+      "description": "Read monitoring dashboards and metrics"
+    },
+    {
+      "name": "read_gitlab",
+      "action_type": "read",
+      "description": "Browse GitLab repos, issues, MRs, and pipelines"
+    },
+    {
+      "name": "read_files",
+      "action_type": "read",
+      "description": "Browse and read files in a POSIX home directory"
+    },
+    {
+      "name": "submit_jobs",
+      "action_type": "state_change",
+      "description": "Submit compute jobs"
+    },
+    {
+      "name": "manage_jobs",
+      "action_type": "state_change",
+      "description": "Cancel or modify compute jobs"
+    },
+    {
+      "name": "launch_compute",
+      "action_type": "state_change",
+      "description": "Launch interactive compute sessions"
+    },
+    {
+      "name": "manage_jupyter",
+      "action_type": "state_change",
+      "description": "Start, stop, and configure Jupyter servers"
+    },
+    {
+      "name": "manage_gitlab",
+      "action_type": "state_change",
+      "description": "Create MRs, open issues, retry CI"
+    },
+    {
+      "name": "manage_data",
+      "action_type": "state_change",
+      "description": "Write or delete data (gated)"
+    },
+    {
+      "name": "admin",
+      "action_type": "state_change",
+      "description": "Platform administration"
+    },
+    {
+      "name": "use_notebooks",
+      "action_type": "state_change",
+      "description": null
+    },
+    {
+      "name": "servicex_access",
+      "action_type": "state_change",
+      "description": null
+    },
+    {
+      "name": "admin_ops",
+      "action_type": "state_change",
+      "description": null
+    },
+    {
+      "name": "read_search",
+      "action_type": "read",
+      "description": null
+    },
+    {
+      "name": "exec_jobs",
+      "action_type": "state_change",
+      "description": null
+    },
+    {
+      "name": "example_exec_jobs",
+      "action_type": "state_change",
+      "description": null
+    }
+  ]
+}

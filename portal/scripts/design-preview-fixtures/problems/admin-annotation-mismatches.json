@@ -1,0 +1,10 @@
+[
+  {
+    "service": "condor",
+    "tool": "condor_hold_job",
+    "declared_read_only_hint": true,
+    "resolved_action_type": "state_change",
+    "resolved_via": "permission",
+    "permission": "submit_jobs"
+  }
+]

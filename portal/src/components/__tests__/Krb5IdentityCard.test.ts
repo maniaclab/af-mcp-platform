@@ -128,13 +128,13 @@ beforeEach(() => {
 describe('badge and action button', () => {
   it('renders a "not linked" badge and a mint button when unlinked', () => {
     const wrapper = mountCard(false);
-    expect(wrapper.text()).toContain('not linked');
+    expect(wrapper.text()).toContain('Not linked');
     expect(wrapper.find('button.kc__btn').text()).toBe('Get Kerberos ticket');
   });
 
   it('renders a "linked" badge and a refresh button when linked', () => {
     const wrapper = mountCard(true);
-    expect(wrapper.text()).toContain('linked');
+    expect(wrapper.text()).toContain('Linked');
     expect(wrapper.find('button.kc__btn').text()).toBe('Refresh ticket');
   });
 
@@ -153,13 +153,13 @@ describe('badge and action button', () => {
 
   it('does not render a "keytab linked" badge when no keytab is linked', () => {
     const wrapper = mountCard(true, false);
-    expect(wrapper.text()).not.toContain('keytab linked');
+    expect(wrapper.text()).not.toContain('Keytab linked');
     expect(wrapper.find('button.kc__btn--keytab').text()).toBe('Link a keytab');
   });
 
   it('renders a "keytab linked" badge and a "Replace keytab" button once a keytab is linked', () => {
     const wrapper = mountCard(true, true);
-    expect(wrapper.text()).toContain('keytab linked');
+    expect(wrapper.text()).toContain('Keytab linked');
     expect(wrapper.find('button.kc__btn--keytab').text()).toBe('Replace keytab');
   });
 });

@@ -48,7 +48,13 @@ as every other `/v1` route — no special-cased public route):
   `principal.groups` alongside the resolved `grants` it already returned —
   the internal data existed already, it just wasn't surfaced.
 - `GET /v1/entitlements` (new): the static `EntitlementPolicy.group_permissions`
-  table verbatim, the same for every caller.
+  table verbatim, the same for every caller. It also returns `permissions`,
+  the catalog of every permission the policy knows (built-ins in
+  `PERMISSIONS` order, then `custom_permissions` in policy order, then any
+  name only a group grants), each as `{name, action_type, description}`;
+  `description` is `null` for a custom permission. The portal takes each
+  permission's kind, description and order from it rather than keeping its
+  own copy.
 
 Portal: new `/entitlements/` page (`EntitlementsPage.vue`), added to the
 existing **Platform** sidebar section (previously just "Admin") —

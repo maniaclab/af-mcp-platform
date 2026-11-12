@@ -46,7 +46,7 @@ export function krb5LinkErrorMessage(err: unknown): string {
     return `Request failed (${err.status}).`;
   }
   if (err instanceof Error) return err.message;
-  return 'Could not mint a Kerberos ticket.';
+  return 'Could not create a Kerberos ticket.';
 }
 
 /**

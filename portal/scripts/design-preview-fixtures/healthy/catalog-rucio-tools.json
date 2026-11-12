@@ -1,0 +1,27 @@
+{
+  "name": "rucio",
+  "display_name": "Rucio",
+  "description": "Dataset, replica and replication-rule queries for the example data catalogue.",
+  "status": "ok",
+  "status_detail": "Ready to use.",
+  "tools": [
+    {
+      "name": "rucio_list_dids",
+      "description": "List data identifiers matching a pattern.",
+      "action_type": "read",
+      "permission": "read_data"
+    },
+    {
+      "name": "rucio_list_replicas",
+      "description": "List the replicas of a dataset.",
+      "action_type": "read",
+      "permission": "read_data"
+    },
+    {
+      "name": "rucio_add_rule",
+      "description": "Create a replication rule for a dataset.",
+      "action_type": "state_change",
+      "permission": "read_data"
+    }
+  ]
+}
