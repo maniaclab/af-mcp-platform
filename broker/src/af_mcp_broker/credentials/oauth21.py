@@ -241,6 +241,7 @@ class OAuth21Provider(CredentialProvider):
 
     cred_class: ClassVar[str] = "oauth21"
     execution_model: ClassVar[ExecutionModel] = ExecutionModel.DELEGATED
+    tracks_rejection: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -330,6 +331,10 @@ class OAuth21Provider(CredentialProvider):
         if cred.rejected_at is not None:
             return False
         return self._usable_seconds(cred) > 0
+
+    async def is_rejected(self, principal: Principal) -> bool:
+        entry = await self._store.get(principal.subject, self._alias)
+        return entry is not None and entry[0].rejected_at is not None
 
     async def mark_rejected(self, principal: Principal, access_token: str) -> None:
         """Handle a backend's 401 for *access_token*: refresh once, else mark it rejected.

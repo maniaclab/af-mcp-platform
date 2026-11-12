@@ -24,8 +24,10 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
+from af_mcp_broker.api.permissions import _service_status
 from af_mcp_broker.app import app as broker_app
 from af_mcp_broker.config import get_settings
+from af_mcp_broker.credentials import CredentialRegistry
 from af_mcp_broker.credentials.oauth21 import (
     InMemoryTokenStore,
     OAuth21Provider,
@@ -34,6 +36,7 @@ from af_mcp_broker.credentials.oauth21 import (
     normalize_token_response,
 )
 from af_mcp_broker.identity import Principal, keycloak_dependency
+from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
 from af_mcp_broker.oauth_state import (
     NONCE_COOKIE_NAME,
     NONCE_COOKIE_PATH,
@@ -938,6 +941,149 @@ async def test_issue_refresh_clears_refreshed_after_rejection(
     assert stored is not None
     assert stored[0].access_token.get_secret_value() == "access-token-2"
     assert stored[0].refreshed_after_rejection is False
+
+
+# ---------------------------------------------------------------------------
+# A rejected credential in the catalog (api/permissions.py::_service_status)
+# ---------------------------------------------------------------------------
+
+
+async def _catalog_state(
+    provider: OAuth21Provider, service_registry: ServiceRegistry | None = None
+) -> tuple[str, str, str | None]:
+    """(status, status_detail, link_state) the catalog reports for SUBJECT's view of ALIAS."""
+    spec = ServiceSpec(
+        name=ALIAS,
+        prefix="rucio",
+        url="http://backend.invalid/mcp",
+        transport="http",
+        required_permission="__none__",
+        auth_type="bearer",
+    )
+    credentials = CredentialRegistry()
+    credentials.register(ALIAS, provider)
+    status, detail, _correlation_id, link_state = await _service_status(
+        spec, _principal(), set(), credentials, service_registry or ServiceRegistry()
+    )
+    return status, detail, link_state
+
+
+async def test_is_rejected_is_false_without_a_stored_credential() -> None:
+    provider = _make_provider(InMemoryTokenStore())
+
+    assert await provider.is_rejected(_principal()) is False
+
+
+async def test_is_rejected_is_false_for_a_usable_credential() -> None:
+    store = InMemoryTokenStore()
+    await store.write_cas(SUBJECT, ALIAS, _make_cred(), expected_version=None)
+
+    assert await _make_provider(store).is_rejected(_principal()) is False
+
+
+async def test_is_rejected_is_true_for_a_stored_rejected_credential() -> None:
+    store = InMemoryTokenStore()
+    await store.write_cas(
+        SUBJECT, ALIAS, _make_cred(rejected_at=datetime.now(UTC)), expected_version=None
+    )
+    provider = _make_provider(store)
+
+    assert await provider.is_rejected(_principal()) is True
+    assert await provider.is_linked(_principal()) is False
+
+
+async def test_catalog_says_not_linked_when_nothing_is_stored() -> None:
+    status, detail, link_state = await _catalog_state(
+        _make_provider(InMemoryTokenStore())
+    )
+
+    assert (status, link_state) == ("link_required", "not_linked")
+    assert detail.startswith("Link your identity")
+
+
+async def test_catalog_says_rejected_for_a_stored_rejected_credential() -> None:
+    """A user who linked, whose token the backend rejected, is told so --
+    never asked to link as if they never had."""
+    store = InMemoryTokenStore()
+    await store.write_cas(
+        SUBJECT, ALIAS, _make_cred(rejected_at=datetime.now(UTC)), expected_version=None
+    )
+
+    status, detail, link_state = await _catalog_state(_make_provider(store))
+
+    assert (status, link_state) == ("link_required", "rejected")
+    assert detail.startswith("Your linked credential was rejected")
+
+
+async def test_catalog_ignores_an_unauthorized_listing_record_the_provider_resolved(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The provider, not the per-caller "unauthorized" listing record, decides
+    whether an oauth21 credential is rejected. A 401 that a refresh resolved
+    leaves the credential usable, so the record it also left behind must not
+    keep the catalog on "rejected"."""
+    store = InMemoryTokenStore()
+    await store.write_cas(SUBJECT, ALIAS, _make_cred(), expected_version=None)
+    provider = _make_provider(store)
+    monkeypatch.setattr(
+        "af_mcp_broker.credentials.oauth21.get_http_client",
+        lambda: _FakeTokenClient(
+            status_code=200,
+            json_body={"access_token": "access-token-2", "expires_in": 3600},
+        ),
+    )
+    service_registry = ServiceRegistry()
+
+    await provider.mark_rejected(_principal(), "access-token-1")
+    service_registry.record_list_failure(ALIAS, "unauthorized", SUBJECT)
+
+    status, _detail, link_state = await _catalog_state(provider, service_registry)
+    assert (status, link_state) == ("available", None)
+
+
+async def test_catalog_does_not_claim_rejected_when_the_as_is_unreachable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An authorization-server outage leaves the credential as it was, so
+    the catalog must not call it rejected."""
+    store = InMemoryTokenStore()
+    await store.write_cas(SUBJECT, ALIAS, _make_cred(), expected_version=None)
+    provider = _make_provider(store)
+    monkeypatch.setattr(
+        "af_mcp_broker.credentials.oauth21.get_http_client",
+        lambda: _FakeTokenClient(status_code=503),
+    )
+    service_registry = ServiceRegistry()
+
+    await provider.mark_rejected(_principal(), "access-token-1")
+    service_registry.record_list_failure(ALIAS, "unauthorized", SUBJECT)
+
+    status, _detail, link_state = await _catalog_state(provider, service_registry)
+    assert (status, link_state) == ("available", None)
+
+
+async def test_catalog_clears_rejected_when_the_user_relinks() -> None:
+    """Re-linking replaces the stored entry, which drops ``rejected_at``; a
+    leftover "unauthorized" listing record must not hold the catalog on
+    "rejected" until the caller's next successful listing."""
+    store = InMemoryTokenStore()
+    version = await store.write_cas(
+        SUBJECT, ALIAS, _make_cred(rejected_at=datetime.now(UTC)), expected_version=None
+    )
+    provider = _make_provider(store)
+    service_registry = ServiceRegistry()
+    service_registry.record_list_failure(ALIAS, "unauthorized", SUBJECT)
+    assert (await _catalog_state(provider, service_registry))[2] == "rejected"
+
+    await store.write_cas(
+        SUBJECT,
+        ALIAS,
+        _make_cred(access_token=SecretStr("access-token-2")),
+        expected_version=version,
+    )
+
+    status, _detail, link_state = await _catalog_state(provider, service_registry)
+    assert (status, link_state) == ("available", None)
 
 
 async def test_issue_handles_version_conflict_during_refresh(

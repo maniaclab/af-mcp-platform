@@ -16,6 +16,7 @@ from fastmcp.utilities.tests import run_server_async
 from pydantic import SecretStr
 from starlette.responses import JSONResponse
 
+from af_mcp_broker.api.permissions import _service_status
 from af_mcp_broker.authorization import EntitlementPolicy
 from af_mcp_broker.credentials import (
     CredentialKind,
@@ -167,6 +168,7 @@ def aggregator_app_url(settings, toy_backend_url, policy, static_principal_cache
             credential_registry,
             principal_cache=principal_cache,
         )
+        _run.service_registry = registry
         async with run_aggregator_async(mcp, path="/mcp") as url:
             yield url
 
@@ -515,3 +517,100 @@ async def test_backend_401_for_the_refreshed_token_rejects_it(
     principal = make_principal(subject="user-123")
     assert await provider.is_linked(principal) is False
     assert verifying_backend.refresh_grants == 1
+
+
+async def _catalog_view(
+    service_registry: ServiceRegistry, provider: OAuth21Provider, principal: Principal
+) -> tuple[str, str | None]:
+    """(status, link_state) the catalog reports for *principal*'s view of "toy"."""
+    spec = service_registry.get("toy")
+    assert spec is not None
+    credentials = CredentialRegistry()
+    credentials.register("toy", provider)
+    status, _detail, _correlation_id, link_state = await _service_status(
+        spec, principal, {"read_data"}, credentials, service_registry
+    )
+    return status, link_state
+
+
+async def test_rejected_oauth21_credential_reads_as_rejected_in_the_catalog(
+    aggregator_app_url, verifying_backend, sig_key, prime_jwks, make_principal
+) -> None:
+    """The caller linked and the backend rejected the token: the catalog says
+    "rejected" (re-link), not "not_linked", though ``is_linked()`` is False."""
+    prime_jwks([sig_key.jwk])
+    provider = await _oauth21_provider_holding(
+        "revoked-token", token_endpoint=verifying_backend.token_endpoint
+    )
+    aggregator_app_url.directory.groups_by_subject["user-123"] = ["atlas"]
+    token = sig_key.sign(make_claims())
+
+    async for base_url in aggregator_app_url(
+        provider, toy_url=verifying_backend.mcp_url
+    ):
+        async with _bearer_client(base_url, token) as client:
+            with pytest.raises(ToolError):
+                await client.call_tool("toy_ping", {})
+
+    assert await _catalog_view(
+        aggregator_app_url.service_registry,
+        provider,
+        make_principal(subject="user-123"),
+    ) == ("link_required", "rejected")
+
+
+async def test_refreshed_oauth21_credential_leaves_no_rejection_in_the_catalog(
+    aggregator_app_url, verifying_backend, sig_key, prime_jwks, make_principal
+) -> None:
+    """A 401 that a refresh resolves records the caller's "unauthorized"
+    listing failure first; the retried listing then succeeds and clears it, so
+    the catalog never keeps reporting a credential that now works as rejected."""
+    prime_jwks([sig_key.jwk])
+    provider = await _oauth21_provider_holding(
+        "stale-token",
+        token_endpoint=verifying_backend.token_endpoint,
+        refresh_token="refresh-1",
+    )
+    aggregator_app_url.directory.groups_by_subject["user-123"] = ["atlas"]
+    token = sig_key.sign(make_claims())
+
+    async for base_url in aggregator_app_url(
+        provider, toy_url=verifying_backend.mcp_url
+    ):
+        async with _bearer_client(base_url, token) as client:
+            result = await client.call_tool("toy_ping", {})
+
+    assert result.data == "pong"
+    service_registry = aggregator_app_url.service_registry
+    assert service_registry.recent_list_failure("toy", "user-123") is None
+    assert await _catalog_view(
+        service_registry, provider, make_principal(subject="user-123")
+    ) == ("available", None)
+
+
+async def test_unreachable_authorization_server_leaves_the_catalog_unrejected(
+    aggregator_app_url, verifying_backend, sig_key, prime_jwks, make_principal
+) -> None:
+    """The refresh cannot reach the AS: the credential is left as it was and
+    the catalog does not call it rejected, although the call itself failed."""
+    prime_jwks([sig_key.jwk])
+    provider = await _oauth21_provider_holding(
+        "stale-token",
+        token_endpoint="http://127.0.0.1:1/oauth/token",
+        refresh_token="refresh-1",
+    )
+    aggregator_app_url.directory.groups_by_subject["user-123"] = ["atlas"]
+    token = sig_key.sign(make_claims())
+
+    async for base_url in aggregator_app_url(
+        provider, toy_url=verifying_backend.mcp_url
+    ):
+        async with _bearer_client(base_url, token) as client:
+            with pytest.raises(ToolError):
+                await client.call_tool("toy_ping", {})
+
+    principal = make_principal(subject="user-123")
+    assert await provider.is_linked(principal) is True
+    assert await _catalog_view(
+        aggregator_app_url.service_registry, provider, principal
+    ) == ("available", None)

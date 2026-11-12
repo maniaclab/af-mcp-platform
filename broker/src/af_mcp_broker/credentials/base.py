@@ -116,6 +116,22 @@ class CredentialProvider(ABC):
         genuinely cannot be minted yet, not merely "we didn't check."
         """
 
+    # True for a provider that records a backend's rejection of a stored
+    # credential itself (``mark_rejected``/``is_rejected``). Its stored state
+    # then decides whether the catalog reports "rejected"; for every other
+    # provider the catalog falls back to the caller's recorded "unauthorized"
+    # listing failure.
+    tracks_rejection: ClassVar[bool] = False
+
+    async def is_rejected(self, principal: Principal) -> bool:  # noqa: ARG002 (interface)
+        """Whether this principal has a credential stored that a backend rejected, so ``is_linked()`` is False although they did link.
+
+        Lets the catalog tell "linked, but the credential was rejected" from
+        "never linked". Default False; a provider that sets
+        ``tracks_rejection`` overrides it.
+        """
+        return False
+
     @abstractmethod
     async def issue(
         self,
