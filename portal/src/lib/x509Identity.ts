@@ -8,7 +8,7 @@
  * /v1/x509/proxy (via api.ts's requestProxy); this module only turns its
  * outcomes into user-facing strings.
  */
-import { APIError, SessionExpiredError } from './api';
+import { APIError, SessionExpiredError, type X509PreflightCheck } from './api';
 
 /**
  * Extracts FastAPI's `{"detail": "..."}` from an APIError body, or null when
@@ -136,6 +136,19 @@ const PREFLIGHT_CHECK_LABELS: Record<string, string> = {
 
 export function preflightCheckLabel(name: string): string {
   return PREFLIGHT_CHECK_LABELS[name] ?? name;
+}
+
+/** The checklist's "Required mode" cell: the service's allowed modes, or
+ * "Any" when the service sets no requirement (the public certificate). */
+export function preflightRequiredModeLabel(check: X509PreflightCheck): string {
+  return check.required_modes?.length ? check.required_modes.join(' or ') : 'Any';
+}
+
+/** True when a found mode falls outside the service's required set, so the
+ * Mode cell can flag it; false when either side is unknown. */
+export function preflightModeMismatch(check: X509PreflightCheck): boolean {
+  if (!check.mode || !check.required_modes?.length) return false;
+  return !check.required_modes.includes(check.mode);
 }
 
 /**
