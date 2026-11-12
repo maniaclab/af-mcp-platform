@@ -501,6 +501,20 @@ class TestPerTargetResolution:
         assert resp.status_code == 201, resp.text
         assert linked == [(state["principal"].subject, "dune-mcp")]
 
+    def test_proxy_delete_invalidates_listing_caches_via_revoke(
+        self, two_entry_app
+    ) -> None:
+        client, _store, state = two_entry_app
+        revoked: list[tuple[str, str]] = []
+        client.app.state.credential_cache._on_revoke = lambda subject, target: (
+            revoked.append((subject, target))
+        )
+
+        resp = client.delete("/v1/x509/proxy", params={"target": "dune-mcp"})
+
+        assert resp.status_code == 204, resp.text
+        assert revoked == [(state["principal"].subject, "dune-mcp")]
+
     def test_unlock_resolves_the_target_entry_provider(self, two_entry_app) -> None:
         """POST /v1/x509/proxy with an explicit target mints via that
         target's entry (the dune fakes), storing the link in its store."""

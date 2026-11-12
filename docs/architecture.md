@@ -641,7 +641,7 @@ status it can change:
 A successful listing by a caller clears that caller's own record and the
 service-wide one, never another caller's. Listings are cached per caller and
 service (a failed one for 30 seconds), so a caller's cached listing and own
-record are also dropped the moment a credential for that service is linked
+caller-specific record (never the service-wide one) are also dropped the moment a credential for that service is linked
 (OAuth 2.1 callback, ServiceX link, Kerberos keytab/ticket, x509 proxy mint)
 or revoked, and the next `tools/list` reaches the backend; see
 [docs/auth.md](auth.md#when-a-new-link-shows-up-in-toolslist). A

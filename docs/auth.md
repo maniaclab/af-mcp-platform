@@ -185,8 +185,9 @@ skipped one) is cached for 30 seconds. Completing a link must not leave the
 caller waiting that out, so the `/v1` routes that complete one call
 `CredentialCache.notify_linked(subject, target)` — the counterpart of
 `revoke()`'s `on_revoke` — for every target of the identity-provider entry.
-That drops the caller's cached listing and recorded listing failure for those
-services (no other caller's, no other service's), and their next `tools/list`
+That drops the caller's cached listing and their own caller-specific listing
+failure record (`not_linked`/`unauthorized`) for those services (no other
+caller's, no other service's, and never a service-wide `unavailable`), and their next `tools/list`
 reaches the backend. `app.py` wires both hooks to `invalidate_subject_cache`.
 
 | Type | Link event the broker sees | Listing cache after linking |

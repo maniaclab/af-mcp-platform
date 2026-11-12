@@ -124,3 +124,22 @@ async def test_lifespan_revoke_also_drops_the_per_caller_record(
 
         assert ("tools", "alice") not in rucio._subject_list_cache
         assert registry.recent_list_failure("rucio", "alice") is None
+
+
+async def test_lifespan_link_and_revoke_keep_the_service_wide_failure_record(
+    app_client_factory: Any,
+) -> None:
+    with app_client_factory() as (client, _state):
+        registry = client.app.state.service_registry
+        cache = client.app.state.credential_cache
+        registry.record_list_failure("rucio", "unavailable", None)
+        registry.record_list_failure("rucio", "not_linked", "alice")
+
+        cache.notify_linked("alice", "rucio")
+        assert registry.recent_list_failure("rucio", "alice") == "unavailable"
+        assert registry.recent_list_failure("rucio", "bob") == "unavailable"
+
+        registry.record_list_failure("rucio", "not_linked", "alice")
+        await cache.revoke("alice", "rucio")
+        assert registry.recent_list_failure("rucio", "alice") == "unavailable"
+        assert registry.recent_list_failure("rucio", "bob") == "unavailable"

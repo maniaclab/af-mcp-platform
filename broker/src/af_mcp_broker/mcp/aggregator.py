@@ -1295,14 +1295,16 @@ class _ObservableProxyProvider(ProxyProvider):
             )
 
     def invalidate_subject(self, subject: str) -> None:
-        """Drop *subject*'s cached listing entries (success or failure), for every kind (tools, resources, resource templates, prompts), for this service, and the failure reason recorded for *subject* against it.
+        """Drop *subject*'s cached listing entries (success or failure), for every kind (tools, resources, resource templates, prompts), for this service, and the caller-specific failure reason recorded for *subject* against it.
 
         Called when *subject*'s linked identity changes -- see
         ``invalidate_subject_cache`` (module-level, below) for the wiring
         across every provider on a link/unlink/credential-revocation event.
-        The recorded reason (``ServiceRegistry.clear_list_failure``) goes with
-        the cached entries because both describe the credential state being
-        replaced; the next listing records whatever is true afterwards. A
+        The caller-specific reason (``ServiceRegistry.clear_caller_list_failure``)
+        goes with the cached entries because both describe the credential state
+        being replaced; the next listing records whatever is true afterwards.
+        A service-wide reason is left alone: a credential change says nothing
+        about whether the backend is up. A
         subject with nothing cached is a silent no-op. Leaves
         ``_subject_list_locks`` alone: an in-flight refresh for *subject* (if
         any) is unaffected, and the next cache miss just creates a fresh lock.
@@ -1310,7 +1312,7 @@ class _ObservableProxyProvider(ProxyProvider):
         stale = [key for key in self._subject_list_cache if key[1] == subject]
         for key in stale:
             del self._subject_list_cache[key]
-        self._registry.clear_list_failure(self._service_name, subject)
+        self._registry.clear_caller_list_failure(self._service_name, subject)
 
     def _prune_subject_list_cache(self) -> None:
         """Drop every expired entry, so the cache dict never grows past recently active (kind, subject) pairs."""
