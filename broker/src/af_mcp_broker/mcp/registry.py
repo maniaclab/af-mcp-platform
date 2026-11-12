@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, get_args
@@ -384,30 +385,48 @@ class ToolRouting:
         return self.advertised - len(self.unroutable)
 
 
+# tools/list failure reasons (aggregator.py's _classify_failure) that describe
+# the backend itself and hold for every caller; any other reason describes one
+# caller's credential ("unauthorized": the backend rejected it; "not_linked":
+# the caller has none).
+_SERVICE_WIDE_LIST_FAILURES = frozenset({"unavailable"})
+
+# Cap on per-caller list-failure records held in memory. Each is a small
+# (service, subject) -> reason entry, so the cap is generous; evicting one only
+# drops a best-effort status refinement until that caller's next failed listing.
+_MAX_CALLER_LIST_FAILURES = 4096
+
+
 class ServiceRegistry:
     """Config-driven service registry. Adding a service = one YAML entry, no code change."""
 
     def __init__(self, builtin_service_name: str = BUILTIN_SERVICE_NAME) -> None:
         self._builtin_service_name = builtin_service_name
         self._services: dict[str, ServiceSpec] = {}
-        # service name -> most recently classified tools/list failure reason
-        # ("not_linked" | "unauthorized" | "unavailable", see aggregator.py's
-        # _classify_list_failure). Best-effort, last-write-wins, no history --
-        # lets /v1/catalog's status derivation (issue #123) factor in a recent
-        # listing failure without an extra live probe of its own.
-        self._recent_list_failures: dict[str, str] = {}
+        # Most recently classified tools/list failure reasons (see
+        # aggregator.py's _classify_list_failure), best-effort, last-write-
+        # wins, no history -- lets /v1/catalog's status derivation (issue
+        # #123) factor in a recent listing failure without an extra live
+        # probe of its own. A reason in _SERVICE_WIDE_LIST_FAILURES describes
+        # the backend and is true for every caller: service name -> reason.
+        # Every other reason ("unauthorized", "not_linked") describes one
+        # caller's credential: (service name, subject) -> reason, capped at
+        # _MAX_CALLER_LIST_FAILURES entries (least recently recorded evicted
+        # first) since it is keyed by an unbounded set of subjects.
+        self._service_list_failures: dict[str, str] = {}
+        self._caller_list_failures: OrderedDict[tuple[str, str], str] = OrderedDict()
         # (service, tool) -> most recently observed annotation/policy
         # mismatch (issue #238 B.8). Populated by EntitlementMiddleware.
         # on_list_tools as callers list tools -- observed over time, not by
         # a live probe of every registered service, same discovery model as
-        # _recent_list_failures above.
+        # the list-failure records above.
         self._annotation_mismatches: dict[tuple[str, str], AnnotationMismatch] = {}
         # service name -> most recently observed tool-mapping drift (issue
         # #330); same observed-over-time model as _annotation_mismatches.
         self._tool_mapping_drifts: dict[str, ToolMappingDrift] = {}
         # service name -> its backend's last successful upstream listing's
         # routing outcome (see ToolRouting); last-write-wins like
-        # _recent_list_failures, and kept across a failed listing.
+        # the list-failure records above, and kept across a failed listing.
         self._tool_routings: dict[str, ToolRouting] = {}
         # Merged, O(1)-lookup permission map built by register(): a dict-form
         # required_permission's per-tool entries insert under their namespaced
@@ -587,17 +606,33 @@ class ServiceRegistry:
                 return spec
         return None
 
-    def record_list_failure(self, name: str, reason: str) -> None:
-        """Record the most recent classified tools/list failure *reason* for service *name*. Called by aggregator.py's _ObservableProxyProvider when a tools/list request fails -- see _classify_list_failure."""
-        self._recent_list_failures[name] = reason
+    def record_list_failure(self, name: str, reason: str, subject: str | None) -> None:
+        """Record the most recent classified tools/list failure *reason* for service *name*. Called by aggregator.py's _ObservableProxyProvider when a tools/list request fails -- see _classify_list_failure.
 
-    def clear_list_failure(self, name: str) -> None:
-        """Clear any recorded tools/list failure reason for *name*. Called by aggregator.py's _ObservableProxyProvider on a successful tools/list, so a service that recovers stops being reported "unavailable" -- record_list_failure() has last-write-wins semantics but nothing previously cleared a stale reason on success, so it otherwise persisted for the life of the process. No-op if nothing was recorded."""
-        self._recent_list_failures.pop(name, None)
+        A service-wide *reason* (_SERVICE_WIDE_LIST_FAILURES) is recorded against *name* alone; any other reason is about *subject*'s own credential and is recorded against (*name*, *subject*) only, so it never reaches another caller's status. A caller-specific reason with no *subject* has no caller to show it to and is dropped.
+        """
+        if reason in _SERVICE_WIDE_LIST_FAILURES:
+            self._service_list_failures[name] = reason
+            return
+        if subject is None:
+            return
+        key = (name, subject)
+        self._caller_list_failures[key] = reason
+        self._caller_list_failures.move_to_end(key)
+        while len(self._caller_list_failures) > _MAX_CALLER_LIST_FAILURES:
+            self._caller_list_failures.popitem(last=False)
 
-    def recent_list_failure(self, name: str) -> str | None:
-        """Return the most recently recorded tools/list failure reason for *name*, or None if none has been recorded (the healthy default)."""
-        return self._recent_list_failures.get(name)
+    def clear_list_failure(self, name: str, subject: str | None) -> None:
+        """Clear the tools/list failure reasons *subject*'s successful listing of *name* supersedes: *name*'s service-wide reason (the backend answered, so it has recovered) and *subject*'s own caller-specific one. Called by aggregator.py's _ObservableProxyProvider on a successful tools/list, so a recovered service stops being reported "unavailable" -- nothing else resets a recorded reason. Other subjects' caller-specific records are untouched. No-op if nothing was recorded."""
+        self._service_list_failures.pop(name, None)
+        if subject is not None:
+            self._caller_list_failures.pop((name, subject), None)
+
+    def recent_list_failure(self, name: str, subject: str) -> str | None:
+        """Return the failure reason /v1/catalog should show *subject* for *name*, or None if none has been recorded (the healthy default): the service-wide reason if any (a backend that is down leaves nothing for the caller to act on), else *subject*'s own caller-specific one. Never another subject's reason."""
+        return self._service_list_failures.get(name) or self._caller_list_failures.get(
+            (name, subject)
+        )
 
     def record_annotation_mismatch(self, mismatch: AnnotationMismatch) -> None:
         """Record (or overwrite) *mismatch* for its (service, tool). Called by EntitlementMiddleware.on_list_tools whenever it observes one, so GET /v1/admin/annotation-mismatches can surface it without a live probe of its own -- see AnnotationMismatch."""

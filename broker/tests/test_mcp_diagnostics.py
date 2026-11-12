@@ -445,7 +445,7 @@ async def test_af_list_mcp_servers_reuses_service_status_and_identity_join(
             display_name="Rejected Backend",
         )
     )
-    registry.record_list_failure("rejected", "unauthorized")
+    registry.record_list_failure("rejected", "unauthorized", "user-123")
     credential_registry = CredentialRegistry()
     unlinked_provider = _FakeIdentityProvider(linked=False)
     credential_registry.register("needs-link", unlinked_provider)

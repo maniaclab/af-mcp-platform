@@ -27,10 +27,16 @@ from fastmcp.server.elicitation import AcceptedElicitation
 from fastmcp.server.providers.proxy import (
     ClientFactoryT,
     ProxyProvider,
+    ProxyTool,
     default_proxy_log_handler,
     default_proxy_progress_handler,
 )
-from mcp.types import ClientCapabilities, ElicitationCapability, ToolAnnotations
+from mcp.types import (
+    ClientCapabilities,
+    ElicitationCapability,
+    ToolAnnotations,
+)
+from mcp.types import Tool as McpTool
 from starlette.middleware import Middleware
 
 from af_mcp_broker import metrics
@@ -318,12 +324,45 @@ async def _classify_list_failure(exc: Exception, service_name: str) -> tuple[str
     Consults the per-service request-scoped state ``_bearer_factory``'s
     list-time branch records (keyed per service since one ``tools/list``
     request fans out to every service concurrently), then applies
-    ``_classify_failure``'s shared decision core.
+    ``_classify_failure``'s shared decision core. A ``NotLinkedForListing``
+    (the client factory turned the caller away before any request) is
+    ``"not_linked"`` outright.
     """
+    if isinstance(exc, NotLinkedForListing):
+        return "not_linked", str(exc)
     ctx = get_context()
     status = await ctx.get_state(f"__list_credential_status__:{service_name}")
     injected, skip_reason = status if status is not None else (False, None)
     return _classify_failure(exc, injected=injected, skip_reason=skip_reason), str(exc)
+
+
+class NotLinkedForListing(Exception):
+    """A caller who has not linked the credential a mint-and-inject service redeems cannot list that service's tools.
+
+    Raised before any identity token is minted and before any request
+    reaches the backend. ``_classify_list_failure`` maps it to
+    ``"not_linked"``; ``api/catalog_tools.py`` reports the same status for
+    the /v1 per-service listing.
+    """
+
+
+async def _require_linked_to_list(
+    spec: ServiceSpec, credential_registry: CredentialRegistry, principal: Principal
+) -> None:
+    """Raise ``NotLinkedForListing`` unless *principal* has linked the credential *spec* (x509/krb5/servicex) redeems.
+
+    A provider that doesn't resolve is a platform misconfiguration reported
+    elsewhere, so it does not block the listing here.
+    """
+    try:
+        provider = await credential_registry.resolve(spec.name)
+    except KeyError:
+        return
+    if not await provider.is_linked(principal):
+        raise NotLinkedForListing(
+            f"Service '{spec.name}' lists its tools only for callers who have "
+            "linked their credential."
+        )
 
 
 async def resolve_list_time_credential(
@@ -348,7 +387,8 @@ async def resolve_list_time_credential(
       actual proxy/ticket/access-token itself via ``POST /v1/credentials/
       x509/redeem``, ``.../krb5/redeem``, or ``.../servicex/redeem``
       respectively; this function must never call ``provider.issue()`` for
-      any of the three.
+      any of the three. A caller who has not linked the credential raises
+      ``NotLinkedForListing`` before anything is minted.
     - "bearer": ``_resolve_list_time_headers`` (the issue #121 best-effort
       mint), unchanged -- ``skip_reason`` ("not_linked" | "unavailable")
       is set whenever no credential could be attached.
@@ -363,6 +403,7 @@ async def resolve_list_time_credential(
     if spec.auth_type in ("x509", "krb5", "servicex"):
         if broker_token_issuer is None:
             return None, None
+        await _require_linked_to_list(spec, credential_registry, principal)
         token, _ = broker_token_issuer.mint(principal.subject, spec.effective_audience)
         return {"Authorization": f"Bearer {token}"}, None
     return await _resolve_list_time_headers(spec, credential_registry, principal)
@@ -718,12 +759,12 @@ def _make_client_factory(
     calls on a stale-cache lookup) hits the latter, and the two are otherwise
     indistinguishable from inside this factory.
 
-    For "x509" (and "krb5", identically), the answer is still to do nothing
-    extra: raising the not-yet-supported error during a listing would be
-    both wasteful (every session's first list would eat it) and wrong (a
-    listing shouldn't itself hard-fail), so absent the authorized-call
-    signal the factory just connects without a credential, same as a "none"
-    service -- unchanged.
+    For "x509" (and "krb5" and "servicex", identically), absent the
+    authorized-call signal the factory attaches an identity header for a
+    caller who has linked the credential, and raises ``NotLinkedForListing``
+    for one who has not -- before minting anything or contacting the
+    backend, so that service simply contributes no tools to that caller's
+    list.
 
     For "bearer", that same "wasteful and wrong" framing used to justify
     skipping credential resolution entirely during a listing -- until issue
@@ -776,15 +817,17 @@ def _make_client_factory(
         async def _x509_factory() -> Client:
             ctx = get_context()
             if await ctx.get_state("authorized_call_target") != spec.name:
-                # tools/list (or a stale-cache refresh): best-effort identity
-                # header, mirroring the bearer branch -- but minting is a
-                # local signature, so there is no network to fail and no
-                # skip_reason machinery to thread through.
+                # tools/list (or a stale-cache refresh): identity header for a
+                # caller who has linked the credential the backend will
+                # redeem -- minting is a local signature, so there is no
+                # network to fail. An unlinked caller raises before anything
+                # is minted or any request is made (_require_linked_to_list).
                 principal = await ctx.get_state("principal")
                 if principal is None or broker_token_issuer is None:
                     return _build_client(spec, transport_cls)
                 if not _might_be_entitled(principal, spec, policy):
                     return _build_client(spec, transport_cls)
+                await _require_linked_to_list(spec, credential_registry, principal)
                 token, _ = broker_token_issuer.mint(
                     principal.subject, spec.effective_audience
                 )
@@ -848,15 +891,17 @@ def _make_client_factory(
         async def _krb5_factory() -> Client:
             ctx = get_context()
             if await ctx.get_state("authorized_call_target") != spec.name:
-                # tools/list (or a stale-cache refresh): best-effort identity
-                # header, mirroring the bearer branch -- but minting is a
-                # local signature, so there is no network to fail and no
-                # skip_reason machinery to thread through.
+                # tools/list (or a stale-cache refresh): identity header for a
+                # caller who has linked the credential the backend will
+                # redeem -- minting is a local signature, so there is no
+                # network to fail. An unlinked caller raises before anything
+                # is minted or any request is made (_require_linked_to_list).
                 principal = await ctx.get_state("principal")
                 if principal is None or broker_token_issuer is None:
                     return _build_client(spec, transport_cls)
                 if not _might_be_entitled(principal, spec, policy):
                     return _build_client(spec, transport_cls)
+                await _require_linked_to_list(spec, credential_registry, principal)
                 token, _ = broker_token_issuer.mint(
                     principal.subject, spec.effective_audience
                 )
@@ -920,15 +965,17 @@ def _make_client_factory(
         async def _servicex_factory() -> Client:
             ctx = get_context()
             if await ctx.get_state("authorized_call_target") != spec.name:
-                # tools/list (or a stale-cache refresh): best-effort identity
-                # header, mirroring the krb5/x509 branches -- but minting is
-                # a local signature, so there is no network to fail and no
-                # skip_reason machinery to thread through.
+                # tools/list (or a stale-cache refresh): identity header for a
+                # caller who has linked the credential the backend will
+                # redeem -- minting is a local signature, so there is no
+                # network to fail. An unlinked caller raises before anything
+                # is minted or any request is made (_require_linked_to_list).
                 principal = await ctx.get_state("principal")
                 if principal is None or broker_token_issuer is None:
                     return _build_client(spec, transport_cls)
                 if not _might_be_entitled(principal, spec, policy):
                     return _build_client(spec, transport_cls)
+                await _require_linked_to_list(spec, credential_registry, principal)
                 token, _ = broker_token_issuer.mint(
                     principal.subject, spec.effective_audience
                 )
@@ -1230,7 +1277,22 @@ class _ObservableProxyProvider(ProxyProvider):
         # filtering _list_tools()'s return value alone isn't enough.
         if name in self._exclude_tools:
             return None
-        return await super()._get_tool(name, version)
+        try:
+            return await super()._get_tool(name, version)
+        except NotLinkedForListing:
+            # An unlinked caller's listing is skipped, so there is no schema
+            # to resolve this name against. For an authorized tools/call of
+            # this service, resolve it to a schema-less stand-in instead:
+            # AggregateProvider swallows a resolution failure into a bare
+            # "Unknown tool", whereas running the stand-in reaches
+            # client_factory's authorized branch and its friendly not-linked
+            # error (issue #311).
+            ctx = get_context()
+            if await ctx.get_state("authorized_call_target") != self._service_name:
+                raise
+            return ProxyTool.from_mcp_tool(
+                self.client_factory, McpTool(name=name, input_schema={"type": "object"})
+            )
 
     def invalidate_subject(self, subject: str) -> None:
         """Drop *subject*'s cached listing entries (success or failure), for every kind (tools, resources, resource templates, prompts), for this service.
@@ -1399,8 +1461,11 @@ class _ObservableProxyProvider(ProxyProvider):
             tools = await super()._list_tools()
         except Exception as exc:
             reason, detail = await _classify_list_failure(exc, self._service_name)
-            self._registry.record_list_failure(self._service_name, reason)
-            logger.warning(
+            subject = await self._caller_subject("tools")
+            self._registry.record_list_failure(self._service_name, reason, subject)
+            # An unlinked caller is an expected state, not a fault.
+            log = logger.info if reason == "not_linked" else logger.warning
+            log(
                 "aggregator.service_list_failed",
                 service=self._service_name,
                 reason=reason,
@@ -1409,10 +1474,12 @@ class _ObservableProxyProvider(ProxyProvider):
             raise
         else:
             # A successful listing means the service has recovered from any
-            # previously recorded failure -- clear it so /v1/catalog and
-            # af_list_mcp_servers stop reporting "unavailable" for a service
-            # that's actually fine again.
-            self._registry.clear_list_failure(self._service_name)
+            # recorded service-wide failure, and this caller from their own
+            # -- clear both so /v1/catalog and af_list_mcp_servers stop
+            # reporting them.
+            self._registry.clear_list_failure(
+                self._service_name, await self._caller_subject("tools")
+            )
             if self._exclude_tools:
                 self._warn_on_missing_exclude_tools(tools)
                 tools = [t for t in tools if t.name not in self._exclude_tools]
