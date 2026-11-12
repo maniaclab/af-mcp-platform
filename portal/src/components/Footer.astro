@@ -4,72 +4,49 @@
  * authenticated app shell) and PublicBase.astro (the unauthenticated
  * landing page) so the two layouts don't each carry their own copy.
  */
-import ThemeToggle from './ThemeToggle.astro';
-
-interface Props {
-  // Base.astro's topbar already renders its own ThemeToggle -- PublicBase.astro
-  // has no chrome at all, so it opts into this one instead. Defaulting to
-  // false keeps Base.astro's page from rendering the control twice.
-  showThemeToggle?: boolean;
-}
-
-const { showThemeToggle = false } = Astro.props;
 const appVersion = import.meta.env.PUBLIC_APP_VERSION || 'dev';
 ---
 
 <footer class="af-footer" aria-label="Site footer">
-  <span class="af-footer__text"
-    ><span data-af-brand="facilityName">ATLAS Analysis Facility</span> · MCP Platform</span
-  >
-  <span class="af-footer__version">v{appVersion}</span>
-  <a href="https://atlas.cern" class="af-footer__link" target="_blank" rel="noopener noreferrer">
-    atlas.cern
-  </a>
-  <a
-    href="https://giordonstark.com/"
-    class="af-footer__link"
-    target="_blank"
-    rel="noopener noreferrer"
-  >
-    © Giordon Stark
-  </a>
-  {showThemeToggle && <ThemeToggle />}
+  <div class="af-wrap af-footer__in">
+    <span><span data-af-brand="facilityName">ATLAS Analysis Facility</span> · MCP Platform</span>
+    <span>v{appVersion}</span>
+    <a href="https://atlas.cern" class="af-footer__link" target="_blank" rel="noopener noreferrer">
+      atlas.cern
+    </a>
+    <a
+      href="https://giordonstark.com/"
+      class="af-footer__link"
+      target="_blank"
+      rel="noopener noreferrer"
+    >
+      © Giordon Stark
+    </a>
+  </div>
 </footer>
 
 <style>
   .af-footer {
     border-top: 1px solid var(--color-af-border);
-    padding: 0 2rem;
-    height: 48px;
-    display: flex;
-    align-items: center;
-    gap: 2rem;
+    font-size: var(--text-12);
+    line-height: var(--text-12--line-height);
+    color: var(--color-af-text-secondary);
   }
 
-  .af-footer__text {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.6875rem;
-    color: var(--color-af-dim);
-    letter-spacing: 0.04em;
+  .af-footer__in {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-4) var(--space-24);
+    padding-block: var(--space-16);
   }
 
   .af-footer__link {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.6875rem;
-    color: var(--color-af-dim);
-    letter-spacing: 0.04em;
-    text-decoration: none;
+    color: inherit;
+    text-underline-offset: 3px;
   }
   .af-footer__link:hover {
-    color: var(--color-af-teal);
-  }
-
-  .af-footer__version {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.625rem;
-    color: var(--color-af-dim);
-    letter-spacing: 0.04em;
-    opacity: 0.6;
+    color: var(--color-af-text);
   }
 </style>
 
@@ -79,7 +56,10 @@ const appVersion = import.meta.env.PUBLIC_APP_VERSION || 'dev';
   // landing page never runs that script, and this is the only place its
   // Footer instance's facility name would otherwise get patched.
   import { getBranding } from '../lib/auth';
+  import { watchAccent } from '../lib/accent';
   import { applyBranding } from '../lib/branding';
 
-  applyBranding(await getBranding());
+  const branding = await getBranding();
+  applyBranding(branding);
+  watchAccent(branding);
 </script>

@@ -1,0 +1,24 @@
+{
+  "subjects": [
+    {
+      "subject": "example-subject-0001",
+      "unixname": "example-user-1",
+      "email": "example-user-1@example-facility.org"
+    },
+    {
+      "subject": "example-subject-0002",
+      "unixname": "example-user-2",
+      "email": "example-user-2@example-facility.org"
+    },
+    {
+      "subject": "example-subject-0003",
+      "unixname": "example-user-3",
+      "email": "example-user-3@example-facility.org"
+    },
+    {
+      "subject": "example-subject-0004",
+      "unixname": null,
+      "email": "example-user-4@example-facility.org"
+    }
+  ]
+}

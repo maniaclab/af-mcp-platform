@@ -1,24 +1,21 @@
 /*
  * global.css — Tailwind v4 entrypoint and single source of truth for the
- * AF palette, fonts, type scale, and light/dark theming.
+ * AF palette, fonts, type scale, and light/dark theming. The worked reference
+ * for every value here is docs/design-language/index.html.
  *
  * Tailwind 4 is CSS-first: the JS `tailwind.config.mjs` is gone. Design tokens
  * are declared here in a `@theme` block. Tailwind generates matching utility
- * classes (e.g. `--color-af-teal` → `bg-af-teal`, `text-af-teal`, ...) AND
- * exposes each token as a CSS custom property, so scoped `<style>` blocks in
- * .vue / .astro files reference them via `var(--color-af-teal)`.
+ * classes (e.g. `--color-af-border` → `border-af-border`, `text-af-text`, ...)
+ * AND exposes each token as a CSS custom property, so scoped `<style>` blocks
+ * in .vue / .astro files reference them via `var(--color-af-border)`.
  *
  * If you change a color here, that is the ONLY place it needs to change.
  *
  * ---------------------------------------------------------------------
- * Theming — "the void becomes the ink"
+ * Theming
  * ---------------------------------------------------------------------
- * Two themes share one token set. DARK is the detector-console's native
- * look (see DESIGN.md's "Creative North Star"); LIGHT is not an inversion —
- * it's a cool blue-grey blueprint-paper page where the near-black `af-void`
- * that used to be the dark page's *ground* becomes `af-text`, the light
- * page's *ink*. Same cold undertone in both, so they read as one instrument
- * in two lighting conditions.
+ * Two themes share one token set: untinted greys, an accent that is ink
+ * unless a deployment overrides it, and fixed status colours.
  *
  * Mechanism: the `@theme` block below holds the LIGHT values as the
  * unconditional default (matching Basecoat's own convention: its `:root` is
@@ -29,7 +26,7 @@
  * mechanism the `dialog:modal` rule at the bottom of this file already
  * relies on. Because every `var(--color-af-*)` reference re-resolves live
  * against the cascade, `.dark`'s presence or absence on `<html>` is the only
- * thing that needs to change for every consumer — the ~700 scoped `<style>`
+ * thing that needs to change for every consumer — the scoped `<style>`
  * blocks across the app, the Basecoat bridge below, and the two canvas
  * palettes in src/lib/particleTracks.ts — to follow.
  *
@@ -41,131 +38,204 @@
  * they'll desync. src/lib/theme.ts and themeInitScript.js both toggle
  * `.dark` on `document.documentElement` for this reason.
  *
- * A hover "lift" wash (previously three separate `rgba(255, 255, 255, …)`
- * literals) has no token of its own — `rgb(from var(--color-af-text) r g b
- * / <alpha>)` already inverts correctly per theme (af-text is near-white in
- * dark mode, near-black/ink in light mode), matching the derivation pattern
- * ~180 other rules in this codebase already use, so a dedicated token would
- * only duplicate it.
+ * Contrast (WCAG 2.1, sRGB relative luminance) of the text, status and
+ * banner pairs is asserted by src/lib/__tests__/globalCssContrast.test.ts,
+ * which parses this file so the ratios cannot silently regress.
  *
- * Contrast (WCAG 2.1, sRGB relative luminance): every text-bearing light
- * token clears AA (4.5:1) against both its card (#fff) and page (#e9edf2)
- * ground — af-dim 7.56:1/6.43:1, af-label 5.84:1/4.97:1, af-text
- * 19.25:1/16.38:1, af-teal 6.20:1/5.28:1, af-amber 5.33:1/4.54:1, af-red
- * 6.47:1/5.50:1, af-green 5.86:1/4.99:1 — see
- * src/lib/__tests__/globalCssContrast.test.ts, which parses this file and
- * re-checks these ratios so they can't silently regress.
+ * Components come from Basecoat (`.btn`, `.input`, `.table`, `.badge`,
+ * `.dialog`, ...), re-themed only through the bridge block below. The `af-*`
+ * classes in components.css cover what Basecoat does not ship and use only the
+ * tokens defined here.
  */
 
 @import 'tailwindcss';
-@import 'basecoat-css';
+/* Basecoat, imported per component (the package exports each file) instead of
+ * through `basecoat-css`, which pulls in all 38 components for about 30% more
+ * CSS. The structure files come first, then the vega style that gives them
+ * their look. A component the portal starts to use needs its line here. */
+@import 'basecoat-css/base/base.css';
+@import 'basecoat-css/components/alert';
+@import 'basecoat-css/components/badge';
+@import 'basecoat-css/components/button';
+@import 'basecoat-css/components/button-group';
+@import 'basecoat-css/components/chart';
+@import 'basecoat-css/components/checkbox';
+@import 'basecoat-css/components/dialog';
+@import 'basecoat-css/components/empty';
+@import 'basecoat-css/components/field';
+@import 'basecoat-css/components/input';
+@import 'basecoat-css/components/label';
+@import 'basecoat-css/components/native-select';
+@import 'basecoat-css/components/scrollbar';
+@import 'basecoat-css/components/table';
+@import 'basecoat-css/components/textarea';
+@import 'basecoat-css/styles/vega';
+@import './components.css';
 
 @plugin '@tailwindcss/forms';
 @plugin '@tailwindcss/typography';
 
 @theme {
   /* --------------------------------------------------------------------
-   * Ground palette (LIGHT — the default; see the theming note above).
-   * "Blueprint paper": a cool blue-grey page and white cards, both drawn
-   * from the same cold undertone as the dark theme's void/Cherenkov teal.
+   * Colour tokens (LIGHT — the default; see the theming note above).
    * ------------------------------------------------------------------ */
-  --color-af-void: #e9edf2; /* page ground — blueprint paper */
-  --color-af-surface: #ffffff; /* elevated surface (cards, panels) */
-  --color-af-border: #cdd5df; /* structural dividers -- 1.48:1 on card, non-text */
-  --color-af-muted: #7d8a99; /* muted borders and disabled states -- never text; 3.52:1 on card (WCAG 1.4.11 non-text) */
-  --color-af-dim: #4b5563; /* secondary text, labels -- 7.56:1 on card, 6.43:1 on page (WCAG AA) */
-  --color-af-label: #5b6673; /* tertiary/label text (eyebrows, uppercase labels) -- 5.84:1 on card, 4.97:1 on page */
-  --color-af-text: #0a0e1a; /* primary text -- the dark theme's void, now the ink */
-  --color-af-teal: #046d66; /* Cherenkov accent — primary action -- 6.20:1 on card */
-  --color-af-amber: #92610a; /* calorimeter heat — warnings, state-change -- 5.33:1 on card */
-  --color-af-red: #b91c1c; /* error, revoke -- 6.47:1 on card */
-  --color-af-green: #0a7350; /* active/healthy status -- 5.86:1 on card */
-  --color-af-on-accent: #ffffff; /* text/icon color over a filled teal/amber/red/green control */
+  --color-af-bg: #ffffff; /* page and container background */
+  --color-af-bg-subtle: #f6f6f6; /* hover rows, read-only fields, selected nav item */
+  --color-af-bg-hover: #ececec; /* hover on buttons and menu items */
+  --color-af-border: #e0e0e0; /* container outlines and row rules */
+  --color-af-border-strong: #c6c6c6; /* control outlines: anything a person can type in or press */
+  --color-af-text: #0a0a0a; /* primary text */
+  --color-af-text-secondary: #5c5c5c; /* labels, column headers, help text */
+  --color-af-text-disabled: #8d8d8d; /* disabled controls only, never readable text */
 
-  /* A fixed dark scrim/shadow in BOTH themes, not a per-theme pair: a
-   * backdrop's job is to dim what's behind it regardless of the app's own
-   * theme (native <dialog>::backdrop and Basecoat's own
-   * `.dialog::backdrop { @apply bg-black/10 }` both default to a fixed
-   * black wash the same way) -- named here rather than left as a magic
-   * literal at each call site. */
-  --color-af-scrim: rgb(0 0 0 / 0.5); /* backdrop behind an off-canvas panel */
-  --color-af-panel-shadow: rgb(
-    0 0 0 / 0.4
-  ); /* the one directional shadow (a floating/overlaying surface) */
+  /* Ink unless a deployment overrides it at runtime. Used only as a fill
+   * (primary button, checked control) or a nav indicator, never as text. */
+  --color-af-accent: #0a0a0a;
+  --color-af-on-accent: #ffffff; /* text/icon colour over an af-accent fill */
+
+  /* Status colours: fixed for every deployment and never the accent. */
+  --color-af-ok: #16a34a;
+  --color-af-warn: #d97706;
+  --color-af-bad: #dc2626;
+  --color-af-info: #2563eb;
+  --color-af-bad-text: #b91c1c; /* error text and danger-button label */
+
+  /* Banner fills and their text, identical in both themes. */
+  --color-af-banner-ok: #15803d;
+  --color-af-banner-warn: #fbbf24;
+  --color-af-banner-bad: #dc2626;
+  --color-af-banner-info: #2563eb;
+  --color-af-on-banner-ok: #ffffff;
+  --color-af-on-banner-warn: #0a0a0a;
+  --color-af-on-banner-bad: #ffffff;
+  --color-af-on-banner-info: #ffffff;
+
+  --color-af-scrim: rgb(10 10 10 / 0.45); /* backdrop behind a dialog */
+  --shadow-af-1:
+    0 1px 2px rgb(10 10 10 / 0.08), 0 4px 12px rgb(10 10 10 / 0.1); /* menus, popovers, tooltips */
+  --shadow-af-2: 0 2px 4px rgb(10 10 10 / 0.1), 0 16px 40px rgb(10 10 10 / 0.2); /* dialogs */
 
   /* Particle-track canvas palette (src/lib/particleTracks.ts) — "R G B"
    * channel triplets, since canvas fillStyle/strokeStyle can't resolve CSS
    * custom properties and the module composes rgb(<triplet> / alpha)
-   * strings from these at draw time. LIGHT: ink tracks on paper — deepened
-   * teal/amber plus a slate ink in place of the dark theme's near-white,
-   * and a higher alpha floor/span since the dark-tuned 0.15 floor is
+   * strings from these at draw time. LIGHT: ink tracks on a white ground,
+   * with a higher alpha floor/span since the dark-tuned 0.15 floor is
    * invisible on a pale ground. */
-  --af-canvas-track-a: 0 98 93; /* deepened teal */
-  --af-canvas-track-b: 146 97 10; /* deepened amber */
-  --af-canvas-track-c: 51 65 85; /* slate ink, replacing the dark theme's near-white */
-  --af-canvas-grid: 195 204 216; /* barrel-ring stroke */
+  --af-canvas-track-a: 10 10 10;
+  --af-canvas-track-b: 92 92 92;
+  --af-canvas-track-c: 198 198 198;
+  --af-canvas-grid: 224 224 224; /* barrel-ring stroke */
   --af-canvas-alpha-floor: 0.25;
   --af-canvas-alpha-span: 0.5;
 
   /* --------------------------------------------------------------------
    * Fonts — self-hosted IBM Plex woff2 files live in portal/public/fonts/.
    * ------------------------------------------------------------------ */
-  --font-mono: 'IBM Plex Mono', 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
-  --font-sans: 'IBM Plex Sans', 'Inter', system-ui, sans-serif;
+  --font-sans: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
 
   /* --------------------------------------------------------------------
-   * Type scale — display / h1 / h2 / h3 / label.
+   * Type scale — the number is the size in px; line heights are 16, 20, 20,
+   * 24, 28, 32 and 40px respectively.
    * ------------------------------------------------------------------ */
-  --text-display: 3.5rem;
-  --text-display--line-height: 1.05;
-  --text-display--letter-spacing: 0.04em;
-  --text-display--font-weight: 700;
+  --text-12: 0.75rem;
+  --text-12--line-height: 1rem;
+  --text-13: 0.8125rem;
+  --text-13--line-height: 1.25rem;
+  --text-14: 0.875rem;
+  --text-14--line-height: 1.25rem;
+  --text-16: 1rem;
+  --text-16--line-height: 1.5rem;
+  --text-20: 1.25rem;
+  --text-20--line-height: 1.75rem;
+  --text-24: 1.5rem;
+  --text-24--line-height: 2rem;
+  --text-32: 2rem;
+  --text-32--line-height: 2.5rem;
 
-  --text-h1: 2.25rem;
-  --text-h1--line-height: 1.1;
-  --text-h1--letter-spacing: 0.03em;
-  --text-h1--font-weight: 700;
+  /* Radius — the number is the size in px. */
+  --radius-4: 4px;
+  --radius-8: 8px;
+  --radius-10: 10px;
+  --radius-full: 999px;
 
-  --text-h2: 1.5rem;
-  --text-h2--line-height: 1.2;
-  --text-h2--letter-spacing: 0.02em;
-  --text-h2--font-weight: 600;
-
-  --text-h3: 1.125rem;
-  --text-h3--line-height: 1.3;
-  --text-h3--letter-spacing: 0.02em;
-  --text-h3--font-weight: 600;
-
-  --text-label: 0.6875rem;
-  --text-label--line-height: 1;
-  --text-label--letter-spacing: 0.1em;
-  --text-label--font-weight: 600;
+  /* Basecoat's component styles are written with Tailwind utilities
+   * (`text-lg`, `shadow-xs`, `backdrop-blur-xs`, `tracking-tight`). These
+   * overrides keep what they resolve to inside the contract: headings on the
+   * type scale, no shadow or blur on in-page surfaces, no letter-spacing.
+   * `text-xs/sm/base` already resolve to 12/14/16px. */
+  --text-lg: 1.25rem;
+  --text-lg--line-height: 1.75rem;
+  --shadow-xs: 0 0 #0000;
+  --shadow-sm: 0 0 #0000;
+  /* The chart tooltip is a floating surface: it gets the portal's popover shadow. */
+  --shadow-xl: var(--shadow-af-1);
+  --blur-xs: 0px;
+  --tracking-tight: normal;
 }
 
 /*
- * DARK overrides — today's original detector-console values, unchanged,
- * now scoped under .dark instead of being the unconditional default. See
- * the "Theming" note at the top of this file for why this has to be
- * unlayered and keyed on this exact class.
+ * Spacing, control heights and motion. Plain custom properties rather than
+ * `@theme` entries: they are consumed through `var()` in components.css and
+ * scoped styles, not as Tailwind utilities.
+ */
+:root {
+  --space-2: 2px;
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-48: 48px;
+  --space-64: 64px;
+
+  /* Basecoat's button heights: data-size="sm", default and "lg". */
+  --control-s: 32px;
+  --control-m: 36px;
+  --control-l: 40px;
+
+  --time-fast: 100ms;
+  --time-base: 200ms;
+  --time-slow: 300ms;
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  color-scheme: light;
+}
+
+/*
+ * DARK overrides. See the "Theming" note at the top of this file for why
+ * this has to be unlayered and keyed on this exact class. The banner fills
+ * are the same in both themes and are not repeated here.
  */
 .dark {
-  --color-af-void: #0a0e1a; /* near-black ground */
-  --color-af-surface: #111827; /* elevated surface (cards, panels) */
-  --color-af-border: #1f2937; /* structural dividers */
-  --color-af-muted: #374151; /* muted borders and disabled states -- never text, fails contrast */
-  --color-af-dim: #9ca3af; /* secondary text, labels -- 6.99:1 on surface, 7.58:1 on void (WCAG AA) */
-  --color-af-label: #838d99; /* tertiary/label text (eyebrows, uppercase labels) -- 5.27:1 on surface, 5.72:1 on void */
-  --color-af-text: #e8ecf0; /* primary text */
-  --color-af-teal: #00d4c8; /* Cherenkov accent — primary action */
-  --color-af-amber: #f59e0b; /* calorimeter heat — warnings, state-change */
-  --color-af-red: #ef4444; /* error, revoke */
-  --color-af-green: #10b981; /* active/healthy status */
-  --color-af-on-accent: #0a0e1a;
+  --color-af-bg: #0f0f10;
+  --color-af-bg-subtle: #18181a;
+  --color-af-bg-hover: #2a2a2d;
+  --color-af-border: #2a2a2d;
+  --color-af-border-strong: #3d3d42;
+  --color-af-text: #f5f5f5;
+  --color-af-text-secondary: #a8a8ad;
+  --color-af-text-disabled: #6f6f75;
 
-  --af-canvas-track-a: 0 212 200;
-  --af-canvas-track-b: 245 158 11;
-  --af-canvas-track-c: 232 236 240;
-  --af-canvas-grid: 31 41 55;
+  --color-af-accent: #f5f5f5;
+  --color-af-on-accent: #0a0a0a;
+
+  --color-af-ok: #4ade80;
+  --color-af-warn: #fbbf24;
+  --color-af-bad: #f87171;
+  --color-af-info: #60a5fa;
+  --color-af-bad-text: #f87171;
+
+  --color-af-scrim: rgb(0 0 0 / 0.6);
+  /* A shadow is hard to see on a dark page, so raised surfaces also get a
+   * 1px light outline. */
+  --shadow-af-1: 0 0 0 1px #3d3d42, 0 4px 12px rgb(0 0 0 / 0.5);
+  --shadow-af-2: 0 0 0 1px #3d3d42, 0 16px 40px rgb(0 0 0 / 0.7);
+
+  --af-canvas-track-a: 245 245 245;
+  --af-canvas-track-b: 168 168 173;
+  --af-canvas-track-c: 61 61 66;
+  --af-canvas-grid: 42 42 45;
   --af-canvas-alpha-floor: 0.15;
   --af-canvas-alpha-span: 0.45;
 
@@ -173,37 +243,68 @@
 }
 
 /*
- * Basecoat bridge — drives shadcn's variable set from the AF tokens above
- * instead of the other way around, one-directionally, so AF stays the
- * source of truth and this whole block could be deleted without any AF
- * token losing meaning. Every value here is a var() reference (not a
- * literal), so it re-resolves automatically under .dark without needing to
- * be repeated there — only `color-scheme` (a literal keyword) needs the
- * explicit override above.
+ * Basecoat bridge — drives shadcn's whole variable set from the AF tokens
+ * above instead of the other way around, one-directionally, so AF stays the
+ * source of truth and this whole block could be deleted without any AF token
+ * losing meaning. Every value is a var() reference (not a literal), so it
+ * re-resolves automatically under .dark without being repeated there.
  *
- * Only the variables this build actually exercises today are bridged:
- * Basecoat's base-layer universal-selector border/ring reset, body's
- * background/foreground, and the tooltip component's foreground/background.
- * --muted, --accent, --secondary, --sidebar-*, --popover-foreground and
- * --card-foreground are deliberately left at Basecoat defaults for now:
- * nothing shipped in this change uses them, and mapping them ahead of the
- * component-migration PRs risks a bridge value nobody has actually checked
- * against real content.
+ * Basecoat's own `:root` and `.dark` blocks are unlayered, like this one, so
+ * `@layer` cannot decide between them. `:root:root` (two pseudo-classes)
+ * outranks Basecoat's single-class `.dark { --primary: ... }` by specificity
+ * whatever the import order, so the AF values win in both themes.
+ *
+ * Naming trap: shadcn's `--accent` is a hover surface, NOT the AF accent. The
+ * AF accent (a facility's brand colour) reaches Basecoat only as `--primary`,
+ * which is the primary button, checked controls and Basecoat's link colour.
+ *
+ * `--radius` is 10px so that Basecoat's control radius (`rounded-md` =
+ * `--radius` - 2px) is 8px, its alert and field radius (`rounded-lg`) is 10px.
+ *
+ * Scrollbars: Basecoat's `scrollbar` class (on `<html>` in both layouts, since
+ * `scrollbar-color` inherits) draws every scroll box from the tokens, so the
+ * track and thumb follow the theme in Firefox as well as Chromium. Its default
+ * thumb is `--border`, which is nearly invisible on the dark page; the thumb
+ * here is the stronger border token.
+ *
+ * The `--chevron-down-icon*` and `--check-icon` data URIs Basecoat defines for
+ * native selects keep their neutral grey stroke: an SVG data URI cannot read a
+ * custom property.
  */
-:root {
-  --radius: 4px; /* DESIGN.md's Sharp-Not-Round rule, not Basecoat's own 0.625rem default */
-  --background: var(--color-af-void);
+:root:root {
+  --radius: 10px;
+  --background: var(--color-af-bg);
   --foreground: var(--color-af-text);
-  --card: var(--color-af-surface);
-  --popover: var(--color-af-surface);
-  --border: var(--color-af-border);
-  --input: var(--color-af-muted);
-  --ring: var(--color-af-teal);
-  --primary: var(--color-af-teal);
+  --card: var(--color-af-bg);
+  --card-foreground: var(--color-af-text);
+  --popover: var(--color-af-bg);
+  --popover-foreground: var(--color-af-text);
+  --primary: var(--color-af-accent);
   --primary-foreground: var(--color-af-on-accent);
-  --muted-foreground: var(--color-af-dim);
-  --destructive: var(--color-af-red);
-  color-scheme: light;
+  --secondary: var(--color-af-bg-subtle);
+  --secondary-foreground: var(--color-af-text);
+  --muted: var(--color-af-bg-subtle);
+  --muted-foreground: var(--color-af-text-secondary);
+  --accent: var(--color-af-bg-hover);
+  --accent-foreground: var(--color-af-text);
+  --destructive: var(--color-af-bad);
+  --border: var(--color-af-border);
+  --input: var(--color-af-border-strong);
+  --ring: var(--color-af-text);
+  --scrollbar-thumb: var(--color-af-border-strong);
+  --chart-1: var(--color-af-text-secondary);
+  --chart-2: var(--color-af-text);
+  --chart-3: var(--color-af-border-strong);
+  --chart-4: var(--color-af-text-disabled);
+  --chart-5: var(--color-af-border);
+  --sidebar: var(--color-af-bg);
+  --sidebar-foreground: var(--color-af-text);
+  --sidebar-primary: var(--color-af-accent);
+  --sidebar-primary-foreground: var(--color-af-on-accent);
+  --sidebar-accent: var(--color-af-bg-hover);
+  --sidebar-accent-foreground: var(--color-af-text);
+  --sidebar-border: var(--color-af-border);
+  --sidebar-ring: var(--color-af-text);
 }
 
 /*
@@ -221,4 +322,36 @@
  */
 dialog:modal {
   margin: auto;
+}
+
+/*
+ * Base element styles: body text, headings and the focus outline of the
+ * portal's own interactive elements (links, nav items, summaries). In
+ * `@layer base` so component classes and Tailwind utilities override them.
+ * Basecoat's controls set `outline-none` in `@layer components` and draw their
+ * own ring from the same `--ring` token (border + 3px halo), so no element
+ * shows both.
+ */
+@layer base {
+  body {
+    background: var(--color-af-bg);
+    color: var(--color-af-text);
+    font-family: var(--font-sans);
+    font-size: var(--text-14);
+    line-height: var(--text-14--line-height);
+    -webkit-font-smoothing: antialiased;
+  }
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: var(--font-sans);
+    font-weight: 600;
+  }
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
 }

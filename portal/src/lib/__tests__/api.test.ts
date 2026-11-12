@@ -567,6 +567,181 @@ describe('fetchDashboardSummary()', () => {
   });
 });
 
+describe('fetchDashboardSummary() service and token details', () => {
+  it('carries service reachability counts and the soonest-expiring active token', async () => {
+    const soon = new Date(Date.now() + 3 * 24 * 3600 * 1000).toISOString();
+    const later = new Date(Date.now() + 60 * 24 * 3600 * 1000).toISOString();
+    const token = (name: string, expires_at: string | null, revoked_at: string | null = null) => ({
+      lookup_id: name,
+      name,
+      note: null,
+      created_at: '2024-01-01T00:00:00Z',
+      expires_at,
+      revoked_at,
+      last_used_at: null,
+      permission_grant: null,
+    });
+    const server = (name: string, status: string) => ({
+      name,
+      display_name: `Display ${name}`,
+      status,
+      credential_provider: status === 'link_required' ? 'krb5' : 'atlas-oidc',
+    });
+    const body = (url: string): unknown => {
+      if (url.includes('/identities')) {
+        return {
+          providers: [{ id: 'krb5', display_name: 'CERN Kerberos', link_mechanism: 'passphrase' }],
+        };
+      }
+      if (url.includes('/catalog')) {
+        return {
+          servers: [
+            server('a', 'available'),
+            server('b', 'available'),
+            server('c', 'link_required'),
+            server('d', 'misconfigured'),
+          ],
+        };
+      }
+      if (url.includes('/tokens')) {
+        return [
+          token('later', later),
+          token('soon', soon),
+          token('gone', soon, '2024-02-01T00:00:00Z'),
+        ];
+      }
+      return { cached: false, voms_attributes: [] };
+    };
+    globalThis.fetch = vi.fn((input: RequestInfo | URL) =>
+      Promise.resolve(
+        new Response(JSON.stringify(body(String(input))), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      ),
+    );
+
+    const summary = await fetchDashboardSummary();
+
+    expect(summary.serverCount).toBe(4);
+    expect(summary.reachableCount).toBe(2);
+    expect(summary.needsLinkCount).toBe(1);
+    expect(summary.needsLinkService).toBe('Display c');
+    expect(summary.needsLinkAction).toEqual({
+      label: expect.any(String),
+      href: '/identities/#identity-card-krb5',
+    });
+    expect(summary.misconfiguredCount).toBe(1);
+    expect(summary.unavailableCount).toBe(0);
+    expect(summary.soonestExpiringToken).toEqual({ name: 'soon', expires_at: soon });
+  });
+});
+
+describe('fetchDashboardSummary() rejected credentials', () => {
+  const run = async (servers: unknown[]) => {
+    const body = (url: string): unknown => {
+      if (url.includes('/identities')) {
+        return {
+          providers: [
+            { id: 'krb5', display_name: 'Kerberos ticket', link_mechanism: 'credential' },
+            { id: 'atlas-oidc', display_name: 'ATLAS IAM', link_mechanism: 'redirect' },
+          ],
+        };
+      }
+      if (url.includes('/catalog')) return { servers };
+      if (url.includes('/tokens')) return [];
+      return { cached: false, voms_attributes: [] };
+    };
+    globalThis.fetch = vi.fn((input: RequestInfo | URL) =>
+      Promise.resolve(
+        new Response(JSON.stringify(body(String(input))), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      ),
+    );
+    return fetchDashboardSummary();
+  };
+  const server = (name: string, link_state: string | null | undefined, provider = 'krb5') => ({
+    name,
+    display_name: `Display ${name}`,
+    status: 'link_required',
+    link_state,
+    credential_provider: provider,
+  });
+
+  it('counts a rejected service apart from not linked, naming its service, identity and action', async () => {
+    const summary = await run([server('a', 'rejected'), server('b', 'not_linked', 'atlas-oidc')]);
+    expect(summary.rejectedCount).toBe(1);
+    expect(summary.rejectedService).toBe('Display a');
+    expect(summary.rejectedIdentity).toBe('Kerberos ticket');
+    expect(summary.rejectedAction).toEqual({
+      label: 'Refresh ticket',
+      href: '/identities/#identity-card-krb5',
+    });
+    expect(summary.needsLinkCount).toBe(1);
+    expect(summary.needsLinkService).toBe('Display b');
+  });
+
+  it.each([null, undefined])(
+    'treats link_state %s as not linked, never rejected',
+    async (state) => {
+      const summary = await run([server('a', state)]);
+      expect(summary.rejectedCount).toBe(0);
+      expect(summary.rejectedService).toBeNull();
+      expect(summary.rejectedIdentity).toBeNull();
+      expect(summary.rejectedAction).toBeNull();
+      expect(summary.needsLinkCount).toBe(1);
+    },
+  );
+
+  it('offers no action when several rejected services need different identities', async () => {
+    const summary = await run([server('a', 'rejected'), server('b', 'rejected', 'atlas-oidc')]);
+    expect(summary.rejectedCount).toBe(2);
+    expect(summary.rejectedService).toBeNull();
+    expect(summary.rejectedAction).toBeNull();
+  });
+});
+
+describe('fetchDashboardSummary() proxy renewal', () => {
+  const identities = (providers: unknown[]) =>
+    vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      let body: unknown = { cached: false, voms_attributes: [] };
+      if (url.includes('/identities')) body = { providers };
+      else if (url.includes('/catalog')) body = { servers: [] };
+      else if (url.includes('/tokens')) body = [];
+      return Promise.resolve(
+        new Response(JSON.stringify(body), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+    });
+  const x509 = (mode: string | null) => ({
+    id: 'x509',
+    link_mechanism: 'passphrase',
+    linked: true,
+    x509_link_mode: mode,
+  });
+
+  it('reports that the proxy renews itself when the x509 link is auto-renew', async () => {
+    globalThis.fetch = identities([x509('auto-renew')]);
+    expect((await fetchDashboardSummary()).proxyAutoRenews).toBe(true);
+  });
+
+  it('reports that it does not for an until-expiry link, a legacy entry or no x509 provider', async () => {
+    globalThis.fetch = identities([x509('until-expiry')]);
+    expect((await fetchDashboardSummary()).proxyAutoRenews).toBe(false);
+    window.sessionStorage.clear();
+    globalThis.fetch = identities([x509(null)]);
+    expect((await fetchDashboardSummary()).proxyAutoRenews).toBe(false);
+    window.sessionStorage.clear();
+    globalThis.fetch = identities([]);
+    expect((await fetchDashboardSummary()).proxyAutoRenews).toBe(false);
+  });
+});
+
 describe('permissions client (issue #144 step 4: permission PATs)', () => {
   it('fetchPermissions returns the parsed grants and the callers raw groups', async () => {
     globalThis.fetch = mockJson(200, {

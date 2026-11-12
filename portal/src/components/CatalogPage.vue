@@ -1,47 +1,36 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
-import { AccessDeniedError, fetchCatalog, fetchIdentities, SessionExpiredError } from '../lib/api';
+import { fetchCatalog, fetchIdentities } from '../lib/api';
 import type { CatalogServer, IdentityProvider } from '../lib/api';
 import { resolvePoweredBy } from '../lib/catalog';
+import { resolveServicesMessage, sortServices } from '../lib/serviceStatus';
+import { useLoadState } from '../lib/useLoadState';
 import ServiceCard from './ServiceCard.vue';
+import AsyncState from './ui/AsyncState.vue';
+import PageMessage from './ui/PageMessage.vue';
+import SegmentedControl from './ui/SegmentedControl.vue';
 
 const servers = ref<CatalogServer[]>([]);
 const providers = ref<IdentityProvider[]>([]);
-const loading = ref(true);
-const error = ref<string | null>(null);
-const sessionExpired = ref(false);
-const accessDenied = ref<AccessDeniedError | null>(null);
-const filter = ref<'all' | 'read' | 'state_change'>('all');
+const { loading, error, sessionExpired, accessDenied, run } = useLoadState();
+const filter = ref('all');
 const search = ref('');
 
-onMounted(async () => {
-  try {
+const FILTER_OPTIONS = [
+  { value: 'all', label: 'All' },
+  { value: 'read', label: 'Read only' },
+  { value: 'state_change', label: 'Write ops' },
+];
+
+onMounted(() =>
+  run(async () => {
     const [catalog, identities] = await Promise.all([fetchCatalog(), fetchIdentities()]);
     servers.value = catalog.servers;
     providers.value = identities.providers;
-  } catch (err) {
-    if (err instanceof AccessDeniedError) {
-      accessDenied.value = err;
-    } else if (err instanceof SessionExpiredError) {
-      sessionExpired.value = true;
-    } else {
-      error.value =
-        err instanceof Error
-          ? err.message
-          : 'Failed to load catalog. Check that your identities are linked.';
-    }
-  } finally {
-    loading.value = false;
-  }
-});
-
-function reload() {
-  location.reload();
-}
-
-const sortedServers = computed<CatalogServer[]>(() =>
-  [...servers.value].sort((a, b) => a.name.localeCompare(b.name)),
+  }, 'Failed to load catalog. Check that your identities are linked.'),
 );
+
+const sortedServers = computed<CatalogServer[]>(() => sortServices(servers.value));
 
 const filteredServers = computed<CatalogServer[]>(() => {
   let result = sortedServers.value;
@@ -67,319 +56,128 @@ const filteredServers = computed<CatalogServer[]>(() => {
 function poweredByFor(server: CatalogServer) {
   return resolvePoweredBy(server.credential_provider, providers.value);
 }
+
+const message = computed(() => resolveServicesMessage(servers.value, providers.value));
 </script>
 
 <template>
-  <div class="cp">
-    <!-- Toolbar -->
-    <div class="cp__toolbar" role="toolbar" aria-label="Catalog filters">
-      <div class="cp__search-wrap">
-        <label for="catalog-search" class="sr-only">Search services</label>
-        <input
-          id="catalog-search"
-          v-model="search"
-          type="search"
-          class="cp__search"
-          placeholder="Search servers, descriptions, permissions…"
-          aria-label="Search services"
-        />
-      </div>
-
-      <div class="cp__filters" role="group" aria-label="Filter by type">
-        <button
-          v-for="opt in [
-            { value: 'all', label: 'All' },
-            { value: 'read', label: 'Read only' },
-            { value: 'state_change', label: 'Write ops' },
-          ]"
-          :key="opt.value"
-          class="cp__filter-btn"
-          :class="{ 'cp__filter-btn--active': filter === opt.value }"
-          :aria-pressed="filter === opt.value"
-          @click="filter = opt.value as typeof filter"
-        >
-          {{ opt.label }}
-        </button>
-      </div>
-
-      <span
-        v-if="!loading && !error && !sessionExpired && !accessDenied"
-        class="cp__count"
-        aria-live="polite"
-      >
-        {{ filteredServers.length }} server{{ filteredServers.length !== 1 ? 's' : '' }}
-      </span>
-    </div>
-
-    <!-- Loading -->
-    <div v-if="loading" class="cp__loading" aria-live="polite" aria-label="Loading services">
-      <span class="cp__spinner" aria-hidden="true"></span>
-      <span>Loading services…</span>
-    </div>
-
-    <!-- Session expired -->
-    <div v-else-if="sessionExpired" class="cp__error" role="alert">
-      <span class="cp__error-title">Session expired</span>
-      <span class="cp__error-body">
-        Your session has expired.
-        <button type="button" class="cp__reload" @click="reload">Reload</button>
-        to re-authenticate.
-      </span>
-    </div>
-
-    <!-- Access denied: a valid, unexpired credential that's missing the
-         audience needed to use this platform -- a reload can't fix it, only
-         an administrator granting access can (see identity.py's
-         TokenAudienceError). -->
-    <div v-else-if="accessDenied" class="cp__error" role="alert">
-      <span class="cp__error-title">Access not yet granted</span>
-      <span class="cp__error-body">{{ accessDenied.message }}</span>
-    </div>
-
-    <!-- Error -->
-    <div v-else-if="error" class="cp__error" role="alert">
-      <span class="cp__error-title">Services unavailable</span>
-      <span class="cp__error-body">{{ error }}</span>
-      <span class="cp__error-hint">
+  <AsyncState
+    :loading="loading"
+    :error="error"
+    error-title="Services unavailable"
+    :session-expired="sessionExpired"
+    :access-denied="accessDenied"
+    :empty="servers.length === 0"
+    loading-label="Loading services…"
+  >
+    <template #error-hint>
+      <span class="cp__hint">
         Make sure your ATLAS IAM and CERN identities are linked on the
-        <a href="/identities/" class="cp__error-link">Identities page</a>.
+        <a href="/identities/">Identities page</a>.
       </span>
-    </div>
+    </template>
 
-    <!-- Empty (no servers at all) -->
-    <div v-else-if="servers.length === 0" class="cp__empty">
-      <p class="cp__empty-title">No services available</p>
-      <p class="cp__empty-body">
-        Your account doesn't have any granted permissions yet. Link your external identities to
-        unlock access.
-      </p>
-      <a href="/identities/" class="cp__empty-cta">Link identities →</a>
-    </div>
+    <template #empty>
+      <header>
+        <h2>No services available</h2>
+        <p>
+          Your account doesn't have any granted permissions yet. Link your external identities to
+          unlock access.
+        </p>
+      </header>
+      <section>
+        <a href="/identities/" class="btn" data-variant="outline">Link identities</a>
+      </section>
+    </template>
 
-    <!-- Empty search result -->
-    <div v-else-if="filteredServers.length === 0" class="cp__empty">
-      <p class="cp__empty-title">No matches</p>
-      <p class="cp__empty-body">
-        No services match "{{ search }}" with the current filter. Try a different search term or
-        clear the filter.
-      </p>
-    </div>
+    <div class="af-page">
+      <PageMessage v-if="message" :message="message" />
 
-    <!-- Server list -->
-    <div v-else class="cp__list" role="list" aria-label="Available services">
-      <div v-for="server in filteredServers" :key="server.name" role="listitem">
-        <ServiceCard :server="server" :powered-by="poweredByFor(server)" />
-      </div>
+      <section class="af-sect" aria-labelledby="cp-heading">
+        <h2 id="cp-heading">Your services</h2>
+
+        <div class="cp__toolbar">
+          <div class="field af-narrow cp__search">
+            <label for="catalog-search">Search services</label>
+            <input
+              id="catalog-search"
+              v-model="search"
+              type="search"
+              class="input"
+              placeholder="Name, description or permission"
+            />
+          </div>
+
+          <SegmentedControl
+            v-model="filter"
+            :options="FILTER_OPTIONS"
+            aria-label="Filter by type"
+          />
+
+          <span class="cp__count" aria-live="polite">
+            {{ filteredServers.length }} service{{ filteredServers.length !== 1 ? 's' : '' }}
+          </span>
+        </div>
+
+        <div v-if="filteredServers.length === 0" class="empty border-input border">
+          <header>
+            <h2>No matches</h2>
+            <p>
+              No services match "{{ search }}" with the current filter. Try a different search term
+              or clear the filter.
+            </p>
+          </header>
+        </div>
+
+        <ul v-else class="cp__list" aria-label="Available services">
+          <li v-for="server in filteredServers" :key="server.name" class="cp__item">
+            <ServiceCard :server="server" :powered-by="poweredByFor(server)" />
+          </li>
+        </ul>
+      </section>
     </div>
-  </div>
+  </AsyncState>
 </template>
 
 <style scoped>
-.cp {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
+.cp__hint {
+  display: block;
 }
 
-/* Toolbar */
 .cp__toolbar {
   display: flex;
-  align-items: center;
-  gap: 1rem;
   flex-wrap: wrap;
-}
-
-.cp__search-wrap {
-  flex: 1;
-  min-width: 12rem;
+  align-items: flex-end;
+  gap: var(--space-12) var(--space-16);
 }
 
 .cp__search {
-  width: 100%;
-  background: var(--color-af-surface);
-  border: 1px solid var(--color-af-muted);
-  border-radius: 3px;
-  color: var(--color-af-text);
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.8125rem;
-  padding: 0.4375rem 0.75rem;
-  transition: border-color 150ms;
-}
-.cp__search::placeholder {
-  color: var(--color-af-label);
-}
-.cp__search:focus {
-  outline: none;
-  border-color: var(--color-af-teal);
-  box-shadow: 0 0 0 2px rgb(from var(--color-af-teal) r g b / 0.1);
-}
-
-.cp__filters {
-  display: flex;
-  gap: 0;
-  border: 1px solid var(--color-af-muted);
-  border-radius: 3px;
-  overflow: hidden;
-}
-
-.cp__filter-btn {
-  padding: 0.375rem 0.875rem;
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.6875rem;
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--color-af-dim);
-  background: transparent;
-  border: none;
-  border-right: 1px solid var(--color-af-muted);
-  cursor: pointer;
-  transition:
-    color 120ms,
-    background 120ms;
-  white-space: nowrap;
-}
-.cp__filter-btn:last-child {
-  border-right: none;
-}
-.cp__filter-btn:hover {
-  color: var(--color-af-text);
-  background: rgb(from var(--color-af-text) r g b / 0.04);
-}
-.cp__filter-btn:focus-visible {
-  outline: 2px solid var(--color-af-teal);
-  outline-offset: -2px;
-}
-.cp__filter-btn--active {
-  color: var(--color-af-teal);
-  background: rgb(from var(--color-af-teal) r g b / 0.08);
+  flex: 1;
+  min-width: 12rem;
+  max-width: 360px;
 }
 
 .cp__count {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.6875rem;
-  color: var(--color-af-label);
-  white-space: nowrap;
   margin-left: auto;
+  color: var(--color-af-text-secondary);
+  font-size: var(--text-13);
+  white-space: nowrap;
 }
 
-/* List */
+/* One bordered list; rows are separated by rules, not boxed individually. */
 .cp__list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-/* Loading */
-.cp__loading {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 2rem;
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.8125rem;
-  color: var(--color-af-dim);
-}
-
-.cp__spinner {
-  width: 16px;
-  height: 16px;
-  border: 2px solid var(--color-af-border);
-  border-top-color: var(--color-af-teal);
-  border-radius: 50%;
-  animation: spin 600ms linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .cp__spinner {
-    animation: none;
-    border-top-color: var(--color-af-dim);
-  }
-}
-
-/* Error */
-.cp__error {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  padding: 1.25rem;
-  border: 1px solid rgb(from var(--color-af-red) r g b / 0.2);
-  border-radius: 4px;
-  background: rgb(from var(--color-af-red) r g b / 0.05);
-}
-
-.cp__error-title {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.8125rem;
-  font-weight: 600;
-  color: var(--color-af-red);
-}
-
-.cp__error-body {
-  font-size: 0.875rem;
-  color: var(--color-af-dim);
-}
-
-.cp__error-hint {
-  font-size: 0.8125rem;
-  color: var(--color-af-dim);
-}
-
-.cp__error-link {
-  color: var(--color-af-teal);
-  text-decoration: underline;
-}
-
-.cp__reload {
-  font: inherit;
-  color: var(--color-af-teal);
-  background: none;
-  border: none;
+  list-style: none;
+  margin: 0;
   padding: 0;
-  cursor: pointer;
-  text-decoration: underline;
+  border: 1px solid var(--color-af-border);
+  border-radius: var(--radius-10);
 }
 
-/* Empty */
-.cp__empty {
-  padding: 3rem 1.5rem;
-  text-align: center;
-  border: 1px dashed var(--color-af-border);
-  border-radius: 4px;
+.cp__item {
+  border-bottom: 1px solid var(--color-af-border);
 }
 
-.cp__empty-title {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 1rem;
-  font-weight: 600;
-  color: var(--color-af-label);
-  margin: 0 0 0.5rem;
-}
-
-.cp__empty-body {
-  font-size: 0.875rem;
-  color: var(--color-af-dim);
-  margin: 0 0 1.25rem;
-  max-width: 32rem;
-  margin-inline: auto;
-  line-height: 1.6;
-}
-
-.cp__empty-cta {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: var(--color-af-teal);
-  text-decoration: none;
-  letter-spacing: 0.04em;
-}
-.cp__empty-cta:hover {
-  text-decoration: underline;
+.cp__item:last-child {
+  border-bottom: 0;
 }
 </style>

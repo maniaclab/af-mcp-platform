@@ -1,6 +1,6 @@
 /**
  * usageFormat.ts — shared display formatting for GET /v1/usage numbers,
- * used by both the overview's UsageCard and the /usage page so the same
+ * used by both the overview's usage summary and the /usage page so the same
  * figure never renders two different ways.
  */
 

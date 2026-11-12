@@ -9,7 +9,9 @@ import { APIError, SessionExpiredError } from '../api';
 import {
   apiErrorDetail,
   formatProxyExpiry,
+  PROXY_EXPIRY_WARNING_SECONDS,
   preflightCheckLabel,
+  proxyExpiryState,
   x509LinkErrorMessage,
   x509LinkModeLabel,
   x509PreflightErrorMessage,
@@ -201,5 +203,32 @@ describe('x509PreflightErrorMessage', () => {
 
   it('falls back to a generic message for anything else', () => {
     expect(x509PreflightErrorMessage('nope')).toMatch(/could not/i);
+  });
+});
+
+describe('proxyExpiryState', () => {
+  const HOUR = 3600;
+
+  it('warns at one hour', () => {
+    expect(PROXY_EXPIRY_WARNING_SECONDS).toBe(HOUR);
+  });
+
+  it('is "expiring" for a proxy that cannot renew itself with under an hour left', () => {
+    expect(proxyExpiryState(HOUR - 1, false)).toBe('expiring');
+    expect(proxyExpiryState(1, false)).toBe('expiring');
+  });
+
+  it('is "ok" at exactly an hour and beyond', () => {
+    expect(proxyExpiryState(HOUR, false)).toBe('ok');
+    expect(proxyExpiryState(2 * HOUR, false)).toBe('ok');
+  });
+
+  it('never warns about an auto-renewing proxy that is still valid', () => {
+    expect(proxyExpiryState(60, true)).toBe('ok');
+  });
+
+  it('is "expired" at zero or below, even when auto-renewing, since renewal has failed', () => {
+    expect(proxyExpiryState(0, false)).toBe('expired');
+    expect(proxyExpiryState(-5, true)).toBe('expired');
   });
 });

@@ -1,0 +1,21 @@
+{
+  "name": "condor",
+  "display_name": "HTCondor",
+  "description": "Batch jobs on the facility pool.",
+  "status": "ok",
+  "status_detail": "Ready to use.",
+  "tools": [
+    {
+      "name": "condor_query_jobs",
+      "description": "Query jobs in the queue.",
+      "action_type": "read",
+      "permission": "submit_jobs"
+    },
+    {
+      "name": "condor_submit_job",
+      "description": "Submit a job to the pool.",
+      "action_type": "state_change",
+      "permission": "submit_jobs"
+    }
+  ]
+}

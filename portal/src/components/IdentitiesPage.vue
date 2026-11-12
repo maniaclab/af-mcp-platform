@@ -1,11 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { X } from '@lucide/vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import {
-  AccessDeniedError,
   clearIdentitiesCache,
   fetchCatalog,
   fetchIdentities,
-  SessionExpiredError,
   type CatalogServer,
   type IdentityProvider,
   type KrbTicketMetadata,
@@ -13,22 +12,24 @@ import {
   type ServiceXTokenMetadata,
 } from '../lib/api';
 import { groupServersByAlias } from '../lib/catalog';
+import { identityTargetFromHash } from '../lib/identityTarget';
 import {
   extractLinkedErrorParams,
   extractLinkedParam,
   resolveLinkedBanner,
   resolveLinkedErrorBanner,
 } from '../lib/linkedBanner';
+import { formatDateTime, formatRemaining } from '../lib/relativeTime';
+import { proxyExpiryState } from '../lib/x509Identity';
+import { useLoadState } from '../lib/useLoadState';
 import IdentityLink from './IdentityLink.vue';
 import Krb5IdentityCard from './Krb5IdentityCard.vue';
 import ServiceXIdentityCard from './ServiceXIdentityCard.vue';
 import X509IdentityCard from './X509IdentityCard.vue';
+import AsyncState from './ui/AsyncState.vue';
 
 const providers = ref<IdentityProvider[]>([]);
-const loading = ref(true);
-const error = ref<string | null>(null);
-const sessionExpired = ref(false);
-const accessDenied = ref<AccessDeniedError | null>(null);
+const { loading, error, sessionExpired, accessDenied, run } = useLoadState();
 
 // Which servers each identity feeds, for the "What each identity unlocks"
 // grid below — joined client-side from the catalog's credential_provider
@@ -75,6 +76,51 @@ function dismissLinkedErrorBanner() {
   clearTimeout(linkedErrorBannerTimer);
 }
 
+// The row a `#identity-card-<id>` hash points at. The rows render after the
+// identities fetch, so the target is derived from the loaded providers: a hash
+// that arrives first takes effect once its row exists. Read on mount, not
+// during setup: setup also runs when Astro renders this island on the server,
+// where there is no window.
+const urlHash = ref('');
+const targetId = computed(() =>
+  identityTargetFromHash(
+    urlHash.value,
+    providers.value.map((p) => p.id),
+  ),
+);
+const listRoot = ref<HTMLElement | null>(null);
+
+function syncUrlHash() {
+  urlHash.value = window.location.hash;
+}
+
+// Bring the target row into view and move focus to its heading, so keyboard
+// and screen-reader users land there too. The browser's own hash scroll fires
+// before the rows exist, so it is repeated here once they do. Runs only for a
+// target, so a visit without a hash never moves focus.
+watch(
+  [targetId, loading],
+  async ([id, isLoading]) => {
+    if (!id || isLoading) return;
+    await nextTick();
+    const row = listRoot.value?.querySelector<HTMLElement>(`[id="identity-card-${id}"]`);
+    if (!row) return;
+    row.scrollIntoView({ block: 'start' });
+    const heading = row.querySelector<HTMLElement>('h3');
+    if (heading) {
+      heading.tabIndex = -1;
+      heading.focus({ preventScroll: true });
+    }
+  },
+  { immediate: true },
+);
+
+onMounted(() => {
+  syncUrlHash();
+  window.addEventListener('hashchange', syncUrlHash);
+});
+onBeforeUnmount(() => window.removeEventListener('hashchange', syncUrlHash));
+
 onMounted(async () => {
   const { linkedId, remainingSearch: afterLinked } = extractLinkedParam(window.location.search);
   const linkedError = extractLinkedErrorParams(afterLinked);
@@ -94,7 +140,7 @@ onMounted(async () => {
     );
   }
 
-  try {
+  await run(async () => {
     const data = await fetchIdentities();
     providers.value = data.providers;
     linkedBanner.value = resolveLinkedBanner(data.providers, linkedId);
@@ -105,17 +151,7 @@ onMounted(async () => {
     if (linkedErrorBanner.value) {
       linkedErrorBannerTimer = setTimeout(dismissLinkedErrorBanner, 5000);
     }
-  } catch (err) {
-    if (err instanceof AccessDeniedError) {
-      accessDenied.value = err;
-    } else if (err instanceof SessionExpiredError) {
-      sessionExpired.value = true;
-    } else {
-      error.value = err instanceof Error ? err.message : 'Could not load identity status.';
-    }
-  } finally {
-    loading.value = false;
-  }
+  }, 'Could not load identity status.');
 
   try {
     const catalog = await fetchCatalog();
@@ -125,9 +161,56 @@ onMounted(async () => {
   }
 });
 
-function reload() {
-  location.reload();
+interface StateBanner {
+  tone: 'bad' | 'warn';
+  title: string;
+  text: string;
+  /** Exact time shown on hover for relative wording in `text`. */
+  hoverTitle?: string;
+  /** Provider the banner's one button jumps to; absent when no single target exists. */
+  targetId?: string;
+  button?: string;
 }
+
+// The one most urgent state problem, or null. The proxy is judged by
+// proxyExpiryState: an auto-renewing link re-mints hands-free, so it never
+// warns of expiry.
+// Problem beats warning: an expired proxy, then an expiring one. An account
+// that is not linked is the user's choice, and one that needs access is for an
+// administrator to fix, so neither raises a banner; each card says so itself.
+const stateBanner = computed<StateBanner | null>(() => {
+  const now = new Date();
+  const x509 = providers.value.find((p) => p.link_mechanism === 'passphrase');
+  const expiry = x509?.proxy_expires_at ? new Date(x509.proxy_expires_at) : null;
+  if (x509 && expiry && !Number.isNaN(expiry.getTime())) {
+    const state = proxyExpiryState(
+      (expiry.getTime() - now.getTime()) / 1000,
+      x509.x509_link_mode === 'auto-renew',
+    );
+    if (state === 'expired') {
+      return {
+        tone: 'bad',
+        title: 'Your grid proxy has expired',
+        text: 'Link your grid certificate again to restore HTCondor and grid data access.',
+        hoverTitle: formatDateTime(expiry, { year: true }),
+        targetId: x509.id,
+        button: 'Link certificate',
+      };
+    }
+    if (x509.linked && state === 'expiring') {
+      return {
+        tone: 'warn',
+        title: 'Your grid proxy expires soon',
+        text: `${formatRemaining(expiry, now)}. Re-link your grid certificate to renew it.`,
+        hoverTitle: formatDateTime(expiry, { year: true }),
+        targetId: x509.id,
+        button: 'Re-link certificate',
+      };
+    }
+  }
+
+  return null;
+});
 
 // Called on IdentityLink's `unlinked` event, once the DELETE has already
 // succeeded — reflect it locally rather than re-fetching, and drop the
@@ -241,301 +324,196 @@ function handleServiceXRevoked(id: string) {
 </script>
 
 <template>
-  <div class="ip">
-    <!-- Linked confirmation banner -->
-    <div v-if="linkedBanner" class="ip__banner" role="status">
-      <span
-        >Linked <strong>{{ linkedBanner }}</strong> successfully.</span
-      >
+  <div class="af-page">
+    <!-- Banner slot: one message. A just-finished link attempt outranks the
+         standing state, which returns once it is dismissed or fades. -->
+    <div v-if="linkedErrorBanner" class="alert af-banner bad" role="alert">
+      <span class="af-mark bad" aria-hidden="true"></span>
+      <div>
+        <b>Linking failed</b>
+        {{ linkedErrorBanner }}
+      </div>
       <button
         type="button"
-        class="ip__banner-close"
-        aria-label="Dismiss"
-        @click="dismissLinkedBanner"
-      >
-        &times;
-      </button>
-    </div>
-
-    <!-- Linking failure banner -->
-    <div v-if="linkedErrorBanner" class="ip__banner ip__banner--error" role="alert">
-      <span>{{ linkedErrorBanner }}</span>
-      <button
-        type="button"
-        class="ip__banner-close"
+        class="btn"
+        data-variant="ghost"
+        data-size="sm"
         aria-label="Dismiss"
         @click="dismissLinkedErrorBanner"
       >
-        &times;
+        <X class="af-icon" :size="16" aria-hidden="true" />
       </button>
     </div>
 
-    <!-- Loading -->
-    <div v-if="loading" class="ip__loading" aria-live="polite">
-      <span class="ip__spinner" aria-hidden="true"></span>
-      Loading identity status…
+    <div v-else-if="linkedBanner" class="alert af-banner ok" role="status">
+      <span class="af-mark ok" aria-hidden="true"></span>
+      <div>
+        <b>{{ linkedBanner }} linked</b>
+      </div>
+      <button
+        type="button"
+        class="btn"
+        data-variant="ghost"
+        data-size="sm"
+        aria-label="Dismiss"
+        @click="dismissLinkedBanner"
+      >
+        <X class="af-icon" :size="16" aria-hidden="true" />
+      </button>
     </div>
 
-    <!-- Session expired -->
-    <div v-else-if="sessionExpired" class="ip__error" role="alert">
-      <span class="ip__error-title">Session expired</span>
-      <span class="ip__error-body">
-        Your session has expired.
-        <button type="button" class="ip__reload" @click="reload">Reload</button>
-        to re-authenticate.
-      </span>
+    <div v-else-if="stateBanner" class="alert af-banner" :class="stateBanner.tone" role="alert">
+      <span class="af-mark" :class="stateBanner.tone" aria-hidden="true"></span>
+      <div>
+        <b>{{ stateBanner.title }}</b>
+        <span :title="stateBanner.hoverTitle">{{ stateBanner.text }}</span>
+      </div>
+      <a
+        v-if="stateBanner.targetId"
+        class="btn"
+        data-variant="outline"
+        data-size="sm"
+        :href="`#identity-card-${stateBanner.targetId}`"
+      >
+        {{ stateBanner.button }}
+      </a>
     </div>
 
-    <!-- Access denied: a valid, unexpired credential that's missing the
-         audience needed to use this platform -- a reload can't fix it, only
-         an administrator granting access can (see identity.py's
-         TokenAudienceError). -->
-    <div v-else-if="accessDenied" class="ip__error" role="alert">
-      <span class="ip__error-title">Access not yet granted</span>
-      <span class="ip__error-body">{{ accessDenied.message }}</span>
-    </div>
+    <section class="af-sect">
+      <h2>Accounts and credentials</h2>
+      <AsyncState
+        :loading="loading"
+        :error="error"
+        error-title="Could not load identities"
+        :session-expired="sessionExpired"
+        :access-denied="accessDenied"
+        :empty="providers.length === 0"
+        loading-label="Loading identity status…"
+      >
+        <!-- Identity list — one flat list. Redirect-mechanism providers
+             (keycloak-brokered, oauth21-direct) render uniformly via
+             IdentityLink; the passphrase-mechanism x509 entry gets its own
+             card with the in-page passphrase form; the credential-mechanism
+             krb5-token entry gets its own card with the in-page ticket form;
+             the servicex-token entry gets its own card with the in-page
+             refresh-token paste form and an external-link-out button. -->
+        <div ref="listRoot" class="ip__list">
+          <template v-for="p in providers" :key="p.id">
+            <!--
+              Stable per-provider anchor -- af_link_identity (and the broker's
+              not-linked ToolError) deep-link to
+              `{portal_url}/identities#identity-card-{id}`. Wraps whichever
+              card component renders rather than putting the id on the
+              component itself: IdentityLink already declares its own `id`
+              prop with a different meaning (the provider alias passed
+              through to startIdpLink() and its dialog's aria ids), so
+              reusing it for the DOM anchor would collide.
+            -->
+            <div
+              :id="`identity-card-${p.id}`"
+              class="ip__card-anchor"
+              :class="{ 'ip__card-anchor--target': p.id === targetId }"
+              :aria-current="p.id === targetId ? 'true' : undefined"
+            >
+              <X509IdentityCard
+                v-if="p.link_mechanism === 'passphrase'"
+                :linked="p.linked"
+                :display_name="p.display_name"
+                :enables="p.enables"
+                :powers="powersForAlias(p.id)"
+                :proxy_expires_at="p.proxy_expires_at"
+                :x509_link_mode="p.x509_link_mode"
+                @linked="(meta, remember) => handleX509Linked(p.id, meta, remember)"
+                @revoked="handleX509Revoked(p.id)"
+              />
+              <Krb5IdentityCard
+                v-else-if="p.link_mechanism === 'credential'"
+                :id="p.id"
+                :linked="p.linked"
+                :krb5_has_keytab="p.krb5_has_keytab"
+                :display_name="p.display_name"
+                :enables="p.enables"
+                :powers="powersForAlias(p.id)"
+                @linked="(meta) => handleKrb5Linked(p.id, meta)"
+                @keytab-linked="handleKrb5KeytabLinked(p.id)"
+                @keytab-unlinked="handleKrb5KeytabUnlinked(p.id)"
+                @revoked="handleKrb5Revoked(p.id)"
+              />
+              <ServiceXIdentityCard
+                v-else-if="p.link_mechanism === 'servicex-token'"
+                :id="p.id"
+                :linked="p.linked"
+                :display_name="p.display_name"
+                :enables="p.enables"
+                :powers="powersForAlias(p.id)"
+                :external_login_url="p.external_login_url"
+                @linked="(meta) => handleServiceXLinked(p.id, meta)"
+                @revoked="handleServiceXRevoked(p.id)"
+              />
+              <IdentityLink
+                v-else
+                :id="p.id"
+                :type="p.type"
+                :linked="p.linked"
+                :display_name="p.display_name"
+                :enables="p.enables"
+                :powers="powersForAlias(p.id)"
+                :link_url="p.link_url"
+                :link_permission_denied="p.link_permission_denied"
+                @unlinked="handleUnlinked(p.id)"
+              />
+            </div>
+          </template>
+        </div>
 
-    <!-- Error -->
-    <div v-else-if="error" class="ip__error" role="alert">
-      <span class="ip__error-title">Could not load identities</span>
-      <span class="ip__error-body">{{ error }}</span>
-    </div>
-
-    <template v-else>
-      <!-- Identity list — one flat list. Redirect-mechanism providers
-           (keycloak-brokered, oauth21-direct) render uniformly via
-           IdentityLink; the passphrase-mechanism x509 entry gets its own
-           card with the in-page passphrase form; the credential-mechanism
-           krb5-token entry gets its own card with the in-page ticket form;
-           the servicex-token entry gets its own card with the in-page
-           refresh-token paste form and an external-link-out button. -->
-      <div v-if="providers.length > 0" class="ip__list">
-        <template v-for="p in providers" :key="p.id">
-          <!--
-            Stable per-provider anchor -- af_link_identity (and the broker's
-            not-linked ToolError) deep-link to
-            `{portal_url}/identities#identity-card-{id}`. Wraps whichever
-            card component renders rather than putting the id on the
-            component itself: IdentityLink already declares its own `id`
-            prop with a different meaning (the provider alias passed
-            through to startIdpLink() and its dialog's aria ids), so
-            reusing it for the DOM anchor would collide.
-          -->
-          <div :id="`identity-card-${p.id}`" class="ip__card-anchor">
-            <X509IdentityCard
-              v-if="p.link_mechanism === 'passphrase'"
-              :linked="p.linked"
-              :display_name="p.display_name"
-              :enables="p.enables"
-              :powers="powersForAlias(p.id)"
-              :proxy_expires_at="p.proxy_expires_at"
-              :x509_link_mode="p.x509_link_mode"
-              @linked="(meta, remember) => handleX509Linked(p.id, meta, remember)"
-              @revoked="handleX509Revoked(p.id)"
-            />
-            <Krb5IdentityCard
-              v-else-if="p.link_mechanism === 'credential'"
-              :id="p.id"
-              :linked="p.linked"
-              :krb5_has_keytab="p.krb5_has_keytab"
-              :display_name="p.display_name"
-              :enables="p.enables"
-              :powers="powersForAlias(p.id)"
-              @linked="(meta) => handleKrb5Linked(p.id, meta)"
-              @keytab-linked="handleKrb5KeytabLinked(p.id)"
-              @keytab-unlinked="handleKrb5KeytabUnlinked(p.id)"
-              @revoked="handleKrb5Revoked(p.id)"
-            />
-            <ServiceXIdentityCard
-              v-else-if="p.link_mechanism === 'servicex-token'"
-              :id="p.id"
-              :linked="p.linked"
-              :display_name="p.display_name"
-              :enables="p.enables"
-              :powers="powersForAlias(p.id)"
-              :external_login_url="p.external_login_url"
-              @linked="(meta) => handleServiceXLinked(p.id, meta)"
-              @revoked="handleServiceXRevoked(p.id)"
-            />
-            <IdentityLink
-              v-else
-              :id="p.id"
-              :type="p.type"
-              :linked="p.linked"
-              :display_name="p.display_name"
-              :enables="p.enables"
-              :powers="powersForAlias(p.id)"
-              :link_url="p.link_url"
-              :link_permission_denied="p.link_permission_denied"
-              @unlinked="handleUnlinked(p.id)"
-            />
-          </div>
+        <!-- No providers returned at all -->
+        <template #empty>
+          <header>
+            <h3>No identity providers configured</h3>
+            <p>Contact your facility administrator to enable external identity providers.</p>
+          </header>
         </template>
-      </div>
-
-      <!-- No providers returned at all -->
-      <div v-else class="ip__empty">
-        <p class="ip__empty-title">No identity providers configured</p>
-        <p class="ip__empty-body">
-          Contact your facility administrator to enable external identity providers.
-        </p>
-      </div>
-    </template>
+      </AsyncState>
+    </section>
   </div>
 </template>
 
 <style scoped>
-.ip {
-  display: flex;
-  flex-direction: column;
-  gap: 1.5rem;
-}
-
-/* Linked confirmation banner */
-.ip__banner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  padding: 0.875rem 1rem;
-  border: 1px solid rgb(from var(--color-af-green) r g b / 0.25);
-  border-radius: 4px;
-  background: rgb(from var(--color-af-green) r g b / 0.08);
-  font-size: 0.875rem;
-  color: var(--color-af-text);
-  animation: ip-banner-fade-in 200ms ease-out;
-}
-
-.ip__banner-close {
-  flex-shrink: 0;
-  font: inherit;
-  font-size: 1rem;
-  line-height: 1;
-  color: var(--color-af-dim);
-  background: none;
-  border: none;
-  cursor: pointer;
-  padding: 0 0.25rem;
-}
-.ip__banner-close:hover {
-  color: var(--color-af-text);
-}
-
-/* Linking failure banner — same layout as the success banner, red/warning styling */
-.ip__banner--error {
-  border-color: rgb(from var(--color-af-red) r g b / 0.25);
-  background: rgb(from var(--color-af-red) r g b / 0.06);
-}
-
-@keyframes ip-banner-fade-in {
-  from {
-    opacity: 0;
-    transform: translateY(-4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .ip__banner {
-    animation: none;
-  }
-}
-
-/* List */
 .ip__list {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: var(--space-16);
 }
 
-/* Anchor wrapper for a `#identity-card-{id}` deep link (af_link_identity,
-   and the broker's not-linked ToolError) -- scroll-margin-top keeps the
-   card clear of Base.astro's sticky .af-topbar (56px tall) when the
-   browser scrolls a hash target into view. */
+/* A deep link (#identity-card-<id>) lands with the row clear of the sticky
+   top bar. That bar exists only under 860px, where it is 52px tall
+   (--control-m + --space-16); above it nothing is sticky. */
 .ip__card-anchor {
-  scroll-margin-top: 72px;
+  scroll-margin-top: var(--space-16);
 }
 
-/* Loading */
-.ip__loading {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 2rem;
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.8125rem;
-  color: var(--color-af-dim);
+/* The row a link points at: a 2px outline (outlines take no layout space, so
+   neighbouring rows do not move) and a subtle fill that fades in. No accent;
+   that is reserved for the primary action. */
+.ip__card-anchor {
+  border-radius: var(--radius-10);
+  transition: background-color var(--time-base) var(--ease);
 }
 
-.ip__spinner {
-  width: 16px;
-  height: 16px;
-  border: 2px solid var(--color-af-border);
-  border-top-color: var(--color-af-teal);
-  border-radius: 50%;
-  animation: spin 600ms linear infinite;
+.ip__card-anchor--target {
+  outline: 2px solid var(--color-af-text);
+  background-color: var(--color-af-bg-subtle);
 }
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
+
 @media (prefers-reduced-motion: reduce) {
-  .ip__spinner {
-    animation: none;
-    border-top-color: var(--color-af-dim);
+  .ip__card-anchor {
+    transition: none;
   }
 }
 
-/* Error */
-.ip__error {
-  display: flex;
-  flex-direction: column;
-  gap: 0.375rem;
-  padding: 1rem;
-  border: 1px solid rgb(from var(--color-af-red) r g b / 0.2);
-  border-radius: 4px;
-  background: rgb(from var(--color-af-red) r g b / 0.05);
-}
-.ip__error-title {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.8125rem;
-  font-weight: 600;
-  color: var(--color-af-red);
-}
-.ip__error-body {
-  font-size: 0.875rem;
-  color: var(--color-af-dim);
-}
-
-.ip__reload {
-  font: inherit;
-  color: var(--color-af-teal);
-  background: none;
-  border: none;
-  padding: 0;
-  cursor: pointer;
-  text-decoration: underline;
-}
-
-/* Empty */
-.ip__empty {
-  padding: 3rem 1.5rem;
-  text-align: center;
-  border: 1px dashed var(--color-af-border);
-  border-radius: 4px;
-}
-.ip__empty-title {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 1rem;
-  color: var(--color-af-label);
-  margin: 0 0 0.5rem;
-}
-.ip__empty-body {
-  font-size: 0.875rem;
-  color: var(--color-af-dim);
-  margin: 0;
+@media (max-width: 859px) {
+  .ip__card-anchor {
+    scroll-margin-top: calc(var(--control-m) + var(--space-16) + var(--space-16));
+  }
 }
 </style>

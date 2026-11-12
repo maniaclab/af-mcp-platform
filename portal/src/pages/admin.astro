@@ -4,33 +4,12 @@ import AdminPage from '../components/AdminPage.vue';
 ---
 
 <Base title="Admin">
-  <div class="page-header">
-    <h1 class="page-title">Admin</h1>
-    <p class="page-subtitle">Platform administration, visible only to admins.</p>
+  <div class="af-page-head">
+    <div>
+      <h1>Admin</h1>
+      <p>Platform state across all users, for facility operators.</p>
+    </div>
   </div>
 
   <AdminPage client:load />
 </Base>
-
-<style>
-  .page-header {
-    margin-bottom: 1.75rem;
-  }
-
-  .page-title {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 1.5rem;
-    font-weight: 700;
-    letter-spacing: 0.02em;
-    color: var(--color-af-text);
-    margin: 0 0 0.5rem;
-  }
-
-  .page-subtitle {
-    font-size: 0.9375rem;
-    color: var(--color-af-dim);
-    line-height: 1.6;
-    margin: 0;
-    max-width: 52rem;
-  }
-</style>

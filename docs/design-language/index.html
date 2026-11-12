@@ -1,0 +1,882 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AF MCP Portal design language</title>
+<style>
+/* ---------- Fonts (self-hosted, same files the portal would ship) ---------- */
+@font-face { font-family: "IBM Plex Sans"; src: url("fonts/ibm-plex-sans-latin-wght-normal.woff2") format("woff2"); font-weight: 100 700; font-display: swap; }
+@font-face { font-family: "IBM Plex Mono"; src: url("fonts/ibm-plex-mono-latin-400-normal.woff2") format("woff2"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "IBM Plex Mono"; src: url("fonts/ibm-plex-mono-latin-500-normal.woff2") format("woff2"); font-weight: 500; font-display: swap; }
+
+/* ---------- Layer 1: primitives, which components never reference directly. ---------- */
+:root {
+  --grey-0: #ffffff; --grey-50: #f6f6f6; --grey-100: #ececec; --grey-200: #e0e0e0; --grey-300: #c6c6c6;
+  --grey-500: #8d8d8d; --grey-600: #5c5c5c; --grey-700: #3d3d42; --grey-800: #2a2a2d; --grey-900: #18181a;
+  --grey-950: #0f0f10; --grey-1000: #0a0a0a;
+  --green-400: #4ade80; --green-600: #16a34a; --green-700: #15803d;
+  --amber-400: #fbbf24; --amber-600: #d97706;
+  --red-400: #f87171; --red-600: #dc2626; --red-700: #b91c1c;
+  --blue-400: #60a5fa; --blue-600: #2563eb;
+}
+
+/* ---------- Layer 2: semantic tokens. Components use only these. ---------- */
+:root {
+  color-scheme: light;
+  --bg: var(--grey-0); --bg-subtle: var(--grey-50); --bg-hover: var(--grey-100);
+  --border: var(--grey-200); --border-strong: var(--grey-300);
+  --text: var(--grey-1000); --text-secondary: var(--grey-600); --text-disabled: var(--grey-500);
+  --ok: var(--green-600); --warn: var(--amber-600); --bad: var(--red-600); --info: var(--blue-600);
+  --bad-text: var(--red-700);
+  --banner-ok: var(--green-700); --banner-warn: var(--amber-400); --banner-bad: var(--red-600); --banner-info: var(--blue-600);
+  --on-banner-ok: #fff; --on-banner-warn: var(--grey-1000); --on-banner-bad: #fff; --on-banner-info: #fff;
+  --accent: var(--grey-1000); --on-accent: #ffffff;  /* ink unless a deployment opts in; see Colour */
+  --scrim: rgb(10 10 10 / 0.45);
+  --shadow-1: 0 1px 2px rgb(10 10 10 / 0.08), 0 4px 12px rgb(10 10 10 / 0.10);
+  --shadow-2: 0 2px 4px rgb(10 10 10 / 0.10), 0 16px 40px rgb(10 10 10 / 0.20);
+
+  --font-text: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-head: var(--font-text);                     /* one family for headings and text */
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --text-12: 0.75rem; --text-13: 0.8125rem; --text-14: 0.875rem; --text-16: 1rem; --text-20: 1.25rem; --text-24: 1.5rem; --text-32: 2rem;
+  --space-2: 2px; --space-4: 4px; --space-8: 8px; --space-12: 12px; --space-16: 16px; --space-24: 24px; --space-32: 32px; --space-48: 48px; --space-64: 64px;
+  --radius-4: 4px; --radius-8: 8px; --radius-10: 10px; --radius-full: 999px;
+  --control-s: 32px; --control-m: 36px; --control-l: 40px; --control-xl: 52px;
+  --time-fast: 100ms; --time-base: 200ms; --time-slow: 300ms; --ease: cubic-bezier(0.2, 0, 0, 1);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: var(--grey-950); --bg-subtle: var(--grey-900); --bg-hover: var(--grey-800);
+    --border: var(--grey-800); --border-strong: var(--grey-700);
+    --text: #f5f5f5; --text-secondary: #a8a8ad; --text-disabled: #6f6f75;
+    --ok: var(--green-400); --warn: var(--amber-400); --bad: var(--red-400); --info: var(--blue-400);
+    --bad-text: var(--red-400);
+    --scrim: rgb(0 0 0 / 0.6);
+    --shadow-1: 0 0 0 1px var(--grey-700), 0 4px 12px rgb(0 0 0 / 0.5);
+    --shadow-2: 0 0 0 1px var(--grey-700), 0 16px 40px rgb(0 0 0 / 0.7);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: var(--grey-950); --bg-subtle: var(--grey-900); --bg-hover: var(--grey-800);
+  --border: var(--grey-800); --border-strong: var(--grey-700);
+  --text: #f5f5f5; --text-secondary: #a8a8ad; --text-disabled: #6f6f75;
+  --ok: var(--green-400); --warn: var(--amber-400); --bad: var(--red-400); --info: var(--blue-400);
+  --bad-text: var(--red-400);
+  --scrim: rgb(0 0 0 / 0.6);
+  --shadow-1: 0 0 0 1px var(--grey-700), 0 4px 12px rgb(0 0 0 / 0.5);
+  --shadow-2: 0 0 0 1px var(--grey-700), 0 16px 40px rgb(0 0 0 / 0.7);
+}
+
+/* ---------- Base ---------- */
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 72px; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 400 var(--text-14)/1.45 var(--font-text); -webkit-font-smoothing: antialiased; }
+h1, h2, h3, h4 { font-family: var(--font-head); font-weight: 600; margin: 0; text-wrap: balance; letter-spacing: -0.01em; }
+p { margin: 0; }
+code, .mono { font-family: var(--font-mono); font-size: 0.93em; }
+a { color: inherit; text-underline-offset: 3px; }
+:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+svg.i { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ---------- Reference chrome ---------- */
+.ref-top { position: sticky; top: 0; z-index: 20; background: var(--bg); border-bottom: 1px solid var(--border); }
+.ref-top-in { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-12) var(--space-24); padding: var(--space-12) max(16px, env(safe-area-inset-right, 0px)) var(--space-12) max(16px, env(safe-area-inset-left, 0px)); max-width: 1400px; margin: 0 auto; }
+.ref-name { font: 600 var(--text-14)/1 var(--font-head); margin-right: auto; }
+.ref-ctl { display: flex; align-items: center; gap: var(--space-8); font-size: var(--text-12); color: var(--text-secondary); }
+.ref-sw { width: 22px; height: 22px; border-radius: var(--radius-full); border: 2px solid var(--bg); box-shadow: 0 0 0 1px var(--border-strong); padding: 0; cursor: pointer; }
+.ref-sw[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--text); }
+.ref-ctl input[type="color"] { width: 28px; height: 24px; padding: 0; border: 1px solid var(--border-strong); border-radius: var(--radius-4); background: none; }
+.ref-wrap { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: var(--space-48); max-width: 1400px; margin: 0 auto; padding: var(--space-32) max(16px, env(safe-area-inset-right, 0px)) var(--space-64) max(16px, env(safe-area-inset-left, 0px)); }
+.ref-nav { position: sticky; top: 72px; align-self: start; max-height: calc(100vh - 88px); overflow: auto; font-size: var(--text-13); }
+.ref-nav p { font-size: var(--text-12); color: var(--text-secondary); margin: var(--space-16) 0 var(--space-4); }
+.ref-nav p:first-child { margin-top: 0; }
+.ref-nav a { display: block; padding: 5px 0; text-decoration: none; color: var(--text); }
+.ref-nav a:hover { text-decoration: underline; }
+.ref-main { min-width: 0; display: flex; flex-direction: column; gap: var(--space-64); }
+.ref-main > section { display: flex; flex-direction: column; gap: var(--space-24); }
+.ref-main > section > header { display: flex; flex-direction: column; gap: var(--space-8); padding-bottom: var(--space-16); border-bottom: 1px solid var(--border); }
+.term { font-size: var(--text-12); color: var(--text-secondary); }
+.ref-main h1 { font-size: var(--text-32); line-height: 1.2; }
+.ref-main h2 { font-size: var(--text-24); line-height: 1.3; }
+.ref-main h3 { font-size: var(--text-16); line-height: 1.4; margin-top: var(--space-8); }
+.def { font-size: var(--text-16); line-height: 1.55; max-width: 68ch; }
+.prose { max-width: 68ch; display: flex; flex-direction: column; gap: var(--space-8); }
+.prose ul { margin: 0; padding-left: 1.2em; display: flex; flex-direction: column; gap: var(--space-4); }
+.used { font-size: var(--text-13); color: var(--text-secondary); }
+.used b { color: var(--text); font-weight: 500; }
+.scroll { overflow-x: auto; }
+table.spec { border-collapse: collapse; width: 100%; font-size: var(--text-13); }
+table.spec th { text-align: left; font-weight: 500; color: var(--text-secondary); padding: var(--space-8) var(--space-16) var(--space-8) 0; border-bottom: 1px solid var(--border-strong); white-space: nowrap; }
+table.spec td { padding: var(--space-8) var(--space-16) var(--space-8) 0; border-bottom: 1px solid var(--border); vertical-align: top; }
+table.spec td:first-child { white-space: nowrap; }
+.chip { display: inline-block; width: 28px; height: 28px; border-radius: var(--radius-4); box-shadow: inset 0 0 0 1px var(--border-strong); vertical-align: middle; }
+.stage { border: 1px solid var(--border); border-radius: var(--radius-10); padding: var(--space-24); display: flex; flex-direction: column; gap: var(--space-16); min-width: 0; }
+.stage.row { flex-direction: row; flex-wrap: wrap; align-items: center; }
+.stage-label { font-size: var(--text-12); color: var(--text-secondary); }
+.dd { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: var(--space-16); }
+.dd > div { display: flex; flex-direction: column; gap: var(--space-12); min-width: 0; }
+.dd .stage { flex: 1; padding: var(--space-16); }
+.verdict { display: flex; gap: var(--space-8); align-items: baseline; font-size: var(--text-13); }
+.verdict b { font-weight: 600; }
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: var(--space-16); }
+.swatch-row { display: flex; align-items: center; gap: var(--space-12); }
+.bar { height: 12px; background: var(--text); border-radius: 2px; }
+@media (max-width: 860px) {
+  .ref-wrap { grid-template-columns: minmax(0, 1fr); gap: var(--space-24); }
+  .ref-nav { position: static; max-height: none; display: flex; flex-wrap: wrap; gap: 0 var(--space-16); }
+  .ref-nav p { display: none; }
+}
+
+/* ---------- Layer 3: components ---------- */
+/* Status mark: shape carries the meaning, colour repeats it, the word states it. */
+.st { display: inline-flex; align-items: center; gap: var(--space-8); white-space: nowrap; }
+.mark { width: 10px; height: 10px; flex: none; display: inline-block; }
+.mark.ok { background: var(--ok); border-radius: 50%; }
+.mark.warn { background: var(--warn); clip-path: polygon(50% 4%, 100% 96%, 0 96%); width: 11px; }
+.mark.bad { background: var(--bad); border-radius: 2px; }
+.mark.info { background: var(--info); transform: rotate(45deg) scale(0.82); border-radius: 1px; }
+.mark.busy { border-radius: 50%; background: linear-gradient(90deg, var(--text-secondary) 50%, transparent 50%); box-shadow: inset 0 0 0 1.5px var(--text-secondary); }
+.mark.off { border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--text-secondary); }
+
+/* Button */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-8); height: var(--control-m); padding: 0 10px; border-radius: var(--radius-8); border: 1px solid transparent; font: 500 var(--text-14)/1 var(--font-text); cursor: pointer; white-space: nowrap; text-decoration: none; transition: background var(--time-fast) var(--ease), border-color var(--time-fast) var(--ease); }
+.btn.primary { background: var(--accent); color: var(--on-accent); }
+.btn.primary:hover { background: color-mix(in srgb, var(--accent) 86%, var(--on-accent)); }
+.btn.secondary { background: var(--bg); color: var(--text); border-color: var(--border-strong); }
+.btn.secondary:hover { background: var(--bg-hover); }
+.btn.quiet { background: transparent; color: var(--text); }
+.btn.quiet:hover { background: var(--bg-hover); }
+.btn.danger { background: var(--bg); color: var(--bad-text); border-color: color-mix(in srgb, var(--bad) 55%, var(--bg)); }
+.btn.danger:hover { background: color-mix(in srgb, var(--bad) 10%, var(--bg)); }
+.btn.s { height: var(--control-s); }
+.btn.l { height: var(--control-l); }
+.btn.xl { height: var(--control-xl); padding: 0 var(--space-32); font-size: var(--text-16); }
+.btn[disabled] { background: var(--bg-subtle); color: var(--text-disabled); border-color: var(--border); cursor: not-allowed; }
+
+/* Banner: page level, one per page, always a status colour, never the accent. */
+.banner { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-8) var(--space-16); padding: var(--space-12) var(--space-16); border-radius: var(--radius-10); }
+.banner > div { flex: 1 1 180px; min-width: 0; }
+.banner b { font-weight: 600; display: block; }
+.banner .btn { background: var(--bg); color: var(--text); border-color: transparent; }
+.banner.warn { background: var(--banner-warn); color: var(--on-banner-warn); }
+.banner.bad { background: var(--banner-bad); color: var(--on-banner-bad); }
+.banner.info { background: var(--banner-info); color: var(--on-banner-info); }
+.banner.ok { background: var(--banner-ok); color: var(--on-banner-ok); }
+.banner .mark { background: currentColor; }
+
+/* Slim: the one-line maintenance bar in the shell. */
+.banner.slim { padding-block: var(--space-8); flex-wrap: nowrap; gap: var(--space-12); }
+.banner.slim > div { flex: 1 1 auto; }
+
+/* Note: inline, sits inside a section next to the thing it is about. A hint is a note.info. */
+.note { display: flex; gap: var(--space-12); padding: var(--space-12) var(--space-16); border-radius: var(--radius-8); border: 1px solid; font-size: var(--text-13); align-items: baseline; }
+.note.warn { background: color-mix(in srgb, var(--warn) 10%, var(--bg)); border-color: color-mix(in srgb, var(--warn) 50%, var(--bg)); }
+.note.bad { background: color-mix(in srgb, var(--bad) 8%, var(--bg)); border-color: color-mix(in srgb, var(--bad) 45%, var(--bg)); }
+.note.info { background: color-mix(in srgb, var(--info) 8%, var(--bg)); border-color: color-mix(in srgb, var(--info) 45%, var(--bg)); }
+.note.ok { background: color-mix(in srgb, var(--ok) 8%, var(--bg)); border-color: color-mix(in srgb, var(--ok) 45%, var(--bg)); }
+
+/* Table */
+.tbl-box { border: 1px solid var(--border); border-radius: var(--radius-10); overflow-x: auto; }
+table.tbl { width: 100%; border-collapse: collapse; }
+.tbl th { text-align: left; font-weight: 500; font-size: var(--text-13); color: var(--text-secondary); padding: 0 var(--space-16); height: 40px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.tbl td { padding: 0 var(--space-16); height: 44px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.tbl tr:last-child td { border-bottom: 0; }
+.tbl tbody tr:hover { background: var(--bg-subtle); }
+.tbl .num { text-align: right; font-variant-numeric: tabular-nums; }
+.tbl .act { text-align: right; }
+.tbl .sub { color: var(--text-secondary); }
+.tbl.compact td { height: 32px; font-size: var(--text-13); }
+.tbl.compact th { height: 32px; font-size: var(--text-12); }
+
+/* Field */
+.field { display: flex; flex-direction: column; gap: 6px; max-width: 360px; }
+.field label { font-weight: 500; font-size: var(--text-13); }
+.field .hint { font-size: var(--text-13); color: var(--text-secondary); }
+.field .err { font-size: var(--text-13); color: var(--bad-text); display: flex; gap: var(--space-8); align-items: center; }
+.input { height: var(--control-m); padding: 0 var(--space-12); border: 1px solid var(--border-strong); border-radius: var(--radius-8); background: var(--bg); color: var(--text); font: inherit; width: 100%; }
+.input[aria-invalid="true"] { border-color: var(--bad); }
+.check { display: inline-flex; gap: var(--space-8); align-items: center; }
+.check input { width: 16px; height: 16px; accent-color: var(--accent); margin: 0; }
+
+/* Tag: a neutral label for a category, which is different from a status. */
+.tag { display: inline-flex; align-items: center; height: 20px; padding: 0 var(--space-8); border-radius: var(--radius-full); background: transparent; border: 1px solid var(--border); font: 500 var(--text-12)/1 var(--font-text); }
+
+/* Segmented control */
+.seg { display: inline-flex; }
+.seg button { height: var(--control-s); padding: 0 10px; border: 1px solid var(--border-strong); margin-left: -1px; border-radius: 0; background: var(--bg); color: var(--text); font: 500 var(--text-14)/1 var(--font-text); cursor: pointer; }
+.seg button:first-child { margin-left: 0; border-radius: var(--radius-8) 0 0 var(--radius-8); }
+.seg button:last-child { border-radius: 0 var(--radius-8) var(--radius-8) 0; }
+.seg button[aria-pressed="true"] { background: var(--text); color: var(--bg); border-color: var(--text); position: relative; }
+
+/* Sidebar nav */
+.nav { display: flex; flex-direction: column; gap: 2px; width: 220px; max-width: 100%; }
+.nav a { display: flex; align-items: center; height: var(--control-m); padding: 0 var(--space-12); border-radius: var(--radius-8); text-decoration: none; color: var(--text-secondary); position: relative; }
+.nav a:hover { background: var(--bg-hover); color: var(--text); }
+.nav a[aria-current="page"] { color: var(--text); font-weight: 600; background: var(--bg-subtle); }
+.nav a[aria-current="page"]::before { content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px; border-radius: 2px; background: var(--accent); }
+
+/* Copy field */
+.copy { display: flex; align-items: center; gap: var(--space-8); border: 1px solid var(--border-strong); border-radius: var(--radius-8); padding: 0 var(--space-4) 0 var(--space-12); height: var(--control-l); background: var(--bg-subtle); min-width: 0; max-width: 560px; }
+.copy code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Key-value list */
+.kv { display: grid; grid-template-columns: minmax(120px, 180px) minmax(0, 1fr); margin: 0; }
+.kv dt, .kv dd { padding: var(--space-12) 0; border-bottom: 1px solid var(--border); margin: 0; }
+.kv dt { color: var(--text-secondary); }
+.kv dd { overflow-wrap: anywhere; }
+.kv dt:last-of-type, .kv dd:last-of-type { border-bottom: 0; }
+
+/* Stat */
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: var(--space-24); }
+.stat { display: flex; flex-direction: column; gap: var(--space-4); }
+.stat span { font-size: var(--text-13); color: var(--text-secondary); }
+.stat b { font: 600 var(--text-24)/1.2 var(--font-text); font-variant-numeric: tabular-nums; }
+.stat small { font-size: var(--text-12); color: var(--text-secondary); }
+
+/* Dialog, menu, tooltip (shown inline as specimens) */
+.scrim-demo { background: var(--scrim); border-radius: var(--radius-10); padding: var(--space-32) var(--space-16); display: flex; justify-content: center; }
+.dialog { background: var(--bg); border-radius: 14px; /* Basecoat's dialog panel (rounded-xl) */ box-shadow: var(--shadow-2); padding: var(--space-24); width: min(100%, 440px); display: flex; flex-direction: column; gap: var(--space-16); }
+.dialog h4 { font-size: var(--text-20); }
+.dialog footer { display: flex; justify-content: flex-end; gap: var(--space-8); flex-wrap: wrap; }
+.chart-tip { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-10); box-shadow: var(--shadow-1); padding: 6px 10px; width: 160px; display: flex; flex-direction: column; gap: var(--space-4); font-size: var(--text-12); }
+.chart-tip div { display: flex; align-items: center; gap: var(--space-8); }
+.chart-tip i { width: 10px; height: 10px; border-radius: 2px; background: var(--text-secondary); }
+.chart-tip b { margin-left: auto; font: 500 var(--text-12)/1 var(--font-mono); font-variant-numeric: tabular-nums; }
+.tip { background: var(--bg); color: var(--text); border: 1px solid var(--border-strong); font-size: var(--text-12); padding: 8px 10px; border-radius: var(--radius-4); max-width: 240px; }
+
+/* Empty state */
+.empty { display: flex; flex-direction: column; align-items: center; text-align: center; text-wrap: balance; gap: var(--space-16); padding: var(--space-48); border: 1px dashed var(--border-strong); border-radius: var(--radius-10); }
+.empty b { font: 500 var(--text-20)/1.4 var(--font-head); }
+.empty p { color: var(--text-secondary); max-width: 52ch; }
+.chart-demo { display: flex; align-items: flex-end; gap: 3px; height: 120px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.chart-demo i { flex: 1; background: var(--text-secondary); }
+.chart-demo i:hover { background: var(--text); }
+
+/* Page pattern */
+.page { border: 1px solid var(--border); border-radius: var(--radius-10); display: grid; grid-template-columns: 220px minmax(0, 1fr); overflow: hidden; }
+.page > aside { border-right: 1px solid var(--border); padding: var(--space-16) var(--space-12); display: flex; flex-direction: column; gap: var(--space-16); }
+.page > div { padding: var(--space-24) var(--space-32) var(--space-32); display: flex; flex-direction: column; gap: var(--space-24); min-width: 0; }
+.page-head { display: flex; flex-wrap: wrap; gap: var(--space-12); justify-content: space-between; align-items: flex-end; }
+.page-head h4 { font-size: var(--text-24); line-height: 1.3; }
+.page-head p { color: var(--text-secondary); }
+.sect { display: flex; flex-direction: column; gap: var(--space-12); }
+.sect h5 { font: 600 var(--text-16)/1.4 var(--font-head); margin: 0; }
+.brand { font: 600 var(--text-14)/1 var(--font-head); padding: var(--space-8) var(--space-12); }
+@media (max-width: 720px) { .page { grid-template-columns: minmax(0, 1fr); } .page > aside { border-right: 0; border-bottom: 1px solid var(--border); } .page > div { padding: var(--space-16); } .page .nav { width: 100%; } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; scroll-behavior: auto !important; } }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <!-- Icons: Lucide v1.72.0 (ISC), https://lucide.dev. In the portal they come from the @lucide/vue and @lucide/astro packages, not pasted markup. -->
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></symbol>
+  <symbol id="i-ext" viewBox="0 0 24 24"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+  <symbol id="i-key" viewBox="0 0 24 24"><path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z"/><circle cx="16.5" cy="7.5" r=".5" fill="currentColor"/></symbol>
+</svg>
+
+<div class="ref-top"><div class="ref-top-in">
+  <span class="ref-name">AF MCP Portal design language</span>
+  <div class="ref-ctl" role="group" aria-label="Facility accent">Facility accent
+    <button class="ref-sw" data-accent="#0a0a0a" style="background:#0a0a0a" title="Ink: the default when a facility sets no colour"></button>
+    <button class="ref-sw" data-accent="#800000" style="background:#800000" title="Maroon (example facility colour)"></button>
+    <button class="ref-sw" data-accent="#0033a0" style="background:#0033a0" title="Blue (example facility colour)"></button>
+    <button class="ref-sw" data-accent="#0f7b3f" style="background:#0f7b3f" title="Green (example facility colour)"></button>
+    <button class="ref-sw" data-accent="#ffd200" style="background:#ffd200" title="Yellow (stress case)"></button>
+    <input type="color" id="accent-pick" value="#0a0a0a" aria-label="Any colour">
+  </div>
+  <div class="ref-ctl">Theme
+    <div class="seg" id="theme"><button data-v="auto" aria-pressed="true">Auto</button><button data-v="light" aria-pressed="false">Light</button><button data-v="dark" aria-pressed="false">Dark</button></div>
+  </div>
+</div></div>
+
+<div class="ref-wrap">
+<nav class="ref-nav" aria-label="Sections">
+  <p>Start</p>
+  <a href="#intro">Overview</a><a href="#basecoat">Built on Basecoat</a><a href="#tokens">Design tokens</a>
+  <p>Visual styles</p>
+  <a href="#colour">Colour</a><a href="#type">Typography</a><a href="#dimensions">Dimensions</a><a href="#grid">Layout grid</a><a href="#border">Border and corner radius</a><a href="#elevation">Elevation</a>
+  <p>Expression</p>
+  <a href="#motion">Motion</a><a href="#icons">Icons</a>
+  <p>Content</p>
+  <a href="#content">Writing</a>
+  <p>Components</p>
+  <a href="#status">Status mark</a><a href="#button">Button</a><a href="#banner">Banner and note</a><a href="#table">Table</a><a href="#field">Form field</a><a href="#copy">Copy field</a><a href="#kv">Key-value list and stat</a><a href="#navc">Navigation and controls</a><a href="#chart">Chart</a><a href="#overlay">Dialog and tooltip</a><a href="#empty">Empty state</a>
+  <p>Pages</p>
+  <a href="#pattern">Page pattern</a><a href="#pages">Per-page specs</a><a href="#open">Open decisions</a>
+</nav>
+
+<main class="ref-main">
+
+<section id="intro">
+  <header><p class="term">Start</p><h1>The portal looks like infrastructure you already trust</h1>
+  <p class="def">The portal follows the conventions of GitHub settings, the Tailscale and Cloudflare consoles, and Grafana. A physicist or an operator should recognise every control without learning anything. The design's job is to make the state of someone's access obvious and to show the one thing to do next.</p></header>
+  <div class="prose">
+    <h3>Four rules everything else follows from</h3>
+    <ul>
+      <li><b>Containers recede, content leads.</b> A box, a rule or a header never competes with the data inside it. Borders are 1px and pale; fills are rare.</li>
+      <li><b>Colour means something or it is absent.</b> Neutrals are untinted greys. The accent marks the main action and the current location; it is ink unless a facility opts into its own colour. Status colours mark status and nothing else.</li>
+      <li><b>The facility accent is never a message.</b> Banners and alerts always use the fixed status colours, so a maroon or yellow facility cannot be mistaken for an error or a warning.</li>
+      <li><b>One loud thing per page.</b> At most one banner, at most one primary button. If nothing is wrong, the page is quiet.</li>
+    </ul>
+    <p class="used">Every table, token and name on this page is example data. Use the controls above to change the facility accent and the theme; every example responds.</p>
+  </div>
+</section>
+
+<section id="basecoat">
+  <header><p class="term">Start</p><h2>Built on Basecoat</h2>
+  <p class="def">The portal is built on Basecoat (<code>basecoat-css</code>): plain CSS classes that work the same in <code>.astro</code> pages and <code>.vue</code> components. The standing rule is <b>Basecoat-class-first</b>: if Basecoat ships a component, use its class and attributes and re-theme it through the token bridge; extend it with a separate <code>af-</code> class; never redefine a Basecoat class. Basecoat supplies structure, the portal's tokens supply identity.</p></header>
+  <p class="used">This page is self-contained and draws its examples with short demo classes. This is what each one is in the portal.</p>
+  <div class="scroll"><table class="spec">
+    <tr><th>Demo class here</th><th>Portal markup</th><th>Notes</th></tr>
+    <tr><td><code>.btn.primary</code></td><td><code>class="btn"</code></td><td>Basecoat's default variant is filled with <code>--primary</code>, the accent.</td></tr>
+    <tr><td><code>.btn.secondary</code>, <code>.btn.quiet</code></td><td><code>data-variant="outline"</code>, <code>data-variant="ghost"</code></td><td></td></tr>
+    <tr><td><code>.btn.danger</code></td><td><code>class="btn af-danger" data-variant="outline"</code></td><td><code>af-danger</code> is the portal extension: red outline and label, never a fill.</td></tr>
+    <tr><td><code>.btn.s</code>, <code>.btn.l</code>, <code>.btn.xl</code></td><td><code>data-size="sm"</code> (32px), default (36px), <code>data-size="lg"</code> (40px), <code>af-btn-xl</code> (52px)</td><td>The heights are <code>--control-s/m/l</code>.</td></tr>
+    <tr><td><code>.tag</code></td><td><code>class="badge" data-variant="outline"</code></td><td>A pill, 20px high, 12px text.</td></tr>
+    <tr><td><code>.banner</code>, <code>.note</code></td><td><code>class="alert af-banner warn"</code>, <code>class="alert af-note info"</code></td><td><code>af-banner</code> and <code>af-note</code> are the portal extensions that add status treatments to Basecoat's <code>alert</code>.</td></tr>
+    <tr><td><code>.tbl-box</code> + <code>.tbl</code></td><td><code>class="table-container af-box"</code> + <code>class="table"</code></td><td><code>af-compact</code>, <code>af-num</code>, <code>af-act</code>, <code>af-sub</code> on top.</td></tr>
+    <tr><td><code>.field</code>, <code>.input</code>, <code>.check</code></td><td><code>field</code>, <code>input</code> / <code>native-select</code> / <code>textarea</code>, <code>field</code> with <code>data-orientation="horizontal"</code> around a checkbox</td><td><code>af-narrow</code> caps a field at 360px.</td></tr>
+    <tr><td><code>.seg</code></td><td><code>class="button-group af-toggle"</code> of <code>btn</code>s with <code>aria-pressed</code></td><td><code>af-toggle</code> fills the selected button with ink.</td></tr>
+    <tr><td><code>.dialog</code></td><td><code>&lt;dialog class="dialog af-modal"&gt;</code></td><td><code>af-modal</code> sets the scrim and the overlay shadow.</td></tr>
+    <tr><td><code>.empty</code></td><td><code>class="empty"</code></td><td>Basecoat centres its content, and the portal keeps that.</td></tr>
+    <tr><td><code>.chart-demo</code></td><td><code>BarChart.vue</code> on Basecoat's <code>chart</code></td><td>See Chart.</td></tr>
+    <tr><td><code>.st</code>, <code>.mark</code>, <code>.nav</code>, <code>.copy</code>, <code>.kv</code>, <code>.stats</code></td><td><code>af-st</code>, <code>af-mark</code>, <code>af-nav</code>, <code>af-copy</code>, <code>af-kv</code>, <code>af-stats</code></td><td>Basecoat has no equivalent, so these are portal classes.</td></tr>
+  </table></div>
+  <div class="prose"><ul>
+    <li><b>Documented exceptions.</b> Tooltips use the native Popover API (<code>PopoverTooltip.vue</code>), because Basecoat's <code>data-tooltip</code> is clipped by scrolling ancestors. The shell sidebar is built in <code>Base.astro</code>.</li>
+    <li><b>Token bridge.</b> Basecoat's own variables (<code>--primary</code>, <code>--border</code>, <code>--ring</code>, <code>--chart-1</code> ...) are set from the portal's tokens in <code>global.css</code>, so a colour is changed once. How it is wired is in <code>docs/portal-styling.md</code>.</li>
+  </ul></div>
+</section>
+
+<section id="tokens">
+  <header><p class="term">Start</p><h2>Design tokens</h2>
+  <p class="def">A token is a named design decision. Code refers to the name, never to the raw value, so a decision is changed in one place. The portal has three layers, the same structure Uber's Base uses.</p></header>
+  <div class="scroll"><table class="spec">
+    <tr><th>Layer</th><th>What it is</th><th>Example</th><th>Who may use it</th></tr>
+    <tr><td>1. Primitive</td><td>A raw value with a neutral name.</td><td><code>--grey-200: #e0e0e0</code></td><td>Only the semantic layer.</td></tr>
+    <tr><td>2. Semantic</td><td>A role. Changes between light and dark.</td><td><code>--border: var(--grey-200)</code></td><td>Every component and page.</td></tr>
+    <tr><td>3. Component</td><td>A class that combines semantic tokens: Basecoat's, re-themed through the bridge, plus <code>af-</code> extensions.</td><td><code>.btn[data-variant="outline"]</code></td><td>Pages.</td></tr>
+  </table></div>
+  <div class="dd">
+    <div><div class="stage"><code>border: 1px solid var(--border);<br>padding: var(--space-16);<br>font-size: var(--text-14);</code></div><p class="verdict"><span class="mark ok"></span><span><b>Do</b> use a semantic token for every colour, size, radius and duration.</span></p></div>
+    <div><div class="stage"><code>border: 1px solid #1e2a3d;<br>padding: 14px;<br>font-size: 9px;</code></div><p class="verdict"><span class="mark bad"></span><span><b>Don't</b> write raw values in a component. The current portal has 16 font sizes and 5 radii because of this.</span></p></div>
+  </div>
+  <p class="used"><b>Enforcement:</b> a contract test (<code>designContract.test.ts</code>) rejects hex colours, pixel font sizes, off-scale radii and hand-rolled replacements for Basecoat classes in <code>portal/src</code>. Without it the written system and the shipped portal drift apart again.</p>
+</section>
+
+<section id="colour">
+  <header><p class="term">Visual styles</p><h2>Colour</h2>
+  <p class="def">Three groups with separate jobs. Neutrals build the page. The accent marks action and location: ink by default, or a colour the facility opts into. Status colours are fixed for every deployment and carry meaning.</p></header>
+
+  <h3>Neutrals</h3>
+  <div class="scroll"><table class="spec" data-tokens="--bg|Page and container background;--bg-subtle|Hover rows, read-only fields, selected nav item;--bg-hover|Hover on buttons and menu items;--border|Container outlines and row rules;--border-strong|Control outlines (inputs, secondary buttons);--text|All primary text, including links;--text-secondary|Labels, column headers, help text;--text-disabled|Disabled controls only, never for readable text"></table></div>
+
+  <h3>Facility accent</h3>
+  <div class="prose">
+    <p>The default is a neutral monochrome theme: the accent is ink, black in light mode and white in dark. The portal does not give a facility an identity it has not chosen. A deployment may opt in by setting one colour; the portal derives the rest, so any colour is safe:</p>
+    <ul>
+      <li><code>--accent</code> appears only as a <b>fill</b> (primary button, checked control) or a <b>3px indicator</b> (current nav item). It is never a text colour, so a pale facility colour cannot produce unreadable links.</li>
+      <li><code>--on-accent</code> is computed: white if it reaches 4.5:1 on the accent, otherwise near-black.</li>
+      <li>In dark mode a dark accent is lightened until it reaches 3:1 against the page, unless the deployment supplies its own dark-mode value.</li>
+    </ul>
+  </div>
+  <div class="stage row">
+    <button class="btn primary"><svg class="i"><use href="#i-plus"/></svg>New token</button>
+    <label class="check"><input type="checkbox" checked> Checked</label>
+    <div class="nav" style="width:180px"><a href="#colour" aria-current="page">Tokens</a></div>
+    <span class="used">accent <code id="acc-val"></code> · on-accent <code id="onacc-val"></code></span>
+  </div>
+
+  <h3>Status</h3>
+  <div class="scroll"><table class="spec">
+    <tr><th>Meaning</th><th>Mark</th><th>Token</th><th>Banner fill</th><th>Use when</th></tr>
+    <tr><td>OK</td><td><span class="st"><span class="mark ok"></span>Reachable</span></td><td><code>--ok</code></td><td><span class="chip" style="background:var(--banner-ok)"></span></td><td>Working, linked, valid.</td></tr>
+    <tr><td>Warning</td><td><span class="st"><span class="mark warn"></span>Expires in 2 days</span></td><td><code>--warn</code></td><td><span class="chip" style="background:var(--banner-warn)"></span></td><td>Works now, will stop without action.</td></tr>
+    <tr><td>Problem</td><td><span class="st"><span class="mark bad"></span>Blocked</span></td><td><code>--bad</code></td><td><span class="chip" style="background:var(--banner-bad)"></span></td><td>Not working. Also destructive actions.</td></tr>
+    <tr><td>Information</td><td><span class="st"><span class="mark info"></span>Maintenance Friday</span></td><td><code>--info</code></td><td><span class="chip" style="background:var(--banner-info)"></span></td><td>Neutral notice, nothing is wrong.</td></tr>
+    <tr><td>In progress</td><td><span class="st"><span class="mark busy"></span>Minting proxy</span></td><td><code>--text-secondary</code></td><td>none</td><td>Waiting on the system.</td></tr>
+    <tr><td>Off</td><td><span class="st"><span class="mark off"></span>Not linked</span></td><td><code>--text-secondary</code></td><td>none</td><td>Absent by choice, not an error. "Not linked" is this mark: it never raises a banner, at most a hint.</td></tr>
+  </table></div>
+  <p class="used">Chart colours are Basecoat's <code>--chart-1</code> to <code>--chart-5</code>, bridged to neutral steps (secondary text, text, strong border, disabled text, border), never status colours.</p>
+  <p class="used">Status values are Tailwind's palette (green 600/700, amber 400/600, red 600/700, blue 600 in light; the 400 steps in dark). Banner fills are the same in both themes.</p>
+
+  <h3>Do and don't</h3>
+  <div class="dd">
+    <div><div class="stage"><div class="banner warn"><span class="mark warn"></span><div><b>Your grid proxy expires in 2 days</b>Renew it to keep Rucio and AMI working.</div><button class="btn s">Renew proxy</button></div><button class="btn primary" style="align-self:flex-start">New token</button></div><p class="verdict"><span class="mark ok"></span><span><b>Do</b> keep messages in status colours and actions in the accent. Try the yellow accent above: the warning still reads as a warning because of its shape, title and position.</span></p></div>
+    <div><div class="stage"><div class="banner" style="background:var(--accent);color:var(--on-accent)"><div><b>Your grid proxy expires in 2 days</b>Renew it to keep Rucio and AMI working.</div></div><button class="btn primary" style="align-self:flex-start">New token</button></div><p class="verdict"><span class="mark bad"></span><span><b>Don't</b> fill a message with the accent. Try maroon or yellow above: with maroon it reads as an error; with yellow, every notice looks like a warning.</span></p></div>
+    <div><div class="stage row"><span class="st"><span class="mark ok"></span>Linked</span><span class="st"><span class="mark bad"></span>Blocked</span></div><p class="verdict"><span class="mark ok"></span><span><b>Do</b> pair every status colour with a shape and a word. Colour alone fails for colour-blind users.</span></p></div>
+    <div><div class="stage row"><span style="color:var(--ok)">cern-sso</span><span style="color:var(--bad)">rucio</span></div><p class="verdict"><span class="mark bad"></span><span><b>Don't</b> colour a name to show its state.</span></p></div>
+  </div>
+  <p class="used"><b>Used on:</b> every page. Status marks: Overview, Services, Identities, Tokens, Admin.</p>
+</section>
+
+<section id="type">
+  <header><p class="term">Visual styles</p><h2>Typography</h2>
+  <p class="def">One sans-serif for everything a person reads. Monospace only for values a person copies or compares character by character. Hierarchy comes from size and weight, never from a change of typeface or from capitals.</p></header>
+  <div class="scroll"><table class="spec">
+    <tr><th>Token</th><th>Size / line</th><th>Weight</th><th>Specimen</th><th>Use</th></tr>
+    <tr><td><code>--text-32</code></td><td>32 / 40</td><td>600 head</td><td><span style="font:600 2rem/1.2 var(--font-head)">Sign in</span></td><td>Landing page headline only.</td></tr>
+    <tr><td><code>--text-24</code></td><td>24 / 32</td><td>600 head</td><td><span style="font:600 1.5rem/1.3 var(--font-head)">Tokens</span></td><td>Page title. One per page. Large stat values.</td></tr>
+    <tr><td><code>--text-20</code></td><td>20 / 28</td><td>600 head</td><td><span style="font:600 1.25rem/1.4 var(--font-head)">No tokens yet</span></td><td>Landing section headings; empty-state title; dialog title.</td></tr>
+    <tr><td><code>--text-16</code></td><td>16 / 24</td><td>600 head</td><td><span style="font:600 1rem/1.4 var(--font-head)">Linked accounts</span></td><td>Section title, card name.</td></tr>
+    <tr><td><code>--text-14</code></td><td>14 / 20</td><td>400, 500</td><td>claude-desktop-laptop</td><td>Default. Body, table cells, buttons, inputs.</td></tr>
+    <tr><td><code>--text-13</code></td><td>13 / 20</td><td>400, 500</td><td><span style="font-size:var(--text-13);color:var(--text-secondary)">Last used</span></td><td>Column headers, labels, help text, compact tables.</td></tr>
+    <tr><td><code>--text-12</code></td><td>12 / 16</td><td>400</td><td><span style="font-size:var(--text-12);color:var(--text-secondary)">Updated 2 minutes ago</span></td><td>Badges, chart axes, text under stats. The minimum size.</td></tr>
+    <tr><td><code>--font-mono</code></td><td>inherits</td><td>400</td><td><code>mcp_pat_8f2c…a91e</code></td><td>Tokens, hostnames, certificate DNs, commands, IDs.</td></tr>
+  </table></div>
+  <div class="prose">
+<p><b>Typeface.</b> IBM Plex Sans for headings and text; headings differ only in size and weight (600). IBM Plex Mono, from the same superfamily, for monospace, so a token string beside its label reads as one typeface in two modes.</p>
+    <ul>
+      <li>Weights in use: 400 for text, 500 for labels and buttons, 600 for headings. No others.</li>
+      <li>Its numerals are tabular by default, so number columns align with no extra setting.</li>
+      <li>Capital I, lowercase l and 1 are drawn differently, which matters for hostnames, token names and dataset IDs.</li>
+      <li>Self-hosted and open-licensed (OFL). No letter-spacing is added to text; if a page feels tight, loosen row height and padding instead.</li>
+    </ul>
+  </div>
+  <div class="dd">
+    <div><div class="stage"><div class="tbl-box"><table class="tbl"><tr><th>Service</th><th class="num">Calls</th><th class="num">Errors</th></tr><tr><td>Rucio</td><td class="num">1,284</td><td class="num">11</td></tr><tr><td>AMI</td><td class="num">317</td><td class="num">0</td></tr></table></div></div><p class="verdict"><span class="mark ok"></span><span><b>Do</b> set names in the text face and right-align numbers with tabular figures.</span></p></div>
+    <div><div class="stage"><div class="tbl-box"><table class="tbl" style="font-family:var(--font-mono)"><tr><th style="text-transform:uppercase;letter-spacing:.1em;font-size:9px">Service</th><th style="text-transform:uppercase;letter-spacing:.1em;font-size:9px">Calls</th><th style="text-transform:uppercase;letter-spacing:.1em;font-size:9px">Errors</th></tr><tr><td>Rucio</td><td>1,284</td><td>11</td></tr><tr><td>AMI</td><td>317</td><td>0</td></tr></table></div></div><p class="verdict"><span class="mark bad"></span><span><b>Don't</b> set whole tables in monospace or use tiny spaced capitals for headers. This is the terminal look the portal is leaving.</span></p></div>
+  </div>
+  <p class="used"><b>Used on:</b> every page.</p>
+</section>
+
+<section id="dimensions">
+  <header><p class="term">Visual styles</p><h2>Dimensions</h2>
+  <p class="def">Every gap, padding and control height comes from one scale based on 4px. Density is a named choice per page, not something each component decides.</p></header>
+  <div class="scroll"><table class="spec" id="space-table">
+    <tr><th>Token</th><th>Value</th><th></th><th>Use</th></tr>
+  </table></div>
+  <div class="scroll"><table class="spec">
+    <tr><th>Size</th><th>Token</th><th>Height</th><th>Use</th></tr>
+    <tr><td>Small</td><td><code>--control-s</code></td><td>32px</td><td><code>data-size="sm"</code>: row actions inside tables, buttons in banners, segmented controls.</td></tr>
+    <tr><td>Medium</td><td><code>--control-m</code></td><td>36px</td><td>Default for buttons, inputs, nav items.</td></tr>
+    <tr><td>Large</td><td><code>--control-l</code></td><td>40px</td><td><code>data-size="lg"</code>; copy fields.</td></tr>
+    <tr><td>Extra large</td><td>(none)</td><td>52px</td><td><code>af-btn-xl</code>: Sign in on the landing page.</td></tr>
+  </table></div>
+  <h3>Density</h3>
+  <div class="scroll"><table class="spec">
+    <tr><th>Mode</th><th>Table row</th><th>Cell text</th><th>Section gap</th><th>Pages</th></tr>
+    <tr><td>Comfortable</td><td>44px</td><td>14px</td><td>32px</td><td>Overview, Services, Identities, Tokens, Usage</td></tr>
+    <tr><td>Compact</td><td>32px</td><td>13px</td><td>24px</td><td>Entitlements, Admin</td></tr>
+  </table></div>
+  <p class="used">Operators scan many rows at once, so their pages are compact. Physics users check a handful of items, so theirs are comfortable.</p>
+</section>
+
+<section id="grid">
+  <header><p class="term">Visual styles</p><h2>Layout grid</h2>
+  <p class="def">A fixed sidebar and one content column. Content is a single column of full-width sections stacked top to bottom. Side-by-side cards are the exception, not the default.</p></header>
+  <div class="scroll"><table class="spec">
+    <tr><th>Viewport</th><th>Sidebar</th><th>Content margin</th><th>Content max width</th><th>Columns</th></tr>
+    <tr><td>1136px and up</td><td>220px, fixed</td><td>32px</td><td>1120px</td><td>12, 24px gutter</td></tr>
+    <tr><td>600 to 1135px</td><td>220px, or a top bar under 860px</td><td>24px</td><td>fluid</td><td>8, 24px gutter</td></tr>
+    <tr><td>Under 600px</td><td>Top bar with menu</td><td>16px</td><td>fluid</td><td>4, 16px gutter</td></tr>
+  </table></div>
+  <div class="dd">
+    <div><div class="stage"><div class="bar" style="width:40%"></div><div style="border:1px solid var(--border);border-radius:var(--radius-8);height:56px"></div><div style="border:1px solid var(--border);border-radius:var(--radius-8);height:88px"></div></div><p class="verdict"><span class="mark ok"></span><span><b>Do</b> stack full-width sections. Tables want width, and the reading order is unambiguous.</span></p></div>
+    <div><div class="stage"><div class="bar" style="width:40%"></div><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px"><div style="border:1px solid var(--border);border-radius:var(--radius-8);height:72px"></div><div style="border:1px solid var(--border);border-radius:var(--radius-8);height:72px"></div><div style="border:1px solid var(--border);border-radius:var(--radius-8);height:72px"></div></div></div><p class="verdict"><span class="mark bad"></span><span><b>Don't</b> default to a row of three equal cards. It gives every item the same weight whether or not it matters.</span></p></div>
+  </div>
+  <p class="used"><b>Used on:</b> every signed-in page. The landing page has no sidebar and a 720px text column.</p>
+</section>
+
+<section id="border">
+  <header><p class="term">Visual styles</p><h2>Border and corner radius</h2>
+  <p class="def">Borders separate; they do not decorate. Corners are soft enough that a container feels like a surface holding its content, and consistent enough that nobody notices them.</p></header>
+  <div class="scroll"><table class="spec">
+    <tr><th>Token</th><th>Value</th><th>Specimen</th><th>Use</th></tr>
+    <tr><td><code>--radius-4</code></td><td>4px</td><td><span class="chip" style="border-radius:4px"></span></td><td>Popover tooltips, chart indicators.</td></tr>
+    <tr><td><code>--radius-8</code></td><td>8px</td><td><span class="chip" style="border-radius:8px"></span></td><td>Buttons, inputs, nav items, copy fields (Basecoat's <code>rounded-md</code>, <code>--radius</code> minus 2px).</td></tr>
+    <tr><td><code>--radius-10</code></td><td>10px</td><td><span class="chip" style="border-radius:10px"></span></td><td>Containers: table boxes, row lists, banners, notes, fields, empty states. Basecoat's dialog panel is 14px.</td></tr>
+    <tr><td><code>--radius-full</code></td><td>999px</td><td><span class="chip" style="border-radius:999px"></span></td><td>Badges (tags) and round icon buttons; status uses the status mark.</td></tr>
+    <tr><td><code>--border</code></td><td>1px</td><td></td><td>Container outlines, row rules.</td></tr>
+    <tr><td><code>--border-strong</code></td><td>1px</td><td></td><td>Anything a person can type in or press.</td></tr>
+  </table></div>
+  <div class="dd">
+    <div><div class="stage"><div class="tbl-box"><table class="tbl"><tr><th>Account</th><th>Status</th></tr><tr><td>CERN SSO</td><td><span class="st"><span class="mark ok"></span>Linked</span></td></tr></table></div></div><p class="verdict"><span class="mark ok"></span><span><b>Do</b> let the container recede: unfilled header, pale rules, the data is the darkest thing in the box.</span></p></div>
+    <div><div class="stage"><div style="border:2px solid var(--text);border-left:6px solid var(--accent);border-radius:2px"><table class="tbl"><tr><th style="background:var(--text);color:var(--bg)">Account</th><th style="background:var(--text);color:var(--bg)">Status</th></tr><tr><td>CERN SSO</td><td>Linked</td></tr></table></div></div><p class="verdict"><span class="mark bad"></span><span><b>Don't</b> use heavy outlines, filled headers or a coloured stripe down one side. The frame becomes louder than the content.</span></p></div>
+  </div>
+</section>
+
+<section id="elevation">
+  <header><p class="term">Visual styles</p><h2>Elevation</h2>
+  <p class="def">Elevation says what is temporarily on top. Everything that belongs to the page is flat. Only things that appear over the page have a shadow.</p></header>
+  <div class="scroll"><table class="spec">
+    <tr><th>Level</th><th>Token</th><th>Used by</th><th>Rule</th></tr>
+    <tr><td>0 Flat</td><td>none</td><td>Tables, sections, rows, banners, notes, sidebar, top bar, popover tooltips</td><td>Separated by a 1px border, never a shadow.</td></tr>
+    <tr><td>1 Raised</td><td><code>--shadow-1</code></td><td>The chart tooltip (via Basecoat's <code>--shadow-xl</code>), the open navigation drawer</td><td>No scrim.</td></tr>
+    <tr><td>2 Overlay</td><td><code>--shadow-2</code> + <code>--scrim</code></td><td>Dialogs</td><td>Scrim behind. Focus is trapped.</td></tr>
+  </table></div>
+  <div class="cols">
+    <div class="stage" style="background:var(--bg-subtle)"><span class="stage-label">Level 1: chart tooltip</span><div class="chart-tip"><span>2026-11-06</span><div><i></i>Calls<b>139</b></div></div></div>
+    <div class="stage" style="background:var(--bg-subtle)"><span class="stage-label">Level 2</span><div class="dialog" style="padding:var(--space-16)"><h4>Revoke this token?</h4><p class="used">Dialog on a scrim.</p></div></div>
+  </div>
+  <p class="used">No background blur anywhere. In dark mode a shadow is hard to see, so raised surfaces also get a 1px light outline. Basecoat's own small shadows (<code>--shadow-xs</code>, <code>--shadow-sm</code>) resolve to none and its backdrop blur to 0.</p>
+</section>
+
+<section id="motion">
+  <header><p class="term">Expression</p><h2>Motion</h2>
+  <p class="def">Motion explains a change: something appeared, moved or finished. Nothing moves for atmosphere on working pages.</p></header>
+  <div class="scroll"><table class="spec">
+    <tr><th>Token</th><th>Value</th><th>Use</th></tr>
+    <tr><td><code>--time-fast</code></td><td>100ms</td><td>Hover and press colour changes.</td></tr>
+    <tr><td><code>--time-base</code></td><td>200ms</td><td>Disclosure chevron, the navigation drawer, a chart's first draw.</td></tr>
+    <tr><td><code>--time-slow</code></td><td>300ms</td><td>Reserved for a large surface entering; the sign-in spinner.</td></tr>
+    <tr><td><code>--ease</code></td><td>cubic-bezier(0.2, 0, 0, 1)</td><td>Everything. Starts fast, settles.</td></tr>
+  </table></div>
+  <div class="prose"><ul>
+    <li>Tables, rows and page content do not animate on load.</li>
+    <li>Only opacity and transform are animated.</li>
+    <li>With reduced motion requested, every transition is instant and charts draw without animation.</li>
+    <li><b>Two named exceptions</b> are kept on purpose: the particle-track canvas behind the Overview header, and the gateway diagram on the landing page. Both stop when reduced motion is requested, and neither sits behind text a person needs to read.</li>
+  </ul></div>
+</section>
+
+<section id="icons">
+  <header><p class="term">Expression</p><h2>Icons</h2>
+  <p class="def">An icon repeats a label; it does not replace one. One set, Lucide, at one size.</p></header>
+  <div class="prose"><ul>
+    <li>Icons are inline SVG, so they inherit text colour and need no network request or icon font.</li>
+    <li>They come from the <code>@lucide/vue</code> and <code>@lucide/astro</code> packages, pinned in <code>package.json</code>. The lockfile records the version and the ISC licence; markup is not pasted by hand, so an icon can always be traced and updated.</li>
+    <li>16px beside 14px text, 20px in the large button. Lucide's default stroke; no per-icon weights or colours.</li>
+    <li>Decorative icons are <code>aria-hidden</code>. An icon-only button has an accessible name.</li>
+  </ul></div>
+  <div class="stage row">
+    <svg class="i"><use href="#i-plus"/></svg><svg class="i"><use href="#i-copy"/></svg><svg class="i"><use href="#i-ext"/></svg><svg class="i"><use href="#i-x"/></svg><svg class="i"><use href="#i-chev"/></svg><svg class="i"><use href="#i-key"/></svg>
+    <span class="used">Lucide, 16px, default stroke, <code>currentColor</code>, inline SVG</span>
+  </div>
+  <div class="dd">
+    <div><div class="stage row"><button class="btn secondary"><svg class="i"><use href="#i-copy"/></svg>Copy</button><a href="#icons">Open CERN account settings <svg class="i" style="vertical-align:-3px"><use href="#i-ext"/></svg></a></div><p class="verdict"><span class="mark ok"></span><span><b>Do</b> pair an icon with its word. Icon-only buttons need an accessible name and a tooltip.</span></p></div>
+    <div><div class="stage row"><span>✓ Linked</span><span>⚠ Expiring</span><span>▸ Details</span><span>→ Continue</span></div><p class="verdict"><span class="mark bad"></span><span><b>Don't</b> use text glyphs as icons. They change shape between fonts and platforms. Status uses the status mark, not an icon.</span></p></div>
+  </div>
+</section>
+
+<section id="content">
+  <header><p class="term">Content</p><h2>Writing</h2>
+  <p class="def">Say what the state is and what to do about it, in the words a physicist would use to a colleague. The portal never asks a person to understand the broker to fix their access.</p></header>
+  <div class="scroll"><table class="spec">
+    <tr><th>Rule</th><th>Write</th><th>Not</th></tr>
+    <tr><td>Name the thing and the fix</td><td>Rucio is unavailable to your account. Link your CERN account to use it.</td><td>Access denied (403).</td></tr>
+    <tr><td>Buttons are verb + object</td><td>Link CERN account</td><td>Continue</td></tr>
+    <tr><td>Sentence case everywhere</td><td>New token</td><td>NEW TOKEN, New Token</td></tr>
+    <tr><td>Relative time, exact time on hover</td><td>Expires in 2 days</td><td>2026-11-13T09:14:00Z</td></tr>
+    <tr><td>No filler</td><td>Token created</td><td>Your token was successfully created!</td></tr>
+    <tr><td>Destructive actions say what is lost</td><td>Revoke token. Clients using it stop working immediately.</td><td>Are you sure?</td></tr>
+    <tr><td>Empty states say what goes here</td><td>No tokens yet. Create one for clients that can't sign in with a browser.</td><td>Nothing to show.</td></tr>
+    <tr><td>Product words, not internals</td><td>Grid certificate</td><td>x509 VOMS proxy credential provider</td></tr>
+  </table></div>
+  <p class="used">Internal terms (provider class names, config keys) appear only on the Admin page, where the reader is an operator.</p>
+</section>
+
+<section id="status">
+  <header><p class="term">Components</p><h2>Status mark</h2>
+  <p class="def">A small filled shape followed by a plain word. The shape differs per meaning, so it works without colour.</p></header>
+  <div class="stage row" style="gap:var(--space-24)">
+    <span class="st"><span class="mark ok"></span>Reachable</span><span class="st"><span class="mark warn"></span>Expires in 2 days</span><span class="st"><span class="mark bad"></span>Blocked</span><span class="st"><span class="mark info"></span>Maintenance</span><span class="st"><span class="mark busy"></span>Minting</span><span class="st"><span class="mark off"></span>Not linked</span>
+  </div>
+  <div class="dd">
+    <div><div class="stage row"><span class="st"><span class="mark bad"></span>Blocked</span><a href="#status">Link CERN account</a></div><p class="verdict"><span class="mark ok"></span><span><b>Do</b> put the fix next to a problem status.</span></p></div>
+    <div><div class="stage row"><span style="border:1px solid var(--ok);color:var(--ok);border-radius:999px;padding:2px 10px;font-size:12px">ACTIVE</span><span style="border:1px solid var(--bad);color:var(--bad);border-radius:999px;padding:2px 10px;font-size:12px">BLOCKED</span></div><p class="verdict"><span class="mark bad"></span><span><b>Don't</b> use outlined pills. In a table they become a column of boxes louder than the names beside them.</span></p></div>
+  </div>
+  <p class="used"><b>Used on:</b> Overview, Services, Identities, Tokens, Admin.</p>
+</section>
+
+<section id="button">
+  <header><p class="term">Components</p><h2>Button</h2>
+  <p class="def">Four kinds, ranked, in four sizes (32, 36, 40 and, for Sign in on the landing page, 52px). A page has at most one primary button; everything else is secondary or quiet.</p></header>
+  <div class="stage row">
+    <button class="btn primary">New token</button><button class="btn secondary">Refresh</button><button class="btn quiet">Cancel</button><button class="btn danger">Revoke</button><button class="btn primary" disabled>New token</button>
+  </div>
+  <div class="stage row">
+    <button class="btn primary s">Small 32</button><button class="btn primary">Medium 36</button><button class="btn primary l">Large 40</button><button class="btn primary xl">Sign in</button>
+  </div>
+  <div class="scroll"><table class="spec">
+    <tr><th>Kind</th><th>Looks like</th><th>Use</th></tr>
+    <tr><td>Primary (<code>btn</code>)</td><td>Accent fill</td><td>The page's main action. One per page, in the page header.</td></tr>
+    <tr><td>Secondary (<code>outline</code>)</td><td>Outline</td><td>Other actions: Refresh, Copy, row actions.</td></tr>
+    <tr><td>Quiet (<code>ghost</code>)</td><td>Text only</td><td>Cancel, dismiss, low-stakes actions in dense rows.</td></tr>
+    <tr><td>Danger</td><td>Red outline and text (<code>btn af-danger</code> on the <code>outline</code> variant)</td><td>Revoke, unlink, delete. Never filled, so it cannot be confused with a maroon or red facility accent.</td></tr>
+  </table></div>
+  <div class="dd">
+    <div><div class="stage"><div class="page-head"><h4>Tokens</h4><button class="btn primary">New token</button></div><div style="display:flex;justify-content:space-between;align-items:center"><span>claude-desktop-laptop</span><button class="btn danger s">Revoke</button></div></div><p class="verdict"><span class="mark ok"></span><span><b>Do</b> give the page one primary button and keep row actions small.</span></p></div>
+    <div><div class="stage"><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary">New token</button><button class="btn primary">Refresh</button><button class="btn primary">Docs</button></div></div><p class="verdict"><span class="mark bad"></span><span><b>Don't</b> make every action primary. Nothing leads when everything does.</span></p></div>
+  </div>
+  <p class="used"><b>Used on:</b> every page.</p>
+</section>
+
+<section id="banner">
+  <header><p class="term">Components</p><h2>Banner and note</h2>
+  <p class="def">A banner is the page's one loud message: the most urgent thing about this person's access, with its fix. A note is quiet and sits beside the thing it explains. A hint is a note in the banner slot: information that never alarms, such as accounts the person has not linked.</p></header>
+  <div class="stage">
+    <div class="banner bad"><span class="mark bad"></span><div><b>Rucio is unavailable to your account</b>Link your CERN account to use Rucio, AMI and PanDA.</div><button class="btn s">Link CERN account</button></div>
+    <div class="banner warn"><span class="mark warn"></span><div><b>Your grid proxy expires in 2 days</b>Renew it to keep grid services working.</div><button class="btn s">Renew proxy</button></div>
+    <div class="banner info"><span class="mark info"></span><div><b>Maintenance on Friday 14 November, 09:00 to 11:00</b>The gateway will be unavailable.</div></div>
+    <div class="banner ok"><span class="mark ok"></span><div><b>Token created</b>Copy it now. It is not shown again.</div></div>
+  </div>
+  <div class="stage">
+    <div class="note warn"><span class="mark warn"></span><span>This token expires in 5 days. Clients using it will need a new one.</span></div>
+    <div class="note info"><span class="mark info"></span><span>ServiceX uses its own credential. It is not affected by your grid proxy.</span></div>
+  </div>
+  <div class="stage"><span class="stage-label">Hint: a note in the banner slot, only when no banner is showing</span>
+    <div class="note info"><span class="mark info"></span><span><b>2 services are not linked.</b> Link an account on the Identities page to use them.</span><button class="btn secondary s" style="margin-left:auto">Link an account</button></div>
+    <span class="stage-label">Maintenance: the slim bar, on every page including the landing page</span>
+    <div class="banner info slim"><span class="mark info"></span><div>Maintenance mode is enabled: storage migration; expect brief interruptions.</div></div>
+  </div>
+  <div class="scroll"><table class="spec">
+    <tr><th></th><th>Banner</th><th>Note</th></tr>
+    <tr><td>Where</td><td>Directly under the page header.</td><td>Inside a section or dialog.</td></tr>
+    <tr><td>How many</td><td>One per page. Problem beats warning beats information.</td><td>As needed, but rarely more than one per section.</td></tr>
+    <tr><td>Fill</td><td>Solid status colour.</td><td>Tinted status colour with a border.</td></tr>
+    <tr><td>Action</td><td>At most one button, naming the fix.</td><td>A link in the sentence.</td></tr>
+    <tr><td>Announced as</td><td><code>role="alert"</code> for a problem or warning; <code>role="status"</code> for information.</td><td><code>role="status"</code> for a hint.</td></tr>
+    <tr><td>Colour</td><td colspan="2">A status colour in every case, so the facility accent is never a message.</td></tr>
+  </table></div>
+  <p class="used"><b>Used on:</b> Overview, Services, Identities, Tokens, Admin (drift); the maintenance bar on every page. Hints: Overview and Services.</p>
+</section>
+
+<section id="table">
+  <header><p class="term">Components</p><h2>Table</h2>
+  <p class="def">Where several things share the same fields, a table is the honest shape: tokens, usage per service, entitlements, admin data.</p></header>
+  <div class="tbl-box"><table class="tbl">
+    <thead><tr><th>Name</th><th>Status</th><th>Created</th><th>Last used</th><th class="num">Calls, 30 days</th><th></th></tr></thead>
+    <tbody>
+      <tr><td>claude-desktop-laptop</td><td><span class="st"><span class="mark ok"></span>Active</span></td><td class="sub">12 Oct 2026</td><td class="sub">2 hours ago</td><td class="num">1,284</td><td class="act"><button class="btn danger s">Revoke</button></td></tr>
+      <tr><td>gemini-cli-workstation</td><td><span class="st"><span class="mark warn"></span>Expires in 5 days</span></td><td class="sub">18 Aug 2026</td><td class="sub">Yesterday</td><td class="num">317</td><td class="act"><button class="btn danger s">Revoke</button></td></tr>
+      <tr><td>old-notebook</td><td><span class="st"><span class="mark off"></span>Revoked</span></td><td class="sub">3 Mar 2026</td><td class="sub">4 months ago</td><td class="num">0</td><td class="act"></td></tr>
+    </tbody>
+  </table></div>
+  <div class="stage"><span class="stage-label">Compact, for Admin and Entitlements</span>
+  <div class="tbl-box"><table class="tbl compact">
+    <thead><tr><th>User</th><th>Service</th><th class="num">Calls</th><th class="num">Errors</th><th>Last call</th></tr></thead>
+    <tbody>
+      <tr><td>example-user-1</td><td>Rucio</td><td class="num">4,102</td><td class="num">12</td><td class="sub">1 minute ago</td></tr>
+      <tr><td>example-user-2</td><td>HTCondor</td><td class="num">873</td><td class="num">0</td><td class="sub">14 minutes ago</td></tr>
+      <tr><td>example-user-3</td><td>AMI</td><td class="num">96</td><td class="num">3</td><td class="sub">2 hours ago</td></tr>
+    </tbody>
+  </table></div></div>
+  <div class="prose"><ul>
+    <li>First column is the name, in the text face at normal weight and full ink. It is the darkest thing in the row.</li>
+    <li>Numbers are right-aligned with tabular figures. Dates and secondary facts are <code>--text-secondary</code>.</li>
+    <li>Row actions are small buttons at the right edge. More than two go into a menu.</li>
+    <li>Header is unfilled, 13px, secondary colour and sentence case.</li>
+    <li>Under 600px the table scrolls sideways inside its box; the page does not.</li>
+  </ul></div>
+  <p class="used"><b>Used on:</b> Tokens, Usage, Entitlements, Admin. Services and Identities are row lists (one bordered list, a rule between rows, a name and a status on each), not tables.</p>
+</section>
+
+<section id="field">
+  <header><p class="term">Components</p><h2>Form field</h2>
+  <p class="def">Label above, help below, error in place of help. One column.</p></header>
+  <div class="cols">
+    <div class="stage"><div class="field"><label for="f1">Token name</label><input class="input" id="f1" value="claude-desktop-laptop"><span class="hint">Shown in your token list. Name the device or client.</span></div></div>
+    <div class="stage"><div class="field"><label for="f2">Token name</label><input class="input" id="f2" value="" aria-invalid="true" aria-describedby="f2e"><span class="err" id="f2e"><span class="mark bad"></span>Enter a name for this token.</span></div></div>
+  </div>
+  <div class="dd">
+    <div><div class="stage"><div class="field"><label for="f3">Expires after</label><select class="input" id="f3"><option>30 days</option><option>90 days</option></select></div></div><p class="verdict"><span class="mark ok"></span><span><b>Do</b> use a visible label and a sensible default.</span></p></div>
+    <div><div class="stage"><input class="input" placeholder="Token name" aria-label="Token name" style="max-width:360px"></div><p class="verdict"><span class="mark bad"></span><span><b>Don't</b> use the placeholder as the label. It disappears as soon as the person types.</span></p></div>
+  </div>
+  <p class="used"><b>Used on:</b> Tokens (new token), Identities (grid certificate passphrase, keytab upload), Admin (maintenance message).</p>
+</section>
+
+<section id="copy">
+  <header><p class="term">Components</p><h2>Copy field</h2>
+  <p class="def">A read-only value with a Copy button. The one place monospace is large and prominent, because the person is about to paste it somewhere exact.</p></header>
+  <div class="stage">
+    <div class="copy"><code>https://mcp.example-facility.org/mcp</code><button class="btn secondary s"><svg class="i"><use href="#i-copy"/></svg>Copy</button></div>
+    <div class="copy"><code>mcp_pat_EXAMPLE_8f2c41d7b0a94e6f9c3d5a1e7b2f0a91e</code><button class="btn secondary s"><svg class="i"><use href="#i-copy"/></svg>Copy</button></div>
+    <div class="note warn"><span class="mark warn"></span><span>Copy this token now. It is not shown again.</span></div>
+  </div>
+  <p class="used">After copying, the button reads "Copied" for two seconds. <b>Used on:</b> Overview (endpoint and client snippets), Tokens (new token dialog).</p>
+</section>
+
+<section id="kv">
+  <header><p class="term">Components</p><h2>Key-value list and stat</h2>
+  <p class="def">A key-value list shows the facts about one thing. A stat shows one number that matters. Neither needs a card around it.</p></header>
+  <div class="cols">
+    <div class="stage"><dl class="kv"><dt>Status</dt><dd><span class="st"><span class="mark ok"></span>Valid</span></dd><dt>Subject</dt><dd><code>/DC=ch/DC=cern/OU=Users/CN=example</code></dd><dt>VO</dt><dd>atlas</dd><dt>Expires</dt><dd>In 11 hours</dd></dl></div>
+    <div class="stage"><div class="stats"><div class="stat"><span>Calls</span><b>1,601</b><small>Last 30 days</small></div><div class="stat"><span>Errors</span><b>11</b><small>0.7%</small></div><div class="stat"><span>Services used</span><b>4</b><small>of 6 available</small></div></div></div>
+  </div>
+  <div class="dd">
+    <div><div class="stage"><div class="stats"><div class="stat"><span>Calls</span><b>1,601</b></div><div class="stat"><span>Errors</span><b>11</b></div></div></div><p class="verdict"><span class="mark ok"></span><span><b>Do</b> set stats as plain numbers in a row, separated by space.</span></p></div>
+    <div><div class="stage"><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><div style="border:1px solid var(--border-strong);border-radius:10px;padding:12px;box-shadow:var(--shadow-1)"><div class="stat"><span>Calls</span><b style="color:var(--info)">1,601</b></div></div><div style="border:1px solid var(--border-strong);border-radius:10px;padding:12px;box-shadow:var(--shadow-1)"><div class="stat"><span>Errors</span><b style="color:var(--info)">11</b></div></div></div></div><p class="verdict"><span class="mark bad"></span><span><b>Don't</b> put each number in its own shadowed card with a coloured value.</span></p></div>
+  </div>
+  <p class="used"><b>Used on:</b> Identities (certificate and account details), Usage and Overview (stats), Admin.</p>
+</section>
+
+<section id="navc">
+  <header><p class="term">Components</p><h2>Navigation and controls</h2>
+  <p class="def">The sidebar lists every page, always. The current page is marked by weight plus the accent indicator. Segmented controls switch a view; tags are pill badges that label a category.</p></header>
+  <div class="cols">
+    <div class="stage"><div class="nav"><a href="#navc">Overview</a><a href="#navc">Services</a><a href="#navc">Identities</a><a href="#navc" aria-current="page">Tokens</a><a href="#navc">Usage</a><a href="#navc">Entitlements</a><a href="#navc">Admin</a></div></div>
+    <div class="stage"><span class="stage-label">Segmented control: Usage range</span><div class="seg"><button aria-pressed="false">7 days</button><button aria-pressed="true">30 days</button><button aria-pressed="false">90 days</button></div>
+    <span class="stage-label">Tag: a category, never a status</span><div style="display:flex;gap:8px;flex-wrap:wrap"><span class="tag">ATLAS</span><span class="tag">ESCAPE</span><span class="tag">read-only</span></div></div>
+  </div>
+  <p class="used">The selected segment is ink, not accent: the accent is reserved for the primary action and the current page. Admin appears in the sidebar only for operators.</p>
+</section>
+
+<section id="chart">
+  <header><p class="term">Components</p><h2>Chart</h2>
+  <p class="def">Basecoat's <code>chart</code> component, which wraps Chart.js, through <code>BarChart.vue</code>. Used for the daily activity on the Usage page.</p></header>
+  <div class="stage"><div class="chart-demo" role="img" aria-label="Calls per day, example"><i style="height:62%"></i><i style="height:70%"></i><i style="height:48%"></i><i style="height:75%"></i><i style="height:30%"></i><i style="height:0"></i><i style="height:12%"></i><i style="height:55%"></i><i style="height:68%"></i><i style="height:80%"></i><i style="height:58%"></i><i style="height:44%"></i></div></div>
+  <div class="prose"><ul>
+    <li>Bars are <code>--chart-1</code> (secondary text) and their hover is <code>--chart-2</code> (text): neutral steps, legible in both themes, never status colours. The grid is <code>--border</code>; axis labels are 12px in secondary text in IBM Plex Sans, with flat bars and no gradient or shadow.</li>
+    <li>A canvas is opaque to assistive technology, so the chart is <code>role="img"</code> with a summary label and every value is repeated in a visually hidden table.</li>
+    <li>It draws without animation when reduced motion is requested, and redraws with the new colours when the theme changes. Chart.js and Basecoat's chart script load only on the page that draws a chart.</li>
+  </ul></div>
+  <p class="used"><b>Used on:</b> Usage.</p>
+</section>
+
+<section id="overlay">
+  <header><p class="term">Components</p><h2>Dialog and tooltip</h2>
+  <p class="def">A dialog interrupts for a decision that cannot be undone or a short form. A tooltip names an icon or shows an exact value.</p></header>
+  <div class="scrim-demo"><div class="dialog"><h4>Revoke claude-desktop-laptop?</h4><p>Clients using this token stop working immediately. This cannot be undone.</p><footer><button class="btn quiet">Cancel</button><button class="btn danger">Revoke token</button></footer></div></div>
+  <div class="stage row" style="align-items:flex-start;gap:var(--space-32);background:var(--bg-subtle)">
+    <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-start"><span class="tip">13 November 2026, 09:14 UTC</span><span class="used">Expires in 2 days</span></div>
+  </div>
+  <div class="prose"><ul>
+    <li>Dialog buttons sit bottom right, with the confirming action last. The confirming button repeats the title's verb.</li>
+    <li>A tooltip never holds information a person needs to complete the task. It is not reachable on touch.</li>
+    <li>Prefer inline content to a dialog. Do not open a dialog from a dialog.</li>
+    <li>A tooltip is flat: page background, strong border, 4px radius. It uses the native Popover API, so a scrolling ancestor cannot clip it.</li>
+  </ul></div>
+  <p class="used"><b>Used on:</b> Tokens (new, revoke), Identities (unlink, consent), Admin (maintenance mode). Tooltips: tags, dates, icon-only buttons.</p>
+</section>
+
+<section id="empty">
+  <header><p class="term">Components</p><h2>Empty state</h2>
+  <p class="def">When a list has nothing in it, say what belongs there and offer the action that fills it.</p></header>
+  <div class="empty"><b>No tokens yet</b><p>Tokens let clients that can't sign in with a browser, such as Claude Desktop, reach the gateway as you.</p><button class="btn primary">New token</button></div>
+  <p class="used">This is Basecoat's <code>empty</code>, which centres its content under a dashed border; the portal keeps that layout. Here the empty state carries the page's primary button, so the page header does not repeat it. <b>Used on:</b> Tokens, Identities, Usage (no calls in range).</p>
+</section>
+
+<section id="pattern">
+  <header><p class="term">Pages</p><h2>Page pattern</h2>
+  <p class="def">Every signed-in page has the same four parts in the same order: title with the one primary action, the banner slot, then sections. A person who has seen one page knows where to look on all of them.</p></header>
+  <div class="page">
+    <aside><div class="brand">AF / MCP</div><div class="nav"><a href="#pattern">Overview</a><a href="#pattern">Services</a><a href="#pattern">Identities</a><a href="#pattern" aria-current="page">Tokens</a><a href="#pattern">Usage</a><a href="#pattern">Entitlements</a></div></aside>
+    <div>
+      <div class="page-head"><div><h4>Tokens</h4><p>For clients that can't sign in with a browser.</p></div><button class="btn primary"><svg class="i"><use href="#i-plus"/></svg>New token</button></div>
+      <div class="banner warn"><span class="mark warn"></span><div><b>gemini-cli-workstation expires in 5 days</b>Create a replacement and update the client.</div><button class="btn s">New token</button></div>
+      <div class="sect"><h5>Your tokens</h5>
+        <div class="tbl-box"><table class="tbl">
+          <thead><tr><th>Name</th><th>Status</th><th>Last used</th><th></th></tr></thead>
+          <tbody>
+            <tr><td>claude-desktop-laptop</td><td><span class="st"><span class="mark ok"></span>Active</span></td><td class="sub">2 hours ago</td><td class="act"><button class="btn danger s">Revoke</button></td></tr>
+            <tr><td>gemini-cli-workstation</td><td><span class="st"><span class="mark warn"></span>Expires in 5 days</span></td><td class="sub">Yesterday</td><td class="act"><button class="btn danger s">Revoke</button></td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </div>
+  </div>
+  <div class="scroll"><table class="spec">
+    <tr><th>Part</th><th>Rule</th></tr>
+    <tr><td>1. Page header</td><td>Title (24px), one line saying what the page is for, and at most one primary button on the right.</td></tr>
+    <tr><td>2. Banner slot</td><td>Empty when nothing is wrong. Otherwise the single most urgent message for this page: a banner for a problem or warning, a hint (a quiet note) for information. A banner outranks a hint.</td></tr>
+    <tr><td>3. Sections</td><td>Full width, stacked, 32px apart. Each has a 16px title and one component: a table, a key-value list, a row of stats or a copy field.</td></tr>
+    <tr><td>4. Sidebar</td><td>Same on every page. Accent indicator on the current page.</td></tr>
+  </table></div>
+</section>
+
+<section id="pages">
+  <header><p class="term">Pages</p><h2>Per-page specs</h2>
+  <p class="def">What each page is for, its one primary action, when its banner or hint appears and which component carries it.</p></header>
+  <div class="scroll"><table class="spec">
+    <tr><th>Page</th><th>Job</th><th>Primary action</th><th>Banner appears when</th><th>Main components</th><th>Density</th></tr>
+    <tr><td>Landing <code>/</code></td><td>Say what the platform is; get a facility user signed in.</td><td>Sign in, extra large (52px)</td><td>Maintenance is on (the slim information bar)</td><td>Headline, one paragraph, particle canvas, gateway diagram, benefits</td><td>Spacious</td></tr>
+    <tr><td>Overview</td><td>Is my access working? How do I connect a client?</td><td>None; Copy on the endpoint</td><td>In priority order: grid proxy expired (problem); a service misconfigured (problem) or unavailable (warning); a service rejected a linked credential (warning); grid proxy expiring (warning, only if it cannot auto-renew and has under an hour left); a token expiring within 7 days (warning). Then hints: no account linked; N services not linked</td><td>Status rows, stats, copy field, particle canvas in the header</td><td>Comfortable</td></tr>
+    <tr><td>Services</td><td>Which backends and methods can I reach, and why not the others?</td><td>None</td><td>A service is misconfigured (problem) or unavailable (warning); then a rejected credential (warning, with the re-link action when they share one identity). Otherwise a hint when services are not linked, with one action only when they all need the same account</td><td>Search, filter, a list of service rows with status and the fix</td><td>Comfortable</td></tr>
+    <tr><td>Identities</td><td>Link external accounts and keep the grid certificate valid.</td><td>None in the header; each card has its own</td><td>Grid proxy expired (problem) or expiring (warning); a link attempt failed (problem); an account was just linked (ok). No hint: the rows show what is not linked</td><td>One card per credential, key-value lists</td><td>Comfortable</td></tr>
+    <tr><td>Tokens</td><td>Create and revoke tokens for clients without browser sign-in.</td><td>New token</td><td>A token expires within 7 days (warning); a revoke failed (problem)</td><td>Table, dialog with copy field</td><td>Comfortable</td></tr>
+    <tr><td>Usage</td><td>What have my clients been doing?</td><td>None; range control</td><td>Never</td><td>Stats, bar chart, table per service</td><td>Comfortable</td></tr>
+    <tr><td>Entitlements</td><td>Which group grants which permission?</td><td>None</td><td>Never</td><td>Matrix table</td><td>Compact</td></tr>
+    <tr><td>Admin</td><td>Platform state across users; operators only.</td><td>None; maintenance toggle in its section</td><td>Tool configuration issues are found (warning)</td><td>Compact tables, status marks</td><td>Compact</td></tr>
+  </table></div>
+  <div class="prose">
+    <h3>State rules that hold on every page</h3>
+    <ul>
+      <li><b>Not linked is off, not wrong.</b> The off mark, the words "Not linked", a quiet row; never a warning or problem banner, at most a hint. A service that needs no credential, such as the gateway's own, is never counted as unlinked.</li>
+      <li><b>Credential rejected is a warning, not "Not linked".</b> The person did link, and the backend refuses what they set up. Warning mark, the words "Credential rejected", a row at full ink, one sentence ("Your linked &lt;identity&gt; was rejected. Re-link it to use this service.") and a re-link action that names the identity and goes to its card. It raises a warning banner, ranked below misconfigured and unavailable and above the not-linked hint, sorts ahead of available services, and is never counted as not linked.</li>
+      <li><b>A grid proxy warns only when it cannot renew itself and has under an hour left.</b> An auto-renewing proxy never shows as expiring.</li>
+      <li><b>Misconfigured and Unavailable differ.</b> Misconfigured needs an operator: problem mark and a reference id to quote. Unavailable is temporary: warning mark, nothing to do but wait.</li>
+      <li><b>Access required</b> needs an administrator: warning mark and inline detail, never a banner. A service row shows its identity's link state only where that is the actionable fact.</li>
+      <li><b>Maintenance</b> is the slim information bar above the page, not the page banner.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="open">
+  <header><p class="term">Pages</p><h2>Open decisions</h2>
+  <p class="def">Things this reference proposes but nobody has confirmed yet.</p></header>
+  <div class="scroll"><table class="spec">
+    <tr><th>Decision</th><th>Proposed here</th><th>Alternative</th></tr>
+    <tr><td>Dark-mode accent</td><td>Derived automatically, with an optional override</td><td>Require every deployment to supply both</td></tr>
+    <tr><td>Breakpoints</td><td>600 and 1136px</td><td>Keep whatever the portal uses today</td></tr>
+  </table></div>
+</section>
+
+</main>
+</div>
+
+<script>
+(function () {
+  var root = document.documentElement;
+  var q = new URLSearchParams(location.search);
+  var accent = '#0a0a0a';
+
+  function rgb(hex) { var n = parseInt(hex.slice(1), 16); return [n >> 16 & 255, n >> 8 & 255, n & 255]; }
+  function hex(c) { return '#' + c.map(function (v) { return Math.round(v).toString(16).padStart(2, '0'); }).join(''); }
+  function lum(c) { var a = c.map(function (v) { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }); return 0.2126 * a[0] + 0.7152 * a[1] + 0.0722 * a[2]; }
+  function contrast(a, b) { var x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); }
+  function isDark() { var t = root.dataset.theme; return t ? t === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches; }
+
+  // Accent derivation described under Colour: lighten a dark accent in dark
+  // mode until 3:1 against the page; pick on-accent by 4.5:1 against white.
+  function applyAccent() {
+    var c = rgb(accent), dark = isDark();
+    if (accent.toLowerCase() === '#0a0a0a' && dark) c = [245, 245, 245];
+    if (dark) { var bg = [15, 15, 16], i = 0; while (contrast(c, bg) < 3 && i++ < 20) c = c.map(function (v) { return v + (255 - v) * 0.1; }); }
+    var on = contrast(c, [255, 255, 255]) >= 4.5 ? '#ffffff' : '#0a0a0a';
+    root.style.setProperty('--accent', hex(c)); root.style.setProperty('--on-accent', on);
+    document.getElementById('acc-val').textContent = hex(c);
+    document.getElementById('onacc-val').textContent = on;
+    document.querySelectorAll('.ref-sw').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.accent === accent)); });
+    document.getElementById('accent-pick').value = accent;
+    renderTokens();
+  }
+
+  // Token tables read their values from the live page, so they cannot drift.
+  function renderTokens() {
+    var cs = getComputedStyle(root);
+    document.querySelectorAll('table[data-tokens]').forEach(function (t) {
+      t.innerHTML = '<tr><th></th><th>Token</th><th>Value now</th><th>Use</th></tr>' + t.dataset.tokens.split(';').map(function (row) {
+        var p = row.split('|'), v = cs.getPropertyValue(p[0]).trim();
+        return '<tr><td><span class="chip" style="background:var(' + p[0] + ')"></span></td><td><code>' + p[0] + '</code></td><td><code>' + v + '</code></td><td>' + p[1] + '</td></tr>';
+      }).join('');
+    });
+  }
+  var st = document.getElementById('space-table');
+  [['2', 'Hairline offsets'], ['4', 'Icon to label inside a tag'], ['8', 'Icon to label; between related controls'], ['12', 'Input padding; between a label group and its control'], ['16', 'Cell padding; inside banners and notes'], ['24', 'Container padding; grid gutter'], ['32', 'Between sections; page margin'], ['48', 'Between major page regions'], ['64', 'Page bottom; landing page rhythm']].forEach(function (r) {
+    st.insertAdjacentHTML('beforeend', '<tr><td><code>--space-' + r[0] + '</code></td><td>' + r[0] + 'px</td><td><span class="bar" style="display:block;width:' + r[0] + 'px"></span></td><td>' + r[1] + '</td></tr>');
+  });
+
+  function seg(id, fn) {
+    var el = document.getElementById(id);
+    el.addEventListener('click', function (e) { var b = e.target.closest('button'); if (b) set(b.dataset.v); });
+    function set(v) { el.querySelectorAll('button').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.v === v)); }); fn(v); }
+    return set;
+  }
+  var setTheme = seg('theme', function (v) { if (v === 'auto') delete root.dataset.theme; else root.dataset.theme = v; applyAccent(); });
+  document.querySelectorAll('.ref-sw').forEach(function (b) { b.addEventListener('click', function () { accent = b.dataset.accent; applyAccent(); }); });
+  document.getElementById('accent-pick').addEventListener('input', function (e) { accent = e.target.value; applyAccent(); });
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyAccent);
+
+  if (/^[0-9a-f]{6}$/i.test(q.get('accent') || '')) accent = '#' + q.get('accent');
+  if (q.get('theme') === 'light' || q.get('theme') === 'dark') setTheme(q.get('theme')); else applyAccent();
+})();
+</script>
+</body>
+</html>

@@ -434,9 +434,22 @@ async def test_af_list_mcp_servers_reuses_service_status_and_identity_join(
             display_name="Needs Link Backend",
         )
     )
+    registry.register(
+        ServiceSpec(
+            name="rejected",
+            prefix="rejected",
+            url="http://rejected.invalid/mcp",
+            transport="http",
+            required_permission="__none__",
+            auth_type="bearer",
+            display_name="Rejected Backend",
+        )
+    )
+    registry.record_list_failure("rejected", "unauthorized", "user-123")
     credential_registry = CredentialRegistry()
     unlinked_provider = _FakeIdentityProvider(linked=False)
     credential_registry.register("needs-link", unlinked_provider)
+    credential_registry.register("rejected", _FakeIdentityProvider(linked=True))
     target_to_alias = {"needs-link": "unlinked-idp"}
 
     mcp = build_aggregator(
@@ -462,6 +475,14 @@ async def test_af_list_mcp_servers_reuses_service_status_and_identity_join(
     assert rows["gated"]["status"] == "permission_required"
     assert rows["needs-link"]["status"] == "link_required"
     assert rows["needs-link"]["credential_provider"] == "unlinked-idp"
+    # link_state says WHY a link is required: never linked vs linked but the
+    # backend rejected the stored credential; null for every other status.
+    assert rows["needs-link"]["link_state"] == "not_linked"
+    assert rows["rejected"]["status"] == "link_required"
+    assert rows["rejected"]["link_state"] == "rejected"
+    assert rows["open"]["link_state"] is None
+    assert rows["gated"]["link_state"] is None
+    assert rows["gateway_service"]["link_state"] is None
     # The gateway lists itself too (issue #240): the builtin af-mcp service
     # is always present and available -- even to this zero-permission caller
     # -- with no identity provider servicing it.

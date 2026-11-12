@@ -3,120 +3,54 @@
 // (see docs/architecture.md, "Reserved paths on the portal host"). New
 // portal pages must not use those prefixes.
 import Base from '../layouts/Base.astro';
-import DashboardCards from '../components/DashboardCards.vue';
-import UsageCard from '../components/UsageCard.vue';
+import ConnectClient from '../components/ConnectClient.vue';
+import OverviewSummary from '../components/OverviewSummary.vue';
 
 // Identity is filled client-side (see Base.astro) — the greeting element is
 // tagged data-af-identity and stays hidden until GET /v1/identities resolves.
 //
-// The MCP endpoint URL below is likewise filled client-side (see the
-// "Fill MCP endpoint" script) from getBrokerOrigin() (../lib/auth) rather
-// than baked in here — this frontmatter only runs at build time, so a
-// hardcoded URL here would show every deployment its own host or a
-// different, wrong one.
+// The MCP endpoint URL is likewise filled client-side (see ConnectClient.vue)
+// from getBrokerOrigin() (../lib/auth) rather than baked in here — this
+// frontmatter only runs at build time, so a hardcoded URL here would show
+// every deployment its own host or a different, wrong one.
 ---
 
 <Base title="Overview">
-  <!-- ── Hero: particle track canvas + identity ────────────────────────── -->
-  <section class="hero" aria-label="Platform overview">
-    <canvas id="track-canvas" class="hero__canvas" aria-hidden="true"></canvas>
-
-    <div class="hero__content">
-      <div class="hero__eyebrow" data-af-brand="facilityName">ATLAS Analysis Facility</div>
-      <h1 class="hero__title">MCP Platform</h1>
-      <p class="hero__sub">
-        A <a href="https://modelcontextprotocol.io/" target="_blank" rel="noopener noreferrer"
-          >Model Context Protocol</a
-        >
-        gateway for ATLAS computing — connecting your AI assistant to Rucio, AMI, and the analysis grid,
-        without ever handing it your credentials.
-      </p>
-
-      <div class="hero__user" data-af-user-holder hidden>
-        <span class="hero__user-label">Signed in as</span>
-        <span class="hero__user-email" data-af-identity></span>
+  <div class="af-page">
+    <!-- ── Page header: title, one sentence and the particle-track canvas beside it ── -->
+    <header class="af-page-head ov-head">
+      <div>
+        <h1>Overview</h1>
+        <p>
+          A <a href="https://modelcontextprotocol.io/" target="_blank" rel="noopener noreferrer"
+            >Model Context Protocol</a
+          >{' '}gateway for ATLAS computing, connecting your AI assistant to Rucio, AMI, and the
+          analysis grid without ever handing it your credentials.
+        </p>
+        <p class="ov-head__user" data-af-user-holder hidden>
+          <span>Signed in as</span>
+          <span data-af-identity></span>
+        </p>
       </div>
-    </div>
-  </section>
+      <!-- The canvas has its own cell so no text is ever drawn over it. -->
+      <canvas id="track-canvas" class="ov-head__canvas" aria-hidden="true"></canvas>
+    </header>
 
-  <!-- ── Status cards (Vue island — fetches live data) ─────────────────── -->
-  <DashboardCards client:load />
+    <!-- ── Banner, status list and usage stats (Vue island — fetches live data) ── -->
+    <OverviewSummary client:load />
 
-  <!-- ── Usage summary (Vue island — fetches live data) ────────────────── -->
-  <UsageCard client:load />
-
-  <!-- ── MCP endpoint ──────────────────────────────────────────────────── -->
-  <section class="endpoint-section" aria-label="MCP endpoint">
-    <h2 class="section-heading">Connect to this endpoint</h2>
-    <p class="section-body">
-      Add this server URL to Claude Desktop, Gemini Advanced, or any MCP-compatible client. Your
-      account signs in automatically the first time you connect — you never paste a credential by
-      hand unless your client can't open a browser (see below).
-    </p>
-
-    <div class="endpoint-block">
-      <div class="endpoint-block__header">
-        <span class="endpoint-block__label">MCP server URL</span>
-        <button
-          id="copy-btn"
-          class="endpoint-block__copy"
-          aria-label="Copy endpoint URL to clipboard"
-        >
-          Copy
-        </button>
-      </div>
-      <code class="endpoint-block__url" id="mcp-endpoint-url"></code>
-    </div>
-
-    <div class="snippet-group">
-      <h3 class="snippet-heading">Claude (Claude.ai, Claude Desktop)</h3>
-      <ol class="connect-steps">
-        <li class="connect-steps__step">
-          <span class="connect-steps__num" aria-hidden="true">1</span>
-          <span class="connect-steps__text">
-            Add a custom connector with just the server URL above — no header, no token needed:
-            <strong>Settings → Connectors → Add custom connector.</strong>
-          </span>
-        </li>
-        <li class="connect-steps__step">
-          <span class="connect-steps__num" aria-hidden="true">2</span>
-          <span class="connect-steps__text">
-            The first call opens a browser window to sign in with your account. Claude stores the
-            resulting credential itself — you won't see it again.
-          </span>
-        </li>
-        <li class="connect-steps__step">
-          <span class="connect-steps__num" aria-hidden="true">3</span>
-          <span class="connect-steps__text">
-            If your client can't open a browser, skip that step: mint a Personal Access Token (PAT)
-            from the <a href="/tokens/" class="connect-steps__link">Tokens page</a> instead, then under
-            <strong>Request headers</strong> add name <code>Authorization</code>, value <code
-              >Bearer &lt;your PAT&gt;</code
-            >.
-          </span>
-        </li>
-      </ol>
-    </div>
-
-    <div class="snippet-group">
-      <h3 class="snippet-heading">curl</h3>
-      <p class="snippet-note">
-        Mint a Personal Access Token (PAT) from the
-        <a href="/tokens/" class="connect-steps__link">Tokens page</a> first, then paste it in place of
-        <code>&lt;your PAT&gt;</code> below.
-      </p>
-      <pre class="code-block"><code id="curl-snippet" /></pre>
-    </div>
-  </section>
+    <!-- ── Connect a client (Vue island — endpoint comes from /config.json) ── -->
+    <ConnectClient client:load />
+  </div>
 </Base>
 
-<!-- ── Canvas particle track (the aesthetic risk) ─────────────────────── -->
+<!-- ── Canvas particle track ──────────────────────────────────────────── -->
 <!--
   A sparse radial event display: a handful of curved tracks originating from
   a central vertex, using quadratic Bezier curves to simulate magnetic
   curvature — the same visualization ATLAS physicists read every day.
-  One orchestrated moment; the rest of the page is quiet. Shared with the
-  public landing page's hero — see src/lib/particleTracks.ts.
+  Shared with the public landing page's hero — see src/lib/particleTracks.ts,
+  which draws one static frame under prefers-reduced-motion.
 -->
 <script>
   import { initParticleTracks } from '../lib/particleTracks';
@@ -125,329 +59,37 @@ import UsageCard from '../components/UsageCard.vue';
   if (canvas) initParticleTracks(canvas);
 </script>
 
-<!-- ── Fill MCP endpoint ─────────────────────────────────────────────── -->
-<!--
-  The endpoint URL depends on a runtime fetch (getBrokerOrigin() reads
-  /config.json), so it can't be a build-time Astro frontmatter constant —
-  it's filled here on mount instead, the same way Base.astro's inline
-  script fills [data-af-identity] from GET /v1/identities.
--->
-<script>
-  import { getBrokerOrigin } from '../lib/auth';
-
-  (async () => {
-    // Trailing slash matters: some MCP clients don't follow the redirect a
-    // bare /mcp gets from Starlette's Mount (see docs/connecting-a-client.md).
-    const endpoint = `${await getBrokerOrigin()}/mcp/`;
-
-    const urlEl = document.getElementById('mcp-endpoint-url');
-    if (urlEl) urlEl.textContent = endpoint;
-
-    const btn = document.getElementById('copy-btn') as HTMLButtonElement | null;
-    if (btn) btn.dataset.url = endpoint;
-
-    const curlEl = document.getElementById('curl-snippet');
-    if (curlEl) {
-      curlEl.textContent = `export MCP_PAT="<your PAT>"
-curl -H "Authorization: Bearer $MCP_PAT" \\
-     ${endpoint}`;
-    }
-  })();
-</script>
-
-<!-- ── Copy button ───────────────────────────────────────────────────── -->
-<script>
-  const btn = document.getElementById('copy-btn') as HTMLButtonElement | null;
-  if (btn) {
-    btn.addEventListener('click', async () => {
-      const url = btn.dataset.url;
-      if (!url) return;
-      try {
-        await navigator.clipboard.writeText(url);
-        btn.textContent = 'Copied';
-        setTimeout(() => {
-          btn.textContent = 'Copy';
-        }, 2000);
-      } catch {
-        btn.textContent = 'Copy';
-      }
-    });
+<style is:global>
+  /* The text keeps the width the canvas leaves; the canvas wraps under it only
+     when the row is too narrow for both. */
+  .ov-head > div {
+    flex: 1 1 24rem;
+    min-width: 0;
   }
-</script>
 
-<style>
-  /* ── Hero ──────────────────────────────────────────────────────────── */
-  .hero {
-    position: relative;
-    height: 220px;
-    overflow: hidden;
-    border-radius: 4px;
-    border: 1px solid var(--color-af-border);
-    background: var(--color-af-void);
-    margin-bottom: 2rem;
+  .ov-head__user {
     display: flex;
-    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-8);
+    font-size: var(--text-13);
   }
 
-  .hero__canvas {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
+  .ov-head__user[hidden] {
+    display: none;
+  }
+
+  .ov-head__canvas {
+    width: 320px;
+    max-width: 100%;
+    height: 96px;
+    border: 1px solid var(--color-af-border);
+    border-radius: var(--radius-10);
     pointer-events: none;
   }
 
-  .hero__content {
-    position: relative;
-    z-index: 1;
-    padding: 2rem 2.5rem;
-  }
-
-  .hero__eyebrow {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.625rem;
-    font-weight: 600;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: var(--color-af-teal);
-    margin-bottom: 0.5rem;
-  }
-
-  .hero__title {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 2.25rem;
-    font-weight: 700;
-    letter-spacing: 0.03em;
-    color: var(--color-af-text);
-    line-height: 1.1;
-    margin: 0 0 0.625rem;
-  }
-
-  .hero__sub {
-    font-family: 'IBM Plex Sans', system-ui, sans-serif;
-    font-size: 0.9375rem;
-    color: var(--color-af-dim);
-    max-width: 38rem;
-    line-height: 1.6;
-    margin: 0 0 1rem;
-  }
-
-  .hero__sub a {
-    color: var(--color-af-teal);
-  }
-
-  .hero__user {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-
-  .hero__user-label {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.625rem;
-    font-weight: 600;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--color-af-label);
-  }
-
-  .hero__user-email {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.75rem;
-    color: var(--color-af-dim);
-  }
-
-  /* ── Endpoint section ─────────────────────────────────────────────── */
-  .endpoint-section {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-    max-width: 52rem;
-  }
-
-  .section-heading {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.625rem;
-    font-weight: 600;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: var(--color-af-label);
-    margin: 0;
-  }
-
-  .section-body {
-    font-size: 0.9375rem;
-    color: var(--color-af-dim);
-    line-height: 1.6;
-    margin: 0;
-  }
-
-  .endpoint-block {
-    border: 1px solid var(--color-af-border);
-    border-radius: 4px;
-    overflow: hidden;
-  }
-
-  .endpoint-block__header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0.5rem 0.875rem;
-    background: var(--color-af-surface);
-    border-bottom: 1px solid var(--color-af-border);
-  }
-
-  .endpoint-block__label {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.5625rem;
-    font-weight: 600;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--color-af-label);
-  }
-
-  .endpoint-block__copy {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.625rem;
-    font-weight: 600;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--color-af-teal);
-    background: transparent;
-    border: 1px solid rgb(from var(--color-af-teal) r g b / 0.2);
-    border-radius: 2px;
-    padding: 0.25rem 0.625rem;
-    cursor: pointer;
-    transition: background 150ms;
-  }
-  .endpoint-block__copy:hover {
-    background: rgb(from var(--color-af-teal) r g b / 0.08);
-  }
-  .endpoint-block__copy:focus-visible {
-    outline: 2px solid var(--color-af-teal);
-    outline-offset: 2px;
-  }
-
-  .endpoint-block__url {
-    display: block;
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.875rem;
-    color: var(--color-af-text);
-    padding: 0.875rem;
-    background: var(--color-af-void);
-    word-break: break-all;
-  }
-
-  /* Snippets */
-  .snippet-group {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .snippet-heading {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.6875rem;
-    font-weight: 600;
-    color: var(--color-af-dim);
-    margin: 0;
-  }
-
-  .snippet-heading code {
-    color: var(--color-af-dim);
-    font-size: 0.6875rem;
-  }
-
-  .code-block {
-    background: var(--color-af-void);
-    border: 1px solid var(--color-af-border);
-    border-radius: 4px;
-    padding: 0.875rem 1rem;
-    overflow-x: auto;
-    margin: 0;
-  }
-
-  .code-block code {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.8125rem;
-    color: var(--color-af-dim);
-    line-height: 1.7;
-  }
-
-  .connect-steps {
-    display: flex;
-    flex-direction: column;
-    gap: 0.625rem;
-    margin: 0;
-    padding: 0;
-    list-style: none;
-    font-size: 0.875rem;
-    color: var(--color-af-dim);
-    line-height: 1.6;
-  }
-
-  .connect-steps__step {
-    display: flex;
-    align-items: baseline;
-    gap: 0.75rem;
-    padding: 0.75rem 0.875rem;
-    border: 1px solid var(--color-af-border);
-    border-radius: 4px;
-    background: var(--color-af-surface);
-  }
-
-  .connect-steps__num {
-    flex-shrink: 0;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 1.375rem;
-    height: 1.375rem;
-    border-radius: 50%;
-    background: rgb(from var(--color-af-teal) r g b / 0.12);
-    color: var(--color-af-teal);
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.6875rem;
-    font-weight: 700;
-  }
-
-  .connect-steps__text {
-    flex: 1;
-  }
-
-  .connect-steps code {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.8125rem;
-    color: var(--color-af-text);
-  }
-
-  .connect-steps__link {
-    color: var(--color-af-teal);
-  }
-
-  .snippet-note {
-    margin: 0;
-    font-size: 0.8125rem;
-    color: var(--color-af-dim);
-    line-height: 1.5;
-  }
-
-  .snippet-note code {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.75rem;
-    color: var(--color-af-text);
-  }
-
-  /* ── Responsive ────────────────────────────────────────────────────── */
-  @media (max-width: 640px) {
-    .hero {
-      height: 180px;
-    }
-    .hero__title {
-      font-size: 1.5rem;
-    }
-    .hero__content {
-      padding: 1.5rem;
+  @media (max-width: 720px) {
+    .ov-head__canvas {
+      width: 100%;
     }
   }
 </style>

@@ -1,0 +1,70 @@
+{
+  "subject": "example-subject-0001",
+  "email": "example-user-1@example-facility.org",
+  "unixname": "example-user-1",
+  "uid": 100001,
+  "gid": 100001,
+  "groups": ["example-atlas-users", "example-operators"],
+  "is_admin": true,
+  "providers": [
+    {
+      "id": "example-iam",
+      "type": "keycloak-brokered",
+      "display_name": "Example IAM",
+      "enables": "Rucio, PanDA, AMI and JupyterHub on your behalf.",
+      "linked": false,
+      "link_url": null,
+      "link_mechanism": "redirect"
+    },
+    {
+      "id": "example-sso",
+      "type": "keycloak-brokered",
+      "display_name": "Example SSO",
+      "enables": "Single sign-on for example collaboration tools.",
+      "linked": false,
+      "link_url": null,
+      "link_mechanism": "redirect",
+      "link_permission_denied": true
+    },
+    {
+      "id": "x509",
+      "type": "x509",
+      "display_name": "Grid certificate",
+      "enables": "HTCondor jobs and grid data access with a VOMS proxy.",
+      "linked": false,
+      "link_url": null,
+      "link_mechanism": "passphrase",
+      "proxy_expires_at": "@iso-3h",
+      "x509_link_mode": "until-expiry"
+    },
+    {
+      "id": "krb5-token",
+      "type": "krb5-token",
+      "display_name": "Kerberos ticket",
+      "enables": "Access to Kerberos-protected storage.",
+      "linked": false,
+      "link_url": null,
+      "link_mechanism": "credential",
+      "krb5_has_keytab": false
+    },
+    {
+      "id": "servicex-token",
+      "type": "servicex-token",
+      "display_name": "ServiceX token",
+      "enables": "Submit ServiceX transforms.",
+      "linked": true,
+      "link_url": null,
+      "link_mechanism": "servicex-token",
+      "external_login_url": "https://servicex.example-facility.org/api-token"
+    },
+    {
+      "id": "example-oauth",
+      "type": "oauth21-direct",
+      "display_name": "Example Docs Service",
+      "enables": "Search the example documentation index.",
+      "linked": false,
+      "link_url": "/v1/oauth/authorize/example-oauth",
+      "link_mechanism": "redirect"
+    }
+  ]
+}

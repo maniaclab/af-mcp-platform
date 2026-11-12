@@ -211,6 +211,45 @@ pixi run -e portal format-check # prettier --check
 pixi run -e portal check        # the aggregate CI runs
 ```
 
+## Previewing every page with example data (design review)
+
+The signed-in pages are empty or error-ridden without a broker behind them.
+For design work there is a dependency-free preview server that serves the
+built portal together with canned answers for every `/v1` call, so each page
+can be looked at (or screenshotted) with realistic data and no login:
+
+```bash
+pixi run -e portal design-preview                       # builds, then serves the "healthy" scenario
+pixi run -e portal design-preview --scenario problems   # blocked services, expired proxy, maintenance on, ...
+pixi run -e portal design-preview --port 4400           # default: a free port, printed on start
+```
+
+Everything it serves is **fictional example data** (`example-user-1`,
+`mcp.example-facility.org`, ...) and exists for design review only; it is
+never a stand-in for a real deployment. Fixtures live in
+`portal/scripts/design-preview-fixtures/<scenario>/`, one JSON file per
+endpoint, and mirror the response types in `portal/src/lib/api.ts`. Dates are
+written as placeholders (`"@iso+3d"`) so "expires in 3 days" stays true.
+Mutating calls (mint a token, set maintenance, ...) answer with a plausible
+success and change nothing.
+
+Two overrides work from the URL alone, so a headless browser needs no
+rebuild: `?theme=light|dark` and `?accent=RRGGBB`, for example
+`http://127.0.0.1:4400/tokens/?theme=dark&accent=800000`. The accent is kept
+in a cookie, so it sticks for later pages until you pass `?accent=` (empty).
+
+To capture every page at 1440 and 400 px wide, in light and dark, for both
+scenarios (build first; needs a headless Chromium, by default the Playwright
+cache, or `--chrome <path>` / `CHROME_BIN`):
+
+```bash
+pixi run -e portal build
+cd portal && node scripts/design-screenshots.mjs --out /tmp/design-shots
+# optional: --pages tokens,admin  --scenarios problems  --accent 800000
+```
+
+Files are named `<scenario>-<page>-<width>-<theme>.png`.
+
 ## Ports summary
 
 | Port | Owned by         | Notes                                             |

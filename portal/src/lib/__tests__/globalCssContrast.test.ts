@@ -1,11 +1,9 @@
 /**
  * Parses the real, live token values out of src/styles/global.css (not a
- * copy-pasted snapshot of them) and re-checks WCAG 2.1 AA (4.5:1) for every
- * text-bearing af-* token against both grounds it's actually used on --
- * af-surface (cards/panels) and af-void (the page). This is what keeps
- * global.css's own inline ratio comments, and DESIGN.md's Theming table,
- * honest as the palette evolves: a future edit that regresses a ratio fails
- * here instead of shipping.
+ * copy-pasted snapshot of them) and re-checks WCAG 2.1 contrast for the
+ * semantic af-* tokens against the grounds they are used on: text tokens at
+ * 4.5:1 (AA), status colours at 3:1 (non-text, WCAG 1.4.11). A future edit
+ * that regresses a ratio fails here instead of shipping.
  */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -35,25 +33,24 @@ function extractAfTokens(blockSource: string): Record<string, string> {
   return tokens;
 }
 
-// The @theme block holds the LIGHT defaults; .dark overrides the same names
-// for dark mode (see global.css's own "Theming" docstring for why).
+// The @theme block holds the LIGHT defaults; .dark overrides only the tokens
+// that differ. Tokens identical in both themes (the banner fills) are not
+// repeated in .dark, so dark resolves against light for anything it omits.
 const lightTokens = extractAfTokens(extractBlock(/@theme\s*{([^}]*)}/s));
-const darkTokens = extractAfTokens(extractBlock(/\n\.dark\s*{([^}]*)}/s));
+const darkTokens = { ...lightTokens, ...extractAfTokens(extractBlock(/\n\.dark\s*{([^}]*)}/s)) };
 
 const AA_NORMAL_TEXT = 4.5;
+const NON_TEXT = 3;
 
-// Only tokens actually used as text color are checked here — af-border,
-// af-muted (a non-text, ≥3:1 token per WCAG 1.4.11), af-hover-lift,
-// af-scrim, and af-panel-shadow are structural/non-text and intentionally
-// excluded.
-const TEXT_TOKENS = ['dim', 'label', 'text', 'teal', 'amber', 'red', 'green'];
-const GROUNDS = ['surface', 'void'] as const;
+const TEXT_TOKENS = ['text', 'text-secondary', 'bad-text'];
+const STATUS_TOKENS = ['ok', 'warn', 'bad', 'info'];
+const GROUNDS = ['bg', 'bg-subtle'] as const;
 
 describe.each([
   ['light', lightTokens],
   ['dark', darkTokens],
 ] as const)('global.css %s theme', (themeName, tokens) => {
-  it.each(TEXT_TOKENS)('af-%s clears AA (4.5:1) against both af-surface and af-void', (name) => {
+  it.each(TEXT_TOKENS)('af-%s clears AA (4.5:1) against both af-bg and af-bg-subtle', (name) => {
     for (const ground of GROUNDS) {
       const ratio = contrastRatio(tokens[name], tokens[ground]);
       expect(
@@ -63,11 +60,30 @@ describe.each([
     }
   });
 
-  it('af-on-accent clears AA (4.5:1) against a filled af-teal control', () => {
-    const ratio = contrastRatio(tokens['on-accent'], tokens['teal']);
+  it('af-on-accent clears AA (4.5:1) against a filled af-accent control', () => {
+    const ratio = contrastRatio(tokens['on-accent'], tokens['accent']);
     expect(
       ratio,
-      `${themeName}: on-accent (${tokens['on-accent']}) vs teal (${tokens['teal']})`,
+      `${themeName}: on-accent (${tokens['on-accent']}) vs accent (${tokens['accent']})`,
     ).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+  });
+
+  it.each(['ok', 'warn', 'bad', 'info'])(
+    'af-on-banner-%s clears AA (4.5:1) against its af-banner fill',
+    (name) => {
+      const ratio = contrastRatio(tokens[`on-banner-${name}`], tokens[`banner-${name}`]);
+      expect(
+        ratio,
+        `${themeName}: on-banner-${name} (${tokens[`on-banner-${name}`]}) vs banner-${name} (${tokens[`banner-${name}`]})`,
+      ).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+    },
+  );
+
+  it.each(STATUS_TOKENS)('af-%s clears 3:1 (non-text) against af-bg', (name) => {
+    const ratio = contrastRatio(tokens[name], tokens['bg']);
+    expect(
+      ratio,
+      `${themeName}: ${name} (${tokens[name]}) vs bg (${tokens['bg']})`,
+    ).toBeGreaterThanOrEqual(NON_TEXT);
   });
 });

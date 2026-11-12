@@ -39,6 +39,11 @@ ServiceStatus = Literal[
     "misconfigured",
 ]
 
+# Why a "link_required" service needs a link: the caller never linked the
+# identity ("not_linked"), or linked it and the backend rejected the stored
+# credential ("rejected"). None for every other status.
+LinkState = Literal["not_linked", "rejected"]
+
 _STATUS_DETAILS: dict[ServiceStatus, str] = {
     "available": "Available.",
     "link_required": (
@@ -100,6 +105,16 @@ class PermissionsResponse(BaseModel):
     grants: list[PermissionGrant]
 
 
+class PermissionCatalogEntry(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    action_type: Literal["read", "state_change"]
+    # None for a permission the policy declares without prose (every
+    # custom_permissions entry).
+    description: str | None
+
+
 class EntitlementsResponse(BaseModel):
     """The static group -> permission table, verbatim from policy.yaml.
 
@@ -112,6 +127,11 @@ class EntitlementsResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     group_permissions: dict[str, list[str]]
+    # Every permission the policy knows, in display order: built-ins in
+    # PERMISSIONS order, then custom_permissions in policy order, then any
+    # name only group_permissions grants. Lets the portal show each one's
+    # kind and description without a hard-coded copy of this list.
+    permissions: list[PermissionCatalogEntry]
 
 
 class AuthorizeRequest(BaseModel):
@@ -159,6 +179,10 @@ class CatalogServer(BaseModel):
     # populated; status_detail is a short, human, internals-free sentence.
     status: ServiceStatus
     status_detail: str
+    # Why a link is required: set only when status is "link_required" --
+    # "not_linked" (never linked) or "rejected" (linked, but the backend
+    # rejected the stored credential). None for every other status.
+    link_state: LinkState | None
     # Set only for admin-actionable statuses (permission_required,
     # misconfigured) -- a correlation id the caller can quote in a ticket so
     # an admin can grep the audit log for it. None otherwise.
@@ -211,10 +235,34 @@ def _get_credential_registry(request: Request) -> CredentialRegistry:
 
 
 def _action_type_for_permission(
-    permission: str | None,
+    permission: str, policy: EntitlementPolicy
 ) -> Literal["read", "state_change"]:
-    cap = PERMISSIONS.get(permission) if permission is not None else None
-    return cap.action_type if cap else "read"  # type: ignore[return-value]
+    # No target, so no target_action_types override can apply: this is the
+    # permission's own built-in or custom_permissions action type.
+    return get_action_type("", "", permission, policy)  # type: ignore[return-value]
+
+
+def _permission_catalog(policy: EntitlementPolicy) -> list[PermissionCatalogEntry]:
+    """List built-in, then custom, then group-granted-only permissions.
+
+    startup validation (app.py) only checks the permissions *services*
+    require, so a group may grant a name that is neither built-in nor
+    custom; it is listed last, with the action type the shared resolver
+    yields for an unknown name ("read").
+    """
+    # dict keys: de-duplicate while keeping first-seen order.
+    granted = dict.fromkeys(
+        name for names in policy.group_permissions.values() for name in names
+    )
+    names = dict.fromkeys([*PERMISSIONS, *policy.custom_permissions, *granted])
+    return [
+        PermissionCatalogEntry(
+            name=name,
+            action_type=_action_type_for_permission(name, policy),
+            description=PERMISSIONS[name].description if name in PERMISSIONS else None,
+        )
+        for name in names
+    ]
 
 
 def _action_type_for_service(
@@ -234,7 +282,7 @@ def _action_type_for_service(
     available) — otherwise "read".
     """
     if any(
-        _action_type_for_permission(perm) == "state_change"
+        _action_type_for_permission(perm, policy) == "state_change"
         for perm in spec.all_required_permissions()
     ):
         return "state_change"
@@ -268,7 +316,7 @@ def _grants_for(
             PermissionGrant(
                 permission=cap,
                 targets=targets,
-                action_types=[_action_type_for_permission(cap)],
+                action_types=[_action_type_for_permission(cap, policy)],
             )
         )
     return grants
@@ -297,7 +345,7 @@ async def _service_status(
     caps: set[str],
     credential_registry: CredentialRegistry,
     registry: ServiceRegistry,
-) -> tuple[ServiceStatus, str, str | None]:
+) -> tuple[ServiceStatus, str, str | None, LinkState | None]:
     """Derive one service's per-caller availability status for /v1/catalog (issue #123) from data the broker already has -- never an upstream probe of the service itself, an upstream error body, a policy internal, or a group list (see _STATUS_DETAILS's canned sentences).
 
     Precedence mirrors the real enforcement order (AuthorizationMiddleware
@@ -305,8 +353,9 @@ async def _service_status(
     credential -- see aggregator.py's _bearer_factory): a missing permission
     is reported before a credential problem, since the credential is moot
     until the permission gate is fixed. Returns
-    ``(status, status_detail, correlation_id)`` -- correlation_id is set
-    only for the two admin-actionable statuses.
+    ``(status, status_detail, correlation_id, link_state)`` --
+    correlation_id is set only for the two admin-actionable statuses and
+    link_state only for "link_required".
 
     For a dict-form required_permission a service can require several
     different permissions across its tools -- "available" here means the
@@ -327,6 +376,7 @@ async def _service_status(
             "permission_required",
             _STATUS_DETAILS["permission_required"],
             correlation_id,
+            None,
         )
 
     # A backend whose every advertised tool lost the service's prefix (a
@@ -348,12 +398,13 @@ async def _service_status(
             "misconfigured",
             _NO_ROUTABLE_TOOLS_DETAIL.format(advertised=routing.advertised),
             correlation_id,
+            None,
         )
 
     if spec.auth_type == "none":
         # No permission gate (or one just satisfied) and no user credential
         # needed at all -- nothing left to block on.
-        return "available", _STATUS_DETAILS["available"], None
+        return "available", _STATUS_DETAILS["available"], None, None
 
     try:
         provider = await credential_registry.resolve(spec.name)
@@ -369,10 +420,10 @@ async def _service_status(
             status="misconfigured",
             request_id=correlation_id,
         )
-        return "misconfigured", _STATUS_DETAILS["misconfigured"], correlation_id
+        return "misconfigured", _STATUS_DETAILS["misconfigured"], correlation_id, None
 
     if not await provider.is_linked(principal):
-        return "link_required", _STATUS_DETAILS["link_required"], None
+        return "link_required", _STATUS_DETAILS["link_required"], None, "not_linked"
 
     # Permission satisfied, provider resolves, and linked -- the live checks
     # above all say "available". Factor in a recent classified tools/list
@@ -384,11 +435,11 @@ async def _service_status(
     # waiting it out) is the fix.
     failure = registry.recent_list_failure(spec.name, principal.subject)
     if failure == "unavailable":
-        return "unavailable", _STATUS_DETAILS["unavailable"], None
+        return "unavailable", _STATUS_DETAILS["unavailable"], None, None
     if failure == "unauthorized":
-        return "link_required", _RELINK_DETAIL, None
+        return "link_required", _RELINK_DETAIL, None, "rejected"
 
-    return "available", _STATUS_DETAILS["available"], None
+    return "available", _STATUS_DETAILS["available"], None, None
 
 
 # ---------------------------------------------------------------------------
@@ -424,7 +475,10 @@ async def get_entitlements(
     _principal: Annotated[Principal, Depends(keycloak_dependency)],
 ) -> EntitlementsResponse:
     policy = _get_policy(request)
-    return EntitlementsResponse(group_permissions=policy.group_permissions)
+    return EntitlementsResponse(
+        group_permissions=policy.group_permissions,
+        permissions=_permission_catalog(policy),
+    )
 
 
 @router.post(
@@ -497,7 +551,7 @@ async def get_catalog(
         # currently use -- status/status_detail say why instead of a silent
         # omission (issue #123: a hidden, permission-gated service left the
         # portal unable to explain an empty tools/list).
-        status, status_detail, correlation_id = await _service_status(
+        status, status_detail, correlation_id, link_state = await _service_status(
             spec, principal, caps, credential_registry, registry
         )
         servers.append(
@@ -517,6 +571,7 @@ async def get_catalog(
                 credential_provider=target_to_alias.get(spec.name),
                 status=status,
                 status_detail=status_detail,
+                link_state=link_state,
                 correlation_id=correlation_id,
                 builtin=spec.builtin,
                 trust_tier=spec.trust_tier,

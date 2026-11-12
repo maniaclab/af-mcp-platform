@@ -1,0 +1,528 @@
+/*
+ * components.css — portal classes for what Basecoat does not ship, imported
+ * by global.css. Buttons, fields, tables, badges, dialogs, empty states and
+ * alerts are Basecoat's (`.btn`, `.input`, `.table`, `.badge`, `.dialog`,
+ * `.empty`, `.alert`); a rule here never redefines one of those. Where the
+ * contract needs more than Basecoat gives, a separate `af-` class extends it
+ * (`.btn.af-danger`, `.alert.af-banner.warn`, `.af-box .table`), and the
+ * designContract test rejects any selector that names a Basecoat class
+ * without an `af-` class beside it.
+ *
+ * Every rule uses only the semantic tokens from global.css (colours, type
+ * scale, radii, spacing, control heights, durations); no raw colours or font
+ * sizes. They sit in `@layer components`, after Basecoat's own components, so
+ * a Tailwind utility on the same element still wins.
+ *
+ * Reference: docs/design-language/index.html (layer 3).
+ */
+
+@layer components {
+  /* Icon: Lucide SVG at one size, inheriting text colour. */
+  .af-icon {
+    width: 16px;
+    height: 16px;
+    flex: none;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  /* Status mark: shape carries the meaning, colour repeats it, the word states it. */
+  .af-st {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-8);
+    white-space: nowrap;
+  }
+  .af-mark {
+    width: 10px;
+    height: 10px;
+    flex: none;
+    display: inline-block;
+  }
+  .af-mark.ok {
+    background: var(--color-af-ok);
+    border-radius: 50%;
+  }
+  .af-mark.warn {
+    background: var(--color-af-warn);
+    clip-path: polygon(50% 4%, 100% 96%, 0 96%);
+    width: 11px;
+  }
+  .af-mark.bad {
+    background: var(--color-af-bad);
+    border-radius: 2px;
+  }
+  .af-mark.info {
+    background: var(--color-af-info);
+    transform: rotate(45deg) scale(0.82);
+    border-radius: 1px;
+  }
+  .af-mark.busy {
+    border-radius: 50%;
+    background: linear-gradient(90deg, var(--color-af-text-secondary) 50%, transparent 50%);
+    box-shadow: inset 0 0 0 1.5px var(--color-af-text-secondary);
+  }
+  .af-mark.off {
+    border-radius: 50%;
+    box-shadow: inset 0 0 0 1.5px var(--color-af-text-secondary);
+  }
+
+  /* Button extensions. Basecoat's `btn` supplies shape, size and the variants;
+   * these two add what the contract needs on top.
+   *
+   * Danger is always an outline with red-tinted text and border, never a fill,
+   * so it cannot be mistaken for a red facility accent. The selector is
+   * `:root`-prefixed to outrank Basecoat's `dark:` outline border rule, whose
+   * `:is(html.dark *)` adds specificity. */
+  :root .btn.af-danger[data-variant='outline'] {
+    color: var(--color-af-bad-text);
+    border-color: color-mix(in srgb, var(--color-af-bad) 55%, var(--color-af-bg));
+  }
+  :root .btn.af-danger[data-variant='outline']:hover {
+    color: var(--color-af-bad-text);
+    background: color-mix(in srgb, var(--color-af-bad) 10%, var(--color-af-bg));
+  }
+  /* Extra large: the one call to action on a landing page. */
+  .btn.af-btn-xl {
+    height: calc(var(--control-l) + var(--space-12));
+    padding-inline: var(--space-32);
+    font-size: var(--text-16);
+  }
+
+  /* Banner and note: Basecoat's `alert` supplies the box (border, radius,
+   * padding, type size); these classes supply the four status treatments and
+   * lay a status mark, text and an optional action in one wrapping row (the
+   * mark is a shape, not the svg `alert` expects, and its absolutely placed
+   * footer cannot hold a labelled button at 400px).
+   *
+   * A banner is page level, one per page, a solid status fill, never the
+   * accent. A note is inline next to the thing it is about, a tinted fill. */
+  .alert.af-banner {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-8) var(--space-16);
+    border-color: transparent;
+  }
+  .alert.af-banner > div {
+    flex: 1 1 180px;
+    min-width: 0;
+  }
+  .alert.af-banner b {
+    font-weight: 600;
+    display: block;
+  }
+  /* A button on a status fill is a plain light button. `:root` outranks
+   * Basecoat's `dark:` outline rules, which would otherwise tint it. */
+  :root .af-banner .btn[data-variant] {
+    background: var(--color-af-bg);
+    color: var(--color-af-text);
+    border-color: transparent;
+  }
+  :root .af-banner .btn[data-variant]:hover {
+    background: var(--color-af-bg-hover);
+  }
+  .alert.af-banner.warn {
+    background: var(--color-af-banner-warn);
+    color: var(--color-af-on-banner-warn);
+  }
+  .alert.af-banner.bad {
+    background: var(--color-af-banner-bad);
+    color: var(--color-af-on-banner-bad);
+  }
+  .alert.af-banner.info {
+    background: var(--color-af-banner-info);
+    color: var(--color-af-on-banner-info);
+  }
+  .alert.af-banner.ok {
+    background: var(--color-af-banner-ok);
+    color: var(--color-af-on-banner-ok);
+  }
+  .af-banner .af-mark {
+    background: currentColor;
+  }
+  /* Slim: a one-line notice bar for information that applies to the whole
+   * shell (e.g. maintenance), quieter than a page banner. */
+  .alert.af-banner.slim {
+    padding-block: var(--space-8);
+    flex-wrap: nowrap;
+    gap: var(--space-12);
+  }
+  .alert.af-banner.slim > div {
+    flex: 1 1 auto;
+  }
+
+  .alert.af-note {
+    display: flex;
+    gap: var(--space-12);
+    align-items: baseline;
+  }
+  .alert.af-note.warn {
+    background: color-mix(in srgb, var(--color-af-warn) 10%, var(--color-af-bg));
+    border-color: color-mix(in srgb, var(--color-af-warn) 50%, var(--color-af-bg));
+  }
+  .alert.af-note.bad {
+    background: color-mix(in srgb, var(--color-af-bad) 8%, var(--color-af-bg));
+    border-color: color-mix(in srgb, var(--color-af-bad) 45%, var(--color-af-bg));
+  }
+  .alert.af-note.info {
+    background: color-mix(in srgb, var(--color-af-info) 8%, var(--color-af-bg));
+    border-color: color-mix(in srgb, var(--color-af-info) 45%, var(--color-af-bg));
+  }
+  .alert.af-note.ok {
+    background: color-mix(in srgb, var(--color-af-ok) 8%, var(--color-af-bg));
+    border-color: color-mix(in srgb, var(--color-af-ok) 45%, var(--color-af-bg));
+  }
+
+  /* Box: the bordered, rounded frame around a table (on Basecoat's
+   * `table-container`, which supplies the horizontal scroll) or a row list. */
+  .af-box {
+    border: 1px solid var(--color-af-border);
+    border-radius: var(--radius-10);
+  }
+  /* Table extensions. Comfortable rows are 44px; `af-compact` makes them 32px
+   * (Entitlements, Admin). Header cells and secondary facts use the secondary
+   * text colour. Cell classes: `af-num` right-aligns numbers with tabular
+   * figures, `af-act` right-aligns row actions, `af-sub` is a secondary fact. */
+  .af-box .table th {
+    font-size: var(--text-13);
+    color: var(--color-af-text-secondary);
+    padding: 0 var(--space-16);
+    height: calc(var(--space-32) + var(--space-8));
+  }
+  .af-box .table td {
+    padding: 0 var(--space-16);
+    height: calc(var(--space-32) + var(--space-12));
+  }
+  .af-box .table tbody tr:hover {
+    background: var(--color-af-bg-subtle);
+  }
+  .af-box .table.af-compact td {
+    height: var(--space-32);
+    font-size: var(--text-13);
+  }
+  .af-box .table.af-compact th {
+    height: var(--space-32);
+    font-size: var(--text-12);
+  }
+  .af-box .table .af-num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  .af-box .table .af-act {
+    text-align: right;
+  }
+  .af-box .table .af-sub {
+    color: var(--color-af-text-secondary);
+  }
+  /* A row action that stays visible when a narrow window makes the table scroll
+   * sideways; its fill hides the cells that slide beneath it. */
+  .af-box .table .af-sticky {
+    position: sticky;
+    right: 0;
+    background: var(--color-af-bg);
+  }
+  .af-box .table tbody tr:hover .af-sticky {
+    background: var(--color-af-bg-subtle);
+  }
+
+  /* A field in a page section stays a readable width. */
+  .field.af-narrow {
+    max-width: 360px;
+  }
+
+  /* Toggle: a `button-group` of single-choice `btn`s. The selected one is
+   * filled with ink (not Basecoat's `primary`, which would carry the facility
+   * accent), the others are outlines. */
+  :root .button-group.af-toggle > .btn[aria-pressed='true'] {
+    background: var(--color-af-text);
+    color: var(--color-af-bg);
+    border-color: var(--color-af-text);
+  }
+
+  /* Modal: the native <dialog> is Basecoat's `dialog`; the backdrop is the
+   * contract's scrim and the panel carries the dialog shadow. */
+  .dialog.af-modal::backdrop {
+    background: var(--color-af-scrim);
+  }
+  .dialog.af-modal > * {
+    box-shadow: var(--shadow-af-2);
+  }
+  /* Basecoat's `dialog` leaves its header title at body size and weight 500;
+   * the contract's dialog title is the 20px step, weight 600, so it reads as
+   * a title against the 14px body, with a gap before the description. */
+  .dialog.af-modal > * > header {
+    gap: var(--space-8);
+  }
+  .dialog.af-modal > * > header > h2 {
+    font: 600 var(--text-20) / var(--text-20--line-height) var(--font-sans);
+  }
+
+  /* Sidebar nav */
+  .af-nav {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    width: 220px;
+    max-width: 100%;
+  }
+  .af-nav a {
+    display: flex;
+    align-items: center;
+    gap: var(--space-8);
+    height: var(--control-m);
+    padding: 0 var(--space-12);
+    border-radius: var(--radius-8);
+    text-decoration: none;
+    color: var(--color-af-text-secondary);
+    position: relative;
+  }
+  .af-nav a:hover {
+    background: var(--color-af-bg-hover);
+    color: var(--color-af-text);
+  }
+  .af-nav a[aria-current='page'] {
+    color: var(--color-af-text);
+    font-weight: 600;
+    background: var(--color-af-bg-subtle);
+  }
+  .af-nav a[aria-current='page']::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: var(--space-8);
+    bottom: var(--space-8);
+    width: 3px;
+    border-radius: var(--space-2);
+    background: var(--color-af-accent);
+  }
+
+  /* Nav groups: a plain secondary heading over a list of links. */
+  .af-nav-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+  .af-nav-group ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+  .af-nav-label {
+    margin: 0;
+    padding: 0 var(--space-12);
+    font-size: var(--text-12);
+    color: var(--color-af-text-secondary);
+  }
+
+  /* Copy field */
+  .af-copy {
+    display: flex;
+    align-items: center;
+    gap: var(--space-8);
+    border: 1px solid var(--color-af-border-strong);
+    border-radius: var(--radius-8);
+    padding: 0 var(--space-4) 0 var(--space-12);
+    height: var(--control-l);
+    background: var(--color-af-bg-subtle);
+    min-width: 0;
+    max-width: 560px;
+  }
+  .af-copy code {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Key-value list */
+  .af-kv {
+    display: grid;
+    grid-template-columns: minmax(120px, 180px) minmax(0, 1fr);
+    margin: 0;
+  }
+  .af-kv dt,
+  .af-kv dd {
+    padding: var(--space-12) 0;
+    border-bottom: 1px solid var(--color-af-border);
+    margin: 0;
+  }
+  .af-kv dt {
+    color: var(--color-af-text-secondary);
+  }
+  .af-kv dd {
+    overflow-wrap: anywhere;
+  }
+  .af-kv dt:last-of-type,
+  .af-kv dd:last-of-type {
+    border-bottom: 0;
+  }
+
+  /* Stat */
+  .af-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: var(--space-24);
+  }
+  .af-stat {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+  }
+  .af-stat span {
+    font-size: var(--text-13);
+    color: var(--color-af-text-secondary);
+  }
+  .af-stat b {
+    font: 600 var(--text-24) / 1.2 var(--font-sans);
+    font-variant-numeric: tabular-nums;
+  }
+  .af-stat small {
+    font-size: var(--text-12);
+    color: var(--color-af-text-secondary);
+  }
+
+  /* Help text: a short explanation under a section heading, above what it explains. */
+  .af-help {
+    font-size: var(--text-13);
+    color: var(--color-af-text-secondary);
+    max-width: 80ch;
+  }
+
+  /* Links inside prose and notes are underlined so they read as links. */
+  :is(.af-note, .af-help, .af-banner, .empty p, .af-page-head p, .field p, .field .hint)
+    a:not(.btn) {
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+
+  /* Page pattern: header with the one primary action, then titled sections.
+   * .af-page is the page root: it stacks the banner and the sections
+   * --af-page-gap apart (32px on comfortable pages, 24px with .compact, per
+   * the contract's density table). The header always leaves 24px below it,
+   * whether it sits outside the root (an .astro page) or inside it. */
+  .af-page {
+    --af-page-gap: var(--space-32);
+    display: flex;
+    flex-direction: column;
+    gap: var(--af-page-gap);
+  }
+  .af-page.compact {
+    --af-page-gap: var(--space-24);
+  }
+  .af-page-head {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-12);
+    justify-content: space-between;
+    align-items: flex-end;
+    margin-bottom: var(--space-24);
+  }
+  .af-page > .af-page-head {
+    margin-bottom: calc(var(--space-24) - var(--af-page-gap));
+  }
+  .af-page-head > div {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+  }
+  .af-page-head h1,
+  .af-page-head h4 {
+    font: 600 var(--text-24) / 1.3 var(--font-sans);
+  }
+  .af-page-head p {
+    color: var(--color-af-text-secondary);
+  }
+  .af-sect {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-12);
+  }
+  .af-sect > h2,
+  .af-sect > h5 {
+    font: 600 var(--text-16) / 1.4 var(--font-sans);
+  }
+
+  /* Page shell, shared by the signed-in and public layouts.
+     --af-margin is the content gutter: 16px under 600px, 24px up to 1135px,
+     32px above. .af-wrap holds content to 1120px inside that gutter. */
+  :root {
+    --af-margin: var(--space-16);
+  }
+  @media (min-width: 600px) {
+    :root {
+      --af-margin: var(--space-24);
+    }
+  }
+  @media (min-width: 1136px) {
+    :root {
+      --af-margin: var(--space-32);
+    }
+  }
+  .af-wrap {
+    width: 100%;
+    max-width: calc(1120px + 2 * var(--af-margin));
+    margin-inline: auto;
+    padding-inline: var(--af-margin);
+  }
+  .af-topbar {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    background: var(--color-af-bg);
+    border-bottom: 1px solid var(--color-af-border);
+  }
+  .af-topbar__in {
+    display: flex;
+    align-items: center;
+    gap: var(--space-12);
+    height: calc(var(--control-m) + var(--space-16));
+  }
+  .af-topbar__spacer {
+    flex: 1;
+  }
+  .af-brand {
+    font: 600 var(--text-14) / 1 var(--font-sans);
+    color: var(--color-af-text);
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .skip-link {
+    position: absolute;
+    top: -100%;
+    left: var(--space-16);
+    z-index: 1000;
+    padding: var(--space-8) var(--space-16);
+    border-radius: var(--radius-8);
+    background: var(--color-af-accent);
+    color: var(--color-af-on-accent);
+    font: 500 var(--text-14) / 1.25 var(--font-sans);
+    text-decoration: none;
+  }
+  .skip-link:focus {
+    top: var(--space-16);
+  }
+
+  /* Every af- class that sets display would otherwise override [hidden]. */
+  :is(
+    .af-st,
+    .af-banner,
+    .af-note,
+    .af-copy,
+    .af-kv,
+    .af-stats,
+    .af-stat,
+    .af-page,
+    .af-page-head,
+    .af-sect
+  )[hidden] {
+    display: none;
+  }
+}

@@ -157,6 +157,8 @@ export async function getBranding(): Promise<BrandingConfig> {
       shortName: cfg.branding?.shortName || DEFAULT_BRANDING.shortName,
       fullName: cfg.branding?.fullName || DEFAULT_BRANDING.fullName,
       facilityName: cfg.branding?.facilityName || DEFAULT_BRANDING.facilityName,
+      accentColor: cfg.branding?.accentColor || DEFAULT_BRANDING.accentColor,
+      accentColorDark: cfg.branding?.accentColorDark || DEFAULT_BRANDING.accentColorDark,
     };
   } catch {
     return DEFAULT_BRANDING;

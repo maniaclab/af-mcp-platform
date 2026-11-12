@@ -1,0 +1,41 @@
+---
+/**
+ * MaintenanceBanner.astro — the slim information bar shown to every visitor
+ * while maintenance mode is on, in both layouts (Base.astro and
+ * PublicBase.astro). It is hidden until the script below reveals it.
+ *
+ * It is information, not a fault, so it announces politely (role="status").
+ * GET /v1/admin/maintenance requires no authentication at all (see
+ * fetchMaintenanceStatus's docstring), precisely so a visitor currently
+ * locked out by maintenance mode on every other route -- including one with
+ * no session, or one about to be redirected to Keycloak -- still sees why.
+ */
+---
+
+<div data-af-maintenance-banner class="alert af-banner info slim" role="status" hidden>
+  <span class="af-mark info" aria-hidden="true"></span>
+  <div data-af-maintenance-text></div>
+</div>
+
+<script>
+  import { fetchMaintenanceStatus } from '../lib/api';
+  import { maintenanceBannerText } from '../lib/maintenanceBanner';
+
+  (async () => {
+    const banner = document.querySelector<HTMLElement>('[data-af-maintenance-banner]');
+    const bannerText = banner?.querySelector<HTMLElement>('[data-af-maintenance-text]');
+    if (!banner || !bannerText) return;
+    try {
+      const status = await fetchMaintenanceStatus();
+      const text = maintenanceBannerText(status);
+      if (text) {
+        bannerText.textContent = text;
+        banner.hidden = false;
+      }
+    } catch {
+      // Fails open, same as the broker route itself (api/admin.py) -- an
+      // unreachable maintenance store or a network error must not put a
+      // false banner in front of every visitor.
+    }
+  })();
+</script>
