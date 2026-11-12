@@ -316,6 +316,56 @@ def test_oauth21_provider_linked_reflects_token_store_state(
     assert entry["linked"] is True
 
 
+def test_oauth21_provider_rejected_credential_is_unlinked_and_flagged_rejected(
+    monkeypatch: pytest.MonkeyPatch, app_client_factory: Callable[..., object]
+) -> None:
+    """A credential a backend rejected is stored but unusable: ``linked``
+    stays false (its meaning is unchanged) and ``rejected`` says why."""
+    from af_mcp_broker.app import app as broker_app
+    from af_mcp_broker.credentials.oauth21 import StoredOAuthCredential
+
+    _configure_oauth21_env(monkeypatch)
+
+    with app_client_factory() as (client, state):
+        subject = state["principal"].subject
+        store = broker_app.state.oauth21_token_store
+        cred = StoredOAuthCredential(
+            alias=ALIAS,
+            subject=subject,
+            access_token=SecretStr("access-token"),
+            refresh_token=None,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+            refresh_expires_at=None,
+            scope=["openid"],
+            issuer=PROVIDER_ISSUER,
+            token_endpoint=TOKEN_ENDPOINT,
+            rejected_at=datetime.now(UTC),
+        )
+        asyncio.run(store.write_cas(subject, ALIAS, cred, expected_version=None))
+
+        resp = client.get("/v1/identities", headers=_AUTH)
+
+    assert resp.status_code == 200, resp.text
+    by_id = _by_id(resp.json())
+    assert by_id[ALIAS]["linked"] is False
+    assert by_id[ALIAS]["rejected"] is True
+    # A provider that tracks no rejection is never flagged.
+    assert by_id["x509"]["rejected"] is False
+
+
+def test_oauth21_provider_with_nothing_stored_is_not_rejected(
+    monkeypatch: pytest.MonkeyPatch, app_client_factory: Callable[..., object]
+) -> None:
+    _configure_oauth21_env(monkeypatch)
+
+    with app_client_factory() as (client, _state):
+        resp = client.get("/v1/identities", headers=_AUTH)
+
+    entry = _by_id(resp.json())[ALIAS]
+    assert entry["linked"] is False
+    assert entry["rejected"] is False
+
+
 # ---------------------------------------------------------------------------
 # Config-order preservation
 # ---------------------------------------------------------------------------

@@ -76,6 +76,18 @@ class _FakeIdentityProvider(CredentialProvider):
         raise NotImplementedError
 
 
+class _FakeRejectingIdentityProvider(_FakeIdentityProvider):
+    """An unlinked provider that tracks rejection and holds a rejected credential, as OAuth21Provider does."""
+
+    tracks_rejection = True
+
+    def __init__(self) -> None:
+        super().__init__(linked=False)
+
+    async def is_rejected(self, principal: Principal) -> bool:
+        return True
+
+
 def _idp_config(display_name: str, enables: str) -> KeycloakBrokeredProviderConfig:
     return KeycloakBrokeredProviderConfig(
         alias=display_name.lower(),
@@ -213,10 +225,12 @@ async def test_af_list_identities_reflects_linkage_per_provider(
     identity_providers = {
         "linked-idp": _FakeIdentityProvider(linked=True),
         "unlinked-idp": _FakeIdentityProvider(linked=False),
+        "rejected-idp": _FakeRejectingIdentityProvider(),
     }
     identity_provider_configs = {
         "linked-idp": _idp_config("Linked IdP", "VOMS proxy generation"),
         "unlinked-idp": _idp_config("Unlinked IdP", "GitLab access"),
+        "rejected-idp": _idp_config("Rejected IdP", "Indico access"),
     }
 
     mcp = build_aggregator(
@@ -242,9 +256,13 @@ async def test_af_list_identities_reflects_linkage_per_provider(
         "display_name": "Linked IdP",
         "enables": "VOMS proxy generation",
         "linked": True,
+        "rejected": False,
         "job_credential": None,
     }
     assert rows["unlinked-idp"]["linked"] is False
+    assert rows["unlinked-idp"]["rejected"] is False
+    assert rows["rejected-idp"]["linked"] is False
+    assert rows["rejected-idp"]["rejected"] is True
     assert rows["unlinked-idp"]["enables"] == "GitLab access"
 
 

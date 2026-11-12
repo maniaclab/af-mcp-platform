@@ -101,6 +101,9 @@ class DiagnosticIdentityProvider(BaseModel):
     display_name: str
     enables: str
     linked: bool
+    # True when the caller linked a credential that a backend rejected, so
+    # `linked` is false but re-linking (not a first link) is the fix.
+    rejected: bool = False
     # Set only when the HTCondor credmon integration serves this provider's
     # kind at this site; None everywhere else.
     job_credential: DiagnosticJobCredential | None = None
@@ -269,6 +272,8 @@ def register_diagnostic_tools(
                     display_name=cfg.display_name,
                     enables=cfg.enables,
                     linked=await provider.is_linked(principal),
+                    rejected=provider.tracks_rejection
+                    and await provider.is_rejected(principal),
                     job_credential=DiagnosticJobCredential(
                         service=job_cred.service,
                         path=job_cred.path,

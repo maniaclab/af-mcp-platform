@@ -222,6 +222,7 @@ errors to you will show one of these verbatim:
 | Tool call denied (permission missing) | `Authorization denied: principal lacks permission '<cap>'. Granted permissions: [...]` |
 | Tool name doesn't match any backend | `No backend registered for tool '<name>'` |
 | Bearer backend, not linked | `<ProviderClassName> not linked. Visit the portal Identities page to connect it. Call af_list_identities to see which identity provider this backend needs, or af_list_mcp_servers for this backend's current status.` (e.g. `OAuth21Provider not linked...` for rucio-mcp-escape) |
+| Bearer backend, linked credential rejected | `Your linked credential was rejected. Re-link your identity. ...` followed by the portal Identities link; `af_list_identities` shows `linked: false, rejected: true` for it |
 | x509 backend needs unlock | `Credential unlock required. Visit the portal: <portal-url>/v1/x509/proxy` |
 | x509 backend, broker has no signing key | `Backend '<name>' is an x509 backend, which needs the broker to sign AF Broker Identity Tokens, but no signing key is configured ...` — mount `broker.identityToken.existingSigningKeySecret` |
 | x509 backend, no proxy minted yet | The backend's own tool error surfaces the redeem 404: `No valid x509/VOMS proxy is cached for this account — mint one at the AF portal and retry.` |
