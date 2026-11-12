@@ -18,6 +18,7 @@ from af_mcp_broker.logging import (
     bind_subject,
     log_request_finished,
     log_request_received,
+    request_id_headers,
 )
 
 
@@ -117,3 +118,25 @@ def test_log_request_finished_carries_exc_type_and_no_status_on_a_raised_request
 
     assert logs[0]["status_code"] is None
     assert logs[0]["exc_type"] == "RuntimeError"
+
+
+# ---------------------------------------------------------------------------
+# request_id_headers (issue #342)
+# ---------------------------------------------------------------------------
+
+
+def test_request_id_headers_carries_the_bound_correlation_id() -> None:
+    structlog.contextvars.clear_contextvars()
+    bind_new_correlation_id()
+
+    headers = request_id_headers()
+
+    assert headers == {
+        "X-Request-ID": structlog.contextvars.get_contextvars()["correlation_id"]
+    }
+
+
+def test_request_id_headers_is_empty_without_a_bound_correlation_id() -> None:
+    structlog.contextvars.clear_contextvars()
+
+    assert request_id_headers() == {}

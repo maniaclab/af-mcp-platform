@@ -32,6 +32,7 @@ from af_mcp_broker.credentials import (
     X509Provider,
 )
 from af_mcp_broker.identity import Principal, keycloak_dependency
+from af_mcp_broker.logging import CorrelatedHTTPException
 
 if TYPE_CHECKING:
     from af_mcp_broker.credentials.base import IssuedCredential as _IssuedCredential
@@ -598,10 +599,14 @@ async def link_servicex(
     provider = await _servicex_provider(request, target)
     try:
         await provider.link(principal.subject, body.refresh_token)
+    # The broker cannot know why ServiceX rejected the token, so the
+    # correlation_id (also logged, and sent to servicex-token-service as
+    # X-Request-ID) is what the user quotes if a fresh token is rejected too.
     except ServiceXBadRefreshTokenError as exc:
-        raise HTTPException(
+        correlation_id = structlog.contextvars.get_contextvars()["correlation_id"]
+        raise CorrelatedHTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
+            detail=f"{exc} (ref: {correlation_id})",
         ) from exc
     except ServiceXServiceMintError as exc:
         raise HTTPException(

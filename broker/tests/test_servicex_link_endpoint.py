@@ -119,6 +119,21 @@ class TestLink:
 
         assert resp.status_code == 400
 
+    def test_bad_refresh_token_400_carries_the_correlation_id(
+        self, servicex_link_env, app_client_factory
+    ) -> None:
+        """af-mcp-platform#342: the 400 body and message both carry the id
+        the broker logged and sent to servicex-token-service."""
+        servicex_link_env()
+        with app_client_factory() as (client, _):
+            _fake_provider(client, outcome=ServiceXBadRefreshTokenError())
+            resp = client.post(_LINK, json={"refresh_token": "bad-token"})
+
+        body = resp.json()
+        assert body["correlation_id"]
+        assert f"(ref: {body['correlation_id']})" in body["detail"]
+        assert "ServiceX rejected" in body["detail"]
+
     def test_infra_failure_is_502(self, servicex_link_env, app_client_factory) -> None:
         servicex_link_env()
         with app_client_factory() as (client, _):
