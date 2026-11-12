@@ -649,6 +649,16 @@ class Settings(BaseSettings):
     keycloak_admin_client_id: str = ""
     keycloak_admin_client_secret: SecretStr = SecretStr("")
 
+    # Broker-wide deadline (seconds) for one backend's share of a tools/list:
+    # the whole per-backend listing attempt, list-time credential setup
+    # included. A backend that has not answered by then is left out of that
+    # listing and recorded as "unavailable" (aggregator.py's
+    # _ObservableProxyProvider), so one unresponsive backend cannot hold the
+    # response past a client's own timeout. Deliberately separate from
+    # ServiceSpec.timeout_seconds, which also caps a tools/call and has to stay
+    # much longer.
+    mcp_list_timeout_seconds: float = Field(default=10.0, gt=0)
+
     # Principal cache (principal_cache.py) staleness bounds -- two SEPARATE
     # numbers, not one, because they answer different questions: how often to
     # *try* refreshing (short -- a group removal should propagate quickly),

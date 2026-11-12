@@ -330,10 +330,21 @@ async def _classify_list_failure(exc: Exception, service_name: str) -> tuple[str
     """
     if isinstance(exc, NotLinkedForListing):
         return "not_linked", str(exc)
+    if isinstance(exc, ListDeadlineExceeded):
+        return "unavailable", str(exc)
     ctx = get_context()
     status = await ctx.get_state(f"__list_credential_status__:{service_name}")
     injected, skip_reason = status if status is not None else (False, None)
     return _classify_failure(exc, injected=injected, skip_reason=skip_reason), str(exc)
+
+
+class ListDeadlineExceeded(Exception):
+    """A backend's tools/list (credential setup included) did not finish within ``Settings.mcp_list_timeout_seconds``.
+
+    ``_classify_list_failure`` maps it to ``"unavailable"`` regardless of what
+    credential state was recorded before the stall: the broker gave up on the
+    backend, which says nothing about the caller's linkage.
+    """
 
 
 class NotLinkedForListing(Exception):
@@ -1228,9 +1239,13 @@ class _ObservableProxyProvider(ProxyProvider):
         cache_ttl: float | None = None,
         route_prefix: str | None = None,
         exclude_tools: frozenset[str] = frozenset(),
+        list_timeout_seconds: float | None = None,
     ) -> None:
         super().__init__(client_factory, cache_ttl=cache_ttl)
         self._service_name = service_name
+        # Deadline for one upstream tools/list including the client factory's
+        # credential setup; None disables it (see _list_tools_uncached).
+        self._list_timeout_seconds = list_timeout_seconds
         self._registry = registry
         # Set only for an un-namespaced service (apply_namespace: false):
         # fastmcp's prefix-based dispatch skips that filtering for an
@@ -1458,7 +1473,7 @@ class _ObservableProxyProvider(ProxyProvider):
         entirely) rather than on every ``tools/list``.
         """
         try:
-            tools = await super()._list_tools()
+            tools = await self._list_tools_within_deadline()
         except Exception as exc:
             reason, detail = await _classify_list_failure(exc, self._service_name)
             subject = await self._caller_subject("tools")
@@ -1485,6 +1500,29 @@ class _ObservableProxyProvider(ProxyProvider):
                 tools = [t for t in tools if t.name not in self._exclude_tools]
             self._record_tool_routing(tools)
             return tools
+
+    async def _list_tools_within_deadline(self) -> Sequence[Tool]:
+        """Run fastmcp's upstream ``tools/list`` under this provider's listing deadline.
+
+        The deadline wraps the whole attempt -- ``client_factory`` (list-time
+        credential setup) as well as the backend round trip -- so a stalled
+        Vault read counts the same as a stalled backend. Expiry cancels the
+        attempt, which closes the backend client and its connection through
+        the ``async with client`` inside ``ProxyProvider._list_tools``.
+        ``Timeout.expired()`` distinguishes this deadline from a
+        ``TimeoutError`` the attempt raised on its own.
+        """
+        deadline = asyncio.timeout(self._list_timeout_seconds)
+        try:
+            async with deadline:
+                return await super()._list_tools()
+        except TimeoutError as exc:
+            if not deadline.expired():
+                raise
+            raise ListDeadlineExceeded(
+                f"Service '{self._service_name}' did not list its tools within "
+                f"{self._list_timeout_seconds:g}s."
+            ) from exc
 
     def _record_tool_routing(self, tools: Sequence[Tool]) -> None:
         """Record how many of *tools* (one upstream listing, after ``exclude_tools``) this service's prefix can route -- onto the registry (ToolRouting) and the per-service advertised/routable gauges -- and warn once for the whole listing if any can't."""
@@ -1784,6 +1822,7 @@ def _register_services(
             cache_ttl=spec.tools_cache_ttl,
             route_prefix=None if spec.apply_namespace else spec.prefix,
             exclude_tools=spec.exclude_tools,
+            list_timeout_seconds=settings.mcp_list_timeout_seconds,
         )
         namespace = spec.prefix if spec.apply_namespace else ""
         mcp.add_provider(provider, namespace=namespace)
