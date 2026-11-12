@@ -12,6 +12,7 @@ from __future__ import annotations
 # loaded. The client_factory below deliberately never forwards the caller's
 # inbound Authorization header to a service; see its docstring.
 import asyncio
+import json
 import time
 from typing import TYPE_CHECKING, Any, NamedTuple
 
@@ -143,6 +144,96 @@ def _unauthorized_raising_httpx_client_factory(
     return client
 
 
+class BackendInvalidResponse(Exception):
+    """A backend answered a JSON-RPC request with HTTP 200 and a body the mcp SDK transport cannot parse (issue #280).
+
+    Carries only the service name, status code and content type, never the
+    backend's body: the message reaches logs and, for a tools/call, the
+    caller. Classified as ``"unavailable"`` like any other unusable backend.
+    """
+
+
+def _is_jsonrpc_request(request: httpx2.Request) -> bool:
+    """Whether *request*'s body is a JSON-RPC request (it carries an ``id``), as opposed to a notification that a server may answer with an empty body."""
+    try:
+        body = json.loads(request.content)
+    except (httpx2.RequestNotRead, ValueError):
+        return False
+    return isinstance(body, dict) and "id" in body
+
+
+def _raise_for_invalid_response(
+    service_name: str,
+) -> Callable[[httpx2.Response], Awaitable[None]]:
+    """Build a response hook raising ``BackendInvalidResponse`` for a 200 reply to a JSON-RPC request that is neither an SSE stream nor a JSON document.
+
+    Same layer and reasoning as ``_raise_for_401`` above: the mcp SDK turns
+    such a reply into a generic parse-error ``MCPError`` whose text embeds a
+    prefix of the backend's body, and the HTTP status and content type are
+    gone by the time the broker sees it. Checking here keeps them, fails the
+    request as soon as the response arrives, and lets the broker name the
+    service. Only a syntactically valid JSON document is required of a
+    ``application/json`` reply; the SDK still validates its JSON-RPC shape.
+    A reply to a notification (no ``id``) is never inspected.
+    """
+
+    async def hook(response: httpx2.Response) -> None:
+        request = response.request
+        if (
+            request.method != "POST"
+            or response.status_code != 200
+            or not _is_jsonrpc_request(request)
+        ):
+            return
+        content_type = response.headers.get("content-type", "").lower()
+        if content_type.startswith("text/event-stream"):
+            return
+        problem = "unexpected content type"
+        if content_type.startswith("application/json"):
+            await response.aread()
+            try:
+                json.loads(response.content)
+            except ValueError:
+                problem = "body is not valid JSON"
+            else:
+                return
+        media_type = content_type.split(";")[0][:100]
+        logger.warning(
+            "aggregator.backend_invalid_response",
+            service=service_name,
+            status_code=response.status_code,
+            content_type=media_type,
+            problem=problem,
+        )
+        raise BackendInvalidResponse(
+            f"Service '{service_name}' returned an invalid response "
+            f"(HTTP {response.status_code}, content-type "
+            f"{media_type or 'missing'}): {problem}."
+        )
+
+    return hook
+
+
+def _checked_httpx_client_factory(
+    service_name: str,
+) -> Callable[..., httpx2.AsyncClient]:
+    """``McpHttpClientFactory`` for *service_name*: ``_unauthorized_raising_httpx_client_factory`` plus the invalid-response check."""
+
+    def factory(
+        headers: dict[str, str] | None = None,
+        timeout: httpx2.Timeout | None = None,
+        auth: httpx2.Auth | None = None,
+        **kwargs: Any,
+    ) -> httpx2.AsyncClient:
+        client = _unauthorized_raising_httpx_client_factory(
+            headers=headers, timeout=timeout, auth=auth, **kwargs
+        )
+        client.event_hooks["response"].append(_raise_for_invalid_response(service_name))
+        return client
+
+    return factory
+
+
 def _build_client(
     spec: ServiceSpec,
     transport_cls: type[SSETransport | StreamableHttpTransport],
@@ -166,7 +257,7 @@ def _build_client(
         transport_cls(
             spec.url,
             headers=headers,
-            httpx_client_factory=_unauthorized_raising_httpx_client_factory,
+            httpx_client_factory=_checked_httpx_client_factory(spec.name),
         ),
         timeout=spec.timeout_seconds,
         progress_handler=default_proxy_progress_handler,

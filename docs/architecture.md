@@ -634,9 +634,18 @@ status it can change:
 
 | Reason | Describes | Recorded against | Catalog status |
 |---|---|---|---|
-| `unavailable` | the backend (down, not answering within the listing deadline `MCP_LIST_TIMEOUT_SECONDS`, or an unexplained 401) | the service, seen by every caller | `unavailable` |
+| `unavailable` | the backend (down, not answering within the listing deadline `MCP_LIST_TIMEOUT_SECONDS`, an unexplained 401, or a reply the broker cannot parse) | the service, seen by every caller | `unavailable` |
 | `unauthorized` | one caller's credential, which the backend rejected | that caller and service only | `link_required` ("re-link") |
 | `not_linked` | one caller, who has no credential for the service; logged at INFO. A mint-and-inject (`x509`, `krb5`, `servicex`) service's tools are listed only for a caller who has linked the credential, so for an unlinked caller the listing is skipped without minting a token or contacting the backend | that caller and service only | `link_required` ("link") |
+
+A backend that answers a JSON-RPC request with HTTP 200 and something that is
+not a JSON document (an undecoded gzip body, an HTML page from a proxy) fails
+the request as soon as the response arrives (`BackendInvalidResponse`, raised
+from an httpx response hook in `mcp/aggregator.py`). It logs
+`aggregator.backend_invalid_response` with the service, status code, content
+type and what was wrong, never the body; a listing records `unavailable`, and a
+`tools/call` returns an error naming the service and saying it returned an
+invalid response.
 
 A successful listing by a caller clears that caller's own record and the
 service-wide one, never another caller's. Caller-specific records are held
