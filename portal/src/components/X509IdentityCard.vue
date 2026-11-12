@@ -36,6 +36,8 @@ import {
 import {
   formatProxyExpiry,
   preflightCheckLabel,
+  preflightModeMismatch,
+  preflightRequiredModeLabel,
   x509LinkErrorMessage,
   x509LinkModeLabel,
   x509PreflightErrorMessage,
@@ -192,7 +194,7 @@ function remainingText(seconds?: number | null): string {
       <Disclosure :open="preflightOpen" @toggle="togglePreflight">
         <template #label>Grid certificate files</template>
         <template #badge>
-          <StatusMark v-if="preflight?.ok" class="xc__chip" tone="ok" label="Mounted" />
+          <StatusMark v-if="preflight?.ok" class="xc__chip" tone="ok" label="Ready" />
           <StatusMark v-else-if="preflight" class="xc__chip" tone="warn" label="Problems found" />
         </template>
 
@@ -210,6 +212,7 @@ function remainingText(seconds?: number | null): string {
                 <th>Path</th>
                 <th>Exists</th>
                 <th>Mode</th>
+                <th>Required mode</th>
                 <th>Readable</th>
               </tr>
             </thead>
@@ -226,7 +229,13 @@ function remainingText(seconds?: number | null): string {
                       :label="check.exists ? 'Yes' : 'No'"
                     />
                   </td>
-                  <td>{{ check.mode ?? '—' }}</td>
+                  <td>
+                    <StatusMark v-if="preflightModeMismatch(check)" tone="bad">
+                      {{ check.mode }}
+                    </StatusMark>
+                    <template v-else>{{ check.mode ?? '—' }}</template>
+                  </td>
+                  <td>{{ preflightRequiredModeLabel(check) }}</td>
                   <td>
                     <template
                       v-if="
@@ -245,7 +254,7 @@ function remainingText(seconds?: number | null): string {
                 <!-- The actionable fix (e.g. the chmod 400 command) for a
                      failing check gets its own full-width row. -->
                 <tr v-if="!check.ok && check.detail" class="xc__detail-row">
-                  <td colspan="5" class="af-sub">{{ check.detail }}</td>
+                  <td colspan="6" class="af-sub">{{ check.detail }}</td>
                 </tr>
               </template>
             </tbody>
