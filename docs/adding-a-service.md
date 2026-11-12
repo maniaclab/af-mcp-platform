@@ -180,7 +180,8 @@ is invisible to the broker, which then keeps serving the token.
 This matters most for an AS whose tokens never expire and that issues no
 refresh token, such as Indico or a GitHub OAuth App. Its token response
 leaves out `expires_in`, and the broker serves the token until a backend
-rejects it. See
+rejects it. The caller's catalog entry then reads `link_required` with
+`link_state: "rejected"` until they re-link. See
 [Rejected `oauth21-direct` tokens](auth.md#rejected-oauth21-direct-tokens).
 
 ### Migrating from the pre-unification chart values

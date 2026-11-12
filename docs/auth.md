@@ -1410,11 +1410,12 @@ per-service tool listing, the broker reacts in one of three ways (issue #344):
   causes a refresh loop. A routine refresh or a re-link clears the flag.
 - **No refresh token** (Indico, JupyterHub), **the AS refuses the refresh**,
   or **the refreshed token also gets a 401**: the broker records
-  `rejected_at` on the stored credential. From then on the account shows as
-  unlinked, and `issue()` answers 401 with a re-link hint. The broker keeps
-  the rejected token and never re-links on the user's behalf, because the
-  AS may need the user's consent again. Re-linking from the portal's
-  Identities page replaces the token.
+  `rejected_at` on the stored credential. From then on `is_linked()` is false
+  and `issue()` answers 401 with a re-link hint, but the credential is still
+  stored, so `is_rejected()` is true. The broker keeps the rejected token and
+  never re-links on the user's behalf, because the AS may need the user's
+  consent again. Re-linking from the portal's Identities page replaces the
+  token and drops `rejected_at`.
 - **The AS can't be reached during that refresh** (network error or 5xx):
   the broker leaves the credential as it was and logs
   `oauth21.mark_rejected.refresh_failed`. The next 401 tries again. An AS
@@ -1427,6 +1428,33 @@ When the 401 lands on the listing that runs ahead of a tool call, the call
 itself already uses the refreshed token. That's because a listing that
 failed this way is not negative-cached like other listing failures, so the
 next listing tries again.
+
+### What the caller sees
+
+The catalog (`GET /v1/catalog`, `af_list_mcp_servers`) tells a rejected
+credential apart from one that was never linked, by asking the provider
+(`CredentialProvider.is_rejected()`, true only for a stored `rejected_at`):
+
+| State of the caller's credential | `status` | `link_state` |
+|---|---|---|
+| nothing stored | `link_required` ("Link your identity…") | `not_linked` |
+| stored, `rejected_at` set | `link_required` ("Your linked credential was rejected. Re-link your identity…") | `rejected` |
+| stored, usable (including after a refresh that fixed a 401, or an AS outage during the refresh) | `available` | `null` |
+
+For a provider with `tracks_rejection` (`OAuth21Provider`) the stored
+credential alone decides this. The caller's recorded `unauthorized` listing
+failure (see [Catalog status and listing failures](architecture.md#catalog-status-and-listing-failures))
+is ignored for it, because the credential may have been refreshed or re-linked
+since that 401. Re-linking therefore clears `rejected` at once; no listing
+needs to succeed first. The listing itself is not negative-cached after an
+injected-credential 401, so a re-linked caller's next `tools/list` already
+carries the new token. A caller whose listing was cached as a different
+failure (for example `not_linked`, while the credential was rejected) can
+still wait out that entry's 30 s negative-cache window
+(`_NEGATIVE_LIST_CACHE_TTL_SECONDS`), because linking does not invalidate the
+per-caller listing cache (issue #355).
+`GET /v1/identities` reports `linked: false` for a rejected credential, so
+the portal's Identities page shows it as not linked.
 
 This is what ends a token with no expiry, so the MCP server must answer
 HTTP 401 when the AS rejects the bearer. See

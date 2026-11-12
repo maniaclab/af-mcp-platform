@@ -635,8 +635,20 @@ status it can change:
 | Reason | Describes | Recorded against | Catalog status |
 |---|---|---|---|
 | `unavailable` | the backend (down, timing out, or an unexplained 401) | the service, seen by every caller | `unavailable` |
-| `unauthorized` | one caller's credential, which the backend rejected | that caller and service only | `link_required` ("re-link") |
+| `unauthorized` | one caller's credential, which the backend rejected | that caller and service only | `link_required` ("re-link"), `link_state: "rejected"`; not used for an `oauth21` credential, see below |
 | `not_linked` | one caller, who has no credential for the service; logged at INFO. A mint-and-inject (`x509`, `krb5`, `servicex`) service's tools are listed only for a caller who has linked the credential, so for an unlinked caller the listing is skipped without minting a token or contacting the backend | that caller and service only | `link_required` ("link") |
+
+`link_required` carries a `link_state` saying why: `not_linked` when
+`provider.is_linked()` is false, `rejected` when the caller linked and the
+backend refused the credential. An `oauth21` credential that a backend 401
+marked rejected (`rejected_at`, see
+[Rejected `oauth21-direct` tokens](auth.md#rejected-oauth21-direct-tokens))
+also fails `is_linked()`, so `_service_status` asks
+`provider.is_rejected()` to report it as `rejected` rather than `not_linked`.
+Because that provider refreshes or rejects the credential itself
+(`tracks_rejection`), its stored state alone decides: the caller's
+`unauthorized` record is not consulted, and a refreshed or re-linked
+credential stops reading as rejected immediately.
 
 A successful listing by a caller clears that caller's own record and the
 service-wide one, never another caller's. Caller-specific records are held
