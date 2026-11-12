@@ -311,7 +311,7 @@ def notify_identity_linked(request: Request, subject: str, alias: str | None) ->
 
 
 def _alias_for_target(request: Request, target: str) -> str | None:
-    """The identity-provider entry alias serving *target*, if any."""
+    """Return the identity-provider entry alias serving *target*, if any."""
     target_to_alias: dict[str, str] = (
         getattr(request.app.state, "target_to_alias", None) or {}
     )
