@@ -368,9 +368,21 @@ Three separate concerns, deliberately kept separate in the code:
   `principal_cache.principal_rejected` warning log, never in the response.
   Re-enabling the user restores access at the next refresh. A directory view
   that omits `enabled` entirely is treated as enabled; Keycloak's
-  `GET /users/{id}` always includes it. With `PRINCIPAL_CACHE_BACKEND=vault`,
-  a replica restarted inside that window can still serve the persisted value
-  for up to one refresh interval before it asks Keycloak.
+  `GET /users/{id}` always includes it.
+  The rejection is also written to the principal-cache backend as a
+  tombstone (an ordinary write to the same record; no new Vault capability
+  or policy change is needed). A restarted replica, or another replica with
+  nothing cached for that user, therefore fails closed during a Keycloak
+  outage instead of seeding the user's last good value, and stays closed
+  until Keycloak says the user is active again, at which point the next
+  successful resolve overwrites the tombstone. The guarantee is: refused
+  within one refresh interval on a replica that can reach Keycloak; durable
+  across restarts and replicas during an outage. One limit: a replica that
+  already holds that user's value in memory learns of the disablement only
+  from its own refresh, so it can keep serving it stale if it never reaches
+  Keycloak after the disablement. A failure writing the tombstone is logged
+  (`principal_cache.rejection_persist_failed`) and the request is still
+  refused.
 - **Permission engine** (`authorization/`) — unchanged; still gates on
   `group_permissions` from whatever groups the principal cache currently
   reports, regardless of which credential type asked.
