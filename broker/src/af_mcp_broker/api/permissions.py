@@ -382,7 +382,7 @@ async def _service_status(
     # live is_linked() check above already accounts for it); "unauthorized"
     # means the stored credential itself was rejected, so re-linking (not
     # waiting it out) is the fix.
-    failure = registry.recent_list_failure(spec.name)
+    failure = registry.recent_list_failure(spec.name, principal.subject)
     if failure == "unavailable":
         return "unavailable", _STATUS_DETAILS["unavailable"], None
     if failure == "unauthorized":

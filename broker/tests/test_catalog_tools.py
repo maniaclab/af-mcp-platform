@@ -165,6 +165,26 @@ def dead_backend_url() -> str:
     return f"http://127.0.0.1:{port}/mcp"
 
 
+class _RecordingBackend:
+    """ASGI middleware recording every request the backend receives."""
+
+    def __init__(self, app: Any, requests: list[str]) -> None:
+        self.app = app
+        self.requests = requests
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] == "http":
+            self.requests.append(scope["path"])
+        await self.app(scope, receive, send)
+
+
+class _FailingIssuer:
+    """A broker token issuer that fails the test if asked to mint anything."""
+
+    def mint(self, *args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("no identity token may be minted for an unlinked caller")
+
+
 class _FakeProvider(CredentialProvider):
     """Mints "token-for-<unixname>" (recognized by _auth_gated_backend's
     middleware) -- or a configurable garbage token to exercise the
@@ -476,6 +496,49 @@ async def test_not_linked_status_for_unlinked_caller(
     body = resp.json()
     assert body["status"] == "not_linked"
     assert body["tools"] == []
+
+
+@pytest.mark.parametrize("auth_type", ["x509", "krb5", "servicex"])
+async def test_not_linked_mint_and_inject_caller_never_reaches_the_backend(
+    policy: EntitlementPolicy,
+    make_principal: Callable[..., Any],
+    auth_type: str,
+) -> None:
+    """For a "mint and inject, the backend redeems" service a caller must
+    have the credential linked for tools to be listed: the /v1 listing
+    reports "not_linked" without minting a token or contacting the backend
+    (same outcome as a tools/list through /mcp)."""
+    requests: list[str] = []
+    backend_app = _RecordingBackend(_open_backend().http_app(path="/mcp"), requests)
+    async with run_asgi_app(backend_app) as backend_url:
+        registry = ServiceRegistry()
+        registry.register(
+            _spec(
+                "redeemer",
+                f"{backend_url}/mcp",
+                required_permission="read_data",
+                auth_type=auth_type,
+            )
+        )
+        credential_registry = CredentialRegistry()
+        credential_registry.register(
+            "redeemer", _FakeProvider(unlinked_subjects=frozenset({"sub-abc"}))
+        )
+        app, state = _make_app(
+            registry,
+            policy,
+            credential_registry,
+            broker_token_issuer=_FailingIssuer(),
+        )
+        state["principal"] = make_principal(groups=["atlas"])
+
+        resp = await _get_tools(app, "redeemer")
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "not_linked"
+    assert body["tools"] == []
+    assert requests == []
 
 
 async def test_linked_caller_lists_auth_gated_tools(

@@ -234,6 +234,11 @@ credential mint during `tools/list` (not only `tools/call`), so a service
 whose own MCP endpoint requires auth just to list tools (e.g. rucio-mcp)
 isn't invisible to every caller — see `mcp/aggregator.py`'s
 `_make_client_factory` docstring for the full rationale.
+For `x509`, `krb5` and `servicex` services, a caller must have linked the
+credential for the service's tools to be listed: an unlinked caller's
+listing is skipped (no token minted, the backend not contacted) and
+recorded as `not_linked`; a direct call of one of its tools still returns
+the not-linked error.
 
 `tools_cache_ttl` (seconds, default 300, matching fastmcp's own
 `ProxyProvider` default) controls how long a cached component list for this

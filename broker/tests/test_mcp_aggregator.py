@@ -831,7 +831,7 @@ async def test_observable_proxy_provider_records_list_failure_on_registry(
     with pytest.raises(ConnectionError):
         await provider._list_tools()
 
-    assert registry.recent_list_failure("example") == "unavailable"
+    assert registry.recent_list_failure("example", "alice") == "unavailable"
 
 
 async def test_observable_proxy_provider_clears_list_failure_on_success(
@@ -850,7 +850,7 @@ async def test_observable_proxy_provider_clears_list_failure_on_success(
 
     registry = ServiceRegistry()
     registry.register(_spec())
-    registry.record_list_failure("example", "unavailable")
+    registry.record_list_failure("example", "unavailable", "alice")
 
     async def _factory() -> Client:
         raise AssertionError(
@@ -863,7 +863,122 @@ async def test_observable_proxy_provider_clears_list_failure_on_success(
 
     await provider._list_tools()
 
-    assert registry.recent_list_failure("example") is None
+    assert registry.recent_list_failure("example", "alice") is None
+
+
+async def test_observable_proxy_provider_records_unauthorized_per_subject(
+    monkeypatch: pytest.MonkeyPatch, make_principal
+) -> None:
+    """A caller-specific failure ("unauthorized") is recorded against the
+    subject whose listing failed -- not against the whole service, where
+    every other caller's catalog status would pick it up."""
+    ctx = _patch_context(
+        monkeypatch, make_principal(subject="alice"), active_backend=None
+    )
+    ctx.recorded_state["__list_credential_status__:example"] = (True, None)
+
+    request = httpx2.Request("GET", "http://example.invalid")
+    unauthorized = httpx2.HTTPStatusError(
+        "unauthorized", request=request, response=httpx2.Response(401, request=request)
+    )
+
+    async def _factory() -> Client:
+        raise unauthorized
+
+    registry = ServiceRegistry()
+    registry.register(_spec())
+    provider = aggregator._ObservableProxyProvider(
+        "example", _factory, registry=registry
+    )
+
+    with pytest.raises(Exception):  # noqa: B017, PT011 -- fastmcp rewraps the 401
+        await provider._list_tools()
+
+    assert registry.recent_list_failure("example", "alice") == "unauthorized"
+    assert registry.recent_list_failure("example", "bob") is None
+
+
+async def test_observable_proxy_provider_success_clears_only_own_subject_record(
+    monkeypatch: pytest.MonkeyPatch, make_principal
+) -> None:
+    """A successful listing by one subject clears that subject's own
+    caller-specific record, leaving another subject's rejected credential
+    on record."""
+    monkeypatch.setattr(
+        aggregator.ProxyProvider, "_list_tools", AsyncMock(return_value=[])
+    )
+    _patch_context(monkeypatch, make_principal(subject="alice"), active_backend=None)
+
+    registry = ServiceRegistry()
+    registry.register(_spec())
+    registry.record_list_failure("example", "unauthorized", "alice")
+    registry.record_list_failure("example", "unauthorized", "bob")
+
+    async def _factory() -> Client:
+        raise AssertionError("ProxyProvider._list_tools is stubbed")
+
+    provider = aggregator._ObservableProxyProvider(
+        "example", _factory, registry=registry
+    )
+
+    await provider._list_tools()
+
+    assert registry.recent_list_failure("example", "alice") is None
+    assert registry.recent_list_failure("example", "bob") == "unauthorized"
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected_reason", "expected_level"),
+    [
+        (aggregator.NotLinkedForListing("not linked"), "not_linked", "info"),
+        (
+            httpx2.HTTPStatusError(
+                "unauthorized",
+                request=httpx2.Request("GET", "http://example.invalid"),
+                response=httpx2.Response(
+                    401, request=httpx2.Request("GET", "http://example.invalid")
+                ),
+            ),
+            "unauthorized",
+            "warning",
+        ),
+    ],
+    ids=["not_linked", "rejected_credential"],
+)
+async def test_observable_proxy_provider_logs_unlinked_listing_failure_at_info(
+    monkeypatch: pytest.MonkeyPatch,
+    make_principal,
+    failure: Exception,
+    expected_reason: str,
+    expected_level: str,
+) -> None:
+    """A caller with no credential is "not_linked" -- an expected state,
+    logged at INFO and recorded against that caller -- while a backend 401 to
+    an injected credential is "unauthorized" (WARNING)."""
+    ctx = _patch_context(
+        monkeypatch, make_principal(subject="alice"), active_backend=None
+    )
+    ctx.recorded_state["__list_credential_status__:example"] = (True, None)
+
+    async def _factory() -> Client:
+        raise failure
+
+    registry = ServiceRegistry()
+    registry.register(_spec())
+    provider = aggregator._ObservableProxyProvider(
+        "example", _factory, registry=registry
+    )
+
+    with (
+        structlog.testing.capture_logs() as logs,
+        pytest.raises(Exception),  # noqa: B017, PT011 -- fastmcp rewraps the 401
+    ):
+        await provider._list_tools()
+
+    [entry] = [e for e in logs if e["event"] == "aggregator.service_list_failed"]
+    assert entry["reason"] == expected_reason
+    assert entry["log_level"] == expected_level
+    assert registry.recent_list_failure("example", "alice") == expected_reason
 
 
 async def test_observable_proxy_provider_get_tool_short_circuits_on_prefix_mismatch(
@@ -1577,7 +1692,7 @@ async def test_list_tools_negative_cache_reraises_without_relogging_then_retries
         entry for entry in logs if entry["event"] == "aggregator.service_list_failed"
     ]
     assert len(failure_logs) == 1  # not re-logged on the cached re-raise
-    assert registry.recent_list_failure("example") == "unavailable"
+    assert registry.recent_list_failure("example", "alice") == "unavailable"
 
     # Past the negative TTL (30s): retried, not served stale.
     clock.advance(31.0)
@@ -2032,6 +2147,113 @@ async def test_client_factory_x509_list_time_injects_header_best_effort(
     )()
 
     assert client.transport.headers["Authorization"].startswith("Bearer ")
+
+
+_MINT_AND_INJECT_AUTH_TYPES = ["x509", "krb5", "servicex"]
+
+
+@pytest.mark.parametrize("auth_type", _MINT_AND_INJECT_AUTH_TYPES)
+async def test_client_factory_mint_and_inject_list_time_linked_injects_header(
+    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch, auth_type: str
+) -> None:
+    ctx = _patch_context(
+        monkeypatch, make_principal(subject="sub-abc"), active_backend=None
+    )
+    spec = _spec(auth_type=auth_type)
+    registry = CredentialRegistry()
+    registry.register(spec.name, _FakeProvider(linked=True))
+
+    client = await _make_client_factory(
+        spec,
+        registry,
+        settings,
+        _OPEN_POLICY,
+        broker_token_issuer=_make_issuer(),
+    )()
+
+    assert client.transport.headers["Authorization"].startswith("Bearer ")
+    assert ctx.recorded_state[f"__list_credential_status__:{spec.name}"] == (True, None)
+
+
+@pytest.mark.parametrize("auth_type", _MINT_AND_INJECT_AUTH_TYPES)
+async def test_client_factory_mint_and_inject_list_time_unlinked_builds_no_client(
+    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch, auth_type: str
+) -> None:
+    """A caller who has not linked the credential gets no client at all, so
+    nothing is minted and the backend is never contacted."""
+    _patch_context(monkeypatch, make_principal(subject="sub-abc"), active_backend=None)
+    spec = _spec(auth_type=auth_type)
+    registry = CredentialRegistry()
+    registry.register(spec.name, _FakeProvider(linked=False))
+    issuer = _make_issuer()
+
+    def _fail_mint(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("no identity token may be minted for an unlinked caller")
+
+    monkeypatch.setattr(issuer, "mint", _fail_mint)
+
+    with pytest.raises(aggregator.NotLinkedForListing):
+        await _make_client_factory(
+            spec, registry, settings, _OPEN_POLICY, broker_token_issuer=issuer
+        )()
+
+
+@pytest.mark.parametrize("auth_type", _MINT_AND_INJECT_AUTH_TYPES)
+async def test_client_factory_mint_and_inject_list_time_unresolved_provider_connects_bare_of_linkage(
+    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch, auth_type: str
+) -> None:
+    """A provider that does not resolve is a platform misconfiguration
+    reported elsewhere; the list-time branch behaves as it does for any
+    entitled caller (identity header attached)."""
+    _patch_context(monkeypatch, make_principal(subject="sub-abc"), active_backend=None)
+
+    client = await _make_client_factory(
+        _spec(auth_type=auth_type),
+        CredentialRegistry(),
+        settings,
+        _OPEN_POLICY,
+        broker_token_issuer=_make_issuer(),
+    )()
+
+    assert client.transport.headers["Authorization"].startswith("Bearer ")
+
+
+@pytest.mark.parametrize("auth_type", _MINT_AND_INJECT_AUTH_TYPES)
+async def test_resolve_list_time_credential_mint_and_inject_linked_returns_header(
+    make_principal, auth_type: str
+) -> None:
+    spec = _spec(auth_type=auth_type)
+    registry = CredentialRegistry()
+    registry.register(spec.name, _FakeProvider(linked=True))
+
+    headers, skip_reason = await resolve_list_time_credential(
+        spec,
+        registry,
+        make_principal(subject="sub-abc"),
+        broker_token_issuer=_make_issuer(),
+    )
+
+    assert headers is not None
+    assert skip_reason is None
+
+
+@pytest.mark.parametrize("auth_type", _MINT_AND_INJECT_AUTH_TYPES)
+async def test_resolve_list_time_credential_mint_and_inject_unlinked_raises(
+    make_principal, auth_type: str
+) -> None:
+    """The /v1 per-service listing must agree with the /mcp listing: an
+    unlinked caller is turned away before any token is minted."""
+    spec = _spec(auth_type=auth_type)
+    registry = CredentialRegistry()
+    registry.register(spec.name, _FakeProvider(linked=False))
+
+    with pytest.raises(aggregator.NotLinkedForListing):
+        await resolve_list_time_credential(
+            spec,
+            registry,
+            make_principal(subject="sub-abc"),
+            broker_token_issuer=_make_issuer(),
+        )
 
 
 async def test_client_factory_x509_list_time_aud_uses_effective_audience(
@@ -2630,7 +2852,7 @@ async def test_observable_proxy_provider_method_not_found_is_empty_not_a_failure
     identically before and after the SDK bump."""
     registry = ServiceRegistry()
     registry.register(_spec())
-    registry.record_list_failure("example", "unavailable")
+    registry.record_list_failure("example", "unavailable", "alice")
 
     class _FakeClient:
         async def __aenter__(self) -> Self:
@@ -2649,4 +2871,4 @@ async def test_observable_proxy_provider_method_not_found_is_empty_not_a_failure
     tools = await provider._list_tools()
 
     assert tools == []
-    assert registry.recent_list_failure("example") is None
+    assert registry.recent_list_failure("example", "alice") is None
