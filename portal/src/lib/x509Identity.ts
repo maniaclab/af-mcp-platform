@@ -22,13 +22,17 @@ import { APIError, SessionExpiredError } from './api';
  * alongside `detail` (app.py's `_http_exception_handler`) — appended here so
  * every caller of this function gets it for free, as something a user can
  * quote back to AF support, rather than every per-status branch needing its
- * own copy of this formatting.
+ * own copy of this formatting. A detail that already quotes the id (the
+ * ServiceX link rejection, #342) is returned as-is rather than repeating it.
  */
 export function apiErrorDetail(err: APIError): string | null {
   try {
     const parsed = JSON.parse(err.body) as { detail?: unknown; correlation_id?: unknown };
     if (typeof parsed.detail !== 'string') return null;
-    if (typeof parsed.correlation_id === 'string') {
+    if (
+      typeof parsed.correlation_id === 'string' &&
+      !parsed.detail.includes(parsed.correlation_id)
+    ) {
       return `${parsed.detail} (reference: ${parsed.correlation_id})`;
     }
     return parsed.detail;

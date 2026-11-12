@@ -1008,6 +1008,15 @@ transient-failure problem; every other failure (unreachable, timeout,
 identity requirement at all: a ServiceX access token is a pure bearer
 credential, not tied to a unix account.
 
+When ServiceX rejects a token at link time, the broker cannot tell revoked
+from expired from signed before a ServiceX key rotation. It logs
+`servicex_service.redeem.bad_refresh_token` (WARNING: subject, upstream
+status, `correlation_id`; never the token or the service's body) and returns
+400 whose `detail` says ServiceX rejected the token, to generate a new one
+and re-link, ending in `(ref: <correlation_id>)`; the body also carries
+`correlation_id`. The same id is sent to servicex-token-service as
+`X-Request-ID`, so its audit line can be joined to the broker's.
+
 Configuration is one `identity_providers` entry of type `servicex-token`
 with a required `service_url` (the servicex-token-service deployment's
 base URL — the provider appends `/v1/redeem`) and an `audience` defaulting

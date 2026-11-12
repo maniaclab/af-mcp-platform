@@ -41,6 +41,7 @@ import httpx
 import structlog
 
 from af_mcp_broker.http import get_http_client
+from af_mcp_broker.logging import request_id_headers
 
 if TYPE_CHECKING:
     from pydantic import SecretStr
@@ -214,7 +215,10 @@ class VomsTokenServiceClient:
         try:
             resp = await self._http().post(
                 self._mint_endpoint,
-                headers={"Authorization": f"Bearer {broker_token}"},
+                headers={
+                    "Authorization": f"Bearer {broker_token}",
+                    **request_id_headers(),
+                },
                 # The passphrase is revealed only here, inside the call
                 # expression — see the module docstring's handling notes.
                 json={
@@ -298,7 +302,10 @@ class VomsTokenServiceClient:
         try:
             resp = await self._http().get(
                 f"{self._base_url}/v1/preflight/{unixname}",
-                headers={"Authorization": f"Bearer {broker_token}"},
+                headers={
+                    "Authorization": f"Bearer {broker_token}",
+                    **request_id_headers(),
+                },
                 timeout=15.0,
             )
         except httpx.HTTPError as exc:

@@ -48,6 +48,17 @@ describe('servicexLinkErrorMessage', () => {
     expect(servicexLinkErrorMessage(err)).toContain('reference: abc123def456');
   });
 
+  it('does not repeat the correlation_id when the 400 detail already quotes it (af-mcp-platform#342)', () => {
+    const detail =
+      'ServiceX rejected this token. Generate a new token from your ServiceX profile page and re-link. (ref: abc123def456)';
+    const err = new APIError(
+      400,
+      'Bad Request',
+      JSON.stringify({ detail, correlation_id: 'abc123def456' }),
+    );
+    expect(servicexLinkErrorMessage(err)).toBe(detail);
+  });
+
   it('falls back to APIError.message for other statuses (matches x509LinkErrorMessage)', () => {
     const err = new APIError(500, 'Internal Server Error', 'not-json');
     expect(servicexLinkErrorMessage(err)).toBe(err.message);

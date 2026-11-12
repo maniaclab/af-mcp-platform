@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 import httpx
 import jwt
 import pytest
+import structlog
 from pydantic import SecretStr
 from test_broker_issued import _make_rsa_key, _private_pem
 
@@ -130,6 +131,12 @@ class TestRedeemFailures:
         with pytest.raises(ServiceXBadRefreshTokenError):
             await _redeem(client)
 
+    def test_bad_refresh_token_message_does_not_guess_a_cause(self) -> None:
+        message = str(ServiceXBadRefreshTokenError())
+        assert "ServiceX rejected" in message
+        assert "revoked or expired" not in message
+        assert "new token" in message
+
     async def test_redeem_401_raises_mint_error(self, make_client) -> None:
         client, _ = make_client(httpx.Response(401, json={"detail": "nope"}))
         with pytest.raises(ServiceXServiceMintError):
@@ -159,6 +166,51 @@ class TestRedeemFailures:
         with pytest.raises(ServiceXServiceMintError) as exc_info:
             await _redeem(client)
         assert "some internal secret path" not in str(exc_info.value)
+
+
+class TestRequestCorrelation:
+    async def test_redeem_sends_the_bound_correlation_id_as_x_request_id(
+        self, make_client
+    ) -> None:
+        structlog.contextvars.clear_contextvars()
+        structlog.contextvars.bind_contextvars(correlation_id="corr-342")
+        client, requests = make_client()
+        await _redeem(client)
+        assert requests[0].headers["x-request-id"] == "corr-342"
+
+    async def test_redeem_without_a_bound_correlation_id_sends_no_x_request_id(
+        self, make_client
+    ) -> None:
+        structlog.contextvars.clear_contextvars()
+        client, requests = make_client()
+        await _redeem(client)
+        assert "x-request-id" not in requests[0].headers
+
+    async def test_redeem_400_logs_a_warning_with_subject_status_and_correlation_id(
+        self, make_client
+    ) -> None:
+        structlog.contextvars.clear_contextvars()
+        structlog.contextvars.bind_contextvars(correlation_id="corr-342")
+        client, _ = make_client(httpx.Response(400, json={"detail": "bad token"}))
+        with (
+            structlog.testing.capture_logs(
+                processors=[structlog.contextvars.merge_contextvars]
+            ) as logs,
+            pytest.raises(ServiceXBadRefreshTokenError),
+        ):
+            await _redeem(
+                client, subject="user1", refresh_token=SecretStr("tok-s3cret")
+            )
+
+        [record] = [
+            r for r in logs if r["event"] == "servicex_service.redeem.bad_refresh_token"
+        ]
+        assert record["log_level"] == "warning"
+        assert record["subject"] == "user1"
+        assert record["upstream_status"] == 400
+        assert record["correlation_id"] == "corr-342"
+        assert "tok-s3cret" not in str(logs)
+        assert "bad token" not in str(logs)
 
 
 class TestEndpointJoin:

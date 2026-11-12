@@ -65,6 +65,7 @@ from af_mcp_broker.credmon.guidance import JobCredentialGuide, wired_kinds
 from af_mcp_broker.http import aclose_http_client
 from af_mcp_broker.identity import build_dev_principal, get_jwks, issuer_is_local
 from af_mcp_broker.logging import (
+    CorrelatedHTTPException,
     bind_new_correlation_id,
     configure_logging,
     log_request_finished,
@@ -1355,7 +1356,10 @@ async def _http_exception_handler(request: Request, exc: HTTPException) -> Respo
     # TokenAudienceError, this route's own NeedsUnlock-derived 409s) is
     # already structured/already carries its own correlation_id where one
     # makes sense -- overwriting it here would be a regression, not a fix.
-    if exc.status_code >= 500 and isinstance(exc.detail, str):
+    # A 4xx opts in by raising CorrelatedHTTPException (issue #342).
+    if (
+        exc.status_code >= 500 or isinstance(exc, CorrelatedHTTPException)
+    ) and isinstance(exc.detail, str):
         correlation_id = structlog.contextvars.get_contextvars().get("correlation_id")
         if correlation_id:
             return JSONResponse(

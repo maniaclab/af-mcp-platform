@@ -7,6 +7,7 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 import structlog
+from fastapi import HTTPException
 
 if TYPE_CHECKING:
     from structlog.stdlib import BoundLogger
@@ -97,6 +98,28 @@ def bind_new_correlation_id() -> None:
     """
     structlog.contextvars.clear_contextvars()
     structlog.contextvars.bind_contextvars(correlation_id=uuid.uuid4().hex)
+
+
+def request_id_headers() -> dict[str, str]:
+    """``X-Request-ID`` header carrying the current request's ``correlation_id`` (issue #342).
+
+    Spread into the headers of every call to an AF-internal token service
+    (servicex/voms/krb5/condor-token-service) so that service's audit line
+    shares the id the broker logged, instead of minting an unrelated one.
+    Empty when no correlation_id is bound (a call made outside a request).
+    """
+    correlation_id = structlog.contextvars.get_contextvars().get("correlation_id")
+    return {"X-Request-ID": correlation_id} if correlation_id else {}
+
+
+class CorrelatedHTTPException(HTTPException):
+    """An ``HTTPException`` whose string ``detail`` is returned with the request's ``correlation_id`` in the body (issue #342).
+
+    ``app._http_exception_handler`` adds the id to every 5xx on its own; a
+    4xx opts in by raising this, for the cases where the broker cannot tell
+    the user why the request failed and the id is what they quote to AF
+    support.
+    """
 
 
 def bind_subject(subject: str) -> None:
