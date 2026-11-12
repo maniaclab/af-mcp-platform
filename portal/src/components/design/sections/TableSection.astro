@@ -1,0 +1,85 @@
+---
+import StatusMark from '../../ui/StatusMark.vue';
+import DesignSection from '../DesignSection.astro';
+import Stage from '../Stage.astro';
+---
+
+<DesignSection id="table">
+  <Fragment slot="definition"> Where several things share the same fields, a table is the honest shape: tokens, usage per service, entitlements, admin data. </Fragment>
+  <div class="table-container af-box">
+    <table class="table">
+      <caption class="sr-only">Tokens, example data</caption>
+      <thead>
+        <tr>
+          <th scope="col">Name</th>
+          <th scope="col">Status</th>
+          <th scope="col">Created</th>
+          <th scope="col">Last used</th>
+          <th scope="col" class="af-num">Calls, 30 days</th>
+          <th scope="col"><span class="sr-only">Actions</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>claude-desktop-laptop</td>
+          <td><StatusMark tone="ok" label="Active" /></td>
+          <td class="af-sub">12 Oct 2026</td>
+          <td class="af-sub">2 hours ago</td>
+          <td class="af-num">1,284</td>
+          <td class="af-act"><button type="button" class="btn af-danger" data-variant="outline" data-size="sm">Revoke</button></td>
+        </tr>
+        <tr>
+          <td>gemini-cli-workstation</td>
+          <td><StatusMark tone="warn" label="Expires in 5 days" /></td>
+          <td class="af-sub">18 Aug 2026</td>
+          <td class="af-sub">Yesterday</td>
+          <td class="af-num">317</td>
+          <td class="af-act"><button type="button" class="btn af-danger" data-variant="outline" data-size="sm">Revoke</button></td>
+        </tr>
+        <tr>
+          <td>old-notebook</td>
+          <td><StatusMark tone="off" label="Revoked" /></td>
+          <td class="af-sub">3 Mar 2026</td>
+          <td class="af-sub">4 months ago</td>
+          <td class="af-num">0</td>
+          <td class="af-act"></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <Stage label="Compact, for Admin and Entitlements">
+    <div class="table-container af-box">
+      <table class="af-compact table">
+        <caption class="sr-only">Calls per user and service, example data</caption>
+        <thead>
+          <tr>
+            <th scope="col">User</th>
+            <th scope="col">Service</th>
+            <th scope="col" class="af-num">Calls</th>
+            <th scope="col" class="af-num">Errors</th>
+            <th scope="col">Last call</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>example-user-1</td><td>Rucio</td><td class="af-num">4,102</td><td class="af-num">12</td><td class="af-sub">1 minute ago</td></tr>
+          <tr><td>example-user-2</td><td>HTCondor</td><td class="af-num">873</td><td class="af-num">0</td><td class="af-sub">14 minutes ago</td></tr>
+          <tr><td>example-user-3</td><td>AMI</td><td class="af-num">96</td><td class="af-num">3</td><td class="af-sub">2 hours ago</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </Stage>
+  <div class="design-prose">
+    <ul>
+      <li>First column is the name, in the text face at normal weight and full ink. It is the darkest thing in the row.</li>
+      <li>
+        Numbers are right-aligned with tabular figures (<code>af-num</code>). Dates and secondary facts are secondary text (<code>af-sub</code>).
+      </li>
+      <li>
+        Row actions (<code>af-act</code>) are small buttons at the right edge. More than two go into a menu.
+      </li>
+      <li>Header is unfilled, 13px, secondary colour and sentence case. Rows are 44px, compact rows 32px.</li>
+      <li>Under 600px the table scrolls sideways inside its box; the page does not.</li>
+    </ul>
+  </div>
+  <p class="af-help">Used on: Tokens, Usage, Entitlements, Admin. Services and Identities are row lists (one bordered list, a rule between rows, a name and a status on each), not tables.</p>
+</DesignSection>

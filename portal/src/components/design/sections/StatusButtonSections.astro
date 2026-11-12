@@ -1,0 +1,81 @@
+---
+import { Plus } from '@lucide/astro';
+import StatusMark from '../../ui/StatusMark.vue';
+import DesignSection from '../DesignSection.astro';
+import DoDont from '../DoDont.astro';
+import DontExamples from '../DontExamples.astro';
+import SpecTable from '../SpecTable.astro';
+import Stage from '../Stage.astro';
+---
+
+<DesignSection id="status">
+  <Fragment slot="definition">
+    A small filled shape followed by a plain word. The shape differs per meaning (circle, triangle, square, diamond, half ring, empty ring), so it works without colour. This is <code>StatusMark</code>.
+  </Fragment>
+  <Stage label="The six tones" row>
+    <StatusMark tone="ok" label="Reachable" />
+    <StatusMark tone="warn" label="Expires in 2 days" />
+    <StatusMark tone="bad" label="Blocked" />
+    <StatusMark tone="info" label="Maintenance" />
+    <StatusMark tone="busy" label="Minting" />
+    <StatusMark tone="off" label="Not linked" />
+  </Stage>
+  <DoDont>
+    <Fragment slot="do">
+      <div class="design-stage__body is-row">
+        <StatusMark tone="bad" label="Blocked" />
+        <a href="#status">Link CERN account</a>
+      </div>
+    </Fragment>
+    <Fragment slot="do-note">put the fix next to a problem status.</Fragment>
+    <DontExamples slot="dont" kind="outlined-pills" />
+    <Fragment slot="dont-note">use outlined pills for status. In a table they become a column of boxes louder than the names beside them. A tag or pill labels a category, never a state.</Fragment>
+  </DoDont>
+  <p class="af-help">Used on: Overview, Services, Identities, Tokens, Admin.</p>
+</DesignSection>
+
+<DesignSection id="button">
+  <Fragment slot="definition"> Four kinds, ranked, in four sizes (32, 36, 40 and, for Sign in on the landing page, 52px). A page has at most one primary button; everything else is secondary or quiet. </Fragment>
+  <Stage label="Kinds" row>
+    <button type="button" class="btn">New token</button>
+    <button type="button" class="btn" data-variant="outline">Refresh</button>
+    <button type="button" class="btn" data-variant="ghost">Cancel</button>
+    <button type="button" class="btn af-danger" data-variant="outline">Revoke</button>
+    <button type="button" class="btn" disabled>New token</button>
+  </Stage>
+  <Stage label="Sizes" row>
+    <button type="button" class="btn" data-size="sm">Small 32</button>
+    <button type="button" class="btn">Medium 36</button>
+    <button type="button" class="btn" data-size="lg">Large 40</button>
+    <button type="button" class="btn af-btn-xl">Sign in</button>
+    <button type="button" class="btn" data-size="icon" aria-label="Add"><Plus class="af-icon" size={16} aria-hidden="true" /></button>
+  </Stage>
+  <SpecTable columns={['Kind', 'Looks like', 'Use']} caption="Button kinds">
+    <tr><td>Primary (<code>btn</code>)</td><td>Accent fill</td><td>The page's main action. One per page, in the page header.</td></tr>
+    <tr><td>Secondary (<code>data-variant="outline"</code>)</td><td>Outline</td><td>Other actions: Refresh, Copy, row actions.</td></tr>
+    <tr><td>Quiet (<code>data-variant="ghost"</code>)</td><td>Text only</td><td>Cancel, dismiss, low-stakes actions in dense rows.</td></tr>
+    <tr><td>Danger (<code>btn af-danger</code> on the outline variant)</td><td>Red outline and text</td><td>Revoke, unlink, delete. Never filled, so it cannot be confused with a maroon or red facility accent.</td></tr>
+  </SpecTable>
+  <DoDont>
+    <Fragment slot="do">
+      <div class="af-page-head">
+        <div><h4>Tokens</h4></div>
+        <button type="button" class="btn">New token</button>
+      </div>
+      <div class="design-stage__body is-row">
+        <span>claude-desktop-laptop</span>
+        <button type="button" class="btn af-danger" data-variant="outline" data-size="sm">Revoke</button>
+      </div>
+    </Fragment>
+    <Fragment slot="do-note">give the page one primary button and keep row actions small.</Fragment>
+    <Fragment slot="dont">
+      <div class="design-stage__body is-row">
+        <button type="button" class="btn">New token</button>
+        <button type="button" class="btn">Refresh</button>
+        <button type="button" class="btn">Docs</button>
+      </div>
+    </Fragment>
+    <Fragment slot="dont-note">make every action primary. Nothing leads when everything does.</Fragment>
+  </DoDont>
+  <p class="af-help">Used on every page.</p>
+</DesignSection>

@@ -1,0 +1,79 @@
+---
+/**
+ * The design language reference: what the portal looks like and why, with
+ * every example drawn by the portal's own tokens, Basecoat classes, `af-`
+ * extensions and Vue components, so an example cannot differ from what ships.
+ * Public (PublicBase.astro): it holds only fictional example data and is
+ * useful to reviewers and other facilities without signing in.
+ *
+ * The sections are listed once, in components/design/sectionList.ts; the
+ * navigation is generated from that list and designSections.test.ts checks
+ * this page renders exactly those sections, in that order.
+ */
+import PublicBase from '../layouts/PublicBase.astro';
+import '../components/design/design.css';
+import AccentSwitcher from '../components/design/AccentSwitcher.vue';
+import SectionNav from '../components/design/SectionNav.astro';
+import BannerSection from '../components/design/sections/BannerSection.astro';
+import BasecoatSection from '../components/design/sections/BasecoatSection.astro';
+import ChartSection from '../components/design/sections/ChartSection.astro';
+import ColourSection from '../components/design/sections/ColourSection.astro';
+import DataDisplaySections from '../components/design/sections/DataDisplaySections.astro';
+import FormSections from '../components/design/sections/FormSections.astro';
+import IntroSection from '../components/design/sections/IntroSection.astro';
+import LayoutSections from '../components/design/sections/LayoutSections.astro';
+import MotionIconSections from '../components/design/sections/MotionIconSections.astro';
+import OverlaySections from '../components/design/sections/OverlaySections.astro';
+import PageSections from '../components/design/sections/PageSections.astro';
+import ShapeSections from '../components/design/sections/ShapeSections.astro';
+import StatusButtonSections from '../components/design/sections/StatusButtonSections.astro';
+import TableSection from '../components/design/sections/TableSection.astro';
+import TokensSection from '../components/design/sections/TokensSection.astro';
+import TypographySection from '../components/design/sections/TypographySection.astro';
+import WritingSection from '../components/design/sections/WritingSection.astro';
+---
+
+<PublicBase title="Design language">
+  <div id="design-scope" class="design-scope">
+    <div class="af-wrap design-title">
+      <div class="af-page-head">
+        <div>
+          <h1>Design language</h1>
+          <p>
+            What the portal looks like and why. Every example on this page is the portal's own
+            component, drawn from its own tokens.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <div class="design-bar">
+      <div class="af-wrap design-bar__in">
+        <AccentSwitcher client:load />
+      </div>
+    </div>
+
+    <div class="af-wrap design-page">
+      <SectionNav />
+      <div class="design-main">
+        <IntroSection />
+        <BasecoatSection />
+        <TokensSection />
+        <ColourSection />
+        <TypographySection />
+        <LayoutSections />
+        <ShapeSections />
+        <MotionIconSections />
+        <WritingSection />
+        <StatusButtonSections />
+        <BannerSection />
+        <TableSection />
+        <FormSections />
+        <DataDisplaySections />
+        <ChartSection />
+        <OverlaySections />
+        <PageSections />
+      </div>
+    </div>
+  </div>
+</PublicBase>

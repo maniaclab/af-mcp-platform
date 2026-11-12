@@ -1,0 +1,25 @@
+---
+/**
+ * SectionNav.astro — the in-page navigation: every section of the page,
+ * grouped, generated from sectionList.ts. A sticky column beside the content
+ * at desktop width, a wrapped list above it under 860px (design.css).
+ */
+import { SECTIONS, SECTION_GROUPS } from './sectionList';
+---
+
+<nav class="design-nav" aria-label="Design language sections">
+  {
+    SECTION_GROUPS.map((group) => (
+      <div>
+        <p>{group}</p>
+        <ul role="list">
+          {SECTIONS.filter((s) => s.group === group).map((s) => (
+            <li>
+              <a href={`#${s.id}`}>{s.title}</a>
+            </li>
+          ))}
+        </ul>
+      </div>
+    ))
+  }
+</nav>

@@ -1,0 +1,21 @@
+---
+/**
+ * Stage.astro — a framed example. `label` names the example (an `h3`); `row`
+ * lays the examples out in a wrapping row; `subtle` uses the subtle surface
+ * (for an example that sits on top of the page, such as a raised surface).
+ */
+interface Props {
+  label?: string;
+  row?: boolean;
+  subtle?: boolean;
+}
+
+const { label, row = false, subtle = false } = Astro.props;
+---
+
+<div class:list={['design-stage', { 'design-stage--subtle': subtle }]}>
+  {label && <h3 class="design-label">{label}</h3>}
+  <div class:list={['design-stage__body', { 'is-row': row }]}>
+    <slot />
+  </div>
+</div>

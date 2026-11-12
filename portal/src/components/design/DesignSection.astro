@@ -1,0 +1,25 @@
+---
+/**
+ * DesignSection.astro — one section of the design reference: the group as an
+ * eyebrow, the title as an `h2`, a definition, then the examples (the default
+ * slot). Group and title come from sectionList.ts, which the in-page
+ * navigation is also generated from, so an id with no entry fails the build.
+ */
+import { sectionInfo } from './sectionList';
+
+interface Props {
+  id: string;
+}
+
+const { id } = Astro.props;
+const { title, group } = sectionInfo(id);
+---
+
+<section id={id} class="design-section" aria-labelledby={`${id}-title`}>
+  <header class="design-head">
+    <p class="design-eyebrow">{group}</p>
+    <h2 id={`${id}-title`}>{title}</h2>
+    <div class="design-def"><slot name="definition" /></div>
+  </header>
+  <slot />
+</section>
