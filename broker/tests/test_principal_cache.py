@@ -358,6 +358,125 @@ async def test_outage_still_serves_stale_value_for_an_enabled_principal(
     assert attrs.groups == ["atlas"]
 
 
+def _advance_wall_clock(monkeypatch: pytest.MonkeyPatch, seconds: float) -> None:
+    """Move ``time.time`` forward, for persisted records' wall-clock ``resolved_at``."""
+    real_time = time.time
+    monkeypatch.setattr(time, "time", lambda: real_time() + seconds)
+
+
+async def _warm_then_reject(
+    monkeypatch: pytest.MonkeyPatch, backend: PrincipalCacheBackend
+) -> _FakeDirectory:
+    """Warm p1 in a first cache over *backend*, then disable it and have that cache observe the rejection."""
+    directory = _FakeDirectory()
+    directory.responses["p1"] = _attrs(groups=["atlas"])
+    cache = _rejecting_cache(directory, backend)
+    await cache.get("p1")
+    directory.rejected["p1"] = PrincipalDisabledError("p1")
+    _advance_clock(monkeypatch, 2000.0)
+    _advance_wall_clock(monkeypatch, 2000.0)
+    with pytest.raises(PrincipalRejectedError):
+        await cache.get("p1")
+    return directory
+
+
+async def test_rejection_survives_restart_during_directory_outage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A fresh cache over the same backend (restart, or another replica) must
+    not seed the disabled user's last good value and serve it stale."""
+    backend = InMemoryPrincipalCacheBackend()
+    await _warm_then_reject(monkeypatch, backend)
+
+    outage = _FakeDirectory()
+    outage.fail_next = 5
+    restarted = _rejecting_cache(outage, backend)
+    _advance_clock(monkeypatch, 2000.0)
+    _advance_wall_clock(monkeypatch, 2000.0)
+    with pytest.raises(PrincipalUnavailableError):
+        await restarted.get("p1")
+
+
+async def test_second_cache_over_same_backend_fails_closed_during_outage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Another replica that never saw the rejection and has nothing cached."""
+    backend = InMemoryPrincipalCacheBackend()
+    await _warm_then_reject(monkeypatch, backend)
+
+    outage = _FakeDirectory()
+    outage.fail_next = 5
+    other_replica = _rejecting_cache(outage, backend)
+    with pytest.raises(PrincipalUnavailableError):
+        await other_replica.get("p1")  # tombstone is within the refresh window
+
+
+async def test_reenable_clears_durable_rejection_on_fresh_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = InMemoryPrincipalCacheBackend()
+    directory = await _warm_then_reject(monkeypatch, backend)
+    del directory.rejected["p1"]
+
+    fresh = _rejecting_cache(directory, backend)
+    _advance_clock(monkeypatch, 4000.0)
+    _advance_wall_clock(monkeypatch, 4000.0)
+    attrs = await fresh.get("p1")
+    assert attrs.groups == ["atlas"]
+
+    outage = _FakeDirectory()
+    outage.fail_next = 5
+    later = _rejecting_cache(outage, backend)
+    _advance_clock(monkeypatch, 4000.0)
+    _advance_wall_clock(monkeypatch, 4000.0)
+    assert (await later.get("p1")).groups == ["atlas"]  # seeded: no tombstone left
+
+
+async def test_backend_failure_persisting_rejection_still_rejects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = _CountingBackend()
+    directory = _FakeDirectory()
+    directory.responses["p1"] = _attrs()
+    cache = _rejecting_cache(directory, backend)
+    await cache.get("p1")
+
+    directory.rejected["p1"] = PrincipalDisabledError("p1")
+    backend.fail_put_next = 1
+    _advance_clock(monkeypatch, 2000.0)
+    with (
+        structlog.testing.capture_logs() as logs,
+        pytest.raises(PrincipalRejectedError),
+    ):
+        await cache.get("p1")
+
+    assert any(
+        e["event"] == "principal_cache.rejection_persist_failed"
+        and e["log_level"] == "error"
+        for e in logs
+    )
+
+
+async def test_expired_rejections_are_pruned(monkeypatch: pytest.MonkeyPatch) -> None:
+    directory = _FakeDirectory()
+    for pid in ("p1", "p2"):
+        directory.responses[pid] = _attrs()
+    cache = _rejecting_cache(directory)
+    await cache.get("p1")
+    await cache.get("p2")
+
+    directory.rejected["p1"] = PrincipalDisabledError("p1")
+    _advance_clock(monkeypatch, 2000.0)
+    with pytest.raises(PrincipalRejectedError):
+        await cache.get("p1")
+    directory.rejected["p2"] = PrincipalDisabledError("p2")
+    _advance_clock(monkeypatch, 4000.0)
+    with pytest.raises(PrincipalRejectedError):
+        await cache.get("p2")
+
+    assert set(cache._rejections) == {"p2"}
+
+
 # ---------------------------------------------------------------------------
 # Fake Vault KV-v2 HTTP API for VaultPrincipalCacheBackend -- get/write_cas
 # only, same technique as test_token_registry.py's _FakeRegistryVault, pared
