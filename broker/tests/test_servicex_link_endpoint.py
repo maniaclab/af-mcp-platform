@@ -109,6 +109,36 @@ class TestLink:
         assert body["remaining_seconds"] > 0
         assert "access_token" not in body
 
+    def test_successful_link_notifies_listing_caches_for_the_entry_targets(
+        self, servicex_link_env, app_client_factory
+    ) -> None:
+        servicex_link_env()
+        with app_client_factory() as (client, state):
+            _fake_provider(client)
+            linked: list[tuple[str, str]] = []
+            client.app.state.credential_cache._on_link = lambda subject, target: (
+                linked.append((subject, target))
+            )
+            resp = client.post(_LINK, json={"refresh_token": "a-refresh-token"})
+
+        assert resp.status_code == 201, resp.text
+        assert linked == [(state["principal"].subject, _TARGET)]
+
+    def test_failed_link_does_not_notify_listing_caches(
+        self, servicex_link_env, app_client_factory
+    ) -> None:
+        servicex_link_env()
+        with app_client_factory() as (client, _):
+            _fake_provider(client, outcome=ServiceXBadRefreshTokenError())
+            linked: list[tuple[str, str]] = []
+            client.app.state.credential_cache._on_link = lambda subject, target: (
+                linked.append((subject, target))
+            )
+            resp = client.post(_LINK, json={"refresh_token": "bad-token"})
+
+        assert resp.status_code == 400
+        assert linked == []
+
     def test_bad_refresh_token_is_400_and_stores_nothing(
         self, servicex_link_env, app_client_factory
     ) -> None:

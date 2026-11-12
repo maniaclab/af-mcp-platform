@@ -1597,6 +1597,75 @@ def test_callback_completes_flow_and_stores_credential(
         assert cred.access_token.get_secret_value() == "linked-access-token"
 
 
+def test_callback_notifies_listing_caches_for_the_linking_subject(
+    monkeypatch: pytest.MonkeyPatch, app_client_factory: Any
+) -> None:
+    fernet_key = Fernet.generate_key().decode()
+    _configure_oauth21_env(monkeypatch, fernet_key)
+    fake_token_client = _FakeTokenClient(
+        status_code=200,
+        json_body={"access_token": "linked-access-token", "expires_in": 3600},
+    )
+    monkeypatch.setattr(
+        "af_mcp_broker.api.oauth21.get_http_client", lambda: fake_token_client
+    )
+
+    with app_client_factory() as (client, _state):
+        linked: list[tuple[str, str]] = []
+        client.app.state.credential_cache._on_link = lambda subject, target: (
+            linked.append((subject, target))
+        )
+        authorize_resp = client.get(
+            f"/v1/oauth/authorize/{ALIAS}", follow_redirects=False
+        )
+        state_token = parse_qs(urlparse(authorize_resp.headers["location"]).query)[
+            "state"
+        ][0]
+        nonce_cookie = authorize_resp.cookies.get(NONCE_COOKIE_NAME)
+        assert nonce_cookie is not None
+        client.cookies.set(NONCE_COOKIE_NAME, nonce_cookie, path=NONCE_COOKIE_PATH)
+
+        resp = client.get(
+            f"/v1/oauth/callback/{ALIAS}",
+            params={"code": "auth-code-xyz", "state": state_token},
+            follow_redirects=False,
+        )
+
+    assert resp.status_code == 302, resp.text
+    assert linked == [("sub-abc", ALIAS)]
+
+
+def test_callback_backend_error_does_not_notify_listing_caches(
+    monkeypatch: pytest.MonkeyPatch, app_client_factory: Any
+) -> None:
+    fernet_key = Fernet.generate_key().decode()
+    _configure_oauth21_env(monkeypatch, fernet_key)
+
+    with app_client_factory() as (client, _state):
+        linked: list[tuple[str, str]] = []
+        client.app.state.credential_cache._on_link = lambda subject, target: (
+            linked.append((subject, target))
+        )
+        authorize_resp = client.get(
+            f"/v1/oauth/authorize/{ALIAS}", follow_redirects=False
+        )
+        state_token = parse_qs(urlparse(authorize_resp.headers["location"]).query)[
+            "state"
+        ][0]
+        nonce_cookie = authorize_resp.cookies.get(NONCE_COOKIE_NAME)
+        assert nonce_cookie is not None
+        client.cookies.set(NONCE_COOKIE_NAME, nonce_cookie, path=NONCE_COOKIE_PATH)
+
+        resp = client.get(
+            f"/v1/oauth/callback/{ALIAS}",
+            params={"error": "access_denied", "state": state_token},
+            follow_redirects=False,
+        )
+
+    assert resp.status_code == 302, resp.text
+    assert linked == []
+
+
 def test_callback_never_calls_keycloak_dependency(
     monkeypatch: pytest.MonkeyPatch, app_client_factory: Any
 ) -> None:

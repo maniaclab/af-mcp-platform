@@ -177,6 +177,33 @@ tells the portal how a linking flow starts: `"redirect"`
 to redirect to, so `link_url` stays null), or `"none"` (the AF-native types
 below, which have no linking step).
 
+### When a new link shows up in `tools/list`
+
+The aggregator caches each caller's listing per (subject, service), and a
+failed listing (for an x509/krb5/servicex service, an unlinked caller's
+skipped one) is cached for 30 seconds. Completing a link must not leave the
+caller waiting that out, so the `/v1` routes that complete one call
+`CredentialCache.notify_linked(subject, target)` — the counterpart of
+`revoke()`'s `on_revoke` — for every target of the identity-provider entry.
+That drops the caller's cached listing and their own caller-specific listing
+failure record (`not_linked`/`unauthorized`) for those services (no other
+caller's, no other service's, and never a service-wide `unavailable`), and their next `tools/list`
+reaches the backend. `app.py` wires both hooks to `invalidate_subject_cache`.
+
+| Type | Link event the broker sees | Listing cache after linking |
+|---|---|---|
+| `oauth21-direct` | `GET /v1/oauth/callback/{alias}` stores the token | dropped on a successful callback |
+| `servicex-token` | `POST /v1/servicex/link` | dropped on success |
+| `krb5-token` | `POST /v1/krb5/keytab` (keytab link) and `POST /v1/krb5/ticket` (ticket mint) | dropped on success |
+| `x509` | `POST /v1/x509/proxy` (proxy mint) | dropped on success |
+| `keycloak-brokered` | none — the link happens in Keycloak and the broker only fetches the brokered token later | not dropped; relies on the 30 s negative-entry TTL |
+| `broker-issued`, `condor-token`, service account | none — always linked | nothing to drop |
+
+A legacy-mode x509 link made by placing files in `~/.globus` is likewise
+invisible to the broker and relies on the TTL until the first proxy mint.
+A routine token refresh (`CredentialCache.put`) is not a link event and does
+not invalidate anything.
+
 ---
 
 ## Portal auth (OIDC public client)
