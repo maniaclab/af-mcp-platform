@@ -23,6 +23,7 @@ const healthy: DashboardSummary = {
   rejectedService: null,
   rejectedIdentity: null,
   rejectedAction: null,
+  rejectedIdentityCount: 0,
   proxyAutoRenews: false,
   soonestExpiringToken: null,
 };
@@ -42,6 +43,7 @@ const empty: DashboardSummary = {
   rejectedService: null,
   rejectedIdentity: null,
   rejectedAction: null,
+  rejectedIdentityCount: 0,
   proxyAutoRenews: false,
   soonestExpiringToken: null,
 };

@@ -237,6 +237,66 @@ describe('IdentitiesPage banner', () => {
     expect(wrapper.text()).toContain('Access required');
   });
 
+  const rejectedProvider = (over: Partial<IdentityProvider> = {}) =>
+    linkedProvider({
+      id: 'rucio-oauth',
+      type: 'oauth21-direct',
+      display_name: 'Rucio (ATLAS)',
+      linked: false,
+      rejected: true,
+      link_url: '/v1/oauth/authorize/rucio-oauth',
+      ...over,
+    });
+
+  it('shows a warning banner with a re-link action for a rejected credential', async () => {
+    const wrapper = await mountWith([linkedProvider(), rejectedProvider()]);
+    const banner = wrapper.find('.af-banner.warn');
+    expect(banner.attributes('role')).toBe('alert');
+    expect(banner.text()).toContain('Rucio (ATLAS) rejected the linked credential');
+    expect(banner.text()).toContain('Re-link it to restore the services that use it.');
+    const action = banner.find('a.btn');
+    expect(action.text()).toBe('Reconnect Rucio (ATLAS) account');
+    expect(action.attributes('href')).toBe('#identity-card-rucio-oauth');
+    expect(wrapper.find('#identity-card-rucio-oauth .il__status--rejected').exists()).toBe(true);
+  });
+
+  it('counts several rejected credentials without naming one action', async () => {
+    const wrapper = await mountWith([
+      rejectedProvider(),
+      rejectedProvider({ id: 'other-oauth', display_name: 'Other' }),
+    ]);
+    const banner = wrapper.find('.af-banner.warn');
+    expect(banner.text()).toContain('2 linked credentials were rejected');
+    expect(banner.find('a.btn').exists()).toBe(false);
+  });
+
+  it('ranks a rejected credential below an expired proxy and above an expiring one', async () => {
+    const expired = x509({
+      linked: false,
+      x509_link_mode: 'until-expiry',
+      proxy_expires_at: new Date(Date.now() - 3600_000).toISOString(),
+    });
+    const expiring = x509({
+      x509_link_mode: 'until-expiry',
+      proxy_expires_at: new Date(Date.now() + 30 * 60_000).toISOString(),
+    });
+
+    const withExpired = await mountWith([rejectedProvider(), expired]);
+    expect(withExpired.findAll('.af-banner')).toHaveLength(1);
+    expect(withExpired.find('.af-banner.bad').text()).toContain('Your grid proxy has expired');
+
+    const withExpiring = await mountWith([rejectedProvider(), expiring]);
+    expect(withExpiring.findAll('.af-banner')).toHaveLength(1);
+    expect(withExpiring.find('.af-banner.warn').text()).toContain('rejected the linked credential');
+  });
+
+  it('treats a response without the rejected field as not rejected', async () => {
+    const wrapper = await mountWith([rejectedProvider({ rejected: undefined })]);
+    expect(wrapper.find('.af-banner').exists()).toBe(false);
+    expect(wrapper.find('.il__status--rejected').exists()).toBe(false);
+    expect(wrapper.text()).toContain('Not linked');
+  });
+
   it('shows the most urgent problem only: an expired proxy beats an unlinked account', async () => {
     const wrapper = await mountWith([
       linkedProvider({ linked: false }),

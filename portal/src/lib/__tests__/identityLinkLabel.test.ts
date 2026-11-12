@@ -66,6 +66,10 @@ describe('identityRelinkLabel', () => {
       'Reconnect CERN account',
     );
   });
+
+  it('names the redirect card button the same word the Reconnect link starts with', () => {
+    expect(RELINK_ACTION_LABEL.account).toBe('Reconnect');
+  });
 });
 
 describe('identityNoun', () => {

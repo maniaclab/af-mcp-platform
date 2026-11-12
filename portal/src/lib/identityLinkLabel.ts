@@ -14,6 +14,7 @@ export const LINK_ACTION_LABEL = {
 
 /** The names of the "link this identity again" actions: what each identity card calls its button once the identity is already linked. */
 export const RELINK_ACTION_LABEL = {
+  account: 'Reconnect',
   certificate: 'Re-link certificate',
   kerberos: 'Refresh ticket',
   servicex: 'Re-link ServiceX token',

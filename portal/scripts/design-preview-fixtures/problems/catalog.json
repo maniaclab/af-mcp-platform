@@ -91,7 +91,7 @@
       "permission": "servicex_access",
       "auth_type": "bearer",
       "action_type": "state_change",
-      "credential_provider": "servicex-token",
+      "credential_provider": "example-oauth",
       "status": "link_required",
       "status_detail": "Your linked credential was rejected. Re-link your identity.",
       "correlation_id": null,

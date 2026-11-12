@@ -18,6 +18,7 @@ vi.mock('../../lib/api', async (importOriginal) => ({
 }));
 
 import { unlinkIdentity } from '../../lib/api';
+import { LINK_ACTION_LABEL, RELINK_ACTION_LABEL } from '../../lib/identityLinkLabel';
 import IdentityLink from '../IdentityLink.vue';
 
 function mountLink(linkPermissionDenied: boolean) {
@@ -83,5 +84,58 @@ describe('IdentityLink unlink confirmation', () => {
     expect(unlinkIdentity).toHaveBeenCalledWith('example-oauth');
     expect(wrapper.emitted('unlinked')).toEqual([[]]);
     wrapper.unmount();
+  });
+});
+
+describe('IdentityLink rejected credential', () => {
+  function mountRejected(over: Record<string, unknown> = {}) {
+    return mount(IdentityLink, {
+      props: {
+        id: 'example-oauth',
+        type: 'oauth21-direct',
+        display_name: 'Example Docs Service',
+        enables: 'Docs search',
+        linked: false,
+        rejected: true,
+        link_url: '/v1/oauth/authorize/example-oauth',
+        ...over,
+      },
+    });
+  }
+
+  it('shows a warning "Credential rejected" status, not "Not linked"', () => {
+    const wrapper = mountRejected();
+
+    expect(wrapper.find('.il__status--rejected').exists()).toBe(true);
+    expect(wrapper.find('.il__status--unlinked').exists()).toBe(false);
+    expect(wrapper.find('.il__status .af-mark').classes()).toContain('warn');
+    expect(wrapper.text()).toContain('Credential rejected');
+    expect(wrapper.text()).not.toContain('Not linked');
+  });
+
+  it('explains the rejection and what re-linking restores', () => {
+    const wrapper = mountRejected();
+
+    expect(wrapper.find('.il__notice').text()).toBe(
+      'Example Docs Service rejected the linked credential. Re-link it to restore the services that use it.',
+    );
+  });
+
+  it('offers the shared re-link action, not "Link account", and still allows unlinking', () => {
+    const wrapper = mountRejected();
+
+    expect(wrapper.find('button.il__btn--link').exists()).toBe(false);
+    expect(wrapper.find('button.il__btn--reconnect').text()).toBe(RELINK_ACTION_LABEL.account);
+    expect(wrapper.find('button.il__btn--unlink').exists()).toBe(true);
+  });
+
+  it('reads an absent rejected flag as false', () => {
+    const wrapper = mountRejected({ rejected: undefined });
+
+    expect(wrapper.find('.il__status--rejected').exists()).toBe(false);
+    expect(wrapper.find('.il__status--unlinked').exists()).toBe(true);
+    expect(wrapper.text()).toContain('Not linked');
+    expect(wrapper.find('.il__notice').exists()).toBe(false);
+    expect(wrapper.find('button.il__btn--link').text()).toBe(LINK_ACTION_LABEL.account);
   });
 });

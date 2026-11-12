@@ -101,9 +101,17 @@ const identitiesStatus = computed(() => {
   const cert = gridCertificate(s);
   // A certificate that is not linked is absent by choice, not a problem; an
   // expired one is, and one about to lapse that cannot renew is a warning.
+  // A credential a backend rejected needs the user to re-link it: a warning.
   const tone: Tone =
-    cert === 'expired' ? 'bad' : cert === 'expiring' ? 'warn' : s.linkedCount > 0 ? 'ok' : 'off';
-  return { tone, state: `${s.linkedCount} linked · grid certificate ${cert}` };
+    cert === 'expired'
+      ? 'bad'
+      : cert === 'expiring' || s.rejectedIdentityCount > 0
+        ? 'warn'
+        : s.linkedCount > 0
+          ? 'ok'
+          : 'off';
+  const rejected = s.rejectedIdentityCount > 0 ? ` · ${s.rejectedIdentityCount} rejected` : '';
+  return { tone, state: `${s.linkedCount} linked${rejected} · grid certificate ${cert}` };
 });
 
 const tokensStatus = computed(() => {
