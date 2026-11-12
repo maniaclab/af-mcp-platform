@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol
@@ -38,12 +39,6 @@ _MIN_REFRESH_WINDOW_SECONDS = 300
 # re-link.
 _NO_REFRESH_EXPIRY_SKEW_SECONDS = 60
 
-# Lifetime assumed when a token response omits `expires_in` (it is only
-# RECOMMENDED by RFC 6749 §5.1). Deliberately short: a token whose real
-# lifetime is unknown is refreshed -- or, with no refresh_token, re-linked --
-# soon, rather than being trusted indefinitely.
-_DEFAULT_EXPIRES_IN_SECONDS = 300
-
 
 class StoredOAuthCredential(BaseModel):
     """Normalized OAuth 2.1 token pair persisted in a ``TokenStore``.
@@ -57,18 +52,35 @@ class StoredOAuthCredential(BaseModel):
     subject: str
     access_token: SecretStr
     refresh_token: SecretStr | None
-    expires_at: datetime
+    # None when the token response omitted `expires_in` (only RECOMMENDED by
+    # RFC 6749 §5.1): an AS such as Indico or a GitHub OAuth App issues
+    # tokens that do not expire, and the token is served until a backend
+    # rejects it -- see issue #344.
+    expires_at: datetime | None
     refresh_expires_at: datetime | None
     scope: list[str]
     issuer: str
     token_endpoint: AnyHttpUrl
     metadata: dict[str, Any] = {}
+    # Set when a backend answered HTTP 401 to this access token (issue #344).
+    # The token is kept rather than deleted: only the user can re-link, since
+    # the AS may need their consent again. Defaults to None so records
+    # written before this field existed load as not rejected.
+    rejected_at: datetime | None = None
+    # Set when this token came from the one refresh a backend 401 earns
+    # (``OAuth21Provider.mark_rejected``), so a 401 for it rejects instead of
+    # refreshing again. A routine refresh or a re-link builds a fresh
+    # credential, which resets it. Defaults to False for the same reason as
+    # rejected_at.
+    refreshed_after_rejection: bool = False
 
-    @field_validator("expires_at", "refresh_expires_at")
+    @field_validator("expires_at", "refresh_expires_at", "rejected_at")
     @classmethod
     def _require_tz_aware(cls, value: datetime | None) -> datetime | None:
         if value is not None and value.tzinfo is None:
-            raise ValueError("expires_at/refresh_expires_at must be tz-aware (UTC)")
+            raise ValueError(
+                "expires_at/refresh_expires_at/rejected_at must be tz-aware (UTC)"
+            )
         return value
 
 
@@ -176,8 +188,10 @@ def normalize_token_response(
     the initial authorization_code exchange in ``api/oauth21.py``.
     """
     now = datetime.now(UTC)
-    expires_in = int(data.get("expires_in", _DEFAULT_EXPIRES_IN_SECONDS))
-    expires_at = now + timedelta(seconds=expires_in)
+    expires_in = data.get("expires_in")
+    expires_at = (
+        now + timedelta(seconds=int(expires_in)) if expires_in is not None else None
+    )
 
     refresh_token_raw = data.get("refresh_token")
     if refresh_token_raw is not None:
@@ -227,6 +241,7 @@ class OAuth21Provider(CredentialProvider):
 
     cred_class: ClassVar[str] = "oauth21"
     execution_model: ClassVar[ExecutionModel] = ExecutionModel.DELEGATED
+    tracks_rejection: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -297,8 +312,12 @@ class OAuth21Provider(CredentialProvider):
 
         A token with a refresh_token is usable until ``expires_at`` (``issue``
         refreshes it ahead of that); one without can never be renewed, so it
-        stops being usable ``_NO_REFRESH_EXPIRY_SKEW_SECONDS`` early.
+        stops being usable ``_NO_REFRESH_EXPIRY_SKEW_SECONDS`` early. A token
+        with no known expiry is usable indefinitely, so it is never inside
+        any refresh window.
         """
+        if cred.expires_at is None:
+            return math.inf
         remaining = (cred.expires_at - datetime.now(UTC)).total_seconds()
         if cred.refresh_token is None:
             return remaining - _NO_REFRESH_EXPIRY_SKEW_SECONDS
@@ -309,7 +328,78 @@ class OAuth21Provider(CredentialProvider):
         if entry is None:
             return False
         cred, _version = entry
+        if cred.rejected_at is not None:
+            return False
         return self._usable_seconds(cred) > 0
+
+    async def is_rejected(self, principal: Principal) -> bool:
+        entry = await self._store.get(principal.subject, self._alias)
+        return entry is not None and entry[0].rejected_at is not None
+
+    async def mark_rejected(self, principal: Principal, access_token: str) -> None:
+        """Handle a backend's 401 for *access_token*: refresh once, else mark it rejected.
+
+        Acts only if *access_token* is still the one stored, so a late 401
+        for a superseded token (since refreshed, or re-linked) leaves its
+        replacement alone. A lost CAS race means something newer was
+        written, so it is dropped the same way.
+
+        A credential with a refresh token first gets one refresh, since the
+        AS may still honor the refresh token. The refreshed token is flagged
+        ``refreshed_after_rejection``, so a 401 for it rejects rather than
+        refreshing again. Only a definite refusal from the AS rejects; if
+        the AS can't be reached the credential is left as it was and the
+        next 401 tries again. The request that got the 401 is never
+        replayed, since a tool call may have side effects.
+        """
+        entry = await self._store.get(principal.subject, self._alias)
+        if entry is None:
+            return
+        cred, version = entry
+        if cred.access_token.get_secret_value() != access_token:
+            return
+
+        if cred.refresh_token is not None and not cred.refreshed_after_rejection:
+            try:
+                refreshed = await self._refresh(cred)
+            except HTTPException:
+                pass  # the AS refused the refresh token: reject below
+            except httpx.HTTPError as exc:
+                self._log.warning(
+                    "oauth21.mark_rejected.refresh_failed",
+                    subject=principal.subject,
+                    error=str(exc),
+                )
+                return
+            else:
+                flagged = refreshed.model_copy(
+                    update={"refreshed_after_rejection": True}
+                )
+                if await self._write_unless_superseded(principal, flagged, version):
+                    self._log.info(
+                        "oauth21.refreshed_after_rejection",
+                        subject=principal.subject,
+                    )
+                return
+
+        rejected = cred.model_copy(update={"rejected_at": datetime.now(UTC)})
+        if await self._write_unless_superseded(principal, rejected, version):
+            self._log.warning("oauth21.credential_rejected", subject=principal.subject)
+
+    async def _write_unless_superseded(
+        self, principal: Principal, cred: StoredOAuthCredential, version: int
+    ) -> bool:
+        """CAS-write *cred* over *version*; False if something newer was written first."""
+        try:
+            await self._store.write_cas(
+                principal.subject, self._alias, cred, expected_version=version
+            )
+        except VersionConflict:
+            self._log.info(
+                "oauth21.mark_rejected.superseded", subject=principal.subject
+            )
+            return False
+        return True
 
     async def issue(
         self,
@@ -341,6 +431,16 @@ class OAuth21Provider(CredentialProvider):
                 ),
             )
         cred, version = entry
+
+        if cred.rejected_at is not None:
+            raise HTTPException(
+                status_code=401,
+                detail=(
+                    f"OAuth 2.1 token for alias {self._alias!r} was rejected "
+                    "by the service. Please re-link this account from the "
+                    "portal's Identities page."
+                ),
+            )
 
         if cred.refresh_token is None:
             # Nothing to refresh, so neither the refresh window nor the
@@ -479,7 +579,9 @@ class OAuth21Provider(CredentialProvider):
             cred_class=self.cred_class,
             target=target,
             kind=CredentialKind.BEARER,
-            expires_at=cred.expires_at.timestamp(),
+            expires_at=(
+                cred.expires_at.timestamp() if cred.expires_at is not None else None
+            ),
             payload={
                 "access_token": cred.access_token.get_secret_value(),
                 "token_type": "Bearer",
