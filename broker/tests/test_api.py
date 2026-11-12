@@ -5,6 +5,7 @@ import time
 from typing import TYPE_CHECKING
 
 import pytest
+import structlog.testing
 from cryptography.fernet import Fernet
 
 from af_mcp_broker.mcp.registry import ToolRouting
@@ -293,6 +294,32 @@ def test_catalog_status_link_required_when_not_linked(
     assert rucio["status"] == "link_required"
     assert rucio["status_detail"]
     assert rucio["correlation_id"] is None
+
+
+def test_catalog_unlinked_mint_and_inject_caller_is_told_to_link(
+    app_client: tuple[TestClient, dict],
+    make_principal: Callable[..., object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ "ami" is an x509 ("mint and inject") service: a caller who has not
+    linked it is told to link, from the live is_linked() check alone -- no
+    listing failure is logged for them."""
+    from af_mcp_broker.credentials.x509 import X509Provider
+
+    async def _unlinked(self, principal) -> bool:
+        return False
+
+    monkeypatch.setattr(X509Provider, "is_linked", _unlinked)
+
+    client, state = app_client
+    state["principal"] = make_principal(groups=["atlas"])
+    with structlog.testing.capture_logs() as logs:
+        resp = client.get("/v1/catalog", headers=_AUTH)
+    assert resp.status_code == 200, resp.text
+    ami = {s["name"]: s for s in resp.json()["servers"]}["ami"]
+    assert ami["status"] == "link_required"
+    assert ami["status_detail"].startswith("Link your identity")
+    assert [e for e in logs if e["event"] == "aggregator.service_list_failed"] == []
 
 
 def test_catalog_status_available_when_permission_and_linked(

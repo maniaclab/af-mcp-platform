@@ -29,6 +29,7 @@ from af_mcp_broker.authorization import (
 )
 from af_mcp_broker.identity import Principal, keycloak_dependency
 from af_mcp_broker.mcp.aggregator import (
+    NotLinkedForListing,
     ToolListingEntry,
     fetch_service_tool_listing,
     resolve_list_time_credential,
@@ -286,9 +287,18 @@ async def get_service_tools(
 
     credential_registry = _get_credential_registry(request)
     broker_token_issuer = getattr(request.app.state, "broker_token_issuer", None)
-    headers, skip_reason = await resolve_list_time_credential(
-        spec, credential_registry, principal, broker_token_issuer
-    )
+    try:
+        headers, skip_reason = await resolve_list_time_credential(
+            spec, credential_registry, principal, broker_token_issuer
+        )
+    except NotLinkedForListing:
+        logger.info(
+            "catalog.tools_list_failed",
+            subject=principal.subject,
+            target=spec.name,
+            status="not_linked",
+        )
+        return _respond(spec, "not_linked", [], policy, registry, caps)
 
     # The cache only ever short-circuits a caller whose credential
     # resolution succeeded (skip_reason None) -- a degraded caller
