@@ -634,7 +634,7 @@ status it can change:
 
 | Reason | Describes | Recorded against | Catalog status |
 |---|---|---|---|
-| `unavailable` | the backend (down, timing out, or an unexplained 401) | the service, seen by every caller | `unavailable` |
+| `unavailable` | the backend (down, not answering within the listing deadline `MCP_LIST_TIMEOUT_SECONDS`, an unexplained 401, or a reply the broker cannot parse) | the service, seen by every caller | `unavailable` |
 | `unauthorized` | one caller's credential, which the backend rejected, or a stored `oauth21` credential already marked rejected (no request is sent for it) | that caller and service only | `link_required` ("re-link"), `link_state: "rejected"`; not used for an `oauth21` credential, see below |
 | `not_linked` | one caller, who has no credential for the service; logged at INFO. A credentialed service's (`bearer`, `x509`, `krb5`, `servicex`) tools are listed only for a caller who has linked the credential, so for an unlinked caller the listing is skipped without minting a credential or contacting the backend | that caller and service only | `link_required` ("link") |
 
@@ -650,8 +650,24 @@ Because that provider refreshes or rejects the credential itself
 `unauthorized` record is not consulted, and a refreshed or re-linked
 credential stops reading as rejected immediately.
 
+A backend that answers a JSON-RPC request with HTTP 200 and something that is
+not a JSON document (an undecoded gzip body, an HTML page from a proxy) fails
+the request as soon as the response arrives (`BackendInvalidResponse`, raised
+from an httpx response hook in `mcp/aggregator.py`). It logs
+`aggregator.backend_invalid_response` with the service, status code, content
+type and what was wrong, never the body; a listing records `unavailable`, and a
+`tools/call` returns an error naming the service and saying it returned an
+invalid response.
+
 A successful listing by a caller clears that caller's own record and the
-service-wide one, never another caller's. Caller-specific records are held
+service-wide one, never another caller's. Listings are cached per caller and
+service (a failed one for 30 seconds), so a caller's cached listing and own
+caller-specific record (never the service-wide one) are also dropped the moment a credential for that service is linked
+(OAuth 2.1 callback, ServiceX link, Kerberos keytab/ticket, x509 proxy mint)
+or revoked, and the next `tools/list` reaches the backend; see
+[docs/auth.md](auth.md#when-a-new-link-shows-up-in-toolslist). A
+`keycloak-brokered` link is made in Keycloak, which the broker does not
+observe, so that type still waits out the 30 seconds. Caller-specific records are held
 in process memory, capped at 4096 entries (least recently recorded evicted
 first); each replica keeps its own, so a caller whose requests land on
 different replicas can see the status differ until each replica has

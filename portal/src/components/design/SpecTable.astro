@@ -1,0 +1,24 @@
+---
+/**
+ * SpecTable.astro — a reference table in the portal's own table markup
+ * (`table-container af-box` + `table af-compact`). `columns` are the header
+ * cells; the default slot holds the body rows. It scrolls inside its own box
+ * at narrow widths. `caption` names it for assistive technology.
+ */
+interface Props {
+  columns: string[];
+  caption: string;
+}
+
+const { columns, caption } = Astro.props;
+---
+
+<div class="table-container af-box design-table">
+  <table class="af-compact table">
+    <caption class="sr-only">{caption}</caption>
+    <thead>
+      <tr>{columns.map((c) => <th scope="col">{c}</th>)}</tr>
+    </thead>
+    <tbody><slot /></tbody>
+  </table>
+</div>

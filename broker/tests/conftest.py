@@ -401,6 +401,24 @@ async def run_asgi_app(app: Any, port: int | None = None) -> AsyncIterator[str]:
             sock.close()
 
 
+class HungBackend:
+    """ASGI app that reads each request and never responds, recording how many requests arrived and how many connections were later closed by the client."""
+
+    def __init__(self) -> None:
+        self.requests = 0
+        self.disconnects = 0
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] != "http":
+            return
+        self.requests += 1
+        while True:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                self.disconnects += 1
+                return
+
+
 @asynccontextmanager
 async def run_aggregator_async(mcp: FastMCP, path: str = "/mcp") -> AsyncIterator[str]:
     """Like fastmcp.utilities.tests.run_server_async, but for an aggregator
@@ -491,6 +509,7 @@ def static_principal_cache() -> tuple[Any, Any]:
     from af_mcp_broker.principal_directory import (
         PrincipalAttributes,
         PrincipalDirectory,
+        PrincipalDisabledError,
     )
 
     class _StaticDirectory(PrincipalDirectory):
@@ -499,9 +518,12 @@ def static_principal_cache() -> tuple[Any, Any]:
             self.posix_by_subject: dict[str, dict[str, int | str]] = {}
             self.resolve_calls: list[str] = []
             self.unavailable_subjects: set[str] = set()
+            self.disabled_subjects: set[str] = set()
 
         async def resolve(self, principal_id: str) -> PrincipalAttributes:
             self.resolve_calls.append(principal_id)
+            if principal_id in self.disabled_subjects:
+                raise PrincipalDisabledError(principal_id)
             if principal_id in self.unavailable_subjects:
                 raise RuntimeError(f"directory unavailable for {principal_id!r} (test)")
             posix = self.posix_by_subject.get(principal_id, {})

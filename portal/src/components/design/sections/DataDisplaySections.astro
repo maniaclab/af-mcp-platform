@@ -1,0 +1,81 @@
+---
+import StatusMark from '../../ui/StatusMark.vue';
+import DesignSection from '../DesignSection.astro';
+import DoDont from '../DoDont.astro';
+import DontExamples from '../DontExamples.astro';
+import Stage from '../Stage.astro';
+import DisclosureDemo from '../DisclosureDemo.vue';
+import SegmentedDemo from '../SegmentedDemo.vue';
+
+const PAGES = ['Overview', 'Services', 'Identities', 'Tokens', 'Usage', 'Entitlements', 'Admin'];
+---
+
+<DesignSection id="kv">
+  <Fragment slot="definition"> A key-value list shows the facts about one thing. A stat shows one number that matters. Neither needs a card around it. </Fragment>
+  <div class="design-cols">
+    <Stage label="Key-value list (af-kv)">
+      <dl class="af-kv">
+        <dt>Status</dt>
+        <dd><StatusMark tone="ok" label="Valid" /></dd>
+        <dt>Subject</dt>
+        <dd><code>/DC=ch/DC=cern/OU=Users/CN=example</code></dd>
+        <dt>VO</dt>
+        <dd>atlas</dd>
+        <dt>Expires</dt>
+        <dd>In 11 hours</dd>
+      </dl>
+    </Stage>
+    <Stage label="Stats (af-stats)">
+      <div class="af-stats">
+        <div class="af-stat"><span>Calls</span><b>1,601</b><small>Last 30 days</small></div>
+        <div class="af-stat"><span>Errors</span><b>11</b><small>0.7%</small></div>
+        <div class="af-stat"><span>Services used</span><b>4</b><small>of 6 available</small></div>
+      </div>
+    </Stage>
+  </div>
+  <DoDont>
+    <div slot="do" class="af-stats">
+      <div class="af-stat"><span>Calls</span><b>1,601</b></div>
+      <div class="af-stat"><span>Errors</span><b>11</b></div>
+    </div>
+    <Fragment slot="do-note">set stats as plain numbers in a row, separated by space.</Fragment>
+    <DontExamples slot="dont" kind="shadow-cards" />
+    <Fragment slot="dont-note">put each number in its own shadowed card with a coloured value.</Fragment>
+  </DoDont>
+  <p class="af-help">Used on: Identities (certificate and account details), Usage and Overview (stats), Admin.</p>
+</DesignSection>
+
+<DesignSection id="nav">
+  <Fragment slot="definition"> The sidebar lists every page, always. The current page is marked by weight plus the accent marker. Segmented controls switch a view; badges are pill labels for a category. </Fragment>
+  <div class="design-cols">
+    <Stage label="Navigation (af-nav)">
+      <nav class="af-nav" aria-label="Primary navigation, example">
+        <div class="af-nav-group">
+          <ul role="list">
+            {
+              PAGES.map((p) => (
+                <li>
+                  <a href="#nav" aria-current={p === 'Tokens' ? 'page' : undefined}>
+                    {p}{' '}
+                  </a>
+                </li>
+              ))
+            }
+          </ul>
+        </div>
+      </nav>
+    </Stage>
+    <div class="design-stage">
+      <h3 class="design-label">Segmented control: Usage range</h3>
+      <div class="design-stage__body"><div><SegmentedDemo client:load /></div></div>
+      <h3 class="design-label">Badge: a category, never a status</h3>
+      <div class="design-stage__body is-row">
+        <span class="badge" data-variant="outline">ATLAS</span>
+        <span class="badge" data-variant="outline">ESCAPE</span>
+        <span class="badge" data-variant="outline">read-only</span>
+      </div>
+    </div>
+  </div>
+  <DisclosureDemo client:load />
+  <p class="af-help">The selected segment is ink, not the accent: the accent is reserved for the primary action and the current page. Admin appears in the sidebar only for operators. In-page tabs are not a sidebar.</p>
+</DesignSection>

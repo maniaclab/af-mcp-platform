@@ -1,7 +1,7 @@
 /*
  * global.css — Tailwind v4 entrypoint and single source of truth for the
  * AF palette, fonts, type scale, and light/dark theming. The worked reference
- * for every value here is docs/design-language/index.html.
+ * for every value here is the portal's /design/ page (src/pages/design.astro).
  *
  * Tailwind 4 is CSS-first: the JS `tailwind.config.mjs` is gone. Design tokens
  * are declared here in a `@theme` block. Tailwind generates matching utility
@@ -74,6 +74,12 @@
 
 @plugin '@tailwindcss/forms';
 @plugin '@tailwindcss/typography';
+
+/* The /design/ reference page is mostly prose, and Tailwind treats every word
+ * in a scanned file as a possible utility (`lowercase`, `blur`), which would
+ * add rules to the stylesheet every page loads. Its components use only
+ * classes that other pages already use or that design.css defines. */
+@source not '../components/design';
 
 @theme {
   /* --------------------------------------------------------------------

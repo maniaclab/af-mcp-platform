@@ -208,6 +208,83 @@ describe('Grid Certificates accordion', () => {
   });
 });
 
+describe('Grid Certificates checklist content', () => {
+  const PREFLIGHT_BAD_KEY: X509Preflight = {
+    unixname: 'auser',
+    root: '/home/auser/.globus',
+    ok: false,
+    checks: [
+      {
+        name: 'usercert',
+        path: '/home/auser/.globus/usercert.pem',
+        exists: true,
+        mode: '0644',
+        readable_by_service: true,
+        ok: true,
+      },
+      {
+        name: 'userkey',
+        path: '/home/auser/.globus/userkey.pem',
+        exists: true,
+        mode: '0644',
+        readable_by_service: true,
+        ok: false,
+        detail:
+          'userkey.pem is 0644 but must be 0400 or 0600 (readable only by you). Fix: chmod 400 ~/.globus/userkey.pem',
+        required_modes: ['0400', '0600'],
+      },
+    ],
+  };
+
+  async function expandWith(body: X509Preflight): Promise<VueWrapper> {
+    vi.mocked(fetchX509Preflight).mockResolvedValueOnce(body);
+    const wrapper = mountCard();
+    await toggles(wrapper).preflightToggle.trigger('click');
+    await flushPromises();
+    return wrapper;
+  }
+
+  /** The table row whose first cell matches *label*. */
+  function row(wrapper: VueWrapper, label: string) {
+    const found = wrapper.findAll('tbody tr').find((r) => r.find('td').text() === label);
+    expect(found).toBeDefined();
+    return found!;
+  }
+
+  function rowCells(wrapper: VueWrapper, label: string): string[] {
+    return row(wrapper, label)
+      .findAll('td')
+      .map((td) => td.text());
+  }
+
+  it('shows the required mode next to the found mode on every file row', async () => {
+    const wrapper = await expandWith(PREFLIGHT_BAD_KEY);
+    const headers = wrapper.findAll('thead th').map((th) => th.text());
+    expect(headers).toContain('Required mode');
+
+    const required = headers.indexOf('Required mode');
+    expect(rowCells(wrapper, 'Private key (userkey.pem)')[required]).toBe('0400 or 0600');
+    expect(rowCells(wrapper, 'Certificate (usercert.pem)')[required]).toBe('Any');
+  });
+
+  it('marks a found mode outside the required set as bad, and an allowed one plainly', async () => {
+    const wrapper = await expandWith(PREFLIGHT_BAD_KEY);
+    const modeIdx = wrapper
+      .findAll('thead th')
+      .map((th) => th.text())
+      .indexOf('Mode');
+    const keyRow = row(wrapper, 'Private key (userkey.pem)');
+    const certRow = row(wrapper, 'Certificate (usercert.pem)');
+    expect(keyRow.findAll('td')[modeIdx].find('.af-mark.bad').exists()).toBe(true);
+    expect(certRow.findAll('td')[modeIdx].find('.af-mark').exists()).toBe(false);
+  });
+
+  it('labels a fully passing checklist "Ready"', async () => {
+    const wrapper = await expandWith({ ...PREFLIGHT_OK, checks: [] });
+    expect(toggles(wrapper).preflightToggle.find('.xc__chip').text()).toBe('Ready');
+  });
+});
+
 describe('proxy revoke confirmation', () => {
   it('needs a second click, then revokes, emits revoked and shows the no-proxy state', async () => {
     vi.mocked(fetchProxyStatus).mockResolvedValueOnce(ACTIVE);

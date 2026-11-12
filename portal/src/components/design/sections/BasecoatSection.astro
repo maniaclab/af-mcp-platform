@@ -1,0 +1,174 @@
+---
+import DesignSection from '../DesignSection.astro';
+import SpecTable from '../SpecTable.astro';
+import TokenTable from '../TokenTable.vue';
+
+const BRIDGE = [
+  { name: '--primary', use: 'The primary button, checked controls and links: the AF accent.' },
+  { name: '--primary-foreground', use: 'Text on a primary fill: the AF on-accent colour.' },
+  { name: '--border', use: 'Basecoat container outlines, from the AF border.' },
+  { name: '--input', use: 'Basecoat control outlines, from the AF strong border.' },
+  { name: '--ring', use: 'The focus border and 3px halo of Basecoat controls.' },
+  { name: '--muted-foreground', use: 'Basecoat secondary text, chart axis labels.' },
+  { name: '--chart-1', use: 'A chart bar: a neutral step.' },
+  { name: '--chart-2', use: 'A chart bar on hover.' },
+];
+---
+
+<DesignSection id="basecoat">
+  <Fragment slot="definition">
+    The portal is built on Basecoat (<code>basecoat-css</code>): plain CSS classes that work the same in <code>.astro</code> pages and <code>.vue</code> components. The standing rule is <b>Basecoat-class-first</b>: if Basecoat ships a component, use its class and attributes and re-theme it through the token bridge; extend it with a separate <code>af-</code> class; never redefine a Basecoat class. Basecoat supplies structure, the portal's tokens supply identity.
+  </Fragment>
+
+  <h3>Basecoat components in use</h3>
+  <SpecTable columns={['Basecoat class', 'As used here', 'Notes']} caption="Basecoat components in use">
+    <tr>
+      <td><code>btn</code></td>
+      <td>
+        No variant: the primary action. <code>data-variant="outline"</code>: ordinary action. <code>data-variant="ghost"</code>: low emphasis (Cancel, row links). <code>data-size="sm"</code> 32px in tables and banners; default 36px; <code>data-size="lg"</code> 40px; <code>data-size="icon"</code> 36px square.
+      </td>
+      <td>
+        One primary per page. Danger is <code>btn af-danger</code> with <code>data-variant="outline"</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>badge</code></td>
+      <td><code>data-variant="outline"</code>: a neutral pill label for a category (permission, credential type, read or write).</td>
+      <td>20px, 12px text. Never status.</td>
+    </tr>
+    <tr>
+      <td><code>alert</code></td>
+      <td>The box for banners and notes, with <code>af-banner</code> or <code>af-note</code>.</td>
+      <td>See Banner, note and hint.</td>
+    </tr>
+    <tr>
+      <td><code>table-container</code> + <code>table</code></td>
+      <td>
+        With <code>af-box</code> (frame); <code>af-compact</code>, <code>af-num</code>, <code>af-act</code>, <code>af-sub</code> on top.
+      </td>
+      <td>Three or more items with the same fields.</td>
+    </tr>
+    <tr>
+      <td><code>field</code>, <code>input</code>, <code>native-select</code>, <code>textarea</code>, <code>label</code>, checkbox</td>
+      <td>
+        A label above the control, hint or error below. <code>field</code> with <code>data-orientation="horizontal"</code> for a checkbox. <code>af-narrow</code> caps a field at 360px.
+      </td>
+      <td>A placeholder never stands in for a label.</td>
+    </tr>
+    <tr>
+      <td><code>button-group</code></td>
+      <td>With <code>af-toggle</code>: a single-choice switch (<code>SegmentedControl</code>). The selected button is ink, not the accent.</td>
+      <td>A range or filter, not page navigation.</td>
+    </tr>
+    <tr>
+      <td><code>dialog</code></td>
+      <td>
+        Native <code>&lt;dialog&gt;</code> with <code>af-modal</code> (scrim, overlay shadow). <code>ConfirmDialog</code> wraps it; focus starts on Cancel.
+      </td>
+      <td>Decisions that cannot be undone, or a short form.</td>
+    </tr>
+    <tr>
+      <td><code>empty</code></td>
+      <td>Centred title, sentence and optional action.</td>
+      <td>A list with nothing in it.</td>
+    </tr>
+    <tr>
+      <td><code>chart</code></td>
+      <td>
+        Through <code>BarChart.vue</code> (Chart.js underneath, loaded only where a chart mounts): neutral <code>--chart-N</code> bars.
+      </td>
+      <td>See Chart.</td>
+    </tr>
+  </SpecTable>
+
+  <h3>Portal extensions on Basecoat</h3>
+  <SpecTable columns={['Class', 'Why it exists']} caption="Portal extensions on Basecoat classes">
+    <tr>
+      <td><code>af-danger</code></td>
+      <td>Basecoat's destructive variant is a tinted fill; the contract wants a red outline and label, never a fill, so it cannot be mistaken for a red facility accent.</td>
+    </tr>
+    <tr>
+      <td><code>af-banner</code> / <code>af-note</code> (<code>ok</code>, <code>warn</code>, <code>bad</code>, <code>info</code>) on <code>alert</code></td>
+      <td>Basecoat's <code>alert</code> has no status treatments and expects an svg; these add the solid banner fills and tinted notes and lay a mark, text and action in one wrapping row. <code>af-banner slim</code> is the one-line shell bar.</td>
+    </tr>
+    <tr>
+      <td><code>af-box</code>, <code>af-compact</code>, <code>af-num</code>, <code>af-act</code>, <code>af-sub</code></td>
+      <td>The table frame, 32px density, right-aligned numbers, the action cell and secondary cells.</td>
+    </tr>
+    <tr>
+      <td><code>af-toggle</code></td>
+      <td>Fills the selected <code>button-group</code> button with ink rather than the accent.</td>
+    </tr>
+    <tr>
+      <td><code>af-modal</code></td>
+      <td>The scrim and overlay shadow on <code>dialog</code>.</td>
+    </tr>
+    <tr>
+      <td><code>af-btn-xl</code></td>
+      <td>The one 52px call to action on the landing page.</td>
+    </tr>
+  </SpecTable>
+
+  <h3>Bespoke pieces</h3>
+  <SpecTable columns={['Class or component', 'What it is for', 'Not when']} caption="Pieces Basecoat has no equivalent for">
+    <tr>
+      <td><code>af-st</code> + <code>af-mark</code> (<code>StatusMark</code>)</td>
+      <td>A status word with its shape. Tones <code>ok</code>, <code>warn</code>, <code>bad</code>, <code>info</code>, <code>busy</code>, <code>off</code>.</td>
+      <td>Labelling a category; the mark without a word.</td>
+    </tr>
+    <tr>
+      <td><code>PageMessage</code></td>
+      <td>A page's banner slot: a problem or warning as <code>af-banner</code>, a hint as <code>af-note info</code>.</td>
+      <td>More than one per page.</td>
+    </tr>
+    <tr>
+      <td><code>AsyncState</code></td>
+      <td>The loading, session-expired, access-denied, error and empty ladder for fetched data.</td>
+      <td>Hand-written loading or error markup.</td>
+    </tr>
+    <tr>
+      <td><code>af-kv</code></td>
+      <td>A two-column list of label and value for one record.</td>
+      <td>Comparing several records.</td>
+    </tr>
+    <tr>
+      <td><code>af-stats</code> + <code>af-stat</code></td>
+      <td>A label, a 24px value and an optional 12px line.</td>
+      <td>A number needing a row of context.</td>
+    </tr>
+    <tr>
+      <td><code>af-copy</code> (<code>CopyField</code>)</td>
+      <td>A read-only mono value with a Copy button ("Copied" for two seconds).</td>
+      <td>Values nobody copies.</td>
+    </tr>
+    <tr>
+      <td><code>Disclosure</code>, <code>ArmedConfirmButton</code></td>
+      <td>An expanding region; a two-step inline confirm.</td>
+      <td>Hiding the page's main content; anything needing an explanation of what is lost.</td>
+    </tr>
+    <tr>
+      <td><code>InfoTip</code> / <code>PopoverTooltip</code></td>
+      <td>A tooltip on the native Popover API. A documented exception: Basecoat's <code>data-tooltip</code> is clipped by scrolling ancestors.</td>
+      <td>Anything needed to finish the task; it is not reachable on touch.</td>
+    </tr>
+    <tr>
+      <td><code>af-nav</code>, <code>af-nav-group</code>, <code>af-nav-label</code></td>
+      <td>The sidebar. A documented exception: the shell sidebar (fixed, grouped, count badges, drawer under 860px) is built in <code>Base.astro</code>, because Basecoat's sidebar targets an app-shell layout the portal does not use.</td>
+      <td>In-page tabs.</td>
+    </tr>
+    <tr>
+      <td><code>af-page</code>, <code>af-page-head</code>, <code>af-sect</code>, <code>af-help</code>, <code>af-wrap</code>, <code>af-topbar</code>, <code>af-brand</code>, <code>skip-link</code>, <code>af-icon</code>, <code>EntitlementMark</code></td>
+      <td>Page structure, shell, icon sizing; the entitlements matrix cell.</td>
+      <td></td>
+    </tr>
+  </SpecTable>
+
+  <h3>The token bridge</h3>
+  <div class="design-prose">
+    <p>
+      Basecoat's own variables (<code>--primary</code>, <code>--border</code>, <code>--ring</code>, <code>--chart-1</code> ...) are set from the portal's tokens in <code>global.css</code>, so a colour is changed once. These are their values on this page right now. Try an accent above: <code>--primary</code> follows it.
+    </p>
+  </div>
+  <TokenTable client:load tokens={BRIDGE} specimen="colour" caption="Basecoat variables and the values they resolve to" />
+  <p class="af-help">How it is wired is in <code>docs/portal-styling.md</code>.</p>
+</DesignSection>

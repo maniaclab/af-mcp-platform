@@ -11,6 +11,8 @@ import {
   formatProxyExpiry,
   PROXY_EXPIRY_WARNING_SECONDS,
   preflightCheckLabel,
+  preflightModeMismatch,
+  preflightRequiredModeLabel,
   proxyExpiryState,
   x509LinkErrorMessage,
   x509LinkModeLabel,
@@ -174,6 +176,55 @@ describe('preflightCheckLabel', () => {
 
   it('passes unknown names through so new service checks still render', () => {
     expect(preflightCheckLabel('crl_freshness')).toBe('crl_freshness');
+  });
+});
+
+describe('preflightRequiredModeLabel', () => {
+  it('lists the service-reported modes', () => {
+    expect(
+      preflightRequiredModeLabel({
+        name: 'userkey',
+        path: '/home/a/.globus/userkey.pem',
+        exists: true,
+        ok: true,
+        required_modes: ['0400', '0600'],
+      }),
+    ).toBe('0400 or 0600');
+  });
+
+  it('says "Any" when the service sets no requirement', () => {
+    expect(
+      preflightRequiredModeLabel({
+        name: 'usercert',
+        path: '/home/a/.globus/usercert.pem',
+        exists: true,
+        ok: true,
+        mode: '0644',
+      }),
+    ).toBe('Any');
+  });
+});
+
+describe('preflightModeMismatch', () => {
+  const key = {
+    name: 'userkey',
+    path: '/home/a/.globus/userkey.pem',
+    exists: true,
+    ok: false,
+    required_modes: ['0400', '0600'],
+  };
+
+  it('is true when the found mode is outside the required set', () => {
+    expect(preflightModeMismatch({ ...key, mode: '0644' })).toBe(true);
+  });
+
+  it('is false when the found mode is allowed', () => {
+    expect(preflightModeMismatch({ ...key, mode: '0600' })).toBe(false);
+  });
+
+  it('is false when there is no found mode or no requirement', () => {
+    expect(preflightModeMismatch({ ...key, exists: false })).toBe(false);
+    expect(preflightModeMismatch({ ...key, mode: '0644', required_modes: null })).toBe(false);
   });
 });
 

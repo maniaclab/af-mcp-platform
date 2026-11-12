@@ -1,0 +1,76 @@
+---
+import type { PageMessage as PageMessageData } from '../../../lib/serviceStatus';
+import PageMessage from '../../ui/PageMessage.vue';
+import DesignSection from '../DesignSection.astro';
+import SpecTable from '../SpecTable.astro';
+import Stage from '../Stage.astro';
+
+const PROBLEM: PageMessageData = {
+  kind: 'banner',
+  tone: 'bad',
+  title: 'Rucio is misconfigured',
+  body: 'An operator needs to fix this. Quote reference EX-4F2A when you ask for help.',
+  action: null,
+};
+
+const WARNING: PageMessageData = {
+  kind: 'banner',
+  tone: 'warn',
+  title: 'Your linked CERN account was rejected',
+  body: 'Re-link it to use Rucio and AMI.',
+  action: { label: 'Re-link CERN account', href: '#banner' },
+};
+
+const HINT: PageMessageData = {
+  kind: 'hint',
+  title: '2 services are not linked.',
+  body: 'Link an account on the Identities page to use them.',
+  action: { label: 'Link an account', href: '#banner' },
+};
+---
+
+<DesignSection id="banner">
+  <Fragment slot="definition"> A banner is the page's one loud message: the most urgent thing about this person's access, with its fix. A note is quiet and sits beside the thing it explains. A hint is a note in the banner slot: information that never alarms, such as accounts the person has not linked. </Fragment>
+  <Stage label="Banners: a problem or a warning (PageMessage), then information and success">
+    <PageMessage message={PROBLEM} />
+    <PageMessage message={WARNING} />
+    <div class="alert af-banner info" role="status">
+      <span class="af-mark info" aria-hidden="true"></span>
+      <div>
+        <b>New services are available</b>Open the Services page to see which ones your account can use.
+      </div>
+    </div>
+    <div class="alert af-banner ok" role="status">
+      <span class="af-mark ok" aria-hidden="true"></span>
+      <div><b>CERN account linked</b>Rucio, AMI and PanDA now work for your account.</div>
+    </div>
+  </Stage>
+  <Stage label="Notes: inline, beside the thing they explain">
+    <div class="alert af-note warn" role="alert">
+      <span class="af-mark warn" aria-hidden="true"></span>
+      <span>This token expires in 5 days. Clients using it will need a new one.</span>
+    </div>
+    <div class="alert af-note info" role="status">
+      <span class="af-mark info" aria-hidden="true"></span>
+      <span>ServiceX uses its own credential. It is not affected by your grid proxy.</span>
+    </div>
+  </Stage>
+  <Stage label="Hint: a note in the banner slot, only when no banner is showing">
+    <PageMessage message={HINT} />
+  </Stage>
+  <Stage label="Maintenance: the slim information bar, on every page including the landing page">
+    <div class="alert af-banner info slim" role="status">
+      <span class="af-mark info" aria-hidden="true"></span>
+      <div>Maintenance mode is enabled: storage migration; expect brief interruptions.</div>
+    </div>
+  </Stage>
+  <SpecTable columns={['', 'Banner', 'Hint', 'Note']} caption="Banner, hint and note compared">
+    <tr><td>Where</td><td>Directly under the page header.</td><td>The banner slot, when no banner shows.</td><td>Inside a section or dialog.</td></tr>
+    <tr><td>How many</td><td>One per page. Problem beats warning.</td><td>One, and never with a banner.</td><td>As needed, but rarely more than one per section.</td></tr>
+    <tr><td>Fill</td><td>Solid status colour.</td><td>Tinted information colour with a border.</td><td>Tinted status colour with a border.</td></tr>
+    <tr><td>Action</td><td>At most one button, naming the fix.</td><td>At most one button.</td><td>A link in the sentence.</td></tr>
+    <tr><td>Announced as</td><td><code>role="alert"</code> for a problem or warning; <code>role="status"</code> for information (an account just linked, maintenance).</td><td><code>role="status"</code></td><td><code>role="status"</code>, or <code>role="alert"</code> for a warning or failure.</td></tr>
+    <tr><td>Colour</td><td colspan="3">A status colour in every case, so the facility accent is never a message.</td></tr>
+  </SpecTable>
+  <p class="af-help">Used on: Overview, Services, Identities, Tokens, Admin (banners); the maintenance bar on every page. Hints: Overview and Services.</p>
+</DesignSection>

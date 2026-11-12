@@ -36,6 +36,7 @@ const PAGES = {
   usage: '/usage/',
   entitlements: '/entitlements/',
   admin: '/admin/',
+  design: '/design/',
 };
 
 // Window height is tall so the capture is effectively full-page; a shorter

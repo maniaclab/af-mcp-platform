@@ -177,6 +177,33 @@ tells the portal how a linking flow starts: `"redirect"`
 to redirect to, so `link_url` stays null), or `"none"` (the AF-native types
 below, which have no linking step).
 
+### When a new link shows up in `tools/list`
+
+The aggregator caches each caller's listing per (subject, service), and a
+failed listing (for an x509/krb5/servicex service, an unlinked caller's
+skipped one) is cached for 30 seconds. Completing a link must not leave the
+caller waiting that out, so the `/v1` routes that complete one call
+`CredentialCache.notify_linked(subject, target)` — the counterpart of
+`revoke()`'s `on_revoke` — for every target of the identity-provider entry.
+That drops the caller's cached listing and their own caller-specific listing
+failure record (`not_linked`/`unauthorized`) for those services (no other
+caller's, no other service's, and never a service-wide `unavailable`), and their next `tools/list`
+reaches the backend. `app.py` wires both hooks to `invalidate_subject_cache`.
+
+| Type | Link event the broker sees | Listing cache after linking |
+|---|---|---|
+| `oauth21-direct` | `GET /v1/oauth/callback/{alias}` stores the token | dropped on a successful callback |
+| `servicex-token` | `POST /v1/servicex/link` | dropped on success |
+| `krb5-token` | `POST /v1/krb5/keytab` (keytab link) and `POST /v1/krb5/ticket` (ticket mint) | dropped on success |
+| `x509` | `POST /v1/x509/proxy` (proxy mint) | dropped on success |
+| `keycloak-brokered` | none — the link happens in Keycloak and the broker only fetches the brokered token later | not dropped; relies on the 30 s negative-entry TTL |
+| `broker-issued`, `condor-token`, service account | none — always linked | nothing to drop |
+
+A legacy-mode x509 link made by placing files in `~/.globus` is likewise
+invisible to the broker and relies on the TTL until the first proxy mint.
+A routine token refresh (`CredentialCache.put`) is not a link event and does
+not invalidate anything.
+
 ---
 
 ## Portal auth (OIDC public client)
@@ -358,6 +385,31 @@ Three separate concerns, deliberately kept separate in the code:
   `PRINCIPAL_CACHE_MAX_STALENESS_SECONDS` (default 6 hours) before failing
   closed, logging loudly the whole time — a brief Keycloak outage should
   not instantly lock out every authenticated caller.
+  **Disabling or deleting a user is not an outage.** When the directory
+  answers that the user is disabled (Keycloak `enabled: false`) or does not
+  exist, the cached value is dropped rather than served stale, and both
+  credential types are refused with the same vague 401 (a JWT would
+  otherwise get a 503) within one refresh interval (default ~45s) — a
+  still-valid access token and an unexpired, unrevoked PAT alike. The cause
+  (`disabled` or `not_found`) is only in the broker's
+  `principal_cache.principal_rejected` warning log, never in the response.
+  Re-enabling the user restores access at the next refresh. A directory view
+  that omits `enabled` entirely is treated as enabled; Keycloak's
+  `GET /users/{id}` always includes it.
+  The rejection is also written to the principal-cache backend as a
+  tombstone (an ordinary write to the same record; no new Vault capability
+  or policy change is needed). A restarted replica, or another replica with
+  nothing cached for that user, therefore fails closed during a Keycloak
+  outage instead of seeding the user's last good value, and stays closed
+  until Keycloak says the user is active again, at which point the next
+  successful resolve overwrites the tombstone. The guarantee is: refused
+  within one refresh interval on a replica that can reach Keycloak; durable
+  across restarts and replicas during an outage. One limit: a replica that
+  already holds that user's value in memory learns of the disablement only
+  from its own refresh, so it can keep serving it stale if it never reaches
+  Keycloak after the disablement. A failure writing the tombstone is logged
+  (`principal_cache.rejection_persist_failed`) and the request is still
+  refused.
 - **Permission engine** (`authorization/`) — unchanged; still gates on
   `group_permissions` from whatever groups the principal cache currently
   reports, regardless of which credential type asked.
@@ -1014,6 +1066,15 @@ transient-failure problem; every other failure (unreachable, timeout,
 401/403/429/5xx) leaves the link untouched. Unlike x509 there is no POSIX
 identity requirement at all: a ServiceX access token is a pure bearer
 credential, not tied to a unix account.
+
+When ServiceX rejects a token at link time, the broker cannot tell revoked
+from expired from signed before a ServiceX key rotation. It logs
+`servicex_service.redeem.bad_refresh_token` (WARNING: subject, upstream
+status, `correlation_id`; never the token or the service's body) and returns
+400 whose `detail` says ServiceX rejected the token, to generate a new one
+and re-link, ending in `(ref: <correlation_id>)`; the body also carries
+`correlation_id`. The same id is sent to servicex-token-service as
+`X-Request-ID`, so its audit line can be joined to the broker's.
 
 Configuration is one `identity_providers` entry of type `servicex-token`
 with a required `service_url` (the servicex-token-service deployment's

@@ -947,3 +947,16 @@ def test_credmon_top_token_ttl_must_exceed_sync_interval():
         Settings(
             credmon_top_token_ttl_seconds=3600, credmon_sync_interval_seconds=14400
         )
+
+
+def test_mcp_list_timeout_defaults_to_ten_seconds_and_reads_env(monkeypatch):
+    assert Settings().mcp_list_timeout_seconds == pytest.approx(10.0)
+    monkeypatch.setenv("MCP_LIST_TIMEOUT_SECONDS", "4.5")
+    assert Settings().mcp_list_timeout_seconds == pytest.approx(4.5)
+
+
+@pytest.mark.parametrize("value", ["0", "-1"])
+def test_mcp_list_timeout_must_be_positive(monkeypatch, value):
+    monkeypatch.setenv("MCP_LIST_TIMEOUT_SECONDS", value)
+    with pytest.raises(ValueError, match="mcp_list_timeout_seconds"):
+        Settings()

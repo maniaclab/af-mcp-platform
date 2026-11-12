@@ -6,8 +6,8 @@
  * `--color-af-accent` / `--color-af-on-accent`); a facility opts in to its
  * own accent by setting `accentColor` (and optionally `accentColorDark`).
  * With nothing configured no inline property is written, so the stylesheet
- * defaults apply. The derivation mirrors `applyAccent` in
- * docs/design-language/index.html.
+ * defaults apply. The /design/ page's accent switcher
+ * reuses `resolveAccent` (see designAccent.ts).
  */
 
 import type { BrandingConfig } from './branding';

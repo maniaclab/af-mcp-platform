@@ -1,0 +1,187 @@
+---
+import { Plus } from '@lucide/astro';
+import type { PageMessage as PageMessageData } from '../../../lib/serviceStatus';
+import PageMessage from '../../ui/PageMessage.vue';
+import StatusMark from '../../ui/StatusMark.vue';
+import DesignSection from '../DesignSection.astro';
+import SpecTable from '../SpecTable.astro';
+
+const NAV = ['Overview', 'Services', 'Identities', 'Tokens', 'Usage', 'Entitlements'];
+
+const EXPIRING: PageMessageData = {
+  kind: 'banner',
+  tone: 'warn',
+  title: 'gemini-cli-workstation expires in 5 days',
+  body: 'Create a replacement and update the client.',
+  action: { label: 'New token', href: '#pattern' },
+};
+---
+
+<DesignSection id="pattern">
+  <Fragment slot="definition"> Every signed-in page has the same four parts in the same order: title with the one primary action, the banner slot, then sections. A person who has seen one page knows where to look on all of them. </Fragment>
+  <h3 class="design-label">A signed-in page: Tokens, example data</h3>
+  <div class="design-frame">
+    <aside>
+      <span class="af-brand">AF&nbsp;/&nbsp;MCP</span>
+      <nav class="af-nav" aria-label="Primary navigation, page pattern example">
+        <div class="af-nav-group">
+          <ul role="list">
+            {
+              NAV.map((p) => (
+                <li>
+                  <a href="#pattern" aria-current={p === 'Tokens' ? 'page' : undefined}>
+                    {p}{' '}
+                  </a>
+                </li>
+              ))
+            }
+          </ul>
+        </div>
+      </nav>
+    </aside>
+    <div class="af-page">
+      <div class="af-page-head">
+        <div>
+          <h4>Tokens</h4>
+          <p>For clients that can't sign in with a browser.</p>
+        </div>
+        <button type="button" class="btn"><Plus class="af-icon" size={16} aria-hidden="true" />New token</button>
+      </div>
+      <PageMessage message={EXPIRING} />
+      <section class="af-sect" aria-labelledby="pattern-tokens">
+        <h5 id="pattern-tokens">Your tokens</h5>
+        <div class="table-container af-box">
+          <table class="table">
+            <caption class="sr-only">Tokens, example data</caption>
+            <thead>
+              <tr>
+                <th scope="col">Name</th>
+                <th scope="col">Status</th>
+                <th scope="col">Last used</th>
+                <th scope="col"><span class="sr-only">Actions</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>claude-desktop-laptop</td>
+                <td><StatusMark tone="ok" label="Active" /></td>
+                <td class="af-sub">2 hours ago</td>
+                <td class="af-act"><button type="button" class="btn af-danger" data-variant="outline" data-size="sm">Revoke</button></td>
+              </tr>
+              <tr>
+                <td>gemini-cli-workstation</td>
+                <td><StatusMark tone="warn" label="Expires in 5 days" /></td>
+                <td class="af-sub">Yesterday</td>
+                <td class="af-act"><button type="button" class="btn af-danger" data-variant="outline" data-size="sm">Revoke</button></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </div>
+  <SpecTable columns={['Part', 'Rule']} caption="The parts of a page">
+    <tr><td>1. Maintenance bar</td><td>Only while maintenance is on: the slim information bar above everything.</td></tr>
+    <tr><td>2. Page header</td><td>Title (24px), one line saying what the page is for, and at most one primary button on the right.</td></tr>
+    <tr><td>3. Banner slot</td><td>Empty when nothing is wrong. Otherwise the single most urgent message for this page: a banner for a problem or warning, a hint (a quiet note) for information. Problem beats warning beats hint.</td></tr>
+    <tr><td>4. Sections</td><td>Full width, stacked, 32px apart (24px on a compact page). Each has a 16px title and one main component: a table, a key-value list, a row of stats or a copy field.</td></tr>
+    <tr><td>Sidebar</td><td>Same on every page. Accent marker on the current page.</td></tr>
+  </SpecTable>
+  <p class="af-help">
+    The example is built from the real page classes (<code>af-page</code>, <code>af-page-head</code>, <code>af-sect</code>, <code>af-nav</code>) and components; the shell's sidebar and drawer themselves live in <code>Base.astro</code>. A data page also shows a problem banner when its own data fails to load.
+  </p>
+</DesignSection>
+
+<DesignSection id="pages">
+  <Fragment slot="definition"> What each page is for, its one primary action, when its banner or hint appears and which component carries it. </Fragment>
+  <SpecTable columns={['Page', 'Job', 'Primary action', 'Banner slot', 'Main components', 'Density']} caption="Each page's job, action, banner and components">
+    <tr>
+      <td>Landing <code>/</code></td>
+      <td>Say what the platform is; sign in.</td>
+      <td>Sign in (<code>af-btn-xl</code>)</td>
+      <td>Maintenance bar only</td>
+      <td>Headline, particle canvas, gateway diagram, benefits</td>
+      <td>Spacious</td>
+    </tr>
+    <tr>
+      <td>Overview</td>
+      <td>Is my access working? How do I connect a client?</td>
+      <td>None; Copy on the endpoint</td>
+      <td> In priority order: grid proxy expired (problem); a service misconfigured (problem) or unavailable (warning); a service rejected a linked credential (warning); proxy expiring (warning); a token expiring within 7 days (warning). Then hints: no account linked; N services not linked. </td>
+      <td>Status rows, stats, copy field, particle canvas in the header</td>
+      <td>Comfortable</td>
+    </tr>
+    <tr>
+      <td>Services</td>
+      <td>Which backends and methods can I reach?</td>
+      <td>None</td>
+      <td> Misconfigured (problem), unavailable (warning), a credential rejected (warning, with a re-link action when they share one identity). Hint: N services not linked, with an action when they share one account. </td>
+      <td>Search, filter, service rows (not a table)</td>
+      <td>Comfortable</td>
+    </tr>
+    <tr>
+      <td>Identities</td>
+      <td>Link accounts and keep the grid certificate valid.</td>
+      <td>None in the header; each card has its own</td>
+      <td>Proxy expired (problem) or expiring (warning); a link failed (problem); a link succeeded (ok, clears after 5 seconds). No hint: the rows show what is not linked.</td>
+      <td>One card per credential, key-value lists</td>
+      <td>Comfortable</td>
+    </tr>
+    <tr>
+      <td>Tokens</td>
+      <td>Create and revoke tokens for clients without a browser.</td>
+      <td>New token</td>
+      <td>A token expires within 7 days (warning); a revoke failed (problem)</td>
+      <td>Table, dialog with copy field</td>
+      <td>Comfortable</td>
+    </tr>
+    <tr>
+      <td>Usage</td>
+      <td>What have my clients been doing?</td>
+      <td>None; range control</td>
+      <td>None</td>
+      <td>Stats, bar chart, table per service</td>
+      <td>Comfortable</td>
+    </tr>
+    <tr>
+      <td>Entitlements</td>
+      <td>Which group grants which permission?</td>
+      <td>None</td>
+      <td>None</td>
+      <td>Compact matrix table</td>
+      <td>Compact</td>
+    </tr>
+    <tr>
+      <td>Admin</td>
+      <td>Platform state across users; operators only.</td>
+      <td>None; maintenance toggle in its section</td>
+      <td>Tool configuration issues (warning)</td>
+      <td>Compact tables, status marks</td>
+      <td>Compact</td>
+    </tr>
+  </SpecTable>
+  <p class="af-help">A data page also shows a problem banner when its own data fails to load.</p>
+  <h3>State rules that hold on every page</h3>
+  <div class="design-prose">
+    <ul>
+      <li>
+        <b>Not linked is off, not wrong.</b> The off mark, the words "Not linked", a quiet row. It never raises a warning or problem banner; at most a hint. A service that needs no credential (the gateway's own) is never counted as unlinked. The Identities page needs no hint: its rows show the state and the action.
+      </li>
+      <li>
+        <b>Credential rejected is a warning, not "Not linked".</b> The user did link, and the backend refuses what they set up. Warning mark, the words "Credential rejected", a row at full ink (never the quiet treatment), one sentence ("Your linked &lt;identity&gt; was rejected. Re-link it to use this service.") and a re-link action that names the identity and goes to its card. It raises a warning banner, ranked below misconfigured and unavailable and above a not-linked hint. It sorts with the things that need attention and is never counted as not linked. Its "Powered by" line shows no link state.
+      </li>
+      <li>
+        <b>A grid proxy warns only when it cannot renew itself and has under 1 hour left.</b> An auto-renewing proxy never shows as expiring.
+      </li>
+      <li>
+        <b>Misconfigured and Unavailable differ.</b> Misconfigured needs an operator: problem mark and a reference id to quote. Unavailable is temporary: warning mark, nothing to do but wait.
+      </li>
+      <li>
+        <b>Access required</b> needs an administrator: warning mark, inline detail, no banner. A row shows its identity's link state only where that is the actionable fact.
+      </li>
+      <li>
+        <b>Maintenance</b> is the slim information bar above the page, on every page including the landing page, not the page banner.
+      </li>
+    </ul>
+  </div>
+</DesignSection>

@@ -9,6 +9,7 @@ from __future__ import annotations
 # bearer (rucio-mcp's shape), and a dead URL. Real HTTP backends throughout,
 # no transport mocks -- only the FastAPI route itself is driven in-process
 # via httpx's ASGITransport.
+import asyncio
 import json
 import re
 import time
@@ -17,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 import pytest
-from conftest import run_asgi_app
+from conftest import HungBackend, run_asgi_app
 from fastapi import FastAPI
 from fastmcp import FastMCP
 from fastmcp.server.dependencies import get_http_headers
@@ -29,6 +30,7 @@ from starlette.responses import JSONResponse
 
 from af_mcp_broker.api import catalog_tools
 from af_mcp_broker.authorization import EntitlementPolicy
+from af_mcp_broker.config import Settings
 from af_mcp_broker.credentials import (
     CredentialKind,
     CredentialProvider,
@@ -661,6 +663,79 @@ async def test_unavailable_when_backend_is_down(
     state["principal"] = make_principal(groups=["atlas"])
 
     resp = await _get_tools(app, "dead")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "unavailable"
+    assert body["tools"] == []
+
+
+# One hung backend, or one hung credential lookup, must not hold the portal's
+# per-service listing past the broker-wide listing deadline (issue #335): the
+# same Settings.mcp_list_timeout_seconds that bounds /mcp's tools/list. The
+# service's own timeout_seconds is set far above it so only the deadline can
+# end the request early.
+_LIST_DEADLINE_SECONDS = 0.5
+_SERVICE_TIMEOUT_SECONDS = 20.0
+_MAX_LIST_SECONDS = 8.0
+
+
+def _with_list_deadline(app: FastAPI) -> None:
+    app.state.settings = Settings(mcp_list_timeout_seconds=_LIST_DEADLINE_SECONDS)
+
+
+async def test_unavailable_when_backend_never_answers(
+    policy: EntitlementPolicy, make_principal: Callable[..., Any]
+) -> None:
+    hung = HungBackend()
+    async with run_asgi_app(hung) as url:
+        registry = ServiceRegistry()
+        registry.register(
+            _spec("hung", f"{url}/mcp", timeout_seconds=_SERVICE_TIMEOUT_SECONDS)
+        )
+        app, state = _make_app(registry, policy)
+        _with_list_deadline(app)
+        state["principal"] = make_principal(groups=[])
+
+        started = time.monotonic()
+        resp = await _get_tools(app, "hung")
+        elapsed = time.monotonic() - started
+
+    assert elapsed < _MAX_LIST_SECONDS
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "unavailable"
+    assert body["tools"] == []
+
+
+async def test_unavailable_when_credential_lookup_never_answers(
+    policy: EntitlementPolicy, make_principal: Callable[..., Any]
+) -> None:
+    class _HangingProvider(_FakeProvider):
+        async def is_linked(self, principal: Principal) -> bool:
+            await asyncio.Event().wait()
+            raise AssertionError("unreachable")
+
+    registry = ServiceRegistry()
+    registry.register(
+        _spec(
+            "stuck",
+            "http://example.invalid/mcp",
+            required_permission="read_data",
+            auth_type="bearer",
+            timeout_seconds=_SERVICE_TIMEOUT_SECONDS,
+        )
+    )
+    credential_registry = CredentialRegistry()
+    credential_registry.register("stuck", _HangingProvider())
+    app, state = _make_app(registry, policy, credential_registry)
+    _with_list_deadline(app)
+    state["principal"] = make_principal(groups=["atlas"])
+
+    started = time.monotonic()
+    resp = await _get_tools(app, "stuck")
+    elapsed = time.monotonic() - started
+
+    assert elapsed < _MAX_LIST_SECONDS
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["status"] == "unavailable"

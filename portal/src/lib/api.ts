@@ -589,7 +589,9 @@ export async function revokeProxy(): Promise<void> {
 /** One row of the checklist — voms-token-service's contract, proxied through
  * the broker verbatim. `mode`/`readable_by_service` are absent on checks they
  * don't apply to (the .globus directory row); `detail` carries the actionable
- * fix (e.g. the chmod 400 command) when `ok` is false. */
+ * fix (e.g. the chmod 400 command) when `ok` is false. `required_modes` lists
+ * the exact octal modes the file must have (only the private key has one);
+ * absent means any mode works. */
 export interface X509PreflightCheck {
   name: string;
   path: string;
@@ -598,6 +600,7 @@ export interface X509PreflightCheck {
   readable_by_service?: boolean | null;
   ok: boolean;
   detail?: string | null;
+  required_modes?: string[] | null;
 }
 
 export interface X509Preflight {

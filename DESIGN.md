@@ -85,11 +85,6 @@ below, so a colour is changed once, in `portal/src/styles/global.css`. How it is
 wired is in `docs/portal-styling.md`; `designContract.test.ts` fails on a
 hand-rolled replacement or a redefined Basecoat class.
 
-Token names in this file are the portal's. The worked reference,
-`docs/design-language/index.html`, uses short names in its self-contained demo
-CSS (`--bg` is `--color-af-bg`; `--shadow-1` is `--shadow-af-1`) and has a
-"Built on Basecoat" section that maps its demo classes to the real ones.
-
 ## Colors
 
 Values are in the frontmatter (light is the default, each `-dark` entry is the
@@ -367,6 +362,10 @@ State rules that hold on every page:
 - **Don't** use a tag, pill or coloured name for status, a text glyph as an icon,
   or a third animation.
 
-Enforcement (`designContract.test.ts`, `globalCssContrast.test.ts`), the preview
-tooling and how the styling is built are in `docs/portal-styling.md`. The worked
-reference with rendered examples is `docs/design-language/index.html`.
+## Reference
+
+The worked reference is the portal's own `/design/` page: public, built from the real
+tokens, Basecoat classes and Vue components (not look-alikes), with live token tables and
+a facility-accent switcher. Open it locally with `pixi run -e portal design-preview`, then
+`/design/`. Enforcement (`designContract.test.ts`, `globalCssContrast.test.ts`), the
+preview tooling and how the styling is built are in `docs/portal-styling.md`.
