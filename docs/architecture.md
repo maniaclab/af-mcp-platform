@@ -639,7 +639,14 @@ status it can change:
 | `not_linked` | one caller, who has no credential for the service; logged at INFO. A mint-and-inject (`x509`, `krb5`, `servicex`) service's tools are listed only for a caller who has linked the credential, so for an unlinked caller the listing is skipped without minting a token or contacting the backend | that caller and service only | `link_required` ("link") |
 
 A successful listing by a caller clears that caller's own record and the
-service-wide one, never another caller's. Caller-specific records are held
+service-wide one, never another caller's. Listings are cached per caller and
+service (a failed one for 30 seconds), so a caller's cached listing and own
+record are also dropped the moment a credential for that service is linked
+(OAuth 2.1 callback, ServiceX link, Kerberos keytab/ticket, x509 proxy mint)
+or revoked, and the next `tools/list` reaches the backend; see
+[docs/auth.md](auth.md#when-a-new-link-shows-up-in-toolslist). A
+`keycloak-brokered` link is made in Keycloak, which the broker does not
+observe, so that type still waits out the 30 seconds. Caller-specific records are held
 in process memory, capped at 4096 entries (least recently recorded evicted
 first); each replica keeps its own, so a caller whose requests land on
 different replicas can see the status differ until each replica has

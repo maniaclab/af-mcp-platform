@@ -473,6 +473,12 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         on_revoke=lambda subject, target: invalidate_subject_cache(
             _mcp_aggregator, subject, target
         ),
+        # The mirror of on_revoke for issue #355: the /v1 routes that complete
+        # a link call credential_cache.notify_linked(), so a caller who just
+        # linked does not wait out a cached "no tools" listing.
+        on_link=lambda subject, target: invalidate_subject_cache(
+            _mcp_aggregator, subject, target
+        ),
     )
     credential_cache.start_janitor()
 
