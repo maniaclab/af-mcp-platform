@@ -37,6 +37,7 @@ from af_mcp_broker.credentials.base import (
     IssuedCredential,
 )
 from af_mcp_broker.http import get_http_client
+from af_mcp_broker.logging import request_id_headers
 
 if TYPE_CHECKING:
     from pydantic import SecretBytes
@@ -197,7 +198,10 @@ class CondorTokenProvider(CredentialProvider):
         try:
             resp = await get_http_client().post(
                 self._token_endpoint,
-                headers={"Authorization": f"Bearer {broker_token}"},
+                headers={
+                    "Authorization": f"Bearer {broker_token}",
+                    **request_id_headers(),
+                },
                 timeout=10.0,
             )
         except httpx.HTTPError as exc:

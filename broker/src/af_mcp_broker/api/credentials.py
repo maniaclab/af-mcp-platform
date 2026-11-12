@@ -32,8 +32,10 @@ from af_mcp_broker.credentials import (
     X509Provider,
 )
 from af_mcp_broker.identity import Principal, keycloak_dependency
+from af_mcp_broker.logging import CorrelatedHTTPException
 
 if TYPE_CHECKING:
+    from af_mcp_broker.config import IdentityProviderConfig
     from af_mcp_broker.credentials.base import IssuedCredential as _IssuedCredential
 
 log = structlog.get_logger(__name__)
@@ -290,6 +292,33 @@ def _cache(request: Request) -> CredentialCache:
             detail="Credential cache is not configured",
         )
     return cache
+
+
+def notify_identity_linked(request: Request, subject: str, alias: str | None) -> None:
+    """Tell the credential cache that *subject* just completed a link for identity-provider entry *alias* (issue #355), so its cached listings for every service that entry targets are dropped.
+
+    Every target of the entry is notified, not just the one the caller named:
+    ``is_linked`` is per subject, so a link made through one target makes the
+    entry's other targets usable too (the same fan-out ``unlink_identity``
+    uses). A no-op for an unknown *alias* or an unconfigured cache, mirroring
+    ``unlink_identity``'s own tolerance.
+    """
+    configs: dict[str, IdentityProviderConfig] = (
+        getattr(request.app.state, "identity_provider_configs", None) or {}
+    )
+    cache = getattr(request.app.state, "credential_cache", None)
+    if alias is None or alias not in configs or cache is None:
+        return
+    for target in configs[alias].targets:
+        cache.notify_linked(subject, target)
+
+
+def _alias_for_target(request: Request, target: str) -> str | None:
+    """Return the identity-provider entry alias serving *target*, if any."""
+    target_to_alias: dict[str, str] = (
+        getattr(request.app.state, "target_to_alias", None) or {}
+    )
+    return target_to_alias.get(target)
 
 
 async def _x509_provider(request: Request, target: str) -> X509Provider:
@@ -569,6 +598,9 @@ async def create_proxy(
             detail="Proxy minting is temporarily unavailable — retry later.",
         ) from exc
 
+    notify_identity_linked(
+        request, principal.subject, _alias_for_target(request, target)
+    )
     meta = _cache(request).get_proxy_meta(principal.subject, target)
     if meta is None:  # pragma: no cover - mint succeeded but nothing cached
         raise HTTPException(
@@ -605,16 +637,24 @@ async def link_servicex(
     provider = await _servicex_provider(request, target)
     try:
         await provider.link(principal.subject, body.refresh_token)
+    # The broker cannot know why ServiceX rejected the token, so the
+    # correlation_id (also logged, and sent to servicex-token-service as
+    # X-Request-ID) is what the user quotes if a fresh token is rejected too.
     except ServiceXBadRefreshTokenError as exc:
-        raise HTTPException(
+        correlation_id = structlog.contextvars.get_contextvars()["correlation_id"]
+        raise CorrelatedHTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
+            detail=f"{exc} (ref: {correlation_id})",
         ) from exc
     except ServiceXServiceMintError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="ServiceX token redemption is temporarily unavailable — retry later.",
         ) from exc
+
+    notify_identity_linked(
+        request, principal.subject, _alias_for_target(request, target)
+    )
 
     record = await provider.vault_store.get_token(principal.subject)
     if record is None:  # pragma: no cover - link succeeded but nothing cached
@@ -698,6 +738,9 @@ async def create_krb5_ticket(
             detail="Kerberos ticket issuance is temporarily unavailable — retry later.",
         ) from exc
 
+    notify_identity_linked(
+        request, principal.subject, _alias_for_target(request, target)
+    )
     payload = cred.payload
     renew_until = payload.get("renew_until")
     assert cred.expires_at is not None  # a krb5 ticket always has an end time
@@ -759,6 +802,9 @@ async def link_krb5_keytab(
             detail="Kerberos ticket issuance is temporarily unavailable — retry later.",
         ) from exc
 
+    notify_identity_linked(
+        request, principal.subject, _alias_for_target(request, target)
+    )
     payload = cred.payload
     renew_until = payload.get("renew_until")
     assert cred.expires_at is not None  # a krb5 ticket always has an end time

@@ -12,7 +12,7 @@ from __future__ import annotations
 # loaded. The client_factory below deliberately never forwards the caller's
 # inbound Authorization header to a service; see its docstring.
 import asyncio
-import functools
+import json
 import time
 from typing import TYPE_CHECKING, Any, NamedTuple
 
@@ -177,6 +177,101 @@ def _unauthorized_raising_httpx_client_factory(
     return client
 
 
+class BackendInvalidResponse(Exception):
+    """A backend answered a JSON-RPC request with HTTP 200 and a body the mcp SDK transport cannot parse (issue #280).
+
+    Carries only the service name, status code and content type, never the
+    backend's body: the message reaches logs and, for a tools/call, the
+    caller. Classified as ``"unavailable"`` like any other unusable backend.
+    """
+
+
+def _is_jsonrpc_request(request: httpx2.Request) -> bool:
+    """Whether *request*'s body is a JSON-RPC request (it carries an ``id``), as opposed to a notification that a server may answer with an empty body."""
+    try:
+        body = json.loads(request.content)
+    except (httpx2.RequestNotRead, ValueError):
+        return False
+    return isinstance(body, dict) and "id" in body
+
+
+def _raise_for_invalid_response(
+    service_name: str,
+) -> Callable[[httpx2.Response], Awaitable[None]]:
+    """Build a response hook raising ``BackendInvalidResponse`` for a 200 reply to a JSON-RPC request that is neither an SSE stream nor a JSON document.
+
+    Same layer and reasoning as ``_raise_for_401`` above: the mcp SDK turns
+    such a reply into a generic parse-error ``MCPError`` whose text embeds a
+    prefix of the backend's body, and the HTTP status and content type are
+    gone by the time the broker sees it. Checking here keeps them, fails the
+    request as soon as the response arrives, and lets the broker name the
+    service. Only a syntactically valid JSON document is required of a
+    ``application/json`` reply; the SDK still validates its JSON-RPC shape.
+    A reply to a notification (no ``id``) is never inspected.
+    """
+
+    async def hook(response: httpx2.Response) -> None:
+        request = response.request
+        if (
+            request.method != "POST"
+            or response.status_code != 200
+            or not _is_jsonrpc_request(request)
+        ):
+            return
+        content_type = response.headers.get("content-type", "").lower()
+        if content_type.startswith("text/event-stream"):
+            return
+        problem = "unexpected content type"
+        if content_type.startswith("application/json"):
+            await response.aread()
+            try:
+                json.loads(response.content)
+            except ValueError:
+                problem = "body is not valid JSON"
+            else:
+                return
+        media_type = content_type.split(";")[0][:100]
+        logger.warning(
+            "aggregator.backend_invalid_response",
+            service=service_name,
+            status_code=response.status_code,
+            content_type=media_type,
+            problem=problem,
+        )
+        raise BackendInvalidResponse(
+            f"Service '{service_name}' returned an invalid response "
+            f"(HTTP {response.status_code}, content-type "
+            f"{media_type or 'missing'}): {problem}."
+        )
+
+    return hook
+
+
+def _checked_httpx_client_factory(
+    service_name: str,
+    on_unauthorized: Callable[[], Awaitable[None]] | None = None,
+) -> Callable[..., httpx2.AsyncClient]:
+    """``McpHttpClientFactory`` for *service_name*: ``_unauthorized_raising_httpx_client_factory`` (given *on_unauthorized*) plus the invalid-response check."""
+
+    def factory(
+        headers: dict[str, str] | None = None,
+        timeout: httpx2.Timeout | None = None,
+        auth: httpx2.Auth | None = None,
+        **kwargs: Any,
+    ) -> httpx2.AsyncClient:
+        client = _unauthorized_raising_httpx_client_factory(
+            headers=headers,
+            timeout=timeout,
+            auth=auth,
+            on_unauthorized=on_unauthorized,
+            **kwargs,
+        )
+        client.event_hooks["response"].append(_raise_for_invalid_response(service_name))
+        return client
+
+    return factory
+
+
 def _build_client(
     spec: ServiceSpec,
     transport_cls: type[SSETransport | StreamableHttpTransport],
@@ -204,9 +299,8 @@ def _build_client(
         transport_cls(
             spec.url,
             headers=headers,
-            httpx_client_factory=functools.partial(
-                _unauthorized_raising_httpx_client_factory,
-                on_unauthorized=on_unauthorized,
+            httpx_client_factory=_checked_httpx_client_factory(
+                spec.name, on_unauthorized
             ),
         ),
         timeout=spec.timeout_seconds,
@@ -402,10 +496,21 @@ async def _classify_list_failure(exc: Exception, service_name: str) -> tuple[str
     """
     if isinstance(exc, NotLinkedForListing):
         return ("unauthorized" if exc.rejected else "not_linked"), str(exc)
+    if isinstance(exc, ListDeadlineExceeded):
+        return "unavailable", str(exc)
     ctx = get_context()
     status = await ctx.get_state(f"__list_credential_status__:{service_name}")
     injected, skip_reason = status if status is not None else (False, None)
     return _classify_failure(exc, injected=injected, skip_reason=skip_reason), str(exc)
+
+
+class ListDeadlineExceeded(Exception):
+    """A backend's tools/list (credential setup included) did not finish within ``Settings.mcp_list_timeout_seconds``.
+
+    ``_classify_list_failure`` maps it to ``"unavailable"`` regardless of what
+    credential state was recorded before the stall: the broker gave up on the
+    backend, which says nothing about the caller's linkage.
+    """
 
 
 class NotLinkedForListing(Exception):
@@ -1337,9 +1442,13 @@ class _ObservableProxyProvider(ProxyProvider):
         cache_ttl: float | None = None,
         route_prefix: str | None = None,
         exclude_tools: frozenset[str] = frozenset(),
+        list_timeout_seconds: float | None = None,
     ) -> None:
         super().__init__(client_factory, cache_ttl=cache_ttl)
         self._service_name = service_name
+        # Deadline for one upstream tools/list including the client factory's
+        # credential setup; None disables it (see _list_tools_uncached).
+        self._list_timeout_seconds = list_timeout_seconds
         self._registry = registry
         # Set only for an un-namespaced service (apply_namespace: false):
         # fastmcp's prefix-based dispatch skips that filtering for an
@@ -1404,11 +1513,16 @@ class _ObservableProxyProvider(ProxyProvider):
             )
 
     def invalidate_subject(self, subject: str) -> None:
-        """Drop *subject*'s cached listing entries (success or failure), for every kind (tools, resources, resource templates, prompts), for this service.
+        """Drop *subject*'s cached listing entries (success or failure), for every kind (tools, resources, resource templates, prompts), for this service, and the caller-specific failure reason recorded for *subject* against it.
 
         Called when *subject*'s linked identity changes -- see
         ``invalidate_subject_cache`` (module-level, below) for the wiring
-        across every provider on a link/unlink/credential-revocation event. A
+        across every provider on a link/unlink/credential-revocation event.
+        The caller-specific reason (``ServiceRegistry.clear_caller_list_failure``)
+        goes with the cached entries because both describe the credential state
+        being replaced; the next listing records whatever is true afterwards.
+        A service-wide reason is left alone: a credential change says nothing
+        about whether the backend is up. A
         subject with nothing cached is a silent no-op. Leaves
         ``_subject_list_locks`` alone: an in-flight refresh for *subject* (if
         any) is unaffected, and the next cache miss just creates a fresh lock.
@@ -1416,6 +1530,7 @@ class _ObservableProxyProvider(ProxyProvider):
         stale = [key for key in self._subject_list_cache if key[1] == subject]
         for key in stale:
             del self._subject_list_cache[key]
+        self._registry.clear_caller_list_failure(self._service_name, subject)
 
     def _prune_subject_list_cache(self) -> None:
         """Drop every expired entry, so the cache dict never grows past recently active (kind, subject) pairs."""
@@ -1578,7 +1693,7 @@ class _ObservableProxyProvider(ProxyProvider):
         entirely) rather than on every ``tools/list``.
         """
         try:
-            tools = await super()._list_tools()
+            tools = await self._list_tools_within_deadline()
         except Exception as exc:
             reason, detail = await _classify_list_failure(exc, self._service_name)
             subject = await self._caller_subject("tools")
@@ -1605,6 +1720,29 @@ class _ObservableProxyProvider(ProxyProvider):
                 tools = [t for t in tools if t.name not in self._exclude_tools]
             self._record_tool_routing(tools)
             return tools
+
+    async def _list_tools_within_deadline(self) -> Sequence[Tool]:
+        """Run fastmcp's upstream ``tools/list`` under this provider's listing deadline.
+
+        The deadline wraps the whole attempt -- ``client_factory`` (list-time
+        credential setup) as well as the backend round trip -- so a stalled
+        Vault read counts the same as a stalled backend. Expiry cancels the
+        attempt, which closes the backend client and its connection through
+        the ``async with client`` inside ``ProxyProvider._list_tools``.
+        ``Timeout.expired()`` distinguishes this deadline from a
+        ``TimeoutError`` the attempt raised on its own.
+        """
+        deadline = asyncio.timeout(self._list_timeout_seconds)
+        try:
+            async with deadline:
+                return await super()._list_tools()
+        except TimeoutError as exc:
+            if not deadline.expired():
+                raise
+            raise ListDeadlineExceeded(
+                f"Service '{self._service_name}' did not list its tools within "
+                f"{self._list_timeout_seconds:g}s."
+            ) from exc
 
     def _record_tool_routing(self, tools: Sequence[Tool]) -> None:
         """Record how many of *tools* (one upstream listing, after ``exclude_tools``) this service's prefix can route -- onto the registry (ToolRouting) and the per-service advertised/routable gauges -- and warn once for the whole listing if any can't."""
@@ -1660,8 +1798,9 @@ def invalidate_subject_cache(
 ) -> None:
     """Drop *subject*'s cached listing entries (every kind: tools, resources, resource templates, prompts) across ``mcp``'s providers -- one service (*target*) or every service.
 
-    Called wherever a subject's linked identity changes (unlink, or a
-    credential revocation -- see app.py's ``CredentialCache`` construction)
+    Called wherever a subject's linked identity changes (unlink, credential
+    revocation, or a completed link -- see app.py's ``CredentialCache``
+    construction)
     so a stale per-subject listing (``_ObservableProxyProvider.invalidate_subject``)
     is never served past that change. *target* narrows to the one
     ``ServiceSpec.name`` affected; omitted, every service's cache entry for
@@ -1904,6 +2043,7 @@ def _register_services(
             cache_ttl=spec.tools_cache_ttl,
             route_prefix=None if spec.apply_namespace else spec.prefix,
             exclude_tools=spec.exclude_tools,
+            list_timeout_seconds=settings.mcp_list_timeout_seconds,
         )
         namespace = spec.prefix if spec.apply_namespace else ""
         mcp.add_provider(provider, namespace=namespace)

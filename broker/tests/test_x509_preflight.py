@@ -48,7 +48,11 @@ _PREFLIGHT_BODY = {
             "mode": "0644",
             "readable_by_service": True,
             "ok": False,
-            "detail": "run: chmod 400 ~/.globus/userkey.pem",
+            "detail": (
+                "userkey.pem is 0644 but must be 0400 or 0600 (readable only "
+                "by you). Fix: chmod 400 ~/.globus/userkey.pem"
+            ),
+            "required_modes": ["0400", "0600"],
         },
     ],
 }

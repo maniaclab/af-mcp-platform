@@ -1020,3 +1020,22 @@ def test_register_rejects_colliding_tool_permission_keys_across_services() -> No
     )
     with pytest.raises(ValueError, match="condor_service"):
         registry.register(other)
+
+
+def test_clear_caller_list_failure_clears_only_that_callers_record() -> None:
+    registry = ServiceRegistry()
+    registry.record_list_failure("svc", "unavailable", None)
+    registry.record_list_failure("svc", "not_linked", "alice")
+    registry.record_list_failure("svc", "not_linked", "bob")
+    registry.record_list_failure("other", "not_linked", "alice")
+
+    registry.clear_caller_list_failure("svc", "alice")
+
+    # The service-wide reason still describes alice's status; only her own
+    # caller-specific record is gone.
+    assert registry.recent_list_failure("svc", "alice") == "unavailable"
+    assert registry.recent_list_failure("svc", "bob") == "unavailable"
+    registry.clear_list_failure("svc", None)
+    assert registry.recent_list_failure("svc", "alice") is None
+    assert registry.recent_list_failure("svc", "bob") == "not_linked"
+    assert registry.recent_list_failure("other", "alice") == "not_linked"

@@ -1,0 +1,252 @@
+---
+/**
+ * DontExamples.astro — the deliberately wrong half of every "don't" example on
+ * the design reference page.
+ *
+ * This is the ONE file allowed to break the design contract, so the rest of
+ * src stays enforced: designContract.test.ts allowlists each rule used here for
+ * this file only, matched on the `wrong:<rule>` marker comment that must sit on
+ * the same line as the violation. A violation without its marker fails the
+ * test, so a stray wrong style cannot hide in this file. Wrong things that use
+ * only tokens (an accent-filled banner, a coloured name, a row of cards) need
+ * no marker. Everything else on the page uses the real components.
+ */
+interface Props {
+  kind:
+    | 'raw-values'
+    | 'accent-banner'
+    | 'coloured-names'
+    | 'terminal-table'
+    | 'three-cards'
+    | 'heavy-frame'
+    | 'outlined-pills'
+    | 'glyphs'
+    | 'shadow-cards';
+}
+
+const { kind } = Astro.props;
+
+// Raw values are text here, not styles.
+const RAW_VALUES = ['border: 1px solid #1e2a3d;', 'padding: 14px;', 'font-size: 9px;'];
+
+const GLYPH_EXAMPLES = [
+  '✓ Linked', // wrong:icon-glyph
+  '⚠ Expiring', // wrong:icon-glyph
+  '▸ Details', // wrong:icon-glyph
+  '→ Continue', // wrong:arrow-glyph
+];
+
+const ACCENT_BANNER = {
+  title: 'Your grid proxy expires in 2 days',
+  body: 'Renew it to keep Rucio and AMI working.',
+};
+---
+
+{kind === 'raw-values' && <pre class="design-code" set:text={RAW_VALUES.join('\n')} />}
+
+{
+  kind === 'accent-banner' && (
+    <>
+      <div class="alert af-banner dont-accent">
+        <div>
+          <b>{ACCENT_BANNER.title}</b>
+          {ACCENT_BANNER.body}
+        </div>
+      </div>
+      <div>
+        <button type="button" class="btn">
+          New token
+        </button>
+      </div>
+    </>
+  )
+}
+
+{
+  kind === 'coloured-names' && (
+    <div class="dont-row">
+      <span class="dont-ok">cern-sso</span>
+      <span class="dont-bad">rucio</span>
+    </div>
+  )
+}
+
+{
+  kind === 'terminal-table' && (
+    <div class="table-container af-box">
+      <table class="dont-terminal table">
+        <thead>
+          <tr>
+            <th>Service</th>
+            <th>Calls</th>
+            <th>Errors</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Rucio</td>
+            <td>1,284</td>
+            <td>11</td>
+          </tr>
+          <tr>
+            <td>AMI</td>
+            <td>317</td>
+            <td>0</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+{
+  kind === 'three-cards' && (
+    <div class="dont-cards">
+      <div class="dont-card" />
+      <div class="dont-card" />
+      <div class="dont-card" />
+    </div>
+  )
+}
+
+{
+  kind === 'heavy-frame' && (
+    <div class="dont-heavy">
+      <table class="dont-heavy__table table">
+        <thead>
+          <tr>
+            <th>Account</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>CERN SSO</td>
+            <td>Linked</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+{
+  kind === 'outlined-pills' && (
+    <div class="dont-row">
+      <span class="dont-pill dont-pill--ok">ACTIVE</span>
+      <span class="dont-pill dont-pill--bad">BLOCKED</span>
+    </div>
+  )
+}
+
+{
+  kind === 'glyphs' && (
+    <div class="dont-row">
+      {GLYPH_EXAMPLES.map((g) => (
+        <span>{g}</span>
+      ))}
+    </div>
+  )
+}
+
+{
+  kind === 'shadow-cards' && (
+    <div class="dont-cards dont-cards--two">
+      <div class="dont-shadow">
+        <div class="af-stat">
+          <span>Calls</span>
+          <b class="dont-info">1,601</b>
+        </div>
+      </div>
+      <div class="dont-shadow">
+        <div class="af-stat">
+          <span>Errors</span>
+          <b class="dont-info">11</b>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+<style>
+  .dont-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-8) var(--space-16);
+  }
+
+  /* An accent fill used as a message. */
+  .dont-accent.alert.af-banner {
+    background: var(--color-af-accent);
+    color: var(--color-af-on-accent);
+  }
+
+  /* A name coloured to show its state. */
+  .dont-ok {
+    color: var(--color-af-ok);
+  }
+  .dont-bad {
+    color: var(--color-af-bad);
+  }
+
+  /* A whole table in monospace, with tiny spaced capitals for headers. */
+  .dont-terminal {
+    font-family: var(--font-mono);
+  }
+  .dont-terminal th {
+    font-size: 9px; /* wrong:font-size */
+    text-transform: uppercase; /* wrong:uppercase */
+    letter-spacing: 0.1em; /* wrong:letter-spacing */
+  }
+
+  /* A row of equal cards. */
+  .dont-cards {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--space-8);
+  }
+  .dont-cards--two {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .dont-card {
+    height: calc(var(--space-64) + var(--space-8));
+    border: 1px solid var(--color-af-border);
+    border-radius: var(--radius-8);
+  }
+
+  /* A heavy outline, a filled header and a coloured stripe down one side. */
+  .dont-heavy {
+    border: 2px solid var(--color-af-text);
+    border-left: 6px solid var(--color-af-accent);
+    border-radius: 2px; /* wrong:border-radius */
+  }
+  .dont-heavy__table th {
+    background: var(--color-af-text);
+    color: var(--color-af-bg);
+  }
+
+  /* Outlined status pills. */
+  .dont-pill {
+    padding: var(--space-2) var(--space-12);
+    border: 1px solid currentColor;
+    border-radius: var(--radius-full);
+    font-size: var(--text-12);
+  }
+  .dont-pill--ok {
+    color: var(--color-af-ok);
+  }
+  .dont-pill--bad {
+    color: var(--color-af-bad);
+  }
+
+  /* A shadowed card per number, with a coloured value. */
+  .dont-shadow {
+    padding: var(--space-12);
+    border: 1px solid var(--color-af-border-strong);
+    border-radius: var(--radius-10);
+    box-shadow: 0 2px 8px var(--color-af-border-strong); /* wrong:box-shadow */
+  }
+  .dont-info {
+    color: var(--color-af-info);
+  }
+</style>

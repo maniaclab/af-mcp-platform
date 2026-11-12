@@ -369,6 +369,14 @@ log's `trace_id` field finds the exact invocations — and their
 measurements, which live only in the audit log and usage store, never on
 spans.
 
+## Correlation ids on calls to token services
+
+Every `/v1` request binds a `correlation_id` into the broker's log lines.
+Calls to the AF-internal token services (servicex, voms, krb5, condor) send
+it as `X-Request-ID`, so a token service that logs that header shares the id
+with the broker's line. 5xx bodies carry `correlation_id`, as does the
+ServiceX link rejection (400); other 4xx bodies do not.
+
 ## See also
 
 - [Architecture § Audit](architecture.md#4-audit) — the metering

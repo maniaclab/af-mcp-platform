@@ -475,6 +475,40 @@ async def test_valid_pat_stashes_principal_and_calls_inner_app(settings):
     assert _status(messages) == 200
 
 
+async def test_pat_of_user_disabled_after_cache_warmed_gets_vague_401(
+    settings, monkeypatch
+):
+    """Issue #336: a valid, unexpired, unrevoked PAT stops working on /mcp
+    within one principal-cache refresh once its owner is disabled."""
+    from af_mcp_broker.principal_directory import PrincipalDisabledError
+
+    backend, plaintext, principal_cache = await _pat_principal_cache_and_token(
+        groups=["atlas"]
+    )
+    inner = _InnerApp()
+    middleware = AsgiAuthMiddleware(
+        inner,
+        IdentityMiddleware(
+            settings, pat_backend=backend, principal_cache=principal_cache
+        ),
+    )
+    scope = {"authorization": f"Bearer {plaintext}"}
+    assert _status(await _run(middleware, _http_scope(scope))) == 200
+
+    async def disabled(principal_id: str):
+        raise PrincipalDisabledError(principal_id)
+
+    monkeypatch.setattr(principal_cache._directory, "resolve", disabled)
+    real_monotonic = time.monotonic
+    monkeypatch.setattr(time, "monotonic", lambda: real_monotonic() + 2000.0)
+    inner.called = False
+    messages = await _run(middleware, _http_scope(scope))
+
+    assert not inner.called
+    assert _status(messages) == 401
+    assert json.loads(_body(messages))["detail"] == "Invalid bearer token"
+
+
 async def test_pat_shaped_bearer_rejected_when_pat_support_not_configured(
     settings,
 ):

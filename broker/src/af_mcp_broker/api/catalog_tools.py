@@ -5,6 +5,7 @@ from __future__ import annotations
 # rather than api/permissions.py because it imports mcp/aggregator.py's
 # list-time helpers, and permissions.py importing the aggregator would be a
 # straight import cycle (aggregator -> mcp/diagnostics -> permissions).
+import asyncio
 import time
 from typing import TYPE_CHECKING, Annotated, Literal
 
@@ -27,6 +28,7 @@ from af_mcp_broker.authorization import (
     get_action_type,
     get_principal_permissions,
 )
+from af_mcp_broker.config import get_settings
 from af_mcp_broker.identity import Principal, keycloak_dependency
 from af_mcp_broker.mcp.aggregator import (
     NotLinkedForListing,
@@ -285,45 +287,66 @@ async def get_service_tools(
         )
         return _respond(spec, "ok", tools, policy, registry, caps)
 
-    credential_registry = _get_credential_registry(request)
-    broker_token_issuer = getattr(request.app.state, "broker_token_issuer", None)
+    # One deadline over the whole live attempt (credential resolution and the
+    # backend round trip), the same Settings.mcp_list_timeout_seconds that
+    # bounds a tools/list through /mcp, so a hung backend or credential store
+    # cannot hold this request past the portal's own timeout.
+    settings = getattr(request.app.state, "settings", None) or get_settings()
+    deadline = asyncio.timeout(settings.mcp_list_timeout_seconds)
     try:
-        credential = await resolve_list_time_credential(
-            spec, credential_registry, principal, broker_token_issuer
-        )
-    except NotLinkedForListing as exc:
-        # A rejected credential reads as "unauthorized" (re-link), matching
-        # the catalog's "rejected" link state, not "not_linked".
-        status = "unauthorized" if exc.rejected else "not_linked"
-        logger.info(
+        async with deadline:
+            credential_registry = _get_credential_registry(request)
+            broker_token_issuer = getattr(
+                request.app.state, "broker_token_issuer", None
+            )
+            try:
+                credential = await resolve_list_time_credential(
+                    spec, credential_registry, principal, broker_token_issuer
+                )
+            except NotLinkedForListing as exc:
+                # A rejected credential reads as "unauthorized" (re-link), matching
+                # the catalog's "rejected" link state, not "not_linked".
+                status = "unauthorized" if exc.rejected else "not_linked"
+                logger.info(
+                    "catalog.tools_list_failed",
+                    subject=principal.subject,
+                    target=spec.name,
+                    status=status,
+                )
+                return _respond(spec, status, [], policy, registry, caps)
+            skip_reason = credential.skip_reason
+
+            # The cache only ever short-circuits a caller whose credential
+            # resolution succeeded (skip_reason None) -- a degraded caller
+            # (not linked, provider unavailable) always goes to the live attempt so
+            # their status reflects *their* credential state, never another
+            # caller's cached success.
+            cache = _get_cache(request)
+            if skip_reason is None:
+                cached = cache.get(spec.name, spec.tools_cache_ttl)
+                if cached is not None:
+                    return _respond(spec, "ok", cached, policy, registry, caps)
+
+            status, tools = await fetch_service_tool_listing(spec, credential)
+            if status == "ok":
+                if skip_reason is None:
+                    cache.put(spec.name, tools)
+            else:
+                logger.info(
+                    "catalog.tools_list_failed",
+                    subject=principal.subject,
+                    target=spec.name,
+                    status=status,
+                )
+            return _respond(spec, status, tools, policy, registry, caps)
+    except TimeoutError:
+        if not deadline.expired():
+            raise
+        logger.warning(
             "catalog.tools_list_failed",
             subject=principal.subject,
             target=spec.name,
-            status=status,
+            status="unavailable",
+            reason="list_deadline_exceeded",
         )
-        return _respond(spec, status, [], policy, registry, caps)
-    skip_reason = credential.skip_reason
-
-    # The cache only ever short-circuits a caller whose credential
-    # resolution succeeded (skip_reason None) -- a degraded caller
-    # (not linked, provider unavailable) always goes to the live attempt so
-    # their status reflects *their* credential state, never another
-    # caller's cached success.
-    cache = _get_cache(request)
-    if skip_reason is None:
-        cached = cache.get(spec.name, spec.tools_cache_ttl)
-        if cached is not None:
-            return _respond(spec, "ok", cached, policy, registry, caps)
-
-    status, tools = await fetch_service_tool_listing(spec, credential)
-    if status == "ok":
-        if skip_reason is None:
-            cache.put(spec.name, tools)
-    else:
-        logger.info(
-            "catalog.tools_list_failed",
-            subject=principal.subject,
-            target=spec.name,
-            status=status,
-        )
-    return _respond(spec, status, tools, policy, registry, caps)
+        return _respond(spec, "unavailable", [], policy, registry, caps)

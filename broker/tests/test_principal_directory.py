@@ -14,6 +14,8 @@ from af_mcp_broker import principal_directory as principal_directory_module
 from af_mcp_broker.config import Settings
 from af_mcp_broker.principal_directory import (
     KeycloakPrincipalDirectory,
+    PrincipalDisabledError,
+    PrincipalNotActiveError,
     PrincipalNotFoundError,
     _admin_base_url,
 )
@@ -163,6 +165,59 @@ async def test_resolve_unknown_user_raises_principal_not_found(
     directory = _directory(settings)
     with pytest.raises(PrincipalNotFoundError):
         await directory.resolve("no-such-user")
+
+
+async def test_resolve_disabled_user_raises_principal_disabled(
+    settings: Settings, fake_admin: _FakeKeycloakAdmin
+) -> None:
+    fake_admin.users["user-123"] = {"enabled": False, "email": "user@example.org"}
+    fake_admin.groups["user-123"] = [{"name": "atlas", "path": "/atlas"}]
+
+    directory = _directory(settings)
+    with pytest.raises(PrincipalDisabledError) as exc:
+        await directory.resolve("user-123")
+
+    assert isinstance(exc.value, PrincipalNotActiveError)
+    assert exc.value.principal_id == "user-123"
+    # Refused before group membership is read.
+    assert not any(url.endswith("/groups") for url in fake_admin.get_calls)
+
+
+def test_not_found_and_disabled_share_a_base_class() -> None:
+    assert issubclass(PrincipalNotFoundError, PrincipalNotActiveError)
+    assert issubclass(PrincipalDisabledError, PrincipalNotActiveError)
+    assert not issubclass(PrincipalDisabledError, PrincipalNotFoundError)
+
+
+@pytest.mark.parametrize("enabled", [True, None])
+async def test_resolve_enabled_user_resolves(
+    settings: Settings, fake_admin: _FakeKeycloakAdmin, enabled: bool | None
+) -> None:
+    """``enabled: true`` resolves normally; a representation with no
+    ``enabled`` key at all (as the other fixtures here, and any directory
+    view that omits it) is treated as enabled rather than locking everyone
+    out. Keycloak's ``GET /users/{id}`` always includes the key."""
+    user: dict[str, Any] = {"email": "user@example.org"}
+    if enabled is not None:
+        user["enabled"] = enabled
+    fake_admin.users["user-123"] = user
+    fake_admin.groups["user-123"] = []
+
+    attrs = await _directory(settings).resolve("user-123")
+
+    assert attrs.email == "user@example.org"
+
+
+@pytest.mark.parametrize("enabled", [None, "false", 0])
+async def test_resolve_non_true_enabled_value_is_treated_as_disabled(
+    settings: Settings, fake_admin: _FakeKeycloakAdmin, enabled: object
+) -> None:
+    """When the key is present, anything but a literal ``true`` refuses."""
+    fake_admin.users["user-123"] = {"enabled": enabled}
+    fake_admin.groups["user-123"] = []
+
+    with pytest.raises(PrincipalDisabledError):
+        await _directory(settings).resolve("user-123")
 
 
 async def test_resolve_leaves_missing_posix_attributes_none(

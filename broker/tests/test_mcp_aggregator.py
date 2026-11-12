@@ -2049,6 +2049,73 @@ async def test_invalidate_subject_cache_helper_targets_all_services_when_none(
     assert client_b.call_count == 2
 
 
+async def test_invalidate_subject_reaches_backend_instead_of_cached_negative_entry(
+    monkeypatch: pytest.MonkeyPatch, make_principal
+) -> None:
+    """A cached listing failure is dropped by invalidation, so the next
+    tools/list reaches the backend without waiting out the negative TTL."""
+    client = _CountingListClient(error=ConnectionError("refused"))
+    registry = ServiceRegistry()
+    registry.register(_spec())
+    provider = aggregator._ObservableProxyProvider(
+        "example", lambda: client, registry=registry, cache_ttl=300.0
+    )
+    ctx = _patch_context(
+        monkeypatch, make_principal(subject="alice"), active_backend=None
+    )
+    ctx.recorded_state["__list_credential_status__:example"] = (False, "unavailable")
+    with pytest.raises(ConnectionError):
+        await provider._list_tools()
+    assert client.call_count == 1
+
+    client.error = None
+    client.tools = [_tool("widget_a")]
+    provider.invalidate_subject("alice")
+
+    tools = await provider._list_tools()
+    assert client.call_count == 2
+    assert [t.name for t in tools] == ["widget_a"]
+
+
+async def test_invalidate_subject_keeps_the_service_wide_failure_record() -> None:
+    """A link or revoke by one caller must not clear a still-true
+    service-wide ``unavailable`` for anyone, including that caller."""
+    registry = ServiceRegistry()
+    registry.register(_spec())
+    provider = aggregator._ObservableProxyProvider(
+        "example", _CountingListClient, registry=registry, cache_ttl=300.0
+    )
+    registry.record_list_failure("example", "unavailable", None)
+    registry.record_list_failure("example", "not_linked", "alice")
+
+    provider.invalidate_subject("alice")
+
+    assert registry.recent_list_failure("example", "alice") == "unavailable"
+    assert registry.recent_list_failure("example", "bob") == "unavailable"
+    registry.clear_list_failure("example", None)  # drop the service-wide reason
+    assert registry.recent_list_failure("example", "alice") is None
+
+
+async def test_invalidate_subject_clears_only_that_subjects_list_failure_record() -> (
+    None
+):
+    registry = ServiceRegistry()
+    registry.register(_spec(name="svc-a", prefix="a"))
+    registry.register(_spec(name="svc-b", prefix="b"))
+    provider_a = aggregator._ObservableProxyProvider(
+        "svc-a", _CountingListClient, registry=registry, cache_ttl=300.0
+    )
+    registry.record_list_failure("svc-a", "not_linked", "alice")
+    registry.record_list_failure("svc-a", "not_linked", "bob")
+    registry.record_list_failure("svc-b", "not_linked", "alice")
+
+    provider_a.invalidate_subject("alice")
+
+    assert registry.recent_list_failure("svc-a", "alice") is None
+    assert registry.recent_list_failure("svc-a", "bob") == "not_linked"
+    assert registry.recent_list_failure("svc-b", "alice") == "not_linked"
+
+
 # ---------------------------------------------------------------------------
 # Per-(subject, service) listing cache generalized to every kind
 # (tools/resources/resource templates/prompts) -- production symptom:

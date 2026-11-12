@@ -2,8 +2,8 @@
 
 This page explains how the portal's styling is wired. What the portal should
 look like, and why, is in `DESIGN.md` at the repository root; the worked
-reference with rendered examples is
-[the design language page](design-language/index.html). Everything here is
+reference with rendered examples is the portal's own `/design/` page (see
+[The design reference page](#the-design-reference-page)). Everything here is
 about `portal/`.
 
 ## Where things live
@@ -138,8 +138,8 @@ defaults apply. The light-theme colour is not adjusted: the accent is only ever
 a fill or the nav marker, never text, so its contrast against the page is not
 load-bearing for reading.
 
-The derivation mirrors `applyAccent` in the design language page, which lets
-you try a colour before configuring it.
+The `/design/` page has an accent switcher that reuses this derivation, which
+lets you try a colour before configuring it.
 
 ## Fonts
 
@@ -377,6 +377,49 @@ line and fix for each of these:
 A genuine exception goes in the test's `ALLOWLIST` with a reason. A second test
 fails if an allowlist entry is no longer needed.
 
+## The design reference page
+
+`/design/` (`portal/src/pages/design.astro`) is the worked reference for
+`DESIGN.md`: one section per term and component, each with a definition, tokens,
+rendered examples and do and don't pairs. It is public (`PublicBase.astro`), holds
+only fictional example data, and has a quiet "Design" link in the footer.
+
+**The examples are the real thing.** Buttons, fields, tables, badges, alerts and
+empty states are Basecoat classes with the `af-` extensions the pages use;
+status marks, banners, hints, copy fields, segmented controls, disclosures,
+tooltips, the dialog, the async-state ladder and the bar chart are the shared
+Vue components, and the page pattern is composed from the real page classes. An
+example therefore cannot differ from what ships. Where the contract bans
+something, a "don't" says so in words or draws it in
+`components/design/DontExamples.astro`, the one file whose deliberate violations
+are allowlisted in `designContract.test.ts` (each line carries a
+`wrong:<rule>` marker, so a stray violation there still fails).
+
+**Layout.** The page is `components/design/`: presentational pieces
+(`DesignSection`, `Stage`, `DoDont`, `SpecTable`, `SectionNav`), one file per
+section group under `sections/`, and the sections listed once in
+`sectionList.ts`, from which the in-page navigation is generated;
+`designSections.test.ts` fails if the list and the rendered sections differ.
+Tailwind does not scan this directory (`@source not` in `global.css`), so its
+prose cannot add utilities to the stylesheet every page loads.
+
+**Live token tables.** `TokenTable.vue` renders token names and uses on the
+server and fills the "Value now" column and the specimens on the client from the
+computed style of the page's accent scope, again on every `af-themechange`, on
+a change of the page-local accent and when the configured accent lands on
+`<html>` (`lib/designTokens.ts`). Values are shown as the stylesheet reports them,
+so a minified `#fff` stands for `#ffffff`.
+
+**The accent switcher.** `AccentSwitcher.vue` lets a reader try a facility colour
+on this page only (`lib/designAccent.ts`). The choice is written on the page's
+`#design-scope` element, never on `<html>`, so it beats the configured accent that
+the footer's `watchAccent` writes there, "Default" removes it and the configured
+accent shows again, and nothing is stored. It uses `resolveAccent` from
+`accent.ts` (on-accent by contrast, lightening in dark) and re-derives on a theme
+change. The scope redeclares Basecoat's `--primary` and Tailwind's
+`--color-primary` (see `design.css`), because a custom property defined from another
+is resolved where it is declared and would otherwise stay on the `<html>` accent.
+
 ## Running the checks and the preview
 
 ```bash
@@ -387,6 +430,8 @@ pixi run -e portal design-preview  # build, then serve every page with example d
 
 `design-preview` takes `--scenario healthy|problems`, `--port N` and
 `--accent RRGGBB`; `?theme=light|dark` and `?accent=RRGGBB` work per request.
+The design reference page is at `/design/`; there `?accent=` sets the
+configured accent and the page's own switcher overrides it.
 All of its data is fictional. To capture every page at desktop and phone widths
 in both themes:
 
