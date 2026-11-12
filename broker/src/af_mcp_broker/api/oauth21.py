@@ -7,6 +7,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse, RedirectResponse
 
+from af_mcp_broker.api.credentials import notify_identity_linked
 from af_mcp_broker.config import Settings, get_settings
 from af_mcp_broker.credentials.oauth21 import (
     OAuth21Provider,
@@ -369,6 +370,7 @@ async def callback(
         )
 
     log.info("oauth21.callback.linked", alias=alias, subject=payload.sub)
+    notify_identity_linked(request, payload.sub, alias)
 
     # Tell the portal which provider was just linked so the Identities page
     # can show a confirmation banner without an extra round trip — appended

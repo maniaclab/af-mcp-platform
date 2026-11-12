@@ -1,0 +1,74 @@
+---
+import { AccessDeniedError } from '../../../lib/api';
+import AsyncState from '../../ui/AsyncState.vue';
+import DesignSection from '../DesignSection.astro';
+import OverlayDemo from '../OverlayDemo.vue';
+import Stage from '../Stage.astro';
+
+const DENIED = new AccessDeniedError('Your account has not been granted access to this platform yet. Ask an administrator.', null);
+
+// The props every state shares; each example turns one on.
+const IDLE = {
+  loading: false,
+  error: null,
+  errorTitle: 'Usage unavailable',
+  sessionExpired: false,
+  accessDenied: null,
+};
+---
+
+<DesignSection id="dialog">
+  <Fragment slot="definition"> A dialog interrupts for a decision that cannot be undone or a short form. A tooltip names an icon or shows an exact value. </Fragment>
+  <OverlayDemo client:load />
+  <div class="design-prose">
+    <ul>
+      <li>Dialog buttons sit bottom right, with the confirming action last. The confirming button repeats the title's verb. The title is the 20px step.</li>
+      <li>A tooltip never holds information a person needs to complete the task. It is not reachable on touch.</li>
+      <li>Prefer inline content to a dialog. Do not open a dialog from a dialog.</li>
+      <li>A tooltip is flat: page background, strong border, 4px radius. It uses the native Popover API, so a scrolling ancestor cannot clip it.</li>
+    </ul>
+  </div>
+  <p class="af-help">Used on: Tokens (new, revoke), Identities (unlink, consent), Admin (maintenance mode). Tooltips: badges, dates, icon-only buttons.</p>
+</DesignSection>
+
+<DesignSection id="empty">
+  <Fragment slot="definition">
+    When a list has nothing in it, say what belongs there and offer the action that fills it. Data fetched from the broker goes through one ladder of states (<code>AsyncState</code>): loading, session expired, access denied, error, empty, then the content.
+  </Fragment>
+  <Stage label="Empty state">
+    <div class="empty border-input border">
+      <header>
+        <h4>No tokens yet</h4>
+        <p>Tokens let clients that can't sign in with a browser, such as Claude Desktop, reach the gateway as you.</p>
+      </header>
+      <section>
+        <button type="button" class="btn">New token</button>
+      </section>
+    </div>
+  </Stage>
+  <div class="design-cols">
+    <Stage label="AsyncState: loading">
+      <AsyncState {...IDLE} loading={true} loadingLabel="Loading usage…" />
+    </Stage>
+    <Stage label="AsyncState: session expired">
+      <AsyncState {...IDLE} sessionExpired={true} inline />
+    </Stage>
+    <Stage label="AsyncState: access denied">
+      <AsyncState {...IDLE} accessDenied={DENIED} inline />
+    </Stage>
+    <Stage label="AsyncState: error">
+      <AsyncState {...IDLE} error="The broker did not answer. Try again in a minute." inline />
+    </Stage>
+  </div>
+  <Stage label="AsyncState: empty">
+    <AsyncState {...IDLE} empty={true}>
+      <header slot="empty">
+        <h4>No tool calls in the last 30 days</h4>
+        <p>Once your AI assistant calls tools through this platform, its estimated context usage shows up here.</p>
+      </header>
+    </AsyncState>
+  </Stage>
+  <p class="af-help">
+    This is Basecoat's <code>empty</code>, which centres its content under a dashed border; the portal keeps that layout. An empty state may carry the page's primary button, so the page header does not repeat it. The failure states are shown as notes here (<code>inline</code>); a page uses the banner form when the page's own data fails to load. Used on: Tokens, Identities, Usage (no calls in range).
+  </p>
+</DesignSection>

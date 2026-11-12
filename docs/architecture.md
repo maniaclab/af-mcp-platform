@@ -635,11 +635,30 @@ status it can change:
 | Reason | Describes | Recorded against | Catalog status |
 |---|---|---|---|
 | `unavailable` | the backend (down, not answering within the listing deadline `MCP_LIST_TIMEOUT_SECONDS`, or an unexplained 401) | the service, seen by every caller | `unavailable` |
-| `unauthorized` | one caller's credential, which the backend rejected | that caller and service only | `link_required` ("re-link") |
+| `unauthorized` | one caller's credential, which the backend rejected | that caller and service only | `link_required` ("re-link"), `link_state: "rejected"`; not used for an `oauth21` credential, see below |
 | `not_linked` | one caller, who has no credential for the service; logged at INFO. A mint-and-inject (`x509`, `krb5`, `servicex`) service's tools are listed only for a caller who has linked the credential, so for an unlinked caller the listing is skipped without minting a token or contacting the backend | that caller and service only | `link_required` ("link") |
 
+`link_required` carries a `link_state` saying why: `not_linked` when
+`provider.is_linked()` is false, `rejected` when the caller linked and the
+backend refused the credential. An `oauth21` credential that a backend 401
+marked rejected (`rejected_at`, see
+[Rejected `oauth21-direct` tokens](auth.md#rejected-oauth21-direct-tokens))
+also fails `is_linked()`, so `_service_status` asks
+`provider.is_rejected()` to report it as `rejected` rather than `not_linked`.
+Because that provider refreshes or rejects the credential itself
+(`tracks_rejection`), its stored state alone decides: the caller's
+`unauthorized` record is not consulted, and a refreshed or re-linked
+credential stops reading as rejected immediately.
+
 A successful listing by a caller clears that caller's own record and the
-service-wide one, never another caller's. Caller-specific records are held
+service-wide one, never another caller's. Listings are cached per caller and
+service (a failed one for 30 seconds), so a caller's cached listing and own
+caller-specific record (never the service-wide one) are also dropped the moment a credential for that service is linked
+(OAuth 2.1 callback, ServiceX link, Kerberos keytab/ticket, x509 proxy mint)
+or revoked, and the next `tools/list` reaches the backend; see
+[docs/auth.md](auth.md#when-a-new-link-shows-up-in-toolslist). A
+`keycloak-brokered` link is made in Keycloak, which the broker does not
+observe, so that type still waits out the 30 seconds. Caller-specific records are held
 in process memory, capped at 4096 entries (least recently recorded evicted
 first); each replica keeps its own, so a caller whose requests land on
 different replicas can see the status differ until each replica has

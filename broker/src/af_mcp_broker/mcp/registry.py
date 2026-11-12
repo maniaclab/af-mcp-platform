@@ -628,6 +628,10 @@ class ServiceRegistry:
         if subject is not None:
             self._caller_list_failures.pop((name, subject), None)
 
+    def clear_caller_list_failure(self, name: str, subject: str) -> None:
+        """Clear only *subject*'s caller-specific tools/list failure reason for *name*, leaving *name*'s service-wide reason and every other subject's record alone. Called when *subject*'s credential state changes (a link or revoke): that says nothing about whether the backend is up, so unlike ``clear_list_failure`` it must not reset a service-wide ``unavailable`` for anyone. No-op if nothing was recorded."""
+        self._caller_list_failures.pop((name, subject), None)
+
     def recent_list_failure(self, name: str, subject: str) -> str | None:
         """Return the failure reason /v1/catalog should show *subject* for *name*, or None if none has been recorded (the healthy default): the service-wide reason if any (a backend that is down leaves nothing for the caller to act on), else *subject*'s own caller-specific one. Never another subject's reason."""
         return self._service_list_failures.get(name) or self._caller_list_failures.get(

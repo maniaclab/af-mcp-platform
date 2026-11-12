@@ -1,0 +1,19 @@
+---
+import DesignSection from '../DesignSection.astro';
+import SpecTable from '../SpecTable.astro';
+---
+
+<DesignSection id="writing">
+  <Fragment slot="definition"> Say what the state is and what to do about it, in the words a physicist would use to a colleague. The portal never asks a person to understand the broker to fix their access. </Fragment>
+  <SpecTable columns={['Rule', 'Write', 'Not']} caption="Writing rules with an example each">
+    <tr><td>Name the thing and the fix</td><td>Your grid proxy has expired. Renew it to keep grid services working.</td><td>Access denied (403).</td></tr>
+    <tr><td>Buttons are verb + object</td><td>Link certificate</td><td>Continue</td></tr>
+    <tr><td>Sentence case everywhere</td><td>New token</td><td>NEW TOKEN, New Token</td></tr>
+    <tr><td>Relative time, exact on hover</td><td>Expires in 3 days</td><td>2026-11-13T09:14:00Z</td></tr>
+    <tr><td>No filler</td><td>Token created</td><td>Your token was successfully created!</td></tr>
+    <tr><td>Say what is lost</td><td>Revoke token. Clients using it stop working immediately.</td><td>Are you sure?</td></tr>
+    <tr><td>Empty states say what goes here</td><td>No tokens yet. Create one for clients that can't sign in with a browser.</td><td>Nothing to show.</td></tr>
+    <tr><td>Product words, not internals</td><td>Grid certificate</td><td>x509 VOMS proxy credential provider</td></tr>
+  </SpecTable>
+  <p class="af-help">Internal terms (provider class names, config keys) appear only on the Admin page, where the reader is an operator.</p>
+</DesignSection>

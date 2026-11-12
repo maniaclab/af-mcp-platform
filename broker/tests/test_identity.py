@@ -275,6 +275,61 @@ async def test_cold_cache_directory_outage_raises_actionable_error(
     assert "invalid" not in detail  # must not read like a bad-credential 401
 
 
+async def test_get_principal_rejects_jwt_of_user_disabled_after_cache_warmed(
+    settings, sig_key, prime_jwks, static_principal_cache, monkeypatch
+):
+    """Issue #336: a still-valid access token for a user disabled in the
+    directory is refused with the vague 401 (never the 503 an outage gets)
+    once the principal cache refreshes."""
+    cache, directory = static_principal_cache
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+    await get_principal(token, settings, cache)  # warms the cache
+
+    directory.disabled_subjects.add("user-123")
+    real_monotonic = time.monotonic
+    monkeypatch.setattr(time, "monotonic", lambda: real_monotonic() + 2000.0)
+    with pytest.raises(HTTPException) as exc:
+        await get_principal(token, settings, cache)
+
+    assert not isinstance(exc.value, PrincipalDirectoryUnavailableError)
+    assert exc.value.status_code == 401
+    assert exc.value.detail == "Invalid or expired token"
+
+
+async def test_resolve_pat_principal_rejects_pat_of_user_disabled_after_cache_warmed(
+    settings, static_principal_cache, monkeypatch
+):
+    """Issue #336: the PAT's own record stays valid, yet a disabled owner
+    gets the same vague 401 as any other invalid PAT within one refresh."""
+    cache, directory = static_principal_cache
+    backend = InMemoryTokenRegistryBackend()
+    plaintext, lookup_id, secret_hash = mint_pat()
+    await backend.add(
+        TokenRecord(
+            lookup_id=lookup_id,
+            principal_id="user-123",
+            secret_hash=secret_hash,
+            name="t",
+            created_at=time.time(),
+            expires_at=time.time() + 3600,
+            revoked_at=None,
+            last_used_at=None,
+        )
+    )
+    tracker = LastUsedTracker()
+    await resolve_pat_principal(plaintext, settings, backend, cache, tracker)
+
+    directory.disabled_subjects.add("user-123")
+    real_monotonic = time.monotonic
+    monkeypatch.setattr(time, "monotonic", lambda: real_monotonic() + 2000.0)
+    with pytest.raises(HTTPException) as exc:
+        await resolve_pat_principal(plaintext, settings, backend, cache, tracker)
+
+    assert exc.value.status_code == 401
+    assert exc.value.detail == "Invalid bearer token"
+
+
 async def test_get_principal_without_a_configured_directory_raises_actionable_error(
     settings, sig_key, prime_jwks
 ):

@@ -181,6 +181,52 @@ def test_happy_path_returns_metadata_without_ccache(krb5_app) -> None:
     assert fake_client.calls[0]["password"].get_secret_value() == "hunter2"
 
 
+def _record_links(client) -> list[tuple[str, str]]:
+    """Replace the credential cache's on_link hook with a recorder."""
+    linked: list[tuple[str, str]] = []
+    client.app.state.credential_cache._on_link = lambda subject, target: linked.append(
+        (subject, target)
+    )
+    return linked
+
+
+def test_ticket_mint_notifies_listing_caches(krb5_app) -> None:
+    client, state, _fake_client = krb5_app
+    linked = _record_links(client)
+
+    resp = client.post(
+        "/v1/krb5/ticket", json={"username": "tuser", "password": "hunter2"}
+    )
+
+    assert resp.status_code == 201, resp.text
+    assert linked == [(state["principal"].subject, _TARGET)]
+
+
+def test_failed_ticket_mint_does_not_notify_listing_caches(krb5_app) -> None:
+    client, _state, fake_client = krb5_app
+    fake_client.outcome = Krb5TokenBadCredentialError()
+    linked = _record_links(client)
+
+    resp = client.post(
+        "/v1/krb5/ticket", json={"username": "tuser", "password": "wrong"}
+    )
+
+    assert resp.status_code == 400
+    assert linked == []
+
+
+def test_keytab_link_notifies_listing_caches(krb5_app) -> None:
+    client, state, _fake_client = krb5_app
+    linked = _record_links(client)
+
+    resp = client.post(
+        "/v1/krb5/keytab", json={"username": "tuser", "keytab_b64": "a2V5dGFi"}
+    )
+
+    assert resp.status_code == 201, resp.text
+    assert linked == [(state["principal"].subject, _TARGET)]
+
+
 def test_happy_path_null_renew_until_for_non_renewable_ticket(krb5_app) -> None:
     client, _state, fake_client = krb5_app
     fake_client.outcome = _minted(renewable=False)

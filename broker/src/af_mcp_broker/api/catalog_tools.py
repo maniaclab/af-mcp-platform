@@ -300,7 +300,7 @@ async def get_service_tools(
                 request.app.state, "broker_token_issuer", None
             )
             try:
-                headers, skip_reason = await resolve_list_time_credential(
+                credential = await resolve_list_time_credential(
                     spec, credential_registry, principal, broker_token_issuer
                 )
             except NotLinkedForListing:
@@ -311,6 +311,7 @@ async def get_service_tools(
                     status="not_linked",
                 )
                 return _respond(spec, "not_linked", [], policy, registry, caps)
+            skip_reason = credential.skip_reason
 
             # The cache only ever short-circuits a caller whose credential
             # resolution succeeded (skip_reason None) -- a degraded caller
@@ -323,7 +324,7 @@ async def get_service_tools(
                 if cached is not None:
                     return _respond(spec, "ok", cached, policy, registry, caps)
 
-            status, tools = await fetch_service_tool_listing(spec, headers, skip_reason)
+            status, tools = await fetch_service_tool_listing(spec, credential)
             if status == "ok":
                 if skip_reason is None:
                     cache.put(spec.name, tools)

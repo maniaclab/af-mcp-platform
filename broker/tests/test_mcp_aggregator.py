@@ -120,6 +120,8 @@ class _FakeProvider(CredentialProvider):
         self.needs_unlock = needs_unlock
         self.http_error = http_error
         self.issue_calls: list[tuple[int, str]] = []
+        # (subject, access_token) per mark_rejected() call
+        self.rejected: list[tuple[str, str]] = []
 
     async def is_linked(self, principal: Principal) -> bool:
         return self.linked
@@ -146,6 +148,9 @@ class _FakeProvider(CredentialProvider):
             source="test",
             execution_model=self.execution_model,
         )
+
+    async def mark_rejected(self, principal: Principal, access_token: str) -> None:
+        self.rejected.append((principal.subject, access_token))
 
 
 class _RelinkingProvider(_FakeProvider):
@@ -601,6 +606,139 @@ async def test_client_factory_bearer_injects_minted_token_not_inbound(
     # See test_client_factory_selects_transport_by_spec for why this is
     # _transport_options rather than a transport-level attribute in v4.
     assert client._transport_options is None
+
+
+def _status_transport(status_code: int) -> httpx2.MockTransport:
+    return httpx2.MockTransport(lambda request: httpx2.Response(status_code))
+
+
+async def _send_through(client: Client, status_code: int) -> None:
+    """Send one request through *client*'s own httpx client factory, against a
+    backend that answers *status_code* -- the path every MCP request takes."""
+    http_client = client.transport.httpx_client_factory(
+        transport=_status_transport(status_code)
+    )
+    async with http_client:
+        await http_client.get("http://backend.invalid/mcp")
+
+
+class TestUnauthorizedHook:
+    """The httpx response hook that reports a backend's 401 for an injected
+    credential (issue #344), ahead of _raise_for_401."""
+
+    async def test_401_reports_and_still_raises(self) -> None:
+        reported: list[None] = []
+
+        async def _on_unauthorized() -> None:
+            reported.append(None)
+
+        http_client = aggregator._unauthorized_raising_httpx_client_factory(
+            on_unauthorized=_on_unauthorized, transport=_status_transport(401)
+        )
+        async with http_client:
+            with pytest.raises(httpx2.HTTPStatusError):
+                await http_client.get("http://backend.invalid/mcp")
+
+        assert reported == [None]
+
+    async def test_success_does_not_report(self) -> None:
+        reported: list[None] = []
+
+        async def _on_unauthorized() -> None:
+            reported.append(None)
+
+        http_client = aggregator._unauthorized_raising_httpx_client_factory(
+            on_unauthorized=_on_unauthorized, transport=_status_transport(200)
+        )
+        async with http_client:
+            resp = await http_client.get("http://backend.invalid/mcp")
+
+        assert resp.status_code == 200
+        assert reported == []
+
+    async def test_failing_report_is_logged_and_never_masks_the_401(self) -> None:
+        async def _on_unauthorized() -> None:
+            raise RuntimeError("token store unreachable")
+
+        http_client = aggregator._unauthorized_raising_httpx_client_factory(
+            on_unauthorized=_on_unauthorized, transport=_status_transport(401)
+        )
+        with structlog.testing.capture_logs() as logs:
+            async with http_client:
+                with pytest.raises(httpx2.HTTPStatusError):
+                    await http_client.get("http://backend.invalid/mcp")
+
+        assert [e["event"] for e in logs] == ["aggregator.mark_rejected_failed"]
+        assert logs[0]["log_level"] == "warning"
+
+
+async def test_client_factory_bearer_call_reports_401_for_the_injected_token(
+    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_context(monkeypatch, make_principal(subject="sub-abc"))
+    spec = _spec(auth_type="bearer")
+    provider = _FakeProvider(token="minted-abc")
+    registry = CredentialRegistry()
+    registry.register(spec.name, provider)
+
+    client = await _make_client_factory(spec, registry, settings, _OPEN_POLICY)()
+    with pytest.raises(httpx2.HTTPStatusError):
+        await _send_through(client, 401)
+
+    assert provider.rejected == [("sub-abc", "minted-abc")]
+
+
+async def test_client_factory_bearer_list_time_reports_401_for_the_injected_token(
+    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_context(monkeypatch, make_principal(subject="sub-abc"), active_backend=None)
+    spec = _spec(auth_type="bearer")
+    provider = _FakeProvider(token="minted-abc")
+    registry = CredentialRegistry()
+    registry.register(spec.name, provider)
+
+    client = await _make_client_factory(spec, registry, settings, _OPEN_POLICY)()
+    with pytest.raises(httpx2.HTTPStatusError):
+        await _send_through(client, 401)
+
+    assert provider.rejected == [("sub-abc", "minted-abc")]
+
+
+async def test_client_factory_uncredentialed_list_time_401_reports_nothing(
+    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A 401 for a connection that carried no credential (an unlinked caller)
+    says nothing about any stored credential."""
+    _patch_context(monkeypatch, make_principal(subject="sub-abc"), active_backend=None)
+    spec = _spec(auth_type="bearer")
+    provider = _FakeProvider(linked=False)
+    registry = CredentialRegistry()
+    registry.register(spec.name, provider)
+
+    client = await _make_client_factory(spec, registry, settings, _OPEN_POLICY)()
+    with pytest.raises(httpx2.HTTPStatusError):
+        await _send_through(client, 401)
+
+    assert provider.rejected == []
+
+
+async def test_resolve_list_time_credential_bearer_reports_401_for_the_injected_token(
+    make_principal,
+) -> None:
+    """The /v1 catalog listing path gets the same rejection report as /mcp."""
+    spec = _spec(auth_type="bearer")
+    provider = _FakeProvider(token="minted-abc")
+    registry = CredentialRegistry()
+    registry.register(spec.name, provider)
+
+    resolved = await resolve_list_time_credential(
+        spec, registry, make_principal(subject="sub-abc")
+    )
+
+    assert resolved.headers == {"Authorization": "Bearer minted-abc"}
+    assert resolved.on_unauthorized is not None
+    await resolved.on_unauthorized()
+    assert provider.rejected == [("sub-abc", "minted-abc")]
 
 
 async def test_client_factory_bearer_per_user_isolation(
@@ -1545,12 +1683,44 @@ async def test_list_tools_cache_hit_within_ttl_skips_second_upstream_call(
     assert client.call_count == 1
 
 
+def _injected_401_error() -> httpx2.HTTPStatusError:
+    request = httpx2.Request("GET", "http://example.invalid")
+    return httpx2.HTTPStatusError(
+        "unauthorized", request=request, response=httpx2.Response(401, request=request)
+    )
+
+
+async def test_list_tools_still_caches_a_401_with_no_credential_injected(
+    monkeypatch: pytest.MonkeyPatch, make_principal
+) -> None:
+    """An unlinked caller's uncredentialed 401 (rucio-mcp) stays
+    negative-cached: nothing changed that a retry could pick up."""
+    client = _CountingListClient(error=_injected_401_error())
+    registry = ServiceRegistry()
+    registry.register(_spec())
+    provider = aggregator._ObservableProxyProvider(
+        "example", lambda: client, registry=registry, cache_ttl=300.0
+    )
+    ctx = _patch_context(
+        monkeypatch, make_principal(subject="alice"), active_backend=None
+    )
+    ctx.recorded_state["__list_credential_status__:example"] = (False, "not_linked")
+
+    for _ in range(2):
+        with pytest.raises(McpError):
+            await provider._list_tools()
+
+    assert client.call_count == 1
+
+
 async def test_list_tools_per_subject_isolation_one_401_one_success(
     monkeypatch: pytest.MonkeyPatch, make_principal
 ) -> None:
     """Two principals against the same service: alice's upstream listing
     401s, bob's succeeds -- neither may be served the other's cached
-    outcome."""
+    outcome. Alice is unlinked (no credential injected, the rucio-mcp case),
+    so her 401 is negative-cached; an injected credential's 401 is not (see
+    test_list_tools_does_not_cache_a_401_for_an_injected_credential)."""
     request = httpx2.Request("GET", "http://example.invalid")
     response = httpx2.Response(401, request=request)
     unauthorized = httpx2.HTTPStatusError(
@@ -1574,7 +1744,9 @@ async def test_list_tools_per_subject_isolation_one_401_one_success(
         ctx = _patch_context(
             monkeypatch, make_principal(subject=subject), active_backend=None
         )
-        ctx.recorded_state["__list_credential_status__:example"] = (True, None)
+        ctx.recorded_state["__list_credential_status__:example"] = (
+            (False, "not_linked") if subject == "alice" else (True, None)
+        )
         monkeypatch.setattr(provider, "client_factory", lambda c=client: c)
         if subject == "alice":
             with pytest.raises(McpError):
@@ -1827,6 +1999,73 @@ async def test_invalidate_subject_cache_helper_targets_all_services_when_none(
     assert client_b.call_count == 2
 
 
+async def test_invalidate_subject_reaches_backend_instead_of_cached_negative_entry(
+    monkeypatch: pytest.MonkeyPatch, make_principal
+) -> None:
+    """A cached listing failure is dropped by invalidation, so the next
+    tools/list reaches the backend without waiting out the negative TTL."""
+    client = _CountingListClient(error=ConnectionError("refused"))
+    registry = ServiceRegistry()
+    registry.register(_spec())
+    provider = aggregator._ObservableProxyProvider(
+        "example", lambda: client, registry=registry, cache_ttl=300.0
+    )
+    ctx = _patch_context(
+        monkeypatch, make_principal(subject="alice"), active_backend=None
+    )
+    ctx.recorded_state["__list_credential_status__:example"] = (False, "unavailable")
+    with pytest.raises(ConnectionError):
+        await provider._list_tools()
+    assert client.call_count == 1
+
+    client.error = None
+    client.tools = [_tool("widget_a")]
+    provider.invalidate_subject("alice")
+
+    tools = await provider._list_tools()
+    assert client.call_count == 2
+    assert [t.name for t in tools] == ["widget_a"]
+
+
+async def test_invalidate_subject_keeps_the_service_wide_failure_record() -> None:
+    """A link or revoke by one caller must not clear a still-true
+    service-wide ``unavailable`` for anyone, including that caller."""
+    registry = ServiceRegistry()
+    registry.register(_spec())
+    provider = aggregator._ObservableProxyProvider(
+        "example", _CountingListClient, registry=registry, cache_ttl=300.0
+    )
+    registry.record_list_failure("example", "unavailable", None)
+    registry.record_list_failure("example", "not_linked", "alice")
+
+    provider.invalidate_subject("alice")
+
+    assert registry.recent_list_failure("example", "alice") == "unavailable"
+    assert registry.recent_list_failure("example", "bob") == "unavailable"
+    registry.clear_list_failure("example", None)  # drop the service-wide reason
+    assert registry.recent_list_failure("example", "alice") is None
+
+
+async def test_invalidate_subject_clears_only_that_subjects_list_failure_record() -> (
+    None
+):
+    registry = ServiceRegistry()
+    registry.register(_spec(name="svc-a", prefix="a"))
+    registry.register(_spec(name="svc-b", prefix="b"))
+    provider_a = aggregator._ObservableProxyProvider(
+        "svc-a", _CountingListClient, registry=registry, cache_ttl=300.0
+    )
+    registry.record_list_failure("svc-a", "not_linked", "alice")
+    registry.record_list_failure("svc-a", "not_linked", "bob")
+    registry.record_list_failure("svc-b", "not_linked", "alice")
+
+    provider_a.invalidate_subject("alice")
+
+    assert registry.recent_list_failure("svc-a", "alice") is None
+    assert registry.recent_list_failure("svc-a", "bob") == "not_linked"
+    assert registry.recent_list_failure("svc-b", "alice") == "not_linked"
+
+
 # ---------------------------------------------------------------------------
 # Per-(subject, service) listing cache generalized to every kind
 # (tools/resources/resource templates/prompts) -- production symptom:
@@ -1845,6 +2084,34 @@ _LIST_KIND_CASES = [
     ("_list_resource_templates", "resource_templates"),
     ("_list_prompts", "prompts"),
 ]
+
+
+@pytest.mark.parametrize(("method_name", "client_attr"), _LIST_KIND_CASES)
+async def test_list_does_not_cache_a_401_for_an_injected_credential(
+    monkeypatch: pytest.MonkeyPatch,
+    make_principal,
+    method_name: str,
+    client_attr: str,
+) -> None:
+    """A 401 for an injected credential has just refreshed or rejected it
+    (issue #344), so the next listing must try again rather than replay the
+    cached failure for 30 seconds."""
+    client = _CountingListClient(error=_injected_401_error())
+    registry = ServiceRegistry()
+    registry.register(_spec())
+    provider = aggregator._ObservableProxyProvider(
+        "example", lambda: client, registry=registry, cache_ttl=300.0
+    )
+    ctx = _patch_context(
+        monkeypatch, make_principal(subject="alice"), active_backend=None
+    )
+    ctx.recorded_state["__list_credential_status__:example"] = (True, None)
+
+    for _ in range(2):
+        with pytest.raises(McpError):
+            await getattr(provider, method_name)()
+
+    assert client.call_count == 2
 
 
 @pytest.mark.parametrize(("method_name", "client_attr"), _LIST_KIND_CASES)
@@ -2226,7 +2493,7 @@ async def test_resolve_list_time_credential_mint_and_inject_linked_returns_heade
     registry = CredentialRegistry()
     registry.register(spec.name, _FakeProvider(linked=True))
 
-    headers, skip_reason = await resolve_list_time_credential(
+    headers, skip_reason, _ = await resolve_list_time_credential(
         spec,
         registry,
         make_principal(subject="sub-abc"),
@@ -2286,7 +2553,7 @@ async def test_resolve_list_time_credential_x509_aud_uses_effective_audience(
     issuer = _make_issuer()
     spec = _spec(name="ami_service", auth_type="x509", audience="ami-mcp")
 
-    headers, skip_reason = await resolve_list_time_credential(
+    headers, skip_reason, _ = await resolve_list_time_credential(
         spec,
         CredentialRegistry(),
         make_principal(subject="sub-abc"),
@@ -2331,7 +2598,7 @@ async def test_resolve_list_time_credential_krb5_mints_not_provider_issue(
     registry = CredentialRegistry()
     registry.register(spec.name, provider)
 
-    headers, skip_reason = await resolve_list_time_credential(
+    headers, skip_reason, _ = await resolve_list_time_credential(
         spec,
         registry,
         make_principal(subject="sub-abc"),

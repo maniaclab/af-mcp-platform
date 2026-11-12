@@ -55,7 +55,9 @@ class IssuedCredential:
     cred_class: str  # "oidc_native" | "service_account" | "user_x509"
     target: str
     kind: CredentialKind
-    expires_at: float  # epoch seconds (UTC)
+    # epoch seconds (UTC); None when the issuing AS reported no expiry
+    # (non-expiring oauth21 tokens, issue #344)
+    expires_at: float | None
     # bearer: {"access_token": ..., "token_type": "Bearer"}
     # x509 (proxy_ref):    {"proxy_handle": ..., "proxy_path": ..., "delivery": "direct"}
     # x509 (proxy_redeem): {"proxy_handle": ..., "delivery": "redeem"}
@@ -114,6 +116,22 @@ class CredentialProvider(ABC):
         genuinely cannot be minted yet, not merely "we didn't check."
         """
 
+    # True for a provider that records a backend's rejection of a stored
+    # credential itself (``mark_rejected``/``is_rejected``). Its stored state
+    # then decides whether the catalog reports "rejected"; for every other
+    # provider the catalog falls back to the caller's recorded "unauthorized"
+    # listing failure.
+    tracks_rejection: ClassVar[bool] = False
+
+    async def is_rejected(self, principal: Principal) -> bool:  # noqa: ARG002 (interface)
+        """Whether this principal has a credential stored that a backend rejected, so ``is_linked()`` is False although they did link.
+
+        Lets the catalog tell "linked, but the credential was rejected" from
+        "never linked". Default False; a provider that sets
+        ``tracks_rejection`` overrides it.
+        """
+        return False
+
     @abstractmethod
     async def issue(
         self,
@@ -135,6 +153,15 @@ class CredentialProvider(ABC):
 
         X509Provider overrides this to zero-overwrite the proxy file before
         unlinking it, then removes the cache entry.
+        """
+
+    async def mark_rejected(self, principal: Principal, access_token: str) -> None:  # noqa: B027
+        """Record that a backend answered HTTP 401 to *access_token*.  Default is a no-op.
+
+        Called by the aggregator for an injected bearer credential (issue
+        #344). OAuth21Provider overrides this so a rejected token stops
+        reading as linked until the user re-links; it must never re-link on
+        the user's behalf.
         """
 
 

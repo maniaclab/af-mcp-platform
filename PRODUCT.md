@@ -127,7 +127,7 @@ URL without multiplying the number of places a client must trust with credential
   reserved for values a user copies or compares literally. Number columns use its
   tabular numerals so they align.
 - Icons are Lucide, rendered as inline SVG from its published packages.
-- The worked reference for all of the above is `docs/design-language/index.html`.
+- The worked reference for all of the above is the portal's `/design/` page; open it locally with `pixi run -e portal design-preview`, then `/design/`.
 
 ## Evidence on Hand
 

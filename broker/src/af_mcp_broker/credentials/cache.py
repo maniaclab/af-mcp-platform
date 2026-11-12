@@ -130,6 +130,7 @@ class CredentialCache:
         max_failed_unlocks: int = 5,
         unlock_window_seconds: int = 15 * 60,
         on_revoke: Callable[[str, str], None] | None = None,
+        on_link: Callable[[str, str], None] | None = None,
     ) -> None:
         # (subject, target) -> _CacheEntry
         self._entries: dict[tuple[str, str], _CacheEntry] = {}
@@ -160,6 +161,14 @@ class CredentialCache:
         # merely expiring is bookkeeping, not an identity change, and must
         # not drop that warm listing cache (see _expire()'s docstring).
         self._on_revoke = on_revoke
+        # Called by notify_linked() with (subject, target) -- the mirror of
+        # on_revoke for issue #355: a credential becoming usable for a
+        # subject must drop the aggregator's cached listing for that service
+        # (a negative entry from before the link would otherwise be served
+        # until its TTL runs out). Deliberately NOT called by put(): every
+        # routine token refresh goes through it, and invalidating there would
+        # defeat the per-(subject, service) listing cache (issue #320).
+        self._on_link = on_link
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -396,6 +405,17 @@ class CredentialCache:
         )
         if self._on_revoke is not None:
             self._on_revoke(subject, target)
+
+    def notify_linked(self, subject: str, target: str) -> None:
+        """Signal that *subject*'s credential for *target* just became usable through an explicit link event (issue #355).
+
+        Calls ``on_link(subject, target)`` (if configured). Called by the
+        ``/v1`` routes that complete a link (OAuth 2.1 callback, ServiceX
+        token link, Kerberos keytab link / ticket mint, x509 proxy mint),
+        never by ``put()`` -- see ``on_link``'s comment in ``__init__``.
+        """
+        if self._on_link is not None:
+            self._on_link(subject, target)
 
     async def _expire(self, subject: str, target: str) -> None:
         """Drop an expired cache entry -- bookkeeping, not an identity change.

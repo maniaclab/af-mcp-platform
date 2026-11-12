@@ -423,6 +423,8 @@ async def _service_status(
         return "misconfigured", _STATUS_DETAILS["misconfigured"], correlation_id, None
 
     if not await provider.is_linked(principal):
+        if await provider.is_rejected(principal):
+            return "link_required", _RELINK_DETAIL, None, "rejected"
         return "link_required", _STATUS_DETAILS["link_required"], None, "not_linked"
 
     # Permission satisfied, provider resolves, and linked -- the live checks
@@ -432,11 +434,14 @@ async def _service_status(
     # live probe of the service itself. "not_linked" can't appear here (the
     # live is_linked() check above already accounts for it); "unauthorized"
     # means the stored credential itself was rejected, so re-linking (not
-    # waiting it out) is the fix.
+    # waiting it out) is the fix. A provider that tracks rejection itself
+    # already answered above through is_rejected(): its credential may have
+    # been refreshed or re-linked since the 401 behind the record, so the
+    # record doesn't count for it.
     failure = registry.recent_list_failure(spec.name, principal.subject)
     if failure == "unavailable":
         return "unavailable", _STATUS_DETAILS["unavailable"], None, None
-    if failure == "unauthorized":
+    if failure == "unauthorized" and not provider.tracks_rejection:
         return "link_required", _RELINK_DETAIL, None, "rejected"
 
     return "available", _STATUS_DETAILS["available"], None, None

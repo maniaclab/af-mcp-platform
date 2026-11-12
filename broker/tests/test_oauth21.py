@@ -18,20 +18,25 @@ from urllib.parse import parse_qs, urlparse
 
 import httpx
 import pytest
+import structlog
 from cryptography.fernet import Fernet
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
+from af_mcp_broker.api.permissions import _service_status
 from af_mcp_broker.app import app as broker_app
 from af_mcp_broker.config import get_settings
+from af_mcp_broker.credentials import CredentialRegistry
 from af_mcp_broker.credentials.oauth21 import (
     InMemoryTokenStore,
     OAuth21Provider,
     StoredOAuthCredential,
     VersionConflict,
+    normalize_token_response,
 )
 from af_mcp_broker.identity import Principal, keycloak_dependency
+from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
 from af_mcp_broker.oauth_state import (
     NONCE_COOKIE_NAME,
     NONCE_COOKIE_PATH,
@@ -493,6 +498,53 @@ async def test_is_linked_true_when_no_refresh_token_inside_refresh_window() -> N
     assert await provider.is_linked(_principal()) is True
 
 
+async def test_is_linked_true_when_no_expiry_and_no_refresh_token() -> None:
+    store = InMemoryTokenStore()
+    await store.write_cas(
+        SUBJECT,
+        ALIAS,
+        _make_cred(refresh_token=None, expires_at=None, refresh_expires_at=None),
+        expected_version=None,
+    )
+    provider = _make_provider(store)
+
+    assert await provider.is_linked(_principal()) is True
+
+
+# ---------------------------------------------------------------------------
+# normalize_token_response
+# ---------------------------------------------------------------------------
+
+
+def _normalize(data: dict[str, Any]) -> StoredOAuthCredential:
+    return normalize_token_response(
+        data,
+        alias=ALIAS,
+        subject=SUBJECT,
+        issuer=PROVIDER_ISSUER,
+        token_endpoint=TOKEN_ENDPOINT,
+    )
+
+
+def test_normalize_token_response_without_expires_in_has_no_expiry() -> None:
+    """RFC 6749 §5.1 makes ``expires_in`` only RECOMMENDED; Indico and GitHub
+    OAuth Apps omit it because their tokens do not expire -- issue #344."""
+    cred = _normalize(
+        {"access_token": "tok", "token_type": "Bearer", "scope": "read:user"}
+    )
+
+    assert cred.expires_at is None
+
+
+def test_normalize_token_response_with_expires_in_sets_expiry() -> None:
+    before = datetime.now(UTC)
+
+    cred = _normalize({"access_token": "tok", "expires_in": 3600})
+
+    assert cred.expires_at is not None
+    assert (cred.expires_at - before).total_seconds() == pytest.approx(3600, abs=5)
+
+
 # ---------------------------------------------------------------------------
 # OAuth21Provider.issue
 # ---------------------------------------------------------------------------
@@ -627,6 +679,411 @@ async def test_issue_returns_token_without_refresh_token_inside_refresh_window()
     issued = await provider.issue(_principal(), ALIAS, min_remaining_seconds=600)
 
     assert issued.payload["access_token"] == "access-token-1"
+
+
+async def test_issue_serves_token_without_expiry_and_reports_no_expiry() -> None:
+    """An AS that issues non-expiring tokens (Indico, GitHub OAuth Apps) gives
+    no expiry to report: the issued credential must say so rather than
+    invent one -- issue #344."""
+    store = InMemoryTokenStore()
+    await store.write_cas(
+        SUBJECT,
+        ALIAS,
+        _make_cred(refresh_token=None, expires_at=None, refresh_expires_at=None),
+        expected_version=None,
+    )
+    provider = _make_provider(store)
+
+    issued = await provider.issue(_principal(), ALIAS, min_remaining_seconds=600)
+
+    assert issued.payload["access_token"] == "access-token-1"
+    assert issued.expires_at is None
+
+
+async def test_issue_never_refreshes_token_without_expiry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A token with no known expiry is never inside the refresh window, even
+    when a refresh token happens to be stored alongside it."""
+    store = InMemoryTokenStore()
+    await store.write_cas(
+        SUBJECT, ALIAS, _make_cred(expires_at=None), expected_version=None
+    )
+    provider = _make_provider(store)
+    fake_client = _FakeTokenClient(
+        status_code=200, json_body={"access_token": "access-token-2"}
+    )
+    monkeypatch.setattr(
+        "af_mcp_broker.credentials.oauth21.get_http_client", lambda: fake_client
+    )
+
+    issued = await provider.issue(_principal(), ALIAS)
+
+    assert issued.payload["access_token"] == "access-token-1"
+    assert fake_client.calls == []
+
+
+# ---------------------------------------------------------------------------
+# OAuth21Provider.mark_rejected
+# ---------------------------------------------------------------------------
+
+
+async def test_mark_rejected_unlinks_but_keeps_the_token() -> None:
+    """A backend rejecting a stored token that cannot be refreshed marks it
+    rejected rather than deleting it: the user re-links (and re-consents)
+    themselves -- issue #344."""
+    store = InMemoryTokenStore()
+    await store.write_cas(
+        SUBJECT, ALIAS, _make_cred(refresh_token=None), expected_version=None
+    )
+    provider = _make_provider(store)
+
+    await provider.mark_rejected(_principal(), "access-token-1")
+
+    assert await provider.is_linked(_principal()) is False
+    stored = await store.get(SUBJECT, ALIAS)
+    assert stored is not None
+    assert stored[0].rejected_at is not None
+    assert stored[0].access_token.get_secret_value() == "access-token-1"
+
+
+async def test_issue_raises_401_with_relink_hint_when_rejected() -> None:
+    store = InMemoryTokenStore()
+    await store.write_cas(
+        SUBJECT,
+        ALIAS,
+        _make_cred(rejected_at=datetime.now(UTC)),
+        expected_version=None,
+    )
+    provider = _make_provider(store)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await provider.issue(_principal(), ALIAS)
+
+    assert exc_info.value.status_code == 401
+    assert "rejected" in exc_info.value.detail
+    assert "re-link" in exc_info.value.detail
+
+
+async def test_mark_rejected_ignores_a_token_that_was_since_replaced() -> None:
+    """A late 401 for an old token must not reject the token a re-link or
+    refresh has stored since."""
+    store = InMemoryTokenStore()
+    await store.write_cas(
+        SUBJECT,
+        ALIAS,
+        _make_cred(access_token=SecretStr("access-token-2")),
+        expected_version=None,
+    )
+    provider = _make_provider(store)
+
+    await provider.mark_rejected(_principal(), "access-token-1")
+
+    assert await provider.is_linked(_principal()) is True
+
+
+async def test_mark_rejected_when_nothing_stored_is_a_noop() -> None:
+    store = InMemoryTokenStore()
+    provider = _make_provider(store)
+
+    await provider.mark_rejected(_principal(), "access-token-1")
+
+    assert await store.get(SUBJECT, ALIAS) is None
+
+
+async def test_mark_rejected_loses_a_write_race_quietly() -> None:
+    """A concurrent write (another replica's refresh, or a re-link) wins: the
+    stored entry is newer than the token that was rejected."""
+
+    class _RacingStore(InMemoryTokenStore):
+        async def write_cas(self, *args: Any, **kwargs: Any) -> int:
+            raise VersionConflict
+
+    store = _RacingStore()
+    await InMemoryTokenStore.write_cas(
+        store, SUBJECT, ALIAS, _make_cred(refresh_token=None), expected_version=None
+    )
+    provider = _make_provider(store)
+
+    await provider.mark_rejected(_principal(), "access-token-1")
+
+    assert await provider.is_linked(_principal()) is True
+
+
+async def test_mark_rejected_refreshes_once_instead_of_rejecting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With a refresh token, a 401 first earns one refresh: the AS may still
+    honor the refresh token, so the user need not re-link."""
+    store = InMemoryTokenStore()
+    await store.write_cas(SUBJECT, ALIAS, _make_cred(), expected_version=None)
+    provider = _make_provider(store)
+    fake_client = _FakeTokenClient(
+        status_code=200,
+        json_body={"access_token": "access-token-2", "expires_in": 3600},
+    )
+    monkeypatch.setattr(
+        "af_mcp_broker.credentials.oauth21.get_http_client", lambda: fake_client
+    )
+
+    await provider.mark_rejected(_principal(), "access-token-1")
+
+    assert [c["data"]["grant_type"] for c in fake_client.calls] == ["refresh_token"]
+    assert await provider.is_linked(_principal()) is True
+    stored = await store.get(SUBJECT, ALIAS)
+    assert stored is not None
+    assert stored[0].access_token.get_secret_value() == "access-token-2"
+    assert stored[0].rejected_at is None
+    assert stored[0].refreshed_after_rejection is True
+
+
+async def test_mark_rejected_rejects_a_token_already_refreshed_after_a_401(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A second 401, for the token that refresh produced, rejects it: one
+    refresh per rejection, never a refresh loop against a backend that
+    rejects everything."""
+    store = InMemoryTokenStore()
+    await store.write_cas(
+        SUBJECT,
+        ALIAS,
+        _make_cred(refreshed_after_rejection=True),
+        expected_version=None,
+    )
+    provider = _make_provider(store)
+    fake_client = _FakeTokenClient(
+        status_code=200, json_body={"access_token": "access-token-2"}
+    )
+    monkeypatch.setattr(
+        "af_mcp_broker.credentials.oauth21.get_http_client", lambda: fake_client
+    )
+
+    await provider.mark_rejected(_principal(), "access-token-1")
+
+    assert fake_client.calls == []
+    assert await provider.is_linked(_principal()) is False
+
+
+async def test_mark_rejected_rejects_when_the_as_refuses_the_refresh(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = InMemoryTokenStore()
+    await store.write_cas(SUBJECT, ALIAS, _make_cred(), expected_version=None)
+    provider = _make_provider(store)
+    fake_client = _FakeTokenClient(
+        status_code=400, json_body={"error": "invalid_grant"}
+    )
+    monkeypatch.setattr(
+        "af_mcp_broker.credentials.oauth21.get_http_client", lambda: fake_client
+    )
+
+    await provider.mark_rejected(_principal(), "access-token-1")
+
+    assert await provider.is_linked(_principal()) is False
+    stored = await store.get(SUBJECT, ALIAS)
+    assert stored is not None
+    assert stored[0].access_token.get_secret_value() == "access-token-1"
+
+
+async def test_mark_rejected_leaves_the_token_alone_when_the_as_is_unreachable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 5xx from the AS says nothing about the refresh token: leave the
+    credential as it was, so the next 401 tries again, rather than forcing a
+    re-link over an AS outage."""
+    store = InMemoryTokenStore()
+    await store.write_cas(SUBJECT, ALIAS, _make_cred(), expected_version=None)
+    provider = _make_provider(store)
+    fake_client = _FakeTokenClient(status_code=503, json_body={})
+    monkeypatch.setattr(
+        "af_mcp_broker.credentials.oauth21.get_http_client", lambda: fake_client
+    )
+
+    with structlog.testing.capture_logs() as logs:
+        await provider.mark_rejected(_principal(), "access-token-1")
+
+    assert await provider.is_linked(_principal()) is True
+    stored = await store.get(SUBJECT, ALIAS)
+    assert stored is not None
+    assert stored[0].access_token.get_secret_value() == "access-token-1"
+    assert stored[0].refreshed_after_rejection is False
+    assert [e["event"] for e in logs] == ["oauth21.mark_rejected.refresh_failed"]
+    assert logs[0]["log_level"] == "warning"
+
+
+async def test_issue_refresh_clears_refreshed_after_rejection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A routine refresh starts a fresh token lifetime, so a later 401 earns
+    its own refresh again."""
+    store = InMemoryTokenStore()
+    await store.write_cas(
+        SUBJECT,
+        ALIAS,
+        _make_cred(
+            expires_at=datetime.now(UTC) + timedelta(seconds=60),
+            refreshed_after_rejection=True,
+        ),
+        expected_version=None,
+    )
+    provider = _make_provider(store)
+    fake_client = _FakeTokenClient(
+        status_code=200,
+        json_body={"access_token": "access-token-2", "expires_in": 3600},
+    )
+    monkeypatch.setattr(
+        "af_mcp_broker.credentials.oauth21.get_http_client", lambda: fake_client
+    )
+
+    await provider.issue(_principal(), ALIAS)
+
+    stored = await store.get(SUBJECT, ALIAS)
+    assert stored is not None
+    assert stored[0].access_token.get_secret_value() == "access-token-2"
+    assert stored[0].refreshed_after_rejection is False
+
+
+# ---------------------------------------------------------------------------
+# A rejected credential in the catalog (api/permissions.py::_service_status)
+# ---------------------------------------------------------------------------
+
+
+async def _catalog_state(
+    provider: OAuth21Provider, service_registry: ServiceRegistry | None = None
+) -> tuple[str, str, str | None]:
+    """(status, status_detail, link_state) the catalog reports for SUBJECT's view of ALIAS."""
+    spec = ServiceSpec(
+        name=ALIAS,
+        prefix="rucio",
+        url="http://backend.invalid/mcp",
+        transport="http",
+        required_permission="__none__",
+        auth_type="bearer",
+    )
+    credentials = CredentialRegistry()
+    credentials.register(ALIAS, provider)
+    status, detail, _correlation_id, link_state = await _service_status(
+        spec, _principal(), set(), credentials, service_registry or ServiceRegistry()
+    )
+    return status, detail, link_state
+
+
+async def test_is_rejected_is_false_without_a_stored_credential() -> None:
+    provider = _make_provider(InMemoryTokenStore())
+
+    assert await provider.is_rejected(_principal()) is False
+
+
+async def test_is_rejected_is_false_for_a_usable_credential() -> None:
+    store = InMemoryTokenStore()
+    await store.write_cas(SUBJECT, ALIAS, _make_cred(), expected_version=None)
+
+    assert await _make_provider(store).is_rejected(_principal()) is False
+
+
+async def test_is_rejected_is_true_for_a_stored_rejected_credential() -> None:
+    store = InMemoryTokenStore()
+    await store.write_cas(
+        SUBJECT, ALIAS, _make_cred(rejected_at=datetime.now(UTC)), expected_version=None
+    )
+    provider = _make_provider(store)
+
+    assert await provider.is_rejected(_principal()) is True
+    assert await provider.is_linked(_principal()) is False
+
+
+async def test_catalog_says_not_linked_when_nothing_is_stored() -> None:
+    status, detail, link_state = await _catalog_state(
+        _make_provider(InMemoryTokenStore())
+    )
+
+    assert (status, link_state) == ("link_required", "not_linked")
+    assert detail.startswith("Link your identity")
+
+
+async def test_catalog_says_rejected_for_a_stored_rejected_credential() -> None:
+    """A user who linked, whose token the backend rejected, is told so --
+    never asked to link as if they never had."""
+    store = InMemoryTokenStore()
+    await store.write_cas(
+        SUBJECT, ALIAS, _make_cred(rejected_at=datetime.now(UTC)), expected_version=None
+    )
+
+    status, detail, link_state = await _catalog_state(_make_provider(store))
+
+    assert (status, link_state) == ("link_required", "rejected")
+    assert detail.startswith("Your linked credential was rejected")
+
+
+async def test_catalog_ignores_an_unauthorized_listing_record_the_provider_resolved(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The provider, not the per-caller "unauthorized" listing record, decides
+    whether an oauth21 credential is rejected. A 401 that a refresh resolved
+    leaves the credential usable, so the record it also left behind must not
+    keep the catalog on "rejected"."""
+    store = InMemoryTokenStore()
+    await store.write_cas(SUBJECT, ALIAS, _make_cred(), expected_version=None)
+    provider = _make_provider(store)
+    monkeypatch.setattr(
+        "af_mcp_broker.credentials.oauth21.get_http_client",
+        lambda: _FakeTokenClient(
+            status_code=200,
+            json_body={"access_token": "access-token-2", "expires_in": 3600},
+        ),
+    )
+    service_registry = ServiceRegistry()
+
+    await provider.mark_rejected(_principal(), "access-token-1")
+    service_registry.record_list_failure(ALIAS, "unauthorized", SUBJECT)
+
+    status, _detail, link_state = await _catalog_state(provider, service_registry)
+    assert (status, link_state) == ("available", None)
+
+
+async def test_catalog_does_not_claim_rejected_when_the_as_is_unreachable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An authorization-server outage leaves the credential as it was, so
+    the catalog must not call it rejected."""
+    store = InMemoryTokenStore()
+    await store.write_cas(SUBJECT, ALIAS, _make_cred(), expected_version=None)
+    provider = _make_provider(store)
+    monkeypatch.setattr(
+        "af_mcp_broker.credentials.oauth21.get_http_client",
+        lambda: _FakeTokenClient(status_code=503),
+    )
+    service_registry = ServiceRegistry()
+
+    await provider.mark_rejected(_principal(), "access-token-1")
+    service_registry.record_list_failure(ALIAS, "unauthorized", SUBJECT)
+
+    status, _detail, link_state = await _catalog_state(provider, service_registry)
+    assert (status, link_state) == ("available", None)
+
+
+async def test_catalog_clears_rejected_when_the_user_relinks() -> None:
+    """Re-linking replaces the stored entry, which drops ``rejected_at``; a
+    leftover "unauthorized" listing record must not hold the catalog on
+    "rejected" until the caller's next successful listing."""
+    store = InMemoryTokenStore()
+    version = await store.write_cas(
+        SUBJECT, ALIAS, _make_cred(rejected_at=datetime.now(UTC)), expected_version=None
+    )
+    provider = _make_provider(store)
+    service_registry = ServiceRegistry()
+    service_registry.record_list_failure(ALIAS, "unauthorized", SUBJECT)
+    assert (await _catalog_state(provider, service_registry))[2] == "rejected"
+
+    await store.write_cas(
+        SUBJECT,
+        ALIAS,
+        _make_cred(access_token=SecretStr("access-token-2")),
+        expected_version=version,
+    )
+
+    status, _detail, link_state = await _catalog_state(provider, service_registry)
+    assert (status, link_state) == ("available", None)
 
 
 async def test_issue_handles_version_conflict_during_refresh(
@@ -1140,6 +1597,75 @@ def test_callback_completes_flow_and_stores_credential(
         assert cred.access_token.get_secret_value() == "linked-access-token"
 
 
+def test_callback_notifies_listing_caches_for_the_linking_subject(
+    monkeypatch: pytest.MonkeyPatch, app_client_factory: Any
+) -> None:
+    fernet_key = Fernet.generate_key().decode()
+    _configure_oauth21_env(monkeypatch, fernet_key)
+    fake_token_client = _FakeTokenClient(
+        status_code=200,
+        json_body={"access_token": "linked-access-token", "expires_in": 3600},
+    )
+    monkeypatch.setattr(
+        "af_mcp_broker.api.oauth21.get_http_client", lambda: fake_token_client
+    )
+
+    with app_client_factory() as (client, _state):
+        linked: list[tuple[str, str]] = []
+        client.app.state.credential_cache._on_link = lambda subject, target: (
+            linked.append((subject, target))
+        )
+        authorize_resp = client.get(
+            f"/v1/oauth/authorize/{ALIAS}", follow_redirects=False
+        )
+        state_token = parse_qs(urlparse(authorize_resp.headers["location"]).query)[
+            "state"
+        ][0]
+        nonce_cookie = authorize_resp.cookies.get(NONCE_COOKIE_NAME)
+        assert nonce_cookie is not None
+        client.cookies.set(NONCE_COOKIE_NAME, nonce_cookie, path=NONCE_COOKIE_PATH)
+
+        resp = client.get(
+            f"/v1/oauth/callback/{ALIAS}",
+            params={"code": "auth-code-xyz", "state": state_token},
+            follow_redirects=False,
+        )
+
+    assert resp.status_code == 302, resp.text
+    assert linked == [("sub-abc", ALIAS)]
+
+
+def test_callback_backend_error_does_not_notify_listing_caches(
+    monkeypatch: pytest.MonkeyPatch, app_client_factory: Any
+) -> None:
+    fernet_key = Fernet.generate_key().decode()
+    _configure_oauth21_env(monkeypatch, fernet_key)
+
+    with app_client_factory() as (client, _state):
+        linked: list[tuple[str, str]] = []
+        client.app.state.credential_cache._on_link = lambda subject, target: (
+            linked.append((subject, target))
+        )
+        authorize_resp = client.get(
+            f"/v1/oauth/authorize/{ALIAS}", follow_redirects=False
+        )
+        state_token = parse_qs(urlparse(authorize_resp.headers["location"]).query)[
+            "state"
+        ][0]
+        nonce_cookie = authorize_resp.cookies.get(NONCE_COOKIE_NAME)
+        assert nonce_cookie is not None
+        client.cookies.set(NONCE_COOKIE_NAME, nonce_cookie, path=NONCE_COOKIE_PATH)
+
+        resp = client.get(
+            f"/v1/oauth/callback/{ALIAS}",
+            params={"error": "access_denied", "state": state_token},
+            follow_redirects=False,
+        )
+
+    assert resp.status_code == 302, resp.text
+    assert linked == []
+
+
 def test_callback_never_calls_keycloak_dependency(
     monkeypatch: pytest.MonkeyPatch, app_client_factory: Any
 ) -> None:
@@ -1300,6 +1826,42 @@ def test_callback_omits_client_secret_when_public(
     sent = fake_token_client.calls[0]["data"]
     assert sent["client_id"] == CLIENT_ID
     assert "client_secret" not in sent
+
+
+def test_callback_relink_clears_a_rejected_credential(
+    monkeypatch: pytest.MonkeyPatch, app_client_factory: Any
+) -> None:
+    """Re-linking is the user's way out of a rejected credential (issue #344):
+    the freshly exchanged token replaces it, no longer rejected."""
+    fernet_key = Fernet.generate_key().decode()
+    _configure_oauth21_env(monkeypatch, fernet_key)
+
+    fake_token_client = _FakeTokenClient(
+        status_code=200, json_body={"access_token": "relinked-access-token"}
+    )
+    monkeypatch.setattr(
+        "af_mcp_broker.api.oauth21.get_http_client", lambda: fake_token_client
+    )
+
+    with app_client_factory() as (client, _state):
+        store = broker_app.state.oauth21_token_store
+        _run(
+            store.write_cas(
+                "sub-abc",
+                ALIAS,
+                _make_cred(subject="sub-abc", rejected_at=datetime.now(UTC)),
+                expected_version=None,
+            )
+        )
+
+        callback_resp = _link_through_callback(client)
+
+        assert callback_resp.status_code == 302, callback_resp.text
+        stored = _run(store.get("sub-abc", ALIAS))
+        assert stored is not None
+        cred, _version = stored
+        assert cred.access_token.get_secret_value() == "relinked-access-token"
+        assert cred.rejected_at is None
 
 
 def test_callback_400_when_nonce_cookie_missing(

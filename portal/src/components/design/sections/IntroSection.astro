@@ -1,0 +1,27 @@
+---
+import DesignSection from '../DesignSection.astro';
+---
+
+<DesignSection id="intro">
+  <Fragment slot="definition"> The portal follows the conventions of GitHub settings, the Tailscale and Cloudflare consoles, and Grafana. A physicist or an operator should recognise every control without learning anything. The design's job is to make the state of someone's access obvious and to show the one thing to do next. </Fragment>
+  <div class="design-prose">
+    <h3>Four rules everything else follows from</h3>
+    <ul>
+      <li>
+        <b>Containers recede, content leads.</b> A box, a rule or a header never competes with the data inside it. Borders are 1px and pale; fills are rare. The data is the darkest thing in a box.
+      </li>
+      <li>
+        <b>Colour means something or it is absent.</b> Neutrals are untinted greys. The accent marks the main action and the current location; it is ink unless a facility opts into its own colour. Status colours mark status and nothing else.
+      </li>
+      <li>
+        <b>The accent is never a message.</b> Banners and notes use the fixed status colours, so a facility whose colour is red or yellow cannot make a notice look like an error or a warning.
+      </li>
+      <li>
+        <b>One loud thing per page.</b> At most one page banner and at most one primary button. If nothing is wrong, the page is quiet.
+      </li>
+    </ul>
+    <p class="af-help">
+      Every table, token and name on this page is example data. This page is built from the portal's own tokens, Basecoat classes, <code>af-</code> extensions and Vue components, so an example cannot differ from what ships. Use the accent control above to try a facility colour; every example responds, and the theme control in the top bar switches light and dark.
+    </p>
+  </div>
+</DesignSection>

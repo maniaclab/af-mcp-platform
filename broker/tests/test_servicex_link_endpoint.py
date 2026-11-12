@@ -109,6 +109,36 @@ class TestLink:
         assert body["remaining_seconds"] > 0
         assert "access_token" not in body
 
+    def test_successful_link_notifies_listing_caches_for_the_entry_targets(
+        self, servicex_link_env, app_client_factory
+    ) -> None:
+        servicex_link_env()
+        with app_client_factory() as (client, state):
+            _fake_provider(client)
+            linked: list[tuple[str, str]] = []
+            client.app.state.credential_cache._on_link = lambda subject, target: (
+                linked.append((subject, target))
+            )
+            resp = client.post(_LINK, json={"refresh_token": "a-refresh-token"})
+
+        assert resp.status_code == 201, resp.text
+        assert linked == [(state["principal"].subject, _TARGET)]
+
+    def test_failed_link_does_not_notify_listing_caches(
+        self, servicex_link_env, app_client_factory
+    ) -> None:
+        servicex_link_env()
+        with app_client_factory() as (client, _):
+            _fake_provider(client, outcome=ServiceXBadRefreshTokenError())
+            linked: list[tuple[str, str]] = []
+            client.app.state.credential_cache._on_link = lambda subject, target: (
+                linked.append((subject, target))
+            )
+            resp = client.post(_LINK, json={"refresh_token": "bad-token"})
+
+        assert resp.status_code == 400
+        assert linked == []
+
     def test_bad_refresh_token_is_400_and_stores_nothing(
         self, servicex_link_env, app_client_factory
     ) -> None:
@@ -118,6 +148,21 @@ class TestLink:
             resp = client.post(_LINK, json={"refresh_token": "bad-token"})
 
         assert resp.status_code == 400
+
+    def test_bad_refresh_token_400_carries_the_correlation_id(
+        self, servicex_link_env, app_client_factory
+    ) -> None:
+        """af-mcp-platform#342: the 400 body and message both carry the id
+        the broker logged and sent to servicex-token-service."""
+        servicex_link_env()
+        with app_client_factory() as (client, _):
+            _fake_provider(client, outcome=ServiceXBadRefreshTokenError())
+            resp = client.post(_LINK, json={"refresh_token": "bad-token"})
+
+        body = resp.json()
+        assert body["correlation_id"]
+        assert f"(ref: {body['correlation_id']})" in body["detail"]
+        assert "ServiceX rejected" in body["detail"]
 
     def test_infra_failure_is_502(self, servicex_link_env, app_client_factory) -> None:
         servicex_link_env()

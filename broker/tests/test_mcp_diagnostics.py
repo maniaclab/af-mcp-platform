@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import time
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -10,6 +11,7 @@ from conftest import make_claims, run_aggregator_async
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.exceptions import ToolError
+from pydantic import SecretStr
 from tokencost import calculate_cost_by_tokens  # type: ignore[import-untyped]
 
 from af_mcp_broker.audit import AuditRecord
@@ -20,6 +22,11 @@ from af_mcp_broker.credentials import (
     CredentialProvider,
     CredentialRegistry,
     ExecutionModel,
+)
+from af_mcp_broker.credentials.oauth21 import (
+    InMemoryTokenStore,
+    OAuth21Provider,
+    StoredOAuthCredential,
 )
 from af_mcp_broker.credmon.guidance import JobCredentialGuide
 from af_mcp_broker.mcp.aggregator import build_aggregator
@@ -446,7 +453,49 @@ async def test_af_list_mcp_servers_reuses_service_status_and_identity_join(
         )
     )
     registry.record_list_failure("rejected", "unauthorized", "user-123")
+    registry.register(
+        ServiceSpec(
+            name="rejected-oauth",
+            prefix="rejectedoauth",
+            url="http://rejectedoauth.invalid/mcp",
+            transport="http",
+            required_permission="__none__",
+            auth_type="bearer",
+            display_name="Rejected OAuth Backend",
+        )
+    )
+    oauth_store = InMemoryTokenStore()
+    await oauth_store.write_cas(
+        "user-123",
+        "rejected-oauth-idp",
+        StoredOAuthCredential(
+            alias="rejected-oauth-idp",
+            subject="user-123",
+            access_token=SecretStr("revoked"),
+            refresh_token=None,
+            expires_at=None,
+            refresh_expires_at=None,
+            scope=[],
+            issuer="https://as.example",
+            token_endpoint="https://as.example/token",
+            rejected_at=datetime.now(UTC),
+        ),
+        expected_version=None,
+    )
     credential_registry = CredentialRegistry()
+    credential_registry.register(
+        "rejected-oauth",
+        OAuth21Provider(
+            alias="rejected-oauth-idp",
+            targets=frozenset({"rejected-oauth"}),
+            authorization_endpoint="https://as.example/authorize",
+            token_endpoint="https://as.example/token",
+            issuer="https://as.example",
+            scope="",
+            store=oauth_store,
+            client_id="client",
+        ),
+    )
     unlinked_provider = _FakeIdentityProvider(linked=False)
     credential_registry.register("needs-link", unlinked_provider)
     credential_registry.register("rejected", _FakeIdentityProvider(linked=True))
@@ -480,6 +529,10 @@ async def test_af_list_mcp_servers_reuses_service_status_and_identity_join(
     assert rows["needs-link"]["link_state"] == "not_linked"
     assert rows["rejected"]["status"] == "link_required"
     assert rows["rejected"]["link_state"] == "rejected"
+    # An oauth21 credential the backend rejected is stored but reads as
+    # unlinked; it is still reported "rejected", never "not_linked".
+    assert rows["rejected-oauth"]["status"] == "link_required"
+    assert rows["rejected-oauth"]["link_state"] == "rejected"
     assert rows["open"]["link_state"] is None
     assert rows["gated"]["link_state"] is None
     assert rows["gateway_service"]["link_state"] is None

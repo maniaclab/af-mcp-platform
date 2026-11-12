@@ -37,6 +37,17 @@ adds on top):
   identically whether the last-known value came from this process's own
   successful resolve() or from a persisted record loaded at cold start.
 
+A directory answer of "deleted" or "disabled" (``PrincipalNotActiveError``)
+is the exception to serve-stale: it is definitive, so the cached value is
+dropped and ``PrincipalRejectedError`` raised on the next refresh, bounded by
+``refresh_interval_seconds`` (issue #336). Only an unreachable directory
+falls back to the last-known value. The rejection is also written to the
+persistence backend as a tombstone (``PersistedPrincipalRecord.rejected_reason``),
+so a restarted replica, or another replica with nothing cached, fails closed
+during a directory outage rather than seeding the last good value; the next
+successful resolve overwrites it. A replica that already holds a value in
+memory learns of the rejection only from its own refresh.
+
 Two failure shapes fall out of this:
 
 * **Cold start**: nothing cached in memory yet for this principal. Before
@@ -150,7 +161,10 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from af_mcp_broker.principal_directory import PrincipalAttributes
+from af_mcp_broker.principal_directory import (
+    PrincipalAttributes,
+    PrincipalNotActiveError,
+)
 from af_mcp_broker.vault_kv import CasConflict, VaultError, VaultKV
 
 if TYPE_CHECKING:
@@ -178,6 +192,20 @@ class PrincipalUnavailableError(Exception):
         super().__init__(f"Principal {principal_id!r} attributes unavailable")
 
 
+class PrincipalRejectedError(PrincipalUnavailableError):
+    """Raised by ``PrincipalCache.get()`` when the directory definitively refuses *principal_id* (deleted or disabled), as opposed to being unreachable.
+
+    A ``PrincipalUnavailableError`` subclass so every caller that already
+    fails closed on the parent does so here too; the JWT path catches this
+    one first to answer 401 (bad identity) instead of 503 (platform outage).
+    ``reason`` is for logs only and must never reach a client.
+    """
+
+    def __init__(self, principal_id: str, reason: str) -> None:
+        super().__init__(principal_id)
+        self.reason = reason
+
+
 @dataclass(frozen=True)
 class PersistedPrincipalRecord:
     """A principal's attributes as last resolved, together with the wall-clock time that happened -- the unit ``PrincipalCacheBackend`` stores and retrieves.
@@ -193,6 +221,11 @@ class PersistedPrincipalRecord:
 
     attributes: PrincipalAttributes
     resolved_at: float  # time.time()
+    # Set (to ``PrincipalNotActiveError.reason``) on a tombstone: the directory
+    # refused this principal at ``resolved_at``, and ``attributes`` are empty
+    # placeholders that must never be served. Cleared by the next successful
+    # resolve overwriting the record.
+    rejected_reason: str | None = None
 
 
 class PrincipalCacheBackend(ABC):
@@ -243,6 +276,7 @@ def _record_to_fields(record: PersistedPrincipalRecord) -> dict[str, Any]:
         "groups": list(record.attributes.groups),
         "email": record.attributes.email,
         "resolved_at": record.resolved_at,
+        "rejected_reason": record.rejected_reason,
     }
 
 
@@ -256,6 +290,7 @@ def _record_from_fields(fields: dict[str, Any]) -> PersistedPrincipalRecord:
             email=str(fields.get("email") or ""),
         ),
         resolved_at=float(fields["resolved_at"]),
+        rejected_reason=fields.get("rejected_reason"),
     )
 
 
@@ -334,6 +369,11 @@ class PrincipalCache:
         # global refresh, there is no single snapshot shared across callers
         # here.
         self._locks: dict[str, asyncio.Lock] = {}
+        # principal_id -> (monotonic time of the rejection, reason): a
+        # principal the directory last refused (deleted/disabled). Answered
+        # from here for one refresh interval without asking the directory
+        # again, and keeps the persisted value from being loaded back in.
+        self._rejections: dict[str, tuple[float, str]] = {}
         self._log = structlog.get_logger(__name__).bind(component="PrincipalCache")
 
     def _lock_for(self, principal_id: str) -> asyncio.Lock:
@@ -370,6 +410,15 @@ class PrincipalCache:
             return None
 
         age = max(0.0, time.time() - persisted.resolved_at)
+        if persisted.rejected_reason is not None:
+            # A tombstone is honoured however old it is: only the directory
+            # saying the principal is active again clears it, so an outage
+            # fails closed instead of seeding a disabled user's last value.
+            self._rejections[principal_id] = (
+                now_monotonic - age,
+                persisted.rejected_reason,
+            )
+            return None
         # The record was, by definition, last written at this same translated
         # instant -- fetched_at and persisted_at start out identical for a
         # value freshly loaded from the backend.
@@ -430,6 +479,40 @@ class PrincipalCache:
             return previous.persisted_at if previous is not None else float("-inf")
         return now_monotonic
 
+    def _prune_rejections(self, now_monotonic: float) -> None:
+        """Drop in-process rejections older than the refresh interval; the durable tombstone, not this map, is what outlasts them."""
+        self._rejections = {
+            pid: rejection
+            for pid, rejection in self._rejections.items()
+            if (now_monotonic - rejection[0]) < self._refresh_interval
+        }
+
+    async def _persist_rejection(self, principal_id: str, reason: str) -> None:
+        """Overwrite *principal_id*'s persisted record with a tombstone, so a restarted or other replica sharing the backend fails closed during a directory outage instead of seeding the last good value.
+
+        A tombstone (written with the ordinary ``put()``) rather than a
+        delete: the backend contract has no delete, and the broker's Vault
+        policy is not documented to grant one on this path. A write failure
+        is logged and swallowed -- this request is rejected either way.
+        """
+        try:
+            await self._backend.put(
+                principal_id,
+                PersistedPrincipalRecord(
+                    attributes=PrincipalAttributes(
+                        uid=None, gid=None, unixname=None, groups=[], email=""
+                    ),
+                    resolved_at=time.time(),
+                    rejected_reason=reason,
+                ),
+            )
+        except Exception:  # noqa: BLE001 — persistence failing must never turn a rejection into access
+            self._log.error(
+                "principal_cache.rejection_persist_failed",
+                principal_id=principal_id,
+                exc_info=True,
+            )
+
     async def get(self, principal_id: str) -> PrincipalAttributes:
         """Return *principal_id*'s current attributes, refreshing if the cached value (if any) is older than ``refresh_interval_seconds``.
 
@@ -439,7 +522,10 @@ class PrincipalCache:
         ``PrincipalUnavailableError`` when no usable cached value (in memory
         or freshly loaded from the backend) exists and the directory is
         unreachable, or once a stale cached value has exceeded
-        ``max_staleness_seconds`` without a successful refresh.
+        ``max_staleness_seconds`` without a successful refresh. Raises
+        ``PrincipalRejectedError`` (a ``PrincipalUnavailableError``) when the
+        directory reports the principal deleted or disabled; the cached
+        value is dropped, never served stale.
         """
         entry = self._entries.get(principal_id)
         now = time.monotonic()
@@ -453,7 +539,10 @@ class PrincipalCache:
             if entry is not None and (now - entry.fetched_at) < self._refresh_interval:
                 return entry.attributes
 
-            if entry is None:
+            # A principal the directory refused must not be seeded back from
+            # the persisted record's last good value; its tombstone, if any,
+            # is what _load_from_backend reads instead.
+            if entry is None and principal_id not in self._rejections:
                 entry = await self._load_from_backend(principal_id, now)
                 if (
                     entry is not None
@@ -464,8 +553,28 @@ class PrincipalCache:
                     # the instant this replica comes up.
                     return entry.attributes
 
+            rejection = self._rejections.get(principal_id)
+            if rejection is not None and (now - rejection[0]) < self._refresh_interval:
+                raise PrincipalRejectedError(principal_id, rejection[1])
+
             try:
                 attributes = await self._directory.resolve(principal_id)
+            except PrincipalNotActiveError as exc:
+                # A definitive answer, not an outage: drop the last-known
+                # value instead of serving it stale, so removal takes effect
+                # within one refresh interval like a group change does.
+                self._entries.pop(principal_id, None)
+                already_persisted = principal_id in self._rejections
+                self._prune_rejections(now)
+                self._rejections[principal_id] = (now, exc.reason)
+                self._log.warning(
+                    "principal_cache.principal_rejected",
+                    principal_id=principal_id,
+                    reason=exc.reason,
+                )
+                if not already_persisted:
+                    await self._persist_rejection(principal_id, exc.reason)
+                raise PrincipalRejectedError(principal_id, exc.reason) from None
             except Exception:  # noqa: BLE001 — must never take auth down; serve stale or fail closed below
                 if entry is None:
                     self._log.error(
@@ -494,6 +603,7 @@ class PrincipalCache:
                 )
                 return entry.attributes
 
+            self._rejections.pop(principal_id, None)
             persisted_at = await self._persist_if_needed(
                 principal_id, attributes, entry, now
             )

@@ -1,0 +1,69 @@
+---
+import DesignSection from '../DesignSection.astro';
+import DoDont from '../DoDont.astro';
+import DontExamples from '../DontExamples.astro';
+import SpecTable from '../SpecTable.astro';
+import TokenTable from '../TokenTable.vue';
+
+const SPACE = [
+  { name: '--space-2', use: 'Hairline offsets.' },
+  { name: '--space-4', use: 'Icon to label inside a badge; between a title and its line.' },
+  { name: '--space-8', use: 'Icon to label; between related controls.' },
+  { name: '--space-12', use: 'Section title to content; between a label group and its control.' },
+  { name: '--space-16', use: 'Cell padding; inside banners and notes.' },
+  { name: '--space-24', use: 'Page header to content; compact page gap.' },
+  { name: '--space-32', use: 'Between sections; page margin on wide screens.' },
+  { name: '--space-48', use: 'Between landing regions.' },
+  { name: '--space-64', use: 'Landing page rhythm; page bottom.' },
+];
+
+const CONTROLS = [
+  {
+    name: '--control-s',
+    use: 'Small: Basecoat data-size="sm". Row actions inside tables, buttons in banners, segmented controls.',
+  },
+  { name: '--control-m', use: 'Medium: the default button, input and nav item.' },
+  { name: '--control-l', use: 'Large: data-size="lg"; copy fields.' },
+];
+---
+
+<DesignSection id="dimensions">
+  <Fragment slot="definition"> Every gap, padding and control height comes from one scale based on 4px. Density is a named choice per page, not something each component decides. </Fragment>
+  <TokenTable client:load tokens={SPACE} specimen="space" caption="Spacing tokens, current values and uses" />
+  <TokenTable client:load tokens={CONTROLS} caption="Control height tokens and their current values" />
+  <p class="af-help">
+    There is no token for the 52px extra-large button (<code>af-btn-xl</code>): it is the landing page's Sign in, and nothing else.
+  </p>
+  <h3>Density</h3>
+  <SpecTable columns={['Mode', 'Table row', 'Cell text', 'Section gap', 'Pages']} caption="Comfortable and compact density">
+    <tr><td>Comfortable</td><td>44px</td><td>14px</td><td>32px</td><td>Overview, Services, Identities, Tokens, Usage</td></tr>
+    <tr><td>Compact</td><td>32px</td><td>13px</td><td>24px</td><td>Entitlements, Admin</td></tr>
+  </SpecTable>
+  <p class="af-help">Operators scan many rows at once, so their pages are compact. Physics users check a handful of items, so theirs are comfortable. A compact table may sit inside a comfortable page for a secondary checklist.</p>
+</DesignSection>
+
+<DesignSection id="grid">
+  <Fragment slot="definition"> A fixed sidebar and one content column. Content is a single column of full-width sections stacked top to bottom. Side-by-side cards are the exception, not the default. </Fragment>
+  <SpecTable columns={['Viewport', 'Sidebar', 'Content margin', 'Content max width']} caption="Layout by viewport width">
+    <tr><td>1136px and up</td><td>220px, fixed</td><td>32px</td><td>1120px</td></tr>
+    <tr><td>860 to 1135px</td><td>220px, fixed</td><td>24px</td><td>fluid, up to 1120px</td></tr>
+    <tr><td>600 to 859px</td><td>A drawer opened from a 52px top bar</td><td>24px</td><td>fluid</td></tr>
+    <tr><td>Under 600px</td><td>A drawer opened from a 52px top bar</td><td>16px</td><td>fluid</td></tr>
+  </SpecTable>
+  <DoDont>
+    <div slot="do" class="af-page compact">
+      <div class="af-sect">
+        <h5>Linked accounts</h5>
+        <div class="af-box design-block design-block--s"></div>
+      </div>
+      <div class="af-sect">
+        <h5>Grid certificate</h5>
+        <div class="af-box design-block design-block--m"></div>
+      </div>
+    </div>
+    <Fragment slot="do-note">stack full-width sections. Tables want width, and the reading order is unambiguous.</Fragment>
+    <DontExamples slot="dont" kind="three-cards" />
+    <Fragment slot="dont-note">default to a row of three equal cards. It gives every item the same weight whether or not it matters.</Fragment>
+  </DoDont>
+  <p class="af-help">Wide tables scroll inside their own box, never the page. Used on every signed-in page. The landing page has no sidebar: the same column, text capped at 720px, regions 64px apart.</p>
+</DesignSection>

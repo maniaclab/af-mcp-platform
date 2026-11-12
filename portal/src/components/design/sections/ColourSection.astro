@@ -1,0 +1,163 @@
+---
+import { Plus } from '@lucide/astro';
+import type { PageMessage as PageMessageData } from '../../../lib/serviceStatus';
+import PageMessage from '../../ui/PageMessage.vue';
+import StatusMark from '../../ui/StatusMark.vue';
+import DesignSection from '../DesignSection.astro';
+import DoDont from '../DoDont.astro';
+import DontExamples from '../DontExamples.astro';
+import SpecTable from '../SpecTable.astro';
+import Stage from '../Stage.astro';
+import TokenTable from '../TokenTable.vue';
+
+const NEUTRALS = [
+  { name: '--color-af-bg', use: 'Page and container background.' },
+  { name: '--color-af-bg-subtle', use: 'Hover rows, read-only fields, selected nav item.' },
+  { name: '--color-af-bg-hover', use: 'Hover on buttons and menu items.' },
+  { name: '--color-af-border', use: 'Container outlines and row rules.' },
+  { name: '--color-af-border-strong', use: 'Anything a person can type in or press.' },
+  { name: '--color-af-text', use: 'All primary text, including links.' },
+  { name: '--color-af-text-secondary', use: 'Labels, column headers, help text.' },
+  { name: '--color-af-text-disabled', use: 'Disabled controls only, never readable text.' },
+];
+
+const ACCENT = [
+  {
+    name: '--color-af-accent',
+    use: 'A fill or the 3px nav marker. Never text, border or banner fill.',
+  },
+  {
+    name: '--color-af-on-accent',
+    use: 'Text and icons on an accent fill: white if it reaches 4.5:1, otherwise near-black.',
+  },
+];
+
+const STATUS = [
+  { tone: 'ok', word: 'Reachable', token: '--color-af-ok', use: 'Working, linked, valid.' },
+  {
+    tone: 'warn',
+    word: 'Expires in 2 days',
+    token: '--color-af-warn',
+    use: 'Works for now, or someone must wait or ask.',
+  },
+  {
+    tone: 'bad',
+    word: 'Blocked',
+    token: '--color-af-bad',
+    use: 'Not working. Also destructive actions.',
+  },
+  {
+    tone: 'info',
+    word: 'Maintenance Friday',
+    token: '--color-af-info',
+    use: 'A neutral notice or hint. Nothing is wrong.',
+  },
+] as const;
+
+const PROXY_WARNING: PageMessageData = {
+  kind: 'banner',
+  tone: 'warn',
+  title: 'Your grid proxy expires in 40 minutes',
+  body: 'Renew it to keep grid services working.',
+  action: { label: 'Renew proxy', href: '#colour' },
+};
+---
+
+<DesignSection id="colour">
+  <Fragment slot="definition"> Three groups with separate jobs. Neutrals build the page. The accent marks action and location: ink by default, or a colour the facility opts into. Status colours are fixed for every deployment and carry meaning. </Fragment>
+
+  <h3>Neutrals</h3>
+  <TokenTable client:load tokens={NEUTRALS} specimen="colour" caption="Neutral colour tokens and their values now" />
+
+  <h3>Facility accent</h3>
+  <div class="design-prose">
+    <p>
+      The default is a neutral monochrome theme: the accent is ink, near-black in light mode and near-white in dark. The portal does not give a facility an identity it has not chosen. A deployment may opt in by setting one colour (<code>docs/portal-styling.md</code> has the derivation); the portal derives the rest, so any colour is safe:
+    </p>
+    <ul>
+      <li>
+        The accent appears only as a <b>fill</b> (primary button, checked control, skip link) or a <b>3px marker</b> (current sidebar item). It is never a text colour, so a pale facility colour cannot produce unreadable links.
+      </li>
+      <li>The on-accent colour is computed: white if it reaches 4.5:1 on the accent, otherwise near-black.</li>
+      <li>In dark mode a dark accent is lightened until it reaches 3:1 against the page, unless the deployment supplies its own dark-mode value.</li>
+    </ul>
+  </div>
+  <Stage label="The accent in use" row>
+    <button type="button" class="btn"><Plus class="af-icon" size={16} aria-hidden="true" />New token</button>
+    <div>
+      <div class="field" data-orientation="horizontal">
+        <input id="colour-checked" type="checkbox" class="input" checked />
+        <label for="colour-checked">Checked</label>
+      </div>
+    </div>
+    <nav class="af-nav" aria-label="Current page marker, example">
+      <div class="af-nav-group">
+        <ul role="list">
+          <li><a href="#colour" aria-current="page">Tokens</a></li>
+        </ul>
+      </div>
+    </nav>
+  </Stage>
+  <TokenTable client:load tokens={ACCENT} specimen="colour" caption="Accent tokens and their values now" />
+
+  <h3>Status</h3>
+  <SpecTable columns={['Meaning', 'Mark', 'Token', 'Banner fill', 'Use when']} caption="Status meanings, marks, tokens and banner fills">
+    {
+      STATUS.map((s) => (
+        <tr>
+          <td>{s.tone === 'ok' ? 'OK' : s.tone === 'warn' ? 'Warning' : s.tone === 'bad' ? 'Problem' : 'Information'}</td>
+          <td>
+            <StatusMark tone={s.tone} label={s.word} />
+          </td>
+          <td>
+            <code>{s.token}</code>
+          </td>
+          <td>
+            <span class={`design-chip design-fill--${s.tone}`} role="img" aria-label={`${s.tone} banner fill`} />
+          </td>
+          <td>{s.use}</td>
+        </tr>
+      ))
+    }
+    <tr>
+      <td>In progress</td>
+      <td><StatusMark tone="busy" label="Minting proxy" /></td>
+      <td><code>--color-af-text-secondary</code></td>
+      <td>none</td>
+      <td>Waiting on the system.</td>
+    </tr>
+    <tr>
+      <td>Off</td>
+      <td><StatusMark tone="off" label="Not linked" /></td>
+      <td><code>--color-af-text-secondary</code></td>
+      <td>none</td>
+      <td>Absent by choice, not an error. "Not linked" is this mark: it never raises a banner, at most a hint.</td>
+    </tr>
+  </SpecTable>
+  <p class="af-help">
+    Chart colours are Basecoat's <code>--chart-1</code> to <code>--chart-5</code>, bridged to neutral steps (secondary text, text, strong border, disabled text, border), never status colours. Banner fills and their <code>--color-af-on-banner-*</code> text are the same in both themes; <code>--color-af-bad-text</code> is the only status colour used for text.
+  </p>
+
+  <h3>Do and don't</h3>
+  <DoDont>
+    <Fragment slot="do">
+      <PageMessage message={PROXY_WARNING} />
+      <div><button type="button" class="btn">New token</button></div>
+    </Fragment>
+    <Fragment slot="do-note">keep messages in status colours and actions in the accent. Try the yellow accent above: the warning still reads as a warning because of its shape, title and position.</Fragment>
+    <DontExamples slot="dont" kind="accent-banner" />
+    <Fragment slot="dont-note">fill a message with the accent. Try maroon or yellow above: with maroon it reads as an error; with yellow, every notice looks like a warning.</Fragment>
+  </DoDont>
+  <DoDont>
+    <Fragment slot="do">
+      <div class="design-stage__body is-row">
+        <StatusMark tone="ok" label="Linked" />
+        <StatusMark tone="bad" label="Blocked" />
+      </div>
+    </Fragment>
+    <Fragment slot="do-note">pair every status colour with a shape and a word. Colour alone fails for colour-blind users.</Fragment>
+    <DontExamples slot="dont" kind="coloured-names" />
+    <Fragment slot="dont-note">colour a name to show its state.</Fragment>
+  </DoDont>
+  <p class="af-help">Used on every page. Status marks: Overview, Services, Identities, Tokens, Admin.</p>
+</DesignSection>
