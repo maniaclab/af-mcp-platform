@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { LINK_ACTION_LABEL } from '../lib/identityLinkLabel';
+import { LINK_ACTION_LABEL, RELINK_ACTION_LABEL } from '../lib/identityLinkLabel';
 import { Link2 } from '@lucide/vue';
 import { ref } from 'vue';
 import { fetchOAuth21AuthorizeUrl, unlinkIdentity, type ProviderType } from '../lib/api';
@@ -11,6 +11,10 @@ const props = defineProps<{
   id: string;
   type: ProviderType;
   linked: boolean;
+  /** True when a credential is stored but a backend rejected it (`linked` is
+   * false then): the user must re-link, which is not the same as never having
+   * linked. Absent reads as false. */
+  rejected?: boolean;
   display_name: string;
   enables: string;
   /** Display names of catalog backends this identity's credential powers, empty/absent if none. */
@@ -100,16 +104,30 @@ async function handleLink() {
     :display-name="display_name"
     :enables="enables"
     :powers="powers"
-    :status-tone="linked ? 'ok' : link_permission_denied ? 'warn' : 'off'"
-    :status-label="linked ? 'Linked' : link_permission_denied ? 'Access required' : 'Not linked'"
+    :status-tone="linked ? 'ok' : rejected || link_permission_denied ? 'warn' : 'off'"
+    :status-label="
+      linked
+        ? 'Linked'
+        : rejected
+          ? 'Credential rejected'
+          : link_permission_denied
+            ? 'Access required'
+            : 'Not linked'
+    "
     :status-class="
       linked
         ? 'il__status il__status--linked'
-        : link_permission_denied
-          ? 'il__status il__status--permission-denied'
-          : 'il__status il__status--unlinked'
+        : rejected
+          ? 'il__status il__status--rejected'
+          : link_permission_denied
+            ? 'il__status il__status--permission-denied'
+            : 'il__status il__status--unlinked'
     "
   >
+    <p v-if="!linked && rejected" class="alert af-note warn il__notice" role="status">
+      {{ display_name }} rejected the linked credential. Re-link it to restore the services that use
+      it.
+    </p>
     <p v-if="!linked && link_permission_denied" class="alert af-note warn il__notice" role="status">
       Your account isn't authorized to use this identity yet. Contact the platform team to request
       access.
@@ -131,7 +149,7 @@ async function handleLink() {
 
     <template #actions>
       <button
-        v-if="!linked && canLink"
+        v-if="!linked && !rejected && canLink"
         type="button"
         class="btn il__btn il__btn--link"
         data-variant="outline"
@@ -145,12 +163,12 @@ async function handleLink() {
 
       <!--
       Reconnect re-runs the same linking flow, which overwrites the stored
-      token in place — a fix for a stale/broken linkage without an explicit
-      unlink. Unlink (oauth21-direct only — DELETE still returns 501 for
+      token in place — a fix for a stale/broken or rejected linkage without an
+      explicit unlink. Unlink (oauth21-direct only — DELETE still returns 501 for
       keycloak-brokered, Keycloak admin API unlink is out of scope) actually
       revokes the stored token instead.
       -->
-      <template v-else-if="linked && canLink">
+      <template v-else-if="(linked || rejected) && canLink">
         <button
           type="button"
           class="btn il__btn il__btn--reconnect"
@@ -160,7 +178,7 @@ async function handleLink() {
           :aria-busy="busy"
           @click="handleLink"
         >
-          {{ busy ? 'Redirecting…' : 'Reconnect' }}
+          {{ busy ? 'Redirecting…' : RELINK_ACTION_LABEL.account }}
         </button>
         <button
           v-if="canUnlink"

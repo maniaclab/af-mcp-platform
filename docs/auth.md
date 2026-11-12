@@ -1529,8 +1529,17 @@ failure (for example `not_linked`, while the credential was rejected) can
 still wait out that entry's 30 s negative-cache window
 (`_NEGATIVE_LIST_CACHE_TTL_SECONDS`), because linking does not invalidate the
 per-caller listing cache (issue #355).
-`GET /v1/identities` reports `linked: false` for a rejected credential, so
-the portal's Identities page shows it as not linked.
+`GET /v1/identities` (and `af_list_identities`) report `linked: false` for a
+rejected credential, as `linked` keeps meaning "has a usable credential", and
+add `rejected: true` for it: true only for a provider with `tracks_rejection`
+whose `is_rejected()` is true, false everywhere else. The portal's Identities
+page shows that identity as "Credential rejected" with a re-link action, the
+same way its Services page does.
+
+A `/mcp` tool call by such a caller gets the catalog's re-link sentence
+("Your linked credential was rejected. Re-link your identity…") plus the
+portal link, not the generic "not linked" error, and the elicitation offered
+to a capable client says the same.
 
 This is what ends a token with no expiry, so the MCP server must answer
 HTTP 401 when the AS rejects the bearer. See

@@ -25,6 +25,7 @@ function summary(overrides: Partial<DashboardSummary> = {}): DashboardSummary {
     rejectedService: null,
     rejectedIdentity: null,
     rejectedAction: null,
+    rejectedIdentityCount: 0,
     proxyAutoRenews: false,
     soonestExpiringToken: null,
     proxyStatus: { cached: true, voms_attributes: [], remaining_seconds: 48 * HOUR },

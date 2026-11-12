@@ -41,6 +41,7 @@ from mcp.types import Tool as McpTool
 from starlette.middleware import Middleware
 
 from af_mcp_broker import metrics
+from af_mcp_broker.api.permissions import _RELINK_DETAIL
 from af_mcp_broker.authorization import get_principal_permissions
 from af_mcp_broker.credentials import CredentialKind, NeedsUnlock
 from af_mcp_broker.mcp.diagnostics import register_diagnostic_tools
@@ -727,9 +728,13 @@ def _identity_display_name(
 
 
 def _not_linked_error(
-    provider: CredentialProvider, settings: Settings, alias: str | None
+    provider: CredentialProvider,
+    settings: Settings,
+    alias: str | None,
+    *,
+    rejected: bool = False,
 ) -> ToolError:
-    """Build the "identity not linked" ``ToolError``.
+    """Build the "identity not linked" ``ToolError``, or, when *rejected*, the "credential rejected, re-link" one.
 
     Shared by ``_bearer_factory`` and ``_x509_factory`` (via
     ``_require_linked``) so the message text -- and the portal deep link it
@@ -746,12 +751,21 @@ def _not_linked_error(
     ``af_link_identity`` (mcp/diagnostics.py) returns. Falls back to the bare
     Identities page (and omits the ``provider=`` argument from the
     ``af_link_identity`` hint) when no alias is known.
+
+    *rejected* is the provider's ``is_rejected()``: the caller did link, and a
+    backend rejected the stored credential, so the message is the catalog's
+    re-link sentence (``_RELINK_DETAIL``) plus the same link and hint.
     """
     url = _identity_link_url(settings, alias)
     if alias is None:
         link_hint = f"`{LINK_IDENTITY_TOOL_NAME}`"
     else:
         link_hint = f'`{LINK_IDENTITY_TOOL_NAME}` (provider="{alias}")'
+    if rejected:
+        return ToolError(
+            f"{_RELINK_DETAIL} Visit {url} to re-link it, or call {link_hint} "
+            "to get this link."
+        )
     return ToolError(
         f"{type(provider).__name__} not linked. Visit {url} to connect it, "
         f"or call {link_hint} to get this link. Call "
@@ -834,7 +848,8 @@ async def _require_linked(
         return
 
     alias = (target_to_alias or {}).get(spec.name)
-    not_linked = _not_linked_error(provider, settings, alias)
+    rejected = await provider.is_rejected(principal)
+    not_linked = _not_linked_error(provider, settings, alias, rejected=rejected)
 
     ctx = get_context()
     if not _client_supports_elicitation(ctx):
@@ -844,7 +859,10 @@ async def _require_linked(
     url = _identity_link_url(settings, alias)
     try:
         result = await ctx.elicit(
-            f"You need to link {display_name} before I can do this. Visit "
+            f"Your linked {display_name} credential was rejected. Visit {url} "
+            "to re-link it, then let me know when you're done."
+            if rejected
+            else f"You need to link {display_name} before I can do this. Visit "
             f"{url} to link it, then let me know when you're done.",
             [_ELICIT_RETRY_OPTION, _ELICIT_CANCEL_OPTION],  # type: ignore[arg-type]
             # mypy 2.3.0 misresolves fastmcp 3.4.4's Context.elicit overloads
@@ -869,6 +887,11 @@ async def _require_linked(
     if await provider.is_linked(principal):
         return
 
+    if rejected:
+        raise ToolError(
+            f"{display_name} is still rejected. Visit {url} to re-link it, then "
+            "try again."
+        )
     raise ToolError(
         f"{display_name} still not linked. Visit {url} to connect it, then try again."
     )

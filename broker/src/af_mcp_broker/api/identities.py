@@ -119,6 +119,11 @@ class IdentityProvider(BaseModel):
     # Human-readable description of what linking this provider enables.
     enables: str
     linked: bool
+    # True when a credential is stored but a backend rejected it
+    # (CredentialProvider.is_rejected), so `linked` is false although the
+    # user did link: they need to re-link, not link for the first time. Only
+    # a provider that tracks rejection (oauth21-direct) can set it.
+    rejected: bool = False
     link_url: str | None
     link_mechanism: LinkMechanism
     # Expiry (ISO-8601) of the caller's x509/VOMS proxy — populated only on
@@ -259,6 +264,7 @@ async def _build_providers(
             linked = await provider.is_linked(principal)
             x509_link_mode = None
             proxy_expires_at = None
+        rejected = provider.tracks_rejection and await provider.is_rejected(principal)
         external_login_url = (
             str(cfg.external_login_url)
             if cfg.type == "servicex-token" and cfg.external_login_url
@@ -271,6 +277,7 @@ async def _build_providers(
                 display_name=cfg.display_name,
                 enables=cfg.enables,
                 linked=linked,
+                rejected=rejected,
                 link_url=link_url,
                 link_mechanism=_LINK_MECHANISM_BY_TYPE[cfg.type],
                 external_login_url=external_login_url,

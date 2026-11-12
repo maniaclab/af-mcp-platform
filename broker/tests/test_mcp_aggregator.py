@@ -31,6 +31,7 @@ from mcp.types import ResourceTemplate as McpResourceTemplate
 from mcp.types import Tool as McpTool
 
 from af_mcp_broker import metrics
+from af_mcp_broker.api.permissions import _RELINK_DETAIL
 from af_mcp_broker.authorization import EntitlementPolicy
 from af_mcp_broker.config import BrokerIssuedProviderConfig
 from af_mcp_broker.credentials import (
@@ -2998,6 +2999,79 @@ async def test_require_linked_elicit_message_names_display_name_and_portal_url(
         aggregator._ELICIT_RETRY_OPTION,
         aggregator._ELICIT_CANCEL_OPTION,
     ]
+
+
+# A caller whose provider holds a credential that a backend rejected is told
+# to re-link, with the catalog's wording, not that the identity is not linked.
+
+
+async def test_require_linked_rejected_credential_says_relink_without_elicitation(
+    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_context(monkeypatch, make_principal(), supports_elicitation=False)
+    provider = _FakeProvider(linked=False, rejected=True)
+    spec = _spec()
+
+    with pytest.raises(ToolError) as excinfo:
+        await _require_linked(provider, make_principal(), spec, settings, None)
+
+    assert _RELINK_DETAIL in str(excinfo.value)
+    assert "not linked" not in str(excinfo.value)
+    assert f"{settings.portal_url.rstrip('/')}/identities" in str(excinfo.value)
+
+
+async def test_require_linked_rejected_credential_still_elicits_and_names_the_rejection(
+    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx = _patch_context(
+        monkeypatch, make_principal(), elicit_result=DeclinedElicitation()
+    )
+    provider = _FakeProvider(linked=False, rejected=True)
+    spec = _spec()
+
+    with pytest.raises(ToolError) as excinfo:
+        await _require_linked(provider, make_principal(), spec, settings, None)
+
+    assert _RELINK_DETAIL in str(excinfo.value)
+    assert len(ctx.elicit_calls) == 1
+    message, options = ctx.elicit_calls[0]
+    assert "rejected" in message
+    assert f"{settings.portal_url.rstrip('/')}/identities" in message
+    assert options == [
+        aggregator._ELICIT_RETRY_OPTION,
+        aggregator._ELICIT_CANCEL_OPTION,
+    ]
+
+
+async def test_require_linked_rejected_credential_accepted_retry_still_rejected(
+    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_context(
+        monkeypatch,
+        make_principal(),
+        elicit_result=AcceptedElicitation(data=aggregator._ELICIT_RETRY_OPTION),
+    )
+    provider = _FakeProvider(linked=False, rejected=True)
+    spec = _spec()
+
+    with pytest.raises(ToolError, match="still rejected"):
+        await _require_linked(provider, make_principal(), spec, settings, None)
+
+
+async def test_client_factory_bearer_call_with_rejected_credential_says_relink(
+    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_context(monkeypatch, make_principal())
+    spec = _spec(auth_type="bearer")
+    provider = _FakeProvider(linked=False, rejected=True)
+    registry = CredentialRegistry()
+    registry.register(spec.name, provider)
+
+    with pytest.raises(ToolError) as excinfo:
+        await _make_client_factory(spec, registry, settings, _OPEN_POLICY)()
+
+    assert _RELINK_DETAIL in str(excinfo.value)
+    assert provider.issue_calls == []
 
 
 async def test_client_factory_bearer_elicitation_accepted_now_linked_proceeds(

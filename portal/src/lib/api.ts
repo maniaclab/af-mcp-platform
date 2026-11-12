@@ -213,6 +213,10 @@ export interface IdentityProvider {
   /** Human-readable description of what linking this provider enables. */
   enables: string;
   linked: boolean;
+  /** True when a credential is stored but a backend rejected it, so `linked` is
+   * false although the user did link: they need to re-link. Only an
+   * "oauth21-direct" entry can set it; absent reads as false. */
+  rejected?: boolean;
   /** URL to navigate the browser to in order to link this provider, or null if linking isn't possible right now. */
   link_url: string | null;
   link_mechanism: LinkMechanism;
@@ -841,6 +845,8 @@ export interface DashboardSummary {
   rejectedIdentity: string | null;
   /** The action that re-links every rejected credential, when they all belong to the same identity. */
   rejectedAction: StatusCta | null;
+  /** Identities holding a stored credential the broker marked rejected. */
+  rejectedIdentityCount: number;
   /** Services that are temporarily unreachable. */
   unavailableCount: number;
   /** Services an operator must fix. */
@@ -906,6 +912,7 @@ export async function fetchDashboardSummary(): Promise<DashboardSummary> {
     rejectedService: services.rejectedNames.length === 1 ? services.rejectedNames[0] : null,
     rejectedIdentity: rejectedIdentityNoun(services.rejectedProviders, providers),
     rejectedAction: rejectedAction(services.rejectedProviders, providers),
+    rejectedIdentityCount: providers.filter((p) => p.rejected).length,
     unavailableCount: services.unavailable,
     misconfiguredCount: services.misconfigured,
     soonestExpiringToken: tokens.status === 'fulfilled' ? soonestExpiringToken(tokens.value) : null,

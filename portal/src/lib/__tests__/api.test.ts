@@ -637,6 +637,43 @@ describe('fetchDashboardSummary() service and token details', () => {
   });
 });
 
+describe('fetchDashboardSummary() rejected identities', () => {
+  const run = async (providers: unknown[]) => {
+    const body = (url: string): unknown => {
+      if (url.includes('/identities')) return { providers };
+      if (url.includes('/catalog')) return { servers: [] };
+      if (url.includes('/tokens')) return [];
+      return { cached: false, voms_attributes: [] };
+    };
+    globalThis.fetch = vi.fn((input: RequestInfo | URL) =>
+      Promise.resolve(
+        new Response(JSON.stringify(body(String(input))), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      ),
+    );
+    return fetchDashboardSummary();
+  };
+
+  it('counts identities the broker marks rejected, not linked ones', async () => {
+    const summary = await run([
+      { id: 'a', display_name: 'A', link_mechanism: 'redirect', linked: false, rejected: true },
+      { id: 'b', display_name: 'B', link_mechanism: 'redirect', linked: true },
+      { id: 'c', display_name: 'C', link_mechanism: 'redirect', linked: false },
+    ]);
+    expect(summary.rejectedIdentityCount).toBe(1);
+    expect(summary.linkedCount).toBe(1);
+  });
+
+  it('counts none when the broker omits the field', async () => {
+    const summary = await run([
+      { id: 'a', display_name: 'A', link_mechanism: 'redirect', linked: false },
+    ]);
+    expect(summary.rejectedIdentityCount).toBe(0);
+  });
+});
+
 describe('fetchDashboardSummary() rejected credentials', () => {
   const run = async (servers: unknown[]) => {
     const body = (url: string): unknown => {

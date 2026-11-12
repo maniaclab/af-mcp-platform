@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -387,8 +388,9 @@ async def _oauth21_provider_holding(
     *,
     token_endpoint: str,
     refresh_token: str | None = None,
+    rejected: bool = False,
 ) -> OAuth21Provider:
-    """A real OAuth21Provider whose store holds a non-expiring token for user-123."""
+    """A real OAuth21Provider whose store holds a non-expiring token for user-123, marked rejected if *rejected*."""
     store = InMemoryTokenStore()
     await store.write_cas(
         "user-123",
@@ -403,6 +405,7 @@ async def _oauth21_provider_holding(
             scope=["read:user"],
             issuer="https://toy-as.example",
             token_endpoint=token_endpoint,
+            rejected_at=datetime.now(UTC) if rejected else None,
         ),
         expected_version=None,
     )
@@ -557,6 +560,30 @@ async def test_rejected_oauth21_credential_reads_as_rejected_in_the_catalog(
         provider,
         make_principal(subject="user-123"),
     ) == ("link_required", "rejected")
+
+
+async def test_call_with_a_rejected_oauth21_credential_says_relink(
+    aggregator_app_url, verifying_backend, sig_key, prime_jwks
+) -> None:
+    """With a stored credential the backend rejected, a tool call tells the
+    caller it was rejected and to re-link -- not that nothing is linked."""
+    prime_jwks([sig_key.jwk])
+    provider = await _oauth21_provider_holding(
+        "revoked-token", token_endpoint=verifying_backend.token_endpoint, rejected=True
+    )
+    aggregator_app_url.directory.groups_by_subject["user-123"] = ["atlas"]
+    token = sig_key.sign(make_claims())
+
+    async for base_url in aggregator_app_url(
+        provider, toy_url=verifying_backend.mcp_url
+    ):
+        async with _bearer_client(base_url, token) as client:
+            for _ in range(2):
+                with pytest.raises(ToolError, match="rejected") as excinfo:
+                    await client.call_tool("toy_ping", {})
+
+    assert "Re-link" in str(excinfo.value)
+    assert "not linked" not in str(excinfo.value)
 
 
 async def test_refreshed_oauth21_credential_leaves_no_rejection_in_the_catalog(

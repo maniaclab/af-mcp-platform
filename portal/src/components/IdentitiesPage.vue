@@ -19,6 +19,7 @@ import {
   resolveLinkedBanner,
   resolveLinkedErrorBanner,
 } from '../lib/linkedBanner';
+import { identityRelinkLabel } from '../lib/identityLinkLabel';
 import { formatDateTime, formatRemaining } from '../lib/relativeTime';
 import { proxyExpiryState } from '../lib/x509Identity';
 import { useLoadState } from '../lib/useLoadState';
@@ -175,38 +176,61 @@ interface StateBanner {
 // The one most urgent state problem, or null. The proxy is judged by
 // proxyExpiryState: an auto-renewing link re-mints hands-free, so it never
 // warns of expiry.
-// Problem beats warning: an expired proxy, then an expiring one. An account
-// that is not linked is the user's choice, and one that needs access is for an
-// administrator to fix, so neither raises a banner; each card says so itself.
+// Problem beats warning: an expired proxy, then a rejected credential, then an
+// expiring proxy. An account that is not linked is the user's choice, and one
+// that needs access is for an administrator to fix, so neither raises a
+// banner; each card says so itself. A rejected credential is a real problem:
+// the user did link, and the backend refuses it.
 const stateBanner = computed<StateBanner | null>(() => {
   const now = new Date();
   const x509 = providers.value.find((p) => p.link_mechanism === 'passphrase');
   const expiry = x509?.proxy_expires_at ? new Date(x509.proxy_expires_at) : null;
-  if (x509 && expiry && !Number.isNaN(expiry.getTime())) {
-    const state = proxyExpiryState(
-      (expiry.getTime() - now.getTime()) / 1000,
-      x509.x509_link_mode === 'auto-renew',
-    );
-    if (state === 'expired') {
-      return {
-        tone: 'bad',
-        title: 'Your grid proxy has expired',
-        text: 'Link your grid certificate again to restore HTCondor and grid data access.',
-        hoverTitle: formatDateTime(expiry, { year: true }),
-        targetId: x509.id,
-        button: 'Link certificate',
-      };
-    }
-    if (x509.linked && state === 'expiring') {
-      return {
-        tone: 'warn',
-        title: 'Your grid proxy expires soon',
-        text: `${formatRemaining(expiry, now)}. Re-link your grid certificate to renew it.`,
-        hoverTitle: formatDateTime(expiry, { year: true }),
-        targetId: x509.id,
-        button: 'Re-link certificate',
-      };
-    }
+  const proxyState =
+    x509 && expiry && !Number.isNaN(expiry.getTime())
+      ? proxyExpiryState(
+          (expiry.getTime() - now.getTime()) / 1000,
+          x509.x509_link_mode === 'auto-renew',
+        )
+      : null;
+  if (x509 && expiry && proxyState === 'expired') {
+    return {
+      tone: 'bad',
+      title: 'Your grid proxy has expired',
+      text: 'Link your grid certificate again to restore HTCondor and grid data access.',
+      hoverTitle: formatDateTime(expiry, { year: true }),
+      targetId: x509.id,
+      button: 'Link certificate',
+    };
+  }
+
+  const rejected = providers.value.filter((p) => p.rejected);
+  const [onlyRejected] = rejected;
+  if (onlyRejected && rejected.length === 1) {
+    return {
+      tone: 'warn',
+      title: `${onlyRejected.display_name} rejected the linked credential`,
+      text: 'Re-link it to restore the services that use it.',
+      targetId: onlyRejected.id,
+      button: identityRelinkLabel(onlyRejected),
+    };
+  }
+  if (rejected.length > 1) {
+    return {
+      tone: 'warn',
+      title: `${rejected.length} linked credentials were rejected`,
+      text: 'Re-link them to restore the services that use them.',
+    };
+  }
+
+  if (x509 && expiry && x509.linked && proxyState === 'expiring') {
+    return {
+      tone: 'warn',
+      title: 'Your grid proxy expires soon',
+      text: `${formatRemaining(expiry, now)}. Re-link your grid certificate to renew it.`,
+      hoverTitle: formatDateTime(expiry, { year: true }),
+      targetId: x509.id,
+      button: 'Re-link certificate',
+    };
   }
 
   return null;
@@ -217,7 +241,10 @@ const stateBanner = computed<StateBanner | null>(() => {
 // cache so a subsequent page load doesn't serve the pre-unlink snapshot.
 function handleUnlinked(id: string) {
   const provider = providers.value.find((p) => p.id === id);
-  if (provider) provider.linked = false;
+  if (provider) {
+    provider.linked = false;
+    provider.rejected = false;
+  }
   clearIdentitiesCache();
 }
 
@@ -455,6 +482,7 @@ function handleServiceXRevoked(id: string) {
                 :id="p.id"
                 :type="p.type"
                 :linked="p.linked"
+                :rejected="p.rejected"
                 :display_name="p.display_name"
                 :enables="p.enables"
                 :powers="powersForAlias(p.id)"

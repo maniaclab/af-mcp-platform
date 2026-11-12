@@ -35,6 +35,7 @@ const SUMMARY: DashboardSummary = {
   rejectedService: null,
   rejectedIdentity: null,
   rejectedAction: null,
+  rejectedIdentityCount: 0,
   proxyAutoRenews: false,
   soonestExpiringToken: null,
   proxyStatus: { cached: true, voms_attributes: [], remaining_seconds: 48 * 3600 },
@@ -185,6 +186,15 @@ describe('OverviewSummary status list', () => {
 
     const identities = wrapper.findAll('.ov__row')[1]!;
     expect(identities.text()).toContain('grid certificate expiring');
+    expect(identities.find('.af-mark').classes()).toContain('warn');
+  });
+
+  it('warns in the identities row when a linked credential was rejected', async () => {
+    vi.mocked(fetchDashboardSummary).mockResolvedValue({ ...SUMMARY, rejectedIdentityCount: 1 });
+    const wrapper = await mountSummary();
+
+    const identities = wrapper.findAll('.ov__row')[1]!;
+    expect(identities.text()).toContain('1 rejected');
     expect(identities.find('.af-mark').classes()).toContain('warn');
   });
 
