@@ -168,6 +168,22 @@ JupyterHub has no revocation endpoint either, so unlinking deletes only
 the broker's stored copy, and the token stays valid at the hub until it
 expires. See [Token Lifetime and Refresh](auth.md#token-lifetime-and-refresh).
 
+### Backends must reject a bad bearer with HTTP 401
+
+The broker learns that an `oauth21-direct` token was revoked only when the
+MCP server it was sent to answers **HTTP 401**. Verify the bearer at the
+transport, before any tool runs: pass a `token_verifier` that checks the
+token against the AS, the way af-jupyterhub-mcp's `HubTokenVerifier` checks
+`/hub/api/user`. A rejection reported as a tool error inside a 200 response
+is invisible to the broker, which then keeps serving the token.
+
+This matters most for an AS whose tokens never expire and that issues no
+refresh token, such as Indico or a GitHub OAuth App. Its token response
+leaves out `expires_in`, and the broker serves the token until a backend
+rejects it. The caller's catalog entry then reads `link_required` with
+`link_state: "rejected"` until they re-link. See
+[Rejected `oauth21-direct` tokens](auth.md#rejected-oauth21-direct-tokens).
+
 ### Migrating from the pre-unification chart values
 
 Older chart releases configured identity providers across four separate
