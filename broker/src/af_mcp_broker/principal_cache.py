@@ -37,6 +37,12 @@ adds on top):
   identically whether the last-known value came from this process's own
   successful resolve() or from a persisted record loaded at cold start.
 
+A directory answer of "deleted" or "disabled" (``PrincipalNotActiveError``)
+is the exception to serve-stale: it is definitive, so the cached value is
+dropped and ``PrincipalRejectedError`` raised on the next refresh, bounded by
+``refresh_interval_seconds`` (issue #336). Only an unreachable directory
+falls back to the last-known value.
+
 Two failure shapes fall out of this:
 
 * **Cold start**: nothing cached in memory yet for this principal. Before
@@ -150,7 +156,10 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from af_mcp_broker.principal_directory import PrincipalAttributes
+from af_mcp_broker.principal_directory import (
+    PrincipalAttributes,
+    PrincipalNotActiveError,
+)
 from af_mcp_broker.vault_kv import CasConflict, VaultError, VaultKV
 
 if TYPE_CHECKING:
@@ -176,6 +185,20 @@ class PrincipalUnavailableError(Exception):
     def __init__(self, principal_id: str) -> None:
         self.principal_id = principal_id
         super().__init__(f"Principal {principal_id!r} attributes unavailable")
+
+
+class PrincipalRejectedError(PrincipalUnavailableError):
+    """Raised by ``PrincipalCache.get()`` when the directory definitively refuses *principal_id* (deleted or disabled), as opposed to being unreachable.
+
+    A ``PrincipalUnavailableError`` subclass so every caller that already
+    fails closed on the parent does so here too; the JWT path catches this
+    one first to answer 401 (bad identity) instead of 503 (platform outage).
+    ``reason`` is for logs only and must never reach a client.
+    """
+
+    def __init__(self, principal_id: str, reason: str) -> None:
+        super().__init__(principal_id)
+        self.reason = reason
 
 
 @dataclass(frozen=True)
@@ -334,6 +357,11 @@ class PrincipalCache:
         # global refresh, there is no single snapshot shared across callers
         # here.
         self._locks: dict[str, asyncio.Lock] = {}
+        # principal_id -> (monotonic time of the rejection, reason): a
+        # principal the directory last refused (deleted/disabled). Answered
+        # from here for one refresh interval without asking the directory
+        # again, and keeps the persisted value from being loaded back in.
+        self._rejections: dict[str, tuple[float, str]] = {}
         self._log = structlog.get_logger(__name__).bind(component="PrincipalCache")
 
     def _lock_for(self, principal_id: str) -> asyncio.Lock:
@@ -439,7 +467,10 @@ class PrincipalCache:
         ``PrincipalUnavailableError`` when no usable cached value (in memory
         or freshly loaded from the backend) exists and the directory is
         unreachable, or once a stale cached value has exceeded
-        ``max_staleness_seconds`` without a successful refresh.
+        ``max_staleness_seconds`` without a successful refresh. Raises
+        ``PrincipalRejectedError`` (a ``PrincipalUnavailableError``) when the
+        directory reports the principal deleted or disabled; the cached
+        value is dropped, never served stale.
         """
         entry = self._entries.get(principal_id)
         now = time.monotonic()
@@ -453,7 +484,13 @@ class PrincipalCache:
             if entry is not None and (now - entry.fetched_at) < self._refresh_interval:
                 return entry.attributes
 
-            if entry is None:
+            rejection = self._rejections.get(principal_id)
+            if rejection is not None and (now - rejection[0]) < self._refresh_interval:
+                raise PrincipalRejectedError(principal_id, rejection[1])
+
+            # A principal the directory refused must not be seeded back from
+            # the persisted record, which still holds its last good value.
+            if entry is None and rejection is None:
                 entry = await self._load_from_backend(principal_id, now)
                 if (
                     entry is not None
@@ -466,6 +503,18 @@ class PrincipalCache:
 
             try:
                 attributes = await self._directory.resolve(principal_id)
+            except PrincipalNotActiveError as exc:
+                # A definitive answer, not an outage: drop the last-known
+                # value instead of serving it stale, so removal takes effect
+                # within one refresh interval like a group change does.
+                self._entries.pop(principal_id, None)
+                self._rejections[principal_id] = (now, exc.reason)
+                self._log.warning(
+                    "principal_cache.principal_rejected",
+                    principal_id=principal_id,
+                    reason=exc.reason,
+                )
+                raise PrincipalRejectedError(principal_id, exc.reason) from None
             except Exception:  # noqa: BLE001 — must never take auth down; serve stale or fail closed below
                 if entry is None:
                     self._log.error(
@@ -494,6 +543,7 @@ class PrincipalCache:
                 )
                 return entry.attributes
 
+            self._rejections.pop(principal_id, None)
             persisted_at = await self._persist_if_needed(
                 principal_id, attributes, entry, now
             )

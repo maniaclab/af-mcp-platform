@@ -19,7 +19,10 @@ from af_mcp_broker.config import Settings, get_settings
 from af_mcp_broker.http import get_http_client
 from af_mcp_broker.logging import bind_subject
 from af_mcp_broker.maintenance import check_not_maintenance_or_fail_open
-from af_mcp_broker.principal_cache import PrincipalUnavailableError
+from af_mcp_broker.principal_cache import (
+    PrincipalRejectedError,
+    PrincipalUnavailableError,
+)
 
 if TYPE_CHECKING:
     from af_mcp_broker.principal_cache import PrincipalCache
@@ -320,6 +323,13 @@ async def _resolve_current_attributes(
         )
     try:
         attributes = await principal_cache.get(principal.subject)
+    except PrincipalRejectedError as exc:
+        # The directory refused this subject (deleted or disabled): a bad
+        # identity, not an outage, so it takes the vague 401 path through
+        # get_principal's ValueError handling -- never the reason.
+        raise ValueError(
+            f"subject {principal.subject!r} rejected by directory"
+        ) from exc
     except PrincipalUnavailableError as exc:
         raise PrincipalDirectoryUnavailableError(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

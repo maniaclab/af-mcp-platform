@@ -36,6 +36,8 @@ implementation, backed by Keycloak's Admin REST API:
   principal (issue #148); only x509 credential minting genuinely needs it,
   and that requirement is enforced at the point of use in
   ``credentials/x509.py``, not here.
+  The ``enabled`` flag is also read: ``false`` raises ``PrincipalDisabledError``,
+  which the principal cache treats like a deleted user (issue #336).
 * ``GET /admin/realms/{realm}/users/{id}/groups`` -- group representations.
   Uses each group's ``name`` (not ``path``) by default so the result matches
   what the Group Membership mapper puts in a JWT's `groups` claim -- AF
@@ -95,12 +97,43 @@ class PrincipalAttributes:
     email: str
 
 
-class PrincipalNotFoundError(Exception):
+class PrincipalNotActiveError(Exception):
+    """Raised by ``PrincipalDirectory.resolve()`` when the directory answered, and the answer is that *principal_id* must not be granted access.
+
+    Base of ``PrincipalNotFoundError`` and ``PrincipalDisabledError``, kept
+    distinct so logs can tell the two apart while every caller treats them
+    identically (see ``principal_cache.PrincipalRejectedError``). Unlike any
+    other ``resolve()`` failure this is a definitive answer, not a directory
+    outage, so the cache must never serve a stale value in response to it.
+    """
+
+    reason: str = "not_active"
+
+    def __init__(self, principal_id: str, message: str) -> None:
+        self.principal_id = principal_id
+        super().__init__(message)
+
+
+class PrincipalNotFoundError(PrincipalNotActiveError):
     """Raised by ``PrincipalDirectory.resolve()`` when *principal_id* does not exist in the directory (e.g. a Keycloak user deleted after a PAT was minted)."""
 
+    reason = "not_found"
+
     def __init__(self, principal_id: str) -> None:
-        self.principal_id = principal_id
-        super().__init__(f"Principal {principal_id!r} not found in directory")
+        super().__init__(
+            principal_id, f"Principal {principal_id!r} not found in directory"
+        )
+
+
+class PrincipalDisabledError(PrincipalNotActiveError):
+    """Raised by ``PrincipalDirectory.resolve()`` when *principal_id* exists in the directory but is disabled (e.g. Keycloak's user ``Enabled`` switch is off)."""
+
+    reason = "disabled"
+
+    def __init__(self, principal_id: str) -> None:
+        super().__init__(
+            principal_id, f"Principal {principal_id!r} is disabled in directory"
+        )
 
 
 class PrincipalDirectory(ABC):
@@ -117,7 +150,8 @@ class PrincipalDirectory(ABC):
         """Return *principal_id*'s current attributes.
 
         Raises ``PrincipalNotFoundError`` if the directory has no such
-        principal. Any other failure (network error, malformed response,
+        principal, and ``PrincipalDisabledError`` if it has one that is
+        disabled. Any other failure (network error, malformed response,
         missing posix attributes) should raise -- callers (the principal
         cache) are responsible for stale-serving/fail-closed decisions, not
         this method.
@@ -173,6 +207,14 @@ class KeycloakPrincipalDirectory(PrincipalDirectory):
             raise PrincipalNotFoundError(principal_id)
         user_resp.raise_for_status()
         user = user_resp.json()
+
+        # ``GET /users/{id}`` always carries ``enabled`` on a real Keycloak,
+        # so a present key is authoritative: anything but a literal true
+        # refuses. A representation with no key at all is treated as enabled
+        # -- refusing it would lock out every user of a directory view that
+        # omits the field -- and is the only case that is not fail-closed.
+        if "enabled" in user and user["enabled"] is not True:
+            raise PrincipalDisabledError(principal_id)
 
         group_key = (
             "path" if self._settings.principal_directory_group_full_path else "name"
