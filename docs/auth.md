@@ -358,6 +358,19 @@ Three separate concerns, deliberately kept separate in the code:
   `PRINCIPAL_CACHE_MAX_STALENESS_SECONDS` (default 6 hours) before failing
   closed, logging loudly the whole time — a brief Keycloak outage should
   not instantly lock out every authenticated caller.
+  **Disabling or deleting a user is not an outage.** When the directory
+  answers that the user is disabled (Keycloak `enabled: false`) or does not
+  exist, the cached value is dropped rather than served stale, and both
+  credential types are refused with the same vague 401 (a JWT would
+  otherwise get a 503) within one refresh interval (default ~45s) — a
+  still-valid access token and an unexpired, unrevoked PAT alike. The cause
+  (`disabled` or `not_found`) is only in the broker's
+  `principal_cache.principal_rejected` warning log, never in the response.
+  Re-enabling the user restores access at the next refresh. A directory view
+  that omits `enabled` entirely is treated as enabled; Keycloak's
+  `GET /users/{id}` always includes it. With `PRINCIPAL_CACHE_BACKEND=vault`,
+  a replica restarted inside that window can still serve the persisted value
+  for up to one refresh interval before it asks Keycloak.
 - **Permission engine** (`authorization/`) — unchanged; still gates on
   `group_permissions` from whatever groups the principal cache currently
   reports, regardless of which credential type asked.
