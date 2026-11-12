@@ -264,6 +264,20 @@ caller-independent, so a schema cached under one caller's credential being
 served to another isn't a credential leak — only set this to `0` for a
 service whose tool list genuinely personalizes per caller.
 
+`timeout_seconds` (default 30) is the per-request read timeout for calls to
+this service. It does not bound `tools/list`: the broker gives each service
+one broker-wide listing deadline, `MCP_LIST_TIMEOUT_SECONDS` (default 10),
+covering that service's whole listing attempt including list-time credential
+setup. A service that has not answered by then is left out of that `tools/list`
+(the other services' tools are returned as normal), logged as
+`aggregator.service_list_failed` with `reason: unavailable`, and shown as
+`unavailable` to every caller until a listing succeeds. The failure is
+negative-cached for 30 seconds per caller, so a service that stays down costs
+each caller the deadline at most once per 30 seconds. The deadline also bounds
+`GET /v1/catalog/{service}/tools` (the portal's Methods list). The chart does
+not expose it; set the environment variable on the broker pod if the default
+does not suit.
+
 ### `apply_namespace` — tool naming
 
 `apply_namespace` controls whether the aggregator mounts this service's

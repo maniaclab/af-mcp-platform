@@ -634,7 +634,7 @@ status it can change:
 
 | Reason | Describes | Recorded against | Catalog status |
 |---|---|---|---|
-| `unavailable` | the backend (down, timing out, or an unexplained 401) | the service, seen by every caller | `unavailable` |
+| `unavailable` | the backend (down, not answering within the listing deadline `MCP_LIST_TIMEOUT_SECONDS`, or an unexplained 401) | the service, seen by every caller | `unavailable` |
 | `unauthorized` | one caller's credential, which the backend rejected | that caller and service only | `link_required` ("re-link"), `link_state: "rejected"`; not used for an `oauth21` credential, see below |
 | `not_linked` | one caller, who has no credential for the service; logged at INFO. A mint-and-inject (`x509`, `krb5`, `servicex`) service's tools are listed only for a caller who has linked the credential, so for an unlinked caller the listing is skipped without minting a token or contacting the backend | that caller and service only | `link_required` ("link") |
 

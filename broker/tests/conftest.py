@@ -401,6 +401,24 @@ async def run_asgi_app(app: Any, port: int | None = None) -> AsyncIterator[str]:
             sock.close()
 
 
+class HungBackend:
+    """ASGI app that reads each request and never responds, recording how many requests arrived and how many connections were later closed by the client."""
+
+    def __init__(self) -> None:
+        self.requests = 0
+        self.disconnects = 0
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] != "http":
+            return
+        self.requests += 1
+        while True:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                self.disconnects += 1
+                return
+
+
 @asynccontextmanager
 async def run_aggregator_async(mcp: FastMCP, path: str = "/mcp") -> AsyncIterator[str]:
     """Like fastmcp.utilities.tests.run_server_async, but for an aggregator
