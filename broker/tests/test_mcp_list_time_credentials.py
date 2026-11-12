@@ -126,12 +126,24 @@ class _FakeListProvider(CredentialProvider):
     cred_class = "fake"
     execution_model = ExecutionModel.DELEGATED
 
-    def __init__(self, *, unlinked_uids: frozenset[int] = frozenset()) -> None:
+    def __init__(
+        self,
+        *,
+        unlinked_uids: frozenset[int] = frozenset(),
+        rejected_uids: frozenset[int] = frozenset(),
+    ) -> None:
         self.unlinked_uids = unlinked_uids
+        self.rejected_uids = rejected_uids
         self.issue_calls: list[int] = []
 
     async def is_linked(self, principal: Principal) -> bool:
-        return principal.uid not in self.unlinked_uids
+        return (
+            principal.uid not in self.unlinked_uids
+            and principal.uid not in self.rejected_uids
+        )
+
+    async def is_rejected(self, principal: Principal) -> bool:
+        return principal.uid in self.rejected_uids
 
     async def issue(
         self,
@@ -566,8 +578,8 @@ async def test_replica_split_session_continuity(
 
 
 # ---------------------------------------------------------------------------
-# x509/krb5/servicex ("mint and inject, the backend redeems"): a caller must
-# have the credential linked for the service's tools to be listed. For an
+# bearer and x509/krb5/servicex ("mint and inject, the backend redeems"): a
+# caller must have the credential linked for the service's tools to be listed. For an
 # unlinked caller the broker neither mints an identity token nor contacts the
 # backend; the service just contributes no tools to that caller's list.
 # ---------------------------------------------------------------------------
@@ -593,13 +605,14 @@ class _MintAndInjectEnv:
 
     def __init__(self) -> None:
         self.url = ""
+        self.auth_type = ""
         self.backend_requests: list[str] = []
         self.minted_subjects: list[str] = []
         self.registry = ServiceRegistry()
         self.provider = _FakeListProvider(unlinked_uids=frozenset({333}))
 
 
-@pytest.fixture(params=["x509", "krb5", "servicex"])
+@pytest.fixture(params=["bearer", "x509", "krb5", "servicex"])
 async def mint_and_inject_env(
     request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch,
@@ -609,6 +622,7 @@ async def mint_and_inject_env(
     static_principal_cache: Any,
 ) -> AsyncIterator[_MintAndInjectEnv]:
     env = _MintAndInjectEnv()
+    env.auth_type = request.param
     principal_cache, directory = static_principal_cache
     for uid, gid, unixname in _TEST_PERSONAS:
         sub = _subject_for(unixname)
@@ -721,7 +735,11 @@ async def test_linked_caller_lists_a_mint_and_inject_backend_with_identity_heade
     assert "redeemer_whoami" in names
     assert env.backend_requests
     assert all(auth.startswith("Bearer ") for auth in env.backend_requests)
-    assert set(env.minted_subjects) == {"user-alice"}
+    if env.auth_type == "bearer":
+        # The provider's own credential is injected; no identity token is minted.
+        assert set(env.provider.issue_calls) == {111}
+    else:
+        assert set(env.minted_subjects) == {"user-alice"}
     assert env.registry.recent_list_failure("redeemer", "user-alice") is None
 
 
@@ -740,3 +758,23 @@ async def test_unlinked_caller_calling_an_unlisted_tool_gets_the_not_linked_erro
 
     assert env.backend_requests == []
     assert env.minted_subjects == []
+
+
+async def test_rejected_caller_calling_an_unlisted_tool_still_gets_a_friendly_error(
+    mint_and_inject_env: _MintAndInjectEnv, sig_key: Any, prime_jwks: Any
+) -> None:
+    """A caller whose stored credential was rejected is unlinked too: no
+    backend request, and a direct call gets the actionable error, never
+    "Unknown tool" -- on the first call and on a repeat."""
+    prime_jwks([sig_key.jwk])
+    env = mint_and_inject_env
+    env.provider.rejected_uids = frozenset({333})
+    token = sig_key.sign(_token_for(333, 333, "carol"))
+
+    async with _bearer_client(env.url, token) as client:
+        for _ in range(2):
+            with pytest.raises(ToolError) as excinfo:
+                await client.call_tool("redeemer_whoami", {})
+            assert "Unknown tool" not in str(excinfo.value)
+
+    assert env.backend_requests == []

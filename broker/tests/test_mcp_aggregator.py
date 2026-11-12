@@ -114,8 +114,10 @@ class _FakeProvider(CredentialProvider):
         token: str | None = "minted-token",
         needs_unlock: NeedsUnlock | None = None,
         http_error: HTTPException | None = None,
+        rejected: bool = False,
     ) -> None:
         self.linked = linked
+        self.rejected_credential = rejected
         self.token = token
         self.needs_unlock = needs_unlock
         self.http_error = http_error
@@ -125,6 +127,9 @@ class _FakeProvider(CredentialProvider):
 
     async def is_linked(self, principal: Principal) -> bool:
         return self.linked
+
+    async def is_rejected(self, principal: Principal) -> bool:
+        return self.rejected_credential
 
     async def issue(
         self,
@@ -707,11 +712,13 @@ async def test_client_factory_bearer_list_time_reports_401_for_the_injected_toke
 async def test_client_factory_uncredentialed_list_time_401_reports_nothing(
     settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A 401 for a connection that carried no credential (an unlinked caller)
-    says nothing about any stored credential."""
+    """A 401 for a connection that carried no credential (the caller's mint
+    failed) says nothing about any stored credential."""
     _patch_context(monkeypatch, make_principal(subject="sub-abc"), active_backend=None)
     spec = _spec(auth_type="bearer")
-    provider = _FakeProvider(linked=False)
+    provider = _FakeProvider(
+        http_error=HTTPException(status_code=503, detail="token endpoint down")
+    )
     registry = CredentialRegistry()
     registry.register(spec.name, provider)
 
@@ -876,17 +883,56 @@ async def test_client_factory_bearer_list_time_falls_back_when_no_provider_regis
     )
 
 
-async def test_client_factory_bearer_list_time_falls_back_when_not_linked(
+async def test_client_factory_bearer_list_time_skips_listing_when_not_linked(
     settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Same non-fatal fallback as the no-provider case above, but for a
-    registered provider that says the caller isn't linked -- classified
-    distinctly ("not_linked" vs "unavailable") so _ObservableProxyProvider
-    can log the precise reason if the resulting uncredentialed connection
-    goes on to fail (e.g. the backend itself gates listing on auth)."""
-    ctx = _patch_context(monkeypatch, make_principal(), active_backend=None)
+    """A caller who has not linked the credential gets no listing at all, as
+    for x509/krb5/servicex: the factory raises NotLinkedForListing before
+    minting anything or building a client, so the backend is never contacted."""
+    _patch_context(monkeypatch, make_principal(), active_backend=None)
     spec = _spec(auth_type="bearer")
     provider = _FakeProvider(linked=False)
+    registry = CredentialRegistry()
+    registry.register(spec.name, provider)
+    factory = _make_client_factory(spec, registry, settings, _OPEN_POLICY)
+
+    with pytest.raises(aggregator.NotLinkedForListing) as excinfo:
+        await factory()
+
+    assert provider.issue_calls == []
+    assert excinfo.value.rejected is False
+
+
+async def test_client_factory_bearer_list_time_flags_a_rejected_credential(
+    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A rejected credential is not linked either, so no backend request; the
+    exception says it was rejected so the listing outcome can say so."""
+    _patch_context(monkeypatch, make_principal(), active_backend=None)
+    spec = _spec(auth_type="bearer")
+    provider = _FakeProvider(linked=False, rejected=True)
+    registry = CredentialRegistry()
+    registry.register(spec.name, provider)
+    factory = _make_client_factory(spec, registry, settings, _OPEN_POLICY)
+
+    with pytest.raises(aggregator.NotLinkedForListing) as excinfo:
+        await factory()
+
+    assert provider.issue_calls == []
+    assert excinfo.value.rejected is True
+
+
+async def test_client_factory_bearer_list_time_mint_failure_stays_unavailable(
+    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A linked caller whose mint fails for an operational reason is not
+    "not linked": the listing still connects without a credential and the
+    outcome is classified "unavailable"."""
+    ctx = _patch_context(monkeypatch, make_principal(), active_backend=None)
+    spec = _spec(auth_type="bearer")
+    provider = _FakeProvider(
+        http_error=HTTPException(status_code=503, detail="token endpoint down")
+    )
     registry = CredentialRegistry()
     registry.register(spec.name, provider)
     factory = _make_client_factory(spec, registry, settings, _OPEN_POLICY)
@@ -894,10 +940,9 @@ async def test_client_factory_bearer_list_time_falls_back_when_not_linked(
     client = await factory()
 
     assert "Authorization" not in client.transport.headers
-    assert provider.issue_calls == []
     assert ctx.recorded_state[f"__list_credential_status__:{spec.name}"] == (
         False,
-        "not_linked",
+        "unavailable",
     )
 
 
@@ -1070,6 +1115,11 @@ async def test_observable_proxy_provider_success_clears_only_own_subject_record(
     [
         (aggregator.NotLinkedForListing("not linked"), "not_linked", "info"),
         (
+            aggregator.NotLinkedForListing("rejected", rejected=True),
+            "unauthorized",
+            "warning",
+        ),
+        (
             httpx2.HTTPStatusError(
                 "unauthorized",
                 request=httpx2.Request("GET", "http://example.invalid"),
@@ -1081,7 +1131,7 @@ async def test_observable_proxy_provider_success_clears_only_own_subject_record(
             "warning",
         ),
     ],
-    ids=["not_linked", "rejected_credential"],
+    ids=["not_linked", "rejected_stored_credential", "rejected_by_backend"],
 )
 async def test_observable_proxy_provider_logs_unlinked_listing_failure_at_info(
     monkeypatch: pytest.MonkeyPatch,

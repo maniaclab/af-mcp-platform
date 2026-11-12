@@ -303,14 +303,17 @@ async def get_service_tools(
                 credential = await resolve_list_time_credential(
                     spec, credential_registry, principal, broker_token_issuer
                 )
-            except NotLinkedForListing:
+            except NotLinkedForListing as exc:
+                # A rejected credential reads as "unauthorized" (re-link), matching
+                # the catalog's "rejected" link state, not "not_linked".
+                status = "unauthorized" if exc.rejected else "not_linked"
                 logger.info(
                     "catalog.tools_list_failed",
                     subject=principal.subject,
                     target=spec.name,
-                    status="not_linked",
+                    status=status,
                 )
-                return _respond(spec, "not_linked", [], policy, registry, caps)
+                return _respond(spec, status, [], policy, registry, caps)
             skip_reason = credential.skip_reason
 
             # The cache only ever short-circuits a caller whose credential
