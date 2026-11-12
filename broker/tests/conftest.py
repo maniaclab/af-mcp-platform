@@ -491,6 +491,7 @@ def static_principal_cache() -> tuple[Any, Any]:
     from af_mcp_broker.principal_directory import (
         PrincipalAttributes,
         PrincipalDirectory,
+        PrincipalDisabledError,
     )
 
     class _StaticDirectory(PrincipalDirectory):
@@ -499,9 +500,12 @@ def static_principal_cache() -> tuple[Any, Any]:
             self.posix_by_subject: dict[str, dict[str, int | str]] = {}
             self.resolve_calls: list[str] = []
             self.unavailable_subjects: set[str] = set()
+            self.disabled_subjects: set[str] = set()
 
         async def resolve(self, principal_id: str) -> PrincipalAttributes:
             self.resolve_calls.append(principal_id)
+            if principal_id in self.disabled_subjects:
+                raise PrincipalDisabledError(principal_id)
             if principal_id in self.unavailable_subjects:
                 raise RuntimeError(f"directory unavailable for {principal_id!r} (test)")
             posix = self.posix_by_subject.get(principal_id, {})
