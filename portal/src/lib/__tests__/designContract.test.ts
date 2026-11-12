@@ -1,5 +1,5 @@
 /**
- * Enforces the design contract (docs/design-language/index.html) on every
+ * Enforces the design contract (DESIGN.md; the reference page is /design/) on every
  * .vue, .astro and .css file under src. It reads the sources and fails, naming
  * file and line, on anything that re-introduces a look the contract removed:
  * literal colours, transitional alias tokens, raw type sizes, off-contract
@@ -52,6 +52,55 @@ const ALLOWLIST: { file: string; rule: string; contains: string; reason: string 
     rule: 'arrow-glyph',
     contains: 'Settings → Connectors',
     reason: 'A navigation path inside a prose sentence; the arrow is punctuation, not an icon.',
+  },
+  {
+    file: 'src/components/design/DontExamples.astro',
+    rule: 'font-size',
+    contains: 'wrong:font-size',
+    reason:
+      'The design reference page\'s "don\'t" examples show a font size below the 12px minimum (a tiny table header) on purpose. Every such line in this one file carries the marker.',
+  },
+  {
+    file: 'src/components/design/DontExamples.astro',
+    rule: 'uppercase',
+    contains: 'wrong:uppercase',
+    reason:
+      'The design reference page\'s "don\'t" examples show uppercase labels (a terminal-style table header) on purpose. Every such line in this one file carries the marker.',
+  },
+  {
+    file: 'src/components/design/DontExamples.astro',
+    rule: 'letter-spacing',
+    contains: 'wrong:letter-spacing',
+    reason:
+      'The design reference page\'s "don\'t" examples show letter-spaced labels (a terminal-style table header) on purpose. Every such line in this one file carries the marker.',
+  },
+  {
+    file: 'src/components/design/DontExamples.astro',
+    rule: 'box-shadow',
+    contains: 'wrong:box-shadow',
+    reason:
+      'The design reference page\'s "don\'t" examples show a shadow on a card that belongs to the page on purpose. Every such line in this one file carries the marker.',
+  },
+  {
+    file: 'src/components/design/DontExamples.astro',
+    rule: 'border-radius',
+    contains: 'wrong:border-radius',
+    reason:
+      'The design reference page\'s "don\'t" examples show an off-scale corner radius on a heavy frame on purpose. Every such line in this one file carries the marker.',
+  },
+  {
+    file: 'src/components/design/DontExamples.astro',
+    rule: 'icon-glyph',
+    contains: 'wrong:icon-glyph',
+    reason:
+      'The design reference page\'s "don\'t" examples show text glyphs used as icons on purpose. Every such line in this one file carries the marker.',
+  },
+  {
+    file: 'src/components/design/DontExamples.astro',
+    rule: 'arrow-glyph',
+    contains: 'wrong:arrow-glyph',
+    reason:
+      'The design reference page\'s "don\'t" examples show an arrow glyph used as an icon on purpose. Every such line in this one file carries the marker.',
   },
 ];
 

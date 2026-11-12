@@ -177,6 +177,33 @@ tells the portal how a linking flow starts: `"redirect"`
 to redirect to, so `link_url` stays null), or `"none"` (the AF-native types
 below, which have no linking step).
 
+### When a new link shows up in `tools/list`
+
+The aggregator caches each caller's listing per (subject, service), and a
+failed listing (for an x509/krb5/servicex service, an unlinked caller's
+skipped one) is cached for 30 seconds. Completing a link must not leave the
+caller waiting that out, so the `/v1` routes that complete one call
+`CredentialCache.notify_linked(subject, target)` — the counterpart of
+`revoke()`'s `on_revoke` — for every target of the identity-provider entry.
+That drops the caller's cached listing and their own caller-specific listing
+failure record (`not_linked`/`unauthorized`) for those services (no other
+caller's, no other service's, and never a service-wide `unavailable`), and their next `tools/list`
+reaches the backend. `app.py` wires both hooks to `invalidate_subject_cache`.
+
+| Type | Link event the broker sees | Listing cache after linking |
+|---|---|---|
+| `oauth21-direct` | `GET /v1/oauth/callback/{alias}` stores the token | dropped on a successful callback |
+| `servicex-token` | `POST /v1/servicex/link` | dropped on success |
+| `krb5-token` | `POST /v1/krb5/keytab` (keytab link) and `POST /v1/krb5/ticket` (ticket mint) | dropped on success |
+| `x509` | `POST /v1/x509/proxy` (proxy mint) | dropped on success |
+| `keycloak-brokered` | none — the link happens in Keycloak and the broker only fetches the brokered token later | not dropped; relies on the 30 s negative-entry TTL |
+| `broker-issued`, `condor-token`, service account | none — always linked | nothing to drop |
+
+A legacy-mode x509 link made by placing files in `~/.globus` is likewise
+invisible to the broker and relies on the TTL until the first proxy mint.
+A routine token refresh (`CredentialCache.put`) is not a link event and does
+not invalidate anything.
+
 ---
 
 ## Portal auth (OIDC public client)
@@ -358,6 +385,31 @@ Three separate concerns, deliberately kept separate in the code:
   `PRINCIPAL_CACHE_MAX_STALENESS_SECONDS` (default 6 hours) before failing
   closed, logging loudly the whole time — a brief Keycloak outage should
   not instantly lock out every authenticated caller.
+  **Disabling or deleting a user is not an outage.** When the directory
+  answers that the user is disabled (Keycloak `enabled: false`) or does not
+  exist, the cached value is dropped rather than served stale, and both
+  credential types are refused with the same vague 401 (a JWT would
+  otherwise get a 503) within one refresh interval (default ~45s) — a
+  still-valid access token and an unexpired, unrevoked PAT alike. The cause
+  (`disabled` or `not_found`) is only in the broker's
+  `principal_cache.principal_rejected` warning log, never in the response.
+  Re-enabling the user restores access at the next refresh. A directory view
+  that omits `enabled` entirely is treated as enabled; Keycloak's
+  `GET /users/{id}` always includes it.
+  The rejection is also written to the principal-cache backend as a
+  tombstone (an ordinary write to the same record; no new Vault capability
+  or policy change is needed). A restarted replica, or another replica with
+  nothing cached for that user, therefore fails closed during a Keycloak
+  outage instead of seeding the user's last good value, and stays closed
+  until Keycloak says the user is active again, at which point the next
+  successful resolve overwrites the tombstone. The guarantee is: refused
+  within one refresh interval on a replica that can reach Keycloak; durable
+  across restarts and replicas during an outage. One limit: a replica that
+  already holds that user's value in memory learns of the disablement only
+  from its own refresh, so it can keep serving it stale if it never reaches
+  Keycloak after the disablement. A failure writing the tombstone is logged
+  (`principal_cache.rejection_persist_failed`) and the request is still
+  refused.
 - **Permission engine** (`authorization/`) — unchanged; still gates on
   `group_permissions` from whatever groups the principal cache currently
   reports, regardless of which credential type asked.
@@ -1008,6 +1060,15 @@ transient-failure problem; every other failure (unreachable, timeout,
 identity requirement at all: a ServiceX access token is a pure bearer
 credential, not tied to a unix account.
 
+When ServiceX rejects a token at link time, the broker cannot tell revoked
+from expired from signed before a ServiceX key rotation. It logs
+`servicex_service.redeem.bad_refresh_token` (WARNING: subject, upstream
+status, `correlation_id`; never the token or the service's body) and returns
+400 whose `detail` says ServiceX rejected the token, to generate a new one
+and re-link, ending in `(ref: <correlation_id>)`; the body also carries
+`correlation_id`. The same id is sent to servicex-token-service as
+`X-Request-ID`, so its audit line can be joined to the broker's.
+
 Configuration is one `identity_providers` entry of type `servicex-token`
 with a required `service_url` (the servicex-token-service deployment's
 base URL — the provider appends `/v1/redeem`) and an `audience` defaulting
@@ -1390,12 +1451,75 @@ inspect.
 | AF access token (portal SPA) | 5 minutes | `oidc-client-ts` silent renew via refresh_token grant (see [Portal auth](#portal-auth-oidc-public-client)) |
 | Broker-issued PAT (most MCP clients) | 90 days by default, or never-expiring by explicit opt-in | Not refreshed — revoke and re-mint (manually, or via [MCP OAuth discovery](#mcp-oauth-discovery-pat-bootstrap-issue-140) again) |
 | ATLAS IAM token (brokered) | 1 hour | Broker re-fetches from Keycloak on cache miss |
-| `oauth21-direct` backend token | Whatever the backend AS's `expires_in` says (300 seconds is assumed when the response omits it); e.g. 14 days for JupyterHub's default | With a refresh token: `refresh_token` grant once under 5 minutes (or the caller's `min_remaining_seconds`) remain. **Without one** (JupyterHub never issues them): served as-is until 60 seconds before expiry, after which the account shows as unlinked and the user re-links from the portal's Identities page |
+| `oauth21-direct` backend token | Whatever the backend AS's `expires_in` says; e.g. 14 days for JupyterHub's default. **No expiry** when the response omits `expires_in` (Indico, GitHub OAuth Apps): the token is treated as valid until a backend rejects it | With a refresh token: `refresh_token` grant once under 5 minutes (or the caller's `min_remaining_seconds`) remain. **Without one** (JupyterHub never issues them): served as-is until 60 seconds before expiry, after which the account shows as unlinked and the user re-links from the portal's Identities page. A token with no expiry is never refreshed. In every case, a backend answering HTTP 401 marks the token rejected (see below) |
 | x509 VOMS proxy | 12–192 hours (configurable) | voms-token-service mode: hands-free re-mint with the Vault-stored passphrase when the stored proxy expires. Legacy mode: re-mint Job on the next portal unlock |
 
 The `CredentialCache` stores each credential with its `expires_at` timestamp.
 A background janitor coroutine sweeps the cache every 60 seconds and evicts
 expired entries, triggering a fresh mint on the next request.
+
+### Rejected `oauth21-direct` tokens
+
+When an MCP server answers HTTP 401 to a request carrying an injected
+`oauth21-direct` token, on `tools/list`, `tools/call` or the portal's
+per-service tool listing, the broker reacts in one of three ways (issue #344):
+
+- **The token has a refresh token** (Rucio): the broker refreshes once, since
+  the AS may still honor the refresh token, and the user does nothing. The
+  refreshed token is flagged `refreshed_after_rejection`. If it also gets a
+  401, it is rejected (below), so a backend that rejects every token never
+  causes a refresh loop. A routine refresh or a re-link clears the flag.
+- **No refresh token** (Indico, JupyterHub), **the AS refuses the refresh**,
+  or **the refreshed token also gets a 401**: the broker records
+  `rejected_at` on the stored credential. From then on `is_linked()` is false
+  and `issue()` answers 401 with a re-link hint, but the credential is still
+  stored, so `is_rejected()` is true. The broker keeps the rejected token and
+  never re-links on the user's behalf, because the AS may need the user's
+  consent again. Re-linking from the portal's Identities page replaces the
+  token and drops `rejected_at`.
+- **The AS can't be reached during that refresh** (network error or 5xx):
+  the broker leaves the credential as it was and logs
+  `oauth21.mark_rejected.refresh_failed`. The next 401 tries again. An AS
+  outage never forces a re-link.
+
+A 401 only counts against the token that was actually sent, so a late 401
+for a token that has since been refreshed or re-linked is ignored. A request
+that got a 401 is never replayed, because a tool call may have side effects.
+When the 401 lands on the listing that runs ahead of a tool call, the call
+itself already uses the refreshed token. That's because a listing that
+failed this way is not negative-cached like other listing failures, so the
+next listing tries again.
+
+### What the caller sees
+
+The catalog (`GET /v1/catalog`, `af_list_mcp_servers`) tells a rejected
+credential apart from one that was never linked, by asking the provider
+(`CredentialProvider.is_rejected()`, true only for a stored `rejected_at`):
+
+| State of the caller's credential | `status` | `link_state` |
+|---|---|---|
+| nothing stored | `link_required` ("Link your identity…") | `not_linked` |
+| stored, `rejected_at` set | `link_required` ("Your linked credential was rejected. Re-link your identity…") | `rejected` |
+| stored, usable (including after a refresh that fixed a 401, or an AS outage during the refresh) | `available` | `null` |
+
+For a provider with `tracks_rejection` (`OAuth21Provider`) the stored
+credential alone decides this. The caller's recorded `unauthorized` listing
+failure (see [Catalog status and listing failures](architecture.md#catalog-status-and-listing-failures))
+is ignored for it, because the credential may have been refreshed or re-linked
+since that 401. Re-linking therefore clears `rejected` at once; no listing
+needs to succeed first. The listing itself is not negative-cached after an
+injected-credential 401, so a re-linked caller's next `tools/list` already
+carries the new token. A caller whose listing was cached as a different
+failure (for example `not_linked`, while the credential was rejected) can
+still wait out that entry's 30 s negative-cache window
+(`_NEGATIVE_LIST_CACHE_TTL_SECONDS`), because linking does not invalidate the
+per-caller listing cache (issue #355).
+`GET /v1/identities` reports `linked: false` for a rejected credential, so
+the portal's Identities page shows it as not linked.
+
+This is what ends a token with no expiry, so the MCP server must answer
+HTTP 401 when the AS rejects the bearer. See
+[Adding a Service](adding-a-service.md#backends-must-reject-a-bad-bearer-with-http-401).
 
 ---
 

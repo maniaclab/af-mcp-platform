@@ -54,6 +54,21 @@ FastAPI dependency):
   with actual broker activity — never a full Keycloak user directory.
 - **`POST /v1/admin/maintenance`** — see below.
 
+## Cutting off a user
+
+Disable the user in Keycloak (**Enabled = off**). Within one principal-cache
+refresh window (default ~45s, `PRINCIPAL_CACHE_REFRESH_SECONDS`) the broker
+refuses both their JWTs and their PATs with a 401, with no per-token
+cleanup; re-enabling restores access at the next refresh. The refusal is
+logged as `principal_cache.principal_rejected` with `reason=disabled`. The
+refusal is recorded in the principal-cache backend, so a restart or another
+replica does not let the user back in during a Keycloak outage (no operator
+action or Vault policy change is required). Their
+PATs remain in the token registry (not revoked) until revoked or expired.
+See "Authorization is an attribute of the principal, not the token" in
+[auth.md](auth.md). This does not revoke credentials already minted for
+backend services.
+
 ## Maintenance mode
 
 Maintenance mode is a single broker-wide on/off flag. While enabled, every

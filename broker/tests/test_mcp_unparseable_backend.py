@@ -17,7 +17,11 @@ from af_mcp_broker.authorization import EntitlementPolicy
 from af_mcp_broker.config import Settings
 from af_mcp_broker.credentials import CredentialRegistry
 from af_mcp_broker.mcp import aggregator as aggregator_module
-from af_mcp_broker.mcp.aggregator import build_aggregator, fetch_service_tool_listing
+from af_mcp_broker.mcp.aggregator import (
+    ListTimeCredential,
+    build_aggregator,
+    fetch_service_tool_listing,
+)
 from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
 
 if TYPE_CHECKING:
@@ -262,7 +266,7 @@ async def test_one_shot_service_listing_reports_unavailable_for_unparseable_resp
     async with run_asgi_app(app) as backend_url:
         started = time.monotonic()
         status, tools = await fetch_service_tool_listing(
-            _spec(f"{backend_url}/mcp"), None, None
+            _spec(f"{backend_url}/mcp"), ListTimeCredential(None, None)
         )
         elapsed = time.monotonic() - started
 
@@ -276,7 +280,7 @@ async def test_well_formed_backend_is_not_flagged(
 ) -> None:
     async with run_asgi_app(_backend().http_app(path="/mcp")) as backend_url:
         status, tools = await fetch_service_tool_listing(
-            _spec(f"{backend_url}/mcp"), None, None
+            _spec(f"{backend_url}/mcp"), ListTimeCredential(None, None)
         )
 
     assert status == "ok"

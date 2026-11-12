@@ -71,7 +71,11 @@ if TYPE_CHECKING:
 
     from af_mcp_broker.authorization import EntitlementPolicy
     from af_mcp_broker.config import IdentityProviderConfig, Settings
-    from af_mcp_broker.credentials import CredentialProvider, CredentialRegistry
+    from af_mcp_broker.credentials import (
+        CredentialProvider,
+        CredentialRegistry,
+        IssuedCredential,
+    )
     from af_mcp_broker.credentials.broker_issued import BrokerTokenIssuer
     from af_mcp_broker.credmon.guidance import JobCredentialGuide
     from af_mcp_broker.identity import Principal
@@ -115,13 +119,39 @@ async def _raise_for_401(response: httpx2.Response) -> None:
         response.raise_for_status()
 
 
+def _report_401(
+    on_unauthorized: Callable[[], Awaitable[None]],
+) -> Callable[[httpx2.Response], Awaitable[None]]:
+    """Response hook that calls *on_unauthorized* when the backend answers 401 (issue #344).
+
+    Installed only on a client carrying an injected per-user credential, so
+    a 401 here means the backend rejected exactly that credential. It runs
+    ahead of ``_raise_for_401`` and never raises itself: a failed report is
+    logged, and the 401 still propagates unchanged.
+    """
+
+    async def _hook(response: httpx2.Response) -> None:
+        if response.status_code != 401:
+            return
+        try:
+            await on_unauthorized()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("aggregator.mark_rejected_failed", error=str(exc))
+
+    return _hook
+
+
 def _unauthorized_raising_httpx_client_factory(
     headers: dict[str, str] | None = None,
     timeout: httpx2.Timeout | None = None,
     auth: httpx2.Auth | None = None,
+    *,
+    on_unauthorized: Callable[[], Awaitable[None]] | None = None,
     **kwargs: Any,
 ) -> httpx2.AsyncClient:
     """``McpHttpClientFactory`` that adds ``_raise_for_401`` to the client's response hooks.
+
+    With *on_unauthorized*, also adds ``_report_401`` ahead of it.
 
     Mirrors ``mcp.shared._httpx_utils.create_mcp_http_client``'s defaults
     (30s connect/write/pool, 300s read, for a backend that holds a response
@@ -140,7 +170,10 @@ def _unauthorized_raising_httpx_client_factory(
     if auth is not None:
         client_kwargs["auth"] = auth
     client = httpx2.AsyncClient(**client_kwargs)
-    client.event_hooks.setdefault("response", []).append(_raise_for_401)
+    response_hooks = client.event_hooks.setdefault("response", [])
+    if on_unauthorized is not None:
+        response_hooks.append(_report_401(on_unauthorized))
+    response_hooks.append(_raise_for_401)
     return client
 
 
@@ -216,8 +249,9 @@ def _raise_for_invalid_response(
 
 def _checked_httpx_client_factory(
     service_name: str,
+    on_unauthorized: Callable[[], Awaitable[None]] | None = None,
 ) -> Callable[..., httpx2.AsyncClient]:
-    """``McpHttpClientFactory`` for *service_name*: ``_unauthorized_raising_httpx_client_factory`` plus the invalid-response check."""
+    """``McpHttpClientFactory`` for *service_name*: ``_unauthorized_raising_httpx_client_factory`` (given *on_unauthorized*) plus the invalid-response check."""
 
     def factory(
         headers: dict[str, str] | None = None,
@@ -226,7 +260,11 @@ def _checked_httpx_client_factory(
         **kwargs: Any,
     ) -> httpx2.AsyncClient:
         client = _unauthorized_raising_httpx_client_factory(
-            headers=headers, timeout=timeout, auth=auth, **kwargs
+            headers=headers,
+            timeout=timeout,
+            auth=auth,
+            on_unauthorized=on_unauthorized,
+            **kwargs,
         )
         client.event_hooks["response"].append(_raise_for_invalid_response(service_name))
         return client
@@ -238,6 +276,7 @@ def _build_client(
     spec: ServiceSpec,
     transport_cls: type[SSETransport | StreamableHttpTransport],
     headers: dict[str, str] | None = None,
+    on_unauthorized: Callable[[], Awaitable[None]] | None = None,
 ) -> Client:
     """Construct the plain (never ProxyClient) Client every branch of _make_client_factory returns.
 
@@ -252,12 +291,17 @@ def _build_client(
     these two handlers, which only relay already-decided-safe notification
     content from the service to the aggregator's own caller, never inbound
     credentials.
+
+    *on_unauthorized* comes from ``_bearer_injection`` alongside *headers*:
+    it reports a backend 401 for the injected credential (issue #344).
     """
     return Client(
         transport_cls(
             spec.url,
             headers=headers,
-            httpx_client_factory=_checked_httpx_client_factory(spec.name),
+            httpx_client_factory=_checked_httpx_client_factory(
+                spec.name, on_unauthorized
+            ),
         ),
         timeout=spec.timeout_seconds,
         progress_handler=default_proxy_progress_handler,
@@ -265,14 +309,49 @@ def _build_client(
     )
 
 
+class ListTimeCredential(NamedTuple):
+    """What a list-time connection should carry, and why it carries nothing.
+
+    ``headers``/``skip_reason`` as documented on ``_resolve_list_time_headers``;
+    ``on_unauthorized`` is set only when a per-user bearer credential was
+    injected, and goes to ``_build_client`` with ``headers``.
+    """
+
+    headers: dict[str, str] | None
+    skip_reason: str | None
+    on_unauthorized: Callable[[], Awaitable[None]] | None = None
+
+
+def _bearer_injection(
+    provider: CredentialProvider, principal: Principal, cred: IssuedCredential
+) -> tuple[dict[str, str], Callable[[], Awaitable[None]] | None]:
+    """Headers injecting *cred* for a backend request, plus its 401 report (issue #344).
+
+    The report is bound to this exact access token, so a 401 can only ever
+    reject the token that was actually sent (see ``mark_rejected``). Both
+    are empty when *cred* carries no bearer token.
+    """
+    token = (
+        cred.payload.get("access_token") if cred.kind == CredentialKind.BEARER else None
+    )
+    if not token:
+        return {}, None
+
+    async def _mark_rejected() -> None:
+        await provider.mark_rejected(principal, token)
+
+    return {"Authorization": f"Bearer {token}"}, _mark_rejected
+
+
 async def _resolve_list_time_headers(
     spec: ServiceSpec,
     credential_registry: CredentialRegistry,
     principal: Principal,
-) -> tuple[dict[str, str] | None, str | None]:
+) -> ListTimeCredential:
     """Best-effort per-user credential mint for a tools/list-time connection.
 
-    Returns ``(headers, skip_reason)``. Never raises: unlike the authorized
+    Returns a ``ListTimeCredential`` (``headers``, ``skip_reason``, and the
+    injected credential's ``on_unauthorized`` report). Never raises: unlike the authorized
     tools/call path in ``_bearer_factory``, a failure here must not prevent
     the connection attempt outright -- doing so would mean this service's
     ``ProxyProvider`` never completes a single successful ``_list_tools()``
@@ -301,24 +380,20 @@ async def _resolve_list_time_headers(
     try:
         provider = await credential_registry.resolve(spec.name)
     except KeyError:
-        return None, "unavailable"
+        return ListTimeCredential(None, "unavailable")
 
     # Same linkage gate as the authorized tools/call path, but non-fatal:
     # an unlinked caller simply doesn't get a credential attached.
     if not await provider.is_linked(principal):
-        return None, "not_linked"
+        return ListTimeCredential(None, "not_linked")
 
     try:
         cred = await provider.issue(principal, spec.name)
     except (NeedsUnlock, HTTPException):
-        return None, "unavailable"
+        return ListTimeCredential(None, "unavailable")
 
-    headers: dict[str, str] = {}
-    if cred.kind == CredentialKind.BEARER:
-        token = cred.payload.get("access_token")
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
-    return headers, None
+    headers, on_unauthorized = _bearer_injection(provider, principal, cred)
+    return ListTimeCredential(headers, None, on_unauthorized)
 
 
 def _iter_leaf_exceptions(
@@ -472,7 +547,7 @@ async def resolve_list_time_credential(
     credential_registry: CredentialRegistry,
     principal: Principal,
     broker_token_issuer: BrokerTokenIssuer | None = None,
-) -> tuple[dict[str, str] | None, str | None]:
+) -> ListTimeCredential:
     """Best-effort list-time credential headers for *spec*, any auth_type.
 
     The /v1 per-service tool listing's (api/catalog_tools.py) entry point
@@ -501,13 +576,13 @@ async def resolve_list_time_credential(
     caller who could never pass it shouldn't trigger a mint attempt at all.
     """
     if spec.auth_type == "none":
-        return {}, None
+        return ListTimeCredential({}, None)
     if spec.auth_type in ("x509", "krb5", "servicex"):
         if broker_token_issuer is None:
-            return None, None
+            return ListTimeCredential(None, None)
         await _require_linked_to_list(spec, credential_registry, principal)
         token, _ = broker_token_issuer.mint(principal.subject, spec.effective_audience)
-        return {"Authorization": f"Bearer {token}"}, None
+        return ListTimeCredential({"Authorization": f"Bearer {token}"}, None)
     return await _resolve_list_time_headers(spec, credential_registry, principal)
 
 
@@ -550,12 +625,11 @@ class ToolListingEntry(NamedTuple):
 
 async def fetch_service_tool_listing(
     spec: ServiceSpec,
-    headers: dict[str, str] | None,
-    skip_reason: str | None,
+    credential: ListTimeCredential,
 ) -> tuple[str, list[ToolListingEntry]]:
     """Connect to *spec* once and list its tools.
 
-    *headers*/*skip_reason* come from ``resolve_list_time_credential``.
+    *credential* comes from ``resolve_list_time_credential``.
     Returns ``(status, tools)``: status is "ok" or a ``_classify_failure``
     reason ("not_linked" | "unauthorized" | "unavailable"), and tools are
     ``ToolListingEntry``s with ``ServiceSpec.apply_namespace`` already
@@ -567,12 +641,21 @@ async def fetch_service_tool_listing(
     own factories) rather than a second HTTP code path.
     """
     transport_cls = SSETransport if spec.transport == "sse" else StreamableHttpTransport
-    client = _build_client(spec, transport_cls, headers=headers)
+    client = _build_client(
+        spec,
+        transport_cls,
+        headers=credential.headers,
+        on_unauthorized=credential.on_unauthorized,
+    )
     try:
         async with client:
             tools = await client.list_tools()
     except Exception as exc:  # noqa: BLE001
-        reason = _classify_failure(exc, injected=bool(headers), skip_reason=skip_reason)
+        reason = _classify_failure(
+            exc,
+            injected=bool(credential.headers),
+            skip_reason=credential.skip_reason,
+        )
         return reason, []
     return "ok", [
         ToolListingEntry(
@@ -1160,7 +1243,7 @@ def _make_client_factory(
             if not _might_be_entitled(principal, spec, policy):
                 return _build_client(spec, transport_cls)
 
-            headers, skip_reason = await _resolve_list_time_headers(
+            resolved = await _resolve_list_time_headers(
                 spec, credential_registry, principal
             )
             # Keyed per service (not a single shared key) since one
@@ -1168,10 +1251,15 @@ def _make_client_factory(
             # concurrently -- see _classify_list_failure's use of this.
             await ctx.set_state(
                 f"__list_credential_status__:{spec.name}",
-                (headers is not None, skip_reason),
+                (resolved.headers is not None, resolved.skip_reason),
                 serializable=False,
             )
-            return _build_client(spec, transport_cls, headers=headers or {})
+            return _build_client(
+                spec,
+                transport_cls,
+                headers=resolved.headers or {},
+                on_unauthorized=resolved.on_unauthorized,
+            )
 
         principal = await ctx.get_state("principal")
         if principal is None:
@@ -1212,12 +1300,10 @@ def _make_client_factory(
             # its detail the same way FastAPI's own handler would at /v1.
             raise ToolError(str(exc.detail)) from exc
 
-        call_headers: dict[str, str] = {}
-        if cred.kind == CredentialKind.BEARER:
-            token = cred.payload.get("access_token")
-            if token:
-                call_headers["Authorization"] = f"Bearer {token}"
-        return _build_client(spec, transport_cls, headers=call_headers)
+        call_headers, on_unauthorized = _bearer_injection(provider, principal, cred)
+        return _build_client(
+            spec, transport_cls, headers=call_headers, on_unauthorized=on_unauthorized
+        )
 
     return _bearer_factory
 
@@ -1401,11 +1487,16 @@ class _ObservableProxyProvider(ProxyProvider):
             )
 
     def invalidate_subject(self, subject: str) -> None:
-        """Drop *subject*'s cached listing entries (success or failure), for every kind (tools, resources, resource templates, prompts), for this service.
+        """Drop *subject*'s cached listing entries (success or failure), for every kind (tools, resources, resource templates, prompts), for this service, and the caller-specific failure reason recorded for *subject* against it.
 
         Called when *subject*'s linked identity changes -- see
         ``invalidate_subject_cache`` (module-level, below) for the wiring
-        across every provider on a link/unlink/credential-revocation event. A
+        across every provider on a link/unlink/credential-revocation event.
+        The caller-specific reason (``ServiceRegistry.clear_caller_list_failure``)
+        goes with the cached entries because both describe the credential state
+        being replaced; the next listing records whatever is true afterwards.
+        A service-wide reason is left alone: a credential change says nothing
+        about whether the backend is up. A
         subject with nothing cached is a silent no-op. Leaves
         ``_subject_list_locks`` alone: an in-flight refresh for *subject* (if
         any) is unaffected, and the next cache miss just creates a fresh lock.
@@ -1413,6 +1504,7 @@ class _ObservableProxyProvider(ProxyProvider):
         stale = [key for key in self._subject_list_cache if key[1] == subject]
         for key in stale:
             del self._subject_list_cache[key]
+        self._registry.clear_caller_list_failure(self._service_name, subject)
 
     def _prune_subject_list_cache(self) -> None:
         """Drop every expired entry, so the cache dict never grows past recently active (kind, subject) pairs."""
@@ -1526,10 +1618,16 @@ class _ObservableProxyProvider(ProxyProvider):
             try:
                 items = await fetch()
             except Exception as exc:
-                self._subject_list_cache[key] = _SubjectListCacheEntry(
-                    error=exc, timestamp=time.monotonic()
-                )
-                self._prune_subject_list_cache()
+                # A 401 for an injected credential has just made its
+                # provider refresh or reject it (issue #344, _report_401), so
+                # the next listing must try again rather than replay this
+                # failure; every other failure is negative-cached.
+                reason, _ = await _classify_list_failure(exc, self._service_name)
+                if reason != "unauthorized":
+                    self._subject_list_cache[key] = _SubjectListCacheEntry(
+                        error=exc, timestamp=time.monotonic()
+                    )
+                    self._prune_subject_list_cache()
                 raise
             else:
                 self._subject_list_cache[key] = _SubjectListCacheEntry(
@@ -1669,8 +1767,9 @@ def invalidate_subject_cache(
 ) -> None:
     """Drop *subject*'s cached listing entries (every kind: tools, resources, resource templates, prompts) across ``mcp``'s providers -- one service (*target*) or every service.
 
-    Called wherever a subject's linked identity changes (unlink, or a
-    credential revocation -- see app.py's ``CredentialCache`` construction)
+    Called wherever a subject's linked identity changes (unlink, credential
+    revocation, or a completed link -- see app.py's ``CredentialCache``
+    construction)
     so a stale per-subject listing (``_ObservableProxyProvider.invalidate_subject``)
     is never served past that change. *target* narrows to the one
     ``ServiceSpec.name`` affected; omitted, every service's cache entry for

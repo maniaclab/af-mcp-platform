@@ -1,0 +1,48 @@
+---
+import DesignSection from '../DesignSection.astro';
+import DoDont from '../DoDont.astro';
+import DontExamples from '../DontExamples.astro';
+import SpecTable from '../SpecTable.astro';
+
+// What the "do" example shows: the same three declarations, by token.
+const DO_VALUES = ['border: 1px solid var(--color-af-border);', 'padding: var(--space-16);', 'font-size: var(--text-14);'];
+---
+
+<DesignSection id="tokens">
+  <Fragment slot="definition">
+    A token is a named design decision. Code refers to the name, never to the raw value, so a decision is changed in one place: <code>portal/src/styles/global.css</code>.
+  </Fragment>
+  <SpecTable columns={['Layer', 'What it is', 'Example', 'Who may use it']} caption="The three layers of tokens">
+    <tr>
+      <td>1. Token</td>
+      <td>
+        A role, with its value. Colours, shadows, fonts, the type scale and radii are in <code>@theme</code>; spacing, control heights and motion in <code>:root</code>; the dark values in <code>.dark</code>.
+      </td>
+      <td><code>--color-af-border</code>, defined once in <code>global.css</code></td>
+      <td>Every component and page, by name. Only <code>global.css</code> holds a literal colour.</td>
+    </tr>
+    <tr>
+      <td>2. Bridge</td>
+      <td>Basecoat's own variables, set from the tokens so Basecoat follows the theme.</td>
+      <td><code>--border: var(--color-af-border)</code></td>
+      <td>Basecoat's stylesheet only.</td>
+    </tr>
+    <tr>
+      <td>3. Component</td>
+      <td>
+        A class that combines tokens: Basecoat's, re-themed through the bridge, plus <code>af-</code> extensions in <code>components.css</code>.
+      </td>
+      <td><code>.btn[data-variant="outline"]</code></td>
+      <td>Pages.</td>
+    </tr>
+  </SpecTable>
+  <DoDont>
+    <pre slot="do" class="design-code" set:text={DO_VALUES.join('\n')} />
+    <Fragment slot="do-note">use a token for every colour, size, radius, shadow and duration.</Fragment>
+    <DontExamples slot="dont" kind="raw-values" />
+    <Fragment slot="dont-note">write raw values in a component. Each one is a decision made again, by hand.</Fragment>
+  </DoDont>
+  <p class="af-help">
+    <b>Enforcement:</b> a contract test (<code>designContract.test.ts</code>) rejects hex colours, raw font sizes, off-scale radii and shadows, and hand-rolled replacements for Basecoat classes in <code>portal/src</code>. Without it the written system and the shipped portal drift apart.
+  </p>
+</DesignSection>

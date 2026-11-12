@@ -1,0 +1,25 @@
+---
+/**
+ * DoDont.astro — a do/don't pair. The `do` slot holds real components. The
+ * `dont` slot holds a deliberately wrong example, always a <DontExamples>
+ * (the one file that is allowed to break the contract) or, where the wrong
+ * thing can be told in words, a plain sentence. `do-note` and `dont-note`
+ * are the verdicts.
+ */
+import StatusMark from '../ui/StatusMark.vue';
+---
+
+<div class="design-dd">
+  <div class="design-dd__side">
+    <div class="design-stage"><div class="design-stage__body"><slot name="do" /></div></div>
+    <p class="design-verdict">
+      <StatusMark tone="ok"><b>Do</b></StatusMark><span><slot name="do-note" /></span>
+    </p>
+  </div>
+  <div class="design-dd__side">
+    <div class="design-stage"><div class="design-stage__body"><slot name="dont" /></div></div>
+    <p class="design-verdict">
+      <StatusMark tone="bad"><b>Don't</b></StatusMark><span><slot name="dont-note" /></span>
+    </p>
+  </div>
+</div>

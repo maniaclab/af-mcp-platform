@@ -65,6 +65,7 @@ from af_mcp_broker.credmon.guidance import JobCredentialGuide, wired_kinds
 from af_mcp_broker.http import aclose_http_client
 from af_mcp_broker.identity import build_dev_principal, get_jwks, issuer_is_local
 from af_mcp_broker.logging import (
+    CorrelatedHTTPException,
     bind_new_correlation_id,
     configure_logging,
     log_request_finished,
@@ -471,6 +472,12 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         max_failed_unlocks=settings.credential_unlock_max_failures,
         unlock_window_seconds=settings.credential_unlock_window_seconds,
         on_revoke=lambda subject, target: invalidate_subject_cache(
+            _mcp_aggregator, subject, target
+        ),
+        # The mirror of on_revoke for issue #355: the /v1 routes that complete
+        # a link call credential_cache.notify_linked(), so a caller who just
+        # linked does not wait out a cached "no tools" listing.
+        on_link=lambda subject, target: invalidate_subject_cache(
             _mcp_aggregator, subject, target
         ),
     )
@@ -1355,7 +1362,10 @@ async def _http_exception_handler(request: Request, exc: HTTPException) -> Respo
     # TokenAudienceError, this route's own NeedsUnlock-derived 409s) is
     # already structured/already carries its own correlation_id where one
     # makes sense -- overwriting it here would be a regression, not a fix.
-    if exc.status_code >= 500 and isinstance(exc.detail, str):
+    # A 4xx opts in by raising CorrelatedHTTPException (issue #342).
+    if (
+        exc.status_code >= 500 or isinstance(exc, CorrelatedHTTPException)
+    ) and isinstance(exc.detail, str):
         correlation_id = structlog.contextvars.get_contextvars().get("correlation_id")
         if correlation_id:
             return JSONResponse(

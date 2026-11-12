@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING
 
 import httpx
 import pytest
+import structlog
 from pydantic import SecretStr
 from test_broker_issued import _make_rsa_key, _private_pem
 
@@ -314,6 +315,24 @@ class TestMintKeytabMode:
             await client.mint(
                 subject="user1", username="alice", keytab_b64=SecretStr("ZmFrZQ==")
             )
+
+
+class TestRequestCorrelation:
+    """af-mcp-platform#342: every call carries the broker's correlation id as X-Request-ID."""
+
+    async def test_mint_sends_the_bound_correlation_id(self, make_client) -> None:
+        structlog.contextvars.clear_contextvars()
+        structlog.contextvars.bind_contextvars(correlation_id="corr-342")
+        client, requests = make_client()
+        await _mint(client)
+        assert requests[0].headers["x-request-id"] == "corr-342"
+
+    async def test_renew_sends_the_bound_correlation_id(self, make_client) -> None:
+        structlog.contextvars.clear_contextvars()
+        structlog.contextvars.bind_contextvars(correlation_id="corr-342")
+        client, requests = make_client()
+        await client.renew(subject="user1", ccache_b64="ZmFrZQ==")
+        assert requests[0].headers["x-request-id"] == "corr-342"
 
 
 class TestRenew:

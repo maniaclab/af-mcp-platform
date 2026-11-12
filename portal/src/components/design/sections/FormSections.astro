@@ -1,0 +1,68 @@
+---
+import CopyField from '../../ui/CopyField.vue';
+import DesignSection from '../DesignSection.astro';
+import DoDont from '../DoDont.astro';
+import Stage from '../Stage.astro';
+---
+
+<DesignSection id="field">
+  <Fragment slot="definition">
+    Label above, help below, error in place of help. One column, capped at a readable width (<code>af-narrow</code>).
+  </Fragment>
+  <div class="design-cols">
+    <Stage label="With help">
+      <div class="field af-narrow">
+        <label for="field-name">Token name</label>
+        <input id="field-name" class="input" value="claude-desktop-laptop" />
+        <p>Shown in your token list. Name the device or client.</p>
+      </div>
+    </Stage>
+    <Stage label="With an error">
+      <div class="field af-narrow">
+        <label for="field-name-error">Token name</label>
+        <input id="field-name-error" class="input" value="" aria-invalid="true" aria-describedby="field-name-error-note" />
+        <div id="field-name-error-note" class="alert af-note bad" role="alert">
+          <span class="af-mark bad" aria-hidden="true"></span>
+          <span>Enter a name for this token.</span>
+        </div>
+      </div>
+    </Stage>
+    <Stage label="Checkbox, and a note on what it does">
+      <div class="field">
+        <div class="field" data-orientation="horizontal">
+          <input id="field-restrict" type="checkbox" class="input" />
+          <label for="field-restrict">Restrict permissions (optional)</label>
+        </div>
+        <p>Leave this unchecked for a token with your full account access.</p>
+      </div>
+    </Stage>
+  </div>
+  <DoDont>
+    <div slot="do" class="field af-narrow">
+      <label for="field-expiry">Expires after</label>
+      <select id="field-expiry" class="select w-full">
+        <option>30 days</option>
+        <option>90 days</option>
+      </select>
+    </div>
+    <Fragment slot="do-note">use a visible label and a sensible default.</Fragment>
+    <div slot="dont" class="field af-narrow">
+      <input class="input" placeholder="Token name" aria-label="Token name" />
+    </div>
+    <Fragment slot="dont-note">use the placeholder as the label. It disappears as soon as the person types.</Fragment>
+  </DoDont>
+  <p class="af-help">Used on: Tokens (new token), Identities (grid certificate passphrase, keytab upload), Admin (maintenance message).</p>
+</DesignSection>
+
+<DesignSection id="copy">
+  <Fragment slot="definition"> A read-only value with a Copy button. The one place monospace is large and prominent, because the person is about to paste it somewhere exact. </Fragment>
+  <Stage label="CopyField: a value, and a token with its warning">
+    <CopyField client:load value="https://mcp.example-facility.org/mcp" label="Copy endpoint" />
+    <CopyField client:load value="mcp_pat_EXAMPLE_8f2c41d7b0a94e6f9c3d5a1e7b2f0a91e" label="Copy token" />
+    <div class="alert af-note warn" role="alert">
+      <span class="af-mark warn" aria-hidden="true"></span>
+      <span>Copy this token now. It is not shown again.</span>
+    </div>
+  </Stage>
+  <p class="af-help">The buttons are live. After copying, the button reads "Copied" for two seconds. A multiline copy field holds a command or snippet. Used on: Overview (endpoint and client snippets), Tokens (new token dialog).</p>
+</DesignSection>

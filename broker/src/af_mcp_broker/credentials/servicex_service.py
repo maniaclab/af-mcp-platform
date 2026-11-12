@@ -35,6 +35,7 @@ import httpx
 import structlog
 
 from af_mcp_broker.http import get_http_client
+from af_mcp_broker.logging import request_id_headers
 
 if TYPE_CHECKING:
     from pydantic import SecretStr
@@ -63,8 +64,8 @@ class ServiceXBadRefreshTokenError(ValueError):
 
     def __init__(self) -> None:
         super().__init__(
-            "servicex-token-service rejected the refresh token -- it may "
-            "have been revoked or expired; re-link required."
+            "ServiceX rejected this token. Generate a new token from your "
+            "ServiceX profile page and re-link."
         )
 
 
@@ -131,7 +132,10 @@ class ServiceXTokenServiceClient:
         try:
             resp = await self._http().post(
                 self._redeem_endpoint,
-                headers={"Authorization": f"Bearer {broker_token}"},
+                headers={
+                    "Authorization": f"Bearer {broker_token}",
+                    **request_id_headers(),
+                },
                 # The refresh token is revealed only here, inside the call
                 # expression -- see the module docstring's handling notes.
                 json={"refresh_token": refresh_token.get_secret_value()},
@@ -146,6 +150,16 @@ class ServiceXTokenServiceClient:
             ) from exc
 
         if resp.status_code == httpx.codes.BAD_REQUEST:
+            # The service's body is not logged (it may carry ServiceX
+            # backend internals), and the broker cannot tell revoked from
+            # expired from signed-by-a-rotated-key; the correlation_id
+            # (merged from contextvars, and sent as X-Request-ID above)
+            # joins this line to the token service's audit line.
+            self._log.warning(
+                "servicex_service.redeem.bad_refresh_token",
+                subject=subject,
+                upstream_status=resp.status_code,
+            )
             raise ServiceXBadRefreshTokenError
         if resp.status_code != httpx.codes.OK:
             # Status code only -- the response body may carry service
