@@ -1,0 +1,94 @@
+---
+import DesignSection from '../DesignSection.astro';
+import DoDont from '../DoDont.astro';
+import DontExamples from '../DontExamples.astro';
+import TokenTable from '../TokenTable.vue';
+
+const SIZES = [
+  {
+    name: '--text-32',
+    weight: 600,
+    sample: 'Sign in',
+    use: '32 / 40px, 600. Landing page headline only.',
+  },
+  {
+    name: '--text-24',
+    weight: 600,
+    sample: 'Tokens',
+    use: '24 / 32px, 600. Page title, one per page. Stat values.',
+  },
+  {
+    name: '--text-20',
+    weight: 600,
+    sample: 'No tokens yet',
+    use: '20 / 28px, 600. Landing section headings; empty-state title; dialog title.',
+  },
+  {
+    name: '--text-16',
+    weight: 600,
+    sample: 'Linked accounts',
+    use: '16 / 24px, 600. Section title, card name.',
+  },
+  {
+    name: '--text-14',
+    weight: 400,
+    sample: 'claude-desktop-laptop',
+    use: '14 / 20px, 400 and 500. Default: body, cells, buttons, inputs.',
+  },
+  {
+    name: '--text-13',
+    weight: 400,
+    sample: 'Last used',
+    use: '13 / 20px, 400 and 500. Column headers, help text, notes.',
+  },
+  {
+    name: '--text-12',
+    weight: 400,
+    sample: 'Updated 2 minutes ago',
+    use: '12 / 16px, 400. Badges, nav group labels, chart axes. The minimum.',
+  },
+];
+
+const FONTS = [
+  { name: '--font-sans', use: 'IBM Plex Sans: all text and headings.' },
+  {
+    name: '--font-mono',
+    use: 'IBM Plex Mono: tokens, hostnames, tool names, commands, reference ids.',
+  },
+];
+---
+
+<DesignSection id="type">
+  <Fragment slot="definition"> One sans-serif for everything a person reads. Monospace only for values a person copies or compares character by character. Hierarchy comes from size and weight, never from a change of typeface, from capitals or from letter-spacing. </Fragment>
+  <TokenTable client:load tokens={SIZES} specimen="type" caption="Type scale: size tokens, current values, specimens and uses" />
+  <TokenTable client:load tokens={FONTS} caption="Font family tokens and their current values" />
+  <div class="design-prose">
+    <p>
+      <b>Typeface.</b> IBM Plex Sans for headings and text; headings differ only in size and weight (600). IBM Plex Mono, from the same superfamily, for literal values, so a token string beside its label reads as one typeface in two modes.
+    </p>
+    <ul>
+      <li>Weights in use: 400 for text, 500 for labels and buttons, 600 for headings. No others.</li>
+      <li>Number columns are right-aligned with tabular numerals (<code>af-num</code>).</li>
+      <li>Capital I, lowercase l and 1 are drawn differently, which matters for hostnames, token names and dataset IDs.</li>
+      <li>Self-hosted and open-licensed (OFL). No letter-spacing is added to text; if a page feels tight, loosen row height and padding instead.</li>
+      <li>Help text is capped at 80 characters per line, empty-state text at 52.</li>
+    </ul>
+  </div>
+  <DoDont>
+    <div slot="do" class="table-container af-box">
+      <table class="table">
+        <thead>
+          <tr><th>Service</th><th class="af-num">Calls</th><th class="af-num">Errors</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Rucio</td><td class="af-num">1,284</td><td class="af-num">11</td></tr>
+          <tr><td>AMI</td><td class="af-num">317</td><td class="af-num">0</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <Fragment slot="do-note">set names in the text face and right-align numbers with tabular figures.</Fragment>
+    <DontExamples slot="dont" kind="terminal-table" />
+    <Fragment slot="dont-note">set whole tables in monospace or use tiny spaced capitals for headers. This is the terminal look the portal is leaving.</Fragment>
+  </DoDont>
+  <p class="af-help">Used on every page.</p>
+</DesignSection>

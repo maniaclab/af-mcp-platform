@@ -13,7 +13,7 @@
  * sizes. They sit in `@layer components`, after Basecoat's own components, so
  * a Tailwind utility on the same element still wins.
  *
- * Reference: docs/design-language/index.html (layer 3).
+ * Reference: the portal's /design/ page (src/pages/design.astro).
  */
 
 @layer components {

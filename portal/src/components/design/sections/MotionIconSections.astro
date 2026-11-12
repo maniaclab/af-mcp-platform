@@ -1,0 +1,79 @@
+---
+import { Copy, ExternalLink, Key, Plus, X, ChevronRight } from '@lucide/astro';
+import DesignSection from '../DesignSection.astro';
+import DoDont from '../DoDont.astro';
+import DontExamples from '../DontExamples.astro';
+import Stage from '../Stage.astro';
+import TokenTable from '../TokenTable.vue';
+
+const MOTION = [
+  { name: '--time-fast', use: 'Hover colour.' },
+  { name: '--time-base', use: "Disclosure chevron, the navigation drawer, a chart's first draw." },
+  { name: '--time-slow', use: 'The sign-in spinner.' },
+  { name: '--ease', use: 'Every transition. Starts fast, settles.' },
+];
+
+const ICONS = [
+  { name: 'Plus', Icon: Plus },
+  { name: 'Copy', Icon: Copy },
+  { name: 'ExternalLink', Icon: ExternalLink },
+  { name: 'X', Icon: X },
+  { name: 'ChevronRight', Icon: ChevronRight },
+  { name: 'Key', Icon: Key },
+];
+---
+
+<DesignSection id="motion">
+  <Fragment slot="definition"> Motion explains a change: something appeared, moved or finished. Nothing moves for atmosphere on working pages. </Fragment>
+  <TokenTable client:load tokens={MOTION} caption="Motion tokens and their current values" />
+  <div class="design-prose">
+    <ul>
+      <li>Only hover colour, a turning chevron, the sliding drawer, a small spinner and a chart's first draw move. Page content does not animate on load.</li>
+      <li>With reduced motion requested, every transition and spinner stops and charts draw without animation.</li>
+      <li>
+        <b>Two named exceptions</b> are kept on purpose: the particle-track canvas (beside the Overview header and in the landing hero; one still frame under reduced motion) and the gateway diagram on the landing page (runs only on screen, never under reduced motion). Neither sits behind text a person needs to read.
+      </li>
+    </ul>
+  </div>
+</DesignSection>
+
+<DesignSection id="icons">
+  <Fragment slot="definition"> An icon repeats a label; it does not replace one. One set, Lucide, at one size. </Fragment>
+  <div class="design-prose">
+    <ul>
+      <li>Icons are inline SVG, so they inherit text colour and need no network request or icon font.</li>
+      <li>
+        They come from the <code>@lucide/vue</code> and <code>@lucide/astro</code> packages, pinned in <code>package.json</code>; markup is never pasted by hand, so an icon can always be traced and updated.
+      </li>
+      <li>
+        16px beside text, 20px in a large button. Lucide's default stroke; no per-icon weights or colours. <code>currentColor</code>, <code>aria-hidden</code> when decorative.
+      </li>
+      <li>An icon-only button has an accessible name. Status uses the status mark, not an icon.</li>
+    </ul>
+  </div>
+  <Stage label="Lucide at 16px, and in a large button at 20px" row>
+    {
+      ICONS.map(({ name, Icon }) => (
+        <span class="af-st">
+          <>
+            <Icon class="af-icon" size={16} aria-hidden="true" />
+            <code>{name}</code>
+          </>
+        </span>
+      ))
+    }
+    <button type="button" class="btn" data-size="lg"><Plus size={20} aria-hidden="true" />New token</button>
+  </Stage>
+  <DoDont>
+    <Fragment slot="do">
+      <div class="design-stage__body is-row">
+        <button type="button" class="btn" data-variant="outline"><Copy class="af-icon" size={16} aria-hidden="true" />Copy</button>
+        <a href="#icons" class="design-link">Open CERN account settings <ExternalLink class="af-icon" size={16} aria-hidden="true" /></a>
+        <button type="button" class="btn" data-variant="ghost" data-size="icon" aria-label="Dismiss"><X class="af-icon" size={16} aria-hidden="true" /></button>
+      </div>
+    </Fragment>
+    <Fragment slot="do-note">pair an icon with its word. An icon-only button needs an accessible name.</Fragment>
+    <DontExamples slot="dont" kind="glyphs" />
+    <Fragment slot="dont-note">use text glyphs as icons. They change shape between fonts and platforms. An arrow is allowed only inside a sentence.</Fragment>
+  </DoDont>
+</DesignSection>

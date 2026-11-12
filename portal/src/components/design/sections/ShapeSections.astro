@@ -1,0 +1,105 @@
+---
+import StatusMark from '../../ui/StatusMark.vue';
+import DesignSection from '../DesignSection.astro';
+import DoDont from '../DoDont.astro';
+import DontExamples from '../DontExamples.astro';
+import SpecTable from '../SpecTable.astro';
+import TokenTable from '../TokenTable.vue';
+
+const RADII = [
+  { name: '--radius-4', use: 'Popover tooltips, chart indicators.' },
+  {
+    name: '--radius-8',
+    use: "Buttons, inputs, nav items, copy fields (Basecoat's rounded-md, --radius minus 2px).",
+  },
+  {
+    name: '--radius-10',
+    use: "Containers: table boxes, row lists, banners, notes, fields, empty states. Basecoat's dialog panel is 14px.",
+  },
+  {
+    name: '--radius-full',
+    use: 'Badges (tags) and round icon buttons. Not status pills: status uses the status mark.',
+  },
+];
+
+const BORDERS = [
+  { name: '--color-af-border', use: '1px. Container outlines, row rules.' },
+  { name: '--color-af-border-strong', use: '1px. Anything a person can type in or press.' },
+];
+
+const SHADOWS = [
+  {
+    name: '--shadow-af-1',
+    use: "Raised: the chart tooltip (through Basecoat's --shadow-xl), the open navigation drawer.",
+  },
+  { name: '--shadow-af-2', use: 'Overlay: dialogs.' },
+  { name: '--color-af-scrim', use: 'The scrim behind a dialog.' },
+];
+---
+
+<DesignSection id="border">
+  <Fragment slot="definition"> Borders separate; they do not decorate. Corners are soft enough that a container feels like a surface holding its content, and consistent enough that nobody notices them. </Fragment>
+  <TokenTable client:load tokens={RADII} specimen="radius" caption="Corner radius tokens, current values and uses" />
+  <TokenTable client:load tokens={BORDERS} specimen="colour" caption="Border colour tokens and their current values" />
+  <div class="design-prose">
+    <ul>
+      <li>Table headers are unfilled. No coloured stripe down one side of a container.</li>
+      <li>
+        The empty state (Basecoat's <code>empty</code>) is the only dashed border, and its content is centred, as Basecoat lays it out.
+      </li>
+      <li>
+        Focus: Basecoat's controls draw a border and 3px halo from <code>--ring</code>; the portal's own links, nav items and summaries draw a 2px outline in the text colour, offset 2px. No element shows both.
+      </li>
+    </ul>
+  </div>
+  <DoDont>
+    <div slot="do" class="table-container af-box">
+      <table class="table">
+        <thead>
+          <tr><th>Account</th><th>Status</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>CERN SSO</td><td><StatusMark tone="ok" label="Linked" /></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <Fragment slot="do-note">let the container recede: unfilled header, pale rules, the data is the darkest thing in the box.</Fragment>
+    <DontExamples slot="dont" kind="heavy-frame" />
+    <Fragment slot="dont-note">use heavy outlines, filled headers or a coloured stripe down one side. The frame becomes louder than the content.</Fragment>
+  </DoDont>
+</DesignSection>
+
+<DesignSection id="elevation">
+  <Fragment slot="definition"> Elevation says what is temporarily on top. Everything that belongs to the page is flat. Only things that appear over the page have a shadow. </Fragment>
+  <SpecTable columns={['Level', 'Token', 'Allowed on']} caption="Elevation levels">
+    <tr>
+      <td>Flat</td>
+      <td>none</td>
+      <td>Tables, sections, rows, banners, notes, sidebar, top bar, popover tooltips. Separated by a 1px border, never a shadow.</td>
+    </tr>
+    <tr>
+      <td>Raised</td>
+      <td><code>--shadow-af-1</code></td>
+      <td>The chart tooltip (through Basecoat's <code>--shadow-xl</code>), the open navigation drawer. No scrim.</td>
+    </tr>
+    <tr>
+      <td>Overlay</td>
+      <td><code>--shadow-af-2</code> + <code>--color-af-scrim</code></td>
+      <td>Dialogs. Scrim behind, focus trapped.</td>
+    </tr>
+  </SpecTable>
+  <TokenTable client:load tokens={SHADOWS} caption="Shadow and scrim tokens and their current values" />
+  <div class="design-cols">
+    <div class="design-stage design-stage--subtle">
+      <h3 class="design-label">Level 1: raised</h3>
+      <div class="design-level design-level--raised">A raised surface</div>
+    </div>
+    <div class="design-stage design-stage--subtle">
+      <h3 class="design-label">Level 2: overlay</h3>
+      <div class="design-level design-level--overlay">An overlay surface</div>
+    </div>
+  </div>
+  <p class="af-help">
+    The two swatches show the shadow tokens; the real thing is the dialog (see Dialog and tooltip) and the chart tooltip (hover a bar in Chart). No background blur anywhere. In dark mode a shadow is hard to see, so both also carry a 1px light outline. Basecoat's own small shadows (<code>--shadow-xs</code>, <code>--shadow-sm</code>) resolve to none and its backdrop blur to 0.
+  </p>
+</DesignSection>

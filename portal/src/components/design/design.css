@@ -1,0 +1,361 @@
+/*
+ * design.css — the frame around the /design/ reference page: its layout, the
+ * in-page navigation, the example "stage" and the prose column. It does not
+ * style any example: those use the portal's own Basecoat classes, `af-`
+ * extensions and Vue components, so an example cannot differ from what ships.
+ * Tokens only, like every other stylesheet in src.
+ */
+
+/* The accent scope. The page-local accent choice (designAccent.ts) is written
+ * on this element, which sits inside <html>. A custom property that is defined
+ * from another is resolved where it is declared, so Basecoat's chain from the
+ * accent (global.css's bridge, then Tailwind's `--color-primary`, which the
+ * primary button and checked controls use) is declared again here to follow
+ * the scope's own accent instead of the one resolved on <html>. */
+.design-scope {
+  --primary: var(--color-af-accent);
+  --primary-foreground: var(--color-af-on-accent);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  /* The height of what stays fixed above a jumped-to section. */
+  --design-top: calc(var(--control-m) + var(--space-16));
+}
+@media (min-width: 860px) {
+  .design-scope {
+    --design-top: calc(
+      var(--control-m) + var(--space-16) + var(--control-s) + var(--space-16) + 1px
+    );
+  }
+}
+
+/* The accent control: a strip under the top bar, fixed in place at desktop width. */
+.design-bar {
+  background: var(--color-af-bg);
+  border-bottom: 1px solid var(--color-af-border);
+}
+.design-bar__in {
+  padding-block: var(--space-8);
+}
+@media (min-width: 860px) {
+  .design-bar {
+    position: sticky;
+    top: calc(var(--control-m) + var(--space-16));
+    z-index: 40;
+  }
+}
+
+/* Content column beside the in-page navigation; under 860px they stack. */
+.design-page {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: var(--space-48);
+  align-items: start;
+  padding-bottom: var(--space-64);
+}
+@media (max-width: 859px) {
+  .design-page {
+    display: block;
+  }
+}
+.design-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* In-page navigation */
+.design-nav {
+  font-size: var(--text-13);
+  line-height: var(--text-13--line-height);
+}
+.design-nav p {
+  margin: var(--space-12) 0 var(--space-4);
+  color: var(--color-af-text-secondary);
+  font-size: var(--text-12);
+  line-height: var(--text-12--line-height);
+}
+.design-nav ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.design-nav a {
+  display: block;
+  padding: var(--space-4) var(--space-8);
+  border-radius: var(--radius-8);
+  color: var(--color-af-text-secondary);
+  text-decoration: none;
+}
+.design-nav a:hover {
+  background: var(--color-af-bg-hover);
+  color: var(--color-af-text);
+}
+@media (min-width: 860px) {
+  .design-nav {
+    position: sticky;
+    top: calc(var(--design-top) + var(--space-8));
+    max-height: calc(100vh - var(--design-top) - var(--space-16));
+    overflow-y: auto;
+    padding-block: var(--space-8);
+  }
+}
+@media (max-width: 859px) {
+  .design-nav {
+    padding-block: var(--space-16);
+    border-bottom: 1px solid var(--color-af-border);
+  }
+  .design-nav ul {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-4);
+  }
+  .design-nav a {
+    border: 1px solid var(--color-af-border);
+  }
+}
+
+/* A section: eyebrow, title, definition, then the examples. */
+.design-section {
+  scroll-margin-top: calc(var(--design-top) + var(--space-16));
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+  padding-block: var(--space-32);
+  border-top: 1px solid var(--color-af-border);
+}
+.design-section:first-child {
+  border-top: 0;
+}
+.design-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.design-eyebrow {
+  margin: 0;
+  font-size: var(--text-12);
+  line-height: var(--text-12--line-height);
+  color: var(--color-af-text-secondary);
+}
+.design-head h2 {
+  font: 600 var(--text-24) / 1.3 var(--font-sans);
+}
+.design-def {
+  max-width: 68ch;
+}
+.design-section h3:not(.design-label) {
+  font: 600 var(--text-16) / 1.4 var(--font-sans);
+  margin-top: var(--space-8);
+}
+
+/* Prose stays near 68 characters; tables and stages may be wider. */
+.design-prose {
+  max-width: 68ch;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+}
+.design-prose ul,
+.design-def ul {
+  list-style: disc;
+  margin: 0;
+  padding-left: var(--space-24);
+}
+.design-prose li {
+  margin-block: var(--space-4);
+}
+:is(.design-prose, .design-def, .design-verdict, .design-table) code {
+  font-size: var(--text-13);
+}
+
+/* An example stage: a pale frame around real components. */
+.design-stage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+  padding: var(--space-16);
+  border: 1px solid var(--color-af-border);
+  border-radius: var(--radius-10);
+  background: var(--color-af-bg);
+  min-width: 0;
+}
+.design-stage--subtle {
+  background: var(--color-af-bg-subtle);
+}
+.design-label {
+  margin: 0;
+  font: 500 var(--text-13) / var(--text-13--line-height) var(--font-sans);
+  color: var(--color-af-text-secondary);
+}
+.design-stage__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+  min-width: 0;
+}
+.design-stage__body.is-row {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-12) var(--space-16);
+}
+.design-cols {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  gap: var(--space-16);
+}
+
+/* A do/don't pair: two stages, each with its verdict beneath. */
+.design-dd {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+  gap: var(--space-24);
+}
+.design-dd__side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  min-width: 0;
+}
+.design-verdict {
+  display: flex;
+  gap: var(--space-8);
+  align-items: baseline;
+  margin: 0;
+  max-width: 68ch;
+}
+.design-verdict .af-mark {
+  align-self: center;
+}
+
+/* Spec tables: cells wrap (Basecoat keeps table cells on one line), and the
+ * table keeps a readable width so a narrow screen scrolls the box, not the page. */
+.design-table.af-box table {
+  min-width: 560px;
+}
+.design-table.af-box table :is(th, td) {
+  white-space: normal;
+  vertical-align: top;
+  padding-block: var(--space-8);
+  height: auto;
+}
+.design-table.af-box table td {
+  overflow-wrap: break-word;
+}
+
+/* Token table specimens: the value is set from script, so before hydration
+ * they are empty frames next to the token's name and use. */
+.design-chip {
+  display: inline-block;
+  width: var(--space-24);
+  height: var(--space-24);
+  border: 1px solid var(--color-af-border-strong);
+  border-radius: var(--radius-4);
+  vertical-align: middle;
+}
+.design-bar-spec {
+  display: block;
+  height: var(--space-8);
+  background: var(--color-af-text);
+}
+.design-specimen {
+  white-space: nowrap;
+}
+.design-value {
+  font-size: var(--text-13);
+}
+
+/* A framed page-pattern example and its pieces. */
+.design-frame {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: var(--space-24);
+  padding: var(--space-16);
+  border: 1px solid var(--color-af-border);
+  border-radius: var(--radius-10);
+  min-width: 0;
+}
+.design-frame > aside {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+}
+@media (max-width: 859px) {
+  .design-frame {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* A column-width bar for the grid examples. */
+.design-block {
+  border: 1px solid var(--color-af-border);
+  border-radius: var(--radius-8);
+}
+.design-block--s {
+  height: var(--space-48);
+}
+.design-block--m {
+  height: calc(var(--space-48) + var(--space-16));
+}
+.design-block--l {
+  height: calc(var(--space-64) + var(--space-24));
+}
+.design-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-8);
+}
+
+/* A short code sample. */
+.design-code {
+  margin: 0;
+  font: var(--text-13) / var(--text-13--line-height) var(--font-mono);
+  white-space: pre-wrap;
+}
+
+/* A banner-fill swatch beside a status. */
+.design-fill--ok {
+  background: var(--color-af-banner-ok);
+}
+.design-fill--warn {
+  background: var(--color-af-banner-warn);
+}
+.design-fill--bad {
+  background: var(--color-af-banner-bad);
+}
+.design-fill--info {
+  background: var(--color-af-banner-info);
+}
+
+/* Elevation swatches: a surface at each level, drawn with the shadow tokens. */
+.design-level {
+  height: calc(var(--space-64) + var(--space-8));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-10);
+  background: var(--color-af-bg);
+}
+.design-level--raised {
+  box-shadow: var(--shadow-af-1);
+}
+.design-level--overlay {
+  box-shadow: var(--shadow-af-2);
+}
+
+/* The page's own header, above the accent control. */
+.design-title {
+  padding-top: var(--space-32);
+}
+
+/* A link with a trailing icon stays on one line. */
+.design-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+/* A token name is one word: it scrolls with the table rather than breaking at a hyphen. */
+.design-token {
+  white-space: nowrap;
+}

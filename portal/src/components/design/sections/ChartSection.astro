@@ -1,0 +1,30 @@
+---
+import BarChart from '../../ui/BarChart.vue';
+import DesignSection from '../DesignSection.astro';
+import Stage from '../Stage.astro';
+
+// Fictional daily calls, two weeks.
+const DAYS = ['3 Nov', '4 Nov', '5 Nov', '6 Nov', '7 Nov', '8 Nov', '9 Nov', '10 Nov', '11 Nov', '12 Nov', '13 Nov', '14 Nov', '15 Nov', '16 Nov'];
+const CALLS = [62, 70, 48, 75, 30, 0, 12, 55, 68, 80, 58, 44, 71, 39];
+---
+
+<DesignSection id="chart">
+  <Fragment slot="definition">
+    Basecoat's <code>chart</code> component, which wraps Chart.js, through <code>BarChart.vue</code>. Used for the daily activity on the Usage page.
+  </Fragment>
+  <Stage label="BarChart, example data. Hover a bar for the raised tooltip.">
+    <BarChart client:visible labels={DAYS} series={[{ label: 'Calls', values: CALLS }]} ariaLabel="Calls per day, example data" />
+  </Stage>
+  <div class="design-prose">
+    <ul>
+      <li>
+        Bars are <code>--chart-1</code> (secondary text) and their hover is <code>--chart-2</code> (text): neutral steps, legible in both themes, never status colours. The grid is <code>--border</code>; axis labels are 12px in secondary text in the page font, with flat bars and no gradient or shadow.
+      </li>
+      <li>
+        A canvas is opaque to assistive technology, so the chart is <code>role="img"</code> with a summary label and every value is repeated in a visually hidden table.
+      </li>
+      <li>It draws without animation when reduced motion is requested, and redraws with the new colours when the theme changes. Chart.js and Basecoat's chart script load only on a page that draws a chart, and only when it mounts.</li>
+    </ul>
+  </div>
+  <p class="af-help">Used on: Usage.</p>
+</DesignSection>
