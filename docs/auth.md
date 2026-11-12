@@ -959,9 +959,16 @@ caller (logged at INFO as `aggregator.service_list_failed`, catalog status
 still gets the friendly not-linked error rather than "Unknown tool"
 (`_ObservableProxyProvider._get_tool` resolves it to a stand-in whose run
 reaches the authorized branch above). `unauthorized` ("Your linked
-credential was rejected") is reserved for a linked caller whose injected
-credential the backend rejected. The x509 and servicex branches do the
-same. `resolve_list_time_credential` — the portal's
+credential was rejected") is reserved for a caller whose credential the
+backend rejected. The x509, servicex and bearer branches do the same: a
+`bearer` service's list-time mint (`_resolve_list_time_headers`) raises
+`NotLinkedForListing` for a caller whose provider is not linked, so for
+every auth type that carries a per-user credential an unlinked caller's
+listing sends the backend no request. A provider that needs no user action
+(`broker-issued`, `condor-token`, the service-account provider) reports
+`is_linked()` true, so it is unaffected; a mint that fails for an
+operational reason, or a provider that does not resolve, still connects
+without a credential and is classified `unavailable`. `resolve_list_time_credential` — the portal's
 per-service tool-listing entry point into this same logic
 (`api/catalog_tools.py`, which reports `not_linked` for the unlinked caller
 without contacting the backend) — folds `"x509"` and `"krb5"` into one shared
@@ -1428,6 +1435,14 @@ When the 401 lands on the listing that runs ahead of a tool call, the call
 itself already uses the refreshed token. That's because a listing that
 failed this way is not negative-cached like other listing failures, so the
 next listing tries again.
+
+A caller whose credential is already rejected gets no listing request at
+all, because `is_linked()` is false: the listing raises `NotLinkedForListing`
+with `rejected` set, which is recorded as `unauthorized` for that caller (not
+`not_linked`) and, for the portal's per-service tool listing, reported with
+the same "credential was rejected, re-link" status. Like any other
+turned-away listing it is negative-cached for 30 s, so tools can take that
+long to reappear after a re-link (issue #355).
 
 ### What the caller sees
 

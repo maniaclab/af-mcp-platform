@@ -254,44 +254,43 @@ async def _resolve_list_time_headers(
     credential_registry: CredentialRegistry,
     principal: Principal,
 ) -> ListTimeCredential:
-    """Best-effort per-user credential mint for a tools/list-time connection.
+    """Best-effort per-user credential mint for a bearer service's tools/list-time connection.
 
     Returns a ``ListTimeCredential`` (``headers``, ``skip_reason``, and the
-    injected credential's ``on_unauthorized`` report). Never raises: unlike the authorized
-    tools/call path in ``_bearer_factory``, a failure here must not prevent
-    the connection attempt outright -- doing so would mean this service's
-    ``ProxyProvider`` never completes a single successful ``_list_tools()``
-    call for an unlinked caller, which (a) would leave its component-list
-    cache permanently unpopulated (fastmcp's ``ProxyProvider`` only writes
-    that cache after a call that didn't raise), forcing every later
-    ``_get_tool()`` cache-miss lookup -- including ones for a *different*,
-    perfectly authorized caller -- to re-trigger a listing, and (b) a
-    listing failure raised from there is swallowed by
-    ``AggregateProvider._get_tool()``'s own warn-and-continue handling into
-    a bare "Unknown tool", losing the friendly authorized-path ``ToolError``
-    entirely. Connecting without a credential instead reproduces exactly
-    what a "none" service does: a service that itself gates listing on auth
-    (rucio-mcp) still ends up excluded via its own 401 -- classified and
-    logged by ``_ObservableProxyProvider`` below -- while one that doesn't
-    (e.g. a bearer service whose listing endpoint happens to be open) still
-    lists successfully, deferring the real access decision to the
-    authorized tools/call path exactly as before this fix.
+    injected credential's ``on_unauthorized`` report). A caller who has not
+    linked the credential raises ``NotLinkedForListing`` before anything is
+    minted, so the backend is never contacted and the service contributes no
+    tools to that caller's list, as for x509/krb5/servicex.
 
-    ``skip_reason`` (``"not_linked"`` | ``"unavailable"``) is set whenever
-    ``headers`` is ``None``, letting the caller pre-record *why* no
-    credential was attached (see the per-service request-scoped state in
-    ``_bearer_factory``) for ``_classify_list_failure`` to use if the
-    resulting uncredentialed connection does go on to fail.
+    Every other failure is non-fatal: unlike the authorized tools/call path
+    in ``_bearer_factory``, a provider that does not resolve, or a mint that
+    fails for an operational reason, must not prevent the connection attempt
+    outright -- doing so would mean this service's ``ProxyProvider`` never
+    completes a single successful ``_list_tools()`` call for a caller whose
+    mint failed, which (a) would leave its component-list cache permanently
+    unpopulated (fastmcp's ``ProxyProvider`` only writes that cache after a
+    call that didn't raise), forcing every later ``_get_tool()`` cache-miss
+    lookup -- including ones for a *different*, perfectly authorized caller
+    -- to re-trigger a listing, and (b) a listing failure raised from there
+    is swallowed by ``AggregateProvider._get_tool()``'s own warn-and-continue
+    handling into a bare "Unknown tool", losing the friendly authorized-path
+    ``ToolError`` entirely. Connecting without a credential instead
+    reproduces exactly what a "none" service does: a service that itself
+    gates listing on auth (rucio-mcp) still ends up excluded via its own 401
+    -- classified and logged by ``_ObservableProxyProvider`` below.
+
+    ``skip_reason`` (``"unavailable"``) is set whenever ``headers`` is
+    ``None``, letting the caller pre-record *why* no credential was attached
+    (see the per-service request-scoped state in ``_bearer_factory``) for
+    ``_classify_list_failure`` to use if the resulting uncredentialed
+    connection does go on to fail.
     """
     try:
         provider = await credential_registry.resolve(spec.name)
     except KeyError:
         return ListTimeCredential(None, "unavailable")
 
-    # Same linkage gate as the authorized tools/call path, but non-fatal:
-    # an unlinked caller simply doesn't get a credential attached.
-    if not await provider.is_linked(principal):
-        return ListTimeCredential(None, "not_linked")
+    await _raise_unless_linked_to_list(spec, provider, principal)
 
     try:
         cred = await provider.issue(principal, spec.name)
@@ -398,10 +397,11 @@ async def _classify_list_failure(exc: Exception, service_name: str) -> tuple[str
     request fans out to every service concurrently), then applies
     ``_classify_failure``'s shared decision core. A ``NotLinkedForListing``
     (the client factory turned the caller away before any request) is
-    ``"not_linked"`` outright.
+    ``"not_linked"`` outright, or ``"unauthorized"`` -- the stored credential
+    was rejected -- when it says ``rejected``.
     """
     if isinstance(exc, NotLinkedForListing):
-        return "not_linked", str(exc)
+        return ("unauthorized" if exc.rejected else "not_linked"), str(exc)
     ctx = get_context()
     status = await ctx.get_state(f"__list_credential_status__:{service_name}")
     injected, skip_reason = status if status is not None else (False, None)
@@ -409,13 +409,35 @@ async def _classify_list_failure(exc: Exception, service_name: str) -> tuple[str
 
 
 class NotLinkedForListing(Exception):
-    """A caller who has not linked the credential a mint-and-inject service redeems cannot list that service's tools.
+    """A caller who has not linked the credential a service redeems cannot list that service's tools.
 
-    Raised before any identity token is minted and before any request
-    reaches the backend. ``_classify_list_failure`` maps it to
-    ``"not_linked"``; ``api/catalog_tools.py`` reports the same status for
-    the /v1 per-service listing.
+    Raised before any credential is minted and before any request reaches
+    the backend. ``rejected`` is set when the caller did link a credential
+    but a backend rejected it (``CredentialProvider.is_rejected``), so the
+    listing outcome can say so instead of "never linked".
+    ``_classify_list_failure`` maps it to ``"not_linked"`` (or
+    ``"unauthorized"`` when ``rejected``); ``api/catalog_tools.py`` reports
+    the same status for the /v1 per-service listing.
     """
+
+    def __init__(self, message: str, *, rejected: bool = False) -> None:
+        super().__init__(message)
+        self.rejected = rejected
+
+
+async def _raise_unless_linked_to_list(
+    spec: ServiceSpec, provider: CredentialProvider, principal: Principal
+) -> None:
+    """Raise ``NotLinkedForListing`` unless *principal* has linked the credential *provider* issues for *spec*."""
+    if await provider.is_linked(principal):
+        return
+    rejected = await provider.is_rejected(principal)
+    raise NotLinkedForListing(
+        f"Service '{spec.name}' lists its tools only for callers who have "
+        "linked their credential"
+        + (" (the linked credential was rejected)." if rejected else "."),
+        rejected=rejected,
+    )
 
 
 async def _require_linked_to_list(
@@ -430,11 +452,7 @@ async def _require_linked_to_list(
         provider = await credential_registry.resolve(spec.name)
     except KeyError:
         return
-    if not await provider.is_linked(principal):
-        raise NotLinkedForListing(
-            f"Service '{spec.name}' lists its tools only for callers who have "
-            "linked their credential."
-        )
+    await _raise_unless_linked_to_list(spec, provider, principal)
 
 
 async def resolve_list_time_credential(
@@ -462,8 +480,10 @@ async def resolve_list_time_credential(
       any of the three. A caller who has not linked the credential raises
       ``NotLinkedForListing`` before anything is minted.
     - "bearer": ``_resolve_list_time_headers`` (the issue #121 best-effort
-      mint), unchanged -- ``skip_reason`` ("not_linked" | "unavailable")
-      is set whenever no credential could be attached.
+      mint). A caller who has not linked the credential raises
+      ``NotLinkedForListing`` before anything is minted, as for the three
+      types above; ``skip_reason`` ("unavailable") is set when a resolved,
+      linked caller's mint failed for an operational reason.
 
     Callers must gate on holding at least one of the service's required
     permissions first (``_might_be_entitled`` here; ``api/permissions.py``'s
@@ -857,8 +877,13 @@ def _make_client_factory(
     version of the per-tool check ``AuthorizationMiddleware`` uses) -- the
     in-process ``CredentialCache`` already makes repeat mints for the same
     ``(uid, target)`` cheap, so
-    "wasteful" no longer applies. A failure to mint (no linked identity, no
-    provider configured, a mint error) does NOT prevent the connection
+    "wasteful" no longer applies. A caller who has not linked the credential
+    gets no listing at all, exactly like x509/krb5/servicex above: the
+    factory raises ``NotLinkedForListing`` before minting anything or
+    contacting the backend (``_ObservableProxyProvider._get_tool`` then
+    resolves a direct call to one of its tools to a stand-in, so the caller
+    still gets the not-linked error). Any other failure to mint (no provider
+    configured, a mint error) does NOT prevent the connection
     attempt, unlike the authorized tools/call path below -- see
     ``_resolve_list_time_headers``'s docstring for why raising there instead
     would reintroduce a worse bug (a permanently unpopulated schema cache
@@ -1122,7 +1147,8 @@ def _make_client_factory(
             # triggered by one). See the docstring above for why a
             # best-effort mint is attempted here rather than skipped
             # outright, and _resolve_list_time_headers for the non-fatal
-            # failure handling this requires.
+            # failure handling this requires (an unlinked caller raises
+            # NotLinkedForListing instead).
             principal = await ctx.get_state("principal")
             if principal is None:
                 # identity_mw should always have set this by now; there is
@@ -1506,9 +1532,14 @@ class _ObservableProxyProvider(ProxyProvider):
                 # A 401 for an injected credential has just made its
                 # provider refresh or reject it (issue #344, _report_401), so
                 # the next listing must try again rather than replay this
-                # failure; every other failure is negative-cached.
+                # failure; every other failure is negative-cached. A caller
+                # turned away before any request (NotLinkedForListing, even
+                # for a rejected credential) is cached too: _get_tool relies
+                # on replaying it to resolve a direct call to the stand-in
+                # instead of re-running the client factory's authorized
+                # branch, whose friendly error AggregateProvider swallows.
                 reason, _ = await _classify_list_failure(exc, self._service_name)
-                if reason != "unauthorized":
+                if reason != "unauthorized" or isinstance(exc, NotLinkedForListing):
                     self._subject_list_cache[key] = _SubjectListCacheEntry(
                         error=exc, timestamp=time.monotonic()
                     )

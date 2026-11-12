@@ -635,8 +635,8 @@ status it can change:
 | Reason | Describes | Recorded against | Catalog status |
 |---|---|---|---|
 | `unavailable` | the backend (down, timing out, or an unexplained 401) | the service, seen by every caller | `unavailable` |
-| `unauthorized` | one caller's credential, which the backend rejected | that caller and service only | `link_required` ("re-link"), `link_state: "rejected"`; not used for an `oauth21` credential, see below |
-| `not_linked` | one caller, who has no credential for the service; logged at INFO. A mint-and-inject (`x509`, `krb5`, `servicex`) service's tools are listed only for a caller who has linked the credential, so for an unlinked caller the listing is skipped without minting a token or contacting the backend | that caller and service only | `link_required` ("link") |
+| `unauthorized` | one caller's credential, which the backend rejected, or a stored `oauth21` credential already marked rejected (no request is sent for it) | that caller and service only | `link_required` ("re-link"), `link_state: "rejected"`; not used for an `oauth21` credential, see below |
+| `not_linked` | one caller, who has no credential for the service; logged at INFO. A credentialed service's (`bearer`, `x509`, `krb5`, `servicex`) tools are listed only for a caller who has linked the credential, so for an unlinked caller the listing is skipped without minting a credential or contacting the backend | that caller and service only | `link_required` ("link") |
 
 `link_required` carries a `link_state` saying why: `not_linked` when
 `provider.is_linked()` is false, `rejected` when the caller linked and the
@@ -709,7 +709,9 @@ the simplest correct thing. The extraction path if it becomes necessary:
 4. `mcp/aggregator.py`'s `client_factory` resolves the caller's credential
    for `auth_type: "bearer"` backends, in-process against the same provider
    code `POST /v1/credential` calls — cache hit or a fresh mint (token
-   exchange or x509 mint Job) either way. `auth_type: "none"` backends skip
+   exchange or x509 mint Job) either way. A caller who has not linked the
+   credential gets the "not linked" error here, and the backend's tools are
+   not listed for them in the first place. `auth_type: "none"` backends skip
    this step; `auth_type: "x509"` backends get an AF Broker Identity Token
    (`aud` = the backend) minted locally by the broker's own signing key, and
    redeem the caller's VOMS proxy server-side via

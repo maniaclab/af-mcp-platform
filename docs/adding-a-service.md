@@ -250,11 +250,19 @@ credential mint during `tools/list` (not only `tools/call`), so a service
 whose own MCP endpoint requires auth just to list tools (e.g. rucio-mcp)
 isn't invisible to every caller — see `mcp/aggregator.py`'s
 `_make_client_factory` docstring for the full rationale.
-For `x509`, `krb5` and `servicex` services, a caller must have linked the
-credential for the service's tools to be listed: an unlinked caller's
-listing is skipped (no token minted, the backend not contacted) and
-recorded as `not_linked`; a direct call of one of its tools still returns
-the not-linked error.
+For every auth type that carries a per-user credential (`bearer`, `x509`,
+`krb5` and `servicex`), a caller must have linked the credential for the
+service's tools to be listed: an unlinked caller's listing is skipped (no
+token minted, the backend not contacted, even if it would list its tools
+without a credential) and recorded as `not_linked`; a direct call of one of
+its tools still returns the not-linked error. A caller whose linked
+credential was rejected (`oauth21-direct` only) is likewise not listed and
+is recorded as `unauthorized`. A `bearer` service whose provider needs no
+user action (`broker-issued`, `condor-token`, the service-account provider)
+counts as always linked, so it is listed for everyone entitled to it, and a
+mint that fails for an operational reason is `unavailable`, not
+`not_linked`. A `bearer` service with no resolvable credential provider is
+still listed without a credential.
 
 `tools_cache_ttl` (seconds, default 300, matching fastmcp's own
 `ProxyProvider` default) controls how long a cached component list for this

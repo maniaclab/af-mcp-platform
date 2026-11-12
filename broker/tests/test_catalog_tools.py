@@ -198,13 +198,21 @@ class _FakeProvider(CredentialProvider):
         self,
         *,
         unlinked_subjects: frozenset[str] = frozenset(),
+        rejected_subjects: frozenset[str] = frozenset(),
         mint_garbage: bool = False,
     ) -> None:
         self.unlinked_subjects = unlinked_subjects
+        self.rejected_subjects = rejected_subjects
         self.mint_garbage = mint_garbage
 
     async def is_linked(self, principal: Principal) -> bool:
-        return principal.subject not in self.unlinked_subjects
+        return (
+            principal.subject not in self.unlinked_subjects
+            and principal.subject not in self.rejected_subjects
+        )
+
+    async def is_rejected(self, principal: Principal) -> bool:
+        return principal.subject in self.rejected_subjects
 
     async def issue(
         self,
@@ -498,16 +506,16 @@ async def test_not_linked_status_for_unlinked_caller(
     assert body["tools"] == []
 
 
-@pytest.mark.parametrize("auth_type", ["x509", "krb5", "servicex"])
-async def test_not_linked_mint_and_inject_caller_never_reaches_the_backend(
+@pytest.mark.parametrize("auth_type", ["bearer", "x509", "krb5", "servicex"])
+async def test_not_linked_caller_never_reaches_the_backend(
     policy: EntitlementPolicy,
     make_principal: Callable[..., Any],
     auth_type: str,
 ) -> None:
-    """For a "mint and inject, the backend redeems" service a caller must
-    have the credential linked for tools to be listed: the /v1 listing
-    reports "not_linked" without minting a token or contacting the backend
-    (same outcome as a tools/list through /mcp)."""
+    """For every credentialed auth_type a caller must have the credential
+    linked for tools to be listed: the /v1 listing reports "not_linked"
+    without minting a token or contacting the backend (same outcome as a
+    tools/list through /mcp)."""
     requests: list[str] = []
     backend_app = _RecordingBackend(_open_backend().http_app(path="/mcp"), requests)
     async with run_asgi_app(backend_app) as backend_url:
@@ -537,6 +545,41 @@ async def test_not_linked_mint_and_inject_caller_never_reaches_the_backend(
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["status"] == "not_linked"
+    assert body["tools"] == []
+    assert requests == []
+
+
+async def test_rejected_bearer_caller_never_reaches_the_backend(
+    policy: EntitlementPolicy,
+    make_principal: Callable[..., Any],
+) -> None:
+    """A rejected credential is not linked, so the backend is not contacted;
+    the status says the credential was rejected, matching the catalog's
+    "rejected" link state rather than "not_linked"."""
+    requests: list[str] = []
+    backend_app = _RecordingBackend(_open_backend().http_app(path="/mcp"), requests)
+    async with run_asgi_app(backend_app) as backend_url:
+        registry = ServiceRegistry()
+        registry.register(
+            _spec(
+                "secure",
+                f"{backend_url}/mcp",
+                required_permission="read_data",
+                auth_type="bearer",
+            )
+        )
+        credential_registry = CredentialRegistry()
+        credential_registry.register(
+            "secure", _FakeProvider(rejected_subjects=frozenset({"sub-abc"}))
+        )
+        app, state = _make_app(registry, policy, credential_registry)
+        state["principal"] = make_principal(groups=["atlas"])
+
+        resp = await _get_tools(app, "secure")
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "unauthorized"
     assert body["tools"] == []
     assert requests == []
 
