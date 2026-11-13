@@ -263,6 +263,42 @@ async def test_retry_after_is_the_longest_wait_among_exceeded_rules() -> None:
     assert excinfo.value.window_seconds == 3600
 
 
+async def test_edited_rule_does_not_inherit_the_old_rules_count(
+    clock: _Clock,
+) -> None:
+    store = InMemorySharedState()
+    before = [RateLimitRule(2, 3600, tool="x_*")]
+    await check_rate_limits(before, store, "sub", "x_a", "read")
+    await check_rate_limits(before, store, "sub", "x_a", "read")
+
+    # The operator edits the rule: its budget starts fresh, with its own window.
+    after = [RateLimitRule(2, 60, tool="x_*")]
+    await check_rate_limits(after, store, "sub", "x_a", "read")
+    await check_rate_limits(after, store, "sub", "x_a", "read")
+    with pytest.raises(ToolRateLimitError) as excinfo:
+        await check_rate_limits(after, store, "sub", "x_a", "read")
+    assert excinfo.value.retry_after_seconds == 60
+
+
+async def test_reordering_rules_keeps_their_counters() -> None:
+    store = InMemorySharedState()
+    strict = RateLimitRule(1, 60, tool="x_*")
+    other = RateLimitRule(5, 60, tool="y_*")
+    await check_rate_limits([strict, other], store, "sub", "x_a", "read")
+
+    with pytest.raises(ToolRateLimitError):
+        await check_rate_limits([other, strict], store, "sub", "x_a", "read")
+
+
+async def test_identical_rules_share_one_counter_counted_once_per_call() -> None:
+    store = InMemorySharedState()
+    rules = [RateLimitRule(2, 60, tool="x_*"), RateLimitRule(2, 60, tool="x_*")]
+    await check_rate_limits(rules, store, "sub", "x_a", "read")
+    await check_rate_limits(rules, store, "sub", "x_a", "read")
+    with pytest.raises(ToolRateLimitError):
+        await check_rate_limits(rules, store, "sub", "x_a", "read")
+
+
 async def test_rules_keep_separate_counters_even_with_identical_matching() -> None:
     counter = InMemorySharedState()
     rules = [RateLimitRule(1, 60, tool="x_*"), RateLimitRule(5, 60, tool="x_*")]

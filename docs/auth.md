@@ -530,7 +530,7 @@ rate_limits:
 **Replicas.** Counters live in the broker's shared state store
 (`SHARED_STATE_URL`; see [Replica consistency](architecture.md#replica-consistency-and-the-shared-state-store)),
 one counter per rule and principal under the key
-`tool-rate-limit:<rule index>:<subject>`, so with a store configured a limit
+`tool-rate-limit:<rule fingerprint>:<subject>`, so with a store configured a limit
 is cluster-wide however a user's calls are spread across replicas. The
 counts are per replica only when no store is configured
 (`allowPerReplicaState` with more than one replica, or a single replica), in
@@ -539,8 +539,11 @@ while the store is unreachable: the broker then counts per replica, logs
 `tool_rate_limit.shared_state_unavailable`, and goes back to the store when
 it recovers. The limiter neither fails open nor refuses every call during an
 outage, the same policy as the x509 unlock limiter.
-Reordering `rate_limits` changes which counter each rule uses, so the
-affected budgets start over.
+The fingerprint is a short hash of the rule's `action_type`, `tool`, `limit`
+and `window_seconds`. Reordering or inserting rules keeps every existing
+counter; editing a rule gives it a fresh counter, so it never inherits the
+count or the window of the rule it replaced. Identical rules share one
+counter, counted once per call.
 
 ## AF Broker Identity Token (issue #162)
 
