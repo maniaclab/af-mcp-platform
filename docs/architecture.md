@@ -106,6 +106,80 @@ each request independently with no session pinning by default.
   start; the chart's `NOTES.txt` warns at install/upgrade time for the
   same combination.
 
+### Replica consistency and the shared state store
+
+The broker runs more than one replica (`broker.replicaCount`, default 2),
+and some of its state lives in process memory. Where that state only makes
+sense as one value for the whole deployment, a per-replica copy is wrong, not
+merely stale: a brute-force limiter whose budget multiplies with the replica
+count is not a limiter. The broker therefore has a small shared state layer
+(`shared_state.py`, a `SharedState` ABC) with two backends:
+
+- `in_memory` (default): process-local. Correct for exactly one replica.
+- `redis`: any server speaking the redis protocol, reached through an
+  operator-supplied `redis://` or `rediss://` URL. [Valkey](https://valkey.io)
+  is the recommended open implementation; redis, Dragonfly and KeyDB also
+  work. The chart does not deploy a store, the same as it does not deploy
+  Postgres. The state is small, short-lived counters and caches, so it is
+  deliberately kept out of Postgres and Vault.
+
+**Scaling is safe by construction.** Running more than one replica with no
+shared store must be an explicit choice, not a silent degradation:
+
+- The chart refuses to render (`fail`) when `broker.replicaCount > 1` and
+  neither `broker.sharedState.url` nor `broker.sharedState.existingSecret.name`
+  is set, unless `broker.sharedState.allowPerReplicaState: true`.
+- The broker refuses to start (`Settings` validation) when
+  `MCP_REPLICA_COUNT > 1` and `SHARED_STATE_URL` is empty, unless
+  `ALLOW_PER_REPLICA_STATE=true`. The chart sets `MCP_REPLICA_COUNT` itself;
+  non-chart deployments set it by hand. With the escape hatch the broker logs
+  `per_replica_state` at startup and the chart's `NOTES.txt` prints a warning.
+- Upgrading an existing multi-replica release that has no store yet therefore
+  needs either a store or `allowPerReplicaState: true` in its values *before*
+  the upgrade.
+
+Operator setup:
+
+```yaml
+broker:
+  replicaCount: 2
+  sharedState:
+    # redis:// or rediss://. Put a URL with a password in a Secret instead:
+    #   existingSecret: {name: broker-shared-state, key: url}
+    url: "rediss://valkey.cache.svc:6379/0"
+    # NetworkPolicy egress to the store (when networkPolicy.enabled):
+    networkPolicy:
+      namespaceSelector: {kubernetes.io/metadata.name: cache}
+      podSelector: {app.kubernetes.io/name: valkey}
+      # cidr: 203.0.113.0/24   # instead of selectors, for a managed instance
+      port: 6379
+```
+
+Outside the chart set `SHARED_STATE_URL` (and `MCP_REPLICA_COUNT`) directly.
+
+Per-replica state in the broker, what happens at more than one replica
+without a store, and what each item does when the store is down. "Phase"
+is the order in which items move onto the store; only phase 1 is
+implemented today.
+
+| Item | Location | Effect at N > 1 without a store | Consistency need | Store down | Phase |
+|---|---|---|---|---|---|
+| Unlock brute-force limiter (5 failures / 15 min per uid) | `credentials/cache.py`, `CredentialCache` | Budget multiplied by N (security-relevant) | Strong: one counter per uid, atomic increment | Falls back to a per-replica limit and logs `credential_cache.shared_state_unavailable`; never fails open, never blocks unlock | 1 (done) |
+| PAT mint rate window (`_rate`) | `api/tokens.py` | Mint cap multiplied by N | Strong, but a per-replica cap is a documented trade-off | Fall back to per-replica | 2 |
+| Per-(subject, service) tools/list cache and 30 s negative cache | `mcp/aggregator.py` | Invalidate-on-link/revoke reaches only the replica that handled it | Eventual, bounded by the TTL | Fail open (serve from the local cache) | 3 |
+| Caller list-failure records | `mcp/registry.py` (`_caller_list_failures`) | Status differs by replica until each re-lists | Eventual | Fail open | 3 |
+| Admin lint tables (annotation mismatches, tool-mapping drift) | `mcp/registry.py` | Each replica reports only what it has observed | Eventual | Compute on demand instead of storing | 4 |
+| MCP OAuth authorization codes | `mcp_auth_codes.py` | A redeem on another replica fails | Strong, single use | Out of scope here: being made stateless separately | n/a |
+| Revocation, credentials, principal cache, credmon lease | Vault | Already shared | n/a | n/a | n/a |
+| Usage, maintenance mode | Postgres | Already shared | n/a | n/a | n/a |
+
+Unlock limiter failure policy: when the store is unreachable the limiter
+counts failures per replica instead. That is exactly the behaviour without a
+store, so an outage never makes the limiter weaker than the operator already
+accepted by being unable to reach it, and it never turns a store outage into
+a loss of x509 unlock for every user. Caches always fail open: a stale or
+missing entry costs one extra backend call, never correctness.
+
 ---
 
 ## Elwood vocabulary alignment
@@ -385,6 +459,10 @@ failure, recorded via `record_failed_unlock()` — per uid and raises
 slow brute-force guessing. `X509Provider.mint()` calls
 `cache.check_unlock_rate_limit()` before doing any minting work, so a
 locked-out uid never reaches the k8s Job / subprocess path (`x509.py`).
+
+The counters live in the shared state store, so the budget is per uid across
+all replicas rather than per replica; see
+[Replica consistency](#replica-consistency-and-the-shared-state-store).
 
 Plain cache misses from `CredentialCache.get()` — "nothing cached yet, no
 passphrase given" — do **not** count against this budget. That used to be a
