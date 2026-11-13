@@ -19,9 +19,9 @@ import hashlib
 import json
 import re
 import secrets
+import time
 from dataclasses import dataclass
-from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from cryptography.fernet import InvalidToken
@@ -70,6 +70,74 @@ _STATE_PAYLOAD_FIELDS = (
 
 class StateTokenError(BrokerError):
     """Raised for any invalid, expired, malformed, or mis-audienced state token."""
+
+
+def encrypt_claims(
+    cipher: Fernet,
+    claims: dict[str, Any],
+    *,
+    iss: str,
+    ttl_seconds: int,
+    now: int | None = None,
+) -> str:
+    """Encrypt *claims* plus ``iss``/``aud``/``iat``/``exp`` into an opaque Fernet token.
+
+    *now* (whole seconds since the epoch) exists so a caller can inject a
+    clock; it defaults to the wall clock.
+    """
+    issued_at = int(time.time()) if now is None else now
+    payload = {
+        "iss": iss,
+        "aud": iss,
+        **claims,
+        "iat": issued_at,
+        "exp": issued_at + ttl_seconds,
+    }
+    return cipher.encrypt_at_time(json.dumps(payload).encode(), issued_at).decode()
+
+
+def decrypt_claims(
+    cipher: Fernet,
+    token: str,
+    *,
+    fields: tuple[str, ...],
+    expected_iss: str,
+    ttl_seconds: int,
+    now: int | None = None,
+) -> dict[str, Any]:
+    """Decrypt a token minted by ``encrypt_claims`` and return its payload.
+
+    Raises ``StateTokenError`` on any failure: Fernet TTL/HMAC failure,
+    malformed JSON, a payload missing any of *fields*, an ``iss``/``aud`` that
+    does not match *expected_iss* (rejects tokens minted for another
+    deployment), or an already-past ``exp`` (belt-and-braces on top of
+    Fernet's own ``ttl=`` enforcement).
+    """
+    current = int(time.time()) if now is None else now
+    try:
+        raw = cipher.decrypt_at_time(token.encode(), ttl_seconds, current)
+    except (InvalidToken, UnicodeEncodeError) as exc:
+        raise StateTokenError("state token is invalid or expired") from exc
+
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise StateTokenError("state token payload is not valid JSON") from exc
+
+    if not isinstance(data, dict):
+        raise StateTokenError("state token payload is not a JSON object")
+
+    missing = [k for k in fields if k not in data]
+    if missing:
+        raise StateTokenError(f"state token missing fields: {', '.join(missing)}")
+
+    if data["iss"] != expected_iss or data["aud"] != expected_iss:
+        raise StateTokenError("state token iss/aud does not match this deployment")
+
+    if data["exp"] <= current:
+        raise StateTokenError("state token has expired")
+
+    return data
 
 
 @dataclass(frozen=True)
@@ -196,19 +264,18 @@ def build_state_token(
     nonce: str,
 ) -> str:
     """Encrypt an OAuth flow's in-flight state into an opaque token."""
-    now = int(datetime.now(UTC).timestamp())
-    payload = {
-        "iss": iss,
-        "aud": iss,
-        "sub": sub,
-        "alias": alias,
-        "pkce_verifier": pkce_verifier,
-        "return_url": return_url,
-        "nonce": nonce,
-        "iat": now,
-        "exp": now + STATE_TOKEN_TTL_SECONDS,
-    }
-    return cipher.encrypt(json.dumps(payload).encode()).decode()
+    return encrypt_claims(
+        cipher,
+        {
+            "sub": sub,
+            "alias": alias,
+            "pkce_verifier": pkce_verifier,
+            "return_url": return_url,
+            "nonce": nonce,
+        },
+        iss=iss,
+        ttl_seconds=STATE_TOKEN_TTL_SECONDS,
+    )
 
 
 def decrypt_state_token(
@@ -222,30 +289,13 @@ def decrypt_state_token(
     already-past ``exp`` (belt-and-braces on top of Fernet's own ``ttl=``
     enforcement).
     """
-    try:
-        raw = cipher.decrypt(token.encode(), ttl=STATE_TOKEN_TTL_SECONDS)
-    except InvalidToken as exc:
-        raise StateTokenError("state token is invalid or expired") from exc
-
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise StateTokenError("state token payload is not valid JSON") from exc
-
-    if not isinstance(data, dict):
-        raise StateTokenError("state token payload is not a JSON object")
-
-    missing = [k for k in _STATE_PAYLOAD_FIELDS if k not in data]
-    if missing:
-        raise StateTokenError(f"state token missing fields: {', '.join(missing)}")
-
-    if data["iss"] != expected_iss or data["aud"] != expected_iss:
-        raise StateTokenError("state token iss/aud does not match this deployment")
-
-    now = int(datetime.now(UTC).timestamp())
-    if data["exp"] < now:
-        raise StateTokenError("state token has expired")
-
+    data = decrypt_claims(
+        cipher,
+        token,
+        fields=_STATE_PAYLOAD_FIELDS,
+        expected_iss=expected_iss,
+        ttl_seconds=STATE_TOKEN_TTL_SECONDS,
+    )
     return StatePayload(**{k: data[k] for k in _STATE_PAYLOAD_FIELDS})
 
 
@@ -308,21 +358,20 @@ def build_mcp_authorize_state(
     nonce: str,
 ) -> str:
     """Encrypt an in-flight MCP OAuth bootstrap authorize request into an opaque token -- the `state` the broker sends to Keycloak as its own OAuth client."""
-    now = int(datetime.now(UTC).timestamp())
-    payload = {
-        "iss": iss,
-        "aud": iss,
-        "pkce_verifier": pkce_verifier,
-        "mcp_client_id": mcp_client_id,
-        "mcp_redirect_uri": mcp_redirect_uri,
-        "mcp_state": mcp_state,
-        "mcp_code_challenge": mcp_code_challenge,
-        "mcp_client_name": mcp_client_name,
-        "nonce": nonce,
-        "iat": now,
-        "exp": now + STATE_TOKEN_TTL_SECONDS,
-    }
-    return cipher.encrypt(json.dumps(payload).encode()).decode()
+    return encrypt_claims(
+        cipher,
+        {
+            "pkce_verifier": pkce_verifier,
+            "mcp_client_id": mcp_client_id,
+            "mcp_redirect_uri": mcp_redirect_uri,
+            "mcp_state": mcp_state,
+            "mcp_code_challenge": mcp_code_challenge,
+            "mcp_client_name": mcp_client_name,
+            "nonce": nonce,
+        },
+        iss=iss,
+        ttl_seconds=STATE_TOKEN_TTL_SECONDS,
+    )
 
 
 def decrypt_mcp_authorize_state(
@@ -334,28 +383,11 @@ def decrypt_mcp_authorize_state(
     TTL/HMAC failure, malformed JSON, missing fields, a mismatched
     ``iss``/``aud``, or an already-past ``exp`` all raise ``StateTokenError``.
     """
-    try:
-        raw = cipher.decrypt(token.encode(), ttl=STATE_TOKEN_TTL_SECONDS)
-    except InvalidToken as exc:
-        raise StateTokenError("state token is invalid or expired") from exc
-
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise StateTokenError("state token payload is not valid JSON") from exc
-
-    if not isinstance(data, dict):
-        raise StateTokenError("state token payload is not a JSON object")
-
-    missing = [k for k in _MCP_AUTHORIZE_PAYLOAD_FIELDS if k not in data]
-    if missing:
-        raise StateTokenError(f"state token missing fields: {', '.join(missing)}")
-
-    if data["iss"] != expected_iss or data["aud"] != expected_iss:
-        raise StateTokenError("state token iss/aud does not match this deployment")
-
-    now = int(datetime.now(UTC).timestamp())
-    if data["exp"] < now:
-        raise StateTokenError("state token has expired")
-
+    data = decrypt_claims(
+        cipher,
+        token,
+        fields=_MCP_AUTHORIZE_PAYLOAD_FIELDS,
+        expected_iss=expected_iss,
+        ttl_seconds=STATE_TOKEN_TTL_SECONDS,
+    )
     return McpAuthorizePayload(**{k: data[k] for k in _MCP_AUTHORIZE_PAYLOAD_FIELDS})
