@@ -767,7 +767,11 @@ class VaultTokenRegistryBackend(TokenRegistryBackend):
         """Remove the records of the by-principal entry at *path* for which ``should_remove(lookup_id, fields)`` holds, plus their lookup-owner entries.
 
         Returns the removed lookup_ids and whether the principal's entry was
-        emptied (and so deleted outright). Shared by ``sweep_expired()`` and
+        left empty. An emptied entry is kept, never deleted: KV-v2's metadata
+        delete has no check-and-set, so deleting would drop a record a
+        concurrent ``add()`` wrote after this read. The empty entry costs
+        nothing -- reads see no records, and ``add()`` writes it with CAS on
+        the version it read. Shared by ``sweep_expired()`` and
         ``delete_inactive()``, so the CAS loop and the owner-index cleanup
         live in one place.
         """
@@ -797,18 +801,10 @@ class VaultTokenRegistryBackend(TokenRegistryBackend):
                 if lookup_id not in to_remove
             }
             try:
-                if remaining:
-                    await self._vault_kv.write_cas(path, remaining, version)
-                else:
-                    # Metadata delete (not an empty-dict write_cas) so the
-                    # version counter is destroyed too -- preserves a
-                    # subsequent add()'s plain create (cas=0) for this
-                    # principal, exactly as vault_kv.delete_metadata's
-                    # docstring describes.
-                    await self._vault_kv.delete_metadata(path)
-                    emptied = True
+                await self._vault_kv.write_cas(path, remaining, version)
             except CasConflict:
                 continue
+            emptied = not remaining
             removed = to_remove
             break
         else:

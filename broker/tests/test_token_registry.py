@@ -749,11 +749,9 @@ async def test_sweep_owners_removed_for_vault_backend(sa_token_path: Path) -> No
 async def test_sweep_emptied_principal_path_can_be_recreated(
     sa_token_path: Path,
 ) -> None:
-    """Vault-specific: emptying a by-principal path must actually delete its
-    metadata (not just write an empty dict) so a subsequent add() for that
-    principal -- a plain CAS-create (expected_version=None) -- still works,
-    exactly the cas=0 recreate semantics vault_kv.delete_metadata's docstring
-    describes."""
+    """Vault-specific: emptying a by-principal path leaves an empty entry
+    (written with CAS, never deleted -- see ``_remove_records``), and a
+    subsequent add() for that principal still works against it."""
     fake = _FakeRegistryVault()
     backend = _make_vault_backend(fake, sa_token_path)
     now = time.time()
@@ -769,8 +767,7 @@ async def test_sweep_emptied_principal_path_can_be_recreated(
     stats = await backend.sweep_expired(grace_seconds=int(_ONE_DAY))
     assert stats.principals_emptied == 1
 
-    # Must not raise -- a stale cached version for the now-destroyed path
-    # would surface as a CasConflict on this add()'s create-only write.
+    assert fake.entries[_PRINCIPAL_KEY]["data"] == {}
     await backend.add(_make_record(lookup_id="lookup-2", principal_id="p1"))
     rows = await backend.list_for_principal("p1")
     assert [r.lookup_id for r in rows] == ["lookup-2"]
@@ -1077,10 +1074,11 @@ async def test_vault_delete_inactive_of_last_record_allows_re_adding(
     removed = await backend.delete_inactive("p1", now=time.time())
 
     assert removed == ["lookup-1"]
-    assert _PRINCIPAL_KEY not in fake.entries
+    # The principal's entry is kept, empty; the owner index entry is removed.
+    assert fake.entries[_PRINCIPAL_KEY]["data"] == {}
     assert f"{KV_PATH_PREFIX}/lookup-owner/lookup-1" not in fake.entries
-    # Must not raise a CasConflict -- see delete_metadata's docstring.
     await backend.add(_make_record(lookup_id="lookup-2", principal_id="p1"))
+    assert [r.lookup_id for r in await backend.list_for_principal("p1")] == ["lookup-2"]
 
 
 async def test_vault_delete_inactive_retries_on_concurrent_cas_conflict(
@@ -1090,7 +1088,6 @@ async def test_vault_delete_inactive_retries_on_concurrent_cas_conflict(
     replica_a = _make_vault_backend(fake, sa_token_path)
     replica_b = _make_vault_backend(fake, sa_token_path)
     await replica_a.add(_make_record(lookup_id="dead", principal_id="p1", name="dead"))
-    await replica_a.add(_make_record(lookup_id="keep", principal_id="p1", name="keep"))
     await replica_a.revoke("p1", "dead", revoked_at=1.0)
 
     await asyncio.gather(
@@ -1099,7 +1096,88 @@ async def test_vault_delete_inactive_retries_on_concurrent_cas_conflict(
     )
 
     rows = await replica_a.list_for_principal("p1")
-    assert {r.lookup_id for r in rows} == {"keep", "new"}
+    assert [r.lookup_id for r in rows] == ["new"]
+
+
+def _mint_after_next_read_of(
+    reader: VaultTokenRegistryBackend,
+    writer: VaultTokenRegistryBackend,
+    path: str,
+    record: TokenRecord,
+) -> None:
+    """Make *writer* add *record* right after *reader*'s next read of *path*.
+
+    Interleaves deterministically: *reader* has read the entry, a concurrent
+    mint then writes it, and only afterwards does *reader* act on what it
+    read -- exactly the window in which a stale write loses the mint.
+    """
+    real_get = reader._vault_kv.get
+    fired = False
+
+    async def get(read_path: str) -> Any:
+        nonlocal fired
+        result = await real_get(read_path)
+        if read_path == path and not fired:
+            fired = True
+            await writer.add(record)
+        return result
+
+    reader._vault_kv.get = get  # type: ignore[method-assign]
+
+
+async def test_vault_delete_of_last_row_keeps_a_mint_that_lands_mid_delete(
+    sa_token_path: Path,
+) -> None:
+    """Deleting a principal's last revoked row while minting elsewhere must
+    not lose the new record: emptying the entry is a CAS write, so the mint
+    either wins and is re-read, or conflicts and is retried."""
+    fake = _FakeRegistryVault()
+    replica_a = _make_vault_backend(fake, sa_token_path)
+    replica_b = _make_vault_backend(fake, sa_token_path)
+    await replica_a.add(_make_record(lookup_id="dead", principal_id="p1", name="dead"))
+    await replica_a.revoke("p1", "dead", revoked_at=1.0)
+    _mint_after_next_read_of(
+        replica_a,
+        replica_b,
+        _PRINCIPAL_KEY,
+        _make_record(lookup_id="new", principal_id="p1", name="new"),
+    )
+
+    removed = await replica_a.delete_inactive("p1", now=time.time())
+
+    assert removed == ["dead"]
+    rows = await replica_a.list_for_principal("p1")
+    assert [r.lookup_id for r in rows] == ["new"]
+    assert await replica_a.owner_principal_id("new") == "p1"
+
+
+async def test_vault_sweep_keeps_a_mint_that_lands_mid_sweep(
+    sa_token_path: Path,
+) -> None:
+    fake = _FakeRegistryVault()
+    replica_a = _make_vault_backend(fake, sa_token_path)
+    replica_b = _make_vault_backend(fake, sa_token_path)
+    now = time.time()
+    await replica_a.add(
+        _make_record(
+            lookup_id="old",
+            principal_id="p1",
+            created_at=now - 10 * _ONE_DAY,
+            expires_at=now - 2 * _ONE_DAY,
+        )
+    )
+    _mint_after_next_read_of(
+        replica_a,
+        replica_b,
+        f"{KV_PATH_PREFIX}/by-principal/p1",
+        _make_record(lookup_id="new", principal_id="p1", name="new"),
+    )
+
+    stats = await replica_a.sweep_expired(grace_seconds=int(_ONE_DAY))
+
+    assert stats.records_removed == 1
+    rows = await replica_a.list_for_principal("p1")
+    assert [r.lookup_id for r in rows] == ["new"]
 
 
 # ---------------------------------------------------------------------------
