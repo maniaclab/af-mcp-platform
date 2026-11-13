@@ -407,15 +407,21 @@
    * .af-page is the page root: it stacks the banner and the sections
    * --af-page-gap apart (32px on comfortable pages, 24px with .compact, per
    * the contract's density table). The header always leaves 24px below it,
-   * whether it sits outside the root (an .astro page) or inside it. */
+   * whether it sits outside the root (an .astro page) or inside it.
+   * The root is capped at --af-page-max; .af-wide lifts the cap for pages
+   * whose main content is a wide table or chart. */
   .af-page {
     --af-page-gap: var(--space-32);
+    max-width: var(--af-page-max);
     display: flex;
     flex-direction: column;
     gap: var(--af-page-gap);
   }
   .af-page.compact {
     --af-page-gap: var(--space-24);
+  }
+  .af-page.af-wide {
+    max-width: none;
   }
   .af-page-head {
     display: flex;
@@ -452,9 +458,11 @@
 
   /* Page shell, shared by the signed-in and public layouts.
      --af-margin is the content gutter: 16px under 600px, 24px up to 1135px,
-     32px above. .af-wrap holds content to 1120px inside that gutter. */
+     32px above. .af-wrap holds content to 1120px inside that gutter.
+     --af-page-max is the default width of a page's content inside .af-wrap. */
   :root {
     --af-margin: var(--space-16);
+    --af-page-max: 960px;
   }
   @media (min-width: 600px) {
     :root {

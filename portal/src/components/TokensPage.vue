@@ -339,7 +339,7 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
 </script>
 
 <template>
-  <div class="af-page tp">
+  <div class="af-page af-wide tp">
     <div class="af-page-head">
       <div>
         <h1>Tokens</h1>

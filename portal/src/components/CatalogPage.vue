@@ -94,7 +94,7 @@ const message = computed(() => resolveServicesMessage(servers.value, providers.v
       </section>
     </template>
 
-    <div class="af-page">
+    <div class="af-page af-wide">
       <PageMessage v-if="message" :message="message" />
 
       <section class="af-sect" aria-labelledby="cp-heading">
