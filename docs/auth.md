@@ -1200,8 +1200,8 @@ another JWT:
    field is what `/mcp` enforces (see "Where PATs are accepted" below):
    validation reads the record from Vault on every request, so a revoked PAT
    is rejected with 401 on its next request, on every replica, with no
-   cache window. `REVOKED_JTI_CACHE_REFRESH_SECONDS` governs only the
-   Keycloak-JWT `jti` denylist, never PATs.
+   cache window. Keycloak JWTs are validated by signature and claims alone;
+   the registry is never read for them.
 4. **Delete a cleared row** — revoking keeps the row (as a tombstone, so
    revoked tokens stay visible), so revoked and expired rows accumulate.
    `DELETE /v1/tokens/{lookup_id}/record` hard-deletes one of the caller's

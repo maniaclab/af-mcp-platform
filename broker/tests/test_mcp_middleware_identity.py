@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 import structlog
-from conftest import DenylistedTokenRegistryBackend, make_claims
+from conftest import RaisingTokenRegistryBackend, make_claims
 from fastmcp.exceptions import AuthorizationError
 from prometheus_client import REGISTRY
 
@@ -23,7 +23,6 @@ from af_mcp_broker.mcp.middleware.identity_mw import (
 )
 from af_mcp_broker.token_registry import (
     InMemoryTokenRegistryBackend,
-    RevokedJtiCache,
     TokenRecord,
 )
 
@@ -368,46 +367,25 @@ async def test_non_http_scope_passes_through_untouched(settings):
 
 
 # ---------------------------------------------------------------------------
-# Revoked-jti enforcement (issue #115) — /mcp must reject a revoked token
-# exactly like /v1 does, since both call identity.get_principal directly.
+# JWT validation reads no token registry: /mcp accepts a valid JWT even when
+# the PAT backend raises on every call.
 # ---------------------------------------------------------------------------
 
 
-async def test_revoked_jti_rejected_on_mcp_path(settings, sig_key, prime_jwks):
-    prime_jwks([sig_key.jwk])
-    token = sig_key.sign(make_claims(jti="revoked-on-mcp"))
-
-    backend = DenylistedTokenRegistryBackend("revoked-on-mcp")
-    cache = RevokedJtiCache(backend, refresh_interval_seconds=30.0)
-
-    inner = _InnerApp()
-    middleware = AsgiAuthMiddleware(
-        inner, IdentityMiddleware(settings, revoked_jti_cache=cache)
-    )
-
-    messages = await _run(middleware, _http_scope({"authorization": f"Bearer {token}"}))
-
-    assert not inner.called
-    assert _status(messages) == 401
-    body = json.loads(_body(messages))
-    assert body["detail"] == "Invalid bearer token"
-
-
-async def test_active_jti_allowed_through_mcp_path_with_cache_configured(
+async def test_valid_jwt_allowed_through_mcp_path_with_a_registry_that_raises(
     settings, sig_key, prime_jwks, static_principal_cache
 ):
     principal_cache, _directory = static_principal_cache
     prime_jwks([sig_key.jwk])
-    token = sig_key.sign(make_claims(jti="still-active"))
+    token = sig_key.sign(make_claims(jti="any-jti"))
 
-    cache = RevokedJtiCache(
-        InMemoryTokenRegistryBackend(), refresh_interval_seconds=30.0
-    )
     inner = _InnerApp()
     middleware = AsgiAuthMiddleware(
         inner,
         IdentityMiddleware(
-            settings, revoked_jti_cache=cache, principal_cache=principal_cache
+            settings,
+            pat_backend=RaisingTokenRegistryBackend(),
+            principal_cache=principal_cache,
         ),
     )
 

@@ -89,7 +89,7 @@ if TYPE_CHECKING:
     from af_mcp_broker.maintenance import MaintenanceModeStore
     from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
     from af_mcp_broker.principal_cache import PrincipalCache
-    from af_mcp_broker.token_registry import RevokedJtiCache, TokenRegistryBackend
+    from af_mcp_broker.token_registry import TokenRegistryBackend
 
 logger = structlog.get_logger(__name__)
 
@@ -1802,7 +1802,6 @@ def build_aggregator(
     settings: Settings,
     policy: EntitlementPolicy,
     credential_registry: CredentialRegistry,
-    revoked_jti_cache: RevokedJtiCache | None = None,
     pat_backend: TokenRegistryBackend | None = None,
     principal_cache: PrincipalCache | None = None,
     identity_providers: dict[str, CredentialProvider] | None = None,
@@ -1841,7 +1840,7 @@ def build_aggregator(
     keeping given it's a no-op for everything this docstring's ordering
     invariant actually cares about.
 
-    *revoked_jti_cache*/*pat_backend*/*principal_cache* default to None here
+    *pat_backend*/*principal_cache* default to None here
     because app.py builds the aggregator eagerly, before the real token
     registry/principal cache exist (see the module-level comment above
     ``_mcp_aggregator``) -- ``populate_aggregator`` pushes the real ones in
@@ -1867,7 +1866,6 @@ def build_aggregator(
     mcp.add_middleware(
         IdentityMiddleware(
             settings,
-            revoked_jti_cache,
             pat_backend,
             principal_cache,
             maintenance_mode_store,
@@ -1907,8 +1905,8 @@ def build_asgi_auth_middleware(mcp: FastMCP) -> Middleware:
 
     Must be built from the same FastMCP instance ``build_aggregator()``
     constructed: it shares that instance's IdentityMiddleware (found via
-    ``_find_middleware``), which is the single mutable settings/
-    revoked_jti_cache handle ``populate_aggregator()`` keeps up to date --
+    ``_find_middleware``), which is the single mutable settings handle
+    ``populate_aggregator()`` keeps up to date --
     see ``identity_mw.AsgiAuthMiddleware``'s docstring for why sharing it
     rather than holding a second copy matters.
     """
@@ -1922,7 +1920,6 @@ def populate_aggregator(
     settings: Settings,
     policy: EntitlementPolicy,
     credential_registry: CredentialRegistry,
-    revoked_jti_cache: RevokedJtiCache | None = None,
     pat_backend: TokenRegistryBackend | None = None,
     principal_cache: PrincipalCache | None = None,
     identity_providers: dict[str, CredentialProvider] | None = None,
@@ -1932,7 +1929,7 @@ def populate_aggregator(
     maintenance_mode_store: MaintenanceModeStore | None = None,
     job_credentials: JobCredentialGuide | None = None,
 ) -> None:
-    """Refresh an aggregator built by ``build_aggregator`` with a freshly loaded registry/settings/policy/credential_registry/revoked_jti_cache/pat_backend/principal_cache/identity_providers/identity_provider_configs/target_to_alias/maintenance_mode_store.
+    """Refresh an aggregator built by ``build_aggregator`` with a freshly loaded registry/settings/policy/credential_registry/pat_backend/principal_cache/identity_providers/identity_provider_configs/target_to_alias/maintenance_mode_store.
 
     app.py's mount-time constraint means the aggregator's FastMCP instance
     and ASGI app must exist before SERVICES_FILE/POLICY_FILE/the credential
@@ -1951,7 +1948,6 @@ def populate_aggregator(
     # omitted every operator service's agent_policy until now (finding #6).
     mcp.instructions = compose_agent_instructions(registry, job_credentials)
     identity_mw.settings = settings
-    identity_mw.revoked_jti_cache = revoked_jti_cache
     identity_mw.pat_backend = pat_backend
     identity_mw.principal_cache = principal_cache
     identity_mw.maintenance_mode_store = maintenance_mode_store

@@ -17,10 +17,8 @@ value without first checking how old it is; a future change extending this
 class must preserve that invariant rather than adding a "just give me
 whatever's stored" shortcut.
 
-Stale-while-revalidate, with two SEPARATE configurable bounds (mirrors
-``token_registry.RevokedJtiCache``'s shape, but per-principal-keyed rather
-than a single global set, and with a second, much longer bound this class
-adds on top):
+Stale-while-revalidate, with two SEPARATE configurable bounds, keyed
+per principal:
 
 * ``refresh_interval_seconds`` (short, ~30-60s) -- how long a cached value
   may be served before the *next* read for that principal triggers a
@@ -300,9 +298,8 @@ class VaultPrincipalCacheBackend(PrincipalCacheBackend):
 
     One entry per principal at ``{kv_path_prefix}/{principal_id}`` -- no
     secondary index of any kind, unlike ``VaultTokenRegistryBackend``'s
-    lookup-owner/revoked-lookup-ids indices, because there is nothing here
-    that needs one: no uniqueness rule to enforce, no denylist to bound, just
-    one overwritable blob per principal. ``put()``'s read-modify-write CAS
+    lookup-owner index, because there is nothing here that needs one: no
+    uniqueness rule to enforce, just one overwritable blob per principal. ``put()``'s read-modify-write CAS
     loop exists only to avoid clobbering a concurrent writer's version
     counter (e.g. two broker replicas refreshing the same principal at
     once); losing that race is not a correctness problem the way it would be
@@ -366,9 +363,8 @@ class PrincipalCache:
         self._heartbeat_interval = heartbeat_interval_seconds
         self._entries: dict[str, _CacheEntry] = {}
         # One lock per principal_id so refreshing principal A never blocks a
-        # concurrent read for principal B -- unlike RevokedJtiCache's single
-        # global refresh, there is no single snapshot shared across callers
-        # here.
+        # concurrent read for principal B -- there is no single snapshot
+        # shared across callers here.
         self._locks: dict[str, asyncio.Lock] = {}
         # principal_id -> (monotonic time of the rejection, reason): a
         # principal the directory last refused (deleted/disabled). Answered

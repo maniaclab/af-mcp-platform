@@ -50,14 +50,6 @@ Vault KV-v2 layout, all under ``{kv_mount}/data/{kv_path_prefix}/...``:
   but belongs to someone else" (403) without a Vault LIST across every
   principal, and is what ``get_by_lookup_id()`` uses to answer validation's
   "who is this token?" question with a single indexed hop.
-* ``revoked-lookup-ids``  -> ``{"jtis": [...]}``, a single flat denylist
-  ``RevokedJtiCache`` reads on its periodic refresh. It is consulted only
-  for a Keycloak JWT's ``jti`` (``identity.get_principal``); PAT
-  revocation never touches it, and nothing in this module writes it any
-  more -- ``sweep_expired()`` only prunes entries an earlier broker wrote.
-  (The Vault key name and the cache class both still say "jti" -- see
-  ``RevokedJtiCache``'s docstring.)
-
 ``revoke()`` is a single CAS write that sets ``revoked_at`` on the
 principal's by-principal entry. That field IS the enforcement for a PAT:
 ``pat_auth.resolve_pat_principal`` reads the record from Vault on every
@@ -221,7 +213,6 @@ class SweepStats:
 
     records_removed: int
     owners_removed: int
-    revoked_pruned: int
     principals_emptied: int
 
 
@@ -293,17 +284,6 @@ class TokenRegistryBackend(ABC):
         """Best-effort update of a record's ``last_used_at``. A no-op if *lookup_id* is unknown or not owned by *principal_id* -- validation has already succeeded by the time this is called, so there is nothing more useful to do with a lost race against a concurrent revoke than silently skip the write."""
 
     @abstractmethod
-    async def list_revoked_jtis(self) -> frozenset[str]:
-        """Return the identifiers on the revoked-token denylist.
-
-        The denylist is consulted only for a Keycloak JWT's ``jti`` (see
-        ``RevokedJtiCache``). ``revoke()`` never adds a PAT to it -- a PAT's
-        revocation is its record's ``revoked_at``, enforced by
-        ``pat_auth.resolve_pat_principal`` -- so the set is empty unless an
-        earlier broker wrote entries.
-        """
-
-    @abstractmethod
     async def delete_inactive(
         self,
         principal_id: str,
@@ -336,10 +316,6 @@ class TokenRegistryBackend(ABC):
         vanishing the instant its own ``expires_at`` passes. Live records
         (``expires_at`` still in the future, or never-expiring) and records
         expired less than *grace_seconds* ago are both left untouched.
-
-        Also prunes ``revoked-lookup-ids`` of any lookup_id this pass removes
-        for being expired past grace, so an entry an earlier broker wrote for
-        a PAT does not outlive the record.
         """
 
 
@@ -388,7 +364,6 @@ class InMemoryTokenRegistryBackend(TokenRegistryBackend):
         return SweepStats(
             records_removed=records_removed,
             owners_removed=0,
-            revoked_pruned=0,
             principals_emptied=principals_emptied,
         )
 
@@ -477,10 +452,6 @@ class InMemoryTokenRegistryBackend(TokenRegistryBackend):
             principal_map[lookup_id] = replace(
                 principal_map[lookup_id], last_used_at=at
             )
-
-    async def list_revoked_jtis(self) -> frozenset[str]:
-        # No denylist exists in memory: revoke() only sets ``revoked_at``.
-        return frozenset()
 
 
 # ---------------------------------------------------------------------------
@@ -596,9 +567,6 @@ class VaultTokenRegistryBackend(TokenRegistryBackend):
 
     def _owner_path(self, lookup_id: str) -> str:
         return f"{self._kv_path_prefix}/lookup-owner/{lookup_id}"
-
-    def _revoked_path(self) -> str:
-        return f"{self._kv_path_prefix}/revoked-lookup-ids"
 
     async def add(self, record: TokenRecord) -> None:
         path = self._principal_path(record.principal_id)
@@ -755,13 +723,6 @@ class VaultTokenRegistryBackend(TokenRegistryBackend):
             lookup_id=lookup_id,
         )
 
-    async def list_revoked_jtis(self) -> frozenset[str]:
-        current = await self._vault_kv.get(self._revoked_path())
-        if current is None:
-            return frozenset()
-        data, _version = current
-        return frozenset(data.get("jtis", []))
-
     async def _remove_records(
         self, path: str, should_remove: Callable[[str, dict[str, Any]], bool]
     ) -> tuple[list[str], bool]:
@@ -834,12 +795,10 @@ class VaultTokenRegistryBackend(TokenRegistryBackend):
     async def sweep_expired(self, *, grace_seconds: int) -> SweepStats:
         now = time.time()
         cutoff = now - grace_seconds
-        revoked_before = await self.list_revoked_jtis()
 
         records_removed = 0
         owners_removed = 0
         principals_emptied = 0
-        lookup_ids_to_prune_from_denylist: set[str] = set()
 
         prefix = self._by_principal_prefix()
         for principal_key in await self._vault_kv.list(prefix):
@@ -850,101 +809,9 @@ class VaultTokenRegistryBackend(TokenRegistryBackend):
             principals_emptied += int(emptied)
             owners_removed += len(removed_this_principal)
             records_removed += len(removed_this_principal)
-            lookup_ids_to_prune_from_denylist.update(
-                set(removed_this_principal) & revoked_before
-            )
-
-        revoked_pruned = 0
-        if lookup_ids_to_prune_from_denylist:
-            path = self._revoked_path()
-            for _attempt in range(_MAX_CAS_RETRIES):
-                current = await self._vault_kv.get(path)
-                if current is None:
-                    break
-                data, version = current
-                lookup_ids = set(data.get("jtis", []))
-                still_present = lookup_ids & lookup_ids_to_prune_from_denylist
-                if not still_present:
-                    break
-                lookup_ids -= still_present
-                try:
-                    await self._vault_kv.write_cas(
-                        path, {"jtis": sorted(lookup_ids)}, version
-                    )
-                except CasConflictError:
-                    continue
-                revoked_pruned = len(still_present)
-                break
-            else:
-                raise VaultError(
-                    "sweep_expired(): exceeded retry budget pruning revoked-lookup-ids"
-                )
 
         return SweepStats(
             records_removed=records_removed,
             owners_removed=owners_removed,
-            revoked_pruned=revoked_pruned,
             principals_emptied=principals_emptied,
         )
-
-
-# ---------------------------------------------------------------------------
-# RevokedJtiCache -- bridges the registry to both identity.get_principal's
-# hot JWT-validation path AND pat_auth.py's PAT-validation path, without a
-# per-request Vault round trip.
-# ---------------------------------------------------------------------------
-
-
-class RevokedJtiCache:
-    """In-process cache of revoked token identifiers, refreshed from a ``TokenRegistryBackend`` on a bounded interval.
-
-    Consulted only for a Keycloak JWT's ``jti`` claim
-    (``identity.get_principal``, on ``/v1`` and ``/mcp`` alike). It is NOT
-    consulted for PATs: ``pat_auth.resolve_pat_principal`` reads the PAT's
-    record from the backend on every request and rejects on its
-    ``revoked_at``, so PAT revocation is immediate and does not wait on this
-    cache. The name stays "jti" because the entries are opaque
-    identifier strings as far as this cache is concerned.
-
-    Every authenticated JWT request calls ``is_revoked()`` -- a per-request
-    Vault read there would add real latency and load, so this cache serves a
-    snapshot refreshed at most once per ``refresh_interval_seconds``
-    (default 30s, configurable via
-    ``Settings.revoked_jti_cache_refresh_seconds``). A denylisted ``jti``
-    therefore takes up to that interval to take effect broker-wide: a
-    deliberate, documented staleness bound, not a bug -- see docs/auth.md.
-
-    A refresh failure (e.g. Vault briefly unreachable) keeps serving the
-    last-known set rather than failing every request open or closed
-    unpredictably, mirroring identity.get_jwks's stale-on-failure fallback.
-    """
-
-    def __init__(
-        self, backend: TokenRegistryBackend, refresh_interval_seconds: float = 30.0
-    ) -> None:
-        self._backend = backend
-        self._refresh_interval = refresh_interval_seconds
-        self._revoked: frozenset[str] = frozenset()
-        self._last_refresh: float = float("-inf")
-        self._lock = asyncio.Lock()
-        self._log = structlog.get_logger(__name__).bind(component="RevokedJtiCache")
-
-    async def is_revoked(self, jti: str) -> bool:
-        await self._maybe_refresh()
-        return jti in self._revoked
-
-    async def _maybe_refresh(self) -> None:
-        now = time.monotonic()
-        if (now - self._last_refresh) < self._refresh_interval:
-            return
-        async with self._lock:
-            now = time.monotonic()
-            if (now - self._last_refresh) < self._refresh_interval:
-                return
-            try:
-                self._revoked = await self._backend.list_revoked_jtis()
-            except Exception:  # noqa: BLE001 — must never take auth down; serve stale
-                self._log.warning(
-                    "revoked_jti_cache.refresh_failed_serving_stale", exc_info=True
-                )
-            self._last_refresh = now

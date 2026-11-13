@@ -104,7 +104,6 @@ from af_mcp_broker.principal_directory import KeycloakPrincipalDirectory
 from af_mcp_broker.shared_state import build_shared_state
 from af_mcp_broker.token_registry import (
     InMemoryTokenRegistryBackend,
-    RevokedJtiCache,
     TokenRegistryBackend,
     VaultTokenRegistryBackend,
 )
@@ -910,16 +909,6 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         token_registry_backend = InMemoryTokenRegistryBackend()
     token_registry = TokenRegistry(token_registry_backend)
 
-    # --- Revoked-jti cache: bridges the token registry to identity.py's hot
-    # JWT-validation path (both /v1's keycloak_dependency and /mcp's
-    # IdentityMiddleware call identity.get_principal, the single choke point
-    # this enforces revocation at) without a per-request Vault round trip.
-    # See token_registry.RevokedJtiCache's docstring for the staleness bound.
-    revoked_jti_cache = RevokedJtiCache(
-        token_registry_backend,
-        refresh_interval_seconds=settings.revoked_jti_cache_refresh_seconds,
-    )
-
     # --- Principal cache (issue #144 steps 2a/3/3b): resolves every
     # authenticated request's *current* groups/uid/gid/unixname/email from
     # Keycloak. Originally built only for PATs (opaque bearers carrying none
@@ -1023,7 +1012,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # (built eagerly at module scope below, since the aggregator must be
     # mountable before Settings()/ServiceRegistry() are known — see the
     # comment above `_mcp_aggregator`). Push the registry/policy/settings/
-    # credential_registry/revoked_jti_cache/identity providers/maintenance_mode_store
+    # credential_registry/identity providers/maintenance_mode_store
     # just loaded above into it now that they're real -- the middle three
     # feed the af_* diagnostic tools (issue #153), and maintenance_mode_store
     # feeds AsgiAuthMiddleware's /mcp enforcement (mirroring /v1's
@@ -1051,7 +1040,6 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         settings,
         entitlement_policy,
         credential_registry,
-        revoked_jti_cache,
         pat_backend=token_registry_backend,
         principal_cache=principal_cache,
         identity_providers=identity_providers,
@@ -1111,7 +1099,6 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     application.state.oauth21_token_store = oauth21_token_store
     application.state.oauth21_state_cipher = oauth21_state_cipher
     application.state.token_registry = token_registry
-    application.state.revoked_jti_cache = revoked_jti_cache
     application.state.principal_cache = principal_cache
     application.state.mcp_auth_code_store = mcp_auth_code_store
     application.state.broker_token_issuer = broker_token_issuer

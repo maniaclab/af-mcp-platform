@@ -446,37 +446,6 @@ def test_populate_aggregator_raises_if_middleware_missing(settings: Any) -> None
         )
 
 
-def test_populate_aggregator_propagates_revoked_jti_cache(settings: Any) -> None:
-    """issue #115: app.py's lifespan builds the real RevokedJtiCache only
-    after the aggregator already exists (see build_aggregator's eager-build
-    note), so populate_aggregator must be able to push it into
-    IdentityMiddleware the same way it refreshes settings/registry/policy."""
-    from af_mcp_broker.token_registry import (
-        InMemoryTokenRegistryBackend,
-        RevokedJtiCache,
-    )
-
-    mcp = build_aggregator(
-        ServiceRegistry(), settings, EntitlementPolicy(), CredentialRegistry()
-    )
-    identity_mw = next(
-        mw for mw in mcp.middleware if isinstance(mw, IdentityMiddleware)
-    )
-    assert identity_mw.revoked_jti_cache is None
-
-    cache = RevokedJtiCache(InMemoryTokenRegistryBackend())
-    populate_aggregator(
-        mcp,
-        ServiceRegistry(),
-        settings,
-        EntitlementPolicy(),
-        CredentialRegistry(),
-        revoked_jti_cache=cache,
-    )
-
-    assert identity_mw.revoked_jti_cache is cache
-
-
 def test_client_factory_builds_streamable_http_transport(settings: Any) -> None:
     # auth_type="none" keeps this test focused on transport selection alone.
     spec = _spec(url="http://example.invalid/mcp", auth_type="none")
