@@ -28,6 +28,8 @@ from urllib.parse import urlparse
 import httpx
 import structlog
 
+from af_mcp_broker.errors import BrokerError
+
 log = structlog.get_logger(__name__)
 
 # Guards for the server-side fetch of an attacker-influenceable URL.
@@ -43,7 +45,7 @@ Resolver = Callable[..., Any]
 _LOOPBACK_HOSTS = frozenset({"localhost"})
 
 
-class CimdError(Exception):
+class CimdError(BrokerError):
     """Raised when an MCP client's CIMD ``client_id`` URL or document is invalid or unsafe."""
 
 

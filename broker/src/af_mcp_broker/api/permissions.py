@@ -403,7 +403,12 @@ async def _service_status(
 
     if spec.auth_type == "none":
         # No permission gate (or one just satisfied) and no user credential
-        # needed at all -- nothing left to block on.
+        # needed at all -- nothing left to block on except a backend that is
+        # down. Only the service-wide "unavailable" record applies: the
+        # caller-specific reasons are about a per-user credential this
+        # service has none of.
+        if registry.recent_list_failure(spec.name, principal.subject) == "unavailable":
+            return "unavailable", _STATUS_DETAILS["unavailable"], None, None
         return "available", _STATUS_DETAILS["available"], None, None
 
     try:

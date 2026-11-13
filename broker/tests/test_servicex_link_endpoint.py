@@ -17,7 +17,7 @@ import pytest
 from test_broker_issued import _make_rsa_key, _private_pem
 from test_servicex import FakeServiceXClient, FakeServiceXStore
 
-from af_mcp_broker.credentials.servicex_service import (
+from af_mcp_broker.credentials.errors import (
     ServiceXBadRefreshTokenError,
     ServiceXServiceMintError,
 )

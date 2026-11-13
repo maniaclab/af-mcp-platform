@@ -3,7 +3,7 @@
 Persists ``StoredOAuthCredential`` entries in a KV-v2 secrets engine, via a
 shared ``VaultKV`` transport client (``vault_kv.py``) -- this module owns the
 path layout (``{kv_path_prefix}/{subject}/{alias}``), the CAS-conflict ->
-``VersionConflict`` translation the ``TokenStore`` protocol promises, and the
+``VersionConflictError`` translation the ``TokenStore`` protocol promises, and the
 ``StoredOAuthCredential`` (de)serialization, including the ``SecretStr``
 reveal/reload round trip.
 """
@@ -12,11 +12,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from af_mcp_broker.credentials.oauth21 import (
-    StoredOAuthCredential,
-    VersionConflict,
-)
-from af_mcp_broker.vault_kv import CasConflict, VaultKV
+from af_mcp_broker.credentials.errors import VersionConflictError
+from af_mcp_broker.credentials.oauth21 import StoredOAuthCredential
+from af_mcp_broker.vault_kv import CasConflictError, VaultKV
 
 
 class VaultTokenStore:
@@ -55,8 +53,8 @@ class VaultTokenStore:
             return await self._vault_kv.write_cas(
                 self._path(subject, alias), _reveal_secrets(cred), expected_version
             )
-        except CasConflict as exc:
-            raise VersionConflict(
+        except CasConflictError as exc:
+            raise VersionConflictError(
                 f"vault cas write conflict for subject={subject!r} "
                 f"alias={alias!r} expected_version={expected_version!r}"
             ) from exc

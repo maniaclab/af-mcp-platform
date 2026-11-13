@@ -16,10 +16,10 @@ The provider's vault store is swapped the same way, for the same reason
 and this fixture only stubs ``VaultKV``'s startup trial auth, not its KV
 verbs.
 
-The provider's own error-mapping/NeedsUnlock behavior is unit-tested in
+The provider's own error-mapping/NeedsUnlockError behavior is unit-tested in
 test_krb5_token.py; this file covers only the ``/v1/krb5/ticket`` route's
 HTTP surface (status codes, response shape, its own credential-optional
-``NeedsUnlock`` -> 409 mapping, and the resulting ``krb5_has_keytab`` status
+``NeedsUnlockError`` -> 409 mapping, and the resulting ``krb5_has_keytab`` status
 ``GET /v1/identities`` reports for the same ``krb5_app`` fixture).
 """
 
@@ -36,13 +36,13 @@ from test_broker_issued import _make_rsa_key, _private_pem
 from test_krb5_token import FakeKrb5VaultStore
 
 from af_mcp_broker.credentials import KrbTokenProvider
-from af_mcp_broker.credentials.krb5_service import (
+from af_mcp_broker.credentials.errors import (
     Krb5TokenAccountError,
     Krb5TokenBadCredentialError,
     Krb5TokenInvalidRequestError,
     Krb5TokenRateLimitedError,
-    MintedTicket,
 )
+from af_mcp_broker.credentials.krb5_service import MintedTicket
 from af_mcp_broker.vault_kv import VaultKV
 
 if TYPE_CHECKING:
@@ -359,7 +359,7 @@ def test_rate_limited_maps_to_429_with_retry_after(krb5_app) -> None:
 
 
 # ---------------------------------------------------------------------------
-# NeedsUnlock -> 409, exercised via POST /v1/credential (provider-agnostic
+# NeedsUnlockError -> 409, exercised via POST /v1/credential (provider-agnostic
 # handler, no krb5-specific code -- see test_api.py's
 # test_credential_x509_needs_unlock_409 for the x509 equivalent).
 # ---------------------------------------------------------------------------
@@ -374,12 +374,12 @@ def test_credential_endpoint_needs_unlock_409_before_a_usable_ticket_is_cached(
     see ``KrbTokenProvider.is_linked``'s docstring on the two different
     staleness thresholds), but ``POST /v1/credential`` (which supplies no
     username/password) then hits ``issue()``'s cache miss and its
-    ``NeedsUnlock`` raise, which ``issue_credential``'s existing generic
-    ``except NeedsUnlock`` handler maps to 409 -- no krb5-specific code
+    ``NeedsUnlockError`` raise, which ``issue_credential``'s existing generic
+    ``except NeedsUnlockError`` handler maps to 409 -- no krb5-specific code
     needed. Minted non-renewable so tier 3 (``get_renewable_ticket``) also
     misses and falls through to tier 5 -- a renewable ticket would instead
     be picked up by ``FakeKrb5VaultStore``'s real bookkeeping and hands-free
-    renewed, never reaching ``NeedsUnlock`` at all."""
+    renewed, never reaching ``NeedsUnlockError`` at all."""
     client, _state, fake_client = krb5_app
     fake_client.outcome = _minted(remaining=60.0, renewable=False)
     mint_resp = client.post(
@@ -431,7 +431,7 @@ def test_ticket_route_needs_unlock_409_with_no_credential_and_no_stored_link(
     krb5_app,
 ) -> None:
     """Nothing cached, nothing stored -- an empty-body request can't produce
-    a ticket, so the route maps ``NeedsUnlock`` to 409 rather than the
+    a ticket, so the route maps ``NeedsUnlockError`` to 409 rather than the
     generic-endpoint's ``422`` a truly missing ``username``/``password``
     would otherwise be (both are optional on ``KrbTicketRequest`` now)."""
     client, _state, _fake_client = krb5_app

@@ -13,11 +13,10 @@ from conftest import (
     HungBackend,
     make_claims,
     run_aggregator_async,
-    run_asgi_app,
+    run_inprocess_asgi_app,
+    run_inprocess_server,
 )
 from fastmcp import Client, FastMCP
-from fastmcp.client.transports import StreamableHttpTransport
-from fastmcp.utilities.tests import run_server_async
 
 from af_mcp_broker.api.permissions import _service_status
 from af_mcp_broker.authorization import EntitlementPolicy
@@ -29,10 +28,13 @@ from af_mcp_broker.credentials import (
 )
 from af_mcp_broker.mcp import aggregator as aggregator_module
 from af_mcp_broker.mcp.aggregator import build_aggregator
+from af_mcp_broker.mcp.errors import ListDeadlineExceededError
 from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
+
+    from fastmcp.utilities.tests import ASGIServer
 
 # ---------------------------------------------------------------------------
 # One backend that accepts the connection and never answers (a pod on an
@@ -90,11 +92,11 @@ def list_registry() -> ServiceRegistry:
 
 
 @pytest.fixture
-async def deadline_aggregator_url(
+async def deadline_aggregator_server(
     hung_backend: HungBackend,
     list_registry: ServiceRegistry,
     static_principal_cache: Any,
-) -> AsyncIterator[str]:
+) -> AsyncIterator[ASGIServer]:
     principal_cache, _directory = static_principal_cache
     settings = Settings(
         oidc_issuer=ISSUER,
@@ -102,8 +104,8 @@ async def deadline_aggregator_url(
         mcp_list_timeout_seconds=_LIST_DEADLINE_SECONDS,
     )
     async with (
-        run_server_async(_open_backend(), path="/mcp") as open_url,
-        run_asgi_app(hung_backend) as hung_url,
+        run_inprocess_server(_open_backend(), path="/mcp") as open_url,
+        run_inprocess_asgi_app(hung_backend) as hung_url,
     ):
         for name, url in (("open", open_url), ("hung", f"{hung_url}/mcp")):
             list_registry.register(
@@ -124,14 +126,12 @@ async def deadline_aggregator_url(
             CredentialRegistry(),
             principal_cache=principal_cache,
         )
-        async with run_aggregator_async(mcp, path="/mcp") as url:
-            yield url
+        async with run_aggregator_async(mcp, path="/mcp") as server:
+            yield server
 
 
-def _client(url: str, token: str) -> Client:
-    return Client(
-        StreamableHttpTransport(url, headers={"Authorization": f"Bearer {token}"})
-    )
+def _client(server: ASGIServer, token: str) -> Client:
+    return server.client(headers={"Authorization": f"Bearer {token}"})
 
 
 @pytest.fixture
@@ -141,13 +141,13 @@ def token(sig_key: Any, prime_jwks: Any) -> str:
 
 
 async def test_hung_backend_neither_delays_nor_hides_healthy_backends(
-    deadline_aggregator_url: str,
+    deadline_aggregator_server: ASGIServer,
     token: str,
     list_registry: ServiceRegistry,
     list_failure_logs: list[dict[str, Any]],
 ) -> None:
     started = time.monotonic()
-    async with _client(deadline_aggregator_url, token) as client:
+    async with _client(deadline_aggregator_server, token) as client:
         names = {t.name for t in await client.list_tools()}
     elapsed = time.monotonic() - started
 
@@ -161,15 +161,15 @@ async def test_hung_backend_neither_delays_nor_hides_healthy_backends(
 
 
 async def test_deadline_miss_is_negative_cached_for_the_same_caller(
-    deadline_aggregator_url: str, token: str, hung_backend: HungBackend
+    deadline_aggregator_server: ASGIServer, token: str, hung_backend: HungBackend
 ) -> None:
-    async with _client(deadline_aggregator_url, token) as client:
+    async with _client(deadline_aggregator_server, token) as client:
         await client.list_tools()
     assert hung_backend.requests >= 1
     requests_after_first = hung_backend.requests
 
     started = time.monotonic()
-    async with _client(deadline_aggregator_url, token) as client:
+    async with _client(deadline_aggregator_server, token) as client:
         names = {t.name for t in await client.list_tools()}
     elapsed = time.monotonic() - started
 
@@ -179,7 +179,7 @@ async def test_deadline_miss_is_negative_cached_for_the_same_caller(
 
 
 async def test_abandoned_backend_request_is_closed_without_leaked_tasks(
-    deadline_aggregator_url: str,
+    deadline_aggregator_server: ASGIServer,
     token: str,
     hung_backend: HungBackend,
     caplog: pytest.LogCaptureFixture,
@@ -187,7 +187,7 @@ async def test_abandoned_backend_request_is_closed_without_leaked_tasks(
     caplog.set_level(logging.WARNING, logger="asyncio")
     before = asyncio.all_tasks()
 
-    async with _client(deadline_aggregator_url, token) as client:
+    async with _client(deadline_aggregator_server, token) as client:
         await client.list_tools()
     # The backend sees the broker's connection go away rather than lingering.
     for _ in range(100):
@@ -198,7 +198,8 @@ async def test_abandoned_backend_request_is_closed_without_leaked_tasks(
 
     await asyncio.sleep(0.2)
     # Tasks the abandoned backend client started (fastmcp / mcp SDK
-    # transport) must be gone; uvicorn's own per-connection tasks are not ours.
+    # transport) must be gone, as must the in-process backend's request handler
+    # (it ends with the client's transport).
     leaked = [
         t
         for t in asyncio.all_tasks() - before
@@ -246,7 +247,7 @@ async def test_deadline_covers_hung_credential_setup_and_is_unavailable(
         list_timeout_seconds=_LIST_DEADLINE_SECONDS,
     )
 
-    with pytest.raises(aggregator_module.ListDeadlineExceeded):
+    with pytest.raises(ListDeadlineExceededError):
         await provider._list_tools()
 
     assert registry.recent_list_failure("example", "alice") == "unavailable"
@@ -282,7 +283,7 @@ async def test_deadline_miss_shows_unavailable_service_wide_in_catalog(
         list_timeout_seconds=_LIST_DEADLINE_SECONDS,
     )
 
-    with pytest.raises(aggregator_module.ListDeadlineExceeded):
+    with pytest.raises(ListDeadlineExceededError):
         await provider._list_tools()
 
     # Every caller sees the service-wide record, not only the one whose

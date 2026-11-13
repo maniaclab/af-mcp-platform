@@ -26,7 +26,7 @@ values and covers three scenarios:
    either during the burst or after it quiesces.
 
 2. **Rate-limit lockout** — five failed cache lookups for a single uid within
-   the 15-minute window return `None`; the sixth raises `RateLimitError`. A
+   the 15-minute window return `None`; the sixth raises `UnlockRateLimitError`. A
    companion test asserts that a successful `put` resets the miss counter so
    legitimate re-authentication after an expiry-driven miss is not penalised.
 
@@ -50,7 +50,7 @@ All tests must show `PASSED`. Any `FAILED` or `ERROR` is a blocker.
 | Scenario | Pass | Fail |
 |---|---|---|
 | Cross-principal isolation | Every principal retrieves exactly its own `IssuedCredential` | Any principal receives another's credential |
-| Rate-limit | Sixth miss within the window raises `RateLimitError`; a successful `put` clears the counter | No error, or raise on attempt < 6, or counter persists across a `put` |
+| Rate-limit | Sixth miss within the window raises `UnlockRateLimitError`; a successful `put` clears the counter | No error, or raise on attempt < 6, or counter persists across a `put` |
 | Janitor | Stale entry gone after `sweep_expired`; live entry preserved | Stale entry lingers, or live entry evicted |
 
 ## Dependency

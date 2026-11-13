@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from af_mcp_broker.credmon.state import CredmonSyncState
 from af_mcp_broker.credmon.storer import SubjectSource
-from af_mcp_broker.vault_kv import CasConflict
+from af_mcp_broker.vault_kv import CasConflictError
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -43,7 +43,7 @@ class VaultCredmonSyncState(CredmonSyncState):
 
     The lease is a check-and-set write against the version just read, so of
     two replicas that both see a free (or expired) lease, exactly one write
-    lands and the other gets ``CasConflict`` -> not acquired. Clock skew
+    lands and the other gets ``CasConflictError`` -> not acquired. Clock skew
     between replicas only shifts when an expired lease becomes takeable; it
     cannot let two holders both win the same version.
     """
@@ -69,7 +69,7 @@ class VaultCredmonSyncState(CredmonSyncState):
                 {"holder": holder, "expires_at": now + ttl_seconds},
                 expected_version=version,
             )
-        except CasConflict:
+        except CasConflictError:
             return False
         return True
 
@@ -91,7 +91,7 @@ class VaultCredmonSyncState(CredmonSyncState):
                 {"holder": holder, "expires_at": now},
                 expected_version=version,
             )
-        except CasConflict:
+        except CasConflictError:
             return
 
     async def write_status(self, status: dict[str, Any]) -> None:
@@ -105,10 +105,10 @@ class VaultCredmonSyncState(CredmonSyncState):
                     status,
                     expected_version=current[1] if current is not None else None,
                 )
-            except CasConflict:
+            except CasConflictError:
                 continue
             return
-        raise CasConflict(
+        raise CasConflictError(
             f"credmon status write kept conflicting at {self._status_path!r}"
         )
 

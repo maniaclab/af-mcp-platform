@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 from test_x509_service_mode import FakeX509Store
 
-from af_mcp_broker.credentials.voms_service import VomsServicePreflightError
+from af_mcp_broker.credentials.errors import VomsServicePreflightError
 
 if TYPE_CHECKING:
     from collections.abc import Callable

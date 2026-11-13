@@ -564,6 +564,68 @@ def test_catalog_status_shows_service_wide_unavailable_to_every_subject(
         assert rucio["status"] == "unavailable"
 
 
+def test_catalog_status_shows_service_wide_unavailable_for_auth_type_none(
+    app_client: tuple[TestClient, dict], make_principal: Callable[..., object]
+) -> None:
+    """A backend needing no credential is still "unavailable" for every
+    caller once a service-wide tools/list failure is on record."""
+    from af_mcp_broker.app import app
+    from af_mcp_broker.mcp.registry import ServiceSpec
+
+    app.state.service_registry.register(
+        ServiceSpec(
+            name="downopen",
+            prefix="downopen",
+            url="http://downopen-mcp.mcp.svc.cluster.local/mcp",
+            transport="http",
+            required_permission="__none__",
+            auth_type="none",
+        )
+    )
+    app.state.service_registry.record_list_failure("downopen", "unavailable", "sub-a")
+
+    client, state = app_client
+    for subject in ("sub-a", "sub-b"):
+        state["principal"] = make_principal(groups=[], subject=subject)
+        resp = client.get("/v1/catalog", headers=_AUTH)
+        assert resp.status_code == 200, resp.text
+        downopen = {s["name"]: s for s in resp.json()["servers"]}["downopen"]
+        assert downopen["status"] == "unavailable"
+        assert downopen["correlation_id"] is None
+        assert downopen["link_state"] is None
+
+
+@pytest.mark.parametrize("reason", ["unauthorized", "not_linked"])
+def test_catalog_status_ignores_caller_specific_failure_for_auth_type_none(
+    app_client: tuple[TestClient, dict],
+    make_principal: Callable[..., object],
+    reason: str,
+) -> None:
+    """Caller-specific listing failures are about a per-user credential, which
+    an auth_type "none" backend has none of, so they never change its status."""
+    from af_mcp_broker.app import app
+    from af_mcp_broker.mcp.registry import ServiceSpec
+
+    app.state.service_registry.register(
+        ServiceSpec(
+            name="openbackend",
+            prefix="openbackend",
+            url="http://openbackend-mcp.mcp.svc.cluster.local/mcp",
+            transport="http",
+            required_permission="__none__",
+            auth_type="none",
+        )
+    )
+    app.state.service_registry.record_list_failure("openbackend", reason, "sub-a")
+
+    client, state = app_client
+    state["principal"] = make_principal(groups=[], subject="sub-a")
+    resp = client.get("/v1/catalog", headers=_AUTH)
+    assert resp.status_code == 200, resp.text
+    openbackend = {s["name"]: s for s in resp.json()["servers"]}["openbackend"]
+    assert openbackend["status"] == "available"
+
+
 def test_catalog_unlinked_caller_is_told_to_link_not_that_a_credential_was_rejected(
     app_client: tuple[TestClient, dict],
     make_principal: Callable[..., object],
@@ -806,7 +868,7 @@ def test_credential_x509_needs_unlock_409(app_client: tuple[TestClient, dict]) -
     client, _ = app_client
     # ami is x509; the app_client fixture pre-creates a fake usercert/userkey
     # pair so is_linked() reports True. With an empty cache and no passphrase
-    # the provider then raises NeedsUnlock, which the endpoint maps to 409 +
+    # the provider then raises NeedsUnlockError, which the endpoint maps to 409 +
     # unlock_endpoint.
     resp = client.post("/v1/credential", json={"target": "ami"}, headers=_AUTH)
     assert resp.status_code == 409, resp.text

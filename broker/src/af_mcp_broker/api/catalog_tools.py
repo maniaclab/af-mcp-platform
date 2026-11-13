@@ -31,11 +31,11 @@ from af_mcp_broker.authorization import (
 from af_mcp_broker.config import get_settings
 from af_mcp_broker.identity import Principal, keycloak_dependency
 from af_mcp_broker.mcp.aggregator import (
-    NotLinkedForListing,
     ToolListingEntry,
     fetch_service_tool_listing,
     resolve_list_time_credential,
 )
+from af_mcp_broker.mcp.errors import NotLinkedForListingError
 
 if TYPE_CHECKING:
     from af_mcp_broker.authorization import EntitlementPolicy
@@ -303,7 +303,7 @@ async def get_service_tools(
                 credential = await resolve_list_time_credential(
                     spec, credential_registry, principal, broker_token_issuer
                 )
-            except NotLinkedForListing as exc:
+            except NotLinkedForListingError as exc:
                 # A rejected credential reads as "unauthorized" (re-link), matching
                 # the catalog's "rejected" link state, not "not_linked".
                 status = "unauthorized" if exc.rejected else "not_linked"
