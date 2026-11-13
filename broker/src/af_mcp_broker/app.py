@@ -64,6 +64,7 @@ from af_mcp_broker.credmon.factory import build_credmon_sync
 from af_mcp_broker.credmon.guidance import JobCredentialGuide, wired_kinds
 from af_mcp_broker.http import aclose_http_client
 from af_mcp_broker.identity import (
+    IdentityError,
     PrincipalDirectoryUnavailableError,
     TokenAudienceError,
     TokenExpiredError,
@@ -1387,44 +1388,22 @@ async def _http_exception_handler(request: Request, exc: HTTPException) -> Respo
 # translates them itself in mcp/middleware/identity_mw.py); /v1 maps each onto
 # the HTTPException the caller has always received, routed through
 # _http_exception_handler so logging and 5xx correlation_id folding are
-# unchanged.
-@app.exception_handler(TokenExpiredError)
-async def _token_expired_error_handler(
-    request: Request, exc: TokenExpiredError
-) -> Response:
+# unchanged. The status code and headers live here, not on the domain classes.
+_IDENTITY_ERROR_RESPONSES: dict[
+    type[IdentityError], tuple[int, dict[str, str] | None]
+] = {
+    TokenExpiredError: (status.HTTP_401_UNAUTHORIZED, {"WWW-Authenticate": "Bearer"}),
+    TokenAudienceError: (status.HTTP_401_UNAUTHORIZED, {"WWW-Authenticate": "Bearer"}),
+    PrincipalDirectoryUnavailableError: (status.HTTP_503_SERVICE_UNAVAILABLE, None),
+}
+
+
+@app.exception_handler(IdentityError)
+async def _identity_error_handler(request: Request, exc: IdentityError) -> Response:
+    status_code, headers = _IDENTITY_ERROR_RESPONSES[type(exc)]
     return await _http_exception_handler(
         request,
-        HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=exc.detail,
-            headers={"WWW-Authenticate": "Bearer"},
-        ),
-    )
-
-
-@app.exception_handler(TokenAudienceError)
-async def _token_audience_error_handler(
-    request: Request, exc: TokenAudienceError
-) -> Response:
-    return await _http_exception_handler(
-        request,
-        HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=exc.detail,
-            headers={"WWW-Authenticate": "Bearer"},
-        ),
-    )
-
-
-@app.exception_handler(PrincipalDirectoryUnavailableError)
-async def _principal_directory_unavailable_error_handler(
-    request: Request, exc: PrincipalDirectoryUnavailableError
-) -> Response:
-    return await _http_exception_handler(
-        request,
-        HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=exc.detail
-        ),
+        HTTPException(status_code=status_code, detail=exc.detail, headers=headers),
     )
 
 
