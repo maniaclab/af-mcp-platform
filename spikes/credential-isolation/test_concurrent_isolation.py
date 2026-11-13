@@ -138,11 +138,11 @@ async def test_rate_limit_triggers_after_max_failed_unlocks() -> None:
 
     # Five genuine failed-unlock attempts in a row.
     for _attempt in range(1, 6):
-        cache.record_failed_unlock(uid)
+        await cache.record_failed_unlock(uid)
 
     # The sixth attempt exceeds the threshold and must raise.
     with pytest.raises(RateLimitError):
-        cache.record_failed_unlock(uid)
+        await cache.record_failed_unlock(uid)
 
 
 @pytest.mark.anyio
@@ -165,14 +165,14 @@ async def test_successful_put_resets_rate_limit_counter() -> None:
 
     # Rack up genuine failed-unlock attempts just short of the limit.
     for _ in range(5):
-        cache.record_failed_unlock(uid)
+        await cache.record_failed_unlock(uid)
 
     # A successful put must clear the counter.
     await cache.put(str(uid), TARGET, _make_credential(uid), uid=uid)
 
     # If the counter had persisted, this single failure would be the sixth
     # and trip the limiter immediately.
-    cache.record_failed_unlock(uid)
+    await cache.record_failed_unlock(uid)
 
 
 # ---------------------------------------------------------------------------

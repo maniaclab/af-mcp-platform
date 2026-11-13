@@ -16,7 +16,7 @@ import datetime
 import sys
 import types
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 from pydantic import SecretBytes, SecretStr
@@ -597,7 +597,7 @@ async def test_mint_kubernetes_job_failed_records_failed_unlock(monkeypatch):
 
     backend = HomeDirVomsBackend(settings=SimpleNamespace(home_root="/data/homes"))
     cache = CredentialCache()
-    monkeypatch.setattr(cache, "record_failed_unlock", MagicMock())
+    monkeypatch.setattr(cache, "record_failed_unlock", AsyncMock())
     principal = _principal("auser")
 
     with pytest.raises(ValueError, match="failed"):
@@ -624,7 +624,7 @@ async def test_mint_kubernetes_harvest_failure_does_not_record_failed_unlock(
 
     backend = HomeDirVomsBackend(settings=SimpleNamespace(home_root="/data/homes"))
     cache = CredentialCache()
-    monkeypatch.setattr(cache, "record_failed_unlock", MagicMock())
+    monkeypatch.setattr(cache, "record_failed_unlock", AsyncMock())
     principal = _principal("auser")
 
     with pytest.raises(ProxyHarvestError, match="end sentinel"):

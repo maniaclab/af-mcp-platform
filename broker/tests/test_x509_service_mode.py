@@ -26,12 +26,18 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from af_mcp_broker.shared_state import WindowCount
+
 import pytest
 from pydantic import SecretBytes, SecretStr
 from test_x509 import _principal
 
 from af_mcp_broker.credentials.base import CredentialKind, NeedsUnlock
-from af_mcp_broker.credentials.cache import CredentialCache, RateLimitError
+from af_mcp_broker.credentials.cache import (
+    CredentialCache,
+    RateLimitError,
+    unlock_failures_key,
+)
 from af_mcp_broker.credentials.voms_service import (
     MintedProxy,
     VomsServiceBadPassphraseError,
@@ -181,6 +187,10 @@ def _make_provider(
     return provider, voms_client, store, cache
 
 
+async def _failed_unlocks(cache: CredentialCache, uid: int) -> WindowCount | None:
+    return await cache._shared_state.get_window(unlock_failures_key(uid))
+
+
 async def _seed_link(store: FakeX509Store, subject: str = "user-123") -> None:
     await store.store_link(
         subject,
@@ -278,7 +288,9 @@ class TestLinkFlow:
             await provider.issue(principal, "ami", passphrase=SecretBytes(b"wrong"))
 
         assert store.records == {}
-        assert cache._failed_unlocks[50123].attempts == 1
+        failures = await _failed_unlocks(cache, 50123)
+        assert failures is not None
+        assert failures.count == 1
 
     async def test_infra_failure_does_not_count_against_rate_limiter(self) -> None:
         provider, _, store, cache = _make_provider(
@@ -290,7 +302,7 @@ class TestLinkFlow:
             await provider.issue(principal, "ami", passphrase=SecretBytes(b"hunter2"))
 
         assert store.records == {}
-        assert 50123 not in cache._failed_unlocks
+        assert await _failed_unlocks(cache, 50123) is None
 
     async def test_rate_limit_is_checked_before_the_service_is_called(self) -> None:
         cache = CredentialCache(max_failed_unlocks=1)
@@ -310,11 +322,11 @@ class TestLinkFlow:
     async def test_successful_link_resets_the_rate_limiter(self) -> None:
         provider, _, _, cache = _make_provider()
         principal = _principal("auser")
-        cache.record_failed_unlock(50123)
+        await cache.record_failed_unlock(50123)
 
         await provider.issue(principal, "ami", passphrase=SecretBytes(b"hunter2"))
 
-        assert 50123 not in cache._failed_unlocks
+        assert await _failed_unlocks(cache, 50123) is None
 
     async def test_posix_identity_required_to_link(self) -> None:
         provider, voms_client, store, _ = _make_provider()
@@ -482,7 +494,7 @@ class TestStoredProxyAndRenewal:
         assert store.deleted == ["user-123"]
         assert await store.get_link("user-123") is None
         # A stored-passphrase failure is not a user brute-force attempt.
-        assert 50123 not in cache._failed_unlocks
+        assert await _failed_unlocks(cache, 50123) is None
 
     async def test_renewal_infra_failure_neither_unlinks_nor_needs_unlock(
         self,
@@ -497,7 +509,7 @@ class TestStoredProxyAndRenewal:
 
         assert store.deleted == []
         assert await store.get_link("user-123") is not None
-        assert 50123 not in cache._failed_unlocks
+        assert await _failed_unlocks(cache, 50123) is None
 
     async def test_no_link_and_no_passphrase_raises_needs_unlock(self) -> None:
         provider, voms_client, _, _ = _make_provider()
@@ -743,7 +755,7 @@ class TestCustodyConsent:
                 remember=False,
             )
 
-        assert 50123 in cache._failed_unlocks
+        assert await _failed_unlocks(cache, 50123) is not None
         assert store.records == {}
 
     async def test_remember_false_expired_proxy_needs_unlock_without_unlinking(
