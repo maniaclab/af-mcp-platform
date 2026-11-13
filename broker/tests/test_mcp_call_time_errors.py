@@ -6,13 +6,11 @@ from typing import Any
 
 import mcp.types as mt
 import pytest
-from conftest import make_claims, run_aggregator_async
+from conftest import make_claims, run_aggregator_async, run_inprocess_server
 from fastmcp import Client, FastMCP
-from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.exceptions import ToolError
 from fastmcp.server.providers.proxy import ProxyTool
 from fastmcp.utilities.http import find_available_port
-from fastmcp.utilities.tests import run_server_async
 
 from af_mcp_broker.authorization import EntitlementPolicy
 from af_mcp_broker.credentials import CredentialRegistry
@@ -109,7 +107,9 @@ async def test_upstream_mcp_level_error_passes_through_unchanged(
     prime_jwks([sig_key.jwk])
     token = sig_key.sign(make_claims())
 
-    async with run_server_async(_toy_backend_with_failing_tool(), path="/mcp") as url:
+    async with run_inprocess_server(
+        _toy_backend_with_failing_tool(), path="/mcp"
+    ) as url:
         registry = ServiceRegistry()
         registry.register(
             ServiceSpec(
@@ -130,12 +130,11 @@ async def test_upstream_mcp_level_error_passes_through_unchanged(
             principal_cache=principal_cache,
         )
 
-        async with run_aggregator_async(mcp, path="/mcp") as agg_url:
-            transport = StreamableHttpTransport(
-                agg_url, headers={"Authorization": f"Bearer {token}"}
-            )
-            async with Client(transport) as client:
-                result = await client.call_tool_mcp("toy_boom", {})
+        async with (
+            run_aggregator_async(mcp, path="/mcp") as server,
+            server.client(headers={"Authorization": f"Bearer {token}"}) as client,
+        ):
+            result = await client.call_tool_mcp("toy_boom", {})
 
     assert result.is_error is True
     assert len(result.content) == 1
@@ -164,7 +163,7 @@ async def test_slow_backend_call_times_out_cleanly_instead_of_hanging(
     prime_jwks([sig_key.jwk])
     token = sig_key.sign(make_claims())
 
-    async with run_server_async(_toy_backend_with_slow_tool(), path="/mcp") as url:
+    async with run_inprocess_server(_toy_backend_with_slow_tool(), path="/mcp") as url:
         registry = ServiceRegistry()
         registry.register(
             ServiceSpec(
@@ -186,20 +185,19 @@ async def test_slow_backend_call_times_out_cleanly_instead_of_hanging(
             principal_cache=principal_cache,
         )
 
-        async with run_aggregator_async(mcp, path="/mcp") as agg_url:
-            transport = StreamableHttpTransport(
-                agg_url, headers={"Authorization": f"Bearer {token}"}
-            )
-            async with Client(transport) as client:
-                started = time.monotonic()
-                # fastmcp v4 normalizes a proxy transport timeout to its own
-                # "Upstream request timed out" message (raised via
-                # _proxy_upstream_error), replacing mcp v1's raw "Timed out
-                # while waiting for response to..." text -- match
-                # case-insensitively on the substring both wordings share.
-                with pytest.raises(ToolError, match=r"(?i)timed out"):
-                    await client.call_tool("slow_slow", {})
-                elapsed = time.monotonic() - started
+        async with (
+            run_aggregator_async(mcp, path="/mcp") as server,
+            server.client(headers={"Authorization": f"Bearer {token}"}) as client,
+        ):
+            started = time.monotonic()
+            # fastmcp v4 normalizes a proxy transport timeout to its own
+            # "Upstream request timed out" message (raised via
+            # _proxy_upstream_error), replacing mcp v1's raw "Timed out
+            # while waiting for response to..." text -- match
+            # case-insensitively on the substring both wordings share.
+            with pytest.raises(ToolError, match=r"(?i)timed out"):
+                await client.call_tool("slow_slow", {})
+            elapsed = time.monotonic() - started
 
     # Well under the backend's 2s sleep -- proves the call actually failed
     # on the configured 0.2s timeout rather than eventually completing.

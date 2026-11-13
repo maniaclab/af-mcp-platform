@@ -1,22 +1,26 @@
-"""Regression tests for the test-server harness itself.
+"""Regression tests for the in-process test harness.
 
-CI runs used to hang silently (until the 6-hour Actions job timeout) when a
-uvicorn server task failed to start -- typically the ``find_available_port``
-TOCTOU race on a contended runner: the port probed as free gets grabbed before
-uvicorn binds it, ``serve()``/``run_http_async()`` dies inside its task, and
-the harness's unbounded startup wait (``while not server.started`` /
-``await mcp._started.wait()``) spins forever with the task's exception
-swallowed. These tests reproduce that failure deterministically by occupying
-the port first, and assert the harness now raises promptly instead of
-hanging. The ``timeout`` marks keep a regression from wedging this very file.
+CI runs used to hang silently (until the 6-hour Actions job timeout) on the
+real-socket harness: a uvicorn server task that failed to start (the
+``find_available_port`` TOCTOU race), and an MCP client whose connection died
+mid-flight or went dead-but-open (modelcontextprotocol/python-sdk#1144), which
+a ``ClientSession`` patch used to bound. Servers now run through fastmcp's
+``asgi_server`` and the aggregator's backends through an in-process transport,
+so there is no port to lose and no connection to leave dead. These tests pin
+the two failure modes that remain expressible in-process -- a transport that
+dies mid-response, and a server that never answers -- and assert the client
+fails promptly instead of hanging. The ``timeout`` marks keep a regression
+from wedging this very file.
 """
 
 from __future__ import annotations
 
-import asyncio
-import socket
+from typing import TYPE_CHECKING, Self
 
+import anyio
+import httpx2
 import pytest
+from conftest import _CLIENT_DEFAULT_TIMEOUT, HungBackend
 
 # Import from conftest at module level ONLY: pytest imports every collected
 # conftest.py under the bare name "conftest", and the CI invocation
@@ -25,116 +29,97 @@ import pytest
 # module-level import here binds broker's conftest at collection time (like
 # every other test file); a function-level `from conftest import ...` would
 # resolve at test time and get the spikes one.
-from conftest import (
-    _CLIENT_SESSION_HOTFIX,
-    _await_server_started,
-    _contained,
-    run_asgi_app,
-)
+from fastmcp import Client, FastMCP
+from fastmcp.client.transports import StreamableHttpTransport
+from fastmcp.exceptions import McpError
+from fastmcp.utilities.asgi_transport import run_asgi_lifespan
+from fastmcp.utilities.tests import ASGIServer, asgi_server
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
 
 
-async def _hello_app(scope, receive, send):  # pragma: no cover - trivial ASGI app
-    assert scope["type"] == "http"
-    await send({"type": "http.response.start", "status": 200, "headers": []})
-    await send({"type": "http.response.body", "body": b"ok"})
+class _DiesMidBody(httpx2.AsyncByteStream):
+    """A response body that delivers one SSE line, then fails like a reset connection."""
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        yield b"event: message\n"
+        raise httpx2.ReadError("connection died mid-body")
 
 
-@pytest.fixture
-def occupied_port() -> int:
-    """A port something is already listening on for the duration of the test."""
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.bind(("127.0.0.1", 0))
-    sock.listen(1)
-    port = sock.getsockname()[1]
-    yield port
-    sock.close()
+class _DiesOnToolCall(httpx2.AsyncBaseTransport):
+    """Wraps an in-process transport, answering ``tools/call`` with a body that dies mid-stream."""
 
+    def __init__(self, inner: httpx2.AsyncBaseTransport) -> None:
+        self._inner = inner
 
-@pytest.mark.timeout(30)
-async def test_run_asgi_app_bind_failure_raises_instead_of_hanging(
-    occupied_port: int,
-) -> None:
-    # run_asgi_app binds the socket itself (eliminating the TOCTOU race
-    # outright), so an occupied port surfaces as an immediate plain OSError
-    # from bind -- not a hang, and not even a server task.
-    with pytest.raises(OSError, match=r"[Aa]ddress already in use"):
-        async with run_asgi_app(_hello_app, port=occupied_port):
-            pytest.fail("bind on an occupied port must fail")
+    async def __aenter__(self) -> Self:
+        await self._inner.__aenter__()
+        return self
 
+    async def __aexit__(self, *exc_info: object) -> None:
+        await self._inner.__aexit__(*exc_info)
 
-@pytest.mark.timeout(30)
-async def test_dead_server_task_surfaces_instead_of_hanging() -> None:
-    """The shared wait used by run_aggregator_async and run_asgi_app: a
-    server task that dies with SystemExit (uvicorn's startup-failure signal,
-    which asyncio would otherwise re-raise into the event loop itself) is
-    contained and reported, instead of the started-flag wait spinning
-    forever."""
-
-    async def _dying_server() -> None:
-        raise SystemExit(3)
-
-    task = asyncio.create_task(_contained(_dying_server()))
-    with pytest.raises(RuntimeError, match="server task exited") as excinfo:
-        await _await_server_started(task, lambda: False)
-    # The original uvicorn failure stays on the chain for diagnosis.
-    assert "uvicorn exited during startup" in str(excinfo.value.__cause__)
-
-
-# ---------------------------------------------------------------------------
-# ClientSession hotfix (conftest's autouse client_session_hotfix fixture):
-# modelcontextprotocol/python-sdk#1144. Still required on mcp SDK v2 /
-# fastmcp v4 -- see conftest.py's _CLIENT_SESSION_HOTFIX comment for why v2's
-# new on_stream_exception hook doesn't close this on its own. An MCP client
-# whose streamable-HTTP response dies mid-flight waits forever: an Exception
-# object sent into the session's read stream is handled by a no-op by
-# default, and a connection that goes dead without ever delivering anything
-# produces no event at all.
-# ---------------------------------------------------------------------------
+    async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
+        if b"tools/call" not in request.content:
+            return await self._inner.handle_async_request(request)
+        return httpx2.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            stream=_DiesMidBody(),
+            request=request,
+        )
 
 
 @pytest.mark.timeout(30)
-async def test_stream_exception_fails_pending_request_instead_of_hanging() -> None:
-    """An Exception arriving on the read stream (what the streamable-HTTP
-    transport sends when the response body dies mid-parse) must fail the
-    pending request promptly -- the hotfix closes the read stream, letting
-    the receive loop's own teardown deliver CONNECTION_CLOSED to waiters."""
-    import anyio
-    from fastmcp.exceptions import McpError
-    from mcp.client.session import ClientSession
+async def test_transport_dying_mid_response_fails_pending_request_instead_of_hanging() -> (
+    None
+):
+    """A response body that dies mid-stream (the transport exception python-sdk#1144 hung on) must fail the pending request promptly."""
+    mcp = FastMCP("dies-mid-response")
 
-    srv_send, cli_recv = anyio.create_memory_object_stream(8)
-    cli_send, _srv_recv = anyio.create_memory_object_stream(8)
+    @mcp.tool
+    def ping() -> str:
+        return "pong"
 
-    async def _inject_after_request_is_pending() -> None:
-        # what streamablehttp_client does on a parse failure; must land
-        # AFTER send_ping has registered its response stream, or teardown
-        # has nothing to fail yet.
-        await asyncio.sleep(0.05)
-        await srv_send.send(ValueError("truncated SSE event"))
+    async with asgi_server(mcp) as server:
 
-    async with ClientSession(cli_recv, cli_send) as session:
-        with anyio.fail_after(10):  # the pre-hotfix behavior: hangs here
-            inject = asyncio.create_task(_inject_after_request_is_pending())
-            with pytest.raises(McpError, match="Connection closed"):
-                await session.send_ping()
-            await inject
+        def factory(**kwargs: object) -> httpx2.AsyncClient:
+            client = server.http_client(**kwargs)  # type: ignore[arg-type]
+            client._transport = _DiesOnToolCall(client._transport)
+            return client
+
+        async with Client(
+            StreamableHttpTransport(server.url, httpx_client_factory=factory)
+        ) as client:
+            with anyio.fail_after(10), pytest.raises(McpError):
+                await client.call_tool("ping", {})
 
 
 @pytest.mark.timeout(30)
-async def test_dead_connection_times_out_instead_of_hanging(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A session whose server never answers (dead-but-open connection -- the
-    CI hang observed on #237) must fail at the injected default read timeout
-    rather than wait forever."""
-    import anyio
-    from fastmcp.exceptions import McpError
-    from mcp.client.session import ClientSession
+async def test_client_built_the_normal_way_fails_fast_against_a_hung_app() -> None:
+    """A client built with no timeout arguments (as every test builds one) must still fail within conftest's bounded default against a server that never answers, instead of waiting for pytest-timeout."""
+    hung = HungBackend()
+    async with run_asgi_lifespan(hung):
+        server = ASGIServer(url="http://127.0.0.1/mcp", app=hung, transport_type="http")
+        with (
+            anyio.fail_after(_CLIENT_DEFAULT_TIMEOUT + 5),
+            pytest.raises(RuntimeError, match="connect"),
+        ):
+            async with server.client() as client:
+                await client.ping()
+    assert hung.requests >= 1
 
-    monkeypatch.setitem(_CLIENT_SESSION_HOTFIX, "read_timeout", 0.5)
-    _srv_send, cli_recv = anyio.create_memory_object_stream(8)
-    cli_send, _srv_recv = anyio.create_memory_object_stream(8)
-    async with ClientSession(cli_recv, cli_send) as session:
-        with anyio.fail_after(10):
-            with pytest.raises(McpError):
-                await session.send_ping()
+
+@pytest.mark.timeout(30)
+async def test_explicit_client_timeout_overrides_the_default() -> None:
+    """Callers can still pass their own (here much shorter) init_timeout."""
+    hung = HungBackend()
+    async with run_asgi_lifespan(hung):
+        server = ASGIServer(url="http://127.0.0.1/mcp", app=hung, transport_type="http")
+        with (
+            anyio.fail_after(_CLIENT_DEFAULT_TIMEOUT / 2),
+            pytest.raises(RuntimeError, match="connect"),
+        ):
+            async with server.client(init_timeout=0.5) as client:
+                await client.ping()
