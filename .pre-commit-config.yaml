@@ -19,6 +19,17 @@ repos:
         files: "^\\.github"
         args: [--persona=pedantic]
 
+  # The af-mcp-builder skill bundles a generated copy of docs/mcp-design.md
+  # (the canonical text); fail when the copy has drifted.
+  - repo: local
+    hooks:
+      - id: sync-skill-guide
+        name: skill guide copy matches docs/mcp-design.md
+        entry: python3 scripts/sync-skill-guide.py --check
+        language: system
+        files: ^(docs/mcp-design\.md|skills/af-mcp-builder/references/mcp-design\.md|scripts/sync-skill-guide\.py)$
+        pass_filenames: false
+
   # ruff and mypy are run via `pixi run lint`/`pixi run typecheck` in CI (see
   # ci.yaml), which pin versions in pixi.toml — that's the single source of
   # truth for those two tools, so they are intentionally not duplicated here.
