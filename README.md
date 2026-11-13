@@ -94,11 +94,13 @@ manifest (`.claude-plugin/marketplace.json`):
 /plugin install af-mcp-builder@af-mcp-platform
 ```
 
-Both mechanisms were exercised with the GitHub CLI and Claude Code available
-when the skill was added (`gh skill install --from-local`, `gh skill publish
---dry-run`, and `claude plugin marketplace add` / `claude plugin install` against
-a checkout, then `claude plugin validate`). Publishing to a public marketplace is
-not done yet.
+Both mechanisms were exercised when the skill was added, with `gh` and Claude
+Code 2.1.323: `gh skill install` from a checkout (`--from-local`) and from
+GitHub pinned to a commit (`--pin`), `gh skill publish --dry-run`,
+`claude plugin marketplace add` and `claude plugin install` from a checkout and
+from GitHub at a branch ref, and `claude plugin validate`. The unpinned commands
+above resolve to the latest tagged release, or else the default branch, so they
+work once this is merged. Publishing to a public marketplace is not done yet.
 
 ## For Operators
 
