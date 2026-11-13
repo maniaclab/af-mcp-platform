@@ -412,6 +412,15 @@ class Settings(BaseSettings):
     # under the same kv_mount.
     maintenance_mode_kv_path_prefix: str = "mcp/maintenance-mode"
 
+    # How long each replica caches the maintenance flag in-process before
+    # re-reading the backing store (maintenance.CachingMaintenanceModeStore).
+    # The flag is read on every non-admin request, so for the vault/postgres
+    # backends this bounds store reads to ~one per TTL per replica. A toggle
+    # made on another replica becomes visible here within this many seconds;
+    # the replica that handled the toggle sees it at once. 0 disables the
+    # cache. Not applied to in_memory, where a read is a field access.
+    maintenance_mode_cache_ttl_seconds: float = Field(default=5.0, ge=0)
+
     # Model key (a tokencost.TOKEN_COSTS entry) whose *input* token price
     # turns GET /v1/usage's result_tokens_est sums into estimated_cost_usd at
     # read time. Dollars are never stored -- only tokens -- so repricing is a

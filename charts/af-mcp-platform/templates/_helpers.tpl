@@ -459,6 +459,8 @@ Callers pipe this through `nindent` at whatever depth their container's
 # TOKEN_STORE_BACKEND above.
 - name: MAINTENANCE_MODE_BACKEND
   value: {{ .Values.broker.maintenanceMode.backend | replace "-" "_" | quote }}
+- name: MAINTENANCE_MODE_CACHE_TTL_SECONDS
+  value: {{ .Values.broker.maintenanceMode.cacheTtlSeconds | quote }}
 {{- if .Values.broker.maintenanceMode.kvPathPrefix }}
 - name: MAINTENANCE_MODE_KV_PATH_PREFIX
   value: {{ .Values.broker.maintenanceMode.kvPathPrefix | quote }}
