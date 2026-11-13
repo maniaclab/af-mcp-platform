@@ -23,6 +23,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 import redis.asyncio as aioredis
+import structlog
 from redis.exceptions import RedisError
 
 from af_mcp_broker.errors import BrokerError
@@ -165,6 +166,54 @@ class RedisSharedState(SharedState):
 
     async def close(self) -> None:
         await self._client.aclose()
+
+
+class FallbackSharedState(SharedState):
+    """Wraps a store so an outage degrades to a per-replica count instead of an error.
+
+    Every call tries *primary* first; on ``SharedStateUnavailableError`` it
+    logs ``<component>.shared_state_unavailable`` and answers from a
+    process-local ``InMemorySharedState``. That is the same behaviour as
+    running without a store, so an outage never makes a limiter weaker than
+    the operator already accepted by being unable to reach the store, and
+    never turns an outage into a refusal of every caller. *effect* is the
+    log text saying what degrades.
+    """
+
+    def __init__(self, primary: SharedState, *, component: str, effect: str) -> None:
+        self.primary = primary
+        self._fallback = InMemorySharedState()
+        self._event = f"{component}.shared_state_unavailable"
+        self._effect = effect
+        self._log = structlog.get_logger(__name__)
+
+    async def incr_window(self, key: str, window_seconds: int) -> WindowCount:
+        try:
+            return await self.primary.incr_window(key, window_seconds)
+        except SharedStateUnavailableError as exc:
+            self._log_unavailable(exc)
+            return await self._fallback.incr_window(key, window_seconds)
+
+    async def get_window(self, key: str) -> WindowCount | None:
+        try:
+            return await self.primary.get_window(key)
+        except SharedStateUnavailableError as exc:
+            self._log_unavailable(exc)
+            return await self._fallback.get_window(key)
+
+    async def delete(self, key: str) -> None:
+        # The fallback copy goes first so it is cleared even if the store is down.
+        await self._fallback.delete(key)
+        try:
+            await self.primary.delete(key)
+        except SharedStateUnavailableError as exc:
+            self._log_unavailable(exc)
+
+    async def close(self) -> None:
+        await self.primary.close()
+
+    def _log_unavailable(self, exc: SharedStateUnavailableError) -> None:
+        self._log.warning(self._event, error=str(exc), effect=self._effect)
 
 
 def build_shared_state(url: str | None) -> SharedState:

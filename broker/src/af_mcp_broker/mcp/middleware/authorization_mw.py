@@ -3,10 +3,11 @@ from __future__ import annotations
 import contextlib
 import time
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import structlog
-from fastmcp.exceptions import AuthorizationError
+from fastmcp.exceptions import AuthorizationError, ToolError
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 from opentelemetry.trace import SpanKind, Status, StatusCode
 
@@ -18,7 +19,10 @@ from af_mcp_broker.authorization import (
     check_entitlement,
     get_action_type,
 )
+from af_mcp_broker.authorization.errors import ToolRateLimitError
+from af_mcp_broker.authorization.rate_limit import check_rate_limits
 from af_mcp_broker.mcp.errors import ERROR_CLASS_TOOL_REPORTED, classify_backend_error
+from af_mcp_broker.shared_state import FallbackSharedState
 from af_mcp_broker.tracing import (
     current_trace_id,
     get_tracer,
@@ -31,6 +35,7 @@ if TYPE_CHECKING:
 
     from af_mcp_broker.identity import Principal
     from af_mcp_broker.mcp.registry import ServiceRegistry
+    from af_mcp_broker.shared_state import SharedState
 
 logger = structlog.get_logger(__name__)
 
@@ -96,6 +101,17 @@ def _tool_result_error_text(result: ToolResult) -> str:
     return "tool call reported isError=true with no text content"
 
 
+def _rate_limit_message(exc: ToolRateLimitError) -> str:
+    """Return the tool-error text for a rate-limited call, with the retry fields the ``/v1`` unlock limit returns (``Retry-After`` seconds and the ``retry_at`` timestamp)."""
+    retry_at = datetime.now(UTC).replace(microsecond=0) + timedelta(
+        seconds=exc.retry_after_seconds
+    )
+    return (
+        f"{exc}. Retry-After: {exc.retry_after_seconds} seconds; "
+        f"retry_at: {retry_at.strftime('%Y-%m-%dT%H:%M:%SZ')}"
+    )
+
+
 def _record_invocation(service_name: str, tool_name: str, action_type: str) -> None:
     """Increment the tool-invocation counter.
 
@@ -110,12 +126,45 @@ def _record_invocation(service_name: str, tool_name: str, action_type: str) -> N
 
 
 class AuthorizationMiddleware(Middleware):
-    def __init__(self, registry: ServiceRegistry, policy: EntitlementPolicy) -> None:
+    def __init__(
+        self,
+        registry: ServiceRegistry,
+        policy: EntitlementPolicy,
+    ) -> None:
         # Mutable on purpose: populate_aggregator() refreshes these in place
         # on every lifespan entry rather than constructing a new middleware
         # instance each time (mirrors EntitlementMiddleware).
         self.registry = registry
         self.policy = policy
+        # The aggregator is built before the lifespan creates the store (see
+        # app.py's mount-time constraint), so the store arrives later through
+        # use_shared_state(). There is deliberately no default store: counting
+        # in a private in-memory one would silently make limits per replica.
+        self.shared_state: FallbackSharedState | None = None
+
+    def use_shared_state(self, shared_state: SharedState) -> None:
+        """Back ``policy.rate_limits`` with *shared_state*.
+
+        Called again by populate_aggregator() once the lifespan has built the
+        store, as for registry and policy. While the store is unreachable
+        the budgets are counted per replica instead.
+        """
+        self.shared_state = FallbackSharedState(
+            shared_state,
+            component="tool_rate_limit",
+            effect="tool rate limits are per-replica until the store recovers",
+        )
+
+    def _require_shared_state(self) -> FallbackSharedState:
+        # Refuse rather than count somewhere other than the shared store:
+        # populate_aggregator() installs both the rules and the store, so a
+        # missing store is a wiring bug, not a runtime condition.
+        if self.shared_state is None:
+            raise RuntimeError(
+                "policy.rate_limits is set but no shared state store was "
+                "provided to AuthorizationMiddleware"
+            )
+        return self.shared_state
 
     async def on_call_tool(
         self,
@@ -266,6 +315,45 @@ class AuthorizationMiddleware(Middleware):
                     )
                 )
                 raise AuthorizationError(f"Authorization denied: {reason}")
+
+            # After the entitlement check, so a caller refused above never
+            # spends budget, and before any credential is minted or backend
+            # contacted. A no-op without policy.rate_limits.
+            try:
+                if self.policy.rate_limits:
+                    await check_rate_limits(
+                        self.policy.rate_limits,
+                        self._require_shared_state(),
+                        principal.subject,
+                        tool_name,
+                        action_type,
+                    )
+            except ToolRateLimitError as exc:
+                _record_invocation(service.name, tool_name, action_type)
+                metrics.tool_invocations_rate_limited_total.labels(
+                    service=service.name, action_type=action_type
+                ).inc()
+                span.set_attribute("af.outcome", "rate_limited")
+                await write_audit(
+                    AuditRecord(
+                        principal_sub=principal.subject,
+                        principal_uid=principal.uid,
+                        permission=permission,
+                        target=service.name,
+                        action=tool_name,
+                        action_type=action_type,
+                        args_summary=args_summary,
+                        timestamp=time.time(),
+                        request_id=request_id,
+                        mcp_service=service.name,
+                        outcome="rate_limited",
+                        error=str(exc),
+                        principal_permission_grant=_permission_grant_field(principal),
+                        token_id=principal.token_id,
+                        trace_id=current_trace_id(),
+                    )
+                )
+                raise ToolError(_rate_limit_message(exc)) from exc
 
             if not service.builtin:
                 # Warm this service's ProxyProvider tool-schema cache BEFORE

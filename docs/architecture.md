@@ -165,6 +165,7 @@ implemented today.
 | Item | Location | Effect at N > 1 without a store | Consistency need | Store down | Phase |
 |---|---|---|---|---|---|
 | Unlock brute-force limiter (5 failures / 15 min per uid) | `credentials/cache.py`, `CredentialCache` | Budget multiplied by N (security-relevant) | Strong: one counter per uid, atomic increment | Falls back to a per-replica limit and logs `credential_cache.shared_state_unavailable`; never fails open, never blocks unlock | 1 (done) |
+| Per-tool call rate limits (`rate_limits` in `policy.yaml`) | `authorization/rate_limit.py`, `AuthorizationMiddleware` | Budget multiplied by N | Strong: one counter per rule and subject, atomic increment | Falls back to a per-replica count and logs `tool_rate_limit.shared_state_unavailable`; never fails open, never refuses every call | 1 (done) |
 | PAT mint rate window (`_rate`) | `api/tokens.py` | Mint cap multiplied by N | Strong, but a per-replica cap is a documented trade-off | Fall back to per-replica | 2 |
 | Per-(subject, service) tools/list cache and 30 s negative cache | `mcp/aggregator.py` | Invalidate-on-link/revoke reaches only the replica that handled it | Eventual, bounded by the TTL | Fail open (serve from the local cache) | 3 |
 | Caller list-failure records | `mcp/registry.py` (`_caller_list_failures`) | Status differs by replica until each re-lists | Eventual | Fail open | 3 |
@@ -173,11 +174,13 @@ implemented today.
 | Revocation, credentials, principal cache, credmon lease | Vault | Already shared | n/a | n/a | n/a |
 | Usage, maintenance mode | Postgres | Already shared | n/a | n/a | n/a |
 
-Unlock limiter failure policy: when the store is unreachable the limiter
-counts failures per replica instead. That is exactly the behaviour without a
-store, so an outage never makes the limiter weaker than the operator already
-accepted by being unable to reach it, and it never turns a store outage into
-a loss of x509 unlock for every user. Caches always fail open: a stale or
+Limiter failure policy (the unlock limiter and the tool rate limits, both
+through `FallbackSharedState` in `shared_state.py`): when the store is
+unreachable the limiter counts per replica instead. That is exactly the
+behaviour without a store, so an outage never makes the limiter weaker than
+the operator already accepted by being unable to reach it, and it never turns
+a store outage into a loss of x509 unlock or of every tool call for every
+user. Caches always fail open: a stale or
 missing entry costs one extra backend call, never correctness.
 
 ---
@@ -626,7 +629,7 @@ Every tool call gets a `tools/call <name>` server span opened by
 `AuthorizationMiddleware` — on **all** outcome paths, denied and unmapped
 included — carrying identity, authorization, and outcome attributes:
 `user.id` (the principal's subject), `af.service`, `af.permission`,
-`af.action_type`, and `af.outcome` (`success` / `denied` / `error`; the
+`af.action_type`, and `af.outcome` (`success` / `denied` / `rate_limited` / `error`; the
 error path also records the exception and sets span status ERROR).
 fastmcp's own `tools/call` span nests underneath as a child, itself
 wrapping a client-side span fastmcp v4 added around each proxied backend
@@ -816,5 +819,5 @@ the simplest correct thing. The extraction path if it becomes necessary:
 6. The backend's response streams back through the aggregator to the LLM
    client.
 7. `AuthorizationMiddleware` writes a structured audit log line
-   (`outcome: "success"`/`"denied"`/`"error"`) and updates Prometheus
+   (`outcome: "success"`/`"denied"`/`"rate_limited"`/`"error"`) and updates Prometheus
    counters exactly once per call, regardless of outcome.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import fnmatch
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -24,6 +25,32 @@ DISABLED_PERMISSION = "__disabled__"
 
 
 ACTION_TYPES = frozenset({"read", "state_change"})
+
+# A bracket expression must be closed: fnmatch silently treats an unclosed
+# "[" as a literal character, which turns a typo into a rule matching nothing.
+_BALANCED_BRACKETS = re.compile(r"[^\[\]]*(?:\[[^\[\]]+\][^\[\]]*)*")
+
+_RATE_LIMIT_RULE_KEYS = frozenset({"action_type", "tool", "limit", "window_seconds"})
+
+
+@dataclass(frozen=True)
+class RateLimitRule:
+    """One ``rate_limits`` entry: at most *limit* matching calls per principal per *window_seconds*.
+
+    A rule matches a call when every selector it sets matches: *action_type*
+    equals the call's resolved action type, and *tool* (an fnmatch glob over
+    the wire tool name, like ``target_action_types``) matches its name.
+    """
+
+    limit: int
+    window_seconds: int
+    action_type: str | None = None
+    tool: str | None = None
+
+    def matches(self, tool_name: str, action_type: str) -> bool:
+        if self.action_type is not None and self.action_type != action_type:
+            return False
+        return self.tool is None or fnmatch.fnmatch(tool_name, self.tool)
 
 
 @dataclass(frozen=True)
@@ -75,6 +102,62 @@ class EntitlementPolicy:
     # a services.yaml required_permission uses that PERMISSIONS doesn't
     # know. Without an entry, get_action_type could only guess "read".
     custom_permissions: dict[str, str] = field(default_factory=dict)
+    # Per-principal call budgets; empty means no rate limiting at all.
+    rate_limits: list[RateLimitRule] = field(default_factory=list)
+
+
+def _positive_int(value: object, where: str, key: str) -> int:
+    # bool is an int subclass, so `true` would otherwise pass as 1.
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+        msg = f"{where}: {key} must be a positive integer, got {value!r}"
+        raise ValueError(msg)
+    return value
+
+
+def _parse_rate_limit_rule(raw: object, where: str) -> RateLimitRule:
+    if not isinstance(raw, dict):
+        msg = f"{where} must be a mapping, got {raw!r}"
+        raise ValueError(msg)  # noqa: TRY004 -- config validation reports ValueError
+    unknown = sorted(set(raw) - _RATE_LIMIT_RULE_KEYS)
+    if unknown:
+        msg = f"{where} has unknown key(s) {unknown}; allowed: {sorted(_RATE_LIMIT_RULE_KEYS)}"
+        raise ValueError(msg)
+    action_type = raw.get("action_type")
+    tool = raw.get("tool")
+    if action_type is None and tool is None:
+        msg = f"{where} needs an action_type and/or a tool glob to match on"
+        raise ValueError(msg)
+    if action_type is not None and action_type not in ACTION_TYPES:
+        msg = (
+            f"{where}: action_type '{action_type}' must be one of "
+            f"{sorted(ACTION_TYPES)}"
+        )
+        raise ValueError(msg)
+    if tool is not None and (
+        not isinstance(tool, str) or not tool or not _BALANCED_BRACKETS.fullmatch(tool)
+    ):
+        msg = f"{where}: tool must be a non-empty glob with balanced brackets, got {tool!r}"
+        raise ValueError(msg)
+    return RateLimitRule(
+        limit=_positive_int(raw.get("limit"), where, "limit"),
+        window_seconds=_positive_int(
+            raw.get("window_seconds"), where, "window_seconds"
+        ),
+        action_type=action_type,
+        tool=tool,
+    )
+
+
+def _parse_rate_limits(raw: object) -> list[RateLimitRule]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        msg = f"rate_limits must be a list of rules, got {raw!r}"
+        raise ValueError(msg)  # noqa: TRY004 -- config validation reports ValueError
+    return [
+        _parse_rate_limit_rule(rule, f"rate_limits[{index}]")
+        for index, rule in enumerate(raw)
+    ]
 
 
 def load_policy(path: str) -> EntitlementPolicy:
@@ -84,6 +167,7 @@ def load_policy(path: str) -> EntitlementPolicy:
     policy.group_permissions = raw.get("group_permissions", {})
     policy.target_action_types = raw.get("target_action_types", {})
     policy.custom_permissions = raw.get("custom_permissions", {})
+    policy.rate_limits = _parse_rate_limits(raw.get("rate_limits"))
     for name, action_type in policy.custom_permissions.items():
         if name in PERMISSIONS:
             msg = f"custom_permissions '{name}' shadows a built-in permission"

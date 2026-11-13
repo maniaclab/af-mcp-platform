@@ -64,3 +64,10 @@ data:
       {{- toYaml .Values.entitlements.target_action_types | nindent 6 }}
     {{- else }} {}
     {{- end }}
+    {{- if .Values.entitlements.rate_limits }}
+
+    # Per-principal call budgets (see docs/auth.md, "Tool rate limits").
+    # Omitted entirely when entitlements.rate_limits is unset.
+    rate_limits:
+      {{- toYaml .Values.entitlements.rate_limits | nindent 6 }}
+    {{- end }}

@@ -89,6 +89,7 @@ if TYPE_CHECKING:
     from af_mcp_broker.maintenance import MaintenanceModeStore
     from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
     from af_mcp_broker.principal_cache import PrincipalCache
+    from af_mcp_broker.shared_state import SharedState
     from af_mcp_broker.token_registry import TokenRegistryBackend
 
 logger = structlog.get_logger(__name__)
@@ -1810,6 +1811,7 @@ def build_aggregator(
     broker_token_issuer: BrokerTokenIssuer | None = None,
     maintenance_mode_store: MaintenanceModeStore | None = None,
     job_credentials: JobCredentialGuide | None = None,
+    shared_state: SharedState | None = None,
 ) -> FastMCP:
     """Construct a fully-wired aggregator FastMCP instance.
 
@@ -1839,6 +1841,11 @@ def build_aggregator(
     ``dereference_schemas=False``: that client-compat behavior is worth
     keeping given it's a no-op for everything this docstring's ordering
     invariant actually cares about.
+
+    *shared_state* backs ``policy.rate_limits``; with none, a policy that sets
+    rate limits refuses tool calls rather than count in a private store. The
+    eager build leaves it None and ``populate_aggregator`` supplies the real
+    store, like the arguments below.
 
     *pat_backend*/*principal_cache* default to None here
     because app.py builds the aggregator eagerly, before the real token
@@ -1872,7 +1879,10 @@ def build_aggregator(
         )
     )
     mcp.add_middleware(EntitlementMiddleware(registry, policy))
-    mcp.add_middleware(AuthorizationMiddleware(registry, policy))
+    authorization_mw = AuthorizationMiddleware(registry, policy)
+    if shared_state is not None:
+        authorization_mw.use_shared_state(shared_state)
+    mcp.add_middleware(authorization_mw)
     _register_services(
         mcp,
         registry,
@@ -1928,8 +1938,9 @@ def populate_aggregator(
     broker_token_issuer: BrokerTokenIssuer | None = None,
     maintenance_mode_store: MaintenanceModeStore | None = None,
     job_credentials: JobCredentialGuide | None = None,
+    shared_state: SharedState | None = None,
 ) -> None:
-    """Refresh an aggregator built by ``build_aggregator`` with a freshly loaded registry/settings/policy/credential_registry/pat_backend/principal_cache/identity_providers/identity_provider_configs/target_to_alias/maintenance_mode_store.
+    """Refresh an aggregator built by ``build_aggregator`` with a freshly loaded registry/settings/policy/credential_registry/pat_backend/principal_cache/identity_providers/identity_provider_configs/target_to_alias/maintenance_mode_store/shared_state.
 
     app.py's mount-time constraint means the aggregator's FastMCP instance
     and ASGI app must exist before SERVICES_FILE/POLICY_FILE/the credential
@@ -1955,6 +1966,8 @@ def populate_aggregator(
     entitlement_mw.policy = policy
     authorization_mw.registry = registry
     authorization_mw.policy = policy
+    if shared_state is not None:
+        authorization_mw.use_shared_state(shared_state)
     _register_services(
         mcp,
         registry,

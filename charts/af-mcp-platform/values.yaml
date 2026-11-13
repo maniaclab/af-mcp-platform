@@ -754,6 +754,20 @@ entitlements:
   # target_action_types:
   #   condor_service:            # service name
   #     "condor_submit_*": state_change   # prefixed wire name
+  # Per-principal call budgets. Each rule sets action_type (read |
+  # state_change) and/or tool (fnmatch glob over the wire tool name), plus
+  # limit and window_seconds; every matching rule must pass. Counted in
+  # broker.sharedState, so limits are cluster-wide with a store and
+  # per-replica only under allowPerReplicaState or during a store outage.
+  # See docs/auth.md, "Tool rate limits". Unset means no rate limiting.
+  rate_limits: []
+  # rate_limits:
+  #   - action_type: state_change
+  #     limit: 60
+  #     window_seconds: 60
+  #   - tool: "condor_submit_*"
+  #     limit: 10
+  #     window_seconds: 3600
 
 # ---------------------------------------------------------------------------
 # Portal: static Astro site

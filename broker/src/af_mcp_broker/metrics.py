@@ -57,6 +57,13 @@ tool_invocations_denied_total = Counter(
     ["service", "action_type"],
 )
 
+tool_invocations_rate_limited_total = Counter(
+    "af_mcp_tool_invocations_rate_limited_total",
+    "Tool invocations refused by a policy.yaml rate_limits rule, by service "
+    "and action_type. No identity label -- see module docstring.",
+    ["service", "action_type"],
+)
+
 tool_duration_seconds = Histogram(
     "af_mcp_tool_duration_seconds",
     "Wall time of the downstream tool call (credential resolution plus the "

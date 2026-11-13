@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import pytest
+import structlog.testing
 
 from af_mcp_broker import shared_state
 from af_mcp_broker.shared_state import (
+    FallbackSharedState,
     InMemorySharedState,
     RedisSharedState,
+    SharedState,
+    SharedStateUnavailableError,
+    WindowCount,
     build_shared_state,
 )
 
@@ -99,3 +104,52 @@ def test_build_shared_state_selects_redis_for_redis_urls(url: str) -> None:
 def test_build_shared_state_rejects_other_schemes(url: str) -> None:
     with pytest.raises(ValueError, match="redis://"):
         build_shared_state(url)
+
+
+class _DownState(SharedState):
+    """A store that is always unreachable."""
+
+    async def incr_window(self, key: str, window_seconds: int) -> WindowCount:
+        raise SharedStateUnavailableError("down")
+
+    async def get_window(self, key: str) -> WindowCount | None:
+        raise SharedStateUnavailableError("down")
+
+    async def delete(self, key: str) -> None:
+        raise SharedStateUnavailableError("down")
+
+
+def _fallback(primary: SharedState) -> FallbackSharedState:
+    return FallbackSharedState(primary, component="test", effect="per-replica")
+
+
+async def test_fallback_delegates_to_a_reachable_primary(clock: _Clock) -> None:
+    primary = InMemorySharedState()
+    store = _fallback(primary)
+    await store.incr_window("k", 60)
+    window = await primary.get_window("k")
+    assert window is not None
+    assert window.count == 1
+
+
+async def test_fallback_counts_per_replica_and_logs_when_the_primary_is_down(
+    clock: _Clock,
+) -> None:
+    store = _fallback(_DownState())
+    with structlog.testing.capture_logs() as logs:
+        counts = [(await store.incr_window("k", 60)).count for _ in range(3)]
+        window = await store.get_window("k")
+    assert counts == [1, 2, 3]
+    assert window is not None
+    assert window.count == 3
+    assert {log["event"] for log in logs} == {"test.shared_state_unavailable"}
+    assert {log["effect"] for log in logs} == {"per-replica"}
+
+
+async def test_fallback_delete_clears_the_per_replica_count_even_when_down(
+    clock: _Clock,
+) -> None:
+    store = _fallback(_DownState())
+    await store.incr_window("k", 60)
+    await store.delete("k")
+    assert await store.get_window("k") is None

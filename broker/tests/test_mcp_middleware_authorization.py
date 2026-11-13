@@ -2,22 +2,26 @@ from __future__ import annotations
 
 import io
 import json
+import uuid
 from typing import TYPE_CHECKING, Any
 
 import httpx2
 import mcp.types as mt
 import pytest
+import structlog.testing
 from fastmcp.exceptions import AuthorizationError, ToolError
 from fastmcp.tools.base import ToolResult
 from prometheus_client import REGISTRY
 
+from af_mcp_broker import shared_state
 from af_mcp_broker.audit import pipeline
 from af_mcp_broker.audit.logger import init_audit_logger
 from af_mcp_broker.audit.pipeline import (
     aclose_metering_pipeline,
     init_metering_pipeline,
 )
-from af_mcp_broker.authorization import EntitlementPolicy
+from af_mcp_broker.authorization import EntitlementPolicy, RateLimitRule
+from af_mcp_broker.authorization.errors import ToolRateLimitError
 from af_mcp_broker.mcp.middleware import authorization_mw
 from af_mcp_broker.mcp.middleware.authorization_mw import AuthorizationMiddleware
 from af_mcp_broker.mcp.registry import (
@@ -25,9 +29,17 @@ from af_mcp_broker.mcp.registry import (
     ServiceRegistry,
     ServiceSpec,
 )
+from af_mcp_broker.shared_state import (
+    InMemorySharedState,
+    RedisSharedState,
+    WindowCount,
+)
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
     from af_mcp_broker.audit import AuditRecord
+    from af_mcp_broker.identity import Principal
 
 
 def _sample(name: str, labels: dict[str, str]) -> float:
@@ -1010,3 +1022,265 @@ async def test_denied_audit_written_inline_not_via_pipeline(
         assert line["target"] == "rucio"
     finally:
         await aclose_metering_pipeline()
+
+
+# ---------------------------------------------------------------------------
+# rate_limits (issue #165): enforced after the entitlement check, before
+# call_next.
+# ---------------------------------------------------------------------------
+
+
+class _Clock:
+    """Controllable replacement for ``time.monotonic``."""
+
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+@pytest.fixture
+def clock(monkeypatch: pytest.MonkeyPatch) -> _Clock:
+    fake = _Clock()
+    monkeypatch.setattr(shared_state.time, "monotonic", fake)
+    return fake
+
+
+def _rate_limited_middleware(
+    registry: ServiceRegistry,
+    policy: EntitlementPolicy,
+    *rules: RateLimitRule,
+    store: shared_state.SharedState | None = None,
+) -> AuthorizationMiddleware:
+    policy.rate_limits = list(rules)
+    mw = AuthorizationMiddleware(registry, policy)
+    mw.use_shared_state(store or InMemorySharedState())
+    return mw
+
+
+async def test_rate_limited_call_is_refused_before_call_next_with_retry_info(
+    registry, policy, make_principal, captured_audits, clock
+) -> None:
+    mw = _rate_limited_middleware(
+        registry, policy, RateLimitRule(1, 60, tool="rucio_*")
+    )
+    principal = make_principal(groups=["atlas"])
+    context = _call_tool_context("rucio_list_dids", {}, principal)
+    await mw.on_call_tool(context, _CallNextRecorder(result=ToolResult(content=[])))
+    clock.now += 20
+    call_next = _CallNextRecorder()
+
+    with pytest.raises(ToolError) as excinfo:
+        await mw.on_call_tool(context, call_next)
+
+    assert call_next.called is False
+    message = str(excinfo.value)
+    assert "Rate limit of 1 calls per 60s exceeded for rucio_list_dids" in message
+    assert "Retry-After: 40" in message
+    assert "retry_at: " in message
+    assert isinstance(excinfo.value.__cause__, ToolRateLimitError)
+    # The first, allowed call audited as success; the refused one as rate_limited.
+    assert [r.outcome for r in captured_audits] == ["success", "rate_limited"]
+    record = captured_audits[1]
+    assert record.target == "rucio"
+    assert record.action == "rucio_list_dids"
+    assert record.action_type == "read"
+    assert record.principal_sub == principal.subject
+    assert record.error is not None
+    assert "Rate limit of 1 calls per 60s" in record.error
+    assert record.duration_ms is None
+
+
+async def test_rate_limited_call_increments_counter_without_identity_label(
+    registry, policy, make_principal, captured_audits
+) -> None:
+    mw = _rate_limited_middleware(
+        registry, policy, RateLimitRule(1, 60, action_type="read")
+    )
+    principal = make_principal(groups=["atlas"])
+    context = _call_tool_context("rucio_list_dids", {}, principal)
+    labels = {"service": "rucio", "action_type": "read"}
+    before = _sample("af_mcp_tool_invocations_rate_limited_total", labels)
+    await mw.on_call_tool(context, _CallNextRecorder(result=ToolResult(content=[])))
+
+    with pytest.raises(ToolError):
+        await mw.on_call_tool(context, _CallNextRecorder())
+
+    assert _sample("af_mcp_tool_invocations_rate_limited_total", labels) == before + 1
+    # No per-user label (metrics.py's cardinality policy).
+    metric = next(
+        m
+        for m in REGISTRY.collect()
+        if m.name == "af_mcp_tool_invocations_rate_limited"
+    )
+    assert all(
+        set(sample.labels) == {"service", "action_type"} for sample in metric.samples
+    )
+
+
+async def test_entitlement_denial_comes_first_and_is_not_counted(
+    registry, policy, make_principal, captured_audits
+) -> None:
+    mw = _rate_limited_middleware(
+        registry, policy, RateLimitRule(1, 60, tool="rucio_*")
+    )
+    stranger = make_principal(groups=[])
+    for _ in range(3):
+        with pytest.raises(AuthorizationError):
+            await mw.on_call_tool(
+                _call_tool_context("rucio_list_dids", {}, stranger),
+                _CallNextRecorder(),
+            )
+
+    assert {r.outcome for r in captured_audits} == {"denied"}
+    # The denied calls consumed no budget: the same subject, once entitled,
+    # still has it.
+    entitled = make_principal(groups=["atlas"], subject=stranger.subject)
+    await mw.on_call_tool(
+        _call_tool_context("rucio_list_dids", {}, entitled),
+        _CallNextRecorder(result=ToolResult(content=[])),
+    )
+
+
+async def test_rate_limits_without_a_store_refuse_the_call(
+    registry, policy, make_principal, captured_audits
+) -> None:
+    # A middleware that was never given a store must not count in a private
+    # default one: that would silently make the limits per replica.
+    policy.rate_limits = [RateLimitRule(1, 60, tool="rucio_*")]
+    mw = AuthorizationMiddleware(registry, policy)
+    call_next = _CallNextRecorder()
+    principal = make_principal(groups=["atlas"])
+
+    with pytest.raises(RuntimeError, match="shared state"):
+        await mw.on_call_tool(
+            _call_tool_context("rucio_list_dids", {}, principal), call_next
+        )
+
+    assert not call_next.called
+
+
+async def test_rate_limit_budgets_are_per_principal(
+    registry, policy, make_principal, captured_audits
+) -> None:
+    mw = _rate_limited_middleware(
+        registry, policy, RateLimitRule(1, 60, tool="rucio_*")
+    )
+    for subject in ("alice", "bob"):
+        principal = make_principal(groups=["atlas"], subject=subject)
+        await mw.on_call_tool(
+            _call_tool_context("rucio_list_dids", {}, principal),
+            _CallNextRecorder(result=ToolResult(content=[])),
+        )
+
+    assert [r.outcome for r in captured_audits] == ["success", "success"]
+
+
+class _SpyState(InMemorySharedState):
+    """In-memory store that counts its increments."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.incr_calls = 0
+
+    async def incr_window(self, key: str, window_seconds: int) -> WindowCount:
+        self.incr_calls += 1
+        return await super().incr_window(key, window_seconds)
+
+
+async def test_no_rate_limits_never_refuses_and_leaves_counter_untouched(
+    registry, policy, make_principal, captured_audits
+) -> None:
+    store = _SpyState()
+    mw = AuthorizationMiddleware(registry, policy)
+    mw.use_shared_state(store)
+    principal = make_principal(groups=["atlas"])
+    for _ in range(5):
+        await mw.on_call_tool(
+            _call_tool_context("rucio_list_dids", {}, principal),
+            _CallNextRecorder(result=ToolResult(content=[])),
+        )
+
+    assert {r.outcome for r in captured_audits} == {"success"}
+    assert store.incr_calls == 0
+
+
+# ---------------------------------------------------------------------------
+# rate_limits across replicas: two middleware instances over one real redis
+# server stand in for two broker replicas (see the ``shared_state_url``
+# fixture); nothing is mocked.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+async def replica_stores(
+    shared_state_url: str,
+) -> AsyncIterator[list[RedisSharedState]]:
+    stores = [RedisSharedState(shared_state_url) for _ in range(2)]
+    yield stores
+    for store in stores:
+        await store.close()
+
+
+async def _call_rucio(mw: AuthorizationMiddleware, principal: Principal) -> ToolResult:
+    return await mw.on_call_tool(
+        _call_tool_context("rucio_list_dids", {}, principal),
+        _CallNextRecorder(result=ToolResult(content=[])),
+    )
+
+
+async def test_rate_limit_budget_is_shared_across_replicas(
+    registry, policy, make_principal, captured_audits, replica_stores
+) -> None:
+    replica_a, replica_b = (
+        _rate_limited_middleware(
+            registry, policy, RateLimitRule(2, 60, tool="rucio_*"), store=store
+        )
+        for store in replica_stores
+    )
+    # A subject unique to this test: the server outlives each test.
+    principal = make_principal(groups=["atlas"], subject=f"sub-{uuid.uuid4()}")
+    # Neither replica sees more than its own limit's worth of calls.
+    await _call_rucio(replica_a, principal)
+    await _call_rucio(replica_b, principal)
+
+    with pytest.raises(ToolError, match="Rate limit of 2 calls per 60s"):
+        await _call_rucio(replica_a, principal)
+
+    assert [r.outcome for r in captured_audits] == [
+        "success",
+        "success",
+        "rate_limited",
+    ]
+
+
+async def test_rate_limit_store_outage_falls_back_to_a_per_replica_count(
+    registry, policy, make_principal, captured_audits, unreachable_shared_state_url
+) -> None:
+    store = RedisSharedState(unreachable_shared_state_url)
+    mw = _rate_limited_middleware(
+        registry, policy, RateLimitRule(2, 60, tool="rucio_*"), store=store
+    )
+    principal = make_principal(groups=["atlas"])
+    try:
+        with structlog.testing.capture_logs() as logs:
+            # Still limited, per replica, instead of failing open or erroring.
+            await _call_rucio(mw, principal)
+            await _call_rucio(mw, principal)
+            with pytest.raises(ToolError, match="Rate limit of 2 calls per 60s"):
+                await _call_rucio(mw, principal)
+    finally:
+        await store.close()
+
+    unavailable = [
+        log
+        for log in logs
+        if log["event"] == "tool_rate_limit.shared_state_unavailable"
+    ]
+    assert unavailable
+    assert [r.outcome for r in captured_audits] == [
+        "success",
+        "success",
+        "rate_limited",
+    ]

@@ -17,6 +17,7 @@ from af_mcp_broker.config import (
     OAuth21DirectProviderConfig,
     X509ProviderConfig,
 )
+from af_mcp_broker.mcp.aggregator import _find_middleware
 from af_mcp_broker.shared_state import RedisSharedState
 
 if TYPE_CHECKING:
@@ -409,7 +410,20 @@ def test_shared_state_url_backs_the_unlock_limiter(
 
     with app_client_factory() as (client, _state):
         cache = client.app.state.credential_cache
-        assert isinstance(cache._shared_state, RedisSharedState)
+        assert isinstance(cache._shared_state.primary, RedisSharedState)
+
+
+def test_shared_state_url_backs_the_tool_rate_limits(
+    monkeypatch: pytest.MonkeyPatch,
+    app_client_factory: Callable[..., Any],
+    shared_state_url: str,
+) -> None:
+    monkeypatch.setenv("MCP_REPLICA_COUNT", "2")
+    monkeypatch.setenv("SHARED_STATE_URL", shared_state_url)
+
+    with app_client_factory() as (_client, _state):
+        *_, authorization_mw = _find_middleware(app_module._mcp_aggregator)
+        assert isinstance(authorization_mw.shared_state.primary, RedisSharedState)
 
 
 def test_malformed_shared_state_url_refuses_to_start(
