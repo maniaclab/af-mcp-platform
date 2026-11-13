@@ -155,8 +155,8 @@ the database sees one round trip per batch instead of one per tool call.
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `USAGE_BATCH_MAX` | `100` | Flush as soon as this many records are buffered. |
-| `USAGE_BATCH_INTERVAL_MS` | `1000` | Flush once the oldest buffered record has waited this long, even if the batch is not full. |
+| `USAGE_BATCH_MAX` (chart: `broker.usage.batchMax`) | `100` | Flush as soon as this many records are buffered. |
+| `USAGE_BATCH_INTERVAL_MS` (chart: `broker.usage.batchIntervalMs`) | `1000` | Flush once the oldest buffered record has waited this long, even if the batch is not full. |
 
 Both must be at least 1. Remaining records are also flushed when the
 broker shuts down gracefully, and the audit line for a record is always

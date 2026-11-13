@@ -146,7 +146,7 @@ async def test_overflow_writes_inline_unmeasured_and_drops_nothing() -> None:
     init_audit_logger(buffer)
     # Tiny queue, worker deliberately not started yet: the queue can only
     # fill up, so the second submit overflows deterministically.
-    p = InProcessMeteringBackend(maxsize=1)
+    p = InProcessMeteringBackend(Settings(), maxsize=1)
 
     before = _overflow_count()
     missing_before = _sample("af_mcp_metering_records_missing_measurements_total")
@@ -176,7 +176,7 @@ async def test_overflow_writes_inline_unmeasured_and_drops_nothing() -> None:
 async def test_aclose_drains_everything_already_enqueued() -> None:
     buffer = io.StringIO()
     init_audit_logger(buffer)
-    p = InProcessMeteringBackend(maxsize=10)
+    p = InProcessMeteringBackend(Settings(), maxsize=10)
     await p.start()
 
     for i in range(5):
@@ -195,7 +195,7 @@ async def test_worker_survives_measurement_failure(
     audit line, and the worker goes on to process the next item."""
     buffer = io.StringIO()
     init_audit_logger(buffer)
-    p = InProcessMeteringBackend()
+    p = InProcessMeteringBackend(Settings())
     await p.start()
 
     def _boom(result: Any) -> tuple[int | None, int | None]:
@@ -230,7 +230,7 @@ async def test_worker_survives_audit_write_failure(
     never die, and the next item is still processed."""
     buffer = io.StringIO()
     init_audit_logger(buffer)
-    p = InProcessMeteringBackend()
+    p = InProcessMeteringBackend(Settings())
     await p.start()
 
     real_write_audit = pipeline.write_audit
@@ -275,7 +275,7 @@ async def test_uninitialized_helper_measures_and_writes_inline() -> None:
 
 def test_in_process_backend_satisfies_the_abc() -> None:
     assert issubclass(InProcessMeteringBackend, MeteringBackend)
-    assert isinstance(InProcessMeteringBackend(), MeteringBackend)
+    assert isinstance(InProcessMeteringBackend(Settings()), MeteringBackend)
 
 
 async def test_init_builds_the_backend_selected_by_settings() -> None:
@@ -297,7 +297,7 @@ async def test_queue_depth_gauge_tracks_enqueue_and_dequeue() -> None:
     init_audit_logger(buffer)
     # Worker deliberately not started: each submit only enqueues, so the
     # gauge must climb with the queue and return to zero after the drain.
-    p = InProcessMeteringBackend(maxsize=10)
+    p = InProcessMeteringBackend(Settings(), maxsize=10)
 
     await p.submit(_record(), None)
     assert _sample("af_mcp_metering_queue_depth") == 1
@@ -318,7 +318,7 @@ async def test_queue_delay_gauge_set_on_dequeue(
     queue before its dequeue."""
     buffer = io.StringIO()
     init_audit_logger(buffer)
-    p = InProcessMeteringBackend()
+    p = InProcessMeteringBackend(Settings())
 
     gate = asyncio.Event()
     real_write_audit = pipeline.write_audit
@@ -344,7 +344,7 @@ async def test_queue_delay_gauge_set_on_dequeue(
 async def test_worker_processed_total_counts_written_records() -> None:
     buffer = io.StringIO()
     init_audit_logger(buffer)
-    p = InProcessMeteringBackend()
+    p = InProcessMeteringBackend(Settings())
     await p.start()
 
     before = _sample("af_mcp_metering_worker_processed_total")
@@ -413,7 +413,7 @@ async def test_overflow_inline_write_feeds_the_usage_store(usage_store) -> None:
     init_audit_logger(buffer)
     # Tiny queue, worker deliberately not started: the second submit
     # overflows deterministically (same setup as the overflow test above).
-    p = InProcessMeteringBackend(maxsize=1)
+    p = InProcessMeteringBackend(Settings(), maxsize=1)
     await p.submit(
         _record(request_id="queued", mcp_service="rucio", timestamp=time.time()), None
     )

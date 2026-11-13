@@ -520,6 +520,15 @@ broker:
   # instance, it does not deploy one.
   usage:
     backend: "in-memory"  # or "postgres"
+    # The metering worker buffers usage records and writes them to the store
+    # as one batch (one round trip, not one per tool call) once batchMax
+    # records are buffered or batchIntervalMs have passed since the first
+    # one, whichever comes first, and on graceful shutdown. A hard crash
+    # (SIGKILL, OOM) can lose up to one interval of usage rows; their audit
+    # lines were already written. Both must be >= 1. Rendered as
+    # USAGE_BATCH_MAX / USAGE_BATCH_INTERVAL_MS.
+    batchMax: 100
+    batchIntervalMs: 1000
     postgres:
       # Secret carrying the asyncpg DSN, rendered as USAGE_POSTGRES_DSN via
       # secretKeyRef only when backend="postgres". With Crunchy PGO the

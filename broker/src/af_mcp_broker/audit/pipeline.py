@@ -126,11 +126,7 @@ class MeteringBackend(abc.ABC):
 class InProcessMeteringBackend(MeteringBackend):
     """Bounded queue + background worker measuring and writing audit records."""
 
-    def __init__(
-        self, maxsize: int = QUEUE_MAXSIZE, settings: Settings | None = None
-    ) -> None:
-        if settings is None:
-            settings = get_settings()
+    def __init__(self, settings: Settings, maxsize: int = QUEUE_MAXSIZE) -> None:
         # Items are (record, result, enqueued_at) tuples -- enqueued_at is a
         # time.monotonic() timestamp feeding the queue-delay gauge -- or the
         # drain sentinel.
