@@ -1,0 +1,8 @@
+{
+  "orig_e4_r1.md": {"passed": 9, "total": 9, "failed": []},
+  "orig_e4_r2.md": {"passed": 8, "total": 9, "failed": ["2: flags U4 and broker-token auth but accepts the shared secret from a mounted Secret; never says to redeem or exchange"]},
+  "orig_e4_r3.md": {"passed": 8, "total": 9, "failed": ["2: flags the shared token and broker-token auth but only asks whether per-user credentials are possible; no redeem or exchange recommendation"]},
+  "final_e4_r1.md": {"passed": 9, "total": 9, "failed": []},
+  "final_e4_r2.md": {"passed": 9, "total": 9, "failed": []},
+  "final_e4_r3.md": {"passed": 8, "total": 9, "failed": ["2: treats the shared token as acceptable service-tier design (U4 'not what this is'); no redeem or exchange recommendation, only a weak per-user mention"]}
+}

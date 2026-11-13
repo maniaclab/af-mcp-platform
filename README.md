@@ -67,6 +67,46 @@ This repo is the broker + portal — the credential-brokering core. A full deplo
 
 None of these are required by af-mcp-platform itself — a different facility registers its own mix of backends and credential services behind the same broker. See [docs/ecosystem.md](docs/ecosystem.md) for what each one does and how it plugs in.
 
+## MCP Server Authors: the `af-mcp-builder` Skill
+
+A backend fits the platform if it follows the MCP specification and the
+checklist in the [MCP Design Guide](docs/mcp-design.md). The `af-mcp-builder`
+agent skill (`skills/af-mcp-builder/`) audits an MCP server's codebase against
+that checklist and reports, as a table of MUST and SHOULD findings with
+`file:line` and a suggested change, what has to change. It works on Python
+(fastmcp, `mcp` SDK) and Go (mcp-go, go-sdk, golang-htcondor style) servers.
+
+Install it with the GitHub CLI's skill installer (`gh skill`, in preview):
+
+```bash
+gh skill install maniaclab/af-mcp-platform af-mcp-builder
+```
+
+Add `--agent claude-code --scope user` to install it for Claude Code in your
+home directory; without `--agent`, `gh skill install` picks the default agent
+for a non-interactive run (`gh skill install --help` lists the values).
+
+Or, in Claude Code, install it as a plugin from this repo's marketplace
+manifest (`.claude-plugin/marketplace.json`):
+
+```text
+/plugin marketplace add maniaclab/af-mcp-platform
+/plugin install af-mcp-builder@af-mcp-platform
+```
+
+The skill carries no copy of the guide. It carries an index of item IDs and
+one-line rules, and reads the canonical `docs/mcp-design.md` from a checkout or
+fetches it from `raw.githubusercontent.com` (a symlink does not survive
+`gh skill install`).
+
+Both mechanisms were exercised when the skill was added, with `gh` and Claude
+Code 2.1.323: `gh skill install` from a checkout (`--from-local`) and from
+GitHub pinned to a commit (`--pin`), `gh skill publish --dry-run`,
+`claude plugin marketplace add` and `claude plugin install` from a checkout and
+from GitHub at a branch ref, and `claude plugin validate`. The unpinned commands
+above resolve to the latest tagged release, or else the default branch, so they
+work once this is merged. Publishing to a public marketplace is not done yet.
+
 ## For Operators
 
 Deployment is via the Helm chart in [`charts/af-mcp-platform`](charts/af-mcp-platform) — `values.yaml` documents every configurable field. See [docs/architecture.md](docs/architecture.md) for the reference architecture and auth model.
