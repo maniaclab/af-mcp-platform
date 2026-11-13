@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 import time
 from typing import TYPE_CHECKING, Any
@@ -34,7 +35,7 @@ from af_mcp_broker.mcp.aggregator import build_aggregator, build_asgi_auth_middl
 from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Iterator
 
     from fastmcp.utilities.tests import ASGIServer
 
@@ -346,6 +347,94 @@ async def test_unlinked_principal_missing_secure_tools_rest_of_list_works(
     ]
     assert matches, events
     assert matches[0]["reason"] == "not_linked"
+
+
+class _RecordingHandler(logging.Handler):
+    """Collects every record logged to the logger it is attached to."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)
+
+
+@pytest.fixture
+def fastmcp_log_records() -> Iterator[list[logging.LogRecord]]:
+    """Every record fastmcp logs while a test runs, whatever its propagation or handlers."""
+    fastmcp_logger = logging.getLogger("fastmcp")
+    handler = _RecordingHandler()
+    previous_level = fastmcp_logger.level
+    fastmcp_logger.addHandler(handler)
+    fastmcp_logger.setLevel(logging.DEBUG)
+    yield handler.records
+    fastmcp_logger.removeHandler(handler)
+    fastmcp_logger.setLevel(previous_level)
+
+
+@pytest.fixture
+def list_failure_events(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[tuple[str, dict[str, Any]]]:
+    """(level, fields) of every ``aggregator.service_list_failed`` event the aggregator logs."""
+    events: list[tuple[str, dict[str, Any]]] = []
+    for level in ("info", "warning"):
+
+        def _capture(event: str, *, _level: str = level, **kwargs: Any) -> None:
+            if event == "aggregator.service_list_failed":
+                events.append((_level, kwargs))
+
+        monkeypatch.setattr(aggregator_module.logger, level, _capture)
+    return events
+
+
+async def test_unlinked_caller_listing_logs_no_fastmcp_warning(
+    aggregator_server: ASGIServer,
+    sig_key: Any,
+    prime_jwks: Any,
+    fastmcp_log_records: list[logging.LogRecord],
+    list_failure_events: list[tuple[str, dict[str, Any]]],
+) -> None:
+    """The not-linked skip is expected, so fastmcp's AggregateProvider has no
+    exception to warn about for tools, resources, resource templates or
+    prompts; the broker's own INFO event is the record."""
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(_token_for(333, 333, "carol"))  # unlinked
+
+    async with _bearer_client(aggregator_server, token) as client:
+        await client.list_tools()
+        await client.list_resources()
+        await client.list_resource_templates()
+        await client.list_prompts()
+
+    assert [
+        r.getMessage() for r in fastmcp_log_records if r.levelno >= logging.WARNING
+    ] == []
+    assert list_failure_events
+    assert {
+        (level, fields["service"], fields["reason"])
+        for level, fields in list_failure_events
+    } == {("info", "secure", "not_linked"), ("info", "dead", "not_linked")}
+
+
+async def test_failing_backend_listing_still_warns_naming_the_service(
+    aggregator_server: ASGIServer,
+    sig_key: Any,
+    prime_jwks: Any,
+    list_failure_events: list[tuple[str, dict[str, Any]]],
+) -> None:
+    """A linked caller whose backend is down is a real failure: it stays at WARNING, with the service named."""
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(_token_for(111, 111, "alice"))
+
+    async with _bearer_client(aggregator_server, token) as client:
+        await client.list_tools()
+
+    [(level, failure)] = list_failure_events
+    assert level == "warning"
+    assert failure["service"] == "dead"
+    assert failure["reason"] == "unavailable"
 
 
 async def test_dead_backend_does_not_break_other_backends_listing(

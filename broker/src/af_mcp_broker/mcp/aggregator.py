@@ -1652,6 +1652,42 @@ class _ObservableProxyProvider(ProxyProvider):
                 self._prune_subject_list_cache()
                 return items
 
+    # The public list_* methods are what AggregateProvider calls, and it logs a
+    # WARNING for any exception they raise. A caller who has not linked the
+    # credential is an expected skip, already on record as an INFO
+    # ``aggregator.service_list_failed`` event, so these report an empty
+    # listing for it instead. Only the public methods catch: ``_get_tool``
+    # and the per-subject cache go through ``_list_*`` and still see the
+    # exception, which they rely on.
+
+    async def list_tools(self) -> Sequence[Tool]:
+        """List this service's tools, or none for a caller who has not linked the credential."""
+        try:
+            return await super().list_tools()
+        except NotLinkedForListingError:
+            return []
+
+    async def list_resources(self) -> Sequence[Resource]:
+        """List this service's resources, or none for a caller who has not linked the credential."""
+        try:
+            return await super().list_resources()
+        except NotLinkedForListingError:
+            return []
+
+    async def list_resource_templates(self) -> Sequence[ResourceTemplate]:
+        """List this service's resource templates, or none for a caller who has not linked the credential."""
+        try:
+            return await super().list_resource_templates()
+        except NotLinkedForListingError:
+            return []
+
+    async def list_prompts(self) -> Sequence[Prompt]:
+        """List this service's prompts, or none for a caller who has not linked the credential."""
+        try:
+            return await super().list_prompts()
+        except NotLinkedForListingError:
+            return []
+
     async def _list_tools(self) -> Sequence[Tool]:
         """List this service's tools, cached per (caller subject, this service) -- issue #320. See ``_cached_list`` for the caching mechanics; ``_list_tools_uncached`` is the tools-specific fetch (classify/log/record_list_failure)."""
         return await self._cached_list("tools", self._list_tools_uncached)
