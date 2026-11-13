@@ -34,6 +34,10 @@ from typing import TYPE_CHECKING
 import httpx
 import structlog
 
+from af_mcp_broker.credentials.errors import (
+    ServiceXBadRefreshTokenError,
+    ServiceXServiceMintError,
+)
 from af_mcp_broker.http import get_http_client
 from af_mcp_broker.logging import request_id_headers
 
@@ -43,30 +47,6 @@ if TYPE_CHECKING:
     from af_mcp_broker.credentials.broker_issued import BrokerTokenIssuer
 
 log = structlog.get_logger(__name__)
-
-
-class ServiceXServiceMintError(RuntimeError):
-    """Raised when a redeem failed for a reason other than a bad refresh token (service unreachable, timeout, 401/403/429/5xx).
-
-    An infra failure, not a refresh-token signal -- callers must NOT unlink
-    the stored refresh token over this. The message never carries the
-    service's response body (it may reference ServiceX backend internals).
-    """
-
-
-class ServiceXBadRefreshTokenError(ValueError):
-    """Raised when the service answered 400: ServiceX itself rejected the refresh token.
-
-    Subclasses ``ValueError`` for the same reason
-    ``VomsServiceBadPassphraseError`` does -- callers unlink the stored
-    refresh token on this (and only this), prompting a re-paste.
-    """
-
-    def __init__(self) -> None:
-        super().__init__(
-            "ServiceX rejected this token. Generate a new token from your "
-            "ServiceX profile page and re-link."
-        )
 
 
 @dataclass(frozen=True)

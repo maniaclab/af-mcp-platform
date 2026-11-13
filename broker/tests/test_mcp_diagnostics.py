@@ -8,8 +8,6 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from conftest import make_claims, run_aggregator_async
-from fastmcp import Client
-from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.exceptions import ToolError
 from pydantic import SecretStr
 from tokencost import calculate_cost_by_tokens  # type: ignore[import-untyped]
@@ -119,12 +117,11 @@ async def test_af_tools_declare_a_proper_object_output_schema(
         principal_cache=principal_cache,
     )
 
-    async with run_aggregator_async(mcp, path="/mcp") as agg_url:
-        transport = StreamableHttpTransport(
-            agg_url, headers={"Authorization": f"Bearer {token}"}
-        )
-        async with Client(transport) as client:
-            tools = await client.list_tools()
+    async with (
+        run_aggregator_async(mcp, path="/mcp") as server,
+        server.client(headers={"Authorization": f"Bearer {token}"}) as client,
+    ):
+        tools = await client.list_tools()
 
     by_name = {t.name: t for t in tools}
     for name in (
@@ -165,12 +162,11 @@ async def test_af_tools_declare_read_only_annotations(
         principal_cache=principal_cache,
     )
 
-    async with run_aggregator_async(mcp, path="/mcp") as agg_url:
-        transport = StreamableHttpTransport(
-            agg_url, headers={"Authorization": f"Bearer {token}"}
-        )
-        async with Client(transport) as client:
-            tools = await client.list_tools()
+    async with (
+        run_aggregator_async(mcp, path="/mcp") as server,
+        server.client(headers={"Authorization": f"Bearer {token}"}) as client,
+    ):
+        tools = await client.list_tools()
 
     by_name = {t.name: t for t in tools}
     for name in (
@@ -202,12 +198,11 @@ async def test_af_whoami_returns_subject_groups_and_permissions(
         principal_cache=principal_cache,
     )
 
-    async with run_aggregator_async(mcp, path="/mcp") as agg_url:
-        transport = StreamableHttpTransport(
-            agg_url, headers={"Authorization": f"Bearer {token}"}
-        )
-        async with Client(transport) as client:
-            result = await client.call_tool(WHOAMI_TOOL_NAME, {})
+    async with (
+        run_aggregator_async(mcp, path="/mcp") as server,
+        server.client(headers={"Authorization": f"Bearer {token}"}) as client,
+    ):
+        result = await client.call_tool(WHOAMI_TOOL_NAME, {})
 
     assert result.structured_content["subject"] == "user-123"
     assert result.structured_content["groups"] == ["atlas"]
@@ -243,12 +238,11 @@ async def test_af_list_identities_reflects_linkage_per_provider(
         identity_provider_configs=identity_provider_configs,
     )
 
-    async with run_aggregator_async(mcp, path="/mcp") as agg_url:
-        transport = StreamableHttpTransport(
-            agg_url, headers={"Authorization": f"Bearer {token}"}
-        )
-        async with Client(transport) as client:
-            result = await client.call_tool(LIST_IDENTITIES_TOOL_NAME, {})
+    async with (
+        run_aggregator_async(mcp, path="/mcp") as server,
+        server.client(headers={"Authorization": f"Bearer {token}"}) as client,
+    ):
+        result = await client.call_tool(LIST_IDENTITIES_TOOL_NAME, {})
 
     rows = {row["id"]: row for row in result.structured_content["identities"]}
     assert rows["linked-idp"] == {
@@ -302,12 +296,11 @@ async def test_af_list_identities_describes_job_credentials_when_credmon_is_wire
         ),
     )
 
-    async with run_aggregator_async(mcp, path="/mcp") as agg_url:
-        transport = StreamableHttpTransport(
-            agg_url, headers={"Authorization": f"Bearer {token}"}
-        )
-        async with Client(transport) as client:
-            result = await client.call_tool(LIST_IDENTITIES_TOOL_NAME, {})
+    async with (
+        run_aggregator_async(mcp, path="/mcp") as server,
+        server.client(headers={"Authorization": f"Bearer {token}"}) as client,
+    ):
+        result = await client.call_tool(LIST_IDENTITIES_TOOL_NAME, {})
 
     rows = {row["id"]: row for row in result.structured_content["identities"]}
     assert rows["krb5"]["job_credential"] == {
@@ -351,17 +344,16 @@ async def test_af_link_identity_returns_portal_url_and_linked_status(
         identity_provider_configs=identity_provider_configs,
     )
 
-    async with run_aggregator_async(mcp, path="/mcp") as agg_url:
-        transport = StreamableHttpTransport(
-            agg_url, headers={"Authorization": f"Bearer {token}"}
+    async with (
+        run_aggregator_async(mcp, path="/mcp") as server,
+        server.client(headers={"Authorization": f"Bearer {token}"}) as client,
+    ):
+        linked_result = await client.call_tool(
+            LINK_IDENTITY_TOOL_NAME, {"provider": "linked-idp"}
         )
-        async with Client(transport) as client:
-            linked_result = await client.call_tool(
-                LINK_IDENTITY_TOOL_NAME, {"provider": "linked-idp"}
-            )
-            unlinked_result = await client.call_tool(
-                LINK_IDENTITY_TOOL_NAME, {"provider": "unlinked-idp"}
-            )
+        unlinked_result = await client.call_tool(
+            LINK_IDENTITY_TOOL_NAME, {"provider": "unlinked-idp"}
+        )
 
     assert linked_result.structured_content == {
         "id": "linked-idp",
@@ -398,15 +390,14 @@ async def test_af_link_identity_unknown_provider_raises_tool_error(
         identity_provider_configs=identity_provider_configs,
     )
 
-    async with run_aggregator_async(mcp, path="/mcp") as agg_url:
-        transport = StreamableHttpTransport(
-            agg_url, headers={"Authorization": f"Bearer {token}"}
-        )
-        async with Client(transport) as client:
-            with pytest.raises(ToolError) as excinfo:
-                await client.call_tool(
-                    LINK_IDENTITY_TOOL_NAME, {"provider": "no-such-provider"}
-                )
+    async with (
+        run_aggregator_async(mcp, path="/mcp") as server,
+        server.client(headers={"Authorization": f"Bearer {token}"}) as client,
+    ):
+        with pytest.raises(ToolError) as excinfo:
+            await client.call_tool(
+                LINK_IDENTITY_TOOL_NAME, {"provider": "no-such-provider"}
+            )
 
     assert "no-such-provider" in str(excinfo.value)
     assert "linked-idp" in str(excinfo.value)
@@ -437,6 +428,18 @@ async def test_af_list_mcp_servers_reuses_service_status_and_identity_join(
             display_name="Open Backend",
         )
     )
+    registry.register(
+        ServiceSpec(
+            name="down",
+            prefix="down",
+            url="http://down.invalid/mcp",
+            transport="http",
+            required_permission="__none__",
+            auth_type="none",
+            display_name="Down Backend",
+        )
+    )
+    registry.record_list_failure("down", "unavailable", None)
     registry.register(
         ServiceSpec(
             name="gated",
@@ -528,17 +531,18 @@ async def test_af_list_mcp_servers_reuses_service_status_and_identity_join(
         target_to_alias=target_to_alias,
     )
 
-    async with run_aggregator_async(mcp, path="/mcp") as agg_url:
-        transport = StreamableHttpTransport(
-            agg_url, headers={"Authorization": f"Bearer {token}"}
-        )
-        async with Client(transport) as client:
-            result = await client.call_tool(LIST_MCP_SERVERS_TOOL_NAME, {})
+    async with (
+        run_aggregator_async(mcp, path="/mcp") as server,
+        server.client(headers={"Authorization": f"Bearer {token}"}) as client,
+    ):
+        result = await client.call_tool(LIST_MCP_SERVERS_TOOL_NAME, {})
 
     rows = {row["name"]: row for row in result.structured_content["servers"]}
     assert rows["open"]["status"] == "available"
     assert rows["open"]["prefix"] == "open"
     assert rows["open"]["credential_provider"] is None
+    # A service-wide failure marks even a credential-free backend unavailable.
+    assert rows["down"]["status"] == "unavailable"
     assert rows["gated"]["status"] == "permission_required"
     assert rows["needs-link"]["status"] == "link_required"
     assert rows["needs-link"]["credential_provider"] == "unlinked-idp"
@@ -599,12 +603,11 @@ async def test_diagnostic_tools_visible_to_principal_with_no_permissions(
         principal_cache=principal_cache,
     )
 
-    async with run_aggregator_async(mcp, path="/mcp") as agg_url:
-        transport = StreamableHttpTransport(
-            agg_url, headers={"Authorization": f"Bearer {token}"}
-        )
-        async with Client(transport) as client:
-            tools = await client.list_tools()
+    async with (
+        run_aggregator_async(mcp, path="/mcp") as server,
+        server.client(headers={"Authorization": f"Bearer {token}"}) as client,
+    ):
+        tools = await client.list_tools()
 
     names = {t.name for t in tools}
     assert {
@@ -644,12 +647,11 @@ async def test_af_whoami_call_is_audited_and_metered_as_the_gateway_service(
         principal_cache=principal_cache,
     )
 
-    async with run_aggregator_async(mcp, path="/mcp") as agg_url:
-        transport = StreamableHttpTransport(
-            agg_url, headers={"Authorization": f"Bearer {token}"}
-        )
-        async with Client(transport) as client:
-            await client.call_tool(WHOAMI_TOOL_NAME, {})
+    async with (
+        run_aggregator_async(mcp, path="/mcp") as server,
+        server.client(headers={"Authorization": f"Bearer {token}"}) as client,
+    ):
+        await client.call_tool(WHOAMI_TOOL_NAME, {})
 
     line = json.loads(buffer.getvalue().strip())
     assert line["event"] == "audit"
@@ -715,14 +717,13 @@ async def test_no_diagnostic_tool_response_contains_a_url(
         target_to_alias=target_to_alias,
     )
 
-    async with run_aggregator_async(mcp, path="/mcp") as agg_url:
-        transport = StreamableHttpTransport(
-            agg_url, headers={"Authorization": f"Bearer {token}"}
-        )
-        async with Client(transport) as client:
-            whoami = await client.call_tool(WHOAMI_TOOL_NAME, {})
-            identities = await client.call_tool(LIST_IDENTITIES_TOOL_NAME, {})
-            servers = await client.call_tool(LIST_MCP_SERVERS_TOOL_NAME, {})
+    async with (
+        run_aggregator_async(mcp, path="/mcp") as server,
+        server.client(headers={"Authorization": f"Bearer {token}"}) as client,
+    ):
+        whoami = await client.call_tool(WHOAMI_TOOL_NAME, {})
+        identities = await client.call_tool(LIST_IDENTITIES_TOOL_NAME, {})
+        servers = await client.call_tool(LIST_MCP_SERVERS_TOOL_NAME, {})
 
     for result in (whoami, identities, servers):
         blob = json.dumps(result.structured_content)
@@ -780,12 +781,11 @@ async def _call_af_usage(
         CredentialRegistry(),
         principal_cache=principal_cache,
     )
-    async with run_aggregator_async(mcp, path="/mcp") as agg_url:
-        transport = StreamableHttpTransport(
-            agg_url, headers={"Authorization": f"Bearer {token}"}
-        )
-        async with Client(transport) as client:
-            return await client.call_tool(USAGE_TOOL_NAME, args)
+    async with (
+        run_aggregator_async(mcp, path="/mcp") as server,
+        server.client(headers={"Authorization": f"Bearer {token}"}) as client,
+    ):
+        return await client.call_tool(USAGE_TOOL_NAME, args)
 
 
 async def test_af_usage_returns_only_the_callers_usage(

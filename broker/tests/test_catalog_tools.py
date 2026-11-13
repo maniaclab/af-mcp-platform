@@ -18,12 +18,15 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 import pytest
-from conftest import HungBackend, run_asgi_app
+from conftest import (
+    HungBackend,
+    run_inprocess_asgi_app,
+    run_inprocess_server,
+)
 from fastapi import FastAPI
 from fastmcp import FastMCP
 from fastmcp.server.dependencies import get_http_headers
 from fastmcp.utilities.http import find_available_port
-from fastmcp.utilities.tests import run_server_async
 from mcp.types import ToolAnnotations
 from starlette.middleware import Middleware
 from starlette.responses import JSONResponse
@@ -120,13 +123,13 @@ def _annotated_backend() -> FastMCP:
 
 @pytest.fixture
 async def open_backend_url() -> AsyncIterator[str]:
-    async with run_server_async(_open_backend(), path="/mcp") as url:
+    async with run_inprocess_server(_open_backend(), path="/mcp") as url:
         yield url
 
 
 @pytest.fixture
 async def annotated_backend_url() -> AsyncIterator[str]:
-    async with run_server_async(_annotated_backend(), path="/mcp") as url:
+    async with run_inprocess_server(_annotated_backend(), path="/mcp") as url:
         yield url
 
 
@@ -151,13 +154,13 @@ def _condor_like_backend() -> FastMCP:
 
 @pytest.fixture
 async def condor_like_backend_url() -> AsyncIterator[str]:
-    async with run_server_async(_condor_like_backend(), path="/mcp") as url:
+    async with run_inprocess_server(_condor_like_backend(), path="/mcp") as url:
         yield url
 
 
 @pytest.fixture
 async def secure_backend_url() -> AsyncIterator[str]:
-    async with run_asgi_app(_auth_gated_backend()) as url:
+    async with run_inprocess_asgi_app(_auth_gated_backend()) as url:
         yield f"{url}/mcp"
 
 
@@ -520,7 +523,7 @@ async def test_not_linked_caller_never_reaches_the_backend(
     tools/list through /mcp)."""
     requests: list[str] = []
     backend_app = _RecordingBackend(_open_backend().http_app(path="/mcp"), requests)
-    async with run_asgi_app(backend_app) as backend_url:
+    async with run_inprocess_asgi_app(backend_app) as backend_url:
         registry = ServiceRegistry()
         registry.register(
             _spec(
@@ -560,7 +563,7 @@ async def test_rejected_bearer_caller_never_reaches_the_backend(
     "rejected" link state rather than "not_linked"."""
     requests: list[str] = []
     backend_app = _RecordingBackend(_open_backend().http_app(path="/mcp"), requests)
-    async with run_asgi_app(backend_app) as backend_url:
+    async with run_inprocess_asgi_app(backend_app) as backend_url:
         registry = ServiceRegistry()
         registry.register(
             _spec(
@@ -687,7 +690,7 @@ async def test_unavailable_when_backend_never_answers(
     policy: EntitlementPolicy, make_principal: Callable[..., Any]
 ) -> None:
     hung = HungBackend()
-    async with run_asgi_app(hung) as url:
+    async with run_inprocess_asgi_app(hung) as url:
         registry = ServiceRegistry()
         registry.register(
             _spec("hung", f"{url}/mcp", timeout_seconds=_SERVICE_TIMEOUT_SECONDS)
@@ -953,7 +956,7 @@ async def test_successful_listing_is_served_from_cache(
     state["principal"] = make_principal(groups=[])
 
     backend_app, counter = _counting_backend()
-    async with run_asgi_app(backend_app) as url:
+    async with run_inprocess_asgi_app(backend_app) as url:
         registry.register(_spec("open", f"{url}/mcp"))
         first = await _get_tools(app, "open")
         assert first.status_code == 200, first.text
@@ -978,7 +981,7 @@ async def test_tools_cache_ttl_zero_disables_caching(
     state["principal"] = make_principal(groups=[])
 
     backend_app, counter = _counting_backend()
-    async with run_asgi_app(backend_app) as url:
+    async with run_inprocess_asgi_app(backend_app) as url:
         registry.register(_spec("open", f"{url}/mcp", tools_cache_ttl=0))
         first = await _get_tools(app, "open")
         assert first.json()["status"] == "ok"

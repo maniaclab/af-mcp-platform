@@ -34,6 +34,8 @@ from tokencost import (  # type: ignore[import-untyped]
     calculate_cost_by_tokens,
 )
 
+from af_mcp_broker.errors import BrokerError
+
 if TYPE_CHECKING:
     from af_mcp_broker.usage.store import UsageAggregate, UsageStore
 
@@ -95,7 +97,7 @@ class UsageResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class UnknownCostModelError(ValueError):
+class UnknownCostModelError(BrokerError):
     """Signal that the requested cost model is not a bundled TOKEN_COSTS key.
 
     Each surface maps this to its own error shape (422 for ``GET

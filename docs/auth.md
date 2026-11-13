@@ -697,14 +697,14 @@ secret the broker can redeem on its own: the CERN password is a live,
 non-recoverable secret (krb5-token-service runs `kinit` against CERN's
 realm with it) that must be supplied fresh on every mint call, not a
 passphrase that merely unlocks an already-stored credential.
-`KrbTokenProvider` (`credentials/krb5.py`) therefore raises `NeedsUnlock`
+`KrbTokenProvider` (`credentials/krb5.py`) therefore raises `NeedsUnlockError`
 (pointing at `POST /v1/krb5/ticket`) whenever nothing usable can be
 produced with no user interaction, mirroring `X509Provider`'s
 passphrase-unlock doctrine rather than `CondorTokenProvider`'s
 unconditional `is_linked() -> True`.
 
 `issue()` works through a five-tier fallback before ever raising
-`NeedsUnlock`. Tiers 1-4 all need **no user interaction**: once a keytab
+`NeedsUnlockError`. Tiers 1-4 all need **no user interaction**: once a keytab
 is linked (see `POST /v1/krb5/keytab` below), renew and remint can keep
 a linked user's tickets flowing indefinitely without ever prompting for
 a password again:
@@ -725,7 +725,7 @@ a password again:
    through as if no link had ever existed.
 
 Only when none of those four tiers can produce a ticket does `issue()`
-raise `NeedsUnlock` — tiers 3 and 4 in particular mean a linked user with
+raise `NeedsUnlockError` — tiers 3 and 4 in particular mean a linked user with
 a linked keytab never has to re-enter a password at all, the same
 hands-free renewal story `X509Provider` already has for VOMS proxies.
 Tier 5, the interactive fresh mint, still requires a live username and
@@ -748,7 +748,7 @@ mint first: an empty body still runs through `issue()`'s full tier
 fallback, so a linked keytab (tier 4) or a still-renewable ticket (tier
 3) can satisfy the request with **no credential at all**. Only when none
 of tiers 1-4 can produce a ticket does the route map the resulting
-`NeedsUnlock` onto `409` — `{"error": "krb5_unlock_required",
+`NeedsUnlockError` onto `409` — `{"error": "krb5_unlock_required",
 "unlock_endpoint": "/v1/krb5/ticket"}` — telling the caller a live
 password is genuinely needed this time. The portal's "Refresh ticket"
 button (`Krb5IdentityCard.vue`) sends the empty-body request first and
@@ -1002,7 +1002,7 @@ x509 branch uses, gated by `_might_be_entitled`, so a listing never
 hard-fails or eats a wasted mint attempt just because a krb5 service is
 in the catalog. A caller must have linked the credential (a stored ticket,
 `is_linked()` true) for the service's tools to be listed: for an unlinked
-caller the branch raises `NotLinkedForListing` before anything is minted,
+caller the branch raises `NotLinkedForListingError` before anything is minted,
 so no identity header is attached and the backend is never contacted. The
 service then contributes no tools to that caller's list (the rest of the
 list is unaffected), the outcome is recorded as `not_linked` for that
@@ -1014,7 +1014,7 @@ reaches the authorized branch above). `unauthorized` ("Your linked
 credential was rejected") is reserved for a caller whose credential the
 backend rejected. The x509, servicex and bearer branches do the same: a
 `bearer` service's list-time mint (`_resolve_list_time_headers`) raises
-`NotLinkedForListing` for a caller whose provider is not linked, so for
+`NotLinkedForListingError` for a caller whose provider is not linked, so for
 every auth type that carries a per-user credential an unlinked caller's
 listing sends the backend no request. A provider that needs no user action
 (`broker-issued`, `condor-token`, the service-account provider) reports
@@ -1498,7 +1498,7 @@ failed this way is not negative-cached like other listing failures, so the
 next listing tries again.
 
 A caller whose credential is already rejected gets no listing request at
-all, because `is_linked()` is false: the listing raises `NotLinkedForListing`
+all, because `is_linked()` is false: the listing raises `NotLinkedForListingError`
 with `rejected` set, which is recorded as `unauthorized` for that caller (not
 `not_linked`) and, for the portal's per-service tool listing, reported with
 the same "credential was rejected, re-link" status. Like any other

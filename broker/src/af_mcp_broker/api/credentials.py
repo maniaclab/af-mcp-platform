@@ -14,22 +14,24 @@ from af_mcp_broker.credentials import (
     CredentialCache,
     CredentialKind,
     CredentialRegistry,
+    KrbTokenProvider,
+    ServiceXProvider,
+    X509Provider,
+)
+from af_mcp_broker.credentials.errors import (
     Krb5TokenAccountError,
     Krb5TokenBadCredentialError,
     Krb5TokenInvalidRequestError,
     Krb5TokenMintError,
     Krb5TokenRateLimitedError,
-    KrbTokenProvider,
-    NeedsUnlock,
+    NeedsUnlockError,
     PosixIdentityRequiredError,
     ServiceXBadRefreshTokenError,
-    ServiceXProvider,
     ServiceXServiceMintError,
     VomsServiceBadPassphraseError,
     VomsServiceMintError,
     VomsServicePreflightError,
     VomsServiceRejectedError,
-    X509Provider,
 )
 from af_mcp_broker.identity import Principal, keycloak_dependency
 from af_mcp_broker.logging import CorrelatedHTTPException
@@ -117,7 +119,7 @@ class KrbTicketRequest(BaseModel):
     # `issue()`'s tiers 1-4 (cache, Vault repopulation, renew, keytab
     # remint) may already produce a ticket with no credential at all, and a
     # linked-but-nothing-cached caller who supplies neither field simply
-    # hits tier 4 or, failing that, `NeedsUnlock` (mapped to 409 below,
+    # hits tier 4 or, failing that, `NeedsUnlockError` (mapped to 409 below,
     # telling the caller a live password is actually needed this time).
     # SecretStr prevents the CERN password from appearing in repr/logs.
     username: str | None = None
@@ -517,7 +519,7 @@ async def issue_credential(
             body.target,
             min_remaining_seconds=body.min_remaining_seconds,
         )
-    except NeedsUnlock as exc:
+    except NeedsUnlockError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
@@ -697,7 +699,7 @@ async def create_krb5_ticket(
             lifetime=body.lifetime,
             renewable_lifetime=body.renewable_lifetime,
         )
-    except NeedsUnlock as exc:
+    except NeedsUnlockError as exc:
         # Only reachable when the caller omitted (or only partially gave)
         # username/password AND none of issue()'s tiers 1-4 (cache, Vault
         # repopulation, renew, keytab remint) could produce a ticket with no
@@ -705,7 +707,7 @@ async def create_krb5_ticket(
         # sends this shape first, before ever asking the user for a
         # password; a 409 here tells it to fall back to the password form,
         # mirroring the generic POST /v1/credential handler's own
-        # NeedsUnlock -> 409 mapping.
+        # NeedsUnlockError -> 409 mapping.
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
@@ -1033,7 +1035,7 @@ async def _redeem_from_vault(
     if record is None:
         try:
             record = await provider.renew_from_stored_link(subject, audience)
-        except NeedsUnlock as exc:
+        except NeedsUnlockError as exc:
             if exc.reason == "not_linked":
                 # Same actionable 404 as "nothing cached" on the legacy path.
                 raise HTTPException(
@@ -1342,12 +1344,12 @@ async def redeem_krb5_ticket(request: Request) -> KrbTicketRedeemResponse:
         # nothing is available -- a still-renewable ticket or a linked
         # keytab can produce one hands-free, with no password, exactly like
         # redeem_x509_proxy's own renew_from_stored_link fallback above.
-        # Only genuinely nothing (NeedsUnlock) still 404s with the mint hint.
+        # Only genuinely nothing (NeedsUnlockError) still 404s with the mint hint.
         try:
             cred = await provider.renew_or_remint(
                 subject, target, min_remaining_seconds=0
             )
-        except NeedsUnlock as exc:
+        except NeedsUnlockError as exc:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail=_KRB5_REDEEM_MINT_HINT
             ) from exc
@@ -1498,7 +1500,7 @@ async def redeem_servicex_token(request: Request) -> ServiceXRedeemResponse:
     if record is None:
         try:
             record = await provider.redeem_from_link(subject, target)
-        except NeedsUnlock as exc:
+        except NeedsUnlockError as exc:
             if exc.reason == "not_linked":
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,

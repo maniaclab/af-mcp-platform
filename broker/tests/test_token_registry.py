@@ -805,7 +805,7 @@ async def test_sweep_emptied_principal_path_can_be_recreated(
     assert stats.principals_emptied == 1
 
     # Must not raise -- a stale cached version for the now-destroyed path
-    # would surface as a CasConflict on this add()'s create-only write.
+    # would surface as a CasConflictError on this add()'s create-only write.
     await backend.add(_make_record(lookup_id="lookup-2", principal_id="p1"))
     rows = await backend.list_for_principal("p1")
     assert [r.lookup_id for r in rows] == ["lookup-2"]

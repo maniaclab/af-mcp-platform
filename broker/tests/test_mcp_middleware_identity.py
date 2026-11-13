@@ -191,6 +191,48 @@ async def test_expired_token_rejected_with_actionable_portal_message(
     assert f"{settings.portal_url.rstrip('/')}/tokens" in detail
 
 
+async def test_wrong_audience_token_gets_the_vague_401(
+    settings, sig_key, prime_jwks, static_principal_cache
+):
+    """A missing audience is stated explicitly on /v1 but must not be on /mcp,
+    where every non-expiry JWT failure collapses into the same vague 401."""
+    principal_cache, _directory = static_principal_cache
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims(aud="some-other-service"))
+    inner = _InnerApp()
+    middleware = AsgiAuthMiddleware(
+        inner, IdentityMiddleware(settings, principal_cache=principal_cache)
+    )
+
+    messages = await _run(middleware, _http_scope({"authorization": f"Bearer {token}"}))
+
+    assert not inner.called
+    assert _status(messages) == 401
+    assert _header(messages, "www-authenticate") == "Bearer"
+    assert json.loads(_body(messages)) == {"detail": "Invalid bearer token"}
+
+
+async def test_unavailable_directory_gets_a_503_not_a_401(
+    settings, sig_key, prime_jwks, static_principal_cache
+):
+    principal_cache, directory = static_principal_cache
+    directory.unavailable_subjects.add("user-123")
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+    inner = _InnerApp()
+    middleware = AsgiAuthMiddleware(
+        inner, IdentityMiddleware(settings, principal_cache=principal_cache)
+    )
+
+    messages = await _run(middleware, _http_scope({"authorization": f"Bearer {token}"}))
+
+    assert not inner.called
+    assert _status(messages) == 503
+    assert _header(messages, "www-authenticate") is None
+    detail = json.loads(_body(messages))["detail"]
+    assert "authorization directory is temporarily unavailable" in detail
+
+
 async def test_dev_bypass_active_builds_principal_without_checking_headers(settings):
     dev_settings = settings.model_copy(
         update={

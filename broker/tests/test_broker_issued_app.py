@@ -18,10 +18,8 @@ import json
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from fastmcp import Client, FastMCP
-from fastmcp.client.transports import StreamableHttpTransport
+from fastmcp import FastMCP
 from fastmcp.server.dependencies import get_http_headers
-from fastmcp.utilities.tests import run_server_async
 from test_broker_issued import (
     _BASE_CLAIMS,
     _make_rsa_key,
@@ -47,7 +45,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
     from pathlib import Path
 
-from conftest import make_claims, run_aggregator_async
+from conftest import make_claims, run_aggregator_async, run_inprocess_server
 
 _BROKER_ISSUED_PROVIDERS = [
     {
@@ -208,7 +206,7 @@ def _toy_backend() -> FastMCP:
 
 @pytest.fixture
 async def toy_backend_url() -> AsyncIterator[str]:
-    async with run_server_async(_toy_backend(), path="/mcp") as url:
+    async with run_inprocess_server(_toy_backend(), path="/mcp") as url:
         yield url
 
 
@@ -252,12 +250,11 @@ async def test_aggregator_injects_broker_identity_token(
     )
     inbound_token = sig_key.sign(make_claims())
 
-    async with run_aggregator_async(mcp, path="/mcp") as base_url:
-        transport = StreamableHttpTransport(
-            base_url, headers={"Authorization": f"Bearer {inbound_token}"}
-        )
-        async with Client(transport) as client:
-            result = await client.call_tool("toy_seen_authorization", {})
+    async with (
+        run_aggregator_async(mcp, path="/mcp") as server,
+        server.client(headers={"Authorization": f"Bearer {inbound_token}"}) as client,
+    ):
+        result = await client.call_tool("toy_seen_authorization", {})
 
     seen: str = result.data
     assert seen is not None

@@ -2,22 +2,27 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-import httpx2
 import pytest
-from conftest import AUDIENCE, ISSUER, make_claims, run_asgi_app
+from conftest import (
+    AUDIENCE,
+    ISSUER,
+    make_claims,
+    run_broker_in_process,
+    run_inprocess_server,
+)
 from fastmcp import Client, FastMCP
-from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_http_headers
 from fastmcp.server.providers.proxy import ProxyProvider
 from fastmcp.utilities.http import find_available_port
-from fastmcp.utilities.tests import run_server_async
 
 from af_mcp_broker.config import get_settings
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
     from pathlib import Path
+
+    from fastmcp.utilities.tests import ASGIServer
 
 # ---------------------------------------------------------------------------
 # Toy backends. One echoes its own inbound headers back (to prove the
@@ -70,13 +75,13 @@ def _self_prefixed_backend() -> FastMCP:
 
 @pytest.fixture
 async def toy_backend_url() -> AsyncIterator[str]:
-    async with run_server_async(_toy_backend(), path="/mcp") as url:
+    async with run_inprocess_server(_toy_backend(), path="/mcp") as url:
         yield url
 
 
 @pytest.fixture
 async def selfpfx_backend_url() -> AsyncIterator[str]:
-    async with run_server_async(_self_prefixed_backend(), path="/mcp") as url:
+    async with run_inprocess_server(_self_prefixed_backend(), path="/mcp") as url:
         yield url
 
 
@@ -221,7 +226,7 @@ def running_broker(
     prime_jwks: Any,
 ):
     """Boot the real af_mcp_broker.app.app (module-level singleton, same
-    object every test module shares) behind a real HTTP server, wired to
+    object every test module shares) served in-process, wired to
     three test backends via a temp services.yaml/policy.yaml."""
     return _boot_broker(
         monkeypatch,
@@ -261,14 +266,12 @@ def running_broker_with_excluded_tools(
     )
 
 
-def _bearer_client(url: str, token: str) -> Client:
-    return Client(
-        StreamableHttpTransport(url, headers={"Authorization": f"Bearer {token}"})
-    )
+def _bearer_client(server: ASGIServer, token: str) -> Client:
+    return server.client(headers={"Authorization": f"Bearer {token}"})
 
 
-async def _list_tool_names(mcp_url: str, token: str) -> set[str]:
-    async with _bearer_client(f"{mcp_url}/mcp/", token) as client:
+async def _list_tool_names(server: ASGIServer, token: str) -> set[str]:
+    async with _bearer_client(server, token) as client:
         tools = await client.list_tools()
     return {t.name for t in tools}
 
@@ -279,8 +282,8 @@ async def test_entitled_principal_sees_namespaced_and_selfprefixed_tools(
     token = sig_key.sign(make_claims())
     _TEST_PRINCIPAL_GROUPS["user-123"] = ["atlas"]
 
-    async with run_asgi_app(running_broker) as base_url:
-        names = await _list_tool_names(base_url, token)
+    async with run_broker_in_process(running_broker) as server:
+        names = await _list_tool_names(server, token)
 
     # toy's tools are namespaced ("toy_echo"); selfpfx's are not
     # (apply_namespace=false) -- and the never-served "dead" backend
@@ -296,8 +299,8 @@ async def test_unentitled_principal_does_not_see_gated_tools(running_broker, sig
     token = sig_key.sign(make_claims())
     _TEST_PRINCIPAL_GROUPS["user-123"] = []
 
-    async with run_asgi_app(running_broker) as base_url:
-        names = await _list_tool_names(base_url, token)
+    async with run_broker_in_process(running_broker) as server:
+        names = await _list_tool_names(server, token)
 
     # No read_data permission -> toy's tools (required_permission=read_data)
     # are filtered out, but the open selfpfx tool is still visible.
@@ -323,11 +326,11 @@ async def test_missing_bearer_rejected(running_broker):
     prove what this test exists to prove.
     """
     async with (
-        run_asgi_app(running_broker) as base_url,
-        httpx2.AsyncClient() as http_client,
+        run_broker_in_process(running_broker) as server,
+        server.http_client() as http_client,
     ):
         resp = await http_client.post(
-            f"{base_url}/mcp/",
+            server.url,
             headers={"Accept": "application/json, text/event-stream"},
             json={
                 "jsonrpc": "2.0",
@@ -346,8 +349,8 @@ async def test_tool_call_round_trips_to_backend(running_broker, sig_key):
     _TEST_PRINCIPAL_GROUPS["user-123"] = ["atlas"]
 
     async with (
-        run_asgi_app(running_broker) as base_url,
-        _bearer_client(f"{base_url}/mcp/", token) as client,
+        run_broker_in_process(running_broker) as server,
+        _bearer_client(server, token) as client,
     ):
         result = await client.call_tool("toy_echo", {"message": "hello"})
 
@@ -361,8 +364,8 @@ async def test_authorization_header_not_forwarded_to_backend(running_broker, sig
     _TEST_PRINCIPAL_GROUPS["user-123"] = ["atlas"]
 
     async with (
-        run_asgi_app(running_broker) as base_url,
-        _bearer_client(f"{base_url}/mcp/", token) as client,
+        run_broker_in_process(running_broker) as server,
+        _bearer_client(server, token) as client,
     ):
         result = await client.call_tool("toy_seen_headers", {})
 
@@ -398,12 +401,9 @@ async def test_two_tools_calls_list_each_backend_once_not_per_call(
     monkeypatch.setattr(ProxyProvider, "_list_tools", _counting_list_tools)
 
     async with (
-        run_asgi_app(running_broker) as base_url,
-        Client(
-            StreamableHttpTransport(
-                f"{base_url}/mcp/", headers={"Authorization": f"Bearer {token}"}
-            ),
-            mode="2026-07-28",
+        run_broker_in_process(running_broker) as server,
+        server.client(
+            headers={"Authorization": f"Bearer {token}"}, mode="2026-07-28"
         ) as client,
     ):
         assert client.protocol_version == "2026-07-28"
@@ -467,13 +467,13 @@ async def test_second_session_same_user_lists_every_kind_from_cache(
         await client.list_resource_templates()
         await client.list_prompts()
 
-    async with run_asgi_app(running_broker) as base_url:
-        async with _bearer_client(f"{base_url}/mcp/", token) as client:
+    async with run_broker_in_process(running_broker) as server:
+        async with _bearer_client(server, token) as client:
             await _list_everything(client)
 
         counts_after_first_session = dict(counts)
 
-        async with _bearer_client(f"{base_url}/mcp/", token) as client:
+        async with _bearer_client(server, token) as client:
             await _list_everything(client)
 
     # Every backend was listed exactly once per kind on the first (cold) round.
@@ -498,8 +498,8 @@ async def test_exclude_tools_omits_the_tool_from_tools_list(
     token = sig_key.sign(make_claims())
     _TEST_PRINCIPAL_GROUPS["user-123"] = ["atlas"]
 
-    async with run_asgi_app(running_broker_with_excluded_tools) as base_url:
-        names = await _list_tool_names(base_url, token)
+    async with run_broker_in_process(running_broker_with_excluded_tools) as server:
+        names = await _list_tool_names(server, token)
 
     # Excluded from both the namespaced (toy) and un-namespaced (selfpfx)
     # service's listing ...
@@ -522,8 +522,8 @@ async def test_call_of_excluded_tool_fails_exactly_like_an_unknown_tool(
     _TEST_PRINCIPAL_GROUPS["user-123"] = ["atlas"]
 
     async with (
-        run_asgi_app(running_broker_with_excluded_tools) as base_url,
-        _bearer_client(f"{base_url}/mcp/", token) as client,
+        run_broker_in_process(running_broker_with_excluded_tools) as server,
+        _bearer_client(server, token) as client,
     ):
         with pytest.raises(ToolError) as excluded_exc_info:
             await client.call_tool("toy_advertise_to_collector", {})
@@ -545,8 +545,8 @@ async def test_call_of_excluded_unnamespaced_tool_fails_exactly_like_an_unknown_
     _TEST_PRINCIPAL_GROUPS["user-123"] = ["atlas"]
 
     async with (
-        run_asgi_app(running_broker_with_excluded_tools) as base_url,
-        _bearer_client(f"{base_url}/mcp/", token) as client,
+        run_broker_in_process(running_broker_with_excluded_tools) as server,
+        _bearer_client(server, token) as client,
     ):
         with pytest.raises(ToolError) as excluded_exc_info:
             await client.call_tool("selfpfx_advertise_to_collector", {})

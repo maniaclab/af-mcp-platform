@@ -24,14 +24,13 @@ from pydantic import SecretStr
 from test_broker_issued import _make_rsa_key, _private_pem
 
 from af_mcp_broker.credentials.broker_issued import BrokerTokenIssuer
-from af_mcp_broker.credentials.voms_service import (
-    MintedProxy,
+from af_mcp_broker.credentials.errors import (
     VomsServiceBadPassphraseError,
     VomsServiceMintError,
     VomsServicePreflightError,
     VomsServiceRejectedError,
-    VomsTokenServiceClient,
 )
+from af_mcp_broker.credentials.voms_service import MintedProxy, VomsTokenServiceClient
 
 _CERTIFICATE_EXPIRED_DETAIL = (
     "Your grid certificate (~/.globus/usercert.pem) has expired. Obtain a "
@@ -224,13 +223,6 @@ class TestMintFailures:
     async def test_400_is_bad_passphrase(self, make_client) -> None:
         client, _ = make_client(httpx.Response(400, json={"detail": "bad passphrase"}))
         with pytest.raises(VomsServiceBadPassphraseError):
-            await _mint(client)
-
-    async def test_bad_passphrase_is_a_value_error(self, make_client) -> None:
-        """Existing ``except ValueError`` call sites (the legacy mint path's
-        bad-passphrase convention) must keep catching the new signal."""
-        client, _ = make_client(httpx.Response(400, json={"detail": "bad passphrase"}))
-        with pytest.raises(ValueError, match="passphrase"):
             await _mint(client)
 
     @pytest.mark.parametrize("status_code", [401, 403, 500, 502, 503])

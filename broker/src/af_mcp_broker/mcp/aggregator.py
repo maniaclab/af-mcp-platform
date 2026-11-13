@@ -43,8 +43,14 @@ from starlette.middleware import Middleware
 from af_mcp_broker import metrics
 from af_mcp_broker.api.permissions import _RELINK_DETAIL
 from af_mcp_broker.authorization import get_principal_permissions
-from af_mcp_broker.credentials import CredentialKind, NeedsUnlock
+from af_mcp_broker.credentials import CredentialKind
+from af_mcp_broker.credentials.errors import NeedsUnlockError
 from af_mcp_broker.mcp.diagnostics import register_diagnostic_tools
+from af_mcp_broker.mcp.errors import (
+    BackendInvalidResponseError,
+    ListDeadlineExceededError,
+    NotLinkedForListingError,
+)
 from af_mcp_broker.mcp.instructions import compose_agent_instructions
 from af_mcp_broker.mcp.middleware.authorization_mw import AuthorizationMiddleware
 from af_mcp_broker.mcp.middleware.entitlement_mw import EntitlementMiddleware
@@ -178,15 +184,6 @@ def _unauthorized_raising_httpx_client_factory(
     return client
 
 
-class BackendInvalidResponse(Exception):
-    """A backend answered a JSON-RPC request with HTTP 200 and a body the mcp SDK transport cannot parse (issue #280).
-
-    Carries only the service name, status code and content type, never the
-    backend's body: the message reaches logs and, for a tools/call, the
-    caller. Classified as ``"unavailable"`` like any other unusable backend.
-    """
-
-
 def _is_jsonrpc_request(request: httpx2.Request) -> bool:
     """Whether *request*'s body is a JSON-RPC request (it carries an ``id``), as opposed to a notification that a server may answer with an empty body."""
     try:
@@ -199,7 +196,7 @@ def _is_jsonrpc_request(request: httpx2.Request) -> bool:
 def _raise_for_invalid_response(
     service_name: str,
 ) -> Callable[[httpx2.Response], Awaitable[None]]:
-    """Build a response hook raising ``BackendInvalidResponse`` for a 200 reply to a JSON-RPC request that is neither an SSE stream nor a JSON document.
+    """Build a response hook raising ``BackendInvalidResponseError`` for a 200 reply to a JSON-RPC request that is neither an SSE stream nor a JSON document.
 
     Same layer and reasoning as ``_raise_for_401`` above: the mcp SDK turns
     such a reply into a generic parse-error ``MCPError`` whose text embeds a
@@ -239,7 +236,7 @@ def _raise_for_invalid_response(
             content_type=media_type,
             problem=problem,
         )
-        raise BackendInvalidResponse(
+        raise BackendInvalidResponseError(
             f"Service '{service_name}' returned an invalid response "
             f"(HTTP {response.status_code}, content-type "
             f"{media_type or 'missing'}): {problem}."
@@ -353,7 +350,7 @@ async def _resolve_list_time_headers(
 
     Returns a ``ListTimeCredential`` (``headers``, ``skip_reason``, and the
     injected credential's ``on_unauthorized`` report). A caller who has not
-    linked the credential raises ``NotLinkedForListing`` before anything is
+    linked the credential raises ``NotLinkedForListingError`` before anything is
     minted, so the backend is never contacted and the service contributes no
     tools to that caller's list, as for x509/krb5/servicex.
 
@@ -389,7 +386,7 @@ async def _resolve_list_time_headers(
 
     try:
         cred = await provider.issue(principal, spec.name)
-    except (NeedsUnlock, HTTPException):
+    except (NeedsUnlockError, HTTPException):
         return ListTimeCredential(None, "unavailable")
 
     headers, on_unauthorized = _bearer_injection(provider, principal, cred)
@@ -490,14 +487,14 @@ async def _classify_list_failure(exc: Exception, service_name: str) -> tuple[str
     Consults the per-service request-scoped state ``_bearer_factory``'s
     list-time branch records (keyed per service since one ``tools/list``
     request fans out to every service concurrently), then applies
-    ``_classify_failure``'s shared decision core. A ``NotLinkedForListing``
+    ``_classify_failure``'s shared decision core. A ``NotLinkedForListingError``
     (the client factory turned the caller away before any request) is
     ``"not_linked"`` outright, or ``"unauthorized"`` -- the stored credential
     was rejected -- when it says ``rejected``.
     """
-    if isinstance(exc, NotLinkedForListing):
+    if isinstance(exc, NotLinkedForListingError):
         return ("unauthorized" if exc.rejected else "not_linked"), str(exc)
-    if isinstance(exc, ListDeadlineExceeded):
+    if isinstance(exc, ListDeadlineExceededError):
         return "unavailable", str(exc)
     ctx = get_context()
     status = await ctx.get_state(f"__list_credential_status__:{service_name}")
@@ -505,40 +502,14 @@ async def _classify_list_failure(exc: Exception, service_name: str) -> tuple[str
     return _classify_failure(exc, injected=injected, skip_reason=skip_reason), str(exc)
 
 
-class ListDeadlineExceeded(Exception):
-    """A backend's tools/list (credential setup included) did not finish within ``Settings.mcp_list_timeout_seconds``.
-
-    ``_classify_list_failure`` maps it to ``"unavailable"`` regardless of what
-    credential state was recorded before the stall: the broker gave up on the
-    backend, which says nothing about the caller's linkage.
-    """
-
-
-class NotLinkedForListing(Exception):
-    """A caller who has not linked the credential a service redeems cannot list that service's tools.
-
-    Raised before any credential is minted and before any request reaches
-    the backend. ``rejected`` is set when the caller did link a credential
-    but a backend rejected it (``CredentialProvider.is_rejected``), so the
-    listing outcome can say so instead of "never linked".
-    ``_classify_list_failure`` maps it to ``"not_linked"`` (or
-    ``"unauthorized"`` when ``rejected``); ``api/catalog_tools.py`` reports
-    the same status for the /v1 per-service listing.
-    """
-
-    def __init__(self, message: str, *, rejected: bool = False) -> None:
-        super().__init__(message)
-        self.rejected = rejected
-
-
 async def _raise_unless_linked_to_list(
     spec: ServiceSpec, provider: CredentialProvider, principal: Principal
 ) -> None:
-    """Raise ``NotLinkedForListing`` unless *principal* has linked the credential *provider* issues for *spec*."""
+    """Raise ``NotLinkedForListingError`` unless *principal* has linked the credential *provider* issues for *spec*."""
     if await provider.is_linked(principal):
         return
     rejected = await provider.is_rejected(principal)
-    raise NotLinkedForListing(
+    raise NotLinkedForListingError(
         f"Service '{spec.name}' lists its tools only for callers who have "
         "linked their credential"
         + (" (the linked credential was rejected)." if rejected else "."),
@@ -549,7 +520,7 @@ async def _raise_unless_linked_to_list(
 async def _require_linked_to_list(
     spec: ServiceSpec, credential_registry: CredentialRegistry, principal: Principal
 ) -> None:
-    """Raise ``NotLinkedForListing`` unless *principal* has linked the credential *spec* (x509/krb5/servicex) redeems.
+    """Raise ``NotLinkedForListingError`` unless *principal* has linked the credential *spec* (x509/krb5/servicex) redeems.
 
     A provider that doesn't resolve is a platform misconfiguration reported
     elsewhere, so it does not block the listing here.
@@ -584,10 +555,10 @@ async def resolve_list_time_credential(
       x509/redeem``, ``.../krb5/redeem``, or ``.../servicex/redeem``
       respectively; this function must never call ``provider.issue()`` for
       any of the three. A caller who has not linked the credential raises
-      ``NotLinkedForListing`` before anything is minted.
+      ``NotLinkedForListingError`` before anything is minted.
     - "bearer": ``_resolve_list_time_headers`` (the issue #121 best-effort
       mint). A caller who has not linked the credential raises
-      ``NotLinkedForListing`` before anything is minted, as for the three
+      ``NotLinkedForListingError`` before anything is minted, as for the three
       types above; ``skip_reason`` ("unavailable") is set when a resolved,
       linked caller's mint failed for an operational reason.
 
@@ -989,7 +960,7 @@ def _make_client_factory(
 
     For "x509" (and "krb5" and "servicex", identically), absent the
     authorized-call signal the factory attaches an identity header for a
-    caller who has linked the credential, and raises ``NotLinkedForListing``
+    caller who has linked the credential, and raises ``NotLinkedForListingError``
     for one who has not -- before minting anything or contacting the
     backend, so that service simply contributes no tools to that caller's
     list.
@@ -1007,7 +978,7 @@ def _make_client_factory(
     ``(uid, target)`` cheap, so
     "wasteful" no longer applies. A caller who has not linked the credential
     gets no listing at all, exactly like x509/krb5/servicex above: the
-    factory raises ``NotLinkedForListing`` before minting anything or
+    factory raises ``NotLinkedForListingError`` before minting anything or
     contacting the backend (``_ObservableProxyProvider._get_tool`` then
     resolves a direct call to one of its tools to a stand-in, so the caller
     still gets the not-linked error). Any other failure to mint (no provider
@@ -1276,7 +1247,7 @@ def _make_client_factory(
             # best-effort mint is attempted here rather than skipped
             # outright, and _resolve_list_time_headers for the non-fatal
             # failure handling this requires (an unlinked caller raises
-            # NotLinkedForListing instead).
+            # NotLinkedForListingError instead).
             principal = await ctx.get_state("principal")
             if principal is None:
                 # identity_mw should always have set this by now; there is
@@ -1337,7 +1308,7 @@ def _make_client_factory(
 
         try:
             cred = await provider.issue(principal, spec.name)
-        except NeedsUnlock as exc:
+        except NeedsUnlockError as exc:
             portal = settings.portal_url.rstrip("/")
             raise ToolError(
                 f"Credential unlock required. Visit the portal: "
@@ -1345,7 +1316,7 @@ def _make_client_factory(
             ) from exc
         except HTTPException as exc:
             # OIDCProvider.issue() raises HTTPException directly (401 session
-            # expired, 404 no stored token) rather than NeedsUnlock -- surface
+            # expired, 404 no stored token) rather than NeedsUnlockError -- surface
             # its detail the same way FastAPI's own handler would at /v1.
             raise ToolError(str(exc.detail)) from exc
 
@@ -1520,7 +1491,7 @@ class _ObservableProxyProvider(ProxyProvider):
             return None
         try:
             return await super()._get_tool(name, version)
-        except NotLinkedForListing:
+        except NotLinkedForListingError:
             # An unlinked caller's listing is skipped, so there is no schema
             # to resolve this name against. For an authorized tools/call of
             # this service, resolve it to a schema-less stand-in instead:
@@ -1671,13 +1642,15 @@ class _ObservableProxyProvider(ProxyProvider):
                 # provider refresh or reject it (issue #344, _report_401), so
                 # the next listing must try again rather than replay this
                 # failure; every other failure is negative-cached. A caller
-                # turned away before any request (NotLinkedForListing, even
+                # turned away before any request (NotLinkedForListingError, even
                 # for a rejected credential) is cached too: _get_tool relies
                 # on replaying it to resolve a direct call to the stand-in
                 # instead of re-running the client factory's authorized
                 # branch, whose friendly error AggregateProvider swallows.
                 reason, _ = await _classify_list_failure(exc, self._service_name)
-                if reason != "unauthorized" or isinstance(exc, NotLinkedForListing):
+                if reason != "unauthorized" or isinstance(
+                    exc, NotLinkedForListingError
+                ):
                     self._subject_list_cache[key] = _SubjectListCacheEntry(
                         error=exc, timestamp=time.monotonic()
                     )
@@ -1762,7 +1735,7 @@ class _ObservableProxyProvider(ProxyProvider):
         except TimeoutError as exc:
             if not deadline.expired():
                 raise
-            raise ListDeadlineExceeded(
+            raise ListDeadlineExceededError(
                 f"Service '{self._service_name}' did not list its tools within "
                 f"{self._list_timeout_seconds:g}s."
             ) from exc

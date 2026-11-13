@@ -161,11 +161,12 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from af_mcp_broker.errors import BrokerError
 from af_mcp_broker.principal_directory import (
     PrincipalAttributes,
     PrincipalNotActiveError,
 )
-from af_mcp_broker.vault_kv import CasConflict, VaultError, VaultKV
+from af_mcp_broker.vault_kv import CasConflictError, VaultError, VaultKV
 
 if TYPE_CHECKING:
     from af_mcp_broker.principal_directory import PrincipalDirectory
@@ -184,7 +185,7 @@ log = structlog.get_logger(__name__)
 _MAX_CAS_RETRIES = 5
 
 
-class PrincipalUnavailableError(Exception):
+class PrincipalUnavailableError(BrokerError):
     """Raised by ``PrincipalCache.get()`` when *principal_id*'s attributes cannot be resolved and no usable (fresh-enough-to-not-fail-closed) cached value exists -- see this module's docstring for the two ways that happens."""
 
     def __init__(self, principal_id: str) -> None:
@@ -331,7 +332,7 @@ class VaultPrincipalCacheBackend(PrincipalCacheBackend):
             try:
                 await self._vault_kv.write_cas(path, _record_to_fields(record), version)
                 break
-            except CasConflict:
+            except CasConflictError:
                 continue
         else:
             raise VaultError(

@@ -9,10 +9,10 @@ from fastapi.responses import JSONResponse, RedirectResponse
 
 from af_mcp_broker.api.credentials import notify_identity_linked
 from af_mcp_broker.config import Settings, get_settings
+from af_mcp_broker.credentials.errors import VersionConflictError
 from af_mcp_broker.credentials.oauth21 import (
     OAuth21Provider,
     TokenStore,
-    VersionConflict,
     normalize_token_response,
 )
 from af_mcp_broker.http import get_http_client
@@ -360,7 +360,7 @@ async def callback(
     store = _token_store(request)
     try:
         await store.write_cas(payload.sub, alias, cred, expected_version=None)
-    except VersionConflict:
+    except VersionConflictError:
         # User already had an entry for this alias (re-linking). Treat it as
         # an in-place update against whatever version is currently stored.
         existing = await store.get(payload.sub, alias)
