@@ -548,7 +548,7 @@ Every tool call gets a `tools/call <name>` server span opened by
 `AuthorizationMiddleware` — on **all** outcome paths, denied and unmapped
 included — carrying identity, authorization, and outcome attributes:
 `user.id` (the principal's subject), `af.service`, `af.permission`,
-`af.action_type`, and `af.outcome` (`success` / `denied` / `error`; the
+`af.action_type`, and `af.outcome` (`success` / `denied` / `rate_limited` / `error`; the
 error path also records the exception and sets span status ERROR).
 fastmcp's own `tools/call` span nests underneath as a child, itself
 wrapping a client-side span fastmcp v4 added around each proxied backend
@@ -738,5 +738,5 @@ the simplest correct thing. The extraction path if it becomes necessary:
 6. The backend's response streams back through the aggregator to the LLM
    client.
 7. `AuthorizationMiddleware` writes a structured audit log line
-   (`outcome: "success"`/`"denied"`/`"error"`) and updates Prometheus
+   (`outcome: "success"`/`"denied"`/`"rate_limited"`/`"error"`) and updates Prometheus
    counters exactly once per call, regardless of outcome.

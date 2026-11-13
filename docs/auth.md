@@ -479,6 +479,61 @@ resident in Vault, alongside the PAT store's own records (see above).
 
 ---
 
+## Tool rate limits
+
+`policy.yaml` accepts an optional `rate_limits` list (chart:
+`entitlements.rate_limits`) that caps how often one principal may call tools
+(issue maniaclab/af-mcp-platform#165). Without the block nothing is counted
+and behaviour is unchanged.
+
+```yaml
+rate_limits:
+  # At most 60 state-changing calls per minute, across all tools.
+  - action_type: state_change
+    limit: 60
+    window_seconds: 60
+  # At most 10 condor submissions per hour.
+  - tool: "condor_submit_*"
+    limit: 10
+    window_seconds: 3600
+```
+
+- **Selectors.** A rule sets `action_type` (`read` or `state_change`, the
+  call's resolved action type), `tool` (an fnmatch glob over the wire tool
+  name, as in `target_action_types`), or both, in which case both must
+  match. At least one is required.
+- **Budget.** `limit` calls per `window_seconds`, both positive integers.
+  The window is fixed: it opens at the principal's first matching call and
+  closes `window_seconds` later, then the count starts over.
+- **Per principal.** Counting is keyed by the principal's subject, never
+  global; one user's calls do not use up another's budget.
+- **Precedence.** Every rule matching a call applies, each with its own
+  count, and the call must pass all of them (the strictest wins). Every
+  matching rule counts the attempt, including one that another rule
+  refuses, so probing one budget never leaves another untouched. When
+  several are exceeded the retry wait is the longest of them.
+- **Where it runs.** In the authorization middleware, after the entitlement
+  check (a caller refused there spends no budget) and before any credential
+  is minted or backend contacted. It applies to `/mcp` tool calls.
+- **What the caller sees.** A tool error such as `Rate limit of 10 calls per
+  3600s exceeded for condor_submit_job. Retry-After: 1800 seconds; retry_at:
+  2026-11-13T12:00:00Z`, the same fields the `/v1` unlock limit returns.
+- **Audit and metrics.** The refused call is written as an audit record with
+  `outcome: "rate_limited"` and counted by
+  `af_mcp_tool_invocations_rate_limited_total{service,action_type}` (no
+  per-user label; per-user questions are answered from the audit log).
+- **Fail-closed validation.** The broker refuses to start on an unknown
+  `action_type`, a non-positive or non-integer `limit` or `window_seconds`,
+  an empty `tool` or one with an unclosed `[`, an unknown key, or a rule
+  with neither selector.
+
+**Replicas.** Counters live in each broker process, so with N replicas the
+effective limit is up to `limit x N`, depending on how a user's calls are
+spread across them. Counting is behind a small interface
+(`WindowCounter.incr_window`, the signature of the shared-state store's
+`incr_window`), so a shared backend can make the limit exact without any
+change to this configuration.
+
 ## AF Broker Identity Token (issue #162)
 
 ### Two classes of backends: federated vs AF-native

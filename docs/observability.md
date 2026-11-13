@@ -237,6 +237,7 @@ from `prometheus-fastapi-instrumentator`, the broker defines these
 | `af_mcp_tool_invocations_total` | counter | `service`, `tool`, `action_type` | Tool invocations attempted via `/mcp`, once per call regardless of outcome. |
 | `af_mcp_tool_invocations_denied_total` | counter | `service`, `action_type` | Invocations denied by authorization for a known service. |
 | `af_mcp_tool_duration_seconds` | histogram | `service`, `tool`, `action_type` | Wall time of the downstream call (credential resolution + backend call); buckets sized up to 300 s for calls that mint credentials via ephemeral k8s Jobs. |
+| `af_mcp_tool_invocations_rate_limited_total` | counter | `service`, `action_type` | Tool calls refused by a `rate_limits` rule in `policy.yaml` (see [auth](auth.md#tool-rate-limits)). Also counted in `tool_invocations_total`. |
 | `af_mcp_tool_invocations_unmapped_total` | counter | *(none)* | Tool names matching no registered service prefix (client-supplied, so never a label). |
 | `af_mcp_metering_queue_overflow_total` | counter | *(none)* | Records that found the metering queue full and were written inline without measurement — nothing dropped, but tool calls are paying for audit I/O again. |
 | `af_mcp_metering_queue_depth` | gauge | *(none)* | Records currently waiting in the metering queue. |
