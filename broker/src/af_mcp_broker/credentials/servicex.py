@@ -27,9 +27,11 @@ from af_mcp_broker.credentials.base import (
     CredentialProvider,
     ExecutionModel,
     IssuedCredential,
-    NeedsUnlock,
 )
-from af_mcp_broker.credentials.servicex_service import ServiceXBadRefreshTokenError
+from af_mcp_broker.credentials.errors import (
+    NeedsUnlockError,
+    ServiceXBadRefreshTokenError,
+)
 
 if TYPE_CHECKING:
     from pydantic import SecretBytes
@@ -119,7 +121,7 @@ class ServiceXProvider(CredentialProvider):
 
         Serves the Vault-stored access token if it has enough validity
         left; else redeems hands-free from the stored refresh token. Raises
-        ``NeedsUnlock`` when there is no stored link at all, or when the
+        ``NeedsUnlockError`` when there is no stored link at all, or when the
         stored refresh token has been rejected (in which case the identity
         is unlinked first, so the portal prompts a re-paste rather than
         repeating the same rejected token on every call).
@@ -132,7 +134,7 @@ class ServiceXProvider(CredentialProvider):
 
         link = await self._vault_store.get_link(principal.subject)
         if link is None:
-            raise NeedsUnlock(
+            raise NeedsUnlockError(
                 target=target, reason="not_linked", unlock_endpoint=_LINK_ENDPOINT
             )
 
@@ -163,7 +165,7 @@ class ServiceXProvider(CredentialProvider):
         holds only a broker-token subject, not a live ``Principal``).
 
         Raises:
-            NeedsUnlock: no link is stored, or the stored refresh token was
+            NeedsUnlockError: no link is stored, or the stored refresh token was
                 rejected -- in which case the identity is UNLINKED first
                 (the token was revoked/expired; the stored value is dead
                 weight) so the portal prompts a re-paste. A stored-token
@@ -175,7 +177,7 @@ class ServiceXProvider(CredentialProvider):
         """
         link = await self._vault_store.get_link(subject)
         if link is None:
-            raise NeedsUnlock(
+            raise NeedsUnlockError(
                 target=target, reason="not_linked", unlock_endpoint=_LINK_ENDPOINT
             )
         # get_link() guarantees the link half is complete; narrow for mypy.
@@ -186,7 +188,7 @@ class ServiceXProvider(CredentialProvider):
             )
         except ServiceXBadRefreshTokenError as exc:
             await self._vault_store.delete(subject)
-            raise NeedsUnlock(
+            raise NeedsUnlockError(
                 target=target,
                 reason="stored_refresh_token_rejected",
                 unlock_endpoint=_LINK_ENDPOINT,

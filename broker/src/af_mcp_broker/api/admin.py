@@ -35,7 +35,7 @@ from af_mcp_broker.identity import Principal, require_admin
 from af_mcp_broker.maintenance import (
     MaintenanceModeStore,
     MaintenanceState,
-    MaintenanceStateConflict,
+    MaintenanceStateConflictError,
 )
 from af_mcp_broker.principal_cache import PrincipalUnavailableError
 
@@ -195,7 +195,7 @@ async def set_maintenance_status(
         # such rather than letting it become an unhandled 500.
         try:
             await store.set(state)
-        except MaintenanceStateConflict as exc:
+        except MaintenanceStateConflictError as exc:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=(

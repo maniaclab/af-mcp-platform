@@ -25,8 +25,8 @@ from af_mcp_broker.credentials import (
     CredentialRegistry,
     ExecutionModel,
     IssuedCredential,
-    NeedsUnlock,
 )
+from af_mcp_broker.credentials.errors import NeedsUnlockError
 from af_mcp_broker.credentials.oauth21 import (
     InMemoryTokenStore,
     OAuth21Provider,
@@ -97,7 +97,7 @@ class _FakeProvider(CredentialProvider):
     ) -> IssuedCredential:
         self.issue_calls.append(principal.uid)
         if self.needs_unlock:
-            raise NeedsUnlock(
+            raise NeedsUnlockError(
                 target, "no cached proxy", unlock_endpoint="/v1/x509/proxy"
             )
         return IssuedCredential(

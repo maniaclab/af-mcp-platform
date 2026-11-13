@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from af_mcp_broker.errors import BrokerError
 from af_mcp_broker.http import get_http_client
 
 if TYPE_CHECKING:
@@ -35,11 +36,11 @@ if TYPE_CHECKING:
 _AUTH_SAFETY_MARGIN_SECONDS = 60
 
 
-class VaultError(Exception):
+class VaultError(BrokerError):
     """Raised when Vault's HTTP API returns an unexpected response."""
 
 
-class CasConflict(Exception):
+class CasConflictError(BrokerError):
     """Raised by ``write_cas()`` when Vault's check-and-set version guard rejects the write -- the caller's ``expected_version`` no longer matches the entry's current version."""
 
 
@@ -144,7 +145,7 @@ class VaultKV:
     async def write_cas(
         self, path: str, data: dict[str, Any], expected_version: int | None
     ) -> int:
-        """KV-v2 data write, check-and-set on *expected_version* (``None`` -> ``cas=0``, i.e. "create; fail if an entry already exists"). Returns the new version; raises ``CasConflict`` if *expected_version* no longer matches the entry's current version."""
+        """KV-v2 data write, check-and-set on *expected_version* (``None`` -> ``cas=0``, i.e. "create; fail if an entry already exists"). Returns the new version; raises ``CasConflictError`` if *expected_version* no longer matches the entry's current version."""
         token = await self._authenticate()
         cas = 0 if expected_version is None else expected_version
 
@@ -160,7 +161,7 @@ class VaultKV:
         if resp.status_code == 400:
             errors = resp.json().get("errors", [])
             if any("check-and-set" in err for err in errors):
-                raise CasConflict(
+                raise CasConflictError(
                     f"vault cas write conflict for path={path!r} "
                     f"expected_version={expected_version!r}"
                 )

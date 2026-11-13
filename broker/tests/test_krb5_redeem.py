@@ -34,7 +34,7 @@ from af_mcp_broker.credentials import (
     ExecutionModel,
     IssuedCredential,
 )
-from af_mcp_broker.credentials.krb5_service import (
+from af_mcp_broker.credentials.errors import (
     Krb5TokenMintError,
     Krb5TokenRenewalWindowClosedError,
 )

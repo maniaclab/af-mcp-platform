@@ -31,7 +31,7 @@ from test_broker_issued import _make_rsa_key, _private_pem
 from test_x509_redeem import _BACKENDS_YAML
 from test_x509_service_mode import FakeVomsClient, FakeX509Store
 
-from af_mcp_broker.credentials.voms_service import (
+from af_mcp_broker.credentials.errors import (
     VomsServiceBadPassphraseError,
     VomsServiceMintError,
     VomsServiceRejectedError,

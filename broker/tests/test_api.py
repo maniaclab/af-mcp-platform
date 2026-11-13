@@ -868,7 +868,7 @@ def test_credential_x509_needs_unlock_409(app_client: tuple[TestClient, dict]) -
     client, _ = app_client
     # ami is x509; the app_client fixture pre-creates a fake usercert/userkey
     # pair so is_linked() reports True. With an empty cache and no passphrase
-    # the provider then raises NeedsUnlock, which the endpoint maps to 409 +
+    # the provider then raises NeedsUnlockError, which the endpoint maps to 409 +
     # unlock_endpoint.
     resp = client.post("/v1/credential", json={"target": "ami"}, headers=_AUTH)
     assert resp.status_code == 409, resp.text

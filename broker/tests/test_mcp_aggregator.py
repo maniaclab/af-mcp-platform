@@ -40,8 +40,8 @@ from af_mcp_broker.credentials import (
     CredentialRegistry,
     ExecutionModel,
     IssuedCredential,
-    NeedsUnlock,
 )
+from af_mcp_broker.credentials.errors import NeedsUnlockError
 from af_mcp_broker.mcp import aggregator
 from af_mcp_broker.mcp.aggregator import (
     _classify_failure,
@@ -51,6 +51,7 @@ from af_mcp_broker.mcp.aggregator import (
     populate_aggregator,
     resolve_list_time_credential,
 )
+from af_mcp_broker.mcp.errors import NotLinkedForListingError
 from af_mcp_broker.mcp.middleware.authorization_mw import AuthorizationMiddleware
 from af_mcp_broker.mcp.middleware.entitlement_mw import EntitlementMiddleware
 from af_mcp_broker.mcp.middleware.identity_mw import IdentityMiddleware
@@ -113,7 +114,7 @@ class _FakeProvider(CredentialProvider):
         *,
         linked: bool = True,
         token: str | None = "minted-token",
-        needs_unlock: NeedsUnlock | None = None,
+        needs_unlock: NeedsUnlockError | None = None,
         http_error: HTTPException | None = None,
         rejected: bool = False,
     ) -> None:
@@ -825,7 +826,7 @@ async def test_client_factory_bearer_needs_unlock_raises_friendly_error(
     _patch_context(monkeypatch, make_principal())
     spec = _spec(auth_type="bearer")
     provider = _FakeProvider(
-        needs_unlock=NeedsUnlock(
+        needs_unlock=NeedsUnlockError(
             spec.name, "no cached proxy", unlock_endpoint="/v1/x509/proxy"
         )
     )
@@ -888,7 +889,7 @@ async def test_client_factory_bearer_list_time_skips_listing_when_not_linked(
     settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A caller who has not linked the credential gets no listing at all, as
-    for x509/krb5/servicex: the factory raises NotLinkedForListing before
+    for x509/krb5/servicex: the factory raises NotLinkedForListingError before
     minting anything or building a client, so the backend is never contacted."""
     _patch_context(monkeypatch, make_principal(), active_backend=None)
     spec = _spec(auth_type="bearer")
@@ -897,7 +898,7 @@ async def test_client_factory_bearer_list_time_skips_listing_when_not_linked(
     registry.register(spec.name, provider)
     factory = _make_client_factory(spec, registry, settings, _OPEN_POLICY)
 
-    with pytest.raises(aggregator.NotLinkedForListing) as excinfo:
+    with pytest.raises(NotLinkedForListingError) as excinfo:
         await factory()
 
     assert provider.issue_calls == []
@@ -916,7 +917,7 @@ async def test_client_factory_bearer_list_time_flags_a_rejected_credential(
     registry.register(spec.name, provider)
     factory = _make_client_factory(spec, registry, settings, _OPEN_POLICY)
 
-    with pytest.raises(aggregator.NotLinkedForListing) as excinfo:
+    with pytest.raises(NotLinkedForListingError) as excinfo:
         await factory()
 
     assert provider.issue_calls == []
@@ -1114,9 +1115,9 @@ async def test_observable_proxy_provider_success_clears_only_own_subject_record(
 @pytest.mark.parametrize(
     ("failure", "expected_reason", "expected_level"),
     [
-        (aggregator.NotLinkedForListing("not linked"), "not_linked", "info"),
+        (NotLinkedForListingError("not linked"), "not_linked", "info"),
         (
-            aggregator.NotLinkedForListing("rejected", rejected=True),
+            NotLinkedForListingError("rejected", rejected=True),
             "unauthorized",
             "warning",
         ),
@@ -2510,7 +2511,7 @@ async def test_client_factory_mint_and_inject_list_time_unlinked_builds_no_clien
 
     monkeypatch.setattr(issuer, "mint", _fail_mint)
 
-    with pytest.raises(aggregator.NotLinkedForListing):
+    with pytest.raises(NotLinkedForListingError):
         await _make_client_factory(
             spec, registry, settings, _OPEN_POLICY, broker_token_issuer=issuer
         )()
@@ -2565,7 +2566,7 @@ async def test_resolve_list_time_credential_mint_and_inject_unlinked_raises(
     registry = CredentialRegistry()
     registry.register(spec.name, _FakeProvider(linked=False))
 
-    with pytest.raises(aggregator.NotLinkedForListing):
+    with pytest.raises(NotLinkedForListingError):
         await resolve_list_time_credential(
             spec,
             registry,

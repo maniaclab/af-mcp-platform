@@ -32,7 +32,7 @@ import structlog
 
 from af_mcp_broker.config import Settings
 from af_mcp_broker.logging import configure_logging
-from af_mcp_broker.vault_kv import CasConflict, VaultError, VaultKV
+from af_mcp_broker.vault_kv import CasConflictError, VaultError, VaultKV
 
 log = structlog.get_logger(__name__)
 
@@ -130,7 +130,7 @@ async def migrate(
             if changed and apply:
                 try:
                     await vault_kv.write_cas(path, data, version)
-                except CasConflict:
+                except CasConflictError:
                     log.info("migrate.cas_retry", principal_id=principal_id)
                     continue
             stats.migrated += doc_stats.migrated
