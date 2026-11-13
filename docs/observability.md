@@ -50,7 +50,7 @@ that sets `isError` as `outcome=error` / `error_class=tool_reported`
 (fixed in `9034858`) — a call that "failed" only in plain text, with no
 `isError`, was silently counted as a success before that fix, and still
 is for any backend that hasn't adopted the convention yet (see
-`docs/adding-a-service.md`'s Tool-authoring conventions). Expect a
+[MCP Design Guide](mcp-design.md#e1-report-tool-failures-with-iserror-true)). Expect a
 visible step up in a given backend's error rate the day it starts
 setting `isError` correctly; that's the fix finally seeing what was
 always failing, not a new regression to chase.
