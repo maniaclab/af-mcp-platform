@@ -1,7 +1,7 @@
 ---
 name: af-mcp-builder
 license: MIT
-description: Audit, review or onboard an MCP server for the AF MCP platform (the credential-brokering MCP gateway at maniaclab/af-mcp-platform). Use when someone is building a new MCP server for the analysis facility, reviewing an existing one (Python fastmcp or mcp SDK, Go mcp-go or golang-htcondor style), or asking what must change for a backend to sit behind the gateway. Checks tool naming and descriptions, input and output schemas, annotations, isError and error text, pagination and output size, stateless HTTP, broker identity token handling, and the services.yaml fields (prefix, agent_policy, trust_tier, exclude_tools).
+description: Use this skill whenever someone is building, designing, extending, reviewing, auditing or onboarding an MCP server (Python fastmcp or mcp SDK, Go mcp-go or golang-htcondor) that will run behind an AF MCP gateway, the credential-brokering MCP platform from maniaclab/af-mcp-platform, deployed at mcp.af.uchicago.edu or at any other analysis facility. Trigger even when the user never says "audit", and for design questions asked before any code exists. Examples are a new backend or architecture for Rucio, PanDA, AMI, HTCondor, ServiceX or JupyterHub; what a server must change to sit behind the gateway; adding a service to services.yaml (prefix, agent_policy, trust_tier, exclude_tools); or checking tool names, schemas, annotations, error results, pagination, stateless HTTP, 401 handling and broker identity tokens against docs/mcp-design.md or with audit_tools.py. Not for generic MCP questions, servers for other gateways, or code inside af-mcp-platform itself (broker, portal, chart).
 ---
 
 # AF MCP Builder
