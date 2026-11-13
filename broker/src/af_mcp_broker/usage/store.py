@@ -71,6 +71,16 @@ class UsageStore(abc.ABC):
     async def record(self, record: AuditRecord) -> None:
         """Account one tool-call audit record (``mcp_service`` set)."""
 
+    async def record_many(self, records: list[AuditRecord]) -> None:
+        """Account a batch of tool-call audit records.
+
+        Backends with a cheaper bulk write override this (see
+        ``PostgresUsageStore``); the default is one ``record`` per record.
+        Redelivery tolerance applies across and within batches alike.
+        """
+        for record in records:
+            await self.record(record)
+
     @abc.abstractmethod
     async def query(self, subject: str, days: int) -> list[UsageAggregate]:
         """Return aggregates for *subject* over the trailing *days* UTC calendar days, today inclusive."""

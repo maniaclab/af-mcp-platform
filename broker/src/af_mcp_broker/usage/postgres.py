@@ -15,7 +15,7 @@ secret.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import asyncpg  # type: ignore[import-untyped]
 
@@ -138,13 +138,9 @@ class PostgresUsageStore(UsageStore):
             raise RuntimeError("PostgresUsageStore used before start()")
         return self._pool
 
-    async def record(self, record: AuditRecord) -> None:
-        if record.mcp_service is None:
-            # Defensive: only tool-call records are usage (the pipeline-side
-            # helper already filters these out before they get here).
-            return
-        await self._require_pool().execute(
-            _INSERT,
+    @staticmethod
+    def _insert_args(record: AuditRecord) -> tuple[Any, ...]:
+        return (
             record.audit_id,
             record.request_id,
             record.principal_sub,
@@ -157,6 +153,31 @@ class PostgresUsageStore(UsageStore):
             record.result_bytes,
             record.result_tokens_est,
         )
+
+    async def record(self, record: AuditRecord) -> None:
+        if record.mcp_service is None:
+            # Defensive: only tool-call records are usage (the pipeline-side
+            # helper already filters these out before they get here).
+            return
+        await self._require_pool().execute(_INSERT, *self._insert_args(record))
+
+    async def record_many(self, records: list[AuditRecord]) -> None:
+        # executemany over one multi-row INSERT: asyncpg prepares the
+        # statement once and pipelines every argument tuple in a single
+        # round trip, with no SQL to build and no 32767-bind-parameter
+        # ceiling to size USAGE_BATCH_MAX against. ON CONFLICT DO NOTHING
+        # also dedups a repeated audit_id inside the batch. The batch runs in
+        # one implicit transaction, so it is all-or-nothing: one rejected row
+        # rolls back its siblings, and the caller (usage.record_usage_batch)
+        # counts every row of a failed batch as failed.
+        args = [
+            self._insert_args(record)
+            for record in records
+            if record.mcp_service is not None
+        ]
+        if not args:
+            return
+        await self._require_pool().executemany(_INSERT, args)
 
     async def query(self, subject: str, days: int) -> list[UsageAggregate]:
         rows = await self._require_pool().fetch(_QUERY, subject, window_start(days))

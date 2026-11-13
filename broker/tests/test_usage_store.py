@@ -17,6 +17,7 @@ from typing import Any
 import pytest
 from prometheus_client import REGISTRY
 
+from af_mcp_broker import usage
 from af_mcp_broker.audit import AuditRecord
 from af_mcp_broker.config import Settings
 from af_mcp_broker.usage import (
@@ -26,6 +27,7 @@ from af_mcp_broker.usage import (
     get_usage_store,
     init_usage_store,
     record_usage,
+    record_usage_batch,
 )
 
 
@@ -244,3 +246,50 @@ async def test_record_usage_swallows_store_failures_and_counts_them() -> None:
     before = _sample("af_mcp_metering_worker_errors_total")
     await record_usage(_record())  # must not raise
     assert _sample("af_mcp_metering_worker_errors_total") == before + 1
+
+
+async def test_in_memory_record_many_accounts_every_record() -> None:
+    store = InMemoryUsageStore()
+    await store.record_many([_record(), _record(audit_id="other", result_bytes=1)])
+
+    (agg,) = await store.query("sub-abc", days=30)
+    assert agg.calls == 2
+    assert agg.result_bytes == 101
+
+
+async def test_record_usage_batch_writes_through_record_many() -> None:
+    store = await init_usage_store(Settings())
+
+    await record_usage_batch([_record(), _record(audit_id="other")])
+
+    (agg,) = await store.query("sub-abc", days=30)
+    assert agg.calls == 2
+
+
+async def test_record_usage_batch_without_a_store_is_a_no_op() -> None:
+    await record_usage_batch([_record()])  # must not raise
+
+
+async def test_record_usage_batch_failure_is_logged_and_counts_every_row(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A failed batch never raises into the worker; usage is best-effort. The
+    failure is logged with the audit_ids (so rows can be rebuilt from the
+    authoritative audit log) and counted once per row, as a failed single
+    insert is."""
+
+    class _ExplodingStore(InMemoryUsageStore):
+        async def record_many(self, records: list[AuditRecord]) -> None:
+            raise RuntimeError("usage store down")
+
+    await init_usage_store(Settings())
+    usage._store = _ExplodingStore()
+
+    before = _sample("af_mcp_metering_worker_errors_total")
+    batch = [_record(audit_id="a"), _record(audit_id="b"), _record(audit_id="c")]
+    await record_usage_batch(batch)  # must not raise
+
+    assert _sample("af_mcp_metering_worker_errors_total") == before + 3
+    assert "usage_record_batch_failed" in caplog.text
+    assert "usage store down" in caplog.text
+    assert "'audit_ids': ['a', 'b', 'c']" in caplog.text

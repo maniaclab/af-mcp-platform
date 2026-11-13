@@ -23,11 +23,13 @@ import json
 import time
 from typing import Any
 
+import asyncpg  # type: ignore[import-untyped]
 import mcp.types as mt
 import pytest
 from fastmcp.tools.base import ToolResult
 from prometheus_client import REGISTRY
 
+from af_mcp_broker import usage
 from af_mcp_broker.audit import AuditRecord, measure, pipeline
 from af_mcp_broker.audit.logger import init_audit_logger
 from af_mcp_broker.audit.pipeline import (
@@ -38,6 +40,7 @@ from af_mcp_broker.audit.pipeline import (
     submit_metered_audit,
 )
 from af_mcp_broker.config import Settings
+from af_mcp_broker.usage import InMemoryUsageStore, aclose_usage_store, init_usage_store
 
 
 def _sample(name: str) -> float:
@@ -466,3 +469,182 @@ async def test_usage_store_failure_never_affects_the_audit_write(
     (line,) = _lines(buffer)
     assert line["outcome"] == "success"
     assert _sample("af_mcp_metering_worker_errors_total") == errors_before + 1
+
+
+# ---------------------------------------------------------------------------
+# Usage batching -- the worker buffers usage records and writes them with one
+# UsageStore.record_many per batch: at USAGE_BATCH_MAX records, after
+# USAGE_BATCH_INTERVAL_MS, or on aclose. The audit line is still written first
+# and per record; only the usage write is batched. The inline paths (overflow,
+# no pipeline running) are unbatched and covered above.
+# ---------------------------------------------------------------------------
+
+_NEVER_MS = 3_600_000  # an interval that cannot fire during a test
+
+
+class _BatchRecordingStore(InMemoryUsageStore):
+    """In-memory store that remembers each record_many call's audit_ids."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.batches: list[list[str]] = []
+        self.flushed = asyncio.Event()
+
+    async def record_many(self, records: list[AuditRecord]) -> None:
+        self.batches.append([r.audit_id for r in records])
+        await super().record_many(records)
+        self.flushed.set()
+
+
+@pytest.fixture
+async def batch_store():
+    """A _BatchRecordingStore installed as the module-level usage store."""
+    store = _BatchRecordingStore()
+    usage._store = store
+    yield store
+    usage._store = None
+
+
+def _usage_record(**overrides: Any) -> AuditRecord:
+    return _record(mcp_service="rucio", timestamp=time.time(), **overrides)
+
+
+async def _until(predicate) -> None:
+    """Poll *predicate* with tiny sleeps; fail rather than hang."""
+    async with asyncio.timeout(5):
+        while not predicate():
+            await asyncio.sleep(0.005)
+
+
+async def test_usage_is_written_in_one_batch_when_the_batch_is_full(
+    batch_store: _BatchRecordingStore,
+) -> None:
+    init_audit_logger(io.StringIO())
+    p = InProcessMeteringBackend(
+        settings=Settings(usage_batch_max=3, usage_batch_interval_ms=_NEVER_MS)
+    )
+    await p.start()
+
+    records = [_usage_record() for _ in range(3)]
+    for r in records:
+        await p.submit(r, None)
+    async with asyncio.timeout(5):
+        await batch_store.flushed.wait()
+
+    assert batch_store.batches == [[r.audit_id for r in records]]
+    await p.aclose()
+
+
+async def test_usage_below_the_batch_size_waits_then_flushes_on_aclose(
+    batch_store: _BatchRecordingStore,
+) -> None:
+    buffer = io.StringIO()
+    init_audit_logger(buffer)
+    p = InProcessMeteringBackend(
+        settings=Settings(usage_batch_max=10, usage_batch_interval_ms=_NEVER_MS)
+    )
+    await p.start()
+
+    await p.submit(_usage_record(), None)
+    await p.submit(_usage_record(), None)
+    # Audit lines are written per record, immediately; only usage waits.
+    await _until(lambda: len(_lines(buffer)) == 2)
+    assert batch_store.batches == []
+
+    await p.aclose()
+
+    assert len(batch_store.batches) == 1
+    assert len(batch_store.batches[0]) == 2
+
+
+async def test_usage_is_flushed_when_the_interval_elapses(
+    batch_store: _BatchRecordingStore,
+) -> None:
+    init_audit_logger(io.StringIO())
+    p = InProcessMeteringBackend(
+        settings=Settings(usage_batch_max=100, usage_batch_interval_ms=20)
+    )
+    await p.start()
+
+    record = _usage_record()
+    await p.submit(record, None)
+    # No further submissions and no aclose: only the interval can flush.
+    async with asyncio.timeout(5):
+        await batch_store.flushed.wait()
+
+    assert batch_store.batches == [[record.audit_id]]
+    await p.aclose()
+    assert batch_store.batches == [[record.audit_id]]
+
+
+async def test_non_usage_records_are_not_buffered(
+    batch_store: _BatchRecordingStore,
+) -> None:
+    init_audit_logger(io.StringIO())
+    p = InProcessMeteringBackend(
+        settings=Settings(usage_batch_max=1, usage_batch_interval_ms=_NEVER_MS)
+    )
+    await p.start()
+
+    await p.submit(_record(mcp_service=None), None)
+    await p.aclose()
+
+    assert batch_store.batches == []
+
+
+async def test_a_failed_usage_batch_is_counted_per_row_and_audit_lines_survive(
+    batch_store: _BatchRecordingStore,
+) -> None:
+    async def _boom(records: list[AuditRecord]) -> None:
+        raise RuntimeError("usage store down")
+
+    batch_store.record_many = _boom  # type: ignore[method-assign]
+    buffer = io.StringIO()
+    init_audit_logger(buffer)
+    p = InProcessMeteringBackend(
+        settings=Settings(usage_batch_max=3, usage_batch_interval_ms=_NEVER_MS)
+    )
+    await p.start()
+
+    errors_before = _sample("af_mcp_metering_worker_errors_total")
+    for _ in range(3):
+        await p.submit(_usage_record(), None)
+    await p.aclose()
+
+    assert len(_lines(buffer)) == 3
+    assert _sample("af_mcp_metering_worker_errors_total") == errors_before + 3
+
+
+async def test_duplicate_audit_ids_through_the_pipeline_count_once_in_postgres(
+    postgres_dsn: str,
+) -> None:
+    """End to end against a real postgres: the same record redelivered in one
+    batch and again in a later batch still produces a single usage row."""
+    store = await init_usage_store(
+        Settings(
+            usage_store_backend="postgres",
+            usage_postgres_dsn=postgres_dsn,
+            usage_batch_max=2,
+            usage_batch_interval_ms=_NEVER_MS,
+        )
+    )
+    conn = await asyncpg.connect(postgres_dsn)
+    try:
+        await conn.execute("TRUNCATE af_mcp_usage_events")
+    finally:
+        await conn.close()
+    init_audit_logger(io.StringIO())
+    p = InProcessMeteringBackend(
+        settings=Settings(usage_batch_max=2, usage_batch_interval_ms=_NEVER_MS)
+    )
+    await p.start()
+
+    record = _usage_record()
+    await p.submit(record, None)
+    await p.submit(record, None)  # fills the batch: duplicate within a batch
+    await p.submit(record, None)  # next batch: duplicate across batches
+    await p.aclose()
+
+    (agg,) = await store.query("sub-abc", days=30)
+    assert agg.calls == 1
+    await aclose_usage_store()

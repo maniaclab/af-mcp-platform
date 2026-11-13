@@ -16,6 +16,7 @@ import structlog
 
 from af_mcp_broker import metrics
 from af_mcp_broker.config import Settings, get_settings
+from af_mcp_broker.usage.batcher import UsageBatcher
 from af_mcp_broker.usage.postgres import PostgresUsageStore
 from af_mcp_broker.usage.store import InMemoryUsageStore, UsageAggregate, UsageStore
 
@@ -28,11 +29,14 @@ __all__ = [
     "InMemoryUsageStore",
     "PostgresUsageStore",
     "UsageAggregate",
+    "UsageBatcher",
     "UsageStore",
     "aclose_usage_store",
+    "counts_as_usage",
     "get_usage_store",
     "init_usage_store",
     "record_usage",
+    "record_usage_batch",
 ]
 
 logger = structlog.get_logger(__name__)
@@ -97,10 +101,38 @@ async def record_usage(record: AuditRecord) -> None:
     """
     if _store is None:
         return
-    if record.mcp_service is None or record.outcome not in ("success", "error"):
+    if not counts_as_usage(record):
         return
     try:
         await _store.record(record)
     except Exception as exc:  # noqa: BLE001 -- usage must never lose an audit line
         metrics.metering_worker_errors_total.inc()
         logger.warning("usage_record_failed", audit_id=record.audit_id, error=str(exc))
+
+
+def counts_as_usage(record: AuditRecord) -> bool:
+    """Whether *record* is a tool-call record that counts as usage."""
+    return record.mcp_service is not None and record.outcome in ("success", "error")
+
+
+async def record_usage_batch(records: list[AuditRecord]) -> None:
+    """Account *records* (already filtered by ``counts_as_usage``) in one store call.
+
+    Never raises, like ``record_usage``. A batch failure may be all-or-nothing
+    (the Postgres store's is), so every row is counted on the metering-worker
+    error counter -- the same per-record unit a failed single insert uses --
+    and the audit_ids are logged so the rows can be rebuilt from the
+    authoritative audit log.
+    """
+    if _store is None:
+        return
+    try:
+        await _store.record_many(records)
+    except Exception as exc:  # noqa: BLE001 -- usage must never lose an audit line
+        metrics.metering_worker_errors_total.inc(len(records))
+        logger.warning(
+            "usage_record_batch_failed",
+            batch_size=len(records),
+            audit_ids=[r.audit_id for r in records],
+            error=str(exc),
+        )
