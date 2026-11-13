@@ -357,6 +357,30 @@ async def test_revoked_pat_rejected(
     assert exc.value.status_code == 401
 
 
+async def test_pat_accepted_then_refused_on_the_next_request_after_revoke(
+    settings, pat_backend, principal_cache, directory, tracker
+) -> None:
+    """Revocation is the record's ``revoked_at`` alone: the very next request
+    with the same token is refused, with no cache window in between."""
+    directory.responses["kc-sub-1"] = PrincipalAttributes(
+        uid=1, gid=1, unixname="u", groups=[], email=""
+    )
+    token = await _mint_and_store(pat_backend, principal_id="kc-sub-1")
+    lookup_id = token.split("_")[2]
+    accepted = await resolve_pat_principal(
+        token, settings, pat_backend, principal_cache, tracker
+    )
+    assert accepted.token_id == lookup_id
+
+    await pat_backend.revoke("kc-sub-1", lookup_id, revoked_at=time.time())
+
+    with pytest.raises(HTTPException) as exc:
+        await resolve_pat_principal(
+            token, settings, pat_backend, principal_cache, tracker
+        )
+    assert exc.value.status_code == 401
+
+
 async def test_expired_pat_raises_token_expired_error_with_portal_hint(
     settings, pat_backend, principal_cache, directory, tracker
 ) -> None:

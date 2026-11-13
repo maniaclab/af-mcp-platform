@@ -611,10 +611,8 @@ broker:
 # ---------------------------------------------------------------------------
 # Token sweep: periodic janitor for the Vault-backed token registry above
 # (broker.tokenRegistry.backend="vault"). Removes registry entries whose
-# expires_at is more than tokenSweep.graceSeconds in the past and prunes the
-# revoked-jtis denylist of anything that's now expired regardless of
-# revocation — see broker/src/af_mcp_broker/token_registry.py's
-# sweep_expired() docstring. Not needed (and refuses to run, exit code 2) for
+# expires_at is more than tokenSweep.graceSeconds in the past — see
+# broker/src/af_mcp_broker/token_registry.py's sweep_expired() docstring. Not needed (and refuses to run, exit code 2) for
 # the in-memory registry backend, which already self-sweeps inline.
 # ---------------------------------------------------------------------------
 tokenSweep:

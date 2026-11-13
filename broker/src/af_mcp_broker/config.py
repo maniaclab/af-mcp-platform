@@ -626,12 +626,6 @@ class Settings(BaseSettings):
     # Vault-backed stores never collide under the same kv_mount.
     token_registry_kv_path_prefix: str = "mcp/token-registry"
 
-    # How often (seconds) identity.RevokedJtiCache re-reads the token
-    # registry's revoked-jti set. Bounds how long a revoked token keeps
-    # working after DELETE /v1/tokens/{jti} -- see token_registry.py's
-    # RevokedJtiCache docstring.
-    revoked_jti_cache_refresh_seconds: float = 30.0
-
     # Grace window (seconds) token_sweep.py's expired-token janitor keeps a
     # record around after its expires_at passes, before removing it from
     # Vault -- see TokenRegistryBackend.sweep_expired's docstring. Default is
@@ -684,11 +678,9 @@ class Settings(BaseSettings):
     # and how long a value may be served *without* a successful refresh
     # before failing closed (long -- a brief Keycloak outage should not lock
     # out every PAT-authenticated caller; this is research infrastructure,
-    # not a bank). Mirrors RevokedJtiCache's single-interval shape, but that
-    # cache has only ever needed the one number because its failure mode
-    # (serve stale forever) has no analogous "eventually distrust this" bound
-    # -- a principal's authority is a stronger thing to get wrong than
-    # whether one specific token was revoked.
+    # not a bank). A cache that served stale forever on failure would have
+    # no "eventually distrust this" bound; a principal's authority is too
+    # strong a thing to get wrong for that.
     principal_cache_refresh_seconds: float = 45.0
     principal_cache_max_staleness_seconds: float = 6 * 60 * 60.0
 
