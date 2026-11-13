@@ -45,6 +45,15 @@
   },
   "description_optimization": {
     "tool": "skill-creator run_loop, 14 trigger queries (8 should, 6 should not), 2 runs each, 3 iterations",
-    "result": "no candidate beat the original description on held-out queries (test 6/10 each iteration, precision 100%, recall 20-33%); description left unchanged"
+    "result": "no candidate beat the original description on held-out queries (test 6/10 each iteration, precision 100%, recall 20-33%); description left unchanged",
+    "superseded_by": "iteration 2 below: the run_loop harness under-measured triggering (see trigger_results/ and PR #385)"
+  },
+  "trigger_eval_iteration_2": {
+    "harness": "evals/run_trigger_eval.py: real skill installed under .claude/skills in a sandbox project, claude -p --model claude-sonnet-5-5, Skill call counted within the first 3 tool calls",
+    "queries": "evals/trigger_queries.json: 36 queries (21 should, 15 should not), fixed split train 22 / test 14",
+    "original_description_in_stock_skill_creator_harness": "held-out recall 3/24 runs, precision 100%",
+    "original_description_in_this_harness": "held-out recall 24/24, precision 100%; train recall 31/39, precision 100%",
+    "final_description": "train recall 75/78 and precision 75/77 over 6 runs per query; held-out recall 48/48 and precision 100% (36 negative runs)",
+    "behaviour_evals_rerun": "38/39 (eval 1 13/13, eval 2 5/6, eval 3 11/11, eval 4 9/9); eval 2 assertion 1 failed in both reruns because the report labels hedged leads (U1, X1) as MUST rows"
   }
 }
