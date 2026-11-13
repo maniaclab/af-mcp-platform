@@ -1063,3 +1063,90 @@ def test_clear_caller_list_failure_clears_only_that_callers_record() -> None:
     assert registry.recent_list_failure("svc", "alice") is None
     assert registry.recent_list_failure("svc", "bob") == "not_linked"
     assert registry.recent_list_failure("other", "alice") == "not_linked"
+
+
+# --- access_url / docs_url (issue #395) -------------------------------------
+
+
+def _spec(**kwargs: object) -> ServiceSpec:
+    return ServiceSpec(
+        name="example",
+        prefix="example",
+        url="http://example.invalid/mcp",
+        transport="http",
+        required_permission="read_data",
+        **kwargs,  # type: ignore[arg-type]
+    )
+
+
+def test_access_and_docs_url_default_to_none() -> None:
+    spec = _spec()
+    assert spec.access_url is None
+    assert spec.docs_url is None
+
+
+def test_load_parses_access_and_docs_url(tmp_path: Path) -> None:
+    services_file = tmp_path / "services.yaml"
+    services_file.write_text(
+        """
+services:
+  - name: example
+    prefix: example
+    url: "http://example.invalid/mcp"
+    required_permission: read_data
+    access_url: https://groups.example.org/request/example
+    docs_url: https://docs.example.org/example
+"""
+    )
+    registry = ServiceRegistry()
+    registry.load(str(services_file))
+    spec = registry.get("example")
+    assert spec is not None
+    assert spec.access_url == "https://groups.example.org/request/example"
+    assert spec.docs_url == "https://docs.example.org/example"
+
+
+@pytest.mark.parametrize("field", ["access_url", "docs_url"])
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "groups.example.org/request",  # no scheme
+        "/relative/path",  # not absolute
+        "http://groups.example.org/request",  # plain http off localhost
+        "javascript:alert(1)",  # script scheme
+        "ftp://groups.example.org/request",  # non-web scheme
+        "https:///no-host",  # no host
+        "",  # empty string is a typo, not "unset"
+    ],
+)
+def test_spec_rejects_invalid_access_urls(field: str, bad: str) -> None:
+    with pytest.raises(ValueError, match=field):
+        _spec(**{field: bad})
+
+
+@pytest.mark.parametrize(
+    "good",
+    [
+        "https://groups.example.org/request",
+        "http://localhost:4321/request",
+        "http://127.0.0.1:8080/request",
+        "http://[::1]:8080/request",
+    ],
+)
+def test_spec_accepts_https_and_loopback_http_urls(good: str) -> None:
+    assert _spec(access_url=good).access_url == good
+
+
+def test_access_url_for_prefers_service_over_facility_default() -> None:
+    registry = ServiceRegistry(default_access_url="https://facility.example.org/access")
+    own = _spec(access_url="https://own.example.org/access")
+    assert registry.access_url_for(own) == "https://own.example.org/access"
+
+
+def test_access_url_for_falls_back_to_facility_default() -> None:
+    registry = ServiceRegistry(default_access_url="https://facility.example.org/access")
+    assert registry.access_url_for(_spec()) == "https://facility.example.org/access"
+
+
+def test_access_url_for_is_none_without_service_or_default() -> None:
+    assert ServiceRegistry().access_url_for(_spec()) is None
