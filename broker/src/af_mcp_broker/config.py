@@ -496,7 +496,7 @@ class Settings(BaseSettings):
     # CredentialCache.record_failed_unlock()/check_unlock_rate_limit() count
     # actual failed unlock attempts (bad passphrase, or a minting-backend
     # failure) per uid -- not plain cache misses from get(), see cache.py --
-    # this many are allowed inside the window below before RateLimitError
+    # this many are allowed inside the window below before UnlockRateLimitError
     # trips. 5 is generous enough to tolerate a mistyped passphrase but tight
     # enough to slow a brute-force guesser who has read access to a user's
     # ~/.globus.

@@ -15,7 +15,7 @@ from af_mcp_broker.maintenance import (
     InMemoryMaintenanceModeStore,
     MaintenanceModeStore,
     MaintenanceState,
-    MaintenanceStateConflict,
+    MaintenanceStateConflictError,
 )
 from af_mcp_broker.mcp import aggregator
 from af_mcp_broker.mcp.middleware import entitlement_mw
@@ -160,7 +160,7 @@ def test_disable_persists_and_is_readable_back_via_get(
 
 
 class _ConflictingStore(MaintenanceModeStore):
-    """Stub store whose set() always loses the compare-and-set race, to verify the endpoint translates MaintenanceStateConflict into a client-actionable response rather than a bare 500."""
+    """Stub store whose set() always loses the compare-and-set race, to verify the endpoint translates MaintenanceStateConflictError into a client-actionable response rather than a bare 500."""
 
     async def start(self) -> None:
         pass
@@ -174,7 +174,7 @@ class _ConflictingStore(MaintenanceModeStore):
         )
 
     async def set(self, state: MaintenanceState) -> None:
-        raise MaintenanceStateConflict("simulated concurrent writer")
+        raise MaintenanceStateConflictError("simulated concurrent writer")
 
 
 def test_post_conflict_from_store_returns_409(maintenance_client, make_principal):

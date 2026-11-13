@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, SecretStr
 
-from af_mcp_broker.vault_kv import CasConflict, VaultKV
+from af_mcp_broker.vault_kv import CasConflictError, VaultKV
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -182,7 +182,7 @@ class VaultServiceXStore:
                 await self._vault_kv.write_cas(
                     self._path(subject), _reveal_secrets(record), version
                 )
-            except CasConflict:
+            except CasConflictError:
                 if attempt == _CAS_ATTEMPTS - 1:
                     raise
                 continue

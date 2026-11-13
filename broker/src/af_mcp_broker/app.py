@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 import structlog
 from cryptography.fernet import Fernet
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import JSONResponse, Response
 from fastmcp.utilities.lifespan import combine_lifespans
@@ -57,13 +57,21 @@ from af_mcp_broker.credentials import (
     X509Provider,
     load_broker_token_issuer,
 )
-from af_mcp_broker.credentials.cache import RateLimitError
+from af_mcp_broker.credentials.errors import UnlockRateLimitError
 from af_mcp_broker.credentials.krb5_vault import Krb5VaultStore
 from af_mcp_broker.credentials.servicex_vault import VaultServiceXStore
 from af_mcp_broker.credmon.factory import build_credmon_sync
 from af_mcp_broker.credmon.guidance import JobCredentialGuide, wired_kinds
 from af_mcp_broker.http import aclose_http_client
-from af_mcp_broker.identity import build_dev_principal, get_jwks, issuer_is_local
+from af_mcp_broker.identity import (
+    IdentityError,
+    PrincipalDirectoryUnavailableError,
+    TokenAudienceError,
+    TokenExpiredError,
+    build_dev_principal,
+    get_jwks,
+    issuer_is_local,
+)
 from af_mcp_broker.logging import (
     CorrelatedHTTPException,
     bind_new_correlation_id,
@@ -1370,7 +1378,7 @@ async def _http_exception_handler(request: Request, exc: HTTPException) -> Respo
     # AF support instead of nothing. Scoped to 5xx only: 4xx details are
     # already meant to be user-actionable on their own (a correlation ID
     # doesn't help "wrong password"), and a dict-shaped detail (identity.py's
-    # TokenAudienceError, this route's own NeedsUnlock-derived 409s) is
+    # TokenAudienceError, this route's own NeedsUnlockError-derived 409s) is
     # already structured/already carries its own correlation_id where one
     # makes sense -- overwriting it here would be a regression, not a fix.
     # A 4xx opts in by raising CorrelatedHTTPException (issue #342).
@@ -1385,6 +1393,29 @@ async def _http_exception_handler(request: Request, exc: HTTPException) -> Respo
                 headers=exc.headers,
             )
     return await http_exception_handler(request, exc)
+
+
+# identity.py raises domain exceptions (it is also reached from /mcp, which
+# translates them itself in mcp/middleware/identity_mw.py); /v1 maps each onto
+# the HTTPException the caller has always received, routed through
+# _http_exception_handler so logging and 5xx correlation_id folding are
+# unchanged. The status code and headers live here, not on the domain classes.
+_IDENTITY_ERROR_RESPONSES: dict[
+    type[IdentityError], tuple[int, dict[str, str] | None]
+] = {
+    TokenExpiredError: (status.HTTP_401_UNAUTHORIZED, {"WWW-Authenticate": "Bearer"}),
+    TokenAudienceError: (status.HTTP_401_UNAUTHORIZED, {"WWW-Authenticate": "Bearer"}),
+    PrincipalDirectoryUnavailableError: (status.HTTP_503_SERVICE_UNAVAILABLE, None),
+}
+
+
+@app.exception_handler(IdentityError)
+async def _identity_error_handler(request: Request, exc: IdentityError) -> Response:
+    status_code, headers = _IDENTITY_ERROR_RESPONSES[type(exc)]
+    return await _http_exception_handler(
+        request,
+        HTTPException(status_code=status_code, detail=exc.detail, headers=headers),
+    )
 
 
 @app.exception_handler(ValidationError)
@@ -1406,11 +1437,11 @@ async def _validation_error_handler(
     )
 
 
-@app.exception_handler(RateLimitError)
+@app.exception_handler(UnlockRateLimitError)
 async def _rate_limit_error_handler(
-    request: Request, exc: RateLimitError
+    request: Request, exc: UnlockRateLimitError
 ) -> JSONResponse:
-    # RateLimitError is raised by CredentialCache.record_failed_unlock()/
+    # UnlockRateLimitError is raised by CredentialCache.record_failed_unlock()/
     # check_unlock_rate_limit() on the x509 credential-issuance path (bad
     # passphrase / minting-backend failures against a colocated user's
     # ~/.globus) -- plain cache misses never raise it (see cache.py's get()).

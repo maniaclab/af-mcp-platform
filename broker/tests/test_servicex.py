@@ -6,7 +6,7 @@ everything in Vault: ``link()`` verifies with one redeem before storing the
 refresh token + access token, ``is_linked()`` asks Vault, ``issue()`` serves
 the Vault access token and — when it's expired or near expiry — REDEEMS
 hands-free with the stored refresh token. A bad-refresh-token failure on
-redeem unlinks and surfaces ``NeedsUnlock`` so the portal prompts a
+redeem unlinks and surfaces ``NeedsUnlockError`` so the portal prompts a
 re-paste; infra failures do neither. Unlike ``X509Provider`` there is no
 legacy path and no POSIX identity requirement at all -- every principal,
 linked or not, is eligible.
@@ -26,14 +26,15 @@ from typing import Any
 import pytest
 from pydantic import SecretStr
 
-from af_mcp_broker.credentials.base import CredentialKind, NeedsUnlock
+from af_mcp_broker.credentials.base import CredentialKind
 from af_mcp_broker.credentials.cache import CredentialCache
-from af_mcp_broker.credentials.servicex import ServiceXProvider
-from af_mcp_broker.credentials.servicex_service import (
-    RedeemedServiceXToken,
+from af_mcp_broker.credentials.errors import (
+    NeedsUnlockError,
     ServiceXBadRefreshTokenError,
     ServiceXServiceMintError,
 )
+from af_mcp_broker.credentials.servicex import ServiceXProvider
+from af_mcp_broker.credentials.servicex_service import RedeemedServiceXToken
 from af_mcp_broker.credentials.servicex_vault import StoredServiceXCredential
 from af_mcp_broker.identity import Principal
 
@@ -294,7 +295,7 @@ class TestStoredTokenAndRenewal:
         )
         await _seed_link(store)
 
-        with pytest.raises(NeedsUnlock):
+        with pytest.raises(NeedsUnlockError):
             await provider.issue(_principal(), "servicex")
 
         assert store.deleted == ["user-123"]
@@ -317,7 +318,7 @@ class TestStoredTokenAndRenewal:
     async def test_no_link_raises_needs_unlock(self) -> None:
         provider, servicex_client, _, _ = _make_provider()
 
-        with pytest.raises(NeedsUnlock) as excinfo:
+        with pytest.raises(NeedsUnlockError) as excinfo:
             await provider.issue(_principal(), "servicex")
 
         assert excinfo.value.unlock_endpoint == "/v1/servicex/link"
@@ -342,7 +343,7 @@ class TestRedeemFromLink:
     async def test_no_link_raises_needs_unlock(self) -> None:
         provider, _, _, _ = _make_provider()
 
-        with pytest.raises(NeedsUnlock) as excinfo:
+        with pytest.raises(NeedsUnlockError) as excinfo:
             await provider.redeem_from_link("user-123", "servicex")
 
         assert excinfo.value.reason == "not_linked"
@@ -353,7 +354,7 @@ class TestRedeemFromLink:
         )
         await _seed_link(store)
 
-        with pytest.raises(NeedsUnlock) as excinfo:
+        with pytest.raises(NeedsUnlockError) as excinfo:
             await provider.redeem_from_link("user-123", "servicex")
 
         assert excinfo.value.reason == "stored_refresh_token_rejected"

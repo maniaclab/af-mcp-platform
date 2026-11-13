@@ -22,7 +22,8 @@ from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
 from af_mcp_broker.config import get_settings
-from af_mcp_broker.credentials.oauth21 import StoredOAuthCredential, VersionConflict
+from af_mcp_broker.credentials.errors import VersionConflictError
+from af_mcp_broker.credentials.oauth21 import StoredOAuthCredential
 from af_mcp_broker.credentials.vault import VaultTokenStore
 from af_mcp_broker.vault_kv import VaultError, VaultKV
 
@@ -275,7 +276,7 @@ async def test_write_cas_none_conflicts_when_existing(sa_token_path: Path) -> No
     store = _make_store(fake, sa_token_path)
     await store.write_cas(SUBJECT, ALIAS, _make_cred(), expected_version=None)
 
-    with pytest.raises(VersionConflict):
+    with pytest.raises(VersionConflictError):
         await store.write_cas(SUBJECT, ALIAS, _make_cred(), expected_version=None)
 
 
@@ -300,7 +301,7 @@ async def test_write_cas_with_stale_version_conflicts(sa_token_path: Path) -> No
     await store.write_cas(SUBJECT, ALIAS, _make_cred(), expected_version=None)  # v1
     await store.write_cas(SUBJECT, ALIAS, _make_cred(), expected_version=1)  # v2
 
-    with pytest.raises(VersionConflict):
+    with pytest.raises(VersionConflictError):
         await store.write_cas(SUBJECT, ALIAS, _make_cred(), expected_version=1)
 
 
