@@ -273,6 +273,27 @@ class HungBackend:
                 return
 
 
+# fastmcp's Client has no default init_timeout (and no request timeout), so a
+# test that connects to an app that never answers would wait for
+# pytest-timeout (300 s) -- the silent-hang class of #237. Every Client built
+# in the suite gets these bounds unless the caller passes its own.
+_CLIENT_DEFAULT_TIMEOUT = 10.0
+
+
+@pytest.fixture(autouse=True)
+def _bound_client_timeouts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Default every fastmcp Client's init_timeout and timeout to _CLIENT_DEFAULT_TIMEOUT."""
+    orig_init = fastmcp.Client.__init__
+
+    def bounded_init(self: Any, *args: Any, **kwargs: Any) -> None:
+        kwargs.setdefault("init_timeout", _CLIENT_DEFAULT_TIMEOUT)
+        if kwargs.get("timeout") is None:
+            kwargs["timeout"] = _CLIENT_DEFAULT_TIMEOUT
+        orig_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(fastmcp.Client, "__init__", bounded_init)
+
+
 # --- In-process backends --------------------------------------------------
 # The aggregator reaches each backend through an httpx2 client built by
 # aggregator._checked_httpx_client_factory (which installs the #314 401 hook

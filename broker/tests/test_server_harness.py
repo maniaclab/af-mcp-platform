@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Self
 import anyio
 import httpx2
 import pytest
-from conftest import HungBackend
+from conftest import _CLIENT_DEFAULT_TIMEOUT, HungBackend
 
 # Import from conftest at module level ONLY: pytest imports every collected
 # conftest.py under the bare name "conftest", and the CI invocation
@@ -97,16 +97,29 @@ async def test_transport_dying_mid_response_fails_pending_request_instead_of_han
 
 
 @pytest.mark.timeout(30)
-async def test_server_that_never_answers_times_out_instead_of_hanging() -> None:
-    """A server that reads a request and never replies (the dead-but-open connection behind the CI hang observed on #237) must fail at the client's timeout rather than wait forever."""
+async def test_client_built_the_normal_way_fails_fast_against_a_hung_app() -> None:
+    """A client built with no timeout arguments (as every test builds one) must still fail within conftest's bounded default against a server that never answers, instead of waiting for pytest-timeout."""
     hung = HungBackend()
     async with run_asgi_lifespan(hung):
         server = ASGIServer(url="http://127.0.0.1/mcp", app=hung, transport_type="http")
-        # fastmcp's Client has no default init timeout: without init_timeout
-        # this client waits on the never-sent initialize reply forever (only
-        # pytest-timeout would end it), exactly the hang the removed
-        # ClientSession read-timeout patch used to bound.
-        with anyio.fail_after(10), pytest.raises(RuntimeError, match="connect"):
-            async with server.client(init_timeout=0.5) as client:
+        with (
+            anyio.fail_after(_CLIENT_DEFAULT_TIMEOUT + 5),
+            pytest.raises(RuntimeError, match="connect"),
+        ):
+            async with server.client() as client:
                 await client.ping()
     assert hung.requests >= 1
+
+
+@pytest.mark.timeout(30)
+async def test_explicit_client_timeout_overrides_the_default() -> None:
+    """Callers can still pass their own (here much shorter) init_timeout."""
+    hung = HungBackend()
+    async with run_asgi_lifespan(hung):
+        server = ASGIServer(url="http://127.0.0.1/mcp", app=hung, transport_type="http")
+        with (
+            anyio.fail_after(_CLIENT_DEFAULT_TIMEOUT / 2),
+            pytest.raises(RuntimeError, match="connect"),
+        ):
+            async with server.client(init_timeout=0.5) as client:
+                await client.ping()
