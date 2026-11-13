@@ -6,12 +6,11 @@ from typing import Any
 
 import mcp.types as mt
 import pytest
-from conftest import make_claims, run_aggregator_async
+from conftest import make_claims, run_aggregator_async, run_inprocess_server
 from fastmcp import Client, FastMCP
 from fastmcp.exceptions import ToolError
 from fastmcp.server.providers.proxy import ProxyTool
 from fastmcp.utilities.http import find_available_port
-from fastmcp.utilities.tests import run_server_async
 
 from af_mcp_broker.authorization import EntitlementPolicy
 from af_mcp_broker.credentials import CredentialRegistry
@@ -108,7 +107,9 @@ async def test_upstream_mcp_level_error_passes_through_unchanged(
     prime_jwks([sig_key.jwk])
     token = sig_key.sign(make_claims())
 
-    async with run_server_async(_toy_backend_with_failing_tool(), path="/mcp") as url:
+    async with run_inprocess_server(
+        _toy_backend_with_failing_tool(), path="/mcp"
+    ) as url:
         registry = ServiceRegistry()
         registry.register(
             ServiceSpec(
@@ -162,7 +163,7 @@ async def test_slow_backend_call_times_out_cleanly_instead_of_hanging(
     prime_jwks([sig_key.jwk])
     token = sig_key.sign(make_claims())
 
-    async with run_server_async(_toy_backend_with_slow_tool(), path="/mcp") as url:
+    async with run_inprocess_server(_toy_backend_with_slow_tool(), path="/mcp") as url:
         registry = ServiceRegistry()
         registry.register(
             ServiceSpec(

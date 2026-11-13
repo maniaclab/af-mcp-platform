@@ -20,7 +20,6 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from fastmcp import FastMCP
 from fastmcp.server.dependencies import get_http_headers
-from fastmcp.utilities.tests import run_server_async
 from test_broker_issued import (
     _BASE_CLAIMS,
     _make_rsa_key,
@@ -46,7 +45,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
     from pathlib import Path
 
-from conftest import make_claims, run_aggregator_async
+from conftest import make_claims, run_aggregator_async, run_inprocess_server
 
 _BROKER_ISSUED_PROVIDERS = [
     {
@@ -207,7 +206,7 @@ def _toy_backend() -> FastMCP:
 
 @pytest.fixture
 async def toy_backend_url() -> AsyncIterator[str]:
-    async with run_server_async(_toy_backend(), path="/mcp") as url:
+    async with run_inprocess_server(_toy_backend(), path="/mcp") as url:
         yield url
 
 

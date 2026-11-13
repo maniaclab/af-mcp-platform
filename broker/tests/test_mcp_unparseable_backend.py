@@ -8,7 +8,13 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from conftest import AUDIENCE, ISSUER, make_claims, run_aggregator_async, run_asgi_app
+from conftest import (
+    AUDIENCE,
+    ISSUER,
+    make_claims,
+    run_aggregator_async,
+    run_inprocess_asgi_app,
+)
 from fastmcp import Client, FastMCP
 from fastmcp.exceptions import ToolError
 
@@ -207,7 +213,7 @@ async def test_tools_list_with_unparseable_backend_response_fails_fast_and_is_lo
     prime_jwks([sig_key.jwk])
     token = sig_key.sign(make_claims())
     async with (
-        run_asgi_app(app) as backend_url,
+        run_inprocess_asgi_app(app) as backend_url,
         _aggregator_server(f"{backend_url}/mcp", registry, principal_cache) as server,
     ):
         started = time.monotonic()
@@ -238,7 +244,7 @@ async def test_tools_call_with_unparseable_backend_response_fails_fast_and_speci
     prime_jwks([sig_key.jwk])
     token = sig_key.sign(make_claims())
     async with (
-        run_asgi_app(app) as backend_url,
+        run_inprocess_asgi_app(app) as backend_url,
         _aggregator_server(
             f"{backend_url}/mcp", ServiceRegistry(), principal_cache
         ) as server,
@@ -262,7 +268,7 @@ async def test_one_shot_service_listing_reports_unavailable_for_unparseable_resp
     bad: _BadResponse, events: list[tuple[str, dict[str, Any]]]
 ) -> None:
     app = _CorruptingBackend(_backend().http_app(path="/mcp"), {"tools/list"}, bad)
-    async with run_asgi_app(app) as backend_url:
+    async with run_inprocess_asgi_app(app) as backend_url:
         started = time.monotonic()
         status, tools = await fetch_service_tool_listing(
             _spec(f"{backend_url}/mcp"), ListTimeCredential(None, None)
@@ -277,7 +283,7 @@ async def test_one_shot_service_listing_reports_unavailable_for_unparseable_resp
 async def test_well_formed_backend_is_not_flagged(
     events: list[tuple[str, dict[str, Any]]],
 ) -> None:
-    async with run_asgi_app(_backend().http_app(path="/mcp")) as backend_url:
+    async with run_inprocess_asgi_app(_backend().http_app(path="/mcp")) as backend_url:
         status, tools = await fetch_service_tool_listing(
             _spec(f"{backend_url}/mcp"), ListTimeCredential(None, None)
         )

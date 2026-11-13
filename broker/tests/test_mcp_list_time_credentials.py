@@ -4,14 +4,18 @@ import re
 import time
 from typing import TYPE_CHECKING, Any
 
-import httpx
 import pytest
-from conftest import make_claims, run_aggregator_async, run_asgi_app
+from conftest import (
+    make_claims,
+    run_aggregator_async,
+    run_inprocess_asgi_app,
+    run_inprocess_server,
+)
 from fastmcp import Client, FastMCP
 from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_http_headers
 from fastmcp.utilities.http import find_available_port
-from fastmcp.utilities.tests import run_server_async
+from fastmcp.utilities.tests import asgi_server
 from starlette.middleware import Middleware
 from starlette.responses import JSONResponse
 from test_broker_issued import _make_rsa_key, _private_pem
@@ -96,13 +100,13 @@ def _open_backend() -> FastMCP:
 
 @pytest.fixture
 async def secure_backend_url() -> AsyncIterator[str]:
-    async with run_asgi_app(_auth_gated_backend()) as url:
+    async with run_inprocess_asgi_app(_auth_gated_backend()) as url:
         yield f"{url}/mcp"
 
 
 @pytest.fixture
 async def open_backend_url() -> AsyncIterator[str]:
-    async with run_server_async(_open_backend(), path="/mcp") as url:
+    async with run_inprocess_server(_open_backend(), path="/mcp") as url:
         yield url
 
 
@@ -447,8 +451,8 @@ async def test_list_then_call_on_healthy_backend_survives_a_sibling_401_during_l
     call was ever processed.
 
     This reproduces the same shape in-process (one client session, one
-    backend 401ing during listing via a real ASGI 401 over a real HTTP
-    connection -- same as the not_linked test above -- followed by
+    backend 401ing during listing via a real ASGI 401 over an in-process
+    HTTP connection -- same as the not_linked test above -- followed by
     tools/call on a different, healthy backend) and passes: the
     ProxyProvider/AggregateProvider exception-containment path already
     isolates "secure"'s listing failure from "open"'s tools/call in this
@@ -490,9 +494,9 @@ async def test_replica_split_session_continuity(
 
     Simulates two replicas as two separate aggregator ASGI app instances
     built from the same registry/policy/credential config (mirrors two pods
-    loading identical ConfigMap-sourced config), each with its own uvicorn
-    server. Talks raw HTTP (rather than fastmcp's Client) so the exact same
-    ``Mcp-Session-Id`` minted by replica 1's ``initialize`` can be replayed
+    loading identical ConfigMap-sourced config), each served in-process
+    through fastmcp's asgi_server. Talks raw HTTP (rather than fastmcp's
+    Client) so the exact same ``Mcp-Session-Id`` minted by replica 1's ``initialize`` can be replayed
     against replica 2's ``tools/call`` -- reproducing a load balancer
     routing one logical session's requests across replicas. Parametrized
     over both modes: stateless must succeed (no server-side session state is
@@ -525,7 +529,8 @@ async def test_replica_split_session_continuity(
             credential_registry,
             principal_cache=principal_cache,
         )
-        return mcp.http_app(
+        return asgi_server(
+            mcp,
             path="/mcp",
             stateless_http=stateless,
             middleware=[build_asgi_auth_middleware(mcp)],
@@ -538,9 +543,10 @@ async def test_replica_split_session_continuity(
     }
 
     async with (
-        run_asgi_app(_replica()) as replica_1_url,
-        run_asgi_app(_replica()) as replica_2_url,
-        httpx.AsyncClient() as http_client,
+        _replica() as replica_1,
+        _replica() as replica_2,
+        replica_1.http_client() as replica_1_client,
+        replica_2.http_client() as replica_2_client,
     ):
         init_body = {
             "jsonrpc": "2.0",
@@ -552,8 +558,8 @@ async def test_replica_split_session_continuity(
                 "clientInfo": {"name": "test", "version": "0"},
             },
         }
-        init_resp = await http_client.post(
-            f"{replica_1_url}/mcp", json=init_body, headers=headers
+        init_resp = await replica_1_client.post(
+            replica_1.url, json=init_body, headers=headers
         )
         assert init_resp.status_code == 200
         session_id = init_resp.headers.get("mcp-session-id")
@@ -568,8 +574,8 @@ async def test_replica_split_session_continuity(
             "method": "tools/call",
             "params": {"name": "open_ping", "arguments": {}},
         }
-        call_resp = await http_client.post(
-            f"{replica_2_url}/mcp", json=call_body, headers=call_headers
+        call_resp = await replica_2_client.post(
+            replica_2.url, json=call_body, headers=call_headers
         )
 
     if stateless:
@@ -660,7 +666,7 @@ async def mint_and_inject_env(
         return "redeemed"
 
     backend_app = _RecordingBackend(backend.http_app(path="/mcp"), env.backend_requests)
-    async with run_asgi_app(backend_app) as backend_url:
+    async with run_inprocess_asgi_app(backend_app) as backend_url:
         env.registry.register(
             ServiceSpec(
                 name="redeemer",

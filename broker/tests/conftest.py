@@ -1,38 +1,38 @@
 from __future__ import annotations
 
-import asyncio
 import contextlib
+import itertools
 import json
 import shutil
-import socket
 import socketserver
 import subprocess
 import time
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Iterator
 
     from fastmcp import FastMCP
-    from fastmcp.utilities.tests import ASGIServer
 
 import fastmcp
+import httpx2
 import jwt
 import pytest
-import uvicorn
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
+from fastmcp.utilities.asgi_transport import StreamingASGITransport, run_asgi_lifespan
 from fastmcp.utilities.http import find_available_port
-from fastmcp.utilities.tests import asgi_server
+from fastmcp.utilities.tests import ASGIServer, asgi_server
 from jwt.algorithms import RSAAlgorithm
 from pydantic import SecretStr
 
 from af_mcp_broker import identity
 from af_mcp_broker.audit import measure
 from af_mcp_broker.config import Settings, get_settings
+from af_mcp_broker.mcp import aggregator as aggregator_module
 from af_mcp_broker.mcp.aggregator import build_asgi_auth_middleware
 
 # fastmcp v4's camelCase compat bridge (mcp_camelcase_compat, default True)
@@ -245,156 +245,6 @@ def prime_jwks(settings: Settings):
     identity._jwks_cache.pop(settings.oidc_jwks_uri, None)
 
 
-# --- ClientSession hotfix -- modelcontextprotocol/python-sdk#1144 ----------
-# An MCP streamable-HTTP client whose response dies mid-flight hangs forever:
-# an Exception object the transport sends into the session's read stream is
-# handled by a default no-op (the receive loop keeps iterating, so its
-# teardown -- which WOULD fail all pending requests with CONNECTION_CLOSED --
-# never runs), and a connection that goes dead without delivering anything
-# produces no event at all (it caused the historic silent CI hangs, e.g. run
-# 32922473653). **Still required on mcp SDK v2 / fastmcp v4** -- verified
-# directly, contradicting this migration's own working assumption that
-# v2's new ``JSONRPCDispatcher.on_stream_exception`` hook closed this bug on
-# its own: that hook only *delivers* a transport exception to whichever
-# ``message_handler`` the caller supplied (a bare ``ClientSession`` with no
-# handler still hangs forever -- ``_default_message_handler`` is a no-op,
-# same as v1). Two halves, both still needed:
-#   - a wrapping message_handler closes the read stream when an Exception
-#     arrives, so the receive loop exits NORMALLY and its own teardown
-#     delivers CONNECTION_CLOSED to every waiter (cleaner than cancelling
-#     the session task group, which races that same teardown). v2 no longer
-#     stores the read stream as ``ClientSession._read_stream`` directly --
-#     ``ClientSession.__init__`` now wraps it into a ``JSONRPCDispatcher`` at
-#     ``self._dispatcher`` (``shared/jsonrpc_dispatcher.py``), which keeps
-#     its own ``self._read_stream`` -- so the hotfix closes
-#     ``self._dispatcher._read_stream`` instead;
-#   - sessions with no read timeout get a default one, covering the
-#     dead-but-open-connection case where no event ever arrives.
-# Mutable so tests of the hotfix itself can shrink the timeout.
-# mcp SDK v2's ClientSession.read_timeout_seconds is a bare float | None, not
-# the v1 timedelta -- store the float directly, matching the real signature.
-_CLIENT_SESSION_HOTFIX: dict[str, Any] = {"read_timeout": 30.0}
-
-
-@pytest.fixture(autouse=True)
-def client_session_hotfix(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Bound every test ClientSession -- see _CLIENT_SESSION_HOTFIX above."""
-    import mcp.client.session as mcp_client_session
-
-    orig_init = mcp_client_session.ClientSession.__init__
-
-    def patched_init(self: Any, *args: Any, **kwargs: Any) -> None:
-        if kwargs.get("read_timeout_seconds") is None:
-            kwargs["read_timeout_seconds"] = _CLIENT_SESSION_HOTFIX["read_timeout"]
-        inner = kwargs.get("message_handler")
-
-        async def close_on_stream_exception(message: Any) -> None:
-            if isinstance(message, Exception):
-                # Ends the receive loop's `async for`; its finally block then
-                # fails every pending request with CONNECTION_CLOSED. v2:
-                # the read stream lives on the dispatcher, not the session.
-                await self._dispatcher._read_stream.aclose()
-                return
-            if inner is not None:
-                await inner(message)
-
-        kwargs["message_handler"] = close_on_stream_exception
-        orig_init(self, *args, **kwargs)
-
-    monkeypatch.setattr(mcp_client_session.ClientSession, "__init__", patched_init)
-
-
-# How long a test server gets to report started before the harness gives up.
-# Generous: startup is normally milliseconds even on a loaded CI runner --
-# the point is a bounded, diagnosable failure instead of the silent
-# until-the-6-hour-job-timeout hang an unbounded wait produces when the
-# server task dies (e.g. the find_available_port TOCTOU race losing the
-# port to another process between probe and bind).
-_SERVER_START_TIMEOUT = 30.0
-
-
-async def _contained(coro: Any) -> None:
-    """Await *coro*, converting SystemExit into an ordinary exception.
-
-    uvicorn reports a startup failure (e.g. a lost port-bind race) with
-    ``sys.exit(3)`` -- and asyncio re-raises SystemExit from a task straight
-    into the event loop, crashing whatever drives it, instead of containing
-    it in the task like a normal exception. Wrapping the server coroutine
-    keeps the failure inside the task where _await_server_started can
-    surface it as a diagnosable error.
-    """
-    try:
-        await coro
-    except SystemExit as exc:
-        raise RuntimeError(f"uvicorn exited during startup (code {exc.code})") from exc
-
-
-async def _await_server_started(
-    server_task: asyncio.Task[Any], started: Callable[[], bool]
-) -> None:
-    """Wait (bounded) for *started*, surfacing *server_task*'s death.
-
-    The historic failure mode this replaces: the server task exits with an
-    exception (uvicorn's bind failure raises SystemExit inside the task,
-    contained by _contained above), the started flag therefore never flips,
-    and an unbounded wait spins forever with the exception swallowed -- the
-    CI hang. Checking ``server_task.done()`` on every poll turns that into
-    an immediate, chained error.
-    """
-    deadline = time.monotonic() + _SERVER_START_TIMEOUT
-    while not started():
-        if server_task.done():
-            # .exception() itself raises CancelledError if the task was
-            # cancelled, which is equally a startup failure -- let it out.
-            exc = server_task.exception()
-            raise RuntimeError("server task exited before startup") from exc
-        if time.monotonic() > deadline:
-            server_task.cancel()
-            raise TimeoutError(
-                f"test server failed to start within {_SERVER_START_TIMEOUT}s"
-            )
-        await asyncio.sleep(0.01)
-
-
-@asynccontextmanager
-async def run_asgi_app(app: Any, port: int | None = None) -> AsyncIterator[str]:
-    """Run an arbitrary ASGI app (not necessarily a bare FastMCP server)
-    behind a real uvicorn server on an ephemeral port -- fastmcp's own
-    run_server_async only accepts a FastMCP instance directly, which can't
-    carry the ASGI-level auth middleware some tests need (e.g. the
-    _auth_gated_backend() doubles reproducing issue #121), nor exercise
-    app.py's actual mount + combine_lifespans wiring end-to-end.
-
-    The listening socket is bound HERE, synchronously, and handed to uvicorn
-    -- unlike the probe-close-rebind of ``find_available_port``, there is no
-    window for another process to steal the port, so the bind race that used
-    to hang CI cannot occur on this harness at all. A genuinely occupied
-    *port* (a harness-test seam, see test_server_harness.py; everything else
-    leaves it None for an ephemeral one) fails the bind right here with a
-    plain OSError instead.
-    """
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.bind(("127.0.0.1", port or 0))
-    port = sock.getsockname()[1]
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error")
-    server = uvicorn.Server(config)
-    task = asyncio.create_task(_contained(server.serve(sockets=[sock])))
-    try:
-        await _await_server_started(task, lambda: server.started)
-        yield f"http://127.0.0.1:{port}"
-    finally:
-        server.should_exit = True
-        # Bounded for the same reason as startup: a server wedged on
-        # shutdown (e.g. a lingering keep-alive connection) must fail the
-        # test, not stall the whole run.
-        with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
-            await asyncio.wait_for(task, timeout=10.0)
-        # uvicorn/asyncio normally close the socket on shutdown; make sure it
-        # never outlives the harness even on an aborted startup.
-        with contextlib.suppress(OSError):
-            sock.close()
-
-
 class HungBackend:
     """ASGI app that reads each request and never responds, recording how many requests arrived and how many connections were later closed by the client."""
 
@@ -403,6 +253,16 @@ class HungBackend:
         self.disconnects = 0
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] == "lifespan":
+            # run_asgi_lifespan (the in-process harness) requires the handshake
+            # to complete; uvicorn tolerates its absence.
+            while True:
+                message = await receive()
+                if message["type"] == "lifespan.startup":
+                    await send({"type": "lifespan.startup.complete"})
+                else:
+                    await send({"type": "lifespan.shutdown.complete"})
+                    return
         if scope["type"] != "http":
             return
         self.requests += 1
@@ -411,6 +271,88 @@ class HungBackend:
             if message["type"] == "http.disconnect":
                 self.disconnects += 1
                 return
+
+
+# --- In-process backends --------------------------------------------------
+# The aggregator reaches each backend through an httpx2 client built by
+# aggregator._checked_httpx_client_factory (which installs the #314 401 hook
+# and the #362 invalid-response hook). _route_backends_in_process wraps that
+# factory to add ``transport=`` -- an httpx2 client kwarg the factory already
+# forwards -- so every hook, timeout and header still runs and only the
+# bytes' path changes: a request to a host registered here is dispatched
+# straight into that backend's ASGI app on the test's event loop (fastmcp's
+# StreamingASGITransport: no socket, no uvicorn, no connection to reset or
+# leave dead-but-open). Any other host (e.g. a port nothing listens
+# on) still goes over a real connection, which is what the dead-backend
+# tests need.
+# host -> backend ASGI app; emptied after every test by the autouse fixture.
+_IN_PROCESS_BACKENDS: dict[str, Any] = {}
+_BACKEND_IDS = itertools.count()
+
+
+class _BackendRouter(httpx2.AsyncBaseTransport):
+    """httpx2 transport sending each request to the in-process backend registered for its URL host, or over the network when none is."""
+
+    def __init__(self) -> None:
+        self._stack = contextlib.AsyncExitStack()
+        self._network = httpx2.AsyncHTTPTransport()
+        self._routes: dict[str, StreamingASGITransport] = {}
+
+    async def __aenter__(self) -> Self:
+        # One ASGI transport per registered backend, each owning its own task
+        # group for that backend's request handlers; the router belongs to a
+        # single client, so those tasks end with the client.
+        await self._stack.enter_async_context(self._network)
+        for host, app in _IN_PROCESS_BACKENDS.items():
+            self._routes[host] = await self._stack.enter_async_context(
+                StreamingASGITransport(app)
+            )
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        await self._stack.__aexit__(*exc_info)
+
+    async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
+        route = self._routes.get(request.url.host, self._network)
+        return await route.handle_async_request(request)
+
+
+@pytest.fixture(autouse=True)
+def _route_backends_in_process(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Route the aggregator's outbound backend traffic through _BackendRouter."""
+    orig = aggregator_module._checked_httpx_client_factory
+
+    def routed(*args: Any, **kwargs: Any) -> Callable[..., httpx2.AsyncClient]:
+        inner = orig(*args, **kwargs)
+
+        def factory(*f_args: Any, **f_kwargs: Any) -> httpx2.AsyncClient:
+            f_kwargs.setdefault("transport", _BackendRouter())
+            return inner(*f_args, **f_kwargs)
+
+        return factory
+
+    monkeypatch.setattr(aggregator_module, "_checked_httpx_client_factory", routed)
+    yield
+    _IN_PROCESS_BACKENDS.clear()
+
+
+@asynccontextmanager
+async def run_inprocess_asgi_app(app: Any) -> AsyncIterator[str]:
+    """Serve an ASGI app (lifespan included) as an in-process backend and yield its base URL, a socket-free counterpart of serving it with uvicorn."""
+    host = f"backend-{next(_BACKEND_IDS)}.test"
+    async with run_asgi_lifespan(app):
+        _IN_PROCESS_BACKENDS[host] = app
+        try:
+            yield f"http://{host}"
+        finally:
+            del _IN_PROCESS_BACKENDS[host]
+
+
+@asynccontextmanager
+async def run_inprocess_server(mcp: FastMCP, path: str = "/mcp") -> AsyncIterator[str]:
+    """Serve a FastMCP backend in-process and yield its full MCP URL, a socket-free counterpart of fastmcp's run_server_async."""
+    async with run_inprocess_asgi_app(mcp.http_app(path=path)) as base_url:
+        yield f"{base_url}{path}"
 
 
 @asynccontextmanager
@@ -428,14 +370,50 @@ async def run_aggregator_async(
     pipeline -- asgi_server forwards ``middleware`` to ``http_app()``, the
     same call run_http_async makes.
 
-    Only the caller-facing side is in-process: the aggregator's own outbound
-    connections to its backends still use real HTTP, so those backends run
-    through run_server_async / run_asgi_app on real sockets.
+    The aggregator's outbound connections to its backends are in-process
+    too, through _route_backends_in_process (see run_inprocess_server).
     """
     async with asgi_server(
         mcp, path=path, middleware=[build_asgi_auth_middleware(mcp)]
     ) as server:
         yield server
+
+
+class _ServerState:
+    """ASGI wrapper providing the ``state`` scope key a real server (uvicorn) provides: one dict the app's lifespan fills, copied into every request scope.
+
+    fastmcp's run_asgi_lifespan builds a bare lifespan scope, which a
+    Starlette app whose lifespan yields state (app.py's combine_lifespans)
+    refuses to start under.
+    """
+
+    def __init__(self, app: Any) -> None:
+        self._app = app
+        self._state: dict[str, Any] = {}
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] == "lifespan":
+            scope["state"] = self._state
+        else:
+            scope["state"] = dict(self._state)
+        await self._app(scope, receive, send)
+
+
+@asynccontextmanager
+async def run_broker_in_process(
+    app: Any, path: str = "/mcp/"
+) -> AsyncIterator[ASGIServer]:
+    """Serve a full ASGI app (the broker, with the aggregator mounted at *path*) in-process, lifespan included, and yield the ASGIServer a test builds its clients from.
+
+    For tests that talk to the whole broker app rather than to a bare FastMCP aggregator
+    (run_aggregator_async), so app.py's mount + combine_lifespans wiring
+    still runs end to end.
+    """
+    served = _ServerState(app)
+    async with run_asgi_lifespan(served):
+        yield ASGIServer(
+            url=f"http://127.0.0.1{path}", app=served, transport_type="http"
+        )
 
 
 def make_claims(**overrides: Any) -> dict[str, Any]:

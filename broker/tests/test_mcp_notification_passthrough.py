@@ -3,10 +3,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
-from conftest import make_claims, run_aggregator_async
+from conftest import make_claims, run_aggregator_async, run_inprocess_server
 from fastmcp import FastMCP
 from fastmcp.server.dependencies import get_context
-from fastmcp.utilities.tests import run_server_async
 
 from af_mcp_broker.authorization import EntitlementPolicy
 from af_mcp_broker.credentials import CredentialRegistry
@@ -44,7 +43,7 @@ def _progress_backend() -> FastMCP:
 
 @pytest.fixture
 async def progress_backend_url() -> AsyncIterator[str]:
-    async with run_server_async(_progress_backend(), path="/mcp") as url:
+    async with run_inprocess_server(_progress_backend(), path="/mcp") as url:
         yield url
 
 

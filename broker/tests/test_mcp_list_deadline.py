@@ -13,10 +13,10 @@ from conftest import (
     HungBackend,
     make_claims,
     run_aggregator_async,
-    run_asgi_app,
+    run_inprocess_asgi_app,
+    run_inprocess_server,
 )
 from fastmcp import Client, FastMCP
-from fastmcp.utilities.tests import run_server_async
 
 from af_mcp_broker.api.permissions import _service_status
 from af_mcp_broker.authorization import EntitlementPolicy
@@ -103,8 +103,8 @@ async def deadline_aggregator_server(
         mcp_list_timeout_seconds=_LIST_DEADLINE_SECONDS,
     )
     async with (
-        run_server_async(_open_backend(), path="/mcp") as open_url,
-        run_asgi_app(hung_backend) as hung_url,
+        run_inprocess_server(_open_backend(), path="/mcp") as open_url,
+        run_inprocess_asgi_app(hung_backend) as hung_url,
     ):
         for name, url in (("open", open_url), ("hung", f"{hung_url}/mcp")):
             list_registry.register(
@@ -197,7 +197,8 @@ async def test_abandoned_backend_request_is_closed_without_leaked_tasks(
 
     await asyncio.sleep(0.2)
     # Tasks the abandoned backend client started (fastmcp / mcp SDK
-    # transport) must be gone; uvicorn's own per-connection tasks are not ours.
+    # transport) must be gone, as must the in-process backend's request handler
+    # (it ends with the client's transport).
     leaked = [
         t
         for t in asyncio.all_tasks() - before

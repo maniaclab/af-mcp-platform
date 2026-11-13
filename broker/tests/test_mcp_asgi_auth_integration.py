@@ -6,9 +6,8 @@ import time
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from conftest import make_claims, run_aggregator_async
+from conftest import make_claims, run_aggregator_async, run_inprocess_server
 from fastmcp import Client, FastMCP
-from fastmcp.utilities.tests import run_server_async
 
 from af_mcp_broker.authorization import EntitlementPolicy
 from af_mcp_broker.credentials import CredentialRegistry
@@ -71,7 +70,7 @@ def _open_backend() -> FastMCP:
 
 @pytest.fixture
 async def open_backend_url() -> AsyncIterator[str]:
-    async with run_server_async(_open_backend(), path="/mcp") as url:
+    async with run_inprocess_server(_open_backend(), path="/mcp") as url:
         yield url
 
 

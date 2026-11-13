@@ -5,14 +5,19 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+import httpx
 import pytest
-from conftest import make_claims, run_aggregator_async
+from conftest import (
+    make_claims,
+    run_aggregator_async,
+    run_inprocess_asgi_app,
+    run_inprocess_server,
+)
 from fastapi import HTTPException
 from fastmcp import Client, FastMCP
 from fastmcp.exceptions import ToolError
 from fastmcp.server.auth.providers.jwt import StaticTokenVerifier
 from fastmcp.server.dependencies import get_http_headers
-from fastmcp.utilities.tests import run_server_async
 from pydantic import SecretStr
 from starlette.responses import JSONResponse
 
@@ -31,7 +36,6 @@ from af_mcp_broker.credentials.oauth21 import (
     OAuth21Provider,
     StoredOAuthCredential,
 )
-from af_mcp_broker.http import aclose_http_client
 from af_mcp_broker.mcp.aggregator import build_aggregator
 from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
 
@@ -45,7 +49,7 @@ if TYPE_CHECKING:
 
 # ---------------------------------------------------------------------------
 # End-to-end coverage for real credential injection through the aggregator:
-# a real toy backend over a real HTTP server, real signed JWTs, and a real
+# a real toy backend served in-process over HTTP, real signed JWTs, and a real
 # build_aggregator()/ProxyProvider/middleware stack, with only the
 # credential provider faked. test_mcp_aggregator_integration.py covers the
 # credential-free scaffold plumbing (namespacing, dead-backend tolerance);
@@ -68,7 +72,7 @@ def _toy_backend() -> FastMCP:
 
 @pytest.fixture
 async def toy_backend_url() -> AsyncIterator[str]:
-    async with run_server_async(_toy_backend(), path="/mcp") as url:
+    async with run_inprocess_server(_toy_backend(), path="/mcp") as url:
         yield url
 
 
@@ -344,7 +348,9 @@ class _VerifyingBackend:
 
 
 @pytest.fixture
-async def verifying_backend() -> AsyncIterator[_VerifyingBackend]:
+async def verifying_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> AsyncIterator[_VerifyingBackend]:
     """Answers HTTP 401 on /mcp to any bearer but _ACCEPTED_TOKEN, and serves
     a real refresh_token grant on /oauth/token."""
     mcp = FastMCP(
@@ -369,16 +375,27 @@ async def verifying_backend() -> AsyncIterator[_VerifyingBackend]:
             {"access_token": backend.next_access_token, "token_type": "Bearer"}
         )
 
-    async with run_server_async(mcp, path="/mcp") as url:
+    app = mcp.http_app(path="/mcp")
+    # OAuth21Provider refreshes through the process-wide plain-httpx client,
+    # not the aggregator's backend client factory, so the backend's token
+    # endpoint needs its own in-process route. Only this backend's host is
+    # routed in-process; any other (an unreachable authorization server) still
+    # fails to connect for real.
+    async with (
+        run_inprocess_asgi_app(app) as base_url,
+        httpx.AsyncClient(
+            mounts={
+                base_url.replace("http://", "all://", 1): httpx.ASGITransport(app=app)
+            }
+        ) as token_client,
+    ):
+        monkeypatch.setattr(
+            "af_mcp_broker.credentials.oauth21.get_http_client", lambda: token_client
+        )
         backend = _VerifyingBackend(
-            mcp_url=url, token_endpoint=url.removesuffix("/mcp") + "/oauth/token"
+            mcp_url=f"{base_url}/mcp", token_endpoint=f"{base_url}/oauth/token"
         )
         yield backend
-    # A refresh against /oauth/token goes through the process-wide shared
-    # client, which then holds connections bound to this test's event loop.
-    # Close it here, on that loop; otherwise the next test whose app
-    # lifespan closes it does so from another loop ("Event loop is closed").
-    await aclose_http_client()
 
 
 async def _oauth21_provider_holding(
