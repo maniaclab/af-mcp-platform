@@ -24,14 +24,13 @@ from pydantic import SecretStr
 from test_broker_issued import _make_rsa_key, _private_pem
 
 from af_mcp_broker.credentials.broker_issued import BrokerTokenIssuer
-from af_mcp_broker.credentials.voms_service import (
-    MintedProxy,
+from af_mcp_broker.credentials.errors import (
     VomsServiceBadPassphraseError,
     VomsServiceMintError,
     VomsServicePreflightError,
     VomsServiceRejectedError,
-    VomsTokenServiceClient,
 )
+from af_mcp_broker.credentials.voms_service import MintedProxy, VomsTokenServiceClient
 
 _CERTIFICATE_EXPIRED_DETAIL = (
     "Your grid certificate (~/.globus/usercert.pem) has expired. Obtain a "

@@ -19,15 +19,16 @@ import pytest
 from prometheus_client import REGISTRY
 from pydantic import SecretBytes, SecretStr
 
-from af_mcp_broker.credentials.base import CredentialKind, NeedsUnlock
+from af_mcp_broker.credentials.base import CredentialKind
 from af_mcp_broker.credentials.cache import CredentialCache
-from af_mcp_broker.credentials.krb5 import KrbTokenProvider
-from af_mcp_broker.credentials.krb5_service import (
+from af_mcp_broker.credentials.errors import (
     Krb5TokenBadCredentialError,
     Krb5TokenMintError,
     Krb5TokenRenewalWindowClosedError,
-    MintedTicket,
+    NeedsUnlockError,
 )
+from af_mcp_broker.credentials.krb5 import KrbTokenProvider
+from af_mcp_broker.credentials.krb5_service import MintedTicket
 from af_mcp_broker.credentials.krb5_vault import StoredKrb5Credential
 from af_mcp_broker.identity import Principal
 
@@ -211,7 +212,7 @@ def _ticket(not_after=None, renew_until=None, ccache_b64="ZmFrZQ==") -> MintedTi
 
 async def test_issue_without_credentials_raises_needs_unlock():
     provider, _, _ = provider_factory(_FakeClient())
-    with pytest.raises(NeedsUnlock) as exc_info:
+    with pytest.raises(NeedsUnlockError) as exc_info:
         await provider.issue(make_principal(), "krb5-target")
     assert exc_info.value.unlock_endpoint == "/v1/krb5/ticket"
 
@@ -604,7 +605,7 @@ async def test_issue_concurrent_tier3_renews_are_single_flighted():
 async def test_issue_tier3_renewal_window_closed_falls_through_to_needs_unlock():
     """A renewal-window-closed signal is expected and recoverable: with no
     stored keytab and no fresh credentials, it must fall through to
-    NeedsUnlock rather than propagate."""
+    NeedsUnlockError rather than propagate."""
     vault_store = FakeKrb5VaultStore()
     principal = make_principal()
     await vault_store.store_ticket(
@@ -618,7 +619,7 @@ async def test_issue_tier3_renewal_window_closed_falls_through_to_needs_unlock()
     client = _FakeClient(renew_error=Krb5TokenRenewalWindowClosedError())
     provider, _, _ = provider_factory(client, vault_store=vault_store)
 
-    with pytest.raises(NeedsUnlock) as exc_info:
+    with pytest.raises(NeedsUnlockError) as exc_info:
         await provider.issue(principal, "krb5-target")
 
     assert exc_info.value.unlock_endpoint == "/v1/krb5/ticket"
@@ -721,7 +722,7 @@ async def test_issue_tier3_hard_failure_falls_through_to_tier4_when_keytab_prese
 
 async def test_issue_tier3_hard_failure_propagates_when_tier4_also_fails():
     """Both tiers genuinely broken: the renew() infra error still surfaces
-    (not a misleading NeedsUnlock) once tier 4's own mint() also fails for an
+    (not a misleading NeedsUnlockError) once tier 4's own mint() also fails for an
     infra reason -- mirrors tier 4's pre-existing "any other exception from
     mint() propagates uncaught" rule, just reached via the new fallthrough."""
     vault_store = FakeKrb5VaultStore()
@@ -755,7 +756,7 @@ async def test_issue_tier3_hard_failure_propagates_when_tier4_also_fails():
 async def test_issue_tier4_keytab_remint_success():
     """No usable cache/ticket, but a keytab is stored and no fresh
     username/password was supplied -- mints via the stored keytab rather
-    than raising NeedsUnlock."""
+    than raising NeedsUnlockError."""
     vault_store = FakeKrb5VaultStore()
     principal = make_principal()
     await vault_store.store_link(
@@ -802,7 +803,7 @@ async def test_issue_tier4_bad_keytab_unlinks_and_raises_needs_unlock():
     """A rejected stored keytab (e.g. a rotated password) proactively
     unlinks the identity -- mirroring X509Provider.renew_from_stored_link's
     auto-unlink-on-bad-stored-passphrase behavior -- then raises
-    NeedsUnlock, since there is nothing left to fall back to."""
+    NeedsUnlockError, since there is nothing left to fall back to."""
     vault_store = FakeKrb5VaultStore()
     principal = make_principal()
     await vault_store.store_link(
@@ -811,7 +812,7 @@ async def test_issue_tier4_bad_keytab_unlinks_and_raises_needs_unlock():
     client = _FakeClient(error=Krb5TokenBadCredentialError())
     provider, _, vault_store = provider_factory(client, vault_store=vault_store)
 
-    with pytest.raises(NeedsUnlock) as exc_info:
+    with pytest.raises(NeedsUnlockError) as exc_info:
         await provider.issue(principal, "krb5-target")
 
     assert exc_info.value.unlock_endpoint == "/v1/krb5/ticket"

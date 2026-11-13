@@ -3,6 +3,8 @@ from __future__ import annotations
 import anyio
 import httpx2
 
+from af_mcp_broker.errors import BrokerError
+
 # Transient-vs-genuine classification of a failed backend tool call (issue
 # #216 A.3). This is OBSERVABILITY ONLY: it names an error for the audit log's
 # error_class field and changes no control flow -- nothing retries, nothing is
@@ -90,3 +92,38 @@ def classify_backend_error(exc: BaseException) -> str:
             return ERROR_CLASS_TRANSIENT
         current = current.__cause__ or current.__context__
     return ERROR_CLASS_BACKEND
+
+
+class BackendInvalidResponseError(BrokerError):
+    """A backend answered a JSON-RPC request with HTTP 200 and a body the mcp SDK transport cannot parse (issue #280).
+
+    Carries only the service name, status code and content type, never the
+    backend's body: the message reaches logs and, for a tools/call, the
+    caller. Classified as ``"unavailable"`` like any other unusable backend.
+    """
+
+
+class ListDeadlineExceededError(BrokerError):
+    """A backend's tools/list (credential setup included) did not finish within ``Settings.mcp_list_timeout_seconds``.
+
+    ``_classify_list_failure`` maps it to ``"unavailable"`` regardless of what
+    credential state was recorded before the stall: the broker gave up on the
+    backend, which says nothing about the caller's linkage.
+    """
+
+
+class NotLinkedForListingError(BrokerError):
+    """A caller who has not linked the credential a service redeems cannot list that service's tools.
+
+    Raised before any credential is minted and before any request reaches
+    the backend. ``rejected`` is set when the caller did link a credential
+    but a backend rejected it (``CredentialProvider.is_rejected``), so the
+    listing outcome can say so instead of "never linked".
+    ``_classify_list_failure`` maps it to ``"not_linked"`` (or
+    ``"unauthorized"`` when ``rejected``); ``api/catalog_tools.py`` reports
+    the same status for the /v1 per-service listing.
+    """
+
+    def __init__(self, message: str, *, rejected: bool = False) -> None:
+        super().__init__(message)
+        self.rejected = rejected

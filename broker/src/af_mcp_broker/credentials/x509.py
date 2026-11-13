@@ -23,10 +23,14 @@ from af_mcp_broker.credentials.base import (
     CredentialProvider,
     ExecutionModel,
     IssuedCredential,
-    NeedsUnlock,
 )
 from af_mcp_broker.credentials.cache import ProxyMeta
-from af_mcp_broker.credentials.voms_service import VomsServiceBadPassphraseError
+from af_mcp_broker.credentials.errors import (
+    NeedsUnlockError,
+    PosixIdentityRequiredError,
+    ProxyHarvestError,
+    VomsServiceBadPassphraseError,
+)
 from af_mcp_broker.credentials.x509_vault import StoredX509Credential
 
 if TYPE_CHECKING:
@@ -57,43 +61,6 @@ _DEFAULT_PROXY_VALID_HOURS = "192:00"  # 8 days
 # mistaken for the payload.
 _PROXY_B64_BEGIN = "-----BEGIN-PROXY-B64-----"
 _PROXY_B64_END = "-----END-PROXY-B64-----"
-
-
-class PosixIdentityRequiredError(RuntimeError):
-    """Raised when x509 proxy minting is attempted for a principal with no POSIX identity.
-
-    Issue #148 made ``Principal.uid``/``gid``/``unixname`` optional -- almost
-    nothing in the broker needs them, but x509 genuinely does (the mint
-    Job's NFS home subPath and ``runAsUser``/``runAsGroup`` all require real
-    values). Rather than reject such a principal at the door for every
-    backend (the old JWT-level behavior this issue removes), the requirement
-    moves to this point of use, naming *target* so the resulting error is
-    actionable: "this service needs a grid identity your account doesn't
-    have" rather than an opaque failure.
-    """
-
-    def __init__(self, target: str, *, settings: Settings) -> None:
-        self.target = target
-        super().__init__(
-            f"Service {target!r} requires an x509/VOMS proxy, which needs a "
-            "POSIX (grid) identity your account does not have. The broker "
-            "looked for the Keycloak profile attributes "
-            f"{settings.posix_uid_attribute!r}/{settings.posix_gid_attribute!r}/"
-            f"{settings.posix_unixname_attribute!r} and found none of them "
-            "set. Contact your Analysis Facility operator to request a grid "
-            "identity."
-        )
-
-
-class ProxyHarvestError(ValueError):
-    """Raised when a mint Job SUCCEEDED but its proxy could not be harvested from the pod log (truncated log, kubelet log-size limits, transient read issue).
-
-    This is an infra failure, not a bad-passphrase signal, so callers
-    must NOT count it against the passphrase rate limiter the way a genuine
-    Job failure is. Subclasses ``ValueError`` so existing ``except
-    ValueError`` call sites still catch it; callers that need to tell the two
-    apart (see ``_mint_kubernetes``) catch this first.
-    """
 
 
 def _zero_bytearray(buf: bytearray) -> None:
@@ -1008,7 +975,7 @@ class X509Provider(CredentialProvider):
         *target*: minting can never succeed for such a principal, and saying
         so immediately is clearer than asking for a passphrase first only to
         fail after it's given. Otherwise, if no passphrase was provided,
-        raises ``NeedsUnlock`` so the caller can guide the user to POST their
+        raises ``NeedsUnlockError`` so the caller can guide the user to POST their
         passphrase to ``/v1/x509/proxy``.
 
         ``remember`` is the custody consent captured alongside an explicit
@@ -1045,7 +1012,7 @@ class X509Provider(CredentialProvider):
             raise PosixIdentityRequiredError(target, settings=self._settings)
 
         if passphrase is None:
-            raise NeedsUnlock(
+            raise NeedsUnlockError(
                 target=target,
                 reason="no_cached_proxy",
                 unlock_endpoint="/v1/x509/proxy",
@@ -1114,7 +1081,7 @@ class X509Provider(CredentialProvider):
            the service, then persist BOTH the passphrase (the link enabling
            hands-free renewal) and the proxy in Vault.
         3. No passphrase: renew hands-free with the stored link, or raise
-           ``NeedsUnlock`` when there is none.
+           ``NeedsUnlockError`` when there is none.
         """
         assert self._vault_store is not None  # uses_voms_service checked by caller
         store = self._vault_store
@@ -1137,7 +1104,7 @@ class X509Provider(CredentialProvider):
                     or principal.unixname is None
                 ):
                     raise PosixIdentityRequiredError(target, settings=self._settings)
-                raise NeedsUnlock(
+                raise NeedsUnlockError(
                     target=target,
                     reason="not_linked",
                     unlock_endpoint="/v1/x509/proxy",
@@ -1250,7 +1217,7 @@ class X509Provider(CredentialProvider):
         holds only a broker-token subject, not a live ``Principal``).
 
         Raises:
-            NeedsUnlock: no link is stored, or the stored passphrase was
+            NeedsUnlockError: no link is stored, or the stored passphrase was
                 rejected — in which case the identity is UNLINKED first (the
                 user changed their Globus password; the stored passphrase is
                 dead weight) so the portal prompts a re-link. A stored-
@@ -1264,7 +1231,7 @@ class X509Provider(CredentialProvider):
         assert self._vault_store is not None
         link = await self._vault_store.get_link(subject)
         if link is None:
-            raise NeedsUnlock(
+            raise NeedsUnlockError(
                 target=target, reason="not_linked", unlock_endpoint="/v1/x509/proxy"
             )
         # get_link() guarantees the link half is complete; narrow for mypy.
@@ -1283,7 +1250,7 @@ class X509Provider(CredentialProvider):
         except VomsServiceBadPassphraseError as exc:
             await self._vault_store.delete(subject)
             self._log.info("x509.unlinked_stored_passphrase_rejected", subject=subject)
-            raise NeedsUnlock(
+            raise NeedsUnlockError(
                 target=target,
                 reason="stored_passphrase_rejected",
                 unlock_endpoint="/v1/x509/proxy",

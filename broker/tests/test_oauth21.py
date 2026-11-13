@@ -28,11 +28,11 @@ from af_mcp_broker.api.permissions import _service_status
 from af_mcp_broker.app import app as broker_app
 from af_mcp_broker.config import get_settings
 from af_mcp_broker.credentials import CredentialRegistry
+from af_mcp_broker.credentials.errors import VersionConflictError
 from af_mcp_broker.credentials.oauth21 import (
     InMemoryTokenStore,
     OAuth21Provider,
     StoredOAuthCredential,
-    VersionConflict,
     normalize_token_response,
 )
 from af_mcp_broker.identity import Principal, keycloak_dependency
@@ -229,7 +229,7 @@ async def test_write_cas_none_raises_when_existing() -> None:
     store = InMemoryTokenStore()
     await store.write_cas(SUBJECT, ALIAS, _make_cred(), expected_version=None)
 
-    with pytest.raises(VersionConflict):
+    with pytest.raises(VersionConflictError):
         await store.write_cas(SUBJECT, ALIAS, _make_cred(), expected_version=None)
 
 
@@ -252,7 +252,7 @@ async def test_write_cas_raises_when_version_stale() -> None:
     await store.write_cas(SUBJECT, ALIAS, _make_cred(), expected_version=None)  # v1
     await store.write_cas(SUBJECT, ALIAS, _make_cred(), expected_version=1)  # v2
 
-    with pytest.raises(VersionConflict):
+    with pytest.raises(VersionConflictError):
         await store.write_cas(SUBJECT, ALIAS, _make_cred(), expected_version=1)
 
 
@@ -797,7 +797,7 @@ async def test_mark_rejected_loses_a_write_race_quietly() -> None:
 
     class _RacingStore(InMemoryTokenStore):
         async def write_cas(self, *args: Any, **kwargs: Any) -> int:
-            raise VersionConflict
+            raise VersionConflictError
 
     store = _RacingStore()
     await InMemoryTokenStore.write_cas(

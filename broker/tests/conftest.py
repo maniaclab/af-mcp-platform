@@ -606,7 +606,7 @@ def app_client_factory(
     # X509Provider.is_linked() checks for a real usercert.pem/userkey.pem pair
     # under HOME_ROOT/<unixname>/.globus/ — pre-create that pair for the
     # default test principal's unixname ("tuser") so tests exercising the
-    # x509 "ami" target (cache-miss -> NeedsUnlock -> 409) see a *linked*
+    # x509 "ami" target (cache-miss -> NeedsUnlockError -> 409) see a *linked*
     # principal, same as before this pre-check existed.
     globus_dir = tmp_path / "tuser" / ".globus"
     globus_dir.mkdir(parents=True)

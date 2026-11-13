@@ -29,6 +29,7 @@ from af_mcp_broker.credentials import (
 )
 from af_mcp_broker.mcp import aggregator as aggregator_module
 from af_mcp_broker.mcp.aggregator import build_aggregator
+from af_mcp_broker.mcp.errors import ListDeadlineExceededError
 from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
 
 if TYPE_CHECKING:
@@ -246,7 +247,7 @@ async def test_deadline_covers_hung_credential_setup_and_is_unavailable(
         list_timeout_seconds=_LIST_DEADLINE_SECONDS,
     )
 
-    with pytest.raises(aggregator_module.ListDeadlineExceeded):
+    with pytest.raises(ListDeadlineExceededError):
         await provider._list_tools()
 
     assert registry.recent_list_failure("example", "alice") == "unavailable"
@@ -282,7 +283,7 @@ async def test_deadline_miss_shows_unavailable_service_wide_in_catalog(
         list_timeout_seconds=_LIST_DEADLINE_SECONDS,
     )
 
-    with pytest.raises(aggregator_module.ListDeadlineExceeded):
+    with pytest.raises(ListDeadlineExceededError):
         await provider._list_tools()
 
     # Every caller sees the service-wide record, not only the one whose

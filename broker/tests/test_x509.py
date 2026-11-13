@@ -22,12 +22,14 @@ import pytest
 from pydantic import SecretBytes, SecretStr
 
 from af_mcp_broker.credentials.cache import CredentialCache
+from af_mcp_broker.credentials.errors import (
+    PosixIdentityRequiredError,
+    ProxyHarvestError,
+)
 from af_mcp_broker.credentials.x509 import (
     _PROXY_B64_BEGIN,
     _PROXY_B64_END,
     HomeDirVomsBackend,
-    PosixIdentityRequiredError,
-    ProxyHarvestError,
     X509Provider,
     _extract_proxy_from_log,
     _parse_proxy_pem,
@@ -467,7 +469,7 @@ async def test_issue_raises_actionable_error_when_posix_identity_missing(tmp_pat
 @pytest.mark.asyncio
 async def test_issue_posix_identity_error_raised_before_needs_unlock(tmp_path):
     """Even with no passphrase supplied, a POSIX-less principal must see the
-    POSIX-identity error, not NeedsUnlock -- asking for a passphrase that can
+    POSIX-identity error, not NeedsUnlockError -- asking for a passphrase that can
     never lead to a successful mint would be misleading."""
     settings = SimpleNamespace(
         home_root=str(tmp_path),

@@ -70,27 +70,6 @@ class IssuedCredential:
     execution_model: ExecutionModel
 
 
-class NeedsUnlock(Exception):
-    """Raised when a credential requires user interaction (e.g. passphrase entry) before it can be issued.
-
-    The caller should surface `unlock_endpoint` to the user so they know where to POST the passphrase.
-    """
-
-    def __init__(
-        self,
-        target: str,
-        reason: str,
-        unlock_endpoint: str = "/v1/x509/proxy",
-    ) -> None:
-        self.target = target
-        self.reason = reason
-        self.unlock_endpoint = unlock_endpoint
-        super().__init__(
-            f"Credential for {target!r} needs unlock ({reason}); "
-            f"POST passphrase to {unlock_endpoint}"
-        )
-
-
 class CredentialProvider(ABC):
     """Abstract base for all credential providers.
 
@@ -140,7 +119,7 @@ class CredentialProvider(ABC):
         min_remaining_seconds: int = 300,
         passphrase: SecretBytes | None = None,
     ) -> IssuedCredential:
-        """Return a usable credential or raise NeedsUnlock / well-typed errors.
+        """Return a usable credential or raise NeedsUnlockError / well-typed errors.
 
         Implementations must:
         - Check the cache before hitting any external service.
