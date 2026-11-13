@@ -443,6 +443,12 @@ Callers pipe this through `nindent` at whatever depth their container's
 # TOKEN_STORE_BACKEND above.
 - name: USAGE_STORE_BACKEND
   value: {{ .Values.broker.usage.backend | replace "-" "_" | quote }}
+# Usage write batching (see broker.usage.batchMax in values.yaml). Always
+# set so the effective values are visible on the pod.
+- name: USAGE_BATCH_MAX
+  value: {{ .Values.broker.usage.batchMax | quote }}
+- name: USAGE_BATCH_INTERVAL_MS
+  value: {{ .Values.broker.usage.batchIntervalMs | quote }}
 {{- if eq .Values.broker.usage.backend "postgres" }}
 {{- if .Values.broker.usage.postgres.existingSecret.name }}
 # asyncpg DSN for the postgres usage store -- with Crunchy PGO, typically

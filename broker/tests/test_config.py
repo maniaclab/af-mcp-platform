@@ -960,3 +960,19 @@ def test_mcp_list_timeout_must_be_positive(monkeypatch, value):
     monkeypatch.setenv("MCP_LIST_TIMEOUT_SECONDS", value)
     with pytest.raises(ValueError, match="mcp_list_timeout_seconds"):
         Settings()
+
+
+def test_usage_batch_settings_default_and_read_env(monkeypatch):
+    assert Settings().usage_batch_max == 100
+    assert Settings().usage_batch_interval_ms == 1000
+    monkeypatch.setenv("USAGE_BATCH_MAX", "7")
+    monkeypatch.setenv("USAGE_BATCH_INTERVAL_MS", "250")
+    assert Settings().usage_batch_max == 7
+    assert Settings().usage_batch_interval_ms == 250
+
+
+@pytest.mark.parametrize("name", ["usage_batch_max", "usage_batch_interval_ms"])
+@pytest.mark.parametrize("value", [0, -1])
+def test_usage_batch_settings_must_be_positive(name, value):
+    with pytest.raises(ValueError, match=name):
+        Settings(**{name: value})

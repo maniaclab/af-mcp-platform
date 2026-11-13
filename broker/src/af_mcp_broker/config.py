@@ -392,6 +392,16 @@ class Settings(BaseSettings):
     # wired in the chart via broker.usage.postgres.existingSecret.
     usage_postgres_dsn: SecretStr | None = None
 
+    # The metering worker (audit/pipeline.py) buffers usage records and hands
+    # them to the usage store as one batch -- one round trip instead of one per
+    # tool call -- once usage_batch_max records have accumulated or
+    # usage_batch_interval_ms have elapsed since the first buffered record,
+    # whichever comes first, and on shutdown. The audit line is always written
+    # first, so up to one interval of buffered usage rows is lost on a hard
+    # crash while the authoritative audit log stays complete.
+    usage_batch_max: int = Field(default=100, ge=1)
+    usage_batch_interval_ms: int = Field(default=1000, ge=1)
+
     # Which MaintenanceModeStore implementation (maintenance.py) holds the
     # broker's maintenance-mode flag -- must be visible to every replica
     # consistently. Mirrors the in_memory/vault/postgres selection shape
