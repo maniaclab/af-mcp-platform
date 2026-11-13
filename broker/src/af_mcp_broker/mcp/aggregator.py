@@ -21,7 +21,7 @@ import structlog
 from fastapi import HTTPException
 from fastmcp import FastMCP
 from fastmcp.client import Client
-from fastmcp.client.transports import SSETransport, StreamableHttpTransport
+from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_context
 from fastmcp.server.elicitation import AcceptedElicitation
@@ -164,10 +164,10 @@ def _unauthorized_raising_httpx_client_factory(
     (30s connect/write/pool, 300s read, for a backend that holds a response
     stream open) rather than importing that private module directly.
     ``**kwargs`` absorbs ``follow_redirects`` (passed by both
-    ``StreamableHttpTransport`` and ``SSETransport``'s ``connect_session``,
-    but not part of the documented factory signature -- see their
-    ``httpx_client_factory`` docstrings recommending ``**kwargs`` for exactly
-    this forward-compatibility reason).
+    ``StreamableHttpTransport``'s ``connect_session``, but not part of the
+    documented factory signature -- see its ``httpx_client_factory``
+    docstring recommending ``**kwargs`` for exactly this forward-compatibility
+    reason).
     """
     if timeout is None:
         timeout = httpx2.Timeout(30.0, read=300.0)
@@ -272,7 +272,6 @@ def _checked_httpx_client_factory(
 
 def _build_client(
     spec: ServiceSpec,
-    transport_cls: type[SSETransport | StreamableHttpTransport],
     headers: dict[str, str] | None = None,
     on_unauthorized: Callable[[], Awaitable[None]] | None = None,
 ) -> Client:
@@ -284,7 +283,7 @@ def _build_client(
     progress/log *notification* forwarding handlers fastmcp's ProxyClient
     installs by default -- ProxyClient itself is still not used (see
     _make_client_factory's docstring: its unconditional
-    forward_incoming_headers=True for HTTP/SSE clients is the one behavior
+    forward_incoming_headers=True for HTTP clients is the one behavior
     deliberately avoided here), but that has nothing to do with
     these two handlers, which only relay already-decided-safe notification
     content from the service to the aggregator's own caller, never inbound
@@ -294,22 +293,17 @@ def _build_client(
     it reports a backend 401 for the injected credential (issue #344).
 
     The same ``timeout_seconds`` also bounds the initialize handshake
-    (``init_timeout``, otherwise unbounded) and, for SSE, the wait on the
-    event stream (``sse_read_timeout``, otherwise 300 s), which is how long
-    a backend that accepts the connection but never speaks would hold the
-    caller (issue #386).
+    (``init_timeout``, otherwise unbounded), which is how long a backend that
+    accepts the connection but never speaks would hold the caller (issue
+    #386).
     """
-    transport_kwargs: dict[str, Any] = {}
-    if transport_cls is SSETransport:
-        transport_kwargs["sse_read_timeout"] = spec.timeout_seconds
     return Client(
-        transport_cls(
+        StreamableHttpTransport(
             spec.url,
             headers=headers,
             httpx_client_factory=_checked_httpx_client_factory(
                 spec.name, on_unauthorized
             ),
-            **transport_kwargs,
         ),
         timeout=spec.timeout_seconds,
         init_timeout=spec.timeout_seconds,
@@ -639,14 +633,12 @@ async def fetch_service_tool_listing(
     applied to the name -- the names a caller actually sees through /mcp.
     ``spec.exclude_tools`` (native names, issue #173) is filtered out here
     too, so this listing can never show a tool a real ``tools/list`` through
-    /mcp hides. Deliberately built on ``_build_client`` (same transport
-    choice, per-call timeout, and notification handlers as the aggregator's
+    /mcp hides. Deliberately built on ``_build_client`` (same transport,
+    per-call timeout, and notification handlers as the aggregator's
     own factories) rather than a second HTTP code path.
     """
-    transport_cls = SSETransport if spec.transport == "sse" else StreamableHttpTransport
     client = _build_client(
         spec,
-        transport_cls,
         headers=credential.headers,
         on_unauthorized=credential.on_unauthorized,
     )
@@ -895,7 +887,7 @@ def _make_client_factory(
     transport object never sets ``forward_incoming_headers`` -- it stays
     unset (``Client._transport_options is None``), so ``TransportOptions``'s
     own default of False applies. fastmcp's ``ProxyClient`` convenience
-    wrapper unconditionally sets that flag to True for HTTP/SSE transports
+    wrapper unconditionally sets that flag to True for HTTP transports
     (intended for proxies that should forward the caller's credentials), so
     it is deliberately not used here: the broker's own AF-internal bearer
     token must never reach a service regardless. The ``headers`` passed to
@@ -1018,12 +1010,10 @@ def _make_client_factory(
     service) ``tools/list`` cache (issue #320) honors the same knob, so a 0
     there disables both.
     """
-    transport_cls = SSETransport if spec.transport == "sse" else StreamableHttpTransport
-
     if spec.auth_type == "none":
 
         def _none_factory() -> Client:
-            return _build_client(spec, transport_cls)
+            return _build_client(spec)
 
         return _none_factory
 
@@ -1039,9 +1029,9 @@ def _make_client_factory(
                 # is minted or any request is made (_require_linked_to_list).
                 principal = await ctx.get_state("principal")
                 if principal is None or broker_token_issuer is None:
-                    return _build_client(spec, transport_cls)
+                    return _build_client(spec)
                 if not _might_be_entitled(principal, spec, policy):
-                    return _build_client(spec, transport_cls)
+                    return _build_client(spec)
                 await _require_linked_to_list(spec, credential_registry, principal)
                 token, _ = broker_token_issuer.mint(
                     principal.subject, spec.effective_audience
@@ -1051,9 +1041,7 @@ def _make_client_factory(
                     (True, None),
                     serializable=False,
                 )
-                return _build_client(
-                    spec, transport_cls, headers={"Authorization": f"Bearer {token}"}
-                )
+                return _build_client(spec, headers={"Authorization": f"Bearer {token}"})
 
             principal = await ctx.get_state("principal")
             if principal is None:
@@ -1095,9 +1083,7 @@ def _make_client_factory(
             token, _ = broker_token_issuer.mint(
                 principal.subject, spec.effective_audience
             )
-            return _build_client(
-                spec, transport_cls, headers={"Authorization": f"Bearer {token}"}
-            )
+            return _build_client(spec, headers={"Authorization": f"Bearer {token}"})
 
         return _x509_factory
 
@@ -1113,9 +1099,9 @@ def _make_client_factory(
                 # is minted or any request is made (_require_linked_to_list).
                 principal = await ctx.get_state("principal")
                 if principal is None or broker_token_issuer is None:
-                    return _build_client(spec, transport_cls)
+                    return _build_client(spec)
                 if not _might_be_entitled(principal, spec, policy):
-                    return _build_client(spec, transport_cls)
+                    return _build_client(spec)
                 await _require_linked_to_list(spec, credential_registry, principal)
                 token, _ = broker_token_issuer.mint(
                     principal.subject, spec.effective_audience
@@ -1125,9 +1111,7 @@ def _make_client_factory(
                     (True, None),
                     serializable=False,
                 )
-                return _build_client(
-                    spec, transport_cls, headers={"Authorization": f"Bearer {token}"}
-                )
+                return _build_client(spec, headers={"Authorization": f"Bearer {token}"})
 
             principal = await ctx.get_state("principal")
             if principal is None:
@@ -1169,9 +1153,7 @@ def _make_client_factory(
             token, _ = broker_token_issuer.mint(
                 principal.subject, spec.effective_audience
             )
-            return _build_client(
-                spec, transport_cls, headers={"Authorization": f"Bearer {token}"}
-            )
+            return _build_client(spec, headers={"Authorization": f"Bearer {token}"})
 
         return _krb5_factory
 
@@ -1187,9 +1169,9 @@ def _make_client_factory(
                 # is minted or any request is made (_require_linked_to_list).
                 principal = await ctx.get_state("principal")
                 if principal is None or broker_token_issuer is None:
-                    return _build_client(spec, transport_cls)
+                    return _build_client(spec)
                 if not _might_be_entitled(principal, spec, policy):
-                    return _build_client(spec, transport_cls)
+                    return _build_client(spec)
                 await _require_linked_to_list(spec, credential_registry, principal)
                 token, _ = broker_token_issuer.mint(
                     principal.subject, spec.effective_audience
@@ -1199,9 +1181,7 @@ def _make_client_factory(
                     (True, None),
                     serializable=False,
                 )
-                return _build_client(
-                    spec, transport_cls, headers={"Authorization": f"Bearer {token}"}
-                )
+                return _build_client(spec, headers={"Authorization": f"Bearer {token}"})
 
             principal = await ctx.get_state("principal")
             if principal is None:
@@ -1243,9 +1223,7 @@ def _make_client_factory(
             token, _ = broker_token_issuer.mint(
                 principal.subject, spec.effective_audience
             )
-            return _build_client(
-                spec, transport_cls, headers={"Authorization": f"Bearer {token}"}
-            )
+            return _build_client(spec, headers={"Authorization": f"Bearer {token}"})
 
         return _servicex_factory
 
@@ -1263,7 +1241,7 @@ def _make_client_factory(
             if principal is None:
                 # identity_mw should always have set this by now; there is
                 # no principal to mint a credential for either way.
-                return _build_client(spec, transport_cls)
+                return _build_client(spec)
 
             # Same permission gate AuthorizationMiddleware applies to an
             # actual call -- a caller who could never pass it shouldn't
@@ -1272,7 +1250,7 @@ def _make_client_factory(
             # response, so this is just avoiding wasted work, not a security
             # boundary of its own.
             if not _might_be_entitled(principal, spec, policy):
-                return _build_client(spec, transport_cls)
+                return _build_client(spec)
 
             resolved = await _resolve_list_time_headers(
                 spec, credential_registry, principal
@@ -1287,7 +1265,6 @@ def _make_client_factory(
             )
             return _build_client(
                 spec,
-                transport_cls,
                 headers=resolved.headers or {},
                 on_unauthorized=resolved.on_unauthorized,
             )
@@ -1333,7 +1310,7 @@ def _make_client_factory(
 
         call_headers, on_unauthorized = _bearer_injection(provider, principal, cred)
         return _build_client(
-            spec, transport_cls, headers=call_headers, on_unauthorized=on_unauthorized
+            spec, headers=call_headers, on_unauthorized=on_unauthorized
         )
 
     return _bearer_factory
