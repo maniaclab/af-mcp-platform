@@ -149,11 +149,11 @@ describe('EntitlementsPage', () => {
     expect(rows).toEqual(['Read data', 'Submit jobs', 'Example exec jobs']);
   });
 
-  it('puts the heavier rule above the first state-changing row only', async () => {
+  it('draws no rule between the read and state-changing rows', async () => {
     const wrapper = await mountPage();
 
     const rows = wrapper.findAll('tbody tr');
-    expect(rows.map((r) => r.classes('ep__divider'))).toEqual([false, true, false]);
+    expect(rows.every((r) => r.classes().length === 0)).toBe(true);
   });
 
   it('gives the broker description to a described permission', async () => {
