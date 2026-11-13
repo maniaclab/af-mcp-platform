@@ -36,6 +36,23 @@ Cardinality policy -- read this before adding a label or a new metric:
   hostile client can send an arbitrary string per call).
   ``tool_invocations_unmapped_total`` carries no labels at all, so a burst
   of these is still visible without any cardinality risk.
+
+Which signal carries what (the same policy across every telemetry path):
+
+====================  ========  =========================================  =====================
+Signal                Identity  Attributes                                 Cardinality
+====================  ========  =========================================  =====================
+Prometheus (:9090)    no        service, tool, action_type, target         bounded by config
+OTel metrics (OTLP)   no        service, method, action_type, outcome      bounded by config
+Audit log (JSON)      yes       principal_sub, token_id, request_id,       unbounded by design,
+                                audit_id, trace_id, per-call               access-controlled
+Spans (OTLP)          yes       user.id, outcome, timing; never args       sampled; joins audit
+                                or results                                 by trace_id
+====================  ========  =========================================  =====================
+
+The OTel aggregate metrics (``otel_metrics.py``) obey this module's policy
+exactly: their attribute names are ``otel_metrics.METRIC_ATTRIBUTES`` and a
+test fails if one gains an identity attribute.
 """
 
 from __future__ import annotations

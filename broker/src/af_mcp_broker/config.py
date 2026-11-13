@@ -451,6 +451,14 @@ class Settings(BaseSettings):
     # fine at tool-call volumes.
     otel_exporter_otlp_endpoint: str = ""
 
+    # Turns on OTel aggregate-metrics EMISSION over OTLP (otel_metrics.py):
+    # calls, errors, duration and result-size sums by service, method,
+    # action_type and outcome -- never per-user. Off by default, and then
+    # nothing is installed. The collector, headers and TLS come from the
+    # standard OTEL_EXPORTER_OTLP_* variables the SDK exporter reads natively,
+    # shared with tracing. Independent of the Prometheus port.
+    otel_metrics_enabled: bool = False
+
     # Prometheus /metrics is served on its own port so a NetworkPolicy can
     # firewall scraping separately from API traffic. 0 picks an ephemeral
     # port (tests); a negative value disables the metrics server.

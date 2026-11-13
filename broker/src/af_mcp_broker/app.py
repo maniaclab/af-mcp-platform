@@ -94,6 +94,7 @@ from af_mcp_broker.mcp.aggregator import (
 )
 from af_mcp_broker.mcp.registry import ServiceRegistry
 from af_mcp_broker.mcp_auth_codes import McpAuthCodeStore
+from af_mcp_broker.otel_metrics import init_otel_metrics, shutdown_otel_metrics
 from af_mcp_broker.principal_cache import (
     InMemoryPrincipalCacheBackend,
     PrincipalCache,
@@ -1067,6 +1068,10 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # BEFORE the pipeline so no record the worker processes can miss the
     # store. The backend is selected by USAGE_STORE_BACKEND.
     usage_store = await init_usage_store(settings)
+    # --- OTel aggregate metrics (otel_metrics.py): a no-op unless
+    # OTEL_METRICS_ENABLED. Installed before the pipeline so the worker's
+    # first record is counted.
+    init_otel_metrics(settings)
     # --- Metering: success/error audit records are measured and written by a
     # background worker (audit/pipeline.py) so tool calls never wait on
     # measurement or audit I/O; without init the helper degrades to inline.
@@ -1180,6 +1185,9 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # and writing) so audit lines aren't lost on a graceful stop -- and it
     # must run before the audit output below is closed.
     await aclose_metering_pipeline()
+    # Flush the OTel aggregates after the drain, so the last records'
+    # measurements are exported too (a no-op when metrics were never enabled).
+    shutdown_otel_metrics()
     # The usage store closes only after the pipeline drain above -- drained
     # records are still being accounted right up to the last audit write.
     await aclose_usage_store()

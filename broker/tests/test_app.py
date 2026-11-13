@@ -325,6 +325,24 @@ def test_lifespan_teardown_flushes_tracing(
     assert calls == [True]
 
 
+def test_lifespan_initializes_and_shuts_down_otel_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    app_client_factory: Callable[..., Any],
+) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(
+        app_module, "init_otel_metrics", lambda _settings: calls.append("init")
+    )
+    monkeypatch.setattr(
+        app_module, "shutdown_otel_metrics", lambda: calls.append("shutdown")
+    )
+
+    with app_client_factory():
+        assert calls == ["init"]
+
+    assert calls == ["init", "shutdown"]
+
+
 @pytest.mark.parametrize(
     ("stateless_http", "replica_count"),
     [

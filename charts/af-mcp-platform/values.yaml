@@ -645,6 +645,20 @@ broker:
       podSelector: {}
       port: 4318
 
+  # OpenTelemetry aggregate METRICS emission over OTLP (broker
+  # otel_metrics.py): calls, errors, duration and result-size sums by
+  # service, method, action_type and outcome -- never per-user. Off by
+  # default, rendering nothing. Prometheus on :9090 is independent and
+  # unchanged. The collector is SHARED with tracing: the endpoint comes from
+  # broker.tracing.endpoint (required when metrics are enabled) and the
+  # NetworkPolicy egress rule from broker.tracing.networkPolicy, which is
+  # rendered when either signal is enabled. With tracing disabled the
+  # endpoint is rendered as OTEL_EXPORTER_OTLP_METRICS_ENDPOINT so enabling
+  # metrics does not switch tracing on.
+  metrics:
+    otlp:
+      enabled: false
+
 # ---------------------------------------------------------------------------
 # Token sweep: periodic janitor for the Vault-backed token registry above
 # (broker.tokenRegistry.backend="vault"). Removes registry entries whose

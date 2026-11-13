@@ -305,6 +305,68 @@ per-identity questions are answered from the audit log, and the full
 reasoning is the module docstring of
 `broker/src/af_mcp_broker/metrics.py`.
 
+### Which signal carries what
+
+Each signal has a cardinality budget, and identity only appears where the
+signal is access-controlled and unbounded by design:
+
+| Signal | Carries identity | Attributes | Cardinality |
+|---|---|---|---|
+| Prometheus metrics (`:9090`) | No | `service`, `tool`, `action_type`, `target` (per metric) | Bounded by `services.yaml` / `policy.yaml` |
+| OTel metrics (OTLP) | No | `service`, `method`, `action_type`, `outcome` | Same bound |
+| Audit log (JSON lines) | Yes: `principal_sub`, `token_id`, `request_id`, `audit_id`, `trace_id` | One record per tool call | Unbounded by design; authoritative, behind access control |
+| Spans (OTLP, sampled) | Yes: `user.id` | Identity, outcome and timing; never arguments or results | Sampled; joins to the audit log by `trace_id` |
+
+Rule of thumb: a question about *a user* is answered from the audit log
+(or a trace); a question about *the facility* is answered from metrics.
+
+## Operator: OTel metrics (OTLP)
+
+OTel metrics are **off by default** and the broker is an emitter only.
+Prometheus on `:9090` is unchanged and is all a facility without an OTel
+collector needs; turn this on to feed your own dashboards from a collector.
+In the chart:
+
+```yaml
+broker:
+  metrics:
+    otlp:
+      enabled: true
+  tracing:
+    endpoint: "http://otel-collector.observability:4318"
+    networkPolicy:
+      namespaceSelector: { kubernetes.io/metadata.name: observability }
+      podSelector: { app.kubernetes.io/name: otel-collector }
+      port: 4318
+```
+
+- `broker.metrics.otlp.enabled` renders `OTEL_METRICS_ENABLED`. Unset,
+  nothing is installed and recording is a no-op.
+- The collector is shared with tracing: the endpoint, headers, timeout and
+  TLS come from the standard `OTEL_EXPORTER_OTLP_*` variables, which the
+  SDK exporter reads natively (appending `/v1/metrics`). In the chart that
+  is `broker.tracing.endpoint` and `broker.tracing.networkPolicy` (the
+  egress rule is rendered when tracing or OTel metrics are enabled).
+  With tracing off, the chart renders `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`
+  instead of the generic variable, so enabling metrics does not switch
+  tracing on.
+- An unreachable collector never fails startup or a tool call; export
+  failures are the periodic reader's background problem.
+
+| Metric | Type | Unit | Meaning |
+|---|---|---|---|
+| `af_mcp.tool.calls` | counter | `{call}` | Tool calls that reached a backend. |
+| `af_mcp.tool.errors` | counter | `{call}` | Of those, the ones that ended in error. |
+| `af_mcp.tool.duration` | histogram | `s` | Wall time of the downstream call; same buckets as `af_mcp_tool_duration_seconds`. |
+| `af_mcp.tool.result_bytes` | counter | `By` | Serialized size of tool results (an estimate of what enters the LLM client's context). |
+| `af_mcp.tool.result_tokens_est` | counter | `{token}` | Estimated tokens of those results. |
+
+Every instrument carries exactly `service`, `method`, `action_type` and
+`outcome`, and no other attribute: a test fails if any metric gains a user,
+token, jti or request-id attribute. Like usage accounting, these cover
+success and error calls only; denied and unmapped calls never reach the
+metering worker.
+
 ## Operator: enabling trace emission
 
 Tracing is **off by default** and the broker is an emitter only — point

@@ -543,6 +543,19 @@ startup refusal (Settings._validate_replica_state_config) for the chart path.
   value: {{ .Values.broker.tracing.sampleRatio | quote }}
 {{- end }}
 {{- end }}
+{{- if .Values.broker.metrics.otlp.enabled }}
+# OpenTelemetry aggregate metrics (broker otel_metrics.py). The collector is
+# shared with tracing (broker.tracing.endpoint). With tracing enabled the
+# generic OTEL_EXPORTER_OTLP_ENDPOINT above already covers metrics; with it
+# disabled the per-signal variable is used instead, because the generic one
+# is also the broker's tracing on/off gate.
+- name: OTEL_METRICS_ENABLED
+  value: "true"
+{{- if not .Values.broker.tracing.enabled }}
+- name: OTEL_EXPORTER_OTLP_METRICS_ENDPOINT
+  value: {{ printf "%s/v1/metrics" (required "broker.tracing.endpoint is required when broker.metrics.otlp.enabled is true (the OTLP collector is shared with tracing)" .Values.broker.tracing.endpoint | trimSuffix "/") | quote }}
+{{- end }}
+{{- end }}
 {{- /*
 Vault connection settings are shared by all Vault-backed stores above (one
 VaultKV instance, per config.py/app.py) — rendered once whenever any of
