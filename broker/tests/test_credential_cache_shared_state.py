@@ -1,6 +1,6 @@
 """Integration tests: the unlock limiter's budget is shared across replicas.
 
-Two ``CredentialCache`` instances over one real valkey server stand in for two
+Two ``CredentialCache`` instances over one real redis server stand in for two
 broker replicas (see the ``shared_state_url`` fixture); nothing is mocked.
 """
 

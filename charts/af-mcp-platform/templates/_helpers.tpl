@@ -333,7 +333,7 @@ startup refusal (Settings._validate_replica_state_config) for the chart path.
 {{- fail "broker.sharedState.url and broker.sharedState.existingSecret.name are mutually exclusive; set only one." -}}
 {{- end -}}
 {{- if and (gt (.Values.broker.replicaCount | int) 1) (not (include "af-mcp-platform.sharedState.configured" .)) (not .Values.broker.sharedState.allowPerReplicaState) -}}
-{{- fail "broker.replicaCount > 1 requires broker.sharedState.url (or broker.sharedState.existingSecret.name): the unlock brute-force limiter and other replica state must agree across replicas. Point it at a Valkey/Redis instance, or set broker.sharedState.allowPerReplicaState=true to accept per-replica state (see docs/architecture.md, Replica consistency)." -}}
+{{- fail "broker.replicaCount > 1 requires broker.sharedState.url (or broker.sharedState.existingSecret.name): the unlock brute-force limiter and other replica state must agree across replicas. Point it at a Redis instance (Valkey also works), or set broker.sharedState.allowPerReplicaState=true to accept per-replica state (see docs/architecture.md, Replica consistency)." -}}
 {{- end -}}
 {{- end }}
 

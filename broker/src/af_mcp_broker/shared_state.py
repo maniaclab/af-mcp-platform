@@ -8,8 +8,8 @@ two backends:
 * ``InMemorySharedState`` -- process-local, the default. Correct for exactly
   one replica; chart and startup guards (see ``Settings``) refuse more than
   one replica on it unless the operator opts in explicitly.
-* ``RedisSharedState`` -- any server speaking the redis protocol (Valkey is
-  the recommended open implementation; redis, Dragonfly and KeyDB also work),
+* ``RedisSharedState`` -- any server speaking the redis protocol (Redis is
+  the recommended store; Valkey, Dragonfly and KeyDB also work),
   reached through a ``redis://`` or ``rediss://`` URL the operator supplies.
 
 See docs/architecture.md ("Replica consistency") for which broker state lives
@@ -173,5 +173,5 @@ def build_shared_state(url: str | None) -> SharedState:
         return RedisSharedState(url)
     raise ValueError(
         "SHARED_STATE_URL must start with redis:// or rediss:// "
-        "(any redis-protocol server, e.g. Valkey, works)"
+        "(any redis-protocol server, e.g. Redis or Valkey, works)"
     )

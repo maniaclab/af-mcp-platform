@@ -220,24 +220,24 @@ def postgres_dsn(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
 
 @pytest.fixture(scope="session")
 def shared_state_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
-    """``redis://`` URL of a real, throwaway valkey server for this test session.
+    """``redis://`` URL of a real, throwaway redis server for this test session.
 
     Loopback TCP on a random free port, no persistence (the data dies with the
-    test run). Valkey speaks the same protocol as redis, so the broker's redis
-    client talks to it unchanged.
+    test run). The broker's redis client talks to it directly; Valkey and other
+    redis-protocol servers speak the same protocol.
     """
-    if shutil.which("valkey-server") is None:
+    if shutil.which("redis-server") is None:
         raise RuntimeError(
-            "valkey-server not found -- the dev pixi environment provides the "
+            "redis-server not found -- the dev pixi environment provides the "
             "server these tests require (pixi.toml's dev feature); run via "
             "`pixi run -e dev pytest`."
         )
 
-    workdir = tmp_path_factory.mktemp("valkey")
+    workdir = tmp_path_factory.mktemp("redis")
     port = find_available_port()
     server = subprocess.Popen(
         [
-            "valkey-server",
+            "redis-server",
             "--port",
             str(port),
             "--bind",
@@ -260,7 +260,7 @@ def shared_state_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
                 break
             except OSError:
                 if time.monotonic() > deadline or server.poll() is not None:
-                    raise RuntimeError("valkey-server did not start") from None
+                    raise RuntimeError("redis-server did not start") from None
                 time.sleep(0.05)
         yield f"redis://127.0.0.1:{port}/0"
     finally:

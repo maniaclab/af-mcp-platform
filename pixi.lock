@@ -1155,6 +1155,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libglib-2.88.2-h0d30a3d_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libgomp-15.2.0-he0feb66_19.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libiconv-1.18-h3b78370_2.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-64/libjemalloc-5.3.1-hecca717_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/liblzma-5.8.3-hb03c661_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libnsl-2.0.1-hb9d3cd8_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libntlm-1.8-hb9d3cd8_0.conda
@@ -1189,6 +1190,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/python-librt-0.13.0-py312h5253ce2_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pyyaml-6.0.3-py312h8a5da7c_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/readline-8.3-h853b02a_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-64/redis-server-8.10.1-h002c45c_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/regex-2026.7.19-py312h4c3975b_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/rpds-py-2026.6.3-py312h192e038_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/ruff-0.15.22-h462bb3b_0.conda
@@ -1197,7 +1199,6 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/tk-8.6.13-noxft_hd70dff1_3.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/tzcode-2026c-h280c20c_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/uvloop-0.22.1-py312h4c3975b_1.conda
-      - conda: https://conda.anaconda.org/conda-forge/linux-64/valkey-server-9.1.2-haf69b54_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/watchfiles-1.2.0-py312h192e038_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/websockets-16.1.1-py312h574c966_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/wrapt-2.3.0-py312h4c3975b_0.conda
@@ -1515,6 +1516,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-64/libexpat-2.8.1-hcc62823_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/libffi-3.5.2-hd1f9c09_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/libiconv-1.18-h4ae439b_3.conda
+      - conda: https://conda.anaconda.org/conda-forge/osx-64/libjemalloc-5.3.1-hcc62823_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/liblzma-5.8.3-hbb4bfdb_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/libntlm-1.8-h6e16a3a_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/libpq-18.4-h5935a4f_0.conda
@@ -1543,6 +1545,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-64/python-librt-0.13.0-py312hba6025d_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/pyyaml-6.0.3-py312h51361c1_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/readline-8.3-h68b038d_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/osx-64/redis-server-8.10.1-ha6f107a_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/regex-2026.7.19-py312h933eb07_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/rpds-py-2026.6.3-py312hb77ea7e_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/ruff-0.15.22-hcca44e8_0.conda
@@ -1550,7 +1553,6 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-64/tk-8.6.13-hb794df6_3.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/tzcode-2026c-ha3d0635_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/uvloop-0.22.1-py312h80b0991_1.conda
-      - conda: https://conda.anaconda.org/conda-forge/osx-64/valkey-server-9.1.2-h7063364_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/watchfiles-1.2.0-py312hb77ea7e_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/websockets-16.1.1-py312hb615c88_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/wrapt-2.3.0-py312h933eb07_0.conda
@@ -1721,6 +1723,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libexpat-2.8.1-hf6b4638_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libffi-3.5.2-hcf2aa1b_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libiconv-1.18-he4c29f2_3.conda
+      - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libjemalloc-5.3.1-hf6b4638_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/liblzma-5.8.3-h8088a28_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libntlm-1.8-h5505292_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libpq-18.4-ha770aab_0.conda
@@ -1749,6 +1752,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/python-librt-0.13.0-py312hb3ab3e3_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/pyyaml-6.0.3-py312h04c11ed_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/readline-8.3-h46df422_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/osx-arm64/redis-server-8.10.1-h7f7f723_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/regex-2026.7.19-py312h2bbb03f_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/rpds-py-2026.6.3-py312h8b1d842_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/ruff-0.15.22-h828de30_0.conda
@@ -1756,7 +1760,6 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/tk-8.6.13-hd3d0363_3.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/tzcode-2026c-h1a92334_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/uvloop-0.22.1-py312h4409184_1.conda
-      - conda: https://conda.anaconda.org/conda-forge/osx-arm64/valkey-server-9.1.2-h5d6d5d7_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/watchfiles-1.2.0-py312h8b1d842_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/websockets-16.1.1-py312h939899b_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/wrapt-2.3.0-py312h2bbb03f_0.conda
@@ -2501,6 +2504,21 @@ packages:
     - libiconv >=1.18,<2.0a0
   size: 790176
   timestamp: 1754908768807
+- conda: https://conda.anaconda.org/conda-forge/linux-64/libjemalloc-5.3.1-hecca717_0.conda
+  sha256: 9e78408138551505e8ca0fe17e2d650a7feb7bb77451302a9820ae9a19e9cb79
+  md5: a80dfdeae14ed3794f68e161465b14df
+  depends:
+  - __glibc >=2.17,<3.0.a0
+  - libgcc >=14
+  - libstdcxx >=14
+  license: BSD-2-Clause
+  license_family: BSD
+  purls: []
+  run_exports:
+    weak:
+    - libjemalloc >=5.3.1
+  size: 1714297
+  timestamp: 1787147233454
 - conda: https://conda.anaconda.org/conda-forge/linux-64/liblzma-5.8.3-hb03c661_0.conda
   sha256: ec30e52a3c1bf7d0425380a189d209a52baa03f22fb66dd3eb587acaa765bd6d
   md5: b88d90cad08e6bc8ad540cb310a761fb
@@ -3120,6 +3138,20 @@ packages:
     - readline >=8.3,<9.0a0
   size: 345073
   timestamp: 1765813471974
+- conda: https://conda.anaconda.org/conda-forge/linux-64/redis-server-8.10.1-h002c45c_0.conda
+  sha256: 02cb1917359fd7fa7b925070c8d7e3399ab46871ae08ea30c442c1a171667a95
+  md5: 677b172c8ecc0bb9887f1b3d37ef7c00
+  depends:
+  - __glibc >=2.17,<3.0.a0
+  - libgcc >=15
+  - libstdcxx >=15
+  - openssl >=3.5.7,<4.0a0
+  - libjemalloc >=5.3.0
+  license: SSPL-1.0 OR LicenseRef-RSALv2
+  purls: []
+  run_exports: {}
+  size: 11687216
+  timestamp: 1787009376199
 - conda: https://conda.anaconda.org/conda-forge/linux-64/regex-2026.7.19-py312h4c3975b_0.conda
   sha256: e1443a29da95edd9b14b3f6a98cc9a43782bffb3d14d47244057b9c0f6cedf81
   md5: eb5238cc301ea4be6f0713283990dd0a
@@ -3249,21 +3281,6 @@ packages:
   run_exports: {}
   size: 596425
   timestamp: 1762472840090
-- conda: https://conda.anaconda.org/conda-forge/linux-64/valkey-server-9.1.2-haf69b54_0.conda
-  sha256: d713d97b1a6a21004e8e35beea1eaff659473abe01b26703a57678538570fed9
-  md5: 3e0d105d7ef5a55a6f38e38ccceeb87a
-  depends:
-  - libgcc >=15
-  - __glibc >=2.17,<3.0.a0
-  - openssl >=3.5.8,<4.0a0
-  constrains:
-  - redis-server <0.a0
-  license: BSD-3-Clause
-  license_family: BSD
-  purls: []
-  run_exports: {}
-  size: 11536554
-  timestamp: 1788246025600
 - conda: https://conda.anaconda.org/conda-forge/linux-64/watchfiles-1.2.0-py312h192e038_1.conda
   sha256: 031a34fd258fe876c78bc382b719733b670b6704d875377adf3d74cd15cdeb88
   md5: 2631cc5eddeb5d1b230d7e2e2a5f9a71
@@ -6108,6 +6125,20 @@ packages:
     - libiconv >=1.18,<2.0a0
   size: 736150
   timestamp: 1787034707041
+- conda: https://conda.anaconda.org/conda-forge/osx-64/libjemalloc-5.3.1-hcc62823_0.conda
+  sha256: c1fdade474413c27bb3b5dfbf2d0490afd27bf026040edf8d610a6cb76338e69
+  md5: b4c6d334af838ac8f158bb394057a840
+  depends:
+  - __osx >=11.0
+  - libcxx >=19
+  license: BSD-2-Clause
+  license_family: BSD
+  purls: []
+  run_exports:
+    weak:
+    - libjemalloc >=5.3.1
+  size: 252380
+  timestamp: 1787148126276
 - conda: https://conda.anaconda.org/conda-forge/osx-64/liblzma-5.8.3-hbb4bfdb_0.conda
   sha256: d9e2006051529aec5578c6efeb13bb6a7200a014b2d5a77a579e83a8049d5f3c
   md5: becdfbfe7049fa248e52aa37a9df09e2
@@ -6613,6 +6644,19 @@ packages:
     - readline >=8.3,<9.0a0
   size: 317819
   timestamp: 1765813692798
+- conda: https://conda.anaconda.org/conda-forge/osx-64/redis-server-8.10.1-ha6f107a_0.conda
+  sha256: d298b33417a7d811c8f54a0fca124843067dd690e0cbf31e7cd7bf46a0ed7fba
+  md5: d37c76eaa74848ad33132f40d4846862
+  depends:
+  - libcxx >=21
+  - __osx >=11.0
+  - libjemalloc >=5.3.0
+  - openssl >=3.5.7,<4.0a0
+  license: SSPL-1.0 OR LicenseRef-RSALv2
+  purls: []
+  run_exports: {}
+  size: 1591528
+  timestamp: 1787009422547
 - conda: https://conda.anaconda.org/conda-forge/osx-64/regex-2026.7.19-py312h933eb07_0.conda
   sha256: 62e09236291680ea035fb0064df6bd5897da7cf8c4a51c94b7b4f7e7e497e996
   md5: 9c5c2741d9f2ca1436d6590232eaa551
@@ -6716,20 +6760,6 @@ packages:
   run_exports: {}
   size: 503063
   timestamp: 1762473216370
-- conda: https://conda.anaconda.org/conda-forge/osx-64/valkey-server-9.1.2-h7063364_0.conda
-  sha256: 2e8f82122fcd02a8d575fcc82e1795cd7a6a3d9e20721ed8d6636d80a2dc3ec4
-  md5: da9edc6308963faedb7691bb08b7d099
-  depends:
-  - __osx >=11.0
-  - openssl >=3.5.8,<4.0a0
-  constrains:
-  - redis-server <0.a0
-  license: BSD-3-Clause
-  license_family: BSD
-  purls: []
-  run_exports: {}
-  size: 1685055
-  timestamp: 1788246222806
 - conda: https://conda.anaconda.org/conda-forge/osx-64/watchfiles-1.2.0-py312hb77ea7e_1.conda
   sha256: bc9fab499b5cfece1aa4efb207db6701bf883b4a3426769f075f0542cac036a9
   md5: 0b9b88c7b32a8c80d85f68c0359c5486
@@ -7262,6 +7292,20 @@ packages:
     - libiconv >=1.18,<2.0a0
   size: 750816
   timestamp: 1787033961086
+- conda: https://conda.anaconda.org/conda-forge/osx-arm64/libjemalloc-5.3.1-hf6b4638_0.conda
+  sha256: 2265f28ebef48a95a89663a58195e1c4e7fa1b6e24d0e77811c117897971d973
+  md5: 62933557cd1f72e97b4a7f865e5760a1
+  depends:
+  - __osx >=11.0
+  - libcxx >=19
+  license: BSD-2-Clause
+  license_family: BSD
+  purls: []
+  run_exports:
+    weak:
+    - libjemalloc >=5.3.1
+  size: 240161
+  timestamp: 1787148074266
 - conda: https://conda.anaconda.org/conda-forge/osx-arm64/liblzma-5.8.3-h8088a28_0.conda
   sha256: 34878d87275c298f1a732c6806349125cebbf340d24c6c23727268184bba051e
   md5: b1fd823b5ae54fbec272cea0811bd8a9
@@ -7772,6 +7816,19 @@ packages:
     - readline >=8.3,<9.0a0
   size: 313930
   timestamp: 1765813902568
+- conda: https://conda.anaconda.org/conda-forge/osx-arm64/redis-server-8.10.1-h7f7f723_0.conda
+  sha256: b738ec1162eba11b6e1e2ce391710932d2e3907592a407dc18661b1cbc25e743
+  md5: 3041c0fb389ee1050c7773988c7a7a9b
+  depends:
+  - __osx >=11.0
+  - libcxx >=21
+  - libjemalloc >=5.3.0
+  - openssl >=3.5.7,<4.0a0
+  license: SSPL-1.0 OR LicenseRef-RSALv2
+  purls: []
+  run_exports: {}
+  size: 1435059
+  timestamp: 1787009429818
 - conda: https://conda.anaconda.org/conda-forge/osx-arm64/regex-2026.7.19-py312h2bbb03f_0.conda
   sha256: 6c7684b98c2bca601a9725bdeb0a4c56fcde464dcdb5b8466d62af8d6e4d26bd
   md5: 746510e9e2e2ac8ac8ea315d9b5cfd32
@@ -7877,20 +7934,6 @@ packages:
   run_exports: {}
   size: 485792
   timestamp: 1762473729988
-- conda: https://conda.anaconda.org/conda-forge/osx-arm64/valkey-server-9.1.2-h5d6d5d7_0.conda
-  sha256: afab0f57fe27bdebcd93ff6664d51b7947b8db203efb4e2c7563ad6443c06b91
-  md5: 065875aad9be5e641d144e9a5f4542ac
-  depends:
-  - __osx >=11.0
-  - openssl >=3.5.8,<4.0a0
-  constrains:
-  - redis-server <0.a0
-  license: BSD-3-Clause
-  license_family: BSD
-  purls: []
-  run_exports: {}
-  size: 1500496
-  timestamp: 1788246160629
 - conda: https://conda.anaconda.org/conda-forge/osx-arm64/watchfiles-1.2.0-py312h8b1d842_1.conda
   sha256: 14070d4df5ec9442b0a31b6f0b720f9a1fba0987b7e760d51b5b6d11882f8db5
   md5: f5cc55a80df26a5a9c42ea6a0980b8c7

@@ -1,7 +1,7 @@
-"""Integration tests for ``RedisSharedState`` against a real valkey server.
+"""Integration tests for ``RedisSharedState`` against a real redis server.
 
-Valkey speaks the redis protocol, so these exercise the same client path an
-operator's redis, valkey, dragonfly or keydb instance would. The server is
+These exercise the same client path an operator's redis, valkey, dragonfly or
+keydb instance would, since they all speak the redis protocol. The server is
 started by the ``shared_state_url`` fixture; nothing here is mocked.
 """
 

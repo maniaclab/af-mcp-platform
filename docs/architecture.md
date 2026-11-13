@@ -117,9 +117,9 @@ count is not a limiter. The broker therefore has a small shared state layer
 
 - `in_memory` (default): process-local. Correct for exactly one replica.
 - `redis`: any server speaking the redis protocol, reached through an
-  operator-supplied `redis://` or `rediss://` URL. [Valkey](https://valkey.io)
-  is the recommended open implementation; redis, Dragonfly and KeyDB also
-  work. The chart does not deploy a store, the same as it does not deploy
+  operator-supplied `redis://` or `rediss://` URL. [Redis](https://redis.io)
+  is the recommended store; [Valkey](https://valkey.io), Dragonfly and KeyDB
+  also work. The chart does not deploy a store, the same as it does not deploy
   Postgres. The state is small, short-lived counters and caches, so it is
   deliberately kept out of Postgres and Vault.
 
@@ -146,11 +146,11 @@ broker:
   sharedState:
     # redis:// or rediss://. Put a URL with a password in a Secret instead:
     #   existingSecret: {name: broker-shared-state, key: url}
-    url: "rediss://valkey.cache.svc:6379/0"
+    url: "rediss://redis.cache.svc:6379/0"
     # NetworkPolicy egress to the store (when networkPolicy.enabled):
     networkPolicy:
       namespaceSelector: {kubernetes.io/metadata.name: cache}
-      podSelector: {app.kubernetes.io/name: valkey}
+      podSelector: {app.kubernetes.io/name: redis}
       # cidr: 203.0.113.0/24   # instead of selectors, for a managed instance
       port: 6379
 ```

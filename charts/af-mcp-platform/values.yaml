@@ -541,8 +541,8 @@ broker:
   # State that must agree across broker replicas (unlock brute-force limiter;
   # see docs/architecture.md "Replica consistency"). The store is BYO, like
   # Postgres above -- this chart does not deploy one. Any server speaking the
-  # redis protocol works; Valkey is the recommended open implementation
-  # (redis, Dragonfly and KeyDB also speak it). Leave both `url` and
+  # redis protocol works; Redis is the recommended store
+  # (Valkey, Dragonfly and KeyDB also speak it). Leave both `url` and
   # `existingSecret.name` empty for process-local state, which is correct for
   # exactly one replica: the chart refuses to render with replicaCount > 1
   # unless `allowPerReplicaState` is set.

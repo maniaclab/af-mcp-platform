@@ -467,11 +467,11 @@ class Settings(BaseSettings):
     mcp_replica_count: int | None = None
 
     # Shared cross-replica state store (shared_state.py): a redis:// or
-    # rediss:// URL for any redis-protocol server (Valkey recommended). Empty
-    # selects the process-local in-memory backend, which is correct for
-    # exactly one replica -- _validate_replica_state_config below refuses to
-    # start more than one replica without a store unless the escape hatch is
-    # set. The URL may embed a password; supply it from a Secret.
+    # rediss:// URL for any redis-protocol server (Redis recommended; Valkey
+    # also works). Empty selects the process-local in-memory backend, which is
+    # correct for exactly one replica -- _validate_replica_state_config below
+    # refuses to start more than one replica without a store unless the escape
+    # hatch is set. The URL may embed a password; supply it from a Secret.
     shared_state_url: str | None = None
 
     # Escape hatch for running mcp_replica_count > 1 with no shared_state_url.
