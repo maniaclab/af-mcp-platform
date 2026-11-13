@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 
     from af_mcp_broker.config import Settings
     from af_mcp_broker.principal_cache import PrincipalCache
-    from af_mcp_broker.token_registry import RevokedJtiCache, TokenRegistryBackend
+    from af_mcp_broker.token_registry import TokenRegistryBackend
 
 logger = structlog.get_logger(__name__)
 
@@ -163,10 +163,10 @@ class AsgiAuthMiddleware:
     See the module docstring above for why this has to live here rather
     than as a FastMCP Middleware.
 
-    Reads settings/revoked_jti_cache off *identity_mw* rather than holding
-    its own copy: identity_mw's attributes are already the single mutable
+    Reads settings/pat_backend/principal_cache off *identity_mw* rather than
+    holding its own copy: identity_mw's attributes are already the single mutable
     config handle ``aggregator.populate_aggregator()`` updates once app.py's
-    lifespan has the real Settings/RevokedJtiCache. This middleware is
+    lifespan has the real Settings and caches. This middleware is
     constructed once, from a placeholder Settings(), at app.py
     module-import time (see its comment on why ``_mcp_aggregator_app`` must
     exist before Settings() is loaded) -- reusing identity_mw's handle
@@ -226,7 +226,6 @@ class AsgiAuthMiddleware:
         self, scope: Scope, receive: Receive, send: Send
     ) -> None:
         settings = self._identity_mw.settings
-        revoked_jti_cache = self._identity_mw.revoked_jti_cache
         pat_backend = self._identity_mw.pat_backend
         principal_cache = self._identity_mw.principal_cache
         maintenance_mode_store = self._identity_mw.maintenance_mode_store
@@ -293,7 +292,6 @@ class AsgiAuthMiddleware:
                         token,
                         settings,
                         principal_cache,
-                        revoked_jti_cache,
                         caller_path=scope.get("path"),
                     )
             except TokenExpiredError:
@@ -365,7 +363,6 @@ class IdentityMiddleware(Middleware):
     def __init__(
         self,
         settings: Settings,
-        revoked_jti_cache: RevokedJtiCache | None = None,
         pat_backend: TokenRegistryBackend | None = None,
         principal_cache: PrincipalCache | None = None,
         maintenance_mode_store: MaintenanceModeStore | None = None,
@@ -374,11 +371,10 @@ class IdentityMiddleware(Middleware):
         # hand-off (see the module docstring). They're kept here anyway
         # because this instance is the single mutable config handle
         # aggregator.populate_aggregator() already updates once app.py's
-        # lifespan has the real Settings/RevokedJtiCache/PAT store/principal
+        # lifespan has the real Settings/PAT store/principal
         # cache; AsgiAuthMiddleware reads all of them off *this* instance
         # rather than holding a second, separately-updated copy.
         self.settings = settings
-        self.revoked_jti_cache = revoked_jti_cache
         self.pat_backend = pat_backend
         self.principal_cache = principal_cache
         self.maintenance_mode_store = maintenance_mode_store

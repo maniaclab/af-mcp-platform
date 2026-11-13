@@ -50,7 +50,7 @@ that sets `isError` as `outcome=error` / `error_class=tool_reported`
 (fixed in `9034858`) — a call that "failed" only in plain text, with no
 `isError`, was silently counted as a success before that fix, and still
 is for any backend that hasn't adopted the convention yet (see
-`docs/adding-a-service.md`'s Tool-authoring conventions). Expect a
+[MCP Design Guide](mcp-design.md#e1-report-tool-failures-with-iserror-true)). Expect a
 visible step up in a given backend's error rate the day it starts
 setting `isError` correctly; that's the fix finally seeing what was
 always failing, not a new regression to chase.
@@ -145,6 +145,38 @@ aggregates behind `GET /v1/usage` live:
 - **`postgres`** — persists one raw event row per tool-call audit record
   via asyncpg. Postgres itself is BYO: the chart only consumes an existing
   instance, it does not deploy one.
+
+### Batched usage writes
+
+The metering worker does not write each usage record as it arrives: it
+buffers them and hands the store one batch (`UsageStore.record_many`; the
+Postgres store runs a single `executemany` of the idempotent insert), so
+the database sees one round trip per batch instead of one per tool call.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `USAGE_BATCH_MAX` (chart: `broker.usage.batchMax`) | `100` | Flush as soon as this many records are buffered. |
+| `USAGE_BATCH_INTERVAL_MS` (chart: `broker.usage.batchIntervalMs`) | `1000` | Flush once the oldest buffered record has waited this long, even if the batch is not full. |
+
+Both must be at least 1. Remaining records are also flushed when the
+broker shuts down gracefully, and the audit line for a record is always
+written before the record is buffered.
+
+- **Crash trade-off.** Buffered rows live only in memory, so a hard crash
+  (SIGKILL, OOM) can lose up to `USAGE_BATCH_INTERVAL_MS` worth of usage
+  rows (at most `USAGE_BATCH_MAX` records). Their audit lines were already
+  written, so the audit log stays complete and the rows can be rebuilt
+  from it.
+- **Failed batches.** A batch that fails to write is logged as
+  `usage_record_batch_failed` (with `batch_size` and the `audit_ids`) and
+  counted on `af_mcp_metering_worker_errors_total` once per record, the
+  same unit a failed single insert used. The Postgres batch is
+  all-or-nothing, so one rejected row fails every row in its batch; the
+  logged `audit_ids` identify exactly which rows to rebuild. Nothing about
+  a failure reaches the tool call or the audit write.
+- **Unbatched paths.** The queue-overflow fallback and the inline path
+  used when no pipeline is running still write each record immediately.
+- **Fresher reads.** `GET /v1/usage` can lag a call by up to the interval.
 
 ### Postgres via Crunchy PGO
 
@@ -243,7 +275,7 @@ from `prometheus-fastapi-instrumentator`, the broker defines these
 | `af_mcp_metering_queue_depth` | gauge | *(none)* | Records currently waiting in the metering queue. |
 | `af_mcp_metering_queue_delay_seconds` | gauge | *(none)* | Time-in-queue of the most recently dequeued item; rising means the worker is falling behind. |
 | `af_mcp_metering_worker_processed_total` | counter | *(none)* | Records fully processed by the metering worker (measured or not). |
-| `af_mcp_metering_worker_errors_total` | counter | *(none)* | Measurement or audit-write failures in the pipeline — the record is still written unmeasured where possible. |
+| `af_mcp_metering_worker_errors_total` | counter | *(none)* | Measurement or audit-write failures in the pipeline — the record is still written unmeasured where possible. Also counts usage-store write failures, once per record (every record of a failed batch). |
 | `af_mcp_metering_records_missing_measurements_total` | counter | *(none)* | Success-path records written without measurements despite a result being present (overflow fallback + measurement failure). |
 | `af_mcp_credential_cache_hits_total` / `..._misses_total` | counter | `target` | Credential cache lookups that did / did not find a valid cached credential. |
 | `af_mcp_x509_proxy_mints_total` | counter | *(none)* | Successful x509/VOMS proxy mints. |

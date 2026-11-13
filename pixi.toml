@@ -1,6 +1,6 @@
 [workspace]
 name = "af-mcp-platform"
-version = "0.5.1"
+version = "0.5.2"
 channels = ["conda-forge"]
 platforms = ["linux-64", "osx-arm64", "osx-64"]
 # Pinned to an explicit date rather than a rolling window: fastmcp 4.0.4
@@ -33,6 +33,7 @@ kubernetes_asyncio = ">=30.0"
 pyyaml = ">=6.0"
 tiktoken = ">=0.14.0"
 asyncpg = ">=0.31.0,<0.32"
+redis-py = ">=5.0"
 opentelemetry-sdk = ">=1.44"
 opentelemetry-exporter-otlp-proto-http = ">=1.44"
 opentelemetry-instrumentation-fastapi = ">=0.65b0"
@@ -54,6 +55,7 @@ tbump = ">=6.7.0"
 httpx2 = ">=2.7.0,<3"
 pytest-timeout = ">=2.4.0,<3"
 postgresql = ">=18.4,<19"
+redis-server = ">=8.0"
 
 [feature.broker.tasks]
 broker = { cmd = "uvicorn af_mcp_broker.app:app --host 0.0.0.0 --port 8080 --reload", description = "Run broker dev server" }
@@ -96,18 +98,18 @@ docs-clean = { cmd = "rm -rf site", description = "Clean documentation build art
 check-docstrings = { cmd = "pydocstyle broker/src/af_mcp_broker/", description = "Check docstring style" }
 
 [feature.dev.tasks]
-lint = { cmd = "ruff check broker && ruff format --check broker", description = "Ruff lint + format check" }
-fmt = { cmd = "ruff format broker && ruff check --fix broker", description = "Format and auto-fix broker source" }
-typecheck = { cmd = "mypy broker/src", description = "Type-check broker source" }
+lint = { cmd = "ruff check broker skills && ruff format --check broker skills", description = "Ruff lint + format check" }
+fmt = { cmd = "ruff format broker skills && ruff check --fix broker skills", description = "Format and auto-fix broker source" }
+typecheck = { cmd = "mypy broker/src skills --exclude evals/fixtures", description = "Type-check broker source and skill scripts" }
 pre-commit = { cmd = "prek run --all-files", description = "Run pre-commit hooks on all files" }
 lint-all = { depends-on = ["lint", "typecheck", "pre-commit"], description = "Everything the CI lint job runs" }
-test = { cmd = "pytest broker/ -v", description = "Broker unit tests" }
+test = { cmd = "pytest broker/ skills/ -v", description = "Broker unit tests and skill script tests" }
 test-spikes = { cmd = "pytest spikes/ -v", description = "Spike validation tests" }
 # COVERAGE_CORE=sysmon: coverage.py's sys.monitoring core (PEP 669, py3.12+)
 # measures line coverage with a fraction of the default C-tracer's overhead
 # -- roughly halves the coverage run's test time here with byte-identical
 # coverage.xml totals. Line coverage only, which is all this task collects.
-test-all = { cmd = "pytest broker/ spikes/ -v --cov=af_mcp_broker --cov-report=xml --cov-report=term-missing", env = { COVERAGE_CORE = "sysmon" }, description = "All tests with coverage" }
+test-all = { cmd = "pytest broker/ skills/ spikes/ -v --cov=af_mcp_broker --cov-report=xml --cov-report=term-missing", env = { COVERAGE_CORE = "sysmon" }, description = "All tests with coverage" }
 check = { depends-on = ["lint", "typecheck", "test"], description = "Quick check: lint + typecheck + broker tests" }
 check-all = { depends-on = ["lint-all", "test-all"], description = "Full check: all linting + all tests with coverage" }
 

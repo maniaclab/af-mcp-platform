@@ -451,6 +451,7 @@ def test_mcp_replica_count_defaults_to_none():
 
 def test_mcp_replica_count_env_var_still_works(monkeypatch):
     monkeypatch.setenv("MCP_REPLICA_COUNT", "3")
+    monkeypatch.setenv("ALLOW_PER_REPLICA_STATE", "true")
     assert Settings().mcp_replica_count == 3
 
 
@@ -960,3 +961,54 @@ def test_mcp_list_timeout_must_be_positive(monkeypatch, value):
     monkeypatch.setenv("MCP_LIST_TIMEOUT_SECONDS", value)
     with pytest.raises(ValueError, match="mcp_list_timeout_seconds"):
         Settings()
+
+
+def test_shared_state_defaults_to_in_memory_and_no_escape_hatch():
+    settings = Settings()
+    assert settings.shared_state_url is None
+    assert settings.allow_per_replica_state is False
+
+
+def test_shared_state_env_vars(monkeypatch):
+    monkeypatch.setenv("SHARED_STATE_URL", "rediss://cache.example.org:6380/0")
+    monkeypatch.setenv("ALLOW_PER_REPLICA_STATE", "true")
+    settings = Settings()
+    assert settings.shared_state_url == "rediss://cache.example.org:6380/0"
+    assert settings.allow_per_replica_state is True
+
+
+def test_multiple_replicas_without_shared_state_refuse_to_start(monkeypatch):
+    monkeypatch.setenv("MCP_REPLICA_COUNT", "2")
+    with pytest.raises(ValueError, match="SHARED_STATE_URL"):
+        Settings()
+
+
+@pytest.mark.parametrize(
+    "env",
+    [
+        {"MCP_REPLICA_COUNT": "2", "SHARED_STATE_URL": "redis://cache:6379/0"},
+        {"MCP_REPLICA_COUNT": "2", "ALLOW_PER_REPLICA_STATE": "true"},
+        {"MCP_REPLICA_COUNT": "1"},
+        {},  # replica count unknown (local dev): nothing to refuse
+    ],
+)
+def test_replica_state_guard_passes(monkeypatch, env):
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    Settings()
+
+
+def test_usage_batch_settings_default_and_read_env(monkeypatch):
+    assert Settings().usage_batch_max == 100
+    assert Settings().usage_batch_interval_ms == 1000
+    monkeypatch.setenv("USAGE_BATCH_MAX", "7")
+    monkeypatch.setenv("USAGE_BATCH_INTERVAL_MS", "250")
+    assert Settings().usage_batch_max == 7
+    assert Settings().usage_batch_interval_ms == 250
+
+
+@pytest.mark.parametrize("name", ["usage_batch_max", "usage_batch_interval_ms"])
+@pytest.mark.parametrize("value", [0, -1])
+def test_usage_batch_settings_must_be_positive(name, value):
+    with pytest.raises(ValueError, match=name):
+        Settings(**{name: value})

@@ -306,7 +306,7 @@ class HomeDirVomsBackend(X509Backend):
         assert principal.uid is not None
         assert principal.gid is not None
         assert principal.unixname is not None
-        cache.check_unlock_rate_limit(principal.uid)
+        await cache.check_unlock_rate_limit(principal.uid)
 
         if self._dev_mode:
             return await self._mint_local(principal, passphrase, valid, voms, cache)
@@ -424,7 +424,7 @@ class HomeDirVomsBackend(X509Backend):
                 except ProxyHarvestError:
                     raise
                 except ValueError:
-                    cache.record_failed_unlock(principal.uid)
+                    await cache.record_failed_unlock(principal.uid)
                     raise
 
             finally:
@@ -651,7 +651,7 @@ class HomeDirVomsBackend(X509Backend):
             self._log.warning(
                 "x509.local_mint.failed", uid=principal.uid, stderr=stderr
             )
-            cache.record_failed_unlock(principal.uid)
+            await cache.record_failed_unlock(principal.uid)
             raise ValueError(
                 f"voms-proxy-init failed (rc={result.returncode}): {stderr[:200]}"
             )
@@ -1176,7 +1176,7 @@ class X509Provider(CredentialProvider):
         assert principal.gid is not None
         assert principal.unixname is not None
 
-        self._cache.check_unlock_rate_limit(principal.uid)
+        await self._cache.check_unlock_rate_limit(principal.uid)
         # The service speaks JSON, so the passphrase crosses as str;
         # SecretStr keeps it out of repr/logs (see voms_service.py).
         passphrase_str = SecretStr(passphrase.get_secret_value().decode())
@@ -1189,7 +1189,7 @@ class X509Provider(CredentialProvider):
                 passphrase=passphrase_str,
             )
         except VomsServiceBadPassphraseError:
-            self._cache.record_failed_unlock(principal.uid)
+            await self._cache.record_failed_unlock(principal.uid)
             raise
 
         await self._vault_store.store_link(

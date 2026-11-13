@@ -3,8 +3,7 @@
 Covers the shared ``TokenRegistryBackend`` contract parametrized across both
 implementations (``InMemoryTokenRegistryBackend``, ``VaultTokenRegistryBackend``
 — the latter against a fake Vault HTTP API via ``httpx.MockTransport``, same
-technique as ``test_oauth21_vault.py``), plus ``RevokedJtiCache``'s
-refresh/staleness behavior.
+technique as ``test_oauth21_vault.py``).
 """
 
 from __future__ import annotations
@@ -24,7 +23,6 @@ if TYPE_CHECKING:
 from af_mcp_broker.token_registry import (
     DuplicateNameError,
     InMemoryTokenRegistryBackend,
-    RevokedJtiCache,
     SweepStats,
     TokenRecord,
     TokenRegistryBackend,
@@ -274,9 +272,7 @@ async def test_revoke_wrong_principal_returns_none(
     assert got.revoked_at is None
 
 
-async def test_revoke_sets_revoked_at_and_appears_in_list_revoked_jtis(
-    backend: TokenRegistryBackend,
-) -> None:
+async def test_revoke_sets_revoked_at(backend: TokenRegistryBackend) -> None:
     await backend.add(_make_record(lookup_id="lookup-1", principal_id="p1"))
 
     updated = await backend.revoke("p1", "lookup-1", revoked_at=555.0)
@@ -286,23 +282,6 @@ async def test_revoke_sets_revoked_at_and_appears_in_list_revoked_jtis(
     got = await backend.get("p1", "lookup-1")
     assert got is not None
     assert got.revoked_at == 555.0
-    assert "lookup-1" in await backend.list_revoked_jtis()
-
-
-async def test_list_revoked_jtis_excludes_active_tokens(
-    backend: TokenRegistryBackend,
-) -> None:
-    await backend.add(
-        _make_record(lookup_id="active-lookup", principal_id="p1", name="active-name")
-    )
-    await backend.add(
-        _make_record(lookup_id="revoked-lookup", principal_id="p1", name="revoked-name")
-    )
-    await backend.revoke("p1", "revoked-lookup", revoked_at=1.0)
-
-    revoked = await backend.list_revoked_jtis()
-
-    assert revoked == frozenset({"revoked-lookup"})
 
 
 async def test_add_stores_and_returns_note(backend: TokenRegistryBackend) -> None:
@@ -671,12 +650,9 @@ async def test_sweep_keeps_live_record(backend: TokenRegistryBackend) -> None:
     assert [r.lookup_id for r in rows] == ["lookup-1"]
 
 
-async def test_sweep_leaves_revoked_but_live_record_in_denylist(
+async def test_sweep_keeps_revoked_but_unexpired_record(
     backend: TokenRegistryBackend,
 ) -> None:
-    """An expired-but-not-yet-past-grace record that was revoked must not be
-    pruned from either the by-principal map or the revoked-lookup-ids
-    denylist -- it's still within its display grace window."""
     now = time.time()
     await backend.add(
         _make_record(
@@ -691,33 +667,7 @@ async def test_sweep_leaves_revoked_but_live_record_in_denylist(
     stats = await backend.sweep_expired(grace_seconds=int(_ONE_DAY))
 
     assert stats.records_removed == 0
-    assert stats.revoked_pruned == 0
-    assert "lookup-1" in await backend.list_revoked_jtis()
-
-
-async def test_sweep_prunes_revoked_and_expired_from_denylist(
-    backend: TokenRegistryBackend,
-) -> None:
-    """A revoked lookup_id whose own expiry has also passed well past grace
-    is dead regardless of revocation -- denylist hygiene so
-    revoked-lookup-ids can't grow forever (see token_registry.py's module
-    docstring)."""
-    now = time.time()
-    await backend.add(
-        _make_record(
-            lookup_id="lookup-1",
-            principal_id="p1",
-            created_at=now - 10 * _ONE_DAY,
-            expires_at=now - 2 * _ONE_DAY,
-        )
-    )
-    await backend.revoke("p1", "lookup-1", revoked_at=now - 2 * _ONE_DAY)
-
-    stats = await backend.sweep_expired(grace_seconds=int(_ONE_DAY))
-
-    assert stats.records_removed == 1
-    assert stats.revoked_pruned == 1
-    assert "lookup-1" not in await backend.list_revoked_jtis()
+    assert await backend.get("p1", "lookup-1") is not None
 
 
 async def test_sweep_removes_only_expired_beyond_grace_leaves_others(
@@ -784,11 +734,9 @@ async def test_sweep_owners_removed_for_vault_backend(sa_token_path: Path) -> No
 async def test_sweep_emptied_principal_path_can_be_recreated(
     sa_token_path: Path,
 ) -> None:
-    """Vault-specific: emptying a by-principal path must actually delete its
-    metadata (not just write an empty dict) so a subsequent add() for that
-    principal -- a plain CAS-create (expected_version=None) -- still works,
-    exactly the cas=0 recreate semantics vault_kv.delete_metadata's docstring
-    describes."""
+    """Vault-specific: emptying a by-principal path leaves an empty entry
+    (written with CAS, never deleted -- see ``_remove_records``), and a
+    subsequent add() for that principal still works against it."""
     fake = _FakeRegistryVault()
     backend = _make_vault_backend(fake, sa_token_path)
     now = time.time()
@@ -804,8 +752,7 @@ async def test_sweep_emptied_principal_path_can_be_recreated(
     stats = await backend.sweep_expired(grace_seconds=int(_ONE_DAY))
     assert stats.principals_emptied == 1
 
-    # Must not raise -- a stale cached version for the now-destroyed path
-    # would surface as a CasConflictError on this add()'s create-only write.
+    assert fake.entries[_PRINCIPAL_KEY]["data"] == {}
     await backend.add(_make_record(lookup_id="lookup-2", principal_id="p1"))
     rows = await backend.list_for_principal("p1")
     assert [r.lookup_id for r in rows] == ["lookup-2"]
@@ -837,7 +784,6 @@ async def test_revoke_on_one_replica_visible_on_another(sa_token_path: Path) -> 
 
     await replica_b.revoke("p1", "lookup-1", revoked_at=42.0)
 
-    assert "lookup-1" in await replica_a.list_revoked_jtis()
     got = await replica_a.get("p1", "lookup-1")
     assert got is not None
     assert got.revoked_at == 42.0
@@ -923,79 +869,309 @@ async def test_vault_authenticates_once_and_caches_token(sa_token_path: Path) ->
 
 
 # ---------------------------------------------------------------------------
-# RevokedJtiCache
+# PAT revocation is a single CAS write on the by-principal entry.
+# ---------------------------------------------------------------------------
+
+_PRINCIPAL_KEY = f"{KV_PATH_PREFIX}/by-principal/p1"
+
+
+async def test_vault_revoke_is_one_write_to_the_principal_entry(
+    sa_token_path: Path,
+) -> None:
+    fake = _FakeRegistryVault()
+    backend = _make_vault_backend(fake, sa_token_path)
+    await backend.add(_make_record(lookup_id="lookup-1", principal_id="p1"))
+    version_before = fake.entries[_PRINCIPAL_KEY]["version"]
+
+    await backend.revoke("p1", "lookup-1", revoked_at=5.0)
+
+    assert fake.entries[_PRINCIPAL_KEY]["version"] == version_before + 1
+    assert fake.entries[_PRINCIPAL_KEY]["data"]["lookup-1"]["revoked_at"] == 5.0
+
+
+async def test_vault_revoked_pat_is_rejected_by_the_record_alone(
+    sa_token_path: Path,
+) -> None:
+    """``pat_auth.resolve_pat_principal`` rejects on ``record.revoked_at``
+    from ``get_by_lookup_id`` -- the very next lookup after revoke() sees it."""
+    fake = _FakeRegistryVault()
+    backend = _make_vault_backend(fake, sa_token_path)
+    await backend.add(_make_record(lookup_id="lookup-1", principal_id="p1"))
+
+    await backend.revoke("p1", "lookup-1", revoked_at=5.0)
+
+    record = await backend.get_by_lookup_id("lookup-1")
+    assert record is not None
+    assert record.revoked_at == 5.0
+
+
+async def test_vault_concurrent_revokes_both_land(sa_token_path: Path) -> None:
+    fake = _FakeRegistryVault()
+    replica_a = _make_vault_backend(fake, sa_token_path)
+    replica_b = _make_vault_backend(fake, sa_token_path)
+    await replica_a.add(
+        _make_record(lookup_id="lookup-a", principal_id="p1", name="name-a")
+    )
+    await replica_a.add(
+        _make_record(lookup_id="lookup-b", principal_id="p1", name="name-b")
+    )
+
+    await asyncio.gather(
+        replica_a.revoke("p1", "lookup-a", revoked_at=1.0),
+        replica_b.revoke("p1", "lookup-b", revoked_at=2.0),
+    )
+
+    rows = {r.lookup_id: r for r in await replica_a.list_for_principal("p1")}
+    assert rows["lookup-a"].revoked_at == 1.0
+    assert rows["lookup-b"].revoked_at == 2.0
+
+
+# ---------------------------------------------------------------------------
+# delete_inactive(): hard-delete revoked or expired records of one principal.
 # ---------------------------------------------------------------------------
 
 
-class _CountingBackend:
-    """Wraps a real backend, counting list_revoked_jtis() calls and
-    optionally raising on the next N calls -- for refresh-failure tests."""
-
-    def __init__(self, inner: TokenRegistryBackend) -> None:
-        self._inner = inner
-        self.refresh_calls = 0
-        self.fail_next = 0
-
-    async def list_revoked_jtis(self) -> frozenset[str]:
-        self.refresh_calls += 1
-        if self.fail_next > 0:
-            self.fail_next -= 1
-            raise RuntimeError("vault unreachable")
-        return await self._inner.list_revoked_jtis()
-
-
-async def test_is_revoked_false_when_nothing_revoked() -> None:
-    backend = InMemoryTokenRegistryBackend()
-    cache = RevokedJtiCache(backend, refresh_interval_seconds=30.0)
-
-    assert await cache.is_revoked("anything") is False
+async def _seed_mixed_records(backend: TokenRegistryBackend) -> None:
+    """p1 owns one active, one revoked, one expired record; p2 owns one active."""
+    now = time.time()
+    await backend.add(_make_record(lookup_id="active", principal_id="p1", name="a"))
+    await backend.add(_make_record(lookup_id="revoked", principal_id="p1", name="r"))
+    await backend.revoke("p1", "revoked", revoked_at=now - 100)
+    await backend.add(
+        _make_record(
+            lookup_id="expired",
+            principal_id="p1",
+            name="e",
+            created_at=now - 10,
+            expires_at=now + 0.05,
+        )
+    )
+    await backend.add(_make_record(lookup_id="other", principal_id="p2", name="o"))
+    await asyncio.sleep(0.1)  # let "expired" lapse
 
 
-async def test_is_revoked_true_after_refresh_picks_up_revocation() -> None:
-    backend = InMemoryTokenRegistryBackend()
+async def test_delete_inactive_removes_revoked_and_expired_but_not_active(
+    backend: TokenRegistryBackend,
+) -> None:
+    await _seed_mixed_records(backend)
+
+    removed = await backend.delete_inactive("p1", now=time.time())
+
+    assert sorted(removed) == ["expired", "revoked"]
+    assert [r.lookup_id for r in await backend.list_for_principal("p1")] == ["active"]
+    assert await backend.owner_principal_id("revoked") is None
+    assert await backend.owner_principal_id("expired") is None
+    assert await backend.owner_principal_id("other") == "p2"
+
+
+async def test_delete_inactive_limited_to_requested_lookup_ids(
+    backend: TokenRegistryBackend,
+) -> None:
+    await _seed_mixed_records(backend)
+
+    removed = await backend.delete_inactive(
+        "p1", now=time.time(), lookup_ids=frozenset({"revoked", "active"})
+    )
+
+    # "active" is requested but not inactive, so it is left alone.
+    assert removed == ["revoked"]
+    remaining = {r.lookup_id for r in await backend.list_for_principal("p1")}
+    assert remaining == {"active", "expired"}
+
+
+async def test_delete_inactive_never_touches_other_principals(
+    backend: TokenRegistryBackend,
+) -> None:
+    await _seed_mixed_records(backend)
+    await backend.revoke("p2", "other", revoked_at=1.0)
+
+    await backend.delete_inactive("p1", now=time.time())
+
+    assert await backend.get("p2", "other") is not None
+
+
+async def test_delete_inactive_for_unknown_principal_returns_empty(
+    backend: TokenRegistryBackend,
+) -> None:
+    assert await backend.delete_inactive("nobody", now=time.time()) == []
+
+
+async def test_vault_delete_inactive_of_last_record_allows_re_adding(
+    sa_token_path: Path,
+) -> None:
+    fake = _FakeRegistryVault()
+    backend = _make_vault_backend(fake, sa_token_path)
     await backend.add(_make_record(lookup_id="lookup-1", principal_id="p1"))
     await backend.revoke("p1", "lookup-1", revoked_at=1.0)
-    cache = RevokedJtiCache(backend, refresh_interval_seconds=30.0)
 
-    assert await cache.is_revoked("lookup-1") is True
+    removed = await backend.delete_inactive("p1", now=time.time())
 
-
-async def test_unknown_jti_never_revoked_even_with_no_registry_entry() -> None:
-    """Ordinary Keycloak session tokens carry a jti that was never minted
-    through the registry at all -- they must never be treated as revoked."""
-    backend = InMemoryTokenRegistryBackend()
-    await backend.add(_make_record(lookup_id="some-other-lookup", principal_id="p1"))
-    cache = RevokedJtiCache(backend, refresh_interval_seconds=30.0)
-
-    assert await cache.is_revoked("a-normal-keycloak-session-jti") is False
+    assert removed == ["lookup-1"]
+    # The principal's entry is kept, empty; the owner index entry is removed.
+    assert fake.entries[_PRINCIPAL_KEY]["data"] == {}
+    assert f"{KV_PATH_PREFIX}/lookup-owner/lookup-1" not in fake.entries
+    await backend.add(_make_record(lookup_id="lookup-2", principal_id="p1"))
+    assert [r.lookup_id for r in await backend.list_for_principal("p1")] == ["lookup-2"]
 
 
-async def test_revocation_is_not_visible_until_next_refresh_interval() -> None:
-    """Bounded staleness: a revocation that happens between refreshes is not
-    picked up until the refresh interval has elapsed."""
-    backend = InMemoryTokenRegistryBackend()
-    await backend.add(_make_record(lookup_id="lookup-1", principal_id="p1"))
-    cache = RevokedJtiCache(backend, refresh_interval_seconds=1000.0)
+async def test_vault_delete_inactive_retries_on_concurrent_cas_conflict(
+    sa_token_path: Path,
+) -> None:
+    fake = _FakeRegistryVault()
+    replica_a = _make_vault_backend(fake, sa_token_path)
+    replica_b = _make_vault_backend(fake, sa_token_path)
+    await replica_a.add(_make_record(lookup_id="dead", principal_id="p1", name="dead"))
+    await replica_a.revoke("p1", "dead", revoked_at=1.0)
 
-    # Prime the cache before the revocation happens.
-    assert await cache.is_revoked("lookup-1") is False
+    await asyncio.gather(
+        replica_a.delete_inactive("p1", now=time.time()),
+        replica_b.add(_make_record(lookup_id="new", principal_id="p1", name="new")),
+    )
 
-    await backend.revoke("p1", "lookup-1", revoked_at=1.0)
-
-    # Still within the refresh window -- must keep serving the stale (empty) set.
-    assert await cache.is_revoked("lookup-1") is False
+    rows = await replica_a.list_for_principal("p1")
+    assert [r.lookup_id for r in rows] == ["new"]
 
 
-async def test_refresh_failure_serves_stale_set_instead_of_raising() -> None:
-    backend = InMemoryTokenRegistryBackend()
-    await backend.add(_make_record(lookup_id="lookup-1", principal_id="p1"))
-    await backend.revoke("p1", "lookup-1", revoked_at=1.0)
-    counting = _CountingBackend(backend)
-    cache = RevokedJtiCache(counting, refresh_interval_seconds=0.0)
+def _mint_after_next_read_of(
+    reader: VaultTokenRegistryBackend,
+    writer: VaultTokenRegistryBackend,
+    path: str,
+    record: TokenRecord,
+) -> None:
+    """Make *writer* add *record* right after *reader*'s next read of *path*.
 
-    assert await cache.is_revoked("lookup-1") is True  # primes the cache
+    Interleaves deterministically: *reader* has read the entry, a concurrent
+    mint then writes it, and only afterwards does *reader* act on what it
+    read -- exactly the window in which a stale write loses the mint.
+    """
+    real_get = reader._vault_kv.get
+    fired = False
 
-    counting.fail_next = 1
-    # Force a refresh attempt (interval is 0, so every call tries to refresh);
-    # the failure must not raise and must not erase the previously-cached set.
-    assert await cache.is_revoked("lookup-1") is True
+    async def get(read_path: str) -> Any:
+        nonlocal fired
+        result = await real_get(read_path)
+        if read_path == path and not fired:
+            fired = True
+            await writer.add(record)
+        return result
+
+    reader._vault_kv.get = get  # type: ignore[method-assign]
+
+
+async def test_vault_delete_of_last_row_keeps_a_mint_that_lands_mid_delete(
+    sa_token_path: Path,
+) -> None:
+    """Deleting a principal's last revoked row while minting elsewhere must
+    not lose the new record: emptying the entry is a CAS write, so the mint
+    either wins and is re-read, or conflicts and is retried."""
+    fake = _FakeRegistryVault()
+    replica_a = _make_vault_backend(fake, sa_token_path)
+    replica_b = _make_vault_backend(fake, sa_token_path)
+    await replica_a.add(_make_record(lookup_id="dead", principal_id="p1", name="dead"))
+    await replica_a.revoke("p1", "dead", revoked_at=1.0)
+    _mint_after_next_read_of(
+        replica_a,
+        replica_b,
+        _PRINCIPAL_KEY,
+        _make_record(lookup_id="new", principal_id="p1", name="new"),
+    )
+
+    removed = await replica_a.delete_inactive("p1", now=time.time())
+
+    assert removed == ["dead"]
+    rows = await replica_a.list_for_principal("p1")
+    assert [r.lookup_id for r in rows] == ["new"]
+    assert await replica_a.owner_principal_id("new") == "p1"
+
+
+async def test_vault_sweep_keeps_a_mint_that_lands_mid_sweep(
+    sa_token_path: Path,
+) -> None:
+    fake = _FakeRegistryVault()
+    replica_a = _make_vault_backend(fake, sa_token_path)
+    replica_b = _make_vault_backend(fake, sa_token_path)
+    now = time.time()
+    await replica_a.add(
+        _make_record(
+            lookup_id="old",
+            principal_id="p1",
+            created_at=now - 10 * _ONE_DAY,
+            expires_at=now - 2 * _ONE_DAY,
+        )
+    )
+    _mint_after_next_read_of(
+        replica_a,
+        replica_b,
+        f"{KV_PATH_PREFIX}/by-principal/p1",
+        _make_record(lookup_id="new", principal_id="p1", name="new"),
+    )
+
+    stats = await replica_a.sweep_expired(grace_seconds=int(_ONE_DAY))
+
+    assert stats.records_removed == 1
+    rows = await replica_a.list_for_principal("p1")
+    assert [r.lookup_id for r in rows] == ["new"]
+
+
+# ---------------------------------------------------------------------------
+# revoke_all(): revoke every active record of one principal in one write.
+# ---------------------------------------------------------------------------
+
+
+async def test_revoke_all_revokes_only_active_records_of_the_principal(
+    backend: TokenRegistryBackend,
+) -> None:
+    await _seed_mixed_records(backend)
+
+    at = time.time()
+    revoked = await backend.revoke_all("p1", revoked_at=at)
+
+    assert [r.lookup_id for r in revoked] == ["active"]
+    assert revoked[0].revoked_at == at
+    rows = {r.lookup_id: r for r in await backend.list_for_principal("p1")}
+    assert rows["active"].revoked_at == at
+    # An already-revoked record keeps its original timestamp.
+    assert rows["revoked"].revoked_at != at
+    assert rows["expired"].revoked_at is None
+    other = await backend.get("p2", "other")
+    assert other is not None
+    assert other.revoked_at is None
+
+
+async def test_revoke_all_for_unknown_principal_returns_empty(
+    backend: TokenRegistryBackend,
+) -> None:
+    assert await backend.revoke_all("nobody", revoked_at=1.0) == []
+
+
+async def test_vault_revoke_all_is_one_write(sa_token_path: Path) -> None:
+    fake = _FakeRegistryVault()
+    backend = _make_vault_backend(fake, sa_token_path)
+    await backend.add(_make_record(lookup_id="a", principal_id="p1", name="a"))
+    await backend.add(_make_record(lookup_id="b", principal_id="p1", name="b"))
+    version_before = fake.entries[_PRINCIPAL_KEY]["version"]
+
+    revoked = await backend.revoke_all("p1", revoked_at=9.0)
+
+    assert {r.lookup_id for r in revoked} == {"a", "b"}
+    assert fake.entries[_PRINCIPAL_KEY]["version"] == version_before + 1
+
+
+async def test_vault_revoke_all_retries_on_concurrent_cas_conflict(
+    sa_token_path: Path,
+) -> None:
+    """A revoke_all() racing an add() must not drop the concurrently added
+    record's write, nor miss a record the winner just wrote."""
+    fake = _FakeRegistryVault()
+    replica_a = _make_vault_backend(fake, sa_token_path)
+    replica_b = _make_vault_backend(fake, sa_token_path)
+    await replica_a.add(_make_record(lookup_id="a", principal_id="p1", name="a"))
+
+    await asyncio.gather(
+        replica_a.revoke_all("p1", revoked_at=3.0),
+        replica_b.add(_make_record(lookup_id="b", principal_id="p1", name="b")),
+    )
+
+    rows = {r.lookup_id: r for r in await replica_a.list_for_principal("p1")}
+    assert set(rows) == {"a", "b"}
+    assert rows["a"].revoked_at == 3.0

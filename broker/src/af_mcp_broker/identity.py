@@ -27,7 +27,6 @@ from af_mcp_broker.principal_cache import (
 
 if TYPE_CHECKING:
     from af_mcp_broker.principal_cache import PrincipalCache
-    from af_mcp_broker.token_registry import RevokedJtiCache
 
 logger = structlog.get_logger(__name__)
 
@@ -364,7 +363,6 @@ async def get_principal(
     token: str,
     settings: Settings,
     principal_cache: PrincipalCache | None,
-    revoked_jti_cache: RevokedJtiCache | None = None,
     caller_path: str | None = None,
 ) -> Principal:
     """Validate a Bearer token and return the extracted Principal.
@@ -396,14 +394,6 @@ async def get_principal(
     before, hit during an outage, has no last-known value to fall back on
     and cannot authenticate at all.
 
-    *revoked_jti_cache*, when provided, is consulted against the token's
-    `jti` claim (issue #115) -- this is the single choke point both
-    `keycloak_dependency` (/v1) and `/mcp`'s ASGI-layer auth middleware call,
-    so enforcing revocation here covers both surfaces. A token with no `jti`
-    claim, or one whose `jti` was never minted through the manual bearer
-    registry, is never affected -- only jtis the registry actually knows
-    about can be revoked (see token_registry.RevokedJtiCache).
-
     *caller_path* is purely diagnostic: the request path this validation is
     gating, attached to the ``jwt_validation_failed`` log line below so a
     rejection here can be told apart from an unrelated one logged moments
@@ -417,13 +407,6 @@ async def get_principal(
     wrong_audience = False
     try:
         claims = decode_broker_bearer(token, keys, settings)
-        jti = claims.get("jti")
-        if (
-            jti
-            and revoked_jti_cache is not None
-            and await revoked_jti_cache.is_revoked(jti)
-        ):
-            _raise_revoked(jti)
         identity_principal = _extract_principal(claims, token)
         principal = await _resolve_current_attributes(
             identity_principal, principal_cache
@@ -479,11 +462,6 @@ async def get_principal(
         detail=_INVALID_TOKEN_DETAIL,
         headers={"WWW-Authenticate": "Bearer"},
     )
-
-
-def _raise_revoked(jti: str) -> None:
-    """Raise a revoked-token ``ValueError`` from inside get_principal's try block -- caught by the same ``except (ValueError, KeyError)`` branch below, so a revoked jti maps to 401 the same way as any other JWT-validation failure."""
-    raise ValueError(f"token jti={jti!r} has been revoked")
 
 
 def _select_jwk(keys: list[dict[str, Any]], kid: str | None) -> dict[str, Any] | None:
@@ -564,11 +542,6 @@ async def keycloak_dependency(
             detail="Not authenticated",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    # Absent (getattr default None) whenever the token registry isn't wired
-    # up at all -- e.g. tests that construct a bare app.state -- in which
-    # case get_principal simply skips the revocation check, same as before
-    # issue #115.
-    revoked_jti_cache = getattr(request.app.state, "revoked_jti_cache", None)
     # Absent (getattr default None) only in a bare app.state; in a properly
     # started app this is never None here -- app.py's lifespan refuses to
     # start without either a configured PrincipalDirectory or the dev bypass
@@ -582,7 +555,6 @@ async def keycloak_dependency(
         credentials.credentials,
         settings,
         principal_cache,
-        revoked_jti_cache,
         caller_path=request.url.path,
     )
 

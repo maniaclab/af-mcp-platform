@@ -5,7 +5,7 @@ import contextlib
 import os
 import time
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -17,6 +17,11 @@ if TYPE_CHECKING:
 from af_mcp_broker import metrics
 from af_mcp_broker.credentials.base import IssuedCredential
 from af_mcp_broker.credentials.errors import UnlockRateLimitError
+from af_mcp_broker.shared_state import (
+    InMemorySharedState,
+    SharedState,
+    SharedStateUnavailableError,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -55,10 +60,9 @@ class _CacheEntry:
     proxy_meta: ProxyMeta | None = None  # populated only for x509 credentials
 
 
-@dataclass
-class _FailedUnlockRecord:
-    attempts: int = 0
-    window_start: float = field(default_factory=time.monotonic)
+def unlock_failures_key(uid: int) -> str:
+    """Shared-state key of *uid*'s failed-unlock counter."""
+    return f"unlock-failures:{uid}"
 
 
 class CredentialCache:
@@ -110,6 +114,13 @@ class CredentialCache:
     ``Settings.credential_unlock_window_seconds`` (see ``app.py`` lifespan);
     the defaults here exist only so callers that construct ``CredentialCache``
     without Settings (tests, spikes) keep the pre-existing behaviour.
+
+    The failed-unlock counters live in the injected ``SharedState`` so the
+    budget is per uid across every broker replica rather than per replica
+    (the in-memory default is correct for exactly one). If the shared store
+    is unreachable the limiter degrades to a per-replica counter and logs
+    ``credential_cache.shared_state_unavailable``: an outage then multiplies
+    the budget by the replica count, instead of blocking every x509 unlock.
     """
 
     def __init__(
@@ -118,17 +129,18 @@ class CredentialCache:
         unlock_window_seconds: int = 15 * 60,
         on_revoke: Callable[[str, str], None] | None = None,
         on_link: Callable[[str, str], None] | None = None,
+        shared_state: SharedState | None = None,
     ) -> None:
         # (subject, target) -> _CacheEntry
         self._entries: dict[tuple[str, str], _CacheEntry] = {}
-        # uid -> _FailedUnlockRecord (for rate-limiting missed lookups) --
-        # deliberately still uid-keyed, see this class's docstring.
-        self._failed_unlocks: dict[int, _FailedUnlockRecord] = defaultdict(
-            _FailedUnlockRecord
-        )
+        # Failed-unlock counters, keyed by uid (see unlock_failures_key) --
+        # deliberately still uid-keyed, see this class's docstring. The
+        # per-replica fallback is used only while the shared store is down.
+        self._shared_state = shared_state or InMemorySharedState()
+        self._fallback_state = InMemorySharedState()
         # (subject, target) -> asyncio.Lock, single-flighting concurrent
         # mints for the same key (see get_or_mint()). Never cleaned up, same
-        # as _failed_unlocks above -- the key space is bounded by real
+        # as the unlock counters above -- the key space is bounded by real
         # authenticated principals and configured backend targets, not
         # attacker-controlled, so leaving idle Locks around is harmless.
         self._mint_locks: dict[tuple[str, str], asyncio.Lock] = defaultdict(
@@ -324,7 +336,7 @@ class CredentialCache:
             credential=cred, expires_at=expires_at, proxy_meta=proxy_meta
         )
         if uid is not None:
-            self._failed_unlocks.pop(uid, None)
+            await self._reset_failed_unlocks(uid)
         self._log.debug(
             "credential_cache.put",
             subject=subject,
@@ -446,60 +458,74 @@ class CredentialCache:
     # Rate-limiting for failed unlock attempts
     # ------------------------------------------------------------------
 
-    def record_failed_unlock(self, uid: int) -> None:
+    async def record_failed_unlock(self, uid: int) -> None:
         """Increment the failed-unlock counter for *uid* and raise ``UnlockRateLimitError`` when exceeded.
 
         Callers invoke this only for an unlock attempt that actually failed
         (bad passphrase, or a minting-backend failure) — plain cache misses
         (see ``get()``) do not consume this budget.
         """
-        now = time.monotonic()
-        record = self._failed_unlocks[uid]
-        # Reset window if it has elapsed
-        if now - record.window_start > self._unlock_window_seconds:
-            record.attempts = 0
-            record.window_start = now
-        record.attempts += 1
+        key = unlock_failures_key(uid)
+        try:
+            window = await self._shared_state.incr_window(
+                key, self._unlock_window_seconds
+            )
+        except SharedStateUnavailableError as exc:
+            self._log_shared_state_unavailable(exc)
+            window = await self._fallback_state.incr_window(
+                key, self._unlock_window_seconds
+            )
         self._log.debug(
             "credential_cache.failed_unlock_recorded",
             uid=uid,
-            attempts=record.attempts,
+            attempts=window.count,
             window_seconds=self._unlock_window_seconds,
         )
-        if record.attempts > self._max_failed_unlocks:
-            remaining_window = max(
-                0, int(self._unlock_window_seconds - (now - record.window_start))
-            )
+        if window.count > self._max_failed_unlocks:
+            remaining_window = max(0, int(window.ttl_seconds))
             raise UnlockRateLimitError(
                 f"Too many failed unlock attempts for uid={uid}. "
                 f"Try again in {remaining_window}s.",
                 retry_after_seconds=remaining_window,
             )
 
-    def check_unlock_rate_limit(self, uid: int) -> None:
+    async def check_unlock_rate_limit(self, uid: int) -> None:
         """Raise ``UnlockRateLimitError`` if *uid* has exceeded the failed-unlock limit.
 
         Callers should invoke this *before* attempting to mint a new proxy so
         that a brute-force passphrase attempt is blocked before any credential
         operation begins.
         """
-        now = time.monotonic()
-        record = self._failed_unlocks.get(uid)
-        if record is None:
+        key = unlock_failures_key(uid)
+        try:
+            window = await self._shared_state.get_window(key)
+        except SharedStateUnavailableError as exc:
+            self._log_shared_state_unavailable(exc)
+            window = await self._fallback_state.get_window(key)
+        if window is None:
             return
-        if now - record.window_start > self._unlock_window_seconds:
-            # Window expired — reset and allow
-            self._failed_unlocks[uid] = _FailedUnlockRecord()
-            return
-        if record.attempts > self._max_failed_unlocks:
-            remaining_window = max(
-                0, int(self._unlock_window_seconds - (now - record.window_start))
-            )
+        if window.count > self._max_failed_unlocks:
+            remaining_window = max(0, int(window.ttl_seconds))
             raise UnlockRateLimitError(
                 f"Too many failed passphrase attempts for uid={uid}. "
                 f"Try again in {remaining_window}s.",
                 retry_after_seconds=remaining_window,
             )
+
+    async def _reset_failed_unlocks(self, uid: int) -> None:
+        key = unlock_failures_key(uid)
+        await self._fallback_state.delete(key)
+        try:
+            await self._shared_state.delete(key)
+        except SharedStateUnavailableError as exc:
+            self._log_shared_state_unavailable(exc)
+
+    def _log_shared_state_unavailable(self, exc: SharedStateUnavailableError) -> None:
+        self._log.warning(
+            "credential_cache.shared_state_unavailable",
+            error=str(exc),
+            effect="unlock limiter is per-replica until the store recovers",
+        )
 
     # ------------------------------------------------------------------
     # Background janitor

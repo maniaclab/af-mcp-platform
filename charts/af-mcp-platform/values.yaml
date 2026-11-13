@@ -520,6 +520,15 @@ broker:
   # instance, it does not deploy one.
   usage:
     backend: "in-memory"  # or "postgres"
+    # The metering worker buffers usage records and writes them to the store
+    # as one batch (one round trip, not one per tool call) once batchMax
+    # records are buffered or batchIntervalMs have passed since the first
+    # one, whichever comes first, and on graceful shutdown. A hard crash
+    # (SIGKILL, OOM) can lose up to one interval of usage rows; their audit
+    # lines were already written. Both must be >= 1. Rendered as
+    # USAGE_BATCH_MAX / USAGE_BATCH_INTERVAL_MS.
+    batchMax: 100
+    batchIntervalMs: 1000
     postgres:
       # Secret carrying the asyncpg DSN, rendered as USAGE_POSTGRES_DSN via
       # secretKeyRef only when backend="postgres". With Crunchy PGO the
@@ -538,6 +547,43 @@ broker:
         namespace: ""
         clusterName: ""
 
+  # State that must agree across broker replicas (unlock brute-force limiter;
+  # see docs/architecture.md "Replica consistency"). The store is BYO, like
+  # Postgres above -- this chart does not deploy one. Any server speaking the
+  # redis protocol works; Redis is the recommended store
+  # (Valkey, Dragonfly and KeyDB also speak it). Leave both `url` and
+  # `existingSecret.name` empty for process-local state, which is correct for
+  # exactly one replica: the chart refuses to render with replicaCount > 1
+  # unless `allowPerReplicaState` is set.
+  sharedState:
+    # redis:// or rediss:// URL, rendered as SHARED_STATE_URL. A URL with a
+    # password belongs in `existingSecret`, not here.
+    url: ""
+    # Secret carrying the URL, rendered as SHARED_STATE_URL via secretKeyRef.
+    # Takes the place of `url`; set only one of the two.
+    existingSecret:
+      name: ""
+      key: "url"
+    # Explicit opt-in to replicaCount > 1 with no shared store. Consequences:
+    # the unlock brute-force budget (5 failures / 15 min per uid) is
+    # multiplied by the replica count, and replica-local caches (the per-user
+    # tools/list cache and its invalidation on link/revoke) disagree between
+    # replicas. Set it before upgrading an existing multi-replica release
+    # that has no store yet.
+    allowPerReplicaState: false
+    # Selects the store for the broker's NetworkPolicy egress rule (rendered
+    # only when `url` or `existingSecret.name` is set and
+    # networkPolicy.enabled). `cidr`, when set, is used instead of the
+    # selectors -- for a managed instance outside the cluster. Otherwise
+    # namespaceSelector / podSelector are matchLabels maps: an empty
+    # namespaceSelector selects the release namespace; an empty podSelector
+    # allows any pod there.
+    networkPolicy:
+      cidr: ""
+      namespaceSelector: {}
+      podSelector: {}
+      port: 6379
+
   # Broker-wide maintenance mode: only admins get through /v1 and /mcp while
   # enabled. Must be visible to every replica consistently -- "in-memory"
   # only ever affects the one replica that handled the toggle request (the
@@ -548,6 +594,10 @@ broker:
     # Path prefix under oauth21.tokenStore.vault.kvMount where the
     # maintenance-mode record is stored. Only meaningful when backend="vault".
     kvPathPrefix: "mcp/maintenance-mode"
+    # Seconds each replica caches the flag in-process (rendered as
+    # MAINTENANCE_MODE_CACHE_TTL_SECONDS). A toggle reaches the other replicas
+    # within this window; 0 disables the cache. Ignored for "in-memory".
+    cacheTtlSeconds: 5
     postgres:
       # Secret carrying the asyncpg DSN, rendered as MAINTENANCE_MODE_POSTGRES_DSN
       # via secretKeyRef only when backend="postgres" and this is set. With Crunchy
@@ -598,10 +648,8 @@ broker:
 # ---------------------------------------------------------------------------
 # Token sweep: periodic janitor for the Vault-backed token registry above
 # (broker.tokenRegistry.backend="vault"). Removes registry entries whose
-# expires_at is more than tokenSweep.graceSeconds in the past and prunes the
-# revoked-jtis denylist of anything that's now expired regardless of
-# revocation — see broker/src/af_mcp_broker/token_registry.py's
-# sweep_expired() docstring. Not needed (and refuses to run, exit code 2) for
+# expires_at is more than tokenSweep.graceSeconds in the past — see
+# broker/src/af_mcp_broker/token_registry.py's sweep_expired() docstring. Not needed (and refuses to run, exit code 2) for
 # the in-memory registry backend, which already self-sweeps inline.
 # ---------------------------------------------------------------------------
 tokenSweep:
@@ -623,7 +671,7 @@ aggregator:
   # List of ServiceSpec objects passed verbatim into services.yaml.
   # Each entry should follow the FastMCP ServiceSpec schema, e.g.:
   #   - name: my-tool
-  #     transport: sse
+  #     transport: http
   #     url: http://my-tool-svc:8000/mcp
   #     apply_namespace: true
   #     tools_cache_ttl: 300  # optional; 0 disables the by-name lookup cache

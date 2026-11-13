@@ -1,0 +1,109 @@
+{
+  "skill_name": "af-mcp-builder",
+  "note": "Prompts name fixture paths relative to the skill directory. The guide's canonical URL is not reachable before the guide is merged to main, so a run gives the agent a local stand-in path for it; eval 2 withholds it to test the index fallback.",
+  "evals": [
+    {
+      "id": 1,
+      "name": "audit-noncompliant-fastmcp",
+      "prompt": "I wrote an MCP server for our batch quota service and I want to put it behind the analysis facility gateway (it will be registered with prefix `quota`). The code is in evals/fixtures/noncompliant-python/server.py. Can you review it and tell me what has to change? I can't start it here (no quotactl binary), so it has to be from the source.",
+      "expected_output": "A findings table covering the planted violations, with file:line locations and concrete changes.",
+      "files": [
+        "evals/fixtures/noncompliant-python/server.py"
+      ],
+      "assertions": [
+        "Reports X1 as a MUST: the HTTP server is started without stateless_http, and a per-session client cache is keyed by session",
+        "Reports U6: list_groups takes `user` and quota_get_usage/quota_set_limit take `owner`, which should come from the verified identity",
+        "Reports U3: quota_get_usage takes an `api_token` argument",
+        "Reports N1/P1: list_groups does not carry the `quota_` prefix",
+        "Reports A1: no tool sets annotations / readOnlyHint, and quota_set_limit is a write tool",
+        "Reports O1: no outputSchema (tools return bare str, dict or list)",
+        "Reports E1 or E2: errors are returned as an error dict or text with a Traceback, not isError with a next step",
+        "Reports X5 or E3: QUOTA_HOST is resolved once at startup and pinned",
+        "Reports B1: list_groups or quota_search_jobs has no limit or pagination",
+        "Reports I1 or O3: output is parsed from CLI text or returns a raw backend row",
+        "Uses a table with Item, Level and Location columns, and every row's location is a file:line or a tool name",
+        "Cites at least 10 distinct guide item IDs",
+        "Does not edit any fixture file"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "audit-compliant-fastmcp-guide-unreachable",
+      "prompt": "Quick sanity check before I register it: can you audit evals/fixtures/compliant-python/server.py against the AF MCP guide? Prefix is `shelf`. Note that you cannot fetch anything from the network in this environment and there is no af-mcp-platform checkout, so work from what you have. The shelf_client package is not installed, so the server cannot be started.",
+      "expected_output": "No MUST findings; heuristic or unchecked items listed honestly; the report says the guide could not be read.",
+      "files": [
+        "evals/fixtures/compliant-python/server.py"
+      ],
+      "assertions": [
+        "Reports no MUST finding against the server's tools for N1, N2, S1, O1, A1, E1, X1, U3 or U6",
+        "Does not report the JSON text block that fastmcp derives from structuredContent as an O2 finding",
+        "States that the mechanical audit was not run, and why",
+        "Lists the items that could not be checked from the source (for example U2 JWKS wiring, P1-P5 services.yaml, E3, B2, T1)",
+        "States that the full guide was not read, or that the audit used the skill's index of rules",
+        "Does not invent MUST findings: every finding row cites a real line of server.py"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "audit-go-mcp-go-server",
+      "prompt": "Our Go service rigctl-mcp (mark3labs/mcp-go) is going behind the AF MCP gateway with prefix `rig`. Source is evals/fixtures/go-server/main.go. What does it need before we can onboard it?",
+      "expected_output": "A findings table for a Go server, locations in main.go.",
+      "files": [
+        "evals/fixtures/go-server/main.go"
+      ],
+      "assertions": [
+        "Identifies the server as Go using mcp-go",
+        "Reports X1 as a MUST: NewStreamableHTTPServer is created without the stateless option",
+        "Reports U3: reserveRig takes a `password` argument",
+        "Reports U6: list_rigs takes an `owner` argument",
+        "Reports N1/P1: tool names lack the `rig_` prefix",
+        "Reports A1: no tool sets annotations (WithReadOnlyHintAnnotation and the others)",
+        "Reports E1: failures are returned as ordinary text results without IsError",
+        "Reports O1: no output schema or structured content",
+        "Reports N2 or S1: a description is a bare two-word phrase, or arguments carry no description",
+        "Locations point into main.go with line numbers",
+        "Gives Go-specific suggested changes (mcp-go option names), not Python ones"
+      ]
+    },
+    {
+      "id": 4,
+      "name": "onboard-new-backend",
+      "prompt": "I'm onboarding a new backend, panda-mini-mcp, to the AF MCP gateway. The server is evals/fixtures/new-backend/server.py. What exactly do I have to change in the server, and what should the services.yaml entry look like? It talks to the workflow queue with one shared service account token.",
+      "expected_output": "Required server changes plus a drafted services.yaml entry.",
+      "files": [
+        "evals/fixtures/new-backend/server.py"
+      ],
+      "assertions": [
+        "Says the server must serve streamable HTTP and statelessly (it runs the default stdio transport), citing X1",
+        "Flags the shared service token as a credential-boundary problem (U1/U2/U4): callers must be authenticated by the broker identity token, and the backend should redeem or exchange rather than use one shared secret",
+        "Flags cancel_task's `username` argument (U6) as something to derive from the verified identity",
+        "Flags that cancel_task is a write tool and neither tool sets annotations (A1/A2)",
+        "Drafts a services.yaml entry that includes prefix, trust_tier and agent_policy",
+        "Chooses service-tier (or higher) for the trust_tier because the backend acts with a facility credential, not the caller's",
+        "Mentions apply_namespace and that tool names must carry the registered prefix (P1/N1)",
+        "Does not claim the platform requires any code change in the broker",
+        "Labels X1 (stateless HTTP) as MUST, not SHOULD"
+      ]
+    },
+    {
+      "id": 5,
+      "name": "debug-audience-401",
+      "prompt": "Our service tapestore returns 401 on every call through the AF MCP gateway, but it works fine when I call the server directly with a token I minted myself for testing. The server is evals/fixtures/rejects-audience/server.py and its services.yaml entry is `name: tapestore`, `prefix: tapestore`, with no `audience` field. I can't see the gateway logs and the tapestore_client package is not installed here, so the server cannot be started. What is wrong and how do I fix it?",
+      "expected_output": "The audience mismatch identified as the cause, with a concrete fix and the check to run.",
+      "files": [
+        "evals/fixtures/rejects-audience/server.py"
+      ],
+      "assertions": [
+        "Identifies the cause as an audience mismatch: the verifier requires aud `tapestore-mcp` but the service's audience defaults to its name, `tapestore`",
+        "Cites U2 (or U1/X2) for the audience check",
+        "Gives a concrete fix: set `audience: tapestore-mcp` on the services.yaml entry, or change the verifier's audience to `tapestore`, and says to change the registry and the server consistently",
+        "Explains why the direct call works: the self-minted token carries the server's own audience, not the broker's",
+        "Says how to verify: run audit_tools.py with --check-401, or present a validly signed token with another aud and expect a refusal",
+        "Does not suggest disabling audience validation or accepting any aud",
+        "Does not claim the platform or broker needs a code change",
+        "Does not invent MUST findings against the tools, annotations, schemas or stateless setting (the rest of the server is compliant)",
+        "Does not edit the fixture"
+      ]
+    }
+  ]
+}

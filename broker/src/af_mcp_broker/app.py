@@ -80,6 +80,7 @@ from af_mcp_broker.logging import (
     log_request_received,
 )
 from af_mcp_broker.maintenance import (
+    CachingMaintenanceModeStore,
     InMemoryMaintenanceModeStore,
     MaintenanceModeStore,
     PostgresMaintenanceModeStore,
@@ -100,9 +101,9 @@ from af_mcp_broker.principal_cache import (
     VaultPrincipalCacheBackend,
 )
 from af_mcp_broker.principal_directory import KeycloakPrincipalDirectory
+from af_mcp_broker.shared_state import build_shared_state
 from af_mcp_broker.token_registry import (
     InMemoryTokenRegistryBackend,
-    RevokedJtiCache,
     TokenRegistryBackend,
     VaultTokenRegistryBackend,
 )
@@ -264,6 +265,28 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
             ),
             replica_count=settings.mcp_replica_count,
         )
+
+    # --- Shared cross-replica state (shared_state.py): the Settings validator
+    # has already refused more than one replica without a store unless the
+    # operator opted into per-replica state; this logs the opt-in so it is
+    # visible in pod logs, never silent.
+    if (
+        not settings.shared_state_url
+        and settings.mcp_replica_count is not None
+        and settings.mcp_replica_count > 1
+    ):
+        logger.warning(
+            "per_replica_state",
+            message=(
+                "allow_per_replica_state with more than one broker replica "
+                "and no shared_state_url: the unlock brute-force budget is "
+                "multiplied by the replica count and replica-local caches "
+                "are inconsistent. Set shared_state_url -- see "
+                'docs/architecture.md "Replica consistency".'
+            ),
+            replica_count=settings.mcp_replica_count,
+        )
+    shared_state = build_shared_state(settings.shared_state_url)
 
     # --- Authorization: the authorization/ engine matches the shipped policy.yaml.
     try:
@@ -479,6 +502,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     credential_cache = CredentialCache(
         max_failed_unlocks=settings.credential_unlock_max_failures,
         unlock_window_seconds=settings.credential_unlock_window_seconds,
+        shared_state=shared_state,
         on_revoke=lambda subject, target: invalidate_subject_cache(
             _mcp_aggregator, subject, target
         ),
@@ -885,16 +909,6 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         token_registry_backend = InMemoryTokenRegistryBackend()
     token_registry = TokenRegistry(token_registry_backend)
 
-    # --- Revoked-jti cache: bridges the token registry to identity.py's hot
-    # JWT-validation path (both /v1's keycloak_dependency and /mcp's
-    # IdentityMiddleware call identity.get_principal, the single choke point
-    # this enforces revocation at) without a per-request Vault round trip.
-    # See token_registry.RevokedJtiCache's docstring for the staleness bound.
-    revoked_jti_cache = RevokedJtiCache(
-        token_registry_backend,
-        refresh_interval_seconds=settings.revoked_jti_cache_refresh_seconds,
-    )
-
     # --- Principal cache (issue #144 steps 2a/3/3b): resolves every
     # authenticated request's *current* groups/uid/gid/unixname/email from
     # Keycloak. Originally built only for PATs (opaque bearers carrying none
@@ -982,13 +996,23 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         maintenance_mode_store = PostgresMaintenanceModeStore(dsn.get_secret_value())
     else:
         maintenance_mode_store = InMemoryMaintenanceModeStore()
+    # In-memory reads are a field access, so only the network-backed stores
+    # get the TTL cache.
+    if (
+        settings.maintenance_mode_backend != "in_memory"
+        and settings.maintenance_mode_cache_ttl_seconds > 0
+    ):
+        maintenance_mode_store = CachingMaintenanceModeStore(
+            maintenance_mode_store,
+            ttl_seconds=settings.maintenance_mode_cache_ttl_seconds,
+        )
     await maintenance_mode_store.start()
 
     # --- MCP aggregator: the FastMCP instance and its ASGI app already exist
     # (built eagerly at module scope below, since the aggregator must be
     # mountable before Settings()/ServiceRegistry() are known — see the
     # comment above `_mcp_aggregator`). Push the registry/policy/settings/
-    # credential_registry/revoked_jti_cache/identity providers/maintenance_mode_store
+    # credential_registry/identity providers/maintenance_mode_store
     # just loaded above into it now that they're real -- the middle three
     # feed the af_* diagnostic tools (issue #153), and maintenance_mode_store
     # feeds AsgiAuthMiddleware's /mcp enforcement (mirroring /v1's
@@ -1016,7 +1040,6 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         settings,
         entitlement_policy,
         credential_registry,
-        revoked_jti_cache,
         pat_backend=token_registry_backend,
         principal_cache=principal_cache,
         identity_providers=identity_providers,
@@ -1076,7 +1099,6 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     application.state.oauth21_token_store = oauth21_token_store
     application.state.oauth21_state_cipher = oauth21_state_cipher
     application.state.token_registry = token_registry
-    application.state.revoked_jti_cache = revoked_jti_cache
     application.state.principal_cache = principal_cache
     application.state.mcp_auth_code_store = mcp_auth_code_store
     application.state.broker_token_issuer = broker_token_issuer
@@ -1143,6 +1165,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     if credmon_sync is not None:
         await credmon_sync.stop()
     await credential_cache.stop_janitor()
+    await shared_state.close()
     await aclose_http_client()
     # Shutdown drains pending metering (records still queued for measurement
     # and writing) so audit lines aren't lost on a graceful stop -- and it

@@ -1,0 +1,70 @@
+{
+  "skill_name": "af-mcp-builder",
+  "note": "Assertion pass counts from graded sonnet subagent runs. old_skill is the skill as first proposed in the PR (bundled guide copy, X1 a SHOULD, O2 preferring curated text); with_skill is the revised skill reading the guide from a local stand-in for the raw URL (eval 2: guide withheld); without_skill is no skill. Grading was done by reading each final answer against the assertions in evals.json; the runs could not write report files, so the answers are not stored.",
+  "iteration_1": {
+    "with_skill": {
+      "audit-noncompliant-fastmcp": "13/13",
+      "audit-compliant-fastmcp-guide-unreachable": "6/6",
+      "audit-go-mcp-go-server": "11/11",
+      "onboard-new-backend": "9/9",
+      "total": "39/39"
+    },
+    "old_skill": {
+      "audit-noncompliant-fastmcp": "12/13",
+      "audit-compliant-fastmcp-guide-unreachable": "5/6",
+      "audit-go-mcp-go-server": "9/11",
+      "onboard-new-backend": "8/9",
+      "total": "34/39"
+    },
+    "without_skill": {
+      "audit-noncompliant-fastmcp": "9/13",
+      "audit-compliant-fastmcp-guide-unreachable": "6/6",
+      "audit-go-mcp-go-server": "10/11",
+      "onboard-new-backend": "4/9",
+      "total": "29/39"
+    }
+  },
+  "failures": {
+    "old_skill": [
+      "X1 reported as SHOULD (3 evals)",
+      "O2 JSON text block reported as a finding",
+      "U6 owner argument not reported (Go)"
+    ],
+    "without_skill": [
+      "no X1 stateless finding (2 evals)",
+      "no outputSchema finding (2 evals)",
+      "no table and fewer than 10 item IDs (eval 1)",
+      "no apply_namespace or agent_policy, no credential-boundary finding (eval 4)"
+    ]
+  },
+  "iteration_2": {
+    "note": "eval 2 rerun after the compliant fixture gained next-step hints (iteration 1 flagged its missing empty-result and truncation hints as MUST rows, which was a fixture defect)",
+    "with_skill": {
+      "audit-compliant-fastmcp-guide-unreachable": "6/6"
+    }
+  },
+  "description_optimization": {
+    "tool": "skill-creator run_loop, 14 trigger queries (8 should, 6 should not), 2 runs each, 3 iterations",
+    "result": "no candidate beat the original description on held-out queries (test 6/10 each iteration, precision 100%, recall 20-33%); description left unchanged",
+    "superseded_by": "iteration 2 below: the run_loop harness under-measured triggering (see trigger_results/ and PR #385)"
+  },
+  "trigger_eval_iteration_2": {
+    "harness": "evals/run_trigger_eval.py: real skill installed under .claude/skills in a sandbox project, claude -p --model claude-sonnet-5-5, Skill call counted within the first 3 tool calls",
+    "queries": "evals/trigger_queries.json: 36 queries (21 should, 15 should not), fixed split train 22 / test 14",
+    "original_description_in_stock_skill_creator_harness": "held-out recall 3/24 runs, precision 100%",
+    "original_description_in_this_harness": "held-out recall 24/24, precision 100%; train recall 31/39, precision 100%",
+    "final_description": "train recall 75/78 and precision 75/77 over 6 runs per query; held-out recall 48/48 and precision 100% (36 negative runs)",
+    "behaviour_evals_rerun": "38/39 (eval 1 13/13, eval 2 5/6, eval 3 11/11, eval 4 9/9); eval 2 assertion 1 failed in both reruns because the report labels hedged leads (U1, X1) as MUST rows"
+  },
+  "regression_original_vs_final_description": {
+    "note": "3 runs per eval per description, sonnet subagents reading the skill from a snapshot, graded by a separate sonnet grader with a strict rule (a MUST row against a listed item fails a 'no MUST finding' assertion even when hedged). Eval 1 assertion 11 (every location file:line or tool name) failed in all six runs of both descriptions because rows such as 'all tools' and 'services.yaml not provided' do not qualify. SKILL.md bodies are identical, only the description differs. Files: behaviour_results/regression_*.json.",
+    "original_description": {"eval1_of_13": [12, 12, 12], "eval2_of_6": [5, 6, 6], "eval3_of_11": [11, 11, 11], "eval4_of_9": [9, 8, 8]},
+    "final_description": {"eval1_of_13": [12, 12, 12], "eval2_of_6": [5, 5, 5], "eval3_of_11": [11, 11, 11], "eval4_of_9": [9, 9, 8]}
+  },
+  "iteration_3": {
+    "changes": "SKILL.md gains a 'Needs confirmation' rule (an unconfirmed lead is not a MUST row) and a debugging section mapping symptoms to guide items and audit_tools.py flags; eval 5 (debug-audience-401, fixture rejects-audience) added",
+    "behaviour_evals": {"eval1_of_13": [13], "eval2_of_6": [6, 6, 6], "eval3_of_11": [11], "eval4_of_9": [9], "eval5_of_9": [9, 9, 9]},
+    "behaviour_evals_note": "graded with a more lenient reading of eval 1 assertion 11 than the regression graders (locations such as 'whole server' accepted), so eval 1 is not comparable on that assertion; files: behaviour_results/after_skill_changes_grades.json",
+    "trigger_eval": "6 runs per query with the final SKILL.md: train recall 76/78, precision 76/78 (FP 2/54); held-out recall 48/48, precision 100% (FP 0/36). Files: trigger_results/final_with_debug_section_run*.json"
+  }
+}

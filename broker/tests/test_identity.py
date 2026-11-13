@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 import structlog
-from conftest import AUDIENCE, make_claims
+from conftest import AUDIENCE, RaisingTokenRegistryBackend, make_claims
 from fastapi import HTTPException
 
 from af_mcp_broker import identity as identity_module
@@ -22,7 +22,6 @@ from af_mcp_broker.pat import mint_pat
 from af_mcp_broker.pat_auth import LastUsedTracker, resolve_pat_principal
 from af_mcp_broker.token_registry import (
     InMemoryTokenRegistryBackend,
-    RevokedJtiCache,
     TokenRecord,
 )
 
@@ -514,110 +513,31 @@ async def test_jwt_and_pat_for_same_principal_get_identical_posix(
 
 
 # ---------------------------------------------------------------------------
-# Revoked-jti enforcement (issue #115) — get_principal is the single choke
-# point both keycloak_dependency (/v1) and IdentityMiddleware (/mcp) call,
-# so testing it here covers both call sites.
+# JWT validation reads no token registry: only PATs are revocable (via the
+# record's revoked_at), so a Keycloak JWT is checked on signature and claims
+# alone. Both /v1 (keycloak_dependency) and /mcp go through get_principal.
 # ---------------------------------------------------------------------------
 
 
-async def test_revoked_jti_raises_401(
+async def test_valid_jwt_accepted_with_a_token_registry_that_raises_on_every_call(
     settings, sig_key, prime_jwks, static_principal_cache
 ):
     principal_cache, _directory = static_principal_cache
     prime_jwks([sig_key.jwk])
-    token = sig_key.sign(make_claims(jti="revoked-jti-1"))
-    backend = InMemoryTokenRegistryBackend()
-    from af_mcp_broker.token_registry import TokenRecord
-
-    await backend.add(
-        TokenRecord(
-            lookup_id="revoked-jti-1",
-            principal_id="user-123",
-            secret_hash="unused-in-this-test",
-            name="test-token",
-            created_at=time.time(),
-            expires_at=time.time() + 3600,
-            revoked_at=None,
-            last_used_at=None,
-        )
-    )
-    await backend.revoke("user-123", "revoked-jti-1", revoked_at=time.time())
-    revoked_cache = RevokedJtiCache(backend, refresh_interval_seconds=30.0)
-
-    with pytest.raises(HTTPException) as exc:
-        await get_principal(
-            token, settings, principal_cache, revoked_jti_cache=revoked_cache
-        )
-    assert exc.value.status_code == 401
-
-
-async def test_unrevoked_jti_still_succeeds(
-    settings, sig_key, prime_jwks, static_principal_cache
-):
-    principal_cache, _directory = static_principal_cache
-    prime_jwks([sig_key.jwk])
-    token = sig_key.sign(make_claims(jti="an-active-jti"))
-    revoked_cache = RevokedJtiCache(
-        InMemoryTokenRegistryBackend(), refresh_interval_seconds=30.0
+    token = sig_key.sign(make_claims(jti="any-jti"))
+    fake_request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                dev_bypass_active=False,
+                principal_cache=principal_cache,
+                token_registry=RaisingTokenRegistryBackend(),
+            )
+        ),
+        url=SimpleNamespace(path="/v1/identities"),
     )
 
-    principal = await get_principal(
-        token, settings, principal_cache, revoked_jti_cache=revoked_cache
-    )
-
-    assert principal.subject == "user-123"
-
-
-async def test_ordinary_keycloak_session_token_unaffected_by_empty_registry(
-    settings, sig_key, prime_jwks, static_principal_cache
-):
-    """A regular Keycloak-issued session token's jti was never minted through
-    the manual-token registry at all -- it must never be rejected just
-    because a RevokedJtiCache is wired in."""
-    principal_cache, _directory = static_principal_cache
-    prime_jwks([sig_key.jwk])
-    token = sig_key.sign(make_claims(jti="regular-keycloak-session-jti"))
-    revoked_cache = RevokedJtiCache(
-        InMemoryTokenRegistryBackend(), refresh_interval_seconds=30.0
-    )
-
-    principal = await get_principal(
-        token, settings, principal_cache, revoked_jti_cache=revoked_cache
-    )
-
-    assert principal.subject == "user-123"
-
-
-async def test_no_revoked_jti_cache_configured_does_not_check_revocation(
-    settings, sig_key, prime_jwks, static_principal_cache
-):
-    """revoked_jti_cache defaults to None -- e.g. a broker with no token
-    registry configured -- and validation must proceed exactly as before."""
-    principal_cache, _directory = static_principal_cache
-    prime_jwks([sig_key.jwk])
-    token = sig_key.sign(make_claims(jti="whatever"))
-
-    principal = await get_principal(token, settings, principal_cache)
-
-    assert principal.subject == "user-123"
-
-
-async def test_token_with_no_jti_claim_is_unaffected_by_revocation_check(
-    settings, sig_key, prime_jwks, static_principal_cache
-):
-    """Some tokens may not carry a jti at all -- revocation can never apply
-    to them, so the check must be skipped rather than erroring."""
-    principal_cache, _directory = static_principal_cache
-    prime_jwks([sig_key.jwk])
-    claims = make_claims()
-    assert "jti" not in claims
-    token = sig_key.sign(claims)
-    revoked_cache = RevokedJtiCache(
-        InMemoryTokenRegistryBackend(), refresh_interval_seconds=30.0
-    )
-
-    principal = await get_principal(
-        token, settings, principal_cache, revoked_jti_cache=revoked_cache
+    principal = await identity_module.keycloak_dependency(
+        fake_request, SimpleNamespace(credentials=token), settings
     )
 
     assert principal.subject == "user-123"

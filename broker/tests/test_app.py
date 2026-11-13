@@ -17,6 +17,7 @@ from af_mcp_broker.config import (
     OAuth21DirectProviderConfig,
     X509ProviderConfig,
 )
+from af_mcp_broker.shared_state import RedisSharedState
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -159,6 +160,7 @@ def test_stateful_multi_replica_warns_at_startup(
 ) -> None:
     monkeypatch.setenv("MCP_STATELESS_HTTP", "false")
     monkeypatch.setenv("MCP_REPLICA_COUNT", "2")
+    monkeypatch.setenv("ALLOW_PER_REPLICA_STATE", "true")
 
     events: list[tuple[str, dict[str, Any]]] = []
     original_warning = app_module.logger.warning
@@ -191,6 +193,7 @@ def test_warns_when_in_memory_maintenance_backend_with_multiple_replicas(
     app_client_factory: Callable[..., Any],
 ) -> None:
     monkeypatch.setenv("MCP_REPLICA_COUNT", "3")
+    monkeypatch.setenv("ALLOW_PER_REPLICA_STATE", "true")
     monkeypatch.setenv("MAINTENANCE_MODE_BACKEND", "in_memory")
 
     events: list[tuple[str, dict[str, Any]]] = []
@@ -228,6 +231,7 @@ def test_maintenance_mode_warning_does_not_fire_at_safe_replica_counts(
 ) -> None:
     if replica_count is not None:
         monkeypatch.setenv("MCP_REPLICA_COUNT", replica_count)
+        monkeypatch.setenv("ALLOW_PER_REPLICA_STATE", "true")
 
     events: list[tuple[str, dict[str, Any]]] = []
     original_warning = app_module.logger.warning
@@ -255,6 +259,7 @@ def test_maintenance_mode_warning_does_not_fire_for_replica_visible_backend(
     monkeypatch.setenv("MAINTENANCE_MODE_BACKEND", "postgres")
     monkeypatch.setenv("MAINTENANCE_MODE_POSTGRES_DSN", postgres_dsn)
     monkeypatch.setenv("MCP_REPLICA_COUNT", "3")
+    monkeypatch.setenv("ALLOW_PER_REPLICA_STATE", "true")
 
     events: list[tuple[str, dict[str, Any]]] = []
     original_warning = app_module.logger.warning
@@ -336,6 +341,7 @@ def test_stateful_multi_replica_warning_does_not_fire_when_safe(
     monkeypatch.setenv("MCP_STATELESS_HTTP", stateless_http)
     if replica_count is not None:
         monkeypatch.setenv("MCP_REPLICA_COUNT", replica_count)
+        monkeypatch.setenv("ALLOW_PER_REPLICA_STATE", "true")
 
     events: list[tuple[str, dict[str, Any]]] = []
     original_warning = app_module.logger.warning
@@ -350,3 +356,68 @@ def test_stateful_multi_replica_warning_does_not_fire_when_safe(
         pass
 
     assert not any(event == "mcp_stateful_multi_replica" for event, _ in events)
+
+
+# ---------------------------------------------------------------------------
+# Shared cross-replica state (shared_state.py): more than one replica needs a
+# shared store, or an explicit opt-in to per-replica state.
+# ---------------------------------------------------------------------------
+
+
+def test_multi_replica_without_shared_state_refuses_to_start(
+    monkeypatch: pytest.MonkeyPatch,
+    app_client_factory: Callable[..., Any],
+) -> None:
+    monkeypatch.setenv("MCP_REPLICA_COUNT", "2")
+
+    with pytest.raises(ValueError, match="SHARED_STATE_URL"):  # noqa: SIM117
+        with app_client_factory():
+            pass
+
+
+def test_per_replica_state_escape_hatch_warns_at_startup(
+    monkeypatch: pytest.MonkeyPatch,
+    app_client_factory: Callable[..., Any],
+) -> None:
+    monkeypatch.setenv("MCP_REPLICA_COUNT", "2")
+    monkeypatch.setenv("ALLOW_PER_REPLICA_STATE", "true")
+
+    events: list[tuple[str, dict[str, Any]]] = []
+    original_warning = app_module.logger.warning
+
+    def _capture(event: str, **kwargs: Any) -> Any:
+        events.append((event, kwargs))
+        return original_warning(event, **kwargs)
+
+    monkeypatch.setattr(app_module.logger, "warning", _capture)
+
+    with app_client_factory():
+        pass
+
+    matches = [kwargs for event, kwargs in events if event == "per_replica_state"]
+    assert matches, events
+    assert matches[0]["replica_count"] == 2
+
+
+def test_shared_state_url_backs_the_unlock_limiter(
+    monkeypatch: pytest.MonkeyPatch,
+    app_client_factory: Callable[..., Any],
+    shared_state_url: str,
+) -> None:
+    monkeypatch.setenv("MCP_REPLICA_COUNT", "2")
+    monkeypatch.setenv("SHARED_STATE_URL", shared_state_url)
+
+    with app_client_factory() as (client, _state):
+        cache = client.app.state.credential_cache
+        assert isinstance(cache._shared_state, RedisSharedState)
+
+
+def test_malformed_shared_state_url_refuses_to_start(
+    monkeypatch: pytest.MonkeyPatch,
+    app_client_factory: Callable[..., Any],
+) -> None:
+    monkeypatch.setenv("SHARED_STATE_URL", "http://cache:6379")
+
+    with pytest.raises(ValueError, match="redis://"):  # noqa: SIM117
+        with app_client_factory():
+            pass

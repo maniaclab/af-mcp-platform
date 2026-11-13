@@ -392,6 +392,16 @@ class Settings(BaseSettings):
     # wired in the chart via broker.usage.postgres.existingSecret.
     usage_postgres_dsn: SecretStr | None = None
 
+    # The metering worker (audit/pipeline.py) buffers usage records and hands
+    # them to the usage store as one batch -- one round trip instead of one per
+    # tool call -- once usage_batch_max records have accumulated or
+    # usage_batch_interval_ms have elapsed since the first buffered record,
+    # whichever comes first, and on shutdown. The audit line is always written
+    # first, so up to one interval of buffered usage rows is lost on a hard
+    # crash while the authoritative audit log stays complete.
+    usage_batch_max: int = Field(default=100, ge=1)
+    usage_batch_interval_ms: int = Field(default=1000, ge=1)
+
     # Which MaintenanceModeStore implementation (maintenance.py) holds the
     # broker's maintenance-mode flag -- must be visible to every replica
     # consistently. Mirrors the in_memory/vault/postgres selection shape
@@ -411,6 +421,15 @@ class Settings(BaseSettings):
     # from every other Vault-backed store's prefix so they never collide
     # under the same kv_mount.
     maintenance_mode_kv_path_prefix: str = "mcp/maintenance-mode"
+
+    # How long each replica caches the maintenance flag in-process before
+    # re-reading the backing store (maintenance.CachingMaintenanceModeStore).
+    # The flag is read on every non-admin request, so for the vault/postgres
+    # backends this bounds store reads to ~one per TTL per replica. A toggle
+    # made on another replica becomes visible here within this many seconds;
+    # the replica that handled the toggle sees it at once. 0 disables the
+    # cache. Not applied to in_memory, where a read is a field access.
+    maintenance_mode_cache_ttl_seconds: float = Field(default=5.0, ge=0)
 
     # Model key (a tokencost.TOKEN_COSTS entry) whose *input* token price
     # turns GET /v1/usage's result_tokens_est sums into estimated_cost_usd at
@@ -465,6 +484,21 @@ class Settings(BaseSettings):
     # None outside the chart (e.g. local dev) -- the check is skipped rather
     # than guessing.
     mcp_replica_count: int | None = None
+
+    # Shared cross-replica state store (shared_state.py): a redis:// or
+    # rediss:// URL for any redis-protocol server (Redis recommended; Valkey
+    # also works). Empty selects the process-local in-memory backend, which is
+    # correct for exactly one replica -- _validate_replica_state_config below
+    # refuses to start more than one replica without a store unless the escape
+    # hatch is set. The URL may embed a password; supply it from a Secret.
+    shared_state_url: str | None = None
+
+    # Escape hatch for running mcp_replica_count > 1 with no shared_state_url.
+    # Per-replica state then multiplies the unlock brute-force budget by the
+    # replica count and leaves other replica-local caches inconsistent (see
+    # docs/architecture.md "Replica consistency"). An explicit choice rather
+    # than a silent default.
+    allow_per_replica_state: bool = False
 
     log_level: str = Field(
         default="INFO",
@@ -607,12 +641,6 @@ class Settings(BaseSettings):
     # Vault-backed stores never collide under the same kv_mount.
     token_registry_kv_path_prefix: str = "mcp/token-registry"
 
-    # How often (seconds) identity.RevokedJtiCache re-reads the token
-    # registry's revoked-jti set. Bounds how long a revoked token keeps
-    # working after DELETE /v1/tokens/{jti} -- see token_registry.py's
-    # RevokedJtiCache docstring.
-    revoked_jti_cache_refresh_seconds: float = 30.0
-
     # Grace window (seconds) token_sweep.py's expired-token janitor keeps a
     # record around after its expires_at passes, before removing it from
     # Vault -- see TokenRegistryBackend.sweep_expired's docstring. Default is
@@ -665,11 +693,9 @@ class Settings(BaseSettings):
     # and how long a value may be served *without* a successful refresh
     # before failing closed (long -- a brief Keycloak outage should not lock
     # out every PAT-authenticated caller; this is research infrastructure,
-    # not a bank). Mirrors RevokedJtiCache's single-interval shape, but that
-    # cache has only ever needed the one number because its failure mode
-    # (serve stale forever) has no analogous "eventually distrust this" bound
-    # -- a principal's authority is a stronger thing to get wrong than
-    # whether one specific token was revoked.
+    # not a bank). A cache that served stale forever on failure would have
+    # no "eventually distrust this" bound; a principal's authority is too
+    # strong a thing to get wrong for that.
     principal_cache_refresh_seconds: float = 45.0
     principal_cache_max_staleness_seconds: float = 6 * 60 * 60.0
 
@@ -1163,6 +1189,25 @@ class Settings(BaseSettings):
                 "maintenance_mode_postgres_dsn (MAINTENANCE_MODE_POSTGRES_DSN) "
                 "or usage_postgres_dsn (USAGE_POSTGRES_DSN) must be set when "
                 "maintenance_mode_backend is 'postgres'."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_replica_state_config(self) -> Settings:
+        """Refuse more than one replica with per-replica state unless ``allow_per_replica_state`` is set."""
+        if (
+            not self.shared_state_url
+            and not self.allow_per_replica_state
+            and self.mcp_replica_count is not None
+            and self.mcp_replica_count > 1
+        ):
+            raise ValueError(
+                "mcp_replica_count > 1 requires shared_state_url "
+                "(SHARED_STATE_URL): state such as the unlock rate limiter "
+                "must agree across replicas. Set it, or set "
+                "allow_per_replica_state (ALLOW_PER_REPLICA_STATE=true) to "
+                "accept per-replica state -- see docs/architecture.md "
+                '"Replica consistency".'
             )
         return self
 

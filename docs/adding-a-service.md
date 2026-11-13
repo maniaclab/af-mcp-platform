@@ -603,119 +603,15 @@ in `tools/list` over `/mcp` (see Verification below).
 
 ## Tool-authoring conventions
 
-Steps 1–5 wire a service in with no code. This section is about the code you
-*do* write — the tools the backend itself advertises. The aggregator forwards
-whatever the backend serves verbatim, so the quality of each tool's
-description, error text, and schema is set entirely at the source. These five
-conventions cost every LLM agent a wasted retry cycle when skipped, regardless
-of which client calls the tool or how good its own discovery is, so treat them
-as the bar for every backend — existing and new. rucio-mcp already meets the
-first two (one-line summaries and actionable errors) and is cited below as
-the shipped example for those; `outputSchema` and annotations are
-documented here but, as of this writing, implemented by no backend in the
-fleet yet — `maniaclab/af-mcp-platform#238` is the rollout tracking issue.
-The broker's own `gateway_service` tools
-(`broker/src/af_mcp_broker/mcp/diagnostics.py`) declare both already, and
-are the in-repo reference for `outputSchema` and annotations, though not
-for the `Annotated[CallToolResult, Model]` markdown-preservation pattern
-below, which none of their tools need (they return plain pydantic models,
-no curated markdown to keep alongside the structured payload).
-
-- **Lead each tool's description with a one-line summary.** The first line is
-  what a client shows in a compact tool list and what it ranks on. This matters
-  more as clients move from loading every tool's full schema upfront to
-  progressive tool-search over just the summaries, where a tool whose first
-  line doesn't say what it does never gets picked. Put the one-liner first, then
-  the detail (arguments, caveats, when to call it) below it. The builtin
-  `gateway_service` tools follow this — see `af_whoami`'s "Return the caller's own
-  subject, groups, and effective permissions." ahead of its usage notes in
-  `broker/src/af_mcp_broker/mcp/diagnostics.py`.
-
-- **On an empty or error result, return an actionable next step, not just the
-  raw condition.** "No replicas found" or a bare backend exception makes the
-  agent guess (and usually burn a diagnostic call, or several — the frictions in
-  maniaclab/af-mcp-platform#216 came from
-  exactly this). Say what to do instead. rucio-mcp is the model: several of its
-  tools' empty/error results carry a "Next steps" hint, e.g. on an empty
-  dataset-replicas result it points the caller at "if this is a container DID,
-  use `rucio_list_container_replicas` instead". Name the specific tool or
-  argument that fixes the situation whenever you can. Surface it as a structured
-  MCP error (`isError: true` with the hint in the message), not raw backend
-  exception text.
-
-- **Declare `outputSchema` wherever the backend's SDK supports it, alongside
-  the curated markdown, not instead of it.** Without an output schema a
-  client can't type-check a tool's result or programmatically compose one
-  tool's output into another's input; it's left parsing prose. Note that an
-  MCP `outputSchema` MUST be a JSON *object* schema — a tool that returns a
-  bare list gets no usable schema (or a synthetic single-key wrapper with a
-  meaningless field name), so wrap a list in a small object model with a
-  named field. Annotating a tool `-> MyModel` directly gets you `outputSchema`
-  + `structuredContent`, but the SDK then renders the text block as the raw
-  JSON dump of that model, destroying any curated markdown you wrote. The
-  supported escape hatch is `Annotated[CallToolResult, ResultModel]`: return
-  an ordinary `CallToolResult` with your own `TextContent` and
-  `structured_content=payload.model_dump(mode="json")`, and the SDK still
-  publishes `ResultModel`'s schema and validates `structured_content` against
-  it — the annotation is metadata for schema/validation purposes only, never
-  evaluated as the literal return type. `Context`, `CallToolResult`,
-  `TextContent`, `ToolAnnotations`, and every model used in a return
-  annotation must stay runtime imports, never `TYPE_CHECKING` — the SDK's
-  `func_metadata()` resolves live annotations via `inspect.signature(func,
-  eval_str=True)`, and a `TYPE_CHECKING`-only name raises `InvalidSignature`
-  at registration. The `gateway_service` tools are the in-repo reference
-  instance for the schema itself: all five declare an object `outputSchema`,
-  and `af_list_identities` / `af_list_mcp_servers` show the list-wrapping
-  pattern (`ListIdentitiesResult.identities` / `ListMcpServersResult.servers`)
-  in `broker/src/af_mcp_broker/mcp/diagnostics.py` — none of them need the
-  `Annotated[CallToolResult, Model]` form since they have no curated markdown
-  to preserve alongside the structured payload.
-
-- **Declare read-only/destructive annotations on every tool.** `ToolAnnotations`
-  (`read_only_hint`, `destructive_hint`, `idempotent_hint`, `open_world_hint`,
-  `title`) tells a client which tools are safe to call speculatively and
-  which change real state, without it having to guess from the name or
-  description. Set `read_only_hint=True` for anything that only reads;
-  `destructive_hint`/`idempotent_hint` are meaningful only when
-  `read_only_hint` is `False`, so leave them unset on a read-only tool. The
-  broker forwards annotations verbatim and lints them against `policy.yaml`'s
-  resolved action type (`maniaclab/af-mcp-platform#238` B.8) — a disagreement
-  doesn't block anything (the gateway never trusts a backend's own annotation
-  for an authorization decision), but it does show up on the admin page as
-  something worth reconciling. The `gateway_service` tools
-  (`broker/src/af_mcp_broker/mcp/diagnostics.py`) are the in-repo reference:
-  all five are read-only, including `af_link_identity`, which returns a
-  portal link but performs no mutation itself.
-
-- **Set `isError: true` on a failed call, not just error-shaped text.** A
-  tool that reports failure by returning ordinary text (or a string a client
-  has to pattern-match) is indistinguishable from success to anything that
-  checks the wire result rather than reads the prose — the broker's own
-  audit pipeline learned this the hard way (`9034858`): a call that "failed"
-  only in its text was counted as a success until the fix, and calls that
-  correctly set `isError` are now the only ones audited `outcome=error` /
-  `error_class=tool_reported`. Raising your SDK's tool-error exception (or
-  building the `CallToolResult` explicitly) gets you this automatically;
-  returning a plain string never does. Expect this to move error rates in
-  dashboards the day a backend ships it — that's the fix working, not a
-  regression.
-
-- **Set `agent_policy` — the model-facing per-service policy knob.** The five
-  conventions above are per-tool text the backend advertises; `agent_policy` is
-  a per-*service* field you set in the Step 1 service list (alongside
-  `required_permission`/`trust_tier`) and is the model-facing half of *dual
-  enforcement* (see docs/architecture.md's "Dual enforcement"). The aggregator
-  composes every service's `agent_policy` into the MCP server `instructions` the
-  LLM agent reads, so write 1–3 sentences of guidance the agent should reason
-  over before calling this service's tools — which operations are safe reads,
-  and which change real facility state and warrant confirming with the user
-  first. Keep it distinct from `description` (user-facing catalog UX shown in
-  the portal): `agent_policy` addresses the agent, imperatively. It is guidance,
-  **not** an access-control boundary — the `required_permission` gate
-  (`maniaclab/af-mcp-platform#253` also adds `trust_tier` as declared posture)
-  remains authoritative. The shipped `services.yaml` carries one for each
-  reference service — e.g. Rucio's says read queries are safe but creating or
-  deleting rules changes real data placement and should be confirmed first.
+Steps 1–5 wire a service in with no code. The tools the backend itself
+advertises are a separate matter: the aggregator forwards them verbatim, so the
+quality of each tool's description, schema, annotations and error text is set
+at the source. Those conventions, and the rest of what a backend must do to fit
+the platform (transport, authentication, size limits), are the
+[MCP Design Guide](mcp-design.md), a MUST/SHOULD checklist with a way to verify
+each item. Two of its items are service-entry fields you set alongside the
+Step 1 entry and are documented in the guide: [`agent_policy`](mcp-design.md#p2-write-an-agent_policy-for-the-service)
+and [`trust_tier`](mcp-design.md#p3-declare-a-trust_tier).
 
 ---
 

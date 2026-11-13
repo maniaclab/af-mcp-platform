@@ -45,6 +45,15 @@ Next steps:
    #128). See docs/architecture.md before relying on this configuration.
 {{- end }}
 
+{{- if and (gt (.Values.broker.replicaCount | int) 1) (not (include "af-mcp-platform.sharedState.configured" .)) }}
+
+   WARNING: broker.sharedState.allowPerReplicaState is set with
+   broker.replicaCount > 1 and no shared state store. The unlock brute-force
+   budget is multiplied by the replica count and replica-local caches
+   disagree between replicas. Set broker.sharedState.url (a Redis
+   instance; Valkey also works) to remove this warning. See docs/architecture.md.
+{{- end }}
+
 3. Check broker health:
    kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/component=broker
 

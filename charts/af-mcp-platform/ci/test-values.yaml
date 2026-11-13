@@ -17,6 +17,18 @@ portal:
 # Secret for template rendering — it doesn't need to exist for `helm
 # lint`/`helm template` to succeed.
 broker:
+  # Exercises the shared-state store render path: SHARED_STATE_URL via a
+  # Secret, and the NetworkPolicy egress rule to the store (selected by
+  # namespace and pod).
+  sharedState:
+    existingSecret:
+      name: "example-redis-url"
+      key: "url"
+    networkPolicy:
+      namespaceSelector:
+        kubernetes.io/metadata.name: cache
+      podSelector:
+        app.kubernetes.io/name: redis
   # Dummy value so `helm template` renders the BROKER_PUBLIC_ORIGIN env var
   # path exercised below (an oauth21-direct identityProviders entry requires
   # it, per the broker's own startup validation).

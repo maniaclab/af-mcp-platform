@@ -238,7 +238,6 @@ async def test_run_logs_sweep_stats_on_success(
     assert len(completed) == 1
     assert completed[0]["records_removed"] == 0
     assert completed[0]["owners_removed"] == 0
-    assert completed[0]["revoked_pruned"] == 0
     assert completed[0]["principals_emptied"] == 0
     assert completed[0]["grace_seconds"] == settings.token_sweep_grace_seconds
 

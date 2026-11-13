@@ -1,0 +1,22 @@
+{
+  "name": "af-mcp-platform",
+  "owner": {
+    "name": "UChicago ATLAS Analysis Facility",
+    "url": "https://github.com/maniaclab/af-mcp-platform"
+  },
+  "metadata": {
+    "description": "Agent skills for building and reviewing MCP servers that sit behind the AF MCP platform."
+  },
+  "plugins": [
+    {
+      "name": "af-mcp-builder",
+      "source": "./skills/af-mcp-builder",
+      "strict": false,
+      "description": "Audit an MCP server's codebase against the AF MCP design guide and report what must change for it to fit the platform.",
+      "version": "0.1.0",
+      "license": "MIT",
+      "homepage": "https://maniaclab.github.io/af-mcp-platform/mcp-design/",
+      "skills": ["./"]
+    }
+  ]
+}
