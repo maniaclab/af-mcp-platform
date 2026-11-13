@@ -1,0 +1,910 @@
+{
+ "description": "Use this skill whenever someone is building, designing, extending, reviewing, auditing or onboarding an MCP server (Python fastmcp or mcp SDK, Go mcp-go or golang-htcondor) that will run behind an AF MCP gateway, the credential-brokering MCP platform from maniaclab/af-mcp-platform, deployed at mcp.af.uchicago.edu or at any other analysis facility. Trigger even when the user never says \"audit\", and for design questions asked before any code exists. Examples are a new backend or architecture for Rucio, PanDA, AMI, HTCondor, ServiceX or JupyterHub; what a server must change to sit behind the gateway; adding a service to services.yaml (prefix, agent_policy, trust_tier, exclude_tools); or checking tool names, schemas, annotations, error results, pagination, stateless HTTP, 401 handling and broker identity tokens against docs/mcp-design.md or with audit_tools.py. Not for generic MCP questions, servers for other gateways, or code inside af-mcp-platform itself (broker, portal, chart).",
+ "results": [
+  {
+   "id": "p01",
+   "split": "train",
+   "should_trigger": true,
+   "query": "I'm writing a fastmcp server for our group's beam-scheduler and want it behind the gateway at mcp.af.uchicago.edu. server.py is the first cut. what has to change before we ask the AF admins to onboard it?",
+   "triggers": 3,
+   "runs": 3,
+   "visible": [
+    true,
+    true,
+    true
+   ],
+   "timeouts": 0,
+   "first_tools": [
+    [
+     "Skill"
+    ],
+    [
+     "Skill"
+    ],
+    [
+     "Skill"
+    ]
+   ]
+  },
+  {
+   "id": "p02",
+   "split": "test",
+   "should_trigger": true,
+   "query": "can you review the tool definitions in ~/src/rucio-mcp/src/rucio_mcp/server.py before we onboard it to the AF MCP platform? mainly worried whether the descriptions and schemas are good enough",
+   "triggers": 3,
+   "runs": 3,
+   "visible": [
+    true,
+    true,
+    true
+   ],
+   "timeouts": 0,
+   "first_tools": [
+    [
+     "Skill"
+    ],
+    [
+     "Skill"
+    ],
+    [
+     "Skill"
+    ]
+   ]
+  },
+  {
+   "id": "p03",
+   "split": "train",
+   "should_trigger": true,
+   "query": "what does my Go htcondor MCP server need to change to sit behind mcp.af.uchicago.edu? it's built on mcp-go and the entrypoint is cmd/condor-mcp/main.go",
+   "triggers": 3,
+   "runs": 3,
+   "visible": [
+    true,
+    true,
+    true
+   ],
+   "timeouts": 0,
+   "first_tools": [
+    [
+     "Skill"
+    ],
+    [
+     "Skill"
+    ],
+    [
+     "Skill"
+    ]
+   ]
+  },
+  {
+   "id": "p04",
+   "split": "test",
+   "should_trigger": true,
+   "query": "servicex-mcp is running in the cluster now. add servicex-mcp to services.yaml with the right trust_tier, agent_policy and exclude_tools, and tell me if the server itself needs anything first",
+   "triggers": 3,
+   "runs": 3,
+   "visible": [
+    true,
+    true,
+    true
+   ],
+   "timeouts": 0,
+   "first_tools": [
+    [
+     "Skill"
+    ],
+    [
+     "Skill"
+    ],
+    [
+     "Skill"
+    ]
+   ]
+  },
+  {
+   "id": "p05",
+   "split": "train",
+   "should_trigger": true,
+   "query": "audit this MCP server against the AF design guide",
+   "triggers": 3,
+   "runs": 3,
+   "visible": [
+    true,
+    true,
+    true
+   ],
+   "timeouts": 0,
+   "first_tools": [
+    [
+     "Skill"
+    ],
+    [
+     "Skill"
+    ],
+    [
+     "Skill"
+    ]
+   ]
+  },
+  {
+   "id": "p06",
+   "split": "train",
+   "should_trigger": true,
+   "query": "does our panda-mcp pass the docs/mcp-design.md checklist? go through every MUST item and give me a table with file:line for anything that fails",
+   "triggers": 3,
+   "runs": 3,
+   "visible": [
+    true,
+    true,
+    true
+   ],
+   "timeouts": 0,
+   "first_tools": [
+    [
+     "Skill"
+    ],
+    [
+     "Skill"
+    ],
+    [
+     "Skill"
+    ]
+   ]
+  },
+  {
+   "id": "p07",
+   "split": "train",
+   "should_trigger": true,
+   "query": "ok so i wrote an MCP server in python w/ the official mcp SDK that wraps our AMI dataset lookup. before it goes on the analysis facility gateway, is my stateless_http setup right and does it return a 401 on a bad bearer token? code is in src/ami_lookup/",
+   "triggers": 3,
+   "runs": 3,
+   "visible": [
+    true,
+    true,
+    true
+   ],
+   "timeouts": 0,
+   "first_tools": [
+    [
+     "Skill"
+    ],
+    [
+     "Skill"
+    ],
+    [
+     "Skill"
+    ]
+   ]
+  },
+  {
+   "id": "p08",
+   "split": "test",
+   "should_trigger": true,
+   "query": "check my tool annotations and outputSchema for the AF gateway. readOnlyHint and friends are all in src/mytool/tools.py, 14 tools",
+   "triggers": 3,
+   "runs": 3,
+   "visible": [
+    true,
+    true,
+    true
+   ],
+   "timeouts": 0,
+   "first_tools": [
+    [
+     "Skill"
+    ],
+    [
+     "Skill"
+    ],
+    [
+     "Skill"
+    ]
+   ]
+  },
+  {
+   "id": "p09",
+   "split": "train",
+   "should_trigger": true,
+   "query": "we want a new backend for the AF MCP platform that exposes our group's EOS quota checker. before I write it, what conventions does the gateway expect for tool names, the service prefix, and error results?",
+   "triggers": 3,
+   "runs": 3,
+   "visible": [
+    true,
+    true,
+    true
+   ],
+   "timeouts": 0,
+   "first_tools": [
+    [
+     "Skill"
+    ],
+    [
+     "Skill"
+    ],
+    [
+     "Skill"
+    ]
+   ]
+  },
+  {
+   "id": "p10",
+   "split": "train",
+   "should_trigger": true,
+   "query": "run the mechanical audit (audit_tools.py) against http://localhost:8000/mcp with prefix jhub and summarize what fails",
+   "triggers": 3,
+   "runs": 3,
+   "visible": [
+    true,
+    true,
+    true
+   ],
+   "timeouts": 0,
+   "first_tools": [
+    [
+     "Skill"
+    ],
+    [
+     "Skill"
+    ],
+    [
+     "Skill"
+    ]
+   ]
+  },
+  {
+   "id": "p11",
+   "split": "train",
+   "should_trigger": true,
+   "query": "is my MCP server ready to register with the af-mcp-platform broker? the tools are named get_jobs, submit and cancel with no prefix, written with fastmcp",
+   "triggers": 3,
+   "runs": 3,
+   "visible": [
+    true,
+    true,
+    true
+   ],
+   "timeouts": 0,
+   "first_tools": [
+    [
+     "Skill"
+    ],
+    [
+     "Skill"
+    ],
+    [
+     "Skill"
+    ]
+   ]
+  },
+  {
+   "id": "p12",
+   "split": "test",
+   "should_trigger": true,
+   "query": "our analysis facility team is standing up an MCP server for the Kubernetes job queue. it forwards the incoming Authorization header straight to the downstream API. is that ok behind the broker, and what else should we check?",
+   "triggers": 3,
+   "runs": 3,
+   "visible": [
+    true,
+    true,
+    true
+   ],
+   "timeouts": 0,
+   "first_tools": [
+    [
+     "Skill"
+    ],
+    [
+     "Skill"
+    ],
+    [
+     "Skill"
+    ]
+   ]
+  },
+  {
+   "id": "p13",
+   "split": "train",
+   "should_trigger": true,
+   "query": "should we build an MCP server for our cutflow database? assistants would hit it constantly. look at the repo and tell me what it would need to meet the AF platform's rules for backends",
+   "triggers": 3,
+   "runs": 3,
+   "visible": [
+    true,
+    true,
+    true
+   ],
+   "timeouts": 0,
+   "first_tools": [
+    [
+     "Skill"
+    ],
+    [
+     "Skill"
+    ],
+    [
+     "Skill"
+    ]
+   ]
+  },
+  {
+   "id": "p14",
+   "split": "test",
+   "should_trigger": true,
+   "query": "someone opened a PR adding a list_all_jobs tool to condor-mcp with no limit parameter and a plain-string error return. does that break the af-mcp-platform guidelines for backends?",
+   "triggers": 3,
+   "runs": 3,
+   "visible": [
+    true,
+    true,
+    true
+   ],
+   "timeouts": 0,
+   "first_tools": [
+    [
+     "Skill"
+    ],
+    [
+     "Skill"
+    ],
+    [
+     "Skill"
+    ]
+   ]
+  },
+  {
+   "id": "n01",
+   "split": "train",
+   "should_trigger": false,
+   "query": "what's the difference between the stdio and streamable HTTP transports in MCP, and which should I use for a local-only tool?",
+   "triggers": 0,
+   "runs": 3,
+   "visible": [
+    true,
+    true,
+    true
+   ],
+   "timeouts": 0,
+   "first_tools": [
+    [],
+    [],
+    []
+   ]
+  },
+  {
+   "id": "n02",
+   "split": "train",
+   "should_trigger": false,
+   "query": "add a /v1/services/{name}/health endpoint to the broker in broker/src/af_mcp_broker/app.py that returns the cached credential status for the caller",
+   "triggers": 0,
+   "runs": 3,
+   "visible": [
+    true,
+    true,
+    true
+   ],
+   "timeouts": 0,
+   "first_tools": [
+    [
+     "Read",
+     "Glob",
+     "Glob"
+    ],
+    [
+     "Read",
+     "Glob",
+     "Glob"
+    ],
+    [
+     "Read",
+     "Glob",
+     "Glob"
+    ]
+   ]
+  },
+  {
+   "id": "n03",
+   "split": "test",
+   "should_trigger": false,
+   "query": "my rucio download keeps failing with 'RSE not found' for scope user.gstark, how do I debug this? I'm on lxplus with a valid proxy",
+   "triggers": 0,
+   "runs": 3,
+   "visible": [
+    true,
+    true,
+    true
+   ],
+   "timeouts": 0,
+   "first_tools": [
+    [],
+    [],
+    []
+   ]
+  },
+  {
+   "id": "n04",
+   "split": "train",
+   "should_trigger": false,
+   "query": "build me a FastAPI REST service for tracking condor job submissions, with SQLAlchemy models and pydantic schemas, plus a pytest suite",
+   "triggers": 0,
+   "runs": 3,
+   "visible": [
+    true,
+    true,
+    true
+   ],
+   "timeouts": 0,
+   "first_tools": [
+    [
+     "Bash",
+     "ToolSearch"
+    ],
+    [
+     "Write",
+     "Write",
+     "Write"
+    ],
+    [
+     "Write",
+     "Write",
+     "Write"
+    ]
+   ]
+  },
+  {
+   "id": "n05",
+   "split": "test",
+   "should_trigger": false,
+   "query": "write a small MCP server in python with fastmcp that exposes one tool to roll dice, I just want to demo it to my kid on my laptop over stdio",
+   "triggers": 0,
+   "runs": 3,
+   "visible": [
+    true,
+    true,
+    true
+   ],
+   "timeouts": 0,
+   "first_tools": [
+    [
+     "Write"
+    ],
+    [
+     "Write"
+    ],
+    [
+     "Write"
+    ]
+   ]
+  },
+  {
+   "id": "n06",
+   "split": "train",
+   "should_trigger": false,
+   "query": "the keycloak token lookup in broker/src/af_mcp_broker/credentials/oidc.py returns invalid_grant for the atlas-oidc idp after the user relinks their CERN account. help me debug",
+   "triggers": 0,
+   "runs": 3,
+   "visible": [
+    true,
+    true,
+    true
+   ],
+   "timeouts": 0,
+   "first_tools": [
+    [
+     "Glob",
+     "Grep",
+     "Glob"
+    ],
+    [
+     "Glob",
+     "Glob"
+    ],
+    [
+     "Glob",
+     "Grep",
+     "Glob"
+    ]
+   ]
+  },
+  {
+   "id": "n07",
+   "split": "test",
+   "should_trigger": false,
+   "query": "add a Helm value to charts/af-mcp-platform for the metrics port and update the chart tests and values.schema.json to match",
+   "triggers": 0,
+   "runs": 3,
+   "visible": [
+    true,
+    true,
+    true
+   ],
+   "timeouts": 0,
+   "first_tools": [
+    [
+     "Glob",
+     "Glob",
+     "Bash"
+    ],
+    [
+     "Glob",
+     "Glob",
+     "Bash"
+    ],
+    [
+     "Glob",
+     "Glob",
+     "Bash"
+    ]
+   ]
+  },
+  {
+   "id": "n08",
+   "split": "train",
+   "should_trigger": false,
+   "query": "how do I configure Claude Desktop to connect to a remote MCP server that needs an OAuth login?",
+   "triggers": 0,
+   "runs": 3,
+   "visible": [
+    true,
+    true,
+    true
+   ],
+   "timeouts": 0,
+   "first_tools": [
+    [],
+    [],
+    []
+   ]
+  },
+  {
+   "id": "n09",
+   "split": "train",
+   "should_trigger": false,
+   "query": "write pytest unit tests for PrincipalCache in the broker covering expiry, refresh and a directory outage",
+   "triggers": 0,
+   "runs": 3,
+   "visible": [
+    true,
+    true,
+    true
+   ],
+   "timeouts": 0,
+   "first_tools": [
+    [
+     "Grep",
+     "Glob",
+     "Read"
+    ],
+    [
+     "Grep",
+     "Glob",
+     "Read"
+    ],
+    [
+     "Grep",
+     "Glob",
+     "Read"
+    ]
+   ]
+  },
+  {
+   "id": "n10",
+   "split": "test",
+   "should_trigger": false,
+   "query": "review my Go HTTP handler in cmd/api/main.go for race conditions and missing context cancellation",
+   "triggers": 0,
+   "runs": 3,
+   "visible": [
+    true,
+    true,
+    true
+   ],
+   "timeouts": 0,
+   "first_tools": [
+    [
+     "Read",
+     "Glob"
+    ],
+    [
+     "Read",
+     "Glob"
+    ],
+    [
+     "Read",
+     "Glob"
+    ]
+   ]
+  },
+  {
+   "id": "c01",
+   "split": "train",
+   "should_trigger": true,
+   "source": "chatgpt",
+   "query": "I'm writing a new FastMCP server for Rucio that will be exposed through our AF gateway. Help me structure the tools and authentication.",
+   "triggers": 3,
+   "runs": 3,
+   "visible": [
+    true,
+    true,
+    true
+   ],
+   "timeouts": 0,
+   "first_tools": [
+    [
+     "Skill"
+    ],
+    [
+     "Skill"
+    ],
+    [
+     "Skill"
+    ]
+   ]
+  },
+  {
+   "id": "c03",
+   "split": "test",
+   "should_trigger": true,
+   "source": "chatgpt",
+   "query": "What changes do I need to make to my existing Python MCP server to work behind the credential broker?",
+   "triggers": 3,
+   "runs": 3,
+   "visible": [
+    true,
+    true,
+    true
+   ],
+   "timeouts": 0,
+   "first_tools": [
+    [
+     "Skill"
+    ],
+    [
+     "Skill"
+    ],
+    [
+     "Skill"
+    ]
+   ]
+  },
+  {
+   "id": "c04",
+   "split": "train",
+   "should_trigger": true,
+   "source": "chatgpt",
+   "query": "I'm adding three new tools to our HTCondor MCP backend. Check the tool names, schemas, annotations, and error handling.",
+   "triggers": 3,
+   "runs": 3,
+   "visible": [
+    true,
+    true,
+    true
+   ],
+   "timeouts": 0,
+   "first_tools": [
+    [
+     "Skill"
+    ],
+    [
+     "Skill"
+    ],
+    [
+     "Skill"
+    ]
+   ]
+  },
+  {
+   "id": "c07",
+   "split": "test",
+   "should_trigger": true,
+   "source": "chatgpt",
+   "query": "Our MCP server works locally, but requests through the AF gateway fail with 401. Can you help debug the integration?",
+   "triggers": 3,
+   "runs": 3,
+   "visible": [
+    true,
+    true,
+    true
+   ],
+   "timeouts": 0,
+   "first_tools": [
+    [
+     "Skill"
+    ],
+    [
+     "Skill"
+    ],
+    [
+     "Skill"
+    ]
+   ]
+  },
+  {
+   "id": "c08",
+   "split": "train",
+   "should_trigger": true,
+   "source": "chatgpt",
+   "query": "We're planning to expose JupyterLab functionality as an MCP service. What should the server architecture look like?",
+   "triggers": 2,
+   "runs": 3,
+   "visible": [
+    true,
+    true,
+    true
+   ],
+   "timeouts": 0,
+   "first_tools": [
+    [],
+    [
+     "Skill"
+    ],
+    [
+     "Skill"
+    ]
+   ]
+  },
+  {
+   "id": "c09",
+   "split": "test",
+   "should_trigger": true,
+   "source": "chatgpt",
+   "query": "Review our MCP tools for pagination, structuredContent, output limits, and recoverable errors before deployment.",
+   "triggers": 3,
+   "runs": 3,
+   "visible": [
+    true,
+    true,
+    true
+   ],
+   "timeouts": 0,
+   "first_tools": [
+    [
+     "Skill"
+    ],
+    [
+     "Skill"
+    ],
+    [
+     "Skill"
+    ]
+   ]
+  },
+  {
+   "id": "c10",
+   "split": "train",
+   "should_trigger": true,
+   "source": "chatgpt",
+   "query": "I have an existing FastMCP service. What do we need to do to make it available to ATLAS agents through the facility's MCP portal?",
+   "triggers": 3,
+   "runs": 3,
+   "visible": [
+    true,
+    true,
+    true
+   ],
+   "timeouts": 0,
+   "first_tools": [
+    [
+     "Skill"
+    ],
+    [
+     "Skill"
+    ],
+    [
+     "Skill"
+    ]
+   ]
+  },
+  {
+   "id": "cn1",
+   "split": "train",
+   "should_trigger": false,
+   "source": "chatgpt",
+   "query": "Explain how the Model Context Protocol works and how tools differ from resources and prompts.",
+   "triggers": 0,
+   "runs": 3,
+   "visible": [
+    true,
+    true,
+    true
+   ],
+   "timeouts": 0,
+   "first_tools": [
+    [],
+    [],
+    []
+   ]
+  },
+  {
+   "id": "cn2",
+   "split": "test",
+   "should_trigger": false,
+   "source": "chatgpt",
+   "query": "What's the difference between MCP and REST APIs?",
+   "triggers": 0,
+   "runs": 3,
+   "visible": [
+    true,
+    true,
+    true
+   ],
+   "timeouts": 0,
+   "first_tools": [
+    [],
+    [],
+    []
+   ]
+  },
+  {
+   "id": "cn3",
+   "split": "train",
+   "should_trigger": false,
+   "source": "chatgpt",
+   "query": "Help me configure OAuth authentication for a generic MCP server deployed on AWS.",
+   "triggers": 0,
+   "runs": 3,
+   "visible": [
+    true,
+    true,
+    true
+   ],
+   "timeouts": 0,
+   "first_tools": [
+    [],
+    [],
+    []
+   ]
+  },
+  {
+   "id": "cn4",
+   "split": "test",
+   "should_trigger": false,
+   "source": "chatgpt",
+   "query": "Review the error-handling architecture in our FastAPI application.",
+   "triggers": 0,
+   "runs": 3,
+   "visible": [
+    true,
+    true,
+    true
+   ],
+   "timeouts": 0,
+   "first_tools": [
+    [
+     "Grep",
+     "Glob",
+     "Read"
+    ],
+    [
+     "Grep",
+     "Glob",
+     "Read"
+    ],
+    [
+     "Grep",
+     "Glob",
+     "Read"
+    ]
+   ]
+  },
+  {
+   "id": "cn5",
+   "split": "train",
+   "should_trigger": false,
+   "source": "chatgpt",
+   "query": "How should I configure HTCondor authentication and token issuance on the Analysis Facility?",
+   "triggers": 0,
+   "runs": 3,
+   "visible": [
+    true,
+    true,
+    true
+   ],
+   "timeouts": 0,
+   "first_tools": [
+    [],
+    [],
+    []
+   ]
+  }
+ ]
+}

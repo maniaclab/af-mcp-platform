@@ -1,0 +1,20 @@
+{
+ "orig_e1_r1.md": {"passed": 12, "total": 13, "failed": ["11: some rows have non-file:line/non-tool locations (services.yaml not seen, whole server)"]},
+ "orig_e1_r2.md": {"passed": 12, "total": 13, "failed": ["11: some rows have non-file:line/non-tool locations (services.yaml not provided, all four, all, n/a)"]},
+ "orig_e1_r3.md": {"passed": 12, "total": 13, "failed": ["11: some rows have non-file:line/non-tool locations (services.yaml not provided, whole server, whole repo)"]},
+ "final_e1_r1.md": {"passed": 12, "total": 13, "failed": ["11: some rows have non-file:line/non-tool locations (services.yaml not provided, all tools, no tests in the directory)"]},
+ "final_e1_r2.md": {"passed": 12, "total": 13, "failed": ["11: some rows have non-file:line/non-tool locations (services.yaml entry not provided, all tools, not checked)"]},
+ "final_e1_r3.md": {"passed": 12, "total": 13, "failed": ["11: some rows have non-file:line/non-tool locations (All 4 tools, whole file)"]},
+ "orig_e2_r1.md": {"passed": 5, "total": 6, "failed": ["1: U6 / X1 (to confirm) row has Level MUST"]},
+ "orig_e2_r2.md": {"passed": 6, "total": 6, "failed": []},
+ "orig_e2_r3.md": {"passed": 6, "total": 6, "failed": []},
+ "final_e2_r1.md": {"passed": 5, "total": 6, "failed": ["1: U1, U4, U6 row has Level MUST"]},
+ "final_e2_r2.md": {"passed": 5, "total": 6, "failed": ["1: U1 / U6 (confirm) row has Level MUST"]},
+ "final_e2_r3.md": {"passed": 5, "total": 6, "failed": ["1: U1 / U4 / U6 (question) row has Level MUST"]},
+ "orig_e3_r1.md": {"passed": 11, "total": 11, "failed": []},
+ "orig_e3_r2.md": {"passed": 11, "total": 11, "failed": []},
+ "orig_e3_r3.md": {"passed": 11, "total": 11, "failed": []},
+ "final_e3_r1.md": {"passed": 11, "total": 11, "failed": []},
+ "final_e3_r2.md": {"passed": 11, "total": 11, "failed": []},
+ "final_e3_r3.md": {"passed": 11, "total": 11, "failed": []}
+}
