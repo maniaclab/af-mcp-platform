@@ -169,7 +169,7 @@ implemented today.
 | Per-(subject, service) tools/list cache and 30 s negative cache | `mcp/aggregator.py` | Invalidate-on-link/revoke reaches only the replica that handled it | Eventual, bounded by the TTL | Fail open (serve from the local cache) | 3 |
 | Caller list-failure records | `mcp/registry.py` (`_caller_list_failures`) | Status differs by replica until each re-lists | Eventual | Fail open | 3 |
 | Admin lint tables (annotation mismatches, tool-mapping drift) | `mcp/registry.py` | Each replica reports only what it has observed | Eventual | Compute on demand instead of storing | 4 |
-| MCP OAuth authorization codes | `mcp_auth_codes.py` | A redeem on another replica fails | Strong, single use | Out of scope here: being made stateless separately | n/a |
+| MCP OAuth authorization codes | `mcp_auth_codes.py` | Codes are self-contained (Fernet, `BROKER_STATE_KEY`), so any replica opens them; the single-use marker is per replica, so a replay on another replica succeeds | Strong, single use: one `mcp_auth_code:<id>` counter per code | Redemption is refused with `invalid_grant` (fail closed); the code is not consumed, so the client retries or restarts the flow | 1 (done) |
 | Revocation, credentials, principal cache, credmon lease | Vault | Already shared | n/a | n/a | n/a |
 | Usage, maintenance mode | Postgres | Already shared | n/a | n/a | n/a |
 
@@ -179,6 +179,13 @@ store, so an outage never makes the limiter weaker than the operator already
 accepted by being unable to reach it, and it never turns a store outage into
 a loss of x509 unlock for every user. Caches always fail open: a stale or
 missing entry costs one extra backend call, never correctness.
+
+MCP authorization code failure policy: the opposite of the limiter. A
+per-replica fallback would let a replayed code redeem once on each replica,
+and RFC 6749 section 4.1.2 requires a code to be single use, so when the
+store is unreachable `/v1/oauth/token` answers `invalid_grant` and logs
+`mcp_oauth.token_refused_shared_state_unavailable`. The bootstrap is a
+one-shot the client can restart, so refusing costs one retry.
 
 ---
 

@@ -27,20 +27,22 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlparse
 
 import httpx
+import pytest
+import structlog
 from cryptography.fernet import Fernet
+from structlog.testing import capture_logs
 
+from af_mcp_broker.api import mcp_oauth
 from af_mcp_broker.api.mcp_oauth import (
     _keycloak_authorization_endpoint,
     _keycloak_token_endpoint,
 )
 from af_mcp_broker.config import Settings
-from af_mcp_broker.mcp_auth_codes import McpAuthCodeRecord, McpAuthCodeStore
+from af_mcp_broker.mcp_auth_codes import McpAuthCodeRecord
 from af_mcp_broker.oauth_state import build_mcp_authorize_state, generate_pkce_pair
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-
-    import pytest
 
     from tests.conftest import RsaKey
 
@@ -51,6 +53,7 @@ LOGIN_CLIENT_ID = "mcp-login-client"
 LOGIN_CLIENT_SECRET = "mcp-login-secret"
 MCP_CLIENT_ID = "https://93.184.216.34/.well-known/oauth-client"
 MCP_REDIRECT_URI = "http://localhost:54321/callback"
+MCP_VERIFIER, MCP_CHALLENGE = generate_pkce_pair()
 # Settings.oidc_audience's default -- the resource-server audience the
 # bootstrap callback verifies the login exchange's access token against
 # (issue #245), same as conftest's AUDIENCE.
@@ -530,8 +533,8 @@ def _assert_bootstrap_denied(callback_resp: Any, client: Any) -> None:
     assert query["error"] == ["access_denied"]
     assert query["state"] == ["client-state-1"]
     assert "code" not in query
-    # No auth code stored means no PAT can ever be redeemed from this login.
-    assert client.app.state.mcp_auth_code_store._entries == {}
+    # No auth code issued means no PAT can ever be redeemed from this login
+    # (the redirect carries no "code" -- asserted above).
     set_cookie = callback_resp.headers.get("set-cookie", "")
     assert "mcp_oauth_state_nonce=" in set_cookie
     assert "Max-Age=0" in set_cookie
@@ -827,19 +830,148 @@ def test_token_rejects_pkce_mismatch(
     assert resp.json()["error"] == "invalid_grant"
 
 
-def test_token_rejects_reused_code() -> None:
-    store = McpAuthCodeStore()
-    code = store.put(
+def _token_request(client: Any, code: str, **overrides: str) -> Any:
+    data = {
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": MCP_REDIRECT_URI,
+        "client_id": MCP_CLIENT_ID,
+        "code_verifier": MCP_VERIFIER,
+    }
+    data.update(overrides)
+    return client.post("/v1/oauth/token", data=data)
+
+
+def _bootstrap_code(client: Any) -> str:
+    return client.app.state.mcp_auth_code_store.put(
         McpAuthCodeRecord(
             principal_id="sub-1",
             client_id=MCP_CLIENT_ID,
             redirect_uri=MCP_REDIRECT_URI,
-            code_challenge="c",
+            code_challenge=MCP_CHALLENGE,
             client_name=None,
         )
     )
-    assert store.consume(code) is not None
-    assert store.consume(code) is None
+
+
+def test_token_redeems_valid_code_once(
+    monkeypatch: pytest.MonkeyPatch, app_client_factory: Callable[..., Any]
+) -> None:
+    _configure_env(monkeypatch, Fernet.generate_key().decode())
+
+    with app_client_factory() as (client, _):
+        code = _bootstrap_code(client)
+        first = _token_request(client, code)
+        replay = _token_request(client, code)
+
+    assert first.status_code == 200, first.text
+    assert first.json()["access_token"].startswith("mcp_pat_")
+    assert replay.status_code == 400
+    assert replay.json() == {"error": "invalid_grant"}
+
+
+@pytest.mark.parametrize(
+    "mismatch",
+    [
+        {"client_id": "https://other.example/.well-known/cimd"},
+        {"redirect_uri": "http://localhost:1/other"},
+    ],
+    ids=["client_id", "redirect_uri"],
+)
+def test_token_rejects_binding_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+    app_client_factory: Callable[..., Any],
+    mismatch: dict[str, str],
+) -> None:
+    _configure_env(monkeypatch, Fernet.generate_key().decode())
+
+    with app_client_factory() as (client, _):
+        resp = _token_request(client, _bootstrap_code(client), **mismatch)
+
+    assert resp.status_code == 400
+    assert resp.json() == {"error": "invalid_grant"}
+
+
+def test_token_rejects_garbage_and_tampered_codes_identically(
+    monkeypatch: pytest.MonkeyPatch, app_client_factory: Callable[..., Any]
+) -> None:
+    _configure_env(monkeypatch, Fernet.generate_key().decode())
+
+    with app_client_factory() as (client, _):
+        code = _bootstrap_code(client)
+        middle = len(code) // 2
+        flipped = "A" if code[middle] != "A" else "B"
+        tampered = code[:middle] + flipped + code[middle + 1 :]
+        responses = [_token_request(client, c) for c in ("never-issued", tampered)]
+
+    assert [(r.status_code, r.json()) for r in responses] == [
+        (400, {"error": "invalid_grant"})
+    ] * 2
+
+
+def test_token_code_issued_on_one_replica_redeems_on_another_once(
+    monkeypatch: pytest.MonkeyPatch,
+    app_client_factory: Callable[..., Any],
+    shared_state_url: str,
+) -> None:
+    """Two app instances share only configuration and the store."""
+    _configure_env(monkeypatch, Fernet.generate_key().decode())
+    monkeypatch.setenv("SHARED_STATE_URL", shared_state_url)
+
+    with app_client_factory() as (replica_a, _):
+        code = _bootstrap_code(replica_a)
+
+    with app_client_factory() as (replica_b, _):
+        first = _token_request(replica_b, code)
+        replay = _token_request(replica_b, code)
+
+    assert first.status_code == 200, first.text
+    assert replay.status_code == 400
+    assert replay.json() == {"error": "invalid_grant"}
+
+
+def test_token_replay_on_issuing_replica_is_rejected_after_redeem_elsewhere(
+    monkeypatch: pytest.MonkeyPatch,
+    app_client_factory: Callable[..., Any],
+    shared_state_url: str,
+) -> None:
+    _configure_env(monkeypatch, Fernet.generate_key().decode())
+    monkeypatch.setenv("SHARED_STATE_URL", shared_state_url)
+
+    with app_client_factory() as (replica_a, _):
+        code = _bootstrap_code(replica_a)
+        with app_client_factory() as (replica_b, _):
+            assert _token_request(replica_b, code).status_code == 200
+        replay = _token_request(replica_a, code)
+
+    assert replay.status_code == 400
+    assert replay.json() == {"error": "invalid_grant"}
+
+
+def test_token_refuses_redemption_when_shared_state_is_down(
+    monkeypatch: pytest.MonkeyPatch,
+    app_client_factory: Callable[..., Any],
+    unreachable_shared_state_url: str,
+) -> None:
+    _configure_env(monkeypatch, Fernet.generate_key().decode())
+    monkeypatch.setenv("SHARED_STATE_URL", unreachable_shared_state_url)
+    # The booted app configures structlog with cache_logger_on_first_use, which
+    # would pin the module logger past capture_logs; use a throwaway one.
+    monkeypatch.setattr(mcp_oauth, "log", structlog.get_logger(mcp_oauth.__name__))
+
+    with app_client_factory() as (client, _):
+        code = _bootstrap_code(client)
+        with capture_logs() as logs:
+            resp = _token_request(client, code)
+
+    assert resp.status_code == 400
+    assert resp.json()["error"] == "invalid_grant"
+    assert "access_token" not in resp.json()
+    assert any(
+        entry["event"] == "mcp_oauth.token_refused_shared_state_unavailable"
+        and entry["log_level"] == "error"
+        for entry in logs
+    )
 
 
 def test_keycloak_endpoints_split_front_and_back_channel() -> None:

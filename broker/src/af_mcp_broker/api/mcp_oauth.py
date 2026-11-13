@@ -81,6 +81,7 @@ from af_mcp_broker.oauth_state import (
     generate_pkce_pair,
 )
 from af_mcp_broker.pat import mint_pat
+from af_mcp_broker.shared_state import SharedStateUnavailableError
 from af_mcp_broker.token_registry import (
     DuplicateNameError,
     TokenRecord,
@@ -536,7 +537,22 @@ async def token(
             {"error": "unsupported_grant_type"}, status_code=status.HTTP_400_BAD_REQUEST
         )
 
-    record = _auth_code_store(request).consume(code)
+    try:
+        record = await _auth_code_store(request).consume(code)
+    except SharedStateUnavailableError:
+        # Fail closed: without the shared store a replayed code could redeem
+        # on a second replica, and RFC 6749 §4.1.2 requires single use.
+        # invalid_grant is the only RFC 6749 §5.2 error that fits; the code is
+        # not consumed, so the client may retry or restart the flow.
+        log.exception("mcp_oauth.token_refused_shared_state_unavailable")
+        return JSONResponse(
+            {
+                "error": "invalid_grant",
+                "error_description": "authorization code could not be verified; "
+                "restart the authorization flow",
+            },
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
     if record is None:
         return JSONResponse(
             {"error": "invalid_grant"}, status_code=status.HTTP_400_BAD_REQUEST

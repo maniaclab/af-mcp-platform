@@ -887,12 +887,20 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
 
     # --- MCP OAuth discovery bootstrap (issue #140): short-lived, single-use
     # authorization codes minted by the Keycloak-login callback and redeemed
-    # at /v1/oauth/token -- see mcp_auth_codes.py's module docstring for why
-    # this is in-process rather than Vault-backed. Built unconditionally
-    # (like pat_last_used_tracker in identity_mw.py) since it has no external
-    # dependency; api/mcp_oauth.py's routes 503 on their own when
-    # keycloak_login_client_id is unset, so an unused store here is harmless.
-    mcp_auth_code_store = McpAuthCodeStore()
+    # at /v1/oauth/token. Codes are self-contained under the same Fernet
+    # cipher as the rest of the flow's state, and single use is enforced
+    # through the shared store -- see mcp_auth_codes.py's module docstring.
+    # None whenever the cipher is (api/mcp_oauth.py's routes 503 on their own
+    # then).
+    mcp_auth_code_store = (
+        McpAuthCodeStore(
+            oauth21_state_cipher,
+            shared_state,
+            issuer=settings.oauth21_effective_state_issuer,
+        )
+        if oauth21_state_cipher is not None
+        else None
+    )
 
     # --- Tokens: durable registry backing the manual bearer-token bootstrap
     # flow (POST/GET/DELETE /v1/tokens, issue #24), Vault/OpenBao-backed for
