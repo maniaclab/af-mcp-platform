@@ -7,6 +7,7 @@
  * tokenStatus) so they're trivially unit-testable -- the caller supplies
  * `now` explicitly rather than this module reading the clock itself.
  */
+import { permissionLabel } from './permissionLabel';
 
 export type TokenStatus = 'active' | 'revoked' | 'expired';
 
@@ -111,9 +112,20 @@ export function truncateNote(
  * non-null (possibly empty) array means a permission PAT scoped to at
  * most those permission names -- sorted for a stable, comparison-friendly
  * display regardless of what order the broker happened to return them in.
+ * Names are shown as permissionLabel() labels; callers keep the raw
+ * identifiers in a `title`.
  */
 export function permissionGrantLabel(permissionGrant: string[] | null): string {
   if (permissionGrant === null) return 'Full account access';
   if (permissionGrant.length === 0) return 'No permissions';
+  return [...permissionGrant].sort().map(permissionLabel).join(', ');
+}
+
+/**
+ * The raw identifiers behind permissionGrantLabel(), sorted the same way, for
+ * a `title`; undefined when the token carries no permission list.
+ */
+export function permissionGrantIdentifiers(permissionGrant: string[] | null): string | undefined {
+  if (permissionGrant === null || permissionGrant.length === 0) return undefined;
   return [...permissionGrant].sort().join(', ');
 }

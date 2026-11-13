@@ -277,8 +277,10 @@ describe('permission badge', () => {
 
     const badge = wrapper.find('.bc__cap-badge');
     expect(badge.exists()).toBe(true);
-    expect(badge.text()).toBe('read_data');
-    expect(badge.attributes('aria-label')).toBe('Permission: read_data');
+    expect(badge.text()).toBe('Read data');
+    expect(badge.attributes('aria-label')).toBe('Permission: Read data');
+    // The raw identifier stays discoverable in the tooltip.
+    expect(wrapper.get('[role="tooltip"] code').text()).toBe('read_data');
     expect(wrapper.find('.bc__cap-badge--mixed').exists()).toBe(false);
   });
 

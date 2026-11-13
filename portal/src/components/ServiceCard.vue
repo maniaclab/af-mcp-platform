@@ -4,6 +4,7 @@ import { Eye, Pencil } from '@lucide/vue';
 import { fetchServerTools } from '../lib/api';
 import type { CatalogServer } from '../lib/api';
 import type { PoweredBy } from '../lib/catalog';
+import { permissionLabel } from '../lib/permissionLabel';
 import { resolveServiceStatus, resolvePoweredByLinked } from '../lib/serviceStatus';
 import type { StatusSeverity } from '../lib/serviceStatus';
 import { resolveToolListing, toolCountLabel } from '../lib/serverTools';
@@ -158,12 +159,17 @@ const toolsView = computed(() =>
             type="button"
             class="badge bc__tag bc__cap-badge"
             data-variant="outline"
-            :aria-label="`Permission: ${server.permission}`"
+            :aria-label="`Permission: ${permissionLabel(server.permission)}`"
             :aria-describedby="`bc-cap-${server.name}`"
           >
-            {{ server.permission }}
+            {{ permissionLabel(server.permission) }}
           </button>
-          <template #tooltip>Requires permission: {{ server.permission }}</template>
+          <template #tooltip
+            >Requires permission: {{ permissionLabel(server.permission) }} (<code>{{
+              server.permission
+            }}</code
+            >)</template
+          >
         </PopoverTooltip>
 
         <!-- The builtin af-mcp entry (issue #240) has no per-user credential

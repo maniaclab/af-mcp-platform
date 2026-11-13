@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import type { CatalogTool } from '../lib/api';
+import { permissionLabel } from '../lib/permissionLabel';
 import { parseToolDescription } from '../lib/toolDescription';
 import { Eye, Pencil } from '@lucide/vue';
 import PopoverTooltip from './PopoverTooltip.vue';
@@ -50,7 +51,9 @@ function toggleExpanded(name: string): void {
 // read/write tag's own row -- same "__none__" convention CatalogServer.
 // permission uses, just resolved per tool here instead of per service.
 function permissionNote(permission: string): string {
-  return permission === '__none__' ? 'No specific permission required.' : `Requires ${permission}.`;
+  return permission === '__none__'
+    ? 'No specific permission required.'
+    : `Requires ${permissionLabel(permission)} (${permission}).`;
 }
 </script>
 

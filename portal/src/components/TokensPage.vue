@@ -29,11 +29,13 @@ import {
   NOTE_MAX_LENGTH,
   expiresIn,
   expiresSoon,
+  permissionGrantIdentifiers,
   permissionGrantLabel,
   shortLookupId,
   tokenStatus,
   truncateNote,
 } from '../lib/tokenDisplay';
+import { permissionLabel } from '../lib/permissionLabel';
 import {
   claudeMcpAddSnippet,
   curlMintSnippet,
@@ -483,7 +485,12 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
                     :label="statusLabel[tokenStatus(row)]"
                   />
                 </td>
-                <td class="af-sub tp__scope">{{ permissionGrantLabel(row.permission_grant) }}</td>
+                <td
+                  class="af-sub tp__scope"
+                  :title="permissionGrantIdentifiers(row.permission_grant)"
+                >
+                  {{ permissionGrantLabel(row.permission_grant) }}
+                </td>
                 <td
                   class="af-sub"
                   :title="row.expires_at ? formatExact(row.expires_at) : 'Never expires'"
@@ -678,7 +685,7 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
                       toggleSelectedPermission(cap, ($event.target as HTMLInputElement).checked)
                     "
                   />
-                  <label :for="`tp-perm-${cap}`">{{ cap }}</label>
+                  <label :for="`tp-perm-${cap}`" :title="cap">{{ permissionLabel(cap) }}</label>
                 </div>
               </fieldset>
             </div>
@@ -738,7 +745,9 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
               <dd>{{ mintedToken.note }}</dd>
             </template>
             <dt>Scope</dt>
-            <dd>{{ permissionGrantLabel(mintedToken.permission_grant) }}</dd>
+            <dd :title="permissionGrantIdentifiers(mintedToken.permission_grant)">
+              {{ permissionGrantLabel(mintedToken.permission_grant) }}
+            </dd>
             <dt>Expires</dt>
             <dd>{{ mintedToken.expires_at ? formatExact(mintedToken.expires_at) : 'Never' }}</dd>
           </dl>

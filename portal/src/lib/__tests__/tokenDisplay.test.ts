@@ -5,6 +5,7 @@ import {
   expiresIn,
   expiresSoon,
   soonestExpiringToken,
+  permissionGrantIdentifiers,
   permissionGrantLabel,
   shortLookupId,
   tokenStatus,
@@ -107,11 +108,11 @@ describe('permissionGrantLabel', () => {
   });
 
   it('describes a permission PAT scoped to one permission', () => {
-    expect(permissionGrantLabel(['read_data'])).toBe('read_data');
+    expect(permissionGrantLabel(['read_data'])).toBe('Read data');
   });
 
   it('sorts multiple permissions for a stable display order', () => {
-    expect(permissionGrantLabel(['submit_jobs', 'read_data'])).toBe('read_data, submit_jobs');
+    expect(permissionGrantLabel(['submit_jobs', 'read_data'])).toBe('Read data, Submit jobs');
   });
 
   it('describes an empty (but non-null) grant distinctly from an identity PAT', () => {
@@ -172,5 +173,16 @@ describe('soonestExpiringToken', () => {
   it('is null when no active token expires', () => {
     expect(soonestExpiringToken([row('never', null)], NOW)).toBeNull();
     expect(soonestExpiringToken([], NOW)).toBeNull();
+  });
+});
+
+describe('permissionGrantIdentifiers', () => {
+  it('lists the raw identifiers in the same sorted order as the label', () => {
+    expect(permissionGrantIdentifiers(['submit_jobs', 'read_data'])).toBe('read_data, submit_jobs');
+  });
+
+  it('is undefined when there is no permission list to show', () => {
+    expect(permissionGrantIdentifiers(null)).toBeUndefined();
+    expect(permissionGrantIdentifiers([])).toBeUndefined();
   });
 });

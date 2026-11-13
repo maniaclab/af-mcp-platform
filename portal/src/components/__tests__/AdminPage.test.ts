@@ -406,12 +406,13 @@ describe('AdminPage annotation mismatches', () => {
     expect(text).toContain('rucio');
     expect(text).toContain('rucio_list_dids');
     expect(text).toContain('readOnlyHint=false');
-    expect(text).toContain('read_data');
+    expect(text).toContain('Read data');
+    expect(wrapper.find('td[title="read_data"]').exists()).toBe(true);
   });
 
   it.each([
     ['target_action_types', 'target_action_types glob override'],
-    ['permission', 'permission read_data'],
+    ['permission', 'permission Read data'],
     ['default', 'default fallback'],
   ])('describes how %s was resolved', async (via, label) => {
     vi.mocked(fetchAnnotationMismatches).mockResolvedValue([{ ...MISMATCH, resolved_via: via }]);

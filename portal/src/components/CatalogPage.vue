@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue';
 import { fetchCatalog, fetchIdentities } from '../lib/api';
 import type { CatalogServer, IdentityProvider } from '../lib/api';
 import { resolvePoweredBy } from '../lib/catalog';
+import { permissionLabel } from '../lib/permissionLabel';
 import { resolveServicesMessage, sortServices } from '../lib/serviceStatus';
 import { useLoadState } from '../lib/useLoadState';
 import ServiceCard from './ServiceCard.vue';
@@ -46,7 +47,10 @@ const filteredServers = computed<CatalogServer[]>(() => {
         s.name.toLowerCase().includes(q) ||
         s.display_name.toLowerCase().includes(q) ||
         s.description.toLowerCase().includes(q) ||
-        (s.permission ?? '').toLowerCase().includes(q),
+        (s.permission ?? '').toLowerCase().includes(q) ||
+        permissionLabel(s.permission ?? '')
+          .toLowerCase()
+          .includes(q),
     );
   }
 

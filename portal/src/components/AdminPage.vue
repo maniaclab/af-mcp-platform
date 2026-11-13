@@ -37,6 +37,7 @@ import {
 } from '../lib/credmonStatus';
 import type { CredmonHealth } from '../lib/credmonStatus';
 import { maintenanceErrorMessage } from '../lib/maintenanceBanner';
+import { permissionLabel } from '../lib/permissionLabel';
 import { formatDateTime, formatRelative } from '../lib/relativeTime';
 import { useLoadState } from '../lib/useLoadState';
 import AsyncState from './ui/AsyncState.vue';
@@ -146,7 +147,7 @@ const mismatches = ref<AnnotationMismatch[]>([]);
 
 function resolvedViaLabel(m: AnnotationMismatch): string {
   if (m.resolved_via === 'target_action_types') return 'target_action_types glob override';
-  if (m.resolved_via === 'permission') return `permission ${m.permission}`;
+  if (m.resolved_via === 'permission') return `permission ${permissionLabel(m.permission)}`;
   return 'default fallback (read)';
 }
 
@@ -440,7 +441,7 @@ const driftBannerText = computed(() => {
                 <td>readOnlyHint={{ m.declared_read_only_hint }}</td>
                 <td>{{ m.resolved_action_type }}</td>
                 <td class="af-sub">{{ resolvedViaLabel(m) }}</td>
-                <td class="af-sub">{{ m.permission }}</td>
+                <td class="af-sub" :title="m.permission">{{ permissionLabel(m.permission) }}</td>
               </tr>
             </tbody>
           </table>
