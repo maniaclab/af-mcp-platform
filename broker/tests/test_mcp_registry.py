@@ -52,6 +52,30 @@ services:
     assert spec.apply_namespace is True
 
 
+@pytest.mark.parametrize("transport", ["sse", "websocket"])
+def test_load_rejects_unsupported_transport_naming_the_service(
+    tmp_path: Path, transport: str
+) -> None:
+    services_file = tmp_path / "services.yaml"
+    services_file.write_text(
+        f"""
+services:
+  - name: legacy_sse
+    prefix: legacy
+    url: "http://example.invalid/sse"
+    transport: {transport}
+    required_permission: __none__
+"""
+    )
+    registry = ServiceRegistry()
+    with pytest.raises(ValueError, match="legacy_sse") as excinfo:
+        registry.load(str(services_file))
+    message = str(excinfo.value)
+    assert f"transport '{transport}'" in message
+    assert "streamable HTTP" in message
+    assert "transport: http" in message
+
+
 def test_load_respects_apply_namespace_false(tmp_path: Path) -> None:
     services_file = tmp_path / "services.yaml"
     services_file.write_text(

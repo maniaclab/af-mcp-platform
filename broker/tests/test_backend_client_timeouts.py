@@ -13,14 +13,12 @@ from typing import Any
 
 import pytest
 from conftest import run_inprocess_asgi_app
-from fastmcp.client.transports import SSETransport, StreamableHttpTransport
 
 from af_mcp_broker.mcp.aggregator import _build_client
 from af_mcp_broker.mcp.registry import ServiceSpec
 
 _SERVICE_TIMEOUT_SECONDS = 1.0
-# Well past the service timeout, far below the 300 s SSE read default and the
-# unbounded keep-alive case, so a regression fails by deadline rather than by
+# Well past the service timeout, far below the unbounded keep-alive case, so a regression fails by deadline rather than by
 # hanging the suite.
 _MAX_CONNECT_SECONDS = 5.0
 
@@ -62,24 +60,21 @@ async def keepalive_only_backend(scope: Any, receive: Any, send: Any) -> None:
             return
 
 
-def _spec(url: str, transport: str) -> ServiceSpec:
+def _spec(url: str) -> ServiceSpec:
     return ServiceSpec(
         name="stalled",
         prefix="stalled",
         url=url,
-        transport=transport,
+        transport="http",
         required_permission="__none__",
         auth_type="none",
         timeout_seconds=_SERVICE_TIMEOUT_SECONDS,
     )
 
 
-async def _seconds_to_fail_connecting(
-    app: Any, transport_cls: type[SSETransport | StreamableHttpTransport]
-) -> float:
-    transport = "sse" if transport_cls is SSETransport else "http"
+async def _seconds_to_fail_connecting(app: Any) -> float:
     async with run_inprocess_asgi_app(app) as base_url:
-        client = _build_client(_spec(f"{base_url}/mcp", transport), transport_cls)
+        client = _build_client(_spec(f"{base_url}/mcp"))
         started = time.monotonic()
         try:
             async with asyncio.timeout(_MAX_CONNECT_SECONDS):
@@ -93,8 +88,6 @@ async def _seconds_to_fail_connecting(
 async def test_http_backend_that_only_sends_keepalives_fails_within_service_timeout() -> (
     None
 ):
-    elapsed = await _seconds_to_fail_connecting(
-        keepalive_only_backend, StreamableHttpTransport
-    )
+    elapsed = await _seconds_to_fail_connecting(keepalive_only_backend)
 
     assert elapsed < 2 * _SERVICE_TIMEOUT_SECONDS + 1

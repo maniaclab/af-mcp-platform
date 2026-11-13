@@ -12,7 +12,7 @@ import structlog
 from fastapi import HTTPException
 from fastmcp import FastMCP
 from fastmcp.client import Client
-from fastmcp.client.transports import SSETransport, StreamableHttpTransport
+from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.exceptions import McpError, ToolError
 from fastmcp.server.elicitation import (
     AcceptedElicitation,
@@ -477,21 +477,13 @@ def test_populate_aggregator_propagates_revoked_jti_cache(settings: Any) -> None
     assert identity_mw.revoked_jti_cache is cache
 
 
-@pytest.mark.parametrize(
-    ("transport", "expected_type"),
-    [("http", StreamableHttpTransport), ("sse", SSETransport)],
-)
-def test_client_factory_selects_transport_by_spec(
-    transport: str, expected_type: type, settings: Any
-) -> None:
+def test_client_factory_builds_streamable_http_transport(settings: Any) -> None:
     # auth_type="none" keeps this test focused on transport selection alone.
-    spec = _spec(
-        transport=transport, url="http://example.invalid/mcp", auth_type="none"
-    )
+    spec = _spec(url="http://example.invalid/mcp", auth_type="none")
     factory = _make_client_factory(spec, CredentialRegistry(), settings, _OPEN_POLICY)
     client = factory()
     assert isinstance(client, Client)
-    assert isinstance(client.transport, expected_type)
+    assert isinstance(client.transport, StreamableHttpTransport)
     # The security property this whole factory exists for: plain Client +
     # an explicit transport object never sets forward_incoming_headers,
     # unlike fastmcp's ProxyClient convenience wrapper (which this code
@@ -610,7 +602,7 @@ async def test_client_factory_bearer_injects_minted_token_not_inbound(
         client.transport.headers["Authorization"]
         != f"Bearer {principal.raw_token.get_secret_value()}"
     )
-    # See test_client_factory_selects_transport_by_spec for why this is
+    # See test_client_factory_builds_streamable_http_transport for why this is
     # _transport_options rather than a transport-level attribute in v4.
     assert client._transport_options is None
 
