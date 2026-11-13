@@ -89,6 +89,7 @@ if TYPE_CHECKING:
     from af_mcp_broker.maintenance import MaintenanceModeStore
     from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
     from af_mcp_broker.principal_cache import PrincipalCache
+    from af_mcp_broker.shared_state import SharedState
     from af_mcp_broker.token_registry import TokenRegistryBackend
 
 logger = structlog.get_logger(__name__)
@@ -1928,8 +1929,9 @@ def populate_aggregator(
     broker_token_issuer: BrokerTokenIssuer | None = None,
     maintenance_mode_store: MaintenanceModeStore | None = None,
     job_credentials: JobCredentialGuide | None = None,
+    shared_state: SharedState | None = None,
 ) -> None:
-    """Refresh an aggregator built by ``build_aggregator`` with a freshly loaded registry/settings/policy/credential_registry/pat_backend/principal_cache/identity_providers/identity_provider_configs/target_to_alias/maintenance_mode_store.
+    """Refresh an aggregator built by ``build_aggregator`` with a freshly loaded registry/settings/policy/credential_registry/pat_backend/principal_cache/identity_providers/identity_provider_configs/target_to_alias/maintenance_mode_store/shared_state.
 
     app.py's mount-time constraint means the aggregator's FastMCP instance
     and ASGI app must exist before SERVICES_FILE/POLICY_FILE/the credential
@@ -1955,6 +1957,8 @@ def populate_aggregator(
     entitlement_mw.policy = policy
     authorization_mw.registry = registry
     authorization_mw.policy = policy
+    if shared_state is not None:
+        authorization_mw.use_shared_state(shared_state)
     _register_services(
         mcp,
         registry,

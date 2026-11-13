@@ -6,31 +6,36 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from af_mcp_broker import shared_state
 from af_mcp_broker.authorization import (
     EntitlementPolicy,
     RateLimitRule,
     load_policy,
 )
 from af_mcp_broker.authorization.errors import ToolRateLimitError
-from af_mcp_broker.authorization.rate_limit import (
-    InMemoryWindowCounter,
-    WindowCount,
-    check_rate_limits,
-)
+from af_mcp_broker.authorization.rate_limit import check_rate_limits
 from af_mcp_broker.errors import BrokerError
+from af_mcp_broker.shared_state import InMemorySharedState, WindowCount
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 
 class _Clock:
-    """Settable monotonic clock injected into the counter."""
+    """Controllable replacement for ``time.monotonic``."""
 
     def __init__(self) -> None:
         self.now = 1000.0
 
     def __call__(self) -> float:
         return self.now
+
+
+@pytest.fixture
+def clock(monkeypatch: pytest.MonkeyPatch) -> _Clock:
+    fake = _Clock()
+    monkeypatch.setattr(shared_state.time, "monotonic", fake)
+    return fake
 
 
 def _write_policy(tmp_path: Path, body: str) -> str:
@@ -171,68 +176,20 @@ def test_rule_matching(
 
 
 # ---------------------------------------------------------------------------
-# Windowing (injected clock)
-# ---------------------------------------------------------------------------
-
-
-async def test_counter_counts_within_a_window() -> None:
-    counter = InMemoryWindowCounter(clock=_Clock())
-    counts = [(await counter.incr_window("k", 60)).count for _ in range(3)]
-    assert counts == [1, 2, 3]
-
-
-async def test_counter_window_opens_at_first_increment_and_is_not_extended() -> None:
-    clock = _Clock()
-    counter = InMemoryWindowCounter(clock=clock)
-    first = await counter.incr_window("k", 60)
-    assert first == WindowCount(count=1, ttl_seconds=60.0)
-    clock.now += 45
-    later = await counter.incr_window("k", 60)
-    assert later.count == 2
-    assert later.ttl_seconds == pytest.approx(15.0)
-
-
-async def test_counter_resets_once_the_window_closes() -> None:
-    clock = _Clock()
-    counter = InMemoryWindowCounter(clock=clock)
-    await counter.incr_window("k", 60)
-    await counter.incr_window("k", 60)
-    clock.now += 60
-    assert (await counter.incr_window("k", 60)) == WindowCount(1, 60.0)
-
-
-async def test_counter_keys_are_independent() -> None:
-    counter = InMemoryWindowCounter(clock=_Clock())
-    await counter.incr_window("a", 60)
-    assert (await counter.incr_window("b", 60)).count == 1
-
-
-async def test_counter_drops_expired_keys() -> None:
-    clock = _Clock()
-    counter = InMemoryWindowCounter(clock=clock)
-    for i in range(10):
-        await counter.incr_window(f"k{i}", 10)
-    clock.now += 3600
-    await counter.incr_window("fresh", 10)
-    assert counter.tracked_keys == 1
-
-
-# ---------------------------------------------------------------------------
 # Enforcement and precedence
 # ---------------------------------------------------------------------------
 
 
 async def test_no_rules_never_touches_the_counter() -> None:
-    class _Exploding(InMemoryWindowCounter):
+    class _Exploding(InMemorySharedState):
         async def incr_window(self, key: str, window_seconds: int) -> WindowCount:
             raise AssertionError("counter must not be used without rules")
 
     await check_rate_limits([], _Exploding(), "sub", "x_a", "read")
 
 
-async def test_calls_up_to_the_limit_pass_and_the_next_is_denied() -> None:
-    clock = _Clock()
-    counter = InMemoryWindowCounter(clock=clock)
+async def test_calls_up_to_the_limit_pass_and_the_next_is_denied(clock: _Clock) -> None:
+    counter = InMemorySharedState()
     rules = [RateLimitRule(2, 60, tool="x_*")]
     await check_rate_limits(rules, counter, "sub", "x_a", "read")
     await check_rate_limits(rules, counter, "sub", "x_a", "read")
@@ -245,9 +202,8 @@ async def test_calls_up_to_the_limit_pass_and_the_next_is_denied() -> None:
     assert isinstance(excinfo.value, BrokerError)
 
 
-async def test_allowed_again_after_the_window_closes() -> None:
-    clock = _Clock()
-    counter = InMemoryWindowCounter(clock=clock)
+async def test_allowed_again_after_the_window_closes(clock: _Clock) -> None:
+    counter = InMemorySharedState()
     rules = [RateLimitRule(1, 60, tool="x_*")]
     await check_rate_limits(rules, counter, "sub", "x_a", "read")
     with pytest.raises(ToolRateLimitError):
@@ -257,7 +213,7 @@ async def test_allowed_again_after_the_window_closes() -> None:
 
 
 async def test_counting_is_per_subject_never_global() -> None:
-    counter = InMemoryWindowCounter(clock=_Clock())
+    counter = InMemorySharedState()
     rules = [RateLimitRule(1, 60, tool="x_*")]
     await check_rate_limits(rules, counter, "alice", "x_a", "read")
     await check_rate_limits(rules, counter, "bob", "x_a", "read")
@@ -266,7 +222,7 @@ async def test_counting_is_per_subject_never_global() -> None:
 
 
 async def test_a_rule_counts_every_tool_it_matches_together() -> None:
-    counter = InMemoryWindowCounter(clock=_Clock())
+    counter = InMemorySharedState()
     rules = [RateLimitRule(2, 60, action_type="state_change")]
     await check_rate_limits(rules, counter, "sub", "x_a", "state_change")
     await check_rate_limits(rules, counter, "sub", "y_b", "state_change")
@@ -278,7 +234,7 @@ async def test_a_rule_counts_every_tool_it_matches_together() -> None:
 
 async def test_every_matching_rule_must_pass() -> None:
     """Precedence: all matching rules apply, the strictest one denies."""
-    counter = InMemoryWindowCounter(clock=_Clock())
+    counter = InMemorySharedState()
     rules = [
         RateLimitRule(100, 60, action_type="state_change"),
         RateLimitRule(1, 60, tool="condor_submit_*"),
@@ -294,8 +250,7 @@ async def test_every_matching_rule_must_pass() -> None:
 
 
 async def test_retry_after_is_the_longest_wait_among_exceeded_rules() -> None:
-    clock = _Clock()
-    counter = InMemoryWindowCounter(clock=clock)
+    counter = InMemorySharedState()
     rules = [
         RateLimitRule(1, 60, tool="x_*"),
         RateLimitRule(1, 3600, action_type="read"),
@@ -309,7 +264,7 @@ async def test_retry_after_is_the_longest_wait_among_exceeded_rules() -> None:
 
 
 async def test_rules_keep_separate_counters_even_with_identical_matching() -> None:
-    counter = InMemoryWindowCounter(clock=_Clock())
+    counter = InMemorySharedState()
     rules = [RateLimitRule(1, 60, tool="x_*"), RateLimitRule(5, 60, tool="x_*")]
     await check_rate_limits(rules, counter, "sub", "x_a", "read")
     with pytest.raises(ToolRateLimitError) as excinfo:

@@ -1048,6 +1048,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         broker_token_issuer=broker_token_issuer,
         maintenance_mode_store=maintenance_mode_store,
         job_credentials=job_credentials,
+        shared_state=shared_state,
     )
 
     # --- Audit: without init the module drops every record. Honor AUDIT_LOG_FILE.

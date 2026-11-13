@@ -20,11 +20,9 @@ from af_mcp_broker.authorization import (
     get_action_type,
 )
 from af_mcp_broker.authorization.errors import ToolRateLimitError
-from af_mcp_broker.authorization.rate_limit import (
-    InMemoryWindowCounter,
-    check_rate_limits,
-)
+from af_mcp_broker.authorization.rate_limit import check_rate_limits
 from af_mcp_broker.mcp.errors import ERROR_CLASS_TOOL_REPORTED, classify_backend_error
+from af_mcp_broker.shared_state import FallbackSharedState, InMemorySharedState
 from af_mcp_broker.tracing import (
     current_trace_id,
     get_tracer,
@@ -35,9 +33,9 @@ if TYPE_CHECKING:
     import mcp.types as mt
     from fastmcp.tools.base import ToolResult
 
-    from af_mcp_broker.authorization.rate_limit import WindowCounter
     from af_mcp_broker.identity import Principal
     from af_mcp_broker.mcp.registry import ServiceRegistry
+    from af_mcp_broker.shared_state import SharedState
 
 logger = structlog.get_logger(__name__)
 
@@ -132,15 +130,27 @@ class AuthorizationMiddleware(Middleware):
         self,
         registry: ServiceRegistry,
         policy: EntitlementPolicy,
-        counter: WindowCounter | None = None,
+        shared_state: SharedState | None = None,
     ) -> None:
         # Mutable on purpose: populate_aggregator() refreshes these in place
         # on every lifespan entry rather than constructing a new middleware
         # instance each time (mirrors EntitlementMiddleware).
         self.registry = registry
         self.policy = policy
-        # Backs policy.rate_limits. Per-replica until a shared store backs it.
-        self.counter = counter if counter is not None else InMemoryWindowCounter()
+        self.use_shared_state(shared_state or InMemorySharedState())
+
+    def use_shared_state(self, shared_state: SharedState) -> None:
+        """Back ``policy.rate_limits`` with *shared_state*.
+
+        Called again by populate_aggregator() once the lifespan has built the
+        store, as for registry and policy. While the store is unreachable
+        the budgets are counted per replica instead.
+        """
+        self.shared_state = FallbackSharedState(
+            shared_state,
+            component="tool_rate_limit",
+            effect="tool rate limits are per-replica until the store recovers",
+        )
 
     async def on_call_tool(
         self,
@@ -298,7 +308,7 @@ class AuthorizationMiddleware(Middleware):
             try:
                 await check_rate_limits(
                     self.policy.rate_limits,
-                    self.counter,
+                    self.shared_state,
                     principal.subject,
                     tool_name,
                     action_type,

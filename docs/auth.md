@@ -527,12 +527,20 @@ rate_limits:
   an empty `tool` or one with an unclosed `[`, an unknown key, or a rule
   with neither selector.
 
-**Replicas.** Counters live in each broker process, so with N replicas the
-effective limit is up to `limit x N`, depending on how a user's calls are
-spread across them. Counting is behind a small interface
-(`WindowCounter.incr_window`, the signature of the shared-state store's
-`incr_window`), so a shared backend can make the limit exact without any
-change to this configuration.
+**Replicas.** Counters live in the broker's shared state store
+(`SHARED_STATE_URL`; see [Replica consistency](architecture.md#replica-consistency-and-the-shared-state-store)),
+one counter per rule and principal under the key
+`tool-rate-limit:<rule index>:<subject>`, so with a store configured a limit
+is cluster-wide however a user's calls are spread across replicas. The
+counts are per replica only when no store is configured
+(`allowPerReplicaState` with more than one replica, or a single replica), in
+which case the effective limit is up to `limit x N` for N replicas, and
+while the store is unreachable: the broker then counts per replica, logs
+`tool_rate_limit.shared_state_unavailable`, and goes back to the store when
+it recovers. The limiter neither fails open nor refuses every call during an
+outage, the same policy as the x509 unlock limiter.
+Reordering `rate_limits` changes which counter each rule uses, so the
+affected budgets start over.
 
 ## AF Broker Identity Token (issue #162)
 

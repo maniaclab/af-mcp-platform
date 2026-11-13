@@ -18,9 +18,9 @@ from af_mcp_broker import metrics
 from af_mcp_broker.credentials.base import IssuedCredential
 from af_mcp_broker.credentials.errors import UnlockRateLimitError
 from af_mcp_broker.shared_state import (
+    FallbackSharedState,
     InMemorySharedState,
     SharedState,
-    SharedStateUnavailableError,
 )
 
 log = structlog.get_logger(__name__)
@@ -136,8 +136,11 @@ class CredentialCache:
         # Failed-unlock counters, keyed by uid (see unlock_failures_key) --
         # deliberately still uid-keyed, see this class's docstring. The
         # per-replica fallback is used only while the shared store is down.
-        self._shared_state = shared_state or InMemorySharedState()
-        self._fallback_state = InMemorySharedState()
+        self._shared_state = FallbackSharedState(
+            shared_state or InMemorySharedState(),
+            component="credential_cache",
+            effect="unlock limiter is per-replica until the store recovers",
+        )
         # (subject, target) -> asyncio.Lock, single-flighting concurrent
         # mints for the same key (see get_or_mint()). Never cleaned up, same
         # as the unlock counters above -- the key space is bounded by real
@@ -466,15 +469,7 @@ class CredentialCache:
         (see ``get()``) do not consume this budget.
         """
         key = unlock_failures_key(uid)
-        try:
-            window = await self._shared_state.incr_window(
-                key, self._unlock_window_seconds
-            )
-        except SharedStateUnavailableError as exc:
-            self._log_shared_state_unavailable(exc)
-            window = await self._fallback_state.incr_window(
-                key, self._unlock_window_seconds
-            )
+        window = await self._shared_state.incr_window(key, self._unlock_window_seconds)
         self._log.debug(
             "credential_cache.failed_unlock_recorded",
             uid=uid,
@@ -497,11 +492,7 @@ class CredentialCache:
         operation begins.
         """
         key = unlock_failures_key(uid)
-        try:
-            window = await self._shared_state.get_window(key)
-        except SharedStateUnavailableError as exc:
-            self._log_shared_state_unavailable(exc)
-            window = await self._fallback_state.get_window(key)
+        window = await self._shared_state.get_window(key)
         if window is None:
             return
         if window.count > self._max_failed_unlocks:
@@ -513,19 +504,7 @@ class CredentialCache:
             )
 
     async def _reset_failed_unlocks(self, uid: int) -> None:
-        key = unlock_failures_key(uid)
-        await self._fallback_state.delete(key)
-        try:
-            await self._shared_state.delete(key)
-        except SharedStateUnavailableError as exc:
-            self._log_shared_state_unavailable(exc)
-
-    def _log_shared_state_unavailable(self, exc: SharedStateUnavailableError) -> None:
-        self._log.warning(
-            "credential_cache.shared_state_unavailable",
-            error=str(exc),
-            effect="unlock limiter is per-replica until the store recovers",
-        )
+        await self._shared_state.delete(unlock_failures_key(uid))
 
     # ------------------------------------------------------------------
     # Background janitor
