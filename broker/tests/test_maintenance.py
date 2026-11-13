@@ -15,7 +15,7 @@ from af_mcp_broker.maintenance import (
     InMemoryMaintenanceModeStore,
     MaintenanceModeStore,
     MaintenanceState,
-    MaintenanceStateConflict,
+    MaintenanceStateConflictError,
     VaultMaintenanceModeStore,
     check_not_maintenance,
 )
@@ -209,7 +209,7 @@ async def test_vault_set_raises_conflict_on_concurrent_write(
 
     vault_kv.get = get_then_concurrent_write  # type: ignore[method-assign]
 
-    with pytest.raises(MaintenanceStateConflict):
+    with pytest.raises(MaintenanceStateConflictError):
         await store.set(
             MaintenanceState(
                 enabled=False, reason=None, enabled_by=None, enabled_at=None

@@ -446,7 +446,7 @@ VaultKV (auth, get/write_cas/list/delete_metadata)
 
 `VaultKV` is transport only — Kubernetes auth (with the re-authentication
 caching/safety-margin/single-flight-lock behavior), the four KV-v2 verbs,
-and error taxonomy (`VaultError`, `CasConflict`). It has no opinion on path
+and error taxonomy (`VaultError`, `CasConflictError`). It has no opinion on path
 layout, record shape, or retry policy: each consumer above owns its own KV
 path prefix, (de)serialization, and CAS retry loop. `app.py`'s lifespan
 constructs one `VaultKV` per process (one Kubernetes auth login, shared by
