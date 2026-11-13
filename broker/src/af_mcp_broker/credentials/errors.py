@@ -127,12 +127,12 @@ class ServiceXServiceMintError(BrokerError):
     """
 
 
-class ServiceXBadRefreshTokenError(BrokerError, ValueError):
+class ServiceXBadRefreshTokenError(BrokerError):
     """Raised when the service answered 400: ServiceX itself rejected the refresh token.
 
-    Subclasses ``ValueError`` for the same reason
-    ``VomsServiceBadPassphraseError`` does -- callers unlink the stored
-    refresh token on this (and only this), prompting a re-paste.
+    Callers unlink the stored refresh token on this (and only this),
+    prompting a re-paste -- the same distinction
+    ``VomsServiceBadPassphraseError`` draws for a bad Globus passphrase.
     """
 
     def __init__(self) -> None:
@@ -162,12 +162,10 @@ class VomsServicePreflightError(BrokerError):
     """
 
 
-class VomsServiceBadPassphraseError(BrokerError, ValueError):
+class VomsServiceBadPassphraseError(BrokerError):
     """Raised when the service answered 400: the Globus key passphrase was wrong.
 
-    Subclasses ``ValueError`` so existing bad-passphrase call sites (the
-    legacy mint path raises plain ``ValueError``) keep catching it; callers
-    count this — and only this — against the unlock rate limiter.
+    Callers count this — and only this — against the unlock rate limiter.
     """
 
     def __init__(self) -> None:
@@ -233,12 +231,11 @@ class PosixIdentityRequiredError(BrokerError):
         )
 
 
-class ProxyHarvestError(BrokerError, ValueError):
+class ProxyHarvestError(BrokerError):
     """Raised when a mint Job SUCCEEDED but its proxy could not be harvested from the pod log (truncated log, kubelet log-size limits, transient read issue).
 
     This is an infra failure, not a bad-passphrase signal, so callers
     must NOT count it against the passphrase rate limiter the way a genuine
-    Job failure is. Subclasses ``ValueError`` so existing ``except
-    ValueError`` call sites still catch it; callers that need to tell the two
-    apart (see ``_mint_kubernetes``) catch this first.
+    Job failure is. ``_mint_kubernetes`` catches it separately from the
+    ``ValueError`` a failed Job raises.
     """

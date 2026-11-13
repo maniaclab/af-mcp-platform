@@ -414,8 +414,9 @@ class HomeDirVomsBackend(X509Backend):
                 # against the rate limiter just like the local path does. A
                 # Job that SUCCEEDED but whose log couldn't be harvested is an
                 # infra failure, not a passphrase signal, so it must NOT count
-                # against that same rate limiter — check ProxyHarvestError
-                # (a ValueError subclass) before the general ValueError case.
+                # against that same rate limiter — ProxyHarvestError is
+                # re-raised untouched, only the ValueError a failed Job raises
+                # is counted.
                 try:
                     proxy_pem = await self._wait_for_job_and_harvest(
                         batch_v1, core_v1, job_name, principal

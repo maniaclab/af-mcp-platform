@@ -225,13 +225,6 @@ class TestMintFailures:
         with pytest.raises(VomsServiceBadPassphraseError):
             await _mint(client)
 
-    async def test_bad_passphrase_is_a_value_error(self, make_client) -> None:
-        """Existing ``except ValueError`` call sites (the legacy mint path's
-        bad-passphrase convention) must keep catching the new signal."""
-        client, _ = make_client(httpx.Response(400, json={"detail": "bad passphrase"}))
-        with pytest.raises(ValueError, match="passphrase"):
-            await _mint(client)
-
     @pytest.mark.parametrize("status_code", [401, 403, 500, 502, 503])
     async def test_non_400_error_status_is_infra_failure(
         self, make_client, status_code: int

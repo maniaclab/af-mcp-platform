@@ -74,19 +74,19 @@ def test_extract_proxy_handles_wrapped_base64():
 
 def test_extract_proxy_missing_begin_sentinel():
     log = f"just some logs\n{_PROXY_B64_END}\n"
-    with pytest.raises(ValueError, match="begin sentinel"):
+    with pytest.raises(ProxyHarvestError, match="begin sentinel"):
         _extract_proxy_from_log(log)
 
 
 def test_extract_proxy_missing_end_sentinel():
     log = f"{_PROXY_B64_BEGIN}\nZm9v\nno end here\n"
-    with pytest.raises(ValueError, match="end sentinel"):
+    with pytest.raises(ProxyHarvestError, match="end sentinel"):
         _extract_proxy_from_log(log)
 
 
 def test_extract_proxy_empty_payload():
     log = f"{_PROXY_B64_BEGIN}\n{_PROXY_B64_END}\n"
-    with pytest.raises(ValueError, match="empty"):
+    with pytest.raises(ProxyHarvestError, match="empty"):
         _extract_proxy_from_log(log)
 
 
