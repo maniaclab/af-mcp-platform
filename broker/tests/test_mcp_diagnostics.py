@@ -439,6 +439,18 @@ async def test_af_list_mcp_servers_reuses_service_status_and_identity_join(
     )
     registry.register(
         ServiceSpec(
+            name="down",
+            prefix="down",
+            url="http://down.invalid/mcp",
+            transport="http",
+            required_permission="__none__",
+            auth_type="none",
+            display_name="Down Backend",
+        )
+    )
+    registry.record_list_failure("down", "unavailable", None)
+    registry.register(
+        ServiceSpec(
             name="gated",
             prefix="gated",
             url="http://gated.invalid/mcp",
@@ -539,6 +551,8 @@ async def test_af_list_mcp_servers_reuses_service_status_and_identity_join(
     assert rows["open"]["status"] == "available"
     assert rows["open"]["prefix"] == "open"
     assert rows["open"]["credential_provider"] is None
+    # A service-wide failure marks even a credential-free backend unavailable.
+    assert rows["down"]["status"] == "unavailable"
     assert rows["gated"]["status"] == "permission_required"
     assert rows["needs-link"]["status"] == "link_required"
     assert rows["needs-link"]["credential_provider"] == "unlinked-idp"
