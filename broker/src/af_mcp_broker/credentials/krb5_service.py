@@ -7,7 +7,7 @@ resulting credential cache (ccache, base64-encoded) in the response body.
 Unlike condor-token-service, there is no standing broker-side secret to
 redeem -- the password on the wire IS the entire credential, supplied fresh
 on every mint call (see ``credentials/krb5.py``'s module docstring for how
-the provider surfaces that as ``NeedsUnlock``).
+the provider surfaces that as ``NeedsUnlockError``).
 
 ``POST /v1/renew`` refreshes a ccache this client already minted (``kinit
 -R``) without needing the CERN credential again -- it is capped at the
@@ -33,6 +33,15 @@ from typing import TYPE_CHECKING, Any
 import httpx
 import structlog
 
+from af_mcp_broker.credentials.errors import (
+    Krb5TokenAccountError,
+    Krb5TokenBadCredentialError,
+    Krb5TokenInvalidCcacheError,
+    Krb5TokenInvalidRequestError,
+    Krb5TokenMintError,
+    Krb5TokenRateLimitedError,
+    Krb5TokenRenewalWindowClosedError,
+)
 from af_mcp_broker.http import get_http_client
 from af_mcp_broker.logging import request_id_headers
 
@@ -42,77 +51,6 @@ if TYPE_CHECKING:
     from af_mcp_broker.credentials.broker_issued import BrokerTokenIssuer
 
 log = structlog.get_logger(__name__)
-
-
-class Krb5TokenMintError(RuntimeError):
-    """Raised for a failure that is NOT the caller's CERN credential (unreachable, timeout, 401, 5xx).
-
-    A broker<->service infra/contract failure, not a client-actionable
-    signal -- the message never carries the service's response body.
-    """
-
-
-class Krb5TokenBadCredentialError(ValueError):
-    """Raised when the service answered 400: the CERN username/password was wrong."""
-
-    def __init__(self) -> None:
-        super().__init__(
-            "krb5-token-service rejected the given CERN username/password."
-        )
-
-
-class Krb5TokenAccountError(ValueError):
-    """Raised when the service answered 403: the CERN account is revoked or its password has expired."""
-
-    def __init__(self) -> None:
-        super().__init__(
-            "The CERN account is revoked or its password has expired. "
-            "Contact CERN account support."
-        )
-
-
-class Krb5TokenInvalidRequestError(ValueError):
-    """Raised when the service answered 422: the username or lifetime value was malformed."""
-
-    def __init__(self) -> None:
-        super().__init__("The given CERN username or ticket lifetime was invalid.")
-
-
-class Krb5TokenRateLimitedError(RuntimeError):
-    """Raised when the service answered 429: too many recent failed passwords for this username.
-
-    ``retry_after`` carries the service's ``Retry-After`` header verbatim
-    (``None`` if absent) so callers can pass it through, same as
-    ``CondorTokenProvider``'s 429 handling.
-    """
-
-    def __init__(self, retry_after: str | None) -> None:
-        self.retry_after = retry_after
-        super().__init__("krb5-token-service rate-limited this request.")
-
-
-class Krb5TokenInvalidCcacheError(ValueError):
-    """Raised when ``renew()`` answered 422: the stored ccache was malformed.
-
-    This is built from OUR OWN stored value, not user input -- unlike
-    ``Krb5TokenInvalidRequestError`` (a 422 callers may treat as
-    user-actionable), this signals internal corruption of the stored
-    ccache.
-    """
-
-    def __init__(self) -> None:
-        super().__init__("The stored Kerberos credential cache was invalid.")
-
-
-class Krb5TokenRenewalWindowClosedError(RuntimeError):
-    """Raised when ``renew()`` answered 400: the ccache is past its renewable window.
-
-    An EXPECTED, recoverable condition -- callers catch this and fall
-    through to a fresh keytab/password mint, never surface it as an error.
-    """
-
-    def __init__(self) -> None:
-        super().__init__("The Kerberos credential cache is past its renewable window.")
 
 
 @dataclass(frozen=True)

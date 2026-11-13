@@ -25,6 +25,8 @@ from dataclasses import dataclass
 import redis.asyncio as aioredis
 from redis.exceptions import RedisError
 
+from af_mcp_broker.errors import BrokerError
+
 # Seconds a store call may block before it counts as the store being down.
 # Short on purpose: every caller sits on a request path.
 _SOCKET_TIMEOUT_SECONDS = 2.0
@@ -51,7 +53,7 @@ return {count, ttl}
 """
 
 
-class SharedStateUnavailableError(Exception):
+class SharedStateUnavailableError(BrokerError):
     """The shared store could not be reached or did not answer in time.
 
     Each caller decides its own failure policy (fail open, or fall back to

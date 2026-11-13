@@ -5,12 +5,9 @@ import json
 import time
 from typing import TYPE_CHECKING, Any
 
-import httpx
 import pytest
-from conftest import make_claims, run_aggregator_async
+from conftest import make_claims, run_aggregator_async, run_inprocess_server
 from fastmcp import Client, FastMCP
-from fastmcp.client.transports import StreamableHttpTransport
-from fastmcp.utilities.tests import run_server_async
 
 from af_mcp_broker.authorization import EntitlementPolicy
 from af_mcp_broker.credentials import CredentialRegistry
@@ -20,6 +17,9 @@ from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
+    import httpx
+    from fastmcp.utilities.tests import ASGIServer
+
 # ---------------------------------------------------------------------------
 # End-to-end coverage for issue #138/#144 step 1: /mcp must answer a
 # missing/invalid/expired bearer with a genuine HTTP 401 -- not the pre-fix
@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 # test_mcp_middleware_identity.py already covers AsgiAuthMiddleware's logic
 # directly against a bare ASGI scope; this file proves the same behavior
 # through a real aggregator (build_aggregator + run_aggregator_async, the
-# same wiring app.py uses to mount /mcp) behind a live uvicorn server -- the
+# same wiring app.py uses to mount /mcp) behind fastmcp's in-process asgi_server -- the
 # actual request/response shape a real MCP client sees.
 # ---------------------------------------------------------------------------
 
@@ -44,7 +44,7 @@ _INIT_BODY = {
 }
 
 
-async def _post(url: str, headers: dict[str, str]) -> httpx.Response:
+async def _post(server: ASGIServer, headers: dict[str, str]) -> httpx.Response:
     """POST a raw MCP initialize request, so a genuine HTTP 401 vs. a 200
     carrying a JSON-RPC error is directly inspectable -- fastmcp's own Client
     would otherwise turn either shape into some kind of raised exception,
@@ -54,8 +54,8 @@ async def _post(url: str, headers: dict[str, str]) -> httpx.Response:
         "Content-Type": "application/json",
         **headers,
     }
-    async with httpx.AsyncClient() as client:
-        return await client.post(url, json=_INIT_BODY, headers=full_headers)
+    async with server.http_client() as client:
+        return await client.post(server.url, json=_INIT_BODY, headers=full_headers)
 
 
 def _open_backend() -> FastMCP:
@@ -70,7 +70,7 @@ def _open_backend() -> FastMCP:
 
 @pytest.fixture
 async def open_backend_url() -> AsyncIterator[str]:
-    async with run_server_async(_open_backend(), path="/mcp") as url:
+    async with run_inprocess_server(_open_backend(), path="/mcp") as url:
         yield url
 
 
@@ -96,12 +96,12 @@ def registry(open_backend_url: str) -> ServiceRegistry:
 
 
 @pytest.fixture
-async def aggregator_url(
+async def aggregator_server(
     settings: Any,
     policy: EntitlementPolicy,
     registry: ServiceRegistry,
     static_principal_cache: Any,
-) -> AsyncIterator[str]:
+) -> AsyncIterator[ASGIServer]:
     principal_cache, _directory = static_principal_cache
     mcp = build_aggregator(
         registry,
@@ -110,20 +110,18 @@ async def aggregator_url(
         CredentialRegistry(),
         principal_cache=principal_cache,
     )
-    async with run_aggregator_async(mcp, path="/mcp") as url:
-        yield url
+    async with run_aggregator_async(mcp, path="/mcp") as server:
+        yield server
 
 
-def _bearer_client(url: str, token: str) -> Client:
-    return Client(
-        StreamableHttpTransport(url, headers={"Authorization": f"Bearer {token}"})
-    )
+def _bearer_client(server: ASGIServer, token: str) -> Client:
+    return server.client(headers={"Authorization": f"Bearer {token}"})
 
 
 async def test_missing_bearer_is_a_genuine_401_not_a_200_with_jsonrpc_error(
-    aggregator_url: str,
+    aggregator_server: ASGIServer,
 ) -> None:
-    resp = await _post(aggregator_url, {})
+    resp = await _post(aggregator_server, {})
 
     assert resp.status_code == 401
     assert resp.headers.get("www-authenticate") == "Bearer"
@@ -136,13 +134,13 @@ async def test_missing_bearer_is_a_genuine_401_not_a_200_with_jsonrpc_error(
 
 
 async def test_expired_bearer_401_names_expiry_and_portal(
-    aggregator_url: str, settings: Any, sig_key: Any, prime_jwks: Any
+    aggregator_server: ASGIServer, settings: Any, sig_key: Any, prime_jwks: Any
 ) -> None:
     prime_jwks([sig_key.jwk])
     now = int(time.time())
     token = sig_key.sign(make_claims(iat=now - 600, exp=now - 300))
 
-    resp = await _post(aggregator_url, {"Authorization": f"Bearer {token}"})
+    resp = await _post(aggregator_server, {"Authorization": f"Bearer {token}"})
 
     assert resp.status_code == 401
     assert resp.headers.get("www-authenticate") == "Bearer"
@@ -152,9 +150,9 @@ async def test_expired_bearer_401_names_expiry_and_portal(
 
 
 async def test_invalid_garbage_bearer_401_leaks_no_claim_or_issuer_detail(
-    aggregator_url: str, settings: Any
+    aggregator_server: ASGIServer, settings: Any
 ) -> None:
-    resp = await _post(aggregator_url, {"Authorization": "Bearer not-a-real-jwt"})
+    resp = await _post(aggregator_server, {"Authorization": "Bearer not-a-real-jwt"})
 
     assert resp.status_code == 401
     assert resp.headers.get("www-authenticate") == "Bearer"
@@ -175,14 +173,14 @@ async def test_invalid_garbage_bearer_401_leaks_no_claim_or_issuer_detail(
 
 
 async def test_valid_bearer_tools_list_and_call_unchanged(
-    aggregator_url: str, sig_key: Any, prime_jwks: Any
+    aggregator_server: ASGIServer, sig_key: Any, prime_jwks: Any
 ) -> None:
     """No behavior change for an authenticated caller: both tools/list and
     tools/call succeed exactly as before this fix."""
     prime_jwks([sig_key.jwk])
     token = sig_key.sign(make_claims(groups=[]))
 
-    async with _bearer_client(aggregator_url, token) as client:
+    async with _bearer_client(aggregator_server, token) as client:
         names = {t.name for t in await client.list_tools()}
         assert "open_ping" in names
         result = await client.call_tool("open_ping", {})
@@ -255,8 +253,8 @@ async def test_pat_round_trip_tools_list_and_call(
     init_audit_logger(audit_buffer)
 
     async with (
-        run_aggregator_async(mcp, path="/mcp") as url,
-        _bearer_client(url, plaintext) as client,
+        run_aggregator_async(mcp, path="/mcp") as server,
+        _bearer_client(server, plaintext) as client,
     ):
         names = {t.name for t in await client.list_tools()}
         assert "open_ping" in names
@@ -295,8 +293,8 @@ async def test_dev_bypass_path_tools_list_and_call_still_work(
 
     # No Authorization header at all -- the bypass must not even look.
     async with (
-        run_aggregator_async(mcp, path="/mcp") as url,
-        Client(StreamableHttpTransport(url)) as client,
+        run_aggregator_async(mcp, path="/mcp") as server,
+        server.client() as client,
     ):
         names = {t.name for t in await client.list_tools()}
         assert "open_ping" in names

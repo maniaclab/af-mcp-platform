@@ -5,7 +5,7 @@ the provider mints via the service and persists everything in Vault:
 unlock/link stores the passphrase + proxy, ``is_linked()`` asks Vault,
 issue() serves the Vault proxy and — when it's expired or near expiry —
 RE-MINTS with the stored passphrase (hands-free renewal). A bad-passphrase
-failure on re-mint unlinks and surfaces ``NeedsUnlock`` so the portal
+failure on re-mint unlinks and surfaces ``NeedsUnlockError`` so the portal
 prompts a re-link; infra failures do neither. The legacy k8s-Job path stays
 untouched when the service is not wired (feature-flagged coexistence —
 covered by the pre-existing tests in test_x509.py).
@@ -32,18 +32,17 @@ import pytest
 from pydantic import SecretBytes, SecretStr
 from test_x509 import _principal
 
-from af_mcp_broker.credentials.base import CredentialKind, NeedsUnlock
-from af_mcp_broker.credentials.cache import (
-    CredentialCache,
-    RateLimitError,
-    unlock_failures_key,
-)
-from af_mcp_broker.credentials.voms_service import (
-    MintedProxy,
+from af_mcp_broker.credentials.base import CredentialKind
+from af_mcp_broker.credentials.cache import CredentialCache, unlock_failures_key
+from af_mcp_broker.credentials.errors import (
+    NeedsUnlockError,
+    PosixIdentityRequiredError,
+    UnlockRateLimitError,
     VomsServiceBadPassphraseError,
     VomsServiceMintError,
 )
-from af_mcp_broker.credentials.x509 import PosixIdentityRequiredError, X509Provider
+from af_mcp_broker.credentials.voms_service import MintedProxy
+from af_mcp_broker.credentials.x509 import X509Provider
 from af_mcp_broker.credentials.x509_vault import StoredX509Credential
 
 _PEM = "-----BEGIN CERTIFICATE-----\nFAKE\n-----END CERTIFICATE-----\n"
@@ -312,10 +311,10 @@ class TestLinkFlow:
         principal = _principal("auser")
 
         for _ in range(2):
-            with pytest.raises((VomsServiceBadPassphraseError, RateLimitError)):
+            with pytest.raises((VomsServiceBadPassphraseError, UnlockRateLimitError)):
                 await provider.issue(principal, "ami", passphrase=SecretBytes(b"wrong"))
         calls_after_lockout = len(voms_client.calls)
-        with pytest.raises(RateLimitError):
+        with pytest.raises(UnlockRateLimitError):
             await provider.issue(principal, "ami", passphrase=SecretBytes(b"wrong"))
         assert len(voms_client.calls) == calls_after_lockout
 
@@ -488,7 +487,7 @@ class TestStoredProxyAndRenewal:
         )
         await _seed_link(store)
 
-        with pytest.raises(NeedsUnlock):
+        with pytest.raises(NeedsUnlockError):
             await provider.issue(_principal("auser"), "ami")
 
         assert store.deleted == ["user-123"]
@@ -514,7 +513,7 @@ class TestStoredProxyAndRenewal:
     async def test_no_link_and_no_passphrase_raises_needs_unlock(self) -> None:
         provider, voms_client, _, _ = _make_provider()
 
-        with pytest.raises(NeedsUnlock) as excinfo:
+        with pytest.raises(NeedsUnlockError) as excinfo:
             await provider.issue(_principal("auser"), "ami")
 
         assert excinfo.value.unlock_endpoint == "/v1/x509/proxy"
@@ -773,7 +772,7 @@ class TestCustodyConsent:
             principal, "ami", passphrase=SecretBytes(b"hunter2"), remember=False
         )
 
-        with pytest.raises(NeedsUnlock) as excinfo:
+        with pytest.raises(NeedsUnlockError) as excinfo:
             await provider.issue(principal, "ami")
 
         assert excinfo.value.reason == "not_linked"

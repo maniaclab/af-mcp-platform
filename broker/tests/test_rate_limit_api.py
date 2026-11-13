@@ -1,13 +1,13 @@
-"""Tests for mapping ``RateLimitError`` to HTTP 429 with ``Retry-After`` (issue #25)
+"""Tests for mapping ``UnlockRateLimitError`` to HTTP 429 with ``Retry-After`` (issue #25)
 and for the miss-vs-bad-passphrase rate-limit fix (issue #93).
 
-``RateLimitError`` is raised by ``CredentialCache.record_failed_unlock()``/
+``UnlockRateLimitError`` is raised by ``CredentialCache.record_failed_unlock()``/
 ``check_unlock_rate_limit()`` when a uid exceeds the configured failed-unlock
 threshold. Before issue #93's fix, ordinary cache misses -- including the
 "not cached yet, no passphrase given" probe that surfaces as 409 -- counted
-against that same budget, so a handful of routine `NeedsUnlock` probes could
+against that same budget, so a handful of routine `NeedsUnlockError` probes could
 lock a user out of their own next (correct) unlock attempt. The global
-handler in `app.py` maps `RateLimitError` to 429 with a `Retry-After` header
+handler in `app.py` maps `UnlockRateLimitError` to 429 with a `Retry-After` header
 and a matching JSON body.
 """
 
@@ -67,7 +67,7 @@ class _FakeFailingBackend:
 def _probe(client: TestClient):
     """POST /v1/credential for the x509 'ami' target with no passphrase.
 
-    Misses the (empty) cache and surfaces as 409 (NeedsUnlock) -- the
+    Misses the (empty) cache and surfaces as 409 (NeedsUnlockError) -- the
     ordinary "not cached yet" probe an MCP client makes before ever prompting
     for a passphrase.
     """
@@ -82,7 +82,7 @@ def _unlock(client: TestClient, passphrase: str = "correct-horse-battery-staple"
 def test_needs_unlock_probes_never_trip_rate_limit(
     app_client_factory: Callable[..., object], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """N plain NeedsUnlock probes must never consume unlock budget (issue #93):
+    """N plain NeedsUnlockError probes must never consume unlock budget (issue #93):
     every probe keeps surfacing 409, never degrading to 429."""
     monkeypatch.setenv("CREDENTIAL_UNLOCK_MAX_FAILURES", "2")
     monkeypatch.setenv("CREDENTIAL_UNLOCK_WINDOW_SECONDS", "60")
@@ -97,7 +97,7 @@ def test_needs_unlock_probes_never_trip_rate_limit(
 def test_correct_passphrase_succeeds_after_probes(
     app_client_factory: Callable[..., object], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A correct-passphrase unlock after N NeedsUnlock probes must succeed --
+    """A correct-passphrase unlock after N NeedsUnlockError probes must succeed --
     not be rejected with 429, since the probes never should have consumed any
     unlock budget in the first place (issue #93's failure scenario: the
     correct POST /v1/x509/proxy call also goes through cache.get() first)."""
@@ -234,7 +234,7 @@ def test_retry_after_matches_configured_window(
 def test_rate_limit_no_regression(
     app_client_factory: Callable[..., object], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Below the threshold, requests keep surfacing NeedsUnlock as 409, not 429."""
+    """Below the threshold, requests keep surfacing NeedsUnlockError as 409, not 429."""
     monkeypatch.setenv("CREDENTIAL_UNLOCK_MAX_FAILURES", "5")
     monkeypatch.setenv("CREDENTIAL_UNLOCK_WINDOW_SECONDS", "900")
 

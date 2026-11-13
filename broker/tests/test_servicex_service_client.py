@@ -25,10 +25,12 @@ from pydantic import SecretStr
 from test_broker_issued import _make_rsa_key, _private_pem
 
 from af_mcp_broker.credentials.broker_issued import BrokerTokenIssuer
-from af_mcp_broker.credentials.servicex_service import (
-    RedeemedServiceXToken,
+from af_mcp_broker.credentials.errors import (
     ServiceXBadRefreshTokenError,
     ServiceXServiceMintError,
+)
+from af_mcp_broker.credentials.servicex_service import (
+    RedeemedServiceXToken,
     ServiceXTokenServiceClient,
 )
 

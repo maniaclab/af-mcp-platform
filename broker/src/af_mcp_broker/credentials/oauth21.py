@@ -17,6 +17,7 @@ from af_mcp_broker.credentials.base import (
     ExecutionModel,
     IssuedCredential,
 )
+from af_mcp_broker.credentials.errors import VersionConflictError
 from af_mcp_broker.http import get_http_client
 
 if TYPE_CHECKING:
@@ -84,10 +85,6 @@ class StoredOAuthCredential(BaseModel):
         return value
 
 
-class VersionConflict(Exception):
-    """Raised by ``TokenStore.write_cas`` when ``expected_version`` is stale."""
-
-
 class TokenStore(Protocol):
     """Abstract persistence for per-subject, per-alias OAuth 2.1 credentials.
 
@@ -113,7 +110,7 @@ class TokenStore(Protocol):
 
         ``expected_version=None`` means "create; fail if an entry already
         exists". Returns the new version on success; raises
-        ``VersionConflict`` when *expected_version* does not match the
+        ``VersionConflictError`` when *expected_version* does not match the
         entry's current version.
         """
         ...
@@ -156,7 +153,7 @@ class InMemoryTokenStore:
             # existing entry, or updating against a stale/missing version —
             # is a conflict.
             if expected_version != current_version:
-                raise VersionConflict(
+                raise VersionConflictError(
                     f"expected_version={expected_version!r} does not match "
                     f"current version={current_version!r} for "
                     f"subject={subject!r} alias={alias!r}"
@@ -394,7 +391,7 @@ class OAuth21Provider(CredentialProvider):
             await self._store.write_cas(
                 principal.subject, self._alias, cred, expected_version=version
             )
-        except VersionConflict:
+        except VersionConflictError:
             self._log.info(
                 "oauth21.mark_rejected.superseded", subject=principal.subject
             )
@@ -468,7 +465,7 @@ class OAuth21Provider(CredentialProvider):
             new_version = await self._store.write_cas(
                 principal.subject, self._alias, refreshed, expected_version=version
             )
-        except VersionConflict:
+        except VersionConflictError:
             # Another replica refreshed concurrently — use whatever is there
             # now rather than clobbering a fresher write with ours.
             self._log.info("oauth21.issue.refresh_race", subject=principal.subject)

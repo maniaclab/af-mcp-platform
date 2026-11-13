@@ -8,7 +8,7 @@ Scenarios covered:
      hands one principal's credential to another.
   2. Rate-limit lockout — repeated genuine failed-unlock attempts (bad
      passphrase, or a minting-backend failure) for a single uid raise
-     ``RateLimitError`` once the counter exceeds ``_MAX_FAILED_UNLOCKS``.
+     ``UnlockRateLimitError`` once the counter exceeds ``_MAX_FAILED_UNLOCKS``.
      Plain cache misses from ``get()`` never count against this budget.
   3. Janitor sweep — an entry stored with ``expires_at`` in the past is
      removed by ``sweep_expired()``.
@@ -31,7 +31,8 @@ from af_mcp_broker.credentials.base import (
     ExecutionModel,
     IssuedCredential,
 )
-from af_mcp_broker.credentials.cache import CredentialCache, RateLimitError
+from af_mcp_broker.credentials.cache import CredentialCache
+from af_mcp_broker.credentials.errors import UnlockRateLimitError
 
 # Deterministic seed for any random-like behaviour in the test module.
 random.seed(42)
@@ -121,7 +122,7 @@ async def test_concurrent_cross_principal_isolation(n: int) -> None:
 
 @pytest.mark.anyio
 async def test_rate_limit_triggers_after_max_failed_unlocks() -> None:
-    """The (N+1)th genuine failed unlock within the window raises ``RateLimitError``.
+    """The (N+1)th genuine failed unlock within the window raises ``UnlockRateLimitError``.
 
     ``_MAX_FAILED_UNLOCKS`` is 5 in the real cache, so five consecutive calls
     to ``record_failed_unlock`` (bad passphrase, or a minting-backend
@@ -141,7 +142,7 @@ async def test_rate_limit_triggers_after_max_failed_unlocks() -> None:
         await cache.record_failed_unlock(uid)
 
     # The sixth attempt exceeds the threshold and must raise.
-    with pytest.raises(RateLimitError):
+    with pytest.raises(UnlockRateLimitError):
         await cache.record_failed_unlock(uid)
 
 

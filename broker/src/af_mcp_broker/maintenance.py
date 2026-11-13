@@ -31,7 +31,8 @@ from fastapi import HTTPException, status
 
 from af_mcp_broker import metrics
 from af_mcp_broker.authorization import is_admin
-from af_mcp_broker.vault_kv import CasConflict, VaultKV
+from af_mcp_broker.errors import BrokerError
+from af_mcp_broker.vault_kv import CasConflictError, VaultKV
 
 if TYPE_CHECKING:
     from af_mcp_broker.config import Settings
@@ -40,7 +41,7 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 
-class MaintenanceStateConflict(Exception):
+class MaintenanceStateConflictError(BrokerError):
     """Raised by ``MaintenanceModeStore.set`` when a concurrent writer already changed the state."""
 
 
@@ -78,7 +79,7 @@ class MaintenanceModeStore(abc.ABC):
     async def set(self, state: MaintenanceState) -> None:
         """Overwrite the current maintenance state.
 
-        May raise ``MaintenanceStateConflict`` on backends that support
+        May raise ``MaintenanceStateConflictError`` on backends that support
         compare-and-set writes (currently only ``VaultMaintenanceModeStore``)
         when a concurrent writer already changed the state; other backends
         silently apply last-writer-wins.
@@ -164,7 +165,7 @@ class VaultMaintenanceModeStore(MaintenanceModeStore):
         deliberate admin action toggling shared, user-visible facility state.
         Silently retrying such an action behind the caller's back could
         commit them to a decision made with stale knowledge of the current
-        state; raising ``MaintenanceStateConflict`` once and letting the
+        state; raising ``MaintenanceStateConflictError`` once and letting the
         caller (``api/admin.py``'s ``POST /v1/admin/maintenance``, which
         translates it to a 409) decide whether to re-read and retry is the
         correct failure mode for this kind of write.
@@ -173,8 +174,8 @@ class VaultMaintenanceModeStore(MaintenanceModeStore):
         version = current[1] if current is not None else None
         try:
             await self._vault_kv.write_cas(self._path, _state_to_fields(state), version)
-        except CasConflict as exc:
-            raise MaintenanceStateConflict(
+        except CasConflictError as exc:
+            raise MaintenanceStateConflictError(
                 f"vault cas write conflict for path={self._path!r} "
                 f"expected_version={version!r}"
             ) from exc

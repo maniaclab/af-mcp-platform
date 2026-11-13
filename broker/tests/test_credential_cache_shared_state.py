@@ -11,7 +11,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from af_mcp_broker.credentials.cache import CredentialCache, RateLimitError
+from af_mcp_broker.credentials.cache import CredentialCache
+from af_mcp_broker.credentials.errors import UnlockRateLimitError
 from af_mcp_broker.shared_state import RedisSharedState
 
 if TYPE_CHECKING:
@@ -46,7 +47,7 @@ async def test_failures_on_different_replicas_share_one_budget(
     await replica_b.record_failed_unlock(uid)
     await replica_a.record_failed_unlock(uid)
 
-    with pytest.raises(RateLimitError) as excinfo:
+    with pytest.raises(UnlockRateLimitError) as excinfo:
         await replica_b.record_failed_unlock(uid)
 
     assert 0 < excinfo.value.retry_after_seconds <= 60
@@ -58,10 +59,10 @@ async def test_lockout_is_visible_to_the_other_replicas_precheck(
     replica_a, replica_b = replicas
     for _ in range(3):
         await replica_a.record_failed_unlock(uid)
-    with pytest.raises(RateLimitError):
+    with pytest.raises(UnlockRateLimitError):
         await replica_a.record_failed_unlock(uid)
 
-    with pytest.raises(RateLimitError) as excinfo:
+    with pytest.raises(UnlockRateLimitError) as excinfo:
         await replica_b.check_unlock_rate_limit(uid)
 
     assert 0 < excinfo.value.retry_after_seconds <= 60
@@ -87,7 +88,7 @@ async def test_other_uids_are_unaffected(
     replica_a, replica_b = replicas
     for _ in range(3):
         await replica_a.record_failed_unlock(uid)
-    with pytest.raises(RateLimitError):
+    with pytest.raises(UnlockRateLimitError):
         await replica_a.record_failed_unlock(uid)
 
     await replica_b.check_unlock_rate_limit(uid + 1)
@@ -104,9 +105,9 @@ async def test_store_outage_falls_back_to_a_per_replica_limit(
         # Still limited, per replica, instead of failing open or erroring.
         await cache.record_failed_unlock(uid)
         await cache.record_failed_unlock(uid)
-        with pytest.raises(RateLimitError):
+        with pytest.raises(UnlockRateLimitError):
             await cache.record_failed_unlock(uid)
-        with pytest.raises(RateLimitError):
+        with pytest.raises(UnlockRateLimitError):
             await cache.check_unlock_rate_limit(uid)
 
         # A successful unlock still clears the per-replica counter.

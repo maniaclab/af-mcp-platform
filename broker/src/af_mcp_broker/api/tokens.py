@@ -78,6 +78,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from af_mcp_broker.audit import AuditRecord, write_audit
 from af_mcp_broker.authorization import EntitlementPolicy, get_principal_permissions
 from af_mcp_broker.config import Settings, get_settings
+from af_mcp_broker.errors import BrokerError
 from af_mcp_broker.identity import Principal, keycloak_dependency
 from af_mcp_broker.pat import mint_pat
 from af_mcp_broker.token_registry import (
@@ -208,7 +209,7 @@ class RevokeTokenResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class RateLimitError(Exception):
+class PatMintRateLimitError(BrokerError):
     """Raised when a principal exceeds the mint-rate limit."""
 
 
@@ -242,14 +243,14 @@ class TokenRegistry:
         self._log = structlog.get_logger(__name__).bind(component="TokenRegistry")
 
     def check_mint_rate_limit(self, subject: str) -> None:
-        """Raise RateLimitError if *subject* has hit the per-hour mint cap."""
+        """Raise PatMintRateLimitError if *subject* has hit the per-hour mint cap."""
         now = time.monotonic()
         window = self._rate.get(subject)
         if window is None or (now - window.window_start) > _MINT_RATE_WINDOW_SECONDS:
             return
         if window.count >= _MAX_MINTS_PER_HOUR:
             remaining = int(_MINT_RATE_WINDOW_SECONDS - (now - window.window_start))
-            raise RateLimitError(
+            raise PatMintRateLimitError(
                 f"Too many tokens minted for subject={subject!r}. "
                 f"Try again in {remaining}s."
             )
@@ -358,7 +359,7 @@ async def mint_token(
     registry = _registry(request)
     try:
         registry.check_mint_rate_limit(principal.subject)
-    except RateLimitError as exc:
+    except PatMintRateLimitError as exc:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=str(exc)
         ) from exc

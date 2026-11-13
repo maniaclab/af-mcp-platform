@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import structlog
-from fastapi import HTTPException
+from fastapi import HTTPException, status
 from fastmcp.exceptions import AuthorizationError
 from fastmcp.server.dependencies import get_http_request
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
@@ -12,6 +12,7 @@ from starlette.responses import JSONResponse
 
 from af_mcp_broker.identity import (
     PrincipalDirectoryUnavailableError,
+    TokenAudienceError,
     TokenExpiredError,
     build_dev_principal,
     get_principal,
@@ -319,9 +320,15 @@ class AsgiAuthMiddleware:
                 logger.exception(
                     "mcp_principal_directory_unavailable", error=str(exc.detail)
                 )
-                await _send_error(scope, receive, send, exc.status_code, exc.detail)
+                await _send_error(
+                    scope,
+                    receive,
+                    send,
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    str(exc.detail),
+                )
                 return
-            except HTTPException as exc:
+            except (HTTPException, TokenAudienceError) as exc:
                 logger.warning("mcp_identity_validation_failed", error=str(exc.detail))
                 # Deliberately vague -- see the module docstring: never
                 # repeat which claim, issuer/audience, or JWKS detail failed

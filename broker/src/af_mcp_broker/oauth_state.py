@@ -26,6 +26,8 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from cryptography.fernet import InvalidToken
 
+from af_mcp_broker.errors import BrokerError
+
 if TYPE_CHECKING:
     from cryptography.fernet import Fernet
 
@@ -66,7 +68,7 @@ _STATE_PAYLOAD_FIELDS = (
 )
 
 
-class StateTokenError(Exception):
+class StateTokenError(BrokerError):
     """Raised for any invalid, expired, malformed, or mis-audienced state token."""
 
 

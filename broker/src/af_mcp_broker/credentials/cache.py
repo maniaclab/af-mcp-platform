@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
 from af_mcp_broker import metrics
 from af_mcp_broker.credentials.base import IssuedCredential
+from af_mcp_broker.credentials.errors import UnlockRateLimitError
 from af_mcp_broker.shared_state import (
     InMemorySharedState,
     SharedState,
@@ -29,20 +30,6 @@ _JANITOR_INTERVAL_SECONDS = 60
 
 # Default TTL used when expires_at is not supplied to put()
 _DEFAULT_TTL_SECONDS = 3600
-
-
-class RateLimitError(Exception):
-    """Raised when a principal exceeds the allowed number of failed cache lookups.
-
-    *retry_after_seconds* is how long until the current fixed window closes
-    and the uid is allowed to try again — ``max(0, window_start +
-    unlock_window_seconds - now)``. The API layer's exception handler formats
-    this into a ``Retry-After`` header and JSON body (see ``app.py``).
-    """
-
-    def __init__(self, message: str, *, retry_after_seconds: int) -> None:
-        super().__init__(message)
-        self.retry_after_seconds = retry_after_seconds
 
 
 @dataclass
@@ -119,7 +106,7 @@ class CredentialCache:
 
     Rate-limiting: *max_failed_unlocks* / *unlock_window_seconds* bound how
     many actual failed unlock attempts (bad passphrase, or a minting-backend
-    failure) a single uid may accrue before ``RateLimitError`` is raised —
+    failure) a single uid may accrue before ``UnlockRateLimitError`` is raised —
     see ``record_failed_unlock`` and ``check_unlock_rate_limit``. Plain cache
     misses from ``get()`` do not count against this budget — see ``get()``'s
     docstring. Production wiring reads these from
@@ -472,7 +459,7 @@ class CredentialCache:
     # ------------------------------------------------------------------
 
     async def record_failed_unlock(self, uid: int) -> None:
-        """Increment the failed-unlock counter for *uid* and raise ``RateLimitError`` when exceeded.
+        """Increment the failed-unlock counter for *uid* and raise ``UnlockRateLimitError`` when exceeded.
 
         Callers invoke this only for an unlock attempt that actually failed
         (bad passphrase, or a minting-backend failure) — plain cache misses
@@ -496,14 +483,14 @@ class CredentialCache:
         )
         if window.count > self._max_failed_unlocks:
             remaining_window = max(0, int(window.ttl_seconds))
-            raise RateLimitError(
+            raise UnlockRateLimitError(
                 f"Too many failed unlock attempts for uid={uid}. "
                 f"Try again in {remaining_window}s.",
                 retry_after_seconds=remaining_window,
             )
 
     async def check_unlock_rate_limit(self, uid: int) -> None:
-        """Raise ``RateLimitError`` if *uid* has exceeded the failed-unlock limit.
+        """Raise ``UnlockRateLimitError`` if *uid* has exceeded the failed-unlock limit.
 
         Callers should invoke this *before* attempting to mint a new proxy so
         that a brute-force passphrase attempt is blocked before any credential
@@ -519,7 +506,7 @@ class CredentialCache:
             return
         if window.count > self._max_failed_unlocks:
             remaining_window = max(0, int(window.ttl_seconds))
-            raise RateLimitError(
+            raise UnlockRateLimitError(
                 f"Too many failed passphrase attempts for uid={uid}. "
                 f"Try again in {remaining_window}s.",
                 retry_after_seconds=remaining_window,

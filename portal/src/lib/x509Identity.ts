@@ -45,7 +45,7 @@ export function apiErrorDetail(err: APIError): string | null {
  * User-facing message for a failed POST /v1/x509/proxy link attempt.
  *
  * The endpoint's contract (see broker/src/af_mcp_broker/api/credentials.py's
- * create_proxy and app.py's RateLimitError handler): 400 is a bad passphrase
+ * create_proxy and app.py's UnlockRateLimitError handler): 400 is a bad passphrase
  * (the user's to fix — and it burns the unlock rate-limit budget), 429 is
  * that budget exhausted, 502 is a voms-token-service infra failure that must
  * NOT read as "wrong passphrase". The broker's own `detail` is preferred
