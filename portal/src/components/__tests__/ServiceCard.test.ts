@@ -41,6 +41,9 @@ const SERVER: CatalogServer = {
   correlation_id: null,
   link_state: null,
   builtin: false,
+  docs_url: null,
+  access_url: null,
+  granting_groups: [],
 };
 
 /** The broker's own af-mcp entry as /v1/catalog reports it (issue #240). */
@@ -57,6 +60,9 @@ const BUILTIN_SERVER: CatalogServer = {
   correlation_id: null,
   link_state: null,
   builtin: true,
+  docs_url: null,
+  access_url: null,
+  granting_groups: [],
 };
 
 function listing(overrides: Partial<ServerToolsResponse> = {}): ServerToolsResponse {
@@ -497,6 +503,69 @@ describe('status line', () => {
     const detail = wrapper.get('.bc__status-detail');
     expect(detail.text()).toContain('Contact an administrator');
     expect(detail.text()).toContain('abc123');
+  });
+
+  describe('access required (issue #395)', () => {
+    const denied = (overrides: Partial<CatalogServer> = {}) =>
+      mountWith({
+        status: 'permission_required',
+        status_detail: "Your account doesn't have the access this service requires.",
+        correlation_id: 'abc123',
+        ...overrides,
+      });
+
+    it('offers "Request access" beside the status, linking to the access URL', () => {
+      const wrapper = denied({ access_url: 'https://groups.example.org/request' });
+      const status = wrapper.get('.bc__status-line');
+      expect(status.text()).toContain('Access required');
+      const cta = status.get('a');
+      // Not relabelled to the identity's "Link ... account" wording.
+      expect(cta.text()).toBe('Request access');
+      expect(cta.attributes('href')).toBe('https://groups.example.org/request');
+      expect(cta.attributes('rel')).toContain('noopener');
+    });
+
+    it('lists the groups that grant access and keeps the reference id', () => {
+      const wrapper = denied({
+        access_url: 'https://groups.example.org/request',
+        granting_groups: ['/connect/atlas-af', '/connect/escape'],
+      });
+      const detail = wrapper.get('.bc__status-detail');
+      expect(detail.text()).toContain('Granted by membership in');
+      const groups = detail.findAll('.bc__groups code').map((c) => c.text());
+      expect(groups).toEqual(['/connect/atlas-af', '/connect/escape']);
+      expect(detail.get('.bc__status-ref code').text()).toBe('abc123');
+    });
+
+    it('names the groups even when there is no access URL, and shows no link', () => {
+      const wrapper = denied({ granting_groups: ['/connect/atlas-af'] });
+      expect(wrapper.get('.bc__status-line').find('a').exists()).toBe(false);
+      expect(wrapper.get('.bc__status-detail').text()).toContain('/connect/atlas-af');
+    });
+
+    it('shows neither a link nor a group list when the broker offers none', () => {
+      const wrapper = denied();
+      expect(wrapper.get('.bc__status-line').find('a').exists()).toBe(false);
+      expect(wrapper.find('.bc__groups').exists()).toBe(false);
+      expect(wrapper.get('.bc__status-detail').text()).toContain('abc123');
+    });
+  });
+
+  describe('documentation link (issue #395)', () => {
+    it.each(['available', 'permission_required', 'unavailable'] as const)(
+      'is shown on a %s service when docs_url is set',
+      (status) => {
+        const wrapper = mountWith({ status, docs_url: 'https://docs.example.org/rucio' });
+        const docs = wrapper.get('a.bc__docs-link');
+        expect(docs.text()).toBe('Documentation');
+        expect(docs.attributes('href')).toBe('https://docs.example.org/rucio');
+        expect(docs.attributes('rel')).toContain('noopener');
+      },
+    );
+
+    it('is omitted when docs_url is not set', () => {
+      expect(mountWith({ docs_url: null }).find('.bc__docs-link').exists()).toBe(false);
+    });
   });
 
   describe('rejected credential', () => {

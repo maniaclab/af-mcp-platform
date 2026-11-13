@@ -28,14 +28,18 @@ export interface ServiceStatusView {
   /** The broker's own status_detail sentence -- already internals-free. */
   detail: string;
   severity: StatusSeverity;
-  /** Null when there's nothing actionable to link to (permission_required/
-   * misconfigured are admin-actionable, not user-actionable; unavailable is
-   * "wait and retry", not a link). */
+  /** Null when there's nothing actionable to link to (misconfigured is
+   * admin-actionable; unavailable is "wait and retry", not a link; a
+   * permission_required service links only when the broker supplies an access
+   * URL). */
   cta: StatusCta | null;
   /** Carried straight through from CatalogServer.correlation_id -- set only
    * for permission_required/misconfigured, so the card can show it for the
    * user to quote in a ticket. */
   correlationId: string | null;
+  /** Groups whose membership grants the missing permission; non-empty only
+   * for permission_required, where the card names them next to the CTA. */
+  grantingGroups: string[];
 }
 
 type ProviderRef = Pick<IdentityProvider, 'id' | 'display_name' | 'link_mechanism'>;
@@ -70,16 +74,18 @@ const SEVERITIES: Record<ServiceStatus, StatusSeverity> = {
 };
 
 /**
- * Resolves how a card should present its server's status. Only
- * "link_required" gets a real CTA link (to /identities/, where the user can
- * actually fix it themselves) -- permission_required/misconfigured are
- * admin-actionable (the detail sentence already says to contact admins, and
- * correlationId carries the id to quote), and unavailable is a
- * wait-and-retry state with nothing to link to.
+ * Resolves how a card should present its server's status. "link_required"
+ * gets a CTA to /identities/, where the user can fix it themselves, and
+ * "permission_required" gets "Request access" when the broker supplies an
+ * access URL (issue #395). misconfigured is admin-actionable (correlationId
+ * carries the id to quote), and unavailable is a wait-and-retry state with
+ * nothing to link to.
  */
 export function resolveServiceStatus(
   server: Pick<CatalogServer, 'status' | 'status_detail' | 'correlation_id'> & {
     link_state?: LinkState | null;
+    access_url?: string | null;
+    granting_groups?: string[];
   },
   identityNounText: string | null = null,
 ): ServiceStatusView {
@@ -92,16 +98,24 @@ export function resolveServiceStatus(
       severity: 'warning',
       cta: { label: 'Re-link identity', href: '/identities/' },
       correlationId: server.correlation_id,
+      grantingGroups: [],
     };
   }
+  const denied = server.status === 'permission_required';
   return {
     label: LABELS[server.status],
     detail: server.status_detail,
     severity: SEVERITIES[server.status],
-    cta:
-      server.status === 'link_required' ? { label: 'Link identity', href: '/identities/' } : null,
+    cta: ctaFor(server.status, denied ? (server.access_url ?? null) : null),
     correlationId: server.correlation_id,
+    grantingGroups: denied ? (server.granting_groups ?? []) : [],
   };
+}
+
+function ctaFor(status: ServiceStatus, accessUrl: string | null): StatusCta | null {
+  if (status === 'link_required') return { label: 'Link identity', href: '/identities/' };
+  if (accessUrl !== null) return { label: 'Request access', href: accessUrl };
+  return null;
 }
 
 /**
