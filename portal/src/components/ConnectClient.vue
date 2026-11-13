@@ -1,7 +1,8 @@
 <script setup lang="ts">
 /**
- * ConnectClient.vue — the Overview page's "connect a client" section: the MCP
- * endpoint as a copy field, numbered steps for Claude, and a curl snippet.
+ * ConnectClient.vue — the Overview page's "connect a client" section: three
+ * numbered step boxes (copy the MCP endpoint, add it to a client, sign in), and
+ * a collapsed disclosure with the personal-access-token route and a curl snippet.
  *
  * The endpoint depends on a runtime fetch (getBrokerOrigin() reads
  * /config.json), so it cannot be a build-time constant: a hardcoded URL would
@@ -10,6 +11,7 @@
 import { computed, onMounted, ref } from 'vue';
 import { getBrokerOrigin } from '../lib/auth';
 import CopyField from './ui/CopyField.vue';
+import Disclosure from './ui/Disclosure.vue';
 
 const origin = ref<string | null>(null);
 
@@ -31,77 +33,102 @@ curl -H "Authorization: Bearer $MCP_TOKEN" \\
 <template>
   <section class="af-sect" aria-labelledby="ov-connect-heading">
     <h2 id="ov-connect-heading">Connect to this endpoint</h2>
-    <p class="ov__body">
-      Add this server URL to Claude Desktop, Gemini Advanced, or any MCP-compatible client. Your
-      account signs in automatically the first time you connect — you never paste a credential by
-      hand unless your client can't open a browser (see below).
+    <p class="cc__body">
+      Add this server to Claude or any MCP-compatible client. You sign in with your own account; the
+      assistant never sees your credentials.
     </p>
 
-    <p v-if="endpoint === null" class="ov__body" role="status">Loading…</p>
-    <template v-else>
-      <div class="ov__field">
-        <span class="ov__label">MCP server URL</span>
-        <CopyField :value="endpoint" label="Copy endpoint URL to clipboard" />
+    <ol class="cc__steps">
+      <li class="af-box cc__step">
+        <span class="cc__num">1</span>
+        <h3 class="cc__title">Copy the server URL</h3>
+        <p v-if="endpoint === null" class="cc__text" role="status">Loading…</p>
+        <CopyField v-else :value="endpoint" label="Copy endpoint URL to clipboard" />
+      </li>
+      <li class="af-box cc__step">
+        <span class="cc__num">2</span>
+        <h3 class="cc__title">Add it to your client</h3>
+        <p class="cc__text">
+          In Claude: <strong>Settings → Connectors → Add custom connector</strong>, and paste the
+          URL. No header or token needed. Other MCP clients: add it as a remote server.
+        </p>
+      </li>
+      <li class="af-box cc__step">
+        <span class="cc__num">3</span>
+        <h3 class="cc__title">Sign in when asked</h3>
+        <p class="cc__text">
+          The first call opens a browser window to sign in with your account. Your client stores the
+          credential itself.
+        </p>
+      </li>
+    </ol>
+
+    <Disclosure label="No browser? Use a personal access token">
+      <div class="cc__token">
+        <p class="cc__body">
+          Create a token on the <a href="/tokens/">Tokens page</a>. In your client's request headers
+          (in Claude, <strong>Request headers</strong>), add name <code>Authorization</code>, value
+          <code>Bearer &lt;your token&gt;</code>. To try it from a terminal, paste the token in
+          place of <code>&lt;your token&gt;</code> below.
+        </p>
+        <CopyField
+          v-if="endpoint !== null"
+          :value="curlSnippet"
+          label="Copy curl snippet to clipboard"
+          multiline
+        />
       </div>
-
-      <h3 class="ov__subheading">Claude (Claude.ai, Claude Desktop)</h3>
-      <ol class="ov__steps">
-        <li>
-          Add a custom connector with just the server URL above — no header, no token needed:
-          <strong>Settings → Connectors → Add custom connector.</strong>
-        </li>
-        <li>
-          The first call opens a browser window to sign in with your account. Claude stores the
-          resulting credential itself — you won't see it again.
-        </li>
-        <li>
-          If your client can't open a browser, skip that step: create a personal access token from
-          the <a href="/tokens/">Tokens page</a> instead, then under
-          <strong>Request headers</strong> add name <code>Authorization</code>, value
-          <code>Bearer &lt;your token&gt;</code>.
-        </li>
-      </ol>
-
-      <h3 class="ov__subheading">curl</h3>
-      <p class="ov__body">
-        Create a personal access token on the <a href="/tokens/">Tokens page</a> first, then paste
-        it in place of <code>&lt;your token&gt;</code> below.
-      </p>
-      <CopyField :value="curlSnippet" label="Copy curl snippet to clipboard" multiline />
-    </template>
+    </Disclosure>
   </section>
 </template>
 
 <style scoped>
-.ov__subheading {
+.cc__body {
+  margin: 0;
+  max-width: 68ch;
+}
+
+/* Three boxes side by side when there is room, one column when narrow. */
+.cc__steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: var(--space-16);
+}
+
+.cc__step {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-8);
+  min-width: 0;
+  padding: var(--space-16);
+}
+
+.cc__step > :where(.af-copy) {
+  align-self: stretch;
+}
+
+.cc__num {
+  font: 500 var(--text-13) / 1 var(--font-mono);
+  color: var(--color-af-text-secondary);
+}
+
+.cc__title {
+  margin: 0;
   font: 600 var(--text-14) / 1.45 var(--font-sans);
-  margin: var(--space-8) 0 0;
 }
 
-.ov__body {
+.cc__text {
   margin: 0;
-  max-width: 68ch;
 }
 
-.ov__field {
+.cc__token {
   display: flex;
   flex-direction: column;
   gap: var(--space-8);
-}
-
-.ov__label {
-  font-weight: 500;
-  font-size: var(--text-13);
-}
-
-.ov__steps {
-  margin: 0;
-  padding-inline-start: var(--space-24);
-  list-style: decimal;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-8);
-  max-width: 68ch;
 }
 
 a {

@@ -18,6 +18,10 @@ vi.mock('../../lib/api', () => ({
   fetchDashboardSummary: vi.fn(),
 }));
 
+vi.mock('../../lib/auth', () => ({
+  getBrokerOrigin: () => Promise.resolve('https://mcp.example.org'),
+}));
+
 import { fetchDashboardSummary, fetchUsage } from '../../lib/api';
 import OverviewSummary from '../OverviewSummary.vue';
 
@@ -437,5 +441,42 @@ describe('OverviewSummary banner', () => {
 
     expect(wrapper.find('.af-note').exists()).toBe(false);
     expect(wrapper.get('.af-banner').attributes('role')).toBe('alert');
+  });
+});
+
+describe('OverviewSummary connect section', () => {
+  it('renders Connect between the banner and Your access, then Usage', async () => {
+    vi.mocked(fetchDashboardSummary).mockResolvedValue({
+      ...SUMMARY,
+      proxyStatus: { cached: true, voms_attributes: [], remaining_seconds: 0 },
+    });
+    const wrapper = await mountSummary();
+
+    const order = wrapper
+      .findAll('[role="alert"], section h2')
+      .map((el) => (el.element.tagName === 'H2' ? el.text() : 'banner'));
+    expect(order).toEqual([
+      'banner',
+      'Connect to this endpoint',
+      'Your access',
+      'Usage in the last 30 days',
+    ]);
+  });
+
+  it('still renders Connect while the summary fetch is loading', async () => {
+    vi.mocked(fetchDashboardSummary).mockReturnValue(new Promise(() => {}));
+    const wrapper = mount(OverviewSummary);
+
+    expect(wrapper.find('#ov-connect-heading').exists()).toBe(true);
+    expect(wrapper.findAll('ol > li')).toHaveLength(3);
+  });
+
+  it('still renders Connect when the summary and usage fetches fail', async () => {
+    vi.mocked(fetchDashboardSummary).mockRejectedValue(new Error('boom'));
+    vi.mocked(fetchUsage).mockRejectedValue(new Error('boom'));
+    const wrapper = await mountSummary();
+
+    expect(wrapper.find('#ov-connect-heading').exists()).toBe(true);
+    expect(wrapper.findAll('ol > li')).toHaveLength(3);
   });
 });

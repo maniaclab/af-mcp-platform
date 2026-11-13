@@ -3,13 +3,13 @@
 // (see docs/architecture.md, "Reserved paths on the portal host"). New
 // portal pages must not use those prefixes.
 import Base from '../layouts/Base.astro';
-import ConnectClient from '../components/ConnectClient.vue';
 import OverviewSummary from '../components/OverviewSummary.vue';
 
 // Identity is filled client-side (see Base.astro) — the greeting element is
 // tagged data-af-identity and stays hidden until GET /v1/identities resolves.
 //
-// The MCP endpoint URL is likewise filled client-side (see ConnectClient.vue)
+// The MCP endpoint URL is likewise filled client-side (see ConnectClient.vue,
+// rendered by OverviewSummary.vue)
 // from getBrokerOrigin() (../lib/auth) rather than baked in here — this
 // frontmatter only runs at build time, so a hardcoded URL here would show
 // every deployment its own host or a different, wrong one.
@@ -36,11 +36,8 @@ import OverviewSummary from '../components/OverviewSummary.vue';
       <canvas id="track-canvas" class="ov-head__canvas" aria-hidden="true"></canvas>
     </header>
 
-    <!-- ── Banner, status list and usage stats (Vue island — fetches live data) ── -->
+    <!-- ── Banner, connect steps, status list and usage stats (Vue island — fetches live data) ── -->
     <OverviewSummary client:load />
-
-    <!-- ── Connect a client (Vue island — endpoint comes from /config.json) ── -->
-    <ConnectClient client:load />
   </div>
 </Base>
 
