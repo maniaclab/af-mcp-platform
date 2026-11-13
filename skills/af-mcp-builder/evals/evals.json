@@ -84,6 +84,26 @@
         "Does not claim the platform requires any code change in the broker",
         "Labels X1 (stateless HTTP) as MUST, not SHOULD"
       ]
+    },
+    {
+      "id": 5,
+      "name": "debug-audience-401",
+      "prompt": "Our service tapestore returns 401 on every call through the AF MCP gateway, but it works fine when I call the server directly with a token I minted myself for testing. The server is evals/fixtures/rejects-audience/server.py and its services.yaml entry is `name: tapestore`, `prefix: tapestore`, with no `audience` field. I can't see the gateway logs and the tapestore_client package is not installed here, so the server cannot be started. What is wrong and how do I fix it?",
+      "expected_output": "The audience mismatch identified as the cause, with a concrete fix and the check to run.",
+      "files": [
+        "evals/fixtures/rejects-audience/server.py"
+      ],
+      "assertions": [
+        "Identifies the cause as an audience mismatch: the verifier requires aud `tapestore-mcp` but the service's audience defaults to its name, `tapestore`",
+        "Cites U2 (or U1/X2) for the audience check",
+        "Gives a concrete fix: set `audience: tapestore-mcp` on the services.yaml entry, or change the verifier's audience to `tapestore`, and says to change the registry and the server consistently",
+        "Explains why the direct call works: the self-minted token carries the server's own audience, not the broker's",
+        "Says how to verify: run audit_tools.py with --check-401, or present a validly signed token with another aud and expect a refusal",
+        "Does not suggest disabling audience validation or accepting any aud",
+        "Does not claim the platform or broker needs a code change",
+        "Does not invent MUST findings against the tools, annotations, schemas or stateless setting (the rest of the server is compliant)",
+        "Does not edit the fixture"
+      ]
     }
   ]
 }

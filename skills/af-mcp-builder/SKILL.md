@@ -156,12 +156,37 @@ Rules for the table:
   read off the wire. A finding without a location is a finding you did not check.
 - `Suggested change` is concrete: the code or the setting, in the server's own
   SDK. Quote the guide's rule by ID rather than copying it.
+- A table row is a violation you saw, in the source or on the wire. A lead you
+  could not confirm (identity wiring that lives in a library you cannot read, an
+  item only the mechanical audit can settle) is not a MUST row, even for a MUST
+  item: list it after the table under "Needs confirmation" with the item ID and
+  what would settle it. MUST items block onboarding, so a MUST row you cannot
+  stand behind sends the user chasing a problem that may not exist.
 - After the table, list the items that passed, as a line of IDs, and the items
   you could not check with the reason.
 - Mark an item **Not exercised by the platform** when the guide says so (B2
   cancellation). Do not report it as a failure.
 - Do not file issues or open pull requests on the audited repository unless the
   user asks.
+
+## When a backend misbehaves behind the gateway
+
+Use this when the server works on its own but fails or looks wrong through the
+broker. Start from the symptom, run the matching check, and report what you find
+in the usual table with the item ID. Gateway-side state (the drift page,
+`af_list_mcp_servers`) belongs to the operator, so ask the user for its output
+instead of assuming it. Every flag below is an `audit_tools.py` flag from step 3.
+
+| Symptom | Items to check | Run |
+|---------|----------------|-----|
+| 401 or 403 through the gateway, fine locally | **U2**: the token's `aud` must equal the service's `audience` in `services.yaml`, which defaults to `name` (renaming a service without setting `audience` 401'd every backend). **U1**: accept only the broker identity token, verified against the broker's `/.well-known/jwks.json` by `kid`, with `iss` and `exp` checked (it lives 600 s by default). **X2**: a bad bearer must be a transport 401, not a tool error inside a 200, or the broker never learns an `oauth21-direct` token was revoked. | `--check-401`. Then, with a real broker token in `$MCP_BEARER_TOKEN`, a plain run; a validly signed token with another `aud` must also be refused (U2). |
+| A tool is missing from `tools/list` | **N1/P1**: a name without the registered prefix is unroutable and hidden while the backend looks healthy. With the default `apply_namespace: true` the aggregator adds the prefix, so the backend advertises bare names; with `false` it must advertise `<prefix>_<tool>`. **P4**: `exclude_tools` and per-tool `required_permission` keys are native, pre-namespace names. For a credentialed service (`bearer`, `x509`, `krb5`, `servicex`) a caller who has not linked the credential is not listed at all: `af_list_mcp_servers` shows `link_state`, `af_link_identity` fixes it. Operator: `GET /v1/admin/tool-mapping-drift` (portal Admin page) lists unroutable names, and the service reads `misconfigured` when none route. | `--prefix <prefix>`, then compare its tool list with the one the user sees. |
+| "Session terminated", 404s across replicas, or a hang | **X1**: the stateful default breaks when consecutive calls reach different replicas, so serve stateless. **X5**: every downstream call needs an explicit timeout, and a downstream address resolved once at startup stops working after the downstream restarts. | `--check-stateless`. Read the downstream calls for timeouts. |
+| A result is unparseable or empty | **O1**: an object `outputSchema` with matching `structuredContent`. **O2**: a text block with the same information. **O3**: curated fields, not raw backend rows. **E2**: an empty result names a next step. | `--call <read-only tool> --args-json '...'` (payload validation against the schema, O2, O3). |
+| Huge outputs or timeouts | **B1**: `limit` with a default and a maximum enforced in code, truncation announced, the upstream paged. **B3**: a per-caller concurrency bound in front of a shared backend. **X5**: timeouts. | `--call <listing tool>`, which checks the result size against `--max-bytes`. |
+
+If none of the checks explains it, say so and list what you could not observe;
+do not guess at gateway internals.
 
 ## Things that look like findings and are not
 
