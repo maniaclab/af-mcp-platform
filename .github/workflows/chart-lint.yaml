@@ -125,6 +125,22 @@ jobs:
             }
           done
 
+      # Scaling safety: more than one broker replica with no shared state
+      # store must be an explicit choice, so the chart has to refuse to render
+      # it. ci/credmon-values.yaml opts in via allowPerReplicaState; this
+      # turns that off to prove the guard fires.
+      - name: Verify replicaCount > 1 without shared state is refused
+        run: |
+          if helm template af-mcp-platform charts/af-mcp-platform \
+            -f charts/af-mcp-platform/ci/credmon-values.yaml \
+            --set broker.replicaCount=2 \
+            --set broker.sharedState.allowPerReplicaState=false \
+            --set image.broker.tag=sha-test \
+            --set image.portal.tag=sha-test >/dev/null 2>&1; then
+            echo "chart rendered replicaCount=2 with no shared state store" >&2
+            exit 1
+          fi
+
       - name: ct lint
         run: ct lint --target-branch "$DEFAULT_BRANCH" --check-version-increment=false
         env:

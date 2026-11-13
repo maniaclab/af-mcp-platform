@@ -1,0 +1,19 @@
+# Exercises the plain-URL form of broker.sharedState with the NetworkPolicy
+# egress rule's `cidr` form (a managed instance outside the cluster), so a
+# broken render of either is caught by CI's `ct lint`, which lints the chart
+# once per values file in this directory. Placeholder example.com values,
+# same caveats as test-values.yaml.
+oidc:
+  issuer: "https://keycloak.example.com/realms/example"
+portal:
+  oidc:
+    clientId: "example-portal-client"
+    scope: "openid profile email example-audience"
+  brokerOrigin: "https://mcp.example.com"
+
+broker:
+  sharedState:
+    url: "rediss://cache.example.com:6380/0"
+    networkPolicy:
+      cidr: "203.0.113.0/24"
+      port: 6380

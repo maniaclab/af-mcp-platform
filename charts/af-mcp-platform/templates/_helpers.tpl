@@ -315,6 +315,28 @@ validation requirements (Settings() raises at construction time otherwise).
 Callers pipe this through `nindent` at whatever depth their container's
 `env:` list sits at.
 */}}
+{{/*
+Whether a shared cross-replica state store is configured (url or secret).
+Renders "true" or nothing, for use in `if`.
+*/}}
+{{- define "af-mcp-platform.sharedState.configured" -}}
+{{- if or .Values.broker.sharedState.url .Values.broker.sharedState.existingSecret.name -}}true{{- end -}}
+{{- end }}
+
+{{/*
+Refuse to render more than one broker replica without a shared state store,
+unless the operator opted into per-replica state. Mirrors the broker's own
+startup refusal (Settings._validate_replica_state_config) for the chart path.
+*/}}
+{{- define "af-mcp-platform.sharedState.validate" -}}
+{{- if and .Values.broker.sharedState.url .Values.broker.sharedState.existingSecret.name -}}
+{{- fail "broker.sharedState.url and broker.sharedState.existingSecret.name are mutually exclusive; set only one." -}}
+{{- end -}}
+{{- if and (gt (.Values.broker.replicaCount | int) 1) (not (include "af-mcp-platform.sharedState.configured" .)) (not .Values.broker.sharedState.allowPerReplicaState) -}}
+{{- fail "broker.replicaCount > 1 requires broker.sharedState.url (or broker.sharedState.existingSecret.name): the unlock brute-force limiter and other replica state must agree across replicas. Point it at a Valkey/Redis instance, or set broker.sharedState.allowPerReplicaState=true to accept per-replica state (see docs/architecture.md, Replica consistency)." -}}
+{{- end -}}
+{{- end }}
+
 {{- define "af-mcp-platform.broker.env" -}}
 # OIDC settings — names must match broker Settings fields. Issuer is the
 # shared top-level `oidc.issuer` (also consumed by the portal); audience is
@@ -344,6 +366,21 @@ Callers pipe this through `nindent` at whatever depth their container's
   value: {{ .Values.broker.mcpStatelessHttp | quote }}
 - name: MCP_REPLICA_COUNT
   value: {{ .Values.broker.replicaCount | quote }}
+# Shared cross-replica state store (see broker.sharedState in values.yaml).
+{{- if .Values.broker.sharedState.existingSecret.name }}
+- name: SHARED_STATE_URL
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.broker.sharedState.existingSecret.name | quote }}
+      key: {{ .Values.broker.sharedState.existingSecret.key | quote }}
+{{- else if .Values.broker.sharedState.url }}
+- name: SHARED_STATE_URL
+  value: {{ .Values.broker.sharedState.url | quote }}
+{{- end }}
+{{- if .Values.broker.sharedState.allowPerReplicaState }}
+- name: ALLOW_PER_REPLICA_STATE
+  value: "true"
+{{- end }}
 # Proxy tmpfs mount path
 {{- if .Values.broker.tmpfsProxy.enabled }}
 - name: PROXY_DIR

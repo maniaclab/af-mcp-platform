@@ -20,6 +20,10 @@ portal:
   brokerOrigin: "https://mcp.example.com"
 
 broker:
+  # Two replicas (the chart default) need a shared state store or an explicit
+  # opt-in; this file is not about shared state, so it opts in.
+  sharedState:
+    allowPerReplicaState: true
   identityProviders:
     - type: krb5-token
       alias: krb5-example
