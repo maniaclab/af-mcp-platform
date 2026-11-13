@@ -1,0 +1,13 @@
+{
+  "skill_name": "af-mcp-builder",
+  "note": "Assertion pass counts from graded sonnet subagent runs. old_skill is the skill as first proposed in the PR (bundled guide copy, X1 a SHOULD, O2 preferring curated text); with_skill is the revised skill reading the guide from a local stand-in for the raw URL (eval 2: guide withheld); without_skill is no skill. Grading was done by reading each final answer against the assertions in evals.json; the runs could not write report files, so the answers are not stored.",
+  "iteration_1": {
+    "with_skill": {"audit-noncompliant-fastmcp": "13/13", "audit-compliant-fastmcp-guide-unreachable": "6/6", "audit-go-mcp-go-server": "11/11", "onboard-new-backend": "9/9", "total": "39/39"},
+    "old_skill": {"audit-noncompliant-fastmcp": "12/13", "audit-compliant-fastmcp-guide-unreachable": "5/6", "audit-go-mcp-go-server": "9/11", "onboard-new-backend": "8/9", "total": "34/39"},
+    "without_skill": {"audit-noncompliant-fastmcp": "9/13", "audit-compliant-fastmcp-guide-unreachable": "6/6", "audit-go-mcp-go-server": "10/11", "onboard-new-backend": "4/9", "total": "29/39"}
+  },
+  "failures": {
+    "old_skill": ["X1 reported as SHOULD (3 evals)", "O2 JSON text block reported as a finding", "U6 owner argument not reported (Go)"],
+    "without_skill": ["no X1 stateless finding (2 evals)", "no outputSchema finding (2 evals)", "no table and fewer than 10 item IDs (eval 1)", "no apply_namespace or agent_policy, no credential-boundary finding (eval 4)"]
+  }
+}

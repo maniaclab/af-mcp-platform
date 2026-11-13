@@ -3,6 +3,8 @@
 # packaged code.
 extend = "../broker/pyproject.toml"
 target-version = "py310"
+# Eval fixtures are deliberately non-compliant servers that the skill is tested on.
+extend-exclude = ["af-mcp-builder/evals/fixtures"]
 
 [lint.per-file-ignores]
 "**/tests/**" = ["ARG"]

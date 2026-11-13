@@ -98,7 +98,7 @@ check-docstrings = { cmd = "pydocstyle broker/src/af_mcp_broker/", description =
 [feature.dev.tasks]
 lint = { cmd = "ruff check broker skills && ruff format --check broker skills", description = "Ruff lint + format check" }
 fmt = { cmd = "ruff format broker skills && ruff check --fix broker skills", description = "Format and auto-fix broker source" }
-typecheck = { cmd = "mypy broker/src skills", description = "Type-check broker source and skill scripts" }
+typecheck = { cmd = "mypy broker/src skills --exclude evals/fixtures", description = "Type-check broker source and skill scripts" }
 pre-commit = { cmd = "prek run --all-files", description = "Run pre-commit hooks on all files" }
 lint-all = { depends-on = ["lint", "typecheck", "pre-commit"], description = "Everything the CI lint job runs" }
 test = { cmd = "pytest broker/ skills/ -v", description = "Broker unit tests and skill script tests" }
