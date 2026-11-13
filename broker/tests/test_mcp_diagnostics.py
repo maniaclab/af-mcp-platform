@@ -920,3 +920,79 @@ async def test_af_usage_without_installed_store_degrades_to_empty_window(
     assert body["totals"]["calls"] == 0
     assert body["by_service"] == []
     assert body["by_day"] == []
+
+
+async def test_af_list_mcp_servers_reports_how_to_request_access(
+    settings: Any, sig_key: Any, prime_jwks: Any, static_principal_cache: Any
+) -> None:
+    """A permission_required row carries the resolved access URL (the service's
+    own, else the facility default), the groups that grant the missing
+    permission, and docs_url; an available row carries only docs_url (issue
+    #395), so an assistant can pass the link on instead of "contact an admin"."""
+    principal_cache, directory = static_principal_cache
+    directory.groups_by_subject["user-123"] = []
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+
+    registry = ServiceRegistry(default_access_url="https://facility.example.org/access")
+    registry.register(
+        ServiceSpec(
+            name="own-link",
+            prefix="ownlink",
+            url="http://ownlink.invalid/mcp",
+            transport="http",
+            required_permission="read_data",
+            auth_type="none",
+            access_url="https://own.example.org/access",
+            docs_url="https://docs.example.org/own",
+        )
+    )
+    registry.register(
+        ServiceSpec(
+            name="default-link",
+            prefix="defaultlink",
+            url="http://defaultlink.invalid/mcp",
+            transport="http",
+            required_permission="read_data",
+            auth_type="none",
+        )
+    )
+    registry.register(
+        ServiceSpec(
+            name="open",
+            prefix="open",
+            url="http://open.invalid/mcp",
+            transport="http",
+            required_permission="__none__",
+            auth_type="none",
+            docs_url="https://docs.example.org/open",
+        )
+    )
+
+    mcp = build_aggregator(
+        registry,
+        settings,
+        EntitlementPolicy(
+            group_permissions={"/connect/atlas-af": ["read_data"], "other": []}
+        ),
+        CredentialRegistry(),
+        principal_cache=principal_cache,
+    )
+
+    async with (
+        run_aggregator_async(mcp, path="/mcp") as server,
+        server.client(headers={"Authorization": f"Bearer {token}"}) as client,
+    ):
+        result = await client.call_tool(LIST_MCP_SERVERS_TOOL_NAME, {})
+
+    rows = {row["name"]: row for row in result.structured_content["servers"]}
+    assert rows["own-link"]["status"] == "permission_required"
+    assert rows["own-link"]["access_url"] == "https://own.example.org/access"
+    assert rows["own-link"]["granting_groups"] == ["/connect/atlas-af"]
+    assert rows["own-link"]["docs_url"] == "https://docs.example.org/own"
+    assert rows["default-link"]["access_url"] == "https://facility.example.org/access"
+    assert rows["default-link"]["docs_url"] is None
+    assert rows["open"]["status"] == "available"
+    assert rows["open"]["access_url"] is None
+    assert rows["open"]["granting_groups"] == []
+    assert rows["open"]["docs_url"] == "https://docs.example.org/open"

@@ -15,9 +15,11 @@ from af_mcp_broker import metrics
 from af_mcp_broker.audit import AuditRecord, write_audit
 from af_mcp_broker.audit.pipeline import submit_metered_audit
 from af_mcp_broker.authorization import (
+    DISABLED_PERMISSION,
     EntitlementPolicy,
     check_entitlement,
     get_action_type,
+    groups_granting_any,
 )
 from af_mcp_broker.authorization.errors import ToolRateLimitError
 from af_mcp_broker.authorization.rate_limit import check_rate_limits
@@ -34,7 +36,7 @@ if TYPE_CHECKING:
     from fastmcp.tools.base import ToolResult
 
     from af_mcp_broker.identity import Principal
-    from af_mcp_broker.mcp.registry import ServiceRegistry
+    from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
     from af_mcp_broker.shared_state import SharedState
 
 logger = structlog.get_logger(__name__)
@@ -141,6 +143,30 @@ class AuthorizationMiddleware(Middleware):
         # use_shared_state(). There is deliberately no default store: counting
         # in a private in-memory one would silently make limits per replica.
         self.shared_state: FallbackSharedState | None = None
+
+    def _denial_message(
+        self, service: ServiceSpec, permission: str | None, reason: str
+    ) -> str:
+        """Return the error text for a permission denial: *reason* plus, when they exist, the groups granting *permission* and where to request access.
+
+        The guidance lets an assistant tell the user what to do instead of
+        only "contact an administrator". It is built from the denied TOOL's
+        own permission, so a per-tool required_permission names that tool's
+        groups, not the service-wide union. A permission nobody can hold
+        (DISABLED_PERMISSION, an unmapped tool) gets no guidance: no group or
+        access page would fix it. The audit record keeps the bare *reason*.
+        """
+        message = f"Authorization denied: {reason}"
+        if permission is None or permission == DISABLED_PERMISSION:
+            return message
+        guidance: list[str] = []
+        groups = groups_granting_any(self.policy, {permission})
+        if groups:
+            guidance.append(f"Granted by membership in: {', '.join(groups)}.")
+        access_url = self.registry.access_url_for(service)
+        if access_url:
+            guidance.append(f"Request access: {access_url}")
+        return " ".join([f"{message}.", *guidance]) if guidance else message
 
     def use_shared_state(self, shared_state: SharedState) -> None:
         """Back ``policy.rate_limits`` with *shared_state*.
@@ -314,7 +340,9 @@ class AuthorizationMiddleware(Middleware):
                         trace_id=current_trace_id(),
                     )
                 )
-                raise AuthorizationError(f"Authorization denied: {reason}")
+                raise AuthorizationError(
+                    self._denial_message(service, permission, reason)
+                )
 
             # After the entitlement check, so a caller refused above never
             # spends budget, and before any credential is minted or backend
