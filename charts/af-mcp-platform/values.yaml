@@ -76,6 +76,14 @@ broker:
   # mode). Empty means no admin surface is reachable by anyone.
   adminGroup: ""
 
+  # Facility-wide page where a user requests the access a service requires
+  # (a group-request form, a ticket queue). Rendered as ACCESS_REQUEST_URL: the
+  # fallback for an aggregator.services entry that sets no access_url of its
+  # own. Must be an absolute https URL. Empty means services without their own
+  # access_url show no "Request access" link (the groups that grant the
+  # permission are still named).
+  accessRequestUrl: ""
+
   # /mcp aggregator transport mode (issue #128). Streamable-HTTP sessions
   # are in-process state, so a stateful session (false) only survives an
   # unpinned load balancer routing its later requests to a *different*
@@ -683,6 +691,16 @@ aggregator:
   #                           # never advertised them -- for infrastructure-
   #                           # facing tools with no user story behind the
   #                           # broker. See docs/adding-a-service.md.
+  # Two optional link fields, absolute https URLs only (http is accepted for
+  # localhost in dev):
+  #     access_url: https://groups.example.org/request/my-tool  # where to
+  #                             # request access when a caller lacks the
+  #                             # service's permission; falls back to
+  #                             # broker.accessRequestUrl. Shown as "Request
+  #                             # access" in the portal and quoted in the
+  #                             # permission-denied tool error.
+  #     docs_url: https://docs.example.org/my-tool  # the service's own
+  #                             # documentation, linked from its portal card.
   # For x509/broker-issued (AF-native) services, two more fields carry the
   # token contract (issue #257):
   #     audience: my-tool-mcp   # the exact `aud` the backend validates the AF
