@@ -295,7 +295,16 @@ def _build_client(
 
     *on_unauthorized* comes from ``_bearer_injection`` alongside *headers*:
     it reports a backend 401 for the injected credential (issue #344).
+
+    The same ``timeout_seconds`` also bounds the initialize handshake
+    (``init_timeout``, otherwise unbounded) and, for SSE, the wait on the
+    event stream (``sse_read_timeout``, otherwise 300 s), which is how long
+    a backend that accepts the connection but never speaks would hold the
+    caller (issue #386).
     """
+    transport_kwargs: dict[str, Any] = {}
+    if transport_cls is SSETransport:
+        transport_kwargs["sse_read_timeout"] = spec.timeout_seconds
     return Client(
         transport_cls(
             spec.url,
@@ -303,8 +312,10 @@ def _build_client(
             httpx_client_factory=_checked_httpx_client_factory(
                 spec.name, on_unauthorized
             ),
+            **transport_kwargs,
         ),
         timeout=spec.timeout_seconds,
+        init_timeout=spec.timeout_seconds,
         progress_handler=default_proxy_progress_handler,
         log_handler=default_proxy_log_handler,
     )
