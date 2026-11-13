@@ -689,7 +689,7 @@ Key endpoints:
 | `GET` | `/v1/identities` | Caller identity, linked accounts, linkable providers |
 | `GET` | `/v1/permissions` | Caller's granted permissions |
 | `POST` | `/v1/authorize` | Check one entitlement (used by the aggregator per call) |
-| `GET` | `/v1/catalog` | Services visible to the caller, each with a per-caller `status`; `link_required` services carry `link_state` (`not_linked` or `rejected`, a linked credential the service refused), `null` for every other status |
+| `GET` | `/v1/catalog` | Services visible to the caller, each with a per-caller `status`; `link_required` services carry `link_state` (`not_linked` or `rejected`, a linked credential the service refused), `null` for every other status; every entry carries `docs_url`, and `permission_required` entries carry `access_url` and `granting_groups` (see [Adding a Service](adding-a-service.md#access_url-and-docs_url-where-to-go-for-access-and-documentation)) |
 | `POST` | `/v1/credential` | Issue or return a cached credential for a target |
 | `POST` | `/v1/x509/proxy` | Mint and cache a VOMS proxy (passphrase unlock) |
 | `GET` | `/v1/x509/proxy/status` | Proxy cache status |
