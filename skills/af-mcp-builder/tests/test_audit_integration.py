@@ -12,14 +12,14 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import pytest
-
 if TYPE_CHECKING:
     import subprocess
     from collections.abc import Callable
 
+    import pytest
+
 FIXTURE_SERVERS = Path(__file__).resolve().parent / "fixture_servers.py"
-GOOD_TOKEN = "fixture-good-token"  # noqa: S105 - matches fixture_servers.GOOD_TOKEN
+GOOD_TOKEN = "fixture-good-token"
 
 # Every finding the violating server must produce, as (item, level, tool).
 VIOLATING_FINDINGS = {
@@ -33,6 +33,7 @@ VIOLATING_FINDINGS = {
     ("N3", "SHOULD", "fx_write_thing"),
     ("B1", "MUST", "fx_list_things"),
     ("U3", "MUST", "fx_list_things"),
+    ("U6", "MUST", "fx_list_things"),
 }
 # Added by --call fx_get_thing --expect-error: the tool reports failure as text.
 VIOLATING_CALL_FINDING = ("E1", "MUST", "fx_get_thing")
@@ -47,7 +48,11 @@ def rows(stdout: str) -> set[tuple[str, str, str]]:
     out = set()
     for line in stdout.splitlines():
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
-        if line.startswith("| ") and len(cells) == 4 and cells[0] not in ("Item", "------"):
+        if (
+            line.startswith("| ")
+            and len(cells) == 4
+            and cells[0] not in ("Item", "------")
+        ):
             out.add((cells[0], cells[1], cells[2].strip("`")))
     return out
 
@@ -87,7 +92,7 @@ class TestOverStdio:
         assert proc.returncode == 1
         assert rows(proc.stdout) == VIOLATING_FINDINGS
         assert "Audited 4 tools." in proc.stdout
-        assert "8 MUST, 2 SHOULD." in proc.stdout
+        assert "9 MUST, 2 SHOULD." in proc.stdout
 
     def test_violating_server_call_adds_e1(
         self, run_audit: Callable[..., subprocess.CompletedProcess[str]]
@@ -109,7 +114,9 @@ class TestOverStdio:
     def test_unknown_tool_for_call_exits_with_message(
         self, run_audit: Callable[..., subprocess.CompletedProcess[str]]
     ) -> None:
-        proc = run_audit("--stdio", stdio_command("compliant"), "--call", "no_such_tool")
+        proc = run_audit(
+            "--stdio", stdio_command("compliant"), "--call", "no_such_tool"
+        )
         assert proc.returncode == 2
         assert "no tool named 'no_such_tool'" in proc.stderr
 
@@ -146,7 +153,9 @@ class TestCheck401EndToEnd:
         serve: Callable[[str, str], int],
     ) -> None:
         port = serve("compliant", "stateless")  # no auth: accepts any bearer
-        proc = run_audit("--url", f"http://127.0.0.1:{port}/mcp", "--prefix", "fx", "--check-401")
+        proc = run_audit(
+            "--url", f"http://127.0.0.1:{port}/mcp", "--prefix", "fx", "--check-401"
+        )
         assert proc.returncode == 1
         assert rows(proc.stdout) == {("X2", "MUST", "(transport)")}
         assert "HTTP 200" in proc.stdout
@@ -157,7 +166,9 @@ class TestCheck401EndToEnd:
         serve: Callable[[str, str], int],
     ) -> None:
         port = serve("compliant", "http")  # bare tools/list has no session id
-        proc = run_audit("--url", f"http://127.0.0.1:{port}/mcp", "--prefix", "fx", "--check-401")
+        proc = run_audit(
+            "--url", f"http://127.0.0.1:{port}/mcp", "--prefix", "fx", "--check-401"
+        )
         assert proc.returncode == 1
         assert rows(proc.stdout) == {("X2", "MUST", "(transport)")}
         assert "HTTP 400" in proc.stdout
@@ -170,7 +181,9 @@ class TestCheck401EndToEnd:
     ) -> None:
         port = serve("compliant-auth", "http")
         monkeypatch.setitem(os.environ, "MCP_BEARER_TOKEN", GOOD_TOKEN)
-        proc = run_audit("--url", f"http://127.0.0.1:{port}/mcp", "--prefix", "fx", "--check-401")
+        proc = run_audit(
+            "--url", f"http://127.0.0.1:{port}/mcp", "--prefix", "fx", "--check-401"
+        )
         assert proc.returncode == 0, proc.stdout + proc.stderr
         assert "No findings." in proc.stdout
 
@@ -185,3 +198,55 @@ class TestCheck401EndToEnd:
         proc = run_audit("--url", f"http://127.0.0.1:{port}/mcp", "--prefix", "fx")
         assert proc.returncode == 2  # cannot connect, so no audit table
         assert "audit could not run" in proc.stderr
+
+
+class TestCheckStatelessEndToEnd:
+    def test_stateless_server_passes(
+        self,
+        run_audit: Callable[..., subprocess.CompletedProcess[str]],
+        serve: Callable[[str, str], int],
+    ) -> None:
+        port = serve("compliant", "stateless")
+        proc = run_audit(
+            "--url",
+            f"http://127.0.0.1:{port}/mcp",
+            "--prefix",
+            "fx",
+            "--check-stateless",
+        )
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert "No findings." in proc.stdout
+
+    def test_stateful_server_fails_x1(
+        self,
+        run_audit: Callable[..., subprocess.CompletedProcess[str]],
+        serve: Callable[[str, str], int],
+    ) -> None:
+        port = serve("compliant", "http")  # SDK default: stateful
+        proc = run_audit(
+            "--url",
+            f"http://127.0.0.1:{port}/mcp",
+            "--prefix",
+            "fx",
+            "--check-stateless",
+        )
+        assert proc.returncode == 1
+        assert rows(proc.stdout) == {("X1", "MUST", "(transport)")}
+        assert "HTTP 400" in proc.stdout
+
+    def test_stateless_server_with_auth_passes_with_a_token(
+        self,
+        run_audit: Callable[..., subprocess.CompletedProcess[str]],
+        serve: Callable[[str, str], int],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        port = serve("compliant-auth", "stateless")
+        monkeypatch.setitem(os.environ, "MCP_BEARER_TOKEN", GOOD_TOKEN)
+        proc = run_audit(
+            "--url",
+            f"http://127.0.0.1:{port}/mcp",
+            "--prefix",
+            "fx",
+            "--check-stateless",
+        )
+        assert proc.returncode == 0, proc.stdout + proc.stderr

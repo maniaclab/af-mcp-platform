@@ -57,11 +57,17 @@ class TestN1Names:
             ("fx_get_thing", None, 0),
             ("get_thing", "fx", 1),
             ("fxx_get_thing", "fx", 1),  # shares letters, not the 'fx_' prefix
-            ("fx get thing", "fx", 2),  # space is outside the character set and breaks the prefix
+            (
+                "fx get thing",
+                "fx",
+                2,
+            ),  # space is outside the character set and breaks the prefix
             ("fx_" + "a" * 130, "fx", 1),  # over 128 characters
         ],
     )
-    def test_name_and_prefix(self, audit: Any, name: str, prefix: str | None, n_findings: int) -> None:
+    def test_name_and_prefix(
+        self, audit: Any, name: str, prefix: str | None, n_findings: int
+    ) -> None:
         found = items(audit.audit_tool(make_tool(name=name), prefix), "N1")
         assert len(found) == n_findings
         assert all(f.level == "MUST" for f in found)
@@ -85,7 +91,9 @@ class TestN2N3Descriptions:
         assert all(e in f.message for f, e in zip(found, expected, strict=True))
         assert all(f.level == "MUST" for f in found)
 
-    def test_n3_flags_one_line_description_with_many_arguments(self, audit: Any) -> None:
+    def test_n3_flags_one_line_description_with_many_arguments(
+        self, audit: Any
+    ) -> None:
         props = {k: desc() for k in "abc"}
         found = items(audit.audit_tool(make_tool(properties=props), "fx"), "N3")
         assert [f.level for f in found] == ["SHOULD"]
@@ -96,7 +104,12 @@ class TestN2N3Descriptions:
     )
     def test_n3_not_flagged(self, audit: Any, description: str, n_props: int) -> None:
         props = {k: desc() for k in "abc"[:n_props]}
-        found = items(audit.audit_tool(make_tool(description=description, properties=props), "fx"), "N3")
+        found = items(
+            audit.audit_tool(
+                make_tool(description=description, properties=props), "fx"
+            ),
+            "N3",
+        )
         assert found == []
 
 
@@ -114,8 +127,12 @@ class TestS1InputSchema:
             ({"type": "string", "description": "  "}, True),
         ],
     )
-    def test_argument_description(self, audit: Any, prop: dict[str, Any], flagged: bool) -> None:
-        found = items(audit.audit_tool(make_tool(properties={"thing_id": prop}), "fx"), "S1")
+    def test_argument_description(
+        self, audit: Any, prop: dict[str, Any], flagged: bool
+    ) -> None:
+        found = items(
+            audit.audit_tool(make_tool(properties={"thing_id": prop}), "fx"), "S1"
+        )
         assert bool(found) is flagged
         if flagged:
             assert "thing_id" in found[0].message
@@ -139,16 +156,52 @@ class TestU3Credentials:
         assert bool(found) is flagged
 
 
+class TestU6AmbientIdentity:
+    @pytest.mark.parametrize(
+        ("arg", "flagged"),
+        [
+            ("username", True),
+            ("owner", True),
+            ("user", True),
+            ("UID", True),
+            ("unixname", True),
+            ("user_id_hint", False),  # not an exact identity parameter name
+            ("dataset", False),
+        ],
+    )
+    def test_argument_names(self, audit: Any, arg: str, flagged: bool) -> None:
+        tool = make_tool(properties={arg: desc()})
+        found = items(audit.audit_tool(tool, "fx"), "U6")
+        assert [f.level for f in found] == (["MUST"] if flagged else [])
+
+
+class TestN4Surface:
+    @pytest.mark.parametrize(
+        ("n_tools", "flagged"), [(1, False), (60, False), (61, True)]
+    )
+    def test_tool_count(self, audit: Any, n_tools: int, flagged: bool) -> None:
+        tools = [make_tool(name=f"fx_get_{i}") for i in range(n_tools)]
+        found = audit.audit_surface(tools)
+        assert [(f.item, f.level) for f in found] == (
+            [("N4", "SHOULD")] if flagged else []
+        )
+
+
 class TestO1OutputSchema:
     @pytest.mark.parametrize(
         ("schema", "expected"),
         [
             (OBJ, []),
             (None, ["no outputSchema"]),
-            ({"type": "array", "items": {}}, ["outputSchema is not a JSON object schema"]),
+            (
+                {"type": "array", "items": {}},
+                ["outputSchema is not a JSON object schema"],
+            ),
         ],
     )
-    def test_output_schema(self, audit: Any, schema: dict[str, Any] | None, expected: list[str]) -> None:
+    def test_output_schema(
+        self, audit: Any, schema: dict[str, Any] | None, expected: list[str]
+    ) -> None:
         found = items(audit.audit_tool(make_tool(output_schema=schema), "fx"), "O1")
         assert [f.message for f in found] == expected
 
@@ -156,7 +209,9 @@ class TestO1OutputSchema:
 class TestA1A2Annotations:
     def test_missing_annotations(self, audit: Any) -> None:
         found = items(audit.audit_tool(make_tool(annotations=None), "fx"), "A1")
-        assert [(f.level, f.message) for f in found] == [("MUST", "readOnlyHint is not set")]
+        assert [(f.level, f.message) for f in found] == [
+            ("MUST", "readOnlyHint is not set")
+        ]
 
     def test_annotations_without_read_only_hint(self, audit: Any) -> None:
         tool = make_tool(annotations=ToolAnnotations(title="t"))
@@ -173,7 +228,10 @@ class TestA1A2Annotations:
     @pytest.mark.parametrize(
         ("ann", "missing"),
         [
-            (ToolAnnotations(read_only_hint=False), "destructiveHint, idempotentHint, openWorldHint"),
+            (
+                ToolAnnotations(read_only_hint=False),
+                "destructiveHint, idempotentHint, openWorldHint",
+            ),
             (
                 ToolAnnotations(read_only_hint=False, destructive_hint=True),
                 "idempotentHint, openWorldHint",
@@ -189,7 +247,9 @@ class TestA1A2Annotations:
             ),
         ],
     )
-    def test_write_tool_hints(self, audit: Any, ann: ToolAnnotations, missing: str | None) -> None:
+    def test_write_tool_hints(
+        self, audit: Any, ann: ToolAnnotations, missing: str | None
+    ) -> None:
         found = items(audit.audit_tool(make_tool(annotations=ann), "fx"), "A2")
         if missing is None:
             assert found == []
@@ -208,7 +268,11 @@ class TestB1Listings:
             ("fx_query_jobs", {}, 1),
             ("fx_find_things", {}, 1),
             ("fx_get_all_things", {}, 1),
-            ("fx_list_things", {"limit": {"type": "integer", "description": "n", "maximum": 5}}, 0),
+            (
+                "fx_list_things",
+                {"limit": {"type": "integer", "description": "n", "maximum": 5}},
+                0,
+            ),
             ("fx_list_things", {"cursor": desc()}, 0),
             ("fx_get_thing", {}, 0),  # not a listing verb
         ],
@@ -216,7 +280,13 @@ class TestB1Listings:
     def test_limit_argument_required(
         self, audit: Any, name: str, props: dict[str, Any], n_must: int
     ) -> None:
-        found = [f for f in items(audit.audit_tool(make_tool(name=name, properties=props), "fx"), "B1") if f.level == "MUST"]
+        found = [
+            f
+            for f in items(
+                audit.audit_tool(make_tool(name=name, properties=props), "fx"), "B1"
+            )
+            if f.level == "MUST"
+        ]
         assert len(found) == n_must
 
     @pytest.mark.parametrize(
@@ -227,7 +297,9 @@ class TestB1Listings:
             ({"type": "string", "description": "n"}, False),  # a cursor, not a count
         ],
     )
-    def test_limit_needs_maximum(self, audit: Any, limit_schema: dict[str, Any], flagged: bool) -> None:
+    def test_limit_needs_maximum(
+        self, audit: Any, limit_schema: dict[str, Any], flagged: bool
+    ) -> None:
         tool = make_tool(name="fx_list_things", properties={"limit": limit_schema})
         found = items(audit.audit_tool(tool, "fx"), "B1")
         assert [f.level for f in found] == (["SHOULD"] if flagged else [])
@@ -262,8 +334,17 @@ class TestAuditCall:
     def tool(self, audit: Any) -> Tool:
         return make_tool(output_schema=OUT_SCHEMA)
 
-    def run(self, audit: Any, res: SimpleNamespace, *, expect_error: bool = False, max_bytes: int = 50_000) -> list[Any]:
-        return audit.audit_call(self.tool(audit), res, expect_error=expect_error, max_bytes=max_bytes)
+    def run(
+        self,
+        audit: Any,
+        res: SimpleNamespace,
+        *,
+        expect_error: bool = False,
+        max_bytes: int = 50_000,
+    ) -> list[Any]:
+        return audit.audit_call(
+            self.tool(audit), res, expect_error=expect_error, max_bytes=max_bytes
+        )
 
     def test_valid_call_is_clean(self, audit: Any) -> None:
         assert self.run(audit, result("size is 3", {"size": 3})) == []
@@ -283,10 +364,55 @@ class TestAuditCall:
             ("O1", "outputSchema declared but no structuredContent")
         ]
 
-    def test_text_that_is_a_json_dump(self, audit: Any) -> None:
+    def test_text_that_is_a_json_dump_is_conformant(self, audit: Any) -> None:
+        # O2: the serialized JSON is what the spec and the SDKs produce.
         payload = {"size": 3}
-        found = self.run(audit, result(json.dumps(payload), payload))
+        assert self.run(audit, result(json.dumps(payload), payload)) == []
+
+    def test_structured_content_without_a_text_block(self, audit: Any) -> None:
+        found = self.run(audit, result("", {"size": 3}))
         assert [(f.item, f.level) for f in found] == [("O2", "SHOULD")]
+
+    @pytest.mark.parametrize(
+        ("n_fields", "flagged"),
+        [(5, False), (30, False), (31, True), (100, True)],
+    )
+    def test_o3_wide_record(self, audit: Any, n_fields: int, flagged: bool) -> None:
+        row = {f"f{i}": i for i in range(n_fields)}
+        found = items(self.run(audit, result("rows", {"size": 1, "rows": [row]})), "O3")
+        assert [f.level for f in found] == (["SHOULD"] if flagged else [])
+
+    def test_o3_wide_top_level_payload(self, audit: Any) -> None:
+        payload = {f"f{i}": i for i in range(40)} | {"size": 1}
+        found = items(self.run(audit, result("wide", payload)), "O3")
+        assert [f.level for f in found] == ["SHOULD"]
+
+    @pytest.mark.parametrize(
+        "leak",
+        [
+            "-----BEGIN CERTIFICATE-----\nMIIB",
+            "-----BEGIN RSA PRIVATE KEY-----\nabc",
+            "token eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.c2ln",
+        ],
+    )
+    @pytest.mark.parametrize("is_error", [False, True])
+    def test_u3_credential_in_result(
+        self, audit: Any, leak: str, is_error: bool
+    ) -> None:
+        res = result(leak, None if is_error else {"size": 3}, is_error=is_error)
+        found = items(self.run(audit, res, expect_error=is_error), "U3")
+        assert [f.level for f in found] == ["MUST"]
+
+    def test_u3_credential_in_structured_content_only(self, audit: Any) -> None:
+        payload = {"size": 3, "note": "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.c2ln"}
+        found = items(self.run(audit, result("ok", payload)), "U3")
+        assert len(found) == 1
+
+    def test_u3_plain_text_is_clean(self, audit: Any) -> None:
+        assert (
+            items(self.run(audit, result("the proxy is valid", {"size": 3})), "U3")
+            == []
+        )
 
     def test_unexpected_error_on_a_good_input(self, audit: Any) -> None:
         found = self.run(audit, result("boom", is_error=True))
@@ -296,7 +422,10 @@ class TestAuditCall:
         ("res", "expected"),
         [
             (result("No thing. Next step: call fx_list_things.", is_error=True), []),
-            (result("error-shaped text, no flag"), [("E1", "failing input did not set isError")]),
+            (
+                result("error-shaped text, no flag"),
+                [("E1", "failing input did not set isError")],
+            ),
             (result("", is_error=True), [("E2", "error result has no text")]),
             (
                 result("Traceback (most recent call last):\n  File x", is_error=True),
@@ -308,7 +437,9 @@ class TestAuditCall:
             ),
         ],
     )
-    def test_expected_error(self, audit: Any, res: SimpleNamespace, expected: list[tuple[str, str]]) -> None:
+    def test_expected_error(
+        self, audit: Any, res: SimpleNamespace, expected: list[tuple[str, str]]
+    ) -> None:
         found = self.run(audit, res, expect_error=True)
         assert [(f.item, f.message) for f in found] == expected
         assert all(f.level == "MUST" for f in found)
@@ -326,7 +457,11 @@ class TestRender:
             F("A1", "MUST", "fx_a", "ro"),
         ]
         lines = audit.render(findings, 2).splitlines()
-        rows = [ln for ln in lines if ln.startswith("| ") and "Item" not in ln and "---" not in ln]
+        rows = [
+            ln
+            for ln in lines
+            if ln.startswith("| ") and "Item" not in ln and "---" not in ln
+        ]
         assert rows == [
             "| A1 | MUST | `fx_a` | ro |",
             "| S1 | MUST | `fx_b` | arg |",
@@ -336,7 +471,9 @@ class TestRender:
 
 
 class TestCheck401:
-    @pytest.mark.parametrize(("code", "n_findings"), [(401, 0), (200, 1), (403, 1), (500, 1)])
+    @pytest.mark.parametrize(
+        ("code", "n_findings"), [(401, 0), (200, 1), (403, 1), (500, 1)]
+    )
     def test_status_codes(
         self, audit: Any, serve: Any, code: int, n_findings: int
     ) -> None:
@@ -345,4 +482,19 @@ class TestCheck401:
         assert len(found) == n_findings
         if found:
             assert (found[0].item, found[0].level) == ("X2", "MUST")
+            assert f"HTTP {code}" in found[0].message
+
+
+class TestCheckStateless:
+    @pytest.mark.parametrize(
+        ("code", "n_findings"), [(200, 0), (400, 1), (401, 1), (404, 1), (500, 1)]
+    )
+    def test_status_codes(
+        self, audit: Any, serve: Any, code: int, n_findings: int
+    ) -> None:
+        port = serve("status", str(code))
+        found = audit.check_stateless(f"http://127.0.0.1:{port}/mcp", None)
+        assert len(found) == n_findings
+        if found:
+            assert (found[0].item, found[0].level) == ("X1", "MUST")
             assert f"HTTP {code}" in found[0].message

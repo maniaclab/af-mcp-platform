@@ -52,7 +52,9 @@ def build_compliant(*, auth: bool = False) -> FastMCP:
     mcp = FastMCP("fx-compliant", auth=verifier)
 
     @mcp.tool(
-        annotations=ToolAnnotations(title="Get a thing", read_only_hint=True, open_world_hint=False)
+        annotations=ToolAnnotations(
+            title="Get a thing", read_only_hint=True, open_world_hint=False
+        )
     )
     def fx_get_thing(
         thing_id: Annotated[str, Field(description="Identifier of the thing.")],
@@ -62,14 +64,20 @@ def build_compliant(*, auth: bool = False) -> FastMCP:
         Fails with a next step when the identifier is unknown.
         """
         if thing_id != "known":
-            raise ToolError(f"No thing {thing_id!r}. Next step: call fx_list_things to see valid ids.")
+            raise ToolError(
+                f"No thing {thing_id!r}. Next step: call fx_list_things to see valid ids."
+            )
         return ThingResult(thing_id=thing_id, size=3)
 
     @mcp.tool(
-        annotations=ToolAnnotations(title="List things", read_only_hint=True, open_world_hint=False)
+        annotations=ToolAnnotations(
+            title="List things", read_only_hint=True, open_world_hint=False
+        )
     )
     def fx_list_things(
-        limit: Annotated[int, Field(description="Maximum rows to return.", ge=1, le=100)] = 10,
+        limit: Annotated[
+            int, Field(description="Maximum rows to return.", ge=1, le=100)
+        ] = 10,
     ) -> ListResult:
         """List thing identifiers, at most `limit` of them."""
         return ListResult(things=[f"t{i}" for i in range(min(limit, 100))])
@@ -84,7 +92,9 @@ def build_compliant(*, auth: bool = False) -> FastMCP:
         )
     )
     def fx_delete_thing(
-        thing_id: Annotated[str, Field(description="Identifier of the thing to delete.")],
+        thing_id: Annotated[
+            str, Field(description="Identifier of the thing to delete.")
+        ],
     ) -> ThingResult:
         """Delete one thing."""
         return ThingResult(thing_id=thing_id, size=0)
@@ -93,7 +103,7 @@ def build_compliant(*, auth: bool = False) -> FastMCP:
 
 
 def build_violating() -> FastMCP:
-    """Return a server that breaks N1, N2, N3, S1, O1, A1, A2, B1 and U3."""
+    """Return a server that breaks N1, N2, N3, S1, O1, A1, A2, B1, U3 and U6."""
     mcp = FastMCP("fx-violating")
 
     # N1 (no prefix), N2 (no description), S1 (undescribed arg), O1 (no
@@ -115,7 +125,7 @@ def build_violating() -> FastMCP:
     ) -> str:
         return a + b + c
 
-    # B1 (listing without limit), U3 (credential-like arg)
+    # B1 (listing without limit), U3 (credential-like arg), U6 (identity arg)
     @mcp.tool(
         name="fx_list_things",
         description="List things.",
@@ -123,6 +133,7 @@ def build_violating() -> FastMCP:
     )
     def fx_list_things(
         api_token: Annotated[str, Field(description="Token for the backend.")],
+        owner: Annotated[str, Field(description="Whose things to list.")],
     ) -> ListResult:
         return ListResult(things=[api_token])
 
@@ -152,7 +163,7 @@ def _serve_status(code: int, port: int) -> None:
     import http.server
 
     class Handler(http.server.BaseHTTPRequestHandler):
-        def do_POST(self) -> None:  # noqa: N802
+        def do_POST(self) -> None:
             self.send_response(code)
             self.send_header("Content-Length", "0")
             self.end_headers()

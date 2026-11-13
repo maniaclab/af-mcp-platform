@@ -40,7 +40,9 @@ def _free_port() -> int:
         return int(s.getsockname()[1])
 
 
-def _wait_for_port(port: int, proc: subprocess.Popen[bytes], timeout: float = 30.0) -> None:
+def _wait_for_port(
+    port: int, proc: subprocess.Popen[bytes], timeout: float = 30.0
+) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if proc.poll() is not None:
@@ -65,7 +67,7 @@ def serve() -> Iterator[Callable[[str, str], int]]:
 
     def start(kind: str, mode: str) -> int:
         port = _free_port()
-        proc = subprocess.Popen(  # noqa: S603
+        proc = subprocess.Popen(
             [sys.executable, str(FIXTURE_SERVERS), kind, mode, str(port)],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -85,7 +87,7 @@ def run_audit() -> Callable[..., subprocess.CompletedProcess[str]]:
     """Run the audit script as a subprocess; the exit code is the contract."""
 
     def run(*args: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(  # noqa: S603
+        return subprocess.run(
             [sys.executable, str(SCRIPT), *args],
             capture_output=True,
             text=True,
