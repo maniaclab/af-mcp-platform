@@ -9,8 +9,6 @@ from typing import TYPE_CHECKING, Any
 import structlog
 from fastapi import HTTPException
 
-from af_mcp_broker.errors import BrokerError
-
 if TYPE_CHECKING:
     from structlog.stdlib import BoundLogger
     from structlog.types import EventDict, WrappedLogger
@@ -114,7 +112,7 @@ def request_id_headers() -> dict[str, str]:
     return {"X-Request-ID": correlation_id} if correlation_id else {}
 
 
-class CorrelatedHTTPException(HTTPException, BrokerError):
+class CorrelatedHTTPException(HTTPException):
     """An ``HTTPException`` whose string ``detail`` is returned with the request's ``correlation_id`` in the body (issue #342).
 
     ``app._http_exception_handler`` adds the id to every 5xx on its own; a

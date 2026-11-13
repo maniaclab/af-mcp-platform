@@ -8,6 +8,10 @@ import pkgutil
 
 import af_mcp_broker
 from af_mcp_broker.errors import BrokerError
+from af_mcp_broker.logging import CorrelatedHTTPException
+
+# A transport type, not a domain error: it only carries an HTTP response.
+_EXEMPT = (CorrelatedHTTPException,)
 
 
 def _broker_modules():
@@ -25,5 +29,6 @@ def test_every_exception_defined_in_the_package_is_a_broker_error() -> None:
         if obj.__module__ == module.__name__
         and issubclass(obj, BaseException)
         and not issubclass(obj, BrokerError)
+        and obj not in _EXEMPT
     )
     assert offenders == [], f"exceptions not deriving from BrokerError: {offenders}"
