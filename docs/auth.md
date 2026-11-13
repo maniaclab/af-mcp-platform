@@ -1192,18 +1192,48 @@ another JWT:
    acceptable tradeoff for a soft anti-abuse counter), the registry itself
    is durable and HA-safe: it's backed by the same Vault/OpenBao KV-v2
    pattern `credentials/vault.py`'s `VaultTokenStore` uses (one entry per
-   principal, CAS writes, a flat revoked-lookup-ids index), selected via
+   principal, CAS writes), selected via
    `TOKEN_REGISTRY_BACKEND=vault` the same way `TOKEN_STORE_BACKEND` selects
    the oauth21 token store — so a PAT minted on one broker replica can be
    listed and revoked from another, and survives a pod restart. Revocation
-   is **enforced**, not cosmetic, on `/mcp` (see "Where PATs are accepted"
-   below); a revoked PAT is rejected with 401 once
-   `REVOKED_JTI_CACHE_REFRESH_SECONDS` (default 30s) has elapsed.
-4. **Sweep** (operations) — unaffected by this change; see
+   sets `revoked_at` on the PAT's record with a single CAS write, and that
+   field is what `/mcp` enforces (see "Where PATs are accepted" below):
+   validation reads the record from Vault on every request, so a revoked PAT
+   is rejected with 401 on its next request, on every replica, with no
+   cache window. `REVOKED_JTI_CACHE_REFRESH_SECONDS` governs only the
+   Keycloak-JWT `jti` denylist, never PATs.
+4. **Delete a cleared row** — revoking keeps the row (as a tombstone, so
+   revoked tokens stay visible), so revoked and expired rows accumulate.
+   `DELETE /v1/tokens/{lookup_id}/record` hard-deletes one of the caller's
+   own rows, and `DELETE /v1/tokens?inactive=true` deletes all of them. Only
+   a revoked or expired row is deletable: an active token is refused with 409
+   (revoke it first), and the bulk form never touches an active one. Each
+   deletion emits a `token.deleted` audit event. Both are owner-only; an
+   admin can revoke but not delete another user's token (see "Admin
+   revocation" below).
+5. **Sweep** (operations) — unaffected by this change; see
    `token_sweep.py`/`tokenSweep.*` as before. A never-expiring PAT
    (`expires_at` unset) is never touched by the sweep — there is no natural
-   expiry to sweep against; it only ever leaves the registry via an explicit
-   revoke.
+   expiry to sweep against; once revoked, its row stays until its owner
+   deletes it (step 4).
+
+#### Admin revocation (issue #336)
+
+An operator who needs to cut off another user's PATs uses endpoints gated on
+`ADMIN_GROUP` (`require_admin`) instead of editing Vault by hand:
+
+| Endpoint | Effect |
+| --- | --- |
+| `GET /v1/admin/tokens?subject=<sub>` | List the principal's PATs: name, `lookup_id`, created / last-used / expiry, revoked state. |
+| `DELETE /v1/admin/tokens/{lookup_id}` | Revoke one PAT; the owner is resolved from the lookup index, so no owner check applies. |
+| `DELETE /v1/admin/tokens?subject=<sub>` | Revoke every active PAT of the principal in one CAS write. Already-revoked and expired tokens are left as they are. |
+
+`subject` is required on the collection routes. Each revoked token emits a
+`token.revoked` audit event, the same event an owner's own revoke emits,
+with the admin as the actor (`principal_sub`) and the owner in `args_summary`
+as `subject=`. Revocation sets `revoked_at` on the record, so it takes effect
+on the owner's next request. There is no admin delete of a row; clearing
+revoked rows is the owner's housekeeping (step 4 above).
 
 ### MCP OAuth discovery + PAT bootstrap (issue #140)
 

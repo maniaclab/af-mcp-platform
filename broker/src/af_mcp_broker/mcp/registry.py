@@ -92,12 +92,17 @@ def namespaced_tool_name(spec: ServiceSpec, native_name: str) -> str:
     return f"{spec.prefix}_{native_name}" if spec.apply_namespace else native_name
 
 
+# The only backend transport: streamable HTTP. Kept as a field on ServiceSpec so
+# every existing services.yaml (all of which say ``transport: http``) stays valid.
+SUPPORTED_TRANSPORT = "http"
+
+
 @dataclass
 class ServiceSpec:
     name: str
     prefix: str
     url: str
-    transport: str  # "http" | "sse"
+    transport: str  # "http" only: backends speak streamable HTTP
     # The permission a caller must hold to invoke this service's tools:
     #   - a permission name (e.g. "read_data") -> gated on that permission,
     #     for every tool this service exposes.
@@ -483,6 +488,15 @@ class ServiceRegistry:
             self.register(spec)
 
     def register(self, service: ServiceSpec) -> None:
+        if service.transport != SUPPORTED_TRANSPORT:
+            msg = (
+                f"service '{service.name}' sets transport '{service.transport}', "
+                f"which is not supported: backends are reached over streamable "
+                f"HTTP only (the MCP spec deprecated the HTTP+SSE transport). "
+                f"Point the service at its streamable HTTP endpoint and set "
+                f"'transport: {SUPPORTED_TRANSPORT}' (or omit the field)."
+            )
+            raise ValueError(msg)
         if service.prefix == RESERVED_PREFIX:
             msg = (
                 f"service '{service.name}' cannot use prefix "

@@ -82,6 +82,20 @@ exactly when it shouldn't) and `GET /v1/admin/maintenance` itself (the
 portal needs to be able to show a maintenance banner to a visitor who is
 currently blocked by it on everything else).
 
+### Propagation delay across replicas
+
+Each replica caches the maintenance flag in-process for
+`MAINTENANCE_MODE_CACHE_TTL_SECONDS` (chart value
+`broker.maintenanceMode.cacheTtlSeconds`, default 5; `0` disables the cache)
+so the check on every request does not become one Postgres or Vault read per
+request. The replica that handles `POST /v1/admin/maintenance` sees the
+change immediately; every other replica sees it within the TTL. Enabling
+maintenance mode therefore lets non-admin requests through on other replicas
+for up to that many seconds, and disabling it keeps them blocked for up to
+that long. The cache applies to the `vault` and `postgres` backends only; the
+`in_memory` backend reads a field and is not cached. Store errors are never
+cached, so the fail-open behaviour below is unchanged.
+
 ### The fail-open limitation — read this before toggling maintenance mode for an incident
 
 **Maintenance mode fails OPEN for non-admins if the backing store itself is

@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 import structlog
-from conftest import make_claims
+from conftest import DenylistedTokenRegistryBackend, make_claims
 from fastmcp.exceptions import AuthorizationError
 from prometheus_client import REGISTRY
 
@@ -377,20 +377,7 @@ async def test_revoked_jti_rejected_on_mcp_path(settings, sig_key, prime_jwks):
     prime_jwks([sig_key.jwk])
     token = sig_key.sign(make_claims(jti="revoked-on-mcp"))
 
-    backend = InMemoryTokenRegistryBackend()
-    await backend.add(
-        TokenRecord(
-            lookup_id="revoked-on-mcp",
-            principal_id="user-123",
-            secret_hash="unused-in-this-test",
-            name="test-token",
-            created_at=time.time(),
-            expires_at=time.time() + 3600,
-            revoked_at=None,
-            last_used_at=None,
-        )
-    )
-    await backend.revoke("user-123", "revoked-on-mcp", revoked_at=time.time())
+    backend = DenylistedTokenRegistryBackend("revoked-on-mcp")
     cache = RevokedJtiCache(backend, refresh_interval_seconds=30.0)
 
     inner = _InnerApp()
@@ -457,7 +444,6 @@ async def _pat_principal_cache_and_token(
         PrincipalAttributes,
         PrincipalDirectory,
     )
-    from af_mcp_broker.token_registry import TokenRecord
 
     class _FakeDirectory(PrincipalDirectory):
         async def resolve(self, principal_id: str) -> PrincipalAttributes:
@@ -658,7 +644,6 @@ async def test_expired_pat_rejected_with_actionable_portal_message(settings):
         PrincipalAttributes,
         PrincipalDirectory,
     )
-    from af_mcp_broker.token_registry import TokenRecord
 
     class _FakeDirectory(PrincipalDirectory):
         async def resolve(self, principal_id: str) -> PrincipalAttributes:

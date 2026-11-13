@@ -480,6 +480,12 @@ startup refusal (Settings._validate_replica_state_config) for the chart path.
 # TOKEN_STORE_BACKEND above.
 - name: USAGE_STORE_BACKEND
   value: {{ .Values.broker.usage.backend | replace "-" "_" | quote }}
+# Usage write batching (see broker.usage.batchMax in values.yaml). Always
+# set so the effective values are visible on the pod.
+- name: USAGE_BATCH_MAX
+  value: {{ .Values.broker.usage.batchMax | quote }}
+- name: USAGE_BATCH_INTERVAL_MS
+  value: {{ .Values.broker.usage.batchIntervalMs | quote }}
 {{- if eq .Values.broker.usage.backend "postgres" }}
 {{- if .Values.broker.usage.postgres.existingSecret.name }}
 # asyncpg DSN for the postgres usage store -- with Crunchy PGO, typically
@@ -496,6 +502,8 @@ startup refusal (Settings._validate_replica_state_config) for the chart path.
 # TOKEN_STORE_BACKEND above.
 - name: MAINTENANCE_MODE_BACKEND
   value: {{ .Values.broker.maintenanceMode.backend | replace "-" "_" | quote }}
+- name: MAINTENANCE_MODE_CACHE_TTL_SECONDS
+  value: {{ .Values.broker.maintenanceMode.cacheTtlSeconds | quote }}
 {{- if .Values.broker.maintenanceMode.kvPathPrefix }}
 - name: MAINTENANCE_MODE_KV_PATH_PREFIX
   value: {{ .Values.broker.maintenanceMode.kvPathPrefix | quote }}

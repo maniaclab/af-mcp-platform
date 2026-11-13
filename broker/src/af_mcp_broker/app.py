@@ -80,6 +80,7 @@ from af_mcp_broker.logging import (
     log_request_received,
 )
 from af_mcp_broker.maintenance import (
+    CachingMaintenanceModeStore,
     InMemoryMaintenanceModeStore,
     MaintenanceModeStore,
     PostgresMaintenanceModeStore,
@@ -1006,6 +1007,16 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         maintenance_mode_store = PostgresMaintenanceModeStore(dsn.get_secret_value())
     else:
         maintenance_mode_store = InMemoryMaintenanceModeStore()
+    # In-memory reads are a field access, so only the network-backed stores
+    # get the TTL cache.
+    if (
+        settings.maintenance_mode_backend != "in_memory"
+        and settings.maintenance_mode_cache_ttl_seconds > 0
+    ):
+        maintenance_mode_store = CachingMaintenanceModeStore(
+            maintenance_mode_store,
+            ttl_seconds=settings.maintenance_mode_cache_ttl_seconds,
+        )
     await maintenance_mode_store.start()
 
     # --- MCP aggregator: the FastMCP instance and its ASGI app already exist

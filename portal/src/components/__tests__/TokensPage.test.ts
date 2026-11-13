@@ -3,7 +3,8 @@
  *
  * The list shows each token's status as a status word, a warning banner names
  * a token that expires within 7 days, an empty list explains what tokens are
- * for, and revoking asks for confirmation before it calls the API.
+ * for, revoking asks for confirmation before it calls the API, and a revoked
+ * or expired row can be deleted singly or all at once (after confirmation).
  */
 import { flushPromises, mount } from '@vue/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -12,6 +13,8 @@ import type { TokenSummary } from '../../lib/api';
 vi.mock('../../lib/api', () => ({
   listTokens: vi.fn(),
   revokeToken: vi.fn(),
+  deleteTokenRecord: vi.fn(),
+  clearInactiveTokens: vi.fn(),
   mintToken: vi.fn(),
   fetchPermissions: vi.fn(),
   SessionExpiredError: class SessionExpiredError extends Error {},
@@ -21,7 +24,14 @@ vi.mock('../../lib/auth', () => ({
   getBrokerOrigin: vi.fn(async () => 'https://broker.example.org'),
 }));
 
-import { fetchPermissions, listTokens, mintToken, revokeToken } from '../../lib/api';
+import {
+  clearInactiveTokens,
+  deleteTokenRecord,
+  fetchPermissions,
+  listTokens,
+  mintToken,
+  revokeToken,
+} from '../../lib/api';
 import TokensPage from '../TokensPage.vue';
 
 const DAY_MS = 86_400_000;
@@ -104,17 +114,21 @@ describe('TokensPage', () => {
     expect(byName('expired-one').find('.af-st').text()).toBe('Expired');
   });
 
-  it('only offers Revoke on active tokens', async () => {
+  it('offers Revoke on active tokens and Delete on revoked and expired ones', async () => {
     const wrapper = await mountPage([
       token({ lookup_id: 'A', name: 'active-one' }),
       token({ lookup_id: 'C', name: 'revoked-one', revoked_at: iso(-1) }),
+      token({ lookup_id: 'D', name: 'expired-one', expires_at: iso(-2) }),
     ]);
 
     const rows = wrapper.findAll('tbody tr');
-    const revokeIn = (name: string) =>
-      rows.find((r) => r.text().includes(name))!.find('button.af-danger');
-    expect(revokeIn('active-one').attributes('disabled')).toBeUndefined();
-    expect(revokeIn('revoked-one').attributes('disabled')).toBeDefined();
+    const row = (name: string) => rows.find((r) => r.text().includes(name))!;
+    expect(row('active-one').find('button.af-danger').exists()).toBe(true);
+    expect(row('active-one').find('button[aria-label^="Delete"]').exists()).toBe(false);
+    for (const name of ['revoked-one', 'expired-one']) {
+      expect(row(name).find('button.af-danger').exists()).toBe(false);
+      expect(row(name).find(`button[aria-label="Delete ${name}"]`).exists()).toBe(true);
+    }
   });
 
   describe('expiring-soon banner', () => {
@@ -203,6 +217,110 @@ describe('TokensPage', () => {
       await flushPromises();
 
       expect(wrapper.find('[role="alert"]').text()).toContain('nope');
+    });
+  });
+
+  describe('delete', () => {
+    it('deletes a revoked row and removes it from the list', async () => {
+      vi.mocked(deleteTokenRecord).mockResolvedValue(undefined);
+      const wrapper = await mountPage([
+        token({ lookup_id: 'A', name: 'active-one' }),
+        token({ lookup_id: 'C', name: 'revoked-one', revoked_at: iso(-1) }),
+      ]);
+
+      await wrapper.find('button[aria-label="Delete revoked-one"]').trigger('click');
+      await flushPromises();
+
+      expect(deleteTokenRecord).toHaveBeenCalledExactlyOnceWith('C');
+      const rows = wrapper.findAll('tbody tr');
+      expect(rows).toHaveLength(1);
+      expect(rows[0].text()).toContain('active-one');
+    });
+
+    it('shows the failure and keeps the row when the API rejects', async () => {
+      vi.mocked(deleteTokenRecord).mockRejectedValue(new Error('still active'));
+      const wrapper = await mountPage([
+        token({ lookup_id: 'C', name: 'revoked-one', revoked_at: iso(-1) }),
+      ]);
+
+      await wrapper.find('button[aria-label="Delete revoked-one"]').trigger('click');
+      await flushPromises();
+
+      expect(wrapper.find('[role="alert"]').text()).toContain('still active');
+      expect(wrapper.findAll('tbody tr')).toHaveLength(1);
+    });
+  });
+
+  describe('clear revoked and expired', () => {
+    const clearButton = (wrapper: Awaited<ReturnType<typeof mountPage>>) =>
+      wrapper.find('button.tp__clear');
+
+    it('is absent when every token is active', async () => {
+      const wrapper = await mountPage([token({ lookup_id: 'A' })]);
+
+      expect(clearButton(wrapper).exists()).toBe(false);
+    });
+
+    it('counts the revoked and expired tokens it would delete', async () => {
+      const wrapper = await mountPage([
+        token({ lookup_id: 'A', name: 'active-one' }),
+        token({ lookup_id: 'C', name: 'revoked-one', revoked_at: iso(-1) }),
+        token({ lookup_id: 'D', name: 'expired-one', expires_at: iso(-2) }),
+      ]);
+
+      expect(clearButton(wrapper).text()).toContain('Clear revoked and expired (2)');
+    });
+
+    it('asks for confirmation, then deletes only the revoked and expired rows', async () => {
+      vi.mocked(clearInactiveTokens).mockResolvedValue(2);
+      const wrapper = await mountPage([
+        token({ lookup_id: 'A', name: 'active-one' }),
+        token({ lookup_id: 'C', name: 'revoked-one', revoked_at: iso(-1) }),
+        token({ lookup_id: 'D', name: 'expired-one', expires_at: iso(-2) }),
+      ]);
+
+      await clearButton(wrapper).trigger('click');
+      await flushPromises();
+      expect(clearInactiveTokens).not.toHaveBeenCalled();
+      const dialog = wrapper.find('dialog.dialog[open]');
+      expect(dialog.text()).toContain('2');
+
+      await dialog.find('footer .btn.af-danger').trigger('click');
+      await flushPromises();
+
+      expect(clearInactiveTokens).toHaveBeenCalledOnce();
+      const rows = wrapper.findAll('tbody tr');
+      expect(rows).toHaveLength(1);
+      expect(rows[0].text()).toContain('active-one');
+      expect(clearButton(wrapper).exists()).toBe(false);
+    });
+
+    it('does not call the API when the confirmation is cancelled', async () => {
+      const wrapper = await mountPage([
+        token({ lookup_id: 'C', name: 'revoked-one', revoked_at: iso(-1) }),
+      ]);
+
+      await clearButton(wrapper).trigger('click');
+      await flushPromises();
+      await wrapper.find('dialog.dialog[open] footer .btn[data-variant="ghost"]').trigger('click');
+      await flushPromises();
+
+      expect(clearInactiveTokens).not.toHaveBeenCalled();
+      expect(wrapper.findAll('tbody tr')).toHaveLength(1);
+    });
+
+    it('shows the failure when the API rejects', async () => {
+      vi.mocked(clearInactiveTokens).mockRejectedValue(new Error('vault down'));
+      const wrapper = await mountPage([
+        token({ lookup_id: 'C', name: 'revoked-one', revoked_at: iso(-1) }),
+      ]);
+
+      await clearButton(wrapper).trigger('click');
+      await flushPromises();
+      await wrapper.find('dialog.dialog[open] footer .btn.af-danger').trigger('click');
+      await flushPromises();
+
+      expect(wrapper.find('[role="alert"]').text()).toContain('vault down');
     });
   });
 

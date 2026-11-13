@@ -22,6 +22,7 @@ no-ops, matching ``InMemoryUsageStore``'s asymmetry with
 from __future__ import annotations
 
 import abc
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -35,6 +36,8 @@ from af_mcp_broker.errors import BrokerError
 from af_mcp_broker.vault_kv import CasConflictError, VaultKV
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from af_mcp_broker.config import Settings
     from af_mcp_broker.identity import Principal
 
@@ -263,6 +266,69 @@ class PostgresMaintenanceModeStore(MaintenanceModeStore):
         await self._require_pool().execute(
             _UPSERT, state.enabled, state.reason, state.enabled_by, state.enabled_at
         )
+
+
+class CachingMaintenanceModeStore(MaintenanceModeStore):
+    """TTL cache in front of another store's ``get()``.
+
+    ``check_not_maintenance`` reads the store on every non-admin /v1 and /mcp
+    request, which for the Postgres and Vault backends is one network round
+    trip per request against a small shared service. Caching the flag for
+    ``ttl_seconds`` bounds that to roughly one read per TTL per replica.
+
+    Trade-offs:
+
+    - A toggle made on another replica is visible here only after the TTL
+      expires. A ``set()`` through this wrapper invalidates the cache at
+      once, so the admin who toggles sees the change immediately.
+    - Errors from the wrapped store propagate unchanged and are never cached,
+      and an expired entry is never served in place of a failed refresh, so
+      ``check_not_maintenance_or_fail_open``'s fail-open handling sees
+      exactly what it would without the cache.
+    - Concurrent misses may each fetch, and a fetch in flight during a
+      ``set()`` may cache the pre-write value for up to one TTL; both are
+      acceptable for a cache this short.
+
+    ``clock`` is injectable so tests control time deterministically; it must
+    be monotonic. A ``ttl_seconds`` of 0 disables caching.
+    """
+
+    def __init__(
+        self,
+        store: MaintenanceModeStore,
+        *,
+        ttl_seconds: float,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._store = store
+        self._ttl_seconds = ttl_seconds
+        self._clock = clock
+        self._cached: MaintenanceState | None = None
+        self._expires_at = 0.0
+
+    async def start(self) -> None:
+        await self._store.start()
+
+    async def aclose(self) -> None:
+        await self._store.aclose()
+
+    async def get(self) -> MaintenanceState:
+        if self._ttl_seconds <= 0:
+            return await self._store.get()
+        if self._cached is not None and self._clock() < self._expires_at:
+            return self._cached
+        state = await self._store.get()
+        self._cached = state
+        self._expires_at = self._clock() + self._ttl_seconds
+        return state
+
+    async def set(self, state: MaintenanceState) -> None:
+        try:
+            await self._store.set(state)
+        finally:
+            # Invalidate even when the write raised: a CAS conflict means the
+            # stored state changed under us, so the cached value is suspect.
+            self._cached = None
 
 
 async def check_not_maintenance(

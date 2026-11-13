@@ -245,3 +245,58 @@ async def test_list_subjects_returns_distinct_subjects_in_window(
     subjects = await store.list_subjects(days=30)
 
     assert sorted(subjects) == ["alice", "bob"]
+
+
+async def test_record_many_writes_every_row(store: PostgresUsageStore) -> None:
+    await store.record_many(
+        [_record(audit_id=f"id-{i}", result_bytes=10) for i in range(5)]
+    )
+
+    (agg,) = await store.query("sub-abc", days=30)
+    assert agg.calls == 5
+    assert agg.result_bytes == 50
+
+
+async def test_record_many_with_no_records_is_a_no_op(
+    store: PostgresUsageStore,
+) -> None:
+    await store.record_many([])
+
+    assert await store.query("sub-abc", days=30) == []
+
+
+async def test_record_many_dedups_a_repeated_audit_id_within_a_batch(
+    store: PostgresUsageStore,
+) -> None:
+    record = _record()
+    await store.record_many([record, record, _record(audit_id="other")])
+
+    (agg,) = await store.query("sub-abc", days=30)
+    assert agg.calls == 2
+
+
+async def test_record_many_dedups_audit_ids_across_batches(
+    store: PostgresUsageStore,
+) -> None:
+    record = _record()
+    await store.record_many([record])
+    await store.record_many([record, _record(audit_id="other")])
+    await store.record(record)
+
+    (agg,) = await store.query("sub-abc", days=30)
+    assert agg.calls == 2
+
+
+async def test_record_many_is_all_or_nothing_when_one_row_is_rejected(
+    store: PostgresUsageStore,
+) -> None:
+    """executemany runs the batch in one implicit transaction: a row that
+    violates a constraint (NULL principal_sub) rolls back its siblings too.
+    The pipeline-side sink accounts for this by counting every row of a
+    failed batch."""
+    batch = [_record(audit_id="good"), _record(audit_id="bad", principal_sub=None)]
+
+    with pytest.raises(asyncpg.PostgresError):
+        await store.record_many(batch)
+
+    assert await store.query("sub-abc", days=30) == []

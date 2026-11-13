@@ -21,8 +21,12 @@ measuring and writing synchronously, exactly the pre-pipeline behavior
 Metering is best-effort; audit records are authoritative.
 
 After every audit write (worker, overflow, and fallback paths alike) the
-record is also handed to the usage store (``usage/`` -- PR C) via
-``record_usage``, which filters non-usage records itself and never raises.
+record is also handed to the usage store (``usage/`` -- PR C). The overflow
+and fallback paths write it at once via ``record_usage``; the worker buffers
+it in a ``UsageBatcher`` and writes batches (``record_usage_batch``) at
+``USAGE_BATCH_MAX`` records, after ``USAGE_BATCH_INTERVAL_MS``, or on drain,
+so the store sees one round trip per batch instead of one per tool call.
+Both helpers filter non-usage records and never raise.
 
 The transport between the hot path and the worker is a config-selected
 ``MeteringBackend`` (``METERING_BACKEND`` -> ``settings.metering_backend``);
@@ -42,7 +46,12 @@ from af_mcp_broker import metrics
 from af_mcp_broker.audit.logger import AuditRecord, write_audit
 from af_mcp_broker.audit.measure import measure_tool_result
 from af_mcp_broker.config import Settings, get_settings
-from af_mcp_broker.usage import record_usage
+from af_mcp_broker.usage import (
+    UsageBatcher,
+    counts_as_usage,
+    record_usage,
+    record_usage_batch,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -117,12 +126,17 @@ class MeteringBackend(abc.ABC):
 class InProcessMeteringBackend(MeteringBackend):
     """Bounded queue + background worker measuring and writing audit records."""
 
-    def __init__(self, maxsize: int = QUEUE_MAXSIZE) -> None:
+    def __init__(self, settings: Settings, maxsize: int = QUEUE_MAXSIZE) -> None:
         # Items are (record, result, enqueued_at) tuples -- enqueued_at is a
         # time.monotonic() timestamp feeding the queue-delay gauge -- or the
         # drain sentinel.
         self._queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=maxsize)
         self._worker: asyncio.Task[None] | None = None
+        self._usage_batcher = UsageBatcher(
+            record_usage_batch,
+            max_size=settings.usage_batch_max,
+            interval_seconds=settings.usage_batch_interval_ms / 1000,
+        )
 
     @property
     def is_running(self) -> bool:
@@ -164,9 +178,22 @@ class InProcessMeteringBackend(MeteringBackend):
 
     async def _run(self) -> None:
         while True:
-            item = await self._queue.get()
+            # Flush an aged batch first, so a steady trickle of submissions
+            # (each satisfying the get below at once) cannot starve the
+            # interval bound; then wait for the next item only as long as the
+            # oldest buffered usage record may still wait.
+            await self._usage_batcher.flush_if_due()
+            try:
+                item = await asyncio.wait_for(
+                    self._queue.get(), self._usage_batcher.seconds_until_due()
+                )
+            except TimeoutError:
+                continue
             metrics.metering_queue_depth.set(self._queue.qsize())
             if item is _SENTINEL:
+                # Same deterministic drain as the queue itself: usage still
+                # buffered goes out before the worker exits.
+                await self._usage_batcher.flush()
                 return
             record, result, enqueued_at = item
             metrics.metering_queue_delay_seconds.set(time.monotonic() - enqueued_at)
@@ -185,10 +212,12 @@ class InProcessMeteringBackend(MeteringBackend):
             else:
                 metrics.metering_worker_processed_total.inc()
             # Usage accounting (PR C) runs strictly AFTER the audit write --
-            # audit records are authoritative, usage is best-effort.
-            # record_usage never raises (store failures are logged and
-            # counted inside it) and filters non-usage records itself.
-            await record_usage(record)
+            # audit records are authoritative, usage is best-effort. The
+            # record is buffered and written with its batch (one store round
+            # trip per batch, not per tool call); the batcher's sink never
+            # raises (store failures are logged and counted inside it).
+            if counts_as_usage(record):
+                await self._usage_batcher.add(record)
 
 
 # Maps ``settings.metering_backend`` values to backend factories. Adding a
@@ -196,8 +225,8 @@ class InProcessMeteringBackend(MeteringBackend):
 # the config Literal alongside the implementation -- see MeteringBackend's
 # docstring. config.py's Literal already rejects values with no entry here,
 # so a KeyError below means the Literal and this table drifted apart.
-_BACKEND_FACTORIES: dict[str, Callable[[], MeteringBackend]] = {
-    "in_process": InProcessMeteringBackend,
+_BACKEND_FACTORIES: dict[str, Callable[[Settings], MeteringBackend]] = {
+    "in_process": lambda settings: InProcessMeteringBackend(settings=settings),
 }
 
 
@@ -210,7 +239,7 @@ async def init_metering_pipeline(settings: Settings | None = None) -> MeteringBa
     global _pipeline
     if settings is None:
         settings = get_settings()
-    _pipeline = _BACKEND_FACTORIES[settings.metering_backend]()
+    _pipeline = _BACKEND_FACTORIES[settings.metering_backend](settings)
     await _pipeline.start()
     return _pipeline
 

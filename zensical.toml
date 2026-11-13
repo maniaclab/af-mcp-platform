@@ -30,6 +30,7 @@ nav = [
   { "Authentication" = "auth.md" },
   { "Ecosystem" = "ecosystem.md" },
   { "Adding a Service" = "adding-a-service.md" },
+  { "MCP Design Guide" = "mcp-design.md" },
   { "Rucio: Per-Site Setup" = "rucio-per-site-setup.md" },
   { "HTCondor Credmon" = "credmon.md" },
   { "Connecting a Client" = "connecting-a-client.md" },

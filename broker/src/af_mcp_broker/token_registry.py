@@ -50,22 +50,22 @@ Vault KV-v2 layout, all under ``{kv_mount}/data/{kv_path_prefix}/...``:
   but belongs to someone else" (403) without a Vault LIST across every
   principal, and is what ``get_by_lookup_id()`` uses to answer validation's
   "who is this token?" question with a single indexed hop.
-* ``revoked-lookup-ids``  -> ``{"jtis": [...]}``, a single flat entry every
-  ``revoke()`` call updates. Gives ``RevokedJtiCache`` an O(1) read for its
-  periodic refresh instead of enumerating every principal's by-principal
-  entry. (The Vault key name and the cache class both still say "jti" --
-  see ``RevokedJtiCache``'s docstring for why that name was kept as a
-  generic "revoked token identifier" set rather than renamed.)
+* ``revoked-lookup-ids``  -> ``{"jtis": [...]}``, a single flat denylist
+  ``RevokedJtiCache`` reads on its periodic refresh. It is consulted only
+  for a Keycloak JWT's ``jti`` (``identity.get_principal``); PAT
+  revocation never touches it, and nothing in this module writes it any
+  more -- ``sweep_expired()`` only prunes entries an earlier broker wrote.
+  (The Vault key name and the cache class both still say "jti" -- see
+  ``RevokedJtiCache``'s docstring.)
 
-``revoke()`` writes ``revoked-lookup-ids`` BEFORE the per-principal entry's
-``revoked_at`` field deliberately: that index is the one
-``RevokedJtiCache``/PAT validation (``pat_auth.py``) actually enforce
-against, so it must never lag behind the per-principal entry, which is
-display-only (the portal's token list). A failure between the two writes can
-only leave the list looking briefly stale ("active" a moment longer than it
-should), never the reverse (enforced-revoked but still shown as active would
-be a security gap; shown-as-active-a-bit-longer while actually enforced is
-just UI lag).
+``revoke()`` is a single CAS write that sets ``revoked_at`` on the
+principal's by-principal entry. That field IS the enforcement for a PAT:
+``pat_auth.resolve_pat_principal`` reads the record from Vault on every
+request (``get_by_lookup_id()``) and rejects one whose ``revoked_at`` is
+set, so a revocation takes effect on the next request, on every replica.
+The same field is what the portal's token list shows, and the record stays
+(as a tombstone) until ``sweep_expired()`` removes it once expired, or
+``delete_inactive()`` removes it at its owner's request.
 
 Expiry is nullable: ``expires_at: float | None``, where ``None`` means the
 PAT never expires -- an explicit opt-in (see ``api/tokens.py``'s
@@ -111,12 +111,15 @@ import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
 from af_mcp_broker.errors import BrokerError
 from af_mcp_broker.vault_kv import CasConflictError, VaultError, VaultKV
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 log = structlog.get_logger(__name__)
 
@@ -181,6 +184,12 @@ class TokenRecord:
     # PAT; a permission PAT's grant otherwise -- see also Principal
     # .permission_grant and get_principal_permissions.
     permission_grant: frozenset[str] | None = None
+
+    def is_active(self, now: float) -> bool:
+        """Return True if this record is neither revoked nor past its ``expires_at`` as of *now*. A never-expiring, unrevoked record is always active."""
+        return self.revoked_at is None and (
+            self.expires_at is None or self.expires_at > now
+        )
 
 
 def _collides(existing: TokenRecord, candidate: TokenRecord, now: float) -> bool:
@@ -251,6 +260,17 @@ class TokenRegistryBackend(ABC):
     ) -> TokenRecord | None:
         """Mark (*principal_id*, *lookup_id*) revoked; returns the updated record, or None if *lookup_id* is unknown or not owned by *principal_id*."""
 
+    @abstractmethod
+    async def revoke_all(
+        self, principal_id: str, revoked_at: float
+    ) -> list[TokenRecord]:
+        """Mark every record of *principal_id* that is still active as of *revoked_at* revoked, in one write; return the records this call revoked.
+
+        A record that is already revoked keeps its original ``revoked_at``,
+        and an expired one is left alone (it can no longer authenticate).
+        Returns an empty list when *principal_id* has nothing to revoke.
+        """
+
     async def get_by_lookup_id(self, lookup_id: str) -> TokenRecord | None:
         """Return the record for *lookup_id* regardless of owner, or None if unknown.
 
@@ -274,13 +294,30 @@ class TokenRegistryBackend(ABC):
 
     @abstractmethod
     async def list_revoked_jtis(self) -> frozenset[str]:
-        """Return every lookup_id, across all principals, whose ``revoked_at`` is set.
+        """Return the identifiers on the revoked-token denylist.
 
-        Named ``list_revoked_jtis`` (not ``..._lookup_ids``) because
-        ``RevokedJtiCache`` -- the sole caller -- already treats "jti" as a
-        generic "unique token identifier" string, and is shared with the
-        JWT-bearer-revocation path in ``identity.get_principal``; see that
-        cache's docstring.
+        The denylist is consulted only for a Keycloak JWT's ``jti`` (see
+        ``RevokedJtiCache``). ``revoke()`` never adds a PAT to it -- a PAT's
+        revocation is its record's ``revoked_at``, enforced by
+        ``pat_auth.resolve_pat_principal`` -- so the set is empty unless an
+        earlier broker wrote entries.
+        """
+
+    @abstractmethod
+    async def delete_inactive(
+        self,
+        principal_id: str,
+        *,
+        now: float,
+        lookup_ids: frozenset[str] | None = None,
+    ) -> list[str]:
+        """Hard-delete *principal_id*'s records that are revoked or expired as of *now*; return the deleted lookup_ids.
+
+        Restricted to *lookup_ids* when given (a requested id that is still
+        active, or not owned by *principal_id*, is silently skipped).
+        Active records are never deleted. A record only ever moves from
+        active to inactive, never back, so a caller may check a record's
+        state first and rely on it still holding here.
         """
 
     @abstractmethod
@@ -301,11 +338,8 @@ class TokenRegistryBackend(ABC):
         expired less than *grace_seconds* ago are both left untouched.
 
         Also prunes ``revoked-lookup-ids`` of any lookup_id this pass removes
-        for being expired past grace -- an expired PAT can never authenticate
-        again regardless of its revoked status, so keeping it in the denylist
-        forever would only make that set grow without bound. A live-but-
-        revoked record is untouched by this pruning; it stays in the denylist
-        until its own expiry catches up (or forever, if it never expires).
+        for being expired past grace, so an entry an earlier broker wrote for
+        a PAT does not outlive the record.
         """
 
 
@@ -338,7 +372,6 @@ class InMemoryTokenRegistryBackend(TokenRegistryBackend):
         now = time.time()
         cutoff = now - grace_seconds
         records_removed = 0
-        revoked_pruned = 0
         principals_emptied = 0
         for principal_id, lookup_ids in list(self._by_principal.items()):
             expired = [
@@ -347,8 +380,6 @@ class InMemoryTokenRegistryBackend(TokenRegistryBackend):
                 if r.expires_at is not None and r.expires_at <= cutoff
             ]
             for lookup_id in expired:
-                if lookup_ids[lookup_id].revoked_at is not None:
-                    revoked_pruned += 1
                 del lookup_ids[lookup_id]
             records_removed += len(expired)
             if not lookup_ids:
@@ -357,13 +388,34 @@ class InMemoryTokenRegistryBackend(TokenRegistryBackend):
         return SweepStats(
             records_removed=records_removed,
             owners_removed=0,
-            revoked_pruned=revoked_pruned,
+            revoked_pruned=0,
             principals_emptied=principals_emptied,
         )
 
     async def sweep_expired(self, *, grace_seconds: int) -> SweepStats:
         async with self._lock:
             return self._sweep_expired_locked(grace_seconds=grace_seconds)
+
+    async def delete_inactive(
+        self,
+        principal_id: str,
+        *,
+        now: float,
+        lookup_ids: frozenset[str] | None = None,
+    ) -> list[str]:
+        async with self._lock:
+            principal_map = self._by_principal.get(principal_id, {})
+            removed = [
+                lookup_id
+                for lookup_id, r in principal_map.items()
+                if (lookup_ids is None or lookup_id in lookup_ids)
+                and not r.is_active(now)
+            ]
+            for lookup_id in removed:
+                del principal_map[lookup_id]
+            if principal_id in self._by_principal and not principal_map:
+                del self._by_principal[principal_id]
+            return removed
 
     async def add(self, record: TokenRecord) -> None:
         async with self._lock:
@@ -401,6 +453,20 @@ class InMemoryTokenRegistryBackend(TokenRegistryBackend):
             principal_map[lookup_id] = updated
             return updated
 
+    async def revoke_all(
+        self, principal_id: str, revoked_at: float
+    ) -> list[TokenRecord]:
+        async with self._lock:
+            principal_map = self._by_principal.get(principal_id, {})
+            revoked = [
+                replace(r, revoked_at=revoked_at)
+                for r in principal_map.values()
+                if r.is_active(revoked_at)
+            ]
+            for record in revoked:
+                principal_map[record.lookup_id] = record
+            return revoked
+
     async def touch_last_used(
         self, principal_id: str, lookup_id: str, at: float
     ) -> None:
@@ -413,12 +479,8 @@ class InMemoryTokenRegistryBackend(TokenRegistryBackend):
             )
 
     async def list_revoked_jtis(self) -> frozenset[str]:
-        return frozenset(
-            r.lookup_id
-            for lookup_ids in self._by_principal.values()
-            for r in lookup_ids.values()
-            if r.revoked_at is not None
-        )
+        # No denylist exists in memory: revoke() only sets ``revoked_at``.
+        return frozenset()
 
 
 # ---------------------------------------------------------------------------
@@ -504,6 +566,11 @@ def _expired_past_cutoff(fields: dict[str, Any], cutoff: float) -> bool:
     """Return True if the raw KV *fields* decode to a record whose ``expires_at`` is set and at or before *cutoff*. Never-expiring records (``expires_at`` absent/None) are never "expired"."""
     expires_at = _record_from_fields(fields).expires_at
     return expires_at is not None and expires_at <= cutoff
+
+
+def _is_inactive(fields: dict[str, Any], now: float) -> bool:
+    """Return True if the raw KV *fields* decode to a record that is revoked, or whose ``expires_at`` is set and at or before *now*. Never-expiring, unrevoked records are always active."""
+    return not _record_from_fields(fields).is_active(now)
 
 
 class VaultTokenRegistryBackend(TokenRegistryBackend):
@@ -597,37 +664,12 @@ class VaultTokenRegistryBackend(TokenRegistryBackend):
         data, _version = current
         return str(data["principal_id"])
 
-    async def _add_to_revoked_index(self, lookup_id: str) -> None:
-        path = self._revoked_path()
-        for _attempt in range(_MAX_CAS_RETRIES):
-            current = await self._vault_kv.get(path)
-            data, version = current if current is not None else ({"jtis": []}, None)
-            lookup_ids = set(data.get("jtis", []))
-            if lookup_id in lookup_ids:
-                return
-            lookup_ids.add(lookup_id)
-            try:
-                await self._vault_kv.write_cas(
-                    path, {"jtis": sorted(lookup_ids)}, version
-                )
-            except CasConflictError:
-                continue
-            else:
-                return
-        raise VaultError(
-            "revoke(): exceeded retry budget updating revoked-lookup-ids index "
-            f"for lookup_id={lookup_id!r}"
-        )
-
     async def revoke(
         self, principal_id: str, lookup_id: str, revoked_at: float
     ) -> TokenRecord | None:
         existing = await self.get(principal_id, lookup_id)
         if existing is None:
             return None
-
-        # Security-load-bearing write first -- see the module docstring.
-        await self._add_to_revoked_index(lookup_id)
 
         path = self._principal_path(principal_id)
         for _attempt in range(_MAX_CAS_RETRIES):
@@ -650,6 +692,36 @@ class VaultTokenRegistryBackend(TokenRegistryBackend):
         raise VaultError(
             "revoke(): exceeded retry budget updating "
             f"principal_id={principal_id!r} lookup_id={lookup_id!r}"
+        )
+
+    async def revoke_all(
+        self, principal_id: str, revoked_at: float
+    ) -> list[TokenRecord]:
+        path = self._principal_path(principal_id)
+        for _attempt in range(_MAX_CAS_RETRIES):
+            current = await self._vault_kv.get(path)
+            if current is None:
+                return []
+            data, version = current
+            # Recomputed on every retry against the just-re-read data, for
+            # the same reason as add()'s CAS loop.
+            new_data = dict(data)
+            revoked: list[TokenRecord] = []
+            for lookup_id, fields in data.items():
+                if _record_from_fields(fields).is_active(revoked_at):
+                    new_fields = dict(fields)
+                    new_fields["revoked_at"] = revoked_at
+                    new_data[lookup_id] = new_fields
+                    revoked.append(_record_from_fields(new_fields))
+            if not revoked:
+                return []
+            try:
+                await self._vault_kv.write_cas(path, new_data, version)
+            except CasConflictError:
+                continue
+            return revoked
+        raise VaultError(
+            f"revoke_all(): exceeded retry budget for principal_id={principal_id!r}"
         )
 
     async def touch_last_used(
@@ -690,6 +762,75 @@ class VaultTokenRegistryBackend(TokenRegistryBackend):
         data, _version = current
         return frozenset(data.get("jtis", []))
 
+    async def _remove_records(
+        self, path: str, should_remove: Callable[[str, dict[str, Any]], bool]
+    ) -> tuple[list[str], bool]:
+        """Remove the records of the by-principal entry at *path* for which ``should_remove(lookup_id, fields)`` holds, plus their lookup-owner entries.
+
+        Returns the removed lookup_ids and whether the principal's entry was
+        left empty. An emptied entry is kept, never deleted: KV-v2's metadata
+        delete has no check-and-set, so deleting would drop a record a
+        concurrent ``add()`` wrote after this read. The empty entry costs
+        nothing -- reads see no records, and ``add()`` writes it with CAS on
+        the version it read. Shared by ``sweep_expired()`` and
+        ``delete_inactive()``, so the CAS loop and the owner-index cleanup
+        live in one place.
+        """
+        removed: list[str] = []
+        emptied = False
+        for _attempt in range(_MAX_CAS_RETRIES):
+            current = await self._vault_kv.get(path)
+            if current is None:
+                # Already gone -- a concurrent sweep/revoke/expiry race.
+                break
+            data, version = current
+            # Recomputed on every retry against the just-re-read data, same
+            # reasoning as add()'s CAS loop: a conflict means something else
+            # wrote this principal's entry in between, so the set of records
+            # to remove must be re-evaluated against that write, not replayed
+            # from a stale read.
+            to_remove = [
+                lookup_id
+                for lookup_id, fields in data.items()
+                if should_remove(lookup_id, fields)
+            ]
+            if not to_remove:
+                break
+            remaining = {
+                lookup_id: fields
+                for lookup_id, fields in data.items()
+                if lookup_id not in to_remove
+            }
+            try:
+                await self._vault_kv.write_cas(path, remaining, version)
+            except CasConflictError:
+                continue
+            emptied = not remaining
+            removed = to_remove
+            break
+        else:
+            raise VaultError(f"exceeded retry budget removing records at path={path!r}")
+
+        for lookup_id in removed:
+            await self._vault_kv.delete_metadata(self._owner_path(lookup_id))
+        return removed, emptied
+
+    async def delete_inactive(
+        self,
+        principal_id: str,
+        *,
+        now: float,
+        lookup_ids: frozenset[str] | None = None,
+    ) -> list[str]:
+        removed, _emptied = await self._remove_records(
+            self._principal_path(principal_id),
+            lambda lookup_id, fields: (
+                (lookup_ids is None or lookup_id in lookup_ids)
+                and _is_inactive(fields, now)
+            ),
+        )
+        return removed
+
     async def sweep_expired(self, *, grace_seconds: int) -> SweepStats:
         now = time.time()
         cutoff = now - grace_seconds
@@ -702,59 +843,16 @@ class VaultTokenRegistryBackend(TokenRegistryBackend):
 
         prefix = self._by_principal_prefix()
         for principal_key in await self._vault_kv.list(prefix):
-            path = f"{prefix}/{principal_key}"
-            removed_this_principal: list[str] = []
-            for _attempt in range(_MAX_CAS_RETRIES):
-                current = await self._vault_kv.get(path)
-                if current is None:
-                    # Already gone -- a concurrent sweep/revoke/expiry race.
-                    removed_this_principal = []
-                    break
-                data, version = current
-                # Recomputed on every retry against the just-re-read data,
-                # same reasoning as add()'s CAS loop: a conflict means
-                # something else wrote this principal's entry in between, so
-                # the set of still-expired lookup_ids must be re-evaluated
-                # against that write, not replayed from a stale read.
-                to_remove = [
-                    lookup_id
-                    for lookup_id, fields in data.items()
-                    if _expired_past_cutoff(fields, cutoff)
-                ]
-                if not to_remove:
-                    removed_this_principal = []
-                    break
-                remaining = {
-                    lookup_id: fields
-                    for lookup_id, fields in data.items()
-                    if lookup_id not in to_remove
-                }
-                try:
-                    if remaining:
-                        await self._vault_kv.write_cas(path, remaining, version)
-                    else:
-                        # Metadata delete (not an empty-dict write_cas) so the
-                        # version counter is destroyed too -- preserves a
-                        # subsequent add()'s plain create (cas=0) for this
-                        # principal, exactly as vault_kv.delete_metadata's
-                        # docstring describes.
-                        await self._vault_kv.delete_metadata(path)
-                        principals_emptied += 1
-                except CasConflictError:
-                    continue
-                removed_this_principal = to_remove
-                break
-            else:
-                raise VaultError(
-                    f"sweep_expired(): exceeded retry budget for path={path!r}"
-                )
-
-            for lookup_id in removed_this_principal:
-                await self._vault_kv.delete_metadata(self._owner_path(lookup_id))
-                owners_removed += 1
-                if lookup_id in revoked_before:
-                    lookup_ids_to_prune_from_denylist.add(lookup_id)
+            removed_this_principal, emptied = await self._remove_records(
+                f"{prefix}/{principal_key}",
+                lambda _lookup_id, fields: _expired_past_cutoff(fields, cutoff),
+            )
+            principals_emptied += int(emptied)
+            owners_removed += len(removed_this_principal)
             records_removed += len(removed_this_principal)
+            lookup_ids_to_prune_from_denylist.update(
+                set(removed_this_principal) & revoked_before
+            )
 
         revoked_pruned = 0
         if lookup_ids_to_prune_from_denylist:
@@ -800,23 +898,21 @@ class VaultTokenRegistryBackend(TokenRegistryBackend):
 class RevokedJtiCache:
     """In-process cache of revoked token identifiers, refreshed from a ``TokenRegistryBackend`` on a bounded interval.
 
-    Kept generically named "jti" (rather than renamed to something PAT-
-    specific) because it is a single shared choke point for two different
-    kinds of unique token identifier: a JWT's own ``jti`` claim (checked by
-    ``identity.get_principal``, still exercised by any Keycloak-issued JWT
-    ``/mcp``/`/v1`` accept -- see issue #144's step 5 for when that path
-    eventually retires) and a PAT's ``lookup_id`` (checked by
-    ``pat_auth.resolve_pat_principal``). Both are just opaque strings from
-    this cache's point of view -- it has no notion of which kind it's
-    looking at, and doesn't need one.
+    Consulted only for a Keycloak JWT's ``jti`` claim
+    (``identity.get_principal``, on ``/v1`` and ``/mcp`` alike). It is NOT
+    consulted for PATs: ``pat_auth.resolve_pat_principal`` reads the PAT's
+    record from the backend on every request and rejects on its
+    ``revoked_at``, so PAT revocation is immediate and does not wait on this
+    cache. The name stays "jti" because the entries are opaque
+    identifier strings as far as this cache is concerned.
 
-    Every authenticated request (``/v1`` and ``/mcp`` alike) calls
-    ``is_revoked()`` -- a per-request Vault read there would add real
-    latency and load, so this cache serves a snapshot refreshed at most once
-    per ``refresh_interval_seconds`` (default 30s, configurable via
-    ``Settings.revoked_jti_cache_refresh_seconds``). Revocation therefore
-    takes up to that interval to take effect broker-wide: a deliberate,
-    documented staleness bound, not a bug -- see docs/auth.md.
+    Every authenticated JWT request calls ``is_revoked()`` -- a per-request
+    Vault read there would add real latency and load, so this cache serves a
+    snapshot refreshed at most once per ``refresh_interval_seconds``
+    (default 30s, configurable via
+    ``Settings.revoked_jti_cache_refresh_seconds``). A denylisted ``jti``
+    therefore takes up to that interval to take effect broker-wide: a
+    deliberate, documented staleness bound, not a bug -- see docs/auth.md.
 
     A refresh failure (e.g. Vault briefly unreachable) keeps serving the
     last-known set rather than failing every request open or closed
