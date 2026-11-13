@@ -8,15 +8,23 @@ env vars to set.
 
 from __future__ import annotations
 
+import asyncio
 import re
-from typing import TYPE_CHECKING
+import time
+from typing import TYPE_CHECKING, Any
 
+import pytest
+
+from af_mcp_broker.api import tokens as tokens_api
 from af_mcp_broker.pat import PAT_PREFIX
+from af_mcp_broker.token_registry import TokenRecord
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from fastapi.testclient import TestClient
+
+    from af_mcp_broker.audit import AuditRecord
 
 _AUTH = {"Authorization": "Bearer test"}
 
@@ -381,14 +389,14 @@ def test_revoke_unknown_lookup_id_404(app_client: tuple[TestClient, dict]) -> No
     assert resp.status_code == 404, resp.text
 
 
-def test_revoke_marks_lookup_id_in_the_apps_revoked_registry(
+def test_revoke_marks_the_record_revoked_without_a_denylist_entry(
     app_client: tuple[TestClient, dict],
 ) -> None:
-    """Confirms DELETE /v1/tokens/{lookup_id} actually reaches the same
-    token_registry app.state wires into /mcp's PAT validation path --
-    end-to-end enforcement itself (a revoked PAT rejecting a real request) is
-    covered directly against pat_auth.resolve_pat_principal and
-    test_mcp_middleware_identity.py."""
+    """Confirms DELETE /v1/tokens/{lookup_id} reaches the same token_registry
+    app.state wires into /mcp's PAT validation path, which enforces
+    ``revoked_at`` on the record -- end-to-end enforcement itself (a revoked
+    PAT rejecting a real request) is covered directly against
+    pat_auth.resolve_pat_principal and test_mcp_middleware_identity.py."""
     from af_mcp_broker.app import app
 
     client, _ = app_client
@@ -399,8 +407,10 @@ def test_revoke_marks_lookup_id_in_the_apps_revoked_registry(
 
     import asyncio
 
-    revoked = asyncio.run(app.state.token_registry._backend.list_revoked_jtis())
-    assert lookup_id in revoked
+    backend = app.state.token_registry._backend
+    assert asyncio.run(backend.list_revoked_jtis()) == frozenset()
+    rows = {r["lookup_id"]: r for r in client.get("/v1/tokens", headers=_AUTH).json()}
+    assert rows[lookup_id]["revoked_at"] is not None
 
 
 # ---------------------------------------------------------------------------
@@ -469,3 +479,175 @@ def test_missing_bearer_still_401_on_v1(app_client: tuple[TestClient, dict]) -> 
             app.dependency_overrides[keycloak_dependency] = saved
 
     assert resp.status_code == 401, resp.text
+
+
+# ---------------------------------------------------------------------------
+# Deleting revoked/expired rows -- DELETE /v1/tokens/{lookup_id}/record and
+# DELETE /v1/tokens?inactive=true. An active token is never deletable; it
+# must be revoked first.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def audited(monkeypatch: pytest.MonkeyPatch) -> list[AuditRecord]:
+    records: list[AuditRecord] = []
+
+    async def _capture(record: AuditRecord) -> None:
+        records.append(record)
+
+    monkeypatch.setattr(tokens_api, "write_audit", _capture)
+    return records
+
+
+def _seed_expired(app_state: Any, *, principal_id: str, lookup_id: str) -> None:
+    """Add an already-expired record straight to the app's registry backend.
+
+    Must be the LAST add in a test: the in-memory backend self-sweeps expired
+    records, across all principals, on every ``add()``.
+    """
+    now = time.time()
+    asyncio.run(
+        app_state.token_registry._backend.add(
+            TokenRecord(
+                lookup_id=lookup_id,
+                principal_id=principal_id,
+                secret_hash="unused",
+                name=f"expired-{lookup_id}",
+                created_at=now - 100,
+                expires_at=now - 10,
+                revoked_at=None,
+                last_used_at=None,
+            )
+        )
+    )
+
+
+def _listed_ids(client: TestClient) -> set[str]:
+    return {r["lookup_id"] for r in client.get("/v1/tokens", headers=_AUTH).json()}
+
+
+def test_delete_record_refuses_an_active_token(
+    app_client: tuple[TestClient, dict],
+) -> None:
+    client, _ = app_client
+    lookup_id = _mint(client, name="still-active").json()["lookup_id"]
+
+    resp = client.delete(f"/v1/tokens/{lookup_id}/record", headers=_AUTH)
+
+    assert resp.status_code == 409, resp.text
+    assert "revoke" in resp.json()["detail"].lower()
+    assert lookup_id in _listed_ids(client)
+
+
+def test_delete_record_removes_a_revoked_token(
+    app_client: tuple[TestClient, dict], audited: list[AuditRecord]
+) -> None:
+    client, state = app_client
+    lookup_id = _mint(client, name="to-clear").json()["lookup_id"]
+    client.delete(f"/v1/tokens/{lookup_id}", headers=_AUTH)
+
+    resp = client.delete(f"/v1/tokens/{lookup_id}/record", headers=_AUTH)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"lookup_id": lookup_id, "deleted": True}
+    assert lookup_id not in _listed_ids(client)
+    deleted = [r for r in audited if r.action == "token.deleted"]
+    assert [r.request_id for r in deleted] == [lookup_id]
+    assert deleted[0].principal_sub == state["principal"].subject
+
+
+def test_delete_record_removes_an_expired_token(
+    app_client: tuple[TestClient, dict],
+) -> None:
+    from af_mcp_broker.app import app
+
+    client, state = app_client
+    _seed_expired(app.state, principal_id=state["principal"].subject, lookup_id="old")
+
+    resp = client.delete("/v1/tokens/old/record", headers=_AUTH)
+
+    assert resp.status_code == 200, resp.text
+    assert "old" not in _listed_ids(client)
+
+
+def test_delete_record_of_another_users_token_is_403_and_leaves_it(
+    app_client: tuple[TestClient, dict], make_principal: Callable[..., object]
+) -> None:
+    client, state = app_client
+    owner_principal = state["principal"]
+    lookup_id = _mint(client, name="first-users").json()["lookup_id"]
+    client.delete(f"/v1/tokens/{lookup_id}", headers=_AUTH)
+
+    state["principal"] = make_principal(
+        uid=99999, groups=["atlas"], subject="sub-other"
+    )
+    resp = client.delete(f"/v1/tokens/{lookup_id}/record", headers=_AUTH)
+    assert resp.status_code == 403, resp.text
+
+    state["principal"] = owner_principal
+    assert lookup_id in _listed_ids(client)
+
+
+def test_delete_record_unknown_lookup_id_404(
+    app_client: tuple[TestClient, dict],
+) -> None:
+    client, _ = app_client
+    resp = client.delete("/v1/tokens/does-not-exist/record", headers=_AUTH)
+    assert resp.status_code == 404, resp.text
+
+
+def test_clear_inactive_deletes_only_the_callers_revoked_and_expired_rows(
+    app_client: tuple[TestClient, dict],
+    make_principal: Callable[..., object],
+    audited: list[AuditRecord],
+) -> None:
+    from af_mcp_broker.app import app
+
+    client, state = app_client
+    owner_principal = state["principal"]
+    active = _mint(client, name="active").json()["lookup_id"]
+    revoked = _mint(client, name="revoked").json()["lookup_id"]
+    client.delete(f"/v1/tokens/{revoked}", headers=_AUTH)
+    # Another principal's revoked row must survive the caller's clear.
+    other_principal = make_principal(uid=99999, groups=["atlas"], subject="sub-other")
+    state["principal"] = other_principal
+    other = _mint(client, name="other-revoked").json()["lookup_id"]
+    client.delete(f"/v1/tokens/{other}", headers=_AUTH)
+    state["principal"] = owner_principal
+    _seed_expired(app.state, principal_id=owner_principal.subject, lookup_id="old")
+
+    resp = client.delete("/v1/tokens?inactive=true", headers=_AUTH)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"deleted": 2}
+    assert _listed_ids(client) == {active}
+    cleared = sorted(r.request_id for r in audited if r.action == "token.deleted")
+    assert cleared == sorted(["old", revoked])
+    state["principal"] = other_principal
+    assert _listed_ids(client) == {other}
+
+
+def test_clear_inactive_with_nothing_to_clear_returns_zero(
+    app_client: tuple[TestClient, dict],
+) -> None:
+    client, _ = app_client
+    _mint(client, name="active")
+
+    resp = client.delete("/v1/tokens?inactive=true", headers=_AUTH)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"deleted": 0}
+
+
+@pytest.mark.parametrize("query", ["", "?inactive=false"])
+def test_bare_delete_on_the_collection_does_nothing(
+    app_client: tuple[TestClient, dict], query: str
+) -> None:
+    client, _ = app_client
+    lookup_id = _mint(client, name="revoked").json()["lookup_id"]
+    client.delete(f"/v1/tokens/{lookup_id}", headers=_AUTH)
+
+    resp = client.delete(f"/v1/tokens{query}", headers=_AUTH)
+
+    assert resp.status_code == 422, resp.text
+    assert lookup_id in _listed_ids(client)

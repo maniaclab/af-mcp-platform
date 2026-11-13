@@ -15,7 +15,14 @@
  */
 import { ref, computed, onBeforeUnmount, onMounted, nextTick } from 'vue';
 import { Check, Copy, Plus } from '@lucide/vue';
-import { mintToken, listTokens, revokeToken, fetchPermissions } from '../lib/api';
+import {
+  mintToken,
+  listTokens,
+  revokeToken,
+  deleteTokenRecord,
+  clearInactiveTokens,
+  fetchPermissions,
+} from '../lib/api';
 import type { MintedToken, PermissionGrant, TokenSummary } from '../lib/api';
 import {
   EXPIRY_WARNING_DAYS,
@@ -273,6 +280,46 @@ async function handleRevoke() {
   }
 }
 
+// ── Delete revoked and expired rows ──────────────────────────────────────
+// Revoking keeps a tombstone row, so dead rows pile up; the broker deletes
+// them only once they are revoked or expired. A single row is deleted without
+// a confirmation (the token already stopped working); clearing them all asks
+// first, since it removes a whole history in one click.
+const deletingLookupId = ref<string | null>(null);
+const clearing = ref(false);
+const deleteError = ref<string | null>(null);
+const clearConfirmOpen = ref(false);
+
+const inactiveTokens = computed(() => tokens.value.filter((t) => tokenStatus(t) !== 'active'));
+
+async function handleDelete(lookupId: string) {
+  deletingLookupId.value = lookupId;
+  deleteError.value = null;
+  try {
+    await deleteTokenRecord(lookupId);
+    tokens.value = tokens.value.filter((t) => t.lookup_id !== lookupId);
+  } catch (err) {
+    deleteError.value = err instanceof Error ? err.message : 'Could not delete the token.';
+  } finally {
+    deletingLookupId.value = null;
+  }
+}
+
+async function handleClear() {
+  clearing.value = true;
+  deleteError.value = null;
+  try {
+    await clearInactiveTokens();
+    clearConfirmOpen.value = false;
+    tokens.value = tokens.value.filter((t) => tokenStatus(t) === 'active');
+  } catch (err) {
+    clearConfirmOpen.value = false;
+    deleteError.value = err instanceof Error ? err.message : 'Could not clear the tokens.';
+  } finally {
+    clearing.value = false;
+  }
+}
+
 // ── Formatting ───────────────────────────────────────────────────────────
 function formatRelativeIso(iso: string): string {
   return formatRelative(Date.parse(iso));
@@ -313,6 +360,13 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
       <div>
         <b>Revoke failed</b>
         {{ revokeError }}
+      </div>
+    </div>
+    <div v-else-if="deleteError" class="alert af-banner bad" role="alert">
+      <span class="af-mark bad" aria-hidden="true"></span>
+      <div>
+        <b>Delete failed</b>
+        {{ deleteError }}
       </div>
     </div>
     <div v-else-if="expiringTokens.length > 0" class="alert af-banner warn" role="alert">
@@ -444,20 +498,44 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
                 </td>
                 <td class="af-act af-sticky">
                   <button
+                    v-if="tokenStatus(row) === 'active'"
                     type="button"
                     class="btn af-danger"
                     data-variant="outline"
                     data-size="sm"
                     :aria-label="`Revoke ${row.name}`"
-                    :disabled="revokingLookupId === row.lookup_id || tokenStatus(row) !== 'active'"
+                    :disabled="revokingLookupId === row.lookup_id"
                     @click="openRevokeConfirm(row.lookup_id, row.name)"
                   >
                     {{ revokingLookupId === row.lookup_id ? 'Revoking…' : 'Revoke' }}
+                  </button>
+                  <button
+                    v-else
+                    type="button"
+                    class="btn"
+                    data-variant="outline"
+                    data-size="sm"
+                    :aria-label="`Delete ${row.name}`"
+                    :disabled="deletingLookupId === row.lookup_id"
+                    @click="handleDelete(row.lookup_id)"
+                  >
+                    {{ deletingLookupId === row.lookup_id ? 'Deleting…' : 'Delete' }}
                   </button>
                 </td>
               </tr>
             </tbody>
           </table>
+        </div>
+        <div v-if="inactiveTokens.length > 0" class="tp__clearbar">
+          <button
+            type="button"
+            class="btn tp__clear"
+            data-variant="outline"
+            data-size="sm"
+            @click="clearConfirmOpen = true"
+          >
+            Clear revoked and expired ({{ inactiveTokens.length }})
+          </button>
         </div>
       </AsyncState>
     </section>
@@ -683,10 +761,30 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
     >
       <p>Clients using this token stop working immediately. This cannot be undone.</p>
     </ConfirmDialog>
+
+    <ConfirmDialog
+      v-model:open="clearConfirmOpen"
+      :title="`Delete ${inactiveTokens.length} revoked and expired ${inactiveTokens.length === 1 ? 'token' : 'tokens'}?`"
+      confirm-label="Delete"
+      busy-label="Deleting…"
+      danger
+      :busy="clearing"
+      @confirm="handleClear"
+    >
+      <p>
+        They have already stopped working. This removes them from the list and cannot be undone.
+        Active tokens are not affected.
+      </p>
+    </ConfirmDialog>
   </div>
 </template>
 
 <style scoped>
+.tp__clearbar {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .tp__label {
   margin: 0;
   font-size: var(--text-13);

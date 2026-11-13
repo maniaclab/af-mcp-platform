@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 import structlog
-from conftest import AUDIENCE, make_claims
+from conftest import AUDIENCE, DenylistedTokenRegistryBackend, make_claims
 from fastapi import HTTPException
 
 from af_mcp_broker import identity as identity_module
@@ -526,22 +526,7 @@ async def test_revoked_jti_raises_401(
     principal_cache, _directory = static_principal_cache
     prime_jwks([sig_key.jwk])
     token = sig_key.sign(make_claims(jti="revoked-jti-1"))
-    backend = InMemoryTokenRegistryBackend()
-    from af_mcp_broker.token_registry import TokenRecord
-
-    await backend.add(
-        TokenRecord(
-            lookup_id="revoked-jti-1",
-            principal_id="user-123",
-            secret_hash="unused-in-this-test",
-            name="test-token",
-            created_at=time.time(),
-            expires_at=time.time() + 3600,
-            revoked_at=None,
-            last_used_at=None,
-        )
-    )
-    await backend.revoke("user-123", "revoked-jti-1", revoked_at=time.time())
+    backend = DenylistedTokenRegistryBackend("revoked-jti-1")
     revoked_cache = RevokedJtiCache(backend, refresh_interval_seconds=30.0)
 
     with pytest.raises(HTTPException) as exc:

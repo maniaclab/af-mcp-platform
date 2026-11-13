@@ -818,6 +818,22 @@ export async function revokeToken(lookupId: string): Promise<void> {
   );
 }
 
+/** Delete the row of a revoked or expired token; the broker refuses an active one (409). */
+export async function deleteTokenRecord(lookupId: string): Promise<void> {
+  await apiFetch<{ lookup_id: string; deleted: boolean }>(
+    `/tokens/${encodeURIComponent(lookupId)}/record`,
+    { method: 'DELETE' },
+  );
+}
+
+/** Delete every revoked and expired token row the caller owns; resolves to how many were deleted. */
+export async function clearInactiveTokens(): Promise<number> {
+  const { deleted } = await apiFetch<{ deleted: number }>('/tokens?inactive=true', {
+    method: 'DELETE',
+  });
+  return deleted;
+}
+
 // ---------------------------------------------------------------------------
 // Dashboard summary (parallel fetch helper for the landing page)
 // ---------------------------------------------------------------------------
