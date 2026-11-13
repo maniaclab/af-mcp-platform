@@ -104,6 +104,36 @@ spec:
           port: 5432
     {{- end }}
 
+    # Shared cross-replica state store (broker.sharedState) -- allow the broker
+    # to reach the redis-protocol server selected by
+    # broker.sharedState.networkPolicy: an ipBlock when `cidr` is set (managed
+    # instance outside the cluster), otherwise a namespace/pod selector (an
+    # empty namespaceSelector means the release namespace; an empty
+    # podSelector allows any pod there).
+    {{- if include "af-mcp-platform.sharedState.configured" . }}
+    - to:
+        {{- if .Values.broker.sharedState.networkPolicy.cidr }}
+        - ipBlock:
+            cidr: {{ .Values.broker.sharedState.networkPolicy.cidr | quote }}
+        {{- else }}
+        - namespaceSelector:
+            matchLabels:
+              {{- if .Values.broker.sharedState.networkPolicy.namespaceSelector }}
+              {{- toYaml .Values.broker.sharedState.networkPolicy.namespaceSelector | nindent 14 }}
+              {{- else }}
+              kubernetes.io/metadata.name: {{ .Release.Namespace | quote }}
+              {{- end }}
+          {{- if .Values.broker.sharedState.networkPolicy.podSelector }}
+          podSelector:
+            matchLabels:
+              {{- toYaml .Values.broker.sharedState.networkPolicy.podSelector | nindent 14 }}
+          {{- end }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.broker.sharedState.networkPolicy.port }}
+    {{- end }}
+
     # OpenTelemetry collector (broker.tracing.enabled) -- allow the broker's
     # OTLP/HTTP span exports to reach the collector selected by
     # broker.tracing.networkPolicy (an empty namespaceSelector means the

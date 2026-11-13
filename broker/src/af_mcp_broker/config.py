@@ -485,6 +485,21 @@ class Settings(BaseSettings):
     # than guessing.
     mcp_replica_count: int | None = None
 
+    # Shared cross-replica state store (shared_state.py): a redis:// or
+    # rediss:// URL for any redis-protocol server (Redis recommended; Valkey
+    # also works). Empty selects the process-local in-memory backend, which is
+    # correct for exactly one replica -- _validate_replica_state_config below
+    # refuses to start more than one replica without a store unless the escape
+    # hatch is set. The URL may embed a password; supply it from a Secret.
+    shared_state_url: str | None = None
+
+    # Escape hatch for running mcp_replica_count > 1 with no shared_state_url.
+    # Per-replica state then multiplies the unlock brute-force budget by the
+    # replica count and leaves other replica-local caches inconsistent (see
+    # docs/architecture.md "Replica consistency"). An explicit choice rather
+    # than a silent default.
+    allow_per_replica_state: bool = False
+
     log_level: str = Field(
         default="INFO",
         alias="LOG_LEVEL",
@@ -1182,6 +1197,25 @@ class Settings(BaseSettings):
                 "maintenance_mode_postgres_dsn (MAINTENANCE_MODE_POSTGRES_DSN) "
                 "or usage_postgres_dsn (USAGE_POSTGRES_DSN) must be set when "
                 "maintenance_mode_backend is 'postgres'."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_replica_state_config(self) -> Settings:
+        """Refuse more than one replica with per-replica state unless ``allow_per_replica_state`` is set."""
+        if (
+            not self.shared_state_url
+            and not self.allow_per_replica_state
+            and self.mcp_replica_count is not None
+            and self.mcp_replica_count > 1
+        ):
+            raise ValueError(
+                "mcp_replica_count > 1 requires shared_state_url "
+                "(SHARED_STATE_URL): state such as the unlock rate limiter "
+                "must agree across replicas. Set it, or set "
+                "allow_per_replica_state (ALLOW_PER_REPLICA_STATE=true) to "
+                "accept per-replica state -- see docs/architecture.md "
+                '"Replica consistency".'
             )
         return self
 

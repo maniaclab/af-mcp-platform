@@ -37,7 +37,7 @@ class _FakeSucceedingBackend:
     async def mint(self, principal, passphrase, valid, voms, cache):
         from af_mcp_broker.credentials.cache import ProxyMeta
 
-        cache.check_unlock_rate_limit(principal.uid)
+        await cache.check_unlock_rate_limit(principal.uid)
         return ProxyMeta(
             dn="CN=Fake User",
             voms_attributes=[],
@@ -59,8 +59,8 @@ class _FakeFailingBackend:
         return True
 
     async def mint(self, principal, passphrase, valid, voms, cache):
-        cache.check_unlock_rate_limit(principal.uid)
-        cache.record_failed_unlock(principal.uid)
+        await cache.check_unlock_rate_limit(principal.uid)
+        await cache.record_failed_unlock(principal.uid)
         raise HTTPException(status_code=422, detail="bad passphrase (fake)")
 
 

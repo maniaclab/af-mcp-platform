@@ -29,7 +29,7 @@ def test_defaults_match_pre_lift_values():
     assert settings.credential_unlock_window_seconds == 900
 
 
-def test_env_var_overrides(monkeypatch: pytest.MonkeyPatch):
+async def test_env_var_overrides(monkeypatch: pytest.MonkeyPatch):
     """Env vars are reflected in Settings, and a cache built from those
     Settings raises on the 4th failed unlock (not the 6th default-derived
     one)."""
@@ -47,10 +47,10 @@ def test_env_var_overrides(monkeypatch: pytest.MonkeyPatch):
     uid = 12_345
 
     for _attempt in range(1, 4):
-        cache.record_failed_unlock(uid)
+        await cache.record_failed_unlock(uid)
 
     with pytest.raises(UnlockRateLimitError):
-        cache.record_failed_unlock(uid)
+        await cache.record_failed_unlock(uid)
 
 
 @pytest.mark.parametrize(
@@ -67,7 +67,7 @@ def test_zero_or_negative_rejected(kwargs: dict[str, int]):
         Settings(**kwargs)
 
 
-def test_record_failed_unlock_defaults_unchanged():
+async def test_record_failed_unlock_defaults_unchanged():
     """``CredentialCache()`` with no args still raises on the 6th failed unlock.
 
     Backwards-compat guarantee for existing callers (test_oidc.py,
@@ -78,10 +78,10 @@ def test_record_failed_unlock_defaults_unchanged():
     uid = 54_321
 
     for _attempt in range(1, 6):
-        cache.record_failed_unlock(uid)
+        await cache.record_failed_unlock(uid)
 
     with pytest.raises(UnlockRateLimitError):
-        cache.record_failed_unlock(uid)
+        await cache.record_failed_unlock(uid)
 
 
 async def test_get_never_counts_against_rate_limit():
@@ -106,26 +106,26 @@ async def test_rate_limit_error_carries_retry_after_seconds():
     uid = 99_999
 
     for _ in range(2):
-        cache.record_failed_unlock(uid)
+        await cache.record_failed_unlock(uid)
 
     with pytest.raises(UnlockRateLimitError) as excinfo:
-        cache.record_failed_unlock(uid)
+        await cache.record_failed_unlock(uid)
 
     assert 0 <= excinfo.value.retry_after_seconds <= 60
 
 
-def test_check_unlock_rate_limit_carries_retry_after_seconds():
+async def test_check_unlock_rate_limit_carries_retry_after_seconds():
     """Same ``retry_after_seconds`` contract on the ``check_unlock_rate_limit``
     raise site (the guard called before minting, x509.py:279)."""
     cache = CredentialCache(max_failed_unlocks=1, unlock_window_seconds=30)
     uid = 88_888
 
-    cache.record_failed_unlock(uid)  # 1st failure: attempts == limit, no raise
+    await cache.record_failed_unlock(uid)  # 1st failure: attempts == limit, no raise
     with pytest.raises(UnlockRateLimitError):
-        cache.record_failed_unlock(uid)  # 2nd failure: trips the limiter
+        await cache.record_failed_unlock(uid)  # 2nd failure: trips the limiter
 
     with pytest.raises(UnlockRateLimitError) as excinfo:
-        cache.check_unlock_rate_limit(uid)  # already-tripped guard
+        await cache.check_unlock_rate_limit(uid)  # already-tripped guard
 
     assert 0 <= excinfo.value.retry_after_seconds <= 30
 
@@ -141,15 +141,15 @@ async def test_failed_unlock_counter_resets_on_put_when_uid_given():
     uid = 22_222
     subject = "subject-22222"
 
-    cache.record_failed_unlock(uid)  # 1 of 2 allowed failures
+    await cache.record_failed_unlock(uid)  # 1 of 2 allowed failures
 
     await cache.put(subject, TARGET, "some-cred", uid=uid)
 
     # Counter reset by put() -- two more failures are allowed before tripping.
-    cache.record_failed_unlock(uid)
-    cache.record_failed_unlock(uid)
+    await cache.record_failed_unlock(uid)
+    await cache.record_failed_unlock(uid)
     with pytest.raises(UnlockRateLimitError):
-        cache.record_failed_unlock(uid)
+        await cache.record_failed_unlock(uid)
 
 
 async def test_put_without_uid_does_not_reset_rate_limit():
@@ -161,11 +161,11 @@ async def test_put_without_uid_does_not_reset_rate_limit():
     uid = 33_333
     subject = "subject-33333"
 
-    cache.record_failed_unlock(uid)  # 1 of 2 allowed failures
+    await cache.record_failed_unlock(uid)  # 1 of 2 allowed failures
 
     await cache.put(subject, TARGET, "some-cred")  # no uid= passed
 
     # Counter NOT reset -- one more failure trips the limit, not two.
-    cache.record_failed_unlock(uid)
+    await cache.record_failed_unlock(uid)
     with pytest.raises(UnlockRateLimitError):
-        cache.record_failed_unlock(uid)
+        await cache.record_failed_unlock(uid)
