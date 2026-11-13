@@ -313,7 +313,7 @@ Answers: "is this principal allowed to call this tool?"
 - Authorization failures are logged with structured fields (uid, tool, permission)
   and return HTTP 403 to the aggregator.
 - The gateway's own methods (`af_whoami`, `af_list_identities`,
-  `af_list_mcp_servers`, `af_link_identity`, `af_usage`) take this exact
+  `af_list_mcp_servers`, `af_link_identity`, `af_usage`, `af_search_tools`) take this exact
   same path: the registry always self-registers a builtin `gateway_service` service
   (prefix `af`, `required_permission: __none__` — issue maniaclab/af-mcp-platform#240, replacing
   issue maniaclab/af-mcp-platform#153's name-based middleware bypass), so they are
