@@ -43,7 +43,9 @@ curl -H "Authorization: Bearer $MCP_TOKEN" \\
         <span class="cc__num">1</span>
         <h3 class="cc__title">Copy the server URL</h3>
         <p v-if="endpoint === null" class="cc__text" role="status">Loading…</p>
-        <CopyField v-else :value="endpoint" label="Copy endpoint URL to clipboard" />
+        <!-- multiline: a step box is too narrow for a whole URL on one line,
+             and the value to copy must never be cut off with an ellipsis. -->
+        <CopyField v-else :value="endpoint" label="Copy endpoint URL to clipboard" multiline />
       </li>
       <li class="af-box cc__step">
         <span class="cc__num">2</span>
