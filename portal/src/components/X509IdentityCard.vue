@@ -194,17 +194,26 @@ function remainingText(seconds?: number | null): string {
       <Disclosure :open="preflightOpen" @toggle="togglePreflight">
         <template #label>Grid certificate files</template>
         <template #badge>
-          <StatusMark v-if="preflight?.ok" class="xc__chip" tone="ok" label="Ready" />
+          <StatusMark
+            v-if="preflightLoading"
+            class="xc__chip"
+            tone="busy"
+            label="Checking…"
+            role="status"
+            aria-live="polite"
+          />
+          <StatusMark v-else-if="preflight?.ok" class="xc__chip" tone="ok" label="Ready" />
           <StatusMark v-else-if="preflight" class="xc__chip" tone="warn" label="Problems found" />
         </template>
 
-        <p v-if="preflightLoading" class="xc__section-note" aria-live="polite">
-          Checking certificate files…
-        </p>
-        <p v-else-if="preflightError" class="alert af-note bad xc__error" role="alert">
+        <p
+          v-if="!preflightLoading && preflightError"
+          class="alert af-note bad xc__error"
+          role="alert"
+        >
           {{ preflightError }}
         </p>
-        <div v-else-if="preflight" class="table-container af-box">
+        <div v-else-if="!preflightLoading && preflight" class="table-container af-box">
           <table class="af-compact table">
             <thead>
               <tr>
@@ -269,17 +278,22 @@ function remainingText(seconds?: number | null): string {
       <Disclosure :open="proxyOpen" @toggle="toggleProxyDetails">
         <template #label>VOMS proxy details</template>
         <template #badge>
-          <StatusMark v-if="proxyStatus?.cached" class="xc__chip" tone="ok" label="Active" />
+          <StatusMark
+            v-if="proxyLoading"
+            class="xc__chip"
+            tone="busy"
+            label="Checking…"
+            role="status"
+            aria-live="polite"
+          />
+          <StatusMark v-else-if="proxyStatus?.cached" class="xc__chip" tone="ok" label="Active" />
           <StatusMark v-else-if="proxyStatus" class="xc__chip" tone="off" label="No proxy" />
         </template>
 
-        <p v-if="proxyLoading" class="xc__section-note" aria-live="polite">
-          Checking proxy status…
-        </p>
-        <p v-else-if="proxyError" class="alert af-note bad xc__error" role="alert">
+        <p v-if="!proxyLoading && proxyError" class="alert af-note bad xc__error" role="alert">
           {{ proxyError }}
         </p>
-        <template v-else-if="proxyStatus">
+        <template v-else-if="!proxyLoading && proxyStatus">
           <template v-if="proxyStatus.cached">
             <dl class="af-kv xc__proxy">
               <dt>Subject DN</dt>

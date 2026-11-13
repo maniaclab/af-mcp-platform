@@ -233,8 +233,19 @@ const toolsView = computed(() =>
     >
       <template #label>Methods</template>
       <template #badge>
+        <!-- Loading shows here, in the header, so the body appears once with its
+             final content instead of flashing a placeholder and shifting. -->
         <span
-          v-if="toolsView && toolsView.kind !== 'blocked'"
+          v-if="toolsLoading"
+          class="badge bc__tools-count"
+          data-variant="outline"
+          role="status"
+          aria-live="polite"
+        >
+          Loading…
+        </span>
+        <span
+          v-else-if="toolsView && toolsView.kind !== 'blocked'"
           class="badge bc__tools-count"
           data-variant="outline"
         >
@@ -242,12 +253,15 @@ const toolsView = computed(() =>
         </span>
       </template>
       <div class="bc__tools-body">
-        <p v-if="toolsLoading" class="bc__tools-note" aria-live="polite">Loading methods…</p>
-        <div v-else-if="toolsError" class="alert af-note bad bc__tools-error" role="alert">
+        <div
+          v-if="!toolsLoading && toolsError"
+          class="alert af-note bad bc__tools-error"
+          role="alert"
+        >
           <span class="af-mark bad" aria-hidden="true"></span>
           <span>{{ toolsError }}</span>
         </div>
-        <template v-else-if="toolsView">
+        <template v-else-if="!toolsLoading && toolsView">
           <ToolTable v-if="toolsView.kind === 'tools'" :tools="toolsView.tools" />
           <p v-else-if="toolsView.kind === 'empty'" class="bc__tools-note">
             {{ toolsView.message }}

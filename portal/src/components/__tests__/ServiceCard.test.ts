@@ -153,6 +153,26 @@ describe('Tools accordion', () => {
     expect(countChip(wrapper)).toBe('2 methods');
   });
 
+  it('shows the loading state in the header badge and nothing in the body', async () => {
+    const d1 = deferred<ServerToolsResponse>();
+    vi.mocked(fetchServerTools).mockReturnValueOnce(d1.promise);
+    const wrapper = mountCard();
+
+    await toolsToggle(wrapper).trigger('click');
+
+    const chip = wrapper.find('button.disclosure__toggle .bc__tools-count');
+    expect(chip.text()).toBe('Loading…');
+    expect(chip.attributes('role')).toBe('status');
+    expect(chip.attributes('aria-live')).toBe('polite');
+    expect(wrapper.find('.bc__tools-body').text()).toBe('');
+
+    d1.resolve(listing());
+    await flushPromises();
+
+    expect(countChip(wrapper)).toBe('2 methods');
+    expect(wrapper.text()).not.toContain('Loading');
+  });
+
   it('discards a response that lands after the accordion collapsed', async () => {
     const d1 = deferred<ServerToolsResponse>();
     vi.mocked(fetchServerTools).mockReturnValueOnce(d1.promise);
