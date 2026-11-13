@@ -92,6 +92,7 @@ from af_mcp_broker.principal_cache import (
     VaultPrincipalCacheBackend,
 )
 from af_mcp_broker.principal_directory import KeycloakPrincipalDirectory
+from af_mcp_broker.shared_state import build_shared_state
 from af_mcp_broker.token_registry import (
     InMemoryTokenRegistryBackend,
     RevokedJtiCache,
@@ -256,6 +257,28 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
             ),
             replica_count=settings.mcp_replica_count,
         )
+
+    # --- Shared cross-replica state (shared_state.py): the Settings validator
+    # has already refused more than one replica without a store unless the
+    # operator opted into per-replica state; this logs the opt-in so it is
+    # visible in pod logs, never silent.
+    if (
+        not settings.shared_state_url
+        and settings.mcp_replica_count is not None
+        and settings.mcp_replica_count > 1
+    ):
+        logger.warning(
+            "per_replica_state",
+            message=(
+                "allow_per_replica_state with more than one broker replica "
+                "and no shared_state_url: the unlock brute-force budget is "
+                "multiplied by the replica count and replica-local caches "
+                "are inconsistent. Set shared_state_url -- see "
+                'docs/architecture.md "Replica consistency".'
+            ),
+            replica_count=settings.mcp_replica_count,
+        )
+    shared_state = build_shared_state(settings.shared_state_url)
 
     # --- Authorization: the authorization/ engine matches the shipped policy.yaml.
     try:
@@ -471,6 +494,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     credential_cache = CredentialCache(
         max_failed_unlocks=settings.credential_unlock_max_failures,
         unlock_window_seconds=settings.credential_unlock_window_seconds,
+        shared_state=shared_state,
         on_revoke=lambda subject, target: invalidate_subject_cache(
             _mcp_aggregator, subject, target
         ),
@@ -1135,6 +1159,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     if credmon_sync is not None:
         await credmon_sync.stop()
     await credential_cache.stop_janitor()
+    await shared_state.close()
     await aclose_http_client()
     # Shutdown drains pending metering (records still queued for measurement
     # and writing) so audit lines aren't lost on a graceful stop -- and it
