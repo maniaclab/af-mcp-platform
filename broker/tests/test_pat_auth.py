@@ -371,7 +371,6 @@ async def test_expired_pat_raises_token_expired_error_with_portal_hint(
         await resolve_pat_principal(
             token, settings, pat_backend, principal_cache, tracker
         )
-    assert exc.value.status_code == 401
     assert "expired" in exc.value.detail
     assert "https://mcp-portal.test/tokens" in exc.value.detail
 

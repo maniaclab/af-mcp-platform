@@ -15,6 +15,7 @@ from af_mcp_broker.authorization import get_principal_permissions
 from af_mcp_broker.identity import (
     PrincipalDirectoryUnavailableError,
     TokenAudienceError,
+    TokenExpiredError,
     get_principal,
 )
 from af_mcp_broker.pat import mint_pat
@@ -52,9 +53,9 @@ async def test_expired_token_raises_401(
     now = int(time.time())
     token = sig_key.sign(make_claims(iat=now - 600, exp=now - 300))
 
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(TokenExpiredError) as exc:
         await get_principal(token, settings, cache)
-    assert exc.value.status_code == 401
+    assert exc.value.detail == "Invalid or expired token"
 
 
 async def test_wrong_audience_raises_401(
@@ -64,9 +65,9 @@ async def test_wrong_audience_raises_401(
     prime_jwks([sig_key.jwk])
     token = sig_key.sign(make_claims(aud="some-other-service"))
 
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(TokenAudienceError) as exc:
         await get_principal(token, settings, cache)
-    assert exc.value.status_code == 401
+    assert exc.value.detail["error"] == "insufficient_scope"
 
 
 async def test_wrong_audience_raises_token_audience_error_with_correlation_id(
@@ -86,7 +87,6 @@ async def test_wrong_audience_raises_token_audience_error_with_correlation_id(
     with pytest.raises(TokenAudienceError) as exc:
         await get_principal(token, settings, cache)
 
-    assert exc.value.status_code == 401
     assert exc.value.detail["error"] == "insufficient_scope"
     correlation_id = exc.value.detail["correlation_id"]
     assert correlation_id
@@ -269,7 +269,6 @@ async def test_cold_cache_directory_outage_raises_actionable_error(
     with pytest.raises(PrincipalDirectoryUnavailableError) as exc:
         await get_principal(token, settings, cache)
 
-    assert exc.value.status_code == 503
     detail = str(exc.value.detail).lower()
     assert "unavailable" in detail or "outage" in detail
     assert "invalid" not in detail  # must not read like a bad-credential 401
@@ -344,7 +343,7 @@ async def test_get_principal_without_a_configured_directory_raises_actionable_er
     with pytest.raises(PrincipalDirectoryUnavailableError) as exc:
         await get_principal(token, settings, None)
 
-    assert exc.value.status_code == 503
+    assert "unavailable" in str(exc.value.detail)
 
 
 async def test_jwt_and_pat_for_same_principal_get_identical_permissions(

@@ -144,11 +144,7 @@ async def resolve_pat_principal(
     if record.expires_at is not None and record.expires_at <= now:
         portal = settings.portal_url.rstrip("/")
         raise TokenExpiredError(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=(
-                f"Your access token has expired — mint a new one at {portal}/tokens"
-            ),
-            headers={"WWW-Authenticate": "Bearer"},
+            f"Your access token has expired — mint a new one at {portal}/tokens"
         )
 
     if last_used_tracker.due(lookup_id):

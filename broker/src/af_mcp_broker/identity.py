@@ -16,6 +16,7 @@ from pydantic import SecretStr
 
 from af_mcp_broker.authorization import is_admin
 from af_mcp_broker.config import Settings, get_settings
+from af_mcp_broker.errors import BrokerError
 from af_mcp_broker.http import get_http_client
 from af_mcp_broker.logging import bind_subject
 from af_mcp_broker.maintenance import check_not_maintenance_or_fail_open
@@ -242,16 +243,31 @@ def _extract_principal(claims: dict[str, Any], raw_token: str) -> Principal:
     )
 
 
-class TokenExpiredError(HTTPException):
-    """HTTPException subclass raised when the token's signature has expired.
+class IdentityError(BrokerError):
+    """Base of the credential-resolution failures that carry a client-visible *detail*.
+
+    *detail* is exactly what the caller is allowed to see: a plain string, or
+    a dict for a failure with a stable ``error`` discriminator. Each surface
+    maps the subclass onto its own response -- ``app.py``'s exception
+    handlers for /v1 (status code, headers), ``mcp/middleware/identity_mw.py``
+    for /mcp -- so this module stays free of transport concerns.
+    """
+
+    def __init__(self, detail: str | dict[str, str]) -> None:
+        super().__init__(detail)
+        self.detail = detail
+
+
+class TokenExpiredError(IdentityError):
+    """Raised when the token's signature has expired (a JWT) or its own ``expires_at`` has passed (a PAT).
 
     Raised by get_principal specifically for this case -- see get_principal's
     docstring for why this exists and why it does not change /v1's behavior.
     """
 
 
-class TokenAudienceError(HTTPException):
-    """HTTPException subclass raised when a token is missing the expected audience.
+class TokenAudienceError(IdentityError):
+    """Raised when a token is missing the expected audience.
 
     Raised when the token's signature, issuer, and expiry all check out but
     it lacks the audience ``settings.oidc_audience`` expects. Distinct from
@@ -273,7 +289,7 @@ class TokenAudienceError(HTTPException):
     """
 
 
-class PrincipalDirectoryUnavailableError(HTTPException):
+class PrincipalDirectoryUnavailableError(IdentityError):
     """Raised by ``get_principal`` (issue #144 steps 3 and 3b) when a validated JWT's current groups/POSIX identity cannot be determined because the ``PrincipalDirectory`` has no answer for this subject -- no ``PrincipalCache`` configured at all, or one configured but currently unable to reach the directory with nothing fresh-enough cached to fall back on.
 
     Deliberately distinct from the plain ``HTTPException(401)`` this module
@@ -303,6 +319,12 @@ _DIRECTORY_UNAVAILABLE_DETAIL = (
     "try again shortly."
 )
 
+# Client-visible detail for every JWT-validation failure that is not a missing
+# audience or an unavailable directory -- deliberately vague, never which
+# claim failed. The expired case (TokenExpiredError) carries the same text so
+# /v1 shows an expired token exactly as it shows any other invalid one.
+_INVALID_TOKEN_DETAIL = "Invalid or expired token"
+
 
 async def _resolve_current_attributes(
     principal: Principal, principal_cache: PrincipalCache | None
@@ -317,10 +339,7 @@ async def _resolve_current_attributes(
     rather than crashing on a ``None`` cache.
     """
     if principal_cache is None:
-        raise PrincipalDirectoryUnavailableError(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=_DIRECTORY_UNAVAILABLE_DETAIL,
-        )
+        raise PrincipalDirectoryUnavailableError(_DIRECTORY_UNAVAILABLE_DETAIL)
     try:
         attributes = await principal_cache.get(principal.subject)
     except PrincipalRejectedError as exc:
@@ -331,10 +350,7 @@ async def _resolve_current_attributes(
             f"subject {principal.subject!r} rejected by directory"
         ) from exc
     except PrincipalUnavailableError as exc:
-        raise PrincipalDirectoryUnavailableError(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=_DIRECTORY_UNAVAILABLE_DETAIL,
-        ) from exc
+        raise PrincipalDirectoryUnavailableError(_DIRECTORY_UNAVAILABLE_DETAIL) from exc
     return replace(
         principal,
         uid=attributes.uid,
@@ -354,11 +370,10 @@ async def get_principal(
     """Validate a Bearer token and return the extracted Principal.
 
     Raises HTTPException(401) on any validation failure so FastAPI can return
-    a proper WWW-Authenticate response. Raises the ``TokenExpiredError``
-    subclass specifically when the signature has expired -- same
-    status_code/detail/headers, so `/v1`'s `keycloak_dependency` (which lets
-    HTTPException bubble to FastAPI's generic handler unchanged) sees no
-    behavior difference, but `/mcp`'s ASGI-layer auth middleware
+    a proper WWW-Authenticate response. Raises ``TokenExpiredError``
+    specifically when the signature has expired -- ``app.py``'s exception
+    handler turns it into the same status_code/detail/headers, so `/v1` sees
+    no behavior difference, but `/mcp`'s ASGI-layer auth middleware
     (mcp/middleware/identity_mw.py) can catch it separately to give expiry a
     distinct, actionable message without this function leaking which claim
     failed for every other invalid-token cause (issue #138).
@@ -447,8 +462,7 @@ async def get_principal(
             expected_audience=settings.oidc_audience,
         )
         raise TokenAudienceError(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={
+            {
                 "error": "insufficient_scope",
                 "message": (
                     "Your account is not authorized to use this platform "
@@ -456,13 +470,13 @@ async def get_principal(
                     f"ID: {correlation_id}"
                 ),
                 "correlation_id": correlation_id,
-            },
-            headers={"WWW-Authenticate": "Bearer"},
+            }
         )
-    exc_cls = TokenExpiredError if expired else HTTPException
-    raise exc_cls(
+    if expired:
+        raise TokenExpiredError(_INVALID_TOKEN_DETAIL)
+    raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Invalid or expired token",
+        detail=_INVALID_TOKEN_DETAIL,
         headers={"WWW-Authenticate": "Bearer"},
     )
 

@@ -67,6 +67,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from af_mcp_broker.errors import BrokerError
 from af_mcp_broker.http import get_http_client
 
 if TYPE_CHECKING:
@@ -97,7 +98,7 @@ class PrincipalAttributes:
     email: str
 
 
-class PrincipalNotActiveError(Exception):
+class PrincipalNotActiveError(BrokerError):
     """Raised by ``PrincipalDirectory.resolve()`` when the directory answered, and the answer is that *principal_id* must not be granted access.
 
     Base of ``PrincipalNotFoundError`` and ``PrincipalDisabledError``, kept

@@ -6,7 +6,7 @@ scratch -- there is no standing linkage the broker can redeem on its own
 unless a keytab has already been linked (see ``link_keytab()`` below).
 ``issue()`` therefore works through a five-tier fallback, mirroring
 ``X509Provider``'s Vault-as-source-of-truth design, before ever raising
-``NeedsUnlock`` (pointing at ``POST /v1/krb5/ticket``):
+``NeedsUnlockError`` (pointing at ``POST /v1/krb5/ticket``):
 
 1. **Cache** -- an unexpired ticket already sits in the in-process
    ``CredentialCache``.
@@ -26,7 +26,7 @@ unless a keytab has already been linked (see ``link_keytab()`` below).
    (``vault_store.delete``, mirroring ``X509Provider.renew_from_stored_
    link``'s auto-unlink-on-bad-stored-passphrase behavior) and falls through
    to asking for a fresh password; any other failure propagates uncaught.
-5. **Interactive password** -- nothing above worked: raise ``NeedsUnlock``
+5. **Interactive password** -- nothing above worked: raise ``NeedsUnlockError``
    unless a fresh username/passphrase was supplied, in which case mint via
    the live CERN password.
 
@@ -75,12 +75,12 @@ from af_mcp_broker.credentials.base import (
     CredentialProvider,
     ExecutionModel,
     IssuedCredential,
-    NeedsUnlock,
 )
-from af_mcp_broker.credentials.krb5_service import (
+from af_mcp_broker.credentials.errors import (
     Krb5TokenBadCredentialError,
     Krb5TokenMintError,
     Krb5TokenRenewalWindowClosedError,
+    NeedsUnlockError,
 )
 
 if TYPE_CHECKING:
@@ -201,7 +201,7 @@ class KrbTokenProvider(CredentialProvider):
         """Return a ticket via the first tier that can produce one -- see the module docstring for the full fallback order.
 
         Raises:
-            NeedsUnlock: nothing usable is cached or stored, and no fresh
+            NeedsUnlockError: nothing usable is cached or stored, and no fresh
                 username/password was supplied -- the caller should POST
                 both to ``/v1/krb5/ticket``.
             Krb5TokenBadCredentialError / Krb5TokenAccountError /
@@ -244,7 +244,7 @@ class KrbTokenProvider(CredentialProvider):
         # Tiers 3-4: renew, then keytab remint -- both credential-free, so
         # they're worth trying before ever asking for a password. Shared
         # with the redeem endpoint's hands-free fallback (af-mcp-platform#286)
-        # via renew_or_remint() below; NeedsUnlock here just means "neither
+        # via renew_or_remint() below; NeedsUnlockError here just means "neither
         # tier produced anything", so fall through to tier 5 rather than
         # raising it -- tier 5 may yet have a fresh password to try.
         try:
@@ -255,12 +255,12 @@ class KrbTokenProvider(CredentialProvider):
                 lifetime=lifetime,
                 renewable_lifetime=renewable_lifetime,
             )
-        except NeedsUnlock:
+        except NeedsUnlockError:
             pass
 
         # Tier 5: nothing usable without a password.
         if passphrase is None or username is None:
-            raise NeedsUnlock(
+            raise NeedsUnlockError(
                 target,
                 "Kerberos ticket not yet minted or expired",
                 unlock_endpoint="/v1/krb5/ticket",
@@ -379,14 +379,14 @@ class KrbTokenProvider(CredentialProvider):
         instead of always 404ing at that route.
 
         Raises:
-            NeedsUnlock: neither a renewable ticket nor a stored keytab
+            NeedsUnlockError: neither a renewable ticket nor a stored keytab
                 produced anything -- the caller should fall through to a
                 fresh mint (``issue()``'s tier 5) or, with no live password
                 available (the redeem endpoint), give up and say so.
             Krb5TokenMintError: tier 3's renew() failed for a genuine infra
                 reason (not the expected window-closed signal) AND there was
                 no stored keytab to fall through to -- surfaces as itself
-                rather than the less specific ``NeedsUnlock``, since asking
+                rather than the less specific ``NeedsUnlockError``, since asking
                 for a password would be misleading when the real problem is
                 krb5-token-service being unreachable. When a keytab IS
                 present, this is swallowed here and tier 4 gets its own
@@ -493,11 +493,11 @@ class KrbTokenProvider(CredentialProvider):
 
         # Nothing usable without a password. A hard renew() infra failure
         # with no keytab to fall through to must surface AS that failure,
-        # not be downgraded to the less specific NeedsUnlock -- see the
+        # not be downgraded to the less specific NeedsUnlockError -- see the
         # Krb5TokenMintError docstring note above.
         if renew_infra_error is not None:
             raise renew_infra_error
-        raise NeedsUnlock(
+        raise NeedsUnlockError(
             target,
             "Kerberos ticket not yet minted or expired",
             unlock_endpoint="/v1/krb5/ticket",

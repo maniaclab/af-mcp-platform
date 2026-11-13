@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 import pytest
 
-from af_mcp_broker.vault_kv import CasConflict, VaultError, VaultKV
+from af_mcp_broker.vault_kv import CasConflictError, VaultError, VaultKV
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -278,7 +278,7 @@ async def test_write_cas_none_conflicts_when_existing(sa_token_path: Path) -> No
     vault_kv = _make_vault_kv(fake, sa_token_path)
     await vault_kv.write_cas(PATH, {"foo": "bar"}, expected_version=None)
 
-    with pytest.raises(CasConflict):
+    with pytest.raises(CasConflictError):
         await vault_kv.write_cas(PATH, {"foo": "baz"}, expected_version=None)
 
 
@@ -298,7 +298,7 @@ async def test_write_cas_with_stale_version_conflicts(sa_token_path: Path) -> No
     await vault_kv.write_cas(PATH, {"foo": "bar"}, expected_version=None)  # v1
     await vault_kv.write_cas(PATH, {"foo": "baz"}, expected_version=1)  # v2
 
-    with pytest.raises(CasConflict):
+    with pytest.raises(CasConflictError):
         await vault_kv.write_cas(PATH, {"foo": "qux"}, expected_version=1)
 
 

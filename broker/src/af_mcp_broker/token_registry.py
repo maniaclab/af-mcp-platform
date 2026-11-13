@@ -115,7 +115,8 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from af_mcp_broker.vault_kv import CasConflict, VaultError, VaultKV
+from af_mcp_broker.errors import BrokerError
+from af_mcp_broker.vault_kv import CasConflictError, VaultError, VaultKV
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -129,7 +130,7 @@ log = structlog.get_logger(__name__)
 _MAX_CAS_RETRIES = 5
 
 
-class DuplicateNameError(Exception):
+class DuplicateNameError(BrokerError):
     """Raised by add() when a record's ``name`` collides, case-insensitively, with an existing live (non-revoked, unexpired or never-expiring) record for the same principal -- see this module's docstring for the uniqueness rule."""
 
     def __init__(self, principal_id: str, name: str) -> None:
@@ -619,7 +620,7 @@ class VaultTokenRegistryBackend(TokenRegistryBackend):
             try:
                 await self._vault_kv.write_cas(path, data, version)
                 break
-            except CasConflict:
+            except CasConflictError:
                 continue
         else:
             raise VaultError(
@@ -630,9 +631,9 @@ class VaultTokenRegistryBackend(TokenRegistryBackend):
         # a plain create (expected_version=None) is correct even under a
         # (vanishingly unlikely) lookup_id collision, since the same
         # lookup_id can only ever belong to the principal that first minted
-        # it. A CasConflict here just means a previous attempt of this same
+        # it. A CasConflictError here just means a previous attempt of this same
         # add() already recorded it -- nothing to do.
-        with contextlib.suppress(CasConflict):
+        with contextlib.suppress(CasConflictError):
             await self._vault_kv.write_cas(
                 self._owner_path(record.lookup_id),
                 {"principal_id": record.principal_id},
@@ -686,7 +687,7 @@ class VaultTokenRegistryBackend(TokenRegistryBackend):
             try:
                 await self._vault_kv.write_cas(path, new_data, version)
                 return _record_from_fields(fields)
-            except CasConflict:
+            except CasConflictError:
                 continue
         raise VaultError(
             "revoke(): exceeded retry budget updating "
@@ -716,7 +717,7 @@ class VaultTokenRegistryBackend(TokenRegistryBackend):
                 return []
             try:
                 await self._vault_kv.write_cas(path, new_data, version)
-            except CasConflict:
+            except CasConflictError:
                 continue
             return revoked
         raise VaultError(
@@ -741,7 +742,7 @@ class VaultTokenRegistryBackend(TokenRegistryBackend):
             new_data[lookup_id] = fields
             try:
                 await self._vault_kv.write_cas(path, new_data, version)
-            except CasConflict:
+            except CasConflictError:
                 continue
             else:
                 return
@@ -802,7 +803,7 @@ class VaultTokenRegistryBackend(TokenRegistryBackend):
             }
             try:
                 await self._vault_kv.write_cas(path, remaining, version)
-            except CasConflict:
+            except CasConflictError:
                 continue
             emptied = not remaining
             removed = to_remove
@@ -870,7 +871,7 @@ class VaultTokenRegistryBackend(TokenRegistryBackend):
                     await self._vault_kv.write_cas(
                         path, {"jtis": sorted(lookup_ids)}, version
                     )
-                except CasConflict:
+                except CasConflictError:
                     continue
                 revoked_pruned = len(still_present)
                 break

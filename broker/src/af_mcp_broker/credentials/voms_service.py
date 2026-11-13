@@ -40,6 +40,12 @@ from typing import TYPE_CHECKING, Any
 import httpx
 import structlog
 
+from af_mcp_broker.credentials.errors import (
+    VomsServiceBadPassphraseError,
+    VomsServiceMintError,
+    VomsServicePreflightError,
+    VomsServiceRejectedError,
+)
 from af_mcp_broker.http import get_http_client
 from af_mcp_broker.logging import request_id_headers
 
@@ -51,75 +57,10 @@ if TYPE_CHECKING:
 log = structlog.get_logger(__name__)
 
 
-class VomsServiceMintError(RuntimeError):
-    """Raised when a mint failed for a reason other than a bad passphrase (service unreachable, timeout, 401/403/5xx).
-
-    An infra failure, not a passphrase signal — callers must NOT count it
-    against the unlock rate limiter, the same distinction the legacy mint
-    path's ``ProxyHarvestError`` draws. The message never carries the
-    service's response body (it may reference VOMS hostnames or paths).
-    """
-
-
-class VomsServicePreflightError(RuntimeError):
-    """Raised when the credential-readiness checklist could not be fetched (service unreachable, timeout, or any non-200 answer).
-
-    Purely an availability signal — the preflight endpoint never signals a
-    bad passphrase (it takes none), so there is no per-status branching to
-    do. The message never carries the service's response body (it may
-    reference home-directory paths).
-    """
-
-
-class VomsServiceBadPassphraseError(ValueError):
-    """Raised when the service answered 400: the Globus key passphrase was wrong.
-
-    Subclasses ``ValueError`` so existing bad-passphrase call sites (the
-    legacy mint path raises plain ``ValueError``) keep catching it; callers
-    count this — and only this — against the unlock rate limiter.
-    """
-
-    def __init__(self) -> None:
-        super().__init__(
-            "voms-token-service rejected the Globus key passphrase — check "
-            "the passphrase and certificate validity."
-        )
-
-
 _REJECTED_FALLBACK_DETAIL = (
     "voms-token-service rejected the request. Check your grid certificate "
     "and the requested voms/valid, then try again."
 )
-
-
-class VomsServiceRejectedError(ValueError):
-    """Raised when the service answered 422: the request was rejected for a specific, user-actionable, non-passphrase reason.
-
-    voms-token-service returns 422 for several distinct causes that all
-    share the same shape — none is a passphrase problem (must NOT count
-    against the unlock rate limiter, unlike ``VomsServiceBadPassphraseError``)
-    and none is an infra failure either (retrying cannot help until the
-    user or an operator acts, unlike ``VomsServiceMintError``): the user's
-    own end-entity certificate (``~/.globus/usercert.pem``) has expired
-    (``CertificateExpiredError``, maniaclab/voms-token-service#16 —
-    af-mcp-platform#288's original repro), the key file's ownership/mode is
-    wrong (``CredentialPermissionsError``), or the caller-supplied
-    ``valid``/``voms`` violates the service's mint policy
-    (``ValidTooLongError``/``VomsNotAllowedError``,
-    maniaclab/voms-token-service#18). This class does not distinguish
-    between them — see below.
-
-    Unlike every other failure in this module, the service's own ``detail``
-    IS safe to relay to the caller verbatim for every one of these causes:
-    each is a fixed or template-built, non-sensitive, user-actionable
-    string by design, never voms-proxy-init's raw stderr (which, for the
-    expired-certificate case, would include the certificate's exact expiry
-    timestamp).
-    """
-
-    def __init__(self, detail: str) -> None:
-        self.detail = detail
-        super().__init__(detail)
 
 
 @dataclass(frozen=True)
