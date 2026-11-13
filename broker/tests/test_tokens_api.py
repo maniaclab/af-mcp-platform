@@ -381,14 +381,14 @@ def test_revoke_unknown_lookup_id_404(app_client: tuple[TestClient, dict]) -> No
     assert resp.status_code == 404, resp.text
 
 
-def test_revoke_marks_lookup_id_in_the_apps_revoked_registry(
+def test_revoke_marks_the_record_revoked_without_a_denylist_entry(
     app_client: tuple[TestClient, dict],
 ) -> None:
-    """Confirms DELETE /v1/tokens/{lookup_id} actually reaches the same
-    token_registry app.state wires into /mcp's PAT validation path --
-    end-to-end enforcement itself (a revoked PAT rejecting a real request) is
-    covered directly against pat_auth.resolve_pat_principal and
-    test_mcp_middleware_identity.py."""
+    """Confirms DELETE /v1/tokens/{lookup_id} reaches the same token_registry
+    app.state wires into /mcp's PAT validation path, which enforces
+    ``revoked_at`` on the record -- end-to-end enforcement itself (a revoked
+    PAT rejecting a real request) is covered directly against
+    pat_auth.resolve_pat_principal and test_mcp_middleware_identity.py."""
     from af_mcp_broker.app import app
 
     client, _ = app_client
@@ -399,8 +399,10 @@ def test_revoke_marks_lookup_id_in_the_apps_revoked_registry(
 
     import asyncio
 
-    revoked = asyncio.run(app.state.token_registry._backend.list_revoked_jtis())
-    assert lookup_id in revoked
+    backend = app.state.token_registry._backend
+    assert asyncio.run(backend.list_revoked_jtis()) == frozenset()
+    rows = {r["lookup_id"]: r for r in client.get("/v1/tokens", headers=_AUTH).json()}
+    assert rows[lookup_id]["revoked_at"] is not None
 
 
 # ---------------------------------------------------------------------------

@@ -1192,13 +1192,16 @@ another JWT:
    acceptable tradeoff for a soft anti-abuse counter), the registry itself
    is durable and HA-safe: it's backed by the same Vault/OpenBao KV-v2
    pattern `credentials/vault.py`'s `VaultTokenStore` uses (one entry per
-   principal, CAS writes, a flat revoked-lookup-ids index), selected via
+   principal, CAS writes), selected via
    `TOKEN_REGISTRY_BACKEND=vault` the same way `TOKEN_STORE_BACKEND` selects
    the oauth21 token store — so a PAT minted on one broker replica can be
    listed and revoked from another, and survives a pod restart. Revocation
-   is **enforced**, not cosmetic, on `/mcp` (see "Where PATs are accepted"
-   below); a revoked PAT is rejected with 401 once
-   `REVOKED_JTI_CACHE_REFRESH_SECONDS` (default 30s) has elapsed.
+   sets `revoked_at` on the PAT's record with a single CAS write, and that
+   field is what `/mcp` enforces (see "Where PATs are accepted" below):
+   validation reads the record from Vault on every request, so a revoked PAT
+   is rejected with 401 on its next request, on every replica, with no
+   cache window. `REVOKED_JTI_CACHE_REFRESH_SECONDS` governs only the
+   Keycloak-JWT `jti` denylist, never PATs.
 4. **Sweep** (operations) — unaffected by this change; see
    `token_sweep.py`/`tokenSweep.*` as before. A never-expiring PAT
    (`expires_at` unset) is never touched by the sweep — there is no natural

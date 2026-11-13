@@ -32,6 +32,7 @@ from af_mcp_broker import identity
 from af_mcp_broker.audit import measure
 from af_mcp_broker.config import Settings, get_settings
 from af_mcp_broker.mcp.aggregator import build_asgi_auth_middleware
+from af_mcp_broker.token_registry import InMemoryTokenRegistryBackend
 
 # fastmcp v4's camelCase compat bridge (mcp_camelcase_compat, default True)
 # lets legacy reads like `tool.inputSchema`/`result.isError` keep working
@@ -462,6 +463,21 @@ async def run_aggregator_async(mcp: FastMCP, path: str = "/mcp") -> AsyncIterato
         server_task.cancel()
         with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
             await asyncio.wait_for(server_task, timeout=2.0)
+
+
+class DenylistedTokenRegistryBackend(InMemoryTokenRegistryBackend):
+    """In-memory registry whose revoked-token denylist holds *jtis*.
+
+    Stands in for entries in Vault's ``revoked-lookup-ids``, which the broker
+    no longer writes itself but still reads for Keycloak JWT ``jti`` claims.
+    """
+
+    def __init__(self, *jtis: str) -> None:
+        super().__init__()
+        self._jtis = frozenset(jtis)
+
+    async def list_revoked_jtis(self) -> frozenset[str]:
+        return self._jtis
 
 
 def make_claims(**overrides: Any) -> dict[str, Any]:
