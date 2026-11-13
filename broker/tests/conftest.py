@@ -218,6 +218,62 @@ def postgres_dsn(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
         )
 
 
+@pytest.fixture(scope="session")
+def shared_state_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
+    """``redis://`` URL of a real, throwaway valkey server for this test session.
+
+    Loopback TCP on a random free port, no persistence (the data dies with the
+    test run). Valkey speaks the same protocol as redis, so the broker's redis
+    client talks to it unchanged.
+    """
+    if shutil.which("valkey-server") is None:
+        raise RuntimeError(
+            "valkey-server not found -- the dev pixi environment provides the "
+            "server these tests require (pixi.toml's dev feature); run via "
+            "`pixi run -e dev pytest`."
+        )
+
+    workdir = tmp_path_factory.mktemp("valkey")
+    port = find_available_port()
+    server = subprocess.Popen(
+        [
+            "valkey-server",
+            "--port",
+            str(port),
+            "--bind",
+            "127.0.0.1",
+            "--save",
+            "",
+            "--appendonly",
+            "no",
+            "--dir",
+            str(workdir),
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        deadline = time.monotonic() + 10
+        while True:
+            try:
+                socket.create_connection(("127.0.0.1", port), timeout=0.2).close()
+                break
+            except OSError:
+                if time.monotonic() > deadline or server.poll() is not None:
+                    raise RuntimeError("valkey-server did not start") from None
+                time.sleep(0.05)
+        yield f"redis://127.0.0.1:{port}/0"
+    finally:
+        server.terminate()
+        server.wait(timeout=10)
+
+
+@pytest.fixture
+def unreachable_shared_state_url() -> str:
+    """``redis://`` URL with nothing listening, for store-outage behaviour."""
+    return f"redis://127.0.0.1:{find_available_port()}/0"
+
+
 @pytest.fixture
 def settings() -> Settings:
     return Settings(
