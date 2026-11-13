@@ -22,6 +22,8 @@ no-ops, matching ``InMemoryUsageStore``'s asymmetry with
 from __future__ import annotations
 
 import abc
+import asyncio
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -34,6 +36,8 @@ from af_mcp_broker.authorization import is_admin
 from af_mcp_broker.vault_kv import CasConflict, VaultKV
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from af_mcp_broker.config import Settings
     from af_mcp_broker.identity import Principal
 
@@ -262,6 +266,85 @@ class PostgresMaintenanceModeStore(MaintenanceModeStore):
         await self._require_pool().execute(
             _UPSERT, state.enabled, state.reason, state.enabled_by, state.enabled_at
         )
+
+
+class CachingMaintenanceModeStore(MaintenanceModeStore):
+    """TTL cache in front of another store's ``get()``.
+
+    ``check_not_maintenance`` reads the store on every non-admin /v1 and /mcp
+    request, which for the Postgres and Vault backends is one network round
+    trip per request against a small shared service. Caching the flag for
+    ``ttl_seconds`` bounds that to roughly one read per TTL per replica.
+
+    Trade-offs:
+
+    - A toggle made on another replica is visible here only after the TTL
+      expires. A ``set()`` through this wrapper invalidates the cache at
+      once, so the admin who toggles sees the change immediately.
+    - Errors from the wrapped store propagate unchanged and are never cached,
+      and an expired entry is never served in place of a failed refresh, so
+      ``check_not_maintenance_or_fail_open``'s fail-open handling sees
+      exactly what it would without the cache.
+    - Concurrent misses share one in-flight fetch (single-flight), so an
+      expiry under load costs one read, not one per waiting request.
+    - A fetch that was in flight when a ``set()`` landed may have read the
+      pre-write value; the generation counter keeps it from being cached.
+
+    ``clock`` is injectable so tests control time deterministically; it must
+    be monotonic. A ``ttl_seconds`` of 0 disables caching.
+    """
+
+    def __init__(
+        self,
+        store: MaintenanceModeStore,
+        *,
+        ttl_seconds: float,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._store = store
+        self._ttl_seconds = ttl_seconds
+        self._clock = clock
+        self._cached: MaintenanceState | None = None
+        self._expires_at = 0.0
+        self._generation = 0
+        self._inflight: asyncio.Task[MaintenanceState] | None = None
+
+    async def start(self) -> None:
+        await self._store.start()
+
+    async def aclose(self) -> None:
+        await self._store.aclose()
+
+    async def get(self) -> MaintenanceState:
+        if self._ttl_seconds <= 0:
+            return await self._store.get()
+        if self._cached is not None and self._clock() < self._expires_at:
+            return self._cached
+        if self._inflight is None:
+            self._inflight = asyncio.ensure_future(self._fetch())
+        # shield: one waiter being cancelled must not cancel the fetch the
+        # other waiters share.
+        return await asyncio.shield(self._inflight)
+
+    async def _fetch(self) -> MaintenanceState:
+        generation = self._generation
+        try:
+            state = await self._store.get()
+            if generation == self._generation:
+                self._cached = state
+                self._expires_at = self._clock() + self._ttl_seconds
+            return state
+        finally:
+            self._inflight = None
+
+    async def set(self, state: MaintenanceState) -> None:
+        try:
+            await self._store.set(state)
+        finally:
+            # Invalidate even when the write raised: a CAS conflict means the
+            # stored state changed under us, so the cached value is suspect.
+            self._generation += 1
+            self._cached = None
 
 
 async def check_not_maintenance(

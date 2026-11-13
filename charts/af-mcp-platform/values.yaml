@@ -548,6 +548,10 @@ broker:
     # Path prefix under oauth21.tokenStore.vault.kvMount where the
     # maintenance-mode record is stored. Only meaningful when backend="vault".
     kvPathPrefix: "mcp/maintenance-mode"
+    # Seconds each replica caches the flag in-process (rendered as
+    # MAINTENANCE_MODE_CACHE_TTL_SECONDS). A toggle reaches the other replicas
+    # within this window; 0 disables the cache. Ignored for "in-memory".
+    cacheTtlSeconds: 5
     postgres:
       # Secret carrying the asyncpg DSN, rendered as MAINTENANCE_MODE_POSTGRES_DSN
       # via secretKeyRef only when backend="postgres" and this is set. With Crunchy
