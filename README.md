@@ -94,6 +94,11 @@ manifest (`.claude-plugin/marketplace.json`):
 /plugin install af-mcp-builder@af-mcp-platform
 ```
 
+The skill carries no copy of the guide. It carries an index of item IDs and
+one-line rules, and reads the canonical `docs/mcp-design.md` from a checkout or
+fetches it from `raw.githubusercontent.com` (a symlink does not survive
+`gh skill install`).
+
 Both mechanisms were exercised when the skill was added, with `gh` and Claude
 Code 2.1.323: `gh skill install` from a checkout (`--from-local`) and from
 GitHub pinned to a commit (`--pin`), `gh skill publish --dry-run`,

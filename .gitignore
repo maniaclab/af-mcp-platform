@@ -56,9 +56,6 @@ scripts/*
 # Exception: the one-time PAT grant migration (capability -> permission) every
 # deployment must be able to run via kubectl exec -- see docs/auth.md.
 !scripts/migrate-pat-capability-grant.py
-# Exception: keeps the af-mcp-builder skill's copy of docs/mcp-design.md in
-# step with the docs page (a pre-commit hook runs it with --check).
-!scripts/sync-skill-guide.py
 
 # Helm — packed charts and downloaded dependencies
 charts/*/charts/

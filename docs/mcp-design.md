@@ -22,6 +22,17 @@ That is the latest protocol version of the `mcp` SDK the broker pins
 is `2026-07-28`). Section links below point at that revision. Where a rule
 exists only because of this platform and not the spec, the item says so.
 
+## Sources
+
+The spec items follow the MCP specification. The platform items and most of the
+agent-facing ones come from operating the reference deployment: the
+maniaclab/af-mcp-platform#216 audit and the production incidents cited in
+individual items, and Giordon Stark's HTCondor Workshop talk
+[The Facility Is the Context](https://kratsg.github.io/2026-10-01-htcondor-eu/)
+(2026-10-01), whose lessons are folded into the items below with the evidence
+in its research notes
+([`mcp-design-talk.md`](https://github.com/kratsg/2026-10-01-htcondor-eu/blob/main/mcp-design-talk.md)).
+
 ## How to read the checklist
 
 Each item has an ID, a level, and four parts.
@@ -40,13 +51,16 @@ Each item has an ID, a level, and four parts.
 
 | ID | Level | Rule |
 |----|-------|------|
+| [G1](#g1-build-a-server-only-where-it-fits) | SHOULD | Build a server only for a service assistants need repeatedly, with bounded output and recoverable errors, never one that hands the model a credential |
 | [N1](#n1-tool-names-are-prefixed-stable-verb_noun-identifiers) | MUST | Tool names are `<prefix>_<verb_noun>`, stable, in the spec's character set |
 | [N2](#n2-the-first-line-of-a-description-is-a-one-line-summary) | MUST | First line of each description is a one-line summary |
 | [N3](#n3-descriptions-say-when-to-call-the-tool-and-what-it-needs) | SHOULD | Description adds arguments, caveats and when to call it |
+| [N4](#n4-keep-the-tool-surface-proportional-and-split-along-observed-confusion) | SHOULD | The tool surface is small enough to choose from; split tools along observed confusion |
 | [S1](#s1-every-tool-has-an-object-inputschema-with-described-properties) | MUST | `inputSchema` is an object schema, every property described |
 | [S2](#s2-constrain-arguments-in-the-schema-not-in-prose) | SHOULD | Types, enums, bounds and defaults live in the schema |
 | [O1](#o1-declare-an-object-outputschema-and-return-structuredcontent) | MUST | Object `outputSchema`, with matching `structuredContent` |
-| [O2](#o2-keep-curated-text-alongside-structuredcontent) | SHOULD | Readable text content alongside the structured payload |
+| [O2](#o2-send-a-text-block-with-the-same-information-as-structuredcontent) | SHOULD | `structuredContent` is the contract; a text block carries the same information |
+| [O3](#o3-curate-results-for-the-model) | SHOULD | Curated fields, units converted in the open, duplicates removed, stable identifiers |
 | [A1](#a1-declare-annotations-on-every-tool) | MUST | `readOnlyHint` set on every tool |
 | [A2](#a2-state-destructive-idempotent-and-open-world-hints-for-writes) | SHOULD | Writes also state `destructiveHint`, `idempotentHint`, `openWorldHint` |
 | [E1](#e1-report-tool-failures-with-iserror-true) | MUST | Tool failure sets `isError: true` |
@@ -55,18 +69,52 @@ Each item has an ID, a level, and four parts.
 | [E4](#e4-use-protocol-errors-only-for-protocol-problems) | MUST | JSON-RPC errors only for protocol problems |
 | [B1](#b1-bound-every-result-and-paginate-listings) | MUST | Every result is bounded; listings take a limit and paginate |
 | [B2](#b2-report-progress-and-honour-cancellation-on-long-calls) | SHOULD | Long calls report progress and honour cancellation |
-| [X1](#x1-serve-streamable-http-statelessly) | SHOULD | Streamable HTTP, no reliance on per-connection session state |
+| [B3](#b3-protect-shared-backends-from-one-caller) | SHOULD | Per-caller concurrency or rate bound in front of a shared backend |
+| [X1](#x1-serve-streamable-http-statelessly) | MUST | Stateless streamable HTTP, no reliance on per-connection session state |
 | [X2](#x2-reject-a-bad-bearer-with-http-401-at-the-transport) | MUST | A bad bearer gets HTTP 401 before any tool runs |
+| [X3](#x3-answer-toolslist-without-a-downstream-call) | SHOULD | `tools/list` is answered from registration, with no downstream call |
+| [X4](#x4-design-for-the-least-capable-client) | SHOULD | Standard transport and auth only; nothing client-specific |
+| [X5](#x5-treat-downstream-endpoints-as-changing) | SHOULD | Explicit timeouts, endpoints re-resolved after failure, readiness reflects own health |
 | [U1](#u1-trust-only-the-broker-identity-token) | MUST | Authenticate callers with the broker identity token only |
 | [U2](#u2-validate-signature-issuer-audience-and-expiry) | MUST | Check signature, `iss`, `aud` and `exp`; reject any other `aud` |
 | [U3](#u3-never-accept-raw-user-credentials-as-tool-arguments) | MUST | No credentials in tool arguments or results |
 | [U4](#u4-redeem-credentials-through-the-broker) | MUST | Fetch x509/krb5 credentials from the broker's redeem routes |
 | [U5](#u5-take-no-authorization-decision-from-the-token) | MUST | Read no permissions or groups from the token |
+| [U6](#u6-identity-is-ambient-never-an-argument) | MUST | No tool takes a username or owner; derive it from the verified identity |
 | [P1](#p1-the-prefix-rule) | MUST | Tool names carry the service prefix the registry routes on |
 | [P2](#p2-write-an-agent_policy-for-the-service) | SHOULD | A service entry carries an `agent_policy` |
 | [P3](#p3-declare-a-trust_tier) | MUST | A service entry declares `trust_tier` |
 | [P4](#p4-hide-infrastructure-tools-with-exclude_tools) | SHOULD | Infrastructure-facing tools are excluded, not left reachable |
 | [P5](#p5-offer-a-read-only-mode) | SHOULD | A server with write tools can be started read-only |
+| [I1](#i1-wrap-the-client-library-not-the-cli) | SHOULD | Wrap the native client library; parse artifacts, never CLI prose |
+| [T1](#t1-test-the-agent-facing-contract-against-the-live-service) | SHOULD | Descriptions, examples, caps and error strings are tested against the real service |
+
+---
+
+## Scope
+
+### G1: Build a server only where it fits
+
+**SHOULD.**
+
+- **Rule.** Put a service behind an MCP server when assistants will need it
+  repeatedly and from more than one client, scientists already use it, you want
+  to control the context the agent is given, and you can bound its output (B1)
+  and make its errors recoverable (E2). Do not build one for a one-off that a
+  script covers, for a backend whose API is still churning, or when the honest
+  implementation would hand the model a credential (U3): fix that boundary
+  first.
+- **Why.** The model experiences exactly two things directly, the size of
+  results and the text of errors. A server that cannot control either gives the
+  agent worse results than the script it replaced, and a tool that returns a
+  credential has left the credential boundary.
+- **Verify.** Reading, as a gate before onboarding: the server's README states
+  the repeat use, the worst-case output of each tool, and what each error tells
+  the caller to do next.
+- **Spec.** Platform-specific.
+- **In this repo.** The talk's "When is an MCP server appropriate?" slide. The
+  brokered x509 and krb5 redeem routes (U4) exist so that no tool has to return
+  a proxy or ticket.
 
 ---
 
@@ -123,12 +171,38 @@ Each item has an ID, a level, and four parts.
 - **Rule.** After the summary, state each argument's meaning where the
   schema cannot, preconditions (a linked credential, a running server), and
   the tool to call instead when this one is the wrong choice.
+  Call out the quirks of the domain the model cannot infer. In condor-mcp,
+  `$(...)` in a job's `arguments` is expanded by HTCondor's submit parser before
+  the shell sees it, and a system path as `executable` needs
+  `transfer_executable = False`; each cost a failed submission until the
+  description said so.
 - **Why.** An agent that guesses burns a diagnostic call or several.
 - **Verify.** Reading. Mechanical proxy: descriptions with a single line and
   more than two parameters are flagged.
 - **Spec.** [Tool](https://modelcontextprotocol.io/specification/2026-07-28/server/tools#tool).
 - **In this repo.** rucio-mcp's tools point container DIDs at
   `rucio_list_container_replicas` when a dataset query comes back empty.
+
+### N4: Keep the tool surface proportional, and split along observed confusion
+
+**SHOULD.**
+
+- **Rule.** Expose the tools a caller would pick between without guessing, and
+  no more. Split one tool into two when callers have been seen to confuse its
+  cases (one replica tool became one per DID type, each redirecting to the
+  other). Keep UI-plumbing, per-widget and infrastructure-facing operations out
+  of the default server, or behind `exclude_tools` (P4). Past about 60 tools a
+  server should say why, or offer a smaller default set.
+- **Why.** Every tool's name, description and schema sits in the model's context
+  for the whole session, and a long list makes the right tool harder to pick.
+  Fewer tools with sharper boundaries beat many overlapping ones. The reference
+  fleet runs from 4 (filesystem, read-only) to 45 (rucio) tools per backend.
+- **Verify.** Mechanical lead: `audit_tools.py` reports a tool count above 60.
+  Reading for overlapping tools and for UI-only tools.
+- **Spec.** Platform-specific.
+- **In this repo.** rucio-mcp's 9f4caed split. The gateway lists only the tools a
+  caller may use, so a backend's surface is also bounded by `required_permission`
+  and `exclude_tools`.
 
 ### S1: Every tool has an object `inputSchema` with described properties
 
@@ -185,37 +259,69 @@ Each item has an ID, a level, and four parts.
   `outputSchema` (closing audit on maniaclab/af-mcp-platform#216). That audit
   confirmed the mechanism in each repo, not every tool.
 
-### O2: Keep curated text alongside `structuredContent`
+### O2: Send a text block with the same information as `structuredContent`
 
 **SHOULD.**
 
-- **Rule.** Return readable text content as well as the structured payload,
-  and do not let the SDK replace your curated text with a JSON dump of the
-  model.
-- **Why.** The model reads the text block. Curated markdown (tables, the
-  "Next steps" hints of E2) serves it better than a JSON dump of the same
-  fields. This departs from the spec's backwards-compatibility SHOULD, which
-  asks for the serialized JSON in a text block so that older clients that parse
-  it keep working. The platform prefers the curated text; a server that must
-  serve such clients returns the JSON text instead.
-- **Verify.** With `--call`, compare the text block to the JSON. Identical
-  text on a tool that has hints or tables means the curated text was lost.
+- **Rule.** `structuredContent` is the contract (O1). Also return a text block
+  that carries the same information: the serialized JSON, which is what the spec
+  asks for and what the SDKs produce for a typed tool, or a readable rendering of
+  the same fields. A text block must not drop data that is in
+  `structuredContent`, and `structuredContent` must not be dropped to make room
+  for prose.
+- **Why.** Clients differ in which representation they feed the model, so each
+  has to be complete on its own. The broker measures what a call puts in the
+  model's context as the text blocks, falling back to the JSON of
+  `structuredContent` only when there are none, because backends commonly mirror
+  one into the other (counting both double-counted every typed tool,
+  `c1c9518`). A server that returns only prose gives the platform nothing to
+  type-check or compose: the markdown-only fleet was the cost behind the
+  `outputSchema` convention (`35591cf`).
+- **Verify.** With `--call`, a tool that declares an `outputSchema` returns
+  `structuredContent` and a non-empty text block. A text block identical to the
+  JSON is conformant, not a finding.
 - **Spec.** [Structured content](https://modelcontextprotocol.io/specification/2026-07-28/server/tools#structured-content)
-  (the SHOULD on a serialized-JSON text block).
-- **In this repo.** In the Python `mcp` SDK, annotating a tool `-> MyModel`
-  yields `outputSchema` and `structuredContent` but renders the text block as the
-  raw JSON. The escape hatch is `Annotated[CallToolResult, ResultModel]`:
-  return an ordinary `CallToolResult` with your own `TextContent` and
+  (a tool that returns `structuredContent` SHOULD also return the serialized JSON
+  in a text block).
+- **In this repo.** The five `gateway_service` tools return plain pydantic
+  models, so fastmcp supplies both: `structuredContent` and a JSON text block
+  (`broker/src/af_mcp_broker/mcp/diagnostics.py`). The talk's checklist says
+  "`outputSchema` + serialized text". Backends that also want curated markdown
+  with "Next steps" hints (E2) keep it in the text block beside the full
+  `structuredContent`. In the Python `mcp` SDK, annotating a tool `-> MyModel`
+  gives `outputSchema`, `structuredContent` and a JSON text block; to supply your
+  own text, annotate `Annotated[CallToolResult, ResultModel]` and return a
+  `CallToolResult` with your `TextContent` and
   `structured_content=payload.model_dump(mode="json")`. The SDK still publishes
-  `ResultModel`'s schema and validates the payload against it; the annotation
-  is metadata, never evaluated as the literal return type. `Context`,
-  `CallToolResult`, `TextContent`, `ToolAnnotations` and every model used in a
-  return annotation must be runtime imports, never `TYPE_CHECKING`-only: the
-  SDK resolves live annotations with `inspect.signature(func, eval_str=True)`,
-  and a `TYPE_CHECKING`-only name raises `InvalidSignature` at registration.
-  ami-mcp uses this form (`src/ami_mcp/tools/datasets.py`). The `gateway_service`
-  tools return plain pydantic models and have no curated text to keep, so they
-  are the reference for the schema but not for this pattern.
+  `ResultModel`'s schema and validates the payload; the annotation is metadata,
+  never evaluated as the literal return type. `Context`, `CallToolResult`,
+  `TextContent`, `ToolAnnotations` and every model used in a return annotation
+  must be runtime imports, never `TYPE_CHECKING`-only: the SDK resolves live
+  annotations with `inspect.signature(func, eval_str=True)`, and a
+  `TYPE_CHECKING`-only name raises `InvalidSignature` at registration. ami-mcp
+  uses this form (`src/ami_mcp/tools/datasets.py`).
+
+### O3: Curate results for the model
+
+**SHOULD.**
+
+- **Rule.** A result carries the fields an analyst would pick, not the backend's
+  full row: about fifteen, not a hundred. Convert units where the value is
+  returned and say so in the field name or value (`729 pb`, not a bare `0.729`
+  in nb), remove duplicate rows, and use the community's own identifiers (DIDs,
+  dataset names, paths) verbatim, so that one tool's output is another's input.
+  End a result with the follow-up tools to call when there is an obvious next
+  step (E2).
+- **Why.** An existing API is not an agent interface. Raw AMI rows were a
+  hundred fields per dataset, cross-sections in nanobarn with no hint, and
+  duplicate rows, multiplied by every dataset in the answer. The model cannot
+  silently mix units it was never told differ, and it reads a hundred columns no
+  better than fifteen.
+- **Verify.** Mechanical lead: with `--call`, a result record with more than 30
+  fields is reported. Reading for units, duplicates and identifiers.
+- **Spec.** Platform-specific.
+- **In this repo.** ami-mcp's curation commit 901f339 ("optimize MCP tools for LLM
+  usefulness"); rucio-mcp's DIDs are returned in the form the next tool accepts.
 
 ### A1: Declare annotations on every tool
 
@@ -293,12 +399,15 @@ Each item has an ID, a level, and four parts.
   specific tool or argument when there is one. "No replicas found" is not
   enough: add "if this is a container DID, use `rucio_list_container_replicas`
   instead". Return it as a tool error (E1) with the hint in the message, not as
-  raw backend exception text.
+  raw backend exception text. Grade errors by audience: say what the caller can
+  fix specifically, and keep security-adjacent detail (internal paths, hostnames,
+  why an authorization check failed) in the server log. Give each error a stable
+  category so that monitoring can chart which tools confuse the agent.
 - **Why.** The model guesses otherwise, and usually spends a diagnostic call
   or several. This was the root of the frictions in maniaclab/af-mcp-platform#216.
 - **Verify.** Reading. Mechanical proxy: with `--call` on a failing input, the
   error text is not empty and does not contain a Python traceback or a Go panic
-  trace.
+  trace. The same call reports a credential-shaped string in any result (U3).
 - **Spec.** [Error handling](https://modelcontextprotocol.io/specification/2026-07-28/server/tools#error-handling).
   The "next step" content is a platform convention.
 - **In this repo.** rucio-mcp is the model. Several of its empty and error
@@ -358,10 +467,15 @@ Each item has an ID, a level, and four parts.
 - **Rule.** A tool must have a ceiling on what it returns, whatever the
   caller asked for. A listing or search tool takes a `limit` (with a default
   and a maximum) and, where the result set can exceed it, a cursor or offset,
-  and says in the result when it truncated. `tools/list` itself paginates with
-  `nextCursor` if the tool count warrants.
-- **Why.** Tool output goes into the model's context window, which is the
-  real budget, not the server's willingness to send. An unbounded answer
+  and says in the result when it truncated and how to get the rest (`Showing 50
+  results (offset=0). Pass offset=50 to see more.`). Cap the work as well as the
+  output: paginate the upstream iterator, so that a 50-row page of a
+  500,000-file container does not download the container. Enforce the cap in
+  code and test it; a limit that is only documented is not a limit.
+  `tools/list` itself paginates with `nextCursor` if the tool count warrants.
+- **Why.** Truncation the model cannot see distorts what it believes;
+  truncation it can see is the next tool call. Tool output goes into the model's
+  context window, which is the real budget, not the server's willingness to send. An unbounded answer
   crowds out the reasoning that was meant to follow it, and the model reads a
   thousand rows no better than fifty. Past a few hundred rows the honest
   answer is a smaller question.
@@ -378,6 +492,8 @@ Each item has an ID, a level, and four parts.
   Until that is fixed upstream, the reference deployment excludes the tool at
   the gateway (see P4), and servicex-mcp runs `--read-only` by design. golang-htcondor clamps every listing to a
   maximum in `webapi/mcpserver/tool_limits.go` and appends a truncation note.
+  rucio-mcp's `paginate_iter` pages the upstream iterator, after a version that
+  paginated the output but still fetched the whole container per page.
 
 ### B2: Report progress and honour cancellation on long calls
 
@@ -406,35 +522,61 @@ Each item has an ID, a level, and four parts.
   backend has no test in this repo, so a backend's cancel handling is verified
   against the backend alone.
 
+### B3: Protect shared backends from one caller
+
+**SHOULD.**
+
+- **Rule.** Bound how much one caller can ask of a shared downstream system at
+  once: a per-caller concurrency limit (a semaphore) or rate limit in front of
+  anything whose latency or lockout counters other users share (NFS, a Kerberos
+  KDC, a schedd, an upstream with account lockout). Answer a refused call with a
+  tool error that says to retry later (E3).
+- **Why.** Agents loop and fan out. One caller's burst against a shared
+  filesystem or a third party's lockout counter is felt by every other user.
+- **Verify.** Reading for the limit, and a test that issues more concurrent calls
+  than the bound and checks the excess waits or is refused.
+- **Spec.** Platform-specific.
+- **In this repo.** af-filesystem-mcp's per-user semaphore protects other tenants'
+  NFS latency; krb5-token-service's rate limiter protects CERN's lockout counter,
+  not itself.
+
 ---
 
 ## Transport
 
 ### X1: Serve streamable HTTP statelessly
 
-**SHOULD.**
+**MUST.**
 
 - **Rule.** Expose the MCP endpoint over streamable HTTP and make every request
   self-contained. Do not rely on a session id, on the `initialize` call having
-  reached this process, or on state held between calls in process memory.
+  reached this process, or on state held between calls in process memory. A
+  cache of per-caller data (a client, a result) is keyed by the verified
+  identity, never by a session or connection alone.
   Where a feature needs state across calls (a transform, a server), return an
   explicit handle from a creation tool and accept it as an argument, as
   `servicex_submit_query` and `servicex_get_transform_status` do.
-- **Why.** The broker's own `/mcp` runs stateless by default
+- **Why.** Stateless backends simplify the platform's logic and its upkeep: no
+  session routing, no affinity, no session-lifetime handling, and any replica can
+  serve any call. The broker's own `/mcp` runs stateless by default
   (`broker.mcpStatelessHttp: true`), and its chart load-balances requests across
   replicas with no session pinning. A backend that keeps per-connection state
-  fails the same way when consecutive calls reach different replicas, or when a
-  proxy opens a fresh connection per call. This repo does not pin down which of
-  those the aggregator does on the broker-to-backend hop, so a backend should
-  depend on neither. In stateless mode the standalone GET SSE stream is not
+  fails when consecutive calls reach different replicas, or when a proxy opens a
+  fresh connection per call: the SDK default (stateful) with two replicas gave
+  cross-replica "Session terminated" and 404s until `stateless_http=True`
+  (af-filesystem-mcp `149b63d`, af-jupyterlab-mcp `92ff9cc`, platform #128). A
+  session-keyed client cache once risked serving one user's client to another.
+  The MCP 2026-07-28 revision removed protocol sessions, so stateless is also
+  the spec's default. In stateless mode the standalone GET SSE stream is not
   available, so `notifications/tools/list_changed` and server-initiated sampling
-  or elicitation do not reach the client; a backend that needs them is the
-  exception, and then needs session affinity in front of it.
+  or elicitation do not reach the client. A backend that needs them cannot be
+  onboarded as it is; redesign the feature around an explicit handle.
 - **Verify.** Run the server with the transport's stateless option (for the
   Python SDKs, `stateless_http=True`), or run two replicas, then send a bare
   `tools/call` with `curl` without a prior `initialize` or session header and
-  confirm it succeeds. Reading for module-level dicts keyed by session or
-  connection.
+  confirm it succeeds. `audit_tools.py --url ... --check-stateless` sends that
+  request and reports a non-200 answer. Reading for module-level dicts keyed by
+  session or connection.
 - **Spec.** [Transports](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports),
   [Stateful tools](https://modelcontextprotocol.io/specification/2026-07-28/server/tools#stateful-tools):
   at this revision the protocol has no session, so a server cannot rely on
@@ -463,6 +605,64 @@ Each item has an ID, a level, and four parts.
   and [Rejected `oauth21-direct` tokens](auth.md#rejected-oauth21-direct-tokens).
   af-jupyterhub-mcp's `HubTokenVerifier` is the worked example.
 
+### X3: Answer `tools/list` without a downstream call
+
+**SHOULD.**
+
+- **Rule.** `tools/list` is answered from the server's own registration, needs
+  nothing but the broker identity token, and does not call the downstream service
+  or depend on the caller's linked credentials. The list does not vary with
+  hidden state.
+- **Why.** The gateway has to enumerate a backend's tools before any user call,
+  and some backends demanded per-user authentication just to list, so the gateway
+  minted a credential for the listing. Fixing that naively poisoned a schema cache
+  shared with other callers (#121). A backend that is down should disappear from
+  the list at the gateway, not fail inside `tools/list`.
+- **Verify.** Stop the downstream service and call `tools/list` with a valid
+  broker token: it must still return the full list.
+- **Spec.** [Listing tools](https://modelcontextprotocol.io/specification/2026-07-28/server/tools#listing-tools).
+- **In this repo.** The aggregator's per-(user, service) tool-list cache and its
+  handling of an unavailable backend (`docs/architecture.md`, #121, #323).
+
+### X4: Design for the least capable client
+
+**SHOULD.**
+
+- **Rule.** Use standard transports (stdio, streamable HTTP) and standard OAuth
+  or bearer auth, with no behaviour that depends on one client or provider. Do
+  not add a fallback that only one client needs, and remove one when a different
+  client breaks on it.
+- **Why.** Clients differ: one had no OAuth discovery, so personal access tokens
+  were added; another choked on an OAuth metadata fallback, which was deleted. A
+  design that needs a particular client does not travel across providers or
+  facilities.
+- **Verify.** Run the audit script, then connect with at least one client other
+  than the one you developed against and list and call a tool.
+- **Spec.** [Transports](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports),
+  [Authorization](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization).
+- **In this repo.** The root OAuth-metadata fallback was removed after it
+  produced a phantom issuer for non-first sites (`89e66cf`); PATs exist for
+  clients without OAuth discovery.
+
+### X5: Treat downstream endpoints as changing
+
+**SHOULD.**
+
+- **Rule.** Set an explicit timeout on every downstream call. Re-resolve a
+  downstream address after a connection failure rather than pinning the one
+  found at startup, or fail the readiness probe so the orchestrator restarts the
+  pod. Readiness reflects the server's own health, never the upstream's.
+- **Why.** condor-mcp resolved its schedd address once and kept it. When the
+  schedd restarted on a new socket, every call failed until the pod was
+  restarted, because its refresh loop logged the new address and kept the old
+  one (bbockelm/golang-htcondor#308). An upstream outage that fails readiness
+  takes the whole backend, including calls that still work, out of rotation.
+- **Verify.** Restart the downstream service under a running server and check the
+  next call succeeds without a pod restart.
+- **Spec.** Platform-specific.
+- **In this repo.** E3 covers what the caller sees; this item covers whether the
+  server recovers by itself.
+
 ---
 
 ## Authentication and credentials
@@ -480,10 +680,14 @@ is this and did the broker send them", and nothing else. The full design is in
 - **Rule.** An AF-native backend authenticates a caller only by the AF Broker
   Identity Token the broker sends in `Authorization: Bearer`. It does not
   accept a Keycloak JWT, a personal access token, a username or a shared secret
-  from a caller it has not placed behind the broker.
+  from a caller it has not placed behind the broker. Never forward the received
+  token to another service: exchange it for a credential minted for that
+  service, or redeem one (U4).
 - **Why.** The broker is the sole authorization decision point. A second way in
-  is a way around entitlement and audit.
-- **Verify.** Reading the auth wiring; then a request carrying a token signed by
+  is a way around entitlement and audit, and the MCP specification forbids a
+  server from passing the token it received on to a downstream API.
+- **Verify.** Reading the auth wiring and every outbound HTTP call for the
+  incoming `Authorization` header; then a request carrying a token signed by
   another key, or none, must fail with 401 (see X2).
 - **Spec.** [Authorization](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization)
   (the MCP server as an OAuth resource server).
@@ -521,11 +725,14 @@ is this and did the broker send them", and nothing else. The full design is in
   logs and the audit trail. A credential there has left the credential boundary.
   LLM clients never hold raw credentials on this platform.
 - **Verify.** Mechanical: flag parameters named like `password`, `token`,
-  `secret`, `proxy`, `key`, `credential`. Reading for results.
+  `secret`, `proxy`, `key`, `credential`; with `--call`, flag a result or error
+  containing a PEM block or a JWT. Reading for the rest of the results.
 - **Spec.** [Security considerations](https://modelcontextprotocol.io/specification/2026-07-28/server/tools#security-considerations)
   and [Token handling](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization#token-handling).
 - **In this repo.** Users link credentials through the portal or
-  `af_link_identity`, which returns a link and takes no secret.
+  `af_link_identity`, which returns a link and takes no secret. A token-returning
+  argument was deleted as soon as brokered execution made possessing the token
+  unnecessary (`4ea435f`): brokered execution beats redacted disclosure.
 
 ### U4: Redeem credentials through the broker
 
@@ -536,14 +743,17 @@ is this and did the broker send them", and nothing else. The full design is in
   /v1/credentials/x509/redeem` for a VOMS proxy, `POST
   /v1/credentials/krb5/redeem` for a ticket. Hold the result for the one call,
   in a per-call temporary file, and delete it when the call finishes. Do not
-  persist it or log it.
+  persist it or log it. A server holds no secrets of its own; long-lived
+  secrets live in a vault behind the broker, and each root secret has one
+  service that touches it.
 - **Why.** The broker is where credentials are minted, renewed, stored and
   audited. The redeem routes are the deliberate, audited exception to "the PEM
   never leaves the broker", scoped to authenticated backend targets and released
   once per request. The krb5 route never mints or renews, because a synchronous
   backend call cannot prompt a user.
 - **Verify.** Reading for any other credential source (environment variables,
-  files in the user's home, shared service accounts). A deployment's audit log
+  files in the user's home, shared service accounts). A test that the temporary
+  file is deleted after a successful call and after a failed one. A deployment's audit log
   shows `x509_proxy_release` and `krb5_ticket_release` events for each call.
 - **Spec.** Platform-specific.
 - **In this repo.** `docs/auth.md` (the x509 redeem flow and "Redeeming the
@@ -566,6 +776,30 @@ is this and did the broker send them", and nothing else. The full design is in
 - **Spec.** Platform-specific.
 - **In this repo.** `docs/auth.md`, "Authorization is an attribute of the
   principal, not the token".
+
+### U6: Identity is ambient, never an argument
+
+**MUST.**
+
+- **Rule.** No tool takes a username, owner, uid or account that the caller
+  could set to someone else. Derive the acting identity from the verified broker
+  token (and the POSIX claims when `requires_posix`), and enforce it where the
+  backend can: owner labels on a Kubernetes object, a kernel uid/gid on a
+  subprocess, the nickname inside a redeemed proxy. State in the description
+  that the caller is always the owner.
+- **Why.** A model-supplied value can be hallucinated or injected. A schema with
+  no owner parameter cannot express "read bob's files", so the whole class of
+  mistake is unrepresentable. Do not expose dangerous parameters; derive them
+  from verified identity.
+- **Verify.** Mechanical lead: parameters named `user`, `username`, `owner`,
+  `uid`, `gid` or `unixname` are reported. Reading for any parameter that selects
+  whose data a tool touches.
+- **Spec.** Platform-specific.
+- **In this repo.** `create_jupyter_server` in af-jupyterlab-mcp takes no owner and
+  reads it from `get_broker_claims`; af-filesystem-mcp runs a setuid subprocess
+  so the kernel enforces it. A resource name that is not the caller (a Rucio
+  `account` on a read) is a case for the reader to confirm, not an automatic
+  pass.
 
 ---
 
@@ -610,6 +844,10 @@ audit because a backend that cannot meet them cannot be registered.
   model-facing half of dual enforcement (`docs/architecture.md`). It is
   guidance, not an access-control boundary: `required_permission` stays
   authoritative.
+  Put facility know-how that does not fit one tool (how storage and queues
+  actually work) in the server's `instructions`, a resource or a published
+  skill, not in every tool description: MCP gives the agent hands, skills give it
+  expertise.
 - **Verify.** Reading `services.yaml`. On a deployment, `af_list_mcp_servers`
   and the gateway's server `instructions` show the composed text.
 - **Spec.** Platform-specific. The spec's `instructions` field on `initialize`
@@ -675,6 +913,49 @@ audit because a backend that cannot meet them cannot be registered.
 
 ---
 
+## Implementation and testing
+
+### I1: Wrap the client library, not the CLI
+
+**SHOULD.**
+
+- **Rule.** Build a tool on the service's native client library so that the
+  server handles structured objects and returns curated text (O3). Where only a
+  CLI exists, run the native binary and parse artifacts it produces (a ccache,
+  a PEM, JSON output), never its human-readable text. Start on stdio from the
+  user's own environment; add HTTP when a facility hosts it.
+- **Why.** Parsing text tables is fragile, and CLI prose is locale-dependent. A
+  Rust CLI wrapper that parsed tables was replaced by the Python client for that
+  reason.
+- **Verify.** Reading for `subprocess` calls whose output is split or matched as
+  text, and for the locale the child runs under.
+- **Spec.** Platform-specific.
+- **In this repo.** rucio-mcp wraps `rucio.client`; the three token services
+  orchestrate the native binary and parse artifacts.
+
+### T1: Test the agent-facing contract against the live service
+
+**SHOULD.**
+
+- **Rule.** Test what the model sees against the real service: that each
+  example in a description runs and returns what the description says, that
+  result caps hold, that errors carry their next step and category. Fix a
+  description as you fix code, against the live behaviour. Run the audit script
+  against a running instance in CI.
+- **Why.** The model reproduces an example verbatim, so a documentation bug is a
+  behaviour bug: ami-mcp's documented query examples were wrong four times in
+  one day and the model copied the wrong syntax. Mock-green tools shipped real
+  API misuse, and green CI proves nothing about credential plumbing.
+- **Verify.** A test that extracts and runs the examples in descriptions; a
+  test for each cap and error string. `audit_tools.py --call` against a live
+  instance covers E1, E2, O1, O2 and the result size.
+- **Spec.** Platform-specific.
+- **In this repo.** The closing remark of the talk: "testing against the live
+  services, not mocks". No linter checks that a description agrees with its
+  schema.
+
+---
+
 ## Auditing with the skill
 
 The `af-mcp-builder` skill walks an agent through this checklist against a
@@ -682,8 +963,8 @@ backend's source and, where it can, against the running server.
 
 ### Install
 
-The repo is a source for both mechanisms below. Both were exercised against a
-checkout of this repo; see the [README](https://github.com/maniaclab/af-mcp-platform#mcp-server-authors-the-af-mcp-builder-skill)
+The repo is a source for both mechanisms below; see the
+[README](https://github.com/maniaclab/af-mcp-platform#mcp-server-authors-the-af-mcp-builder-skill)
 for the exact commands and the checks behind them.
 
 With the GitHub CLI's skill installer (`gh skill`, in preview):
@@ -704,19 +985,22 @@ As a Claude Code plugin, from the repo's marketplace manifest
 
 `skills/af-mcp-builder/scripts/audit_tools.py` connects to a server with an MCP
 client, lists its tools, and reports the items that can be read off the wire:
-N1, N2, S1, O1, A1, A2, B1 (the `limit` parameter), U3 (parameter names),
-and with `--call` E1 and the output size. The remaining items need the source
-and the deployment and are checked by reading, following the skill's procedure.
-The skill reports findings as a table of ID, level, location (`file:line`), and
-suggested change.
+N1, N2, N3, N4, S1, O1, A1, A2, B1 (the `limit` parameter), U3 and U6 (parameter
+names), and with `--call` E1, E2, O1, O2, O3, U3 (results) and the output size.
+`--check-401` checks X2 and `--check-stateless` checks X1. The remaining items
+need the source and the deployment and are checked by reading, following the
+skill's procedure. The skill reports findings as a table of ID, level, location
+(`file:line`), and suggested change.
 
-### One source of truth
+### Where the skill reads the guide
 
-This page is the canonical text. The skill installs as a directory, and an
-installed skill cannot reach `docs/`, so `skills/af-mcp-builder/references/mcp-design.md`
-carries a generated copy. `scripts/sync-skill-guide.py` writes the copy from this
-page, rewriting the relative links to sibling docs into absolute GitHub URLs so
-they resolve outside the repo. A pre-commit hook, `sync-skill-guide`, runs the
-script with `--check` and fails when the copy differs from what the script would
-write. Edit this page, then run `python3 scripts/sync-skill-guide.py` to refresh
-the copy.
+This page is the only copy of the guide. The skill installs as a bare
+directory, which cannot reach `docs/`, and a symlink does not fix that:
+`gh skill install` drops a symlink, and the plugin install turns it into a
+frozen copy. So the skill carries an index of item IDs and one-line rules
+(enough to audit when it cannot fetch the guide) and points at this page:
+inside an af-mcp-platform checkout it reads `docs/mcp-design.md`, and elsewhere
+it fetches
+`https://raw.githubusercontent.com/maniaclab/af-mcp-platform/main/docs/mcp-design.md`.
+When you add, rename or re-level an item, update the index in
+`skills/af-mcp-builder/SKILL.md` in the same change.
