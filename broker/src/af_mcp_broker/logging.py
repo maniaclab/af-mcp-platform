@@ -79,6 +79,12 @@ def configure_logging(log_level: str = "INFO") -> None:
     root_logger.handlers = [handler]
     root_logger.setLevel(log_level.upper())
 
+    # fastmcp gives its own logger a rich handler and stops propagation at
+    # import; hand its records to the root handler so they are JSON lines too.
+    fastmcp_logger = logging.getLogger("fastmcp")
+    fastmcp_logger.handlers = []
+    fastmcp_logger.propagate = True
+
     # Quieten noisy third-party loggers that we don't need at DEBUG
     for noisy in ("uvicorn.access", "httpx", "httpcore"):
         logging.getLogger(noisy).setLevel(logging.WARNING)

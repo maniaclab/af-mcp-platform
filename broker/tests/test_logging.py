@@ -9,17 +9,25 @@ place that now does, so every request-scoped log line can be tied back to a
 
 from __future__ import annotations
 
+import json
+import logging
 import time
+from typing import TYPE_CHECKING
 
+import pytest
 import structlog
 
 from af_mcp_broker.logging import (
     bind_new_correlation_id,
     bind_subject,
+    configure_logging,
     log_request_finished,
     log_request_received,
     request_id_headers,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
 def test_bind_new_correlation_id_binds_a_nonempty_value() -> None:
@@ -140,3 +148,33 @@ def test_request_id_headers_is_empty_without_a_bound_correlation_id() -> None:
     structlog.contextvars.clear_contextvars()
 
     assert request_id_headers() == {}
+
+
+@pytest.fixture
+def restore_logging() -> Iterator[None]:
+    """Undo configure_logging's changes to the root and fastmcp loggers."""
+    root = logging.getLogger()
+    fastmcp_logger = logging.getLogger("fastmcp")
+    saved = [
+        (lg, lg.handlers[:], lg.level, lg.propagate) for lg in (root, fastmcp_logger)
+    ]
+    yield
+    for lg, handlers, level, propagate in saved:
+        lg.handlers = handlers
+        lg.setLevel(level)
+        lg.propagate = propagate
+
+
+def test_configure_logging_emits_fastmcp_records_as_json(
+    capsys: pytest.CaptureFixture[str], restore_logging: None
+) -> None:
+    """fastmcp installs its own rich handler on its logger and stops propagation; its records must go through the broker's JSON handler instead."""
+    configure_logging("INFO")
+
+    logging.getLogger("fastmcp.server.providers.aggregate").warning("provider failed")
+
+    [line] = capsys.readouterr().out.splitlines()
+    record = json.loads(line)
+    assert record["event"] == "provider failed"
+    assert record["level"] == "warning"
+    assert record["logger"] == "fastmcp.server.providers.aggregate"
