@@ -64,9 +64,9 @@ describe('EntitlementsPage', () => {
   it('gives granted-read, granted-state-changing and not-granted cells distinct names', async () => {
     const wrapper = await mountPage();
 
-    const read = wrapper.find('[aria-label="example-users grants read_data (read)"]');
-    const write = wrapper.find('[aria-label="example-users grants submit_jobs (state-changing)"]');
-    const none = wrapper.find('[aria-label="example-guests does not grant submit_jobs"]');
+    const read = wrapper.find('[aria-label="example-users grants Read data (read)"]');
+    const write = wrapper.find('[aria-label="example-users grants Submit jobs (state-changing)"]');
+    const none = wrapper.find('[aria-label="example-guests does not grant Submit jobs"]');
     expect(read.exists()).toBe(true);
     expect(write.exists()).toBe(true);
     expect(none.exists()).toBe(true);
@@ -75,8 +75,8 @@ describe('EntitlementsPage', () => {
   it('names the You column cells by what the caller holds', async () => {
     const wrapper = await mountPage({ ...PERMISSIONS, grants: [PERMISSIONS.grants[0]] });
 
-    expect(wrapper.find('[aria-label="You hold read_data (read)"]').exists()).toBe(true);
-    expect(wrapper.find('[aria-label="You do not hold submit_jobs"]').exists()).toBe(true);
+    expect(wrapper.find('[aria-label="You hold Read data (read)"]').exists()).toBe(true);
+    expect(wrapper.find('[aria-label="You do not hold Submit jobs"]').exists()).toBe(true);
   });
 
   it('keeps the matrix a real table with scoped headers', async () => {
@@ -134,41 +134,51 @@ describe('EntitlementsPage', () => {
 
     expect(
       wrapper
-        .find('[aria-label="example-users grants example_exec_jobs (state-changing)"]')
+        .find('[aria-label="example-users grants Example exec jobs (state-changing)"]')
         .exists(),
     ).toBe(true);
     expect(
-      wrapper.find('[aria-label="example-guests does not grant example_exec_jobs"]').exists(),
+      wrapper.find('[aria-label="example-guests does not grant Example exec jobs"]').exists(),
     ).toBe(true);
   });
 
   it('lists reads first, then state-changing, each in broker order', async () => {
     const wrapper = await mountPage();
 
-    const rows = wrapper.findAll('tbody th[scope="row"] code').map((c) => c.text());
-    expect(rows).toEqual(['read_data', 'submit_jobs', 'example_exec_jobs']);
+    const rows = wrapper.findAll('tbody th[scope="row"] .ep__perm-name').map((c) => c.text());
+    expect(rows).toEqual(['Read data', 'Submit jobs', 'Example exec jobs']);
   });
 
-  it('puts the heavier rule above the first state-changing row only', async () => {
+  it('draws no rule between the read and state-changing rows', async () => {
     const wrapper = await mountPage();
 
     const rows = wrapper.findAll('tbody tr');
-    expect(rows.map((r) => r.classes('ep__divider'))).toEqual([false, true, false]);
+    expect(rows.every((r) => r.classes().length === 0)).toBe(true);
   });
 
   it('gives the broker description to a described permission', async () => {
     const wrapper = await mountPage();
 
     const row = wrapper.findAll('tbody tr')[0];
-    expect(row.get('[role="tooltip"]').text()).toBe('Read datasets from data stores');
+    expect(row.get('[role="tooltip"]').text()).toContain('Read datasets from data stores');
+  });
+
+  it('shows the label in plain text and the raw identifier in the info tooltip', async () => {
+    const wrapper = await mountPage();
+
+    const row = wrapper.findAll('tbody tr')[0];
+    expect(row.get('.ep__perm-name').text()).toBe('Read data');
+    const tip = row.get('[role="tooltip"]');
+    expect(tip.get('code').text()).toBe('read_data');
+    expect(tip.text()).toBe('read_data Read datasets from data stores');
   });
 
   it('gives a permission without a description the site-defined info text', async () => {
     const wrapper = await mountPage();
 
     const row = wrapper.findAll('tbody tr')[2];
-    expect(row.find('button[aria-label="About example_exec_jobs"]').exists()).toBe(true);
-    expect(row.get('[role="tooltip"]').text()).toBe('Site-defined permission');
+    expect(row.find('button[aria-label="About Example exec jobs"]').exists()).toBe(true);
+    expect(row.get('[role="tooltip"]').text()).toBe('example_exec_jobs Site-defined permission');
   });
 
   it('shows the error state, not a table, when the broker sends no permission catalog', async () => {

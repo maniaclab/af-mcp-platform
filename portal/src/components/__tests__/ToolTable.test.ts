@@ -23,7 +23,7 @@ function tool(overrides: Partial<CatalogTool> = {}): CatalogTool {
 describe('permission tooltip', () => {
   it("names the tool's specific permission, not just read/write", () => {
     const wrapper = mount(ToolTable, { props: { tools: [tool({ permission: 'read_data' })] } });
-    expect(wrapper.text()).toContain('Requires read_data.');
+    expect(wrapper.text()).toContain('Requires Read data (read_data).');
   });
 
   it('says no specific permission is required for a "__none__" tool', () => {

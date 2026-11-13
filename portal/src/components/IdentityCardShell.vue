@@ -112,7 +112,7 @@ const nameId = useId();
 .ids__actions {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: flex-end;
   gap: var(--space-8);
   min-width: 160px;
 }
@@ -149,6 +149,7 @@ const nameId = useId();
   .ids__actions {
     flex-direction: row;
     flex-wrap: wrap;
+    align-items: flex-start;
   }
 }
 </style>

@@ -119,7 +119,7 @@ const chartLabel = computed<string>(() => {
 </script>
 
 <template>
-  <div class="af-page">
+  <div class="af-page af-wide">
     <div class="up__toolbar">
       <SegmentedControl
         :model-value="String(days)"

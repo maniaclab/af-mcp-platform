@@ -65,5 +65,6 @@ const CONTROLS = [
     <DontExamples slot="dont" kind="three-cards" />
     <Fragment slot="dont-note">default to a row of three equal cards. It gives every item the same weight whether or not it matters.</Fragment>
   </DoDont>
+  <p class="af-help">Page content is 960px wide by default (<code>--af-page-max</code> on <code>.af-page</code>), left-aligned inside the column. A page whose main content is a wide table or chart adds <code>af-wide</code> to lift that cap: Services, Tokens, Usage and Admin do (Entitlements has no <code>.af-page</code> root, so it is already uncapped); Overview and Identities do not.</p>
   <p class="af-help">Wide tables scroll inside their own box, never the page. Used on every signed-in page. The landing page has no sidebar: the same column, text capped at 720px, regions 64px apart.</p>
 </DesignSection>

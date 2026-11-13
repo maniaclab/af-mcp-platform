@@ -163,6 +163,11 @@ inside a comfortable page for a secondary checklist.
 
 - A 220px sidebar, fixed left and full height, and one content column capped at
   1120px. Content margin is 16px under 600px, 24px from 600px, 32px from 1136px.
+- Page content (`.af-page`) is 960px wide by default, set by `--af-page-max`,
+  and left-aligned so the content edge never moves between pages. A page whose
+  main content is a wide table or chart (Services, Tokens, Usage, Admin) adds
+  `af-wide` to its `.af-page` to use the full column; Entitlements has no
+  `.af-page` root, so it already does. Overview and Identities keep the default.
 - Under 860px the sidebar becomes a drawer opened from a 52px top bar, on a scrim.
 - Sections are full width and stacked; a row of equal cards is not a default.
 - Wide tables scroll inside their own box, never the page. The landing page has

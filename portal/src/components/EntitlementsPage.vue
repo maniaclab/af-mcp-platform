@@ -23,6 +23,7 @@ import {
   type EntitlementsResponse,
   type PermissionsResponse,
 } from '../lib/api';
+import { permissionLabel } from '../lib/permissionLabel';
 import { useLoadState } from '../lib/useLoadState';
 import EntitlementMark from './EntitlementMark.vue';
 import AsyncState from './ui/AsyncState.vue';
@@ -114,24 +115,20 @@ const columns = computed<Column[]>(() => {
   return [...rows.filter((c) => c.kind === 'read'), ...rows.filter((c) => c.kind === 'write')];
 });
 
-// First index whose kind differs from the previous column's, so the
-// template can drop a visual divider between the read and write blocks.
-const firstWriteIndex = computed(() => columns.value.findIndex((c) => c.kind === 'write'));
-
 // The mark's accessible name carries the grant kind, since shape and colour
 // alone must not be the only difference between the two granted states.
 const KIND_WORDS = { read: 'read', write: 'state-changing' } as const;
 
 function groupMarkLabel(group: string, col: Column): string {
   return groupHasPermission(group, col.name)
-    ? `${groupLabel(group)} grants ${col.name} (${KIND_WORDS[col.kind]})`
-    : `${groupLabel(group)} does not grant ${col.name}`;
+    ? `${groupLabel(group)} grants ${permissionLabel(col.name)} (${KIND_WORDS[col.kind]})`
+    : `${groupLabel(group)} does not grant ${permissionLabel(col.name)}`;
 }
 
 function meMarkLabel(col: Column): string {
   return meHasPermission(col.name)
-    ? `You hold ${col.name} (${KIND_WORDS[col.kind]})`
-    : `You do not hold ${col.name}`;
+    ? `You hold ${permissionLabel(col.name)} (${KIND_WORDS[col.kind]})`
+    : `You do not hold ${permissionLabel(col.name)}`;
 }
 
 function groupHasPermission(group: string, permission: string): boolean {
@@ -220,19 +217,18 @@ function meHasPermission(permission: string): boolean {
             </tr>
           </thead>
           <tbody>
-            <tr
-              v-for="(col, i) in columns"
-              :key="col.name"
-              :class="{ ep__divider: i === firstWriteIndex }"
-            >
+            <tr v-for="col in columns" :key="col.name">
               <th scope="row" class="ep__pin">
                 <span class="ep__perm">
-                  <code>{{ col.name }}</code>
+                  <span class="ep__perm-name">{{ permissionLabel(col.name) }}</span>
+                  <!-- The identifier is what policy.yaml uses, so administrators
+                       find it here. -->
                   <InfoTip
                     :id="`ep-perm-${col.name}`"
-                    :text="col.description"
-                    :label="`About ${col.name}`"
-                  />
+                    :label="`About ${permissionLabel(col.name)}`"
+                  >
+                    <code>{{ col.name }}</code> {{ col.description }}
+                  </InfoTip>
                 </span>
               </th>
               <td class="ep__mark-col ep__you">
@@ -312,11 +308,5 @@ function meHasPermission(permission: string): boolean {
 .ep__mine,
 .ep__you {
   background: var(--color-af-bg-subtle);
-}
-
-/* Boundary between the read and state-changing permission blocks. */
-.ep__divider th,
-.ep__divider td {
-  border-top: 1px solid var(--color-af-border-strong);
 }
 </style>

@@ -213,6 +213,16 @@ describe('filter and search', () => {
     expect(wrapper.text()).not.toContain('Rucio');
     expect(wrapper.text()).toContain('HTCondor');
   });
+
+  it('matches the permission label shown on the card, not only its identifier', async () => {
+    const wrapper = await mountPage([
+      server({ name: 'rucio', display_name: 'Rucio', permission: 'read_data' }),
+      server({ name: 'condor', display_name: 'HTCondor', permission: 'submit_jobs' }),
+    ]);
+    await wrapper.find('input[type="search"]').setValue('read data');
+    expect(wrapper.text()).toContain('Rucio');
+    expect(wrapper.text()).not.toContain('HTCondor');
+  });
 });
 
 describe('empty states', () => {

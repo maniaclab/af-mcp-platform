@@ -376,9 +376,10 @@ describe('TokensPage permission picker', () => {
     const groups = wrapper.findAll('dialog[open] fieldset.tp__perms');
     expect(groups.map((g) => g.get('legend').text())).toEqual(['Read', 'State-changing']);
     const names = (g: (typeof groups)[number]) => g.findAll('label').map((l) => l.text());
-    expect(names(groups[0])).toEqual(['read_data', 'read_search']);
+    expect(names(groups[0])).toEqual(['Read data', 'Read search']);
     // Only the grant's own action types decide; a grant reporting both is state-changing.
-    expect(names(groups[1])).toEqual(['example_exec_jobs', 'manage_jobs', 'use_notebooks']);
+    expect(names(groups[1])).toEqual(['Example exec jobs', 'Manage jobs', 'Use notebooks']);
+    expect(groups[0].get('label').attributes('title')).toBe('read_data');
   });
 
   it('omits a group that has no permissions', async () => {
@@ -446,7 +447,8 @@ describe('TokensPage table layout', () => {
   it('lists every permission of a scoped token in the scope cell', async () => {
     const wrapper = await mountPage([token({ permission_grant: ['read_data', 'submit_jobs'] })]);
 
-    expect(wrapper.get('tbody td.tp__scope').text()).toBe('read_data, submit_jobs');
+    expect(wrapper.get('tbody td.tp__scope').text()).toBe('Read data, Submit jobs');
+    expect(wrapper.get('tbody td.tp__scope').attributes('title')).toBe('read_data, submit_jobs');
   });
 });
 

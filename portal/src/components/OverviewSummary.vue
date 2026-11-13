@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
- * OverviewSummary.vue — the Overview page's banner or hint slot, status list and
- * usage stats, in one island.
+ * OverviewSummary.vue — the Overview page's banner or hint slot, the connect
+ * steps, status list and usage stats, in one island.
  *
  * The list has one row per area a new user needs to understand (services,
  * identities, tokens, usage): a plain-language explanation, a status word
@@ -20,6 +20,7 @@ import { overviewMessage } from '../lib/overviewBanner';
 import { proxyExpiryState } from '../lib/x509Identity';
 import { expiresIn, expiresSoon } from '../lib/tokenDisplay';
 import { formatCost, formatTokens } from '../lib/usageFormat';
+import ConnectClient from './ConnectClient.vue';
 import PageMessage from './ui/PageMessage.vue';
 import StatusMark from './ui/StatusMark.vue';
 
@@ -186,6 +187,10 @@ const showStats = computed(() => usage.value !== null && usage.value.totals.call
 
 <template>
   <PageMessage v-if="message" :message="message" />
+
+  <!-- Rendered here, between the banner and the status list, so one island
+       owns the page order. It does not depend on either fetch. -->
+  <ConnectClient />
 
   <section class="af-sect" aria-labelledby="ov-access-heading">
     <h2 id="ov-access-heading">Your access</h2>

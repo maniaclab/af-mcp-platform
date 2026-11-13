@@ -4,6 +4,7 @@ import { Eye, Pencil } from '@lucide/vue';
 import { fetchServerTools } from '../lib/api';
 import type { CatalogServer } from '../lib/api';
 import type { PoweredBy } from '../lib/catalog';
+import { permissionLabel } from '../lib/permissionLabel';
 import { resolveServiceStatus, resolvePoweredByLinked } from '../lib/serviceStatus';
 import type { StatusSeverity } from '../lib/serviceStatus';
 import { resolveToolListing, toolCountLabel } from '../lib/serverTools';
@@ -158,12 +159,17 @@ const toolsView = computed(() =>
             type="button"
             class="badge bc__tag bc__cap-badge"
             data-variant="outline"
-            :aria-label="`Permission: ${server.permission}`"
+            :aria-label="`Permission: ${permissionLabel(server.permission)}`"
             :aria-describedby="`bc-cap-${server.name}`"
           >
-            {{ server.permission }}
+            {{ permissionLabel(server.permission) }}
           </button>
-          <template #tooltip>Requires permission: {{ server.permission }}</template>
+          <template #tooltip
+            >Requires permission: {{ permissionLabel(server.permission) }} (<code>{{
+              server.permission
+            }}</code
+            >)</template
+          >
         </PopoverTooltip>
 
         <!-- The builtin af-mcp entry (issue #240) has no per-user credential
@@ -233,8 +239,19 @@ const toolsView = computed(() =>
     >
       <template #label>Methods</template>
       <template #badge>
+        <!-- Loading shows here, in the header, so the body appears once with its
+             final content instead of flashing a placeholder and shifting. -->
         <span
-          v-if="toolsView && toolsView.kind !== 'blocked'"
+          v-if="toolsLoading"
+          class="badge bc__tools-count"
+          data-variant="outline"
+          role="status"
+          aria-live="polite"
+        >
+          Loading…
+        </span>
+        <span
+          v-else-if="toolsView && toolsView.kind !== 'blocked'"
           class="badge bc__tools-count"
           data-variant="outline"
         >
@@ -242,12 +259,15 @@ const toolsView = computed(() =>
         </span>
       </template>
       <div class="bc__tools-body">
-        <p v-if="toolsLoading" class="bc__tools-note" aria-live="polite">Loading methods…</p>
-        <div v-else-if="toolsError" class="alert af-note bad bc__tools-error" role="alert">
+        <div
+          v-if="!toolsLoading && toolsError"
+          class="alert af-note bad bc__tools-error"
+          role="alert"
+        >
           <span class="af-mark bad" aria-hidden="true"></span>
           <span>{{ toolsError }}</span>
         </div>
-        <template v-else-if="toolsView">
+        <template v-else-if="!toolsLoading && toolsView">
           <ToolTable v-if="toolsView.kind === 'tools'" :tools="toolsView.tools" />
           <p v-else-if="toolsView.kind === 'empty'" class="bc__tools-note">
             {{ toolsView.message }}

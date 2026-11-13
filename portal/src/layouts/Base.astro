@@ -11,9 +11,9 @@
  * GET /v1/identities, sent with the session's Bearer token (see ../lib/api).
  *
  * Shell structure (#166): fixed left sidebar with grouped nav + count badges
- * and, at its foot, the user controls and theme toggle; content column with
- * footer. Under 860px the sidebar becomes an off-canvas drawer toggled from a
- * top bar.
+ * and the theme toggle under the brand at its top, the account controls at
+ * its foot; content column with footer. Under 860px the sidebar becomes an
+ * off-canvas drawer toggled from a top bar.
  */
 import '../styles/global.css';
 import {
@@ -149,6 +149,21 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
         padding: var(--space-16) var(--space-12);
         background: var(--color-af-bg);
         border-right: 1px solid var(--color-af-border);
+      }
+
+      /* The brand sits on its own row with the theme toggle under it, so a
+         long facility short name never competes with the toggle for width. */
+      .af-sidebar__head {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: var(--space-8);
+      }
+
+      /* Lines the toggle's edge up with the brand text and the nav icons,
+         which sit inside the same inline padding. */
+      .af-sidebar__head :global(.theme-toggle) {
+        margin-inline-start: var(--space-12);
       }
 
       .af-sidebar .af-brand {
@@ -355,9 +370,17 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
 
     <div class="af-shell">
       <aside class="af-sidebar" id="af-sidebar">
-        <a href="/overview/" class="af-brand" aria-label="AF MCP Platform home" data-af-brand-logo>
-          AF&nbsp;/&nbsp;MCP
-        </a>
+        <div class="af-sidebar__head">
+          <a
+            href="/overview/"
+            class="af-brand"
+            aria-label="AF MCP Platform home"
+            data-af-brand-logo
+          >
+            AF&nbsp;/&nbsp;MCP
+          </a>
+          <ThemeToggle />
+        </div>
 
         <nav class="af-nav" aria-label="Primary navigation">
           {
@@ -401,7 +424,6 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
               Sign out
             </button>
           </div>
-          <ThemeToggle />
         </div>
       </aside>
 

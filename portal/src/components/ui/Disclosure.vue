@@ -65,6 +65,9 @@ function toggle(): void {
   display: inline-flex;
   align-items: center;
   gap: var(--space-8);
+  /* Tall enough for a badge beside the label, so the row keeps its height
+     when one appears or changes (a count arriving after a fetch). */
+  min-height: var(--control-s);
   padding: var(--space-4) 0;
   border: 0;
   background: transparent;
