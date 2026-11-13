@@ -991,6 +991,8 @@ async def test_af_list_mcp_servers_reports_how_to_request_access(
     assert rows["own-link"]["granting_groups"] == ["/connect/atlas-af"]
     assert rows["own-link"]["docs_url"] == "https://docs.example.org/own"
     assert rows["default-link"]["access_url"] == "https://facility.example.org/access"
+    assert "Use Request access to ask for it" in rows["own-link"]["status_detail"]
+    assert "Use Request access to ask for it" in rows["default-link"]["status_detail"]
     assert rows["default-link"]["docs_url"] is None
     assert rows["open"]["status"] == "available"
     assert rows["open"]["access_url"] is None

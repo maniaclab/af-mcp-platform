@@ -1004,6 +1004,12 @@ def test_catalog_permission_required_names_groups_and_facility_access_url(
     assert rucio["status"] == "permission_required"
     assert rucio["access_url"] == "https://groups.example.org/request"
     assert rucio["granting_groups"] == _READ_DATA_GROUPS
+    # The sentence points at the button instead of only saying "contact".
+    assert (
+        "Use Request access to ask for it, or contact the AF admins."
+        in (rucio["status_detail"])
+    )
+    assert "Contact the AF admins." not in rucio["status_detail"]
 
 
 def test_catalog_service_access_url_overrides_facility_default(
@@ -1034,6 +1040,9 @@ def test_catalog_permission_required_without_any_access_url(
     assert rucio["status"] == "permission_required"
     assert rucio["access_url"] is None
     assert rucio["granting_groups"] == _READ_DATA_GROUPS
+    # No button to point at: today's wording.
+    assert "Contact the AF admins." in rucio["status_detail"]
+    assert "Request access" not in rucio["status_detail"]
 
 
 def test_catalog_access_url_and_groups_only_for_permission_required(

@@ -61,6 +61,16 @@ _STATUS_DETAILS: dict[ServiceStatus, str] = {
     "misconfigured": "This service is misconfigured. Contact the AF admins.",
 }
 
+# "permission_required" when the service resolves an access URL: the portal
+# shows a "Request access" button next to this sentence, so it points there
+# rather than only saying to contact the admins.
+_PERMISSION_REQUIRED_WITH_ACCESS_URL_DETAIL = (
+    "Your account doesn't have the access this service requires. "
+    "Use Request access to ask for it, or contact the AF admins. "
+    f"Call the {BUILTIN_SERVICE_NAME} service's "
+    f"`{WHOAMI_TOOL_NAME}` method to see your current permissions."
+)
+
 # A stored credential that was itself rejected (a recorded "unauthorized"
 # listing failure -- see aggregator.py's _classify_list_failure) still maps
 # to "link_required" (re-linking is the fix, same as never having linked at
@@ -408,7 +418,11 @@ async def _service_status(
         )
         return (
             "permission_required",
-            _STATUS_DETAILS["permission_required"],
+            (
+                _PERMISSION_REQUIRED_WITH_ACCESS_URL_DETAIL
+                if registry.access_url_for(spec)
+                else _STATUS_DETAILS["permission_required"]
+            ),
             correlation_id,
             None,
         )
