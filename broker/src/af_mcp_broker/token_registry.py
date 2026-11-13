@@ -111,11 +111,14 @@ import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
 from af_mcp_broker.vault_kv import CasConflict, VaultError, VaultKV
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 log = structlog.get_logger(__name__)
 
@@ -180,6 +183,12 @@ class TokenRecord:
     # PAT; a permission PAT's grant otherwise -- see also Principal
     # .permission_grant and get_principal_permissions.
     permission_grant: frozenset[str] | None = None
+
+    def is_active(self, now: float) -> bool:
+        """Return True if this record is neither revoked nor past its ``expires_at`` as of *now*. A never-expiring, unrevoked record is always active."""
+        return self.revoked_at is None and (
+            self.expires_at is None or self.expires_at > now
+        )
 
 
 def _collides(existing: TokenRecord, candidate: TokenRecord, now: float) -> bool:
@@ -283,6 +292,23 @@ class TokenRegistryBackend(ABC):
         """
 
     @abstractmethod
+    async def delete_inactive(
+        self,
+        principal_id: str,
+        *,
+        now: float,
+        lookup_ids: frozenset[str] | None = None,
+    ) -> list[str]:
+        """Hard-delete *principal_id*'s records that are revoked or expired as of *now*; return the deleted lookup_ids.
+
+        Restricted to *lookup_ids* when given (a requested id that is still
+        active, or not owned by *principal_id*, is silently skipped).
+        Active records are never deleted. A record only ever moves from
+        active to inactive, never back, so a caller may check a record's
+        state first and rely on it still holding here.
+        """
+
+    @abstractmethod
     async def sweep_expired(self, *, grace_seconds: int) -> SweepStats:
         """Remove every record whose ``expires_at`` is set and more than *grace_seconds* in the past, across all principals.
 
@@ -357,6 +383,27 @@ class InMemoryTokenRegistryBackend(TokenRegistryBackend):
     async def sweep_expired(self, *, grace_seconds: int) -> SweepStats:
         async with self._lock:
             return self._sweep_expired_locked(grace_seconds=grace_seconds)
+
+    async def delete_inactive(
+        self,
+        principal_id: str,
+        *,
+        now: float,
+        lookup_ids: frozenset[str] | None = None,
+    ) -> list[str]:
+        async with self._lock:
+            principal_map = self._by_principal.get(principal_id, {})
+            removed = [
+                lookup_id
+                for lookup_id, r in principal_map.items()
+                if (lookup_ids is None or lookup_id in lookup_ids)
+                and not r.is_active(now)
+            ]
+            for lookup_id in removed:
+                del principal_map[lookup_id]
+            if principal_id in self._by_principal and not principal_map:
+                del self._by_principal[principal_id]
+            return removed
 
     async def add(self, record: TokenRecord) -> None:
         async with self._lock:
@@ -493,6 +540,11 @@ def _expired_past_cutoff(fields: dict[str, Any], cutoff: float) -> bool:
     """Return True if the raw KV *fields* decode to a record whose ``expires_at`` is set and at or before *cutoff*. Never-expiring records (``expires_at`` absent/None) are never "expired"."""
     expires_at = _record_from_fields(fields).expires_at
     return expires_at is not None and expires_at <= cutoff
+
+
+def _is_inactive(fields: dict[str, Any], now: float) -> bool:
+    """Return True if the raw KV *fields* decode to a record that is revoked, or whose ``expires_at`` is set and at or before *now*. Never-expiring, unrevoked records are always active."""
+    return not _record_from_fields(fields).is_active(now)
 
 
 class VaultTokenRegistryBackend(TokenRegistryBackend):
@@ -654,6 +706,79 @@ class VaultTokenRegistryBackend(TokenRegistryBackend):
         data, _version = current
         return frozenset(data.get("jtis", []))
 
+    async def _remove_records(
+        self, path: str, should_remove: Callable[[str, dict[str, Any]], bool]
+    ) -> tuple[list[str], bool]:
+        """Remove the records of the by-principal entry at *path* for which ``should_remove(lookup_id, fields)`` holds, plus their lookup-owner entries.
+
+        Returns the removed lookup_ids and whether the principal's entry was
+        emptied (and so deleted outright). Shared by ``sweep_expired()`` and
+        ``delete_inactive()``, so the CAS loop and the owner-index cleanup
+        live in one place.
+        """
+        removed: list[str] = []
+        emptied = False
+        for _attempt in range(_MAX_CAS_RETRIES):
+            current = await self._vault_kv.get(path)
+            if current is None:
+                # Already gone -- a concurrent sweep/revoke/expiry race.
+                break
+            data, version = current
+            # Recomputed on every retry against the just-re-read data, same
+            # reasoning as add()'s CAS loop: a conflict means something else
+            # wrote this principal's entry in between, so the set of records
+            # to remove must be re-evaluated against that write, not replayed
+            # from a stale read.
+            to_remove = [
+                lookup_id
+                for lookup_id, fields in data.items()
+                if should_remove(lookup_id, fields)
+            ]
+            if not to_remove:
+                break
+            remaining = {
+                lookup_id: fields
+                for lookup_id, fields in data.items()
+                if lookup_id not in to_remove
+            }
+            try:
+                if remaining:
+                    await self._vault_kv.write_cas(path, remaining, version)
+                else:
+                    # Metadata delete (not an empty-dict write_cas) so the
+                    # version counter is destroyed too -- preserves a
+                    # subsequent add()'s plain create (cas=0) for this
+                    # principal, exactly as vault_kv.delete_metadata's
+                    # docstring describes.
+                    await self._vault_kv.delete_metadata(path)
+                    emptied = True
+            except CasConflict:
+                continue
+            removed = to_remove
+            break
+        else:
+            raise VaultError(f"exceeded retry budget removing records at path={path!r}")
+
+        for lookup_id in removed:
+            await self._vault_kv.delete_metadata(self._owner_path(lookup_id))
+        return removed, emptied
+
+    async def delete_inactive(
+        self,
+        principal_id: str,
+        *,
+        now: float,
+        lookup_ids: frozenset[str] | None = None,
+    ) -> list[str]:
+        removed, _emptied = await self._remove_records(
+            self._principal_path(principal_id),
+            lambda lookup_id, fields: (
+                (lookup_ids is None or lookup_id in lookup_ids)
+                and _is_inactive(fields, now)
+            ),
+        )
+        return removed
+
     async def sweep_expired(self, *, grace_seconds: int) -> SweepStats:
         now = time.time()
         cutoff = now - grace_seconds
@@ -666,59 +791,16 @@ class VaultTokenRegistryBackend(TokenRegistryBackend):
 
         prefix = self._by_principal_prefix()
         for principal_key in await self._vault_kv.list(prefix):
-            path = f"{prefix}/{principal_key}"
-            removed_this_principal: list[str] = []
-            for _attempt in range(_MAX_CAS_RETRIES):
-                current = await self._vault_kv.get(path)
-                if current is None:
-                    # Already gone -- a concurrent sweep/revoke/expiry race.
-                    removed_this_principal = []
-                    break
-                data, version = current
-                # Recomputed on every retry against the just-re-read data,
-                # same reasoning as add()'s CAS loop: a conflict means
-                # something else wrote this principal's entry in between, so
-                # the set of still-expired lookup_ids must be re-evaluated
-                # against that write, not replayed from a stale read.
-                to_remove = [
-                    lookup_id
-                    for lookup_id, fields in data.items()
-                    if _expired_past_cutoff(fields, cutoff)
-                ]
-                if not to_remove:
-                    removed_this_principal = []
-                    break
-                remaining = {
-                    lookup_id: fields
-                    for lookup_id, fields in data.items()
-                    if lookup_id not in to_remove
-                }
-                try:
-                    if remaining:
-                        await self._vault_kv.write_cas(path, remaining, version)
-                    else:
-                        # Metadata delete (not an empty-dict write_cas) so the
-                        # version counter is destroyed too -- preserves a
-                        # subsequent add()'s plain create (cas=0) for this
-                        # principal, exactly as vault_kv.delete_metadata's
-                        # docstring describes.
-                        await self._vault_kv.delete_metadata(path)
-                        principals_emptied += 1
-                except CasConflict:
-                    continue
-                removed_this_principal = to_remove
-                break
-            else:
-                raise VaultError(
-                    f"sweep_expired(): exceeded retry budget for path={path!r}"
-                )
-
-            for lookup_id in removed_this_principal:
-                await self._vault_kv.delete_metadata(self._owner_path(lookup_id))
-                owners_removed += 1
-                if lookup_id in revoked_before:
-                    lookup_ids_to_prune_from_denylist.add(lookup_id)
+            removed_this_principal, emptied = await self._remove_records(
+                f"{prefix}/{principal_key}",
+                lambda _lookup_id, fields: _expired_past_cutoff(fields, cutoff),
+            )
+            principals_emptied += int(emptied)
+            owners_removed += len(removed_this_principal)
             records_removed += len(removed_this_principal)
+            lookup_ids_to_prune_from_denylist.update(
+                set(removed_this_principal) & revoked_before
+            )
 
         revoked_pruned = 0
         if lookup_ids_to_prune_from_denylist:

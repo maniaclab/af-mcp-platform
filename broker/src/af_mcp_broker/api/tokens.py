@@ -72,7 +72,7 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from af_mcp_broker.audit import AuditRecord, write_audit
@@ -203,6 +203,20 @@ class RevokeTokenResponse(BaseModel):
     revoked: bool
 
 
+class DeleteTokenResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    lookup_id: str
+    deleted: bool
+
+
+class ClearTokensResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    # How many revoked or expired rows were deleted.
+    deleted: int
+
+
 # ---------------------------------------------------------------------------
 # Registry orchestration -- rate limiting + the durable TokenRegistryBackend.
 # ---------------------------------------------------------------------------
@@ -276,6 +290,22 @@ class TokenRegistry:
 
     async def owner_principal_id(self, lookup_id: str) -> str | None:
         return await self._backend.owner_principal_id(lookup_id)
+
+    async def get(self, principal_id: str, lookup_id: str) -> TokenRecord | None:
+        return await self._backend.get(principal_id, lookup_id)
+
+    async def delete_inactive(
+        self, principal_id: str, lookup_ids: frozenset[str] | None = None
+    ) -> list[str]:
+        """Delete *principal_id*'s revoked or expired records (only *lookup_ids*, when given); return the deleted lookup_ids."""
+        deleted = await self._backend.delete_inactive(
+            principal_id, now=time.time(), lookup_ids=lookup_ids
+        )
+        for lookup_id in deleted:
+            self._log.info(
+                "token_registry.deleted", lookup_id=lookup_id, principal_id=principal_id
+            )
+        return deleted
 
     async def revoke(self, principal_id: str, lookup_id: str) -> TokenRecord | None:
         record = await self._backend.revoke(
@@ -524,3 +554,89 @@ async def revoke_token(
     )
 
     return RevokeTokenResponse(lookup_id=lookup_id, revoked=True)
+
+
+@router.delete(
+    "/{lookup_id}/record",
+    response_model=DeleteTokenResponse,
+    summary="Delete the row of a revoked or expired PAT",
+)
+async def delete_token_record(
+    lookup_id: str,
+    request: Request,
+    principal: Annotated[Principal, Depends(keycloak_dependency)],
+) -> DeleteTokenResponse:
+    """Hard-delete the caller's own token row, so revoked and expired rows do not pile up on the Tokens page.
+
+    Distinct from ``DELETE /v1/tokens/{lookup_id}``, which revokes and keeps
+    the row as a tombstone. An active token is refused with 409: revoke it
+    first, so a single mis-click can never both disable and erase a
+    credential.
+    """
+    registry = _registry(request)
+
+    owner_principal_id = await registry.owner_principal_id(lookup_id)
+    if owner_principal_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Unknown token"
+        )
+    if owner_principal_id != principal.subject:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Not your token"
+        )
+
+    # A record only ever moves from active to inactive, so an inactive record
+    # read here is still inactive when delete_inactive() runs.
+    record = await registry.get(principal.subject, lookup_id)
+    if record is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Unknown token"
+        )
+    if record.is_active(time.time()):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Token is still active; revoke it before deleting it",
+        )
+
+    deleted = await registry.delete_inactive(principal.subject, frozenset({lookup_id}))
+    if deleted:
+        await _audit(
+            principal,
+            "token.deleted",
+            lookup_id,
+            args_summary=f"lookup_id={lookup_id}",
+        )
+    return DeleteTokenResponse(lookup_id=lookup_id, deleted=True)
+
+
+@router.delete(
+    "",
+    response_model=ClearTokensResponse,
+    summary="Delete every revoked or expired PAT row the caller owns",
+)
+async def clear_inactive_tokens(
+    request: Request,
+    principal: Annotated[Principal, Depends(keycloak_dependency)],
+    inactive: Annotated[bool, Query()],
+) -> ClearTokensResponse:
+    """Delete the caller's revoked and expired token rows; active tokens are never touched.
+
+    ``inactive=true`` is required: a bare ``DELETE /v1/tokens`` (or
+    ``inactive=false``) is rejected with 422 rather than doing anything.
+    """
+    if not inactive:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="inactive=true is required",
+        )
+    registry = _registry(request)
+
+    deleted = await registry.delete_inactive(principal.subject)
+    for lookup_id in deleted:
+        await _audit(
+            principal,
+            "token.deleted",
+            lookup_id,
+            args_summary=f"lookup_id={lookup_id}",
+        )
+    return ClearTokensResponse(deleted=len(deleted))

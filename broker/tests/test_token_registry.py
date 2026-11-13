@@ -997,6 +997,112 @@ async def test_vault_sweep_keeps_a_legacy_denylist_entry_for_a_live_record(
 
 
 # ---------------------------------------------------------------------------
+# delete_inactive(): hard-delete revoked or expired records of one principal.
+# ---------------------------------------------------------------------------
+
+
+async def _seed_mixed_records(backend: TokenRegistryBackend) -> None:
+    """p1 owns one active, one revoked, one expired record; p2 owns one active."""
+    now = time.time()
+    await backend.add(_make_record(lookup_id="active", principal_id="p1", name="a"))
+    await backend.add(_make_record(lookup_id="revoked", principal_id="p1", name="r"))
+    await backend.revoke("p1", "revoked", revoked_at=now - 100)
+    await backend.add(
+        _make_record(
+            lookup_id="expired",
+            principal_id="p1",
+            name="e",
+            created_at=now - 10,
+            expires_at=now + 0.05,
+        )
+    )
+    await backend.add(_make_record(lookup_id="other", principal_id="p2", name="o"))
+    await asyncio.sleep(0.1)  # let "expired" lapse
+
+
+async def test_delete_inactive_removes_revoked_and_expired_but_not_active(
+    backend: TokenRegistryBackend,
+) -> None:
+    await _seed_mixed_records(backend)
+
+    removed = await backend.delete_inactive("p1", now=time.time())
+
+    assert sorted(removed) == ["expired", "revoked"]
+    assert [r.lookup_id for r in await backend.list_for_principal("p1")] == ["active"]
+    assert await backend.owner_principal_id("revoked") is None
+    assert await backend.owner_principal_id("expired") is None
+    assert await backend.owner_principal_id("other") == "p2"
+
+
+async def test_delete_inactive_limited_to_requested_lookup_ids(
+    backend: TokenRegistryBackend,
+) -> None:
+    await _seed_mixed_records(backend)
+
+    removed = await backend.delete_inactive(
+        "p1", now=time.time(), lookup_ids=frozenset({"revoked", "active"})
+    )
+
+    # "active" is requested but not inactive, so it is left alone.
+    assert removed == ["revoked"]
+    remaining = {r.lookup_id for r in await backend.list_for_principal("p1")}
+    assert remaining == {"active", "expired"}
+
+
+async def test_delete_inactive_never_touches_other_principals(
+    backend: TokenRegistryBackend,
+) -> None:
+    await _seed_mixed_records(backend)
+    await backend.revoke("p2", "other", revoked_at=1.0)
+
+    await backend.delete_inactive("p1", now=time.time())
+
+    assert await backend.get("p2", "other") is not None
+
+
+async def test_delete_inactive_for_unknown_principal_returns_empty(
+    backend: TokenRegistryBackend,
+) -> None:
+    assert await backend.delete_inactive("nobody", now=time.time()) == []
+
+
+async def test_vault_delete_inactive_of_last_record_allows_re_adding(
+    sa_token_path: Path,
+) -> None:
+    fake = _FakeRegistryVault()
+    backend = _make_vault_backend(fake, sa_token_path)
+    await backend.add(_make_record(lookup_id="lookup-1", principal_id="p1"))
+    await backend.revoke("p1", "lookup-1", revoked_at=1.0)
+
+    removed = await backend.delete_inactive("p1", now=time.time())
+
+    assert removed == ["lookup-1"]
+    assert _PRINCIPAL_KEY not in fake.entries
+    assert f"{KV_PATH_PREFIX}/lookup-owner/lookup-1" not in fake.entries
+    # Must not raise a CasConflict -- see delete_metadata's docstring.
+    await backend.add(_make_record(lookup_id="lookup-2", principal_id="p1"))
+
+
+async def test_vault_delete_inactive_retries_on_concurrent_cas_conflict(
+    sa_token_path: Path,
+) -> None:
+    fake = _FakeRegistryVault()
+    replica_a = _make_vault_backend(fake, sa_token_path)
+    replica_b = _make_vault_backend(fake, sa_token_path)
+    await replica_a.add(_make_record(lookup_id="dead", principal_id="p1", name="dead"))
+    await replica_a.add(_make_record(lookup_id="keep", principal_id="p1", name="keep"))
+    await replica_a.revoke("p1", "dead", revoked_at=1.0)
+
+    await asyncio.gather(
+        replica_a.delete_inactive("p1", now=time.time()),
+        replica_b.add(_make_record(lookup_id="new", principal_id="p1", name="new")),
+    )
+
+    rows = await replica_a.list_for_principal("p1")
+    assert {r.lookup_id for r in rows} == {"keep", "new"}
+
+
+# ---------------------------------------------------------------------------
 # RevokedJtiCache
 # ---------------------------------------------------------------------------
 

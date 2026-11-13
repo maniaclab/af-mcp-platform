@@ -1202,11 +1202,20 @@ another JWT:
    is rejected with 401 on its next request, on every replica, with no
    cache window. `REVOKED_JTI_CACHE_REFRESH_SECONDS` governs only the
    Keycloak-JWT `jti` denylist, never PATs.
-4. **Sweep** (operations) — unaffected by this change; see
+4. **Delete a cleared row** — revoking keeps the row (as a tombstone, so
+   revoked tokens stay visible), so revoked and expired rows accumulate.
+   `DELETE /v1/tokens/{lookup_id}/record` hard-deletes one of the caller's
+   own rows, and `DELETE /v1/tokens?inactive=true` deletes all of them. Only
+   a revoked or expired row is deletable: an active token is refused with 409
+   (revoke it first), and the bulk form never touches an active one. Each
+   deletion emits a `token.deleted` audit event. Both are owner-only; an
+   admin can revoke but not delete another user's token (see "Admin
+   revocation" below).
+5. **Sweep** (operations) — unaffected by this change; see
    `token_sweep.py`/`tokenSweep.*` as before. A never-expiring PAT
    (`expires_at` unset) is never touched by the sweep — there is no natural
-   expiry to sweep against; it only ever leaves the registry via an explicit
-   revoke.
+   expiry to sweep against; once revoked, its row stays until its owner
+   deletes it (step 4).
 
 ### MCP OAuth discovery + PAT bootstrap (issue #140)
 
