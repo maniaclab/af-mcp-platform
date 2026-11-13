@@ -85,7 +85,7 @@ chart redraws with the new colours on its own.
 
 The control is `portal/src/components/ThemeToggle.astro`, a three-option
 `role="radiogroup"` (Auto, Dark, Light) with its own script. It is rendered at
-the top of the sidebar in `Base.astro`, on the brand's row (under 860px that
+the top of the sidebar in `Base.astro`, under the brand (under 860px that
 is the top of the navigation drawer), and in the top bar of `PublicBase.astro`.
 
 ### The particle-track canvas

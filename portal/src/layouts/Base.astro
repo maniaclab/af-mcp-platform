@@ -11,7 +11,7 @@
  * GET /v1/identities, sent with the session's Bearer token (see ../lib/api).
  *
  * Shell structure (#166): fixed left sidebar with grouped nav + count badges
- * and the theme toggle beside the brand at its top, the account controls at
+ * and the theme toggle under the brand at its top, the account controls at
  * its foot; content column with footer. Under 860px the sidebar becomes an
  * off-canvas drawer toggled from a top bar.
  */
@@ -151,12 +151,19 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
         border-right: 1px solid var(--color-af-border);
       }
 
-      /* The brand sits left and the theme toggle right on one row. */
+      /* The brand sits on its own row with the theme toggle under it, so a
+         long facility short name never competes with the toggle for width. */
       .af-sidebar__head {
         display: flex;
-        align-items: center;
-        justify-content: space-between;
+        flex-direction: column;
+        align-items: flex-start;
         gap: var(--space-8);
+      }
+
+      /* Lines the toggle's edge up with the brand text and the nav icons,
+         which sit inside the same inline padding. */
+      .af-sidebar__head :global(.theme-toggle) {
+        margin-inline-start: var(--space-12);
       }
 
       .af-sidebar .af-brand {
