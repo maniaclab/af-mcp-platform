@@ -178,6 +178,47 @@ written before the record is buffered.
   used when no pipeline is running still write each record immediately.
 - **Fresher reads.** `GET /v1/usage` can lag a call by up to the interval.
 
+### Token and trace columns
+
+Each raw row also carries `token_id` (the calling PAT's public `lookup_id`;
+`NULL` for a session JWT) and `trace_id` (the OTel trace; `NULL` when the
+call was not traced), and both are `NULL` on rows written before the columns
+existed. They let you join
+usage to a token or to a trace from SQL. The columns are added at startup by
+an idempotent `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`; they are not
+indexed, because nothing reads by them yet and an index adds write load.
+
+### Retention and daily rollup (Postgres)
+
+Raw rows would otherwise accumulate forever. The broker folds raw rows older
+than the retention window into `af_mcp_usage_daily`, keyed `(day,
+principal_sub, service, method, outcome)` with the summed calls, duration,
+bytes and tokens, and deletes them in the same statement.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `USAGE_RETENTION_DAYS` (chart: `broker.usage.retentionDays`) | `90` | Raw rows older than this many UTC days are rolled up and deleted. `0` keeps raw rows forever and runs no job. |
+| `USAGE_ROLLUP_INTERVAL_SECONDS` (chart: `broker.usage.rollupIntervalSeconds`) | `3600` | How often each replica attempts the job. |
+
+- **Reads do not change.** `GET /v1/usage` and `af_usage` sum raw rows and
+  rollup rows, so a window answers the same before and after a row moves.
+  What ages out is per-call detail (`audit_id`, `token_id`, `trace_id`);
+  the audit log keeps that.
+- **One replica at a time.** Every replica runs the loop; a Postgres
+  advisory lock (`pg_try_advisory_xact_lock`) lets one proceed and the rest
+  skip until the next interval. The lock lives in the database the job
+  works on, so it needs no second dependency, is released if the replica
+  dies, and is not weakened by the optional shared-state store's in-memory
+  fallback. Correctness does not depend on it: the `DELETE ... RETURNING`
+  that feeds the rollup is a single statement, so two racing replicas would
+  still count each row once.
+- **First run.** The first pass on a large existing table moves everything
+  older than the window in one statement; expect a one-time burst of
+  Postgres work.
+- **Window edges.** The raw-row window is a plain range on `ts`, so the
+  `ts` indexes are used (wrapping `ts` in `(ts AT TIME ZONE 'UTC')::date`
+  would force a full index scan).
+
 ### Postgres via Crunchy PGO
 
 The reference deployment uses [Crunchy PGO](https://access.crunchydata.com/documentation/postgres-operator/latest).

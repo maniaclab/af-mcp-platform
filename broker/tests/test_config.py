@@ -1007,6 +1007,26 @@ def test_usage_batch_settings_default_and_read_env(monkeypatch):
     assert Settings().usage_batch_interval_ms == 250
 
 
+def test_usage_retention_settings_default_and_read_env(monkeypatch):
+    assert Settings().usage_retention_days == 90
+    assert Settings().usage_rollup_interval_seconds == 3600
+    monkeypatch.setenv("USAGE_RETENTION_DAYS", "0")
+    monkeypatch.setenv("USAGE_ROLLUP_INTERVAL_SECONDS", "60")
+    assert Settings().usage_retention_days == 0
+    assert Settings().usage_rollup_interval_seconds == 60
+
+
+def test_usage_retention_days_rejects_negative():
+    with pytest.raises(ValueError, match="usage_retention_days"):
+        Settings(usage_retention_days=-1)
+
+
+@pytest.mark.parametrize("value", [0, -1])
+def test_usage_rollup_interval_must_be_positive(value):
+    with pytest.raises(ValueError, match="usage_rollup_interval_seconds"):
+        Settings(usage_rollup_interval_seconds=value)
+
+
 @pytest.mark.parametrize("name", ["usage_batch_max", "usage_batch_interval_ms"])
 @pytest.mark.parametrize("value", [0, -1])
 def test_usage_batch_settings_must_be_positive(name, value):

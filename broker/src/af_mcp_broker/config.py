@@ -402,6 +402,18 @@ class Settings(BaseSettings):
     usage_batch_max: int = Field(default=100, ge=1)
     usage_batch_interval_ms: int = Field(default=1000, ge=1)
 
+    # Postgres usage store only (the in_memory store already keeps aggregates,
+    # not raw rows). Raw af_mcp_usage_events rows older than this many UTC
+    # days are folded into the af_mcp_usage_daily rollup and deleted, bounding
+    # the table; /v1/usage reads raw rows inside the window and the rollup
+    # beyond it, so history is not lost -- only per-call detail (audit_id,
+    # token_id, trace_id) ages out, and the audit log keeps that. 0 keeps raw
+    # rows forever (no job runs). usage_rollup_interval_seconds is how often
+    # each replica attempts the job; a Postgres advisory lock lets exactly
+    # one proceed.
+    usage_retention_days: int = Field(default=90, ge=0)
+    usage_rollup_interval_seconds: int = Field(default=3600, ge=1)
+
     # Which MaintenanceModeStore implementation (maintenance.py) holds the
     # broker's maintenance-mode flag -- must be visible to every replica
     # consistently. Mirrors the in_memory/vault/postgres selection shape
