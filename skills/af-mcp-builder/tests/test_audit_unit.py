@@ -498,3 +498,28 @@ class TestCheckStateless:
         if found:
             assert (found[0].item, found[0].level) == ("X1", "MUST")
             assert f"HTTP {code}" in found[0].message
+
+
+class TestCheckLegacySse:
+    def test_streamable_http_server_is_not_flagged(
+        self, audit: Any, serve: Any
+    ) -> None:
+        port = serve("compliant", "stateless")
+        assert audit.check_legacy_sse(f"http://127.0.0.1:{port}/mcp", None) == []
+
+    def test_legacy_sse_server_is_flagged(self, audit: Any, serve: Any) -> None:
+        port = serve("legacy-sse", "sse")
+        found = audit.check_legacy_sse(f"http://127.0.0.1:{port}/sse", None)
+        assert len(found) == 1
+        assert (found[0].item, found[0].level) == ("X1", "MUST")
+        assert "HTTP+SSE" in found[0].message
+
+    @pytest.mark.parametrize("code", [401, 403, 404, 405, 500])
+    def test_plain_error_status_is_not_flagged(
+        self, audit: Any, serve: Any, code: int
+    ) -> None:
+        port = serve("status", str(code))
+        assert audit.check_legacy_sse(f"http://127.0.0.1:{port}/mcp", None) == []
+
+    def test_unreachable_endpoint_is_not_flagged(self, audit: Any) -> None:
+        assert audit.check_legacy_sse("http://127.0.0.1:1/mcp", None) == []

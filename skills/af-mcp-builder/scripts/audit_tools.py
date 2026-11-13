@@ -25,6 +25,9 @@ Usage:
     # Check that a bad bearer gets HTTP 401 (X2)
     uv run audit_tools.py --url ... --check-401
 
+    # With --url, an endpoint that speaks only the deprecated HTTP+SSE transport
+    # is reported as an X1 MUST and nothing else is audited.
+
     # Check that a bare tools/list works with no initialize or session (X1)
     uv run audit_tools.py --url ... --check-stateless
 
@@ -80,6 +83,9 @@ CREDENTIAL_RE = re.compile(
 MAX_TOOLS = 60
 # O3: a record wider than this is a raw backend row, not a curated result.
 MAX_RECORD_FIELDS = 30
+# X1: how long and how many lines to read from a GET stream that never ends.
+LEGACY_PROBE_TIMEOUT = 5
+LEGACY_PROBE_LINES = 10
 WRITE_HINTS = ("destructiveHint", "idempotentHint", "openWorldHint")
 
 
@@ -351,6 +357,70 @@ def check_stateless(url: str, bearer: str | None) -> list[Finding]:
     return []
 
 
+def check_legacy_sse(url: str, bearer: str | None) -> list[Finding]:
+    """Detect an endpoint that speaks only the deprecated HTTP+SSE transport (X1).
+
+    The spec's backwards-compatibility procedure: a POST ``initialize`` that gets
+    a 4xx, then a GET that answers ``text/event-stream`` opening with an
+    ``endpoint`` event, identifies the 2024-11-05 transport. A streamable HTTP
+    server answers the POST, so it is never flagged. A 401 or 403 is not
+    evidence either way.
+    """
+    body = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-03-26",
+                "capabilities": {},
+                "clientInfo": {"name": "af-mcp-audit", "version": "0"},
+            },
+        }
+    ).encode()
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+    }
+    if bearer:
+        headers["Authorization"] = f"Bearer {bearer}"
+    post = urllib.request.Request(url, data=body, method="POST", headers=headers)
+    try:
+        with urllib.request.urlopen(post, timeout=15):
+            return []
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            return []
+    except OSError:
+        return []
+
+    get_headers = {**headers, "Accept": "text/event-stream"}
+    get = urllib.request.Request(url, method="GET", headers=get_headers)
+    try:
+        with urllib.request.urlopen(get, timeout=LEGACY_PROBE_TIMEOUT) as resp:
+            if "text/event-stream" not in resp.headers.get("Content-Type", ""):
+                return []
+            # The stream never ends, so read only its first few lines.
+            for _ in range(LEGACY_PROBE_LINES):
+                if (
+                    resp.readline().decode(errors="replace").strip()
+                    == "event: endpoint"
+                ):
+                    return [
+                        Finding(
+                            "X1",
+                            "MUST",
+                            "(transport)",
+                            "endpoint speaks only the deprecated HTTP+SSE transport "
+                            "(an SSE stream that opens with an 'endpoint' event); "
+                            "serve streamable HTTP and set 'transport: http' in services.yaml",
+                        )
+                    ]
+    except (OSError, TimeoutError):
+        return []
+    return []
+
+
 def render(findings: list[Finding], n_tools: int) -> str:
     """Render the findings table in the skill's output format."""
     lines = [f"Audited {n_tools} tools.", ""]
@@ -378,6 +448,11 @@ async def run(args: argparse.Namespace) -> tuple[int, list[Finding]]:
     token = os.environ.get(args.token_env)
     auth = token if (args.url and token) else None
     findings: list[Finding] = []
+    if args.url:
+        findings += check_legacy_sse(args.url, token)
+        if findings:
+            # A legacy SSE endpoint cannot be audited over streamable HTTP.
+            return 0, findings
     async with Client(_transport(args), auth=auth) as client:
         tools = await client.list_tools()
         for tool in tools:

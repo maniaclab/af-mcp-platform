@@ -5,6 +5,7 @@ transport bearer auth); `violating` breaks a known, fixed set of them. Run as a 
 
     python fixture_servers.py <compliant|compliant-auth|violating> stdio
     python fixture_servers.py <compliant|compliant-auth|violating> <http|stateless> <port>
+    python fixture_servers.py legacy-sse sse <port>   # deprecated HTTP+SSE transport
     python fixture_servers.py status <401|200> <port>   # bare HTTP status stub
 """
 
@@ -178,6 +179,10 @@ if __name__ == "__main__":
     kind, mode = sys.argv[1], sys.argv[2]
     if kind == "status":
         _serve_status(int(mode), int(sys.argv[3]))
+    elif kind == "legacy-sse":
+        build_compliant().run(
+            transport="sse", host="127.0.0.1", port=int(sys.argv[3]), show_banner=False
+        )
     elif mode == "stdio":
         BUILDERS[kind]().run(transport="stdio", show_banner=False)
     else:

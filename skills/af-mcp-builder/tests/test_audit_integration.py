@@ -250,3 +250,26 @@ class TestCheckStatelessEndToEnd:
             "--check-stateless",
         )
         assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+class TestLegacySseEndToEnd:
+    def test_legacy_sse_server_fails_x1(
+        self,
+        run_audit: Callable[..., subprocess.CompletedProcess[str]],
+        serve: Callable[[str, str], int],
+    ) -> None:
+        port = serve("legacy-sse", "sse")
+        proc = run_audit("--url", f"http://127.0.0.1:{port}/sse", "--prefix", "fx")
+        assert proc.returncode == 1, proc.stdout + proc.stderr
+        assert rows(proc.stdout) == {("X1", "MUST", "(transport)")}
+        assert "HTTP+SSE" in proc.stdout
+
+    def test_streamable_server_is_not_flagged(
+        self,
+        run_audit: Callable[..., subprocess.CompletedProcess[str]],
+        serve: Callable[[str, str], int],
+    ) -> None:
+        port = serve("compliant", "stateless")
+        proc = run_audit("--url", f"http://127.0.0.1:{port}/mcp", "--prefix", "fx")
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert "No findings." in proc.stdout

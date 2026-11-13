@@ -549,7 +549,10 @@ Each item has an ID, a level, and four parts.
 **MUST.**
 
 - **Rule.** Expose the MCP endpoint over streamable HTTP and make every request
-  self-contained. Do not rely on a session id, on the `initialize` call having
+  self-contained. The gateway reaches backends over streamable HTTP only: the
+  deprecated HTTP+SSE transport (replaced by streamable HTTP in spec revision
+  2025-03-26) is refused at broker startup (#389), so a server that exposes only
+  a legacy `/sse` endpoint does not fit. Do not rely on a session id, on the `initialize` call having
   reached this process, or on state held between calls in process memory. A
   cache of per-caller data (a client, a result) is keyed by the verified
   identity, never by a session or connection alone.
@@ -567,17 +570,22 @@ Each item has an ID, a level, and four parts.
   (af-filesystem-mcp `149b63d`, af-jupyterlab-mcp `92ff9cc`, platform #128). A
   session-keyed client cache once risked serving one user's client to another.
   The MCP 2026-07-28 revision removed protocol sessions, so stateless is also
-  the spec's default. In stateless mode the standalone GET SSE stream is not
-  available, so `notifications/tools/list_changed` and server-initiated sampling
+  the spec's default. The standalone GET SSE stream named next is a different thing
+  from the legacy transport: it is an SSE response stream inside streamable HTTP.
+  In stateless mode that stream is not available, so `notifications/tools/list_changed` and server-initiated sampling
   or elicitation do not reach the client. A backend that needs them cannot be
   onboarded as it is; redesign the feature around an explicit handle.
 - **Verify.** Run the server with the transport's stateless option (for the
   Python SDKs, `stateless_http=True`), or run two replicas, then send a bare
   `tools/call` with `curl` without a prior `initialize` or session header and
   confirm it succeeds. `audit_tools.py --url ... --check-stateless` sends that
-  request and reports a non-200 answer. Reading for module-level dicts keyed by
-  session or connection.
+  request and reports a non-200 answer. With `--url`, the audit also reports an
+  endpoint that speaks only the legacy HTTP+SSE transport. Reading for
+  module-level dicts keyed by session or connection, and for a legacy SSE app
+  (`sse_app()`, `transport="sse"`, a `/sse` route, mcp-go `NewSSEServer`).
 - **Spec.** [Transports](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports),
+  [2025-03-26 changelog](https://modelcontextprotocol.io/specification/2025-03-26/changelog)
+  (streamable HTTP replaces HTTP+SSE),
   [Stateful tools](https://modelcontextprotocol.io/specification/2026-07-28/server/tools#stateful-tools):
   at this revision the protocol has no session, so a server cannot rely on
   implicit per-connection state.
@@ -628,7 +636,8 @@ Each item has an ID, a level, and four parts.
 
 **SHOULD.**
 
-- **Rule.** Use standard transports (stdio, streamable HTTP) and standard OAuth
+- **Rule.** Use standard transports (stdio for local use, which the gateway cannot
+  reach, and streamable HTTP for anything it fronts) and standard OAuth
   or bearer auth, with no behaviour that depends on one client or provider. Do
   not add a fallback that only one client needs, and remove one when a different
   client breaks on it.
@@ -987,7 +996,8 @@ As a Claude Code plugin, from the repo's marketplace manifest
 client, lists its tools, and reports the items that can be read off the wire:
 N1, N2, N3, N4, S1, O1, A1, A2, B1 (the `limit` parameter), U3 and U6 (parameter
 names), and with `--call` E1, E2, O1, O2, O3, U3 (results) and the output size.
-`--check-401` checks X2 and `--check-stateless` checks X1. The remaining items
+`--check-401` checks X2 and `--check-stateless` checks X1; with `--url` it also
+flags a legacy HTTP+SSE-only endpoint as X1. The remaining items
 need the source and the deployment and are checked by reading, following the
 skill's procedure. The skill reports findings as a table of ID, level, location
 (`file:line`), and suggested change.

@@ -55,7 +55,7 @@ stated reason.
 | B1 | MUST | Every result bounded; listings take a limit and paginate; truncation announced with how to continue; upstream work capped too |
 | B2 | SHOULD | Long calls report progress and honour cancellation |
 | B3 | SHOULD | Per-caller concurrency or rate bound in front of a shared backend |
-| X1 | MUST | Stateless streamable HTTP; no session or per-connection state; per-caller caches keyed by verified identity |
+| X1 | MUST | Stateless streamable HTTP (no legacy SSE); no session or per-connection state; per-caller caches keyed by verified identity |
 | X2 | MUST | A bad bearer gets HTTP 401 before any tool runs |
 | X3 | SHOULD | `tools/list` answered from registration, with no downstream call |
 | X4 | SHOULD | Standard transport and auth only; nothing client-specific |
@@ -79,7 +79,9 @@ stated reason.
 1. **Identify the server.** Language (Python or Go), SDK, transport (stdio,
    streamable HTTP), and the service prefix it will be registered under. Ask the
    user for the prefix if the code does not make it obvious; N1 and P1 depend on
-   it.
+   it. Flag a legacy HTTP+SSE-only server (the mcp SDK's `sse_app()`, fastmcp
+   `transport="sse"`, a `/sse` route, mcp-go `NewSSEServer`) as an X1 MUST: the
+   broker refuses it at startup.
 2. **Locate the tools.** See [references/locating-tools.md](references/locating-tools.md)
    for the registration patterns in each SDK. Produce the full list of tool names
    with `file:line` before checking anything. If the list from the source and the
@@ -181,6 +183,7 @@ instead of assuming it. Every flag below is an `audit_tools.py` flag from step 3
 |---------|----------------|-----|
 | 401 or 403 through the gateway, fine locally | **U2**: the token's `aud` must equal the service's `audience` in `services.yaml`, which defaults to `name` (renaming a service without setting `audience` 401'd every backend). **U1**: accept only the broker identity token, verified against the broker's `/.well-known/jwks.json` by `kid`, with `iss` and `exp` checked (it lives 600 s by default). **X2**: a bad bearer must be a transport 401, not a tool error inside a 200, or the broker never learns an `oauth21-direct` token was revoked. | `--check-401`. Then, with a real broker token in `$MCP_BEARER_TOKEN`, a plain run; a validly signed token with another `aud` must also be refused (U2). |
 | A tool is missing from `tools/list` | **N1/P1**: a name without the registered prefix is unroutable and hidden while the backend looks healthy. With the default `apply_namespace: true` the aggregator adds the prefix, so the backend advertises bare names; with `false` it must advertise `<prefix>_<tool>`. **P4**: `exclude_tools` and per-tool `required_permission` keys are native, pre-namespace names. For a credentialed service (`bearer`, `x509`, `krb5`, `servicex`) a caller who has not linked the credential is not listed at all: `af_list_mcp_servers` shows `link_state`, `af_link_identity` fixes it. Operator: `GET /v1/admin/tool-mapping-drift` (portal Admin page) lists unroutable names, and the service reads `misconfigured` when none route. | `--prefix <prefix>`, then compare its tool list with the one the user sees. |
+| Broker fails to start with "service '<name>' sets transport 'sse'" | **X1**: the backend must serve streamable HTTP; point the service at that endpoint and set `transport: http` in `services.yaml` (or omit the field). | `audit_tools.py --url ...` reports a legacy SSE-only endpoint. |
 | "Session terminated", 404s across replicas, or a hang | **X1**: the stateful default breaks when consecutive calls reach different replicas, so serve stateless. **X5**: every downstream call needs an explicit timeout, and a downstream address resolved once at startup stops working after the downstream restarts. | `--check-stateless`. Read the downstream calls for timeouts. |
 | A result is unparseable or empty | **O1**: an object `outputSchema` with matching `structuredContent`. **O2**: a text block with the same information. **O3**: curated fields, not raw backend rows. **E2**: an empty result names a next step. | `--call <read-only tool> --args-json '...'` (payload validation against the schema, O2, O3). |
 | Huge outputs or timeouts | **B1**: `limit` with a default and a maximum enforced in code, truncation announced, the upstream paged. **B3**: a per-caller concurrency bound in front of a shared backend. **X5**: timeouts. | `--call <listing tool>`, which checks the result size against `--max-bytes`. |
