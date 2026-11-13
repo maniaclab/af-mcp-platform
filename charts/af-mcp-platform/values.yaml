@@ -623,7 +623,7 @@ aggregator:
   # List of ServiceSpec objects passed verbatim into services.yaml.
   # Each entry should follow the FastMCP ServiceSpec schema, e.g.:
   #   - name: my-tool
-  #     transport: sse
+  #     transport: http
   #     url: http://my-tool-svc:8000/mcp
   #     apply_namespace: true
   #     tools_cache_ttl: 300  # optional; 0 disables the by-name lookup cache
