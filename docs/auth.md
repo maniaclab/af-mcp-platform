@@ -1217,6 +1217,24 @@ another JWT:
    expiry to sweep against; once revoked, its row stays until its owner
    deletes it (step 4).
 
+#### Admin revocation (issue #336)
+
+An operator who needs to cut off another user's PATs uses endpoints gated on
+`ADMIN_GROUP` (`require_admin`) instead of editing Vault by hand:
+
+| Endpoint | Effect |
+| --- | --- |
+| `GET /v1/admin/tokens?subject=<sub>` | List the principal's PATs: name, `lookup_id`, created / last-used / expiry, revoked state. |
+| `DELETE /v1/admin/tokens/{lookup_id}` | Revoke one PAT; the owner is resolved from the lookup index, so no owner check applies. |
+| `DELETE /v1/admin/tokens?subject=<sub>` | Revoke every active PAT of the principal in one CAS write. Already-revoked and expired tokens are left as they are. |
+
+`subject` is required on the collection routes. Each revoked token emits a
+`token.revoked` audit event, the same event an owner's own revoke emits,
+with the admin as the actor (`principal_sub`) and the owner in `args_summary`
+as `subject=`. Revocation sets `revoked_at` on the record, so it takes effect
+on the owner's next request. There is no admin delete of a row; clearing
+revoked rows is the owner's housekeeping (step 4 above).
+
 ### MCP OAuth discovery + PAT bootstrap (issue #140)
 
 The portal's mint page above still requires a signed-in human to visit it and

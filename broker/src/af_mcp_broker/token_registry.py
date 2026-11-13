@@ -259,6 +259,17 @@ class TokenRegistryBackend(ABC):
     ) -> TokenRecord | None:
         """Mark (*principal_id*, *lookup_id*) revoked; returns the updated record, or None if *lookup_id* is unknown or not owned by *principal_id*."""
 
+    @abstractmethod
+    async def revoke_all(
+        self, principal_id: str, revoked_at: float
+    ) -> list[TokenRecord]:
+        """Mark every record of *principal_id* that is still active as of *revoked_at* revoked, in one write; return the records this call revoked.
+
+        A record that is already revoked keeps its original ``revoked_at``,
+        and an expired one is left alone (it can no longer authenticate).
+        Returns an empty list when *principal_id* has nothing to revoke.
+        """
+
     async def get_by_lookup_id(self, lookup_id: str) -> TokenRecord | None:
         """Return the record for *lookup_id* regardless of owner, or None if unknown.
 
@@ -440,6 +451,20 @@ class InMemoryTokenRegistryBackend(TokenRegistryBackend):
             updated = replace(principal_map[lookup_id], revoked_at=revoked_at)
             principal_map[lookup_id] = updated
             return updated
+
+    async def revoke_all(
+        self, principal_id: str, revoked_at: float
+    ) -> list[TokenRecord]:
+        async with self._lock:
+            principal_map = self._by_principal.get(principal_id, {})
+            revoked = [
+                replace(r, revoked_at=revoked_at)
+                for r in principal_map.values()
+                if r.is_active(revoked_at)
+            ]
+            for record in revoked:
+                principal_map[record.lookup_id] = record
+            return revoked
 
     async def touch_last_used(
         self, principal_id: str, lookup_id: str, at: float
@@ -666,6 +691,36 @@ class VaultTokenRegistryBackend(TokenRegistryBackend):
         raise VaultError(
             "revoke(): exceeded retry budget updating "
             f"principal_id={principal_id!r} lookup_id={lookup_id!r}"
+        )
+
+    async def revoke_all(
+        self, principal_id: str, revoked_at: float
+    ) -> list[TokenRecord]:
+        path = self._principal_path(principal_id)
+        for _attempt in range(_MAX_CAS_RETRIES):
+            current = await self._vault_kv.get(path)
+            if current is None:
+                return []
+            data, version = current
+            # Recomputed on every retry against the just-re-read data, for
+            # the same reason as add()'s CAS loop.
+            new_data = dict(data)
+            revoked: list[TokenRecord] = []
+            for lookup_id, fields in data.items():
+                if _record_from_fields(fields).is_active(revoked_at):
+                    new_fields = dict(fields)
+                    new_fields["revoked_at"] = revoked_at
+                    new_data[lookup_id] = new_fields
+                    revoked.append(_record_from_fields(new_fields))
+            if not revoked:
+                return []
+            try:
+                await self._vault_kv.write_cas(path, new_data, version)
+            except CasConflict:
+                continue
+            return revoked
+        raise VaultError(
+            f"revoke_all(): exceeded retry budget for principal_id={principal_id!r}"
         )
 
     async def touch_last_used(

@@ -294,6 +294,17 @@ class TokenRegistry:
     async def get(self, principal_id: str, lookup_id: str) -> TokenRecord | None:
         return await self._backend.get(principal_id, lookup_id)
 
+    async def revoke_all(self, principal_id: str) -> list[TokenRecord]:
+        """Revoke every active token *principal_id* owns in one write; return the revoked records."""
+        records = await self._backend.revoke_all(principal_id, revoked_at=time.time())
+        for record in records:
+            self._log.info(
+                "token_registry.revoked",
+                lookup_id=record.lookup_id,
+                principal_id=principal_id,
+            )
+        return records
+
     async def delete_inactive(
         self, principal_id: str, lookup_ids: frozenset[str] | None = None
     ) -> list[str]:
@@ -335,6 +346,23 @@ def _get_policy(request: Request) -> EntitlementPolicy:
 
 def _iso(epoch: float) -> str:
     return datetime.fromtimestamp(epoch, tz=UTC).isoformat()
+
+
+def _to_summary(record: TokenRecord) -> TokenSummary:
+    return TokenSummary(
+        lookup_id=record.lookup_id,
+        name=record.name,
+        note=record.note,
+        created_at=_iso(record.created_at),
+        expires_at=_iso(record.expires_at) if record.expires_at is not None else None,
+        revoked_at=_iso(record.revoked_at) if record.revoked_at is not None else None,
+        last_used_at=(
+            _iso(record.last_used_at) if record.last_used_at is not None else None
+        ),
+        permission_grant=sorted(record.permission_grant)
+        if record.permission_grant is not None
+        else None,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -501,21 +529,7 @@ async def list_tokens(
     """
     registry = _registry(request)
     rows = await registry.list_for_principal(principal.subject)
-    return [
-        TokenSummary(
-            lookup_id=r.lookup_id,
-            name=r.name,
-            note=r.note,
-            created_at=_iso(r.created_at),
-            expires_at=_iso(r.expires_at) if r.expires_at is not None else None,
-            revoked_at=_iso(r.revoked_at) if r.revoked_at is not None else None,
-            last_used_at=_iso(r.last_used_at) if r.last_used_at is not None else None,
-            permission_grant=sorted(r.permission_grant)
-            if r.permission_grant is not None
-            else None,
-        )
-        for r in rows
-    ]
+    return [_to_summary(r) for r in rows]
 
 
 @router.delete(

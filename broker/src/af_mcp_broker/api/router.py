@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends
 
 from af_mcp_broker.api import (
     admin,
+    admin_tokens,
     catalog_tools,
     credentials,
     health,
@@ -68,3 +69,4 @@ router.include_router(usage.router, dependencies=_maintenance_gated)
 # admin is never blocked by require_not_in_maintenance either, but this
 # router simply isn't wired with that dependency in the first place).
 router.include_router(admin.router)
+router.include_router(admin_tokens.router)

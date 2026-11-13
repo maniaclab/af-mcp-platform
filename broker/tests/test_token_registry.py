@@ -1103,6 +1103,71 @@ async def test_vault_delete_inactive_retries_on_concurrent_cas_conflict(
 
 
 # ---------------------------------------------------------------------------
+# revoke_all(): revoke every active record of one principal in one write.
+# ---------------------------------------------------------------------------
+
+
+async def test_revoke_all_revokes_only_active_records_of_the_principal(
+    backend: TokenRegistryBackend,
+) -> None:
+    await _seed_mixed_records(backend)
+
+    at = time.time()
+    revoked = await backend.revoke_all("p1", revoked_at=at)
+
+    assert [r.lookup_id for r in revoked] == ["active"]
+    assert revoked[0].revoked_at == at
+    rows = {r.lookup_id: r for r in await backend.list_for_principal("p1")}
+    assert rows["active"].revoked_at == at
+    # An already-revoked record keeps its original timestamp.
+    assert rows["revoked"].revoked_at != at
+    assert rows["expired"].revoked_at is None
+    other = await backend.get("p2", "other")
+    assert other is not None
+    assert other.revoked_at is None
+
+
+async def test_revoke_all_for_unknown_principal_returns_empty(
+    backend: TokenRegistryBackend,
+) -> None:
+    assert await backend.revoke_all("nobody", revoked_at=1.0) == []
+
+
+async def test_vault_revoke_all_is_one_write(sa_token_path: Path) -> None:
+    fake = _FakeRegistryVault()
+    backend = _make_vault_backend(fake, sa_token_path)
+    await backend.add(_make_record(lookup_id="a", principal_id="p1", name="a"))
+    await backend.add(_make_record(lookup_id="b", principal_id="p1", name="b"))
+    version_before = fake.entries[_PRINCIPAL_KEY]["version"]
+
+    revoked = await backend.revoke_all("p1", revoked_at=9.0)
+
+    assert {r.lookup_id for r in revoked} == {"a", "b"}
+    assert fake.entries[_PRINCIPAL_KEY]["version"] == version_before + 1
+    assert _DENYLIST_KEY not in fake.entries
+
+
+async def test_vault_revoke_all_retries_on_concurrent_cas_conflict(
+    sa_token_path: Path,
+) -> None:
+    """A revoke_all() racing an add() must not drop the concurrently added
+    record's write, nor miss a record the winner just wrote."""
+    fake = _FakeRegistryVault()
+    replica_a = _make_vault_backend(fake, sa_token_path)
+    replica_b = _make_vault_backend(fake, sa_token_path)
+    await replica_a.add(_make_record(lookup_id="a", principal_id="p1", name="a"))
+
+    await asyncio.gather(
+        replica_a.revoke_all("p1", revoked_at=3.0),
+        replica_b.add(_make_record(lookup_id="b", principal_id="p1", name="b")),
+    )
+
+    rows = {r.lookup_id: r for r in await replica_a.list_for_principal("p1")}
+    assert set(rows) == {"a", "b"}
+    assert rows["a"].revoked_at == 3.0
+
+
+# ---------------------------------------------------------------------------
 # RevokedJtiCache
 # ---------------------------------------------------------------------------
 
