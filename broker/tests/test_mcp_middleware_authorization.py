@@ -17,7 +17,9 @@ from af_mcp_broker.audit.pipeline import (
     aclose_metering_pipeline,
     init_metering_pipeline,
 )
-from af_mcp_broker.authorization import EntitlementPolicy
+from af_mcp_broker.authorization import EntitlementPolicy, RateLimitRule
+from af_mcp_broker.authorization.errors import ToolRateLimitError
+from af_mcp_broker.authorization.rate_limit import InMemoryWindowCounter
 from af_mcp_broker.mcp.middleware import authorization_mw
 from af_mcp_broker.mcp.middleware.authorization_mw import AuthorizationMiddleware
 from af_mcp_broker.mcp.registry import (
@@ -1010,3 +1012,146 @@ async def test_denied_audit_written_inline_not_via_pipeline(
         assert line["target"] == "rucio"
     finally:
         await aclose_metering_pipeline()
+
+
+# ---------------------------------------------------------------------------
+# rate_limits (issue #165): enforced after the entitlement check, before
+# call_next.
+# ---------------------------------------------------------------------------
+
+
+class _Clock:
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def _rate_limited_middleware(
+    registry: ServiceRegistry,
+    policy: EntitlementPolicy,
+    clock: _Clock,
+    *rules: RateLimitRule,
+) -> AuthorizationMiddleware:
+    policy.rate_limits = list(rules)
+    return AuthorizationMiddleware(
+        registry, policy, counter=InMemoryWindowCounter(clock=clock)
+    )
+
+
+async def test_rate_limited_call_is_refused_before_call_next_with_retry_info(
+    registry, policy, make_principal, captured_audits
+) -> None:
+    clock = _Clock()
+    mw = _rate_limited_middleware(
+        registry, policy, clock, RateLimitRule(1, 60, tool="rucio_*")
+    )
+    principal = make_principal(groups=["atlas"])
+    context = _call_tool_context("rucio_list_dids", {}, principal)
+    await mw.on_call_tool(context, _CallNextRecorder(result=ToolResult(content=[])))
+    clock.now += 20
+    call_next = _CallNextRecorder()
+
+    with pytest.raises(ToolError) as excinfo:
+        await mw.on_call_tool(context, call_next)
+
+    assert call_next.called is False
+    message = str(excinfo.value)
+    assert "Rate limit of 1 calls per 60s exceeded for rucio_list_dids" in message
+    assert "Retry-After: 40" in message
+    assert "retry_at: " in message
+    assert isinstance(excinfo.value.__cause__, ToolRateLimitError)
+    # The first, allowed call audited as success; the refused one as rate_limited.
+    assert [r.outcome for r in captured_audits] == ["success", "rate_limited"]
+    record = captured_audits[1]
+    assert record.target == "rucio"
+    assert record.action == "rucio_list_dids"
+    assert record.action_type == "read"
+    assert record.principal_sub == principal.subject
+    assert record.error is not None
+    assert "Rate limit of 1 calls per 60s" in record.error
+    assert record.duration_ms is None
+
+
+async def test_rate_limited_call_increments_counter_without_identity_label(
+    registry, policy, make_principal, captured_audits
+) -> None:
+    mw = _rate_limited_middleware(
+        registry, policy, _Clock(), RateLimitRule(1, 60, action_type="read")
+    )
+    principal = make_principal(groups=["atlas"])
+    context = _call_tool_context("rucio_list_dids", {}, principal)
+    labels = {"service": "rucio", "action_type": "read"}
+    before = _sample("af_mcp_tool_invocations_rate_limited_total", labels)
+    await mw.on_call_tool(context, _CallNextRecorder(result=ToolResult(content=[])))
+
+    with pytest.raises(ToolError):
+        await mw.on_call_tool(context, _CallNextRecorder())
+
+    assert _sample("af_mcp_tool_invocations_rate_limited_total", labels) == before + 1
+    # No per-user label (metrics.py's cardinality policy).
+    metric = next(
+        m
+        for m in REGISTRY.collect()
+        if m.name == "af_mcp_tool_invocations_rate_limited"
+    )
+    assert all(
+        set(sample.labels) == {"service", "action_type"} for sample in metric.samples
+    )
+
+
+async def test_entitlement_denial_comes_first_and_is_not_counted(
+    registry, policy, make_principal, captured_audits
+) -> None:
+    mw = _rate_limited_middleware(
+        registry, policy, _Clock(), RateLimitRule(1, 60, tool="rucio_*")
+    )
+    stranger = make_principal(groups=[])
+    for _ in range(3):
+        with pytest.raises(AuthorizationError):
+            await mw.on_call_tool(
+                _call_tool_context("rucio_list_dids", {}, stranger),
+                _CallNextRecorder(),
+            )
+
+    assert {r.outcome for r in captured_audits} == {"denied"}
+    # The denied calls consumed no budget: the same subject, once entitled,
+    # still has it.
+    entitled = make_principal(groups=["atlas"], subject=stranger.subject)
+    await mw.on_call_tool(
+        _call_tool_context("rucio_list_dids", {}, entitled),
+        _CallNextRecorder(result=ToolResult(content=[])),
+    )
+
+
+async def test_rate_limit_budgets_are_per_principal(
+    registry, policy, make_principal, captured_audits
+) -> None:
+    mw = _rate_limited_middleware(
+        registry, policy, _Clock(), RateLimitRule(1, 60, tool="rucio_*")
+    )
+    for subject in ("alice", "bob"):
+        principal = make_principal(groups=["atlas"], subject=subject)
+        await mw.on_call_tool(
+            _call_tool_context("rucio_list_dids", {}, principal),
+            _CallNextRecorder(result=ToolResult(content=[])),
+        )
+
+    assert [r.outcome for r in captured_audits] == ["success", "success"]
+
+
+async def test_no_rate_limits_never_refuses_and_leaves_counter_untouched(
+    registry, policy, make_principal, captured_audits
+) -> None:
+    counter = InMemoryWindowCounter(clock=_Clock())
+    mw = AuthorizationMiddleware(registry, policy, counter=counter)
+    principal = make_principal(groups=["atlas"])
+    for _ in range(5):
+        await mw.on_call_tool(
+            _call_tool_context("rucio_list_dids", {}, principal),
+            _CallNextRecorder(result=ToolResult(content=[])),
+        )
+
+    assert {r.outcome for r in captured_audits} == {"success"}
+    assert counter.tracked_keys == 0
