@@ -1372,14 +1372,21 @@ is why introspection, RFC 7662, exists at all).
    lacks the audience gets an `access_denied` redirect — no authorization
    code, no PAT — symmetric with the `TokenAudienceError` a JWT caller
    would get on `/mcp`. Only then does the broker mint a
-   short-lived, single-use, in-process
-   authorization code (`mcp_auth_codes.py` — a few seconds' lifetime, not
-   Vault-backed; a broker restart mid-flow just means the MCP client retries
-   from `/authorize`) before redirecting the browser back to the MCP
+   short-lived (120 s), single-use authorization code
+   (`mcp_auth_codes.py`) before redirecting the browser back to the MCP
    client's own `redirect_uri` with that code and its original `state`.
+   The code is self-contained: a Fernet token (the same `BROKER_STATE_KEY`
+   cipher as the authorize→callback state) holding the principal, client,
+   `redirect_uri`, PKCE challenge, expiry and a random code id. It is opaque
+   to the client, and any replica can open it, so the replica that receives
+   the redemption need not be the one that issued the code. Single use is
+   enforced through the shared-state store: redemption increments
+   `mcp_auth_code:<id>` with a TTL equal to the code's remaining lifetime,
+   and only a count of 1 proceeds. With `SHARED_STATE_URL` unset the marker
+   lives in process memory, which is correct for exactly one replica.
 5. **`POST /v1/oauth/token`** redeems the code: validates it hasn't been
-   used already, that `client_id`/`redirect_uri` match, and that the
-   presented `code_verifier` hashes to the stored PKCE challenge — only then
+   used already (on any replica), that `client_id`/`redirect_uri` match, and
+   that the presented `code_verifier` hashes to the stored PKCE challenge — only then
    mints a **new** PAT (never reuses one) via the same registry the portal's
    `POST /v1/tokens` uses, named after the MCP client's CIMD `client_name`
    when available (falling back to the usual dated default), and returns it
