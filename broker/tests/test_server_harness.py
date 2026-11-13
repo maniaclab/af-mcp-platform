@@ -64,7 +64,7 @@ async def test_run_asgi_app_bind_failure_raises_instead_of_hanging(
 
 @pytest.mark.timeout(30)
 async def test_dead_server_task_surfaces_instead_of_hanging() -> None:
-    """The shared wait used by run_aggregator_async and run_asgi_app: a
+    """The wait used by run_asgi_app: a
     server task that dies with SystemExit (uvicorn's startup-failure signal,
     which asyncio would otherwise re-raise into the event loop itself) is
     contained and reported, instead of the started-flag wait spinning

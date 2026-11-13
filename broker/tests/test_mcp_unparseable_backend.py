@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from conftest import AUDIENCE, ISSUER, make_claims, run_aggregator_async, run_asgi_app
 from fastmcp import Client, FastMCP
-from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.exceptions import ToolError
 
 from af_mcp_broker.authorization import EntitlementPolicy
@@ -26,6 +25,8 @@ from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
+
+    from fastmcp.utilities.tests import ASGIServer
 
 # ---------------------------------------------------------------------------
 # A backend that answers at once, HTTP 200, with something the mcp SDK
@@ -156,9 +157,9 @@ def events(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict[str, Any]]]:
 
 
 @asynccontextmanager
-async def _aggregator_url(
+async def _aggregator_server(
     backend_url: str, registry: ServiceRegistry, principal_cache: Any
-) -> AsyncIterator[str]:
+) -> AsyncIterator[ASGIServer]:
     settings = Settings(oidc_issuer=ISSUER, oidc_audience=AUDIENCE)
     registry.register(_spec(backend_url))
     mcp = build_aggregator(
@@ -168,14 +169,12 @@ async def _aggregator_url(
         CredentialRegistry(),
         principal_cache=principal_cache,
     )
-    async with run_aggregator_async(mcp, path="/mcp") as url:
-        yield url
+    async with run_aggregator_async(mcp, path="/mcp") as server:
+        yield server
 
 
-def _client(url: str, token: str) -> Client:
-    return Client(
-        StreamableHttpTransport(url, headers={"Authorization": f"Bearer {token}"})
-    )
+def _client(server: ASGIServer, token: str) -> Client:
+    return server.client(headers={"Authorization": f"Bearer {token}"})
 
 
 def _invalid_response_events(
@@ -209,10 +208,10 @@ async def test_tools_list_with_unparseable_backend_response_fails_fast_and_is_lo
     token = sig_key.sign(make_claims())
     async with (
         run_asgi_app(app) as backend_url,
-        _aggregator_url(f"{backend_url}/mcp", registry, principal_cache) as url,
+        _aggregator_server(f"{backend_url}/mcp", registry, principal_cache) as server,
     ):
         started = time.monotonic()
-        async with _client(url, token) as client:
+        async with _client(server, token) as client:
             names = {t.name for t in await client.list_tools()}
         elapsed = time.monotonic() - started
 
@@ -240,12 +239,12 @@ async def test_tools_call_with_unparseable_backend_response_fails_fast_and_speci
     token = sig_key.sign(make_claims())
     async with (
         run_asgi_app(app) as backend_url,
-        _aggregator_url(
+        _aggregator_server(
             f"{backend_url}/mcp", ServiceRegistry(), principal_cache
-        ) as url,
+        ) as server,
     ):
         started = time.monotonic()
-        async with _client(url, token) as client:
+        async with _client(server, token) as client:
             with pytest.raises(ToolError) as excinfo:
                 await client.call_tool("bad_ping", {})
         elapsed = time.monotonic() - started

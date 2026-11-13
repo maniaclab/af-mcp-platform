@@ -16,7 +16,6 @@ from conftest import (
     run_asgi_app,
 )
 from fastmcp import Client, FastMCP
-from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.utilities.tests import run_server_async
 
 from af_mcp_broker.api.permissions import _service_status
@@ -33,6 +32,8 @@ from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
+
+    from fastmcp.utilities.tests import ASGIServer
 
 # ---------------------------------------------------------------------------
 # One backend that accepts the connection and never answers (a pod on an
@@ -90,11 +91,11 @@ def list_registry() -> ServiceRegistry:
 
 
 @pytest.fixture
-async def deadline_aggregator_url(
+async def deadline_aggregator_server(
     hung_backend: HungBackend,
     list_registry: ServiceRegistry,
     static_principal_cache: Any,
-) -> AsyncIterator[str]:
+) -> AsyncIterator[ASGIServer]:
     principal_cache, _directory = static_principal_cache
     settings = Settings(
         oidc_issuer=ISSUER,
@@ -124,14 +125,12 @@ async def deadline_aggregator_url(
             CredentialRegistry(),
             principal_cache=principal_cache,
         )
-        async with run_aggregator_async(mcp, path="/mcp") as url:
-            yield url
+        async with run_aggregator_async(mcp, path="/mcp") as server:
+            yield server
 
 
-def _client(url: str, token: str) -> Client:
-    return Client(
-        StreamableHttpTransport(url, headers={"Authorization": f"Bearer {token}"})
-    )
+def _client(server: ASGIServer, token: str) -> Client:
+    return server.client(headers={"Authorization": f"Bearer {token}"})
 
 
 @pytest.fixture
@@ -141,13 +140,13 @@ def token(sig_key: Any, prime_jwks: Any) -> str:
 
 
 async def test_hung_backend_neither_delays_nor_hides_healthy_backends(
-    deadline_aggregator_url: str,
+    deadline_aggregator_server: ASGIServer,
     token: str,
     list_registry: ServiceRegistry,
     list_failure_logs: list[dict[str, Any]],
 ) -> None:
     started = time.monotonic()
-    async with _client(deadline_aggregator_url, token) as client:
+    async with _client(deadline_aggregator_server, token) as client:
         names = {t.name for t in await client.list_tools()}
     elapsed = time.monotonic() - started
 
@@ -161,15 +160,15 @@ async def test_hung_backend_neither_delays_nor_hides_healthy_backends(
 
 
 async def test_deadline_miss_is_negative_cached_for_the_same_caller(
-    deadline_aggregator_url: str, token: str, hung_backend: HungBackend
+    deadline_aggregator_server: ASGIServer, token: str, hung_backend: HungBackend
 ) -> None:
-    async with _client(deadline_aggregator_url, token) as client:
+    async with _client(deadline_aggregator_server, token) as client:
         await client.list_tools()
     assert hung_backend.requests >= 1
     requests_after_first = hung_backend.requests
 
     started = time.monotonic()
-    async with _client(deadline_aggregator_url, token) as client:
+    async with _client(deadline_aggregator_server, token) as client:
         names = {t.name for t in await client.list_tools()}
     elapsed = time.monotonic() - started
 
@@ -179,7 +178,7 @@ async def test_deadline_miss_is_negative_cached_for_the_same_caller(
 
 
 async def test_abandoned_backend_request_is_closed_without_leaked_tasks(
-    deadline_aggregator_url: str,
+    deadline_aggregator_server: ASGIServer,
     token: str,
     hung_backend: HungBackend,
     caplog: pytest.LogCaptureFixture,
@@ -187,7 +186,7 @@ async def test_abandoned_backend_request_is_closed_without_leaked_tasks(
     caplog.set_level(logging.WARNING, logger="asyncio")
     before = asyncio.all_tasks()
 
-    async with _client(deadline_aggregator_url, token) as client:
+    async with _client(deadline_aggregator_server, token) as client:
         await client.list_tools()
     # The backend sees the broker's connection go away rather than lingering.
     for _ in range(100):

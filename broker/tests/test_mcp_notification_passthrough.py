@@ -4,8 +4,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from conftest import make_claims, run_aggregator_async
-from fastmcp import Client, FastMCP
-from fastmcp.client.transports import StreamableHttpTransport
+from fastmcp import FastMCP
 from fastmcp.server.dependencies import get_context
 from fastmcp.utilities.tests import run_server_async
 
@@ -50,7 +49,7 @@ async def progress_backend_url() -> AsyncIterator[str]:
 
 
 @pytest.fixture
-def aggregator_url(settings, progress_backend_url, static_principal_cache):
+def aggregator(settings, progress_backend_url, static_principal_cache):
     """A real build_aggregator() wired to the progress-reporting backend
     above, auth_type="none" so this test stays focused on notification
     pass-through rather than credential injection (which has its own
@@ -78,14 +77,14 @@ def aggregator_url(settings, progress_backend_url, static_principal_cache):
             CredentialRegistry(),
             principal_cache=principal_cache,
         )
-        async with run_aggregator_async(mcp, path="/mcp") as url:
-            yield url
+        async with run_aggregator_async(mcp, path="/mcp") as server:
+            yield server
 
     return _run
 
 
 async def test_backend_progress_notifications_reach_the_aggregators_caller(
-    aggregator_url, sig_key, prime_jwks
+    aggregator, sig_key, prime_jwks
 ) -> None:
     """The concrete regression this file exists for: a backend tool that
     calls ctx.report_progress() must have those notifications forwarded all
@@ -101,11 +100,10 @@ async def test_backend_progress_notifications_reach_the_aggregators_caller(
     ) -> None:
         received.append((progress, total, message))
 
-    async for base_url in aggregator_url():
-        transport = StreamableHttpTransport(
-            base_url, headers={"Authorization": f"Bearer {token}"}
+    async for server in aggregator():
+        client = server.client(
+            headers={"Authorization": f"Bearer {token}"}, progress_handler=_collect
         )
-        client = Client(transport, progress_handler=_collect)
         async with client:
             result = await client.call_tool("progress_report_progress_twice", {})
 

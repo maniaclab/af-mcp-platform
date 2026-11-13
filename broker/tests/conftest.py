@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Iterator
 
     from fastmcp import FastMCP
+    from fastmcp.utilities.tests import ASGIServer
 
 import fastmcp
 import jwt
@@ -25,6 +26,7 @@ import uvicorn
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
 from fastmcp.utilities.http import find_available_port
+from fastmcp.utilities.tests import asgi_server
 from jwt.algorithms import RSAAlgorithm
 from pydantic import SecretStr
 
@@ -354,14 +356,6 @@ async def _await_server_started(
         await asyncio.sleep(0.01)
 
 
-def _port_accepting(port: int) -> bool:
-    """True once a TCP connect to 127.0.0.1:*port* succeeds (sub-ms on
-    loopback) -- the real "uvicorn has bound and is accepting" condition."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-        probe.settimeout(0.05)
-        return probe.connect_ex(("127.0.0.1", port)) == 0
-
-
 @asynccontextmanager
 async def run_asgi_app(app: Any, port: int | None = None) -> AsyncIterator[str]:
     """Run an arbitrary ASGI app (not necessarily a bare FastMCP server)
@@ -420,48 +414,28 @@ class HungBackend:
 
 
 @asynccontextmanager
-async def run_aggregator_async(mcp: FastMCP, path: str = "/mcp") -> AsyncIterator[str]:
-    """Like fastmcp.utilities.tests.run_server_async, but for an aggregator
-    built by mcp.aggregator.build_aggregator(): installs the ASGI-layer
-    identity middleware (build_asgi_auth_middleware) the same way app.py
-    does when mounting /mcp, since issue #138/#144 step 1 moved identity
-    enforcement to that layer, out of FastMCP's own middleware pipeline --
-    run_server_async's run_http_async() call has no way to attach it without
-    reimplementing this same loop, so tests that need a real aggregator
-    (rather than a bare test FastMCP backend) use this instead.
+async def run_aggregator_async(
+    mcp: FastMCP, path: str = "/mcp"
+) -> AsyncIterator[ASGIServer]:
+    """Serve an aggregator built by mcp.aggregator.build_aggregator() in-process
+    through fastmcp's asgi_server (no socket, no uvicorn), and yield the
+    ASGIServer a test builds its clients from (``server.transport(...)``,
+    ``server.client(...)``, ``server.http_client()``).
 
-    Unlike run_server_async (unbounded ``await mcp._started.wait()``,
-    upstream), startup here is bounded and surfaces the server task's death
-    -- see _await_server_started.
+    Installs the ASGI-layer identity middleware (build_asgi_auth_middleware)
+    the same way app.py does when mounting /mcp, since issue #138/#144 step 1
+    moved identity enforcement to that layer, out of FastMCP's own middleware
+    pipeline -- asgi_server forwards ``middleware`` to ``http_app()``, the
+    same call run_http_async makes.
+
+    Only the caller-facing side is in-process: the aggregator's own outbound
+    connections to its backends still use real HTTP, so those backends run
+    through run_server_async / run_asgi_app on real sockets.
     """
-    port = find_available_port()
-    await asyncio.sleep(0.01)
-    server_task = asyncio.create_task(
-        _contained(
-            mcp.run_http_async(
-                host="127.0.0.1",
-                port=port,
-                path=path,
-                middleware=[build_asgi_auth_middleware(mcp)],
-                show_banner=False,
-            )
-        )
-    )
-    try:
-        await _await_server_started(server_task, mcp._started.is_set)
-        # ``_started`` flips when the app lifespan is ready, which is BEFORE
-        # uvicorn binds the listening socket -- upstream's run_server_async
-        # papers over that gap with a flat 0.1s sleep ("give uvicorn a moment
-        # to bind the port"). Poll the actual readiness condition instead: a
-        # TCP connect succeeding means the port is accepting, so the harness
-        # proceeds the moment the server is really up (same bounded loop, so
-        # a server that never binds still fails diagnosably).
-        await _await_server_started(server_task, lambda: _port_accepting(port))
-        yield f"http://127.0.0.1:{port}{path}"
-    finally:
-        server_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
-            await asyncio.wait_for(server_task, timeout=2.0)
+    async with asgi_server(
+        mcp, path=path, middleware=[build_asgi_auth_middleware(mcp)]
+    ) as server:
+        yield server
 
 
 def make_claims(**overrides: Any) -> dict[str, Any]:

@@ -18,8 +18,7 @@ import json
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from fastmcp import Client, FastMCP
-from fastmcp.client.transports import StreamableHttpTransport
+from fastmcp import FastMCP
 from fastmcp.server.dependencies import get_http_headers
 from fastmcp.utilities.tests import run_server_async
 from test_broker_issued import (
@@ -252,12 +251,11 @@ async def test_aggregator_injects_broker_identity_token(
     )
     inbound_token = sig_key.sign(make_claims())
 
-    async with run_aggregator_async(mcp, path="/mcp") as base_url:
-        transport = StreamableHttpTransport(
-            base_url, headers={"Authorization": f"Bearer {inbound_token}"}
-        )
-        async with Client(transport) as client:
-            result = await client.call_tool("toy_seen_authorization", {})
+    async with (
+        run_aggregator_async(mcp, path="/mcp") as server,
+        server.client(headers={"Authorization": f"Bearer {inbound_token}"}) as client,
+    ):
+        result = await client.call_tool("toy_seen_authorization", {})
 
     seen: str = result.data
     assert seen is not None

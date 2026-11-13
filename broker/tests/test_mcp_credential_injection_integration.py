@@ -9,7 +9,6 @@ import pytest
 from conftest import make_claims, run_aggregator_async
 from fastapi import HTTPException
 from fastmcp import Client, FastMCP
-from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.exceptions import ToolError
 from fastmcp.server.auth.providers.jwt import StaticTokenVerifier
 from fastmcp.server.dependencies import get_http_headers
@@ -39,6 +38,7 @@ from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
+    from fastmcp.utilities.tests import ASGIServer
     from starlette.requests import Request
 
     from af_mcp_broker.identity import Principal
@@ -120,7 +120,7 @@ def policy() -> EntitlementPolicy:
 
 
 @pytest.fixture
-def aggregator_app_url(settings, toy_backend_url, policy, static_principal_cache):
+def aggregator_app(settings, toy_backend_url, policy, static_principal_cache):
     """Builds a real aggregator (build_aggregator, no app.py involved) wired
     to the real toy backend above plus a second auth_type="none" backend
     sharing the same URL, and a CredentialRegistry holding only the fake
@@ -132,7 +132,7 @@ def aggregator_app_url(settings, toy_backend_url, policy, static_principal_cache
     exposes ``.directory`` (issue #144 steps 3/3b's directory-backed
     groups/POSIX resolution) letting a test set ``groups_by_subject[sub]``/
     ``posix_by_subject[sub]`` to whatever identity/entitlement it needs
-    before calling ``aggregator_app_url(provider)``.
+    before calling ``aggregator_app(provider)``.
     """
     principal_cache, directory = static_principal_cache
 
@@ -170,36 +170,34 @@ def aggregator_app_url(settings, toy_backend_url, policy, static_principal_cache
             principal_cache=principal_cache,
         )
         _run.service_registry = registry
-        async with run_aggregator_async(mcp, path="/mcp") as url:
-            yield url
+        async with run_aggregator_async(mcp, path="/mcp") as server:
+            yield server
 
     _run.directory = directory
     return _run
 
 
-def _bearer_client(url: str, token: str) -> Client:
-    return Client(
-        StreamableHttpTransport(url, headers={"Authorization": f"Bearer {token}"})
-    )
+def _bearer_client(server: ASGIServer, token: str) -> Client:
+    return server.client(headers={"Authorization": f"Bearer {token}"})
 
 
 async def test_credential_injected_and_inbound_token_not_forwarded(
-    aggregator_app_url, sig_key, prime_jwks
+    aggregator_app, sig_key, prime_jwks
 ) -> None:
     prime_jwks([sig_key.jwk])
     provider = _FakeProvider()
-    aggregator_app_url.directory.groups_by_subject["user-123"] = ["atlas"]
+    aggregator_app.directory.groups_by_subject["user-123"] = ["atlas"]
     # POSIX identity now comes from the directory (issue #144 step 3b), not
     # the JWT's own `posix` claim -- see the fixture docstring above.
-    aggregator_app_url.directory.posix_by_subject["user-123"] = {
+    aggregator_app.directory.posix_by_subject["user-123"] = {
         "uid": 501,
         "gid": 501,
         "unixname": "u501",
     }
     inbound_token = sig_key.sign(make_claims())
 
-    async for base_url in aggregator_app_url(provider):
-        async with _bearer_client(base_url, inbound_token) as client:
+    async for server in aggregator_app(provider):
+        async with _bearer_client(server, inbound_token) as client:
             result = await client.call_tool("toy_seen_authorization", {})
 
     assert result.data == "Bearer minted-for-501"
@@ -216,7 +214,7 @@ async def test_credential_injected_and_inbound_token_not_forwarded(
 
 
 async def test_per_user_credential_isolation(
-    aggregator_app_url, sig_key, prime_jwks
+    aggregator_app, sig_key, prime_jwks
 ) -> None:
     """Alice and Bob must be genuinely distinct principals (different `sub`),
     not just different POSIX identities on a shared subject: since POSIX
@@ -226,14 +224,14 @@ async def test_per_user_credential_isolation(
     unification exists to make impossible."""
     prime_jwks([sig_key.jwk])
     provider = _FakeProvider()
-    aggregator_app_url.directory.groups_by_subject["user-alice"] = ["atlas"]
-    aggregator_app_url.directory.groups_by_subject["user-bob"] = ["atlas"]
-    aggregator_app_url.directory.posix_by_subject["user-alice"] = {
+    aggregator_app.directory.groups_by_subject["user-alice"] = ["atlas"]
+    aggregator_app.directory.groups_by_subject["user-bob"] = ["atlas"]
+    aggregator_app.directory.posix_by_subject["user-alice"] = {
         "uid": 111,
         "gid": 111,
         "unixname": "alice",
     }
-    aggregator_app_url.directory.posix_by_subject["user-bob"] = {
+    aggregator_app.directory.posix_by_subject["user-bob"] = {
         "uid": 222,
         "gid": 222,
         "unixname": "bob",
@@ -241,10 +239,10 @@ async def test_per_user_credential_isolation(
     alice_token = sig_key.sign(make_claims(sub="user-alice"))
     bob_token = sig_key.sign(make_claims(sub="user-bob"))
 
-    async for base_url in aggregator_app_url(provider):
-        async with _bearer_client(base_url, alice_token) as client:
+    async for server in aggregator_app(provider):
+        async with _bearer_client(server, alice_token) as client:
             alice_result = await client.call_tool("toy_seen_authorization", {})
-        async with _bearer_client(base_url, bob_token) as client:
+        async with _bearer_client(server, bob_token) as client:
             bob_result = await client.call_tool("toy_seen_authorization", {})
 
     assert alice_result.data == "Bearer minted-for-111"
@@ -257,15 +255,15 @@ async def test_per_user_credential_isolation(
 
 
 async def test_unauthorized_principal_denied_before_credential_provider_touched(
-    aggregator_app_url, sig_key, prime_jwks
+    aggregator_app, sig_key, prime_jwks
 ) -> None:
     prime_jwks([sig_key.jwk])
     provider = _FakeProvider()
-    aggregator_app_url.directory.groups_by_subject["user-123"] = []  # lacks read_data
+    aggregator_app.directory.groups_by_subject["user-123"] = []  # lacks read_data
     token = sig_key.sign(make_claims())
 
-    async for base_url in aggregator_app_url(provider):
-        async with _bearer_client(base_url, token) as client:
+    async for server in aggregator_app(provider):
+        async with _bearer_client(server, token) as client:
             # A denied tools/call surfaces as a normal (though failed)
             # CallToolResult, not a transport-level protocol error -- the
             # client's call_tool() convenience method raises fastmcp's own
@@ -280,42 +278,42 @@ async def test_unauthorized_principal_denied_before_credential_provider_touched(
 
 
 async def test_not_linked_surfaces_friendly_error(
-    aggregator_app_url, sig_key, prime_jwks
+    aggregator_app, sig_key, prime_jwks
 ) -> None:
     prime_jwks([sig_key.jwk])
     provider = _FakeProvider(linked=False)
-    aggregator_app_url.directory.groups_by_subject["user-123"] = ["atlas"]
+    aggregator_app.directory.groups_by_subject["user-123"] = ["atlas"]
     token = sig_key.sign(make_claims())
 
-    async for base_url in aggregator_app_url(provider):
-        async with _bearer_client(base_url, token) as client:
+    async for server in aggregator_app(provider):
+        async with _bearer_client(server, token) as client:
             with pytest.raises(ToolError, match="not linked"):
                 await client.call_tool("toy_seen_authorization", {})
 
 
 async def test_needs_unlock_surfaces_portal_hint(
-    aggregator_app_url, sig_key, prime_jwks
+    aggregator_app, sig_key, prime_jwks
 ) -> None:
     prime_jwks([sig_key.jwk])
     provider = _FakeProvider(needs_unlock=True)
-    aggregator_app_url.directory.groups_by_subject["user-123"] = ["atlas"]
+    aggregator_app.directory.groups_by_subject["user-123"] = ["atlas"]
     token = sig_key.sign(make_claims())
 
-    async for base_url in aggregator_app_url(provider):
-        async with _bearer_client(base_url, token) as client:
+    async for server in aggregator_app(provider):
+        async with _bearer_client(server, token) as client:
             with pytest.raises(ToolError, match="portal"):
                 await client.call_tool("toy_seen_authorization", {})
 
 
 async def test_auth_type_none_skips_credential_resolution(
-    aggregator_app_url, sig_key, prime_jwks
+    aggregator_app, sig_key, prime_jwks
 ) -> None:
     prime_jwks([sig_key.jwk])
     provider = _FakeProvider()
     token = sig_key.sign(make_claims())  # no permission needed for "open"
 
-    async for base_url in aggregator_app_url(provider):
-        async with _bearer_client(base_url, token) as client:
+    async for server in aggregator_app(provider):
+        async with _bearer_client(server, token) as client:
             result = await client.call_tool("open_seen_authorization", {})
 
     # "open" is auth_type="none" and not registered with the fake provider at
@@ -422,20 +420,18 @@ async def _oauth21_provider_holding(
 
 
 async def test_backend_401_marks_the_oauth21_credential_rejected(
-    aggregator_app_url, verifying_backend, sig_key, prime_jwks, make_principal
+    aggregator_app, verifying_backend, sig_key, prime_jwks, make_principal
 ) -> None:
     """No refresh token (Indico, JupyterHub): the first 401 rejects."""
     prime_jwks([sig_key.jwk])
     provider = await _oauth21_provider_holding(
         "revoked-token", token_endpoint=verifying_backend.token_endpoint
     )
-    aggregator_app_url.directory.groups_by_subject["user-123"] = ["atlas"]
+    aggregator_app.directory.groups_by_subject["user-123"] = ["atlas"]
     token = sig_key.sign(make_claims())
 
-    async for base_url in aggregator_app_url(
-        provider, toy_url=verifying_backend.mcp_url
-    ):
-        async with _bearer_client(base_url, token) as client:
+    async for server in aggregator_app(provider, toy_url=verifying_backend.mcp_url):
+        async with _bearer_client(server, token) as client:
             with pytest.raises(ToolError):
                 await client.call_tool("toy_ping", {})
 
@@ -447,19 +443,17 @@ async def test_backend_401_marks_the_oauth21_credential_rejected(
 
 
 async def test_backend_accepting_the_credential_leaves_it_linked(
-    aggregator_app_url, verifying_backend, sig_key, prime_jwks, make_principal
+    aggregator_app, verifying_backend, sig_key, prime_jwks, make_principal
 ) -> None:
     prime_jwks([sig_key.jwk])
     provider = await _oauth21_provider_holding(
         _ACCEPTED_TOKEN, token_endpoint=verifying_backend.token_endpoint
     )
-    aggregator_app_url.directory.groups_by_subject["user-123"] = ["atlas"]
+    aggregator_app.directory.groups_by_subject["user-123"] = ["atlas"]
     token = sig_key.sign(make_claims())
 
-    async for base_url in aggregator_app_url(
-        provider, toy_url=verifying_backend.mcp_url
-    ):
-        async with _bearer_client(base_url, token) as client:
+    async for server in aggregator_app(provider, toy_url=verifying_backend.mcp_url):
+        async with _bearer_client(server, token) as client:
             result = await client.call_tool("toy_ping", {})
 
     assert result.data == "pong"
@@ -468,7 +462,7 @@ async def test_backend_accepting_the_credential_leaves_it_linked(
 
 
 async def test_backend_401_refreshes_a_refreshable_credential_instead(
-    aggregator_app_url, verifying_backend, sig_key, prime_jwks, make_principal
+    aggregator_app, verifying_backend, sig_key, prime_jwks, make_principal
 ) -> None:
     """With a refresh token (Rucio), a 401 earns one refresh instead of a
     rejection. The 401 lands on the listing that precedes the call in the same
@@ -480,13 +474,11 @@ async def test_backend_401_refreshes_a_refreshable_credential_instead(
         token_endpoint=verifying_backend.token_endpoint,
         refresh_token="refresh-1",
     )
-    aggregator_app_url.directory.groups_by_subject["user-123"] = ["atlas"]
+    aggregator_app.directory.groups_by_subject["user-123"] = ["atlas"]
     token = sig_key.sign(make_claims())
 
-    async for base_url in aggregator_app_url(
-        provider, toy_url=verifying_backend.mcp_url
-    ):
-        async with _bearer_client(base_url, token) as client:
+    async for server in aggregator_app(provider, toy_url=verifying_backend.mcp_url):
+        async with _bearer_client(server, token) as client:
             result = await client.call_tool("toy_ping", {})
 
     assert result.data == "pong"
@@ -496,7 +488,7 @@ async def test_backend_401_refreshes_a_refreshable_credential_instead(
 
 
 async def test_backend_401_for_the_refreshed_token_rejects_it(
-    aggregator_app_url, verifying_backend, sig_key, prime_jwks, make_principal
+    aggregator_app, verifying_backend, sig_key, prime_jwks, make_principal
 ) -> None:
     """A backend that rejects the refreshed token too gets no second refresh."""
     prime_jwks([sig_key.jwk])
@@ -506,14 +498,12 @@ async def test_backend_401_for_the_refreshed_token_rejects_it(
         token_endpoint=verifying_backend.token_endpoint,
         refresh_token="refresh-1",
     )
-    aggregator_app_url.directory.groups_by_subject["user-123"] = ["atlas"]
+    aggregator_app.directory.groups_by_subject["user-123"] = ["atlas"]
     token = sig_key.sign(make_claims())
 
     for _ in range(2):
-        async for base_url in aggregator_app_url(
-            provider, toy_url=verifying_backend.mcp_url
-        ):
-            async with _bearer_client(base_url, token) as client:
+        async for server in aggregator_app(provider, toy_url=verifying_backend.mcp_url):
+            async with _bearer_client(server, token) as client:
                 with pytest.raises(ToolError):
                     await client.call_tool("toy_ping", {})
 
@@ -537,7 +527,7 @@ async def _catalog_view(
 
 
 async def test_rejected_oauth21_credential_reads_as_rejected_in_the_catalog(
-    aggregator_app_url, verifying_backend, sig_key, prime_jwks, make_principal
+    aggregator_app, verifying_backend, sig_key, prime_jwks, make_principal
 ) -> None:
     """The caller linked and the backend rejected the token: the catalog says
     "rejected" (re-link), not "not_linked", though ``is_linked()`` is False."""
@@ -545,25 +535,23 @@ async def test_rejected_oauth21_credential_reads_as_rejected_in_the_catalog(
     provider = await _oauth21_provider_holding(
         "revoked-token", token_endpoint=verifying_backend.token_endpoint
     )
-    aggregator_app_url.directory.groups_by_subject["user-123"] = ["atlas"]
+    aggregator_app.directory.groups_by_subject["user-123"] = ["atlas"]
     token = sig_key.sign(make_claims())
 
-    async for base_url in aggregator_app_url(
-        provider, toy_url=verifying_backend.mcp_url
-    ):
-        async with _bearer_client(base_url, token) as client:
+    async for server in aggregator_app(provider, toy_url=verifying_backend.mcp_url):
+        async with _bearer_client(server, token) as client:
             with pytest.raises(ToolError):
                 await client.call_tool("toy_ping", {})
 
     assert await _catalog_view(
-        aggregator_app_url.service_registry,
+        aggregator_app.service_registry,
         provider,
         make_principal(subject="user-123"),
     ) == ("link_required", "rejected")
 
 
 async def test_call_with_a_rejected_oauth21_credential_says_relink(
-    aggregator_app_url, verifying_backend, sig_key, prime_jwks
+    aggregator_app, verifying_backend, sig_key, prime_jwks
 ) -> None:
     """With a stored credential the backend rejected, a tool call tells the
     caller it was rejected and to re-link -- not that nothing is linked."""
@@ -571,13 +559,11 @@ async def test_call_with_a_rejected_oauth21_credential_says_relink(
     provider = await _oauth21_provider_holding(
         "revoked-token", token_endpoint=verifying_backend.token_endpoint, rejected=True
     )
-    aggregator_app_url.directory.groups_by_subject["user-123"] = ["atlas"]
+    aggregator_app.directory.groups_by_subject["user-123"] = ["atlas"]
     token = sig_key.sign(make_claims())
 
-    async for base_url in aggregator_app_url(
-        provider, toy_url=verifying_backend.mcp_url
-    ):
-        async with _bearer_client(base_url, token) as client:
+    async for server in aggregator_app(provider, toy_url=verifying_backend.mcp_url):
+        async with _bearer_client(server, token) as client:
             for _ in range(2):
                 with pytest.raises(ToolError, match="rejected") as excinfo:
                     await client.call_tool("toy_ping", {})
@@ -587,7 +573,7 @@ async def test_call_with_a_rejected_oauth21_credential_says_relink(
 
 
 async def test_refreshed_oauth21_credential_leaves_no_rejection_in_the_catalog(
-    aggregator_app_url, verifying_backend, sig_key, prime_jwks, make_principal
+    aggregator_app, verifying_backend, sig_key, prime_jwks, make_principal
 ) -> None:
     """A 401 that a refresh resolves records the caller's "unauthorized"
     listing failure first; the retried listing then succeeds and clears it, so
@@ -598,17 +584,15 @@ async def test_refreshed_oauth21_credential_leaves_no_rejection_in_the_catalog(
         token_endpoint=verifying_backend.token_endpoint,
         refresh_token="refresh-1",
     )
-    aggregator_app_url.directory.groups_by_subject["user-123"] = ["atlas"]
+    aggregator_app.directory.groups_by_subject["user-123"] = ["atlas"]
     token = sig_key.sign(make_claims())
 
-    async for base_url in aggregator_app_url(
-        provider, toy_url=verifying_backend.mcp_url
-    ):
-        async with _bearer_client(base_url, token) as client:
+    async for server in aggregator_app(provider, toy_url=verifying_backend.mcp_url):
+        async with _bearer_client(server, token) as client:
             result = await client.call_tool("toy_ping", {})
 
     assert result.data == "pong"
-    service_registry = aggregator_app_url.service_registry
+    service_registry = aggregator_app.service_registry
     assert service_registry.recent_list_failure("toy", "user-123") is None
     assert await _catalog_view(
         service_registry, provider, make_principal(subject="user-123")
@@ -616,7 +600,7 @@ async def test_refreshed_oauth21_credential_leaves_no_rejection_in_the_catalog(
 
 
 async def test_unreachable_authorization_server_leaves_the_catalog_unrejected(
-    aggregator_app_url, verifying_backend, sig_key, prime_jwks, make_principal
+    aggregator_app, verifying_backend, sig_key, prime_jwks, make_principal
 ) -> None:
     """The refresh cannot reach the AS: the credential is left as it was and
     the catalog does not call it rejected, although the call itself failed."""
@@ -626,18 +610,16 @@ async def test_unreachable_authorization_server_leaves_the_catalog_unrejected(
         token_endpoint="http://127.0.0.1:1/oauth/token",
         refresh_token="refresh-1",
     )
-    aggregator_app_url.directory.groups_by_subject["user-123"] = ["atlas"]
+    aggregator_app.directory.groups_by_subject["user-123"] = ["atlas"]
     token = sig_key.sign(make_claims())
 
-    async for base_url in aggregator_app_url(
-        provider, toy_url=verifying_backend.mcp_url
-    ):
-        async with _bearer_client(base_url, token) as client:
+    async for server in aggregator_app(provider, toy_url=verifying_backend.mcp_url):
+        async with _bearer_client(server, token) as client:
             with pytest.raises(ToolError):
                 await client.call_tool("toy_ping", {})
 
     principal = make_principal(subject="user-123")
     assert await provider.is_linked(principal) is True
     assert await _catalog_view(
-        aggregator_app_url.service_registry, provider, principal
+        aggregator_app.service_registry, provider, principal
     ) == ("available", None)

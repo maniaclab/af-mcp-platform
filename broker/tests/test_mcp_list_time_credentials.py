@@ -8,7 +8,6 @@ import httpx
 import pytest
 from conftest import make_claims, run_aggregator_async, run_asgi_app
 from fastmcp import Client, FastMCP
-from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_http_headers
 from fastmcp.utilities.http import find_available_port
@@ -32,6 +31,8 @@ from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
+
+    from fastmcp.utilities.tests import ASGIServer
 
     from af_mcp_broker.identity import Principal
 
@@ -168,7 +169,7 @@ class _FakeListProvider(CredentialProvider):
 @pytest.fixture
 def policy() -> EntitlementPolicy:
     # required_permission for each target ("secure"/"open"/"dead") is
-    # declared on that target's ServiceSpec in the aggregator_url fixture
+    # declared on that target's ServiceSpec in the aggregator_server fixture
     # below -- the registry is authoritative for that, not EntitlementPolicy
     # (see check_entitlement's docstring). This policy only needs to say
     # which permissions the "atlas" group grants.
@@ -186,7 +187,7 @@ def fake_provider() -> _FakeListProvider:
 
 
 @pytest.fixture
-async def aggregator_url(
+async def aggregator_server(
     settings: Any,
     policy: EntitlementPolicy,
     fake_provider: _FakeListProvider,
@@ -194,7 +195,7 @@ async def aggregator_url(
     open_backend_url: str,
     dead_backend_url: str,
     static_principal_cache: Any,
-) -> AsyncIterator[str]:
+) -> AsyncIterator[ASGIServer]:
     # Each test persona minted via _token_for below now gets its own JWT
     # `sub` (issue #144 step 3b: POSIX identity comes from the directory,
     # keyed by subject, so two principals sharing a subject would be unable
@@ -252,21 +253,19 @@ async def aggregator_url(
     mcp = build_aggregator(
         registry, settings, policy, credential_registry, principal_cache=principal_cache
     )
-    async with run_aggregator_async(mcp, path="/mcp") as url:
-        yield url
+    async with run_aggregator_async(mcp, path="/mcp") as server:
+        yield server
 
 
-def _bearer_client(url: str, token: str) -> Client:
-    return Client(
-        StreamableHttpTransport(url, headers={"Authorization": f"Bearer {token}"})
-    )
+def _bearer_client(server: ASGIServer, token: str) -> Client:
+    return server.client(headers={"Authorization": f"Bearer {token}"})
 
 
 # The fixed set of test personas this file's tests mint tokens for -- each
 # needs its own JWT `sub` (issue #144 step 3b: POSIX identity, like groups,
 # is a directory fact keyed by subject, so distinct principals can no longer
 # share one), pre-registered on the test-controlled directory by the
-# aggregator_url fixture above.
+# aggregator_server fixture above.
 _TEST_PERSONAS: tuple[tuple[int, int, str], ...] = (
     (111, 111, "alice"),
     (222, 222, "bob"),
@@ -280,7 +279,7 @@ def _subject_for(unixname: str) -> str:
 
 def _token_for(uid: int, gid: int, unixname: str) -> Any:
     # Neither groups nor POSIX identity travels via claims any more (issue
-    # #144 steps 3/3b) -- the aggregator_url fixture above sets the matching
+    # #144 steps 3/3b) -- the aggregator_server fixture above sets the matching
     # entitlement and uid/gid/unixname directly on the test-controlled
     # directory, keyed by this same subject. Asserting membership in
     # _TEST_PERSONAS here catches a typo'd/unregistered persona immediately,
@@ -290,7 +289,7 @@ def _token_for(uid: int, gid: int, unixname: str) -> Any:
 
 
 async def test_linked_entitled_principal_sees_auth_gated_tools(
-    aggregator_url: str, sig_key: Any, prime_jwks: Any
+    aggregator_server: ASGIServer, sig_key: Any, prime_jwks: Any
 ) -> None:
     """(a) With a linked identity and the required permission, tools/list
     through /mcp returns the auth-gated backend's namespaced tools -- the
@@ -298,7 +297,7 @@ async def test_linked_entitled_principal_sees_auth_gated_tools(
     prime_jwks([sig_key.jwk])
     token = sig_key.sign(_token_for(111, 111, "alice"))
 
-    async with _bearer_client(aggregator_url, token) as client:
+    async with _bearer_client(aggregator_server, token) as client:
         names = {t.name for t in await client.list_tools()}
 
     assert "secure_whoami" in names
@@ -309,7 +308,10 @@ async def test_linked_entitled_principal_sees_auth_gated_tools(
 
 
 async def test_unlinked_principal_missing_secure_tools_rest_of_list_works(
-    aggregator_url: str, sig_key: Any, prime_jwks: Any, monkeypatch: pytest.MonkeyPatch
+    aggregator_server: ASGIServer,
+    sig_key: Any,
+    prime_jwks: Any,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """(b) An unlinked principal doesn't see the auth-gated backend's tools,
     the rest of the list still works, and the structured failure log is
@@ -326,7 +328,7 @@ async def test_unlinked_principal_missing_secure_tools_rest_of_list_works(
 
     monkeypatch.setattr(aggregator_module.logger, "info", _capture)
 
-    async with _bearer_client(aggregator_url, token) as client:
+    async with _bearer_client(aggregator_server, token) as client:
         names = {t.name for t in await client.list_tools()}
 
     assert "secure_whoami" not in names
@@ -343,7 +345,7 @@ async def test_unlinked_principal_missing_secure_tools_rest_of_list_works(
 
 
 async def test_dead_backend_does_not_break_other_backends_listing(
-    aggregator_url: str, sig_key: Any, prime_jwks: Any
+    aggregator_server: ASGIServer, sig_key: Any, prime_jwks: Any
 ) -> None:
     """(c) A genuinely-down backend (connection refused) still doesn't break
     listing for the other backends, even though it required a permission
@@ -352,7 +354,7 @@ async def test_dead_backend_does_not_break_other_backends_listing(
     prime_jwks([sig_key.jwk])
     token = sig_key.sign(_token_for(111, 111, "alice"))
 
-    async with _bearer_client(aggregator_url, token) as client:
+    async with _bearer_client(aggregator_server, token) as client:
         names = {t.name for t in await client.list_tools()}
 
     assert not any(n.startswith("dead_") for n in names)
@@ -361,7 +363,7 @@ async def test_dead_backend_does_not_break_other_backends_listing(
 
 
 async def test_authorized_call_unchanged_and_inbound_token_never_forwarded(
-    aggregator_url: str, sig_key: Any, prime_jwks: Any
+    aggregator_server: ASGIServer, sig_key: Any, prime_jwks: Any
 ) -> None:
     """(d) tools/call behavior is unchanged for the authorized path, and
     (e) the caller's inbound Keycloak token is never forwarded upstream --
@@ -369,7 +371,7 @@ async def test_authorized_call_unchanged_and_inbound_token_never_forwarded(
     prime_jwks([sig_key.jwk])
     inbound_token = sig_key.sign(_token_for(111, 111, "alice"))
 
-    async with _bearer_client(aggregator_url, inbound_token) as client:
+    async with _bearer_client(aggregator_server, inbound_token) as client:
         result = await client.call_tool("secure_whoami", {})
 
     assert result.data == "Bearer token-for-111"
@@ -377,7 +379,10 @@ async def test_authorized_call_unchanged_and_inbound_token_never_forwarded(
 
 
 async def test_per_user_isolation_during_list(
-    aggregator_url: str, sig_key: Any, prime_jwks: Any, fake_provider: _FakeListProvider
+    aggregator_server: ASGIServer,
+    sig_key: Any,
+    prime_jwks: Any,
+    fake_provider: _FakeListProvider,
 ) -> None:
     """(f) Two principals each get their own minted credential -- exercised
     at list time (not just call time, which test_mcp_credential_injection_
@@ -387,9 +392,9 @@ async def test_per_user_isolation_during_list(
     alice_token = sig_key.sign(_token_for(111, 111, "alice"))
     bob_token = sig_key.sign(_token_for(222, 222, "bob"))
 
-    async with _bearer_client(aggregator_url, alice_token) as client:
+    async with _bearer_client(aggregator_server, alice_token) as client:
         alice_names = {t.name for t in await client.list_tools()}
-    async with _bearer_client(aggregator_url, bob_token) as client:
+    async with _bearer_client(aggregator_server, bob_token) as client:
         bob_names = {t.name for t in await client.list_tools()}
 
     assert "secure_whoami" in alice_names
@@ -398,7 +403,7 @@ async def test_per_user_isolation_during_list(
 
 
 async def test_unlinked_listing_does_not_poison_a_linked_callers_authorized_call(
-    aggregator_url: str, sig_key: Any, prime_jwks: Any
+    aggregator_server: ASGIServer, sig_key: Any, prime_jwks: Any
 ) -> None:
     """Regression found while building this fix: fastmcp's ProxyProvider
     only writes its shared, process-wide by-name lookup cache (used by
@@ -420,18 +425,18 @@ async def test_unlinked_listing_does_not_poison_a_linked_callers_authorized_call
     carol_token = sig_key.sign(_token_for(333, 333, "carol"))  # unlinked
     alice_token = sig_key.sign(_token_for(111, 111, "alice"))  # linked
 
-    async with _bearer_client(aggregator_url, carol_token) as client:
+    async with _bearer_client(aggregator_server, carol_token) as client:
         carol_names = {t.name for t in await client.list_tools()}
     assert "secure_whoami" not in carol_names
 
-    async with _bearer_client(aggregator_url, alice_token) as client:
+    async with _bearer_client(aggregator_server, alice_token) as client:
         result = await client.call_tool("secure_whoami", {})
 
     assert result.data == "Bearer token-for-111"
 
 
 async def test_list_then_call_on_healthy_backend_survives_a_sibling_401_during_list(
-    aggregator_url: str, sig_key: Any, prime_jwks: Any
+    aggregator_server: ASGIServer, sig_key: Any, prime_jwks: Any
 ) -> None:
     """Attempted regression coverage for issue #58's "Session terminated"
     report: production showed a single MCP session doing tools/list (which
@@ -455,7 +460,7 @@ async def test_list_then_call_on_healthy_backend_survives_a_sibling_401_during_l
     prime_jwks([sig_key.jwk])
     token = sig_key.sign(_token_for(333, 333, "carol"))
 
-    async with _bearer_client(aggregator_url, token) as client:
+    async with _bearer_client(aggregator_server, token) as client:
         names = {t.name for t in await client.list_tools()}
         assert "secure_whoami" not in names
         assert "open_ping" in names
@@ -603,8 +608,10 @@ class _RecordingBackend:
 class _MintAndInjectEnv:
     """Handles on one aggregator fronting a mint-and-inject backend."""
 
+    # Assigned by the mint_and_inject_env fixture once the aggregator is up.
+    server: ASGIServer
+
     def __init__(self) -> None:
-        self.url = ""
         self.auth_type = ""
         self.backend_requests: list[str] = []
         self.minted_subjects: list[str] = []
@@ -684,8 +691,8 @@ async def mint_and_inject_env(
             principal_cache=principal_cache,
             broker_token_issuer=issuer,
         )
-        async with run_aggregator_async(mcp, path="/mcp") as url:
-            env.url = url
+        async with run_aggregator_async(mcp, path="/mcp") as server:
+            env.server = server
             yield env
 
 
@@ -707,7 +714,7 @@ async def test_unlinked_caller_lists_without_contacting_a_mint_and_inject_backen
 
         monkeypatch.setattr(aggregator_module.logger, level, _capture)
 
-    async with _bearer_client(env.url, token) as client:
+    async with _bearer_client(env.server, token) as client:
         names = {t.name for t in await client.list_tools()}
 
     assert "redeemer_whoami" not in names
@@ -729,7 +736,7 @@ async def test_linked_caller_lists_a_mint_and_inject_backend_with_identity_heade
     env = mint_and_inject_env
     token = sig_key.sign(_token_for(111, 111, "alice"))  # linked
 
-    async with _bearer_client(env.url, token) as client:
+    async with _bearer_client(env.server, token) as client:
         names = {t.name for t in await client.list_tools()}
 
     assert "redeemer_whoami" in names
@@ -752,7 +759,7 @@ async def test_unlinked_caller_calling_an_unlisted_tool_gets_the_not_linked_erro
     env = mint_and_inject_env
     token = sig_key.sign(_token_for(333, 333, "carol"))  # unlinked
 
-    async with _bearer_client(env.url, token) as client:
+    async with _bearer_client(env.server, token) as client:
         with pytest.raises(ToolError, match="not linked"):
             await client.call_tool("redeemer_whoami", {})
 
@@ -771,7 +778,7 @@ async def test_rejected_caller_calling_an_unlisted_tool_still_gets_a_friendly_er
     env.provider.rejected_uids = frozenset({333})
     token = sig_key.sign(_token_for(333, 333, "carol"))
 
-    async with _bearer_client(env.url, token) as client:
+    async with _bearer_client(env.server, token) as client:
         for _ in range(2):
             with pytest.raises(ToolError) as excinfo:
                 await client.call_tool("redeemer_whoami", {})
