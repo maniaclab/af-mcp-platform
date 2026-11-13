@@ -25,7 +25,8 @@ Usage:
     # Check that a bad bearer gets HTTP 401 (X2)
     uv run audit_tools.py --url ... --check-401
 
-Exit status is 1 when any MUST finding is reported, 0 otherwise.
+Exit status is 1 when any MUST finding is reported, 0 when there are none, and
+2 when the audit could not run (cannot connect, unknown --call tool).
 """
 
 from __future__ import annotations
@@ -47,6 +48,7 @@ from fastmcp import Client
 from fastmcp.client.transports import StdioTransport
 
 NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
+EXIT_ERROR = 2
 SUMMARY_MAX_CHARS = 120
 LISTING_VERBS = ("list_", "search_", "query_", "find_", "get_all")
 LIMIT_PARAMS = {
@@ -78,8 +80,9 @@ class Finding:
 
 def _field(obj: Any, snake: str, camel: str) -> Any:
     """Read a tool field under either SDK naming (fastmcp 4 snake_case, older camelCase)."""
-    value = getattr(obj, snake, None)
-    return value if value is not None else getattr(obj, camel, None)
+    if hasattr(obj, snake):
+        return getattr(obj, snake)
+    return getattr(obj, camel, None)
 
 
 def _strip_prefix(name: str, prefix: str | None) -> str:
@@ -271,7 +274,8 @@ async def run(args: argparse.Namespace) -> tuple[int, list[Finding]]:
         if args.call:
             by_name = {t.name: t for t in tools}
             if args.call not in by_name:
-                sys.exit(f"--call: no tool named {args.call!r}")
+                sys.stderr.write(f"--call: no tool named {args.call!r}\n")
+                sys.exit(EXIT_ERROR)
             result = await client.call_tool(
                 args.call, json.loads(args.args_json), raise_on_error=False
             )
@@ -302,7 +306,11 @@ def main() -> None:
     p.add_argument("--check-401", action="store_true", help="check a bad bearer gets HTTP 401 (needs --url)")
     args = p.parse_args()
 
-    n_tools, findings = asyncio.run(run(args))
+    try:
+        n_tools, findings = asyncio.run(run(args))
+    except Exception as exc:  # noqa: BLE001 - any connection failure means no audit
+        sys.stderr.write(f"audit could not run: {type(exc).__name__}: {exc}\n")
+        sys.exit(EXIT_ERROR)
     print(render(findings, n_tools))
     sys.exit(1 if any(f.level == "MUST" for f in findings) else 0)
 

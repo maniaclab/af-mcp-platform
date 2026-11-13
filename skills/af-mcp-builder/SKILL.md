@@ -43,6 +43,9 @@ the report. The guide pins MCP spec revision 2026-07-28.
 
    `uv run` reads the script's inline dependencies (`fastmcp>=4.0.4,<5`,
    `jsonschema`). With pixi, use `pixi exec --spec "fastmcp>=4.0.4,<5" --spec jsonschema python scripts/audit_tools.py ...`.
+   Exit status: 1 when any MUST finding is reported, 0 when there are none, 2
+   when the audit could not run (cannot connect, unknown `--call` tool); on 2,
+   fix the connection and rerun rather than reporting a finding.
    Only call tools that are read-only (check `readOnlyHint`) with `--call`; do not
    call a write tool against a real backend to test E1.
 
