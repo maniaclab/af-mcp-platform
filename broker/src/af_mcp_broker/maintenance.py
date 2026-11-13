@@ -22,7 +22,6 @@ no-ops, matching ``InMemoryUsageStore``'s asymmetry with
 from __future__ import annotations
 
 import abc
-import asyncio
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -285,10 +284,9 @@ class CachingMaintenanceModeStore(MaintenanceModeStore):
       and an expired entry is never served in place of a failed refresh, so
       ``check_not_maintenance_or_fail_open``'s fail-open handling sees
       exactly what it would without the cache.
-    - Concurrent misses share one in-flight fetch (single-flight), so an
-      expiry under load costs one read, not one per waiting request.
-    - A fetch that was in flight when a ``set()`` landed may have read the
-      pre-write value; the generation counter keeps it from being cached.
+    - Concurrent misses may each fetch, and a fetch in flight during a
+      ``set()`` may cache the pre-write value for up to one TTL; both are
+      acceptable for a cache this short.
 
     ``clock`` is injectable so tests control time deterministically; it must
     be monotonic. A ``ttl_seconds`` of 0 disables caching.
@@ -306,8 +304,6 @@ class CachingMaintenanceModeStore(MaintenanceModeStore):
         self._clock = clock
         self._cached: MaintenanceState | None = None
         self._expires_at = 0.0
-        self._generation = 0
-        self._inflight: asyncio.Task[MaintenanceState] | None = None
 
     async def start(self) -> None:
         await self._store.start()
@@ -320,22 +316,10 @@ class CachingMaintenanceModeStore(MaintenanceModeStore):
             return await self._store.get()
         if self._cached is not None and self._clock() < self._expires_at:
             return self._cached
-        if self._inflight is None:
-            self._inflight = asyncio.ensure_future(self._fetch())
-        # shield: one waiter being cancelled must not cancel the fetch the
-        # other waiters share.
-        return await asyncio.shield(self._inflight)
-
-    async def _fetch(self) -> MaintenanceState:
-        generation = self._generation
-        try:
-            state = await self._store.get()
-            if generation == self._generation:
-                self._cached = state
-                self._expires_at = self._clock() + self._ttl_seconds
-            return state
-        finally:
-            self._inflight = None
+        state = await self._store.get()
+        self._cached = state
+        self._expires_at = self._clock() + self._ttl_seconds
+        return state
 
     async def set(self, state: MaintenanceState) -> None:
         try:
@@ -343,7 +327,6 @@ class CachingMaintenanceModeStore(MaintenanceModeStore):
         finally:
             # Invalidate even when the write raised: a CAS conflict means the
             # stored state changed under us, so the cached value is suspect.
-            self._generation += 1
             self._cached = None
 
 

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-
 import pytest
 
 from af_mcp_broker.config import Settings
@@ -18,18 +16,15 @@ _OFF = MaintenanceState(enabled=False, reason=None, enabled_by=None, enabled_at=
 
 
 class _CountingStore(InMemoryMaintenanceModeStore):
-    """A real in-memory store that counts ``get()`` calls and can fail or stall on demand."""
+    """A real in-memory store that counts ``get()`` calls and can fail on demand."""
 
     def __init__(self) -> None:
         super().__init__()
         self.gets = 0
         self.fail: Exception | None = None
-        self.gate: asyncio.Event | None = None
 
     async def get(self) -> MaintenanceState:
         self.gets += 1
-        if self.gate is not None:
-            await self.gate.wait()
         if self.fail is not None:
             raise self.fail
         return await super().get()
@@ -115,48 +110,6 @@ async def test_expired_entry_is_not_served_when_store_fails(
     inner.fail = RuntimeError("store down")
     with pytest.raises(RuntimeError, match="store down"):
         await cache.get()
-
-
-async def test_concurrent_misses_share_one_fetch(inner: _CountingStore, clock: _Clock):
-    cache = _cache(inner, clock)
-    inner.gate = asyncio.Event()
-    tasks = [asyncio.create_task(cache.get()) for _ in range(10)]
-    await asyncio.sleep(0)
-    await asyncio.sleep(0)
-    inner.gate.set()
-    assert await asyncio.gather(*tasks) == [_OFF] * 10
-    assert inner.gets == 1
-
-
-async def test_concurrent_misses_share_one_failure(
-    inner: _CountingStore, clock: _Clock
-):
-    cache = _cache(inner, clock)
-    inner.gate = asyncio.Event()
-    inner.fail = RuntimeError("store down")
-    tasks = [asyncio.create_task(cache.get()) for _ in range(5)]
-    await asyncio.sleep(0)
-    await asyncio.sleep(0)
-    inner.gate.set()
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    assert all(isinstance(r, RuntimeError) for r in results)
-    assert inner.gets == 1
-
-
-async def test_write_during_inflight_fetch_is_not_overwritten_by_stale_read(
-    inner: _CountingStore, clock: _Clock
-):
-    cache = _cache(inner, clock)
-    inner.gate = asyncio.Event()
-    reader = asyncio.create_task(cache.get())
-    await asyncio.sleep(0)
-    await asyncio.sleep(0)
-    # The fetch has read nothing yet-visible to the write; the write lands while it is in flight.
-    await cache.set(_ON)
-    inner.gate.set()
-    await reader
-    inner.gate = None
-    assert await cache.get() == _ON
 
 
 async def test_start_and_aclose_delegate(clock: _Clock):
