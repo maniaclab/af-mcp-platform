@@ -16,6 +16,7 @@ from af_mcp_broker.authorization import EntitlementPolicy, RateLimitRule
 from af_mcp_broker.credentials import CredentialRegistry
 from af_mcp_broker.mcp.aggregator import build_aggregator
 from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
+from af_mcp_broker.shared_state import InMemorySharedState
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -77,6 +78,7 @@ def _serve(
         policy,
         CredentialRegistry(),
         principal_cache=principal_cache,
+        shared_state=InMemorySharedState(),
     )
     return run_aggregator_async(mcp, path="/mcp")
 

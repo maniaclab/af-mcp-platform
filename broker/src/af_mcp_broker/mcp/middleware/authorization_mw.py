@@ -22,7 +22,7 @@ from af_mcp_broker.authorization import (
 from af_mcp_broker.authorization.errors import ToolRateLimitError
 from af_mcp_broker.authorization.rate_limit import check_rate_limits
 from af_mcp_broker.mcp.errors import ERROR_CLASS_TOOL_REPORTED, classify_backend_error
-from af_mcp_broker.shared_state import FallbackSharedState, InMemorySharedState
+from af_mcp_broker.shared_state import FallbackSharedState
 from af_mcp_broker.tracing import (
     current_trace_id,
     get_tracer,
@@ -130,14 +130,17 @@ class AuthorizationMiddleware(Middleware):
         self,
         registry: ServiceRegistry,
         policy: EntitlementPolicy,
-        shared_state: SharedState | None = None,
     ) -> None:
         # Mutable on purpose: populate_aggregator() refreshes these in place
         # on every lifespan entry rather than constructing a new middleware
         # instance each time (mirrors EntitlementMiddleware).
         self.registry = registry
         self.policy = policy
-        self.use_shared_state(shared_state or InMemorySharedState())
+        # The aggregator is built before the lifespan creates the store (see
+        # app.py's mount-time constraint), so the store arrives later through
+        # use_shared_state(). There is deliberately no default store: counting
+        # in a private in-memory one would silently make limits per replica.
+        self.shared_state: FallbackSharedState | None = None
 
     def use_shared_state(self, shared_state: SharedState) -> None:
         """Back ``policy.rate_limits`` with *shared_state*.
@@ -151,6 +154,17 @@ class AuthorizationMiddleware(Middleware):
             component="tool_rate_limit",
             effect="tool rate limits are per-replica until the store recovers",
         )
+
+    def _require_shared_state(self) -> FallbackSharedState:
+        # Refuse rather than count somewhere other than the shared store:
+        # populate_aggregator() installs both the rules and the store, so a
+        # missing store is a wiring bug, not a runtime condition.
+        if self.shared_state is None:
+            raise RuntimeError(
+                "policy.rate_limits is set but no shared state store was "
+                "provided to AuthorizationMiddleware"
+            )
+        return self.shared_state
 
     async def on_call_tool(
         self,
@@ -306,13 +320,14 @@ class AuthorizationMiddleware(Middleware):
             # spends budget, and before any credential is minted or backend
             # contacted. A no-op without policy.rate_limits.
             try:
-                await check_rate_limits(
-                    self.policy.rate_limits,
-                    self.shared_state,
-                    principal.subject,
-                    tool_name,
-                    action_type,
-                )
+                if self.policy.rate_limits:
+                    await check_rate_limits(
+                        self.policy.rate_limits,
+                        self._require_shared_state(),
+                        principal.subject,
+                        tool_name,
+                        action_type,
+                    )
             except ToolRateLimitError as exc:
                 _record_invocation(service.name, tool_name, action_type)
                 metrics.tool_invocations_rate_limited_total.labels(

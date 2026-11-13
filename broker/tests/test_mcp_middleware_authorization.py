@@ -1054,7 +1054,9 @@ def _rate_limited_middleware(
     store: shared_state.SharedState | None = None,
 ) -> AuthorizationMiddleware:
     policy.rate_limits = list(rules)
-    return AuthorizationMiddleware(registry, policy, shared_state=store)
+    mw = AuthorizationMiddleware(registry, policy)
+    mw.use_shared_state(store or InMemorySharedState())
+    return mw
 
 
 async def test_rate_limited_call_is_refused_before_call_next_with_retry_info(
@@ -1141,6 +1143,24 @@ async def test_entitlement_denial_comes_first_and_is_not_counted(
     )
 
 
+async def test_rate_limits_without_a_store_refuse_the_call(
+    registry, policy, make_principal, captured_audits
+) -> None:
+    # A middleware that was never given a store must not count in a private
+    # default one: that would silently make the limits per replica.
+    policy.rate_limits = [RateLimitRule(1, 60, tool="rucio_*")]
+    mw = AuthorizationMiddleware(registry, policy)
+    call_next = _CallNextRecorder()
+    principal = make_principal(groups=["atlas"])
+
+    with pytest.raises(RuntimeError, match="shared state"):
+        await mw.on_call_tool(
+            _call_tool_context("rucio_list_dids", {}, principal), call_next
+        )
+
+    assert not call_next.called
+
+
 async def test_rate_limit_budgets_are_per_principal(
     registry, policy, make_principal, captured_audits
 ) -> None:
@@ -1173,7 +1193,8 @@ async def test_no_rate_limits_never_refuses_and_leaves_counter_untouched(
     registry, policy, make_principal, captured_audits
 ) -> None:
     store = _SpyState()
-    mw = AuthorizationMiddleware(registry, policy, shared_state=store)
+    mw = AuthorizationMiddleware(registry, policy)
+    mw.use_shared_state(store)
     principal = make_principal(groups=["atlas"])
     for _ in range(5):
         await mw.on_call_tool(
