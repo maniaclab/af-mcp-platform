@@ -1,0 +1,10 @@
+# Same ruleset as the broker; the skills' scripts declare requires-python >=3.10
+# in their PEP 723 header, so the target is lower, and their tests are not
+# packaged code.
+extend = "../broker/pyproject.toml"
+target-version = "py310"
+
+[lint.per-file-ignores]
+"**/tests/**" = ["ARG"]
+# The audit script is a CLI: it prints its report and exits with its status.
+"**/scripts/*.py" = ["T20"]
