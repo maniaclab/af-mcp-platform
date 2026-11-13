@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 import structlog
 from cryptography.fernet import Fernet
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import JSONResponse, Response
 from fastmcp.utilities.lifespan import combine_lifespans
@@ -63,7 +63,14 @@ from af_mcp_broker.credentials.servicex_vault import VaultServiceXStore
 from af_mcp_broker.credmon.factory import build_credmon_sync
 from af_mcp_broker.credmon.guidance import JobCredentialGuide, wired_kinds
 from af_mcp_broker.http import aclose_http_client
-from af_mcp_broker.identity import build_dev_principal, get_jwks, issuer_is_local
+from af_mcp_broker.identity import (
+    PrincipalDirectoryUnavailableError,
+    TokenAudienceError,
+    TokenExpiredError,
+    build_dev_principal,
+    get_jwks,
+    issuer_is_local,
+)
 from af_mcp_broker.logging import (
     CorrelatedHTTPException,
     bind_new_correlation_id,
@@ -1374,6 +1381,51 @@ async def _http_exception_handler(request: Request, exc: HTTPException) -> Respo
                 headers=exc.headers,
             )
     return await http_exception_handler(request, exc)
+
+
+# identity.py raises domain exceptions (it is also reached from /mcp, which
+# translates them itself in mcp/middleware/identity_mw.py); /v1 maps each onto
+# the HTTPException the caller has always received, routed through
+# _http_exception_handler so logging and 5xx correlation_id folding are
+# unchanged.
+@app.exception_handler(TokenExpiredError)
+async def _token_expired_error_handler(
+    request: Request, exc: TokenExpiredError
+) -> Response:
+    return await _http_exception_handler(
+        request,
+        HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=exc.detail,
+            headers={"WWW-Authenticate": "Bearer"},
+        ),
+    )
+
+
+@app.exception_handler(TokenAudienceError)
+async def _token_audience_error_handler(
+    request: Request, exc: TokenAudienceError
+) -> Response:
+    return await _http_exception_handler(
+        request,
+        HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=exc.detail,
+            headers={"WWW-Authenticate": "Bearer"},
+        ),
+    )
+
+
+@app.exception_handler(PrincipalDirectoryUnavailableError)
+async def _principal_directory_unavailable_error_handler(
+    request: Request, exc: PrincipalDirectoryUnavailableError
+) -> Response:
+    return await _http_exception_handler(
+        request,
+        HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=exc.detail
+        ),
+    )
 
 
 @app.exception_handler(ValidationError)
