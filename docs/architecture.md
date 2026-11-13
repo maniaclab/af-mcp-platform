@@ -159,14 +159,14 @@ Outside the chart set `SHARED_STATE_URL` (and `MCP_REPLICA_COUNT`) directly.
 
 Per-replica state in the broker, what happens at more than one replica
 without a store, and what each item does when the store is down. "Phase"
-is the order in which items move onto the store; only phase 1 is
+is the order in which items move onto the store; phases 1 and 2 are
 implemented today.
 
 | Item | Location | Effect at N > 1 without a store | Consistency need | Store down | Phase |
 |---|---|---|---|---|---|
 | Unlock brute-force limiter (5 failures / 15 min per uid) | `credentials/cache.py`, `CredentialCache` | Budget multiplied by N (security-relevant) | Strong: one counter per uid, atomic increment | Falls back to a per-replica limit and logs `credential_cache.shared_state_unavailable`; never fails open, never blocks unlock | 1 (done) |
 | Per-tool call rate limits (`rate_limits` in `policy.yaml`) | `authorization/rate_limit.py`, `AuthorizationMiddleware` | Budget multiplied by N | Strong: one counter per rule and subject, atomic increment | Falls back to a per-replica count and logs `tool_rate_limit.shared_state_unavailable`; never fails open, never refuses every call | 1 (done) |
-| PAT mint rate window (`_rate`) | `api/tokens.py` | Mint cap multiplied by N | Strong, but a per-replica cap is a documented trade-off | Fall back to per-replica | 2 |
+| PAT mint rate window (10 mints / hour per subject) | `api/tokens.py`, `TokenRegistry` | Mint cap multiplied by N | Strong: one counter per subject, atomic increment. Soft anti-abuse cap, not a security boundary | Falls back to a per-replica count and logs `token_registry.shared_state_unavailable`; never refuses every mint | 2 (done) |
 | Per-(subject, service) tools/list cache and 30 s negative cache | `mcp/aggregator.py` | Invalidate-on-link/revoke reaches only the replica that handled it | Eventual, bounded by the TTL | Fail open (serve from the local cache) | 3 |
 | Caller list-failure records | `mcp/registry.py` (`_caller_list_failures`) | Status differs by replica until each re-lists | Eventual | Fail open | 3 |
 | Admin lint tables (annotation mismatches, tool-mapping drift) | `mcp/registry.py` | Each replica reports only what it has observed | Eventual | Compute on demand instead of storing | 4 |

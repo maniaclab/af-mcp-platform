@@ -915,7 +915,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         )
     else:
         token_registry_backend = InMemoryTokenRegistryBackend()
-    token_registry = TokenRegistry(token_registry_backend)
+    token_registry = TokenRegistry(token_registry_backend, shared_state)
 
     # --- Principal cache (issue #144 steps 2a/3/3b): resolves every
     # authenticated request's *current* groups/uid/gid/unixname/email from
