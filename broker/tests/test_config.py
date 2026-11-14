@@ -1008,7 +1008,7 @@ def test_usage_batch_settings_default_and_read_env(monkeypatch):
 
 
 def test_usage_retention_settings_default_and_read_env(monkeypatch):
-    assert Settings().usage_retention_days == 90
+    assert Settings().usage_retention_days == 365
     assert Settings().usage_rollup_interval_seconds == 3600
     monkeypatch.setenv("USAGE_RETENTION_DAYS", "0")
     monkeypatch.setenv("USAGE_ROLLUP_INTERVAL_SECONDS", "60")

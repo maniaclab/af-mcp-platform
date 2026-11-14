@@ -197,7 +197,7 @@ bytes and tokens, and deletes them in the same statement.
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `USAGE_RETENTION_DAYS` (chart: `broker.usage.retentionDays`) | `90` | Raw rows older than this many UTC days are rolled up and deleted. `0` keeps raw rows forever and runs no job. |
+| `USAGE_RETENTION_DAYS` (chart: `broker.usage.retentionDays`) | `365` | Raw rows older than this many UTC days are rolled up and deleted. `0` keeps raw rows forever and runs no job. |
 | `USAGE_ROLLUP_INTERVAL_SECONDS` (chart: `broker.usage.rollupIntervalSeconds`) | `3600` | How often each replica attempts the job. |
 
 - **Reads do not change.** `GET /v1/usage` and `af_usage` sum raw rows and
@@ -287,15 +287,16 @@ The recipe:
 
 ### Schema
 
-One idempotent table, `af_mcp_usage_events`, keyed by `audit_id`
-(primary key) with an index on `(principal_sub, ts)`. Inserts use
+Two idempotent tables: `af_mcp_usage_events` (raw rows), keyed by
+`audit_id` (primary key) with indexes on `(principal_sub, ts)` and `ts`,
+and `af_mcp_usage_daily` (the rollup, see
+[Retention and daily rollup](#retention-and-daily-rollup-postgres)). Inserts use
 `ON CONFLICT (audit_id) DO NOTHING`, so redelivery of the same record —
 which best-effort metering permits — is safe by construction. The DDL is
-`CREATE ... IF NOT EXISTS` and runs at broker startup (replicas racing
-each other are fine); there is deliberately **no migration framework**
-yet — one table plus one index does not justify one. There is also no
-retention policy yet: rows are small (one per tool call), so revisit at
-scale rather than up front.
+`CREATE ... IF NOT EXISTS` / `ADD COLUMN IF NOT EXISTS` and runs at broker
+startup (replicas racing each other are fine); there is deliberately **no
+migration framework** yet — idempotent DDL does not justify one. Raw
+rows are bounded by the retention window described above.
 
 ## Operator: metrics
 

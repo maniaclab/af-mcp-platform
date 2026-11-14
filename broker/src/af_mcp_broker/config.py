@@ -411,7 +411,7 @@ class Settings(BaseSettings):
     # rows forever (no job runs). usage_rollup_interval_seconds is how often
     # each replica attempts the job; a Postgres advisory lock lets exactly
     # one proceed.
-    usage_retention_days: int = Field(default=90, ge=0)
+    usage_retention_days: int = Field(default=365, ge=0)
     usage_rollup_interval_seconds: int = Field(default=3600, ge=1)
 
     # Which MaintenanceModeStore implementation (maintenance.py) holds the

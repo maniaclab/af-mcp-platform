@@ -537,7 +537,7 @@ broker:
     # replica attempts the job each rollupIntervalSeconds; a Postgres advisory
     # lock lets one run. Rendered as USAGE_RETENTION_DAYS /
     # USAGE_ROLLUP_INTERVAL_SECONDS.
-    retentionDays: 90
+    retentionDays: 365
     rollupIntervalSeconds: 3600
     postgres:
       # Secret carrying the asyncpg DSN, rendered as USAGE_POSTGRES_DSN via
