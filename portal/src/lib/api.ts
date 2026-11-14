@@ -981,10 +981,8 @@ export interface UsageTotals {
   result_bytes: number;
   // A tiktoken (o200k) ESTIMATE of the tool-result text injected into the
   // LLM client's context — not provider-reported usage, and not the user's
-  // full LLM spend. estimated_cost_usd prices that estimate at the response's
-  // cost_model input rate. Label both as estimates wherever they render.
+  // full token volume. Label it as an estimate wherever it renders.
   result_tokens_est: number;
-  estimated_cost_usd: number;
 }
 
 export interface UsageByService {
@@ -993,7 +991,6 @@ export interface UsageByService {
   errors: number;
   result_bytes: number;
   result_tokens_est: number;
-  estimated_cost_usd: number;
 }
 
 export interface UsageByDay {
@@ -1006,8 +1003,6 @@ export interface UsageByDay {
 export interface UsageResponse {
   subject: string;
   window_days: number;
-  /** The price-table key whose input rate produced every estimated_cost_usd. */
-  cost_model: string;
   totals: UsageTotals;
   by_service: UsageByService[];
   by_day: UsageByDay[];
