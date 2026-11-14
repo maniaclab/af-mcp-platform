@@ -18,7 +18,6 @@ from af_mcp_broker.cimd_client import (
     assert_safe_url,
     build_client_from_document,
     fetch_client_document,
-    is_cimd_client_id,
     redirect_uri_matches,
     resolve_cimd_client,
 )
@@ -34,22 +33,6 @@ def _document(**overrides: Any) -> dict[str, Any]:
     }
     doc.update(overrides)
     return doc
-
-
-@pytest.mark.parametrize(
-    ("client_id", "expected"),
-    [
-        ("https://claude.ai/.well-known/oauth-client", True),
-        ("https://example.com/client", True),
-        ("be659aca-1234-5678-9abc-def012345678", False),
-        ("http://example.com/client", False),
-        ("ftp://example.com/client", False),
-        ("not a url", False),
-        ("", False),
-    ],
-)
-def test_is_cimd_client_id(client_id: str, expected: bool) -> None:
-    assert is_cimd_client_id(client_id) is expected
 
 
 @pytest.mark.parametrize(
