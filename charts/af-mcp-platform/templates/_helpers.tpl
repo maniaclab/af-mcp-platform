@@ -532,14 +532,32 @@ startup refusal (Settings._validate_replica_state_config) for the chart path.
 - name: ADMIN_GROUP
   value: {{ .Values.broker.adminGroup | quote }}
 {{- end }}
-{{- if .Values.broker.tracing.enabled }}
-# OpenTelemetry trace emission (broker tracing.py) -- the standard OTel env
-# vars, read natively by the SDK's OTLP/HTTP exporter (which appends the
-# /v1/traces signal path) and sampler; the broker itself only reads the
-# endpoint as its on/off gate. Rendered only when tracing is enabled so a
-# disabled deployment carries no OTel configuration at all.
+{{- include "af-mcp-platform.validateOtlp" . }}
+{{- if or .Values.broker.tracing.enabled .Values.broker.metrics.otlp.enabled }}
+# OTLP transport (broker.otlp), rendered once for every enabled OpenTelemetry
+# signal: the standard OTel env vars, read natively by the SDK's OTLP/HTTP
+# exporters, which append each signal's /v1/<signal> path. The endpoint is
+# transport only; each signal has its own on/off setting below.
 - name: OTEL_EXPORTER_OTLP_ENDPOINT
-  value: {{ .Values.broker.tracing.endpoint | quote }}
+  value: {{ .Values.broker.otlp.endpoint | quote }}
+{{- if .Values.broker.otlp.headers.existingSecret.name }}
+# Collector request headers from a Secret so credentials never sit in values.
+- name: OTEL_EXPORTER_OTLP_HEADERS
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.broker.otlp.headers.existingSecret.name | quote }}
+      key: {{ .Values.broker.otlp.headers.existingSecret.key | quote }}
+{{- else if .Values.broker.otlp.headers.value }}
+- name: OTEL_EXPORTER_OTLP_HEADERS
+  value: {{ .Values.broker.otlp.headers.value | quote }}
+{{- end }}
+{{- end }}
+{{- if .Values.broker.tracing.enabled }}
+# OpenTelemetry trace emission (broker tracing.py). Rendered only when
+# tracing is enabled so a disabled deployment carries no tracing
+# configuration at all.
+- name: TRACING_ENABLED
+  value: "true"
 {{- if .Values.broker.tracing.sampleRatio }}
 # Head sampling: honor an inbound sampled flag, otherwise keep this ratio of
 # new traces. Unset (SDK default parentbased_always_on) keeps every trace.
@@ -548,6 +566,11 @@ startup refusal (Settings._validate_replica_state_config) for the chart path.
 - name: OTEL_TRACES_SAMPLER_ARG
   value: {{ .Values.broker.tracing.sampleRatio | quote }}
 {{- end }}
+{{- end }}
+{{- if .Values.broker.metrics.otlp.enabled }}
+# OpenTelemetry aggregate metrics (broker otel_metrics.py).
+- name: OTEL_METRICS_ENABLED
+  value: "true"
 {{- end }}
 {{- /*
 Vault connection settings are shared by all Vault-backed stores above (one
@@ -633,5 +656,26 @@ addressed.
 {{- range $key, $val := .Values.broker.env }}
 - name: {{ $key | quote }}
   value: {{ $val | quote }}
+{{- end }}
+{{- end }}
+
+{{/*
+Fails the render on OTLP configuration that cannot work: the pre-split
+broker.tracing.endpoint / broker.tracing.networkPolicy keys (renamed, no
+alias), a signal enabled with no collector endpoint, or both a literal and a
+Secret for the collector headers. Emits nothing.
+*/}}
+{{- define "af-mcp-platform.validateOtlp" -}}
+{{- if hasKey .Values.broker.tracing "endpoint" }}
+{{- fail "broker.tracing.endpoint was removed: set broker.otlp.endpoint (the collector endpoint is now shared by every OpenTelemetry signal)" }}
+{{- end }}
+{{- if hasKey .Values.broker.tracing "networkPolicy" }}
+{{- fail "broker.tracing.networkPolicy was removed: set broker.otlp.networkPolicy (the collector egress rule is now shared by every OpenTelemetry signal)" }}
+{{- end }}
+{{- if and (or .Values.broker.tracing.enabled .Values.broker.metrics.otlp.enabled) (not .Values.broker.otlp.endpoint) }}
+{{- fail "broker.otlp.endpoint is required when broker.tracing.enabled or broker.metrics.otlp.enabled is true" }}
+{{- end }}
+{{- if and .Values.broker.otlp.headers.value .Values.broker.otlp.headers.existingSecret.name }}
+{{- fail "set only one of broker.otlp.headers.value and broker.otlp.headers.existingSecret.name" }}
 {{- end }}
 {{- end }}

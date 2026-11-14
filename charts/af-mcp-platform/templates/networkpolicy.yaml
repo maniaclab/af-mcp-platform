@@ -134,27 +134,28 @@ spec:
           port: {{ .Values.broker.sharedState.networkPolicy.port }}
     {{- end }}
 
-    # OpenTelemetry collector (broker.tracing.enabled) -- allow the broker's
-    # OTLP/HTTP span exports to reach the collector selected by
-    # broker.tracing.networkPolicy (an empty namespaceSelector means the
+    # OpenTelemetry collector (broker.tracing.enabled or
+    # broker.metrics.otlp.enabled) -- allow the broker's OTLP/HTTP span and
+    # metric exports to reach the collector selected by
+    # broker.otlp.networkPolicy (an empty namespaceSelector means the
     # release namespace; an empty podSelector allows any pod there).
-    {{- if .Values.broker.tracing.enabled }}
+    {{- if or .Values.broker.tracing.enabled .Values.broker.metrics.otlp.enabled }}
     - to:
         - namespaceSelector:
             matchLabels:
-              {{- if .Values.broker.tracing.networkPolicy.namespaceSelector }}
-              {{- toYaml .Values.broker.tracing.networkPolicy.namespaceSelector | nindent 14 }}
+              {{- if .Values.broker.otlp.networkPolicy.namespaceSelector }}
+              {{- toYaml .Values.broker.otlp.networkPolicy.namespaceSelector | nindent 14 }}
               {{- else }}
               kubernetes.io/metadata.name: {{ .Release.Namespace | quote }}
               {{- end }}
-          {{- if .Values.broker.tracing.networkPolicy.podSelector }}
+          {{- if .Values.broker.otlp.networkPolicy.podSelector }}
           podSelector:
             matchLabels:
-              {{- toYaml .Values.broker.tracing.networkPolicy.podSelector | nindent 14 }}
+              {{- toYaml .Values.broker.otlp.networkPolicy.podSelector | nindent 14 }}
           {{- end }}
       ports:
         - protocol: TCP
-          port: {{ .Values.broker.tracing.networkPolicy.port }}
+          port: {{ .Values.broker.otlp.networkPolicy.port }}
     {{- end }}
 ---
 # Portal network policy: allow ingress from nginx only; no special egress rules.

@@ -347,6 +347,113 @@ per-identity questions are answered from the audit log, and the full
 reasoning is the module docstring of
 `broker/src/af_mcp_broker/metrics.py`.
 
+### Which signal carries what
+
+Each signal has a cardinality budget, and identity only appears where the
+signal is access-controlled and unbounded by design:
+
+| Signal | Carries identity | Attributes | Cardinality |
+|---|---|---|---|
+| Prometheus metrics (`:9090`) | No | `service`, `tool`, `action_type`, `target` (per metric) | Bounded by `services.yaml` / `policy.yaml` |
+| OTel metrics (OTLP) | No | `service`, `method`, `action_type`, `outcome` | Same bound |
+| Audit log (JSON lines) | Yes: `principal_sub`, `token_id`, `request_id`, `audit_id`, `trace_id` | One record per tool call | Unbounded by design; authoritative, behind access control |
+| Spans (OTLP, sampled) | Yes: `user.id` | Identity, outcome and timing; never arguments or results | Sampled; joins to the audit log by `trace_id` |
+
+Rule of thumb: a question about *a user* is answered from the audit log
+(or a trace); a question about *the facility* is answered from metrics.
+
+## Operator: OTLP transport shared by every signal
+
+Traces and OTel metrics export to one collector, configured once under
+`broker.otlp`; `broker.tracing.enabled` and `broker.metrics.otlp.enabled`
+are only the per-signal switches. With every signal off, nothing OTel is
+rendered.
+
+```yaml
+broker:
+  otlp:
+    endpoint: "http://otel-collector.observability:4318"
+    headers:
+      existingSecret: { name: otlp-collector-auth, key: headers }
+    networkPolicy:
+      namespaceSelector: { kubernetes.io/metadata.name: observability }
+      podSelector: { app.kubernetes.io/name: otel-collector }
+      port: 4318
+```
+
+- `endpoint` renders `OTEL_EXPORTER_OTLP_ENDPOINT` once, whenever any
+  signal is enabled, and is **transport only**: it switches nothing on.
+  It is required when any signal is enabled (the chart refuses to render
+  otherwise, and the broker refuses to start with an enabled signal and no
+  endpoint, naming the signal's setting). Each signal appends its own
+  `/v1/<signal>` path.
+- Each signal has its own switch: `TRACING_ENABLED` (chart
+  `broker.tracing.enabled`), `OTEL_METRICS_ENABLED` (chart
+  `broker.metrics.otlp.enabled`). Enabling one does not enable the other.
+- `headers` renders `OTEL_EXPORTER_OTLP_HEADERS` (`k1=v1,k2=v2`) for every
+  signal. `existingSecret` holds the whole string behind a `secretKeyRef`,
+  so credentials never sit in values; `value` is a literal for non-secret
+  headers such as an MLflow `x-mlflow-experiment-id=3`. Set at most one.
+- `networkPolicy` renders one egress rule to the collector when any signal
+  is enabled and the chart's NetworkPolicy is on; an empty
+  `namespaceSelector` selects the release namespace, an empty
+  `podSelector` allows any pod there.
+- **Breaking rename.** `broker.tracing.endpoint` and
+  `broker.tracing.networkPolicy` no longer exist, with no alias. Setting
+  either makes the chart fail with a message naming `broker.otlp.endpoint` /
+  `broker.otlp.networkPolicy`. Tracing with an empty endpoint used to render
+  silently as "off"; it now fails, because an enabled signal with no
+  collector is a misconfiguration. **Setting `OTEL_EXPORTER_OTLP_ENDPOINT`
+  alone no longer turns tracing on:** the broker now needs
+  `TRACING_ENABLED=true` too (the chart renders both from
+  `broker.tracing.enabled` and `broker.otlp.endpoint`). A deployment that
+  set the endpoint by hand to get traces must add `TRACING_ENABLED=true`.
+
+## Operator: OTel metrics (OTLP)
+
+OTel metrics are **off by default** and the broker is an emitter only.
+Prometheus on `:9090` is unchanged and is all a facility without an OTel
+collector needs; turn this on to feed your own dashboards from a collector.
+In the chart:
+
+```yaml
+broker:
+  otlp:                      # shared collector, see "OTLP transport" below
+    endpoint: "http://otel-collector.observability:4318"
+    networkPolicy:
+      namespaceSelector: { kubernetes.io/metadata.name: observability }
+      podSelector: { app.kubernetes.io/name: otel-collector }
+      port: 4318
+  metrics:
+    otlp:
+      enabled: true
+```
+
+- `broker.metrics.otlp.enabled` renders `OTEL_METRICS_ENABLED`. Unset,
+  nothing is installed and recording is a no-op.
+- The collector is shared with tracing through `broker.otlp` (see
+  [OTLP transport](#operator-otlp-transport-shared-by-every-signal)): the
+  endpoint, headers, timeout and TLS come from the standard
+  `OTEL_EXPORTER_OTLP_*` variables, which the SDK exporter reads natively
+  (appending `/v1/metrics`). Enabling metrics does not enable tracing:
+  the endpoint is transport only.
+- An unreachable collector never fails startup or a tool call; export
+  failures are the periodic reader's background problem.
+
+| Metric | Type | Unit | Meaning |
+|---|---|---|---|
+| `af_mcp.tool.calls` | counter | `{call}` | Tool calls that reached a backend. |
+| `af_mcp.tool.errors` | counter | `{call}` | Of those, the ones that ended in error. |
+| `af_mcp.tool.duration` | histogram | `s` | Wall time of the downstream call; same buckets as `af_mcp_tool_duration_seconds`. |
+| `af_mcp.tool.result_bytes` | counter | `By` | Serialized size of tool results (an estimate of what enters the LLM client's context). |
+| `af_mcp.tool.result_tokens_est` | counter | `{token}` | Estimated tokens of those results. |
+
+Every instrument carries exactly `service`, `method`, `action_type` and
+`outcome`, and no other attribute: a test fails if any metric gains a user,
+token, jti or request-id attribute. Like usage accounting, these cover
+success and error calls only; denied and unmapped calls never reach the
+metering worker.
+
 ## Operator: enabling trace emission
 
 Tracing is **off by default** and the broker is an emitter only — point
@@ -355,29 +462,24 @@ it at any OTLP/HTTP collector (Grafana Tempo, Jaeger, an OTel Collector,
 
 ```yaml
 broker:
+  otlp:
+    endpoint: "http://otel-collector.observability:4318"   # see OTLP transport
   tracing:
     enabled: true
-    endpoint: "http://otel-collector.observability:4318"
     sampleRatio: ""          # empty = keep every trace
-    networkPolicy:
-      namespaceSelector: { kubernetes.io/metadata.name: observability }
-      podSelector: { app.kubernetes.io/name: otel-collector }
-      port: 4318
 ```
 
-- `endpoint` renders as `OTEL_EXPORTER_OTLP_ENDPOINT` — the standard OTel
-  env var, which the SDK's exporter reads natively (appending the
-  `/v1/traces` signal path itself). This is also the broker's on/off
-  gate: unset, no tracer provider is installed and every OTel call —
-  fastmcp's native spans included — no-ops.
+- `broker.tracing.enabled` renders `TRACING_ENABLED`, the broker's on/off
+  switch for tracing: off, no tracer provider is installed and every OTel
+  call — fastmcp's native spans included — no-ops, even if
+  `OTEL_EXPORTER_OTLP_ENDPOINT` is set for another signal.
+  `broker.otlp.endpoint` renders as `OTEL_EXPORTER_OTLP_ENDPOINT` — the
+  standard OTel env var, which the SDK's exporter reads natively (appending
+  the `/v1/traces` signal path itself); it is transport only.
 - `sampleRatio` (a head-sampling ratio in `[0, 1]`) renders as
   `OTEL_TRACES_SAMPLER=parentbased_traceidratio` plus
   `OTEL_TRACES_SAMPLER_ARG=<ratio>`; empty means the SDK default
   `parentbased_always_on` — every trace, fine at tool-call volumes.
-- `networkPolicy` renders an egress rule to the collector (only when
-  tracing and the chart's NetworkPolicy are both enabled); an empty
-  `namespaceSelector` selects the release namespace, an empty
-  `podSelector` allows any pod there.
 
 An unreachable collector never fails startup or a tool call — export
 failures are the batch exporter's background problem.

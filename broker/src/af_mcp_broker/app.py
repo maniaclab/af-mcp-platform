@@ -97,6 +97,7 @@ from af_mcp_broker.mcp.cache_invalidation import ListCacheInvalidator
 from af_mcp_broker.mcp.lint_observations import LintObservationStore
 from af_mcp_broker.mcp.registry import ServiceRegistry
 from af_mcp_broker.mcp_auth_codes import McpAuthCodeStore
+from af_mcp_broker.otel_metrics import init_otel_metrics, shutdown_otel_metrics
 from af_mcp_broker.principal_cache import (
     InMemoryPrincipalCacheBackend,
     PrincipalCache,
@@ -1081,6 +1082,10 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # BEFORE the pipeline so no record the worker processes can miss the
     # store. The backend is selected by USAGE_STORE_BACKEND.
     usage_store = await init_usage_store(settings)
+    # --- OTel aggregate metrics (otel_metrics.py): a no-op unless
+    # OTEL_METRICS_ENABLED. Installed before the pipeline so the worker's
+    # first record is counted.
+    init_otel_metrics(settings)
     # --- Metering: success/error audit records are measured and written by a
     # background worker (audit/pipeline.py) so tool calls never wait on
     # measurement or audit I/O; without init the helper degrades to inline.
@@ -1196,6 +1201,9 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # and writing) so audit lines aren't lost on a graceful stop -- and it
     # must run before the audit output below is closed.
     await aclose_metering_pipeline()
+    # Flush the OTel aggregates after the drain, so the last records'
+    # measurements are exported too (a no-op when metrics were never enabled).
+    shutdown_otel_metrics()
     # The usage store closes only after the pipeline drain above -- drained
     # records are still being accounted right up to the last audit write.
     await aclose_usage_store()
@@ -1237,7 +1245,7 @@ _mcp_aggregator_placeholder_settings = Settings()
 # exists: fastmcp 3.4.4 acquires its tracer lazily per span, so this early
 # placement is conservative rather than load-bearing (see init_tracing's
 # docstring) -- but it guarantees nothing downstream can ever capture a
-# pre-init no-op tracer. A no-op when OTEL_EXPORTER_OTLP_ENDPOINT is unset;
+# pre-init no-op tracer. A no-op unless TRACING_ENABLED is set;
 # like MCP_STATELESS_HTTP below, Settings() reads the env synchronously at
 # construction, so the placeholder instance already carries the real value.
 init_tracing(_mcp_aggregator_placeholder_settings)

@@ -17,13 +17,14 @@ broker:
   # opt-in; this file is not about shared state, so it opts in.
   sharedState:
     allowPerReplicaState: true
-  tracing:
-    enabled: true
+  otlp:
     endpoint: "http://otel-collector.observability:4318"
-    sampleRatio: "0.25"
     networkPolicy:
       namespaceSelector:
         kubernetes.io/metadata.name: "observability"
       podSelector:
         app.kubernetes.io/name: "opentelemetry-collector"
       port: 4318
+  tracing:
+    enabled: true
+    sampleRatio: "0.25"

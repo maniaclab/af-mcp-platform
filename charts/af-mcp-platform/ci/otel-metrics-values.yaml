@@ -1,0 +1,32 @@
+# Exercises the OTel-metrics-only template paths (OTEL_METRICS_ENABLED, the
+# shared OTEL_EXPORTER_OTLP_ENDPOINT without tracing switched on, and the
+# shared NetworkPolicy egress rule to the collector) so a broken render is
+# caught by CI's `ct lint`, which lints the chart once per values file in this
+# directory. Placeholder example.com values, same caveats as test-values.yaml;
+# no collector needs to exist for linting -- the broker is an emitter only.
+oidc:
+  issuer: "https://keycloak.example.com/realms/example"
+portal:
+  oidc:
+    clientId: "example-portal-client"
+    scope: "openid profile email example-audience"
+  brokerOrigin: "https://mcp.example.com"
+
+broker:
+  # Two replicas (the chart default) need a shared state store or an explicit
+  # opt-in; this file is not about shared state, so it opts in.
+  sharedState:
+    allowPerReplicaState: true
+  # Tracing stays disabled: the collector endpoint and NetworkPolicy shape are
+  # shared with it, and metrics must not switch tracing on.
+  metrics:
+    otlp:
+      enabled: true
+  otlp:
+    endpoint: "http://otel-collector.observability:4318"
+    networkPolicy:
+      namespaceSelector:
+        kubernetes.io/metadata.name: "observability"
+      podSelector:
+        app.kubernetes.io/name: "opentelemetry-collector"
+      port: 4318

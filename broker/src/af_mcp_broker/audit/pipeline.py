@@ -42,7 +42,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from af_mcp_broker import metrics
+from af_mcp_broker import metrics, otel_metrics
 from af_mcp_broker.audit.logger import AuditRecord, write_audit
 from af_mcp_broker.audit.measure import measure_tool_result
 from af_mcp_broker.config import Settings, get_settings
@@ -173,8 +173,10 @@ class InProcessMeteringBackend(MeteringBackend):
             await write_audit(record)
             # The inline-written record is usage too (PR C) -- record_usage
             # never raises, filters non-usage records itself, and must only
-            # ever run AFTER the audit write above.
+            # ever run AFTER the audit write above. The OTel aggregates
+            # follow the same rule.
             await record_usage(record)
+            otel_metrics.record_tool_call(record)
 
     async def _run(self) -> None:
         while True:
@@ -218,6 +220,10 @@ class InProcessMeteringBackend(MeteringBackend):
             # raises (store failures are logged and counted inside it).
             if counts_as_usage(record):
                 await self._usage_batcher.add(record)
+            # OTel aggregates (a no-op unless OTEL_METRICS_ENABLED) need the
+            # measurements filled in above, which is why they are recorded
+            # here and not on the hot path.
+            otel_metrics.record_tool_call(record)
 
 
 # Maps ``settings.metering_backend`` values to backend factories. Adding a
@@ -267,5 +273,6 @@ async def submit_metered_audit(record: AuditRecord, result: ToolResult | None) -
         # Same post-write usage accounting the worker performs (PR C) --
         # the fallback path must not be a gap in anyone's usage.
         await record_usage(record)
+        otel_metrics.record_tool_call(record)
         return
     await _pipeline.submit(record, result)
