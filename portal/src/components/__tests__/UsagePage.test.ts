@@ -4,8 +4,8 @@
  * The page renders GET /v1/usage's whole payload: window totals, the
  * per-service table, and the per-day activity bars, with a window
  * selector (7/30/90 days) that refetches on change. Everything shown is
- * an ESTIMATE (tokenized tool-result text priced at one model's input
- * rate, not provider-reported spend) so the page must label it as such,
+ * an ESTIMATE (tokenized tool-result text, not provider-reported usage)
+ * so the page must label it as such,
  * and it must degrade gracefully on an empty window and on a failed
  * fetch.
  */
@@ -40,14 +40,12 @@ import UsagePage from '../UsagePage.vue';
 const USAGE: UsageResponse = {
   subject: 'user-123',
   window_days: 30,
-  cost_model: 'claude-sonnet-4-20250514',
   totals: {
     calls: 42,
     errors: 3,
     duration_ms: 1234.5,
     result_bytes: 98765,
     result_tokens_est: 15000,
-    estimated_cost_usd: 0.045,
   },
   by_service: [
     {
@@ -56,7 +54,6 @@ const USAGE: UsageResponse = {
       errors: 2,
       result_bytes: 65536,
       result_tokens_est: 11000,
-      estimated_cost_usd: 0.033,
     },
     {
       service: 'ami',
@@ -64,7 +61,6 @@ const USAGE: UsageResponse = {
       errors: 1,
       result_bytes: 33229,
       result_tokens_est: 4000,
-      estimated_cost_usd: 0.012,
     },
   ],
   by_day: [
@@ -76,14 +72,12 @@ const USAGE: UsageResponse = {
 const EMPTY: UsageResponse = {
   subject: 'user-123',
   window_days: 30,
-  cost_model: 'claude-sonnet-4-20250514',
   totals: {
     calls: 0,
     errors: 0,
     duration_ms: 0,
     result_bytes: 0,
     result_tokens_est: 0,
-    estimated_cost_usd: 0,
   },
   by_service: [],
   by_day: [],
@@ -98,7 +92,7 @@ beforeEach(() => {
 });
 
 describe('UsagePage', () => {
-  it('renders window totals with the estimate labeling and model name', async () => {
+  it('renders window totals with the estimate labeling and no price or dollar figure', async () => {
     vi.mocked(fetchUsage).mockResolvedValue(USAGE);
     const wrapper = mount(UsagePage);
     await flushPromises();
@@ -106,12 +100,13 @@ describe('UsagePage', () => {
     const text = wrapper.text();
     expect(text).toContain('42');
     expect(text).toContain('15,000');
-    expect(text).toContain('$0.045');
-    expect(text).toContain('claude-sonnet-4-20250514');
+    expect(text).not.toContain('$');
+    expect(text.toLowerCase()).not.toContain('cost');
+    expect(text.toLowerCase()).not.toContain('priced');
     // Everything shown is an estimate and must say so — same caveat
     // wording as the overview's usage summary.
     expect(text.toLowerCase()).toContain('estimated');
-    expect(text).toContain('this is not your provider bill');
+    expect(text).toContain('not provider-reported counts');
   });
 
   it('renders one per-service row per service with its aggregates', async () => {
@@ -239,8 +234,8 @@ describe('UsagePage', () => {
     await flushPromises();
 
     expect(wrapper.text()).toContain('No tool calls');
-    // A zeroed cost figure would be noise under an explicit empty state.
-    expect(wrapper.text()).not.toContain('$0');
+    // Zeroed stats would be noise under an explicit empty state.
+    expect(wrapper.text()).not.toContain('Tokens (estimated)');
   });
 
   it('renders an error state when the fetch fails', async () => {

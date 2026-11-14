@@ -19,7 +19,7 @@ import type { DashboardSummary, UsageResponse } from '../lib/api';
 import { overviewMessage } from '../lib/overviewBanner';
 import { proxyExpiryState } from '../lib/x509Identity';
 import { expiresIn, expiresSoon } from '../lib/tokenDisplay';
-import { formatCost, formatTokens } from '../lib/usageFormat';
+import { formatTokens } from '../lib/usageFormat';
 import ConnectClient from './ConnectClient.vue';
 import PageMessage from './ui/PageMessage.vue';
 import StatusMark from './ui/StatusMark.vue';
@@ -224,11 +224,6 @@ const showStats = computed(() => usage.value !== null && usage.value.totals.call
         <span>Tokens (estimated)</span>
         <b>{{ formatTokens(usage.totals.result_tokens_est) }}</b>
         <small>In tool results</small>
-      </div>
-      <div class="af-stat">
-        <span>Cost (estimated)</span>
-        <b>{{ formatCost(usage.totals.estimated_cost_usd) }}</b>
-        <small>At {{ usage.cost_model }} input rate</small>
       </div>
     </div>
   </section>
