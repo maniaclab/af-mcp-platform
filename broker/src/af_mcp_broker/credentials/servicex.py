@@ -181,7 +181,7 @@ class ServiceXProvider(CredentialProvider):
                 target=target, reason="not_linked", unlock_endpoint=_LINK_ENDPOINT
             )
         # get_link() guarantees the link half is complete; narrow for mypy.
-        assert link.refresh_token is not None
+        assert link.refresh_token is not None  # noqa: S101 -- mypy narrowing of an invariant validated upstream
         try:
             redeemed = await self._servicex_client.redeem(
                 subject=subject, refresh_token=link.refresh_token
@@ -242,8 +242,9 @@ class ServiceXProvider(CredentialProvider):
     def _build_credential(
         self, target: str, record: StoredServiceXCredential
     ) -> IssuedCredential:
-        assert record.access_token is not None  # only called with a token present
-        assert record.expires_at is not None
+        # only called with a token present
+        assert record.access_token is not None  # noqa: S101
+        assert record.expires_at is not None  # noqa: S101 -- mypy narrowing of an invariant validated upstream
         return IssuedCredential(
             cred_class=self.cred_class,
             target=target,

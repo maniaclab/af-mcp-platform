@@ -103,7 +103,8 @@ class EntitlementMiddleware(Middleware):
             if not annotation_disagrees_with_policy(read_only_hint, action_type):
                 self.registry.clear_annotation_mismatch(service.name, tool.name)
                 continue
-            assert read_only_hint is not None  # disagreement implies declared
+            # disagreement implies declared
+            assert read_only_hint is not None  # noqa: S101
             mismatch = AnnotationMismatch(
                 service=service.name,
                 tool=tool.name,

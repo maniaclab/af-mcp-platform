@@ -149,7 +149,7 @@ FROM (
 ) AS merged
 GROUP BY day, service, method, outcome
 ORDER BY day, service, method, outcome
-"""
+"""  # noqa: S608 -- interpolates only the module-level constant _RAW_QUERY; request values are bound parameters ($1..$3)
 
 _RAW_SUBJECTS_QUERY = """
 SELECT DISTINCT principal_sub
@@ -161,7 +161,7 @@ _LIST_SUBJECTS_QUERY = f"""
 {_RAW_SUBJECTS_QUERY}
 UNION
 SELECT principal_sub FROM af_mcp_usage_daily WHERE day >= $2
-"""
+"""  # noqa: S608 -- interpolates only the module-level constant _RAW_SUBJECTS_QUERY; request values are bound parameters ($1, $2)
 
 # Folds every raw row older than $1 into the daily rollup and deletes it in
 # ONE statement: the rows the DELETE returns are exactly the rows summed, so

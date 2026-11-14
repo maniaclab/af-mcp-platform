@@ -365,7 +365,7 @@ class Settings(BaseSettings):
     # o200k_base is simply a reasonable modern reference tokenizer. Empty
     # string disables token estimation entirely (the field stays None;
     # byte measurement is unaffected).
-    token_estimate_encoding: str = "o200k_base"
+    token_estimate_encoding: str = "o200k_base"  # noqa: S105 -- tiktoken encoding name, not a secret
 
     # Which MeteringBackend implementation (audit/pipeline.py) carries
     # success/error audit records from the tool-call hot path to the worker
@@ -639,7 +639,7 @@ class Settings(BaseSettings):
     # "in_memory" is single-replica and lost on restart (fine for dev/testing);
     # "vault" persists to Vault/OpenBao KV-v2 via the broker's K8s auth
     # identity — see credentials/vault.py.
-    token_store_backend: Literal["in_memory", "vault"] = "in_memory"
+    token_store_backend: Literal["in_memory", "vault"] = "in_memory"  # noqa: S105 -- backend selector name, not a secret
 
     # Vault/OpenBao HTTP API base URL, no trailing slash (e.g.
     # https://vault.example.com). Required when token_store_backend="vault".
@@ -662,19 +662,19 @@ class Settings(BaseSettings):
     # Filesystem path to the broker's own ServiceAccount JWT, projected by
     # Kubernetes automatically whenever a ServiceAccount is set on the pod —
     # no extra volume mount needed at the chart's default.
-    vault_sa_token_path: str = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+    vault_sa_token_path: str = "/var/run/secrets/kubernetes.io/serviceaccount/token"  # noqa: S105 -- filesystem path of the mounted SA token, not the token
 
     # Which TokenRegistryBackend implementation backs the manual bearer-token
     # bootstrap flow (POST/GET/DELETE /v1/tokens, issue #115). "in_memory" is
     # single-replica and lost on restart (fine for dev/testing); "vault"
     # persists to the same Vault/OpenBao instance as token_store_backend
     # above, under a separate kv_path_prefix — see token_registry.py.
-    token_registry_backend: Literal["in_memory", "vault"] = "in_memory"
+    token_registry_backend: Literal["in_memory", "vault"] = "in_memory"  # noqa: S105 -- backend selector name, not a secret
 
     # KV-v2 path prefix for the token registry, distinct from
     # vault_kv_path_prefix (which is oauth21's TokenStore prefix) so the two
     # Vault-backed stores never collide under the same kv_mount.
-    token_registry_kv_path_prefix: str = "mcp/token-registry"
+    token_registry_kv_path_prefix: str = "mcp/token-registry"  # noqa: S105 -- Vault KV path prefix, not a secret
 
     # Grace window (seconds) token_sweep.py's expired-token janitor keeps a
     # record around after its expires_at passes, before removing it from
@@ -1125,8 +1125,8 @@ class Settings(BaseSettings):
     def _validate_vault_config(self) -> Settings:
         """Fail startup loudly when any Vault-backed store is selected but the settings they depend on are not — a half-configured VaultTokenStore/VaultTokenRegistryBackend/VaultPrincipalCacheBackend/VaultMaintenanceModeStore/VaultX509Store/Krb5VaultStore/VaultServiceXStore would otherwise fail at first request instead of at boot (see also app.py's lifespan trial authentication). All seven stores share the same Vault connection settings (only their kv_path_prefix differs), so one validator covers any or all being selected. voms-token-service mode — an x509 identity_providers entry with a service_url — implies the x509 store: in service mode proxies and passphrases persist in Vault, there is no in-memory fallback (a legacy-mode x509 entry, no service_url, touches no Vault store and imposes nothing here). A krb5-token identity_providers entry always implies the krb5 store, unconditionally — unlike x509 there is no legacy/service-mode split (service_url is mandatory on every entry), and a given entry can't declare ahead of time whether any caller will ever request its optional "remember" persistence, so deferring the requirement to first use would be exactly the silent-runtime-failure trap this validator otherwise exists to avoid. A servicex-token identity_providers entry always implies the ServiceX store too, unconditionally, the same reasoning as krb5-token: the refresh token it vaults has no in-memory fallback either."""
         if (
-            self.token_store_backend != "vault"
-            and self.token_registry_backend != "vault"
+            self.token_store_backend != "vault"  # noqa: S105 -- backend selector name, not a secret
+            and self.token_registry_backend != "vault"  # noqa: S105 -- backend selector name, not a secret
             and self.principal_cache_backend != "vault"
             and self.maintenance_mode_backend != "vault"
             and not any(

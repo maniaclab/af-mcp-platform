@@ -72,9 +72,12 @@ async def build_credmon_sync(
             "CREDMON_ENABLED requires the Keycloak principal directory: credd "
             "stores credentials per POSIX unixname, resolved from it."
         )
-    assert settings.credmon_htcondor_api_url is not None  # Settings validator
-    assert settings.credmon_htcondor_api_token_file is not None  # Settings validator
-    assert settings.credmon_user_domain is not None  # Settings validator
+    # Settings validator
+    assert settings.credmon_htcondor_api_url is not None  # noqa: S101
+    # Settings validator
+    assert settings.credmon_htcondor_api_token_file is not None  # noqa: S101
+    # Settings validator
+    assert settings.credmon_user_domain is not None  # noqa: S101
     token_file = Path(settings.credmon_htcondor_api_token_file)
     try:
         # Checked once here so a missing mount refuses to boot; the client

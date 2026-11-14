@@ -308,9 +308,9 @@ class HomeDirVomsBackend(X509Backend):
         # identity (PosixIdentityRequiredError) before ever reaching here --
         # this assert only narrows the type for mypy in the rest of this
         # call chain, it is never expected to actually fail.
-        assert principal.uid is not None
-        assert principal.gid is not None
-        assert principal.unixname is not None
+        assert principal.uid is not None  # noqa: S101 -- mypy narrowing of an invariant validated upstream
+        assert principal.gid is not None  # noqa: S101 -- mypy narrowing of an invariant validated upstream
+        assert principal.unixname is not None  # noqa: S101 -- mypy narrowing of an invariant validated upstream
         await cache.check_unlock_rate_limit(principal.uid)
 
         if self._dev_mode:
@@ -331,9 +331,9 @@ class HomeDirVomsBackend(X509Backend):
     ) -> ProxyMeta:
         # See mint()'s matching asserts -- HomeDirVomsBackend.mint() is the
         # only caller of this method, and it already validated this.
-        assert principal.uid is not None
-        assert principal.gid is not None
-        assert principal.unixname is not None
+        assert principal.uid is not None  # noqa: S101 -- mypy narrowing of an invariant validated upstream
+        assert principal.gid is not None  # noqa: S101 -- mypy narrowing of an invariant validated upstream
+        assert principal.unixname is not None  # noqa: S101 -- mypy narrowing of an invariant validated upstream
 
         # load_incluster_config is synchronous in kubernetes_asyncio; awaiting
         # it raises TypeError.
@@ -583,9 +583,9 @@ class HomeDirVomsBackend(X509Backend):
         """Run voms-proxy-init locally as a subprocess — dev/testing only."""
         # See mint()'s matching asserts -- HomeDirVomsBackend.mint() is the
         # only caller of this method, and it already validated this.
-        assert principal.uid is not None
-        assert principal.gid is not None
-        assert principal.unixname is not None
+        assert principal.uid is not None  # noqa: S101 -- mypy narrowing of an invariant validated upstream
+        assert principal.gid is not None  # noqa: S101 -- mypy narrowing of an invariant validated upstream
+        assert principal.unixname is not None  # noqa: S101 -- mypy narrowing of an invariant validated upstream
         proxy_dir = Path(self._settings.proxy_dir) / str(principal.uid)
         proxy_dir.mkdir(parents=True, exist_ok=True)
         proxy_path = proxy_dir / "proxy.pem"
@@ -626,7 +626,7 @@ class HomeDirVomsBackend(X509Backend):
             loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(
                 None,
-                lambda: subprocess.run(
+                lambda: subprocess.run(  # noqa: S603 -- dev-only path; fixed argv list (no shell), values come from operator config
                     cmd,
                     input=bytes(passphrase_buf),
                     capture_output=True,
@@ -660,7 +660,7 @@ class HomeDirVomsBackend(X509Backend):
         """Write *proxy_pem* to the broker's per-uid tmpfs and parse its metadata."""
         # See mint()'s matching asserts -- reached only via _mint_kubernetes/
         # _mint_local, both of which already validated this.
-        assert principal.uid is not None
+        assert principal.uid is not None  # noqa: S101 -- mypy narrowing of an invariant validated upstream
         proxy_dir = Path(self._settings.proxy_dir) / str(principal.uid)
         proxy_dir.mkdir(parents=True, exist_ok=True)
         proxy_path = proxy_dir / "proxy.pem"
@@ -895,7 +895,8 @@ class X509Provider(CredentialProvider):
         custody mode or expiry.
         """
         if self.uses_voms_service:
-            assert self._vault_store is not None  # uses_voms_service checked
+            # uses_voms_service checked
+            assert self._vault_store is not None  # noqa: S101
             record = await self._vault_store.get(principal.subject)
             if record is None:
                 return X509LinkStatus(linked=False, mode=None, proxy_not_after=None)
@@ -1036,7 +1037,8 @@ class X509Provider(CredentialProvider):
         meta = self._cache.get_proxy_meta(principal.subject, target)
         await self._cache.revoke(principal.subject, target)
         if self.uses_voms_service:
-            assert self._vault_store is not None  # uses_voms_service checked
+            # uses_voms_service checked
+            assert self._vault_store is not None  # noqa: S101
             await self._vault_store.clear_proxy(principal.subject)
         if meta is not None:
             self._log.info(
@@ -1073,7 +1075,8 @@ class X509Provider(CredentialProvider):
         3. No passphrase: renew hands-free with the stored link, or raise
            ``NeedsUnlockError`` when there is none.
         """
-        assert self._vault_store is not None  # uses_voms_service checked by caller
+        # uses_voms_service checked by caller
+        assert self._vault_store is not None  # noqa: S101
         store = self._vault_store
 
         if passphrase is None:
@@ -1128,7 +1131,8 @@ class X509Provider(CredentialProvider):
         self, principal: Principal, target: str, min_remaining_seconds: int
     ) -> IssuedCredential | None:
         """Return a credential for the Vault-stored proxy if one with at least *min_remaining_seconds* of validity exists, else None."""
-        assert self._vault_store is not None  # uses_voms_service checked by caller
+        # uses_voms_service checked by caller
+        assert self._vault_store is not None  # noqa: S101
         record = await self._vault_store.get_proxy(
             principal.subject, min_remaining=min_remaining_seconds
         )
@@ -1157,13 +1161,14 @@ class X509Provider(CredentialProvider):
         typed it); an infra failure does not. Nothing is persisted on any
         failure.
         """
-        assert self._voms_client is not None  # uses_voms_service checked by caller
-        assert self._vault_store is not None
+        # uses_voms_service checked by caller
+        assert self._voms_client is not None  # noqa: S101
+        assert self._vault_store is not None  # noqa: S101 -- mypy narrowing of an invariant validated upstream
         # _issue_via_service already rejected a POSIX-less principal; these
         # narrow the types for mypy, mirroring HomeDirVomsBackend.mint().
-        assert principal.uid is not None
-        assert principal.gid is not None
-        assert principal.unixname is not None
+        assert principal.uid is not None  # noqa: S101 -- mypy narrowing of an invariant validated upstream
+        assert principal.gid is not None  # noqa: S101 -- mypy narrowing of an invariant validated upstream
+        assert principal.unixname is not None  # noqa: S101 -- mypy narrowing of an invariant validated upstream
 
         await self._cache.check_unlock_rate_limit(principal.uid)
         # The service speaks JSON, so the passphrase crosses as str;
@@ -1217,18 +1222,19 @@ class X509Provider(CredentialProvider):
                 the link is kept and nothing is unlinked.
 
         """
-        assert self._voms_client is not None  # uses_voms_service checked by caller
-        assert self._vault_store is not None
+        # uses_voms_service checked by caller
+        assert self._voms_client is not None  # noqa: S101
+        assert self._vault_store is not None  # noqa: S101 -- mypy narrowing of an invariant validated upstream
         link = await self._vault_store.get_link(subject)
         if link is None:
             raise NeedsUnlockError(
                 target=target, reason="not_linked", unlock_endpoint="/v1/x509/proxy"
             )
         # get_link() guarantees the link half is complete; narrow for mypy.
-        assert link.passphrase is not None
-        assert link.unixname is not None
-        assert link.uid is not None
-        assert link.gid is not None
+        assert link.passphrase is not None  # noqa: S101 -- mypy narrowing of an invariant validated upstream
+        assert link.unixname is not None  # noqa: S101 -- mypy narrowing of an invariant validated upstream
+        assert link.uid is not None  # noqa: S101 -- mypy narrowing of an invariant validated upstream
+        assert link.gid is not None  # noqa: S101 -- mypy narrowing of an invariant validated upstream
         try:
             minted = await self._voms_client.mint(
                 subject=subject,
@@ -1251,7 +1257,8 @@ class X509Provider(CredentialProvider):
         self, subject: str, minted: MintedProxy
     ) -> StoredX509Credential:
         """Persist *minted* in Vault and return it as a stored record."""
-        assert self._vault_store is not None  # uses_voms_service checked by caller
+        # uses_voms_service checked by caller
+        assert self._vault_store is not None  # noqa: S101
         await self._vault_store.store_proxy(
             subject,
             pem=minted.pem,
@@ -1290,7 +1297,8 @@ class X509Provider(CredentialProvider):
         passing the principal's uid unconditionally is harmless: the
         counter only ever holds entries for genuine failures.
         """
-        assert record.not_after is not None  # only called with a proxy present
+        # only called with a proxy present
+        assert record.not_after is not None  # noqa: S101
         meta = ProxyMeta(
             dn=record.dn or "",
             voms_attributes=list(record.voms_attributes),

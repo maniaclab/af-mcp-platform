@@ -156,7 +156,8 @@ class Krb5VaultStore:
         record, _version = got
         if not record.has_ticket:
             return None
-        assert record.not_after is not None  # has_ticket guarantees this
+        # has_ticket guarantees this
+        assert record.not_after is not None  # noqa: S101
         if record.not_after - time.time() < min_remaining:
             return None
         return record

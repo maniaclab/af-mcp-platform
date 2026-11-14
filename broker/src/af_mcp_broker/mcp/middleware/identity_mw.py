@@ -278,8 +278,8 @@ class AsgiAuthMiddleware:
                     # through to the existing JWT path below unchanged.
                     # Both are guaranteed non-None here by the guard above;
                     # asserted rather than re-checked so mypy can narrow them.
-                    assert pat_backend is not None
-                    assert principal_cache is not None
+                    assert pat_backend is not None  # noqa: S101 -- mypy narrowing of an invariant validated upstream
+                    assert principal_cache is not None  # noqa: S101 -- mypy narrowing of an invariant validated upstream
                     principal = await resolve_pat_principal(
                         token,
                         settings,

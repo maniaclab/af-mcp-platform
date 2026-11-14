@@ -33,7 +33,7 @@ class CredentialKind(StrEnum):
     # A ServiceX access token persisted in Vault (issue #295): no local
     # file, redeemed by the backend via POST /v1/credentials/servicex/redeem
     # -- same "deliverable, not local" shape as X509_PROXY_REDEEM.
-    SERVICEX_ACCESS_TOKEN_REDEEM = "servicex_access_token_redeem"
+    SERVICEX_ACCESS_TOKEN_REDEEM = "servicex_access_token_redeem"  # noqa: S105 -- credential-kind identifier, not a secret
     NONE = "none"
 
 

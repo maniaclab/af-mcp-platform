@@ -53,7 +53,7 @@ _store: UsageStore | None = None
 def _build_postgres_store(settings: Settings) -> UsageStore:
     # _validate_usage_store_config guarantees the DSN is set whenever this
     # backend is selected, so the assert is a type-narrowing formality.
-    assert settings.usage_postgres_dsn is not None
+    assert settings.usage_postgres_dsn is not None  # noqa: S101 -- mypy narrowing of an invariant validated upstream
     return PostgresUsageStore(
         settings.usage_postgres_dsn.get_secret_value(),
         retention_days=settings.usage_retention_days,

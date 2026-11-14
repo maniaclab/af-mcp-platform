@@ -379,7 +379,8 @@ async def unlink_identity(
             getattr(request.app.state, "identity_providers", None) or {}
         )
         krb5_provider = identity_providers[provider]
-        assert isinstance(krb5_provider, KrbTokenProvider)  # cfg.type guarantees this
+        # cfg.type guarantees this
+        assert isinstance(krb5_provider, KrbTokenProvider)  # noqa: S101
         await krb5_provider.unlink(principal)
 
         credential_cache = getattr(request.app.state, "credential_cache", None)
@@ -400,7 +401,7 @@ async def unlink_identity(
         )
         servicex_provider = identity_providers[provider]
         # cfg.type guarantees this
-        assert isinstance(servicex_provider, ServiceXProvider)
+        assert isinstance(servicex_provider, ServiceXProvider)  # noqa: S101 -- mypy narrowing of an invariant validated upstream
         await servicex_provider.unlink(principal)
 
         credential_cache = getattr(request.app.state, "credential_cache", None)

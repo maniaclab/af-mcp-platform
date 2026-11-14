@@ -48,7 +48,7 @@ def _build_vault_backend(settings: Settings) -> VaultTokenRegistryBackend:
 
 async def _run(settings: Settings) -> int:
     """Run one sweep pass; return the process exit code."""
-    if settings.token_registry_backend != "vault":
+    if settings.token_registry_backend != "vault":  # noqa: S105 -- backend selector name, not a secret
         log.error(
             "token_sweep.refused",
             reason=(

@@ -543,8 +543,8 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # implies the ServiceX store the same way (has_servicex_token_cfg).
     vault_kv: VaultKV | None = None
     if (
-        settings.token_store_backend == "vault"
-        or settings.token_registry_backend == "vault"
+        settings.token_store_backend == "vault"  # noqa: S105 -- backend selector name, not a secret
+        or settings.token_registry_backend == "vault"  # noqa: S105 -- backend selector name, not a secret
         or settings.principal_cache_backend == "vault"
         or settings.maintenance_mode_backend == "vault"
         or has_service_mode_x509_cfg
@@ -588,8 +588,9 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         cfg.type == "oauth21-direct" for cfg in settings.identity_providers
     )
     if has_oauth21_provider:
-        if settings.token_store_backend == "vault":
-            assert vault_kv is not None  # guaranteed by the check above
+        if settings.token_store_backend == "vault":  # noqa: S105 -- backend selector name, not a secret
+            # guaranteed by the check above
+            assert vault_kv is not None  # noqa: S101
             oauth21_token_store = VaultTokenStore(
                 vault_kv=vault_kv,
                 kv_path_prefix=settings.vault_kv_path_prefix,
@@ -679,7 +680,8 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # #112's custodianship model — the link is per user, not per service).
     x509_vault_store: VaultX509Store | None = None
     if has_service_mode_x509_cfg:
-        assert vault_kv is not None  # guaranteed by the vault block above
+        # guaranteed by the vault block above
+        assert vault_kv is not None  # noqa: S101
         x509_vault_store = VaultX509Store(
             vault_kv=vault_kv, kv_path_prefix=settings.x509_kv_path_prefix
         )
@@ -693,7 +695,8 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # per-user-not-per-service reasoning as x509_vault_store above.
     krb5_vault_store: Krb5VaultStore | None = None
     if has_krb5_token_cfg:
-        assert vault_kv is not None  # guaranteed by the vault block above
+        # guaranteed by the vault block above
+        assert vault_kv is not None  # noqa: S101
         krb5_vault_store = Krb5VaultStore(
             vault_kv=vault_kv, kv_path_prefix=settings.krb5_kv_path_prefix
         )
@@ -708,7 +711,8 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # krb5_vault_store above.
     servicex_vault_store: VaultServiceXStore | None = None
     if has_servicex_token_cfg:
-        assert vault_kv is not None  # guaranteed by the vault block above
+        # guaranteed by the vault block above
+        assert vault_kv is not None  # noqa: S101
         servicex_vault_store = VaultServiceXStore(
             vault_kv=vault_kv, kv_path_prefix=settings.servicex_kv_path_prefix
         )
@@ -735,7 +739,8 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
                 targets=frozenset(cfg.targets),
             )
         elif cfg.type == "broker-issued":
-            assert broker_token_issuer is not None  # guaranteed by the check above
+            # guaranteed by the check above
+            assert broker_token_issuer is not None  # noqa: S101
             # The aud and POSIX requirement of each target's token are declared
             # on the *service* (ServiceSpec.audience / requires_posix, issue
             # #257), so resolve them from the registry here rather than from
@@ -758,7 +763,8 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
                 token_options=token_options,
             )
         elif cfg.type == "condor-token":
-            assert broker_token_issuer is not None  # guaranteed by the check above
+            # guaranteed by the check above
+            assert broker_token_issuer is not None  # noqa: S101
             provider = CondorTokenProvider(
                 issuer=broker_token_issuer,
                 cache=credential_cache,
@@ -768,8 +774,10 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
                 audience=cfg.audience,
             )
         elif cfg.type == "krb5-token":
-            assert broker_token_issuer is not None  # guaranteed by the check above
-            assert krb5_vault_store is not None  # built above for krb5-token entries
+            # guaranteed by the check above
+            assert broker_token_issuer is not None  # noqa: S101
+            # built above for krb5-token entries
+            assert krb5_vault_store is not None  # noqa: S101
             provider = KrbTokenProvider(
                 client=Krb5TokenServiceClient(
                     issuer=broker_token_issuer,
@@ -787,8 +795,10 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
                 # only component that mounts user homes) and persist both the
                 # proxy and the link (Globus passphrase for hands-free
                 # renewal) in Vault (issue #112 follow-up).
-                assert broker_token_issuer is not None  # guaranteed by the check above
-                assert x509_vault_store is not None  # built above for service mode
+                # guaranteed by the check above
+                assert broker_token_issuer is not None  # noqa: S101
+                # built above for service mode
+                assert x509_vault_store is not None  # noqa: S101
                 provider = X509Provider(
                     settings,
                     credential_cache,
@@ -810,10 +820,10 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
                     targets=frozenset(cfg.targets),
                 )
         elif cfg.type == "servicex-token":
-            assert broker_token_issuer is not None  # guaranteed by the check above
-            assert (
-                servicex_vault_store is not None
-            )  # built above for servicex-token entries
+            # guaranteed by the check above
+            assert broker_token_issuer is not None  # noqa: S101
+            # built above for servicex-token entries
+            assert servicex_vault_store is not None  # noqa: S101
             provider = ServiceXProvider(
                 servicex_client=ServiceXTokenServiceClient(
                     issuer=broker_token_issuer,
@@ -826,7 +836,8 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
                 targets=frozenset(cfg.targets),
             )
         else:
-            assert oauth21_token_store is not None  # guaranteed by the check above
+            # guaranteed by the check above
+            assert oauth21_token_store is not None  # noqa: S101
             provider = OAuth21Provider(
                 alias=cfg.alias,
                 targets=frozenset(cfg.targets),
@@ -894,7 +905,8 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     x509_provider: X509Provider | None = None
     if x509_targets:
         resolved = await credential_registry.resolve(x509_targets[0])
-        assert isinstance(resolved, X509Provider)  # registered above
+        # registered above
+        assert isinstance(resolved, X509Provider)  # noqa: S101
         x509_provider = resolved
 
     # --- MCP OAuth discovery bootstrap (issue #140): short-lived, single-use
@@ -919,8 +931,9 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # HA-safe list/revoke across replicas (issue #115) with the same
     # in-memory local-dev fallback pattern as oauth21_token_store above.
     token_registry_backend: TokenRegistryBackend
-    if settings.token_registry_backend == "vault":
-        assert vault_kv is not None  # guaranteed by the check above
+    if settings.token_registry_backend == "vault":  # noqa: S105 -- backend selector name, not a secret
+        # guaranteed by the check above
+        assert vault_kv is not None  # noqa: S101
         token_registry_backend = VaultTokenRegistryBackend(
             vault_kv=vault_kv,
             kv_path_prefix=settings.token_registry_kv_path_prefix,
@@ -971,7 +984,8 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         # above, sharing the same vault_kv transport instance.
         principal_cache_backend: PrincipalCacheBackend
         if settings.principal_cache_backend == "vault":
-            assert vault_kv is not None  # guaranteed by the check above
+            # guaranteed by the check above
+            assert vault_kv is not None  # noqa: S101
             principal_cache_backend = VaultPrincipalCacheBackend(
                 vault_kv=vault_kv,
                 kv_path_prefix=settings.principal_cache_kv_path_prefix,
@@ -1005,14 +1019,16 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # vault_kv transport instance when Vault-backed.
     maintenance_mode_store: MaintenanceModeStore
     if settings.maintenance_mode_backend == "vault":
-        assert vault_kv is not None  # guaranteed by the vault_kv check above
+        # guaranteed by the vault_kv check above
+        assert vault_kv is not None  # noqa: S101
         maintenance_mode_store = VaultMaintenanceModeStore(
             vault_kv=vault_kv,
             kv_path_prefix=settings.maintenance_mode_kv_path_prefix,
         )
     elif settings.maintenance_mode_backend == "postgres":
         dsn = settings.maintenance_mode_effective_postgres_dsn
-        assert dsn is not None  # guaranteed by _validate_maintenance_mode_config
+        # guaranteed by _validate_maintenance_mode_config
+        assert dsn is not None  # noqa: S101
         maintenance_mode_store = PostgresMaintenanceModeStore(dsn.get_secret_value())
     else:
         maintenance_mode_store = InMemoryMaintenanceModeStore()
