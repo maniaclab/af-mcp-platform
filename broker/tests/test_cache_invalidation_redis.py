@@ -1,6 +1,6 @@
 """Integration tests: link and revoke invalidate listing caches on every replica.
 
-Each "replica" is its own ``ServiceRegistry``, aggregator provider and
+Each "replica" is its own ``ServiceRegistry``, aggregator and
 ``ListCacheInvalidator`` over its own client of one real redis server (see the
 ``shared_state_url`` fixture); nothing in the store path is mocked. The fake
 backend client and request context are the ones ``test_mcp_aggregator.py``
@@ -15,13 +15,17 @@ from typing import TYPE_CHECKING
 
 import pytest
 import structlog.testing
-from conftest import find_available_port, run_redis_server
-from fastmcp import FastMCP
-from test_mcp_aggregator import _CountingListClient, _patch_context, _spec, _tool
+from conftest import AUDIENCE, ISSUER, find_available_port, run_redis_server
+from test_mcp_aggregator import (
+    _build_namespaced_aggregator,
+    _CountingListClient,
+    _patch_context,
+    _tool,
+)
 
+from af_mcp_broker.config import Settings
 from af_mcp_broker.mcp import aggregator
 from af_mcp_broker.mcp.cache_invalidation import ListCacheInvalidator
-from af_mcp_broker.mcp.registry import ServiceRegistry
 from af_mcp_broker.shared_state import RedisSharedState
 
 if TYPE_CHECKING:
@@ -39,13 +43,14 @@ class _Replica:
     def __init__(self, store_url: str, client: _CountingListClient) -> None:
         self.client = client
         self.store = RedisSharedState(store_url)
-        self.registry = ServiceRegistry()
-        self.registry.register(_spec())
-        self.provider = aggregator._ObservableProxyProvider(
-            "example", lambda: client, registry=self.registry, cache_ttl=300.0
-        )
-        self.mcp = FastMCP(name="replica")
-        self.mcp.add_provider(self.provider)
+        with pytest.MonkeyPatch.context() as monkeypatch:
+            self.mcp = _build_namespaced_aggregator(
+                monkeypatch,
+                Settings(oidc_issuer=ISSUER, oidc_audience=AUDIENCE),
+                {"example": client},
+            )
+        # Some tests need the raw listing error, which the aggregate swallows.
+        self.provider = aggregator._backend_providers[self.mcp]["example"]
         self.invalidator = ListCacheInvalidator(
             self.store,
             invalidate=lambda subject, target: aggregator.invalidate_subject_cache(
@@ -56,7 +61,12 @@ class _Replica:
         )
 
     async def list_tools(self) -> list[str]:
-        return [t.name for t in await self.provider._list_tools()]
+        tools = await self.mcp._list_tools()
+        return [
+            t.name.removeprefix("example_")
+            for t in tools
+            if t.name.startswith("example_")
+        ]
 
     async def stop(self) -> None:
         await self.invalidator.stop()

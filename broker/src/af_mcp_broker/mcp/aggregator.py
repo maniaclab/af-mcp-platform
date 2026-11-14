@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+import weakref
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 import httpx2
@@ -1828,6 +1829,16 @@ class _ObservableProxyProvider(ProxyProvider):
             self._warned_missing_exclude_tools = True
 
 
+# Each aggregator's backend providers, by service name. fastmcp wraps a
+# namespaced provider in a private ``_WrappedProvider`` when it is added, so
+# ``mcp.providers`` never holds our ``_ObservableProxyProvider`` instances
+# directly; ``_register_services`` records them here instead so the
+# invalidation helpers below reach the real objects.
+_backend_providers: weakref.WeakKeyDictionary[
+    FastMCP, dict[str, _ObservableProxyProvider]
+] = weakref.WeakKeyDictionary()
+
+
 def invalidate_subject_cache(
     mcp: FastMCP, subject: str, target: str | None = None
 ) -> None:
@@ -1841,18 +1852,15 @@ def invalidate_subject_cache(
     ``ServiceSpec.name`` affected; omitted, every service's cache entry for
     *subject* is dropped.
     """
-    for provider in mcp.providers:
-        if isinstance(provider, _ObservableProxyProvider) and (
-            target is None or provider._service_name == target
-        ):
+    for service_name, provider in _backend_providers.get(mcp, {}).items():
+        if target is None or service_name == target:
             provider.invalidate_subject(subject)
 
 
 def invalidate_all_subject_caches(mcp: FastMCP) -> None:
     """Drop every subject's cached listing entries across all of ``mcp``'s providers (see ``_ObservableProxyProvider.invalidate_all_subjects``)."""
-    for provider in mcp.providers:
-        if isinstance(provider, _ObservableProxyProvider):
-            provider.invalidate_all_subjects()
+    for provider in _backend_providers.get(mcp, {}).values():
+        provider.invalidate_all_subjects()
 
 
 def build_aggregator(
@@ -2075,6 +2083,8 @@ def _register_services(
     # every call: it carries no per-call state of its own, and the list was
     # just cleared, so this never produces a duplicate entry.
     mcp.add_provider(mcp.local_provider)
+    backend_providers: dict[str, _ObservableProxyProvider] = {}
+    _backend_providers[mcp] = backend_providers
     for spec in registry.all_services():
         if spec.builtin:
             # The builtin gateway service (issue #240) has no backend to
@@ -2102,6 +2112,7 @@ def _register_services(
         )
         namespace = spec.prefix if spec.apply_namespace else ""
         mcp.add_provider(provider, namespace=namespace)
+        backend_providers[spec.name] = provider
 
 
 def _find_middleware(
