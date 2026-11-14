@@ -32,7 +32,6 @@ function server(overrides: Partial<CatalogServer> = {}): CatalogServer {
     link_state: null,
     builtin: false,
     docs_url: null,
-    access_url: null,
     granting_groups: [],
     ...overrides,
   };

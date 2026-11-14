@@ -43,7 +43,7 @@ const statusTone = computed(() => TONE[statusView.value.severity]);
 const fix = computed(() => {
   const cta = statusView.value.cta;
   if (!cta) return null;
-  // "Request access" is an external page, not the identity's own card.
+  // "About this service" is an external page, not the identity's own card.
   if (props.server.status === 'permission_required') return cta;
   const { kind, linkLabel, relinkLabel, linkHref } = props.poweredBy;
   // A rejected credential is re-linked, not linked for the first time.
@@ -245,12 +245,12 @@ const toolsView = computed(() =>
       </p>
 
       <a
-        v-if="server.docs_url"
+        v-if="server.docs_url && server.status !== 'permission_required'"
         :href="server.docs_url"
         class="bc__docs-link"
         target="_blank"
         rel="noopener noreferrer"
-        >Documentation</a
+        >About this service</a
       >
     </div>
 

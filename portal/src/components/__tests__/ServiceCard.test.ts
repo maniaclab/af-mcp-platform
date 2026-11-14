@@ -42,7 +42,6 @@ const SERVER: CatalogServer = {
   link_state: null,
   builtin: false,
   docs_url: null,
-  access_url: null,
   granting_groups: [],
 };
 
@@ -61,7 +60,6 @@ const BUILTIN_SERVER: CatalogServer = {
   link_state: null,
   builtin: true,
   docs_url: null,
-  access_url: null,
   granting_groups: [],
 };
 
@@ -514,20 +512,21 @@ describe('status line', () => {
         ...overrides,
       });
 
-    it('offers "Request access" beside the status, linking to the access URL', () => {
-      const wrapper = denied({ access_url: 'https://groups.example.org/request' });
+    it('offers "About this service" beside the status, linking to the docs URL', () => {
+      const wrapper = denied({ docs_url: 'https://docs.example.org/rucio' });
       const status = wrapper.get('.bc__status-line');
       expect(status.text()).toContain('Access required');
       const cta = status.get('a');
       // Not relabelled to the identity's "Link ... account" wording.
-      expect(cta.text()).toBe('Request access');
-      expect(cta.attributes('href')).toBe('https://groups.example.org/request');
+      expect(cta.text()).toBe('About this service');
+      expect(cta.attributes('href')).toBe('https://docs.example.org/rucio');
       expect(cta.attributes('rel')).toContain('noopener');
+      // Shown once, not again in the meta line.
+      expect(wrapper.findAll('a[href="https://docs.example.org/rucio"]')).toHaveLength(1);
     });
 
     it('lists the groups that grant access and keeps the reference id', () => {
       const wrapper = denied({
-        access_url: 'https://groups.example.org/request',
         granting_groups: ['/connect/atlas-af', '/connect/escape'],
       });
       const detail = wrapper.get('.bc__status-detail');
@@ -535,12 +534,6 @@ describe('status line', () => {
       const groups = detail.findAll('.bc__groups code').map((c) => c.text());
       expect(groups).toEqual(['/connect/atlas-af', '/connect/escape']);
       expect(detail.get('.bc__status-ref code').text()).toBe('abc123');
-    });
-
-    it('names the groups even when there is no access URL, and shows no link', () => {
-      const wrapper = denied({ granting_groups: ['/connect/atlas-af'] });
-      expect(wrapper.get('.bc__status-line').find('a').exists()).toBe(false);
-      expect(wrapper.get('.bc__status-detail').text()).toContain('/connect/atlas-af');
     });
 
     it('shows neither a link nor a group list when the broker offers none', () => {
@@ -551,20 +544,21 @@ describe('status line', () => {
     });
   });
 
-  describe('documentation link (issue #395)', () => {
-    it.each(['available', 'permission_required', 'unavailable'] as const)(
-      'is shown on a %s service when docs_url is set',
+  describe('"About this service" link (issue #395)', () => {
+    it.each(['available', 'permission_required', 'unavailable', 'misconfigured'] as const)(
+      'is shown once on a %s service when docs_url is set',
       (status) => {
         const wrapper = mountWith({ status, docs_url: 'https://docs.example.org/rucio' });
-        const docs = wrapper.get('a.bc__docs-link');
-        expect(docs.text()).toBe('Documentation');
-        expect(docs.attributes('href')).toBe('https://docs.example.org/rucio');
-        expect(docs.attributes('rel')).toContain('noopener');
+        const links = wrapper.findAll('a[href="https://docs.example.org/rucio"]');
+        expect(links).toHaveLength(1);
+        expect(links[0].text()).toBe('About this service');
+        expect(links[0].attributes('rel')).toContain('noopener');
       },
     );
 
     it('is omitted when docs_url is not set', () => {
-      expect(mountWith({ docs_url: null }).find('.bc__docs-link').exists()).toBe(false);
+      const wrapper = mountWith({ docs_url: null });
+      expect(wrapper.text()).not.toContain('About this service');
     });
   });
 

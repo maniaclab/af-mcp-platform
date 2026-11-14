@@ -53,28 +53,31 @@ describe('resolveServiceStatus', () => {
     expect(view.correlationId).toBe('abc123');
   });
 
-  describe('"permission_required" with an access URL (issue #395)', () => {
+  describe('"permission_required" (issue #395)', () => {
     const denied = (extra: Partial<CatalogServer>) =>
       resolveServiceStatus({
         ...statusFields('permission_required', { correlation_id: 'abc123' }),
         ...extra,
       });
 
-    it('offers "Request access" linking to the access URL', () => {
-      const view = denied({ access_url: 'https://groups.example.org/request' });
+    it('offers "About this service" linking to the docs URL', () => {
+      const view = denied({ docs_url: 'https://docs.example.org/rucio' });
       expect(view.cta).toEqual({
-        label: 'Request access',
-        href: 'https://groups.example.org/request',
+        label: 'About this service',
+        href: 'https://docs.example.org/rucio',
       });
       // The reference id to quote stays alongside the call to action.
       expect(view.correlationId).toBe('abc123');
     });
 
+    it('has no call to action without a docs URL', () => {
+      expect(denied({ docs_url: null }).cta).toBeNull();
+      expect(denied({}).cta).toBeNull();
+    });
+
     it('carries the groups that grant the permission through', () => {
       const view = denied({ granting_groups: ['/connect/atlas-af', '/connect/escape'] });
       expect(view.grantingGroups).toEqual(['/connect/atlas-af', '/connect/escape']);
-      // Naming groups without a URL is information, not a link.
-      expect(view.cta).toBeNull();
     });
 
     it('has no groups when the broker names none, or omits the field', () => {
@@ -83,11 +86,11 @@ describe('resolveServiceStatus', () => {
     });
 
     it.each(['available', 'unavailable', 'misconfigured'] as const)(
-      'never shows "Request access" for a %s service, even with a URL',
+      'never makes the docs link the call to action of a %s service',
       (status) => {
         const view = resolveServiceStatus({
           ...statusFields(status),
-          access_url: 'https://groups.example.org/request',
+          docs_url: 'https://docs.example.org/rucio',
           granting_groups: ['/connect/atlas-af'],
         });
         expect(view.cta).toBeNull();

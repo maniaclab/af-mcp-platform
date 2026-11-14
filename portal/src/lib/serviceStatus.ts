@@ -76,15 +76,15 @@ const SEVERITIES: Record<ServiceStatus, StatusSeverity> = {
 /**
  * Resolves how a card should present its server's status. "link_required"
  * gets a CTA to /identities/, where the user can fix it themselves, and
- * "permission_required" gets "Request access" when the broker supplies an
- * access URL (issue #395). misconfigured is admin-actionable (correlationId
+ * "permission_required" gets "About this service" when the broker supplies
+ * a docs URL (issue #395). misconfigured is admin-actionable (correlationId
  * carries the id to quote), and unavailable is a wait-and-retry state with
  * nothing to link to.
  */
 export function resolveServiceStatus(
   server: Pick<CatalogServer, 'status' | 'status_detail' | 'correlation_id'> & {
     link_state?: LinkState | null;
-    access_url?: string | null;
+    docs_url?: string | null;
     granting_groups?: string[];
   },
   identityNounText: string | null = null,
@@ -106,15 +106,15 @@ export function resolveServiceStatus(
     label: LABELS[server.status],
     detail: server.status_detail,
     severity: SEVERITIES[server.status],
-    cta: ctaFor(server.status, denied ? (server.access_url ?? null) : null),
+    cta: ctaFor(server.status, denied ? (server.docs_url ?? null) : null),
     correlationId: server.correlation_id,
     grantingGroups: denied ? (server.granting_groups ?? []) : [],
   };
 }
 
-function ctaFor(status: ServiceStatus, accessUrl: string | null): StatusCta | null {
+function ctaFor(status: ServiceStatus, docsUrl: string | null): StatusCta | null {
   if (status === 'link_required') return { label: 'Link identity', href: '/identities/' };
-  if (accessUrl !== null) return { label: 'Request access', href: accessUrl };
+  if (docsUrl !== null) return { label: 'About this service', href: docsUrl };
   return null;
 }
 
