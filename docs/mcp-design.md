@@ -18,7 +18,7 @@ procedure covered by [Adding a Service](adding-a-service.md).
 The guide is written against MCP specification revision **2026-07-28**
 ([specification](https://modelcontextprotocol.io/specification/2026-07-28)).
 That is the latest protocol version of the `mcp` SDK the broker pins
-(`mcp` 2.2.0 via `fastmcp>=4.0.4,<5` in `pixi.toml`; `mcp.types.LATEST_PROTOCOL_VERSION`
+(`mcp` 2.3.0 via `fastmcp>=4.2.0,<5` in `pixi.toml`; `mcp.types.LATEST_PROTOCOL_VERSION`
 is `2026-07-28`). Section links below point at that revision. Where a rule
 exists only because of this platform and not the spec, the item says so.
 

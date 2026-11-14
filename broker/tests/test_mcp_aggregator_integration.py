@@ -13,8 +13,10 @@ from conftest import (
 from fastmcp import Client, FastMCP
 from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_http_headers
+from fastmcp.server.providers.aggregate import AggregateProvider
 from fastmcp.server.providers.proxy import ProxyProvider
 from fastmcp.utilities.http import find_available_port
+from mcp.client.session import ClientSession
 
 from af_mcp_broker.config import get_settings
 
@@ -375,18 +377,16 @@ async def test_authorization_header_not_forwarded_to_backend(running_broker, sig
 async def test_two_tools_calls_list_each_backend_once_not_per_call(
     running_broker, sig_key, monkeypatch: pytest.MonkeyPatch
 ):
-    """issue #320: on the mcp SDK's modern (``2026-07-28``) protocol, a
-    ``tools/call`` carrying arguments triggers a full server-side
-    ``tools/list`` to validate ``Mcp-Param-*`` headers against the called
-    tool's schema (SEP-2243, ``mcp/server/_streamable_http_modern.py``'s
-    ``_mcp_param_rejection``). Before the per-(subject, service) cache, THAT
-    ran fastmcp's uncached ``ProxyProvider._list_tools()`` against every
-    backend on every single ``tools/call``. Force the modern protocol
-    (``mode="2026-07-28"``) so this path is actually exercised, then prove
-    two ``tools/call`` requests from the same user list each backend once
-    total, not once per call -- counted by wrapping the base
-    ``ProxyProvider._list_tools`` (below ``_ObservableProxyProvider``'s own
-    cache) rather than trusting a fake backend's own request log.
+    """issue #320: a ``tools/call`` resolves its tool by name, which lists the
+    owning backend through ``_ObservableProxyProvider``'s per-(subject,
+    service) cache (fastmcp's ``ProxyProvider._get_tool`` falls back to
+    ``_list_tools``). Prove two ``tools/call`` requests from the same user
+    list each backend once total, not once per call -- counted by wrapping the
+    base ``ProxyProvider._list_tools`` (below the cache) rather than trusting a
+    fake backend's own request log. The modern protocol
+    (``mode="2026-07-28"``) is forced so the SEP-2243 validation path is also
+    present; with fastmcp >=4.2 it adds no listing of its own (see
+    ``test_argument_bearing_call_burst_does_not_fan_out_to_every_backend``).
     """
     token = sig_key.sign(make_claims())
     _TEST_PRINCIPAL_GROUPS["user-123"] = ["atlas"]
@@ -411,7 +411,7 @@ async def test_two_tools_calls_list_each_backend_once_not_per_call(
         await client.call_tool("toy_echo", {"message": "world"})
 
     # At least one backend must have been listed at all (a vacuously empty
-    # call_counts would mean the SEP-2243 path never fired) -- and every
+    # call_counts would mean the tool lookup never listed) -- and every
     # backend that was, was listed exactly once across both calls.
     assert call_counts
     assert all(count == 1 for count in call_counts.values())
@@ -557,3 +557,56 @@ async def test_call_of_excluded_unnamespaced_tool_fails_exactly_like_an_unknown_
     assert str(excluded_exc_info.value) == str(unknown_exc_info.value).replace(
         "selfpfx_this_tool_was_never_advertised", "selfpfx_advertise_to_collector"
     )
+
+
+async def test_argument_bearing_call_burst_does_not_fan_out_to_every_backend(
+    running_broker, sig_key, monkeypatch: pytest.MonkeyPatch
+):
+    """issue #333: a burst of argument-bearing ``tools/call`` requests on the
+    modern protocol must not list every backend per call. The mcp SDK (>=2.3)
+    validates ``Mcp-Param-*`` headers through its opt-in
+    ``get_tool_input_schema`` hook, which fastmcp (>=4.2) serves from a
+    wire-schema cache; without the hook the SDK runs the aggregator's full
+    ``tools/list`` before each such call.
+
+    Counted on ``AggregateProvider._list_tools``, the fan-out over every
+    backend, which a single-tool lookup never reaches -- so the count does not
+    depend on the per-(subject, service) cache below it. The client's own
+    post-call output-schema validation (``validate_tool_result``) re-lists
+    tools when the called tool declares no output schema; it is stubbed out so
+    the only ``tools/list`` requests the server sees are the SDK's validation
+    path."""
+    token = sig_key.sign(make_claims())
+    _TEST_PRINCIPAL_GROUPS["user-123"] = ["atlas"]
+
+    async def _skip_output_validation(self: Any, name: str, result: Any) -> None:
+        return None
+
+    monkeypatch.setattr(ClientSession, "validate_tool_result", _skip_output_validation)
+
+    fan_outs = 0
+    original_list_tools = AggregateProvider._list_tools
+
+    async def _counting_list_tools(self: Any) -> Any:
+        nonlocal fan_outs
+        fan_outs += 1
+        return await original_list_tools(self)
+
+    monkeypatch.setattr(AggregateProvider, "_list_tools", _counting_list_tools)
+
+    burst_size = 8
+    async with (
+        run_broker_in_process(running_broker) as server,
+        server.client(
+            headers={"Authorization": f"Bearer {token}"}, mode="2026-07-28"
+        ) as client,
+    ):
+        assert client.protocol_version == "2026-07-28"
+        # The first call may list once while the wire-schema cache is cold;
+        # what must not happen is a further listing per call after that.
+        await client.call_tool("toy_echo", {"message": "first"})
+        after_first_call = fan_outs
+        for i in range(burst_size):
+            await client.call_tool("toy_echo", {"message": f"call-{i}"})
+
+    assert fan_outs == after_first_call

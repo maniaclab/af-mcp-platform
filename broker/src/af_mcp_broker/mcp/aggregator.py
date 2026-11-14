@@ -1319,9 +1319,8 @@ def _make_client_factory(
 
 # Negative-cache TTL for a failed per-subject listing (issue #320): short
 # enough that an outage recovers quickly, long enough that a client hammering
-# tools/call (the SEP-2243 per-call listing path this cache originally
-# existed for) doesn't re-hit a backend that just 401'd or timed out on
-# every single call. Shared by all four listing kinds (tools, resources,
+# tools/list or reconnecting in a storm doesn't re-hit a backend that just
+# 401'd or timed out on every single listing. Shared by all four listing kinds (tools, resources,
 # resource templates, prompts) -- a failed listing is a failed listing
 # regardless of which kind fetched it.
 _NEGATIVE_LIST_CACHE_TTL_SECONDS: float = 30.0
@@ -1384,11 +1383,15 @@ class _ObservableProxyProvider(ProxyProvider):
 
     ``_list_tools()`` additionally caches per (caller subject, this service)
     -- issue #320: fastmcp's own ``ProxyProvider._list_tools()`` never
-    consults ``_tools_cache`` (only ``_get_tool()`` does), and the mcp SDK's
-    SEP-2243 param-validation path runs a full server-side ``tools/list`` on
-    every ``tools/call`` that carries arguments, so an uncached listing meant
-    every tool call re-listed every backend -- redeeming a per-user
-    credential each time. Keyed per subject rather than one shared/merged
+    consults ``_tools_cache`` (only ``_get_tool()`` does), so every client
+    ``tools/list`` re-lists every backend, redeeming a per-user credential
+    for each, and a reconnect storm repeats that for every client. The cache
+    bounds those redemptions per user and hosts the negative cache. (It
+    originally also absorbed the mcp SDK's SEP-2243 ``Mcp-Param-*``
+    validation, which listed every backend before each argument-bearing
+    ``tools/call``; fastmcp >=4.2 serves the SDK's ``get_tool_input_schema``
+    hook from its own schema cache, so that path no longer lists at all.)
+    Keyed per subject rather than one shared/merged
     listing, because a listing's outcome can depend on the caller's
     credential (rucio-mcp 401s an unlinked caller); see ``_list_tools``'s own
     docstring for the caching mechanics.
