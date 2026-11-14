@@ -250,9 +250,9 @@ export interface IdentityProvider {
 export interface IdentitiesResponse {
   subject: string;
   email: string;
-  unixname: string;
-  uid: number;
-  gid: number;
+  unixname: string | null;
+  uid: number | null;
+  gid: number | null;
   groups: string[];
   providers: IdentityProvider[];
   /** True when the caller is a member of the broker's configured admin
