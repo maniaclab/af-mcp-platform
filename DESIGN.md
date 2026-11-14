@@ -320,7 +320,7 @@ Every signed-in page has the same parts in the same order.
 | Identities | Link accounts and keep the grid certificate valid. | Per card | Proxy expired (problem); a credential rejected (warning); proxy expiring (warning); a link failed (problem); a link succeeded (ok, clears after 5 seconds) | One card per credential, key-value lists |
 | Tokens | Create and revoke tokens for clients without a browser. | New token | A token expires within 7 days (warning); a revoke failed (problem) | Table, dialog with copy field |
 | Usage | What have my clients been doing? | None; range control | None | Stats, bar chart, table per service |
-| Entitlements | Which group grants which permission? | None | None | Compact matrix table |
+| Entitlements | Which group grants which permission? What are my call limits and how much have I used? | None | None | Compact matrix table, compact rate-limits table with status marks |
 | Admin | Platform state across users. | None | Tool configuration issues (warning) | Compact tables, status marks |
 
 A data page also shows a problem banner when its own data fails to load.

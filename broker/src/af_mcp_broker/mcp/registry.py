@@ -15,9 +15,9 @@ if TYPE_CHECKING:
 
 # Reserved for the broker's own methods, registered directly on the
 # aggregator (mcp/diagnostics.py, issue #153): af_whoami, af_list_identities,
-# af_list_mcp_servers, af_link_identity, af_usage, af_search_tools. The prefix belongs to the
-# builtin BUILTIN_SERVICE_NAME entry ServiceRegistry self-registers below
-# (issue #240) -- no operator service may configure it: doing so would let a
+# af_list_mcp_servers, af_link_identity, af_usage, af_search_tools,
+# af_rate_limits. The prefix belongs to the builtin BUILTIN_SERVICE_NAME entry
+# ServiceRegistry self-registers below (issue #240) -- no operator service may configure it: doing so would let a
 # service's own tools ("af_<toolname>", once namespaced) shadow these methods'
 # names in a caller's tools/list, defeating the "always visible, never
 # proxied" guarantee they exist to provide. Enforced by
@@ -51,6 +51,7 @@ LIST_MCP_SERVERS_TOOL_NAME = f"{RESERVED_PREFIX}_list_mcp_servers"
 LINK_IDENTITY_TOOL_NAME = f"{RESERVED_PREFIX}_link_identity"
 USAGE_TOOL_NAME = f"{RESERVED_PREFIX}_usage"
 SEARCH_TOOLS_TOOL_NAME = f"{RESERVED_PREFIX}_search_tools"
+RATE_LIMITS_TOOL_NAME = f"{RESERVED_PREFIX}_rate_limits"
 DIAGNOSTIC_TOOL_NAMES = frozenset(
     {
         WHOAMI_TOOL_NAME,
@@ -59,6 +60,7 @@ DIAGNOSTIC_TOOL_NAMES = frozenset(
         LINK_IDENTITY_TOOL_NAME,
         USAGE_TOOL_NAME,
         SEARCH_TOOLS_TOOL_NAME,
+        RATE_LIMITS_TOOL_NAME,
     }
 )
 
@@ -346,10 +348,14 @@ def _builtin_service_spec(name: str = BUILTIN_SERVICE_NAME) -> ServiceSpec:
         # reports a missing or unlinked credential rather than retrying.
         agent_policy=(
             "The gateway's own identity and catalog methods. af_whoami, "
-            "af_list_identities, af_list_mcp_servers, af_usage, and "
+            "af_list_identities, af_list_mcp_servers, af_usage, "
             "af_search_tools (keyword search over the tools you are entitled "
-            "to) are read-only orientation tools. When another service fails because "
-            "the caller has no linked identity, route the user to "
+            "to), and af_rate_limits (the call limits that apply to you, which "
+            "of your tools each covers, and how much of each window you have "
+            "used) are read-only orientation tools. Call af_rate_limits before "
+            "a large batch of state-changing calls, or after a rate-limit "
+            "error, instead of retrying blindly. When another service fails "
+            "because the caller has no linked identity, route the user to "
             "af_link_identity (or the portal) instead of retrying the call."
         ),
     )

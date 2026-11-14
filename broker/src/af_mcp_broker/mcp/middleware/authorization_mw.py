@@ -24,6 +24,7 @@ from af_mcp_broker.authorization import (
 from af_mcp_broker.authorization.errors import ToolRateLimitError
 from af_mcp_broker.authorization.rate_limit import check_rate_limits
 from af_mcp_broker.mcp.errors import ERROR_CLASS_TOOL_REPORTED, classify_backend_error
+from af_mcp_broker.mcp.registry import RATE_LIMITS_TOOL_NAME
 from af_mcp_broker.shared_state import FallbackSharedState
 from af_mcp_broker.tracing import (
     current_trace_id,
@@ -110,7 +111,8 @@ def _rate_limit_message(exc: ToolRateLimitError) -> str:
     )
     return (
         f"{exc}. Retry-After: {exc.retry_after_seconds} seconds; "
-        f"retry_at: {retry_at.strftime('%Y-%m-%dT%H:%M:%SZ')}"
+        f"retry_at: {retry_at.strftime('%Y-%m-%dT%H:%M:%SZ')}. "
+        f"Call {RATE_LIMITS_TOOL_NAME} to see all your limits and usage."
     )
 
 

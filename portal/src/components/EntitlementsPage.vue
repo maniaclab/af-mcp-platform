@@ -15,6 +15,9 @@
  * intersect a column in the reference table actually affect access; the
  * rest carry no permission and would just be noise. See
  * docs/plans/2026-09-01-ops-platform-usability.md.
+ *
+ * A "Rate limits" section (RateLimitsSection.vue) follows the matrix. It loads
+ * on its own, so it appears even when the policy declares no permissions.
  */
 import { computed, onMounted, ref } from 'vue';
 import {
@@ -26,6 +29,7 @@ import {
 import { permissionLabel } from '../lib/permissionLabel';
 import { useLoadState } from '../lib/useLoadState';
 import EntitlementMark from './EntitlementMark.vue';
+import RateLimitsSection from './RateLimitsSection.vue';
 import AsyncState from './ui/AsyncState.vue';
 import InfoTip from './ui/InfoTip.vue';
 
@@ -254,6 +258,8 @@ function meHasPermission(permission: string): boolean {
       </div>
     </section>
   </AsyncState>
+
+  <RateLimitsSection />
 </template>
 
 <style scoped>

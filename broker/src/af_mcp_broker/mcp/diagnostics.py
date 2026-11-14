@@ -15,11 +15,14 @@ from af_mcp_broker.api.permissions import (
     _granting_groups_for,
     _service_status,
 )
-from af_mcp_broker.authorization import get_principal_permissions
+from af_mcp_broker.api.rate_limits import RateLimitStatus, rate_limit_statuses
+from af_mcp_broker.authorization import get_action_type, get_principal_permissions
+from af_mcp_broker.authorization.rate_limit import read_rate_limit_usage
 from af_mcp_broker.mcp.registry import (
     LINK_IDENTITY_TOOL_NAME,
     LIST_IDENTITIES_TOOL_NAME,
     LIST_MCP_SERVERS_TOOL_NAME,
+    RATE_LIMITS_TOOL_NAME,
     SEARCH_TOOLS_TOOL_NAME,
     USAGE_TOOL_NAME,
     WHOAMI_TOOL_NAME,
@@ -44,6 +47,7 @@ if TYPE_CHECKING:
     from af_mcp_broker.credmon.guidance import JobCredentialGuide
     from af_mcp_broker.identity import Principal
     from af_mcp_broker.mcp.registry import ServiceRegistry
+    from af_mcp_broker.shared_state import SharedState
 
 # Broker-native diagnostic tools (issue #153), registered directly on the
 # aggregator's FastMCP instance -- never as a services.yaml entry -- for two
@@ -217,6 +221,48 @@ class SearchToolsResult(BaseModel):
     note: str | None = None
 
 
+# Most tool names af_rate_limits lists per rule (docs/mcp-design.md B1); a rule
+# such as "every state-changing call" can cover the whole catalog.
+_RATE_LIMIT_MAX_TOOLS = 20
+
+
+class ToolRateLimitStatus(RateLimitStatus):
+    """One rate-limit rule, the caller's usage of it, and the caller's tools it covers -- af_rate_limits' per-rule row."""
+
+    # Entitled tools the rule covers, sorted by name and capped at
+    # _RATE_LIMIT_MAX_TOOLS; tool_count is the uncapped number.
+    tools: list[str]
+    tool_count: int
+
+
+class RateLimitsResult(BaseModel):
+    """The tool rate limits that apply to the caller and their usage -- af_rate_limits' return value."""
+
+    model_config = ConfigDict(frozen=True)
+
+    # One line saying where the caller stands, so a client can relay it as is.
+    summary: str
+    rules: list[ToolRateLimitStatus]
+    # False when usage could not be read: rules and tools are still listed.
+    usage_available: bool
+    # Set when there is a next step: no rules, or usage unavailable.
+    note: str | None = None
+
+
+def _rate_limits_summary(rules: Sequence[ToolRateLimitStatus]) -> str:
+    if not rules:
+        return "No rate limits are configured."
+    plural = "s" if len(rules) != 1 else ""
+    exhausted = [r for r in rules if r.used is not None and r.used >= r.limit]
+    if exhausted:
+        waits = ", ".join(
+            f"{r.tool or r.action_type} resets in {r.resets_in_seconds}s"
+            for r in exhausted
+        )
+        return f"{len(rules)} rate limit{plural}; at the limit: {waits}."
+    return f"{len(rules)} rate limit{plural} apply; none is at its limit."
+
+
 def _words(text: str) -> list[str]:
     return _WORD.findall(text.lower())
 
@@ -304,6 +350,7 @@ def register_diagnostic_tools(
     target_to_alias: dict[str, str],
     settings: Settings,
     job_credentials: JobCredentialGuide | None = None,
+    shared_state: SharedState | None = None,
 ) -> None:
     """(Re)register the af_* diagnostic tools on *mcp*, bound to the given state.
 
@@ -325,6 +372,7 @@ def register_diagnostic_tools(
         LINK_IDENTITY_TOOL_NAME,
         USAGE_TOOL_NAME,
         SEARCH_TOOLS_TOOL_NAME,
+        RATE_LIMITS_TOOL_NAME,
     ):
         with contextlib.suppress(KeyError):
             mcp.local_provider.remove_tool(name)
@@ -586,4 +634,86 @@ def register_diagnostic_tools(
             )
         return SearchToolsResult(
             query=query, total=len(hits), tools=hits[:limit], note=note
+        )
+
+    @mcp.tool(
+        name=RATE_LIMITS_TOOL_NAME,
+        annotations=ToolAnnotations(
+            title="Rate limits",
+            read_only_hint=True,
+            open_world_hint=False,
+        ),
+    )
+    async def _rate_limits() -> RateLimitsResult:
+        """Return the call limits that apply to you, the tools each covers, and how much of each window you have used.
+
+        Call this before a large batch of state-changing calls, or after a
+        "Rate limit ... exceeded" error, to see how many calls you have left
+        and when the window resets, instead of retrying blindly. Each rule
+        gives a selector (`action_type` and/or a tool-name glob `tool`; a call
+        is covered when every selector set matches), `limit` calls per
+        `window_seconds`, `used` so far and `resets_in_seconds`. Every
+        matching rule applies, so the strictest one decides. `used` counts
+        only your own calls, and includes calls that were refused;
+        `resets_in_seconds` is null while no window is open. When the usage
+        store is unreachable `used` is null and `usage_available` is false.
+        `tools` lists up to 20 of your entitled tools the rule covers
+        (`tool_count` is the full number). This call is itself counted by any
+        rule that matches it. Needs no permission of its own and never
+        contacts a service.
+        """
+        principal = await _require_principal()
+        # Through the middleware chain, so EntitlementMiddleware filters to
+        # this caller's tools, as af_search_tools does.
+        entitled = await mcp.list_tools()
+        entitled_actions: list[tuple[str, str]] = []
+        for tool in entitled:
+            service = registry.get_by_tool_prefix(tool.name)
+            if service is None:
+                continue
+            permission = registry.required_permission_for(tool.name, service)
+            entitled_actions.append(
+                (
+                    tool.name,
+                    get_action_type(service.name, tool.name, permission, policy),
+                )
+            )
+        usage = await read_rate_limit_usage(
+            policy.rate_limits, shared_state, principal.subject
+        )
+        rules: list[ToolRateLimitStatus] = []
+        for rule, status in zip(
+            policy.rate_limits,
+            rate_limit_statuses(policy.rate_limits, usage),
+            strict=True,
+        ):
+            covered = sorted(
+                name
+                for name, action_type in entitled_actions
+                if rule.matches(name, action_type)
+            )
+            rules.append(
+                ToolRateLimitStatus(
+                    **status.model_dump(),
+                    tools=covered[:_RATE_LIMIT_MAX_TOOLS],
+                    tool_count=len(covered),
+                )
+            )
+        note: str | None = None
+        if not rules:
+            note = (
+                "Your tool calls are not rate limited on this gateway, so "
+                "there is nothing to wait for or plan around."
+            )
+        elif usage is None:
+            note = (
+                "Usage could not be read right now, so `used` is null. The "
+                "limits still apply: expect a rate-limit error to say when "
+                "to retry (Retry-After)."
+            )
+        return RateLimitsResult(
+            summary=_rate_limits_summary(rules),
+            rules=rules,
+            usage_available=usage is not None,
+            note=note,
         )

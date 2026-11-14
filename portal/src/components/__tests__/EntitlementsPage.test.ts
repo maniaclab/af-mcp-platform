@@ -12,6 +12,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('../../lib/api', () => ({
   fetchEntitlements: vi.fn(),
   fetchPermissions: vi.fn(),
+  fetchRateLimits: vi.fn(),
+  fetchCatalog: vi.fn(),
+  fetchServerTools: vi.fn(),
   SessionExpiredError: class SessionExpiredError extends Error {},
   AccessDeniedError: class AccessDeniedError extends Error {},
 }));
@@ -19,6 +22,7 @@ vi.mock('../../lib/api', () => ({
 import {
   fetchEntitlements,
   fetchPermissions,
+  fetchRateLimits,
   type EntitlementsResponse,
   type PermissionsResponse,
 } from '../../lib/api';
@@ -58,9 +62,17 @@ async function mountPage(permissions = PERMISSIONS) {
 
 beforeEach(() => {
   vi.restoreAllMocks();
+  vi.mocked(fetchRateLimits).mockResolvedValue({ rate_limits: [], usage_available: true });
 });
 
 describe('EntitlementsPage', () => {
+  it('follows the matrix with the rate limits section', async () => {
+    const wrapper = await mountPage();
+
+    expect(wrapper.find('#rl-heading').text()).toBe('Rate limits');
+    expect(wrapper.text()).toContain('No rate limits are configured.');
+  });
+
   it('gives granted-read, granted-state-changing and not-granted cells distinct names', async () => {
     const wrapper = await mountPage();
 

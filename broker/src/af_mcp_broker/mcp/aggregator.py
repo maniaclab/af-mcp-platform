@@ -1959,6 +1959,7 @@ def build_aggregator(
         target_to_alias or {},
         settings,
         job_credentials,
+        shared_state,
     )
     return mcp
 
@@ -2047,6 +2048,7 @@ def populate_aggregator(
         target_to_alias or {},
         settings,
         job_credentials,
+        shared_state,
     )
 
 

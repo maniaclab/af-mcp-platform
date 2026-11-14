@@ -19,6 +19,7 @@ import {
   fetchMaintenanceStatus,
   fetchOAuth21AuthorizeUrl,
   fetchProxyStatus,
+  fetchRateLimits,
   fetchServerTools,
   fetchX509Preflight,
   linkKrb5Keytab,
@@ -809,6 +810,29 @@ describe('permissions client (issue #144 step 4: permission PATs)', () => {
 
     expect(result.group_permissions.atlas).toEqual(['read_data', 'submit_jobs']);
     expect(result.group_permissions['af-admins']).toEqual(['admin']);
+  });
+
+  it('fetchRateLimits returns the rules with the caller usage of each', async () => {
+    const fetchMock = mockJson(200, {
+      usage_available: true,
+      rate_limits: [
+        {
+          action_type: 'state_change',
+          tool: null,
+          limit: 60,
+          window_seconds: 300,
+          used: 12,
+          resets_in_seconds: 180,
+        },
+      ],
+    });
+    globalThis.fetch = fetchMock;
+
+    const result = await fetchRateLimits();
+
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/v1/rate-limits');
+    expect(result.usage_available).toBe(true);
+    expect(result.rate_limits[0].used).toBe(12);
   });
 });
 
