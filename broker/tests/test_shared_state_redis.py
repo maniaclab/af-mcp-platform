@@ -116,3 +116,60 @@ async def test_unreachable_store_raises_unavailable(
                 await call
     finally:
         await backend.close()
+
+
+async def test_publish_reaches_a_subscriber_on_another_client(
+    shared_state_url: str, key: str
+) -> None:
+    """Replicas are separate clients on one store: a publish on A reaches B."""
+    replica_a = RedisSharedState(shared_state_url)
+    replica_b = RedisSharedState(shared_state_url)
+    try:
+        async with replica_b.subscribe(key) as messages:
+            await replica_a.publish(key, "hello")
+            assert await asyncio.wait_for(anext(messages), timeout=5) == "hello"
+    finally:
+        await replica_a.close()
+        await replica_b.close()
+
+
+async def test_subscriber_only_sees_its_own_channel_and_prefix(
+    shared_state_url: str, key: str
+) -> None:
+    a = RedisSharedState(shared_state_url, key_prefix="a:")
+    b = RedisSharedState(shared_state_url, key_prefix="b:")
+    try:
+        async with a.subscribe(key) as messages:
+            await b.publish(key, "other-prefix")
+            await a.publish(f"{key}-other", "other-channel")
+            await a.publish(key, "mine")
+            assert await asyncio.wait_for(anext(messages), timeout=5) == "mine"
+    finally:
+        await a.close()
+        await b.close()
+
+
+async def test_idle_subscription_outlives_the_socket_timeout(
+    store: RedisSharedState, key: str
+) -> None:
+    """The client's 2 s socket timeout is for request/response calls; a quiet channel is not an outage."""
+    async with store.subscribe(key) as messages:
+        waiting = asyncio.ensure_future(anext(messages))
+        await asyncio.sleep(2.5)
+        assert not waiting.done()
+        await store.publish(key, "late")
+        assert await asyncio.wait_for(waiting, timeout=5) == "late"
+
+
+async def test_unreachable_store_raises_unavailable_for_pubsub(
+    unreachable_shared_state_url: str,
+) -> None:
+    backend = RedisSharedState(unreachable_shared_state_url)
+    try:
+        with pytest.raises(SharedStateUnavailableError):
+            await backend.publish("c", "m")
+        with pytest.raises(SharedStateUnavailableError):
+            async with backend.subscribe("c"):
+                pass
+    finally:
+        await backend.close()

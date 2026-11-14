@@ -12,21 +12,30 @@ two backends:
   the recommended store; Valkey, Dragonfly and KeyDB also work),
   reached through a ``redis://`` or ``rediss://`` URL the operator supplies.
 
+Besides counters it offers publish/subscribe, for state that must reach every
+replica at once rather than be polled (see ``mcp/cache_invalidation.py``).
+
 See docs/architecture.md ("Replica consistency") for which broker state lives
 here and how each item behaves when the store is down.
 """
 
 from __future__ import annotations
 
+import asyncio
 import time
 from abc import ABC, abstractmethod
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import redis.asyncio as aioredis
 import structlog
 from redis.exceptions import RedisError
 
 from af_mcp_broker.errors import BrokerError
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
 
 # Seconds a store call may block before it counts as the store being down.
 # Short on purpose: every caller sits on a request path.
@@ -70,6 +79,11 @@ class WindowCount:
     ttl_seconds: float
 
 
+async def _drain(queue: asyncio.Queue[str]) -> AsyncIterator[str]:
+    while True:
+        yield await queue.get()
+
+
 class SharedState(ABC):
     """Primitives for state that must agree across broker replicas."""
 
@@ -90,6 +104,28 @@ class SharedState(ABC):
     async def delete(self, key: str) -> None:
         """Drop *key*'s counter. Deleting an absent key is not an error."""
 
+    @abstractmethod
+    async def publish(self, channel: str, message: str) -> None:
+        """Send *message* to every current subscriber of *channel*, on every replica.
+
+        Delivery is at-most-once and reaches only subscribers connected at
+        the moment of the call: there is no history and no replay, so a
+        subscriber that was disconnected misses the message.
+        """
+
+    @abstractmethod
+    def subscribe(
+        self, channel: str
+    ) -> AbstractAsyncContextManager[AsyncIterator[str]]:
+        """Subscribe to *channel* for the duration of an ``async with`` block.
+
+        Entering the block returns once the subscription is active, so a
+        message published afterwards is not missed. The yielded iterator
+        produces each message's text. If the store goes away the iterator
+        raises ``SharedStateUnavailableError``; the subscriber decides whether
+        and when to resubscribe, and must assume it missed messages meanwhile.
+        """
+
     async def close(self) -> None:  # noqa: B027 -- optional hook, not abstract
         """Release any connection held by the backend."""
 
@@ -100,6 +136,8 @@ class InMemorySharedState(SharedState):
     def __init__(self) -> None:
         # key -> (count, window end on the monotonic clock)
         self._windows: dict[str, tuple[int, float]] = {}
+        # channel -> one queue per active subscriber
+        self._subscribers: dict[str, set[asyncio.Queue[str]]] = {}
 
     async def incr_window(self, key: str, window_seconds: int) -> WindowCount:
         now = time.monotonic()
@@ -122,6 +160,29 @@ class InMemorySharedState(SharedState):
 
     async def delete(self, key: str) -> None:
         self._windows.pop(key, None)
+
+    async def publish(self, channel: str, message: str) -> None:
+        for queue in self._subscribers.get(channel, ()):
+            queue.put_nowait(message)
+
+    @asynccontextmanager
+    async def subscribe(self, channel: str) -> AsyncIterator[AsyncIterator[str]]:
+        queue: asyncio.Queue[str] = asyncio.Queue()
+        self._subscribers.setdefault(channel, set()).add(queue)
+        try:
+            yield _drain(queue)
+        finally:
+            self._subscribers[channel].discard(queue)
+
+
+async def _redis_messages(pubsub: aioredis.client.PubSub) -> AsyncIterator[str]:
+    while True:
+        try:
+            raw = await pubsub.get_message(ignore_subscribe_messages=True, timeout=None)
+        except (RedisError, OSError) as exc:
+            raise SharedStateUnavailableError(str(exc)) from exc
+        if raw is not None:
+            yield raw["data"].decode()
 
 
 class RedisSharedState(SharedState):
@@ -163,6 +224,25 @@ class RedisSharedState(SharedState):
             await self._client.delete(self._prefix + key)
         except (RedisError, OSError) as exc:
             raise SharedStateUnavailableError(str(exc)) from exc
+
+    async def publish(self, channel: str, message: str) -> None:
+        try:
+            await self._client.publish(self._prefix + channel, message)
+        except (RedisError, OSError) as exc:
+            raise SharedStateUnavailableError(str(exc)) from exc
+
+    @asynccontextmanager
+    async def subscribe(self, channel: str) -> AsyncIterator[AsyncIterator[str]]:
+        pubsub = self._client.pubsub()
+        try:
+            await pubsub.subscribe(self._prefix + channel)
+        except (RedisError, OSError) as exc:
+            await pubsub.aclose()
+            raise SharedStateUnavailableError(str(exc)) from exc
+        try:
+            yield _redis_messages(pubsub)
+        finally:
+            await pubsub.aclose()
 
     async def close(self) -> None:
         await self._client.aclose()
@@ -208,6 +288,17 @@ class FallbackSharedState(SharedState):
             await self.primary.delete(key)
         except SharedStateUnavailableError as exc:
             self._log_unavailable(exc)
+
+    async def publish(self, channel: str, message: str) -> None:
+        # No per-replica fallback: a message only one replica could hear is
+        # not a degraded broadcast. The subscriber and publisher own their
+        # outage handling (see ``ListCacheInvalidator``).
+        await self.primary.publish(channel, message)
+
+    def subscribe(
+        self, channel: str
+    ) -> AbstractAsyncContextManager[AsyncIterator[str]]:
+        return self.primary.subscribe(channel)
 
     async def close(self) -> None:
         await self.primary.close()
