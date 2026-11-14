@@ -7,6 +7,7 @@ import socket
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import anyio
 import structlog
 
 from af_mcp_broker.credmon.guidance import wired_kinds
@@ -79,7 +80,7 @@ async def build_credmon_sync(
         # Checked once here so a missing mount refuses to boot; the client
         # itself re-reads the file on every store, so rotation needs no
         # restart.
-        token_file.read_text()
+        await anyio.Path(token_file).read_text()
     except OSError as exc:
         raise RuntimeError(
             "CREDMON_HTCONDOR_API_TOKEN_FILE could not be read: "

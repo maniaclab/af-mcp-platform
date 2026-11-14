@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import anyio
 import structlog
 
 if TYPE_CHECKING:
@@ -549,7 +550,7 @@ async def _secure_delete_proxy(path: str) -> None:
     the file content is gone before the directory entry is removed.
     """
     try:
-        size = Path(path).stat().st_size
+        size = (await anyio.Path(path).stat()).st_size
         # Run the blocking I/O on the default executor to avoid stalling the loop
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, _overwrite_and_unlink, path, size)

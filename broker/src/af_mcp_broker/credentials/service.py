@@ -4,9 +4,9 @@ import asyncio
 import os
 import time
 import uuid
-from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
 
+import anyio
 import structlog
 
 from af_mcp_broker.audit.logger import AuditRecord, write_audit
@@ -161,7 +161,7 @@ class ServiceProvider(CredentialProvider):
         # Option 2: token file (Kubernetes Secret mounted as file)
         token_file = os.environ.get("AF_SERVICE_TOKEN_FILE")
         if token_file:
-            token = Path(token_file).read_text().strip()
+            token = (await anyio.Path(token_file).read_text()).strip()
             self._log.debug("service.token.from_file", path=token_file)
             return token, time.time() + 3600
 

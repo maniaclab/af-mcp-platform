@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import time
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any
 
+import anyio
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, SecretBytes, SecretStr
@@ -1220,7 +1220,7 @@ async def redeem_x509_proxy(request: Request) -> ProxyRedeemResponse:
         )
 
     try:
-        pem = Path(meta.proxy_path).read_text()
+        pem = await anyio.Path(meta.proxy_path).read_text()
     except OSError:
         # Cached metadata without its file is an inconsistency (e.g. tmpfs
         # cleared); from the caller's perspective the proxy is simply gone.

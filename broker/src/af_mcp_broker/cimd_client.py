@@ -162,7 +162,9 @@ async def fetch_client_document(
     client_id_url: str,
     *,
     client: httpx.AsyncClient,
-    timeout: float = _FETCH_TIMEOUT,
+    # Forwarded to httpx as its per-request timeout; no asyncio/anyio
+    # cancel scope is involved, so ASYNC109's cancel-scope advice does not apply.
+    timeout: float = _FETCH_TIMEOUT,  # noqa: ASYNC109
     max_bytes: int = _MAX_DOC_BYTES,
 ) -> dict[str, Any]:
     """Fetch and JSON-parse the CIMD document at *client_id_url*.
@@ -228,7 +230,9 @@ async def resolve_cimd_client(
     client_id: str,
     *,
     client: httpx.AsyncClient,
-    timeout: float = _FETCH_TIMEOUT,
+    # Forwarded to httpx as its per-request timeout; no asyncio/anyio
+    # cancel scope is involved, so ASYNC109's cancel-scope advice does not apply.
+    timeout: float = _FETCH_TIMEOUT,  # noqa: ASYNC109
     resolver: Resolver | None = None,
 ) -> CimdClient:
     """Resolve a CIMD ``client_id`` URL to a :class:`CimdClient`.

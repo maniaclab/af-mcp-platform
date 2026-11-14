@@ -43,6 +43,7 @@ target-version = "py312"
 # https://github.com/scientific-python/cookie/blob/113bfd515a55969d8177b811e070b1bcd9a3dc51/%7B%7Bcookiecutter.project_name%7D%7D/pyproject.toml#L284-L338
 extend-select = [
   "ARG",  # flake8-unused-arguments
+  "ASYNC", # flake8-async
   "B",    # flake8-bugbear
   "BLE",  # flake8-blind-except
   "C4",   # flake8-comprehensions
@@ -90,7 +91,14 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["ARG"]
+"tests/**" = [
+  "ARG",
+  # Polling helpers (`_eventually`, `_until`) take a `timeout` and loop on a
+  # plain sync predicate with a short sleep inside `asyncio.timeout`; there is
+  # no event to await, and the timeout bounds the wait.
+  "ASYNC109",
+  "ASYNC110",
+]
 # spikes/ are exploratory validation scripts, not production code — allow
 # prints, broad excepts, and other conveniences useful in scratch work.
 "spikes/**" = ["ARG", "BLE", "EM", "PLR", "PTH", "T20", "TRY"]
