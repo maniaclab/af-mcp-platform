@@ -13,8 +13,8 @@ from __future__ import annotations
 from typing import ClassVar
 
 import pytest
+from conftest import InMemoryCredmonSyncState
 
-from af_mcp_broker.credmon.state import InMemoryCredmonSyncState
 from af_mcp_broker.credmon.storer import SyncReport
 from af_mcp_broker.credmon.sync import CredmonSyncService
 

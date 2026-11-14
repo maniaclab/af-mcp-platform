@@ -7,9 +7,8 @@
  * maintenanceBanner.ts's pattern, so the health rules are unit testable
  * without a component harness.
  */
-import { APIError, SessionExpiredError } from './api';
 import type { CredmonStatus } from './api';
-import { apiErrorDetail } from './x509Identity';
+import { describeApiError } from './apiError';
 
 export type CredmonHealth = 'disabled' | 'pending' | 'healthy' | 'warning' | 'error';
 
@@ -75,17 +74,13 @@ export function credmonNextRunAt(status: CredmonStatus): number | null {
  * HTML error page from a proxy hop).
  */
 export function credmonSyncErrorMessage(err: unknown): string {
-  if (err instanceof SessionExpiredError) {
-    return 'Your session has expired. Reload the page to sign in again.';
-  }
-  if (err instanceof APIError) {
-    const detail = apiErrorDetail(err);
-    if (detail) return detail;
-    if (err.status === 404)
-      return 'The HTCondor credmon integration is not enabled on this broker.';
-    if (err.status === 409)
-      return 'A sync is already running on another broker replica. Try again shortly.';
-    if (err.status === 403) return 'Running a sync requires admin access.';
-  }
-  return err instanceof Error ? err.message : 'The sync could not be started.';
+  return describeApiError(err, {
+    sessionExpired: 'Your session has expired. Reload the page to sign in again.',
+    byStatus: {
+      404: 'The HTCondor credmon integration is not enabled on this broker.',
+      409: 'A sync is already running on another broker replica. Try again shortly.',
+      403: 'Running a sync requires admin access.',
+    },
+    fallback: 'The sync could not be started.',
+  });
 }

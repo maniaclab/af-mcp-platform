@@ -4,6 +4,7 @@
  */
 import { ref } from 'vue';
 import { AccessDeniedError, SessionExpiredError } from './api';
+import { errorMessage } from './apiError';
 
 export function useLoadState() {
   // True from the start so the first paint, before onMounted calls run(),
@@ -30,7 +31,7 @@ export function useLoadState() {
       } else if (err instanceof SessionExpiredError) {
         sessionExpired.value = true;
       } else {
-        error.value = err instanceof Error ? err.message : fallbackMessage;
+        error.value = errorMessage(err, fallbackMessage);
       }
     } finally {
       loading.value = false;

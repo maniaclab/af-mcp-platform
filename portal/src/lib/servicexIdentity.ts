@@ -9,8 +9,7 @@
  * linkServiceXToken); this module only turns its outcomes into user-facing
  * strings.
  */
-import { apiErrorDetail } from './x509Identity';
-import { APIError, SessionExpiredError } from './api';
+import { describeApiError } from './apiError';
 
 /**
  * User-facing message for a failed POST /v1/servicex/link attempt.
@@ -23,19 +22,12 @@ import { APIError, SessionExpiredError } from './api';
  * readable when it isn't.
  */
 export function servicexLinkErrorMessage(err: unknown): string {
-  if (err instanceof SessionExpiredError) {
-    return 'Session expired — reload the page to re-authenticate.';
-  }
-  if (err instanceof APIError) {
-    const detail = apiErrorDetail(err);
-    if (detail) return detail;
-    if (err.status === 400) {
-      return 'Token rejected — check your ServiceX personal token and try again.';
-    }
-    if (err.status === 502) {
-      return 'ServiceX token redemption is temporarily unavailable — try again later.';
-    }
-  }
-  if (err instanceof Error && err.message) return err.message;
-  return 'Linking failed. Try again.';
+  return describeApiError(err, {
+    sessionExpired: 'Session expired — reload the page to re-authenticate.',
+    byStatus: {
+      400: 'Token rejected — check your ServiceX personal token and try again.',
+      502: 'ServiceX token redemption is temporarily unavailable — try again later.',
+    },
+    fallback: 'Linking failed. Try again.',
+  });
 }

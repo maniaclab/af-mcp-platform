@@ -16,5 +16,5 @@ const range = ref('30');
 </script>
 
 <template>
-  <SegmentedControl v-model="range" :options="OPTIONS" aria-label="Range, example" />
+  <SegmentedControl v-model="range" :options="OPTIONS" ariaLabel="Range, example" />
 </template>
