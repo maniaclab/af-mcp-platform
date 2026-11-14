@@ -1125,7 +1125,11 @@ listing sends the backend no request. A provider that needs no user action
 (`broker-issued`, `condor-token`, the service-account provider) reports
 `is_linked()` true, so it is unaffected; a mint that fails for an
 operational reason, or a provider that does not resolve, still connects
-without a credential and is classified `unavailable`. `resolve_list_time_credential` — the portal's
+without a credential and is classified `unavailable`. A caller who holds none of the service's
+permissions is skipped before any of this, for every auth type, and classified
+`not_entitled` (INFO, never recorded, no link prompt): the broker neither mints
+a credential nor contacts the backend for a caller whose tools are hidden
+anyway, and a direct call gets the permission denial. `resolve_list_time_credential` — the portal's
 per-service tool-listing entry point into this same logic
 (`api/catalog_tools.py`, which reports `not_linked` for the unlinked caller
 without contacting the backend) — folds `"x509"` and `"krb5"` into one shared
