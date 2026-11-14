@@ -1201,6 +1201,82 @@ the kind's first configured identity target. The claim set is unchanged
 keeps no copy. See [HTCondor Credmon](credmon.md) for the full chain,
 configuration and AP prerequisites.
 
+## Portal prompts through multi-round-trip results (issue #163)
+
+A tool call that needs something only the user can do in the portal -- link an
+identity, re-link a rejected credential, unlock a credential with a passphrase --
+fails with a plain-text `ToolError` naming the portal link. A client that
+supports MCP multi-round-trip results (SEP-2322, protocol 2026-07-28) gets the
+same link as an input prompt instead, and the call resumes when the user
+confirms.
+
+```
+client                         broker                          portal
+  | tools/call toy_x ------------>|                                |
+  |                               | not linked -> ActionRequired   |
+  |<-- input_required ------------|                                |
+  |    inputRequests: one form    |                                |
+  |      (message = link, no      |                                |
+  |       fields)                 |                                |
+  |    requestState: sealed       |                                |
+  | show link to the user ------------------------------------->  | user links
+  | tools/call toy_x (+ inputResponses, requestState) ->          |
+  |                               | verify state, re-check         |
+  |                               | is_linked(), run the call      |
+  |<-- tool result ---------------|                                |
+```
+
+**What the prompt carries.** One embedded form request whose message names the
+identity provider and the portal deep link (the same link the plain error and
+`af_link_identity` give) and whose schema has no fields: the user confirms, never
+types. A passphrase or credential is entered only in the portal; the prompt for
+an unlock says so and points at the unlock page.
+
+**Which clients get it.** `client_supports_input_required`
+(`mcp/input_required.py`) reads the negotiated connection, not the client name:
+the protocol era must be one with multi-round-trip results (2026-07-28 and later)
+and the client must have declared form-mode elicitation (a URL-only declaration
+cannot render the form). Anything else -- a handshake-era client, a modern client
+that cannot elicit, a broker with no `broker_state_key` -- gets the plain error
+text, unchanged. There is no URL-mode elicitation any more (removed in the
+2026-07-28 revision), and handshake-era `ctx.elicit()` is not attempted.
+
+**`request_state`.** Self-contained, so a retry may land on any replica. It is
+sealed twice:
+
+| Layer | Key | Binds | Rejects |
+|---|---|---|---|
+| MCP transport (`RequestStateSecurity`) | AES-256-GCM key derived by HMAC from `broker_state_key` under a fixed label, identical on every replica | tool name and argument digest, expiry (600 s) | forged or tampered state, state from a pod with a different key |
+| Broker (`InputRequiredState`) | Fernet over `broker_state_key`, via `encrypt_claims`/`decrypt_claims` | principal subject, tool, service, issuer, expiry (600 s) | another principal, another tool or service, expired state |
+
+Without a shared transport key the SDK seals under a per-process key and a retry
+landing on another pod is refused, so the transport key is derived from
+`broker_state_key` rather than left to the default. The broker's own layer exists
+because the transport's principal binding depends on an access token the broker
+does not use, and it knows nothing of services.
+
+**The retry.** `AuthorizationMiddleware` verifies a state it sealed before
+anything runs (an expired or misbound one is refused with `Invalid or expired
+requestState`), then runs the original call again from the top. Nothing in the
+state says the user is linked: `is_linked()`, `is_rejected()` and the unlock check
+run afresh, and the per-(subject, service) listing cache is invalidated by link
+events as described [above](#when-a-new-link-shows-up-in-toolslist). A prompt is
+issued at most once per call: a retry that is still blocked (the user confirmed
+without acting, or declined) gets the plain error, not a second prompt.
+
+The broker also removes `inputResponses` and `requestState` from the request
+before the proxy runs on such a retry. fastmcp's proxy relays both to a modern
+backend so that a *backend's* own multi-round-trip ask can be answered; here they
+are the broker's, and the backend would reject the state. A state the broker did
+not seal is a backend's continuation and is relayed untouched.
+
+**Audit.** A call answered with a prompt is audited with `outcome:
+"input_required"` (and `error` carrying the plain text), distinct from `error`; it
+is not metered or usage-counted as a completed call. The retry that follows is
+audited as its own call (`success` or `error`).
+
+---
+
 ## Programmatic client bootstrap
 
 The chain above ("Full Auth Chain") describes the interactive path: the
@@ -1641,8 +1717,10 @@ same way its Services page does.
 
 A `/mcp` tool call by such a caller gets the catalog's re-link sentence
 ("Your linked credential was rejected. Re-link your identity…") plus the
-portal link, not the generic "not linked" error, and the elicitation offered
-to a capable client says the same.
+portal link, not the generic "not linked" error, and the prompt offered
+to a client with multi-round-trip support
+([above](#portal-prompts-through-multi-round-trip-results-issue-163)) says the
+same.
 
 This is what ends a token with no expiry, so the MCP server must answer
 HTTP 401 when the AS rejects the bearer. See

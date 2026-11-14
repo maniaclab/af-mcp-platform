@@ -228,6 +228,12 @@ errors to you will show one of these verbatim:
 | x509 backend, no proxy minted yet | The backend's own tool error surfaces the redeem 404: `No valid x509/VOMS proxy is cached for this account — mint one at the AF portal and retry.` |
 | Backend unreachable / times out | A clean MCP tool error naming the failure, never a raw traceback or the backend's HTTP body |
 
+A client on protocol 2026-07-28 that can elicit input gets the "not linked",
+"rejected" and "needs unlock" cases as a prompt instead (the same portal link,
+plus a confirmation button); confirming makes the client retry the call, which
+proceeds once you have done what the portal asked. Other clients get the text
+above unchanged. See [Portal prompts](auth.md#portal-prompts-through-multi-round-trip-results-issue-163).
+
 A tool you lack the permission for won't appear in `tools/list` at all
 (entitlement filtering, not an error) — it isn't visible-but-denied the way
 the "not linked" case is. If a tool you expect is missing, call
