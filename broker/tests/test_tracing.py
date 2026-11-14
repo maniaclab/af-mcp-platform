@@ -40,10 +40,67 @@ def test_default_settings_leave_tracing_off(monkeypatch: pytest.MonkeyPatch) -> 
     assert tracing._tracer_provider is None
 
 
-def test_init_tracing_installs_sdk_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_endpoint_alone_does_not_turn_tracing_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The endpoint is transport only: tracing has its own switch."""
     installed: list[object] = []
     monkeypatch.setattr(tracing.trace, "set_tracer_provider", installed.append)
     settings = Settings(otel_exporter_otlp_endpoint="http://collector.invalid:4318")
+
+    tracing.init_tracing(settings)
+
+    assert tracing._tracer_provider is None
+    assert installed == []
+    app = FastAPI()
+    tracing.instrument_fastapi(app, settings)
+    assert not getattr(app, "_is_instrumented_by_opentelemetry", False)
+
+
+def test_metrics_only_means_no_tracing() -> None:
+    settings = Settings(
+        otel_metrics_enabled=True,
+        otel_exporter_otlp_endpoint="http://collector.invalid:4318",
+    )
+
+    tracing.init_tracing(settings)
+
+    assert tracing._tracer_provider is None
+
+
+def test_tracing_enabled_reads_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert Settings().tracing_enabled is False
+    monkeypatch.setenv("TRACING_ENABLED", "true")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318")
+    assert Settings().tracing_enabled is True
+
+
+@pytest.mark.parametrize(
+    ("signal_kwargs", "signal_setting"),
+    [
+        ({"tracing_enabled": True}, "TRACING_ENABLED"),
+        ({"otel_metrics_enabled": True}, "OTEL_METRICS_ENABLED"),
+    ],
+    ids=["tracing", "metrics"],
+)
+def test_an_enabled_signal_without_an_endpoint_is_a_startup_error(
+    monkeypatch: pytest.MonkeyPatch,
+    signal_kwargs: dict[str, bool],
+    signal_setting: str,
+) -> None:
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
+    with pytest.raises(ValueError, match=signal_setting) as excinfo:
+        Settings(**signal_kwargs)
+    assert "OTEL_EXPORTER_OTLP_ENDPOINT" in str(excinfo.value)
+
+
+def test_init_tracing_installs_sdk_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    installed: list[object] = []
+    monkeypatch.setattr(tracing.trace, "set_tracer_provider", installed.append)
+    settings = Settings(
+        tracing_enabled=True,
+        otel_exporter_otlp_endpoint="http://collector.invalid:4318",
+    )
     tracing.init_tracing(settings)
     try:
         provider = tracing._tracer_provider
@@ -60,7 +117,10 @@ def test_init_tracing_installs_sdk_provider(monkeypatch: pytest.MonkeyPatch) -> 
 def test_init_tracing_is_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:
     installed: list[object] = []
     monkeypatch.setattr(tracing.trace, "set_tracer_provider", installed.append)
-    settings = Settings(otel_exporter_otlp_endpoint="http://collector.invalid:4318")
+    settings = Settings(
+        tracing_enabled=True,
+        otel_exporter_otlp_endpoint="http://collector.invalid:4318",
+    )
     tracing.init_tracing(settings)
     try:
         tracing.init_tracing(settings)
@@ -121,7 +181,10 @@ def test_instrument_fastapi_only_when_enabled(
 
     enabled_app = FastAPI()
     tracing.instrument_fastapi(
-        enabled_app, Settings(otel_exporter_otlp_endpoint="http://collector:4318")
+        enabled_app,
+        Settings(
+            tracing_enabled=True, otel_exporter_otlp_endpoint="http://collector:4318"
+        ),
     )
     assert getattr(enabled_app, "_is_instrumented_by_opentelemetry", False)
 

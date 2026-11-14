@@ -528,6 +528,12 @@ startup refusal (Settings._validate_replica_state_config) for the chart path.
 {{- end }}
 {{- include "af-mcp-platform.validateOtlp" . }}
 {{- if or .Values.broker.tracing.enabled .Values.broker.metrics.otlp.enabled }}
+# OTLP transport (broker.otlp), rendered once for every enabled OpenTelemetry
+# signal: the standard OTel env vars, read natively by the SDK's OTLP/HTTP
+# exporters, which append each signal's /v1/<signal> path. The endpoint is
+# transport only; each signal has its own on/off setting below.
+- name: OTEL_EXPORTER_OTLP_ENDPOINT
+  value: {{ .Values.broker.otlp.endpoint | quote }}
 {{- if .Values.broker.otlp.headers.existingSecret.name }}
 # Collector request headers from a Secret so credentials never sit in values.
 - name: OTEL_EXPORTER_OTLP_HEADERS
@@ -541,14 +547,11 @@ startup refusal (Settings._validate_replica_state_config) for the chart path.
 {{- end }}
 {{- end }}
 {{- if .Values.broker.tracing.enabled }}
-# OpenTelemetry trace emission (broker tracing.py) -- the standard OTel env
-# vars, read natively by the SDK's OTLP/HTTP exporter (which appends the
-# /v1/traces signal path) and sampler; the broker itself only reads the
-# endpoint as its on/off gate. Rendered only when tracing is enabled so a
-# disabled deployment carries no OTel configuration at all. The endpoint is
-# broker.otlp.endpoint, shared with every other signal.
-- name: OTEL_EXPORTER_OTLP_ENDPOINT
-  value: {{ .Values.broker.otlp.endpoint | quote }}
+# OpenTelemetry trace emission (broker tracing.py). Rendered only when
+# tracing is enabled so a disabled deployment carries no tracing
+# configuration at all.
+- name: TRACING_ENABLED
+  value: "true"
 {{- if .Values.broker.tracing.sampleRatio }}
 # Head sampling: honor an inbound sampled flag, otherwise keep this ratio of
 # new traces. Unset (SDK default parentbased_always_on) keeps every trace.
@@ -559,16 +562,9 @@ startup refusal (Settings._validate_replica_state_config) for the chart path.
 {{- end }}
 {{- end }}
 {{- if .Values.broker.metrics.otlp.enabled }}
-# OpenTelemetry aggregate metrics (broker otel_metrics.py). With tracing
-# enabled the generic OTEL_EXPORTER_OTLP_ENDPOINT above already covers
-# metrics; with it disabled the per-signal variable is used instead, because
-# the generic one is also the broker's tracing on/off gate.
+# OpenTelemetry aggregate metrics (broker otel_metrics.py).
 - name: OTEL_METRICS_ENABLED
   value: "true"
-{{- if not .Values.broker.tracing.enabled }}
-- name: OTEL_EXPORTER_OTLP_METRICS_ENDPOINT
-  value: {{ printf "%s/v1/metrics" (.Values.broker.otlp.endpoint | trimSuffix "/") | quote }}
-{{- end }}
 {{- end }}
 {{- /*
 Vault connection settings are shared by all Vault-backed stores above (one

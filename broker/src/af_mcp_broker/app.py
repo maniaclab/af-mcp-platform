@@ -1229,7 +1229,7 @@ _mcp_aggregator_placeholder_settings = Settings()
 # exists: fastmcp 3.4.4 acquires its tracer lazily per span, so this early
 # placement is conservative rather than load-bearing (see init_tracing's
 # docstring) -- but it guarantees nothing downstream can ever capture a
-# pre-init no-op tracer. A no-op when OTEL_EXPORTER_OTLP_ENDPOINT is unset;
+# pre-init no-op tracer. A no-op unless TRACING_ENABLED is set;
 # like MCP_STATELESS_HTTP below, Settings() reads the env synchronously at
 # construction, so the placeholder instance already carries the real value.
 init_tracing(_mcp_aggregator_placeholder_settings)

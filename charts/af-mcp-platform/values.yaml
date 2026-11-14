@@ -653,9 +653,10 @@ broker:
       port: 4318
 
   # OpenTelemetry trace EMISSION (broker tracing.py, observability roadmap
-  # PR D). Disabled (the default) renders no trace configuration and the
-  # broker installs no SDK tracer provider (every OTel call no-ops). Collector,
-  # headers and egress come from broker.otlp above.
+  # PR D). Rendered as TRACING_ENABLED. Disabled (the default) renders no trace
+  # configuration and the broker installs no SDK tracer provider (every OTel
+  # call no-ops), even if broker.otlp.endpoint is set for another signal.
+  # Collector, headers and egress come from broker.otlp above.
   tracing:
     enabled: false
     # Head sampling ratio in [0, 1]. When set, rendered as
@@ -667,14 +668,10 @@ broker:
 
   # OpenTelemetry aggregate METRICS emission over OTLP (broker
   # otel_metrics.py): calls, errors, duration and result-size sums by
-  # service, method, action_type and outcome -- never per-user. Off by
-  # default, rendering nothing. Prometheus on :9090 is independent and
-  # unchanged. Collector, headers and egress come from broker.otlp above.
-  # With tracing disabled the endpoint is rendered as
-  # OTEL_EXPORTER_OTLP_METRICS_ENDPOINT rather than the generic
-  # OTEL_EXPORTER_OTLP_ENDPOINT, because the broker treats the generic
-  # variable as its tracing on/off gate and enabling metrics must not switch
-  # tracing on.
+  # service, method, action_type and outcome -- never per-user. Rendered as
+  # OTEL_METRICS_ENABLED. Off by default, rendering nothing. Prometheus on
+  # :9090 is independent and unchanged. Collector, headers and egress come
+  # from broker.otlp above.
   metrics:
     otlp:
       enabled: false

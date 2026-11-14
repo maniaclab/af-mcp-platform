@@ -1,6 +1,6 @@
 # Exercises the OTel-metrics-only template paths (OTEL_METRICS_ENABLED, the
-# per-signal OTEL_EXPORTER_OTLP_METRICS_ENDPOINT used when tracing is off, and
-# the shared NetworkPolicy egress rule to the collector) so a broken render is
+# shared OTEL_EXPORTER_OTLP_ENDPOINT without tracing switched on, and the
+# shared NetworkPolicy egress rule to the collector) so a broken render is
 # caught by CI's `ct lint`, which lints the chart once per values file in this
 # directory. Placeholder example.com values, same caveats as test-values.yaml;
 # no collector needs to exist for linting -- the broker is an emitter only.

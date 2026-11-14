@@ -12,25 +12,20 @@ Two seams, both at the exporter boundary only:
 
 from __future__ import annotations
 
-import threading
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from opentelemetry.proto.collector.metrics.v1.metrics_service_pb2 import (
-    ExportMetricsServiceRequest,
-)
+from _otlp_collector import OtlpCollector
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from test_usage_postgres import _record
 
-from af_mcp_broker import otel_metrics
+from af_mcp_broker import otel_metrics, tracing
 from af_mcp_broker.audit import pipeline
 from af_mcp_broker.config import Settings
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-    from typing import Self
 
 # Attribute names a metric must never carry (see metrics.py's cardinality
 # policy): identity, credential, or per-request identifiers.
@@ -47,7 +42,12 @@ _FORBIDDEN_ATTRIBUTES = {
     "trace_id",
     "args_summary",
 }
+_ENDPOINT = "http://collector.invalid:4318"
 _ALLOWED_ATTRIBUTES = {"service", "method", "action_type", "outcome"}
+
+
+def _enabled(endpoint: str = _ENDPOINT) -> Settings:
+    return Settings(otel_metrics_enabled=True, otel_exporter_otlp_endpoint=endpoint)
 
 
 @pytest.fixture(autouse=True)
@@ -60,7 +60,7 @@ def _reset_module_state() -> Iterator[None]:
 @pytest.fixture
 def reader() -> InMemoryMetricReader:
     r = InMemoryMetricReader()
-    otel_metrics.init_otel_metrics(Settings(otel_metrics_enabled=True), reader=r)
+    otel_metrics.init_otel_metrics(_enabled(), reader=r)
     return r
 
 
@@ -89,6 +89,7 @@ def test_disabled_by_default_installs_nothing() -> None:
 
 def test_enabled_setting_reads_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OTEL_METRICS_ENABLED", "true")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", _ENDPOINT)
     assert Settings().otel_metrics_enabled is True
 
 
@@ -269,58 +270,22 @@ async def test_queue_overflow_path_records_metrics(
 # --- real exporter, in-process OTLP receiver -------------------------------
 
 
-class _Collector:
-    """In-process OTLP/HTTP receiver capturing exported metric requests."""
-
-    def __init__(self) -> None:
-        self.requests: list[ExportMetricsServiceRequest] = []
-        self.paths: list[str] = []
-        outer = self
-
-        class Handler(BaseHTTPRequestHandler):
-            def do_POST(self) -> None:
-                body = self.rfile.read(int(self.headers["Content-Length"]))
-                req = ExportMetricsServiceRequest()
-                req.ParseFromString(body)
-                outer.requests.append(req)
-                outer.paths.append(self.path)
-                self.send_response(200)
-                self.send_header("Content-Type", "application/x-protobuf")
-                self.end_headers()
-
-            def log_message(self, *_args: Any) -> None:
-                return
-
-        self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        self.endpoint = f"http://127.0.0.1:{self._server.server_port}"
-        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
-
-    def __enter__(self) -> Self:
-        self._thread.start()
-        return self
-
-    def __exit__(self, *_exc: object) -> None:
-        self._server.shutdown()
-        self._server.server_close()
-
-
 def test_real_exporter_sends_only_the_allowed_attributes_over_otlp(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    with _Collector() as collector:
+    with OtlpCollector() as collector:
         monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", collector.endpoint)
-        otel_metrics.init_otel_metrics(Settings(otel_metrics_enabled=True))
+        otel_metrics.init_otel_metrics(_enabled(collector.endpoint))
         otel_metrics.record_tool_call(
             _record(principal_sub="alice-sub-secret", token_id="tok-secret")
         )
         otel_metrics.shutdown_otel_metrics()  # final flush
 
-    assert collector.paths
-    assert set(collector.paths) == {"/v1/metrics"}
+    assert collector.paths == {"/v1/metrics"}
     wire_attributes: set[str] = set()
     wire_values: set[str] = set()
     names: set[str] = set()
-    for req in collector.requests:
+    for req in collector.requests["/v1/metrics"]:
         for rm in req.resource_metrics:
             for sm in rm.scope_metrics:
                 for metric in sm.metrics:
@@ -342,7 +307,7 @@ def test_an_unreachable_collector_never_breaks_recording_or_shutdown(
     # exporter's own retry loop so the test stays fast.
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:1")
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_TIMEOUT", "1")
-    otel_metrics.init_otel_metrics(Settings(otel_metrics_enabled=True))
+    otel_metrics.init_otel_metrics(_enabled("http://127.0.0.1:1"))
 
     started = time.monotonic()
     for i in range(100):
@@ -353,7 +318,31 @@ def test_an_unreachable_collector_never_breaks_recording_or_shutdown(
     assert recording_seconds < 0.5
 
 
+def test_tracing_and_metrics_share_the_one_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One OTEL_EXPORTER_OTLP_ENDPOINT carries every enabled signal, each on
+    its own /v1/<signal> path."""
+    monkeypatch.setattr(tracing.trace, "set_tracer_provider", lambda _p: None)
+    with OtlpCollector() as collector:
+        monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", collector.endpoint)
+        settings = Settings(
+            tracing_enabled=True,
+            otel_metrics_enabled=True,
+            otel_exporter_otlp_endpoint=collector.endpoint,
+        )
+        tracing.init_tracing(settings)
+        otel_metrics.init_otel_metrics(settings)
+        with tracing.get_tracer().start_as_current_span("probe"):
+            pass
+        otel_metrics.record_tool_call(_record())
+        otel_metrics.shutdown_otel_metrics()
+        tracing.shutdown_tracing()
+
+    assert collector.paths == {"/v1/traces", "/v1/metrics"}
+
+
 def test_init_is_idempotent(reader: InMemoryMetricReader) -> None:
     first = otel_metrics._provider
-    otel_metrics.init_otel_metrics(Settings(otel_metrics_enabled=True))
+    otel_metrics.init_otel_metrics(_enabled())
     assert otel_metrics._provider is first
