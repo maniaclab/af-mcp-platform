@@ -360,7 +360,7 @@ class Settings(BaseSettings):
     # tiktoken encoding name used to ESTIMATE how many tokens a tool
     # result's serialized text would occupy if injected into an LLM
     # client's context (AuditRecord.result_tokens_est -- see
-    # audit/measure.py). It is an estimate of context-injection cost, not a
+    # audit/measure.py). It is an estimate of context-injection size, not a
     # provider-reported count: different LLMs tokenize differently, and
     # o200k_base is simply a reasonable modern reference tokenizer. Empty
     # string disables token estimation entirely (the field stays None;
@@ -442,12 +442,6 @@ class Settings(BaseSettings):
     # the replica that handled the toggle sees it at once. 0 disables the
     # cache. Not applied to in_memory, where a read is a field access.
     maintenance_mode_cache_ttl_seconds: float = Field(default=5.0, ge=0)
-
-    # Model key (a tokencost.TOKEN_COSTS entry) whose *input* token price
-    # turns GET /v1/usage's result_tokens_est sums into estimated_cost_usd at
-    # read time. Dollars are never stored -- only tokens -- so repricing is a
-    # config change, not a migration. Overridable per-request via ?model=.
-    cost_reference_model: str = "claude-sonnet-4-20250514"
 
     # OTLP/HTTP collector base URL (e.g. http://collector:4318): TRANSPORT
     # only, shared by every OTel signal (traces, metrics, usage events). It

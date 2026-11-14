@@ -7,7 +7,6 @@
 import { describe, expect, it } from 'vitest';
 import { APIError, SessionExpiredError } from '../api';
 import {
-  apiErrorDetail,
   formatProxyExpiry,
   PROXY_EXPIRY_WARNING_SECONDS,
   preflightCheckLabel,
@@ -18,40 +17,6 @@ import {
   x509LinkModeLabel,
   x509PreflightErrorMessage,
 } from '../x509Identity';
-
-describe('apiErrorDetail', () => {
-  it('returns the detail unchanged when no correlation_id is present', () => {
-    const err = new APIError(502, 'Bad Gateway', JSON.stringify({ detail: 'boom' }));
-    expect(apiErrorDetail(err)).toBe('boom');
-  });
-
-  it('appends the correlation_id when present, so it can be quoted to support (af-mcp-platform#288)', () => {
-    const err = new APIError(
-      502,
-      'Bad Gateway',
-      JSON.stringify({ detail: 'boom', correlation_id: 'abc123def456' }),
-    );
-    expect(apiErrorDetail(err)).toBe('boom (reference: abc123def456)');
-  });
-
-  it('ignores a non-string correlation_id rather than rendering "undefined"', () => {
-    const err = new APIError(
-      502,
-      'Bad Gateway',
-      JSON.stringify({ detail: 'boom', correlation_id: 12345 }),
-    );
-    expect(apiErrorDetail(err)).toBe('boom');
-  });
-
-  it('returns null when detail is missing, regardless of correlation_id', () => {
-    const err = new APIError(
-      502,
-      'Bad Gateway',
-      JSON.stringify({ correlation_id: 'abc123def456' }),
-    );
-    expect(apiErrorDetail(err)).toBeNull();
-  });
-});
 
 describe('x509LinkErrorMessage', () => {
   it('surfaces the broker detail on a 400 bad passphrase', () => {

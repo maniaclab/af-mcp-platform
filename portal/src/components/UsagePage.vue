@@ -3,9 +3,8 @@
  * UsagePage.vue — the full /usage page behind the overview's usage summary.
  * Renders GET /v1/usage's whole payload: window totals, the per-service
  * table, and a per-day activity chart, with a 7/30/90-day window selector
- * that refetches on change. Everything here is an ESTIMATE (tokenized
- * tool-result text priced at one model's input rate, not provider-reported
- * spend) and is labeled as such — see the broker's GET /v1/usage caveats.
+ * that refetches on change. Token counts here are an ESTIMATE (tokenized
+ * tool-result text, not provider-reported usage) and are labeled as such — see the broker's GET /v1/usage caveats.
  *
  * `subject` is optional and only meaningful for an admin caller: passing it
  * views that subject's usage instead of the caller's own (AdminPage.vue's
@@ -16,7 +15,7 @@ import { ref, computed, onMounted } from 'vue';
 import { fetchCatalog, fetchUsage } from '../lib/api';
 import type { UsageResponse } from '../lib/api';
 import { useLoadState } from '../lib/useLoadState';
-import { formatBytes, formatCost, formatTokens } from '../lib/usageFormat';
+import { formatBytes, formatTokens } from '../lib/usageFormat';
 import AsyncState from './ui/AsyncState.vue';
 import BarChart from './ui/BarChart.vue';
 import SegmentedControl from './ui/SegmentedControl.vue';
@@ -124,12 +123,9 @@ const chartLabel = computed<string>(() => {
       <SegmentedControl
         :model-value="String(days)"
         :options="WINDOW_OPTIONS"
-        aria-label="Trailing window"
+        ariaLabel="Trailing window"
         @update:model-value="selectWindow"
       />
-      <span v-if="usage" class="up__model">
-        Priced at <code>{{ usage.cost_model }}</code> input rate
-      </span>
     </div>
 
     <AsyncState
@@ -172,11 +168,6 @@ const chartLabel = computed<string>(() => {
             <b>{{ formatTokens(usage.totals.result_tokens_est) }}</b>
             <small>{{ formatBytes(usage.totals.result_bytes) }} of results</small>
           </div>
-          <div class="af-stat" role="listitem">
-            <span>Cost (estimated)</span>
-            <b>{{ formatCost(usage.totals.estimated_cost_usd) }}</b>
-            <small>at {{ usage.cost_model }} input rate</small>
-          </div>
         </div>
 
         <section class="af-sect" aria-labelledby="up-daily">
@@ -184,7 +175,7 @@ const chartLabel = computed<string>(() => {
           <BarChart
             :labels="dayLabels"
             :series="daySeries"
-            :aria-label="chartLabel"
+            :ariaLabel="chartLabel"
             :format-value="formatTokens"
           />
         </section>
@@ -193,8 +184,7 @@ const chartLabel = computed<string>(() => {
           <h2 id="up-service">By service</h2>
           <p class="af-help">
             What your AI assistant's tool calls put into its context through this platform — counted
-            as estimated tokens and priced, for scale, at a reference model's input rate. Estimates
-            only: this is not your provider bill.
+            as estimated tokens. Estimates only: these are not provider-reported counts.
           </p>
           <div class="table-container af-box">
             <table class="table">
@@ -205,7 +195,6 @@ const chartLabel = computed<string>(() => {
                   <th scope="col" class="af-num">Errors</th>
                   <th scope="col" class="af-num">Result size</th>
                   <th scope="col" class="af-num">Tokens (est.)</th>
-                  <th scope="col" class="af-num">Cost (est.)</th>
                 </tr>
               </thead>
               <tbody>
@@ -219,7 +208,6 @@ const chartLabel = computed<string>(() => {
                   <td class="af-num af-sub">{{ formatTokens(svc.errors) }}</td>
                   <td class="af-num af-sub">{{ formatBytes(svc.result_bytes) }}</td>
                   <td class="af-num">{{ formatTokens(svc.result_tokens_est) }}</td>
-                  <td class="af-num">{{ formatCost(svc.estimated_cost_usd) }}</td>
                 </tr>
               </tbody>
             </table>
@@ -238,12 +226,6 @@ const chartLabel = computed<string>(() => {
   flex-wrap: wrap;
 }
 
-.up__model {
-  font-size: var(--text-13);
-  color: var(--color-af-text-secondary);
-  margin-left: auto;
-}
-.up__model code,
 .up__id {
   font-family: var(--font-mono);
 }

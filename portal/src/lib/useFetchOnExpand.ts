@@ -9,6 +9,7 @@
  * one fetch behind the clicks.
  */
 import { ref } from 'vue';
+import { errorMessage } from './apiError';
 
 export function useFetchOnExpand<T>(
   fetcher: () => Promise<T>,
@@ -37,7 +38,7 @@ export function useFetchOnExpand<T>(
     } catch (err) {
       if (mine !== seq) return;
       data.value = null;
-      error.value = err instanceof Error ? err.message : fallbackMessage;
+      error.value = errorMessage(err, fallbackMessage);
     } finally {
       if (mine === seq) loading.value = false;
     }
