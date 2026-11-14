@@ -11,6 +11,7 @@ import structlog
 from fastmcp.server.providers.proxy import ProxyTool
 from mcp.types import Tool as McpTool
 
+from af_mcp_broker.api import admin
 from af_mcp_broker.maintenance import (
     InMemoryMaintenanceModeStore,
     MaintenanceModeStore,
@@ -128,6 +129,61 @@ def test_admin_can_disable_and_enabled_by_at_are_cleared(
     assert body["reason"] is None
     assert body["enabled_by"] is None
     assert body["enabled_at"] is None
+
+
+@pytest.mark.parametrize(
+    ("enabled", "action"),
+    [(True, "maintenance_enable"), (False, "maintenance_disable")],
+)
+def test_toggle_is_audited_and_logged(
+    maintenance_client, make_principal, monkeypatch, enabled, action
+):
+    """An admin state change leaves an audit record (who, enabled/disabled,
+    the reason the admin gave) and an info log line."""
+    client, state = maintenance_client
+    state["principal"] = make_principal(groups=["af-admins"], subject="admin-sub")
+    # A throwaway logger for the same reason as _lint_events's: the booted
+    # app's cache_logger_on_first_use would otherwise pin the module logger.
+    monkeypatch.setattr(admin, "logger", structlog.get_logger(admin.__name__))
+
+    with structlog.testing.capture_logs() as logs:
+        resp = client.post(
+            "/v1/admin/maintenance", json={"enabled": enabled, "reason": "upgrading"}
+        )
+
+    assert resp.status_code == 200
+    (audit,) = [e for e in logs if e["event"] == "audit"]
+    assert audit["principal_sub"] == "admin-sub"
+    assert audit["action"] == action
+    assert audit["action_type"] == "state_change"
+    assert audit["outcome"] == "success"
+    assert "upgrading" in audit["args_summary"]
+    (info,) = [e for e in logs if e["event"] == "maintenance_mode_changed"]
+    assert info["log_level"] == "info"
+    assert info["subject"] == "admin-sub"
+    assert info["enabled"] is enabled
+    assert info["reason"] == "upgrading"
+
+
+def test_conflicting_toggle_is_not_audited(maintenance_client, make_principal):
+    """A toggle that lost the compare-and-set race changed nothing, so it
+    must not be audited as a change."""
+    client, state = maintenance_client
+    state["principal"] = make_principal(groups=["af-admins"], subject="admin-sub")
+
+    class _ConflictingStore(InMemoryMaintenanceModeStore):
+        async def set(self, new_state: MaintenanceState) -> None:
+            raise MaintenanceStateConflictError
+
+    client.app.state.maintenance_mode_store = _ConflictingStore()
+
+    with structlog.testing.capture_logs() as logs:
+        resp = client.post(
+            "/v1/admin/maintenance", json={"enabled": True, "reason": "r"}
+        )
+
+    assert resp.status_code == 409
+    assert [e for e in logs if e["event"] == "audit"] == []
 
 
 def test_disable_clears_reason_too(maintenance_client, make_principal):
