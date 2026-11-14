@@ -1595,7 +1595,8 @@ class _ObservableProxyProvider(ProxyProvider):
         """Return a cached success's items, or re-raise a cached failure -- without repeating any side effects the original fetch already ran once, when the failure was first cached."""
         if entry.error is not None:
             raise entry.error
-        assert entry.items is not None  # invariant: exactly one of items/error is set
+        # invariant: exactly one of items/error is set
+        assert entry.items is not None  # noqa: S101
         return entry.items
 
     async def _cached_list(

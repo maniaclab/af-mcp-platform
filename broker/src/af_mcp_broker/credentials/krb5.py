@@ -401,7 +401,8 @@ class KrbTokenProvider(CredentialProvider):
         renew_infra_error: Krb5TokenMintError | None = None
         renewable = await self._vault_store.get_renewable_ticket(subject)
         if renewable is not None:
-            assert renewable.ccache_b64 is not None  # has_ticket guarantees this
+            # has_ticket guarantees this
+            assert renewable.ccache_b64 is not None  # noqa: S101
             ccache_b64 = renewable.ccache_b64.get_secret_value()
 
             async def _do_renew() -> IssuedCredential:
@@ -452,8 +453,10 @@ class KrbTokenProvider(CredentialProvider):
         # Tier 4: remint from a previously-bootstrapped, stored keytab.
         link = await self._vault_store.get_link(subject)
         if link is not None:
-            assert link.username is not None  # has_link guarantees this
-            assert link.keytab_b64 is not None  # has_link guarantees this
+            # has_link guarantees this
+            assert link.username is not None  # noqa: S101
+            # has_link guarantees this
+            assert link.keytab_b64 is not None  # noqa: S101
             link_username = link.username
             link_keytab_b64 = link.keytab_b64
 
@@ -606,8 +609,10 @@ class KrbTokenProvider(CredentialProvider):
         ``peek_ticket()`` below, neither of which has any other use here for
         a full ``Principal``.
         """
-        assert record.ccache_b64 is not None  # has_ticket guarantees this
-        assert record.not_after is not None  # has_ticket guarantees this
+        # has_ticket guarantees this
+        assert record.ccache_b64 is not None  # noqa: S101
+        # has_ticket guarantees this
+        assert record.not_after is not None  # noqa: S101
         cred = self._build_credential(
             target,
             ccache_b64=record.ccache_b64.get_secret_value(),

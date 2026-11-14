@@ -70,7 +70,7 @@ async def get_cimd(request: Request) -> CimdResponse:
         client_id=str(request.url),
         client_name=settings.cimd_client_name,
         redirect_uris=redirect_uris,
-        token_endpoint_auth_method="none",
+        token_endpoint_auth_method="none",  # noqa: S106 -- OAuth metadata value ('none' = public client), not a secret
         grant_types=["authorization_code", "refresh_token"],
         response_types=["code"],
         scope="openid profile email",

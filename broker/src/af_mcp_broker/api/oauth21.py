@@ -324,7 +324,8 @@ async def callback(
         response.delete_cookie(NONCE_COOKIE_NAME, path=NONCE_COOKIE_PATH)
         return response
 
-    assert code is not None  # guaranteed by the missing-code-or-error check above
+    # guaranteed by the missing-code-or-error check above
+    assert code is not None  # noqa: S101
 
     redirect_uri = _callback_url(settings, alias)
     resp = await get_http_client().post(

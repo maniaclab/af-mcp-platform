@@ -21,6 +21,16 @@ from af_mcp_broker.mcp.middleware.identity_mw import (
     AsgiAuthMiddleware,
     IdentityMiddleware,
 )
+from af_mcp_broker.pat import mint_pat
+from af_mcp_broker.principal_cache import (
+    InMemoryPrincipalCacheBackend,
+    PrincipalCache,
+)
+from af_mcp_broker.principal_directory import (
+    PrincipalAttributes,
+    PrincipalDirectory,
+    PrincipalDisabledError,
+)
 from af_mcp_broker.token_registry import (
     InMemoryTokenRegistryBackend,
     TokenRecord,
@@ -413,15 +423,6 @@ async def _pat_principal_cache_and_token(
     that must never be called -- those keep their own inline setup). Returns
     ``(backend, plaintext, principal_cache)``.
     """
-    from af_mcp_broker.pat import mint_pat
-    from af_mcp_broker.principal_cache import (
-        InMemoryPrincipalCacheBackend,
-        PrincipalCache,
-    )
-    from af_mcp_broker.principal_directory import (
-        PrincipalAttributes,
-        PrincipalDirectory,
-    )
 
     class _FakeDirectory(PrincipalDirectory):
         async def resolve(self, principal_id: str) -> PrincipalAttributes:
@@ -486,7 +487,6 @@ async def test_pat_of_user_disabled_after_cache_warmed_gets_vague_401(
 ):
     """Issue #336: a valid, unexpired, unrevoked PAT stops working on /mcp
     within one principal-cache refresh once its owner is disabled."""
-    from af_mcp_broker.principal_directory import PrincipalDisabledError
 
     backend, plaintext, principal_cache = await _pat_principal_cache_and_token(
         groups=["atlas"]
@@ -535,14 +535,6 @@ async def test_pat_shaped_bearer_rejected_when_pat_support_not_configured(
 
 
 async def test_malformed_pat_rejected_with_vague_401(settings):
-    from af_mcp_broker.principal_cache import (
-        InMemoryPrincipalCacheBackend,
-        PrincipalCache,
-    )
-    from af_mcp_broker.principal_directory import (
-        PrincipalAttributes,
-        PrincipalDirectory,
-    )
 
     class _FakeDirectory(PrincipalDirectory):
         async def resolve(self, principal_id: str) -> PrincipalAttributes:
@@ -573,15 +565,6 @@ async def test_malformed_pat_rejected_with_vague_401(settings):
 
 
 async def test_unknown_pat_lookup_id_rejected(settings):
-    from af_mcp_broker.pat import mint_pat
-    from af_mcp_broker.principal_cache import (
-        InMemoryPrincipalCacheBackend,
-        PrincipalCache,
-    )
-    from af_mcp_broker.principal_directory import (
-        PrincipalAttributes,
-        PrincipalDirectory,
-    )
 
     class _FakeDirectory(PrincipalDirectory):
         async def resolve(self, principal_id: str) -> PrincipalAttributes:
@@ -613,15 +596,6 @@ async def test_unknown_pat_lookup_id_rejected(settings):
 
 
 async def test_expired_pat_rejected_with_actionable_portal_message(settings):
-    from af_mcp_broker.pat import mint_pat
-    from af_mcp_broker.principal_cache import (
-        InMemoryPrincipalCacheBackend,
-        PrincipalCache,
-    )
-    from af_mcp_broker.principal_directory import (
-        PrincipalAttributes,
-        PrincipalDirectory,
-    )
 
     class _FakeDirectory(PrincipalDirectory):
         async def resolve(self, principal_id: str) -> PrincipalAttributes:

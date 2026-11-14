@@ -28,6 +28,7 @@ from test_broker_issued import (
     verify_against_jwks,
 )
 
+from af_mcp_broker import metrics
 from af_mcp_broker.credentials import CredentialKind, ExecutionModel
 from af_mcp_broker.credentials import condor as condor_module
 from af_mcp_broker.credentials.broker_issued import BrokerTokenIssuer
@@ -421,7 +422,6 @@ async def test_issue_failure_does_not_cache(
 async def test_issue_increments_issued_counter_only_on_actual_mints(
     provider_factory, make_principal, fake_client
 ) -> None:
-    from af_mcp_broker import metrics
 
     provider, _ = provider_factory()
     counter = metrics.condor_tokens_issued_total.labels(target="condor-mcp")

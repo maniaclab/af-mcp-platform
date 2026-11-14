@@ -43,13 +43,16 @@ target-version = "py312"
 # https://github.com/scientific-python/cookie/blob/113bfd515a55969d8177b811e070b1bcd9a3dc51/%7B%7Bcookiecutter.project_name%7D%7D/pyproject.toml#L284-L338
 extend-select = [
   "ARG",  # flake8-unused-arguments
+  "ASYNC", # flake8-async
   "B",    # flake8-bugbear
   "BLE",  # flake8-blind-except
   "C4",   # flake8-comprehensions
   "DTZ",  # flake8-datetimez
   "EM",   # flake8-errmsg
+  "ERA",  # eradicate
   "EXE",  # flake8-executable
   "FA",   # flake8-future-annotations
+  "FBT",  # flake8-boolean-trap
   "FLY",  # flynt
   "FURB", # refurb
   "G",    # flake8-logging-format
@@ -70,6 +73,7 @@ extend-select = [
   "RET",  # flake8-return
   "RSE",  # flake8-raise
   "RUF",  # Ruff-specific rules
+  "S",    # flake8-bandit
   "SIM",  # flake8-simplify
   "SLOT", # flake8-slots
   "T10",  # flake8-debugger
@@ -82,7 +86,6 @@ extend-select = [
 ignore = [
   "PLR09",   # Too many <...>
   "PLR2004", # Magic value used in comparison
-  "PLC0415", # Lazy imports are deliberate (cycles, optional deps, lifespan)
   "PLW0603", # Module-level singletons (http client, audit logger)
   "TRY003",  # Long exception messages inline — custom exception classes would be over-engineering
   "EM101",   # String literal in exception — assign-to-variable pattern adds noise, not clarity
@@ -91,7 +94,31 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["ARG"]
+"tests/**" = [
+  "ARG",
+  # flake8-bandit: tests assert by design; credentials and secrets are fake
+  # fixtures; the fake proxy path is never touched on disk; conftest launches
+  # postgres tools (initdb, pg_ctl, postgres) from the pixi env PATH; and the
+  # retention test's table name is a test-controlled literal.
+  "S101",
+  "S105",
+  "S106",
+  "S107",
+  "S108",
+  "S603",
+  "S607",
+  "S608",
+  # Polling helpers (`_eventually`, `_until`) take a `timeout` and loop on a
+  # plain sync predicate with a short sleep inside `asyncio.timeout`; there is
+  # no event to await, and the timeout bounds the wait.
+  "ASYNC109",
+  "ASYNC110",
+  # flake8-boolean-trap: bool parameters in tests are pytest-parametrized
+  # values (passed by name through the test signature) or local helper flags,
+  # not a public API where a positional bool hides intent at call sites.
+  "FBT001",
+  "FBT002",
+]
 # spikes/ are exploratory validation scripts, not production code — allow
 # prints, broad excepts, and other conveniences useful in scratch work.
 "spikes/**" = ["ARG", "BLE", "EM", "PLR", "PTH", "T20", "TRY"]

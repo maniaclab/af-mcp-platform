@@ -368,7 +368,6 @@ async def test_worker_processed_total_counts_written_records() -> None:
 @pytest.fixture
 async def usage_store():
     """An installed module-level usage store, uninstalled afterwards."""
-    from af_mcp_broker.usage import aclose_usage_store, init_usage_store
 
     store = await init_usage_store(Settings())
     yield store

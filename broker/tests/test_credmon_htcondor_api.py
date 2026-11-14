@@ -15,6 +15,7 @@ import base64
 import json
 from typing import TYPE_CHECKING
 
+import anyio
 import httpx
 import pytest
 
@@ -132,7 +133,7 @@ async def test_token_file_is_reread_for_every_store(
     await store.store_service_credential(
         user="alice@af.example.org", service="af_krb5", credential={"access_token": "t"}
     )
-    token_file.write_text("rotated-idtoken\n")
+    await anyio.Path(token_file).write_text("rotated-idtoken\n")
     await store.store_service_credential(
         user="alice@af.example.org", service="af_krb5", credential={"access_token": "t"}
     )
@@ -145,7 +146,7 @@ async def test_unreadable_token_file_raises_credential_store_error(
     make_store, token_file: Path
 ) -> None:
     store, requests = make_store()
-    token_file.unlink()
+    await anyio.Path(token_file).unlink()
 
     with pytest.raises(CredentialStoreError, match="token file"):
         await store.store_service_credential(

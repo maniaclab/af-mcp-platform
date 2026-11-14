@@ -11,6 +11,7 @@ transport bearer auth); `violating` breaks a known, fixed set of them. Run as a 
 
 from __future__ import annotations
 
+import http.server
 import sys
 from typing import Annotated
 
@@ -161,7 +162,6 @@ BUILDERS = {
 
 def _serve_status(code: int, port: int) -> None:
     """Serve a bare HTTP endpoint that answers every POST with *code*."""
-    import http.server
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_POST(self) -> None:

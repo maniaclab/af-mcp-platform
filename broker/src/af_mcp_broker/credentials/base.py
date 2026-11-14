@@ -33,7 +33,7 @@ class CredentialKind(StrEnum):
     # A ServiceX access token persisted in Vault (issue #295): no local
     # file, redeemed by the backend via POST /v1/credentials/servicex/redeem
     # -- same "deliverable, not local" shape as X509_PROXY_REDEEM.
-    SERVICEX_ACCESS_TOKEN_REDEEM = "servicex_access_token_redeem"
+    SERVICEX_ACCESS_TOKEN_REDEEM = "servicex_access_token_redeem"  # noqa: S105 -- credential-kind identifier, not a secret
     NONE = "none"
 
 
@@ -58,12 +58,13 @@ class IssuedCredential:
     # epoch seconds (UTC); None when the issuing AS reported no expiry
     # (non-expiring oauth21 tokens, issue #344)
     expires_at: float | None
-    # bearer: {"access_token": ..., "token_type": "Bearer"}
+    # Illustrative payload shape per kind (documentation, not code):
+    # bearer: {"access_token": ..., "token_type": "Bearer"}  # noqa: ERA001
     # x509 (proxy_ref):    {"proxy_handle": ..., "proxy_path": ..., "delivery": "direct"}
     # x509 (proxy_redeem): {"proxy_handle": ..., "delivery": "redeem"}
-    # service:{"access_token": ..., "on_behalf_of": ..., "token_type": "Bearer"}
-    # krb5_ccache: {"ccache_b64": ..., "principal": ..., "realm": ..., "renew_until": float | None}
-    # servicex_access_token_redeem: {"delivery": "redeem"}
+    # service:{"access_token": ..., "on_behalf_of": ..., "token_type": "Bearer"}  # noqa: ERA001
+    # krb5_ccache: {"ccache_b64": ..., "principal": ..., "realm": ..., "renew_until": float | None}  # noqa: ERA001
+    # servicex_access_token_redeem: {"delivery": "redeem"}  # noqa: ERA001
     payload: dict
     audit_id: str
     source: str  # which provider backend produced this credential

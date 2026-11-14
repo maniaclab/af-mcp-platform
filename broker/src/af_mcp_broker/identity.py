@@ -322,7 +322,7 @@ _DIRECTORY_UNAVAILABLE_DETAIL = (
 # audience or an unavailable directory -- deliberately vague, never which
 # claim failed. The expired case (TokenExpiredError) carries the same text so
 # /v1 shows an expired token exactly as it shows any other invalid one.
-_INVALID_TOKEN_DETAIL = "Invalid or expired token"
+_INVALID_TOKEN_DETAIL = "Invalid or expired token"  # noqa: S105 -- error message text, not a secret
 
 
 async def _resolve_current_attributes(

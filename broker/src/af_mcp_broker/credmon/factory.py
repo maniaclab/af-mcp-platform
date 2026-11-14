@@ -7,6 +7,7 @@ import socket
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import anyio
 import structlog
 
 from af_mcp_broker.credmon.guidance import wired_kinds
@@ -71,15 +72,18 @@ async def build_credmon_sync(
             "CREDMON_ENABLED requires the Keycloak principal directory: credd "
             "stores credentials per POSIX unixname, resolved from it."
         )
-    assert settings.credmon_htcondor_api_url is not None  # Settings validator
-    assert settings.credmon_htcondor_api_token_file is not None  # Settings validator
-    assert settings.credmon_user_domain is not None  # Settings validator
+    # Settings validator
+    assert settings.credmon_htcondor_api_url is not None  # noqa: S101
+    # Settings validator
+    assert settings.credmon_htcondor_api_token_file is not None  # noqa: S101
+    # Settings validator
+    assert settings.credmon_user_domain is not None  # noqa: S101
     token_file = Path(settings.credmon_htcondor_api_token_file)
     try:
         # Checked once here so a missing mount refuses to boot; the client
         # itself re-reads the file on every store, so rotation needs no
         # restart.
-        token_file.read_text()
+        await anyio.Path(token_file).read_text()
     except OSError as exc:
         raise RuntimeError(
             "CREDMON_HTCONDOR_API_TOKEN_FILE could not be read: "

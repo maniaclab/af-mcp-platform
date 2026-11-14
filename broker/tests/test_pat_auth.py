@@ -14,6 +14,7 @@ import pytest
 import structlog
 from fastapi import HTTPException
 
+from af_mcp_broker.authorization import get_principal_permissions
 from af_mcp_broker.config import Settings
 from af_mcp_broker.identity import TokenExpiredError
 from af_mcp_broker.pat import mint_pat
@@ -234,7 +235,6 @@ async def test_permission_pat_loses_access_when_owner_loses_the_group(
     for a fresh JWT -- the grant itself never changes; only what it gets
     intersected against does.
     """
-    from af_mcp_broker.authorization import get_principal_permissions
 
     short_refresh_cache = PrincipalCache(
         directory,
@@ -276,7 +276,6 @@ async def test_permission_grant_exceeding_current_permissions_is_still_clipped(
     owner's current permissions (bypassing mint-time validation entirely)
     to prove enforcement does not rely on that check having run -- see
     api/tokens.py's MintTokenRequest.permissions docstring."""
-    from af_mcp_broker.authorization import get_principal_permissions
 
     directory.responses["kc-sub-1"] = PrincipalAttributes(
         uid=1, gid=1, unixname="u", groups=[], email=""

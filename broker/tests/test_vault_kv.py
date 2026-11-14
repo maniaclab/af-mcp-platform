@@ -11,6 +11,7 @@ built on top of this.
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -144,7 +145,6 @@ class _FakeVault:
 
 
 def _json_body(request: httpx.Request) -> dict[str, Any]:
-    import json
 
     return json.loads(request.content.decode())
 
@@ -227,7 +227,7 @@ async def test_authenticate_concurrent_callers_login_once(
 
 
 # ---------------------------------------------------------------------------
-# get()
+# get
 # ---------------------------------------------------------------------------
 
 
@@ -311,7 +311,7 @@ async def test_write_cas_raises_vault_error_on_5xx(sa_token_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# list()
+# list
 # ---------------------------------------------------------------------------
 
 
@@ -342,7 +342,7 @@ async def test_list_raises_vault_error_on_5xx(sa_token_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# delete_metadata()
+# delete_metadata
 # ---------------------------------------------------------------------------
 
 

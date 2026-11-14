@@ -37,7 +37,10 @@ from af_mcp_broker.api.mcp_oauth import (
     _keycloak_authorization_endpoint,
     _keycloak_token_endpoint,
 )
+from af_mcp_broker.app import _mcp_aggregator, app
 from af_mcp_broker.config import Settings
+from af_mcp_broker.identity import keycloak_dependency
+from af_mcp_broker.mcp.aggregator import _find_middleware
 from af_mcp_broker.mcp_auth_codes import McpAuthCodeRecord
 from af_mcp_broker.oauth_state import build_mcp_authorize_state, generate_pkce_pair
 
@@ -274,7 +277,6 @@ def test_authorize_never_calls_keycloak_dependency(
     credential-less request is what drives the response: it must 302 to
     Keycloak, not 401 "Not authenticated".
     """
-    from af_mcp_broker.identity import keycloak_dependency
 
     fernet_key = Fernet.generate_key().decode()
     _configure_env(monkeypatch, fernet_key)
@@ -355,8 +357,6 @@ def test_full_bootstrap_round_trip_yields_working_pat(
         # _find_middleware), not request.app.state -- swap in a directory-backed
         # cache that needs no real Keycloak, same seam
         # test_mcp_middleware_identity.py's own PAT tests use.
-        from af_mcp_broker.app import _mcp_aggregator
-        from af_mcp_broker.mcp.aggregator import _find_middleware
 
         identity_mw, _, _ = _find_middleware(_mcp_aggregator)
         identity_mw.principal_cache = static_principal_cache[0]
@@ -470,8 +470,6 @@ def test_full_bootstrap_round_trip_yields_working_pat(
         # A PAT minted via bootstrap must still be rejected on /v1 --
         # restore real keycloak_dependency validation for this one check
         # (the fixture otherwise overrides it to always succeed).
-        from af_mcp_broker.app import app
-        from af_mcp_broker.identity import keycloak_dependency
 
         app.dependency_overrides.pop(keycloak_dependency, None)
         v1_resp: Any = client.get(

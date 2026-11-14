@@ -503,10 +503,10 @@ class OAuth21Provider(CredentialProvider):
             cred, _version = entry
             if cred.refresh_token is not None:
                 token = cred.refresh_token
-                token_type_hint = "refresh_token"
+                token_type_hint = "refresh_token"  # noqa: S105 -- RFC 7009 token_type_hint value, not a secret
             else:
                 token = cred.access_token
-                token_type_hint = "access_token"
+                token_type_hint = "access_token"  # noqa: S105 -- RFC 7009 token_type_hint value, not a secret
             try:
                 resp = await get_http_client().post(
                     self._revocation_endpoint,

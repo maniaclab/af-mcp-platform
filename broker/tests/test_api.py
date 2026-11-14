@@ -8,9 +8,18 @@ import pytest
 import structlog.testing
 from cryptography.fernet import Fernet
 
+from af_mcp_broker.app import app
+from af_mcp_broker.authorization import EntitlementPolicy
 from af_mcp_broker.credentials.base import CredentialKind, IssuedCredential
 from af_mcp_broker.credentials.oidc import OIDCProvider
-from af_mcp_broker.mcp.registry import ToolRouting
+from af_mcp_broker.credentials.x509 import X509Provider
+from af_mcp_broker.mcp.registry import (
+    BUILTIN_SERVICE_NAME,
+    LIST_IDENTITIES_TOOL_NAME,
+    WHOAMI_TOOL_NAME,
+    ServiceSpec,
+    ToolRouting,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -28,7 +37,6 @@ def _register_condor_service(client: TestClient) -> None:
     does for its own backend, so /v1/authorize (which now derives the
     required permission from the registry, not the request body -- issue
     #60) has a real backend to look up."""
-    from af_mcp_broker.mcp.registry import ServiceSpec
 
     client.app.state.service_registry.register(
         ServiceSpec(
@@ -137,7 +145,6 @@ def test_authorize_ignores_client_supplied_permission(
 
 
 def _register_dict_form_condor_service(client: TestClient) -> None:
-    from af_mcp_broker.mcp.registry import ServiceSpec
 
     client.app.state.service_registry.register(
         ServiceSpec(
@@ -312,7 +319,6 @@ def test_catalog_unlinked_mint_and_inject_caller_is_told_to_link(
     """ "ami" is an x509 ("mint and inject") service: a caller who has not
     linked it is told to link, from the live is_linked() check alone -- no
     listing failure is logged for them."""
-    from af_mcp_broker.credentials.x509 import X509Provider
 
     async def _unlinked(self, principal) -> bool:
         return False
@@ -336,7 +342,6 @@ def test_catalog_status_available_when_permission_and_linked(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Once linked (and entitled), "rucio" reports "available"."""
-    from af_mcp_broker.credentials.oidc import OIDCProvider
 
     async def _linked(self, principal) -> bool:
         return True
@@ -377,11 +382,6 @@ def test_catalog_status_detail_names_the_af_mcp_methods(
     """Close the loop (issues #153/#240): both the "link_required" and
     "permission_required" status_detail sentences name the af-mcp service
     method a model should call next, not just a human-facing instruction."""
-    from af_mcp_broker.mcp.registry import (
-        BUILTIN_SERVICE_NAME,
-        LIST_IDENTITIES_TOOL_NAME,
-        WHOAMI_TOOL_NAME,
-    )
 
     client, state = app_client
 
@@ -435,8 +435,6 @@ def test_catalog_status_misconfigured_when_no_credential_provider_resolves(
     refuses to boot with this config at all; registering it directly on an
     already-booted registry, as other tests here do for "condor-mcp",
     exercises the defensive path.)"""
-    from af_mcp_broker.app import app
-    from af_mcp_broker.mcp.registry import ServiceSpec
 
     client, state = app_client
     state["principal"] = make_principal(groups=["atlas"])
@@ -466,8 +464,6 @@ def test_catalog_status_unavailable_when_recent_list_failure_recorded(
     (ServiceRegistry.record_list_failure -- see aggregator.py's
     _ObservableProxyProvider) downgrades an otherwise-available backend to
     "unavailable" without an extra live probe."""
-    from af_mcp_broker.app import app
-    from af_mcp_broker.credentials.oidc import OIDCProvider
 
     async def _linked(self, principal) -> bool:
         return True
@@ -494,8 +490,6 @@ def test_catalog_status_unauthorized_failure_prompts_relink(
     itself was rejected -- see aggregator.py's _classify_list_failure) means
     the user needs to re-link, not wait out a transient outage -- reported
     as "link_required", same actionable status as never having linked."""
-    from af_mcp_broker.app import app
-    from af_mcp_broker.credentials.oidc import OIDCProvider
 
     async def _linked(self, principal) -> bool:
         return True
@@ -522,8 +516,6 @@ def test_catalog_status_ignores_another_subjects_unauthorized_failure(
     """An "unauthorized" listing failure is about the one caller whose
     credential the backend rejected: it must not reach another caller's
     catalog, while the affected caller still sees their own."""
-    from af_mcp_broker.app import app
-    from af_mcp_broker.credentials.oidc import OIDCProvider
 
     async def _linked(self, principal) -> bool:
         return True
@@ -550,8 +542,6 @@ def test_catalog_status_shows_service_wide_unavailable_to_every_subject(
     make_principal: Callable[..., object],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from af_mcp_broker.app import app
-    from af_mcp_broker.credentials.oidc import OIDCProvider
 
     async def _linked(self, principal) -> bool:
         return True
@@ -573,8 +563,6 @@ def test_catalog_status_shows_service_wide_unavailable_for_auth_type_none(
 ) -> None:
     """A backend needing no credential is still "unavailable" for every
     caller once a service-wide tools/list failure is on record."""
-    from af_mcp_broker.app import app
-    from af_mcp_broker.mcp.registry import ServiceSpec
 
     app.state.service_registry.register(
         ServiceSpec(
@@ -607,8 +595,6 @@ def test_catalog_status_ignores_caller_specific_failure_for_auth_type_none(
 ) -> None:
     """Caller-specific listing failures are about a per-user credential, which
     an auth_type "none" backend has none of, so they never change its status."""
-    from af_mcp_broker.app import app
-    from af_mcp_broker.mcp.registry import ServiceSpec
 
     app.state.service_registry.register(
         ServiceSpec(
@@ -638,8 +624,6 @@ def test_catalog_unlinked_caller_is_told_to_link_not_that_a_credential_was_rejec
     """A caller with no linked identity is asked to link, even with a
     caller-specific listing failure on record for them; only a linked caller
     whose credential was rejected is told it was rejected."""
-    from af_mcp_broker.app import app
-    from af_mcp_broker.credentials.oidc import OIDCProvider
 
     linked: dict[str, bool] = {"value": False}
 
@@ -726,8 +710,6 @@ def test_catalog_status_required_permission_forms(
     omitted) must be handled by the status derivation, not just the
     declared-string form (issue #127 made services.yaml authoritative for
     all three)."""
-    from af_mcp_broker.app import app
-    from af_mcp_broker.mcp.registry import ServiceSpec
 
     client, state = app_client
     state["principal"] = make_principal(groups=groups)
@@ -754,8 +736,6 @@ def test_catalog_status_never_leaks_urls_or_upstream_errors(
     misconfigured, available), the catalog response must never carry a
     backend URL, an upstream error body, policy internals, or a group list
     -- issue #123's "never leak internals" constraint."""
-    from af_mcp_broker.app import app
-    from af_mcp_broker.mcp.registry import ServiceSpec
 
     client, state = app_client
     state["principal"] = make_principal(groups=[])
@@ -791,8 +771,6 @@ def test_catalog_action_type_reflects_target_action_type_overrides(
     own policy (still granting every permission the shipped services.yaml
     requires, or startup refuses — issue #125).
     """
-    from af_mcp_broker.app import app
-    from af_mcp_broker.mcp.registry import ServiceSpec
 
     policy_path = tmp_path / "policy.yaml"
     policy_path.write_text(
@@ -885,7 +863,6 @@ def test_credential_unlinked_provider_404(
     app_client: tuple[TestClient, dict], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A provider whose is_linked() reports False must 404 before issue()."""
-    from af_mcp_broker.credentials.oidc import OIDCProvider
 
     async def _not_linked(self, principal) -> bool:
         return False
@@ -905,8 +882,6 @@ def test_credential_linked_provider_proceeds_to_issue(
     app_client: tuple[TestClient, dict], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A provider whose is_linked() reports True must reach issue()."""
-    from af_mcp_broker.credentials.base import CredentialKind, IssuedCredential
-    from af_mcp_broker.credentials.oidc import OIDCProvider
 
     async def _linked(self, principal) -> bool:
         return True
@@ -1041,8 +1016,6 @@ def test_catalog_dict_form_granting_groups_union_across_tools(
     """A dict-form required_permission has several permissions; the
     service-level summary is the union of groups granting ANY of them,
     matching "available means the caller holds at least one"."""
-    from af_mcp_broker.authorization import EntitlementPolicy
-    from af_mcp_broker.mcp.registry import ServiceSpec
 
     client, state = app_client
     state["principal"] = make_principal(groups=[])

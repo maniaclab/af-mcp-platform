@@ -19,6 +19,7 @@ import pytest
 from test_broker_issued import _make_rsa_key, _private_pem
 
 from af_mcp_broker.credentials.cache import ProxyMeta
+from af_mcp_broker.identity import keycloak_dependency
 from af_mcp_broker.vault_kv import VaultKV
 
 if TYPE_CHECKING:
@@ -183,7 +184,6 @@ class TestRedeemAuth:
         points at an unreachable host, so an actual Keycloak round trip
         can only ever error, never return 200.
         """
-        from af_mcp_broker.identity import keycloak_dependency
 
         x509_redeem_env()
         with app_client_factory() as (client, _):

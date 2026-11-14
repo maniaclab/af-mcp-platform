@@ -143,7 +143,8 @@ class Krb5TokenServiceClient:
         if password is not None:
             body["password"] = password.get_secret_value()
         else:
-            assert keytab_b64 is not None  # guaranteed by the XOR check above
+            # guaranteed by the XOR check above
+            assert keytab_b64 is not None  # noqa: S101
             body["keytab_b64"] = keytab_b64.get_secret_value()
         if lifetime is not None:
             body["lifetime"] = lifetime

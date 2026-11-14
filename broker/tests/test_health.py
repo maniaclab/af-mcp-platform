@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from af_mcp_broker import app as app_module
+
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
@@ -114,8 +116,6 @@ def test_startup_warns_on_no_backends(
     asserts directly against the app module's logger call instead.
     """
     _use_empty_backends(monkeypatch, tmp_path)
-
-    from af_mcp_broker import app as app_module
 
     events: list[str] = []
     original_warning = app_module.logger.warning

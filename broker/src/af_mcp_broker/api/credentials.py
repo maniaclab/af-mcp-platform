@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import time
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any
 
+import anyio
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, SecretBytes, SecretStr
@@ -161,7 +161,7 @@ class KrbTicketMetadata(BaseModel):
     # How the returned ticket was actually obtained -- KrbTokenProvider's
     # own IssuedCredential.payload["tier"], carried through verbatim so the
     # portal can tell "already had a valid one" (cache/vault) apart from
-    # "just renewed/reminted it for you" (renew/keytab_remint/password_mint)
+    # "just renewed/reminted it for you" (tier renew, keytab_remint or password_mint)
     # after a "Refresh ticket" click, rather than every outcome looking the
     # same. None only for a ticket minted before this field existed.
     source: str | None = None
@@ -198,7 +198,7 @@ class ProxyCacheStatus(BaseModel):
     expires_at: str | None = None
     remaining_seconds: int | None = None
     # VOMS nickname attribute (issue #191) — same field/gap as
-    # ProxyRedeemResponse.nickname: populated in voms-token-service
+    # ProxyRedeemResponse.nickname -- populated in voms-token-service
     # (Vault-backed) mode, None on the legacy cache path (ProxyMeta has no
     # such field). Lets the portal show the resolved CERN/Rucio account for
     # the user to visually confirm.
@@ -664,7 +664,8 @@ async def link_servicex(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="ServiceX token linked but no metadata was cached",
         )
-    assert record.expires_at is not None  # get_token only returns records with a token
+    # get_token only returns records with a token
+    assert record.expires_at is not None  # noqa: S101
     return ServiceXTokenMetadata(
         target=target,
         expires_at=_iso(record.expires_at),
@@ -745,7 +746,8 @@ async def create_krb5_ticket(
     )
     payload = cred.payload
     renew_until = payload.get("renew_until")
-    assert cred.expires_at is not None  # a krb5 ticket always has an end time
+    # a krb5 ticket always has an end time
+    assert cred.expires_at is not None  # noqa: S101
     return KrbTicketMetadata(
         target=target,
         principal=payload["principal"],
@@ -809,7 +811,8 @@ async def link_krb5_keytab(
     )
     payload = cred.payload
     renew_until = payload.get("renew_until")
-    assert cred.expires_at is not None  # a krb5 ticket always has an end time
+    # a krb5 ticket always has an end time
+    assert cred.expires_at is not None  # noqa: S101
     return KrbTicketMetadata(
         target=target,
         principal=payload["principal"],
@@ -902,12 +905,13 @@ async def proxy_status(
     provider = await _x509_provider(request, resolved)
     if provider.uses_voms_service:
         store = provider.vault_store
-        assert store is not None  # uses_voms_service checked
+        # uses_voms_service checked
+        assert store is not None  # noqa: S101
         record = await store.get_proxy(principal.subject)
         if record is None:
             return ProxyCacheStatus(cached=False)
         # get_proxy only returns records with a proxy; narrow for mypy.
-        assert record.not_after is not None
+        assert record.not_after is not None  # noqa: S101 -- mypy narrowing of an invariant validated upstream
         return ProxyCacheStatus(
             cached=True,
             dn=record.dn,
@@ -1029,7 +1033,8 @@ async def _redeem_from_vault(
     surface as 502.
     """
     store = provider.vault_store
-    assert store is not None  # uses_voms_service checked by the caller
+    # uses_voms_service checked by the caller
+    assert store is not None  # noqa: S101
     record = await store.get_proxy(subject)
     renewed = False
     if record is None:
@@ -1093,8 +1098,8 @@ async def _redeem_from_vault(
         renewed = True
 
     # renew_from_stored_link/get_proxy only return records with a proxy.
-    assert record.proxy_pem is not None
-    assert record.not_after is not None
+    assert record.proxy_pem is not None  # noqa: S101 -- mypy narrowing of an invariant validated upstream
+    assert record.not_after is not None  # noqa: S101 -- mypy narrowing of an invariant validated upstream
 
     await write_audit(
         _release_audit(
@@ -1220,7 +1225,7 @@ async def redeem_x509_proxy(request: Request) -> ProxyRedeemResponse:
         )
 
     try:
-        pem = Path(meta.proxy_path).read_text()
+        pem = await anyio.Path(meta.proxy_path).read_text()
     except OSError:
         # Cached metadata without its file is an inconsistency (e.g. tmpfs
         # cleared); from the caller's perspective the proxy is simply gone.
@@ -1402,7 +1407,8 @@ async def redeem_krb5_ticket(request: Request) -> KrbTicketRedeemResponse:
         )
     )
 
-    assert cred.expires_at is not None  # a krb5 ticket always has an end time
+    # a krb5 ticket always has an end time
+    assert cred.expires_at is not None  # noqa: S101
     return KrbTicketRedeemResponse(
         ccache_b64=payload["ccache_b64"],
         principal=payload["principal"],
@@ -1547,8 +1553,9 @@ async def redeem_servicex_token(request: Request) -> ServiceXRedeemResponse:
             ) from exc
         renewed = True
 
-    assert record.access_token is not None  # get_token/redeem_from_link guarantee this
-    assert record.expires_at is not None
+    # get_token/redeem_from_link guarantee this
+    assert record.access_token is not None  # noqa: S101
+    assert record.expires_at is not None  # noqa: S101 -- mypy narrowing of an invariant validated upstream
     now = time.time()
 
     await write_audit(

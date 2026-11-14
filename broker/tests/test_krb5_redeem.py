@@ -38,6 +38,7 @@ from af_mcp_broker.credentials.errors import (
     Krb5TokenMintError,
     Krb5TokenRenewalWindowClosedError,
 )
+from af_mcp_broker.identity import keycloak_dependency
 from af_mcp_broker.vault_kv import VaultKV
 
 if TYPE_CHECKING:
@@ -429,7 +430,6 @@ class TestRedeem:
         for every other test in this module -- see credentials.py's
         backend_router module comment for why redeem lives off the
         maintenance-mode-gated router)."""
-        from af_mcp_broker.identity import keycloak_dependency
 
         krb5_redeem_env()
         with app_client_factory() as (client, _):

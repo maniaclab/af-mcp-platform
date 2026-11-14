@@ -19,9 +19,9 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import anyio
 import structlog
 
 from af_mcp_broker.errors import BrokerError
@@ -101,7 +101,7 @@ class VaultKV:
             ):
                 return self._client_token
 
-            jwt = Path(self._sa_token_path).read_text().strip()
+            jwt = (await anyio.Path(self._sa_token_path).read_text()).strip()
             resp = await self._http().post(
                 f"{self._addr}/v1/auth/{self._auth_mount}/login",
                 json={"role": self._auth_role, "jwt": jwt},

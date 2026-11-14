@@ -24,6 +24,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
+from af_mcp_broker.api import oauth21 as oauth21_module
 from af_mcp_broker.api.permissions import _service_status
 from af_mcp_broker.app import app as broker_app
 from af_mcp_broker.config import get_settings
@@ -2039,8 +2040,6 @@ def test_callback_logs_error_at_warn(
 ) -> None:
     fernet_key = Fernet.generate_key().decode()
     _configure_oauth21_env(monkeypatch, fernet_key)
-
-    from af_mcp_broker.api import oauth21 as oauth21_module
 
     events: list[tuple[str, dict[str, Any]]] = []
     original_warning = oauth21_module.log.warning

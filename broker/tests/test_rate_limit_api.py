@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING
 
 from fastapi import HTTPException
 
+from af_mcp_broker.credentials.cache import ProxyMeta
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -35,7 +37,6 @@ class _FakeSucceedingBackend:
         return True
 
     async def mint(self, principal, passphrase, valid, voms, cache):
-        from af_mcp_broker.credentials.cache import ProxyMeta
 
         await cache.check_unlock_rate_limit(principal.uid)
         return ProxyMeta(

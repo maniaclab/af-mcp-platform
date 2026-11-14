@@ -7,6 +7,7 @@ from typing import Any
 
 from prometheus_client import REGISTRY
 
+from af_mcp_broker import maintenance as maintenance_module
 from af_mcp_broker.maintenance import (
     InMemoryMaintenanceModeStore,
     MaintenanceModeStore,
@@ -159,7 +160,6 @@ def test_store_unavailable_is_logged_at_error_with_traceback_and_counted(
     -- so this patches ``maintenance``'s module-level logger, not
     ``identity``'s.
     """
-    from af_mcp_broker import maintenance as maintenance_module
 
     calls: list[dict[str, Any]] = []
     original_exception = maintenance_module.logger.exception

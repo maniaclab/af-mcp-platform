@@ -4,11 +4,12 @@ import asyncio
 import os
 import time
 import uuid
-from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
 
+import anyio
 import structlog
 
+from af_mcp_broker.audit.logger import AuditRecord, write_audit
 from af_mcp_broker.credentials.base import (
     CredentialKind,
     CredentialProvider,
@@ -160,7 +161,7 @@ class ServiceProvider(CredentialProvider):
         # Option 2: token file (Kubernetes Secret mounted as file)
         token_file = os.environ.get("AF_SERVICE_TOKEN_FILE")
         if token_file:
-            token = Path(token_file).read_text().strip()
+            token = (await anyio.Path(token_file).read_text()).strip()
             self._log.debug("service.token.from_file", path=token_file)
             return token, time.time() + 3600
 
@@ -206,35 +207,21 @@ class ServiceProvider(CredentialProvider):
 
         Delegates to ``af_mcp_broker.audit.logger.write_audit`` so that all
         audit output goes through a single, consistently-formatted channel.
-        This import is deferred to avoid a circular dependency at module load.
         """
-        try:
-            from af_mcp_broker.audit import logger as audit_logger
-            from af_mcp_broker.audit.logger import AuditRecord
-
-            record = AuditRecord(
-                principal_sub=principal.subject,
-                principal_uid=principal.uid,
-                permission=self.cred_class,
-                target=target,
-                action="credential.issued",
-                action_type="state_change",
-                args_summary=(
-                    f"on_behalf_of={principal.email} "
-                    f"username={principal.unixname or '<no-posix-identity>'}"
-                ),
-                timestamp=time.time(),
-                request_id=audit_id,
-                audit_id=audit_id,
-                execution_model=self.execution_model.value,
-            )
-            await audit_logger.write_audit(record)
-        except ImportError:
-            # audit module not yet implemented — log a warning so it is visible
-            self._log.warning(
-                "service.audit.module_missing",
-                audit_id=audit_id,
-                target=target,
-                uid=principal.uid,
-                on_behalf_of=principal.email,
-            )
+        record = AuditRecord(
+            principal_sub=principal.subject,
+            principal_uid=principal.uid,
+            permission=self.cred_class,
+            target=target,
+            action="credential.issued",
+            action_type="state_change",
+            args_summary=(
+                f"on_behalf_of={principal.email} "
+                f"username={principal.unixname or '<no-posix-identity>'}"
+            ),
+            timestamp=time.time(),
+            request_id=audit_id,
+            audit_id=audit_id,
+            execution_model=self.execution_model.value,
+        )
+        await write_audit(record)

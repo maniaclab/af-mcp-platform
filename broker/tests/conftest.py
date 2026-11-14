@@ -32,11 +32,23 @@ from jwt.algorithms import RSAAlgorithm
 from pydantic import SecretStr
 
 from af_mcp_broker import identity
+from af_mcp_broker.app import app as broker_app
 from af_mcp_broker.audit import measure
+from af_mcp_broker.authorization import load_policy
 from af_mcp_broker.config import Settings, get_settings
+from af_mcp_broker.identity import Principal, keycloak_dependency
 from af_mcp_broker.mcp import aggregator as aggregator_module
 from af_mcp_broker.mcp import cache_invalidation, lint_observations
 from af_mcp_broker.mcp.aggregator import build_asgi_auth_middleware
+from af_mcp_broker.principal_cache import (
+    InMemoryPrincipalCacheBackend,
+    PrincipalCache,
+)
+from af_mcp_broker.principal_directory import (
+    PrincipalAttributes,
+    PrincipalDirectory,
+    PrincipalDisabledError,
+)
 
 # fastmcp v4's camelCase compat bridge (mcp_camelcase_compat, default True)
 # lets legacy reads like `tool.inputSchema`/`result.isError` keep working
@@ -553,7 +565,6 @@ def make_claims(**overrides: Any) -> dict[str, Any]:
 
 @pytest.fixture
 def policy():
-    from af_mcp_broker.authorization import load_policy
 
     return load_policy(str(SHIPPED_POLICY))
 
@@ -573,15 +584,6 @@ def static_principal_cache() -> tuple[Any, Any]:
     own repeated ``get()`` calls from ever re-hitting the directory or
     falling back to a stale value unless the test wants that specifically.
     """
-    from af_mcp_broker.principal_cache import (
-        InMemoryPrincipalCacheBackend,
-        PrincipalCache,
-    )
-    from af_mcp_broker.principal_directory import (
-        PrincipalAttributes,
-        PrincipalDirectory,
-        PrincipalDisabledError,
-    )
 
     class _StaticDirectory(PrincipalDirectory):
         def __init__(self) -> None:
@@ -619,7 +621,6 @@ def static_principal_cache() -> tuple[Any, Any]:
 
 @pytest.fixture
 def make_principal() -> Callable[..., object]:
-    from af_mcp_broker.identity import Principal
 
     def _make(
         *,
@@ -685,13 +686,12 @@ def app_client_factory(
     (globus_dir / "userkey.pem").write_text("fake-key")
     monkeypatch.setenv("HOME_ROOT", str(tmp_path))
 
-    from af_mcp_broker.app import app
-    from af_mcp_broker.identity import keycloak_dependency
-
     @contextmanager
     def _factory() -> Iterator[tuple[TestClient, dict]]:
         state: dict = {"principal": make_principal(groups=["atlas"])}
-        app.dependency_overrides[keycloak_dependency] = lambda: state["principal"]
+        broker_app.dependency_overrides[keycloak_dependency] = lambda: state[
+            "principal"
+        ]
         # get_settings() is a process-wide lru_cache with no arguments, so a
         # route depending on it (e.g. GET /v1/identities) would otherwise
         # keep serving whichever Settings a *previous* test's env happened to
@@ -699,10 +699,10 @@ def app_client_factory(
         # this factory call just set up.
         get_settings.cache_clear()
         try:
-            with TestClient(app) as client:
+            with TestClient(broker_app) as client:
                 yield client, state
         finally:
-            app.dependency_overrides.clear()
+            broker_app.dependency_overrides.clear()
 
     return _factory
 

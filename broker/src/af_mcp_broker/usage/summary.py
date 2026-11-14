@@ -108,7 +108,7 @@ class UnknownCostModelError(BrokerError):
 
 def _estimated_cost_usd(tokens: int, model: str) -> float:
     """*tokens* priced at *model*'s input rate, from the bundled table."""
-    return float(calculate_cost_by_tokens(tokens, model, token_type="input"))
+    return float(calculate_cost_by_tokens(tokens, model, token_type="input"))  # noqa: S106 -- LLM token class ('input'), not a secret
 
 
 async def build_usage_summary(

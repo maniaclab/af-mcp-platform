@@ -29,6 +29,7 @@ from mcp.types import Prompt as McpPrompt
 from mcp.types import Resource as McpResource
 from mcp.types import ResourceTemplate as McpResourceTemplate
 from mcp.types import Tool as McpTool
+from test_broker_issued import _make_rsa_key, _private_pem
 
 from af_mcp_broker import metrics
 from af_mcp_broker.api.permissions import _RELINK_DETAIL
@@ -41,6 +42,7 @@ from af_mcp_broker.credentials import (
     ExecutionModel,
     IssuedCredential,
 )
+from af_mcp_broker.credentials.broker_issued import BrokerTokenIssuer
 from af_mcp_broker.credentials.errors import NeedsUnlockError
 from af_mcp_broker.mcp import aggregator
 from af_mcp_broker.mcp.aggregator import (
@@ -2328,9 +2330,6 @@ async def test_list_cache_bypass_logs_debug_event_when_no_context(
 
 
 def _make_issuer():
-    from test_broker_issued import _make_rsa_key, _private_pem
-
-    from af_mcp_broker.credentials.broker_issued import BrokerTokenIssuer
 
     return BrokerTokenIssuer(
         private_key_pem=_private_pem(_make_rsa_key()),
