@@ -6,8 +6,8 @@
  * Kept as plain functions (no DOM access, no Vue) following x509Identity.ts's
  * pattern, so both are unit testable without a component harness.
  */
-import { APIError, SessionExpiredError } from './api';
 import type { MaintenanceStatus } from './api';
+import { describeApiError } from './apiError';
 
 /**
  * Text to show in the maintenance banner, or null when it should stay
@@ -23,24 +23,6 @@ export function maintenanceBannerText(status: MaintenanceStatus | null): string 
   return status.reason
     ? `Maintenance mode is enabled: ${status.reason}`
     : 'Maintenance mode is enabled.';
-}
-
-/**
- * Extracts FastAPI's `{"detail": "..."}` from an APIError body, or null when
- * the body isn't that shape (e.g. an HTML error page from a proxy hop). A
- * local copy of the detail-only part of x509Identity.ts's exported
- * apiErrorDetail(), which also appends the response's `correlation_id` and is
- * shared by x509Identity.ts, krb5Identity.ts, servicexIdentity.ts and
- * credmonStatus.ts. This module has a single call site and does not import
- * from x509Identity.ts.
- */
-function apiErrorDetail(err: APIError): string | null {
-  try {
-    const parsed = JSON.parse(err.body) as { detail?: unknown };
-    return typeof parsed.detail === 'string' ? parsed.detail : null;
-  } catch {
-    return null;
-  }
 }
 
 /**
@@ -61,19 +43,12 @@ function apiErrorDetail(err: APIError): string | null {
  * own shape.
  */
 export function maintenanceErrorMessage(err: unknown): string {
-  if (err instanceof SessionExpiredError) {
-    return 'Session expired — reload the page to re-authenticate.';
-  }
-  if (err instanceof APIError) {
-    const detail = apiErrorDetail(err);
-    if (detail) return detail;
-    if (err.status === 403) {
-      return 'Access not yet granted — your admin membership may not have refreshed yet.';
-    }
-    if (err.status === 409) {
-      return 'Someone else just changed maintenance mode. Reload and retry.';
-    }
-  }
-  if (err instanceof Error && err.message) return err.message;
-  return 'Could not update maintenance mode.';
+  return describeApiError(err, {
+    sessionExpired: 'Session expired — reload the page to re-authenticate.',
+    byStatus: {
+      403: 'Access not yet granted — your admin membership may not have refreshed yet.',
+      409: 'Someone else just changed maintenance mode. Reload and retry.',
+    },
+    fallback: 'Could not update maintenance mode.',
+  });
 }
