@@ -89,9 +89,11 @@ from af_mcp_broker.maintenance import (
 from af_mcp_broker.mcp.aggregator import (
     build_aggregator,
     build_asgi_auth_middleware,
+    invalidate_all_subject_caches,
     invalidate_subject_cache,
     populate_aggregator,
 )
+from af_mcp_broker.mcp.cache_invalidation import ListCacheInvalidator
 from af_mcp_broker.mcp.registry import ServiceRegistry
 from af_mcp_broker.mcp_auth_codes import McpAuthCodeStore
 from af_mcp_broker.principal_cache import (
@@ -485,6 +487,17 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     )
 
     # --- Credential subsystem: cache + janitor + provider registry.
+    # The credential cache's link/revoke hooks (below) go through
+    # list_cache_invalidator, which drops this replica's cached listings and
+    # tells the other replicas to drop theirs (mcp/cache_invalidation.py).
+    list_cache_invalidator = ListCacheInvalidator(
+        shared_state,
+        invalidate=lambda subject, target: invalidate_subject_cache(
+            _mcp_aggregator, subject, target
+        ),
+        invalidate_all=lambda: invalidate_all_subject_caches(_mcp_aggregator),
+    )
+    list_cache_invalidator.start()
     #
     # on_revoke wires issue #320's per-(subject, service) tools/list cache
     # invalidation to every revoke() (and, by delegation, revoke_all()) call
@@ -503,15 +516,11 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         max_failed_unlocks=settings.credential_unlock_max_failures,
         unlock_window_seconds=settings.credential_unlock_window_seconds,
         shared_state=shared_state,
-        on_revoke=lambda subject, target: invalidate_subject_cache(
-            _mcp_aggregator, subject, target
-        ),
+        on_revoke=list_cache_invalidator.invalidate,
         # The mirror of on_revoke for issue #355: the /v1 routes that complete
         # a link call credential_cache.notify_linked(), so a caller who just
         # linked does not wait out a cached "no tools" listing.
-        on_link=lambda subject, target: invalidate_subject_cache(
-            _mcp_aggregator, subject, target
-        ),
+        on_link=list_cache_invalidator.invalidate,
     )
     credential_cache.start_janitor()
 
@@ -1174,6 +1183,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     if credmon_sync is not None:
         await credmon_sync.stop()
     await credential_cache.stop_janitor()
+    await list_cache_invalidator.stop()
     await shared_state.close()
     await aclose_http_client()
     # Shutdown drains pending metering (records still queued for measurement

@@ -1515,6 +1515,18 @@ class _ObservableProxyProvider(ProxyProvider):
             del self._subject_list_cache[key]
         self._registry.clear_caller_list_failure(self._service_name, subject)
 
+    def invalidate_all_subjects(self) -> None:
+        """Drop every subject's cached listing entries for this service, and each of those subjects' caller-specific failure reasons.
+
+        For a replica that may have missed invalidation messages (see
+        ``cache_invalidation.ListCacheInvalidator``): it cannot tell which
+        subjects changed, so it forgets all of them. Like
+        ``invalidate_subject``, leaves the service-wide failure reason and
+        ``_subject_list_locks`` alone.
+        """
+        for subject in {subject for _, subject in self._subject_list_cache}:
+            self.invalidate_subject(subject)
+
     def _prune_subject_list_cache(self) -> None:
         """Drop every expired entry, so the cache dict never grows past recently active (kind, subject) pairs."""
         expired = [
@@ -1832,6 +1844,13 @@ def invalidate_subject_cache(
             target is None or provider._service_name == target
         ):
             provider.invalidate_subject(subject)
+
+
+def invalidate_all_subject_caches(mcp: FastMCP) -> None:
+    """Drop every subject's cached listing entries across all of ``mcp``'s providers (see ``_ObservableProxyProvider.invalidate_all_subjects``)."""
+    for provider in mcp.providers:
+        if isinstance(provider, _ObservableProxyProvider):
+            provider.invalidate_all_subjects()
 
 
 def build_aggregator(
