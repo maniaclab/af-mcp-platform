@@ -159,7 +159,7 @@ Outside the chart set `SHARED_STATE_URL` (and `MCP_REPLICA_COUNT`) directly.
 
 Per-replica state in the broker, what happens at more than one replica
 without a store, and what each item does when the store is down. "Phase"
-is the order in which items move onto the store; phases 1 to 3 are
+is the order in which items move onto the store; phases 1 to 4 are
 implemented today and "(done)" marks the ones that have.
 
 | Item | Location | Effect at N > 1 without a store | Consistency need | Store down | Phase |
