@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import contextlib
-from typing import TYPE_CHECKING, Annotated
+import re
+from typing import TYPE_CHECKING, Annotated, Any
 
 from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_context
@@ -14,6 +15,7 @@ from af_mcp_broker.mcp.registry import (
     LINK_IDENTITY_TOOL_NAME,
     LIST_IDENTITIES_TOOL_NAME,
     LIST_MCP_SERVERS_TOOL_NAME,
+    SEARCH_TOOLS_TOOL_NAME,
     USAGE_TOOL_NAME,
     WHOAMI_TOOL_NAME,
     identity_provider_url,
@@ -26,7 +28,10 @@ from af_mcp_broker.usage.summary import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from fastmcp import FastMCP
+    from fastmcp.tools.base import Tool
 
     from af_mcp_broker.authorization import EntitlementPolicy
     from af_mcp_broker.config import IdentityProviderConfig, Settings
@@ -165,6 +170,103 @@ class ListMcpServersResult(BaseModel):
     servers: list[DiagnosticMcpServer]
 
 
+# Longest summary af_search_tools returns per hit (docs/mcp-design.md N2 keeps
+# a description's first line to about 120 characters).
+_SUMMARY_MAX_CHARS = 120
+# Most hits one af_search_tools call returns (docs/mcp-design.md B1).
+_SEARCH_MAX_LIMIT = 50
+_WORD = re.compile(r"[a-z0-9]+")
+
+
+class ToolSearchHit(BaseModel):
+    """One entitled tool matching an af_search_tools query."""
+
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    # First line of the tool's description.
+    summary: str
+    # The registry service the tool belongs to (as af_list_mcp_servers names it).
+    service: str
+    # The tool's MCP annotations as declared (readOnlyHint, ...), or None.
+    annotations: dict[str, Any] | None
+
+
+class SearchToolsResult(BaseModel):
+    """The caller's entitled tools matching a query, best first -- af_search_tools' return value."""
+
+    model_config = ConfigDict(frozen=True)
+
+    query: str
+    # Matches before `limit` was applied.
+    total: int
+    tools: list[ToolSearchHit]
+    # Set when there is a next step: nothing matched, or the list was truncated.
+    note: str | None = None
+
+
+def _words(text: str) -> list[str]:
+    return _WORD.findall(text.lower())
+
+
+def _summary(tool: Tool) -> str:
+    lines = (tool.description or "").strip().splitlines()
+    first = lines[0].strip() if lines else ""
+    return first[:_SUMMARY_MAX_CHARS]
+
+
+def _match_rank(tool: Tool, query: str, tokens: list[str]) -> int | None:
+    """Rank one tool against a query, 0 (best) to 2, or ``None`` when it does not match.
+
+    A tool matches when every query token is a prefix of some word of its
+    name, description, title or tags. Rank 0 is an exact name match (the
+    whole query equals the tool name); rank 1 means every query token matched
+    a word of the name; rank 2 means at least one token needed the
+    description, title or tags.
+    """
+    if tool.name.lower() == query:
+        return 0
+    name_words = _words(tool.name)
+    other_words = _words(
+        " ".join([tool.description or "", tool.title or "", *sorted(tool.tags)])
+    )
+    in_name = [any(w.startswith(t) for w in name_words) for t in tokens]
+    in_other = [any(w.startswith(t) for w in other_words) for t in tokens]
+    if not all(n or o for n, o in zip(in_name, in_other, strict=True)):
+        return None
+    return 1 if all(in_name) else 2
+
+
+def _search_entitled_tools(
+    tools: Sequence[Tool], registry: ServiceRegistry, query: str
+) -> list[ToolSearchHit]:
+    """Rank *tools* (already limited to the caller's entitlements) against *query*, best first, ties broken by name."""
+    query = query.strip().lower()
+    tokens = _words(query)
+    ranked: list[tuple[int, str, Tool]] = []
+    for tool in tools:
+        rank = _match_rank(tool, query, tokens)
+        if rank is not None:
+            ranked.append((rank, tool.name, tool))
+    ranked.sort(key=lambda item: item[:2])
+    hits: list[ToolSearchHit] = []
+    for _, _, tool in ranked:
+        service = registry.get_by_tool_prefix(tool.name)
+        hits.append(
+            ToolSearchHit(
+                name=tool.name,
+                summary=_summary(tool),
+                service=service.name if service is not None else "",
+                annotations=tool.annotations.model_dump(
+                    by_alias=True, exclude_none=True
+                )
+                if tool.annotations is not None
+                else None,
+            )
+        )
+    return hits
+
+
 async def _require_principal() -> Principal:
     """Fetch the calling Principal that IdentityMiddleware stamped onto request-scoped state, or fail closed.
 
@@ -210,6 +312,7 @@ def register_diagnostic_tools(
         LIST_MCP_SERVERS_TOOL_NAME,
         LINK_IDENTITY_TOOL_NAME,
         USAGE_TOOL_NAME,
+        SEARCH_TOOLS_TOOL_NAME,
     ):
         with contextlib.suppress(KeyError):
             mcp.local_provider.remove_tool(name)
@@ -409,3 +512,59 @@ def register_diagnostic_tools(
                 )
             )
         return ListMcpServersResult(servers=servers)
+
+    @mcp.tool(
+        name=SEARCH_TOOLS_TOOL_NAME,
+        annotations=ToolAnnotations(
+            title="Search tools",
+            read_only_hint=True,
+            open_world_hint=False,
+        ),
+    )
+    async def _search_tools(
+        query: str,
+        limit: Annotated[int, Field(ge=1, le=_SEARCH_MAX_LIMIT)] = 10,
+    ) -> SearchToolsResult:
+        """Search the tools you can call by keyword and return the best matches.
+
+        Call this when you need a tool but do not know its name, instead of
+        reading the whole tool list. `query` is one or more words; a tool
+        matches when every word is the start of a word in its name,
+        description, title or tags (a prefix match, so a singular finds its
+        plural). Matches are ranked: an exact tool name first, then tools whose
+        name contains every query word, then tools that needed the description,
+        title or tags; ties are ordered by name. `limit` caps the hits (1..50, default 10);
+        `total` says how many matched. Only tools you are entitled to appear;
+        a tool you lack permission for is never listed, even by exact name --
+        use `af_list_mcp_servers` to see which services are unavailable and
+        why. Read-only: it never calls a tool and reuses the tool listing
+        already cached for you instead of contacting the services again.
+        """
+        if not query.strip():
+            raise ToolError(
+                "query is empty. Pass one or more keywords (for example "
+                "'replica' or 'job status') or a tool name; call "
+                f"`{LIST_MCP_SERVERS_TOOL_NAME}` to browse services by prefix."
+            )
+        # Through the middleware chain, so EntitlementMiddleware filters to
+        # this caller's tools and the per-(subject, service) listing cache
+        # serves the backends' halves.
+        entitled = await mcp.list_tools()
+        hits = _search_entitled_tools(entitled, registry, query)
+        note: str | None = None
+        if not hits:
+            note = (
+                f"No tool you can call matches {query!r}. Try fewer or "
+                f"different keywords, or call `{LIST_MCP_SERVERS_TOOL_NAME}` "
+                "to see each service's tool prefix and whether it is available "
+                "to you."
+            )
+        elif len(hits) > limit:
+            note = (
+                f"Showing {limit} of {len(hits)} matches (limit={limit}). "
+                "Narrow the query with more keywords, or raise limit "
+                f"(maximum {_SEARCH_MAX_LIMIT})."
+            )
+        return SearchToolsResult(
+            query=query, total=len(hits), tools=hits[:limit], note=note
+        )
