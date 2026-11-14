@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     import mcp.types as mt
     from fastmcp.tools.base import Tool
 
+    from af_mcp_broker.mcp.lint_observations import LintObservationStore
     from af_mcp_broker.mcp.registry import ServiceRegistry
 
 logger = structlog.get_logger(__name__)
@@ -39,6 +40,13 @@ class EntitlementMiddleware(Middleware):
         # instance each time.
         self.registry = registry
         self.policy = policy
+        # Where each listing's lint findings are recorded for the admin
+        # tables (see lint_observations.py); None records nothing.
+        self.lint_store: LintObservationStore | None = None
+
+    def use_lint_store(self, lint_store: LintObservationStore) -> None:
+        """Record every listing's lint findings in *lint_store*. Called again by populate_aggregator() on each lifespan entry, as for registry and policy."""
+        self.lint_store = lint_store
 
     async def on_list_tools(
         self,
@@ -48,6 +56,7 @@ class EntitlementMiddleware(Middleware):
         tools = await call_next(context)
         self._lint_annotations(tools)
         self._lint_tool_mapping(tools)
+        await self._record_observations(tools)
 
         principal = (
             await context.fastmcp_context.get_state("principal")
@@ -199,6 +208,38 @@ class EntitlementMiddleware(Middleware):
                         service=drift.service, kind=kind
                     ).inc(len(set(current) - set(before)))
             self.registry.record_tool_mapping_drift(drift)
+
+    async def _record_observations(self, tools: Sequence[Tool]) -> None:
+        """Write, per service this listing contained tools of, what the two lints just found (issue #332).
+
+        Read back from the registry's own records, which the lints above
+        have just brought up to date for these tools, so the shared record
+        can never disagree with the log line and metric. A service with no
+        tools in this listing is not recorded: that is indistinguishable from
+        an unreachable backend or a caller with no linked credential, so
+        saying "observed" would be wrong.
+        """
+        if self.lint_store is None:
+            return
+        listed = {tool.name for tool in tools}
+        observed: set[str] = set()
+        for tool in tools:
+            service = self.registry.get_by_tool_prefix(tool.name)
+            if service is not None:
+                observed.add(service.name)
+        for service in self.registry.all_services():
+            routing = self.registry.tool_routing(service.name)
+            if routing is not None and set(routing.unroutable) & listed:
+                observed.add(service.name)
+        for name in sorted(observed):
+            service = self.registry.get(name)
+            if service is None or service.builtin:
+                continue
+            await self.lint_store.observe(
+                name,
+                [m for m in self.registry.annotation_mismatches() if m.service == name],
+                self.registry.get_tool_mapping_drift(name),
+            )
 
     def _tool_is_allowed(self, tool: Tool, principal_caps: set[str]) -> bool:
         # The broker's own af_* methods (issue #153) route here too, via the

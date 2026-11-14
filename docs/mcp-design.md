@@ -252,7 +252,7 @@ Each item has an ID, a level, and four parts.
   with `--call`, the result's `structuredContent` validates against it.
 - **Spec.** [Output schema](https://modelcontextprotocol.io/specification/2026-07-28/server/tools#output-schema),
   [Structured content](https://modelcontextprotocol.io/specification/2026-07-28/server/tools#structured-content).
-- **In this repo.** All five `gateway_service` tools declare one
+- **In this repo.** All six `gateway_service` tools declare one
   (`broker/src/af_mcp_broker/mcp/diagnostics.py`). As of 2026-11-12 all six
   fleet backends (rucio-mcp, ami-mcp, af-jupyterlab-mcp, af-filesystem-mcp,
   servicex-mcp, and condor via golang-htcondor `webapi/mcpserver`) implement
@@ -283,7 +283,7 @@ Each item has an ID, a level, and four parts.
 - **Spec.** [Structured content](https://modelcontextprotocol.io/specification/2026-07-28/server/tools#structured-content)
   (a tool that returns `structuredContent` SHOULD also return the serialized JSON
   in a text block).
-- **In this repo.** The five `gateway_service` tools return plain pydantic
+- **In this repo.** The six `gateway_service` tools return plain pydantic
   models, so fastmcp supplies both: `structuredContent` and a JSON text block
   (`broker/src/af_mcp_broker/mcp/diagnostics.py`). The talk's checklist says
   "`outputSchema` + serialized text". Backends that also want curated markdown
@@ -343,7 +343,7 @@ Each item has an ID, a level, and four parts.
 - **In this repo.** The broker forwards annotations verbatim and lints them
   against `policy.yaml` (maniaclab/af-mcp-platform#238 B.8). A disagreement does
   not block anything: the gateway never takes an authorization decision from a
-  backend's annotation, and `required_permission` stays authoritative. The five
+  backend's annotation, and `required_permission` stays authoritative. The six
   `gateway_service` tools are all read-only, including `af_link_identity`, which
   returns a portal link but mutates nothing. golang-htcondor keeps the table in
   `webapi/mcpserver/annotations.go`. All six backends implement annotations as

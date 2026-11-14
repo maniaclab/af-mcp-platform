@@ -1,0 +1,30 @@
+# Exercises tracing and OTel metrics enabled together over one shared
+# collector, with the collector headers taken from a Secret (rendered as a
+# secretKeyRef on OTEL_EXPORTER_OTLP_HEADERS) so a broken render is caught by
+# CI's `ct lint`, which lints the chart once per values file in this
+# directory. Placeholder example.com values, same caveats as test-values.yaml;
+# neither the collector nor the Secret needs to exist for linting.
+oidc:
+  issuer: "https://keycloak.example.com/realms/example"
+portal:
+  oidc:
+    clientId: "example-portal-client"
+    scope: "openid profile email example-audience"
+  brokerOrigin: "https://mcp.example.com"
+
+broker:
+  # Two replicas (the chart default) need a shared state store or an explicit
+  # opt-in; this file is not about shared state, so it opts in.
+  sharedState:
+    allowPerReplicaState: true
+  otlp:
+    endpoint: "https://otel-collector.example.com:4318"
+    headers:
+      existingSecret:
+        name: "otlp-collector-auth"
+        key: "headers"
+  tracing:
+    enabled: true
+  metrics:
+    otlp:
+      enabled: true

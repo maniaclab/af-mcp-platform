@@ -178,6 +178,47 @@ written before the record is buffered.
   used when no pipeline is running still write each record immediately.
 - **Fresher reads.** `GET /v1/usage` can lag a call by up to the interval.
 
+### Token and trace columns
+
+Each raw row also carries `token_id` (the calling PAT's public `lookup_id`;
+`NULL` for a session JWT) and `trace_id` (the OTel trace; `NULL` when the
+call was not traced), and both are `NULL` on rows written before the columns
+existed. They let you join
+usage to a token or to a trace from SQL. The columns are added at startup by
+an idempotent `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`; they are not
+indexed, because nothing reads by them yet and an index adds write load.
+
+### Retention and daily rollup (Postgres)
+
+Raw rows would otherwise accumulate forever. The broker folds raw rows older
+than the retention window into `af_mcp_usage_daily`, keyed `(day,
+principal_sub, service, method, outcome)` with the summed calls, duration,
+bytes and tokens, and deletes them in the same statement.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `USAGE_RETENTION_DAYS` (chart: `broker.usage.retentionDays`) | `365` | Raw rows older than this many UTC days are rolled up and deleted. `0` keeps raw rows forever and runs no job. |
+| `USAGE_ROLLUP_INTERVAL_SECONDS` (chart: `broker.usage.rollupIntervalSeconds`) | `3600` | How often each replica attempts the job. |
+
+- **Reads do not change.** `GET /v1/usage` and `af_usage` sum raw rows and
+  rollup rows, so a window answers the same before and after a row moves.
+  What ages out is per-call detail (`audit_id`, `token_id`, `trace_id`);
+  the audit log keeps that.
+- **One replica at a time.** Every replica runs the loop; a Postgres
+  advisory lock (`pg_try_advisory_xact_lock`) lets one proceed and the rest
+  skip until the next interval. The lock lives in the database the job
+  works on, so it needs no second dependency, is released if the replica
+  dies, and is not weakened by the optional shared-state store's in-memory
+  fallback. Correctness does not depend on it: the `DELETE ... RETURNING`
+  that feeds the rollup is a single statement, so two racing replicas would
+  still count each row once.
+- **First run.** The first pass on a large existing table moves everything
+  older than the window in one statement; expect a one-time burst of
+  Postgres work.
+- **Window edges.** The raw-row window is a plain range on `ts`, so the
+  `ts` indexes are used (wrapping `ts` in `(ts AT TIME ZONE 'UTC')::date`
+  would force a full index scan).
+
 ### Postgres via Crunchy PGO
 
 The reference deployment uses [Crunchy PGO](https://access.crunchydata.com/documentation/postgres-operator/latest).
@@ -246,15 +287,16 @@ The recipe:
 
 ### Schema
 
-One idempotent table, `af_mcp_usage_events`, keyed by `audit_id`
-(primary key) with an index on `(principal_sub, ts)`. Inserts use
+Two idempotent tables: `af_mcp_usage_events` (raw rows), keyed by
+`audit_id` (primary key) with indexes on `(principal_sub, ts)` and `ts`,
+and `af_mcp_usage_daily` (the rollup, see
+[Retention and daily rollup](#retention-and-daily-rollup-postgres)). Inserts use
 `ON CONFLICT (audit_id) DO NOTHING`, so redelivery of the same record —
 which best-effort metering permits — is safe by construction. The DDL is
-`CREATE ... IF NOT EXISTS` and runs at broker startup (replicas racing
-each other are fine); there is deliberately **no migration framework**
-yet — one table plus one index does not justify one. There is also no
-retention policy yet: rows are small (one per tool call), so revisit at
-scale rather than up front.
+`CREATE ... IF NOT EXISTS` / `ADD COLUMN IF NOT EXISTS` and runs at broker
+startup (replicas racing each other are fine); there is deliberately **no
+migration framework** yet — idempotent DDL does not justify one. Raw
+rows are bounded by the retention window described above.
 
 ## Operator: metrics
 
@@ -305,6 +347,156 @@ per-identity questions are answered from the audit log, and the full
 reasoning is the module docstring of
 `broker/src/af_mcp_broker/metrics.py`.
 
+### Which signal carries what
+
+Each signal has a cardinality budget, and identity only appears where the
+signal is access-controlled and unbounded by design:
+
+| Signal | Carries identity | Attributes | Cardinality |
+|---|---|---|---|
+| Prometheus metrics (`:9090`) | No | `service`, `tool`, `action_type`, `target` (per metric) | Bounded by `services.yaml` / `policy.yaml` |
+| OTel metrics (OTLP) | No | `service`, `method`, `action_type`, `outcome` | Same bound |
+| Audit log (JSON lines) | Yes: `principal_sub`, `token_id`, `request_id`, `audit_id`, `trace_id` | One record per tool call | Unbounded by design; authoritative, behind access control |
+| OTel usage events (OTLP logs, opt-in) | Yes: `principal_sub`, `token_id`, `audit_id`, `trace_id` | `service`, `method`, `outcome`, `duration_ms`, `result_bytes`, `result_tokens_est`; never arguments or results | One per tool call; access control is the log backend's |
+| Spans (OTLP, sampled) | Yes: `user.id` | Identity, outcome and timing; never arguments or results | Sampled; joins to the audit log by `trace_id` |
+
+Rule of thumb: a question about *a user* is answered from the audit log
+(or a trace); a question about *the facility* is answered from metrics.
+
+## Operator: OTLP transport shared by every signal
+
+Traces, OTel metrics and OTel usage events export to one collector,
+configured once under `broker.otlp`; `broker.tracing.enabled`,
+`broker.metrics.otlp.enabled` and `broker.usageEvents.otlp.enabled` are
+only the per-signal switches. With every signal off, nothing OTel is
+rendered.
+
+```yaml
+broker:
+  otlp:
+    endpoint: "http://otel-collector.observability:4318"
+    headers:
+      existingSecret: { name: otlp-collector-auth, key: headers }
+    networkPolicy:
+      namespaceSelector: { kubernetes.io/metadata.name: observability }
+      podSelector: { app.kubernetes.io/name: otel-collector }
+      port: 4318
+```
+
+- `endpoint` renders `OTEL_EXPORTER_OTLP_ENDPOINT` once, whenever any
+  signal is enabled, and is **transport only**: it switches nothing on.
+  It is required when any signal is enabled (the chart refuses to render
+  otherwise, and the broker refuses to start with an enabled signal and no
+  endpoint, naming the signal's setting). Each signal appends its own
+  `/v1/<signal>` path.
+- Each signal has its own switch: `TRACING_ENABLED` (chart
+  `broker.tracing.enabled`), `OTEL_METRICS_ENABLED` (chart
+  `broker.metrics.otlp.enabled`) and `USAGE_EVENTS_OTLP_ENABLED` (chart
+  `broker.usageEvents.otlp.enabled`). Enabling one does not enable the others.
+- `headers` renders `OTEL_EXPORTER_OTLP_HEADERS` (`k1=v1,k2=v2`) for every
+  signal. `existingSecret` holds the whole string behind a `secretKeyRef`,
+  so credentials never sit in values; `value` is a literal for non-secret
+  headers such as an MLflow `x-mlflow-experiment-id=3`. Set at most one.
+- `networkPolicy` renders one egress rule to the collector when any signal
+  is enabled and the chart's NetworkPolicy is on; an empty
+  `namespaceSelector` selects the release namespace, an empty
+  `podSelector` allows any pod there.
+- **Breaking rename.** `broker.tracing.endpoint` and
+  `broker.tracing.networkPolicy` no longer exist, with no alias. Setting
+  either makes the chart fail with a message naming `broker.otlp.endpoint` /
+  `broker.otlp.networkPolicy`. Tracing with an empty endpoint used to render
+  silently as "off"; it now fails, because an enabled signal with no
+  collector is a misconfiguration. **Setting `OTEL_EXPORTER_OTLP_ENDPOINT`
+  alone no longer turns tracing on:** the broker now needs
+  `TRACING_ENABLED=true` too (the chart renders both from
+  `broker.tracing.enabled` and `broker.otlp.endpoint`). A deployment that
+  set the endpoint by hand to get traces must add `TRACING_ENABLED=true`.
+
+## Operator: OTel metrics (OTLP)
+
+OTel metrics are **off by default** and the broker is an emitter only.
+Prometheus on `:9090` is unchanged and is all a facility without an OTel
+collector needs; turn this on to feed your own dashboards from a collector.
+In the chart:
+
+```yaml
+broker:
+  otlp:                      # shared collector, see "OTLP transport" below
+    endpoint: "http://otel-collector.observability:4318"
+    networkPolicy:
+      namespaceSelector: { kubernetes.io/metadata.name: observability }
+      podSelector: { app.kubernetes.io/name: otel-collector }
+      port: 4318
+  metrics:
+    otlp:
+      enabled: true
+```
+
+- `broker.metrics.otlp.enabled` renders `OTEL_METRICS_ENABLED`. Unset,
+  nothing is installed and recording is a no-op.
+- The collector is shared with tracing through `broker.otlp` (see
+  [OTLP transport](#operator-otlp-transport-shared-by-every-signal)): the
+  endpoint, headers, timeout and TLS come from the standard
+  `OTEL_EXPORTER_OTLP_*` variables, which the SDK exporter reads natively
+  (appending `/v1/metrics`). Enabling metrics does not enable tracing:
+  the endpoint is transport only.
+- An unreachable collector never fails startup or a tool call; export
+  failures are the periodic reader's background problem.
+
+| Metric | Type | Unit | Meaning |
+|---|---|---|---|
+| `af_mcp.tool.calls` | counter | `{call}` | Tool calls that reached a backend. |
+| `af_mcp.tool.errors` | counter | `{call}` | Of those, the ones that ended in error. |
+| `af_mcp.tool.duration` | histogram | `s` | Wall time of the downstream call; same buckets as `af_mcp_tool_duration_seconds`. |
+| `af_mcp.tool.result_bytes` | counter | `By` | Serialized size of tool results (an estimate of what enters the LLM client's context). |
+| `af_mcp.tool.result_tokens_est` | counter | `{token}` | Estimated tokens of those results. |
+
+Every instrument carries exactly `service`, `method`, `action_type` and
+`outcome`, and no other attribute: a test fails if any metric gains a user,
+token, jti or request-id attribute. Like usage accounting, these cover
+success and error calls only; denied and unmapped calls never reach the
+metering worker.
+
+## Operator: per-call usage as OTel log events (opt-in)
+
+To receive every tool call's usage record over OTLP (for example into Loki
+or ClickHouse), alongside the usage store that backs `/v1/usage`,
+`af_usage` and the portal:
+
+```yaml
+broker:
+  otlp:
+    endpoint: "http://otel-collector.observability:4318"   # shared collector
+  usageEvents:
+    otlp:
+      enabled: true
+```
+
+- `broker.usageEvents.otlp.enabled` renders `USAGE_EVENTS_OTLP_ENABLED`,
+  off by default; off, the usage store is not wrapped and nothing changes.
+- The collector is shared with tracing and OTel metrics through `broker.otlp`
+  (same endpoint, headers and NetworkPolicy egress rule). Enabling this
+  does not enable tracing: the endpoint is transport only.
+- One log record (event name `af_mcp.usage`) is emitted for each usage
+  record the store records, with exactly these attributes: `audit_id`,
+  `trace_id`, `principal_sub`, `token_id`, `service`, `method`, `outcome`,
+  `duration_ms`, `result_bytes`, `result_tokens_est`. Unset optional values
+  (no token for a session JWT, no trace when untraced, nothing measured) are
+  omitted. Tool arguments and results are never included.
+- Postgres stays authoritative and the audit log stays authoritative
+  overall. Emission is a wrapper around the usage store, so every record
+  path (batched, overflow, inline) is covered with no second call site, and
+  it adds no Postgres load.
+- A collector outage or overflow never affects a tool call or the Postgres
+  write: the emitter only enqueues onto the SDK's batch processor, which
+  exports on its own thread and drops on overflow. Delivery is
+  at-least-once (a record redelivered to the store is emitted again), so
+  receivers dedupe on `audit_id`. Events are emitted even when the Postgres
+  write fails; the two sinks are independent.
+- These records carry the caller's identity, so the receiving log backend
+  holds per-user data and needs its own access control (out of scope for
+  the broker, as for traces).
+
 ## Operator: enabling trace emission
 
 Tracing is **off by default** and the broker is an emitter only — point
@@ -313,29 +505,24 @@ it at any OTLP/HTTP collector (Grafana Tempo, Jaeger, an OTel Collector,
 
 ```yaml
 broker:
+  otlp:
+    endpoint: "http://otel-collector.observability:4318"   # see OTLP transport
   tracing:
     enabled: true
-    endpoint: "http://otel-collector.observability:4318"
     sampleRatio: ""          # empty = keep every trace
-    networkPolicy:
-      namespaceSelector: { kubernetes.io/metadata.name: observability }
-      podSelector: { app.kubernetes.io/name: otel-collector }
-      port: 4318
 ```
 
-- `endpoint` renders as `OTEL_EXPORTER_OTLP_ENDPOINT` — the standard OTel
-  env var, which the SDK's exporter reads natively (appending the
-  `/v1/traces` signal path itself). This is also the broker's on/off
-  gate: unset, no tracer provider is installed and every OTel call —
-  fastmcp's native spans included — no-ops.
+- `broker.tracing.enabled` renders `TRACING_ENABLED`, the broker's on/off
+  switch for tracing: off, no tracer provider is installed and every OTel
+  call — fastmcp's native spans included — no-ops, even if
+  `OTEL_EXPORTER_OTLP_ENDPOINT` is set for another signal.
+  `broker.otlp.endpoint` renders as `OTEL_EXPORTER_OTLP_ENDPOINT` — the
+  standard OTel env var, which the SDK's exporter reads natively (appending
+  the `/v1/traces` signal path itself); it is transport only.
 - `sampleRatio` (a head-sampling ratio in `[0, 1]`) renders as
   `OTEL_TRACES_SAMPLER=parentbased_traceidratio` plus
   `OTEL_TRACES_SAMPLER_ARG=<ratio>`; empty means the SDK default
   `parentbased_always_on` — every trace, fine at tool-call volumes.
-- `networkPolicy` renders an egress rule to the collector (only when
-  tracing and the chart's NetworkPolicy are both enabled); an empty
-  `namespaceSelector` selects the release namespace, an empty
-  `podSelector` allows any pod there.
 
 An unreachable collector never fails startup or a tool call — export
 failures are the batch exporter's background problem.

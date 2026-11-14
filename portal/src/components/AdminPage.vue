@@ -25,6 +25,7 @@ import {
 import type {
   AnnotationMismatch,
   CredmonStatus,
+  LintServiceStatus,
   MaintenanceStatus,
   ToolMappingDrift,
   UsageSubject,
@@ -43,6 +44,7 @@ import { useLoadState } from '../lib/useLoadState';
 import AsyncState from './ui/AsyncState.vue';
 import ConfirmDialog from './ui/ConfirmDialog.vue';
 import Disclosure from './ui/Disclosure.vue';
+import LintObservations from './ui/LintObservations.vue';
 import StatusMark from './ui/StatusMark.vue';
 import ToolNameList from './ui/ToolNameList.vue';
 import UsagePage from './UsagePage.vue';
@@ -144,6 +146,8 @@ async function disableMaintenance(): Promise<void> {
 
 // ── Annotation/policy mismatches (issue #238 B.8) ───────────────────────
 const mismatches = ref<AnnotationMismatch[]>([]);
+const mismatchServices = ref<LintServiceStatus[]>([]);
+const mismatchRetention = ref(0);
 
 function resolvedViaLabel(m: AnnotationMismatch): string {
   if (m.resolved_via === 'target_action_types') return 'target_action_types glob override';
@@ -153,6 +157,8 @@ function resolvedViaLabel(m: AnnotationMismatch): string {
 
 // ── Tool mapping drift (issue #330) ─────────────────────────────────────
 const drifts = ref<ToolMappingDrift[]>([]);
+const driftServices = ref<LintServiceStatus[]>([]);
+const driftRetention = ref(0);
 
 // ── HTCondor credmon sync (docs/credmon.md) ─────────────────────────────
 const credmon = ref<CredmonStatus | null>(null);
@@ -204,10 +210,16 @@ onMounted(() => {
     maintenanceStatus.value = await fetchMaintenanceStatus();
   }, 'Could not load maintenance status.');
   void mismatchState.run(async () => {
-    mismatches.value = await fetchAnnotationMismatches();
+    const report = await fetchAnnotationMismatches();
+    mismatches.value = report.mismatches;
+    mismatchServices.value = report.services;
+    mismatchRetention.value = report.retention_seconds;
   }, 'Failed to load annotation mismatches.');
   void driftState.run(async () => {
-    drifts.value = await fetchToolMappingDrift();
+    const report = await fetchToolMappingDrift();
+    drifts.value = report.drift;
+    driftServices.value = report.services;
+    driftRetention.value = report.retention_seconds;
   }, 'Failed to load tool mapping drift.');
   void credmonState.run(refreshCredmon, 'Failed to load credmon status.');
 });
@@ -417,10 +429,14 @@ const driftBannerText = computed(() => {
         :access-denied="mismatchState.accessDenied.value"
         loading-label="Loading annotation mismatches…"
       >
-        <p v-if="mismatches.length === 0" class="ap__none">
-          <StatusMark tone="ok">No mismatches.</StatusMark>
-        </p>
-        <div v-else class="table-container af-box">
+        <LintObservations
+          :services="mismatchServices"
+          :retention-seconds="mismatchRetention"
+          :findings="mismatches.length"
+          all-clear="No mismatches."
+          noun="mismatches"
+        />
+        <div v-if="mismatches.length > 0" class="table-container af-box">
           <table class="af-compact table">
             <thead>
               <tr>
@@ -470,10 +486,14 @@ const driftBannerText = computed(() => {
         :access-denied="driftState.accessDenied.value"
         loading-label="Loading tool mapping drift…"
       >
-        <p v-if="drifts.length === 0" class="ap__none">
-          <StatusMark tone="ok">No tool mapping drift.</StatusMark>
-        </p>
-        <div v-else class="table-container af-box">
+        <LintObservations
+          :services="driftServices"
+          :retention-seconds="driftRetention"
+          :findings="drifts.length"
+          all-clear="No tool mapping drift."
+          noun="tool mapping drift"
+        />
+        <div v-if="drifts.length > 0" class="table-container af-box">
           <table class="af-compact table">
             <thead>
               <tr>

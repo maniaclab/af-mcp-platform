@@ -1,9 +1,11 @@
 """Env-gated OpenTelemetry trace emission (observability roadmap PR D).
 
 The broker is an EMITTER only -- no trace backend is shipped or assumed.
-When ``OTEL_EXPORTER_OTLP_ENDPOINT`` is set, :func:`init_tracing` installs an
-SDK ``TracerProvider`` exporting OTLP/HTTP spans toward that collector; when
-it is empty (the default), no provider is installed and every OTel API call
+When ``TRACING_ENABLED`` is set, :func:`init_tracing` installs an
+SDK ``TracerProvider`` exporting OTLP/HTTP spans toward the collector named
+by ``OTEL_EXPORTER_OTLP_ENDPOINT`` (transport only, shared with the other OTel
+signals; the endpoint alone does not turn tracing on); when
+tracing is off (the default), no provider is installed and every OTel API call
 in the process -- the broker's own spans in
 ``mcp/middleware/authorization_mw.py`` and fastmcp's native spans alike --
 no-ops against the API's default provider. Export failures are the batch
@@ -37,11 +39,11 @@ from opentelemetry import trace
 # anything per request.
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
 from af_mcp_broker._version import version as __version__
+from af_mcp_broker.otel_resource import broker_resource
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -71,9 +73,9 @@ _EXCLUDED_URLS = "healthz,readyz,/mcp"
 
 
 def init_tracing(settings: Settings) -> None:
-    """Install the SDK tracer provider when an OTLP endpoint is configured.
+    """Install the SDK tracer provider when ``TRACING_ENABLED`` is set.
 
-    With ``settings.otel_exporter_otlp_endpoint`` empty this returns without
+    With ``settings.tracing_enabled`` false this returns without
     touching the global tracer provider -- fastmcp's and the broker's OTel
     calls then no-op against the API's default provider (zero overhead when
     off). Idempotent: a second call while a provider is installed does
@@ -87,14 +89,11 @@ def init_tracing(settings: Settings) -> None:
     it keeps us safe against a future fastmcp caching the tracer earlier.
     """
     global _tracer_provider
-    if not settings.otel_exporter_otlp_endpoint:
+    if not settings.tracing_enabled:
         return
     if _tracer_provider is not None:
         return
-    resource = Resource.create(
-        {"service.name": "af-mcp-broker", "service.version": __version__}
-    )
-    provider = TracerProvider(resource=resource)
+    provider = TracerProvider(resource=broker_resource())
     # OTLPSpanExporter() is constructed argument-free on purpose: the SDK
     # reads the standard OTEL_EXPORTER_OTLP_* env vars natively (including
     # appending the /v1/traces signal path to OTEL_EXPORTER_OTLP_ENDPOINT);
@@ -182,6 +181,6 @@ def instrument_fastapi(app: FastAPI, settings: Settings) -> None:
     no extra ASGI middleware at all. See _EXCLUDED_URLS for what is excluded
     and why /mcp is on that list.
     """
-    if not settings.otel_exporter_otlp_endpoint:
+    if not settings.tracing_enabled:
         return
     FastAPIInstrumentor.instrument_app(app, excluded_urls=_EXCLUDED_URLS)

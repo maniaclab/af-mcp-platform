@@ -8,6 +8,7 @@ from mcp.types import ToolAnnotations
 
 from af_mcp_broker import metrics
 from af_mcp_broker.authorization import EntitlementPolicy
+from af_mcp_broker.mcp.lint_observations import LintObservationStore
 from af_mcp_broker.mcp.middleware.entitlement_mw import EntitlementMiddleware
 from af_mcp_broker.mcp.registry import (
     DIAGNOSTIC_TOOL_NAMES,
@@ -16,6 +17,7 @@ from af_mcp_broker.mcp.registry import (
     ToolMappingDrift,
     ToolRouting,
 )
+from af_mcp_broker.shared_state import InMemorySharedState
 
 
 class _FakeFastMCPContext:
@@ -601,3 +603,83 @@ async def test_recorded_unroutable_tools_absent_from_this_listing_are_ignored(
     assert (
         renamed_backend_registry.get_tool_mapping_drift("atlas_search_service") is None
     )
+
+
+# ---------------------------------------------------------------------------
+# Shared observation record (issue #332): what each listing's lint found is
+# written to the LintObservationStore, per service, so every replica's admin
+# page shows the same thing.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def lint_store() -> LintObservationStore:
+    return LintObservationStore(InMemorySharedState())
+
+
+async def test_listing_records_an_observation_per_listed_service(
+    registry, policy, make_principal, lint_store
+):
+    mw = EntitlementMiddleware(registry, policy)
+    mw.use_lint_store(lint_store)
+
+    await _list(
+        mw,
+        make_principal,
+        [
+            _tool("rucio_list_dids", read_only_hint=False),
+            _tool("condor_query_jobs"),
+            _tool("condor_submit_job"),
+        ],
+    )
+
+    rucio = await lint_store.get("rucio")
+    assert rucio is not None
+    assert [m.tool for m in rucio.annotation_mismatches] == ["rucio_list_dids"]
+    assert rucio.tool_mapping_drift is None
+    condor = await lint_store.get("condor_service")
+    assert condor is not None
+    assert condor.annotation_mismatches == ()
+    assert condor.tool_mapping_drift is not None
+    assert condor.tool_mapping_drift.unmapped == ("condor_submit_job",)
+
+
+async def test_a_clean_listing_is_recorded_as_observed_and_clean(
+    registry, policy, make_principal, lint_store
+):
+    mw = EntitlementMiddleware(registry, policy)
+    mw.use_lint_store(lint_store)
+
+    await _list(mw, make_principal, [_tool("condor_query_jobs")])
+
+    observation = await lint_store.get("condor_service")
+    assert observation is not None
+    assert observation.annotation_mismatches == ()
+    assert observation.tool_mapping_drift is None
+
+
+async def test_services_absent_from_the_listing_are_not_recorded_as_observed(
+    registry, policy, make_principal, lint_store
+):
+    """An unreachable backend lists nothing; that is not an observation."""
+    mw = EntitlementMiddleware(registry, policy)
+    mw.use_lint_store(lint_store)
+
+    await _list(mw, make_principal, [_tool("condor_query_jobs")])
+
+    assert await lint_store.get("rucio") is None
+    assert await lint_store.get("docs") is None
+
+
+async def test_a_fixed_mismatch_is_recorded_as_gone(
+    registry, policy, make_principal, lint_store
+):
+    mw = EntitlementMiddleware(registry, policy)
+    mw.use_lint_store(lint_store)
+    await _list(mw, make_principal, [_tool("rucio_list_dids", read_only_hint=False)])
+
+    await _list(mw, make_principal, [_tool("rucio_list_dids", read_only_hint=True)])
+
+    observation = await lint_store.get("rucio")
+    assert observation is not None
+    assert observation.annotation_mismatches == ()

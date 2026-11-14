@@ -2012,6 +2012,42 @@ async def test_invalidate_subject_cache_helper_targets_all_services_when_none(
     assert client_b.call_count == 2
 
 
+async def test_invalidate_all_subject_caches_drops_every_subject_on_every_service(
+    monkeypatch: pytest.MonkeyPatch, make_principal
+) -> None:
+    registry = ServiceRegistry()
+    registry.register(_spec(name="svc-a", prefix="a"))
+    registry.register(_spec(name="svc-b", prefix="b"))
+    client_a = _CountingListClient(tools=[_tool("a_widget")])
+    client_b = _CountingListClient(tools=[_tool("b_widget")])
+    provider_a = aggregator._ObservableProxyProvider(
+        "svc-a", lambda: client_a, registry=registry, cache_ttl=300.0
+    )
+    provider_b = aggregator._ObservableProxyProvider(
+        "svc-b", lambda: client_b, registry=registry, cache_ttl=300.0
+    )
+    mcp = FastMCP(name="test")
+    mcp.add_provider(provider_a)
+    mcp.add_provider(provider_b)
+    for subject in ("alice", "bob"):
+        _patch_context(
+            monkeypatch, make_principal(subject=subject), active_backend=None
+        )
+        await provider_a._list_tools()
+        await provider_b._list_tools()
+    assert (client_a.call_count, client_b.call_count) == (2, 2)
+
+    aggregator.invalidate_all_subject_caches(mcp)
+
+    for subject in ("alice", "bob"):
+        _patch_context(
+            monkeypatch, make_principal(subject=subject), active_backend=None
+        )
+        await provider_a._list_tools()
+        await provider_b._list_tools()
+    assert (client_a.call_count, client_b.call_count) == (4, 4)
+
+
 async def test_invalidate_subject_reaches_backend_instead_of_cached_negative_entry(
     monkeypatch: pytest.MonkeyPatch, make_principal
 ) -> None:

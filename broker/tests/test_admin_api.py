@@ -20,7 +20,11 @@ from af_mcp_broker.maintenance import (
 from af_mcp_broker.mcp import aggregator
 from af_mcp_broker.mcp.middleware import entitlement_mw
 from af_mcp_broker.mcp.middleware.entitlement_mw import EntitlementMiddleware
-from af_mcp_broker.mcp.registry import ServiceSpec
+from af_mcp_broker.mcp.registry import (
+    AnnotationMismatch,
+    ServiceSpec,
+    ToolMappingDrift,
+)
 
 
 @pytest.fixture
@@ -216,49 +220,90 @@ def test_get_fails_open_when_store_is_unreachable(maintenance_client):
 
 
 # ---------------------------------------------------------------------------
-# GET /v1/admin/annotation-mismatches (issue #238 B.8)
+# GET /v1/admin/annotation-mismatches (issue #238 B.8) and
+# GET /v1/admin/tool-mapping-drift (issue #330). Both read the shared
+# LintObservationStore (issue #332), so the page shows the same thing from
+# whichever replica answers, and says when each service was last observed.
 # ---------------------------------------------------------------------------
 
+_MISMATCH = AnnotationMismatch(
+    service="rucio",
+    tool="rucio_list_dids",
+    declared_read_only_hint=False,
+    resolved_action_type="read",
+    resolved_via="permission",
+    permission="read_data",
+)
+_DRIFT = ToolMappingDrift(
+    service="rucio",
+    prefix="rucio",
+    advertised=2,
+    routable=2,
+    unmapped=("rucio_submit_job",),
+    stale=("rucio_old_tool",),
+    unroutable=(),
+)
 
-def test_annotation_mismatches_requires_admin(maintenance_client):
+
+def _observe(client, service, mismatches=(), drift=None):
+    store = client.app.state.lint_observations
+    asyncio.run(store.observe(service, mismatches, drift))
+
+
+def _service_status(body, service):
+    return next(s for s in body["services"] if s["service"] == service)
+
+
+@pytest.mark.parametrize("path", ["annotation-mismatches", "tool-mapping-drift"])
+def test_lint_tables_require_admin(maintenance_client, path):
     client, _state = maintenance_client  # default principal has no admin group
-    resp = client.get("/v1/admin/annotation-mismatches")
-    assert resp.status_code == 403
+    assert client.get(f"/v1/admin/{path}").status_code == 403
 
 
-def test_annotation_mismatches_empty_by_default(maintenance_client, make_principal):
+@pytest.mark.parametrize(
+    ("path", "findings_key"),
+    [("annotation-mismatches", "mismatches"), ("tool-mapping-drift", "drift")],
+)
+def test_nothing_observed_yet_is_reported_per_service_not_as_clean(
+    maintenance_client, make_principal, path, findings_key
+):
     client, state = maintenance_client
     state["principal"] = make_principal(groups=["af-admins"])
 
-    resp = client.get("/v1/admin/annotation-mismatches")
+    resp = client.get(f"/v1/admin/{path}")
+
     assert resp.status_code == 200
-    assert resp.json() == []
+    body = resp.json()
+    assert body[findings_key] == []
+    assert body["retention_seconds"] > 0
+    services = {s["service"]: s["last_observed"] for s in body["services"]}
+    assert services  # every configured service is listed...
+    assert set(services.values()) == {None}  # ...and none is claimed observed
 
 
-def test_annotation_mismatches_reflects_registry_state(
+def test_the_builtin_gateway_service_is_not_listed(maintenance_client, make_principal):
+    client, state = maintenance_client
+    state["principal"] = make_principal(groups=["af-admins"])
+
+    body = client.get("/v1/admin/annotation-mismatches").json()
+
+    builtin = {
+        s.name for s in client.app.state.service_registry.all_services() if s.builtin
+    }
+    assert builtin
+    assert not builtin & {s["service"] for s in body["services"]}
+
+
+def test_annotation_mismatches_come_from_the_shared_observation(
     maintenance_client, make_principal
 ):
-    """The endpoint exposes exactly what EntitlementMiddleware's lint
-    already recorded (mcp/registry.py's ServiceRegistry.record_annotation_
-    mismatch) -- no second, separately-probed comparison."""
-    from af_mcp_broker.mcp.registry import AnnotationMismatch
-
     client, state = maintenance_client
     state["principal"] = make_principal(groups=["af-admins"])
-    client.app.state.service_registry.record_annotation_mismatch(
-        AnnotationMismatch(
-            service="rucio",
-            tool="rucio_list_dids",
-            declared_read_only_hint=False,
-            resolved_action_type="read",
-            resolved_via="permission",
-            permission="read_data",
-        )
-    )
+    _observe(client, "rucio", mismatches=(_MISMATCH,))
 
-    resp = client.get("/v1/admin/annotation-mismatches")
-    assert resp.status_code == 200
-    assert resp.json() == [
+    body = client.get("/v1/admin/annotation-mismatches").json()
+
+    assert body["mismatches"] == [
         {
             "service": "rucio",
             "tool": "rucio_list_dids",
@@ -268,58 +313,55 @@ def test_annotation_mismatches_reflects_registry_state(
             "permission": "read_data",
         }
     ]
+    assert _service_status(body, "rucio")["last_observed"] is not None
+    assert _service_status(body, "ami")["last_observed"] is None
 
 
-# ---------------------------------------------------------------------------
-# GET /v1/admin/tool-mapping-drift (issue #330)
-# ---------------------------------------------------------------------------
-
-
-def test_tool_mapping_drift_requires_admin(maintenance_client):
-    client, _state = maintenance_client
-    resp = client.get("/v1/admin/tool-mapping-drift")
-    assert resp.status_code == 403
-
-
-def test_tool_mapping_drift_empty_by_default(maintenance_client, make_principal):
+def test_an_observed_clean_service_has_a_timestamp_and_no_findings(
+    maintenance_client, make_principal
+):
     client, state = maintenance_client
     state["principal"] = make_principal(groups=["af-admins"])
+    _observe(client, "rucio")
 
-    resp = client.get("/v1/admin/tool-mapping-drift")
-    assert resp.status_code == 200
-    assert resp.json() == []
+    body = client.get("/v1/admin/annotation-mismatches").json()
+
+    assert body["mismatches"] == []
+    assert _service_status(body, "rucio")["last_observed"] is not None
 
 
-def test_tool_mapping_drift_reflects_registry_state(maintenance_client, make_principal):
-    from af_mcp_broker.mcp.registry import ToolMappingDrift
-
+def test_what_the_registry_alone_recorded_is_not_reported(
+    maintenance_client, make_principal
+):
+    """The in-process records only dedupe the log line and metric; the page reads the shared store."""
     client, state = maintenance_client
     state["principal"] = make_principal(groups=["af-admins"])
-    client.app.state.service_registry.record_tool_mapping_drift(
-        ToolMappingDrift(
-            service="condor_service",
-            prefix="condor",
-            advertised=2,
-            routable=2,
-            unmapped=("condor_submit_job",),
-            stale=("condor_old_tool",),
-            unroutable=(),
-        )
-    )
+    client.app.state.service_registry.record_annotation_mismatch(_MISMATCH)
 
-    resp = client.get("/v1/admin/tool-mapping-drift")
-    assert resp.status_code == 200
-    assert resp.json() == [
+    assert client.get("/v1/admin/annotation-mismatches").json()["mismatches"] == []
+
+
+def test_tool_mapping_drift_comes_from_the_shared_observation(
+    maintenance_client, make_principal
+):
+    client, state = maintenance_client
+    state["principal"] = make_principal(groups=["af-admins"])
+    _observe(client, "rucio", drift=_DRIFT)
+
+    body = client.get("/v1/admin/tool-mapping-drift").json()
+
+    assert body["drift"] == [
         {
-            "service": "condor_service",
-            "prefix": "condor",
+            "service": "rucio",
+            "prefix": "rucio",
             "advertised": 2,
             "routable": 2,
-            "unmapped": ["condor_submit_job"],
-            "stale": ["condor_old_tool"],
+            "unmapped": ["rucio_submit_job"],
+            "stale": ["rucio_old_tool"],
             "unroutable": [],
         }
     ]
+    assert _service_status(body, "rucio")["last_observed"] is not None
 
 
 # ---------------------------------------------------------------------------
@@ -390,6 +432,7 @@ def _list_renamed_backend(
         route_prefix="atlas_opensearch",
     )
     mw = EntitlementMiddleware(registry, client.app.state.entitlement_policy)
+    mw.use_lint_store(client.app.state.lint_observations)
 
     async def _run() -> None:
         tools = await provider._list_tools()
@@ -420,7 +463,10 @@ def test_renamed_backend_is_drift_and_not_available(
     assert len(mismatch_events) == 1
     assert mismatch_events[0]["count"] == 5
 
-    drift = {d["service"]: d for d in client.get("/v1/admin/tool-mapping-drift").json()}
+    drift = {
+        d["service"]: d
+        for d in client.get("/v1/admin/tool-mapping-drift").json()["drift"]
+    }
     assert drift["atlas_search_service"] == {
         "service": "atlas_search_service",
         "prefix": "atlas_opensearch",
@@ -447,6 +493,6 @@ def test_matching_backend_has_no_drift_and_is_available(
     logs = _list_renamed_backend(client, monkeypatch, _OLD_AOS_KEYS)
 
     assert not [e for e in logs if e["event"] == "aggregator.tool_prefix_mismatch"]
-    assert client.get("/v1/admin/tool-mapping-drift").json() == []
+    assert client.get("/v1/admin/tool-mapping-drift").json()["drift"] == []
     servers = {s["name"]: s for s in client.get("/v1/catalog").json()["servers"]}
     assert servers["atlas_search_service"]["status"] == "available"

@@ -89,11 +89,15 @@ from af_mcp_broker.maintenance import (
 from af_mcp_broker.mcp.aggregator import (
     build_aggregator,
     build_asgi_auth_middleware,
+    invalidate_all_subject_caches,
     invalidate_subject_cache,
     populate_aggregator,
 )
+from af_mcp_broker.mcp.cache_invalidation import ListCacheInvalidator
+from af_mcp_broker.mcp.lint_observations import LintObservationStore
 from af_mcp_broker.mcp.registry import ServiceRegistry
 from af_mcp_broker.mcp_auth_codes import McpAuthCodeStore
+from af_mcp_broker.otel_metrics import init_otel_metrics, shutdown_otel_metrics
 from af_mcp_broker.principal_cache import (
     InMemoryPrincipalCacheBackend,
     PrincipalCache,
@@ -487,6 +491,17 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     )
 
     # --- Credential subsystem: cache + janitor + provider registry.
+    # The credential cache's link/revoke hooks (below) go through
+    # list_cache_invalidator, which drops this replica's cached listings and
+    # tells the other replicas to drop theirs (mcp/cache_invalidation.py).
+    list_cache_invalidator = ListCacheInvalidator(
+        shared_state,
+        invalidate=lambda subject, target: invalidate_subject_cache(
+            _mcp_aggregator, subject, target
+        ),
+        invalidate_all=lambda: invalidate_all_subject_caches(_mcp_aggregator),
+    )
+    list_cache_invalidator.start()
     #
     # on_revoke wires issue #320's per-(subject, service) tools/list cache
     # invalidation to every revoke() (and, by delegation, revoke_all()) call
@@ -505,15 +520,11 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         max_failed_unlocks=settings.credential_unlock_max_failures,
         unlock_window_seconds=settings.credential_unlock_window_seconds,
         shared_state=shared_state,
-        on_revoke=lambda subject, target: invalidate_subject_cache(
-            _mcp_aggregator, subject, target
-        ),
+        on_revoke=list_cache_invalidator.invalidate,
         # The mirror of on_revoke for issue #355: the /v1 routes that complete
         # a link call credential_cache.notify_linked(), so a caller who just
         # linked does not wait out a cached "no tools" listing.
-        on_link=lambda subject, target: invalidate_subject_cache(
-            _mcp_aggregator, subject, target
-        ),
+        on_link=list_cache_invalidator.invalidate,
     )
     credential_cache.start_janitor()
 
@@ -917,7 +928,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         )
     else:
         token_registry_backend = InMemoryTokenRegistryBackend()
-    token_registry = TokenRegistry(token_registry_backend)
+    token_registry = TokenRegistry(token_registry_backend, shared_state)
 
     # --- Principal cache (issue #144 steps 2a/3/3b): resolves every
     # authenticated request's *current* groups/uid/gid/unixname/email from
@@ -1044,6 +1055,9 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         if settings.credmon_enabled
         else None
     )
+    # Where the tool-listing lint's findings are recorded for the admin tables
+    # (mcp/lint_observations.py): shared, so every replica reports the same.
+    lint_observations = LintObservationStore(shared_state)
     populate_aggregator(
         _mcp_aggregator,
         service_registry,
@@ -1059,6 +1073,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         maintenance_mode_store=maintenance_mode_store,
         job_credentials=job_credentials,
         shared_state=shared_state,
+        lint_observations=lint_observations,
     )
 
     # --- Audit: without init the module drops every record. Honor AUDIT_LOG_FILE.
@@ -1069,6 +1084,10 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # BEFORE the pipeline so no record the worker processes can miss the
     # store. The backend is selected by USAGE_STORE_BACKEND.
     usage_store = await init_usage_store(settings)
+    # --- OTel aggregate metrics (otel_metrics.py): a no-op unless
+    # OTEL_METRICS_ENABLED. Installed before the pipeline so the worker's
+    # first record is counted.
+    init_otel_metrics(settings)
     # --- Metering: success/error audit records are measured and written by a
     # background worker (audit/pipeline.py) so tool calls never wait on
     # measurement or audit I/O; without init the helper degrades to inline.
@@ -1115,6 +1134,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     application.state.broker_token_issuer = broker_token_issuer
     application.state.usage_store = usage_store
     application.state.maintenance_mode_store = maintenance_mode_store
+    application.state.lint_observations = lint_observations
     # Not yet consumed by KrbTokenProvider -- issue #274's remember/renew
     # support wires it in -- exposed on state now so it exists in one place
     # from the moment Vault is wired up, same as every other subsystem here.
@@ -1176,12 +1196,16 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     if credmon_sync is not None:
         await credmon_sync.stop()
     await credential_cache.stop_janitor()
+    await list_cache_invalidator.stop()
     await shared_state.close()
     await aclose_http_client()
     # Shutdown drains pending metering (records still queued for measurement
     # and writing) so audit lines aren't lost on a graceful stop -- and it
     # must run before the audit output below is closed.
     await aclose_metering_pipeline()
+    # Flush the OTel aggregates after the drain, so the last records'
+    # measurements are exported too (a no-op when metrics were never enabled).
+    shutdown_otel_metrics()
     # The usage store closes only after the pipeline drain above -- drained
     # records are still being accounted right up to the last audit write.
     await aclose_usage_store()
@@ -1223,7 +1247,7 @@ _mcp_aggregator_placeholder_settings = Settings()
 # exists: fastmcp 3.4.4 acquires its tracer lazily per span, so this early
 # placement is conservative rather than load-bearing (see init_tracing's
 # docstring) -- but it guarantees nothing downstream can ever capture a
-# pre-init no-op tracer. A no-op when OTEL_EXPORTER_OTLP_ENDPOINT is unset;
+# pre-init no-op tracer. A no-op unless TRACING_ENABLED is set;
 # like MCP_STATELESS_HTTP below, Settings() reads the env synchronously at
 # construction, so the placeholder instance already carries the real value.
 init_tracing(_mcp_aggregator_placeholder_settings)

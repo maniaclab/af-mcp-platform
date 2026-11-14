@@ -402,6 +402,18 @@ class Settings(BaseSettings):
     usage_batch_max: int = Field(default=100, ge=1)
     usage_batch_interval_ms: int = Field(default=1000, ge=1)
 
+    # Postgres usage store only (the in_memory store already keeps aggregates,
+    # not raw rows). Raw af_mcp_usage_events rows older than this many UTC
+    # days are folded into the af_mcp_usage_daily rollup and deleted, bounding
+    # the table; /v1/usage reads raw rows inside the window and the rollup
+    # beyond it, so history is not lost -- only per-call detail (audit_id,
+    # token_id, trace_id) ages out, and the audit log keeps that. 0 keeps raw
+    # rows forever (no job runs). usage_rollup_interval_seconds is how often
+    # each replica attempts the job; a Postgres advisory lock lets exactly
+    # one proceed.
+    usage_retention_days: int = Field(default=365, ge=0)
+    usage_rollup_interval_seconds: int = Field(default=3600, ge=1)
+
     # Which MaintenanceModeStore implementation (maintenance.py) holds the
     # broker's maintenance-mode flag -- must be visible to every replica
     # consistently. Mirrors the in_memory/vault/postgres selection shape
@@ -437,19 +449,42 @@ class Settings(BaseSettings):
     # config change, not a migration. Overridable per-request via ?model=.
     cost_reference_model: str = "claude-sonnet-4-20250514"
 
-    # OTLP/HTTP collector base URL (e.g. http://collector:4318) that turns on
-    # OpenTelemetry trace EMISSION (tracing.py). Empty (the default) means
-    # tracing is off: no SDK tracer provider is installed and every OTel API
-    # call -- fastmcp's native spans included -- no-ops. The field name is
-    # deliberately the standard OTel env var OTEL_EXPORTER_OTLP_ENDPOINT
-    # (pydantic-settings matches it case-insensitively), which the SDK's OTLP
-    # exporter also reads natively (appending the /v1/traces signal path) --
-    # the broker only uses the value as the on/off gate and lets the exporter
-    # do its own env handling. Sampling is likewise configured through the
-    # standard OTEL_TRACES_SAMPLER / OTEL_TRACES_SAMPLER_ARG env vars, which
-    # the SDK reads natively; the default sampler (parentbased_always_on) is
-    # fine at tool-call volumes.
+    # OTLP/HTTP collector base URL (e.g. http://collector:4318): TRANSPORT
+    # only, shared by every OTel signal (traces, metrics, usage events). It
+    # turns nothing on by itself; each signal has its own switch, and an
+    # enabled signal with no endpoint is a startup error
+    # (_validate_otlp_endpoint). The field name is deliberately the standard
+    # OTel env var OTEL_EXPORTER_OTLP_ENDPOINT (pydantic-settings matches it
+    # case-insensitively), which the SDK's OTLP exporters also read natively
+    # (appending each signal's /v1/<signal> path) -- the broker only checks it
+    # is present and lets the exporters do their own env handling (headers,
+    # TLS and timeouts included).
     otel_exporter_otlp_endpoint: str = ""
+
+    # Turns on OTel trace EMISSION (tracing.py). Off by default: no SDK tracer
+    # provider is installed and every OTel API call -- fastmcp's native spans
+    # included -- no-ops. Sampling is configured through the standard
+    # OTEL_TRACES_SAMPLER / OTEL_TRACES_SAMPLER_ARG env vars, which the SDK
+    # reads natively; the default sampler (parentbased_always_on) is fine at
+    # tool-call volumes.
+    tracing_enabled: bool = False
+
+    # Turns on OTel aggregate-metrics EMISSION over OTLP (otel_metrics.py):
+    # calls, errors, duration and result-size sums by service, method,
+    # action_type and outcome -- never per-user. Off by default, and then
+    # nothing is installed. The collector, headers and TLS come from the
+    # standard OTEL_EXPORTER_OTLP_* variables the SDK exporter reads natively,
+    # shared with tracing. Independent of the Prometheus port.
+    otel_metrics_enabled: bool = False
+
+    # Emit every tool call's usage record as an OTel LOG record over OTLP
+    # (usage/otel_events.py), beside the usage store, which stays
+    # authoritative. Unlike metrics these carry principal_sub and token_id,
+    # so the receiving log backend needs its own access control. Off by
+    # default, and then the store is not wrapped. Collector, headers and TLS
+    # come from the standard OTEL_EXPORTER_OTLP_* variables, shared with
+    # tracing and metrics.
+    usage_events_otlp_enabled: bool = False
 
     # Prometheus /metrics is served on its own port so a NetworkPolicy can
     # firewall scraping separately from API traffic. 0 picks an ephemeral
@@ -1227,6 +1262,23 @@ class Settings(BaseSettings):
                 "accept per-replica state -- see docs/architecture.md "
                 '"Replica consistency".'
             )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_otlp_endpoint(self) -> Settings:
+        """Refuse an enabled OTel signal with no collector endpoint (transport is shared)."""
+        enabled = {
+            "TRACING_ENABLED": self.tracing_enabled,
+            "OTEL_METRICS_ENABLED": self.otel_metrics_enabled,
+            "USAGE_EVENTS_OTLP_ENABLED": self.usage_events_otlp_enabled,
+        }
+        for setting, is_on in enabled.items():
+            if is_on and not self.otel_exporter_otlp_endpoint:
+                raise ValueError(
+                    f"{setting} is enabled but OTEL_EXPORTER_OTLP_ENDPOINT is "
+                    "not set: the OTLP collector endpoint is shared by every "
+                    "OTel signal and must be configured for any of them."
+                )
         return self
 
     model_config = {"env_file": ".env", "extra": "ignore"}

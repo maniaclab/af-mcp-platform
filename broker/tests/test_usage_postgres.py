@@ -51,7 +51,7 @@ async def store(postgres_dsn: str) -> AsyncIterator[PostgresUsageStore]:
     await s.start()
     conn = await asyncpg.connect(postgres_dsn)
     try:
-        await conn.execute("TRUNCATE af_mcp_usage_events")
+        await conn.execute("TRUNCATE af_mcp_usage_events, af_mcp_usage_daily")
     finally:
         await conn.close()
     yield s

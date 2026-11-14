@@ -537,6 +537,16 @@ broker:
     # USAGE_BATCH_MAX / USAGE_BATCH_INTERVAL_MS.
     batchMax: 100
     batchIntervalMs: 1000
+    # Postgres backend only. Raw usage rows older than retentionDays UTC days
+    # are folded into a daily rollup table (per day, user, service, method,
+    # outcome) and deleted, so the events table stops growing without bound;
+    # /v1/usage and af_usage read raw rows inside the window and the rollup
+    # beyond it, so totals do not change. 0 keeps raw rows forever. Every
+    # replica attempts the job each rollupIntervalSeconds; a Postgres advisory
+    # lock lets one run. Rendered as USAGE_RETENTION_DAYS /
+    # USAGE_ROLLUP_INTERVAL_SECONDS.
+    retentionDays: 365
+    rollupIntervalSeconds: 3600
     postgres:
       # Secret carrying the asyncpg DSN, rendered as USAGE_POSTGRES_DSN via
       # secretKeyRef only when backend="postgres". With Crunchy PGO the
@@ -626,32 +636,77 @@ broker:
         name: ""
         key: "uri"
 
+  # OTLP TRANSPORT shared by every OpenTelemetry signal the broker can emit
+  # (traces, metrics; broker tracing.py / otel_metrics.py): the collector
+  # endpoint, its auth headers and the NetworkPolicy egress rule to it. The
+  # per-signal switches are broker.tracing.enabled,
+  # broker.metrics.otlp.enabled and broker.usageEvents.otlp.enabled below; the chart fails to render if one is on
+  # while `endpoint` is empty. The broker is an emitter only -- no backend is
+  # shipped or assumed; point `endpoint` at any OTLP/HTTP collector. With every
+  # signal off this block renders nothing.
+  otlp:
+    # OTLP/HTTP collector base URL (the SDK appends each signal's /v1/<signal>
+    # path itself), e.g. http://otel-collector.observability:4318
+    endpoint: ""
+    # Request headers for the collector, rendered as OTEL_EXPORTER_OTLP_HEADERS
+    # ("k1=v1,k2=v2") for every signal. Set at most one of `value` and
+    # `existingSecret`. `value` is for non-secret headers (e.g. an MLflow
+    # `x-mlflow-experiment-id=3`); put anything credential-bearing (e.g.
+    # `authorization=Bearer ...`) in a Secret so it never sits in values.
+    headers:
+      value: ""
+      # Secret whose `key` holds the whole header string, rendered through
+      # secretKeyRef. Only used when `name` is set.
+      existingSecret:
+        name: ""
+        key: "headers"
+    # Selects the collector for the broker's NetworkPolicy egress rule
+    # (rendered when any signal is enabled and networkPolicy.enabled) -- same
+    # shape as broker.usage.postgres.networkPolicy above. namespaceSelector /
+    # podSelector are matchLabels maps: an empty namespaceSelector selects the
+    # release namespace; an empty podSelector allows any pod there.
+    networkPolicy:
+      namespaceSelector: {}
+      podSelector: {}
+      port: 4318
+
   # OpenTelemetry trace EMISSION (broker tracing.py, observability roadmap
-  # PR D). The broker is an emitter only -- no trace backend is shipped or
-  # assumed; point `endpoint` at any OTLP/HTTP collector. Disabled (the
-  # default) renders nothing: no env vars, no NetworkPolicy egress, and the
-  # broker installs no SDK tracer provider (every OTel call no-ops).
+  # PR D). Rendered as TRACING_ENABLED. Disabled (the default) renders no trace
+  # configuration and the broker installs no SDK tracer provider (every OTel
+  # call no-ops), even if broker.otlp.endpoint is set for another signal.
+  # Collector, headers and egress come from broker.otlp above.
   tracing:
     enabled: false
-    # OTLP/HTTP collector base URL, rendered as OTEL_EXPORTER_OTLP_ENDPOINT
-    # (the SDK appends the /v1/traces signal path itself), e.g.
-    # http://otel-collector.observability:4318
-    endpoint: ""
     # Head sampling ratio in [0, 1]. When set, rendered as
     # OTEL_TRACES_SAMPLER=parentbased_traceidratio with
     # OTEL_TRACES_SAMPLER_ARG=<ratio>; empty means the SDK default
     # (parentbased_always_on, i.e. every trace -- equivalent to 1.0), fine
     # at tool-call volumes.
     sampleRatio: ""
-    # Selects the collector for the broker's NetworkPolicy egress rule
-    # (rendered only when enabled and networkPolicy.enabled) -- same shape
-    # as broker.usage.postgres.networkPolicy above. namespaceSelector /
-    # podSelector are matchLabels maps: an empty namespaceSelector selects
-    # the release namespace; an empty podSelector allows any pod there.
-    networkPolicy:
-      namespaceSelector: {}
-      podSelector: {}
-      port: 4318
+
+  # OpenTelemetry aggregate METRICS emission over OTLP (broker
+  # otel_metrics.py): calls, errors, duration and result-size sums by
+  # service, method, action_type and outcome -- never per-user. Rendered as
+  # OTEL_METRICS_ENABLED. Off by default, rendering nothing. Prometheus on
+  # :9090 is independent and unchanged. Collector, headers and egress come
+  # from broker.otlp above.
+  metrics:
+    otlp:
+      enabled: false
+
+  # Per-call usage records emitted as OpenTelemetry LOG records over OTLP
+  # (broker usage/otel_events.py), beside the usage store above, which stays
+  # authoritative. One record per tool call with audit_id, trace_id,
+  # principal_sub, token_id, service, method, outcome, duration_ms,
+  # result_bytes and result_tokens_est -- never tool arguments or results.
+  # Because these carry the caller's identity, the receiving log backend
+  # needs its own access control. Off by default, rendering nothing. The
+  # collector, headers and egress come from broker.otlp above, shared with
+  # tracing and metrics. Rendered as USAGE_EVENTS_OTLP_ENABLED; it does not
+  # enable tracing.
+  usageEvents:
+    otlp:
+      enabled: false
 
 # ---------------------------------------------------------------------------
 # Token sweep: periodic janitor for the Vault-backed token registry above

@@ -35,6 +35,7 @@ nav = [
   { "HTCondor Credmon" = "credmon.md" },
   { "Connecting a Client" = "connecting-a-client.md" },
   { "Observability" = "observability.md" },
+  { "MLflow" = "mlflow.md" },
   { "Portal Styling" = "portal-styling.md" },
   { "Phase 1 Acceptance Checklist" = "phase1-acceptance-checklist.md" },
   { "agentgateway Spike" = "agentgateway-spike.md" },
