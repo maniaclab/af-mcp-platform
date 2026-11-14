@@ -147,10 +147,9 @@ broker-issued entries carry nothing more -- each target's aud/POSIX options
 now live on the service entry (aggregator.services' audience/requires_posix,
 issue #257), condor-token entries their serviceUrl/audience (issue #169),
 krb5-token entries their serviceUrl/audience (issue #274), x509 entries
-their serviceUrl/voms/valid/audience (serviceUrl omitted =
-the legacy k8s-Job mint path; replaces the removed global
-broker.env.VOMS_TOKEN_SERVICE_URL -- every auth_type: x509 backend now
-needs an explicit entry, there is no synthesized fallback), and
+their serviceUrl (required)/voms/valid/audience (every
+auth_type: x509 backend needs an explicit entry, there is no synthesized
+fallback), and
 servicex-token entries their serviceUrl/audience/externalLoginUrl (issue
 #295; externalLoginUrl is the portal's ServiceXIdentityCard "Get your
 ServiceX token" link, optional).
@@ -207,7 +206,7 @@ ServiceX token" link, optional).
       "targets" (.targets | default (list))
       "display_name" (.displayName | default "")
       "enables" (.enables | default "")
-      "service_url" (.serviceUrl | default nil)
+      "service_url" (required "an x509 identityProviders entry needs serviceUrl (the voms-token-service base URL)" .serviceUrl)
       "voms" (.voms | default "atlas")
       "valid" (.valid | default "192:00")
       "audience" (.audience | default "voms-token-service")
@@ -281,16 +280,15 @@ independent of identityProviders.
 True when at least one broker.identityProviders entry requires the Vault
 connection settings independent of oauth21.tokenStore/tokenRegistry/
 principalCache.backend being "vault" — mirrors config.py's
-_validate_vault_config: a service-mode x509 entry (type "x509" with a
-non-empty serviceUrl) implies the x509 Vault store, and krb5-token/
-servicex-token entries always imply their own Vault store (no legacy/
-no-Vault mode for either, unlike x509). Used to gate VAULT_ADDR/etc.
-rendering below alongside the three backend checks.
+_validate_vault_config: x509, krb5-token, and servicex-token entries
+always imply their own Vault store (no in-memory fallback for any of them).
+Used to gate VAULT_ADDR/etc. rendering below alongside the three backend
+checks.
 */}}
 {{- define "af-mcp-platform.identityProvidersNeedVault" -}}
 {{- $needs := false -}}
 {{- range .Values.broker.identityProviders -}}
-{{- if and (eq .type "x509") .serviceUrl -}}
+{{- if eq .type "x509" -}}
 {{- $needs = true -}}
 {{- end -}}
 {{- if eq .type "krb5-token" -}}
@@ -351,9 +349,6 @@ startup refusal (Settings._validate_replica_state_config) for the chart path.
 - name: OIDC_INTERNAL_URL
   value: {{ .Values.broker.oidc.internalUrl | quote }}
 {{- end }}
-# Home directory root (broker constructs per-user paths from this)
-- name: HOME_ROOT
-  value: {{ .Values.broker.homeDir.homeRoot | quote }}
 # Portal base URL for unlock hints and identity-linking redirects
 - name: PORTAL_URL
   value: {{ printf "https://%s" .Values.ingress.portalHost | quote }}
@@ -380,11 +375,6 @@ startup refusal (Settings._validate_replica_state_config) for the chart path.
 {{- if .Values.broker.sharedState.allowPerReplicaState }}
 - name: ALLOW_PER_REPLICA_STATE
   value: "true"
-{{- end }}
-# Proxy tmpfs mount path
-{{- if .Values.broker.tmpfsProxy.enabled }}
-- name: PROXY_DIR
-  value: {{ .Values.broker.tmpfsProxy.mountPath | quote }}
 {{- end }}
 # CIMD (/.well-known/cimd) settings — omitted when empty so the
 # broker's pydantic defaults apply.
@@ -581,7 +571,7 @@ startup refusal (Settings._validate_replica_state_config) for the chart path.
 {{- /*
 Vault connection settings are shared by all Vault-backed stores above (one
 VaultKV instance, per config.py/app.py) — rendered once whenever any of
-them needs it, not duplicated per-backend. A service-mode x509 or
+them needs it, not duplicated per-backend. An x509 or
 krb5-token identityProviders entry also implies a Vault-backed store (see
 af-mcp-platform.identityProvidersNeedVault above) even when none of the
 three backend settings below is "vault".

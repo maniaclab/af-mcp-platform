@@ -57,6 +57,26 @@ jobs:
             --set image.portal.tag=sha-test \
             | grep -q 'name: VAULT_ADDR'
 
+      # Content assertions for the x509 entry (ci/x509-vault-values.yaml):
+      # it always implies the Vault connection even when no store backend is
+      # "vault", and serviceUrl is mandatory -- voms-token-service is the
+      # only x509 mint path -- so an entry without one must fail to render.
+      - name: Verify x509-only Vault rendering and serviceUrl requirement
+        run: |
+          helm template af-mcp-platform charts/af-mcp-platform \
+            -f charts/af-mcp-platform/ci/x509-vault-values.yaml \
+            --set image.broker.tag=sha-test \
+            --set image.portal.tag=sha-test \
+            | grep -q 'name: VAULT_ADDR'
+          if helm template af-mcp-platform charts/af-mcp-platform \
+            -f charts/af-mcp-platform/ci/x509-vault-values.yaml \
+            --set 'broker.identityProviders[0].serviceUrl=' \
+            --set image.broker.tag=sha-test \
+            --set image.portal.tag=sha-test >/dev/null 2>&1; then
+            echo "chart rendered an x509 entry with no serviceUrl" >&2
+            exit 1
+          fi
+
       # Content assertion for ci/test-values.yaml's confidential
       # oauth21-direct entry: its secret must render as an env var named the
       # way the broker reads it back (OAuth21DirectProviderConfig.

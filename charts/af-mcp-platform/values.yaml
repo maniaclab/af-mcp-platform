@@ -27,11 +27,6 @@ serviceAccount:
   name: ""
   annotations: {}
 
-# RBAC (Role + RoleBinding) for the broker's ServiceAccount: it mints x509
-# proxies via ephemeral k8s Jobs and needs to manage those Jobs/Pods.
-rbac:
-  create: true
-
 # ---------------------------------------------------------------------------
 # OIDC issuer — single source of truth shared by the broker and the portal
 # ---------------------------------------------------------------------------
@@ -203,35 +198,6 @@ broker:
   # JWT path works fine.
   groupFullPath: false
 
-  # NFS home directory access — required by the x509 legacy credential provider.
-  homeDir:
-    enabled: true
-    # How the home directory volume is provided:
-    #   pvc      — use an existing PersistentVolumeClaim (recommended for prod)
-    #   csi      — inline CSI volume (e.g. NFS CSI driver)
-    #   hostPath — host path directly (dev/testing only; not safe for prod)
-    mode: pvc
-    # Name of the PVC when mode=pvc
-    claimName: "af-user-homes"
-    mountPath: "/data/homes"
-    # Host path to bind-mount when mode=hostPath (dev/testing only).
-    hostPath: "/data/homes"
-    readOnly: true
-    # The root path inside the container where user homes are expected.
-    # The broker uses this to construct per-user paths: {homeRoot}/{username}
-    homeRoot: "/data/homes"
-    # CSI-specific fields (only used when mode=csi)
-    csi:
-      driver: ""
-      volumeAttributes: {}
-
-  # Per-uid proxy tmpfs — scratch space for x509 proxy files.
-  # Avoids writing grid proxies to the container overlay filesystem.
-  tmpfsProxy:
-    enabled: true
-    mountPath: "/run/broker/proxies"
-    sizeLimit: "64Mi"
-
   # Client ID Metadata Document (CIMD, draft-ietf-oauth-client-id-metadata-
   # document) served at /.well-known/cimd, for backend OAuth 2.1 authorization
   # servers to identify this broker without per-backend Dynamic Client
@@ -338,24 +304,19 @@ broker:
   #   alias: x509
   #   displayName: "Grid certificate (x509)"
   #   enables: "VOMS proxy minting for x509-authenticated services"
-  #   # Trust tier: voms-token-service mode (serviceUrl set) keeps Job
-  #   # minting out of the broker pod; the legacy Job-mint mode (serviceUrl
-  #   # omitted) grants the broker pod rbac.create — the higher-trust
-  #   # configuration. See docs/architecture.md "Trust tiers".
+  #   # The broker never mounts user homes: minting happens in
+  #   # voms-token-service. See docs/architecture.md "Trust tiers".
   #   # Every service wired with auth_type: x509 in aggregator.services must
   #   # be covered by an x509 entry's targets (and vice versa) — the broker
   #   # refuses to start on a mismatch, including the entry-less case (no
   #   # synthesized fallback). Requires
-  #   # broker.identityToken.existingSigningKeySecret when serviceUrl (below)
-  #   # is set; a keyless legacy entry (serviceUrl omitted) only warns.
+  #   # broker.identityToken.existingSigningKeySecret (the broker refuses to
+  #   # start without it, naming the affected services).
   #   targets: ["ami"]
   #   # Base URL of the voms-token-service deployment (the broker appends
-  #   # /v1/mint); requires the shared Vault connection
-  #   # (broker.oauth21.tokenStore.vault). Omit serviceUrl for the legacy
-  #   # ephemeral-Job mint path. Replaces the removed global
-  #   # broker.env.VOMS_TOKEN_SERVICE_URL (breaking change — the env var is
-  #   # no longer read). Multiple x509 entries with different
-  #   # serviceUrl/voms are supported.
+  #   # /v1/mint); required. Needs the shared Vault connection
+  #   # (broker.oauth21.tokenStore.vault). Multiple x509 entries with
+  #   # different serviceUrl/voms are supported.
   #   serviceUrl: "http://voms-token-service.voms-token.svc.cluster.local:8080"
   #   # VOMS attribute set and proxy validity (HH:MM) forwarded on every
   #   # mint; audience must match the service's EXPECTED_AUDIENCE.
