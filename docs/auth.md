@@ -1232,14 +1232,23 @@ identity provider and the portal deep link (the same link the plain error and
 types. A passphrase or credential is entered only in the portal; the prompt for
 an unlock says so and points at the unlock page.
 
-**Which clients get it.** `client_supports_input_required`
-(`mcp/input_required.py`) reads the negotiated connection, not the client name:
-the protocol era must be one with multi-round-trip results (2026-07-28 and later)
-and the client must have declared form-mode elicitation (a URL-only declaration
-cannot render the form). Anything else -- a handshake-era client, a modern client
-that cannot elicit, a broker with no `broker_state_key` -- gets the plain error
-text, unchanged. There is no URL-mode elicitation any more (removed in the
-2026-07-28 revision), and handshake-era `ctx.elicit()` is not attempted.
+**Which clients get which prompt.** `prompt_route` (`mcp/input_required.py`) is
+the single place that decides, from the negotiated connection rather than the
+client name:
+
+| Negotiated | Prompt |
+|---|---|
+| 2026-07-28+ protocol, form-mode elicitation declared | `InputRequiredResult` (this section); needs `broker_state_key` to seal `request_state` |
+| Handshake-era protocol, form-mode elicitation declared | server-initiated form-mode `elicit()` with the same message and portal link, "I've linked it -- try again" / "Cancel"; on "try again" the call runs once more |
+| Anything else (no elicitation, URL-only elicitation, modern client without a `broker_state_key`) | the plain error text, unchanged |
+
+A URL-only declaration cannot render the form. An empty `elicitation: {}` counts
+as form mode. A modern client that cannot elicit would auto-retry a state-only
+result in a loop with no user in it, so it gets the plain error. URL-mode
+elicitation was removed in the 2026-07-28 revision and is not used. If the
+handshake-era `elicit()` raises, the broker logs `mcp.portal_prompt_elicit_failed`
+at warning level with the exception type and falls back to the plain error. Both
+prompting routes ask at most once per call.
 
 **`request_state`.** Self-contained, so a retry may land on any replica. It is
 sealed twice:
