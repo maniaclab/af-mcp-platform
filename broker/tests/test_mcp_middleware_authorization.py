@@ -1079,6 +1079,8 @@ async def test_rate_limited_call_is_refused_before_call_next_with_retry_info(
     assert "Rate limit of 1 calls per 60s exceeded for rucio_list_dids" in message
     assert "Retry-After: 40" in message
     assert "retry_at: " in message
+    # Points an agent at where it can see every limit and its own usage.
+    assert "af_rate_limits" in message
     assert isinstance(excinfo.value.__cause__, ToolRateLimitError)
     # The first, allowed call audited as success; the refused one as rate_limited.
     assert [r.outcome for r in captured_audits] == ["success", "rate_limited"]

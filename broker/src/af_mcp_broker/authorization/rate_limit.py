@@ -13,11 +13,16 @@ import json
 import math
 from typing import TYPE_CHECKING
 
+import structlog
+
 from af_mcp_broker.authorization.errors import ToolRateLimitError
+from af_mcp_broker.shared_state import SharedStateUnavailableError
 
 if TYPE_CHECKING:
     from af_mcp_broker.authorization.base import RateLimitRule
     from af_mcp_broker.shared_state import SharedState, WindowCount
+
+logger = structlog.get_logger(__name__)
 
 
 def tool_rate_limit_key(rule: RateLimitRule, subject: str) -> str:
@@ -70,3 +75,34 @@ async def check_rate_limits(
         window_seconds=rule.window_seconds,
         retry_after_seconds=math.ceil(window.ttl_seconds),
     )
+
+
+async def read_rate_limit_usage(
+    rules: list[RateLimitRule],
+    shared_state: SharedState | None,
+    subject: str,
+) -> list[WindowCount | None] | None:
+    """Read *subject*'s counter under each of *rules*, without counting anything.
+
+    Returns one entry per rule, in order: its ``WindowCount``, or ``None``
+    when no window is open (nothing counted yet, or the window closed).
+    Returns ``None`` instead of a list when usage cannot be known: no store
+    is installed, or it is unreachable (logged as
+    ``rate_limits.shared_state_unavailable``). Reading the store directly,
+    never through the limiter's per-replica fallback, keeps "unknown" from
+    being reported as one replica's partial count. With no rules the store
+    is never touched.
+    """
+    if not rules:
+        return []
+    if shared_state is None:
+        logger.warning("rate_limits.shared_state_unavailable", reason="no store")
+        return None
+    try:
+        return [
+            await shared_state.get_window(tool_rate_limit_key(rule, subject))
+            for rule in rules
+        ]
+    except SharedStateUnavailableError as exc:
+        logger.warning("rate_limits.shared_state_unavailable", error=str(exc))
+        return None

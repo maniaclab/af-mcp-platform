@@ -12,6 +12,7 @@ from af_mcp_broker.api import (
     mcp_oauth,
     oauth21,
     permissions,
+    rate_limits,
     tokens,
     usage,
 )
@@ -31,6 +32,7 @@ _maintenance_gated = [Depends(require_not_in_maintenance)]
 router.include_router(identities.router, dependencies=_maintenance_gated)
 router.include_router(permissions.router, dependencies=_maintenance_gated)
 router.include_router(catalog_tools.router, dependencies=_maintenance_gated)
+router.include_router(rate_limits.router, dependencies=_maintenance_gated)
 router.include_router(credentials.router, dependencies=_maintenance_gated)
 # credentials.backend_router carries the backend-facing redeem routes
 # (/credentials/x509/redeem, /credentials/krb5/redeem,
