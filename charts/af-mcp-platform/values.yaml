@@ -282,6 +282,9 @@ broker:
   #   targets: ["rucio-mcp-atlas"]
   #   authorizationEndpoint: "https://rucio-mcp.example/authorize"
   #   tokenEndpoint: "https://rucio-mcp.example/token"
+  #   # Optional RFC 7009 revocation endpoint; unset skips the upstream call
+  #   # on unlink and only deletes the locally stored token.
+  #   revocationEndpoint: "https://rucio-mcp.example/revoke"
   #   issuer: "https://rucio-mcp.example"
   #   scope: "openid profile email"
   #   displayName: "Rucio (ATLAS)"
@@ -436,6 +439,22 @@ broker:
       namespace: ""
       # Extra labels so your Prometheus' ruleSelector picks the rule up.
       labels: {}
+
+  # KV-v2 path prefixes (under oauth21.tokenStore.vault.kvMount) of the
+  # Vault-backed stores that have no backend selector: they are used whenever
+  # a matching identityProviders entry (x509 with serviceUrl, krb5-token,
+  # servicex-token) or credmon is configured. Rendered whenever any
+  # Vault-backed store is in use. Two releases sharing one Vault KV mount
+  # must set different prefixes here and on the stores' own kvPathPrefix
+  # (oauth21.tokenStore.vault, tokenRegistry, principalCache, maintenanceMode)
+  # or they read and write each other's per-user records; the Vault policy
+  # must grant each release its prefixes. Changing a prefix on an existing
+  # release orphans the records stored under the old one.
+  vault:
+    x509KvPathPrefix: "mcp/x509"
+    krb5KvPathPrefix: "mcp/krb5"
+    servicexKvPathPrefix: "mcp/servicex"
+    credmonKvPathPrefix: "mcp/credmon"
 
   # OAuth 2.1 credential-brokering infrastructure shared by every
   # oauth21-direct entry in identityProviders above.
