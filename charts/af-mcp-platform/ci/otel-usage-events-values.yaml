@@ -22,7 +22,7 @@ broker:
       enabled: true
   # Tracing stays disabled: the collector endpoint and NetworkPolicy shape are
   # shared with it, and usage events must not switch tracing on.
-  tracing:
+  otlp:
     endpoint: "http://otel-collector.observability:4318"
     networkPolicy:
       namespaceSelector:
