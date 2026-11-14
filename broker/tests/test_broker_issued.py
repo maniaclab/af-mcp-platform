@@ -117,7 +117,7 @@ def issuer(rsa_key: rsa.RSAPrivateKey) -> BrokerTokenIssuer:
 
 
 # ---------------------------------------------------------------------------
-# BrokerTokenIssuer: claims
+# BrokerTokenIssuer claims
 # ---------------------------------------------------------------------------
 
 
@@ -216,7 +216,7 @@ def test_mint_per_call_ttl_overrides_configured_ttl(
 
 
 # ---------------------------------------------------------------------------
-# BrokerTokenIssuer: kid / JWKS
+# BrokerTokenIssuer kid / JWKS
 # ---------------------------------------------------------------------------
 
 

@@ -416,7 +416,7 @@ async def unlink_identity(
         return
 
     # Keycloak-brokered unlink requires the Keycloak Admin REST API
-    # (DELETE /admin/realms/{realm}/users/{id}/federated-identity/{alias}),
+    # (DELETE /admin/realms/{realm}/users/{id}/federated-identity/{alias}),  # noqa: ERA001 -- Admin REST route quoted in prose
     # which the broker doesn't hold credentials for — surface a clear 501
     # rather than silently succeeding. Out of scope per issue #86.
     #

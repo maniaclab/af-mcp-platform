@@ -161,7 +161,7 @@ class KrbTicketMetadata(BaseModel):
     # How the returned ticket was actually obtained -- KrbTokenProvider's
     # own IssuedCredential.payload["tier"], carried through verbatim so the
     # portal can tell "already had a valid one" (cache/vault) apart from
-    # "just renewed/reminted it for you" (renew/keytab_remint/password_mint)
+    # "just renewed/reminted it for you" (tier renew, keytab_remint or password_mint)
     # after a "Refresh ticket" click, rather than every outcome looking the
     # same. None only for a ticket minted before this field existed.
     source: str | None = None
@@ -198,7 +198,7 @@ class ProxyCacheStatus(BaseModel):
     expires_at: str | None = None
     remaining_seconds: int | None = None
     # VOMS nickname attribute (issue #191) — same field/gap as
-    # ProxyRedeemResponse.nickname: populated in voms-token-service
+    # ProxyRedeemResponse.nickname -- populated in voms-token-service
     # (Vault-backed) mode, None on the legacy cache path (ProxyMeta has no
     # such field). Lets the portal show the resolved CERN/Rucio account for
     # the user to visually confirm.

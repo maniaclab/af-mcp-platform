@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-# requires: kubernetes_asyncio>=30.0
+# Requires kubernetes_asyncio>=30.0
 import asyncio
 import base64
 import binascii

@@ -406,7 +406,7 @@ def test_record_from_fields_migrated_record_decodes_normally() -> None:
 
 
 # ---------------------------------------------------------------------------
-# touch_last_used()
+# touch_last_used
 # ---------------------------------------------------------------------------
 
 
