@@ -291,7 +291,9 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
             ),
             replica_count=settings.mcp_replica_count,
         )
-    shared_state = build_shared_state(settings.shared_state_url)
+    shared_state = build_shared_state(
+        settings.shared_state_url, key_prefix=settings.shared_state_key_prefix
+    )
 
     # --- Authorization: the authorization/ engine matches the shipped policy.yaml.
     try:
