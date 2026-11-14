@@ -486,6 +486,12 @@ startup refusal (Settings._validate_replica_state_config) for the chart path.
   value: {{ .Values.broker.usage.batchMax | quote }}
 - name: USAGE_BATCH_INTERVAL_MS
   value: {{ .Values.broker.usage.batchIntervalMs | quote }}
+# Usage retention and rollup (see broker.usage.retentionDays in values.yaml).
+# Always set so the effective values are visible on the pod.
+- name: USAGE_RETENTION_DAYS
+  value: {{ .Values.broker.usage.retentionDays | quote }}
+- name: USAGE_ROLLUP_INTERVAL_SECONDS
+  value: {{ .Values.broker.usage.rollupIntervalSeconds | quote }}
 {{- if eq .Values.broker.usage.backend "postgres" }}
 {{- if .Values.broker.usage.postgres.existingSecret.name }}
 # asyncpg DSN for the postgres usage store -- with Crunchy PGO, typically

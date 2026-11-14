@@ -159,14 +159,14 @@ Outside the chart set `SHARED_STATE_URL` (and `MCP_REPLICA_COUNT`) directly.
 
 Per-replica state in the broker, what happens at more than one replica
 without a store, and what each item does when the store is down. "Phase"
-is the order in which items move onto the store; "(done)" marks the ones
-that have.
+is the order in which items move onto the store; phases 1 to 3 are
+implemented today and "(done)" marks the ones that have.
 
 | Item | Location | Effect at N > 1 without a store | Consistency need | Store down | Phase |
 |---|---|---|---|---|---|
 | Unlock brute-force limiter (5 failures / 15 min per uid) | `credentials/cache.py`, `CredentialCache` | Budget multiplied by N (security-relevant) | Strong: one counter per uid, atomic increment | Falls back to a per-replica limit and logs `credential_cache.shared_state_unavailable`; never fails open, never blocks unlock | 1 (done) |
 | Per-tool call rate limits (`rate_limits` in `policy.yaml`) | `authorization/rate_limit.py`, `AuthorizationMiddleware` | Budget multiplied by N | Strong: one counter per rule and subject, atomic increment | Falls back to a per-replica count and logs `tool_rate_limit.shared_state_unavailable`; never fails open, never refuses every call | 1 (done) |
-| PAT mint rate window (`_rate`) | `api/tokens.py` | Mint cap multiplied by N | Strong, but a per-replica cap is a documented trade-off | Fall back to per-replica | 2 |
+| PAT mint rate window (10 mints / hour per subject) | `api/tokens.py`, `TokenRegistry` | Mint cap multiplied by N | Strong: one counter per subject, atomic increment. Soft anti-abuse cap, not a security boundary | Falls back to a per-replica count and logs `token_registry.shared_state_unavailable`; never refuses every mint | 2 (done) |
 | Per-(subject, service) tools/list cache and 30 s negative cache | `mcp/aggregator.py`, `mcp/cache_invalidation.py` | Invalidate-on-link/revoke reaches only the replica that handled it | Eventual: the drop is published to every replica (pub/sub), so staleness is the delivery delay, not the TTL | Fails open: the local drop still happens, the broadcast failure is logged as `list_cache_invalidation.shared_state_unavailable`, and other replicas fall back to TTL-only staleness. A replica that resubscribes after an outage drops every cached listing, since it may have missed messages | 3 (done) |
 | Caller list-failure records | `mcp/registry.py` (`_caller_list_failures`) | Status differs by replica until each re-lists | Eventual: cleared with the listing entries by the same invalidation, otherwise refreshed by each replica's own listings | Fail open | 3 (done, via the invalidation above) |
 | Admin lint tables (annotation mismatches, tool-mapping drift) | `mcp/registry.py` | Each replica reports only what it has observed | Eventual | Compute on demand instead of storing | 4 |
@@ -326,7 +326,7 @@ Answers: "is this principal allowed to call this tool?"
 - Authorization failures are logged with structured fields (uid, tool, permission)
   and return HTTP 403 to the aggregator.
 - The gateway's own methods (`af_whoami`, `af_list_identities`,
-  `af_list_mcp_servers`, `af_link_identity`, `af_usage`) take this exact
+  `af_list_mcp_servers`, `af_link_identity`, `af_usage`, `af_search_tools`) take this exact
   same path: the registry always self-registers a builtin `gateway_service` service
   (prefix `af`, `required_permission: __none__` — issue maniaclab/af-mcp-platform#240, replacing
   issue maniaclab/af-mcp-platform#153's name-based middleware bypass), so they are

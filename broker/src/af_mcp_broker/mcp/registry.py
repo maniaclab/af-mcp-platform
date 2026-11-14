@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 # Reserved for the broker's own methods, registered directly on the
 # aggregator (mcp/diagnostics.py, issue #153): af_whoami, af_list_identities,
-# af_list_mcp_servers, af_link_identity, af_usage. The prefix belongs to the
+# af_list_mcp_servers, af_link_identity, af_usage, af_search_tools. The prefix belongs to the
 # builtin BUILTIN_SERVICE_NAME entry ServiceRegistry self-registers below
 # (issue #240) -- no operator service may configure it: doing so would let a
 # service's own tools ("af_<toolname>", once namespaced) shadow these methods'
@@ -49,6 +49,7 @@ LIST_IDENTITIES_TOOL_NAME = f"{RESERVED_PREFIX}_list_identities"
 LIST_MCP_SERVERS_TOOL_NAME = f"{RESERVED_PREFIX}_list_mcp_servers"
 LINK_IDENTITY_TOOL_NAME = f"{RESERVED_PREFIX}_link_identity"
 USAGE_TOOL_NAME = f"{RESERVED_PREFIX}_usage"
+SEARCH_TOOLS_TOOL_NAME = f"{RESERVED_PREFIX}_search_tools"
 DIAGNOSTIC_TOOL_NAMES = frozenset(
     {
         WHOAMI_TOOL_NAME,
@@ -56,6 +57,7 @@ DIAGNOSTIC_TOOL_NAMES = frozenset(
         LIST_MCP_SERVERS_TOOL_NAME,
         LINK_IDENTITY_TOOL_NAME,
         USAGE_TOOL_NAME,
+        SEARCH_TOOLS_TOOL_NAME,
     }
 )
 
@@ -310,8 +312,9 @@ def _builtin_service_spec(name: str = BUILTIN_SERVICE_NAME) -> ServiceSpec:
         # reports a missing or unlinked credential rather than retrying.
         agent_policy=(
             "The gateway's own identity and catalog methods. af_whoami, "
-            "af_list_identities, af_list_mcp_servers, and af_usage are "
-            "read-only orientation tools. When another service fails because "
+            "af_list_identities, af_list_mcp_servers, af_usage, and "
+            "af_search_tools (keyword search over the tools you are entitled "
+            "to) are read-only orientation tools. When another service fails because "
             "the caller has no linked identity, route the user to "
             "af_link_identity (or the portal) instead of retrying the call."
         ),
