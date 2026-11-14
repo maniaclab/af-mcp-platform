@@ -67,7 +67,6 @@ writeup — these are real gaps, not oversights):
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Annotated
 
@@ -81,6 +80,11 @@ from af_mcp_broker.config import Settings, get_settings
 from af_mcp_broker.errors import BrokerError
 from af_mcp_broker.identity import Principal, keycloak_dependency
 from af_mcp_broker.pat import mint_pat
+from af_mcp_broker.shared_state import (
+    FallbackSharedState,
+    InMemorySharedState,
+    SharedState,
+)
 from af_mcp_broker.token_registry import (
     DuplicateNameError,
     TokenRecord,
@@ -102,15 +106,13 @@ _MAX_EXPIRES_IN_DAYS = 3650
 # guards against passphrase brute-forcing; this one guards against unbounded
 # token issuance, a different threat with a different sane threshold.
 #
-# Deliberately kept in-process (not written to the same KV record the
-# TokenRegistryBackend uses) even though that means the effective limit at
-# replicaCount=2 is up to 2x the configured value: this is a soft anti-abuse
-# counter, not a security boundary (CredentialCache's unlock rate limiter --
-# which guards actual brute-forcing -- is exactly the same in-memory-only
-# shape), and moving it into Vault would add a write on every single mint
-# attempt (including ones that get rejected) purely to guard a convenience
-# threshold. See the PR description for the full tradeoff (issue #115
-# requirement 4).
+# The counter lives in the broker's SharedState (shared_state.py), so the cap
+# holds across replicas instead of multiplying by the replica count. It is
+# still a soft anti-abuse counter, not a security boundary, so an outage of
+# the shared store degrades to a per-replica count (FallbackSharedState)
+# rather than refusing mints. It stays out of the Vault KV record the
+# TokenRegistryBackend uses: that would add a durable write on every mint
+# attempt purely to guard a convenience threshold (issue #115 requirement 4).
 _MAX_MINTS_PER_HOUR = 10
 _MINT_RATE_WINDOW_SECONDS = 60 * 60
 
@@ -227,10 +229,9 @@ class PatMintRateLimitError(BrokerError):
     """Raised when a principal exceeds the mint-rate limit."""
 
 
-@dataclass
-class _RateWindow:
-    count: int = 0
-    window_start: float = field(default_factory=time.monotonic)
+def pat_mint_key(subject: str) -> str:
+    """Shared-state key of *subject*'s PAT mint counter."""
+    return f"pat-mint:{subject}"
 
 
 class TokenRegistry:
@@ -239,9 +240,10 @@ class TokenRegistry:
     Delegates durable metadata storage to a ``TokenRegistryBackend`` (in-
     memory or Vault/OpenBao -- see token_registry.py, chosen by
     ``settings.token_registry_backend``); keeps the per-principal mint-rate-
-    limit window in-process regardless of backend (see the constant above
-    for why that's a deliberate, documented tradeoff rather than an
-    oversight).
+    limit window in the injected ``SharedState`` (see the constant above), so
+    the cap is shared by every replica when a store is configured. If the
+    store is unreachable the window degrades to a per-replica count and logs
+    ``token_registry.shared_state_unavailable``.
 
     Keyed by ``principal.subject``, not ``principal.uid`` -- issue #148 made
     POSIX identity optional, and this endpoint only requires a Keycloak JWT
@@ -251,31 +253,32 @@ class TokenRegistry:
     POSIX-less caller; subject is always present and unique per principal.
     """
 
-    def __init__(self, backend: TokenRegistryBackend) -> None:
+    def __init__(
+        self,
+        backend: TokenRegistryBackend,
+        shared_state: SharedState | None = None,
+    ) -> None:
         self._backend = backend
-        self._rate: dict[str, _RateWindow] = {}
+        self._shared_state = FallbackSharedState(
+            shared_state or InMemorySharedState(),
+            component="token_registry",
+            effect="PAT mint cap is per-replica until the store recovers",
+        )
         self._log = structlog.get_logger(__name__).bind(component="TokenRegistry")
 
-    def check_mint_rate_limit(self, subject: str) -> None:
+    async def check_mint_rate_limit(self, subject: str) -> None:
         """Raise PatMintRateLimitError if *subject* has hit the per-hour mint cap."""
-        now = time.monotonic()
-        window = self._rate.get(subject)
-        if window is None or (now - window.window_start) > _MINT_RATE_WINDOW_SECONDS:
-            return
-        if window.count >= _MAX_MINTS_PER_HOUR:
-            remaining = int(_MINT_RATE_WINDOW_SECONDS - (now - window.window_start))
+        window = await self._shared_state.get_window(pat_mint_key(subject))
+        if window is not None and window.count >= _MAX_MINTS_PER_HOUR:
             raise PatMintRateLimitError(
                 f"Too many tokens minted for subject={subject!r}. "
-                f"Try again in {remaining}s."
+                f"Try again in {int(window.ttl_seconds)}s."
             )
 
-    def record_mint(self, subject: str) -> None:
-        now = time.monotonic()
-        window = self._rate.get(subject)
-        if window is None or (now - window.window_start) > _MINT_RATE_WINDOW_SECONDS:
-            window = _RateWindow(count=0, window_start=now)
-            self._rate[subject] = window
-        window.count += 1
+    async def record_mint(self, subject: str) -> None:
+        await self._shared_state.incr_window(
+            pat_mint_key(subject), _MINT_RATE_WINDOW_SECONDS
+        )
 
     async def put(self, record: TokenRecord) -> None:
         await self._backend.add(record)
@@ -416,7 +419,7 @@ async def mint_token(
     """
     registry = _registry(request)
     try:
-        registry.check_mint_rate_limit(principal.subject)
+        await registry.check_mint_rate_limit(principal.subject)
     except PatMintRateLimitError as exc:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=str(exc)
@@ -487,7 +490,7 @@ async def mint_token(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail=str(exc)
         ) from exc
-    registry.record_mint(principal.subject)
+    await registry.record_mint(principal.subject)
 
     # Log lookup_id-only — never the token itself.
     await _audit(

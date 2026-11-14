@@ -87,6 +87,7 @@ if TYPE_CHECKING:
     from af_mcp_broker.credmon.guidance import JobCredentialGuide
     from af_mcp_broker.identity import Principal
     from af_mcp_broker.maintenance import MaintenanceModeStore
+    from af_mcp_broker.mcp.lint_observations import LintObservationStore
     from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
     from af_mcp_broker.principal_cache import PrincipalCache
     from af_mcp_broker.shared_state import SharedState
@@ -1515,6 +1516,18 @@ class _ObservableProxyProvider(ProxyProvider):
             del self._subject_list_cache[key]
         self._registry.clear_caller_list_failure(self._service_name, subject)
 
+    def invalidate_all_subjects(self) -> None:
+        """Drop every subject's cached listing entries for this service, and each of those subjects' caller-specific failure reasons.
+
+        For a replica that may have missed invalidation messages (see
+        ``cache_invalidation.ListCacheInvalidator``): it cannot tell which
+        subjects changed, so it forgets all of them. Like
+        ``invalidate_subject``, leaves the service-wide failure reason and
+        ``_subject_list_locks`` alone.
+        """
+        for subject in {subject for _, subject in self._subject_list_cache}:
+            self.invalidate_subject(subject)
+
     def _prune_subject_list_cache(self) -> None:
         """Drop every expired entry, so the cache dict never grows past recently active (kind, subject) pairs."""
         expired = [
@@ -1834,6 +1847,13 @@ def invalidate_subject_cache(
             provider.invalidate_subject(subject)
 
 
+def invalidate_all_subject_caches(mcp: FastMCP) -> None:
+    """Drop every subject's cached listing entries across all of ``mcp``'s providers (see ``_ObservableProxyProvider.invalidate_all_subjects``)."""
+    for provider in mcp.providers:
+        if isinstance(provider, _ObservableProxyProvider):
+            provider.invalidate_all_subjects()
+
+
 def build_aggregator(
     registry: ServiceRegistry,
     settings: Settings,
@@ -1975,8 +1995,9 @@ def populate_aggregator(
     maintenance_mode_store: MaintenanceModeStore | None = None,
     job_credentials: JobCredentialGuide | None = None,
     shared_state: SharedState | None = None,
+    lint_observations: LintObservationStore | None = None,
 ) -> None:
-    """Refresh an aggregator built by ``build_aggregator`` with a freshly loaded registry/settings/policy/credential_registry/pat_backend/principal_cache/identity_providers/identity_provider_configs/target_to_alias/maintenance_mode_store/shared_state.
+    """Refresh an aggregator built by ``build_aggregator`` with a freshly loaded registry/settings/policy/credential_registry/pat_backend/principal_cache/identity_providers/identity_provider_configs/target_to_alias/maintenance_mode_store/shared_state/lint_observations.
 
     app.py's mount-time constraint means the aggregator's FastMCP instance
     and ASGI app must exist before SERVICES_FILE/POLICY_FILE/the credential
@@ -2004,6 +2025,8 @@ def populate_aggregator(
     authorization_mw.policy = policy
     if shared_state is not None:
         authorization_mw.use_shared_state(shared_state)
+    if lint_observations is not None:
+        entitlement_mw.use_lint_store(lint_observations)
     _register_services(
         mcp,
         registry,

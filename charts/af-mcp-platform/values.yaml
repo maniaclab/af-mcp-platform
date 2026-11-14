@@ -529,6 +529,16 @@ broker:
     # USAGE_BATCH_MAX / USAGE_BATCH_INTERVAL_MS.
     batchMax: 100
     batchIntervalMs: 1000
+    # Postgres backend only. Raw usage rows older than retentionDays UTC days
+    # are folded into a daily rollup table (per day, user, service, method,
+    # outcome) and deleted, so the events table stops growing without bound;
+    # /v1/usage and af_usage read raw rows inside the window and the rollup
+    # beyond it, so totals do not change. 0 keeps raw rows forever. Every
+    # replica attempts the job each rollupIntervalSeconds; a Postgres advisory
+    # lock lets one run. Rendered as USAGE_RETENTION_DAYS /
+    # USAGE_ROLLUP_INTERVAL_SECONDS.
+    retentionDays: 365
+    rollupIntervalSeconds: 3600
     postgres:
       # Secret carrying the asyncpg DSN, rendered as USAGE_POSTGRES_DSN via
       # secretKeyRef only when backend="postgres". With Crunchy PGO the

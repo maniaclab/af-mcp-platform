@@ -22,6 +22,7 @@ import fastmcp
 import httpx2
 import jwt
 import pytest
+import structlog
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
 from fastmcp.utilities.asgi_transport import StreamingASGITransport, run_asgi_lifespan
@@ -34,6 +35,7 @@ from af_mcp_broker import identity
 from af_mcp_broker.audit import measure
 from af_mcp_broker.config import Settings, get_settings
 from af_mcp_broker.mcp import aggregator as aggregator_module
+from af_mcp_broker.mcp import cache_invalidation, lint_observations
 from af_mcp_broker.mcp.aggregator import build_asgi_auth_middleware
 
 # fastmcp v4's camelCase compat bridge (mcp_camelcase_compat, default True)
@@ -221,23 +223,14 @@ def postgres_dsn(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
         )
 
 
-@pytest.fixture(scope="session")
-def shared_state_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
-    """``redis://`` URL of a real, throwaway redis server for this test session.
+@contextmanager
+def run_redis_server(workdir: Path, port: int) -> Iterator[str]:
+    """Run a throwaway ``redis-server`` on loopback *port*, yielding its ``redis://`` URL.
 
-    Loopback TCP on a random free port, no persistence (the data dies with the
-    test run). The broker's redis client talks to it directly; Valkey and other
-    redis-protocol servers speak the same protocol.
+    No persistence (the data dies with the server). Exposed beyond the
+    ``shared_state_url`` fixture so a test can stop a server and start a new
+    one on the same port to exercise store-outage recovery.
     """
-    if shutil.which("redis-server") is None:
-        raise RuntimeError(
-            "redis-server not found -- the dev pixi environment provides the "
-            "server these tests require (pixi.toml's dev feature); run via "
-            "`pixi run -e dev pytest`."
-        )
-
-    workdir = tmp_path_factory.mktemp("redis")
-    port = find_available_port()
     server = subprocess.Popen(
         [
             "redis-server",
@@ -269,6 +262,42 @@ def shared_state_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
     finally:
         server.terminate()
         server.wait(timeout=10)
+
+
+@pytest.fixture(scope="session")
+def shared_state_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
+    """``redis://`` URL of a real, throwaway redis server for this test session.
+
+    Loopback TCP on a random free port, no persistence (the data dies with the
+    test run). The broker's redis client talks to it directly; Valkey and other
+    redis-protocol servers speak the same protocol.
+    """
+    if shutil.which("redis-server") is None:
+        raise RuntimeError(
+            "redis-server not found -- the dev pixi environment provides the "
+            "server these tests require (pixi.toml's dev feature); run via "
+            "`pixi run -e dev pytest`."
+        )
+
+    with run_redis_server(
+        tmp_path_factory.mktemp("redis"), find_available_port()
+    ) as url:
+        yield url
+
+
+@pytest.fixture
+def unpinned_loggers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give the aggregator, cache-invalidation and lint-observation modules fresh loggers for one test.
+
+    A booted app configures structlog with ``cache_logger_on_first_use``, so a
+    module logger first used under that configuration stays pinned to its
+    processor list and ``structlog.testing.capture_logs`` in later tests stops
+    seeing its events (see test_admin_api.py's ``_list_renamed_backend``).
+    Tests that list through the aggregator or run the invalidator use this so
+    their first use pins nothing.
+    """
+    for module in (aggregator_module, cache_invalidation, lint_observations):
+        monkeypatch.setattr(module, "logger", structlog.get_logger(module.__name__))
 
 
 @pytest.fixture
