@@ -46,8 +46,7 @@ transient errors -- do not retry them:
 
 - A denial (the caller lacks the required permission) means the user is not \
 authorized for that service. Tell them they lack access and pass on any \
-"Request access" link or granting groups the error names; do not retry the \
-call.
+groups the error names as granting it; do not retry the call.
 - A missing-credential or not-linked failure means the user must link an \
 identity first. Route them to the af_link_identity tool or the portal; do not \
 retry the call.

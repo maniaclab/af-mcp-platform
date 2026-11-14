@@ -36,7 +36,7 @@ if TYPE_CHECKING:
     from fastmcp.tools.base import ToolResult
 
     from af_mcp_broker.identity import Principal
-    from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
+    from af_mcp_broker.mcp.registry import ServiceRegistry
     from af_mcp_broker.shared_state import SharedState
 
 logger = structlog.get_logger(__name__)
@@ -144,29 +144,23 @@ class AuthorizationMiddleware(Middleware):
         # in a private in-memory one would silently make limits per replica.
         self.shared_state: FallbackSharedState | None = None
 
-    def _denial_message(
-        self, service: ServiceSpec, permission: str | None, reason: str
-    ) -> str:
-        """Return the error text for a permission denial: *reason* plus, when they exist, the groups granting *permission* and where to request access.
+    def _denial_message(self, permission: str | None, reason: str) -> str:
+        """Return the error text for a permission denial: *reason* plus, when they exist, the groups granting *permission*.
 
-        The guidance lets an assistant tell the user what to do instead of
-        only "contact an administrator". It is built from the denied TOOL's
-        own permission, so a per-tool required_permission names that tool's
-        groups, not the service-wide union. A permission nobody can hold
-        (DISABLED_PERMISSION, an unmapped tool) gets no guidance: no group or
-        access page would fix it. The audit record keeps the bare *reason*.
+        The groups let an assistant tell the user which membership to ask
+        for instead of only "contact an administrator". They are built from
+        the denied TOOL's own permission, so a per-tool required_permission
+        names that tool's groups, not the service-wide union. A permission
+        nobody can hold (DISABLED_PERMISSION, an unmapped tool) gets none: no
+        group would fix it. The audit record keeps the bare *reason*.
         """
         message = f"Authorization denied: {reason}"
         if permission is None or permission == DISABLED_PERMISSION:
             return message
-        guidance: list[str] = []
         groups = groups_granting_any(self.policy, {permission})
         if groups:
-            guidance.append(f"Granted by membership in: {', '.join(groups)}.")
-        access_url = self.registry.access_url_for(service)
-        if access_url:
-            guidance.append(f"Request access: {access_url}")
-        return " ".join([f"{message}.", *guidance]) if guidance else message
+            return f"{message}. Granted by membership in: {', '.join(groups)}."
+        return message
 
     def use_shared_state(self, shared_state: SharedState) -> None:
         """Back ``policy.rate_limits`` with *shared_state*.
@@ -340,9 +334,7 @@ class AuthorizationMiddleware(Middleware):
                         trace_id=current_trace_id(),
                     )
                 )
-                raise AuthorizationError(
-                    self._denial_message(service, permission, reason)
-                )
+                raise AuthorizationError(self._denial_message(permission, reason))
 
             # After the entitlement check, so a caller refused above never
             # spends budget, and before any credential is minted or backend

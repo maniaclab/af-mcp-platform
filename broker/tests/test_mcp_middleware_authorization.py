@@ -1286,12 +1286,12 @@ async def test_rate_limit_store_outage_falls_back_to_a_per_replica_count(
     ]
 
 
-# --- access guidance in the permission-denied error (issue #395) -------------
+# --- granting groups in the permission-denied error (issue #395) -------------
 
 
 def _registry_with_rucio(**kwargs) -> ServiceRegistry:
     """A registry whose "rucio" service requires read_data."""
-    reg = ServiceRegistry(default_access_url=kwargs.pop("default_access_url", None))
+    reg = ServiceRegistry()
     reg.register(
         ServiceSpec(
             name="rucio",
@@ -1306,12 +1306,10 @@ def _registry_with_rucio(**kwargs) -> ServiceRegistry:
     return reg
 
 
-async def test_denial_names_granting_groups_and_access_url(
+async def test_denial_names_the_granting_groups(
     policy, make_principal, captured_audits
 ) -> None:
-    registry = _registry_with_rucio(
-        default_access_url="https://facility.example.org/access"
-    )
+    registry = _registry_with_rucio(docs_url="https://docs.example.org/rucio")
     mw = AuthorizationMiddleware(registry, policy)
     context = _call_tool_context("rucio_list_dids", {}, make_principal(groups=[]))
 
@@ -1323,9 +1321,10 @@ async def test_denial_names_granting_groups_and_access_url(
     assert message.startswith(
         "Authorization denied: target 'rucio' requires permission 'read_data'"
     )
-    # ... and extended with where to go and who to ask.
+    # ... and extended with who to ask. No access page is named.
     assert "Granted by membership in: atlas." in message
-    assert "Request access: https://facility.example.org/access" in message
+    assert "Request access" not in message
+    assert "https://" not in message
     # The audit record keeps the bare reason: the guidance is for the caller,
     # not the log line.
     assert captured_audits[0].error == (
@@ -1333,27 +1332,10 @@ async def test_denial_names_granting_groups_and_access_url(
     )
 
 
-async def test_denial_prefers_the_services_own_access_url(
-    policy, make_principal, captured_audits
-) -> None:
-    registry = _registry_with_rucio(
-        default_access_url="https://facility.example.org/access",
-        access_url="https://rucio.example.org/access",
-    )
-    mw = AuthorizationMiddleware(registry, policy)
-    context = _call_tool_context("rucio_list_dids", {}, make_principal(groups=[]))
-
-    with pytest.raises(AuthorizationError) as excinfo:
-        await mw.on_call_tool(context, _CallNextRecorder())
-
-    assert "Request access: https://rucio.example.org/access" in str(excinfo.value)
-    assert "facility.example.org" not in str(excinfo.value)
-
-
-async def test_denial_without_url_or_groups_keeps_the_original_message(
+async def test_denial_without_groups_keeps_the_original_message(
     make_principal, captured_audits
 ) -> None:
-    """No group grants read_data and no URL is configured: nothing to add."""
+    """No group grants read_data: nothing to add."""
     registry = _registry_with_rucio()
     policy = EntitlementPolicy(group_permissions={"__authenticated__": []})
     mw = AuthorizationMiddleware(registry, policy)
@@ -1400,12 +1382,12 @@ async def test_denial_for_a_per_tool_permission_names_that_tools_groups(
     assert "Granted by membership in: af-admins." in messages["condor_submit_job"]
 
 
-async def test_denial_of_an_unmapped_tool_offers_no_access_guidance(
+async def test_denial_of_an_unmapped_tool_names_no_groups(
     make_principal, captured_audits
 ) -> None:
     """A dict-form service with no __default__ disables unlisted tools for
-    everyone: no group or access page can fix that, so none is suggested."""
-    registry = ServiceRegistry(default_access_url="https://facility.example.org/access")
+    everyone: no group can fix that, so none is suggested."""
+    registry = ServiceRegistry()
     registry.register(
         ServiceSpec(
             name="condor",

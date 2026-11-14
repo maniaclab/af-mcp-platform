@@ -72,11 +72,9 @@ _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 def validate_user_facing_url(value: str, where: str) -> str:
     """Return *value* if it is an absolute https URL (http only for a loopback host), else raise ``ValueError`` naming *where*.
 
-    Shared by ServiceSpec's ``access_url``/``docs_url`` and Settings'
-    ``access_request_url``: these are rendered as links in the portal and
-    quoted by assistants, so a relative path, a scheme-less host, or a
-    ``javascript:`` URL must fail at startup rather than become a broken or
-    unsafe link.
+    Used for ServiceSpec's ``docs_url``: it is rendered as a link in the
+    portal, so a relative path, a scheme-less host, or a ``javascript:`` URL
+    must fail at startup rather than become a broken or unsafe link.
     """
     parts = urlsplit(value)
     host = parts.hostname
@@ -247,15 +245,9 @@ class ServiceSpec:
     # self-declares (e.g. rucio-mcp's "rucio_list_dids"), so an entry here
     # must include that prefix too.
     exclude_tools: frozenset[str] = frozenset()
-    # Where a caller who lacks this service's permission requests access (a
-    # group-request page, a ticket form), shown by the portal as "Request
-    # access" and quoted in the permission-denied tool error. None falls back
-    # to the facility-wide default (ServiceRegistry.access_url_for). A link
-    # only: the broker never calls it, and self-service request flows live
-    # outside the broker.
-    access_url: str | None = None
-    # The service's own documentation, linked from its portal card for every
-    # status. None means the card shows no docs link.
+    # A link to where the service is described, shown on its portal card for
+    # every status ("About this service") and as the call to action when the
+    # caller lacks access. None means the card shows no link.
     docs_url: str | None = None
 
     @property
@@ -309,10 +301,8 @@ class ServiceSpec:
                 "or omitted (see docs/architecture.md's 'Trust tiers')."
             )
             raise ValueError(msg)
-        for field_name in ("access_url", "docs_url"):
-            value = getattr(self, field_name)
-            if value is not None:
-                validate_user_facing_url(value, f"service '{self.name}' {field_name}")
+        if self.docs_url is not None:
+            validate_user_facing_url(self.docs_url, f"service '{self.name}' docs_url")
 
 
 def _builtin_service_spec(name: str = BUILTIN_SERVICE_NAME) -> ServiceSpec:
@@ -452,15 +442,8 @@ _MAX_CALLER_LIST_FAILURES = 4096
 class ServiceRegistry:
     """Config-driven service registry. Adding a service = one YAML entry, no code change."""
 
-    def __init__(
-        self,
-        builtin_service_name: str = BUILTIN_SERVICE_NAME,
-        default_access_url: str | None = None,
-    ) -> None:
+    def __init__(self, builtin_service_name: str = BUILTIN_SERVICE_NAME) -> None:
         self._builtin_service_name = builtin_service_name
-        # Facility-wide fallback for a service that sets no access_url of its
-        # own (Settings.access_request_url); see access_url_for().
-        self._default_access_url = default_access_url
         self._services: dict[str, ServiceSpec] = {}
         # Most recently classified tools/list failure reasons (see
         # aggregator.py's _classify_list_failure), best-effort, last-write-
@@ -508,10 +491,6 @@ class ServiceRegistry:
         for key, value in self._tool_permission_entries(builtin_spec):
             self._tool_permissions[key] = value
 
-    def access_url_for(self, service: ServiceSpec) -> str | None:
-        """Return where a caller lacking *service*'s permission requests access: the service's own ``access_url``, else the facility-wide default, else None."""
-        return service.access_url or self._default_access_url
-
     def load(self, path: str) -> None:
         with Path(path).open() as fh:
             raw = yaml.safe_load(fh) or {}
@@ -542,7 +521,6 @@ class ServiceRegistry:
                 agent_policy=entry.get("agent_policy"),
                 requires_posix=entry.get("requires_posix", False),
                 exclude_tools=frozenset(exclude_tools),
-                access_url=entry.get("access_url"),
                 docs_url=entry.get("docs_url"),
             )
             self.register(spec)

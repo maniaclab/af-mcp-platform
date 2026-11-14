@@ -922,19 +922,18 @@ async def test_af_usage_without_installed_store_degrades_to_empty_window(
     assert body["by_day"] == []
 
 
-async def test_af_list_mcp_servers_reports_how_to_request_access(
+async def test_af_list_mcp_servers_reports_docs_url_and_granting_groups(
     settings: Any, sig_key: Any, prime_jwks: Any, static_principal_cache: Any
 ) -> None:
-    """A permission_required row carries the resolved access URL (the service's
-    own, else the facility default), the groups that grant the missing
-    permission, and docs_url; an available row carries only docs_url (issue
-    #395), so an assistant can pass the link on instead of "contact an admin"."""
+    """A permission_required row carries the groups that grant the missing
+    permission; every row carries docs_url (issue #395), so an assistant can
+    pass on where the service is described and which group to ask to join."""
     principal_cache, directory = static_principal_cache
     directory.groups_by_subject["user-123"] = []
     prime_jwks([sig_key.jwk])
     token = sig_key.sign(make_claims())
 
-    registry = ServiceRegistry(default_access_url="https://facility.example.org/access")
+    registry = ServiceRegistry()
     registry.register(
         ServiceSpec(
             name="own-link",
@@ -943,7 +942,6 @@ async def test_af_list_mcp_servers_reports_how_to_request_access(
             transport="http",
             required_permission="read_data",
             auth_type="none",
-            access_url="https://own.example.org/access",
             docs_url="https://docs.example.org/own",
         )
     )
@@ -987,14 +985,10 @@ async def test_af_list_mcp_servers_reports_how_to_request_access(
 
     rows = {row["name"]: row for row in result.structured_content["servers"]}
     assert rows["own-link"]["status"] == "permission_required"
-    assert rows["own-link"]["access_url"] == "https://own.example.org/access"
     assert rows["own-link"]["granting_groups"] == ["/connect/atlas-af"]
     assert rows["own-link"]["docs_url"] == "https://docs.example.org/own"
-    assert rows["default-link"]["access_url"] == "https://facility.example.org/access"
-    assert "Use Request access to ask for it" in rows["own-link"]["status_detail"]
-    assert "Use Request access to ask for it" in rows["default-link"]["status_detail"]
+    assert "Contact the AF admins." in rows["own-link"]["status_detail"]
     assert rows["default-link"]["docs_url"] is None
     assert rows["open"]["status"] == "available"
-    assert rows["open"]["access_url"] is None
     assert rows["open"]["granting_groups"] == []
     assert rows["open"]["docs_url"] == "https://docs.example.org/open"

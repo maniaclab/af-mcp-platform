@@ -255,7 +255,7 @@ def test_catalog_never_exposes_backend_url(
     resp = client.get("/v1/catalog", headers=_AUTH)
     assert resp.status_code == 200, resp.text
     servers = resp.json()["servers"]
-    # The optional docs_url/access_url fields are operator-declared links, not
+    # The optional docs_url field is operator-declared link, not
     # the backend's address: the backend URL itself is neither a key nor a value.
     assert all("url" not in server for server in servers)
     assert "://" not in json.dumps(servers)
@@ -979,7 +979,7 @@ def test_credential_without_expiry_reports_null_expiry(
     assert body["remaining_seconds"] is None
 
 
-# --- access_url / docs_url / granting_groups on catalog entries (issue #395) --
+# --- docs_url / granting_groups on catalog entries (issue #395) --
 
 # Groups the shipped policy.yaml grants read_data to, which rucio requires.
 _READ_DATA_GROUPS = ["af-admins", "atlas", "cms", "dune", "escape"]
@@ -991,73 +991,29 @@ def _catalog_by_name(client: TestClient) -> dict[str, dict]:
     return {s["name"]: s for s in resp.json()["servers"]}
 
 
-def test_catalog_permission_required_names_groups_and_facility_access_url(
-    monkeypatch: pytest.MonkeyPatch,
-    app_client_factory: Callable[..., object],
-    make_principal: Callable[..., object],
-) -> None:
-    monkeypatch.setenv("ACCESS_REQUEST_URL", "https://groups.example.org/request")
-    with app_client_factory() as (client, state):
-        state["principal"] = make_principal(groups=[])
-        rucio = _catalog_by_name(client)["rucio"]
-
-    assert rucio["status"] == "permission_required"
-    assert rucio["access_url"] == "https://groups.example.org/request"
-    assert rucio["granting_groups"] == _READ_DATA_GROUPS
-    # The sentence points at the button instead of only saying "contact".
-    assert (
-        "Use Request access to ask for it, or contact the AF admins."
-        in (rucio["status_detail"])
-    )
-    assert "Contact the AF admins." not in rucio["status_detail"]
-
-
-def test_catalog_service_access_url_overrides_facility_default(
-    monkeypatch: pytest.MonkeyPatch,
-    app_client_factory: Callable[..., object],
-    make_principal: Callable[..., object],
-) -> None:
-    monkeypatch.setenv("ACCESS_REQUEST_URL", "https://groups.example.org/request")
-    with app_client_factory() as (client, state):
-        state["principal"] = make_principal(groups=[])
-        client.app.state.service_registry.get(
-            "rucio"
-        ).access_url = "https://rucio.example.org/access"
-        rucio = _catalog_by_name(client)["rucio"]
-
-    assert rucio["access_url"] == "https://rucio.example.org/access"
-
-
-def test_catalog_permission_required_without_any_access_url(
+def test_catalog_permission_required_names_the_granting_groups(
     app_client: tuple[TestClient, dict], make_principal: Callable[..., object]
 ) -> None:
-    """No per-service and no facility URL: the groups are still named, the
-    link is simply absent (the portal then shows no call to action)."""
     client, state = app_client
     state["principal"] = make_principal(groups=[])
     rucio = _catalog_by_name(client)["rucio"]
 
     assert rucio["status"] == "permission_required"
-    assert rucio["access_url"] is None
     assert rucio["granting_groups"] == _READ_DATA_GROUPS
-    # No button to point at: today's wording.
+    # The sentence is the same canned text whether or not a docs link exists.
     assert "Contact the AF admins." in rucio["status_detail"]
     assert "Request access" not in rucio["status_detail"]
 
 
-def test_catalog_access_url_and_groups_only_for_permission_required(
-    monkeypatch: pytest.MonkeyPatch,
-    app_client_factory: Callable[..., object],
-    make_principal: Callable[..., object],
+def test_catalog_granting_groups_only_for_permission_required(
+    app_client: tuple[TestClient, dict], make_principal: Callable[..., object]
 ) -> None:
-    """A caller who holds the permission is never pointed at an access page."""
-    monkeypatch.setenv("ACCESS_REQUEST_URL", "https://groups.example.org/request")
-    with app_client_factory() as (client, state):
-        state["principal"] = make_principal(groups=["atlas"])
-        rucio = _catalog_by_name(client)["rucio"]
+    """A caller who holds the permission is never told which groups to join."""
+    client, state = app_client
+    state["principal"] = make_principal(groups=["atlas"])
+    rucio = _catalog_by_name(client)["rucio"]
 
     assert rucio["status"] != "permission_required"
-    assert rucio["access_url"] is None
     assert rucio["granting_groups"] == []
 
 

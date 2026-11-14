@@ -316,9 +316,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # services_loaded means "services.yaml parsed without error" — an empty
     # `services: []` is a valid, successfully-parsed degraded state (issue #29);
     # it is only False when the file is missing or fails to parse.
-    service_registry = ServiceRegistry(
-        settings.builtin_service_name, settings.access_request_url
-    )
+    service_registry = ServiceRegistry(settings.builtin_service_name)
     try:
         service_registry.load(settings.services_file)
         services_loaded = True
