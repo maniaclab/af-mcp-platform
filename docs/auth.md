@@ -895,8 +895,7 @@ unreachable from this facility's network: `cern-get-keytab`'s
 `msktutil` backend needs CERN-internal LDAP/AD reachability (to
 `cerndc.cern.ch`, on a port other than the KDC's 88) plus an HTTPS call
 to `lxkerbwin.cern.ch`, and neither host is reachable from here
-(confirmed by testing: the call hangs and times out after
-`CERN_GET_KEYTAB_TIMEOUT_SECONDS`). An SSH-tunnel-through-lxplus
+(confirmed by testing: the call hangs and hangs until it times out). An SSH-tunnel-through-lxplus
 workaround was investigated and ruled out: lxplus enforces mandatory
 multi-factor SSH (Kerberos plus a registered SSH key plus an
 interactive 2FA prompt), and that interactive step cannot be satisfied

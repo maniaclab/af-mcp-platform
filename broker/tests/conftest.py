@@ -36,6 +36,7 @@ from af_mcp_broker.app import app as broker_app
 from af_mcp_broker.audit import measure
 from af_mcp_broker.authorization import load_policy
 from af_mcp_broker.config import Settings, get_settings
+from af_mcp_broker.credmon.state import CredmonSyncState
 from af_mcp_broker.identity import Principal, keycloak_dependency
 from af_mcp_broker.mcp import aggregator as aggregator_module
 from af_mcp_broker.mcp import cache_invalidation, lint_observations
@@ -711,3 +712,31 @@ def app_client_factory(
 def app_client(app_client_factory) -> Iterator[tuple[TestClient, dict]]:
     with app_client_factory() as pair:
         yield pair
+
+
+class InMemoryCredmonSyncState(CredmonSyncState):
+    """Single-process state for tests (no Vault): one replica, so the lease always goes to whoever asks while unexpired-or-own."""
+
+    def __init__(self) -> None:
+        self._holder: str | None = None
+        self._expires_at = 0.0
+        self._status: dict[str, Any] | None = None
+
+    async def try_acquire_lease(
+        self, holder: str, *, ttl_seconds: float, now: float
+    ) -> bool:
+        if self._holder not in (None, holder) and self._expires_at > now:
+            return False
+        self._holder = holder
+        self._expires_at = now + ttl_seconds
+        return True
+
+    async def release_lease(self, holder: str, *, now: float) -> None:
+        if self._holder == holder:
+            self._expires_at = now
+
+    async def write_status(self, status: dict[str, Any]) -> None:
+        self._status = dict(status)
+
+    async def read_status(self) -> dict[str, Any] | None:
+        return dict(self._status) if self._status is not None else None
