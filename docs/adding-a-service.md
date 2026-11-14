@@ -420,7 +420,8 @@ the identity-provider `targets` updated to the new name in lockstep.
 **Reserved: the `af` prefix and the builtin gateway service name.** The
 registry always carries a builtin gateway service (issue maniaclab/af-mcp-platform#240) — the
 gateway's own identity, catalog, and usage methods (`af_whoami`,
-`af_list_identities`, `af_list_mcp_servers`, `af_link_identity`, `af_usage`),
+`af_list_identities`, `af_list_mcp_servers`, `af_link_identity`, `af_usage`,
+`af_search_tools`),
 served by the aggregator itself rather than proxied to any backend. Its name
 defaults to `gateway_service` and is deployment-configurable
 (`broker.builtinServiceName` / `BUILTIN_SERVICE_NAME`); the reserved `af`
