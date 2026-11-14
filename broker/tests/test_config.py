@@ -630,10 +630,9 @@ def test_krb5_token_provider_config_requires_service_url():
 
 
 def test_vault_config_required_by_krb5_token_entry():
-    """Unlike x509 there is no legacy/service-mode split for krb5-token --
-    service_url is mandatory on every entry, and a given entry can't declare
-    ahead of time whether any caller will ever request its optional
-    "remember" persistence -- so Vault is required unconditionally."""
+    """service_url is mandatory on every krb5-token entry, and a given entry
+    can't declare ahead of time whether any caller will ever request its
+    optional "remember" persistence -- so Vault is required unconditionally."""
     entry = {
         "type": "krb5-token",
         "alias": "krb5",
@@ -776,30 +775,20 @@ def test_identity_providers_multiple_x509_entries_are_expressible():
     assert str(atlas.service_url) != str(dune.service_url)
 
 
-def test_identity_providers_x509_service_url_defaults_to_none():
-    """No service_url selects the legacy k8s-Job/local-dev mint path."""
+def test_identity_providers_x509_requires_service_url():
+    """voms-token-service is the only x509 mint path, so every entry names it."""
     entry = {k: v for k, v in _X509_ENTRY.items() if k != "service_url"}
-    settings = Settings(identity_providers=[entry])
-
-    (cfg,) = settings.identity_providers
-    assert cfg.service_url is None
+    with pytest.raises(ValueError, match="service_url"):
+        Settings(identity_providers=[entry], **_VAULT_ENV)
 
 
-def test_vault_config_required_by_x509_entry_with_service_url():
-    """voms-token-service mode persists proxies and passphrases in Vault
-    (there is no in-memory fallback), so an x509 entry with a service_url
-    implies the x509 store."""
+def test_vault_config_required_by_x509_entry():
+    """x509 persists proxies and passphrases in Vault (there is no in-memory
+    fallback), so an x509 entry implies the x509 store."""
     with pytest.raises(ValueError, match="vault_addr"):
         Settings(identity_providers=[_X509_ENTRY])
     with pytest.raises(ValueError, match="vault_auth_role"):
         Settings(identity_providers=[_X509_ENTRY], vault_addr="https://vault.example")
-
-
-def test_vault_config_not_required_by_legacy_x509_entry():
-    """A legacy-mode entry (no service_url) mints via the k8s-Job/local path
-    and touches no Vault store — the connection settings stay optional."""
-    entry = {k: v for k, v in _X509_ENTRY.items() if k != "service_url"}
-    Settings(identity_providers=[entry])  # must not raise
 
 
 # ---------------------------------------------------------------------------

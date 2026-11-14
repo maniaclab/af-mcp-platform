@@ -27,6 +27,7 @@ from test_broker_issued import (
     verify_against_jwks,
 )
 from test_mcp_aggregator import _FakeFastMCPContext
+from x509_fakes import seed_x509_link
 
 import af_mcp_broker.app as app_module
 from af_mcp_broker.authorization import EntitlementPolicy
@@ -45,7 +46,12 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
     from pathlib import Path
 
-from conftest import make_claims, run_aggregator_async, run_inprocess_server
+from conftest import (
+    configure_keyless_env,
+    make_claims,
+    run_aggregator_async,
+    run_inprocess_server,
+)
 
 _BROKER_ISSUED_PROVIDERS = [
     {
@@ -82,6 +88,8 @@ def broker_issued_env(
             key_file = tmp_path / "signing-key.pem"
             key_file.write_bytes(_private_pem(_make_rsa_key()))
             monkeypatch.setenv("BROKER_SIGNING_KEY_FILE", str(key_file))
+        else:
+            monkeypatch.delenv("BROKER_SIGNING_KEY_FILE", raising=False)
 
     return _apply
 
@@ -121,9 +129,12 @@ def test_broker_issued_entry_without_signing_key_refuses_to_start(
             pass
 
 
-def test_unconfigured_feature_boots_cleanly(app_client_factory) -> None:
-    """No broker-issued entry and no signing key: local dev must degrade
+def test_unconfigured_feature_boots_cleanly(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, app_client_factory
+) -> None:
+    """No broker-token entry and no signing key: local dev must degrade
     gracefully, exactly as before this feature existed."""
+    configure_keyless_env(monkeypatch, tmp_path)
     with app_client_factory() as (client, _):
         resp = client.get("/v1/healthz")
         assert resp.status_code == 200, resp.text
@@ -336,6 +347,9 @@ def test_lifespan_threads_issuer_into_x509_client_factory(
     with app_client_factory() as (client, _):
         issuer = client.app.state.broker_token_issuer
         assert issuer is not None
+        # A list-time credential is only minted for a caller who has linked
+        # their x509 identity.
+        seed_x509_link(client.app.state.x509_provider.vault_store)
         # SHIPPED_SERVICES' "ami" is its auth_type: x509 entry.
         ami_provider = _find_service_provider(app_module._mcp_aggregator, "ami")
         # A list-time invocation (no authorized_call_target) by an entitled

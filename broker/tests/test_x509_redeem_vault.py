@@ -1,25 +1,23 @@
 """Tests for the redeem endpoint's Vault-backed path (issue #112 follow-up).
 
-When X509Provider runs in voms-token-service mode, POST
-/v1/credentials/x509/redeem consults the Vault store instead of the
+POST /v1/credentials/x509/redeem consults the Vault store, never the
 in-memory CredentialCache: a valid stored proxy is served; an expired one
 with a stored passphrase is re-minted hands-free, stored, and served; a
 bad-passphrase failure on that re-mint unlinks the identity and answers 404
 telling the user to re-link at the portal; an infra failure answers 502 and
-keeps the link. Feature off falls back to the existing CredentialCache
-behavior (covered by test_x509_redeem.py, which keeps passing untouched).
+keeps the link.
 
 Also covers the unlock endpoint's (POST /v1/x509/proxy) error mapping in
 service mode: 400 for a bad passphrase, 502 for a service infra failure.
 
-Service mode is activated by injecting the same fakes test_x509_service_mode
-uses into the app's already-booted X509Provider — the endpoint keys off
-``provider.uses_voms_service``, so no Vault or voms-token-service deployment
-is needed.
+The app's already-booted X509Provider is given the same fakes
+test_x509_service_mode uses, so no Vault or voms-token-service deployment is
+needed.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from datetime import datetime
@@ -27,11 +25,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 from pydantic import SecretStr
-from test_broker_issued import _make_rsa_key, _private_pem
 from test_x509_redeem import _BACKENDS_YAML
-from test_x509_redeem import _seed_proxy as seed_legacy_cache_proxy
-from test_x509_service_mode import FakeVomsClient, FakeX509Store
+from x509_fakes import FakeVomsClient, FakeX509Store
 
+from af_mcp_broker.credentials.cache import ProxyMeta
 from af_mcp_broker.credentials.errors import (
     VomsServiceBadPassphraseError,
     VomsServiceMintError,
@@ -56,14 +53,10 @@ _VOMS_ATTRS = ["/atlas/Role=NULL", "/atlas"]
 def service_app(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, app_client_factory
 ) -> Iterator[tuple[TestClient, FakeX509Store, FakeVomsClient, dict]]:
-    """Boot the real app with an x509 backend + signing key, then flip its X509Provider into service mode with fakes."""
+    """Boot the real app with an x509 backend, then give its X509Provider in-memory fakes for the Vault store and the voms client."""
     services_file = tmp_path / "services.yaml"
     services_file.write_text(_BACKENDS_YAML)
     monkeypatch.setenv("SERVICES_FILE", str(services_file))
-    monkeypatch.setenv("BROKER_PUBLIC_ORIGIN", "https://mcp.example.com")
-    key_file = tmp_path / "signing-key.pem"
-    key_file.write_bytes(_private_pem(_make_rsa_key()))
-    monkeypatch.setenv("BROKER_SIGNING_KEY_FILE", str(key_file))
     # Audit to a file (not stdout): the app boots inside this fixture, and a
     # stdout handle grabbed then does not reliably land in a test's capsys.
     monkeypatch.setenv("AUDIT_LOG_FILE", str(tmp_path / "audit.log"))
@@ -74,7 +67,6 @@ def service_app(
         provider = client.app.state.x509_provider
         provider._vault_store = store
         provider._voms_client = voms_client
-        assert provider.uses_voms_service is True
         yield client, store, voms_client, {**state, "audit_log": tmp_path / "audit.log"}
 
 
@@ -118,6 +110,21 @@ async def _seed_proxy(
         nickname=nickname,
     )
     return not_after
+
+
+def _seed_cache_proxy_meta(client: TestClient, *, subject: str) -> None:
+    """Leave a ProxyMeta in the in-memory cache without storing anything in Vault."""
+    not_after = time.time() + 3600.0
+    meta = ProxyMeta(dn=_DN, voms_attributes=list(_VOMS_ATTRS), not_after=not_after)
+    asyncio.run(
+        client.app.state.credential_cache.put(
+            subject,
+            "ami",
+            {"proxy_handle": subject},
+            expires_at=not_after,
+            proxy_meta=meta,
+        )
+    )
 
 
 def _release_audit_records(state: dict) -> list[dict]:
@@ -219,14 +226,12 @@ class TestRedeemVaultServe:
         assert resp.status_code == 200, resp.text
         assert resp.json()["nickname"] is None
 
-    def test_vault_mode_ignores_the_in_memory_cache(
-        self, service_app, tmp_path: Path
-    ) -> None:
-        """A leftover tmpfs-cached proxy from before the feature flip must
-        not be served once Vault is authoritative."""
+    def test_ignores_the_in_memory_cache(self, service_app) -> None:
+        """An in-memory cached ProxyMeta must not be served when Vault holds
+        no proxy: Vault is authoritative."""
 
         client, _, _, _ = service_app
-        seed_legacy_cache_proxy(client, tmp_path, subject="sub-abc")
+        _seed_cache_proxy_meta(client, subject="sub-abc")
 
         resp = _redeem(client, _mint_token(client))
 
@@ -531,14 +536,12 @@ class TestProxyStatusServiceMode:
         assert resp.status_code == 200, resp.text
         assert resp.json()["cached"] is False
 
-    def test_vault_mode_ignores_a_stale_in_memory_meta(
-        self, service_app, tmp_path: Path
-    ) -> None:
+    def test_ignores_a_stale_in_memory_meta(self, service_app) -> None:
         """The mirror-image divergence: a leftover in-memory ProxyMeta on
         THIS replica must not report a proxy Vault no longer holds."""
 
         client, _, _, _ = service_app
-        seed_legacy_cache_proxy(client, tmp_path, subject="sub-abc")
+        _seed_cache_proxy_meta(client, subject="sub-abc")
 
         resp = client.get(_STATUS)
 

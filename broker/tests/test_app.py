@@ -44,7 +44,11 @@ def test_build_target_to_alias_covers_all_auth_shapes() -> None:
             token_endpoint="https://backend-as.example/token",
             issuer="https://backend-as.example",
         ),
-        X509ProviderConfig(alias="x509", targets=["ami"]),
+        X509ProviderConfig(
+            alias="x509",
+            targets=["ami"],
+            service_url="http://voms-token-service.invalid",
+        ),
     ]
 
     mapping = _build_target_to_alias(identity_providers_cfgs)
@@ -61,7 +65,13 @@ def test_build_target_to_alias_uses_the_real_x509_entry_alias() -> None:
     """An operator-chosen x509 alias flows through to /v1/catalog's
     credential_provider — nothing hardcodes the "x509" string anymore."""
     mapping = _build_target_to_alias(
-        [X509ProviderConfig(alias="grid-cert-atlas", targets=["ami", "panda"])]
+        [
+            X509ProviderConfig(
+                alias="grid-cert-atlas",
+                targets=["ami", "panda"],
+                service_url="http://voms-token-service.invalid",
+            )
+        ]
     )
 
     assert mapping == {"ami": "grid-cert-atlas", "panda": "grid-cert-atlas"}

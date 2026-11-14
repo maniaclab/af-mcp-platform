@@ -29,6 +29,7 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 import pytest
 import structlog
+from conftest import configure_keyless_env
 from cryptography.fernet import Fernet
 from structlog.testing import capture_logs
 
@@ -46,6 +47,7 @@ from af_mcp_broker.oauth_state import build_mcp_authorize_state, generate_pkce_p
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
     from tests.conftest import RsaKey
 
@@ -181,8 +183,11 @@ def test_protected_resource_metadata_resource_is_request_host_not_public_origin(
 
 
 def test_protected_resource_metadata_503_when_unconfigured(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
     app_client_factory: Callable[..., Any],
 ) -> None:
+    configure_keyless_env(monkeypatch, tmp_path)
     with app_client_factory() as (client, _):
         resp: Any = client.get("/.well-known/oauth-protected-resource")
 

@@ -146,9 +146,9 @@ class VomsServiceMintError(BrokerError):
     """Raised when a mint failed for a reason other than a bad passphrase (service unreachable, timeout, 401/403/5xx).
 
     An infra failure, not a passphrase signal — callers must NOT count it
-    against the unlock rate limiter, the same distinction the legacy mint
-    path's ``ProxyHarvestError`` draws. The message never carries the
-    service's response body (it may reference VOMS hostnames or paths).
+    against the unlock rate limiter, unlike ``VomsServiceBadPassphraseError``.
+    The message never carries the service's response body (it may reference
+    VOMS hostnames or paths).
     """
 
 
@@ -209,9 +209,9 @@ class PosixIdentityRequiredError(BrokerError):
     """Raised when x509 proxy minting is attempted for a principal with no POSIX identity.
 
     Issue #148 made ``Principal.uid``/``gid``/``unixname`` optional -- almost
-    nothing in the broker needs them, but x509 genuinely does (the mint
-    Job's NFS home subPath and ``runAsUser``/``runAsGroup`` all require real
-    values). Rather than reject such a principal at the door for every
+    nothing in the broker needs them, but x509 genuinely does (the broker
+    asserts them to voms-token-service, which mints as that uid/gid against
+    that user's home). Rather than reject such a principal at the door for every
     backend (the old JWT-level behavior this issue removes), the requirement
     moves to this point of use, naming *target* so the resulting error is
     actionable: "this service needs a grid identity your account doesn't
@@ -229,13 +229,3 @@ class PosixIdentityRequiredError(BrokerError):
             "set. Contact your Analysis Facility operator to request a grid "
             "identity."
         )
-
-
-class ProxyHarvestError(BrokerError):
-    """Raised when a mint Job SUCCEEDED but its proxy could not be harvested from the pod log (truncated log, kubelet log-size limits, transient read issue).
-
-    This is an infra failure, not a bad-passphrase signal, so callers
-    must NOT count it against the passphrase rate limiter the way a genuine
-    Job failure is. ``_mint_kubernetes`` catches it separately from the
-    ``ValueError`` a failed Job raises.
-    """

@@ -127,17 +127,15 @@ class IdentityProvider(BaseModel):
     link_url: str | None
     link_mechanism: LinkMechanism
     # Expiry (ISO-8601) of the caller's x509/VOMS proxy — populated only on
-    # "x509" entries. In voms-token-service mode the Vault record is
-    # authoritative (the same probe that decides `linked`); legacy mode
-    # falls back to the in-memory ProxyMeta GET /v1/x509/proxy/status serves.
-    # Null on every other entry, and on an x509 entry with no valid proxy.
+    # "x509" entries. The Vault record is authoritative (the same probe that
+    # decides `linked`). Null on every other entry, and on an x509 entry
+    # with no valid proxy.
     proxy_expires_at: str | None = None
     # Custody mode of an x509 entry's link (X509Provider.link_status):
     # "auto-renew" — the Globus passphrase is stored in Vault, proxies
     # re-mint hands-free; "until-expiry" — only the proxy is stored (the
     # user declined passphrase custody at link time), so the link lasts
-    # exactly as long as proxy_expires_at. Null when not linked, on legacy
-    # x509 entries (filesystem linkage has no custody concept), and on
+    # exactly as long as proxy_expires_at. Null when not linked and on
     # every non-x509 entry.
     x509_link_mode: Literal["auto-renew", "until-expiry"] | None = None
     # True only for a "krb5-token" entry with a durably linked keytab
@@ -232,23 +230,17 @@ async def _build_providers(
         link_permission_denied = False
         krb5_has_keytab = False
         if isinstance(provider, X509Provider):
-            # One probe answers linked + custody mode + expiry together. In
-            # service mode the Vault record is authoritative for the expiry;
-            # legacy mode reports no proxy_not_after, so fall back to the
-            # in-memory ProxyMeta GET /v1/x509/proxy/status serves.
+            # One probe answers linked + custody mode + expiry together; the
+            # Vault record is authoritative, so no valid proxy there means no
+            # expiry (a stale in-memory meta must not override it).
             x509_status = await provider.link_status(principal)
             linked = x509_status.linked
             x509_link_mode = x509_status.mode
-            if x509_status.proxy_not_after is not None:
-                proxy_expires_at = datetime.fromtimestamp(
-                    x509_status.proxy_not_after, tz=UTC
-                ).isoformat()
-            elif provider.uses_voms_service:
-                # Vault answered "no valid proxy" — a stale in-memory meta
-                # must not override the authoritative store.
-                proxy_expires_at = None
-            else:
-                proxy_expires_at = _x509_proxy_expires_at(request, principal, cfg)
+            proxy_expires_at = (
+                datetime.fromtimestamp(x509_status.proxy_not_after, tz=UTC).isoformat()
+                if x509_status.proxy_not_after is not None
+                else None
+            )
         elif isinstance(provider, OIDCProvider):
             oidc_status = await provider.link_status(principal)
             linked = oidc_status.linked
@@ -289,27 +281,6 @@ async def _build_providers(
         )
 
     return providers
-
-
-def _x509_proxy_expires_at(
-    request: Request, principal: Principal, cfg: IdentityProviderConfig
-) -> str | None:
-    """Expiry of the caller's cached VOMS proxy for an x509 entry, or None.
-
-    Read from the in-memory ``ProxyMeta`` of the entry's FIRST target — the
-    same default ``GET /v1/x509/proxy/status`` resolves to — so it stays a
-    cheap in-process lookup (no Vault round trip). Always None for non-x509
-    entries, and for an x509 entry with nothing cached.
-    """
-    if cfg.type != "x509" or not cfg.targets:
-        return None
-    credential_cache = getattr(request.app.state, "credential_cache", None)
-    if credential_cache is None:
-        return None
-    meta = credential_cache.get_proxy_meta(principal.subject, cfg.targets[0])
-    if meta is None:
-        return None
-    return datetime.fromtimestamp(meta.not_after, tz=UTC).isoformat()
 
 
 # ---------------------------------------------------------------------------

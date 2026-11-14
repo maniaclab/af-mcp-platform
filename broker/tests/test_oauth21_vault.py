@@ -183,6 +183,15 @@ def _make_store(fake: _FakeVault, sa_token_path: Path) -> VaultTokenStore:
     return VaultTokenStore(vault_kv=vault_kv, kv_path_prefix=KV_PATH_PREFIX)
 
 
+@pytest.fixture(autouse=True)
+def _broker_signing_key(
+    monkeypatch: pytest.MonkeyPatch, broker_signing_key_file: Path
+) -> None:
+    """The shipped "ami" service (covered by the x509 entry below) needs the broker signing key to boot."""
+    monkeypatch.setenv("BROKER_SIGNING_KEY_FILE", str(broker_signing_key_file))
+    monkeypatch.setenv("BROKER_PUBLIC_ORIGIN", "https://mcp.example.com")
+
+
 @pytest.fixture
 def sa_token_path(tmp_path: Path) -> Path:
     path = tmp_path / "sa-token"
@@ -409,6 +418,7 @@ def _bootstrap_oauth21_vault_env(
                 # start (there is no synthesized fallback).
                 {
                     "type": "x509",
+                    "service_url": "http://voms-token-service.invalid:8000",
                     "alias": "x509",
                     "targets": ["ami"],
                 },

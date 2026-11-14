@@ -154,9 +154,8 @@ def _validate_x509_provider_targets(
             "  - type: x509\n"
             "    alias: x509\n"
             f"    targets: {uncovered}\n"
-            "(add service_url/voms/valid/audience for voms-token-service "
-            "mode, or omit service_url for the legacy k8s-Job/local-dev "
-            "mint path), or change their auth_type."
+            "    service_url: <voms-token-service base URL>\n"
+            "(voms/valid/audience are optional), or change their auth_type."
         )
         raise RuntimeError(msg)
     not_x509 = sorted(covered - x509_service_names)
@@ -170,6 +169,33 @@ def _validate_x509_provider_targets(
             "auth_type to x509 in services.yaml, or remove the target."
         )
         raise RuntimeError(msg)
+
+
+# identity_providers types whose providers authenticate to their service with
+# an AF Broker Identity Token minted by the broker's own signing key.
+_BROKER_TOKEN_ENTRY_TYPES = frozenset(
+    {"broker-issued", "condor-token", "krb5-token", "servicex-token", "x509"}
+)
+
+
+def _broker_token_entries(
+    identity_providers_cfgs: Iterable[IdentityProviderConfig],
+) -> list[IdentityProviderConfig]:
+    """Return the entries whose providers need the broker's signing key."""
+    return [
+        cfg for cfg in identity_providers_cfgs if cfg.type in _BROKER_TOKEN_ENTRY_TYPES
+    ]
+
+
+def _describe_broker_token_entries(
+    entries: Iterable[IdentityProviderConfig],
+) -> str:
+    """Name each target service of *entries* with the entry that serves it, for the missing-signing-key boot error."""
+    described: list[str] = []
+    for cfg in entries:
+        targets = ", ".join(cfg.targets) if cfg.targets else "(no targets)"
+        described.append(f"{targets} ({cfg.type} entry {cfg.alias!r})")
+    return "; ".join(described)
 
 
 def _open_audit_output(dest: str) -> TextIO:
@@ -470,15 +496,11 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
                 audiences[f"{prefix}{kind}"] = targets[0]
     identity_provider_cfg_list = list(settings.identity_providers)
     _validate_x509_provider_targets(settings.identity_providers, set(x509_targets))
-    has_service_mode_x509_cfg = any(
-        cfg.type == "x509" and cfg.service_url is not None
-        for cfg in identity_provider_cfg_list
-    )
-    # Unlike x509 there is no legacy/service-mode split -- service_url is
-    # mandatory on every krb5-token entry (Settings' own validation), so any
-    # such entry always implies the krb5 Vault store (Settings._validate_
-    # vault_config already refused to construct `settings` without the
-    # connection settings).
+    has_x509_cfg = any(cfg.type == "x509" for cfg in identity_provider_cfg_list)
+    # service_url is mandatory on every krb5-token entry (Settings' own
+    # validation), so any such entry always implies the krb5 Vault store
+    # (Settings._validate_vault_config already refused to construct
+    # `settings` without the connection settings).
     has_krb5_token_cfg = any(
         cfg.type == "krb5-token" for cfg in identity_provider_cfg_list
     )
@@ -535,10 +557,9 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # store, and the krb5 link/ticket store below, whichever of the six (or
     # more) is configured to use Vault — see vault_kv.py's module docstring
     # for the transport/domain split.
-    # A service-mode x509 entry implies the x509 store: in service mode
-    # proxies and passphrases persist in Vault (Settings._validate_vault_config
-    # already refused to construct `settings` without the connection
-    # settings). A krb5-token entry implies the krb5 store unconditionally,
+    # An x509 entry implies the x509 store: proxies and passphrases persist
+    # in Vault (Settings._validate_vault_config already refused to construct
+    # `settings` without the connection settings). A krb5-token entry implies the krb5 store unconditionally,
     # same reasoning (see has_krb5_token_cfg above) -- a servicex-token entry
     # implies the ServiceX store the same way (has_servicex_token_cfg).
     vault_kv: VaultKV | None = None
@@ -547,7 +568,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         or settings.token_registry_backend == "vault"  # noqa: S105 -- backend selector name, not a secret
         or settings.principal_cache_backend == "vault"
         or settings.maintenance_mode_backend == "vault"
-        or has_service_mode_x509_cfg
+        or has_x509_cfg
         or has_krb5_token_cfg
         or has_servicex_token_cfg
     ):
@@ -611,75 +632,40 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
 
     # --- AF Broker Identity Token issuer (issue #162): the broker's own
     # RS256 signing key for the identity-assertion JWTs the native providers
-    # (BrokerIssuedProvider, and CondorTokenProvider's service exchange --
-    # issue #169) mint for AF-native services. None when the feature is
-    # unconfigured entirely (no BROKER_SIGNING_KEY_FILE -- a valid local-dev
-    # state); load_broker_token_issuer itself raises RuntimeError on an
-    # unreadable/invalid key or a missing issuer URL. The fail-closed check
-    # below is the remaining gap: a native identity_providers entry (and
-    # therefore every service resolving to it) with no signing key configured
-    # at all must refuse to boot rather than fail at first request -- same
+    # (BrokerIssuedProvider, CondorTokenProvider's service exchange --
+    # issue #169, KrbTokenProvider, ServiceXProvider, and X509Provider's
+    # voms-token-service mint calls) mint for AF-native services. None only
+    # when no BROKER_SIGNING_KEY_FILE is set -- a valid local-dev state for a
+    # deployment with no such entry; load_broker_token_issuer itself raises
+    # RuntimeError on an unreadable/invalid key or a missing issuer URL. The
+    # fail-closed check below is the remaining gap: an identity_providers
+    # entry that needs broker-signed tokens (and therefore every service
+    # resolving to it) with no signing key configured at all must refuse to
+    # boot rather than fail at first request -- same
     # rollout-failure-over-silent-breakage reasoning as
-    # unreachable_permissions above.
+    # unreachable_permissions above. The aggregator also injects a
+    # broker-issued identity JWT for auth_type: x509 targets and the redeem
+    # endpoint verifies it, so x509 is covered by the same requirement.
     broker_token_issuer = load_broker_token_issuer(settings)
-    if broker_token_issuer is None and any(
-        cfg.type in ("broker-issued", "condor-token", "krb5-token", "servicex-token")
-        for cfg in settings.identity_providers
-    ):
-        msg = (
-            "identity_providers contains a broker-issued, condor-token, "
-            "krb5-token, or servicex-token entry but BROKER_SIGNING_KEY_FILE "
-            "is not set, so the broker cannot sign AF Broker Identity Tokens "
-            "for its targets. Mount the RS256 signing key (chart: broker."
-            "identityToken.existingSigningKeySecret) or remove the entry "
-            "-- see docs/auth.md's 'AF Broker Identity Token' section."
-        )
-        raise RuntimeError(msg)
-
-    # --- x509 signing-key requirements. The aggregator injects a
-    # broker-issued identity JWT for auth_type: x509 targets, the redeem
-    # endpoint verifies it, and in service mode every voms-token-service
-    # mint call is authenticated the same way — so a service-mode entry
-    # (``service_url`` set) needs the signing key and is fail-closed at boot
-    # without it — same rollout-failure-over-silent-breakage reasoning as
-    # the broker-issued/condor-token check above. A legacy-mode entry
-    # (``service_url`` None — every x509 service still needs one covering
-    # it, see ``_validate_x509_provider_targets`` above) keeps the
-    # pre-existing loud WARNING instead: the shipped services.yaml has
-    # always declared an x509 service (ami), so refusing to boot would break
-    # existing keyless deployments that never call it; enforcement then
-    # stays at the point of use — the aggregator's x509 factory raises an
-    # actionable ToolError and the redeem endpoint answers 503.
     if broker_token_issuer is None:
-        if has_service_mode_x509_cfg:
+        needing_signing_key = _broker_token_entries(settings.identity_providers)
+        if needing_signing_key:
             msg = (
-                "identity_providers contains an x509 entry with a "
-                "service_url but BROKER_SIGNING_KEY_FILE is not set, so the "
-                "broker cannot sign the AF Broker Identity Tokens the "
-                "aggregator injects for x509 targets, the redeem endpoint "
-                "verifies, and voms-token-service authenticates mint calls "
-                "with. Mount the RS256 signing key (chart: broker."
-                "identityToken.existingSigningKeySecret) or remove "
-                "service_url from the entry."
+                "identity_providers contains entries that need the broker to "
+                "sign AF Broker Identity Tokens, but BROKER_SIGNING_KEY_FILE "
+                "is not set. Affected services: "
+                f"{_describe_broker_token_entries(needing_signing_key)}. "
+                "Mount the RS256 signing key (chart: broker.identityToken."
+                "existingSigningKeySecret) or remove the entries "
+                "-- see docs/auth.md's 'AF Broker Identity Token' section."
             )
             raise RuntimeError(msg)
-        if x509_targets:
-            logger.warning(
-                "x509_services_without_signing_key",
-                x509_targets=x509_targets,
-                hint=(
-                    "BROKER_SIGNING_KEY_FILE is not set; x509 services cannot "
-                    "be called over /mcp until the RS256 signing key is "
-                    "mounted (chart: broker.identityToken."
-                    "existingSigningKeySecret)."
-                ),
-            )
 
-    # --- x509 Vault link/proxy store, shared by every service-mode entry:
-    # one KV record per subject regardless of how many entries exist (issue
-    # #112's custodianship model — the link is per user, not per service).
+    # --- x509 Vault link/proxy store, shared by every x509 entry: one KV
+    # record per subject regardless of how many entries exist (issue #112's
+    # custodianship model — the link is per user, not per service).
     x509_vault_store: VaultX509Store | None = None
-    if has_service_mode_x509_cfg:
+    if has_x509_cfg:
         # guaranteed by the vault block above
         assert vault_kv is not None  # noqa: S101
         x509_vault_store = VaultX509Store(
@@ -722,9 +708,8 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         )
 
     # One CredentialProvider per configured entry, registered for the entry's
-    # targets below — x509 included (voms-proxy minted from the user's
-    # ~/.globus cert in legacy mode, or via the entry's voms-token-service
-    # when a service_url is configured). `bearer`-auth services' credential
+    # targets below — x509 included (voms-proxy minted via the entry's
+    # voms-token-service). `bearer`-auth services' credential
     # provider comes from `identity_providers`' per-entry `targets` list,
     # not a blanket auth_type match — this lets different services bind to
     # different aliases. `none` requires no user credential, so no provider
@@ -790,35 +775,27 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
                 vault_store=krb5_vault_store,
             )
         elif cfg.type == "x509":
-            if cfg.service_url is not None:
-                # voms-token-service mode: mint at the entry's service (the
-                # only component that mounts user homes) and persist both the
-                # proxy and the link (Globus passphrase for hands-free
-                # renewal) in Vault (issue #112 follow-up).
-                # guaranteed by the check above
-                assert broker_token_issuer is not None  # noqa: S101
-                # built above for service mode
-                assert x509_vault_store is not None  # noqa: S101
-                provider = X509Provider(
-                    settings,
-                    credential_cache,
-                    targets=frozenset(cfg.targets),
-                    voms_client=VomsTokenServiceClient(
-                        issuer=broker_token_issuer,
-                        service_url=str(cfg.service_url),
-                        audience=cfg.audience,
-                        voms=cfg.voms,
-                        valid=cfg.valid,
-                    ),
-                    vault_store=x509_vault_store,
-                )
-            else:
-                # Legacy k8s-Job/local-dev mint path, exactly as before.
-                provider = X509Provider(
-                    settings,
-                    credential_cache,
-                    targets=frozenset(cfg.targets),
-                )
+            # Mint at the entry's voms-token-service (the only component that
+            # mounts user homes) and persist both the proxy and the link
+            # (Globus passphrase for hands-free renewal) in Vault (issue #112
+            # follow-up).
+            # guaranteed by the check above
+            assert broker_token_issuer is not None  # noqa: S101
+            # built above for x509 entries
+            assert x509_vault_store is not None  # noqa: S101
+            provider = X509Provider(
+                settings,
+                credential_cache,
+                targets=frozenset(cfg.targets),
+                voms_client=VomsTokenServiceClient(
+                    issuer=broker_token_issuer,
+                    service_url=str(cfg.service_url),
+                    audience=cfg.audience,
+                    voms=cfg.voms,
+                    valid=cfg.valid,
+                ),
+                vault_store=x509_vault_store,
+            )
         elif cfg.type == "servicex-token":
             # guaranteed by the check above
             assert broker_token_issuer is not None  # noqa: S101

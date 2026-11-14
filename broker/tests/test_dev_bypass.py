@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 
 import pytest
+from conftest import configure_x509_service_env
 from fastapi.testclient import TestClient
 
 from af_mcp_broker.app import app
@@ -44,8 +45,25 @@ def _bootstrap_env(monkeypatch: pytest.MonkeyPatch) -> None:
     # refuses to start (there is no synthesized fallback).
     monkeypatch.setenv(
         "IDENTITY_PROVIDERS",
-        json.dumps([{"type": "x509", "alias": "x509", "targets": ["ami"]}]),
+        json.dumps(
+            [
+                {
+                    "type": "x509",
+                    "alias": "x509",
+                    "targets": ["ami"],
+                    "service_url": "http://voms-token-service.invalid:8000",
+                }
+            ]
+        ),
     )
+
+
+@pytest.fixture(autouse=True)
+def _x509_service_env(
+    monkeypatch: pytest.MonkeyPatch, broker_signing_key_file: Path
+) -> None:
+    """The shipped "ami" service needs the signing key and Vault connection to boot."""
+    configure_x509_service_env(monkeypatch, broker_signing_key_file)
 
 
 def _clear_settings_cache() -> None:

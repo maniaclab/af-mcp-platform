@@ -6,7 +6,7 @@ renew a VOMS proxy with no user interaction:
 * the Globus key **passphrase** captured at link time — the custodianship
   model chosen in issue #112's design discussion: the broker holds the
   passphrase so future proxies can be minted hands-free, instead of the
-  broker (or an ephemeral Job) ever touching the user's home directory;
+  broker ever touching the user's home directory;
 * the **POSIX identity** (unixname/uid/gid) every mint request asserts —
   captured at link time because renewal paths (the redeem endpoint's
   hands-free re-mint) hold only a broker-token subject, not a live

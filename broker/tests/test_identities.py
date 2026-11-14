@@ -8,7 +8,7 @@ too: every backend wired with ``auth_type: x509`` must be covered by an
 explicit entry (app.py's lifespan refuses to start otherwise — there is no
 synthesized fallback), so the x509 row is always registry-sourced like every
 other. conftest.py's ``app_client``/``app_client_factory`` default supplies
-a minimal legacy-mode entry (alias "x509", targets ["ami"]) covering the
+a minimal entry (alias "x509", targets ["ami"]) covering the
 shipped services.yaml's x509 backend, which is what the x509-specific tests
 below exercise. These tests cover building that list: probing
 ``is_linked()`` so the response reflects reality rather than a JWT claim
@@ -31,7 +31,7 @@ import pytest
 from cryptography.fernet import Fernet
 from pydantic import SecretStr
 from test_broker_issued import _make_rsa_key, _private_pem
-from test_x509_service_mode import FakeVomsClient, FakeX509Store
+from x509_fakes import FakeX509Store
 
 from af_mcp_broker.app import app as broker_app
 from af_mcp_broker.credentials.cache import ProxyMeta
@@ -77,6 +77,7 @@ def _configure_oauth21_env(monkeypatch: pytest.MonkeyPatch) -> None:
                 # needs an explicit entry or the broker refuses to start.
                 {
                     "type": "x509",
+                    "service_url": "http://voms-token-service.invalid:8000",
                     "alias": "x509",
                     "targets": ["ami"],
                 },
@@ -404,6 +405,7 @@ def test_providers_order_matches_identity_providers_config_order(
                 # must still cover it or the broker refuses to start.
                 {
                     "type": "x509",
+                    "service_url": "http://voms-token-service.invalid:8000",
                     "alias": "x509",
                     "targets": ["ami"],
                 },
@@ -476,6 +478,7 @@ def test_broker_issued_link_mechanism_is_none(
                 # needs an explicit entry or the broker refuses to start.
                 {
                     "type": "x509",
+                    "service_url": "http://voms-token-service.invalid:8000",
                     "alias": "x509",
                     "targets": ["ami"],
                 },
@@ -586,10 +589,8 @@ def test_explicit_x509_entry_renders_from_its_config(
 ) -> None:
     """An operator-written x509 entry is an ordinary registry row: its own
     alias/display_name/enables, the passphrase mechanism, no link_url (here
-    a legacy-mode entry, service_url omitted, so no Vault/voms-token-service
-    deployment is needed to boot). The signing key is mounted anyway in this
-    test even though a keyless legacy entry only warns rather than failing
-    -- see app.py's lifespan."""
+    the entry still needs the signing key, which this test mounts -- see
+    app.py's lifespan)."""
 
     key_file = tmp_path / "signing-key.pem"
     key_file.write_bytes(_private_pem(_make_rsa_key()))
@@ -601,6 +602,7 @@ def test_explicit_x509_entry_renders_from_its_config(
             [
                 {
                     "type": "x509",
+                    "service_url": "http://voms-token-service.invalid:8000",
                     "alias": "grid-cert-atlas",
                     "display_name": "ATLAS grid certificate",
                     "enables": "VOMS proxies for AMI",
@@ -622,49 +624,18 @@ def test_explicit_x509_entry_renders_from_its_config(
     assert entry["enables"] == "VOMS proxies for AMI"
     assert entry["link_mechanism"] == "passphrase"
     assert entry["link_url"] is None
-    # The ~/.globus pair app_client_factory pre-creates makes the default
-    # principal linked in legacy mode — same probe as the alias "x509" case.
-    assert entry["linked"] is True
-
-
-def test_x509_linked_true_legacy_mode(
-    app_client: tuple[TestClient, dict],
-) -> None:
-    """Legacy (no voms-token-service) mode: linked reflects the ~/.globus
-    cert-pair heuristic — the app_client fixture pre-creates the pair for
-    the default principal's unixname."""
-    client, _ = app_client
-    resp = client.get("/v1/identities", headers=_AUTH)
-
-    assert resp.status_code == 200, resp.text
-    assert _by_id(resp.json())["x509"]["linked"] is True
-
-
-def test_x509_linked_false_legacy_mode_without_cert_pair(
-    app_client: tuple[TestClient, dict], make_principal: Callable[..., object]
-) -> None:
-    client, state = app_client
-    state["principal"] = make_principal(groups=["atlas"], unixname="no-globus-here")
-
-    resp = client.get("/v1/identities", headers=_AUTH)
-
-    assert resp.status_code == 200, resp.text
-    assert _by_id(resp.json())["x509"]["linked"] is False
+    # Nothing is stored in Vault for the default principal yet.
+    assert entry["linked"] is False
 
 
 def test_x509_linked_reflects_vault_link_in_service_mode(
     app_client: tuple[TestClient, dict],
 ) -> None:
-    """voms-token-service mode: linked comes from the Vault link record, not
-    the filesystem — the pre-created ~/.globus pair must NOT count, and
+    """linked comes from the Vault link record, never the filesystem, and
     storing a link must flip the flag."""
 
     client, state = app_client
-    store = FakeX509Store()
-    provider = client.app.state.x509_provider
-    provider._vault_store = store
-    provider._voms_client = FakeVomsClient()
-    assert provider.uses_voms_service is True
+    store = client.app.state.x509_provider.vault_store
 
     resp = client.get("/v1/identities", headers=_AUTH)
     assert resp.status_code == 200, resp.text
@@ -699,16 +670,38 @@ def test_x509_proxy_expires_at_null_when_nothing_cached(
 def test_x509_proxy_expires_at_reflects_cached_proxy(
     app_client: tuple[TestClient, dict],
 ) -> None:
-    """proxy_expires_at comes from the same in-memory ProxyMeta the
-    GET /v1/x509/proxy/status endpoint serves — cheap, no Vault round trip."""
+    """proxy_expires_at comes from the Vault-stored proxy."""
 
     client, state = app_client
     subject = state["principal"].subject
-    not_after = time.time() + 3600.0
+    not_after = _seed_service_record(
+        client.app.state.x509_provider.vault_store,
+        subject,
+        passphrase="hunter2",
+        proxy_remaining=3600.0,
+    )
+
+    resp = client.get("/v1/identities", headers=_AUTH)
+
+    assert resp.status_code == 200, resp.text
+    expires_at = _by_id(resp.json())["x509"]["proxy_expires_at"]
+    assert expires_at is not None
+    parsed = datetime.fromisoformat(expires_at)
+    assert parsed.timestamp() == pytest.approx(not_after, abs=1.0)
+
+
+def test_x509_proxy_expires_at_ignores_a_stale_in_memory_meta(
+    app_client: tuple[TestClient, dict],
+) -> None:
+    """Vault is authoritative: a leftover in-memory ProxyMeta on this replica
+    must not report a proxy Vault does not hold."""
+
+    client, state = app_client
+    subject = state["principal"].subject
     meta = ProxyMeta(
         dn="/DC=ch/DC=cern/CN=Test User",
         voms_attributes=["/atlas"],
-        not_after=not_after,
+        not_after=time.time() + 3600.0,
     )
     asyncio.run(
         client.app.state.credential_cache.put(
@@ -719,10 +712,7 @@ def test_x509_proxy_expires_at_reflects_cached_proxy(
     resp = client.get("/v1/identities", headers=_AUTH)
 
     assert resp.status_code == 200, resp.text
-    expires_at = _by_id(resp.json())["x509"]["proxy_expires_at"]
-    assert expires_at is not None
-    parsed = datetime.fromisoformat(expires_at)
-    assert parsed.timestamp() == pytest.approx(not_after, abs=1.0)
+    assert _by_id(resp.json())["x509"]["proxy_expires_at"] is None
 
 
 def test_non_x509_entries_have_null_proxy_expires_at(
@@ -741,14 +731,10 @@ def test_non_x509_entries_have_null_proxy_expires_at(
 # ---------------------------------------------------------------------------
 
 
-def _flip_to_service_mode(client: TestClient):
-    """Flip the app's default legacy x509 provider into service mode with the in-memory fakes (same pattern as the service-mode linked test above)."""
-
-    store = FakeX509Store()
-    provider = client.app.state.x509_provider
-    provider._vault_store = store
-    provider._voms_client = FakeVomsClient()
-    assert provider.uses_voms_service is True
+def _x509_store(client: TestClient) -> FakeX509Store:
+    """The in-memory x509 link/proxy store conftest wires into the app."""
+    store = client.app.state.x509_provider.vault_store
+    assert isinstance(store, FakeX509Store)
     return store
 
 
@@ -784,14 +770,13 @@ def _seed_service_record(
 
 
 class TestX509LinkMode:
-    def test_null_in_legacy_mode(self, app_client: tuple[TestClient, dict]) -> None:
-        """Legacy (filesystem) linkage has no custody concept."""
+    def test_null_when_not_linked(self, app_client: tuple[TestClient, dict]) -> None:
         client, _ = app_client
         resp = client.get("/v1/identities", headers=_AUTH)
 
         assert resp.status_code == 200, resp.text
         entry = _by_id(resp.json())["x509"]
-        assert entry["linked"] is True  # conftest pre-creates the cert pair
+        assert entry["linked"] is False
         assert entry["x509_link_mode"] is None
 
     def test_null_on_non_x509_entries(
@@ -807,7 +792,7 @@ class TestX509LinkMode:
         self, app_client: tuple[TestClient, dict]
     ) -> None:
         client, state = app_client
-        store = _flip_to_service_mode(client)
+        store = _x509_store(client)
         not_after = _seed_service_record(
             store,
             state["principal"].subject,
@@ -821,8 +806,8 @@ class TestX509LinkMode:
         entry = _by_id(resp.json())["x509"]
         assert entry["linked"] is True
         assert entry["x509_link_mode"] == "auto-renew"
-        # Vault is authoritative for the expiry in service mode — the
-        # in-memory ProxyMeta cache is empty here, and that must not matter.
+        # Vault is authoritative for the expiry — the in-memory ProxyMeta
+        # cache is empty here, and that must not matter.
         assert entry["proxy_expires_at"] is not None
         parsed = datetime.fromisoformat(entry["proxy_expires_at"])
         assert parsed.timestamp() == pytest.approx(not_after, abs=1.0)
@@ -833,7 +818,7 @@ class TestX509LinkMode:
         """linked-with-renewal must read as linked even with no valid proxy
         — the next issue() renews hands-free."""
         client, state = app_client
-        store = _flip_to_service_mode(client)
+        store = _x509_store(client)
         _seed_service_record(
             store, state["principal"].subject, passphrase="hunter2", proxy_remaining=-10
         )
@@ -850,7 +835,7 @@ class TestX509LinkMode:
         self, app_client: tuple[TestClient, dict]
     ) -> None:
         client, state = app_client
-        store = _flip_to_service_mode(client)
+        store = _x509_store(client)
         not_after = _seed_service_record(
             store, state["principal"].subject, passphrase=None, proxy_remaining=3600
         )
@@ -870,7 +855,7 @@ class TestX509LinkMode:
         """The bounded consequence of remember=false: after the proxy
         lapses the entry reads as not linked, prompting a re-link."""
         client, state = app_client
-        store = _flip_to_service_mode(client)
+        store = _x509_store(client)
         _seed_service_record(
             store, state["principal"].subject, passphrase=None, proxy_remaining=-10
         )
@@ -997,6 +982,7 @@ def test_unlink_oauth21_alias_204_even_when_revocation_endpoint_fails(
                 # needs an explicit entry or the broker refuses to start.
                 {
                     "type": "x509",
+                    "service_url": "http://voms-token-service.invalid:8000",
                     "alias": "x509",
                     "targets": ["ami"],
                 },

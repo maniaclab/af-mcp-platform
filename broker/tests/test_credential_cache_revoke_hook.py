@@ -22,7 +22,6 @@ reason; the tests below pin that split.
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING
 
 import structlog.testing
 
@@ -31,10 +30,7 @@ from af_mcp_broker.credentials.base import (
     ExecutionModel,
     IssuedCredential,
 )
-from af_mcp_broker.credentials.cache import CredentialCache, ProxyMeta
-
-if TYPE_CHECKING:
-    from pathlib import Path
+from af_mcp_broker.credentials.cache import CredentialCache
 
 TARGET = "rucio"
 
@@ -127,57 +123,6 @@ async def test_janitor_expiry_removes_the_entry():
     await cache.sweep_expired()
 
     assert await cache.peek("sub-1", TARGET, min_remaining=-(10**9)) is None
-
-
-async def test_janitor_expiry_securely_deletes_x509_proxy_file(tmp_path: Path):
-    """Expiry shares revoke()'s proxy-scrubbing cleanup -- an expired x509
-    proxy's on-disk PEM must be zero-overwritten and unlinked exactly as it
-    would be on an explicit revoke, even though on_revoke is never called."""
-    proxy_file = tmp_path / "proxy.pem"
-    proxy_file.write_text("FAKE PROXY PEM\n")
-    meta = ProxyMeta(
-        dn="/DC=ch/DC=cern/CN=Test User",
-        voms_attributes=["/atlas/Role=NULL", "/atlas"],
-        not_after=time.time() - 1,
-        proxy_path=str(proxy_file),
-    )
-    cache = CredentialCache()
-    await cache.put(
-        "sub-1",
-        TARGET,
-        {"proxy_handle": "sub-1"},
-        expires_at=time.time() - 1,
-        proxy_meta=meta,
-    )
-
-    await cache.sweep_expired()
-
-    assert not proxy_file.exists()
-
-
-async def test_explicit_revoke_still_securely_deletes_x509_proxy_file(tmp_path: Path):
-    """Same proxy-scrubbing cleanup, exercised via the explicit revoke() path
-    -- pins that factoring the cleanup out for _expire() to share didn't
-    change revoke()'s own behavior."""
-    proxy_file = tmp_path / "proxy.pem"
-    proxy_file.write_text("FAKE PROXY PEM\n")
-    meta = ProxyMeta(
-        dn="/DC=ch/DC=cern/CN=Test User",
-        voms_attributes=["/atlas/Role=NULL", "/atlas"],
-        not_after=time.time() + 3600,
-        proxy_path=str(proxy_file),
-    )
-    cache = CredentialCache()
-    await cache.put(
-        "sub-1",
-        TARGET,
-        {"proxy_handle": "sub-1"},
-        proxy_meta=meta,
-    )
-
-    await cache.revoke("sub-1", TARGET)
-
-    assert not proxy_file.exists()
 
 
 async def test_janitor_expiry_logs_expired_not_revoked():

@@ -19,6 +19,7 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 import pytest
 import structlog
+from conftest import configure_x509_service_env
 from cryptography.fernet import Fernet
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
@@ -196,6 +197,7 @@ def _configure_oauth21_env(
                 # needs an explicit entry or the broker refuses to start.
                 {
                     "type": "x509",
+                    "service_url": "http://voms-token-service.invalid:8000",
                     "alias": "x509",
                     "targets": ["ami"],
                 },
@@ -1490,6 +1492,14 @@ def test_authorize_400_for_unsafe_return_url(
         resp = client.get(f"/v1/oauth/authorize/{ALIAS}", params={"return": bad_return})
 
     assert resp.status_code == 400
+
+
+@pytest.fixture(autouse=True)
+def _x509_service_env(
+    monkeypatch: pytest.MonkeyPatch, broker_signing_key_file: Path
+) -> None:
+    """The shipped "ami" service (covered by every IDENTITY_PROVIDERS override here) needs the signing key and Vault connection to boot."""
+    configure_x509_service_env(monkeypatch, broker_signing_key_file)
 
 
 def _bootstrap_no_override_env(monkeypatch: pytest.MonkeyPatch) -> None:

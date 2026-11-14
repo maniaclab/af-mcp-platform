@@ -11,8 +11,7 @@ condor-token-service consumes) minted via the existing ``BrokerTokenIssuer``.
 
 Three failure classes matter to callers: a 400 from the service means the
 passphrase was wrong (``VomsServiceBadPassphraseError`` — count it against
-the unlock rate limiter, the same distinction the legacy mint path's
-``ProxyHarvestError`` draws); a 422 means the request itself was rejected
+the unlock rate limiter); a 422 means the request itself was rejected
 for a specific, user-actionable, non-passphrase reason — an expired
 certificate, bad key file permissions, an out-of-policy ``valid``/``voms``
 — none of which the caller can fix by retrying or re-entering their
@@ -25,10 +24,9 @@ of repr/logs by construction) and is revealed only at the JSON-body build
 inside :meth:`VomsTokenServiceClient.mint`, never bound to a longer-lived
 name, never logged, and never echoed into an exception message. A JSON wire
 format means immutable ``str`` copies exist transiently during
-serialization; unlike the k8s-Job path's stdin bytearray there is no buffer
-this code owns to zero, so keeping the reveal window minimal is the whole
-discipline here (the same trade voms-token-service itself makes receiving
-it).
+serialization; there is no buffer this code owns to zero, so keeping the
+reveal window minimal is the whole discipline here (the same trade
+voms-token-service itself makes receiving it).
 """
 
 from __future__ import annotations

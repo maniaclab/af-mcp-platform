@@ -1,14 +1,11 @@
-"""Tests for X509Provider's voms-token-service mode (issue #112 follow-up).
+"""Tests for X509Provider's voms-token-service minting (issue #112 follow-up).
 
-When constructed with a ``VomsTokenServiceClient`` and a ``VaultX509Store``,
-the provider mints via the service and persists everything in Vault:
+The provider mints via the service and persists everything in Vault:
 unlock/link stores the passphrase + proxy, ``is_linked()`` asks Vault,
 issue() serves the Vault proxy and — when it's expired or near expiry —
 RE-MINTS with the stored passphrase (hands-free renewal). A bad-passphrase
 failure on re-mint unlinks and surfaces ``NeedsUnlockError`` so the portal
-prompts a re-link; infra failures do neither. The legacy k8s-Job path stays
-untouched when the service is not wired (feature-flagged coexistence —
-covered by the pre-existing tests in test_x509.py).
+prompts a re-link; infra failures do neither.
 
 The Vault store here is a lightweight in-memory fake implementing the
 ``VaultX509Store`` API (its Vault wire behavior is covered by
@@ -21,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import time
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -29,13 +26,11 @@ if TYPE_CHECKING:
     from af_mcp_broker.shared_state import WindowCount
 
 import json
-from types import SimpleNamespace as _NS
 
 import pytest
 from prometheus_client import REGISTRY
 from pydantic import SecretBytes, SecretStr
-from test_broker_issued import _make_rsa_key, _private_pem
-from test_x509 import _principal
+from x509_fakes import DN, PEM, VOMS_ATTRS, FakeVomsClient, FakeX509Store, minted
 
 from af_mcp_broker.api.credentials import _to_response
 from af_mcp_broker.credentials.base import CredentialKind
@@ -47,124 +42,30 @@ from af_mcp_broker.credentials.errors import (
     VomsServiceBadPassphraseError,
     VomsServiceMintError,
 )
-from af_mcp_broker.credentials.voms_service import MintedProxy
+from af_mcp_broker.credentials.voms_service import VomsTokenServiceClient
 from af_mcp_broker.credentials.x509 import X509Provider
-from af_mcp_broker.credentials.x509_vault import StoredX509Credential
-from af_mcp_broker.vault_kv import VaultKV
+from af_mcp_broker.identity import Principal
 
-_PEM = "-----BEGIN CERTIFICATE-----\nFAKE\n-----END CERTIFICATE-----\n"
-_DN = "/DC=ch/DC=cern/CN=Test User"
-_VOMS_ATTRS = ["/atlas/Role=NULL", "/atlas"]
-
-
-class FakeX509Store:
-    """In-memory stand-in for ``VaultX509Store`` (same public API)."""
-
-    def __init__(self) -> None:
-        self.records: dict[str, StoredX509Credential] = {}
-        self.deleted: list[str] = []
-
-    async def store_link(
-        self,
-        subject: str,
-        *,
-        passphrase: SecretStr | None,
-        unixname: str,
-        uid: int,
-        gid: int,
-    ) -> None:
-        self.records[subject] = StoredX509Credential(
-            passphrase=passphrase, unixname=unixname, uid=uid, gid=gid
-        )
-
-    async def get_link(self, subject: str) -> StoredX509Credential | None:
-        record = self.records.get(subject)
-        if record is None or not record.has_link:
-            return None
-        return record
-
-    async def get(self, subject: str) -> StoredX509Credential | None:
-        return self.records.get(subject)
-
-    async def store_proxy(
-        self,
-        subject: str,
-        *,
-        pem: str,
-        dn: str,
-        voms_attributes: list[str],
-        not_after: float,
-        nickname: str | None = None,
-    ) -> None:
-        base = self.records.get(subject, StoredX509Credential())
-        self.records[subject] = base.model_copy(
-            update={
-                "proxy_pem": SecretStr(pem),
-                "dn": dn,
-                "voms_attributes": list(voms_attributes),
-                "not_after": not_after,
-                "nickname": nickname,
-            }
-        )
-
-    async def get_proxy(
-        self, subject: str, min_remaining: float = 0.0
-    ) -> StoredX509Credential | None:
-        record = self.records.get(subject)
-        if record is None or record.proxy_pem is None or record.not_after is None:
-            return None
-        if record.not_after - time.time() < min_remaining:
-            return None
-        return record
-
-    async def clear_proxy(self, subject: str) -> None:
-        record = self.records.get(subject)
-        if record is None:
-            return
-        self.records[subject] = record.model_copy(
-            update={
-                "proxy_pem": None,
-                "dn": None,
-                "voms_attributes": [],
-                "not_after": None,
-            }
-        )
-
-    async def delete(self, subject: str) -> None:
-        self.records.pop(subject, None)
-        self.deleted.append(subject)
+_PEM = PEM
+_DN = DN
+_VOMS_ATTRS = VOMS_ATTRS
 
 
-class FakeVomsClient:
-    """Recording fake for ``VomsTokenServiceClient.mint``.
-
-    ``outcome`` is a ``MintedProxy`` to return or an exception to raise;
-    every call's kwargs are recorded in ``calls``.
-    """
-
-    def __init__(
-        self, outcome: MintedProxy | Exception | None = None, delay: float = 0.0
-    ) -> None:
-        self.outcome = outcome or _minted()
-        self.delay = delay
-        self.calls: list[dict[str, Any]] = []
-
-    async def mint(self, **kwargs: Any) -> MintedProxy:
-        self.calls.append(kwargs)
-        if self.delay:
-            await asyncio.sleep(self.delay)
-        if isinstance(self.outcome, Exception):
-            raise self.outcome
-        return self.outcome
-
-
-def _minted(remaining: float = 3600.0, nickname: str | None = None) -> MintedProxy:
-    return MintedProxy(
-        pem=_PEM,
-        dn=_DN,
-        voms_attributes=list(_VOMS_ATTRS),
-        not_after=time.time() + remaining,
-        nickname=nickname,
+def _principal(
+    unixname: str | None,
+    *,
+    uid: int | None = 50123,
+    gid: int | None = 5000,
+    subject: str = "user-123",
+) -> Principal:
+    return Principal(
+        subject=subject,
+        email="user@example.org",
+        uid=uid,
+        gid=gid,
+        unixname=unixname,
+        groups=["af-atlas-users"],
+        raw_token=SecretStr("fake-token"),
     )
 
 
@@ -177,7 +78,7 @@ def _make_provider(
     store = store if store is not None else FakeX509Store()
     cache = cache if cache is not None else CredentialCache()
     # Only the posix_*_attribute names (PosixIdentityRequiredError's message)
-    # are ever read from settings in service mode — no filesystem paths.
+    # are ever read from settings.
     settings = SimpleNamespace(
         posix_uid_attribute="uid",
         posix_gid_attribute="gid",
@@ -186,7 +87,6 @@ def _make_provider(
     provider = X509Provider(
         settings=settings,  # type: ignore[arg-type]
         cache=cache,
-        backends=[],
         voms_client=voms_client,  # type: ignore[arg-type]
         vault_store=store,  # type: ignore[arg-type]
     )
@@ -224,7 +124,7 @@ class TestIsLinked:
 
     async def test_ignores_the_filesystem_entirely(self) -> None:
         """settings=None would crash any ~/.globus path construction — the
-        Vault answer must be authoritative in service mode."""
+        Vault answer must be authoritative."""
         provider, _, store, _ = _make_provider()
         await _seed_link(store)
         principal = _principal(None, uid=None, gid=None)  # no POSIX identity
@@ -272,7 +172,7 @@ class TestLinkFlow:
         account, distinct from their AF unixname) must survive into the
         Vault record so the redeem endpoint can serve it downstream."""
         provider, _, store, _ = _make_provider(
-            voms_client=FakeVomsClient(_minted(nickname="jdoe"))
+            voms_client=FakeVomsClient(minted(nickname="jdoe"))
         )
         principal = _principal("auser")
 
@@ -425,7 +325,7 @@ class TestStoredProxyAndRenewal:
 
     async def test_vault_proxy_serves_a_principal_without_posix_identity(self) -> None:
         """POSIX identity isn't needed just to serve an already-minted
-        credential — same rule as the legacy path's cache hit."""
+        credential — same rule as the in-memory cache hit."""
         provider, _, store, _ = _make_provider()
         await _seed_link(store)
         await store.store_proxy(
@@ -466,7 +366,7 @@ class TestStoredProxyAndRenewal:
 
     async def test_hands_free_renewal_stores_the_renewed_nickname(self) -> None:
         provider, _, store, _ = _make_provider(
-            voms_client=FakeVomsClient(_minted(nickname="jdoe"))
+            voms_client=FakeVomsClient(minted(nickname="jdoe"))
         )
         await _seed_link(store)
         await store.store_proxy(
@@ -527,8 +427,7 @@ class TestStoredProxyAndRenewal:
 
     async def test_no_link_and_no_posix_identity_raises_posix_error(self) -> None:
         """An unlinked principal with no POSIX identity can never complete a
-        link, so say that instead of asking for a passphrase (same ordering
-        as the legacy path)."""
+        link, so say that instead of asking for a passphrase."""
         provider, _, _, _ = _make_provider()
 
         with pytest.raises(PosixIdentityRequiredError):
@@ -578,7 +477,7 @@ class TestRevoke:
 class TestAppWiring:
     @pytest.fixture
     def voms_service_env(self, monkeypatch: pytest.MonkeyPatch) -> Callable[[], None]:
-        """Returns a callable that points the app at an explicit service-mode x509 entry + Vault without either existing (Vault's startup trial auth is stubbed out).
+        """Returns a callable that points the app at an explicit x509 entry with a voms-token-service URL.
 
         A callable, applied from inside the test body -- not a plain
         fixture -- so its ``monkeypatch.setenv("IDENTITY_PROVIDERS", ...)``
@@ -591,11 +490,7 @@ class TestAppWiring:
         need to override SERVICES_FILE.
         """
 
-        async def _fake_authenticate(self) -> str:
-            return "vault-test-token"
-
         def _apply() -> None:
-            monkeypatch.setattr(VaultKV, "_authenticate", _fake_authenticate)
             monkeypatch.setenv(
                 "IDENTITY_PROVIDERS",
                 json.dumps(
@@ -609,8 +504,6 @@ class TestAppWiring:
                     ]
                 ),
             )
-            monkeypatch.setenv("VAULT_ADDR", "https://vault.invalid")
-            monkeypatch.setenv("VAULT_AUTH_ROLE", "af-mcp-broker")
 
         return _apply
 
@@ -620,8 +513,8 @@ class TestAppWiring:
         monkeypatch: pytest.MonkeyPatch,
         app_client_factory,
     ) -> None:
-        """Minting at the service needs broker-signed identity tokens: a
-        service URL with no signing key is fail-closed at boot (same
+        """Minting at the service needs broker-signed identity tokens: an
+        x509 entry with no signing key is fail-closed at boot (same
         reasoning as the broker-issued provider check)."""
         voms_service_env()
         monkeypatch.delenv("BROKER_SIGNING_KEY_FILE", raising=False)
@@ -631,41 +524,26 @@ class TestAppWiring:
         ):
             pass  # pragma: no cover - boot must fail before yielding
 
-    def test_boot_wires_service_mode(
+    def test_boot_wires_voms_client_and_vault_store(
         self,
         voms_service_env: Callable[[], None],
-        monkeypatch: pytest.MonkeyPatch,
-        tmp_path,
         app_client_factory,
     ) -> None:
-
         voms_service_env()
-        key_file = tmp_path / "signing-key.pem"
-        key_file.write_bytes(_private_pem(_make_rsa_key()))
-        monkeypatch.setenv("BROKER_SIGNING_KEY_FILE", str(key_file))
-        monkeypatch.setenv("BROKER_PUBLIC_ORIGIN", "https://mcp.example.com")
 
         with app_client_factory() as (client, _):
             provider = client.app.state.x509_provider
-            assert provider.uses_voms_service is True
-            assert provider.vault_store is not None
-
-    def test_boot_without_service_url_stays_in_legacy_mode(
-        self, app_client_factory
-    ) -> None:
-        with app_client_factory() as (client, _):
-            provider = client.app.state.x509_provider
-            assert provider.uses_voms_service is False
-            assert provider.vault_store is None
+            assert isinstance(provider.voms_client, VomsTokenServiceClient)
+            assert isinstance(provider.vault_store, FakeX509Store)
 
 
 # ---------------------------------------------------------------------------
-# API response rendering for the new credential kind
+# API response rendering for the redeem credential kind
 # ---------------------------------------------------------------------------
 
 
 class TestToResponse:
-    async def test_redeem_kind_renders_proxy_handle_without_a_path(self) -> None:
+    async def test_redeem_kind_renders_proxy_handle(self) -> None:
 
         provider, _, _, _ = _make_provider()
         cred = await provider.issue(
@@ -676,7 +554,6 @@ class TestToResponse:
 
         assert response.kind == "x509_proxy_redeem"
         assert response.proxy_handle == cred.payload["proxy_handle"]
-        assert response.proxy_path is None
         assert response.token is None
 
 
@@ -689,19 +566,6 @@ class TestVomsClientProperty:
     async def test_exposed_in_service_mode(self) -> None:
         provider, voms_client, _, _ = _make_provider()
         assert provider.voms_client is voms_client
-
-    async def test_none_in_legacy_mode(self) -> None:
-
-        legacy = X509Provider(
-            settings=_NS(  # type: ignore[arg-type]
-                posix_uid_attribute="uid",
-                posix_gid_attribute="gid",
-                posix_unixname_attribute="unixname",
-            ),
-            cache=CredentialCache(),
-            backends=[],
-        )
-        assert legacy.voms_client is None
 
 
 # ---------------------------------------------------------------------------
@@ -765,7 +629,7 @@ class TestCustodyConsent:
         eagerly (unlinking stays a deliberate act). Simulated with a mint
         whose proxy is already past expiry, so the in-memory cache and the
         Vault record lapse together the way they do in real time."""
-        voms_client = FakeVomsClient(_minted(remaining=-10))
+        voms_client = FakeVomsClient(minted(remaining=-10))
         provider, _, store, _ = _make_provider(voms_client=voms_client)
         principal = _principal("auser")
         await provider.issue(
@@ -855,30 +719,5 @@ class TestLinkStatus:
         status = await provider.link_status(_principal("auser"))
 
         assert status.linked is False
-        assert status.mode is None
-        assert status.proxy_not_after is None
-
-    async def test_legacy_mode_reports_no_mode(self, tmp_path) -> None:
-        """Legacy (filesystem) linkage has no custody concept: linked comes
-        from the ~/.globus pair, mode/expiry stay None."""
-
-        globus = tmp_path / "auser" / ".globus"
-        globus.mkdir(parents=True)
-        (globus / "usercert.pem").write_text("fake-cert")
-        (globus / "userkey.pem").write_text("fake-key")
-        provider = X509Provider(
-            settings=_NS(  # type: ignore[arg-type]
-                home_root=str(tmp_path),
-                posix_uid_attribute="uid",
-                posix_gid_attribute="gid",
-                posix_unixname_attribute="unixname",
-            ),
-            cache=CredentialCache(),
-            backends=[],
-        )
-
-        status = await provider.link_status(_principal("auser"))
-
-        assert status.linked is True
         assert status.mode is None
         assert status.proxy_not_after is None
