@@ -6,7 +6,7 @@
     "dev": "astro dev",
     "build": "astro build && node scripts/sync-csp-hashes.mjs",
     "preview": "astro preview",
-    "check": "astro check",
+    "check": "astro check && vue-tsc --noEmit",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format-check": "prettier --check .",
@@ -29,7 +29,6 @@
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.9",
-    "@eslint/compat": "^2.1.0",
     "@types/node": "^26.1.2",
     "@typescript-eslint/parser": "^8.65.0",
     "@vitejs/plugin-vue": "^6.0.8",
@@ -42,6 +41,7 @@
     "prettier-plugin-astro": "^0.14.1",
     "prettier-plugin-tailwindcss": "^0.8.1",
     "typescript": "^5.4.0",
-    "vitest": "^4.1.4"
+    "vitest": "^4.1.4",
+    "vue-tsc": "^3.3.14"
   }
 }
