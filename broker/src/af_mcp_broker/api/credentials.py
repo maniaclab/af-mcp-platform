@@ -71,7 +71,7 @@ class IssuedCredential(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     target: str
-    kind: str  # "bearer" | "x509_proxy_ref" | "none"
+    kind: str  # a CredentialKind value
     credential_type: str  # provider cred_class
     # ISO-8601; both None when the issuing AS reported no expiry
     # (non-expiring oauth21 tokens, issue #344)

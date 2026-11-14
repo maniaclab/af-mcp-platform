@@ -27,10 +27,12 @@ export function maintenanceBannerText(status: MaintenanceStatus | null): string 
 
 /**
  * Extracts FastAPI's `{"detail": "..."}` from an APIError body, or null when
- * the body isn't that shape (e.g. an HTML error page from a proxy hop). Same
- * helper as x509Identity.ts's own apiErrorDetail() — duplicated rather than
- * shared since each lives beside its own single call site and neither module
- * imports from the other.
+ * the body isn't that shape (e.g. an HTML error page from a proxy hop). A
+ * local copy of the detail-only part of x509Identity.ts's exported
+ * apiErrorDetail(), which also appends the response's `correlation_id` and is
+ * shared by x509Identity.ts, krb5Identity.ts, servicexIdentity.ts and
+ * credmonStatus.ts. This module has a single call site and does not import
+ * from x509Identity.ts.
  */
 function apiErrorDetail(err: APIError): string | null {
   try {
