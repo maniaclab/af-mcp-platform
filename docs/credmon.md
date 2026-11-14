@@ -70,8 +70,7 @@ The broker refuses to boot when credmon is enabled without a signing key,
 without Vault (users are enumerated from the Vault-backed identity stores,
 and replicas coordinate through a Vault lease), without the Keycloak
 principal directory (credd keys credentials by POSIX unixname), or with an
-unreadable htcondor-api token file. A legacy-mode x509 entry (no
-`serviceUrl`) has no Vault store, so x509 users are never enumerated there.
+unreadable htcondor-api token file.
 
 ### The storer's htcondor-api token
 

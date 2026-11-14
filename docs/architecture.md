@@ -280,13 +280,10 @@ externally-created SealedSecret the chart never mints itself.
 
 The broker's effective privilege depends on configuration:
 
-- **x509 minting mode.** With `serviceUrl` set on an `x509`
-  `identityProviders` entry, proxy minting is delegated to
-  voms-token-service and the broker pod needs no Job-creation RBAC. In the
-  legacy mode (`serviceUrl` omitted) the broker's own ServiceAccount
-  creates ephemeral k8s Jobs that read users' NFS `~/.globus` directories,
-  which requires `rbac.create` (batch/jobs create + pods/attach) on the
-  broker pod itself — the higher-trust configuration.
+- **x509 minting.** Proxy minting is delegated to voms-token-service (the
+  `serviceUrl` of each `x509` `identityProviders` entry), so the broker pod
+  mounts no user homes and holds no Kubernetes RBAC: only voms-token-service
+  reads users' `~/.globus` directories.
 - **Credential execution model** (`ExecutionModel` in
   `broker/src/af_mcp_broker/credentials/base.py`). `DELEGATED` providers
   forward a per-user credential — user-tier posture. `ON_BEHALF` providers
@@ -312,8 +309,8 @@ Extracts and validates the AF principal from the incoming request.
   `keycloak_dependency`) — there's no ForwardAuth proxy forwarding it; every
   caller (portal SPA, Claude Desktop, `curl`) presents its own Bearer. See
   [docs/auth.md](auth.md) for the per-client-identity breakdown.
-- Resolves the POSIX `uid` / `gid` for the principal (needed for NFS-scoped
-  credential operations).
+- Resolves the POSIX `uid` / `gid` for the principal (needed for x509
+  minting, which voms-token-service performs as that user).
 - Produces a `Principal` dataclass that flows through the rest of the call.
 
 ### 2. Authorization
@@ -395,7 +392,7 @@ Two axes define the provider matrix:
 | | **Short-lived mint** | **Stored brokered token** |
 |---|---|---|
 | **IAM-based** | Keycloak token exchange (AF-internal only) | `GET /realms/<realm>/broker/<alias>/token` → ATLAS IAM token |
-| **x509/VOMS** | Ephemeral k8s Job (NFS subPath mount of `~/.globus`) | N/A — always minted fresh |
+| **x509/VOMS** | voms-token-service `POST /v1/mint` (passphrase supplied at link time), result stored in Vault | The Vault-stored proxy, renewed hands-free with the stored passphrase |
 
 The `CredentialCache` (in-process, async-safe) stores minted credentials keyed by
 `(subject, target)` for their lifetime, avoiding redundant minting. See
@@ -492,9 +489,10 @@ attacker and a user's x509 proxy. `CredentialCache` (`credentials/cache.py`)
 counts actual failed unlock attempts — a bad passphrase or a minting-backend
 failure, recorded via `record_failed_unlock()` — per uid and raises
 `UnlockRateLimitError` once a threshold is exceeded within a fixed window, to
-slow brute-force guessing. `X509Provider.mint()` calls
-`cache.check_unlock_rate_limit()` before doing any minting work, so a
-locked-out uid never reaches the k8s Job / subprocess path (`x509.py`).
+slow brute-force guessing. `X509Provider` calls
+`cache.check_unlock_rate_limit()` before sending a passphrase to
+voms-token-service, so a locked-out uid never reaches the service
+(`x509.py`).
 
 The counters live in the shared state store, so the budget is per uid across
 all replicas rather than per replica; see
@@ -590,8 +588,8 @@ Structured log (structlog + JSON) of every tool invocation, including:
 - resolved VOMS nickname (`nickname`): on x509 proxy-release records, the
   CERN/Rucio account the released proxy authenticates as — the grid identity
   the credential is usable as, distinct from the AF principal in
-  `principal_sub`/`principal_uid`; `null` on every non-x509 record and on the
-  legacy redeem path, whose `ProxyMeta` cache carries no nickname (issue maniaclab/af-mcp-platform#199)
+  `principal_sub`/`principal_uid`; `null` on every non-x509 record and for a
+  proxy whose VOMS attributes carry no nickname (issue maniaclab/af-mcp-platform#199)
 
 Every tool invocation means every one: calls to the gateway's own `af_*`
 methods are audited and metered too, as service `gateway_service` (the builtin
@@ -625,7 +623,7 @@ call above serves them without extra wiring:
 | `af_mcp_tool_invocations_denied_total` | `backend`, `action_type` | same, denials only |
 | `af_mcp_tool_invocations_unmapped_total` | *(none)* | same, when a tool name matches no registered backend prefix |
 | `af_mcp_credential_cache_hits_total` / `..._misses_total` | `target` | `credentials/cache.py`'s `CredentialCache.get()` |
-| `af_mcp_x509_proxy_mints_total` | *(none)* | `credentials/x509.py`'s `HomeDirVomsBackend._store_proxy_and_parse()` |
+| `af_mcp_x509_proxy_mints_total` | *(none)* | `credentials/x509.py`'s `X509Provider._store_minted_proxy()` |
 
 Cardinality policy: no metric above carries a user identifier (username,
 unixname, subject, or otherwise) — ever. `identity` was on an early draft of

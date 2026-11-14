@@ -76,33 +76,28 @@ Credential subsystem
     │       *** THIS TOKEN IS NOT ACCEPTED BY atlas-auth.cern.ch ***
     │
     └── Path C: x509/VOMS proxy (for AMI, grid jobs, SRM, FTS)
-            Linked once at the portal (user passphrase). Two mint paths
-            coexist behind the x509 identity_providers entry's
-            `service_url` (see the x509 row below):
-
-            • voms-token-service (service_url set): the broker asks
-              voms-token-service — the only component that mounts user
-              homes — to run voms-proxy-init with the passphrase, then
-              persists BOTH the proxy and the Globus passphrase in
-              Vault/OpenBao (the issue #112 custodianship decision). The
-              stored passphrase enables HANDS-FREE RENEWAL: an expired
-              stored proxy is re-minted on the user's behalf with no
-              interaction. If that re-mint fails on a bad passphrase
-              (the user changed their Globus password), the identity is
-              unlinked and the portal prompts a re-link.
-
-            • legacy ephemeral-Job NFS-subPath path (service_url unset):
-              minted per unlock into the broker's tmpfs, nothing
-              persisted — exactly the pre-voms-token-service behavior.
+            Linked once at the portal (user passphrase). Minting goes
+            through voms-token-service, named by the x509
+            identity_providers entry's `service_url` (see the x509 row
+            below): the broker asks voms-token-service — the only
+            component that mounts user homes — to run voms-proxy-init
+            with the passphrase, then persists BOTH the proxy and the
+            Globus passphrase in Vault/OpenBao (the issue #112
+            custodianship decision). The stored passphrase enables
+            HANDS-FREE RENEWAL: an expired stored proxy is re-minted on
+            the user's behalf with no interaction. If that re-mint fails
+            on a bad passphrase (the user changed their Globus
+            password), the identity is unlinked and the portal prompts a
+            re-link.
 
             An x509 backend (auth_type: x509) is called over /mcp with
             an AF Broker Identity Token (aud = the backend) and redeems
             the caller's proxy itself via
             POST /v1/credentials/x509/redeem — issue #112's
-            "backend calls back" wire format. In voms-token-service mode
-            redeem serves the Vault-stored proxy, renewing it hands-free
-            in the same request when expired (failed renewals write
-            outcome=error audit records). The redeem response is the
+            "backend calls back" wire format. Redeem serves the
+            Vault-stored proxy, renewing it hands-free in the same
+            request when expired (failed renewals write outcome=error
+            audit records). The redeem response is the
             ONE deliberate exception to "the PEM never leaves the broker":
             scoped to authenticated backend targets, released once per
             request over in-cluster TLS, audited as a distinct
@@ -128,9 +123,9 @@ done:
 | | `keycloak-brokered` | `oauth21-direct` | `x509` |
 |---|---|---|---|
 | Handled by | `OIDCProvider` | `OAuth21Provider` | `X509Provider` |
-| Backend credential source | Keycloak's stored-broker-token pattern — the user links via `kc_action=LINK_IDP`, Keycloak stores the resulting token internally | The broker itself is an OAuth 2.1 client to the backend's own authorization server (PKCE + CIMD `client_id`, see `docs/architecture.md#client-id-metadata-document-cimd`; or, for an AS with a static client registry such as JupyterHub, a per-provider `client_id`, optionally confidential with `client_secret_post` — see [Adding a Service](adding-a-service.md#confidential-oauth21-direct-clients)) | A VOMS proxy minted from the user's grid certificate — the user enters their Globus passphrase once at the portal; with a `service_url`, voms-token-service mints and Vault persists (hands-free renewal); without one, the legacy ephemeral-Job path mints into tmpfs |
-| Broker retrieves it via | `GET /realms/<realm>/broker/<alias>/token` | `TokenStore.get(sub, alias)`, refreshing on demand near expiry (a token with no refresh token is served until shortly before expiry, then needs a re-link — see [Token Lifetime and Refresh](#token-lifetime-and-refresh)) | `VaultX509Store.get_proxy(sub)`, re-minting hands-free with the stored passphrase when expired (service mode) |
-| Credential persistence | Keycloak (broker holds no copy) | The broker's own `TokenStore` (in-memory or Vault-backed — see PR3) | Vault KV-v2 (service mode) / broker tmpfs (legacy) |
+| Backend credential source | Keycloak's stored-broker-token pattern — the user links via `kc_action=LINK_IDP`, Keycloak stores the resulting token internally | The broker itself is an OAuth 2.1 client to the backend's own authorization server (PKCE + CIMD `client_id`, see `docs/architecture.md#client-id-metadata-document-cimd`; or, for an AS with a static client registry such as JupyterHub, a per-provider `client_id`, optionally confidential with `client_secret_post` — see [Adding a Service](adding-a-service.md#confidential-oauth21-direct-clients)) | A VOMS proxy minted from the user's grid certificate — the user enters their Globus passphrase once at the portal; voms-token-service (the entry's required `service_url`) mints and Vault persists (hands-free renewal) |
+| Broker retrieves it via | `GET /realms/<realm>/broker/<alias>/token` | `TokenStore.get(sub, alias)`, refreshing on demand near expiry (a token with no refresh token is served until shortly before expiry, then needs a re-link — see [Token Lifetime and Refresh](#token-lifetime-and-refresh)) | `VaultX509Store.get_proxy(sub)`, re-minting hands-free with the stored passphrase when expired |
+| Credential persistence | Keycloak (broker holds no copy) | The broker's own `TokenStore` (in-memory or Vault-backed — see PR3) | Vault KV-v2 |
 | Delivery to the backend | `Authorization: Bearer` header injected by the aggregator | `Authorization: Bearer` header injected by the aggregator | **Backend-side redemption, not header injection**: the aggregator injects only an AF Broker Identity Token (`aud` = the backend), and the backend redeems the proxy PEM itself via `POST /v1/credentials/x509/redeem` — issue maniaclab/af-mcp-platform#112's "backend calls back" wire format, chosen so proxy material never transits the aggregator |
 | Requires backend to be | An OIDC-compatible IdP Keycloak can broker to | An OAuth 2.1 authorization server (no OIDC discovery needed) | An MCP server that verifies broker JWTs and redeems proxies (ami-mcp's `--auth broker`, via `af-credentials`), marked `auth_type: x509` in `services.yaml` |
 | Portal `link_url` | Always `null` — the portal re-runs its own client-side `startIdpLink()` flow | Full URL to the broker's own `/v1/oauth/authorize/{alias}` | Always `null` — `link_mechanism: "passphrase"`, an in-portal form POSTing the Globus passphrase to `/v1/x509/proxy` |
@@ -156,22 +151,17 @@ flag is what drives the aggregator's identity-JWT injection branch and the
 redeem endpoint's audience gate. The broker refuses to start when the two
 drift in either direction (an x509 backend no entry targets, or an entry
 targeting a non-x509 backend) — **there is no synthesized fallback**: every
-`auth_type: x509` backend must be covered by an explicit entry, even a bare
-legacy one (`service_url` omitted). A service-mode entry (`service_url`
-set) also requires the broker signing key — the same fail-closed reasoning
-as the broker-issued/condor-token checks; a keyless legacy entry instead
-gets a loud startup warning, since the shipped `services.yaml` has always
-declared an x509 backend. Multiple x509 entries with different
-voms-token-service URLs/VOs are supported.
-
-The global `VOMS_TOKEN_SERVICE_URL` env var (and its
-`VOMS_TOKEN_SERVICE_AUDIENCE`/`_VOMS`/`_VALID` companions) is removed —
-declare an `identity_providers` entry of type `x509` instead (see
-[x509 deployment notes](x509-deployment-notes.md)).
+`auth_type: x509` backend must be covered by an explicit entry, and every
+entry names its voms-token-service with a required `service_url`. Every
+x509 entry also requires the broker signing key and the Vault connection:
+boot fails naming the affected services when either is missing, the same
+fail-closed reasoning as the broker-issued/condor-token checks (see
+[AF Broker Identity Token](#af-broker-identity-token-issue-162)). Multiple x509 entries
+with different voms-token-service URLs/VOs are supported.
 
 `GET /v1/identities` surfaces each entry like any other, with `linked`
 probed from `X509Provider.is_linked()` and `proxy_expires_at` from the
-cached proxy metadata. Every entry also carries `link_mechanism`, which
+Vault-stored proxy. Every entry also carries `link_mechanism`, which
 tells the portal how a linking flow starts: `"redirect"`
 (keycloak-brokered, oauth21-direct), `"passphrase"` (x509 — there is no URL
 to redirect to, so `link_url` stays null), or `"none"` (the AF-native types
@@ -203,8 +193,6 @@ while it is down, the other replicas keep their entries until the TTL expires.
 | `keycloak-brokered` | none — the link happens in Keycloak and the broker only fetches the brokered token later | not dropped; relies on the 30 s negative-entry TTL |
 | `broker-issued`, `condor-token`, service account | none — always linked | nothing to drop |
 
-A legacy-mode x509 link made by placing files in `~/.globus` is likewise
-invisible to the broker and relies on the TTL until the first proxy mint.
 A routine token refresh (`CredentialCache.put`) is not a link event and does
 not invalidate anything.
 
@@ -706,12 +694,13 @@ explicit `audience` and the rename is safe.
 
 The Secret must carry the RS256 private key PEM under the key name
 `signing-key.pem`; the chart mounts it read-only and points
-`BROKER_SIGNING_KEY_FILE` at it. **Fail-closed:** a `broker-issued` entry
-with no signing key configured refuses to boot (a startup `RuntimeError`,
-consistent with the `unreachable_permissions`/`ungated_backends` checks)
-rather than failing at first request; a broker with neither configured
-boots cleanly with the feature absent (`/.well-known/jwks.json` answers
-503). A service with `requires_posix` whose caller has no POSIX identity
+`BROKER_SIGNING_KEY_FILE` at it. **Fail-closed:** any entry that needs
+broker-signed tokens (`broker-issued`, `condor-token`, `krb5-token`,
+`servicex-token`, `x509`) with no signing key configured refuses to boot (a
+startup `RuntimeError` naming the affected services, consistent with the
+`unreachable_permissions`/`ungated_backends` checks) rather than failing at
+first request; a broker with none of those entries boots cleanly with the
+feature absent (`/.well-known/jwks.json` answers 503). A service with `requires_posix` whose caller has no POSIX identity
 gets an actionable 404 naming the backend at issue time — the same
 point-of-use requirement as x509's `PosixIdentityRequiredError`.
 
@@ -1015,7 +1004,7 @@ with a required `service_url` (the service's base URL — the provider
 appends `/v1/mint`) and an `audience` defaulting to
 `krb5-token-service`. **Unlike the mint-only version of this section,
 Vault connection settings are now unconditionally required**: a
-`krb5-token` entry has no legacy/service-mode split the way x509 does —
+`krb5-token` entry always requires its Vault store —
 `service_url` is mandatory on every entry — and since a given entry
 can't declare ahead of time whether any caller will ever link a keytab,
 `Settings._validate_vault_config` (`config.py`) requires
@@ -1601,7 +1590,7 @@ inspect.
 | Broker-issued PAT (most MCP clients) | 90 days by default, or never-expiring by explicit opt-in | Not refreshed — revoke and re-mint (manually, or via [MCP OAuth discovery](#mcp-oauth-discovery-pat-bootstrap-issue-140) again) |
 | ATLAS IAM token (brokered) | 1 hour | Broker re-fetches from Keycloak on cache miss |
 | `oauth21-direct` backend token | Whatever the backend AS's `expires_in` says; e.g. 14 days for JupyterHub's default. **No expiry** when the response omits `expires_in` (Indico, GitHub OAuth Apps): the token is treated as valid until a backend rejects it | With a refresh token: `refresh_token` grant once under 5 minutes (or the caller's `min_remaining_seconds`) remain. **Without one** (JupyterHub never issues them): served as-is until 60 seconds before expiry, after which the account shows as unlinked and the user re-links from the portal's Identities page. A token with no expiry is never refreshed. In every case, a backend answering HTTP 401 marks the token rejected (see below) |
-| x509 VOMS proxy | 12–192 hours (configurable) | voms-token-service mode: hands-free re-mint with the Vault-stored passphrase when the stored proxy expires. Legacy mode: re-mint Job on the next portal unlock |
+| x509 VOMS proxy | 12–192 hours (configurable) | Hands-free re-mint with the Vault-stored passphrase when the stored proxy expires |
 
 The `CredentialCache` stores each credential with its `expires_at` timestamp.
 A background janitor coroutine sweeps the cache every 60 seconds and evicts
@@ -2164,9 +2153,9 @@ JWT-side source of POSIX identity at all.
 no POSIX attributes to authenticate a request: a principal the directory has
 no `uid`/`gid`/`unixname` for still authenticates successfully, with those
 fields simply left `None` on the resulting `Principal`. Only x509/VOMS proxy
-minting (`credentials/x509.py`) genuinely needs a POSIX identity — the mint
-Job's NFS home subPath and `runAsUser`/`runAsGroup` all require real
-uid/gid/unixname values — and that requirement is enforced at that one point
+minting (`credentials/x509.py`) genuinely needs a POSIX identity — the broker
+asserts uid/gid/unixname to voms-token-service, which mints as that user
+against their home directory — and that requirement is enforced at that one point
 of use: a principal with no POSIX identity who reaches an x509-backed target
 gets a clear, actionable error naming the backend ("this backend needs a
 grid identity your account doesn't have") rather than being refused at the

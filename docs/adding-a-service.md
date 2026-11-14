@@ -75,12 +75,10 @@ the portal's Identities page — no separate mapping to keep in sync.
   (Step 1); the broker refuses to start when the entry's `targets` and the
   `auth_type: x509` services drift in either direction — including when a
   service has no explicit entry at all, since there is no synthesized
-  fallback. With `serviceUrl` set it also requires the broker signing key
+  fallback. The entry's `serviceUrl` (the voms-token-service base URL) is
+  required, as are the broker signing key
   (`broker.identityToken.existingSigningKeySecret`) and the shared Vault
-  connection (`broker.oauth21.tokenStore.vault`) — omit `serviceUrl` for the
-  legacy ephemeral-Job mint path (signing key omitted there just warns).
-  This entry replaces the removed global
-  `broker.env.VOMS_TOKEN_SERVICE_URL` — see
+  connection (`broker.oauth21.tokenStore.vault`) — see
   [x509 deployment notes](x509-deployment-notes.md).
 
   ```yaml

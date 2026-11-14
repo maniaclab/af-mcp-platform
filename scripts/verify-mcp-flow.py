@@ -79,10 +79,9 @@ _HINTS: dict[str, str] = {
     ),
     "requires an x509/VOMS proxy, which needs a POSIX": (
         "x509 services are callable via /mcp (issue #112), but this "
-        "account has no POSIX/grid identity for the legacy ephemeral-Job "
-        "mint path. If a voms-token-service identity_providers entry "
-        "covers this service, that path doesn't need POSIX at all -- see "
-        "docs/x509-deployment-notes.md. Otherwise contact your Analysis "
+        "account has no POSIX/grid identity, which voms-token-service "
+        "needs to mint a proxy as you -- see "
+        "docs/x509-deployment-notes.md. Contact your Analysis "
         "Facility operator to request a grid identity."
     ),
     "No service registered for tool": (
