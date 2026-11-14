@@ -52,6 +52,7 @@ extend-select = [
   "ERA",  # eradicate
   "EXE",  # flake8-executable
   "FA",   # flake8-future-annotations
+  "FBT",  # flake8-boolean-trap
   "FLY",  # flynt
   "FURB", # refurb
   "G",    # flake8-logging-format
@@ -112,6 +113,11 @@ ignore = [
   # no event to await, and the timeout bounds the wait.
   "ASYNC109",
   "ASYNC110",
+  # flake8-boolean-trap: bool parameters in tests are pytest-parametrized
+  # values (passed by name through the test signature) or local helper flags,
+  # not a public API where a positional bool hides intent at call sites.
+  "FBT001",
+  "FBT002",
 ]
 # spikes/ are exploratory validation scripts, not production code — allow
 # prints, broad excepts, and other conveniences useful in scratch work.

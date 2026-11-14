@@ -954,6 +954,7 @@ class X509Provider(CredentialProvider):
         target: str,
         min_remaining_seconds: int = 300,
         passphrase: SecretBytes | None = None,
+        *,
         remember: bool = True,
     ) -> IssuedCredential:
         """Return an x509 proxy reference credential.
@@ -996,7 +997,7 @@ class X509Provider(CredentialProvider):
 
         if self.uses_voms_service:
             return await self._issue_via_service(
-                principal, target, min_remaining_seconds, passphrase, remember
+                principal, target, min_remaining_seconds, passphrase, remember=remember
             )
 
         if principal.uid is None or principal.gid is None or principal.unixname is None:
@@ -1058,6 +1059,7 @@ class X509Provider(CredentialProvider):
         target: str,
         min_remaining_seconds: int,
         passphrase: SecretBytes | None,
+        *,
         remember: bool = True,
     ) -> IssuedCredential:
         """Serve the Vault-stored proxy, or mint via voms-token-service.
@@ -1125,7 +1127,9 @@ class X509Provider(CredentialProvider):
         # not the thundering-herd renewal path single-flighted above.
         if principal.uid is None or principal.gid is None or principal.unixname is None:
             raise PosixIdentityRequiredError(target, settings=self._settings)
-        return await self._link_and_mint(principal, target, passphrase, remember)
+        return await self._link_and_mint(
+            principal, target, passphrase, remember=remember
+        )
 
     async def _serve_stored_proxy(
         self, principal: Principal, target: str, min_remaining_seconds: int
@@ -1148,6 +1152,7 @@ class X509Provider(CredentialProvider):
         principal: Principal,
         target: str,
         passphrase: SecretBytes,
+        *,
         remember: bool = True,
     ) -> IssuedCredential:
         """Mint via voms-token-service with a user-supplied passphrase, then persist the link and the proxy in Vault.
