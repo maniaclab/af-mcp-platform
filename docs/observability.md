@@ -341,8 +341,16 @@ broker:
       port: 4318
 ```
 
-- `endpoint` is required when any signal is enabled (the chart refuses to
-  render otherwise). Each signal appends its own `/v1/<signal>` path.
+- `endpoint` renders `OTEL_EXPORTER_OTLP_ENDPOINT` once, whenever any
+  signal is enabled, and is **transport only**: it switches nothing on.
+  It is required when any signal is enabled (the chart refuses to render
+  otherwise, and the broker refuses to start with an enabled signal and no
+  endpoint, naming the signal's setting). Each signal appends its own
+  `/v1/<signal>` path.
+- Each signal has its own switch: `TRACING_ENABLED` (chart
+  `broker.tracing.enabled`), `OTEL_METRICS_ENABLED` (chart
+  `broker.metrics.otlp.enabled`) and `USAGE_EVENTS_OTLP_ENABLED` (chart
+  `broker.usageEvents.otlp.enabled`). Enabling one does not enable the others.
 - `headers` renders `OTEL_EXPORTER_OTLP_HEADERS` (`k1=v1,k2=v2`) for every
   signal. `existingSecret` holds the whole string behind a `secretKeyRef`,
   so credentials never sit in values; `value` is a literal for non-secret
@@ -356,7 +364,11 @@ broker:
   either makes the chart fail with a message naming `broker.otlp.endpoint` /
   `broker.otlp.networkPolicy`. Tracing with an empty endpoint used to render
   silently as "off"; it now fails, because an enabled signal with no
-  collector is a misconfiguration.
+  collector is a misconfiguration. **Setting `OTEL_EXPORTER_OTLP_ENDPOINT`
+  alone no longer turns tracing on:** the broker now needs
+  `TRACING_ENABLED=true` too (the chart renders both from
+  `broker.tracing.enabled` and `broker.otlp.endpoint`). A deployment that
+  set the endpoint by hand to get traces must add `TRACING_ENABLED=true`.
 
 ## Operator: OTel metrics (OTLP)
 
@@ -384,10 +396,8 @@ broker:
   [OTLP transport](#operator-otlp-transport-shared-by-every-signal)): the
   endpoint, headers, timeout and TLS come from the standard
   `OTEL_EXPORTER_OTLP_*` variables, which the SDK exporter reads natively
-  (appending `/v1/metrics`). With tracing off, the chart renders
-  `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` instead of the generic variable,
-  because the broker treats the generic one as its tracing on/off gate and
-  enabling metrics must not switch tracing on.
+  (appending `/v1/metrics`). Enabling metrics does not enable tracing:
+  the endpoint is transport only.
 - An unreachable collector never fails startup or a tool call; export
   failures are the periodic reader's background problem.
 
@@ -423,9 +433,8 @@ broker:
 - `broker.usageEvents.otlp.enabled` renders `USAGE_EVENTS_OTLP_ENABLED`,
   off by default; off, the usage store is not wrapped and nothing changes.
 - The collector is shared with tracing and OTel metrics through `broker.otlp`
-  (same endpoint, headers and NetworkPolicy egress rule; with
-  tracing off the chart renders `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` so
-  enabling this does not switch tracing on).
+  (same endpoint, headers and NetworkPolicy egress rule). Enabling this
+  does not enable tracing: the endpoint is transport only.
 - One log record (event name `af_mcp.usage`) is emitted for each usage
   record the store records, with exactly these attributes: `audit_id`,
   `trace_id`, `principal_sub`, `token_id`, `service`, `method`, `outcome`,
@@ -461,11 +470,13 @@ broker:
     sampleRatio: ""          # empty = keep every trace
 ```
 
-- `broker.otlp.endpoint` renders as `OTEL_EXPORTER_OTLP_ENDPOINT` — the
+- `broker.tracing.enabled` renders `TRACING_ENABLED`, the broker's on/off
+  switch for tracing: off, no tracer provider is installed and every OTel
+  call — fastmcp's native spans included — no-ops, even if
+  `OTEL_EXPORTER_OTLP_ENDPOINT` is set for another signal.
+  `broker.otlp.endpoint` renders as `OTEL_EXPORTER_OTLP_ENDPOINT` — the
   standard OTel env var, which the SDK's exporter reads natively (appending
-  the `/v1/traces` signal path itself). This is also the broker's on/off
-  gate: unset, no tracer provider is installed and every OTel call —
-  fastmcp's native spans included — no-ops.
+  the `/v1/traces` signal path itself); it is transport only.
 - `sampleRatio` (a head-sampling ratio in `[0, 1]`) renders as
   `OTEL_TRACES_SAMPLER=parentbased_traceidratio` plus
   `OTEL_TRACES_SAMPLER_ARG=<ratio>`; empty means the SDK default

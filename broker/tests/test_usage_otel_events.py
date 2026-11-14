@@ -20,9 +20,6 @@ from typing import TYPE_CHECKING, Any
 import asyncpg  # type: ignore[import-untyped]
 import pytest
 from _otlp_collector import OtlpCollector
-from opentelemetry.proto.collector.logs.v1.logs_service_pb2 import (
-    ExportLogsServiceRequest,
-)
 from opentelemetry.sdk._logs.export import (
     InMemoryLogRecordExporter,
     LogRecordExporter,
@@ -31,6 +28,7 @@ from opentelemetry.sdk._logs.export import (
 from test_usage_postgres import _record
 
 import af_mcp_broker.usage as usage_module
+from af_mcp_broker import otel_metrics, tracing
 from af_mcp_broker.config import Settings
 from af_mcp_broker.usage import (
     EventEmittingUsageStore,
@@ -49,6 +47,8 @@ if TYPE_CHECKING:
     from opentelemetry.sdk._logs import ReadableLogRecord
 
     from af_mcp_broker.audit.logger import AuditRecord
+
+_ENDPOINT = "http://collector.invalid:4318"
 
 # The exact attribute set of a fully populated record: nothing else may be
 # added (never tool arguments or results).
@@ -147,7 +147,17 @@ def _logs(exporter: InMemoryLogRecordExporter) -> list[Any]:
 def test_off_by_default_and_reads_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert Settings().usage_events_otlp_enabled is False
     monkeypatch.setenv("USAGE_EVENTS_OTLP_ENABLED", "true")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", _ENDPOINT)
     assert Settings().usage_events_otlp_enabled is True
+
+
+def test_enabled_without_an_endpoint_is_a_startup_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
+    with pytest.raises(ValueError, match="USAGE_EVENTS_OTLP_ENABLED") as excinfo:
+        Settings(usage_events_otlp_enabled=True)
+    assert "OTEL_EXPORTER_OTLP_ENDPOINT" in str(excinfo.value)
 
 
 async def test_disabled_leaves_the_store_unwrapped() -> None:
@@ -159,7 +169,9 @@ async def test_disabled_leaves_the_store_unwrapped() -> None:
 
 
 async def test_enabled_wraps_the_configured_store() -> None:
-    store = await init_usage_store(Settings(usage_events_otlp_enabled=True))
+    store = await init_usage_store(
+        Settings(usage_events_otlp_enabled=True, otel_exporter_otlp_endpoint=_ENDPOINT)
+    )
     try:
         assert isinstance(store, EventEmittingUsageStore)
     finally:
@@ -392,16 +404,16 @@ async def test_a_postgres_failure_still_propagates_and_events_still_go_out(
 def test_real_exporter_sends_the_exact_attribute_set_over_otlp(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    with OtlpCollector(ExportLogsServiceRequest) as collector:
+    with OtlpCollector() as collector:
         monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", collector.endpoint)
         emitter = OtelUsageEventEmitter()
         emitter.emit(_full_record())
         emitter.shutdown()  # final flush
 
-    assert set(collector.paths) == {"/v1/logs"}
+    assert collector.paths == {"/v1/logs"}
     keys: set[str] = set()
     values: list[str] = []
-    for req in collector.requests:
+    for req in collector.requests["/v1/logs"]:
         for rl in req.resource_logs:
             for sl in rl.scope_logs:
                 for lr in sl.log_records:
@@ -410,3 +422,32 @@ def test_real_exporter_sends_the_exact_attribute_set_over_otlp(
                     values += [str(kv.value) for kv in lr.attributes]
     assert keys == _EVENT_ATTRIBUTES
     assert not any("SECRET-ARGUMENT" in v for v in values)
+
+
+def test_all_three_signals_share_the_one_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One OTEL_EXPORTER_OTLP_ENDPOINT carries traces, metrics and usage
+    events, each on its own /v1/<signal> path."""
+    monkeypatch.setattr(tracing.trace, "set_tracer_provider", lambda _p: None)
+    with OtlpCollector() as collector:
+        monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", collector.endpoint)
+        settings = Settings(
+            tracing_enabled=True,
+            otel_metrics_enabled=True,
+            usage_events_otlp_enabled=True,
+            otel_exporter_otlp_endpoint=collector.endpoint,
+        )
+        tracing.init_tracing(settings)
+        otel_metrics.init_otel_metrics(settings)
+        emitter = OtelUsageEventEmitter()
+        with tracing.get_tracer().start_as_current_span("probe"):
+            pass
+        record = _full_record()
+        otel_metrics.record_tool_call(record)
+        emitter.emit(record)
+        emitter.shutdown()
+        otel_metrics.shutdown_otel_metrics()
+        tracing.shutdown_tracing()
+
+    assert collector.paths == {"/v1/traces", "/v1/metrics", "/v1/logs"}
