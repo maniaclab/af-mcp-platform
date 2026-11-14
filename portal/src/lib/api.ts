@@ -528,6 +528,35 @@ export async function fetchEntitlements(): Promise<EntitlementsResponse> {
   return apiFetch<EntitlementsResponse>('/entitlements');
 }
 
+/**
+ * GET /v1/rate-limits — the configured tool rate limits and the caller's own
+ * usage of each (broker/src/af_mcp_broker/api/rate_limits.py). Unlike
+ * /v1/entitlements this is per caller: it reads a live counter.
+ */
+export interface RateLimitStatus {
+  /** The call's resolved action type this rule covers, or null for any. */
+  action_type: ActionType | null;
+  /** fnmatch glob over the wire tool name (as in policy.yaml), or null for any. */
+  tool: string | null;
+  limit: number;
+  window_seconds: number;
+  /** Calls counted in the caller's open window (refused calls included, so
+   * it can exceed `limit`); null when the broker could not read usage. */
+  used: number | null;
+  /** Whole seconds until the window closes; null with no open window or unknown usage. */
+  resets_in_seconds: number | null;
+}
+
+export interface RateLimitsResponse {
+  rate_limits: RateLimitStatus[];
+  /** False when the broker's store was unreachable: rules are listed, usage is unknown. */
+  usage_available: boolean;
+}
+
+export async function fetchRateLimits(): Promise<RateLimitsResponse> {
+  return apiFetch<RateLimitsResponse>('/rate-limits');
+}
+
 // ---------------------------------------------------------------------------
 // X.509 proxy — GET/POST/DELETE /v1/x509/proxy
 // ---------------------------------------------------------------------------
