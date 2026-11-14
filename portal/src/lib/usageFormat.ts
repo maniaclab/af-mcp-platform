@@ -8,12 +8,6 @@ export function formatTokens(n: number): string {
   return n.toLocaleString('en-US');
 }
 
-export function formatCost(n: number): string {
-  // Tool-result costs are typically fractions of a cent -- keep enough
-  // precision that a nonzero estimate never rounds to a misleading $0.00.
-  return `$${n.toLocaleString('en-US', { maximumSignificantDigits: 3 })}`;
-}
-
 export function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   const units = ['KiB', 'MiB', 'GiB'];
