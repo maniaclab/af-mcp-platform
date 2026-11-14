@@ -134,12 +134,13 @@ spec:
           port: {{ .Values.broker.sharedState.networkPolicy.port }}
     {{- end }}
 
-    # OpenTelemetry collector (broker.tracing.enabled or
-    # broker.metrics.otlp.enabled) -- allow the broker's OTLP/HTTP span and
-    # metric exports to reach the collector selected by
-    # broker.otlp.networkPolicy (an empty namespaceSelector means the
-    # release namespace; an empty podSelector allows any pod there).
-    {{- if or .Values.broker.tracing.enabled .Values.broker.metrics.otlp.enabled }}
+    # OpenTelemetry collector (broker.tracing.enabled,
+    # broker.metrics.otlp.enabled or broker.usageEvents.otlp.enabled) -- allow
+    # the broker's OTLP/HTTP span, metric and log exports to reach the
+    # collector selected by broker.otlp.networkPolicy (an empty
+    # namespaceSelector means the release namespace; an empty podSelector
+    # allows any pod there).
+    {{- if or .Values.broker.tracing.enabled .Values.broker.metrics.otlp.enabled .Values.broker.usageEvents.otlp.enabled }}
     - to:
         - namespaceSelector:
             matchLabels:

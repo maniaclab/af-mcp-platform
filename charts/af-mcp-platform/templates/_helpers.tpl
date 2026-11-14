@@ -533,7 +533,7 @@ startup refusal (Settings._validate_replica_state_config) for the chart path.
   value: {{ .Values.broker.adminGroup | quote }}
 {{- end }}
 {{- include "af-mcp-platform.validateOtlp" . }}
-{{- if or .Values.broker.tracing.enabled .Values.broker.metrics.otlp.enabled }}
+{{- if or .Values.broker.tracing.enabled .Values.broker.metrics.otlp.enabled .Values.broker.usageEvents.otlp.enabled }}
 # OTLP transport (broker.otlp), rendered once for every enabled OpenTelemetry
 # signal: the standard OTel env vars, read natively by the SDK's OTLP/HTTP
 # exporters, which append each signal's /v1/<signal> path. The endpoint is
@@ -570,6 +570,12 @@ startup refusal (Settings._validate_replica_state_config) for the chart path.
 {{- if .Values.broker.metrics.otlp.enabled }}
 # OpenTelemetry aggregate metrics (broker otel_metrics.py).
 - name: OTEL_METRICS_ENABLED
+  value: "true"
+{{- end }}
+{{- if .Values.broker.usageEvents.otlp.enabled }}
+# Per-call usage as OTel log records (broker usage/otel_events.py). The
+# collector is the shared broker.otlp transport rendered above.
+- name: USAGE_EVENTS_OTLP_ENABLED
   value: "true"
 {{- end }}
 {{- /*
@@ -672,8 +678,8 @@ Secret for the collector headers. Emits nothing.
 {{- if hasKey .Values.broker.tracing "networkPolicy" }}
 {{- fail "broker.tracing.networkPolicy was removed: set broker.otlp.networkPolicy (the collector egress rule is now shared by every OpenTelemetry signal)" }}
 {{- end }}
-{{- if and (or .Values.broker.tracing.enabled .Values.broker.metrics.otlp.enabled) (not .Values.broker.otlp.endpoint) }}
-{{- fail "broker.otlp.endpoint is required when broker.tracing.enabled or broker.metrics.otlp.enabled is true" }}
+{{- if and (or .Values.broker.tracing.enabled .Values.broker.metrics.otlp.enabled .Values.broker.usageEvents.otlp.enabled) (not .Values.broker.otlp.endpoint) }}
+{{- fail "broker.otlp.endpoint is required when broker.tracing.enabled, broker.metrics.otlp.enabled or broker.usageEvents.otlp.enabled is true" }}
 {{- end }}
 {{- if and .Values.broker.otlp.headers.value .Values.broker.otlp.headers.existingSecret.name }}
 {{- fail "set only one of broker.otlp.headers.value and broker.otlp.headers.existingSecret.name" }}

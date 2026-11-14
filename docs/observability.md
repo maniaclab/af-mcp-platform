@@ -357,6 +357,7 @@ signal is access-controlled and unbounded by design:
 | Prometheus metrics (`:9090`) | No | `service`, `tool`, `action_type`, `target` (per metric) | Bounded by `services.yaml` / `policy.yaml` |
 | OTel metrics (OTLP) | No | `service`, `method`, `action_type`, `outcome` | Same bound |
 | Audit log (JSON lines) | Yes: `principal_sub`, `token_id`, `request_id`, `audit_id`, `trace_id` | One record per tool call | Unbounded by design; authoritative, behind access control |
+| OTel usage events (OTLP logs, opt-in) | Yes: `principal_sub`, `token_id`, `audit_id`, `trace_id` | `service`, `method`, `outcome`, `duration_ms`, `result_bytes`, `result_tokens_est`; never arguments or results | One per tool call; access control is the log backend's |
 | Spans (OTLP, sampled) | Yes: `user.id` | Identity, outcome and timing; never arguments or results | Sampled; joins to the audit log by `trace_id` |
 
 Rule of thumb: a question about *a user* is answered from the audit log
@@ -364,9 +365,10 @@ Rule of thumb: a question about *a user* is answered from the audit log
 
 ## Operator: OTLP transport shared by every signal
 
-Traces and OTel metrics export to one collector, configured once under
-`broker.otlp`; `broker.tracing.enabled` and `broker.metrics.otlp.enabled`
-are only the per-signal switches. With every signal off, nothing OTel is
+Traces, OTel metrics and OTel usage events export to one collector,
+configured once under `broker.otlp`; `broker.tracing.enabled`,
+`broker.metrics.otlp.enabled` and `broker.usageEvents.otlp.enabled` are
+only the per-signal switches. With every signal off, nothing OTel is
 rendered.
 
 ```yaml
@@ -389,7 +391,8 @@ broker:
   `/v1/<signal>` path.
 - Each signal has its own switch: `TRACING_ENABLED` (chart
   `broker.tracing.enabled`), `OTEL_METRICS_ENABLED` (chart
-  `broker.metrics.otlp.enabled`). Enabling one does not enable the other.
+  `broker.metrics.otlp.enabled`) and `USAGE_EVENTS_OTLP_ENABLED` (chart
+  `broker.usageEvents.otlp.enabled`). Enabling one does not enable the others.
 - `headers` renders `OTEL_EXPORTER_OTLP_HEADERS` (`k1=v1,k2=v2`) for every
   signal. `existingSecret` holds the whole string behind a `secretKeyRef`,
   so credentials never sit in values; `value` is a literal for non-secret
@@ -453,6 +456,46 @@ Every instrument carries exactly `service`, `method`, `action_type` and
 token, jti or request-id attribute. Like usage accounting, these cover
 success and error calls only; denied and unmapped calls never reach the
 metering worker.
+
+## Operator: per-call usage as OTel log events (opt-in)
+
+To receive every tool call's usage record over OTLP (for example into Loki
+or ClickHouse), alongside the usage store that backs `/v1/usage`,
+`af_usage` and the portal:
+
+```yaml
+broker:
+  otlp:
+    endpoint: "http://otel-collector.observability:4318"   # shared collector
+  usageEvents:
+    otlp:
+      enabled: true
+```
+
+- `broker.usageEvents.otlp.enabled` renders `USAGE_EVENTS_OTLP_ENABLED`,
+  off by default; off, the usage store is not wrapped and nothing changes.
+- The collector is shared with tracing and OTel metrics through `broker.otlp`
+  (same endpoint, headers and NetworkPolicy egress rule). Enabling this
+  does not enable tracing: the endpoint is transport only.
+- One log record (event name `af_mcp.usage`) is emitted for each usage
+  record the store records, with exactly these attributes: `audit_id`,
+  `trace_id`, `principal_sub`, `token_id`, `service`, `method`, `outcome`,
+  `duration_ms`, `result_bytes`, `result_tokens_est`. Unset optional values
+  (no token for a session JWT, no trace when untraced, nothing measured) are
+  omitted. Tool arguments and results are never included.
+- Postgres stays authoritative and the audit log stays authoritative
+  overall. Emission is a wrapper around the usage store, so every record
+  path (batched, overflow, inline) is covered with no second call site, and
+  it adds no Postgres load.
+- A collector outage or overflow never affects a tool call or the Postgres
+  write: the emitter only enqueues onto the SDK's batch processor, which
+  exports on its own thread and drops on overflow. Delivery is
+  at-least-once (a record redelivered to the store is emitted again), so
+  receivers dedupe on `audit_id`. Events are emitted even when the Postgres
+  write fails; the two sinks are independent.
+- These records carry the caller's identity, so the receiving log backend
+  holds per-user data and needs its own access control (out of scope for
+  the broker, as for traces).
 
 ## Operator: enabling trace emission
 

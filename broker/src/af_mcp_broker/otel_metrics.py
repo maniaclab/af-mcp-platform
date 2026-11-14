@@ -33,9 +33,9 @@ import structlog
 from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
-from opentelemetry.sdk.resources import Resource
 
 from af_mcp_broker._version import version as __version__
+from af_mcp_broker.otel_resource import broker_resource
 from af_mcp_broker.usage import counts_as_usage
 
 if TYPE_CHECKING:
@@ -105,9 +105,7 @@ def init_otel_metrics(settings: Settings, reader: MetricReader | None = None) ->
     if reader is None:
         reader = PeriodicExportingMetricReader(OTLPMetricExporter())
     provider = MeterProvider(
-        resource=Resource.create(
-            {"service.name": "af-mcp-broker", "service.version": __version__}
-        ),
+        resource=broker_resource(),
         metric_readers=[reader],
     )
     meter = provider.get_meter("af_mcp_broker", __version__)

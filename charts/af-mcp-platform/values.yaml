@@ -631,8 +631,8 @@ broker:
   # OTLP TRANSPORT shared by every OpenTelemetry signal the broker can emit
   # (traces, metrics; broker tracing.py / otel_metrics.py): the collector
   # endpoint, its auth headers and the NetworkPolicy egress rule to it. The
-  # per-signal switches are broker.tracing.enabled and
-  # broker.metrics.otlp.enabled below; the chart fails to render if one is on
+  # per-signal switches are broker.tracing.enabled,
+  # broker.metrics.otlp.enabled and broker.usageEvents.otlp.enabled below; the chart fails to render if one is on
   # while `endpoint` is empty. The broker is an emitter only -- no backend is
   # shipped or assumed; point `endpoint` at any OTLP/HTTP collector. With every
   # signal off this block renders nothing.
@@ -683,6 +683,20 @@ broker:
   # :9090 is independent and unchanged. Collector, headers and egress come
   # from broker.otlp above.
   metrics:
+    otlp:
+      enabled: false
+
+  # Per-call usage records emitted as OpenTelemetry LOG records over OTLP
+  # (broker usage/otel_events.py), beside the usage store above, which stays
+  # authoritative. One record per tool call with audit_id, trace_id,
+  # principal_sub, token_id, service, method, outcome, duration_ms,
+  # result_bytes and result_tokens_est -- never tool arguments or results.
+  # Because these carry the caller's identity, the receiving log backend
+  # needs its own access control. Off by default, rendering nothing. The
+  # collector, headers and egress come from broker.otlp above, shared with
+  # tracing and metrics. Rendered as USAGE_EVENTS_OTLP_ENABLED; it does not
+  # enable tracing.
+  usageEvents:
     otlp:
       enabled: false
 

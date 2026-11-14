@@ -477,6 +477,15 @@ class Settings(BaseSettings):
     # shared with tracing. Independent of the Prometheus port.
     otel_metrics_enabled: bool = False
 
+    # Emit every tool call's usage record as an OTel LOG record over OTLP
+    # (usage/otel_events.py), beside the usage store, which stays
+    # authoritative. Unlike metrics these carry principal_sub and token_id,
+    # so the receiving log backend needs its own access control. Off by
+    # default, and then the store is not wrapped. Collector, headers and TLS
+    # come from the standard OTEL_EXPORTER_OTLP_* variables, shared with
+    # tracing and metrics.
+    usage_events_otlp_enabled: bool = False
+
     # Prometheus /metrics is served on its own port so a NetworkPolicy can
     # firewall scraping separately from API traffic. 0 picks an ephemeral
     # port (tests); a negative value disables the metrics server.
@@ -1243,6 +1252,7 @@ class Settings(BaseSettings):
         enabled = {
             "TRACING_ENABLED": self.tracing_enabled,
             "OTEL_METRICS_ENABLED": self.otel_metrics_enabled,
+            "USAGE_EVENTS_OTLP_ENABLED": self.usage_events_otlp_enabled,
         }
         for setting, is_on in enabled.items():
             if is_on and not self.otel_exporter_otlp_endpoint:

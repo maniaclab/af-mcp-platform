@@ -17,6 +17,10 @@ import structlog
 from af_mcp_broker import metrics
 from af_mcp_broker.config import Settings, get_settings
 from af_mcp_broker.usage.batcher import UsageBatcher
+from af_mcp_broker.usage.otel_events import (
+    EventEmittingUsageStore,
+    OtelUsageEventEmitter,
+)
 from af_mcp_broker.usage.postgres import PostgresUsageStore
 from af_mcp_broker.usage.store import InMemoryUsageStore, UsageAggregate, UsageStore
 
@@ -26,7 +30,9 @@ if TYPE_CHECKING:
     from af_mcp_broker.audit.logger import AuditRecord
 
 __all__ = [
+    "EventEmittingUsageStore",
     "InMemoryUsageStore",
+    "OtelUsageEventEmitter",
     "PostgresUsageStore",
     "UsageAggregate",
     "UsageBatcher",
@@ -70,11 +76,16 @@ async def init_usage_store(settings: Settings | None = None) -> UsageStore:
 
     The implementation is selected by ``settings.usage_store_backend``; with
     no Settings passed (tests), the process-wide ``get_settings()`` is used.
+    With ``settings.usage_events_otlp_enabled`` the store is wrapped so each
+    recorded usage is also emitted as an OTel log record (``otel_events.py``).
     """
     global _store
     if settings is None:
         settings = get_settings()
-    _store = _STORE_FACTORIES[settings.usage_store_backend](settings)
+    store = _STORE_FACTORIES[settings.usage_store_backend](settings)
+    if settings.usage_events_otlp_enabled:
+        store = EventEmittingUsageStore(store, OtelUsageEventEmitter())
+    _store = store
     await _store.start()
     return _store
 

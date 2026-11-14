@@ -94,8 +94,20 @@ expect_eq "both" 1 "$(grep -c 'name: OTEL_EXPORTER_OTLP_HEADERS' <<<"$both")"
 # No per-signal endpoint variable is ever rendered.
 for rendered in "$tracing" "$metrics" "$both"; do
   expect_lacks "per-signal endpoint" "OTLP_METRICS_ENDPOINT" "$rendered"
+  expect_lacks "per-signal endpoint" "OTLP_LOGS_ENDPOINT" "$rendered"
   expect_lacks "per-signal endpoint" "OTLP_TRACES_ENDPOINT" "$rendered"
 done
+
+# Usage events only: the shared endpoint (tracing stays off), the switch, and
+# the shared egress rule.
+events=$(render -f "$ci/otel-usage-events-values.yaml")
+expect_has "usage events only" "name: USAGE_EVENTS_OTLP_ENABLED" "$events"
+expect_has "usage events only" "name: OTEL_EXPORTER_OTLP_ENDPOINT" "$events"
+expect_has "usage events only" "http://otel-collector.observability:4318" "$events"
+expect_has "usage events only" "port: 4318" "$events"
+expect_lacks "usage events only" "TRACING_ENABLED" "$events"
+expect_lacks "usage events only" "OTEL_METRICS_ENABLED" "$events"
+expect_lacks "usage events only" "OTLP_LOGS_ENDPOINT" "$events"
 
 # A literal (non-secret) header renders as a plain value.
 literal=$(render -f "$ci/otel-metrics-values.yaml" \
@@ -112,6 +124,8 @@ expect_fails "old broker.tracing.networkPolicy" "set broker.otlp.networkPolicy" 
 # A signal with no collector, or two header sources, is refused.
 expect_fails "signal without endpoint" "broker.otlp.endpoint is required" \
   -f "$ci/test-values.yaml" --set broker.metrics.otlp.enabled=true
+expect_fails "usage events without endpoint" "broker.otlp.endpoint is required" \
+  -f "$ci/test-values.yaml" --set broker.usageEvents.otlp.enabled=true
 expect_fails "both header sources" "only one of broker.otlp.headers.value" \
   -f "$ci/otel-both-headers-values.yaml" --set broker.otlp.headers.value=a=b
 
