@@ -7,8 +7,9 @@ import tailwindcss from '@tailwindcss/vite';
 import { THEME_INIT_SCRIPT } from './src/lib/themeInitScript.js';
 
 // `astro dev` proxies /v1/* to the broker on :8080 so the Vue islands can hit
-// the real API in local dev. In production oauth2-proxy fronts both surfaces
-// on the same origin; this proxy stands in for that during dev only.
+// the real API in local dev. In production the portal and the broker are
+// served on the same origin with no proxy in between; this proxy stands in for
+// that during dev only.
 // `astro preview` does not honour vite.server.proxy — use `astro dev` for
 // interactive UI work with a running broker.
 const BROKER_URL = process.env.PORTAL_DEV_BROKER_URL ?? 'http://localhost:8080';

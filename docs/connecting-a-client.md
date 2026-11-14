@@ -245,8 +245,8 @@ the items pending live verification; see
 
 ## Usage and tracing
 
-Once connected, you can see what your tool calls cost (estimated tokens
-and dollars, via `GET /v1/usage` or the portal's overview page) and, if
+Once connected, you can see how much context your tool calls injected (estimated tokens,
+via `GET /v1/usage` or the portal's overview page) and, if
 your client instruments itself with OpenTelemetry, join the broker's spans
 to your own traces — both are covered in
 [Observability](observability.md).

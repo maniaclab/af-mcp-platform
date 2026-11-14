@@ -30,7 +30,7 @@ const bubble = useTemplateRef<HTMLDivElement>('bubble');
 
 // The Popover API has no declarative hover trigger (`popovertarget` is
 // click-only), so this tracks hover and focus independently and shows
-// while EITHER is true -- matching InfoTooltip.vue's `:hover,
+// while EITHER is true -- matching CSS `:hover,
 // :focus-within` OR semantics rather than closing the instant either one
 // alone ends.
 let hovering = false;
@@ -82,8 +82,8 @@ function onFocusOut(): void {
 
 // A mouse click leaves the trigger focused (`focused` stays true) -- without
 // releasing that focus, moving the mouse away afterward would leave the
-// bubble open forever (`focused` alone keeps it visible). Same fix
-// InfoTooltip.vue applied, same reason: Tab-driven focus never fires a
+// bubble open forever (`focused` alone keeps it visible). This is
+// the same fix a CSS `:hover, :focus-within` tooltip needs: Tab-driven focus never fires a
 // click, so keyboard users are untouched.
 function releaseClickFocus(): void {
   if (document.activeElement instanceof HTMLElement && document.activeElement !== document.body) {
@@ -128,7 +128,7 @@ onBeforeUnmount(() => {
   <!-- Always in the DOM (not display:none, which a closed [popover] is) so
        aria-describedby reaches it for assistive tech regardless of
        hover/focus state -- see the module docstring for why this can't be
-       the same element as the popover bubble above, unlike InfoTooltip.vue's
+       the same element as the popover bubble above, unlike a CSS-only tooltip's
        single always-present span. -->
   <span :id="tooltipId" class="sr-only" role="tooltip"><slot name="tooltip" /></span>
 </template>
