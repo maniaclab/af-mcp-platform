@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import anyio
 import httpx2
+from fastmcp.exceptions import ToolError
 
 from af_mcp_broker.errors import BrokerError
 
@@ -127,3 +128,28 @@ class NotLinkedForListingError(BrokerError):
     def __init__(self, message: str, *, rejected: bool = False) -> None:
         super().__init__(message)
         self.rejected = rejected
+
+
+class ActionRequiredError(ToolError, BrokerError):
+    """A tool call blocked on something only the user can do in the portal: link an identity, re-link a rejected credential, or unlock a credential.
+
+    ``str(exc)`` is the plain-text failure every client has always received.
+    ``AuthorizationMiddleware`` turns it into a multi-round-trip
+    input-required result instead when the client supports one, using
+    ``prompt`` (what the user is shown) and ``url`` (the portal deep link,
+    already embedded in both texts). Neither text asks for a secret: the
+    portal is the only place a passphrase or credential is entered.
+    """
+
+    def __init__(self, message: str, *, kind: str, url: str, prompt: str) -> None:
+        super().__init__(message)
+        self.kind = kind
+        self.url = url
+        self.prompt = prompt
+
+
+# ActionRequiredError.kind values, carried into the sealed request_state so a
+# retry is bound to the action that was asked for.
+ACTION_LINK = "link"
+ACTION_RELINK = "relink"
+ACTION_UNLOCK = "unlock"

@@ -24,7 +24,6 @@ from fastmcp.client import Client
 from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_context
-from fastmcp.server.elicitation import AcceptedElicitation
 from fastmcp.server.providers.proxy import (
     ClientFactoryT,
     ProxyProvider,
@@ -32,12 +31,8 @@ from fastmcp.server.providers.proxy import (
     default_proxy_log_handler,
     default_proxy_progress_handler,
 )
-from mcp.types import (
-    ClientCapabilities,
-    ElicitationCapability,
-    ToolAnnotations,
-)
 from mcp.types import Tool as McpTool
+from mcp.types import ToolAnnotations
 from starlette.middleware import Middleware
 
 from af_mcp_broker import metrics
@@ -47,9 +42,17 @@ from af_mcp_broker.credentials import CredentialKind
 from af_mcp_broker.credentials.errors import NeedsUnlockError
 from af_mcp_broker.mcp.diagnostics import register_diagnostic_tools
 from af_mcp_broker.mcp.errors import (
+    ACTION_LINK,
+    ACTION_RELINK,
+    ACTION_UNLOCK,
+    ActionRequiredError,
     BackendInvalidResponseError,
     ListDeadlineExceededError,
     NotLinkedForListingError,
+)
+from af_mcp_broker.mcp.input_required import (
+    build_input_required_state,
+    request_state_security,
 )
 from af_mcp_broker.mcp.instructions import compose_agent_instructions
 from af_mcp_broker.mcp.middleware.authorization_mw import AuthorizationMiddleware
@@ -70,7 +73,6 @@ from af_mcp_broker.mcp.registry import (
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterator, Sequence
 
-    from fastmcp import Context
     from fastmcp.prompts import Prompt
     from fastmcp.resources import Resource, ResourceTemplate
     from fastmcp.tools.base import Tool
@@ -669,8 +671,8 @@ def _identity_link_url(settings: Settings, alias: str | None) -> str:
     """Build the portal deep link for linking one identity provider.
 
     Shared by ``_not_linked_error`` (the plain-text hint) and
-    ``_require_linked`` (the elicitation message below) so the URL can never
-    drift between the two. Falls back to the bare Identities page when
+    ``_action_required_prompt`` (the multi-round-trip prompt) so the URL can
+    never drift between the two. Falls back to the bare Identities page when
     *alias* is ``None`` -- shouldn't happen for a service that resolved a
     credential provider at all, but keeps this defensive rather than raising
     a second, more confusing error over a missing join entry.
@@ -702,23 +704,47 @@ def _identity_display_name(
     return type(provider).__name__
 
 
+def _action_required_prompt(
+    provider: CredentialProvider,
+    alias: str | None,
+    identity_provider_configs: dict[str, IdentityProviderConfig] | None,
+    url: str,
+    *,
+    rejected: bool,
+) -> str:
+    """Return what a multi-round-trip client shows a caller who must link or re-link an identity.
+
+    Names the identity provider (``_identity_display_name``) and the portal
+    link, and asks only for a confirmation once the caller is done there.
+    """
+    display_name = _identity_display_name(provider, alias, identity_provider_configs)
+    if rejected:
+        return (
+            f"Your linked {display_name} credential was rejected. Open {url} to "
+            "re-link it, then confirm here to continue."
+        )
+    return (
+        f"{display_name} must be linked before this can run. Open {url} to link "
+        "it, then confirm here to continue."
+    )
+
+
 def _not_linked_error(
     provider: CredentialProvider,
     settings: Settings,
     alias: str | None,
+    identity_provider_configs: dict[str, IdentityProviderConfig] | None = None,
     *,
     rejected: bool = False,
-) -> ToolError:
-    """Build the "identity not linked" ``ToolError``, or, when *rejected*, the "credential rejected, re-link" one.
+) -> ActionRequiredError:
+    """Build the "identity not linked" error, or, when *rejected*, the "credential rejected, re-link" one.
 
-    Shared by ``_bearer_factory`` and ``_x509_factory`` (via
+    Shared by every ``auth_type`` branch of ``_make_client_factory`` (via
     ``_require_linked``) so the message text -- and the portal deep link it
-    names -- can never drift between the two ``auth_type`` branches (stage 1
-    of the elicitation/link-identity design: today's LLM clients already
-    relay a URL from a tool error reliably, so this is deliberately plain
-    text). Stage 2a (``_require_linked`` below) now tries a real MCP
-    elicitation first and falls back to this exact error when that isn't
-    possible or the caller doesn't complete it.
+    names -- can never drift between them. The text is plain on purpose:
+    today's LLM clients relay a URL from a tool error reliably. A client that
+    supports multi-round-trip results gets the same link as an input prompt
+    instead (``AuthorizationMiddleware``, via ``ActionRequiredError.prompt``).
 
     *alias* is the identity-provider alias servicing this service
     (``target_to_alias.get(spec.name)``), used to deep-link straight to that
@@ -732,61 +758,51 @@ def _not_linked_error(
     re-link sentence (``_RELINK_DETAIL``) plus the same link and hint.
     """
     url = _identity_link_url(settings, alias)
+    prompt = _action_required_prompt(
+        provider, alias, identity_provider_configs, url, rejected=rejected
+    )
     if alias is None:
         link_hint = f"`{LINK_IDENTITY_TOOL_NAME}`"
     else:
         link_hint = f'`{LINK_IDENTITY_TOOL_NAME}` (provider="{alias}")'
     if rejected:
-        return ToolError(
+        return ActionRequiredError(
             f"{_RELINK_DETAIL} Visit {url} to re-link it, or call {link_hint} "
-            "to get this link."
+            "to get this link.",
+            kind=ACTION_RELINK,
+            url=url,
+            prompt=prompt,
         )
-    return ToolError(
+    return ActionRequiredError(
         f"{type(provider).__name__} not linked. Visit {url} to connect it, "
         f"or call {link_hint} to get this link. Call "
         f"`{LIST_IDENTITIES_TOOL_NAME}` to see which identity provider this "
         f"service needs, or `{LIST_MCP_SERVERS_TOOL_NAME}` for this "
-        "service's current status."
+        "service's current status.",
+        kind=ACTION_LINK,
+        url=url,
+        prompt=prompt,
     )
 
 
-def _client_supports_elicitation(ctx: Context) -> bool:
-    """Best-effort check of whether the connected client declared elicitation support.
+def _unlock_required_error(
+    settings: Settings, exc: NeedsUnlockError
+) -> ActionRequiredError:
+    """Build the "credential unlock required" error for *exc*, pointing at the portal page that takes the passphrase.
 
-    Mirrors the ``ClientCapabilities``-based introspection fastmcp's own
-    sampling code uses (``fastmcp.server.sampling.run.determine_handler_mode``)
-    to decide whether to even attempt a client round trip:
-    ``ctx.session.check_client_capability(...)`` inspects the
-    ``ClientCapabilities`` the client declared at MCP initialize time, so a
-    client that never declared elicitation support can be skipped before
-    ever calling ``ctx.elicit()`` -- a round trip such a client would just
-    error on anyway. Note this only confirms the client declared *some*
-    elicitation mode: the MCP spec's ``ElicitationCapability`` further
-    distinguishes "form" vs "url" mode, and ``check_client_capability``
-    (as pinned, fastmcp 3.4.4) does not drill into that distinction -- a
-    client that declared only URL-mode support (issue #194, not implemented
-    here) still passes this check. ``_require_linked``'s own ``except``
-    around the ``elicit()`` call is what actually catches that case, so this
-    function is purely an optimization to skip a doomed round trip, never
-    the sole safety net.
-
-    Returns True (attempt elicitation) if the session or its client params
-    aren't available for any reason, for the same "never the sole safety
-    net" reason.
+    The prompt tells the caller to enter the passphrase in the portal; the
+    broker never collects it through an MCP prompt.
     """
-    try:
-        return ctx.session.check_client_capability(
-            ClientCapabilities(elicitation=ElicitationCapability())
-        )
-    except Exception:  # noqa: BLE001 -- purely an optimization, see docstring
-        return True
-
-
-# The two elicitation response options _require_linked offers a not-linked
-# caller, kept as module constants so tests can assert against the exact
-# strings without duplicating them.
-_ELICIT_RETRY_OPTION = "I've linked it — try again"
-_ELICIT_CANCEL_OPTION = "Cancel"
+    url = f"{settings.portal_url.rstrip('/')}{exc.unlock_endpoint}"
+    return ActionRequiredError(
+        f"Credential unlock required. Visit the portal: {url}",
+        kind=ACTION_UNLOCK,
+        url=url,
+        prompt=(
+            f"Your credential needs to be unlocked. Open {url} and enter your "
+            "passphrase there (never in this chat), then confirm here to continue."
+        ),
+    )
 
 
 async def _require_linked(
@@ -797,78 +813,22 @@ async def _require_linked(
     target_to_alias: dict[str, str] | None,
     identity_provider_configs: dict[str, IdentityProviderConfig] | None = None,
 ) -> None:
-    """Gate a call on *principal* having linked *provider*, trying a real elicitation before giving up.
+    """Gate a call on *principal* having linked *provider*.
 
-    Shared by ``_bearer_factory`` and ``_x509_factory`` -- stage 2a of the
-    elicitation/link-identity design (following stage 1's plain-text
-    ``_not_linked_error``). Returns normally (proceed) if already linked --
-    the common case, and the only path that doesn't need a request context
-    at all. Otherwise, tries one form-mode ``ctx.elicit()`` round trip
-    asking the caller to link then retry, before falling back to stage 1's
-    plain ``ToolError``. There is no URL-mode elicitation in the pinned
-    fastmcp version (3.4.4) -- no way to have the client auto-open the
-    portal link for the caller -- so this is deliberately form-mode only;
-    true URL-mode elicitation is tracked separately (issue #194).
-
-    Never surfaces anything other than stage 1's ``ToolError`` or the
-    distinct "still not linked" one below: a client that doesn't declare
-    elicitation support (``_client_supports_elicitation``), or whose
-    ``elicit()`` call raises for any reason (declined transport, protocol
-    mismatch, anything), falls back to exactly stage 1's error rather than
-    a worse or different one. Exactly one elicitation attempt is made --
-    a caller who accepts but is still not linked afterward is told so, not
-    re-elicited.
+    Shared by every ``auth_type`` branch of ``_make_client_factory``. Returns
+    normally (proceed) if already linked -- the common case. Otherwise raises
+    ``ActionRequiredError`` (a ``ToolError``): plain text for most clients,
+    a multi-round-trip prompt for ones that support it (see
+    ``AuthorizationMiddleware``). The retry runs this check again, so linking
+    in between is all it takes to proceed.
     """
     if await provider.is_linked(principal):
         return
 
     alias = (target_to_alias or {}).get(spec.name)
     rejected = await provider.is_rejected(principal)
-    not_linked = _not_linked_error(provider, settings, alias, rejected=rejected)
-
-    ctx = get_context()
-    if not _client_supports_elicitation(ctx):
-        raise not_linked
-
-    display_name = _identity_display_name(provider, alias, identity_provider_configs)
-    url = _identity_link_url(settings, alias)
-    try:
-        result = await ctx.elicit(
-            f"Your linked {display_name} credential was rejected. Visit {url} "
-            "to re-link it, then let me know when you're done."
-            if rejected
-            else f"You need to link {display_name} before I can do this. Visit "
-            f"{url} to link it, then let me know when you're done.",
-            [_ELICIT_RETRY_OPTION, _ELICIT_CANCEL_OPTION],  # type: ignore[arg-type]
-            # mypy 2.3.0 misresolves fastmcp 3.4.4's Context.elicit overloads
-            # for a plain list[str] (it picks the response_type=None-only
-            # overload regardless of the argument's actual type -- reproduced
-            # with a minimal repro outside this codebase, so this is a
-            # library/mypy interaction, not a real type error); the select
-            # (list[str]) overload's runtime behavior is exercised directly
-            # by this module's tests.
-        )
-    except Exception:  # noqa: BLE001 -- fall back to stage 1, see docstring
-        raise not_linked from None
-
-    if (
-        not isinstance(result, AcceptedElicitation)
-        or result.data != _ELICIT_RETRY_OPTION
-    ):
-        # Declined, cancelled, or (defensively) accepted with the "Cancel"
-        # option -- one attempt only, no re-elicit loop.
-        raise not_linked
-
-    if await provider.is_linked(principal):
-        return
-
-    if rejected:
-        raise ToolError(
-            f"{display_name} is still rejected. Visit {url} to re-link it, then "
-            "try again."
-        )
-    raise ToolError(
-        f"{display_name} still not linked. Visit {url} to connect it, then try again."
+    raise _not_linked_error(
+        provider, settings, alias, identity_provider_configs, rejected=rejected
     )
 
 
@@ -1067,9 +1027,7 @@ def _make_client_factory(
             # unconditionally, and the failure only ever surfaced as
             # whatever generic error the service's own redeem call happened
             # to produce (e.g. a bare 404 from POST /v1/credentials/x509/
-            # redeem), never a "go link your identity" message. Now also
-            # tries a real elicitation before giving up -- see
-            # _require_linked's docstring.
+            # redeem), never a "go link your identity" message.
             await _require_linked(
                 provider,
                 principal,
@@ -1137,9 +1095,7 @@ def _make_client_factory(
             # unconditionally, and the failure only ever surfaced as
             # whatever generic error the service's own redeem call happened
             # to produce (e.g. a bare 404 from POST /v1/credentials/krb5/
-            # redeem), never a "go link your identity" message. Now also
-            # tries a real elicitation before giving up -- see
-            # _require_linked's docstring.
+            # redeem), never a "go link your identity" message.
             await _require_linked(
                 provider,
                 principal,
@@ -1207,9 +1163,7 @@ def _make_client_factory(
             # unconditionally, and the failure only ever surfaced as
             # whatever generic error the service's own redeem call happened
             # to produce (e.g. a bare 404 from POST /v1/credentials/
-            # servicex/redeem), never a "go link your identity" message. Now
-            # also tries a real elicitation before giving up -- see
-            # _require_linked's docstring.
+            # servicex/redeem), never a "go link your identity" message.
             await _require_linked(
                 provider,
                 principal,
@@ -1284,8 +1238,6 @@ def _make_client_factory(
         # Gate on linkage BEFORE issue() so an unlinked user gets a clean
         # error instead of an opaque failure surfacing from inside the
         # provider -- mirrors api/credentials.py's issue_credential() check.
-        # Now also tries a real elicitation before giving up -- see
-        # _require_linked's docstring.
         await _require_linked(
             provider,
             principal,
@@ -1298,11 +1250,7 @@ def _make_client_factory(
         try:
             cred = await provider.issue(principal, spec.name)
         except NeedsUnlockError as exc:
-            portal = settings.portal_url.rstrip("/")
-            raise ToolError(
-                f"Credential unlock required. Visit the portal: "
-                f"{portal}{exc.unlock_endpoint}"
-            ) from exc
+            raise _unlock_required_error(settings, exc) from exc
         except HTTPException as exc:
             # OIDCProvider.issue() raises HTTPException directly (401 session
             # expired, 404 no stored token) rather than NeedsUnlockError -- surface
@@ -1908,6 +1856,10 @@ def build_aggregator(
     mcp = FastMCP(
         name="af-mcp-aggregator",
         instructions=compose_agent_instructions(registry, job_credentials),
+        # None keeps the SDK's per-process key (no broker_state_key); with one,
+        # every replica seals request_state under the same key, so a portal
+        # prompt issued by one pod can be answered at another.
+        request_state_security=request_state_security(settings),
     )
     mcp.add_middleware(
         IdentityMiddleware(
@@ -1919,6 +1871,7 @@ def build_aggregator(
     )
     mcp.add_middleware(EntitlementMiddleware(registry, policy))
     authorization_mw = AuthorizationMiddleware(registry, policy)
+    authorization_mw.input_required_state = build_input_required_state(settings)
     if shared_state is not None:
         authorization_mw.use_shared_state(shared_state)
     mcp.add_middleware(authorization_mw)
@@ -2005,6 +1958,7 @@ def populate_aggregator(
     entitlement_mw.policy = policy
     authorization_mw.registry = registry
     authorization_mw.policy = policy
+    authorization_mw.input_required_state = build_input_required_state(settings)
     if shared_state is not None:
         authorization_mw.use_shared_state(shared_state)
     _register_services(

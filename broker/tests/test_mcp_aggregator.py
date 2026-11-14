@@ -14,11 +14,6 @@ from fastmcp import FastMCP
 from fastmcp.client import Client
 from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.exceptions import McpError, ToolError
-from fastmcp.server.elicitation import (
-    AcceptedElicitation,
-    CancelledElicitation,
-    DeclinedElicitation,
-)
 from fastmcp.server.providers.proxy import (
     ProxyTool,
     default_proxy_log_handler,
@@ -51,7 +46,12 @@ from af_mcp_broker.mcp.aggregator import (
     populate_aggregator,
     resolve_list_time_credential,
 )
-from af_mcp_broker.mcp.errors import NotLinkedForListingError
+from af_mcp_broker.mcp.errors import (
+    ACTION_LINK,
+    ACTION_RELINK,
+    ActionRequiredError,
+    NotLinkedForListingError,
+)
 from af_mcp_broker.mcp.middleware.authorization_mw import AuthorizationMiddleware
 from af_mcp_broker.mcp.middleware.entitlement_mw import EntitlementMiddleware
 from af_mcp_broker.mcp.middleware.identity_mw import IdentityMiddleware
@@ -160,47 +160,11 @@ class _FakeProvider(CredentialProvider):
         self.rejected.append((principal.subject, access_token))
 
 
-class _RelinkingProvider(_FakeProvider):
-    """Reports not-linked on the first ``is_linked()`` call, then linked on
-    every call after that -- simulates the caller completing the portal
-    linking flow while ``_require_linked``'s elicitation round trip is in
-    flight, so the re-check after an accepted "try again" response sees a
-    different answer than the initial gate did."""
-
-    def __init__(self, **kwargs: Any) -> None:
-        super().__init__(linked=False, **kwargs)
-        self.is_linked_calls = 0
-
-    async def is_linked(self, principal: Principal) -> bool:
-        self.is_linked_calls += 1
-        return self.is_linked_calls > 1
-
-
-class _FakeSession:
-    """Stand-in for the real ``Context.session``'s client-capability introspection.
-
-    ``_client_supports_elicitation`` calls
-    ``ctx.session.check_client_capability(...)`` -- this fake reports a
-    fixed, test-configured answer rather than parsing a real
-    ``ClientCapabilities``/``InitializeRequestParams`` round trip.
-    """
-
-    def __init__(self, *, supports_elicitation: bool) -> None:
-        self._supports_elicitation = supports_elicitation
-
-    def check_client_capability(self, capability: Any) -> bool:
-        return self._supports_elicitation
-
-
 class _FakeFastMCPContext:
     def __init__(
         self,
         principal: Principal | None,
         active_backend: str | None,
-        *,
-        supports_elicitation: bool = True,
-        elicit_result: Any = None,
-        elicit_error: BaseException | None = None,
     ) -> None:
         self._principal = principal
         self._active_backend = active_backend
@@ -208,13 +172,6 @@ class _FakeFastMCPContext:
         # credential-status decision here (see aggregator.py's
         # _classify_list_failure), keyed the same way the real Context would.
         self.recorded_state: dict[str, Any] = {}
-        self.session = _FakeSession(supports_elicitation=supports_elicitation)
-        self._elicit_result = elicit_result
-        self._elicit_error = elicit_error
-        # Recorded (message, response_type) pairs -- lets a test assert
-        # whether _require_linked ever attempted elicit() at all, and with
-        # what message/options.
-        self.elicit_calls: list[tuple[str, list[str]]] = []
 
     async def get_state(self, key: str) -> Any:
         if key == "principal":
@@ -230,21 +187,11 @@ class _FakeFastMCPContext:
     ) -> None:
         self.recorded_state[key] = value
 
-    async def elicit(self, message: str, response_type: list[str]) -> Any:
-        self.elicit_calls.append((message, response_type))
-        if self._elicit_error is not None:
-            raise self._elicit_error
-        return self._elicit_result
-
 
 def _patch_context(
     monkeypatch: pytest.MonkeyPatch,
     principal: Principal | None,
     active_backend: str | None = "example",
-    *,
-    supports_elicitation: bool = True,
-    elicit_result: Any = None,
-    elicit_error: BaseException | None = None,
 ) -> _FakeFastMCPContext:
     """_make_client_factory's bearer/x509 branches read the caller's
     Principal, and whether AuthorizationMiddleware stamped this request as a
@@ -258,20 +205,8 @@ def _patch_context(
     shared context instance every ``get_context()`` call resolves to, so a
     test can inspect what the list-time branch recorded via ``set_state()``
     after calling the factory.
-
-    ``supports_elicitation``/``elicit_result``/``elicit_error`` configure
-    the fake's elicitation behavior for ``_require_linked`` tests (stage 2a):
-    the first controls what ``_client_supports_elicitation`` sees via
-    ``ctx.session.check_client_capability(...)``; the latter two control
-    what ``await ctx.elicit(...)`` returns or raises.
     """
-    ctx = _FakeFastMCPContext(
-        principal,
-        active_backend,
-        supports_elicitation=supports_elicitation,
-        elicit_result=elicit_result,
-        elicit_error=elicit_error,
-    )
+    ctx = _FakeFastMCPContext(principal, active_backend)
     monkeypatch.setattr(aggregator, "get_context", lambda: ctx)
     return ctx
 
@@ -2789,151 +2724,46 @@ async def test_client_factory_krb5_list_time_without_issuer_connects_bare(
 
 
 # ---------------------------------------------------------------------------
-# Stage 2a: real interactive elicitation on the not-linked path, before
-# falling back to stage 1's plain _not_linked_error ToolError.
+# _require_linked: raises an ActionRequiredError carrying the plain text every
+# client receives, plus the portal link and prompt a multi-round-trip client
+# is shown instead (see mcp/input_required.py and test_mcp_input_required.py).
 # ---------------------------------------------------------------------------
 
 
 async def test_require_linked_returns_without_context_when_already_linked(
     settings: Any, make_principal
 ) -> None:
-    """The common case -- most calls never reach the elicitation machinery
-    at all, and this path doesn't even need get_context() patched, since
-    is_linked() short-circuits before _require_linked ever touches it."""
+    """The common case -- is_linked() short-circuits before _require_linked
+    ever touches the request context, so this path doesn't even need
+    get_context() patched."""
     provider = _FakeProvider(linked=True)
     spec = _spec()
 
     await _require_linked(provider, make_principal(), spec, settings, None)
 
 
-async def test_require_linked_skips_elicit_when_client_lacks_permission(
-    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
+async def test_require_linked_raises_action_required_with_the_portal_link(
+    settings: Any, make_principal
 ) -> None:
-    """A client that never declared elicitation support in its
-    ClientCapabilities is never asked -- _client_supports_elicitation's
-    introspection short-circuits straight to stage 1's plain error rather
-    than attempting a doomed round trip."""
-    ctx = _patch_context(monkeypatch, make_principal(), supports_elicitation=False)
     provider = _FakeProvider(linked=False)
     spec = _spec()
 
-    with pytest.raises(ToolError, match="not linked") as excinfo:
+    with pytest.raises(ActionRequiredError, match="not linked") as excinfo:
         await _require_linked(provider, make_principal(), spec, settings, None)
 
-    assert "still" not in str(excinfo.value)
-    assert ctx.elicit_calls == []
+    portal = settings.portal_url.rstrip("/")
+    assert excinfo.value.kind == ACTION_LINK
+    assert excinfo.value.url == f"{portal}/identities"
+    assert excinfo.value.url in str(excinfo.value)
+    assert excinfo.value.url in excinfo.value.prompt
 
 
-@pytest.mark.parametrize(
-    "elicit_result",
-    [DeclinedElicitation(), CancelledElicitation()],
-    ids=["declined", "cancelled"],
-)
-async def test_require_linked_declined_or_cancelled_raises_stage1_error(
-    settings: Any,
-    make_principal,
-    monkeypatch: pytest.MonkeyPatch,
-    elicit_result: DeclinedElicitation | CancelledElicitation,
+async def test_require_linked_prompt_names_display_name_and_portal_card(
+    settings: Any, make_principal
 ) -> None:
-    ctx = _patch_context(monkeypatch, make_principal(), elicit_result=elicit_result)
-    provider = _FakeProvider(linked=False)
-    spec = _spec()
-
-    with pytest.raises(ToolError, match="not linked") as excinfo:
-        await _require_linked(provider, make_principal(), spec, settings, None)
-
-    assert "still" not in str(excinfo.value)
-    assert len(ctx.elicit_calls) == 1
-
-
-async def test_require_linked_accepted_with_cancel_option_raises_stage1_error(
-    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Defensive case: an accepted response carrying the "Cancel" option's
-    own text (rather than a decline/cancel action) is treated the same as
-    a decline -- only the exact retry option's text proceeds."""
-    _patch_context(
-        monkeypatch,
-        make_principal(),
-        elicit_result=AcceptedElicitation(data=aggregator._ELICIT_CANCEL_OPTION),
-    )
-    provider = _FakeProvider(linked=False)
-    spec = _spec()
-
-    with pytest.raises(ToolError, match="not linked") as excinfo:
-        await _require_linked(provider, make_principal(), spec, settings, None)
-
-    assert "still" not in str(excinfo.value)
-
-
-async def test_require_linked_elicit_raising_falls_back_to_stage1_error(
-    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A client that declared elicitation support but whose elicit() call
-    fails anyway (protocol mismatch, transport error, anything) must fall
-    back cleanly -- never a crash, never a worse or different error than
-    stage 1's baseline."""
-    _patch_context(
-        monkeypatch, make_principal(), elicit_error=RuntimeError("client exploded")
-    )
-    provider = _FakeProvider(linked=False)
-    spec = _spec()
-
-    with pytest.raises(ToolError, match="not linked") as excinfo:
-        await _require_linked(provider, make_principal(), spec, settings, None)
-
-    assert "still" not in str(excinfo.value)
-
-
-async def test_require_linked_accepted_retry_now_linked_proceeds(
-    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Accepting "I've linked it -- try again" and the provider now
-    reporting linked (the caller actually completed the portal flow) must
-    let the caller proceed -- _require_linked returns normally, no
-    exception, so the surrounding factory continues exactly as the
-    already-linked path already does."""
-    _patch_context(
-        monkeypatch,
-        make_principal(),
-        elicit_result=AcceptedElicitation(data=aggregator._ELICIT_RETRY_OPTION),
-    )
-    provider = _RelinkingProvider()
-    spec = _spec()
-
-    await _require_linked(provider, make_principal(), spec, settings, None)
-
-    assert provider.is_linked_calls == 2
-
-
-async def test_require_linked_accepted_retry_still_not_linked_raises_distinct_error(
-    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Accepting "try again" but still not linked afterward gets a distinct
-    "still not linked" error -- and exactly one elicitation attempt, never a
-    second round trip (no re-elicit loop)."""
-    ctx = _patch_context(
-        monkeypatch,
-        make_principal(),
-        elicit_result=AcceptedElicitation(data=aggregator._ELICIT_RETRY_OPTION),
-    )
-    provider = _FakeProvider(linked=False)
-    spec = _spec()
-
-    with pytest.raises(ToolError, match="still not linked"):
-        await _require_linked(provider, make_principal(), spec, settings, None)
-
-    assert len(ctx.elicit_calls) == 1
-
-
-async def test_require_linked_elicit_message_names_display_name_and_portal_url(
-    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The elicitation message names the identity provider's configured
-    display_name (the same text af_list_identities/af_link_identity show)
-    and deep-links to that provider's portal card -- and offers exactly the
-    two designed response options."""
-    ctx = _patch_context(monkeypatch, make_principal())
+    """The prompt names the identity provider's configured display_name (the
+    same text af_list_identities/af_link_identity show) and deep-links to that
+    provider's portal card."""
     provider = _FakeProvider(linked=False)
     spec = _spec()
     configs = {
@@ -2942,7 +2772,7 @@ async def test_require_linked_elicit_message_names_display_name_and_portal_url(
         )
     }
 
-    with pytest.raises(ToolError):
+    with pytest.raises(ActionRequiredError) as excinfo:
         await _require_linked(
             provider,
             make_principal(),
@@ -2952,72 +2782,29 @@ async def test_require_linked_elicit_message_names_display_name_and_portal_url(
             configs,
         )
 
-    assert len(ctx.elicit_calls) == 1
-    message, options = ctx.elicit_calls[0]
-    assert "Grid Certificate" in message
+    assert "Grid Certificate" in excinfo.value.prompt
     portal = settings.portal_url.rstrip("/")
-    assert f"{portal}/identities#identity-card-x509" in message
-    assert options == [
-        aggregator._ELICIT_RETRY_OPTION,
-        aggregator._ELICIT_CANCEL_OPTION,
-    ]
+    assert f"{portal}/identities#identity-card-x509" in excinfo.value.prompt
 
 
 # A caller whose provider holds a credential that a backend rejected is told
 # to re-link, with the catalog's wording, not that the identity is not linked.
 
 
-async def test_require_linked_rejected_credential_says_relink_without_elicitation(
-    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
+async def test_require_linked_rejected_credential_says_relink(
+    settings: Any, make_principal
 ) -> None:
-    _patch_context(monkeypatch, make_principal(), supports_elicitation=False)
     provider = _FakeProvider(linked=False, rejected=True)
     spec = _spec()
 
-    with pytest.raises(ToolError) as excinfo:
+    with pytest.raises(ActionRequiredError) as excinfo:
         await _require_linked(provider, make_principal(), spec, settings, None)
 
+    assert excinfo.value.kind == ACTION_RELINK
     assert _RELINK_DETAIL in str(excinfo.value)
     assert "not linked" not in str(excinfo.value)
     assert f"{settings.portal_url.rstrip('/')}/identities" in str(excinfo.value)
-
-
-async def test_require_linked_rejected_credential_still_elicits_and_names_the_rejection(
-    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    ctx = _patch_context(
-        monkeypatch, make_principal(), elicit_result=DeclinedElicitation()
-    )
-    provider = _FakeProvider(linked=False, rejected=True)
-    spec = _spec()
-
-    with pytest.raises(ToolError) as excinfo:
-        await _require_linked(provider, make_principal(), spec, settings, None)
-
-    assert _RELINK_DETAIL in str(excinfo.value)
-    assert len(ctx.elicit_calls) == 1
-    message, options = ctx.elicit_calls[0]
-    assert "rejected" in message
-    assert f"{settings.portal_url.rstrip('/')}/identities" in message
-    assert options == [
-        aggregator._ELICIT_RETRY_OPTION,
-        aggregator._ELICIT_CANCEL_OPTION,
-    ]
-
-
-async def test_require_linked_rejected_credential_accepted_retry_still_rejected(
-    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _patch_context(
-        monkeypatch,
-        make_principal(),
-        elicit_result=AcceptedElicitation(data=aggregator._ELICIT_RETRY_OPTION),
-    )
-    provider = _FakeProvider(linked=False, rejected=True)
-    spec = _spec()
-
-    with pytest.raises(ToolError, match="still rejected"):
-        await _require_linked(provider, make_principal(), spec, settings, None)
+    assert "rejected" in excinfo.value.prompt
 
 
 async def test_client_factory_bearer_call_with_rejected_credential_says_relink(
@@ -3034,57 +2821,6 @@ async def test_client_factory_bearer_call_with_rejected_credential_says_relink(
 
     assert _RELINK_DETAIL in str(excinfo.value)
     assert provider.issue_calls == []
-
-
-async def test_client_factory_bearer_elicitation_accepted_now_linked_proceeds(
-    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """End-to-end through _bearer_factory (not just _require_linked
-    directly): an accepted-and-now-linked elicitation lets the factory
-    continue on to mint and inject a real credential, exactly like the
-    already-linked path -- proving _bearer_factory is actually wired to the
-    shared _require_linked helper, not just a copy of its logic."""
-    _patch_context(
-        monkeypatch,
-        make_principal(),
-        elicit_result=AcceptedElicitation(data=aggregator._ELICIT_RETRY_OPTION),
-    )
-    spec = _spec(auth_type="bearer")
-    provider = _RelinkingProvider(token="minted-after-link")
-    registry = CredentialRegistry()
-    registry.register(spec.name, provider)
-
-    client = await _make_client_factory(spec, registry, settings, _OPEN_POLICY)()
-
-    assert client.transport.headers["Authorization"] == "Bearer minted-after-link"
-
-
-async def test_client_factory_x509_elicitation_accepted_now_linked_proceeds(
-    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Same end-to-end proof as the bearer test above, but for
-    _x509_factory -- both factories share _require_linked rather than
-    duplicating the elicitation logic."""
-    _patch_context(
-        monkeypatch,
-        make_principal(subject="sub-abc"),
-        elicit_result=AcceptedElicitation(data=aggregator._ELICIT_RETRY_OPTION),
-    )
-    issuer = _make_issuer()
-    spec = _spec(auth_type="x509")
-    provider = _RelinkingProvider()
-    registry = CredentialRegistry()
-    registry.register(spec.name, provider)
-
-    client = await _make_client_factory(
-        spec, registry, settings, _OPEN_POLICY, broker_token_issuer=issuer
-    )()
-
-    auth = client.transport.headers["Authorization"]
-    assert auth.startswith("Bearer ")
-    claims = issuer.verify(auth.removeprefix("Bearer "))
-    assert claims is not None
-    assert claims["sub"] == "sub-abc"
 
 
 class TestClassifyFailureUnavailable:

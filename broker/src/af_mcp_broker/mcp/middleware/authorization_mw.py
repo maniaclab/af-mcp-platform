@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING
 import structlog
 from fastmcp.exceptions import AuthorizationError, ToolError
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
+from mcp.shared.exceptions import MCPError
+from mcp_types import INVALID_PARAMS
 from opentelemetry.trace import SpanKind, Status, StatusCode
 
 from af_mcp_broker import metrics
@@ -21,7 +23,19 @@ from af_mcp_broker.authorization import (
 )
 from af_mcp_broker.authorization.errors import ToolRateLimitError
 from af_mcp_broker.authorization.rate_limit import check_rate_limits
-from af_mcp_broker.mcp.errors import ERROR_CLASS_TOOL_REPORTED, classify_backend_error
+from af_mcp_broker.mcp.errors import (
+    ERROR_CLASS_TOOL_REPORTED,
+    ActionRequiredError,
+    classify_backend_error,
+)
+from af_mcp_broker.mcp.input_required import (
+    InvalidInputRequiredStateError,
+    PromptRoute,
+    elicit_portal_action,
+    input_required_result,
+    prompt_route,
+    without_continuation,
+)
 from af_mcp_broker.shared_state import FallbackSharedState
 from af_mcp_broker.tracing import (
     current_trace_id,
@@ -34,6 +48,7 @@ if TYPE_CHECKING:
     from fastmcp.tools.base import ToolResult
 
     from af_mcp_broker.identity import Principal
+    from af_mcp_broker.mcp.input_required import InputRequiredState
     from af_mcp_broker.mcp.registry import ServiceRegistry
     from af_mcp_broker.shared_state import SharedState
 
@@ -141,6 +156,10 @@ class AuthorizationMiddleware(Middleware):
         # use_shared_state(). There is deliberately no default store: counting
         # in a private in-memory one would silently make limits per replica.
         self.shared_state: FallbackSharedState | None = None
+        # Seals the request_state of a portal prompt (see input_required.py).
+        # Arrives later like the store above; None means the broker cannot
+        # issue one, so every client gets the plain error.
+        self.input_required_state: InputRequiredState | None = None
 
     def use_shared_state(self, shared_state: SharedState) -> None:
         """Back ``policy.rate_limits`` with *shared_state*.
@@ -154,6 +173,30 @@ class AuthorizationMiddleware(Middleware):
             component="tool_rate_limit",
             effect="tool rate limits are per-replica until the store recovers",
         )
+
+    def _verify_retry_state(
+        self, token: str, subject: str, tool_name: str, service_name: str
+    ) -> None:
+        """Refuse a portal retry whose request_state was issued for another principal, tool or service, or has expired.
+
+        Same wire error the SDK's own request_state boundary uses, with the
+        reason kept out of it. Only called when ``input_required_state`` owns
+        *token*.
+        """
+        assert self.input_required_state is not None
+        try:
+            self.input_required_state.verify(
+                token, subject=subject, tool=tool_name, service=service_name
+            )
+        except InvalidInputRequiredStateError as exc:
+            logger.warning(
+                "mcp.input_required_state_refused", tool=tool_name, reason=str(exc)
+            )
+            raise MCPError(
+                code=INVALID_PARAMS,
+                message="Invalid or expired requestState",
+                data={"reason": "invalid_request_state"},
+            ) from exc
 
     def _require_shared_state(self) -> FallbackSharedState:
         # Refuse rather than count somewhere other than the shared store:
@@ -316,6 +359,23 @@ class AuthorizationMiddleware(Middleware):
                 )
                 raise AuthorizationError(f"Authorization denied: {reason}")
 
+            # A request_state this broker sealed means this is the retry of a
+            # portal prompt it issued. Refuse an expired or misbound one before
+            # anything runs; the SDK's transport sealing has already rejected
+            # anything it did not mint, this checks what only the broker knows
+            # (principal, tool, service). A state it did not seal is a
+            # backend's own multi-round-trip continuation and passes through.
+            retry_state = fastmcp_context.request_state
+            is_portal_retry = (
+                retry_state is not None
+                and self.input_required_state is not None
+                and self.input_required_state.owns(retry_state)
+            )
+            if retry_state is not None and is_portal_retry:
+                self._verify_retry_state(
+                    retry_state, principal.subject, tool_name, service.name
+                )
+
             # After the entitlement check, so a caller refused above never
             # spends budget, and before any credential is minted or backend
             # contacted. A no-op without policy.rate_limits.
@@ -408,9 +468,79 @@ class AuthorizationMiddleware(Middleware):
             # duration_ms=None.
             started = time.perf_counter()
             try:
-                result = await call_next(context)
+                # On a portal retry the continuation params are the broker's,
+                # not the backend's, so the proxy must not relay them.
+                with (
+                    without_continuation()
+                    if is_portal_retry
+                    else contextlib.nullcontext()
+                ):
+                    try:
+                        result = await call_next(context)
+                    except ActionRequiredError as blocked:
+                        # A handshake-era client that can elicit is asked now,
+                        # and the call runs once more if the user says they
+                        # acted. The block precedes any backend request, so
+                        # re-running it repeats nothing. Still blocked the
+                        # second time, the plain error propagates: one prompt
+                        # per call.
+                        if is_portal_retry or (
+                            prompt_route(
+                                fastmcp_context,
+                                can_seal_state=self.input_required_state is not None,
+                            )
+                            is not PromptRoute.ELICIT
+                            or not await elicit_portal_action(
+                                fastmcp_context, blocked.prompt
+                            )
+                        ):
+                            raise
+                        result = await call_next(context)
             except Exception as exc:
                 duration = time.perf_counter() - started
+                # A call blocked on something only the user can do in the
+                # portal is answered with a prompt when the client can take
+                # one -- but never on a retry, so a user who confirmed without
+                # acting gets the plain error instead of a second prompt.
+                if (
+                    isinstance(exc, ActionRequiredError)
+                    and not is_portal_retry
+                    and self.input_required_state is not None
+                    and prompt_route(fastmcp_context, can_seal_state=True)
+                    is PromptRoute.INPUT_REQUIRED
+                ):
+                    _record_invocation(service.name, tool_name, action_type)
+                    span.set_attribute("af.outcome", "input_required")
+                    await write_audit(
+                        AuditRecord(
+                            principal_sub=principal.subject,
+                            principal_uid=principal.uid,
+                            permission=permission,
+                            target=service.name,
+                            action=tool_name,
+                            action_type=action_type,
+                            args_summary=args_summary,
+                            timestamp=time.time(),
+                            request_id=request_id,
+                            mcp_service=service.name,
+                            outcome="input_required",
+                            error=str(exc),
+                            principal_permission_grant=_permission_grant_field(
+                                principal
+                            ),
+                            token_id=principal.token_id,
+                            duration_ms=duration * 1000.0,
+                            trace_id=current_trace_id(),
+                        )
+                    )
+                    return input_required_result(
+                        exc.prompt,
+                        self.input_required_state.seal(
+                            subject=principal.subject,
+                            tool=tool_name,
+                            service=service.name,
+                        ),
+                    )
                 # An error downstream of authorization (credential resolution,
                 # the service call itself) is still an attempted invocation --
                 # authorization allowed it, so it's not a denial, and gets no
