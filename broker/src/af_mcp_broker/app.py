@@ -1146,9 +1146,9 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     application.state.maintenance_mode_store = maintenance_mode_store
     application.state.lint_observations = lint_observations
     application.state.shared_state = shared_state
-    # Not yet consumed by KrbTokenProvider -- issue #274's remember/renew
-    # support wires it in -- exposed on state now so it exists in one place
-    # from the moment Vault is wired up, same as every other subsystem here.
+    # Also passed to KrbTokenProvider above (remember/renew support, issue
+    # #274); exposed on state so it exists in one place alongside every other
+    # subsystem here.
     application.state.krb5_vault_store = krb5_vault_store
     application.state.servicex_vault_store = servicex_vault_store
 
