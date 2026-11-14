@@ -399,9 +399,9 @@ prefix when `apply_namespace: false`. A name that never appears in the
 backend's own listing logs a one-time `aggregator.exclude_tools_not_found`
 warning — almost always a typo.
 
-### `access_url` and `docs_url` — where to go for access and documentation
+### `docs_url` — linking to where the service is described
 
-Both fields are optional links, so an existing registry keeps working
+`docs_url` is an optional link, so an existing registry keeps working
 unchanged:
 
 ```yaml
@@ -409,31 +409,26 @@ unchanged:
   prefix: rucio
   url: "http://rucio-mcp:8000/mcp"
   required_permission: read_data
-  access_url: "https://groups.example.org/request/rucio"
   docs_url: "https://docs.example.org/rucio"
 ```
 
-| Field | Meaning | Where it shows up |
-|---|---|---|
-| `access_url` | The page where a caller requests the access this service requires (a group-request form, a ticket queue). | When the caller lacks the permission: a "Request access" button on the portal's Services page, `access_url` on the entry in `GET /v1/catalog` and `af_list_mcp_servers`, and the permission-denied tool error. |
-| `docs_url` | The service's own documentation. | A link on the service's portal card for every status, and `docs_url` on the catalog and `af_list_mcp_servers` entries. |
+It must be an absolute `https` URL; `http` is accepted only for `localhost`,
+`127.0.0.1` and `::1` (a local dev docs server). Anything else (a relative
+path, a bare host name, `javascript:`, an empty string) stops the broker at
+startup naming the service and the field.
 
-Both must be absolute `https` URLs; `http` is accepted only for `localhost`,
-`127.0.0.1` and `::1` (a local dev portal or docs server). Anything else (a
-relative path, a bare host name, `javascript:`, an empty string) stops the
-broker at startup naming the service and the field.
+The portal shows it on the service's card as "About this service" for every
+status, and as the call to action on an "Access required" card. `GET
+/v1/catalog` and `af_list_mcp_servers` return it as `docs_url` for every
+status (`null` when unset).
 
-A service without its own `access_url` falls back to the facility-wide
-`broker.accessRequestUrl` chart value (the `ACCESS_REQUEST_URL` environment
-variable), which is validated the same way. With neither set, no link is
-shown, but the groups below still are.
-
-**Granting groups.** The broker also names the Keycloak groups whose
-membership grants the missing permission, computed from `policy.yaml`'s
-`group_permissions` and the service's `required_permission`. The catalog and
-`af_list_mcp_servers` return them as `granting_groups` and the portal lists
-them next to the button, so a user learns *which* group to ask to join, not
-just where to ask. The rules:
+**Granting groups.** When a caller lacks a service's permission, the broker
+also names the Keycloak groups whose membership grants it, computed from
+`policy.yaml`'s `group_permissions` and the service's `required_permission`.
+The catalog and `af_list_mcp_servers` return them as `granting_groups`, the
+portal lists them ("Granted by membership in: ..."), and the permission-denied
+tool error appends them, so a user learns *which* group to ask to join. The
+rules:
 
 - `__authenticated__` is never listed. Every caller already has it, so it is
   not a membership anyone can request.
@@ -445,11 +440,11 @@ just where to ask. The rules:
   it names only the groups granting the permission of the tool that was
   called.
 - A tool no group can reach (a per-tool map with no entry for it and no
-  `__default__`) gets no groups and no link, since no membership would help.
+  `__default__`) gets no groups, since no membership would help.
 
-`access_url` and `granting_groups` appear only while the caller lacks the
-permission (`status: permission_required`); `docs_url` appears for every
-status. Group names are only returned to authenticated callers.
+`granting_groups` is non-empty only while the caller lacks the permission
+(`status: permission_required`). Group names are only returned to
+authenticated callers.
 
 ### Naming conventions
 
