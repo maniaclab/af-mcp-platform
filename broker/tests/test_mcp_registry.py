@@ -1063,3 +1063,70 @@ def test_clear_caller_list_failure_clears_only_that_callers_record() -> None:
     assert registry.recent_list_failure("svc", "alice") is None
     assert registry.recent_list_failure("svc", "bob") == "not_linked"
     assert registry.recent_list_failure("other", "alice") == "not_linked"
+
+
+# --- docs_url (issue #395) -------------------------------------
+
+
+def _spec(**kwargs: object) -> ServiceSpec:
+    return ServiceSpec(
+        name="example",
+        prefix="example",
+        url="http://example.invalid/mcp",
+        transport="http",
+        required_permission="read_data",
+        **kwargs,  # type: ignore[arg-type]
+    )
+
+
+def test_docs_url_defaults_to_none() -> None:
+    assert _spec().docs_url is None
+
+
+def test_load_parses_docs_url(tmp_path: Path) -> None:
+    services_file = tmp_path / "services.yaml"
+    services_file.write_text(
+        """
+services:
+  - name: example
+    prefix: example
+    url: "http://example.invalid/mcp"
+    required_permission: read_data
+    docs_url: https://docs.example.org/example
+"""
+    )
+    registry = ServiceRegistry()
+    registry.load(str(services_file))
+    spec = registry.get("example")
+    assert spec is not None
+    assert spec.docs_url == "https://docs.example.org/example"
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "groups.example.org/request",  # no scheme
+        "/relative/path",  # not absolute
+        "http://groups.example.org/request",  # plain http off localhost
+        "javascript:alert(1)",  # script scheme
+        "ftp://groups.example.org/request",  # non-web scheme
+        "https:///no-host",  # no host
+        "",  # empty string is a typo, not "unset"
+    ],
+)
+def test_spec_rejects_invalid_docs_urls(bad: str) -> None:
+    with pytest.raises(ValueError, match="docs_url"):
+        _spec(docs_url=bad)
+
+
+@pytest.mark.parametrize(
+    "good",
+    [
+        "https://groups.example.org/request",
+        "http://localhost:4321/request",
+        "http://127.0.0.1:8080/request",
+        "http://[::1]:8080/request",
+    ],
+)
+def test_spec_accepts_https_and_loopback_http_urls(good: str) -> None:
+    assert _spec(docs_url=good).docs_url == good

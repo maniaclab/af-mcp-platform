@@ -254,7 +254,11 @@ def test_catalog_never_exposes_backend_url(
     state["principal"] = make_principal(groups=["atlas"])
     resp = client.get("/v1/catalog", headers=_AUTH)
     assert resp.status_code == 200, resp.text
-    assert "url" not in json.dumps(resp.json()["servers"])
+    servers = resp.json()["servers"]
+    # The optional docs_url field is operator-declared link, not
+    # the backend's address: the backend URL itself is neither a key nor a value.
+    assert all("url" not in server for server in servers)
+    assert "://" not in json.dumps(servers)
 
 
 # ---------------------------------------------------------------------------
@@ -973,3 +977,96 @@ def test_credential_without_expiry_reports_null_expiry(
     assert body["token"] == "non-expiring-token"
     assert body["expires_at"] is None
     assert body["remaining_seconds"] is None
+
+
+# --- docs_url / granting_groups on catalog entries (issue #395) --
+
+# Groups the shipped policy.yaml grants read_data to, which rucio requires.
+_READ_DATA_GROUPS = ["af-admins", "atlas", "cms", "dune", "escape"]
+
+
+def _catalog_by_name(client: TestClient) -> dict[str, dict]:
+    resp = client.get("/v1/catalog", headers=_AUTH)
+    assert resp.status_code == 200, resp.text
+    return {s["name"]: s for s in resp.json()["servers"]}
+
+
+def test_catalog_permission_required_names_the_granting_groups(
+    app_client: tuple[TestClient, dict], make_principal: Callable[..., object]
+) -> None:
+    client, state = app_client
+    state["principal"] = make_principal(groups=[])
+    rucio = _catalog_by_name(client)["rucio"]
+
+    assert rucio["status"] == "permission_required"
+    assert rucio["granting_groups"] == _READ_DATA_GROUPS
+    # The sentence is the same canned text whether or not a docs link exists.
+    assert "Contact the AF admins." in rucio["status_detail"]
+    assert "Request access" not in rucio["status_detail"]
+
+
+def test_catalog_granting_groups_only_for_permission_required(
+    app_client: tuple[TestClient, dict], make_principal: Callable[..., object]
+) -> None:
+    """A caller who holds the permission is never told which groups to join."""
+    client, state = app_client
+    state["principal"] = make_principal(groups=["atlas"])
+    rucio = _catalog_by_name(client)["rucio"]
+
+    assert rucio["status"] != "permission_required"
+    assert rucio["granting_groups"] == []
+
+
+@pytest.mark.parametrize("groups", [[], ["atlas"]])
+def test_catalog_docs_url_is_returned_for_every_status(
+    app_client: tuple[TestClient, dict],
+    make_principal: Callable[..., object],
+    groups: list[str],
+) -> None:
+    client, state = app_client
+    state["principal"] = make_principal(groups=groups)
+    client.app.state.service_registry.get(
+        "rucio"
+    ).docs_url = "https://docs.example.org/rucio"
+    servers = _catalog_by_name(client)
+
+    assert servers["rucio"]["docs_url"] == "https://docs.example.org/rucio"
+    # Unset stays null rather than being omitted.
+    assert servers["docs"]["docs_url"] is None
+
+
+def test_catalog_dict_form_granting_groups_union_across_tools(
+    app_client: tuple[TestClient, dict], make_principal: Callable[..., object]
+) -> None:
+    """A dict-form required_permission has several permissions; the
+    service-level summary is the union of groups granting ANY of them,
+    matching "available means the caller holds at least one"."""
+    from af_mcp_broker.authorization import EntitlementPolicy
+    from af_mcp_broker.mcp.registry import ServiceSpec
+
+    client, state = app_client
+    state["principal"] = make_principal(groups=[])
+    client.app.state.entitlement_policy = EntitlementPolicy(
+        group_permissions={
+            "ops": ["manage_jobs"],
+            "analysts": ["read_data"],
+            "__authenticated__": [],
+        }
+    )
+    client.app.state.service_registry.register(
+        ServiceSpec(
+            name="mixed",
+            prefix="mixed",
+            url="http://mixed.invalid/mcp",
+            transport="http",
+            required_permission={
+                "__default__": "manage_jobs",
+                "query": "read_data",
+            },
+            auth_type="none",
+        )
+    )
+    mixed = _catalog_by_name(client)["mixed"]
+
+    assert mixed["status"] == "permission_required"
+    assert mixed["granting_groups"] == ["analysts", "ops"]

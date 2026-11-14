@@ -173,6 +173,8 @@ aggregator:
       required_permission: read_data
       apply_namespace: false
       trust_tier: service-tier
+      # docs_url (issue #395) flows through to services.yaml verbatim.
+      docs_url: "https://docs.example.com/rucio"
       agent_policy: >-
         Read queries are safe; creating or deleting rules changes real data
         placement — confirm with the user first.

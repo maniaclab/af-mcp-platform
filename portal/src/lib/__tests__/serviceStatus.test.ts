@@ -30,6 +30,7 @@ describe('resolveServiceStatus', () => {
       severity: 'ok',
       cta: null,
       correlationId: null,
+      grantingGroups: [],
     });
   });
 
@@ -50,6 +51,52 @@ describe('resolveServiceStatus', () => {
     expect(view.severity).toBe('warning');
     expect(view.cta).toBeNull();
     expect(view.correlationId).toBe('abc123');
+  });
+
+  describe('"permission_required" (issue #395)', () => {
+    const denied = (extra: Partial<CatalogServer>) =>
+      resolveServiceStatus({
+        ...statusFields('permission_required', { correlation_id: 'abc123' }),
+        ...extra,
+      });
+
+    it('offers "About this service" linking to the docs URL', () => {
+      const view = denied({ docs_url: 'https://docs.example.org/rucio' });
+      expect(view.cta).toEqual({
+        label: 'About this service',
+        href: 'https://docs.example.org/rucio',
+      });
+      // The reference id to quote stays alongside the call to action.
+      expect(view.correlationId).toBe('abc123');
+    });
+
+    it('has no call to action without a docs URL', () => {
+      expect(denied({ docs_url: null }).cta).toBeNull();
+      expect(denied({}).cta).toBeNull();
+    });
+
+    it('carries the groups that grant the permission through', () => {
+      const view = denied({ granting_groups: ['/connect/atlas-af', '/connect/escape'] });
+      expect(view.grantingGroups).toEqual(['/connect/atlas-af', '/connect/escape']);
+    });
+
+    it('has no groups when the broker names none, or omits the field', () => {
+      expect(denied({ granting_groups: [] }).grantingGroups).toEqual([]);
+      expect(denied({}).grantingGroups).toEqual([]);
+    });
+
+    it.each(['available', 'unavailable', 'misconfigured'] as const)(
+      'never makes the docs link the call to action of a %s service',
+      (status) => {
+        const view = resolveServiceStatus({
+          ...statusFields(status),
+          docs_url: 'https://docs.example.org/rucio',
+          granting_groups: ['/connect/atlas-af'],
+        });
+        expect(view.cta).toBeNull();
+        expect(view.grantingGroups).toEqual([]);
+      },
+    );
   });
 
   it('reports "unavailable" as warning severity with no CTA and no correlation id', () => {

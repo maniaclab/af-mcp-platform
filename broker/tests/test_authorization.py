@@ -10,6 +10,7 @@ from af_mcp_broker.authorization import (
     check_entitlement,
     get_action_type,
     get_principal_permissions,
+    groups_granting_any,
     is_admin,
     load_policy,
     resolve_action_type,
@@ -557,3 +558,42 @@ def test_startup_accepts_declared_custom_permission(
         resp = client.get("/v1/healthz")
 
     assert resp.status_code == 200, resp.text
+
+
+# --- groups_granting_any (issue #395) ---------------------------------------
+
+
+def test_groups_granting_any_names_every_group_granting_a_permission() -> None:
+    policy = EntitlementPolicy(
+        group_permissions={
+            "/connect/atlas-af": ["read_data", "manage_jobs"],
+            "/connect/escape": ["read_data"],
+            "/connect/ops": ["manage_jobs"],
+            "__authenticated__": ["read_metadata"],
+        }
+    )
+    assert groups_granting_any(policy, {"read_data"}) == [
+        "/connect/atlas-af",
+        "/connect/escape",
+    ]
+    # A union across several permissions, sorted, each group once.
+    assert groups_granting_any(policy, {"read_data", "manage_jobs"}) == [
+        "/connect/atlas-af",
+        "/connect/escape",
+        "/connect/ops",
+    ]
+
+
+def test_groups_granting_any_excludes_the_authenticated_pseudo_group() -> None:
+    """__authenticated__ is not a group anyone can join, so naming it would
+    send a user looking for a membership that doesn't exist."""
+    policy = EntitlementPolicy(
+        group_permissions={"__authenticated__": ["read_data"], "atlas": ["read_data"]}
+    )
+    assert groups_granting_any(policy, {"read_data"}) == ["atlas"]
+
+
+def test_groups_granting_any_is_empty_for_an_ungranted_permission() -> None:
+    policy = EntitlementPolicy(group_permissions={"atlas": ["read_data"]})
+    assert groups_granting_any(policy, {"manage_jobs"}) == []
+    assert groups_granting_any(policy, set()) == []

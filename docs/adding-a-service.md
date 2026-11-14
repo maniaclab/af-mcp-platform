@@ -399,6 +399,53 @@ prefix when `apply_namespace: false`. A name that never appears in the
 backend's own listing logs a one-time `aggregator.exclude_tools_not_found`
 warning — almost always a typo.
 
+### `docs_url` — linking to where the service is described
+
+`docs_url` is an optional link, so an existing registry keeps working
+unchanged:
+
+```yaml
+- name: rucio-mcp
+  prefix: rucio
+  url: "http://rucio-mcp:8000/mcp"
+  required_permission: read_data
+  docs_url: "https://docs.example.org/rucio"
+```
+
+It must be an absolute `https` URL; `http` is accepted only for `localhost`,
+`127.0.0.1` and `::1` (a local dev docs server). Anything else (a relative
+path, a bare host name, `javascript:`, an empty string) stops the broker at
+startup naming the service and the field.
+
+The portal shows it on the service's card as "About this service" for every
+status, and as the call to action on an "Access required" card. `GET
+/v1/catalog` and `af_list_mcp_servers` return it as `docs_url` for every
+status (`null` when unset).
+
+**Granting groups.** When a caller lacks a service's permission, the broker
+also names the Keycloak groups whose membership grants it, computed from
+`policy.yaml`'s `group_permissions` and the service's `required_permission`.
+The catalog and `af_list_mcp_servers` return them as `granting_groups`, the
+portal lists them ("Granted by membership in: ..."), and the permission-denied
+tool error appends them, so a user learns *which* group to ask to join. The
+rules:
+
+- `__authenticated__` is never listed. Every caller already has it, so it is
+  not a membership anyone can request.
+- For a single `required_permission`, the groups are those granting it.
+- For a per-tool `required_permission` map, the catalog entry lists the union
+  of the groups granting any of the tools' permissions. The service reads as
+  "access required" only when the caller holds none of them, so any listed
+  group unlocks at least one tool. A permission-denied tool error is narrower:
+  it names only the groups granting the permission of the tool that was
+  called.
+- A tool no group can reach (a per-tool map with no entry for it and no
+  `__default__`) gets no groups, since no membership would help.
+
+`granting_groups` is non-empty only while the caller lacks the permission
+(`status: permission_required`). Group names are only returned to
+authenticated callers.
+
 ### Naming conventions
 
 New services are named `<backend>_service` per the Elwood v5 glossary (e.g.

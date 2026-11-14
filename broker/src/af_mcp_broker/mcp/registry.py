@@ -4,6 +4,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, get_args
+from urllib.parse import urlsplit
 
 import yaml  # type: ignore[import-untyped]
 
@@ -60,6 +61,33 @@ DIAGNOSTIC_TOOL_NAMES = frozenset(
         SEARCH_TOOLS_TOOL_NAME,
     }
 )
+
+
+# Hosts for which plain http is accepted in a user-facing link: a local dev
+# portal or docs server. Any other host must be https, since the portal and
+# assistants hand these links to users as places to sign in or request access.
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def validate_user_facing_url(value: str, where: str) -> str:
+    """Return *value* if it is an absolute https URL (http only for a loopback host), else raise ``ValueError`` naming *where*.
+
+    Used for ServiceSpec's ``docs_url``: it is rendered as a link in the
+    portal, so a relative path, a scheme-less host, or a ``javascript:`` URL
+    must fail at startup rather than become a broken or unsafe link.
+    """
+    parts = urlsplit(value)
+    host = parts.hostname
+    if not host or parts.scheme not in {"http", "https"}:
+        msg = f"{where} must be an absolute https URL, got {value!r}"
+        raise ValueError(msg)
+    if parts.scheme == "http" and host not in _LOOPBACK_HOSTS:
+        msg = (
+            f"{where} must use https (plain http is accepted only for "
+            f"localhost, 127.0.0.1 or ::1), got {value!r}"
+        )
+        raise ValueError(msg)
+    return value
 
 
 def identity_provider_url(settings: Settings, alias: str) -> str:
@@ -217,6 +245,10 @@ class ServiceSpec:
     # self-declares (e.g. rucio-mcp's "rucio_list_dids"), so an entry here
     # must include that prefix too.
     exclude_tools: frozenset[str] = frozenset()
+    # A link to where the service is described, shown on its portal card for
+    # every status ("About this service") and as the call to action when the
+    # caller lacks access. None means the card shows no link.
+    docs_url: str | None = None
 
     @property
     def effective_audience(self) -> str:
@@ -269,6 +301,8 @@ class ServiceSpec:
                 "or omitted (see docs/architecture.md's 'Trust tiers')."
             )
             raise ValueError(msg)
+        if self.docs_url is not None:
+            validate_user_facing_url(self.docs_url, f"service '{self.name}' docs_url")
 
 
 def _builtin_service_spec(name: str = BUILTIN_SERVICE_NAME) -> ServiceSpec:
@@ -487,6 +521,7 @@ class ServiceRegistry:
                 agent_policy=entry.get("agent_policy"),
                 requires_posix=entry.get("requires_posix", False),
                 exclude_tools=frozenset(exclude_tools),
+                docs_url=entry.get("docs_url"),
             )
             self.register(spec)
 
