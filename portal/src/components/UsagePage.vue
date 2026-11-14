@@ -124,7 +124,7 @@ const chartLabel = computed<string>(() => {
       <SegmentedControl
         :model-value="String(days)"
         :options="WINDOW_OPTIONS"
-        aria-label="Trailing window"
+        ariaLabel="Trailing window"
         @update:model-value="selectWindow"
       />
       <span v-if="usage" class="up__model">
@@ -184,7 +184,7 @@ const chartLabel = computed<string>(() => {
           <BarChart
             :labels="dayLabels"
             :series="daySeries"
-            :aria-label="chartLabel"
+            :ariaLabel="chartLabel"
             :format-value="formatTokens"
           />
         </section>
