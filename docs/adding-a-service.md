@@ -129,6 +129,9 @@ broker:
   it out, the broker uses its CIMD URL. If every oauth21-direct entry has
   its own `clientId`, the CIMD id is never used. Entries with their own
   `clientId` are also left out of the CIMD document's `redirect_uris`.
+- **`revocationEndpoint`** (optional): the service's RFC 7009 token
+  revocation URL. When set, unlinking also revokes the token upstream; when
+  unset, unlinking deletes only the broker's stored copy.
 - **`existingClientSecretSecret`**: the name of a pre-existing Secret
   (create it with a SealedSecret; the chart does not create it) whose
   `client-secret` key holds the client secret. Setting it makes the entry
