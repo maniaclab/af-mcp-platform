@@ -442,6 +442,16 @@ export interface CatalogServer {
    * credential, no identity to link, and no backend that could be
    * unreachable, so ServiceCard drops those affordances for it. */
   builtin: boolean;
+  /** The service's own documentation link; set for every status, null when
+   * the registry entry declares none. */
+  docs_url: string | null;
+  /** Where to request the access this service requires: the service's own
+   * access_url, else the facility default. Set only when `status` is
+   * "permission_required", and null when neither is configured. */
+  access_url: string | null;
+  /** Keycloak groups whose membership grants the missing permission; set only
+   * when `status` is "permission_required", empty otherwise. */
+  granting_groups: string[];
 }
 
 export interface CatalogResponse {

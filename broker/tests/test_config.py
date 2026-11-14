@@ -1012,3 +1012,25 @@ def test_usage_batch_settings_default_and_read_env(monkeypatch):
 def test_usage_batch_settings_must_be_positive(name, value):
     with pytest.raises(ValueError, match=name):
         Settings(**{name: value})
+
+
+def test_access_request_url_defaults_to_none():
+    assert Settings().access_request_url is None
+
+
+def test_access_request_url_env_var(monkeypatch):
+    monkeypatch.setenv("ACCESS_REQUEST_URL", "https://groups.example.org/request")
+    assert Settings().access_request_url == "https://groups.example.org/request"
+
+
+def test_empty_access_request_url_env_var_means_unset(monkeypatch):
+    """The chart omits the value by default; an empty string must not fail startup."""
+    monkeypatch.setenv("ACCESS_REQUEST_URL", "")
+    assert Settings().access_request_url is None
+
+
+@pytest.mark.parametrize("bad", ["groups.example.org", "http://groups.example.org"])
+def test_access_request_url_rejects_non_https(monkeypatch, bad):
+    monkeypatch.setenv("ACCESS_REQUEST_URL", bad)
+    with pytest.raises(ValueError, match="access_request_url"):
+        Settings()

@@ -17,6 +17,9 @@ portal:
 # Secret for template rendering — it doesn't need to exist for `helm
 # lint`/`helm template` to succeed.
 broker:
+  # Exercises the ACCESS_REQUEST_URL env render (facility-wide fallback for a
+  # service's access_url).
+  accessRequestUrl: "https://groups.example.com/request"
   # Exercises the shared-state store render path: SHARED_STATE_URL via a
   # Secret, and the NetworkPolicy egress rule to the store (selected by
   # namespace and pod).
@@ -173,6 +176,9 @@ aggregator:
       required_permission: read_data
       apply_namespace: false
       trust_tier: service-tier
+      # access_url/docs_url (issue #395) flow through to services.yaml verbatim.
+      access_url: "https://groups.example.com/request/rucio"
+      docs_url: "https://docs.example.com/rucio"
       agent_policy: >-
         Read queries are safe; creating or deleting rules changes real data
         placement — confirm with the user first.

@@ -4,6 +4,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, get_args
+from urllib.parse import urlsplit
 
 import yaml  # type: ignore[import-untyped]
 
@@ -58,6 +59,35 @@ DIAGNOSTIC_TOOL_NAMES = frozenset(
         USAGE_TOOL_NAME,
     }
 )
+
+
+# Hosts for which plain http is accepted in a user-facing link: a local dev
+# portal or docs server. Any other host must be https, since the portal and
+# assistants hand these links to users as places to sign in or request access.
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def validate_user_facing_url(value: str, where: str) -> str:
+    """Return *value* if it is an absolute https URL (http only for a loopback host), else raise ``ValueError`` naming *where*.
+
+    Shared by ServiceSpec's ``access_url``/``docs_url`` and Settings'
+    ``access_request_url``: these are rendered as links in the portal and
+    quoted by assistants, so a relative path, a scheme-less host, or a
+    ``javascript:`` URL must fail at startup rather than become a broken or
+    unsafe link.
+    """
+    parts = urlsplit(value)
+    host = parts.hostname
+    if not host or parts.scheme not in {"http", "https"}:
+        msg = f"{where} must be an absolute https URL, got {value!r}"
+        raise ValueError(msg)
+    if parts.scheme == "http" and host not in _LOOPBACK_HOSTS:
+        msg = (
+            f"{where} must use https (plain http is accepted only for "
+            f"localhost, 127.0.0.1 or ::1), got {value!r}"
+        )
+        raise ValueError(msg)
+    return value
 
 
 def identity_provider_url(settings: Settings, alias: str) -> str:
@@ -215,6 +245,16 @@ class ServiceSpec:
     # self-declares (e.g. rucio-mcp's "rucio_list_dids"), so an entry here
     # must include that prefix too.
     exclude_tools: frozenset[str] = frozenset()
+    # Where a caller who lacks this service's permission requests access (a
+    # group-request page, a ticket form), shown by the portal as "Request
+    # access" and quoted in the permission-denied tool error. None falls back
+    # to the facility-wide default (ServiceRegistry.access_url_for). A link
+    # only: the broker never calls it, and self-service request flows live
+    # outside the broker.
+    access_url: str | None = None
+    # The service's own documentation, linked from its portal card for every
+    # status. None means the card shows no docs link.
+    docs_url: str | None = None
 
     @property
     def effective_audience(self) -> str:
@@ -267,6 +307,10 @@ class ServiceSpec:
                 "or omitted (see docs/architecture.md's 'Trust tiers')."
             )
             raise ValueError(msg)
+        for field_name in ("access_url", "docs_url"):
+            value = getattr(self, field_name)
+            if value is not None:
+                validate_user_facing_url(value, f"service '{self.name}' {field_name}")
 
 
 def _builtin_service_spec(name: str = BUILTIN_SERVICE_NAME) -> ServiceSpec:
@@ -405,8 +449,15 @@ _MAX_CALLER_LIST_FAILURES = 4096
 class ServiceRegistry:
     """Config-driven service registry. Adding a service = one YAML entry, no code change."""
 
-    def __init__(self, builtin_service_name: str = BUILTIN_SERVICE_NAME) -> None:
+    def __init__(
+        self,
+        builtin_service_name: str = BUILTIN_SERVICE_NAME,
+        default_access_url: str | None = None,
+    ) -> None:
         self._builtin_service_name = builtin_service_name
+        # Facility-wide fallback for a service that sets no access_url of its
+        # own (Settings.access_request_url); see access_url_for().
+        self._default_access_url = default_access_url
         self._services: dict[str, ServiceSpec] = {}
         # Most recently classified tools/list failure reasons (see
         # aggregator.py's _classify_list_failure), best-effort, last-write-
@@ -454,6 +505,10 @@ class ServiceRegistry:
         for key, value in self._tool_permission_entries(builtin_spec):
             self._tool_permissions[key] = value
 
+    def access_url_for(self, service: ServiceSpec) -> str | None:
+        """Return where a caller lacking *service*'s permission requests access: the service's own ``access_url``, else the facility-wide default, else None."""
+        return service.access_url or self._default_access_url
+
     def load(self, path: str) -> None:
         with Path(path).open() as fh:
             raw = yaml.safe_load(fh) or {}
@@ -484,6 +539,8 @@ class ServiceRegistry:
                 agent_policy=entry.get("agent_policy"),
                 requires_posix=entry.get("requires_posix", False),
                 exclude_tools=frozenset(exclude_tools),
+                access_url=entry.get("access_url"),
+                docs_url=entry.get("docs_url"),
             )
             self.register(spec)
 

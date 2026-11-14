@@ -19,7 +19,7 @@ from pydantic import (
 )
 from pydantic_settings import BaseSettings
 
-from af_mcp_broker.mcp.registry import BUILTIN_SERVICE_NAME
+from af_mcp_broker.mcp.registry import BUILTIN_SERVICE_NAME, validate_user_facing_url
 
 log = structlog.get_logger(__name__)
 
@@ -461,6 +461,12 @@ class Settings(BaseSettings):
     # hostname, not a canonical value -- every deployment overrides it via
     # PORTAL_URL.
     portal_url: str = "https://mcp-portal.af.uchicago.edu"
+
+    # Facility-wide page where a user requests the access a service requires
+    # (e.g. a group-request form). The fallback for a services.yaml entry that
+    # sets no access_url of its own; None (unset or empty) means services
+    # without their own access_url show no "Request access" link.
+    access_request_url: str | None = None
 
     # /mcp aggregator transport mode (issue #128). Streamable-HTTP sessions
     # are in-process state: a stateful session (the fastmcp/mcp SDK default)
@@ -917,6 +923,18 @@ class Settings(BaseSettings):
                     "top tokens in credd through htcondor-api."
                 )
         return self
+
+    @field_validator("access_request_url", mode="before")
+    @classmethod
+    def _validate_access_request_url(cls, value: object) -> object:
+        # The chart exports an empty string when the value is unset; treat it
+        # as "not configured" rather than failing startup.
+        if value is None or value == "":
+            return None
+        # A non-string falls through to pydantic's own type error.
+        if isinstance(value, str):
+            return validate_user_facing_url(value, "access_request_url")
+        return value
 
     @field_validator("broker_token_ttl_seconds")
     @classmethod

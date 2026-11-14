@@ -43,6 +43,8 @@ const statusTone = computed(() => TONE[statusView.value.severity]);
 const fix = computed(() => {
   const cta = statusView.value.cta;
   if (!cta) return null;
+  // "Request access" is an external page, not the identity's own card.
+  if (props.server.status === 'permission_required') return cta;
   const { kind, linkLabel, relinkLabel, linkHref } = props.poweredBy;
   // A rejected credential is re-linked, not linked for the first time.
   const label = isRejected.value ? relinkLabel : linkLabel;
@@ -106,7 +108,15 @@ const toolsView = computed(() =>
       <!-- Reachability, with the fix right beside it when the user can act. -->
       <div class="bc__status-line">
         <StatusMark :tone="statusTone" :label="statusView.label" />
-        <a v-if="fix" :href="fix.href" class="bc__status-cta">{{ fix.label }}</a>
+        <a
+          v-if="fix && server.status === 'permission_required'"
+          :href="fix.href"
+          class="bc__status-cta"
+          target="_blank"
+          rel="noopener noreferrer"
+          >{{ fix.label }}</a
+        >
+        <a v-else-if="fix" :href="fix.href" class="bc__status-cta">{{ fix.label }}</a>
       </div>
     </div>
 
@@ -115,6 +125,13 @@ const toolsView = computed(() =>
     <!-- Status detail: what to do when the status word alone does not say. -->
     <p v-if="showStatusDetail" class="bc__status-detail" role="status">
       {{ statusView.detail }}
+      <span v-if="statusView.grantingGroups.length > 0" class="bc__groups">
+        Granted by membership in:
+        <template v-for="(group, i) in statusView.grantingGroups" :key="group"
+          ><code>{{ group }}</code
+          ><template v-if="i < statusView.grantingGroups.length - 1">, </template></template
+        >.
+      </span>
       <span v-if="statusView.correlationId" class="bc__status-ref">
         Reference: <code>{{ statusView.correlationId }}</code>
       </span>
@@ -226,6 +243,15 @@ const toolsView = computed(() =>
           />
         </template>
       </p>
+
+      <a
+        v-if="server.docs_url"
+        :href="server.docs_url"
+        class="bc__docs-link"
+        target="_blank"
+        rel="noopener noreferrer"
+        >Documentation</a
+      >
     </div>
 
     <!-- Methods -- collapsed by default (a backend can register dozens of
@@ -349,6 +375,15 @@ const toolsView = computed(() =>
 
 .bc__status-ref {
   white-space: nowrap;
+}
+
+/* Group paths are long; let them wrap rather than overflow a narrow card. */
+.bc__groups code {
+  overflow-wrap: anywhere;
+}
+
+.bc__docs-link {
+  font-size: var(--text-13);
 }
 
 .bc__meta {

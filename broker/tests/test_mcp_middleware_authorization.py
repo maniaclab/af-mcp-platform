@@ -1284,3 +1284,145 @@ async def test_rate_limit_store_outage_falls_back_to_a_per_replica_count(
         "success",
         "rate_limited",
     ]
+
+
+# --- access guidance in the permission-denied error (issue #395) -------------
+
+
+def _registry_with_rucio(**kwargs) -> ServiceRegistry:
+    """A registry whose "rucio" service requires read_data."""
+    reg = ServiceRegistry(default_access_url=kwargs.pop("default_access_url", None))
+    reg.register(
+        ServiceSpec(
+            name="rucio",
+            prefix="rucio",
+            url="http://rucio.invalid/mcp",
+            transport="http",
+            required_permission="read_data",
+            apply_namespace=False,
+            **kwargs,
+        )
+    )
+    return reg
+
+
+async def test_denial_names_granting_groups_and_access_url(
+    policy, make_principal, captured_audits
+) -> None:
+    registry = _registry_with_rucio(
+        default_access_url="https://facility.example.org/access"
+    )
+    mw = AuthorizationMiddleware(registry, policy)
+    context = _call_tool_context("rucio_list_dids", {}, make_principal(groups=[]))
+
+    with pytest.raises(AuthorizationError) as excinfo:
+        await mw.on_call_tool(context, _CallNextRecorder())
+
+    message = str(excinfo.value)
+    # The existing wording is kept ...
+    assert message.startswith(
+        "Authorization denied: target 'rucio' requires permission 'read_data'"
+    )
+    # ... and extended with where to go and who to ask.
+    assert "Granted by membership in: atlas." in message
+    assert "Request access: https://facility.example.org/access" in message
+    # The audit record keeps the bare reason: the guidance is for the caller,
+    # not the log line.
+    assert captured_audits[0].error == (
+        "target 'rucio' requires permission 'read_data'"
+    )
+
+
+async def test_denial_prefers_the_services_own_access_url(
+    policy, make_principal, captured_audits
+) -> None:
+    registry = _registry_with_rucio(
+        default_access_url="https://facility.example.org/access",
+        access_url="https://rucio.example.org/access",
+    )
+    mw = AuthorizationMiddleware(registry, policy)
+    context = _call_tool_context("rucio_list_dids", {}, make_principal(groups=[]))
+
+    with pytest.raises(AuthorizationError) as excinfo:
+        await mw.on_call_tool(context, _CallNextRecorder())
+
+    assert "Request access: https://rucio.example.org/access" in str(excinfo.value)
+    assert "facility.example.org" not in str(excinfo.value)
+
+
+async def test_denial_without_url_or_groups_keeps_the_original_message(
+    make_principal, captured_audits
+) -> None:
+    """No group grants read_data and no URL is configured: nothing to add."""
+    registry = _registry_with_rucio()
+    policy = EntitlementPolicy(group_permissions={"__authenticated__": []})
+    mw = AuthorizationMiddleware(registry, policy)
+    context = _call_tool_context("rucio_list_dids", {}, make_principal(groups=[]))
+
+    with pytest.raises(AuthorizationError) as excinfo:
+        await mw.on_call_tool(context, _CallNextRecorder())
+
+    assert str(excinfo.value) == (
+        "Authorization denied: target 'rucio' requires permission 'read_data'"
+    )
+
+
+async def test_denial_for_a_per_tool_permission_names_that_tools_groups(
+    policy, make_principal, captured_audits
+) -> None:
+    """Each tool's error names the groups for ITS permission, not the union
+    across the service."""
+    registry = ServiceRegistry()
+    registry.register(
+        ServiceSpec(
+            name="condor",
+            prefix="condor",
+            url="http://condor.invalid/mcp",
+            transport="http",
+            required_permission={
+                "__default__": "manage_jobs",
+                "query_jobs": "read_data",
+            },
+            auth_type="none",
+        )
+    )
+    mw = AuthorizationMiddleware(registry, policy)
+
+    messages = {}
+    for tool in ("condor_query_jobs", "condor_submit_job"):
+        context = _call_tool_context(tool, {}, make_principal(groups=[]))
+        with pytest.raises(AuthorizationError) as excinfo:
+            await mw.on_call_tool(context, _CallNextRecorder())
+        messages[tool] = str(excinfo.value)
+
+    # policy fixture: atlas -> read_data; af-admins -> manage_jobs.
+    assert "Granted by membership in: atlas." in messages["condor_query_jobs"]
+    assert "Granted by membership in: af-admins." in messages["condor_submit_job"]
+
+
+async def test_denial_of_an_unmapped_tool_offers_no_access_guidance(
+    make_principal, captured_audits
+) -> None:
+    """A dict-form service with no __default__ disables unlisted tools for
+    everyone: no group or access page can fix that, so none is suggested."""
+    registry = ServiceRegistry(default_access_url="https://facility.example.org/access")
+    registry.register(
+        ServiceSpec(
+            name="condor",
+            prefix="condor",
+            url="http://condor.invalid/mcp",
+            transport="http",
+            required_permission={"query_jobs": "read_data"},
+            auth_type="none",
+        )
+    )
+    policy = EntitlementPolicy(group_permissions={"atlas": ["read_data"]})
+    mw = AuthorizationMiddleware(registry, policy)
+    context = _call_tool_context("condor_submit_job", {}, make_principal(groups=[]))
+
+    with pytest.raises(AuthorizationError) as excinfo:
+        await mw.on_call_tool(context, _CallNextRecorder())
+
+    assert str(excinfo.value) == (
+        "Authorization denied: target 'condor' has no permission mapping for this tool"
+    )

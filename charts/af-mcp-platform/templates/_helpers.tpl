@@ -526,6 +526,12 @@ startup refusal (Settings._validate_replica_state_config) for the chart path.
 - name: ADMIN_GROUP
   value: {{ .Values.broker.adminGroup | quote }}
 {{- end }}
+{{- if .Values.broker.accessRequestUrl }}
+# Facility-wide "request access" page, the fallback for a service with no
+# access_url of its own. Only rendered when set.
+- name: ACCESS_REQUEST_URL
+  value: {{ .Values.broker.accessRequestUrl | quote }}
+{{- end }}
 {{- if .Values.broker.tracing.enabled }}
 # OpenTelemetry trace emission (broker tracing.py) -- the standard OTel env
 # vars, read natively by the SDK's OTLP/HTTP exporter (which appends the
