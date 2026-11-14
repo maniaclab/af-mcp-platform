@@ -9,7 +9,12 @@ from fastmcp.server.dependencies import get_context
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field
 
-from af_mcp_broker.api.permissions import LinkState, ServiceStatus, _service_status
+from af_mcp_broker.api.permissions import (
+    LinkState,
+    ServiceStatus,
+    _granting_groups_for,
+    _service_status,
+)
 from af_mcp_broker.api.rate_limits import RateLimitStatus, rate_limit_statuses
 from af_mcp_broker.authorization import get_action_type, get_principal_permissions
 from af_mcp_broker.authorization.rate_limit import read_rate_limit_usage
@@ -164,6 +169,13 @@ class DiagnosticMcpServer(BaseModel):
     # "not_linked" or "rejected" (linked, but the backend rejected the stored
     # credential). None for every other status.
     link_state: LinkState | None
+    # The service's documentation link, for every status; None when unset.
+    docs_url: str | None
+    # The groups whose membership grants the missing permission -- set only
+    # when status is "permission_required" (same field as CatalogServer, see
+    # api/permissions.py). Relay them to the user instead of only saying
+    # "contact an administrator".
+    granting_groups: list[str]
 
 
 class ListMcpServersResult(BaseModel):
@@ -537,7 +549,11 @@ def register_diagnostic_tools(
         misconfigured). A service whose status is "link_required" also
         carries link_state: "not_linked" (the identity was never linked) or
         "rejected" (it is linked but the service rejected the stored
-        credential, so re-link it). Needs no permission of its own and never contacts a
+        credential, so re-link it). A "permission_required" service also carries
+        granting_groups (the groups whose membership grants it): pass them on
+        to the user. docs_url, when set, links to where the service is
+        described.
+        Needs no permission of its own and never contacts a
         service -- the status reported is the broker's own last-known state,
         the same data the portal's Catalog page shows.
         """
@@ -548,6 +564,7 @@ def register_diagnostic_tools(
             status, status_detail, _correlation_id, link_state = await _service_status(
                 spec, principal, caps, credential_registry, registry
             )
+            granting_groups = _granting_groups_for(spec, status, policy)
             servers.append(
                 DiagnosticMcpServer(
                     name=spec.name,
@@ -557,6 +574,8 @@ def register_diagnostic_tools(
                     status=status,
                     status_detail=status_detail,
                     link_state=link_state,
+                    docs_url=spec.docs_url,
+                    granting_groups=granting_groups,
                 )
             )
         return ListMcpServersResult(servers=servers)

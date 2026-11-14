@@ -13,6 +13,7 @@ from af_mcp_broker.authorization import (
     check_entitlement,
     get_action_type,
     get_principal_permissions,
+    groups_granting_any,
 )
 from af_mcp_broker.credentials import CredentialRegistry
 from af_mcp_broker.identity import Principal, keycloak_dependency
@@ -198,6 +199,19 @@ class CatalogServer(BaseModel):
     # posture; the authoritative per-deployment assignment lives in the GitOps
     # repo (maniaclab/flux_apps#32).
     trust_tier: str | None
+    # The service's own documentation link (ServiceSpec.docs_url), returned
+    # for every status; None when the registry entry sets none.
+    docs_url: str | None
+    # Keycloak groups whose membership grants a permission this service
+    # requires -- the answer to "which group do I ask to join?". Set only
+    # when status is "permission_required" (empty otherwise). For a per-tool
+    # required_permission map this is the union across every tool's
+    # permission: "permission_required" means the caller holds none of them,
+    # so any listed group unlocks at least one tool (per-tool groups are in
+    # the permission-denied tool error). Group names are Keycloak paths users
+    # already see on their own profile and in GET /v1/entitlements, and this
+    # response is authenticated-only.
+    granting_groups: list[str]
 
 
 class CatalogResponse(BaseModel):
@@ -339,6 +353,15 @@ def _holds_any_required_permission(spec: ServiceSpec, caps: set[str]) -> bool:
     return not required or bool(required & caps)
 
 
+def _granting_groups_for(
+    spec: ServiceSpec, status: ServiceStatus, policy: EntitlementPolicy
+) -> list[str]:
+    """Return the groups granting a permission *spec* requires: empty unless *status* is "permission_required"."""
+    if status != "permission_required":
+        return []
+    return groups_granting_any(policy, spec.all_required_permissions())
+
+
 async def _service_status(
     spec: ServiceSpec,
     principal: Principal,
@@ -346,7 +369,7 @@ async def _service_status(
     credential_registry: CredentialRegistry,
     registry: ServiceRegistry,
 ) -> tuple[ServiceStatus, str, str | None, LinkState | None]:
-    """Derive one service's per-caller availability status for /v1/catalog (issue #123) from data the broker already has -- never an upstream probe of the service itself, an upstream error body, a policy internal, or a group list (see _STATUS_DETAILS's canned sentences).
+    """Derive one service's per-caller availability status for /v1/catalog (issue #123) from data the broker already has -- never an upstream probe of the service itself, an upstream error body, or a policy internal (see _STATUS_DETAILS's canned sentences). The groups that would grant a missing permission travel separately, as CatalogServer.granting_groups.
 
     Precedence mirrors the real enforcement order (AuthorizationMiddleware
     checks entitlement before a client_factory ever attempts to mint a
@@ -564,6 +587,7 @@ async def get_catalog(
         status, status_detail, correlation_id, link_state = await _service_status(
             spec, principal, caps, credential_registry, registry
         )
+        granting_groups = _granting_groups_for(spec, status, policy)
         servers.append(
             CatalogServer(
                 name=spec.name,
@@ -585,6 +609,8 @@ async def get_catalog(
                 correlation_id=correlation_id,
                 builtin=spec.builtin,
                 trust_tier=spec.trust_tier,
+                docs_url=spec.docs_url,
+                granting_groups=granting_groups,
             )
         )
     return CatalogResponse(servers=servers)

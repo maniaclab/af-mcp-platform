@@ -215,6 +215,21 @@ def get_principal_permissions(
     return caps
 
 
+def groups_granting_any(policy: EntitlementPolicy, permissions: set[str]) -> list[str]:
+    """Return the sorted groups whose ``group_permissions`` entry grants at least one of *permissions*.
+
+    Answers "which group memberships would unlock this?" for a caller who
+    lacks a permission. ``__authenticated__`` is excluded: it is a policy
+    pseudo-group every caller already belongs to, not a membership anyone can
+    request.
+    """
+    return sorted(
+        group
+        for group, granted in policy.group_permissions.items()
+        if group != "__authenticated__" and permissions.intersection(granted)
+    )
+
+
 def is_admin(principal: Principal, settings: Settings) -> bool:
     """Return True when *principal* belongs to the configured admin group.
 

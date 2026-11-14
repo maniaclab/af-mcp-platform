@@ -41,6 +41,8 @@ const SERVER: CatalogServer = {
   correlation_id: null,
   link_state: null,
   builtin: false,
+  docs_url: null,
+  granting_groups: [],
 };
 
 /** The broker's own af-mcp entry as /v1/catalog reports it (issue #240). */
@@ -57,6 +59,8 @@ const BUILTIN_SERVER: CatalogServer = {
   correlation_id: null,
   link_state: null,
   builtin: true,
+  docs_url: null,
+  granting_groups: [],
 };
 
 function listing(overrides: Partial<ServerToolsResponse> = {}): ServerToolsResponse {
@@ -497,6 +501,65 @@ describe('status line', () => {
     const detail = wrapper.get('.bc__status-detail');
     expect(detail.text()).toContain('Contact an administrator');
     expect(detail.text()).toContain('abc123');
+  });
+
+  describe('access required (issue #395)', () => {
+    const denied = (overrides: Partial<CatalogServer> = {}) =>
+      mountWith({
+        status: 'permission_required',
+        status_detail: "Your account doesn't have the access this service requires.",
+        correlation_id: 'abc123',
+        ...overrides,
+      });
+
+    it('offers "About this service" beside the status, linking to the docs URL', () => {
+      const wrapper = denied({ docs_url: 'https://docs.example.org/rucio' });
+      const status = wrapper.get('.bc__status-line');
+      expect(status.text()).toContain('Access required');
+      const cta = status.get('a');
+      // Not relabelled to the identity's "Link ... account" wording.
+      expect(cta.text()).toBe('About this service');
+      expect(cta.attributes('href')).toBe('https://docs.example.org/rucio');
+      expect(cta.attributes('rel')).toContain('noopener');
+      // Shown once, not again in the meta line.
+      expect(wrapper.findAll('a[href="https://docs.example.org/rucio"]')).toHaveLength(1);
+    });
+
+    it('lists the groups that grant access and keeps the reference id', () => {
+      const wrapper = denied({
+        granting_groups: ['/connect/atlas-af', '/connect/escape'],
+      });
+      const detail = wrapper.get('.bc__status-detail');
+      expect(detail.text()).toContain('Granted by membership in');
+      const groups = detail.findAll('.bc__groups code').map((c) => c.text());
+      expect(groups).toEqual(['/connect/atlas-af', '/connect/escape']);
+      expect(detail.get('.bc__status-ref code').text()).toBe('abc123');
+    });
+
+    it('shows neither a link nor a group list when the broker offers none', () => {
+      const wrapper = denied();
+      expect(wrapper.get('.bc__status-line').find('a').exists()).toBe(false);
+      expect(wrapper.find('.bc__groups').exists()).toBe(false);
+      expect(wrapper.get('.bc__status-detail').text()).toContain('abc123');
+    });
+  });
+
+  describe('"About this service" link (issue #395)', () => {
+    it.each(['available', 'permission_required', 'unavailable', 'misconfigured'] as const)(
+      'is shown once on a %s service when docs_url is set',
+      (status) => {
+        const wrapper = mountWith({ status, docs_url: 'https://docs.example.org/rucio' });
+        const links = wrapper.findAll('a[href="https://docs.example.org/rucio"]');
+        expect(links).toHaveLength(1);
+        expect(links[0].text()).toBe('About this service');
+        expect(links[0].attributes('rel')).toContain('noopener');
+      },
+    );
+
+    it('is omitted when docs_url is not set', () => {
+      const wrapper = mountWith({ docs_url: null });
+      expect(wrapper.text()).not.toContain('About this service');
+    });
   });
 
   describe('rejected credential', () => {

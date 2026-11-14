@@ -80,3 +80,11 @@ def test_compose_has_no_job_credential_section_when_no_kind_is_wired() -> None:
     text = compose_agent_instructions(ServiceRegistry(), job_credentials=guide)
 
     assert "use_oauth_services" not in text
+
+
+def test_preamble_tells_the_agent_to_relay_the_granting_groups_on_a_denial() -> None:
+    """A denial error may name the groups that grant access (issue #395); the
+    agent must pass them on, still without retrying. No access page exists."""
+    text = compose_agent_instructions(ServiceRegistry())
+    assert "groups" in text.split("A denial")[1].split("A missing-credential")[0]
+    assert "Request access" not in text
