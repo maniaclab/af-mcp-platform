@@ -5,19 +5,17 @@ Two seams, both at the exporter boundary only:
 * ``InMemoryMetricReader`` injected through ``init_otel_metrics(reader=...)``
   for what the broker records (values and the exact attribute set).
 * A real ``OTLPMetricExporter`` pointed at an in-process OTLP/HTTP receiver
-  (a ``ThreadingHTTPServer`` on a random loopback port) for what goes on the
-  wire, and at an unreachable port for the "a dead collector is harmless"
+  (``_otlp_collector.OtlpCollector``) for what goes on the wire, and at an unreachable port for the "a dead collector is harmless"
   contract.
 """
 
 from __future__ import annotations
 
-import threading
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from _otlp_collector import OtlpCollector
 from opentelemetry.proto.collector.metrics.v1.metrics_service_pb2 import (
     ExportMetricsServiceRequest,
 )
@@ -30,7 +28,6 @@ from af_mcp_broker.config import Settings
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-    from typing import Self
 
 # Attribute names a metric must never carry (see metrics.py's cardinality
 # policy): identity, credential, or per-request identifiers.
@@ -269,45 +266,10 @@ async def test_queue_overflow_path_records_metrics(
 # --- real exporter, in-process OTLP receiver -------------------------------
 
 
-class _Collector:
-    """In-process OTLP/HTTP receiver capturing exported metric requests."""
-
-    def __init__(self) -> None:
-        self.requests: list[ExportMetricsServiceRequest] = []
-        self.paths: list[str] = []
-        outer = self
-
-        class Handler(BaseHTTPRequestHandler):
-            def do_POST(self) -> None:
-                body = self.rfile.read(int(self.headers["Content-Length"]))
-                req = ExportMetricsServiceRequest()
-                req.ParseFromString(body)
-                outer.requests.append(req)
-                outer.paths.append(self.path)
-                self.send_response(200)
-                self.send_header("Content-Type", "application/x-protobuf")
-                self.end_headers()
-
-            def log_message(self, *_args: Any) -> None:
-                return
-
-        self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        self.endpoint = f"http://127.0.0.1:{self._server.server_port}"
-        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
-
-    def __enter__(self) -> Self:
-        self._thread.start()
-        return self
-
-    def __exit__(self, *_exc: object) -> None:
-        self._server.shutdown()
-        self._server.server_close()
-
-
 def test_real_exporter_sends_only_the_allowed_attributes_over_otlp(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    with _Collector() as collector:
+    with OtlpCollector(ExportMetricsServiceRequest) as collector:
         monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", collector.endpoint)
         otel_metrics.init_otel_metrics(Settings(otel_metrics_enabled=True))
         otel_metrics.record_tool_call(

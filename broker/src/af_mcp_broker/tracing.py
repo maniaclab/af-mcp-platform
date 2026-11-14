@@ -37,11 +37,11 @@ from opentelemetry import trace
 # anything per request.
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
 from af_mcp_broker._version import version as __version__
+from af_mcp_broker.otel_resource import broker_resource
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -91,10 +91,7 @@ def init_tracing(settings: Settings) -> None:
         return
     if _tracer_provider is not None:
         return
-    resource = Resource.create(
-        {"service.name": "af-mcp-broker", "service.version": __version__}
-    )
-    provider = TracerProvider(resource=resource)
+    provider = TracerProvider(resource=broker_resource())
     # OTLPSpanExporter() is constructed argument-free on purpose: the SDK
     # reads the standard OTEL_EXPORTER_OTLP_* env vars natively (including
     # appending the /v1/traces signal path to OTEL_EXPORTER_OTLP_ENDPOINT);

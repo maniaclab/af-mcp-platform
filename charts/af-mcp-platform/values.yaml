@@ -659,6 +659,20 @@ broker:
     otlp:
       enabled: false
 
+  # Per-call usage records emitted as OpenTelemetry LOG records over OTLP
+  # (broker usage/otel_events.py), beside the usage store above, which stays
+  # authoritative. One record per tool call with audit_id, trace_id,
+  # principal_sub, token_id, service, method, outcome, duration_ms,
+  # result_bytes and result_tokens_est -- never tool arguments or results.
+  # Because these carry the caller's identity, the receiving log backend
+  # needs its own access control. Off by default, rendering nothing. The
+  # collector is shared with tracing and metrics, exactly as for
+  # broker.metrics.otlp above (endpoint from broker.tracing.endpoint,
+  # egress from broker.tracing.networkPolicy).
+  usageEvents:
+    otlp:
+      enabled: false
+
 # ---------------------------------------------------------------------------
 # Token sweep: periodic janitor for the Vault-backed token registry above
 # (broker.tokenRegistry.backend="vault"). Removes registry entries whose

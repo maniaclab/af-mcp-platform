@@ -46,6 +46,10 @@ Prometheus (:9090)    no        service, tool, action_type, target         bound
 OTel metrics (OTLP)   no        service, method, action_type, outcome      bounded by config
 Audit log (JSON)      yes       principal_sub, token_id, request_id,       unbounded by design,
                                 audit_id, trace_id, per-call               access-controlled
+OTel usage events     yes       audit_id, trace_id, principal_sub,         one per call (opt-in);
+                                token_id, service, method, outcome,        access-controlled
+                                duration_ms, result_bytes,                 by the log backend
+                                result_tokens_est
 Spans (OTLP)          yes       user.id, outcome, timing; never args       sampled; joins audit
                                 or results                                 by trace_id
 ====================  ========  =========================================  =====================

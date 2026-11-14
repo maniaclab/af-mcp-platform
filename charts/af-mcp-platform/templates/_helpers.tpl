@@ -556,6 +556,16 @@ startup refusal (Settings._validate_replica_state_config) for the chart path.
   value: {{ printf "%s/v1/metrics" (required "broker.tracing.endpoint is required when broker.metrics.otlp.enabled is true (the OTLP collector is shared with tracing)" .Values.broker.tracing.endpoint | trimSuffix "/") | quote }}
 {{- end }}
 {{- end }}
+{{- if .Values.broker.usageEvents.otlp.enabled }}
+# Per-call usage as OTel log records (broker usage/otel_events.py). Same
+# shared-collector and per-signal-endpoint reasoning as the metrics block above.
+- name: USAGE_EVENTS_OTLP_ENABLED
+  value: "true"
+{{- if not .Values.broker.tracing.enabled }}
+- name: OTEL_EXPORTER_OTLP_LOGS_ENDPOINT
+  value: {{ printf "%s/v1/logs" (required "broker.tracing.endpoint is required when broker.usageEvents.otlp.enabled is true (the OTLP collector is shared with tracing)" .Values.broker.tracing.endpoint | trimSuffix "/") | quote }}
+{{- end }}
+{{- end }}
 {{- /*
 Vault connection settings are shared by all Vault-backed stores above (one
 VaultKV instance, per config.py/app.py) — rendered once whenever any of
