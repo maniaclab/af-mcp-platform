@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import io
 import json
 import time
 from datetime import UTC, datetime
@@ -13,7 +12,6 @@ from pydantic import SecretStr
 from tokencost import calculate_cost_by_tokens  # type: ignore[import-untyped]
 
 from af_mcp_broker.audit import AuditRecord
-from af_mcp_broker.audit.logger import init_audit_logger
 from af_mcp_broker.authorization import EntitlementPolicy
 from af_mcp_broker.config import KeycloakBrokeredProviderConfig, KrbTokenProviderConfig
 from af_mcp_broker.credentials import (
@@ -624,7 +622,11 @@ async def test_diagnostic_tools_visible_to_principal_with_no_permissions(
 
 
 async def test_af_whoami_call_is_audited_and_metered_as_the_gateway_service(
-    settings: Any, sig_key: Any, prime_jwks: Any, static_principal_cache: Any
+    settings: Any,
+    sig_key: Any,
+    prime_jwks: Any,
+    static_principal_cache: Any,
+    audit_buffer,
 ) -> None:
     """Issue #240: with the DIAGNOSTIC_TOOL_NAMES bypass gone, a successful
     af_* call produces an audit line like any other call -- service af-mcp,
@@ -635,9 +637,6 @@ async def test_af_whoami_call_is_audited_and_metered_as_the_gateway_service(
     directory.groups_by_subject["user-123"] = []
     prime_jwks([sig_key.jwk])
     token = sig_key.sign(make_claims())
-
-    buffer = io.StringIO()
-    init_audit_logger(buffer)
 
     mcp = build_aggregator(
         ServiceRegistry(),
@@ -653,7 +652,7 @@ async def test_af_whoami_call_is_audited_and_metered_as_the_gateway_service(
     ):
         await client.call_tool(WHOAMI_TOOL_NAME, {})
 
-    line = json.loads(buffer.getvalue().strip())
+    line = json.loads(audit_buffer.getvalue().strip())
     assert line["event"] == "audit"
     assert line["outcome"] == "success"
     assert line["mcp_service"] == "gateway_service"
