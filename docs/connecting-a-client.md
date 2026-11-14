@@ -190,7 +190,7 @@ backend's prefix, e.g. `rucio_whoami`.
 
 ## Diagnosing tool problems yourself
 
-The broker exposes four tools directly on the aggregator, named with the
+The broker exposes these tools directly on the aggregator, named with the
 reserved `af_` prefix so a backend can never shadow them (see
 [Architecture](architecture.md)). They need no permission and stay visible
 and callable for every authenticated caller no matter what's broken
@@ -204,6 +204,7 @@ call fails, without needing anything else to be working first.
 | `af_list_mcp_servers` | An expected tool is missing from `tools/list`, or a call fails for a reason that isn't an obviously bad argument — lists every backend, its tool prefix, the identity provider it depends on, and a short reason if it's unavailable. A `link_required` service also carries `link_state`: `not_linked` (never linked) or `rejected` (linked, but the service rejected the stored credential, so re-link it). |
 | `af_link_identity` | A call fails with a "not linked" error, or `af_list_identities` shows `linked: false` for a provider a backend needs — returns the exact portal URL to visit to link (or re-link) that identity provider. |
 | `af_search_tools` | You need a tool but don't know its name — `query` (keywords) and `limit` (1–50, default 10) return the best matches among the tools you are entitled to, each with its service, one-line summary, and annotations. Ranked: exact name, then every word in the name, then description/title/tags; ties by name. A tool you lack permission for never appears. Read-only; served from the cached tool listing. |
+| `af_rate_limits` | Before a large batch of state-changing calls, or after a "Rate limit ... exceeded" error — returns the call limits that apply to you (`action_type` and/or tool glob, `limit` per `window_seconds`), your `used` count and `resets_in_seconds` for each, and up to 20 of your tools each limit covers. A one-line `summary` comes first; `note` says what to do when there are no limits or usage could not be read. Counts are yours alone. Read-only. |
 
 An MCP client that lets you invoke tools directly (or an LLM using the
 broker through you) can call these the same way as any other tool — no

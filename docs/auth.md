@@ -522,6 +522,41 @@ rate_limits:
 - **What the caller sees.** A tool error such as `Rate limit of 10 calls per
   3600s exceeded for condor_submit_job. Retry-After: 1800 seconds; retry_at:
   2026-11-13T12:00:00Z`, the same fields the `/v1` unlock limit returns.
+- **Seeing your limits.** Both users and agents can look before a call is
+  refused; neither read counts against any limit by itself, apart from the
+  note on `af_rate_limits` below.
+    - *Portal.* The Entitlements page has a "Rate limits" section: each rule
+      as a sentence ("State-changing methods: 60 calls per 5 minutes"), the
+      methods of yours it covers, and your usage ("12 of 60 used, resets in
+      3 min", or "Limit reached" with a status mark). With no rules it says
+      "No rate limits are configured."
+    - *API.* `GET /v1/rate-limits` (any authenticated caller, JWT like the
+      rest of `/v1`) returns `rate_limits`, one entry per rule with
+      `action_type`, `tool`, `limit`, `window_seconds`, and the caller's
+      `used` (calls counted in the open window, refused attempts included, so
+      it can exceed `limit`) and `resets_in_seconds` (null while no window is
+      open), plus `usage_available`. It is separate from
+      `GET /v1/entitlements`, which is static policy identical for every
+      caller; this response reads live per-caller counters. The counters are
+      read with `SharedState.get_window` under the same
+      `tool_rate_limit_key` the limiter writes, for the authenticated
+      subject only. The response does not say which tools a rule covers,
+      because that needs every backend's tool list; the portal computes it
+      from each rule's selectors and `GET /v1/catalog/{service}/tools`.
+    - *Gateway tool.* `af_rate_limits` returns the same rules and usage and
+      also lists, per rule, up to 20 of the caller's entitled tools it
+      covers (`tools`, with `tool_count` for the full number), after a
+      one-line `summary`. It is read-only and needs no permission. Calling it
+      is itself a tool call, so a rule that matches `af_rate_limits` (for
+      example `action_type: read`) counts it. The rate-limit error text
+      ends with "Call af_rate_limits to see all your limits and usage."
+    - *Store unavailable.* If the shared state store is unreachable (or none
+      is installed), the rules are still returned, with `used` and
+      `resets_in_seconds` null and `usage_available` false, and the broker
+      logs `rate_limits.shared_state_unavailable`. The limits themselves
+      still apply: enforcement falls back to per-replica counting as
+      described under Replicas, so the visible count is deliberately not
+      that partial one.
 - **Audit and metrics.** The refused call is written as an audit record with
   `outcome: "rate_limited"` and counted by
   `af_mcp_tool_invocations_rate_limited_total{service,action_type}` (no
