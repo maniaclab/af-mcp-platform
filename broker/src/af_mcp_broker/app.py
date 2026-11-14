@@ -94,6 +94,7 @@ from af_mcp_broker.mcp.aggregator import (
     populate_aggregator,
 )
 from af_mcp_broker.mcp.cache_invalidation import ListCacheInvalidator
+from af_mcp_broker.mcp.lint_observations import LintObservationStore
 from af_mcp_broker.mcp.registry import ServiceRegistry
 from af_mcp_broker.mcp_auth_codes import McpAuthCodeStore
 from af_mcp_broker.principal_cache import (
@@ -1051,6 +1052,9 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         if settings.credmon_enabled
         else None
     )
+    # Where the tool-listing lint's findings are recorded for the admin tables
+    # (mcp/lint_observations.py): shared, so every replica reports the same.
+    lint_observations = LintObservationStore(shared_state)
     populate_aggregator(
         _mcp_aggregator,
         service_registry,
@@ -1066,6 +1070,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         maintenance_mode_store=maintenance_mode_store,
         job_credentials=job_credentials,
         shared_state=shared_state,
+        lint_observations=lint_observations,
     )
 
     # --- Audit: without init the module drops every record. Honor AUDIT_LOG_FILE.
@@ -1122,6 +1127,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     application.state.broker_token_issuer = broker_token_issuer
     application.state.usage_store = usage_store
     application.state.maintenance_mode_store = maintenance_mode_store
+    application.state.lint_observations = lint_observations
     # Not yet consumed by KrbTokenProvider -- issue #274's remember/renew
     # support wires it in -- exposed on state now so it exists in one place
     # from the moment Vault is wired up, same as every other subsystem here.

@@ -14,9 +14,12 @@ import type { VueWrapper } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   AnnotationMismatch,
+  AnnotationMismatchesReport,
   CredmonStatus,
+  LintServiceStatus,
   MaintenanceStatus,
   ToolMappingDrift,
+  ToolMappingDriftReport,
   UsageResponse,
   UsageSubjectsResponse,
 } from '../../lib/api';
@@ -122,6 +125,31 @@ const USAGE: UsageResponse = {
   by_day: [],
 };
 
+const OBSERVED_AT = 1_700_000_000;
+const RETENTION_SECONDS = 86_400;
+
+/** Every configured service observed at OBSERVED_AT, unless *observed* is false (none observed). */
+function lintServices(observed = true): LintServiceStatus[] {
+  return ['ami', 'rucio'].map((service) => ({
+    service,
+    last_observed: observed ? OBSERVED_AT : null,
+  }));
+}
+
+function mismatchReport(
+  mismatches: AnnotationMismatch[],
+  services: LintServiceStatus[] = lintServices(),
+): AnnotationMismatchesReport {
+  return { retention_seconds: RETENTION_SECONDS, services, mismatches };
+}
+
+function driftReport(
+  drift: ToolMappingDrift[],
+  services: LintServiceStatus[] = lintServices(),
+): ToolMappingDriftReport {
+  return { retention_seconds: RETENTION_SECONDS, services, drift };
+}
+
 beforeEach(() => {
   vi.restoreAllMocks();
   vi.clearAllMocks();
@@ -131,8 +159,8 @@ beforeEach(() => {
   // mismatches on mount regardless of which section a given test is
   // exercising -- default to the empty-and-harmless case so tests focused
   // on the usage/maintenance sections don't have to know about this one.
-  vi.mocked(fetchAnnotationMismatches).mockResolvedValue([]);
-  vi.mocked(fetchToolMappingDrift).mockResolvedValue([]);
+  vi.mocked(fetchAnnotationMismatches).mockResolvedValue(mismatchReport([]));
+  vi.mocked(fetchToolMappingDrift).mockResolvedValue(driftReport([]));
   vi.mocked(fetchCredmonStatus).mockResolvedValue(CREDMON_DISABLED);
 });
 
@@ -390,7 +418,7 @@ describe('AdminPage annotation mismatches', () => {
   });
 
   it('shows the empty-state placeholder when there are no mismatches', async () => {
-    vi.mocked(fetchAnnotationMismatches).mockResolvedValue([]);
+    vi.mocked(fetchAnnotationMismatches).mockResolvedValue(mismatchReport([]));
     const wrapper = mount(AdminPage);
     await flushPromises();
 
@@ -398,7 +426,7 @@ describe('AdminPage annotation mismatches', () => {
   });
 
   it('renders a row per mismatch with the declared/resolved/permission columns', async () => {
-    vi.mocked(fetchAnnotationMismatches).mockResolvedValue([MISMATCH]);
+    vi.mocked(fetchAnnotationMismatches).mockResolvedValue(mismatchReport([MISMATCH]));
     const wrapper = mount(AdminPage);
     await flushPromises();
 
@@ -415,7 +443,9 @@ describe('AdminPage annotation mismatches', () => {
     ['permission', 'permission Read data'],
     ['default', 'default fallback'],
   ])('describes how %s was resolved', async (via, label) => {
-    vi.mocked(fetchAnnotationMismatches).mockResolvedValue([{ ...MISMATCH, resolved_via: via }]);
+    vi.mocked(fetchAnnotationMismatches).mockResolvedValue(
+      mismatchReport([{ ...MISMATCH, resolved_via: via }]),
+    );
     const wrapper = mount(AdminPage);
     await flushPromises();
 
@@ -423,7 +453,7 @@ describe('AdminPage annotation mismatches', () => {
   });
 
   it('labels the columns by what they hold and explains the table', async () => {
-    vi.mocked(fetchAnnotationMismatches).mockResolvedValue([MISMATCH]);
+    vi.mocked(fetchAnnotationMismatches).mockResolvedValue(mismatchReport([MISMATCH]));
     const wrapper = mount(AdminPage);
     await flushPromises();
 
@@ -497,7 +527,7 @@ describe('AdminPage tool mapping drift', () => {
   });
 
   it('renders unmapped and stale tools per service', async () => {
-    vi.mocked(fetchToolMappingDrift).mockResolvedValue([DRIFT]);
+    vi.mocked(fetchToolMappingDrift).mockResolvedValue(driftReport([DRIFT]));
     const wrapper = mount(AdminPage);
     await flushPromises();
 
@@ -508,7 +538,7 @@ describe('AdminPage tool mapping drift', () => {
   });
 
   it('renders unroutable tools with the expected prefix and routable count', async () => {
-    vi.mocked(fetchToolMappingDrift).mockResolvedValue([RENAMED]);
+    vi.mocked(fetchToolMappingDrift).mockResolvedValue(driftReport([RENAMED]));
     const wrapper = mount(AdminPage);
     await flushPromises();
 
@@ -524,13 +554,15 @@ describe('AdminPage tool mapping drift', () => {
   });
 
   it('lists every tool name of a drift column as its own item, never joined', async () => {
-    vi.mocked(fetchToolMappingDrift).mockResolvedValue([
-      {
-        ...DRIFT,
-        unmapped: ['condor_create_output_download_url', 'condor_doc_guide'],
-        stale: ['condor_condor_doc_search'],
-      },
-    ]);
+    vi.mocked(fetchToolMappingDrift).mockResolvedValue(
+      driftReport([
+        {
+          ...DRIFT,
+          unmapped: ['condor_create_output_download_url', 'condor_doc_guide'],
+          stale: ['condor_condor_doc_search'],
+        },
+      ]),
+    );
     const wrapper = mount(AdminPage);
     await flushPromises();
 
@@ -544,7 +576,7 @@ describe('AdminPage tool mapping drift', () => {
 
   it('collapses a long drift list behind a count', async () => {
     const many = Array.from({ length: 10 }, (_, i) => `condor_tool_${i}`);
-    vi.mocked(fetchToolMappingDrift).mockResolvedValue([{ ...DRIFT, unmapped: many }]);
+    vi.mocked(fetchToolMappingDrift).mockResolvedValue(driftReport([{ ...DRIFT, unmapped: many }]));
     const wrapper = mount(AdminPage);
     await flushPromises();
 
@@ -644,7 +676,7 @@ describe('AdminPage banner', () => {
   });
 
   it('is a warning with the count when mismatches or drift are found', async () => {
-    vi.mocked(fetchAnnotationMismatches).mockResolvedValue([MISMATCH]);
+    vi.mocked(fetchAnnotationMismatches).mockResolvedValue(mismatchReport([MISMATCH]));
     const wrapper = mount(AdminPage);
     await flushPromises();
 
@@ -657,7 +689,7 @@ describe('AdminPage banner', () => {
 
   it('shows only the warning when maintenance is on and issues exist', async () => {
     vi.mocked(fetchMaintenanceStatus).mockResolvedValue(ENABLED);
-    vi.mocked(fetchAnnotationMismatches).mockResolvedValue([MISMATCH]);
+    vi.mocked(fetchAnnotationMismatches).mockResolvedValue(mismatchReport([MISMATCH]));
     const wrapper = mount(AdminPage);
     await flushPromises();
 
@@ -755,5 +787,90 @@ describe('AdminPage credmon', () => {
     await wrapper.get('[data-af-credmon-sync]').trigger('click');
     await flushPromises();
     expect(wrapper.get('[role="alert"]').text()).toContain('credd unreachable');
+  });
+});
+
+describe('AdminPage lint observation status (issue #332)', () => {
+  const MISMATCH: AnnotationMismatch = {
+    service: 'rucio',
+    tool: 'rucio_list_dids',
+    declared_read_only_hint: false,
+    resolved_action_type: 'read',
+    resolved_via: 'default',
+    permission: 'read_data',
+  };
+
+  beforeEach(() => {
+    vi.mocked(fetchUsageSubjects).mockResolvedValue({ subjects: [] });
+    vi.mocked(fetchMaintenanceStatus).mockResolvedValue(DISABLED);
+  });
+
+  it('says "not yet observed since" rather than "clean" when nothing was observed', async () => {
+    vi.mocked(fetchAnnotationMismatches).mockResolvedValue(mismatchReport([], lintServices(false)));
+    vi.mocked(fetchToolMappingDrift).mockResolvedValue(driftReport([], lintServices(false)));
+    const wrapper = mount(AdminPage);
+    await flushPromises();
+
+    expect(wrapper.find('#ap-mismatches').text()).toContain('Not yet observed since');
+    expect(wrapper.find('#ap-mismatches').text()).not.toContain('No mismatches.');
+    expect(wrapper.find('#ap-drift').text()).toContain('Not yet observed since');
+    expect(wrapper.find('#ap-drift').text()).not.toContain('No tool mapping drift.');
+  });
+
+  it('reads "No mismatches." only once every service has been observed', async () => {
+    vi.mocked(fetchAnnotationMismatches).mockResolvedValue(mismatchReport([]));
+    const wrapper = mount(AdminPage);
+    await flushPromises();
+
+    const section = wrapper.find('#ap-mismatches').text();
+    expect(section).toContain('No mismatches.');
+    expect(section).not.toContain('Not yet observed');
+  });
+
+  it('qualifies an empty table when only some services were observed', async () => {
+    vi.mocked(fetchAnnotationMismatches).mockResolvedValue(
+      mismatchReport(
+        [],
+        [
+          { service: 'ami', last_observed: null },
+          { service: 'rucio', last_observed: OBSERVED_AT },
+        ],
+      ),
+    );
+    const wrapper = mount(AdminPage);
+    await flushPromises();
+
+    const section = wrapper.find('#ap-mismatches').text();
+    expect(section).toContain('No mismatches among the observed services');
+    expect(section).not.toContain('No mismatches.');
+  });
+
+  it('lists when each service was last observed, or that it was not', async () => {
+    vi.mocked(fetchAnnotationMismatches).mockResolvedValue(
+      mismatchReport(
+        [MISMATCH],
+        [
+          { service: 'ami', last_observed: null },
+          { service: 'rucio', last_observed: OBSERVED_AT },
+        ],
+      ),
+    );
+    const wrapper = mount(AdminPage);
+    await flushPromises();
+
+    const rows = wrapper.findAll('#ap-mismatches [data-af-observed] li').map((li) => li.text());
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatch(/^ami\b.*not yet observed since/i);
+    expect(rows[1]).toMatch(/^rucio\b.*observed/i);
+    expect(rows[1]).not.toMatch(/not yet observed/i);
+    expect(wrapper.find('#ap-mismatches').text()).toContain('rucio_list_dids');
+  });
+
+  it('shows the same observation list in the drift section', async () => {
+    vi.mocked(fetchToolMappingDrift).mockResolvedValue(driftReport([], lintServices(false)));
+    const wrapper = mount(AdminPage);
+    await flushPromises();
+
+    expect(wrapper.findAll('#ap-drift [data-af-observed] li')).toHaveLength(2);
   });
 });
