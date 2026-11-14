@@ -188,7 +188,11 @@ caller waiting that out, so the `/v1` routes that complete one call
 That drops the caller's cached listing and their own caller-specific listing
 failure record (`not_linked`/`unauthorized`) for those services (no other
 caller's, no other service's, and never a service-wide `unavailable`), and their next `tools/list`
-reaches the backend. `app.py` wires both hooks to `invalidate_subject_cache`.
+reaches the backend. `app.py` wires both hooks to `ListCacheInvalidator`, which
+drops the entries on the replica that handled the event and publishes the
+drop over the shared state store so every other replica drops its own copy
+(see "Replica consistency" in `docs/architecture.md`). Without a store, or
+while it is down, the other replicas keep their entries until the TTL expires.
 
 | Type | Link event the broker sees | Listing cache after linking |
 |---|---|---|
