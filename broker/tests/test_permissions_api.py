@@ -11,6 +11,8 @@ from __future__ import annotations
 import pytest
 
 from af_mcp_broker.authorization import PERMISSIONS, EntitlementPolicy
+from af_mcp_broker.identity import keycloak_dependency
+from af_mcp_broker.mcp.registry import ServiceSpec
 
 
 def test_permissions_includes_callers_raw_groups(app_client, make_principal) -> None:
@@ -177,7 +179,6 @@ def test_grants_reflect_every_permission_a_dict_form_service_can_require(
     must see that service listed as a target under BOTH grants -- not just
     the one matching some single top-level value (issue: per-tool
     required_permission, condor_service's query_jobs/manage_jobs split)."""
-    from af_mcp_broker.mcp.registry import ServiceSpec
 
     client, state = app_client
     client.app.state.entitlement_policy = EntitlementPolicy(
@@ -209,7 +210,6 @@ def test_entitlements_requires_authentication(app_client_factory) -> None:
     """Reference table or not, this still goes through keycloak_dependency
     like every other /v1 route -- an unauthenticated caller gets the same
     401 as anywhere else, not a special-cased public route."""
-    from af_mcp_broker.identity import keycloak_dependency
 
     with app_client_factory() as (client, _state):
         client.app.dependency_overrides.pop(keycloak_dependency, None)

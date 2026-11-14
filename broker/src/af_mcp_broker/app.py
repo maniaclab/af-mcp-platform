@@ -19,6 +19,7 @@ from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import JSONResponse, Response
 from fastmcp.utilities.lifespan import combine_lifespans
+from prometheus_client import start_http_server
 from pydantic import ValidationError
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
@@ -1098,14 +1099,9 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     metrics_server = None
     application.state.metrics_port = None
     if settings.metrics_port >= 0:
-        try:
-            from prometheus_client import start_http_server
-
-            metrics_server, _ = start_http_server(settings.metrics_port)
-            application.state.metrics_port = metrics_server.server_port
-            logger.info("metrics_server_started", port=metrics_server.server_port)
-        except ImportError:
-            logger.debug("prometheus_client_not_installed")
+        metrics_server, _ = start_http_server(settings.metrics_port)
+        application.state.metrics_port = metrics_server.server_port
+        logger.info("metrics_server_started", port=metrics_server.server_port)
 
     application.state.settings = settings
     application.state.entitlement_policy = entitlement_policy

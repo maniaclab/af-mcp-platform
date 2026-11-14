@@ -11,6 +11,8 @@ the whole test session -- a delta is order-independent, a reset is not.
 
 from __future__ import annotations
 
+import time
+
 from prometheus_client import REGISTRY
 
 from af_mcp_broker.credentials.cache import CredentialCache
@@ -59,7 +61,6 @@ async def test_get_stale_entry_counts_as_a_miss():
     hit -- it must count against the miss counter."""
     cache = CredentialCache()
     uid = 2_003
-    import time
 
     await cache.put(uid, TARGET, "expiring-soon", expires_at=time.time() + 5)
     before_hits, before_misses = _hits(TARGET), _misses(TARGET)

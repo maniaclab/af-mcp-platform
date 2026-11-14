@@ -26,9 +26,17 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, urlparse
 
+import httpx
 import pytest
 from cryptography.fernet import Fernet
 from pydantic import SecretStr
+from test_broker_issued import _make_rsa_key, _private_pem
+from test_x509_service_mode import FakeVomsClient, FakeX509Store
+
+from af_mcp_broker.app import app as broker_app
+from af_mcp_broker.credentials.cache import ProxyMeta
+from af_mcp_broker.credentials.oauth21 import StoredOAuthCredential
+from af_mcp_broker.credentials.oidc import OIDCLinkStatus, OIDCProvider
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -149,7 +157,6 @@ def test_is_admin_false_for_non_admin_group_member(
 def test_keycloak_brokered_provider_reflects_is_linked_true(
     app_client: tuple[TestClient, dict], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from af_mcp_broker.credentials.oidc import OIDCLinkStatus, OIDCProvider
 
     async def _linked(self, principal) -> OIDCLinkStatus:
         return OIDCLinkStatus(linked=True, permission_denied=False)
@@ -169,7 +176,6 @@ def test_keycloak_brokered_provider_reflects_is_linked_true(
 def test_keycloak_brokered_provider_reflects_is_linked_false(
     app_client: tuple[TestClient, dict], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from af_mcp_broker.credentials.oidc import OIDCLinkStatus, OIDCProvider
 
     async def _not_linked(self, principal) -> OIDCLinkStatus:
         return OIDCLinkStatus(linked=False, permission_denied=False)
@@ -193,7 +199,6 @@ def test_keycloak_brokered_provider_reflects_permission_denied(
     not-yet-linked False — so the portal can tell the user why, instead of
     an indistinguishable "not linked" for someone who may have already
     completed the IdP linking flow."""
-    from af_mcp_broker.credentials.oidc import OIDCLinkStatus, OIDCProvider
 
     async def _permission_denied(self, principal) -> OIDCLinkStatus:
         return OIDCLinkStatus(linked=False, permission_denied=True)
@@ -215,7 +220,6 @@ def test_keycloak_brokered_provider_probes_not_jwt_claims(
     """A principal has no JWT-derived sub claim to carry any more (the fields
     were removed from Principal entirely) — the linked flag must still be
     accurate, built purely from the link_status() probe."""
-    from af_mcp_broker.credentials.oidc import OIDCLinkStatus, OIDCProvider
 
     async def _linked(self, principal) -> OIDCLinkStatus:
         return OIDCLinkStatus(linked=True, permission_denied=False)
@@ -288,8 +292,6 @@ def test_oauth21_provider_present_with_metadata_and_link_url(
 def test_oauth21_provider_linked_reflects_token_store_state(
     monkeypatch: pytest.MonkeyPatch, app_client_factory: Callable[..., object]
 ) -> None:
-    from af_mcp_broker.app import app as broker_app
-    from af_mcp_broker.credentials.oauth21 import StoredOAuthCredential
 
     _configure_oauth21_env(monkeypatch)
 
@@ -321,8 +323,6 @@ def test_oauth21_provider_rejected_credential_is_unlinked_and_flagged_rejected(
 ) -> None:
     """A credential a backend rejected is stored but unusable: ``linked``
     stays false (its meaning is unchanged) and ``rejected`` says why."""
-    from af_mcp_broker.app import app as broker_app
-    from af_mcp_broker.credentials.oauth21 import StoredOAuthCredential
 
     _configure_oauth21_env(monkeypatch)
 
@@ -457,7 +457,6 @@ def test_broker_issued_link_mechanism_is_none(
 ) -> None:
     """AF-native entries have no linking step at all — the broker is
     authoritative, so there is no portal action to start."""
-    from test_broker_issued import _make_rsa_key, _private_pem
 
     key_file = tmp_path / "signing-key.pem"
     key_file.write_bytes(_private_pem(_make_rsa_key()))
@@ -591,7 +590,6 @@ def test_explicit_x509_entry_renders_from_its_config(
     deployment is needed to boot). The signing key is mounted anyway in this
     test even though a keyless legacy entry only warns rather than failing
     -- see app.py's lifespan."""
-    from test_broker_issued import _make_rsa_key, _private_pem
 
     key_file = tmp_path / "signing-key.pem"
     key_file.write_bytes(_private_pem(_make_rsa_key()))
@@ -660,7 +658,6 @@ def test_x509_linked_reflects_vault_link_in_service_mode(
     """voms-token-service mode: linked comes from the Vault link record, not
     the filesystem — the pre-created ~/.globus pair must NOT count, and
     storing a link must flip the flag."""
-    from test_x509_service_mode import FakeVomsClient, FakeX509Store
 
     client, state = app_client
     store = FakeX509Store()
@@ -704,7 +701,6 @@ def test_x509_proxy_expires_at_reflects_cached_proxy(
 ) -> None:
     """proxy_expires_at comes from the same in-memory ProxyMeta the
     GET /v1/x509/proxy/status endpoint serves — cheap, no Vault round trip."""
-    from af_mcp_broker.credentials.cache import ProxyMeta
 
     client, state = app_client
     subject = state["principal"].subject
@@ -747,7 +743,6 @@ def test_non_x509_entries_have_null_proxy_expires_at(
 
 def _flip_to_service_mode(client: TestClient):
     """Flip the app's default legacy x509 provider into service mode with the in-memory fakes (same pattern as the service-mode linked test above)."""
-    from test_x509_service_mode import FakeVomsClient, FakeX509Store
 
     store = FakeX509Store()
     provider = client.app.state.x509_provider
@@ -913,8 +908,6 @@ def test_unlink_known_keycloak_provider_returns_501(
 def test_unlink_known_oauth21_alias_returns_204_and_deletes_stored_token(
     monkeypatch: pytest.MonkeyPatch, app_client_factory: Callable[..., object]
 ) -> None:
-    from af_mcp_broker.app import app as broker_app
-    from af_mcp_broker.credentials.oauth21 import StoredOAuthCredential
 
     _configure_oauth21_env(monkeypatch)
 
@@ -947,7 +940,6 @@ def test_unlink_known_oauth21_alias_purges_credential_cache(
     purged too, not just the stored TokenStore entry -- otherwise a still-
     cached credential would keep being handed out until it naturally
     expires."""
-    from af_mcp_broker.app import app as broker_app
 
     _configure_oauth21_env(monkeypatch)
 
@@ -983,8 +975,6 @@ def test_unlink_oauth21_alias_204_even_when_revocation_endpoint_fails(
 ) -> None:
     """A rejecting/unreachable revocation_endpoint must not turn into a
     failed unlink -- OAuth21Provider.revoke() is best-effort upstream."""
-    from af_mcp_broker.app import app as broker_app
-    from af_mcp_broker.credentials.oauth21 import StoredOAuthCredential
 
     monkeypatch.setenv("BROKER_STATE_KEY", Fernet.generate_key().decode())
     monkeypatch.setenv("OAUTH21_CLIENT_ID", "https://mcp.example.com/.well-known/cimd")
@@ -1016,7 +1006,6 @@ def test_unlink_oauth21_alias_204_even_when_revocation_endpoint_fails(
 
     class _RejectingClient:
         async def post(self, *args, **kwargs):
-            import httpx
 
             return httpx.Response(500, request=httpx.Request("POST", args[0]))
 

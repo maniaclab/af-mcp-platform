@@ -82,7 +82,6 @@ extend-select = [
 ignore = [
   "PLR09",   # Too many <...>
   "PLR2004", # Magic value used in comparison
-  "PLC0415", # Lazy imports are deliberate (cycles, optional deps, lifespan)
   "PLW0603", # Module-level singletons (http client, audit logger)
   "TRY003",  # Long exception messages inline — custom exception classes would be over-engineering
   "EM101",   # String literal in exception — assign-to-variable pattern adds noise, not clarity

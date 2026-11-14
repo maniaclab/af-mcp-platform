@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import copy
 import os
 import stat
 import subprocess
@@ -15,6 +16,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 
 import structlog
+from cryptography import x509 as cx509
+from kubernetes_asyncio import client as k8s_client  # type: ignore[import]
+from kubernetes_asyncio import config as k8s_config  # type: ignore[import]
+from kubernetes_asyncio.stream import WsApiClient  # type: ignore[import]
 from pydantic import SecretStr
 
 from af_mcp_broker import metrics
@@ -324,22 +329,11 @@ class HomeDirVomsBackend(X509Backend):
         voms: str,
         cache: CredentialCache,
     ) -> ProxyMeta:
-        import copy
-
         # See mint()'s matching asserts -- HomeDirVomsBackend.mint() is the
         # only caller of this method, and it already validated this.
         assert principal.uid is not None
         assert principal.gid is not None
         assert principal.unixname is not None
-
-        try:
-            from kubernetes_asyncio import client as k8s_client  # type: ignore[import]
-            from kubernetes_asyncio import config as k8s_config  # type: ignore[import]
-        except ImportError as exc:
-            raise RuntimeError(
-                "kubernetes_asyncio package is required for Kubernetes-based proxy "
-                "minting. Install it or set DEV_MODE_LOCAL_VOMS=true."
-            ) from exc
 
         # load_incluster_config is synchronous in kubernetes_asyncio; awaiting
         # it raises TypeError.
@@ -491,9 +485,6 @@ class HomeDirVomsBackend(X509Backend):
         copy built at the I/O boundary — before returning, on success or error.
         """
         # kubernetes_asyncio drives exec/attach over a websocket client.
-        from kubernetes_asyncio import client as k8s_client  # type: ignore[import]
-        from kubernetes_asyncio.stream import WsApiClient  # type: ignore[import]
-
         try:
             pod_name = await self._wait_for_running_pod(core_v1, job_name)
 
@@ -717,8 +708,6 @@ def _parse_proxy_pem(proxy_pem: bytes) -> tuple[str, list[str], float]:
     Uses the ``cryptography`` library which ships with most Python environments.
     Returns ``(dn, voms_attributes, not_after_epoch)``.
     """
-    from cryptography import x509 as cx509
-
     # The proxy PEM may contain multiple certs (proxy chain); parse the first
     pem_blocks = proxy_pem.split(b"-----END CERTIFICATE-----")
     first_cert_pem = pem_blocks[0] + b"-----END CERTIFICATE-----\n"

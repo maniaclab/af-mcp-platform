@@ -239,7 +239,6 @@ async def test_record_usage_swallows_store_failures_and_counts_them() -> None:
 
     await init_usage_store(Settings())
     # Swap in the exploding store behind the module-level accessor.
-    from af_mcp_broker import usage
 
     usage._store = _ExplodingStore()
 

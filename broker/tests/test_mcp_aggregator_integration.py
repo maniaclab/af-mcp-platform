@@ -16,7 +16,9 @@ from fastmcp.server.dependencies import get_http_headers
 from fastmcp.server.providers.proxy import ProxyProvider
 from fastmcp.utilities.http import find_available_port
 
+from af_mcp_broker.app import app
 from af_mcp_broker.config import get_settings
+from af_mcp_broker.principal_directory import PrincipalAttributes
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -105,7 +107,6 @@ _TEST_PRINCIPAL_GROUPS: dict[str, list[str]] = {}
 
 
 async def _fake_directory_resolve(self: Any, principal_id: str) -> Any:
-    from af_mcp_broker.principal_directory import PrincipalAttributes
 
     return PrincipalAttributes(
         uid=None,
@@ -209,8 +210,6 @@ group_permissions:
     _TEST_PRINCIPAL_GROUPS.clear()
     get_settings.cache_clear()
     prime_jwks([sig_key.jwk])
-
-    from af_mcp_broker.app import app
 
     return app
 

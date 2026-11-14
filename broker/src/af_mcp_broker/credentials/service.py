@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, ClassVar
 
 import structlog
 
+from af_mcp_broker.audit.logger import AuditRecord, write_audit
 from af_mcp_broker.credentials.base import (
     CredentialKind,
     CredentialProvider,
@@ -206,35 +207,21 @@ class ServiceProvider(CredentialProvider):
 
         Delegates to ``af_mcp_broker.audit.logger.write_audit`` so that all
         audit output goes through a single, consistently-formatted channel.
-        This import is deferred to avoid a circular dependency at module load.
         """
-        try:
-            from af_mcp_broker.audit import logger as audit_logger
-            from af_mcp_broker.audit.logger import AuditRecord
-
-            record = AuditRecord(
-                principal_sub=principal.subject,
-                principal_uid=principal.uid,
-                permission=self.cred_class,
-                target=target,
-                action="credential.issued",
-                action_type="state_change",
-                args_summary=(
-                    f"on_behalf_of={principal.email} "
-                    f"username={principal.unixname or '<no-posix-identity>'}"
-                ),
-                timestamp=time.time(),
-                request_id=audit_id,
-                audit_id=audit_id,
-                execution_model=self.execution_model.value,
-            )
-            await audit_logger.write_audit(record)
-        except ImportError:
-            # audit module not yet implemented — log a warning so it is visible
-            self._log.warning(
-                "service.audit.module_missing",
-                audit_id=audit_id,
-                target=target,
-                uid=principal.uid,
-                on_behalf_of=principal.email,
-            )
+        record = AuditRecord(
+            principal_sub=principal.subject,
+            principal_uid=principal.uid,
+            permission=self.cred_class,
+            target=target,
+            action="credential.issued",
+            action_type="state_change",
+            args_summary=(
+                f"on_behalf_of={principal.email} "
+                f"username={principal.unixname or '<no-posix-identity>'}"
+            ),
+            timestamp=time.time(),
+            request_id=audit_id,
+            audit_id=audit_id,
+            execution_model=self.execution_model.value,
+        )
+        await write_audit(record)

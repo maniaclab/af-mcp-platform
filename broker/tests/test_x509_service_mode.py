@@ -28,10 +28,16 @@ if TYPE_CHECKING:
 
     from af_mcp_broker.shared_state import WindowCount
 
+import json
+from types import SimpleNamespace as _NS
+
 import pytest
+from prometheus_client import REGISTRY
 from pydantic import SecretBytes, SecretStr
+from test_broker_issued import _make_rsa_key, _private_pem
 from test_x509 import _principal
 
+from af_mcp_broker.api.credentials import _to_response
 from af_mcp_broker.credentials.base import CredentialKind
 from af_mcp_broker.credentials.cache import CredentialCache, unlock_failures_key
 from af_mcp_broker.credentials.errors import (
@@ -44,6 +50,7 @@ from af_mcp_broker.credentials.errors import (
 from af_mcp_broker.credentials.voms_service import MintedProxy
 from af_mcp_broker.credentials.x509 import X509Provider
 from af_mcp_broker.credentials.x509_vault import StoredX509Credential
+from af_mcp_broker.vault_kv import VaultKV
 
 _PEM = "-----BEGIN CERTIFICATE-----\nFAKE\n-----END CERTIFICATE-----\n"
 _DN = "/DC=ch/DC=cern/CN=Test User"
@@ -357,7 +364,6 @@ class TestLinkFlow:
         assert link.passphrase.get_secret_value() == "new-pass"
 
     async def test_mint_counter_is_incremented(self) -> None:
-        from prometheus_client import REGISTRY
 
         provider, _, _, _ = _make_provider()
         before = REGISTRY.get_sample_value("af_mcp_x509_proxy_mints_total") or 0.0
@@ -584,9 +590,6 @@ class TestAppWiring:
         (targeting "ami") satisfies the broker's coverage check with no
         need to override SERVICES_FILE.
         """
-        import json
-
-        from af_mcp_broker.vault_kv import VaultKV
 
         async def _fake_authenticate(self) -> str:
             return "vault-test-token"
@@ -635,7 +638,6 @@ class TestAppWiring:
         tmp_path,
         app_client_factory,
     ) -> None:
-        from test_broker_issued import _make_rsa_key, _private_pem
 
         voms_service_env()
         key_file = tmp_path / "signing-key.pem"
@@ -664,7 +666,6 @@ class TestAppWiring:
 
 class TestToResponse:
     async def test_redeem_kind_renders_proxy_handle_without_a_path(self) -> None:
-        from af_mcp_broker.api.credentials import _to_response
 
         provider, _, _, _ = _make_provider()
         cred = await provider.issue(
@@ -690,7 +691,6 @@ class TestVomsClientProperty:
         assert provider.voms_client is voms_client
 
     async def test_none_in_legacy_mode(self) -> None:
-        from types import SimpleNamespace as _NS
 
         legacy = X509Provider(
             settings=_NS(  # type: ignore[arg-type]
@@ -861,7 +861,6 @@ class TestLinkStatus:
     async def test_legacy_mode_reports_no_mode(self, tmp_path) -> None:
         """Legacy (filesystem) linkage has no custody concept: linked comes
         from the ~/.globus pair, mode/expiry stay None."""
-        from types import SimpleNamespace as _NS
 
         globus = tmp_path / "auser" / ".globus"
         globus.mkdir(parents=True)

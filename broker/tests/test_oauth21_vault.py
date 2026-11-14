@@ -21,6 +21,7 @@ from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
+from af_mcp_broker.app import app as broker_app
 from af_mcp_broker.config import get_settings
 from af_mcp_broker.credentials.errors import VersionConflictError
 from af_mcp_broker.credentials.oauth21 import StoredOAuthCredential
@@ -166,7 +167,6 @@ class _FakeVault:
 
 
 def _json_body(request: httpx.Request) -> dict[str, Any]:
-    import json
 
     return json.loads(request.content.decode())
 
@@ -426,7 +426,6 @@ def _bootstrap_oauth21_vault_env(
 
 
 def _fresh_app() -> Any:
-    from af_mcp_broker.app import app as broker_app
 
     get_settings.cache_clear()
     broker_app.dependency_overrides.clear()

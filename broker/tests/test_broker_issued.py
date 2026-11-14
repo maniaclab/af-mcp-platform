@@ -29,6 +29,7 @@ from cryptography.hazmat.primitives.serialization import (
 from fastapi import HTTPException
 from jwt.algorithms import RSAAlgorithm
 
+from af_mcp_broker import metrics
 from af_mcp_broker.config import Settings
 from af_mcp_broker.credentials import CredentialKind, ExecutionModel
 from af_mcp_broker.credentials.broker_issued import (
@@ -594,7 +595,6 @@ async def test_provider_revoke_drops_cached_credential(
 async def test_provider_mint_increments_issued_counter(
     provider_factory, make_principal
 ) -> None:
-    from af_mcp_broker import metrics
 
     provider, _ = provider_factory()
     counter = metrics.broker_identity_tokens_issued_total.labels(

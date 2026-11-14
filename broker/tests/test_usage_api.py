@@ -25,7 +25,9 @@ from tokencost import (  # type: ignore[import-untyped]
     calculate_cost_by_tokens,
 )
 
+from af_mcp_broker.app import app
 from af_mcp_broker.audit import AuditRecord
+from af_mcp_broker.identity import keycloak_dependency
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -272,9 +274,6 @@ def test_usage_requires_authentication(app_client) -> None:
     """Missing bearer is a 401 from the real keycloak_dependency (the
     override-removal technique test_tokens_api.py uses)."""
     client, _ = app_client
-
-    from af_mcp_broker.app import app
-    from af_mcp_broker.identity import keycloak_dependency
 
     saved = app.dependency_overrides.pop(keycloak_dependency, None)
     try:

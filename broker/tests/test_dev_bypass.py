@@ -13,6 +13,9 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from af_mcp_broker.app import app
+from af_mcp_broker.config import get_settings
+
 # The shipped policy/backends need to be findable regardless of the caller's CWD.
 _SRC = Path(__file__).resolve().parents[1] / "src" / "af_mcp_broker"
 SHIPPED_POLICY = _SRC / "authorization" / "policy.yaml"
@@ -47,7 +50,6 @@ def _bootstrap_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _clear_settings_cache() -> None:
     """``get_settings`` is ``lru_cache``d — force a re-read after env changes."""
-    from af_mcp_broker.config import get_settings
 
     get_settings.cache_clear()
 
@@ -55,7 +57,6 @@ def _clear_settings_cache() -> None:
 def _fresh_app():
     """Reimport the app so per-test env changes are picked up cleanly."""
     _clear_settings_cache()
-    from af_mcp_broker.app import app
 
     # Belt-and-braces: any override installed by another test's fixture must not
     # leak into these tests, which exercise the real keycloak_dependency.

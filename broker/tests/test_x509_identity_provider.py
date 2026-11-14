@@ -30,10 +30,15 @@ Covered here:
 
 from __future__ import annotations
 
+import asyncio
+import json
+import time as _time
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from pydantic import SecretStr
 from test_broker_issued import _make_rsa_key, _private_pem
+from test_x509_service_mode import _PEM, FakeVomsClient, FakeX509Store
 
 import af_mcp_broker.app as app_module
 from af_mcp_broker.app import _validate_x509_provider_targets
@@ -42,6 +47,7 @@ from af_mcp_broker.config import (
     X509ProviderConfig,
 )
 from af_mcp_broker.credentials import X509Provider
+from af_mcp_broker.vault_kv import VaultKV
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -159,7 +165,6 @@ def vault_stub_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Vault connection settings + a stubbed startup trial auth, so a
     service-mode entry can boot without a Vault deployment (same stub as
     test_x509_service_mode's TestAppWiring)."""
-    from af_mcp_broker.vault_kv import VaultKV
 
     async def _fake_authenticate(self: VaultKV) -> str:
         return "vault-test-token"
@@ -180,7 +185,6 @@ def _set_backends(
 def _set_identity_providers(
     monkeypatch: pytest.MonkeyPatch, entries: list[dict[str, Any]]
 ) -> None:
-    import json
 
     monkeypatch.setenv("IDENTITY_PROVIDERS", json.dumps(entries))
 
@@ -272,7 +276,6 @@ class TestBootWiring:
 
         with app_client_factory() as (client, _):
             registry = client.app.state.credential_registry
-            import asyncio
 
             ami_provider = asyncio.run(registry.resolve("ami"))
             dune_provider = asyncio.run(registry.resolve("dune-mcp"))
@@ -421,9 +424,6 @@ class TestPerTargetResolution:
         then flip the SECOND entry's provider into service mode with fakes —
         the first stays legacy, so any endpoint that wrongly falls back to
         the default provider takes the wrong mint/redeem path."""
-        import asyncio
-
-        from test_x509_service_mode import FakeVomsClient, FakeX509Store
 
         _set_backends(monkeypatch, tmp_path, _TWO_ENTRY_BACKENDS_YAML)
         _set_identity_providers(
@@ -447,11 +447,6 @@ class TestPerTargetResolution:
     def test_redeem_resolves_the_target_entry_provider(self, two_entry_app) -> None:
         """Redeeming aud=dune-mcp must consult the dune entry's Vault store,
         not the default (legacy) provider's tmpfs path."""
-        import asyncio
-        import time as _time
-
-        from pydantic import SecretStr
-        from test_x509_service_mode import _PEM
 
         client, store, _state = two_entry_app
         subject = "sub-abc"

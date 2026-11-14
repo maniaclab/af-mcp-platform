@@ -29,6 +29,7 @@ import pytest
 from pydantic import SecretStr
 from test_broker_issued import _make_rsa_key, _private_pem
 from test_x509_redeem import _BACKENDS_YAML
+from test_x509_redeem import _seed_proxy as seed_legacy_cache_proxy
 from test_x509_service_mode import FakeVomsClient, FakeX509Store
 
 from af_mcp_broker.credentials.errors import (
@@ -223,7 +224,6 @@ class TestRedeemVaultServe:
     ) -> None:
         """A leftover tmpfs-cached proxy from before the feature flip must
         not be served once Vault is authoritative."""
-        from test_x509_redeem import _seed_proxy as seed_legacy_cache_proxy
 
         client, _, _, _ = service_app
         seed_legacy_cache_proxy(client, tmp_path, subject="sub-abc")
@@ -536,7 +536,6 @@ class TestProxyStatusServiceMode:
     ) -> None:
         """The mirror-image divergence: a leftover in-memory ProxyMeta on
         THIS replica must not report a proxy Vault no longer holds."""
-        from test_x509_redeem import _seed_proxy as seed_legacy_cache_proxy
 
         client, _, _, _ = service_app
         seed_legacy_cache_proxy(client, tmp_path, subject="sub-abc")

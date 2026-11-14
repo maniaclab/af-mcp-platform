@@ -9,13 +9,18 @@ env vars to set.
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import re
 import time
 from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from af_mcp_broker import identity
 from af_mcp_broker.api import tokens as tokens_api
+from af_mcp_broker.app import app
+from af_mcp_broker.config import get_settings
+from af_mcp_broker.identity import keycloak_dependency
 from af_mcp_broker.pat import PAT_PREFIX
 from af_mcp_broker.token_registry import TokenRecord
 
@@ -133,7 +138,6 @@ def test_mint_duplicate_name_allowed_after_first_token_revoked(
 
 
 def test_mint_default_expiry_is_90_days(app_client: tuple[TestClient, dict]) -> None:
-    import datetime as dt
 
     client, _ = app_client
     resp = _mint(client)
@@ -146,7 +150,6 @@ def test_mint_default_expiry_is_90_days(app_client: tuple[TestClient, dict]) -> 
 
 
 def test_mint_custom_expires_in_days(app_client: tuple[TestClient, dict]) -> None:
-    import datetime as dt
 
     client, _ = app_client
     resp = _mint(client, expires_in_days=7)
@@ -420,12 +423,6 @@ def test_revoke_marks_the_record_revoked(
 
 
 def test_pat_is_rejected_on_v1(app_client: tuple[TestClient, dict]) -> None:
-    import time
-
-    from af_mcp_broker import identity
-    from af_mcp_broker.app import app
-    from af_mcp_broker.config import get_settings
-    from af_mcp_broker.identity import keycloak_dependency
 
     client, _ = app_client
     mint_resp = _mint(client, name="for-v1-rejection-test")
@@ -461,9 +458,6 @@ def test_missing_bearer_still_401_on_v1(app_client: tuple[TestClient, dict]) -> 
     """Sanity check that the override-removal technique above actually
     exercises the real dependency (i.e. isn't accidentally still bypassed)."""
     client, _ = app_client
-
-    from af_mcp_broker.app import app
-    from af_mcp_broker.identity import keycloak_dependency
 
     saved = app.dependency_overrides.pop(keycloak_dependency, None)
     try:
@@ -553,7 +547,6 @@ def test_delete_record_removes_a_revoked_token(
 def test_delete_record_removes_an_expired_token(
     app_client: tuple[TestClient, dict],
 ) -> None:
-    from af_mcp_broker.app import app
 
     client, state = app_client
     _seed_expired(app.state, principal_id=state["principal"].subject, lookup_id="old")
@@ -595,7 +588,6 @@ def test_clear_inactive_deletes_only_the_callers_revoked_and_expired_rows(
     make_principal: Callable[..., object],
     audited: list[AuditRecord],
 ) -> None:
-    from af_mcp_broker.app import app
 
     client, state = app_client
     owner_principal = state["principal"]

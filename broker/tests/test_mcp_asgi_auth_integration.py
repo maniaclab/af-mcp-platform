@@ -9,10 +9,21 @@ import pytest
 from conftest import make_claims, run_aggregator_async, run_inprocess_server
 from fastmcp import Client, FastMCP
 
+from af_mcp_broker.audit.logger import init_audit_logger
 from af_mcp_broker.authorization import EntitlementPolicy
 from af_mcp_broker.credentials import CredentialRegistry
 from af_mcp_broker.mcp.aggregator import build_aggregator
 from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
+from af_mcp_broker.pat import mint_pat
+from af_mcp_broker.principal_cache import (
+    InMemoryPrincipalCacheBackend,
+    PrincipalCache,
+)
+from af_mcp_broker.principal_directory import (
+    PrincipalAttributes,
+    PrincipalDirectory,
+)
+from af_mcp_broker.token_registry import InMemoryTokenRegistryBackend, TokenRecord
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -199,17 +210,6 @@ async def test_pat_round_trip_tools_list_and_call(
     disturbs the other (every JWT-path test above is unmodified). The
     call's audit line must also attribute to this PAT's public lookup_id
     (issue #247) without leaking any secret material."""
-    from af_mcp_broker.audit.logger import init_audit_logger
-    from af_mcp_broker.pat import mint_pat
-    from af_mcp_broker.principal_cache import (
-        InMemoryPrincipalCacheBackend,
-        PrincipalCache,
-    )
-    from af_mcp_broker.principal_directory import (
-        PrincipalAttributes,
-        PrincipalDirectory,
-    )
-    from af_mcp_broker.token_registry import InMemoryTokenRegistryBackend, TokenRecord
 
     class _FakeDirectory(PrincipalDirectory):
         async def resolve(self, principal_id: str) -> PrincipalAttributes:

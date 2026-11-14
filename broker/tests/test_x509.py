@@ -13,14 +13,20 @@ from __future__ import annotations
 import asyncio
 import base64
 import datetime
-import sys
 import types
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from cryptography import x509 as cx509
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.serialization import Encoding
+from cryptography.x509.oid import NameOID
+from prometheus_client import REGISTRY
 from pydantic import SecretBytes, SecretStr
 
+from af_mcp_broker.credentials import x509
 from af_mcp_broker.credentials.cache import CredentialCache
 from af_mcp_broker.credentials.errors import (
     PosixIdentityRequiredError,
@@ -96,11 +102,6 @@ def test_extract_proxy_empty_payload():
 
 
 def _make_self_signed_pem(common_name: str, not_after: datetime.datetime) -> bytes:
-    from cryptography import x509 as cx509
-    from cryptography.hazmat.primitives import hashes
-    from cryptography.hazmat.primitives.asymmetric import rsa
-    from cryptography.hazmat.primitives.serialization import Encoding
-    from cryptography.x509.oid import NameOID
 
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     name = cx509.Name(
@@ -144,7 +145,6 @@ def test_parse_proxy_pem_extracts_dn_and_expiry():
 
 @pytest.mark.asyncio
 async def test_store_proxy_and_parse_increments_mint_counter(tmp_path):
-    from prometheus_client import REGISTRY
 
     not_after = datetime.datetime(2030, 6, 15, 12, 0, 0, tzinfo=datetime.UTC)
     proxy_pem = _make_self_signed_pem("Jane Doe", not_after)
@@ -173,7 +173,7 @@ def test_zero_bytearray():
 
 
 def _install_fake_k8s(monkeypatch, captured: dict) -> None:
-    """Inject a minimal fake kubernetes_asyncio into sys.modules."""
+    """Patch a minimal fake kubernetes_asyncio into the x509 module."""
 
     class FakeWsClient:
         async def write_stdin(self, data):
@@ -197,17 +197,13 @@ def _install_fake_k8s(monkeypatch, captured: dict) -> None:
         async def __aexit__(self, *exc):
             return False
 
-    k8s = types.ModuleType("kubernetes_asyncio")
     client_mod = types.ModuleType("kubernetes_asyncio.client")
     stream_mod = types.ModuleType("kubernetes_asyncio.stream")
     client_mod.CoreV1Api = FakeCoreV1Api
     stream_mod.WsApiClient = FakeWsApiClient
-    k8s.client = client_mod
-    k8s.stream = stream_mod
 
-    monkeypatch.setitem(sys.modules, "kubernetes_asyncio", k8s)
-    monkeypatch.setitem(sys.modules, "kubernetes_asyncio.client", client_mod)
-    monkeypatch.setitem(sys.modules, "kubernetes_asyncio.stream", stream_mod)
+    monkeypatch.setattr(x509, "k8s_client", client_mod)
+    monkeypatch.setattr(x509, "WsApiClient", stream_mod.WsApiClient)
 
 
 def _install_fake_k8s_full(
@@ -280,7 +276,6 @@ def _install_fake_k8s_full(
         async def __aexit__(self, *exc):
             return False
 
-    k8s = types.ModuleType("kubernetes_asyncio")
     client_mod = types.ModuleType("kubernetes_asyncio.client")
     stream_mod = types.ModuleType("kubernetes_asyncio.stream")
     config_mod = types.ModuleType("kubernetes_asyncio.config")
@@ -291,14 +286,10 @@ def _install_fake_k8s_full(
     client_mod.V1DeleteOptions = SimpleNamespace
     stream_mod.WsApiClient = FakeWsApiClient
     config_mod.load_incluster_config = lambda: None
-    k8s.client = client_mod
-    k8s.stream = stream_mod
-    k8s.config = config_mod
 
-    monkeypatch.setitem(sys.modules, "kubernetes_asyncio", k8s)
-    monkeypatch.setitem(sys.modules, "kubernetes_asyncio.client", client_mod)
-    monkeypatch.setitem(sys.modules, "kubernetes_asyncio.stream", stream_mod)
-    monkeypatch.setitem(sys.modules, "kubernetes_asyncio.config", config_mod)
+    monkeypatch.setattr(x509, "k8s_client", client_mod)
+    monkeypatch.setattr(x509, "WsApiClient", stream_mod.WsApiClient)
+    monkeypatch.setattr(x509, "k8s_config", config_mod)
 
 
 @pytest.mark.asyncio
@@ -567,7 +558,6 @@ def _install_fake_k8s_for_mint(
     def fake_load_incluster_config():
         captured["loaded_incluster_config"] = True
 
-    k8s = types.ModuleType("kubernetes_asyncio")
     client_mod = types.ModuleType("kubernetes_asyncio.client")
     stream_mod = types.ModuleType("kubernetes_asyncio.stream")
     config_mod = types.ModuleType("kubernetes_asyncio.config")
@@ -577,14 +567,10 @@ def _install_fake_k8s_for_mint(
     client_mod.V1DeleteOptions = FakeV1DeleteOptions
     stream_mod.WsApiClient = FakeWsApiClient
     config_mod.load_incluster_config = fake_load_incluster_config
-    k8s.client = client_mod
-    k8s.stream = stream_mod
-    k8s.config = config_mod
 
-    monkeypatch.setitem(sys.modules, "kubernetes_asyncio", k8s)
-    monkeypatch.setitem(sys.modules, "kubernetes_asyncio.client", client_mod)
-    monkeypatch.setitem(sys.modules, "kubernetes_asyncio.stream", stream_mod)
-    monkeypatch.setitem(sys.modules, "kubernetes_asyncio.config", config_mod)
+    monkeypatch.setattr(x509, "k8s_client", client_mod)
+    monkeypatch.setattr(x509, "WsApiClient", stream_mod.WsApiClient)
+    monkeypatch.setattr(x509, "k8s_config", config_mod)
 
 
 @pytest.mark.asyncio
@@ -713,9 +699,8 @@ async def test_issue_different_uids_do_not_serialize(monkeypatch, tmp_path):
 
     job_names: list[str] = []
     _install_fake_k8s_full(monkeypatch, proxy_pem, job_names)
-    import kubernetes_asyncio.client as fake_client_mod
 
-    monkeypatch.setattr(fake_client_mod, "BatchV1Api", _BlockingBatchV1Api)
+    monkeypatch.setattr(x509.k8s_client, "BatchV1Api", _BlockingBatchV1Api)
 
     settings = SimpleNamespace(
         home_root=str(tmp_path), proxy_dir=str(tmp_path / "proxies")

@@ -11,6 +11,7 @@ built on top of this.
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -144,7 +145,6 @@ class _FakeVault:
 
 
 def _json_body(request: httpx.Request) -> dict[str, Any]:
-    import json
 
     return json.loads(request.content.decode())
 

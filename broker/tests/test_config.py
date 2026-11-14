@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from af_mcp_broker.config import Settings, get_settings
+from af_mcp_broker.mcp.registry import BUILTIN_SERVICE_NAME
 
 
 def test_get_settings_is_cached():
@@ -458,7 +459,6 @@ def test_mcp_replica_count_env_var_still_works(monkeypatch):
 def test_builtin_service_name_defaults_and_env_override(monkeypatch):
     """The builtin gateway service name (issue #240) defaults to
     registry.BUILTIN_SERVICE_NAME and is overridable via BUILTIN_SERVICE_NAME."""
-    from af_mcp_broker.mcp.registry import BUILTIN_SERVICE_NAME
 
     assert Settings().builtin_service_name == BUILTIN_SERVICE_NAME
     monkeypatch.setenv("BUILTIN_SERVICE_NAME", "facility_service")
