@@ -159,7 +159,7 @@ Outside the chart set `SHARED_STATE_URL` (and `MCP_REPLICA_COUNT`) directly.
 
 Per-replica state in the broker, what happens at more than one replica
 without a store, and what each item does when the store is down. "Phase"
-is the order in which items move onto the store; phases 1 to 3 are
+is the order in which items move onto the store; phases 1 to 4 are
 implemented today and "(done)" marks the ones that have.
 
 | Item | Location | Effect at N > 1 without a store | Consistency need | Store down | Phase |
@@ -169,7 +169,7 @@ implemented today and "(done)" marks the ones that have.
 | PAT mint rate window (10 mints / hour per subject) | `api/tokens.py`, `TokenRegistry` | Mint cap multiplied by N | Strong: one counter per subject, atomic increment. Soft anti-abuse cap, not a security boundary | Falls back to a per-replica count and logs `token_registry.shared_state_unavailable`; never refuses every mint | 2 (done) |
 | Per-(subject, service) tools/list cache and 30 s negative cache | `mcp/aggregator.py`, `mcp/cache_invalidation.py` | Invalidate-on-link/revoke reaches only the replica that handled it | Eventual: the drop is published to every replica (pub/sub), so staleness is the delivery delay, not the TTL | Fails open: the local drop still happens, the broadcast failure is logged as `list_cache_invalidation.shared_state_unavailable`, and other replicas fall back to TTL-only staleness. A replica that resubscribes after an outage drops every cached listing, since it may have missed messages | 3 (done) |
 | Caller list-failure records | `mcp/registry.py` (`_caller_list_failures`) | Status differs by replica until each re-lists | Eventual: cleared with the listing entries by the same invalidation, otherwise refreshed by each replica's own listings | Fail open | 3 (done, via the invalidation above) |
-| Admin lint tables (annotation mismatches, tool-mapping drift) | `mcp/registry.py` | Each replica reports only what it has observed | Eventual | Compute on demand instead of storing | 4 |
+| Admin lint tables (annotation mismatches, tool-mapping drift; #332) | `mcp/lint_observations.py`, `mcp/middleware/entitlement_mw.py`, `api/admin.py` | Each replica reports only what it has observed | Eventual: one record per service in the store, written whenever a caller lists that service's tools, so any replica answers the same | Falls back to what this replica observed and logs `lint_observations.shared_state_unavailable`; never reports a service observed that no one listed | 4 (done) |
 | MCP OAuth authorization codes | `mcp_auth_codes.py` | Codes are self-contained (Fernet, `BROKER_STATE_KEY`), so any replica opens them; the single-use marker is per replica, so a replay on another replica succeeds | Strong, single use: one `mcp_auth_code:<id>` counter per code | Redemption is refused with `invalid_grant` (fail closed); the code is not consumed, so the client retries or restarts the flow | 1 (done) |
 | Revocation, credentials, principal cache, credmon lease | Vault | Already shared | n/a | n/a | n/a |
 | Usage, maintenance mode | Postgres | Already shared | n/a | n/a | n/a |
@@ -186,6 +186,19 @@ the store is touched by a background subscriber and by the rare link and
 revoke events only. Delivery is at-most-once, so a replica resubscribing after
 an outage drops *all* cached listings (`list_cache_invalidation.resubscribed`)
 rather than trusting that it missed nothing.
+
+Lint observation record: the admin tables read one `lint-observation:<service>`
+value per service (JSON: findings and a wall-clock `observed_at`) that every
+listing writes, rather than each replica's in-process state, which now only
+dedupes the log line and metric. Writes happen when the findings change and
+at most every 5 minutes otherwise, and the value expires after 24 hours
+without a refresh. `GET /v1/admin/annotation-mismatches` and
+`/v1/admin/tool-mapping-drift` list every configured service with its
+`last_observed`; `null` means no observation is on record, and the portal
+then says "not yet observed since <time>" instead of "no mismatches", which an
+empty table alone cannot distinguish. A service that lists no tools in a
+listing (unreachable backend, caller with no linked credential) is not
+recorded as observed.
 
 Limiter failure policy (the unlock limiter and the tool rate limits, both
 through `FallbackSharedState` in `shared_state.py`): when the store is

@@ -35,7 +35,7 @@ from af_mcp_broker import identity
 from af_mcp_broker.audit import measure
 from af_mcp_broker.config import Settings, get_settings
 from af_mcp_broker.mcp import aggregator as aggregator_module
-from af_mcp_broker.mcp import cache_invalidation
+from af_mcp_broker.mcp import cache_invalidation, lint_observations
 from af_mcp_broker.mcp.aggregator import build_asgi_auth_middleware
 
 # fastmcp v4's camelCase compat bridge (mcp_camelcase_compat, default True)
@@ -287,7 +287,7 @@ def shared_state_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
 
 @pytest.fixture
 def unpinned_loggers(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Give the aggregator and cache-invalidation modules fresh loggers for one test.
+    """Give the aggregator, cache-invalidation and lint-observation modules fresh loggers for one test.
 
     A booted app configures structlog with ``cache_logger_on_first_use``, so a
     module logger first used under that configuration stays pinned to its
@@ -296,7 +296,7 @@ def unpinned_loggers(monkeypatch: pytest.MonkeyPatch) -> None:
     Tests that list through the aggregator or run the invalidator use this so
     their first use pins nothing.
     """
-    for module in (aggregator_module, cache_invalidation):
+    for module in (aggregator_module, cache_invalidation, lint_observations):
         monkeypatch.setattr(module, "logger", structlog.get_logger(module.__name__))
 
 

@@ -1086,13 +1086,30 @@ export interface AnnotationMismatch {
 }
 
 /**
- * Admin-only (require_admin, 403 otherwise). Empty until at least one
- * caller has listed the affected service's tools through /mcp since this
- * broker process started — the lint is observed as callers list tools, not
- * probed live by this endpoint (see EntitlementMiddleware.on_list_tools).
+ * When one service's tool listing was last linted. `last_observed` is epoch
+ * seconds, or null when no observation is on record (nobody has listed the
+ * service within the report's `retention_seconds`), in which case an empty
+ * findings list says nothing about that service.
  */
-export async function fetchAnnotationMismatches(): Promise<AnnotationMismatch[]> {
-  return apiFetch<AnnotationMismatch[]>('/admin/annotation-mismatches');
+export interface LintServiceStatus {
+  service: string;
+  last_observed: number | null;
+}
+
+export interface AnnotationMismatchesReport {
+  retention_seconds: number;
+  services: LintServiceStatus[];
+  mismatches: AnnotationMismatch[];
+}
+
+/**
+ * Admin-only (require_admin, 403 otherwise). The lint is observed as callers
+ * list tools through /mcp on any replica and recorded in the broker's shared
+ * store, not probed live by this endpoint (see
+ * EntitlementMiddleware.on_list_tools); `services` says what was observed.
+ */
+export async function fetchAnnotationMismatches(): Promise<AnnotationMismatchesReport> {
+  return apiFetch<AnnotationMismatchesReport>('/admin/annotation-mismatches');
 }
 
 // ---------------------------------------------------------------------------
@@ -1119,9 +1136,15 @@ export interface ToolMappingDrift {
   unroutable: string[];
 }
 
+export interface ToolMappingDriftReport {
+  retention_seconds: number;
+  services: LintServiceStatus[];
+  drift: ToolMappingDrift[];
+}
+
 /** Admin-only (require_admin, 403 otherwise); observed as callers list tools, like fetchAnnotationMismatches. */
-export async function fetchToolMappingDrift(): Promise<ToolMappingDrift[]> {
-  return apiFetch<ToolMappingDrift[]>('/admin/tool-mapping-drift');
+export async function fetchToolMappingDrift(): Promise<ToolMappingDriftReport> {
+  return apiFetch<ToolMappingDriftReport>('/admin/tool-mapping-drift');
 }
 
 // ---------------------------------------------------------------------------

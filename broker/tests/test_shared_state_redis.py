@@ -173,3 +173,53 @@ async def test_unreachable_store_raises_unavailable_for_pubsub(
                 pass
     finally:
         await backend.close()
+
+
+async def test_set_then_get_round_trips_with_a_ttl(
+    store: RedisSharedState, key: str
+) -> None:
+    await store.set(key, "v", 60)
+    assert await store.get(key) == "v"
+    assert 0 < await store._client.pttl(key) <= 60_000
+
+
+async def test_get_of_an_absent_key_is_none(store: RedisSharedState, key: str) -> None:
+    assert await store.get(key) is None
+
+
+async def test_value_expires(store: RedisSharedState, key: str) -> None:
+    await store.set(key, "v", 1)
+    await asyncio.sleep(1.2)
+    assert await store.get(key) is None
+
+
+async def test_set_overwrites(store: RedisSharedState, key: str) -> None:
+    await store.set(key, "old", 60)
+    await store.set(key, "new", 60)
+    assert await store.get(key) == "new"
+
+
+async def test_value_set_on_one_client_is_read_on_another(
+    shared_state_url: str, key: str
+) -> None:
+    replica_a = RedisSharedState(shared_state_url)
+    replica_b = RedisSharedState(shared_state_url)
+    try:
+        await replica_a.set(key, "v", 60)
+        assert await replica_b.get(key) == "v"
+    finally:
+        await replica_a.close()
+        await replica_b.close()
+
+
+async def test_unreachable_store_raises_unavailable_for_values(
+    unreachable_shared_state_url: str,
+) -> None:
+    backend = RedisSharedState(unreachable_shared_state_url)
+    try:
+        with pytest.raises(SharedStateUnavailableError):
+            await backend.get("k")
+        with pytest.raises(SharedStateUnavailableError):
+            await backend.set("k", "v", 60)
+    finally:
+        await backend.close()

@@ -101,8 +101,20 @@ class SharedState(ABC):
         """Return *key*'s counter without changing it, or None if no window is open."""
 
     @abstractmethod
+    async def get(self, key: str) -> str | None:
+        """Return the value last ``set`` under *key*, or None if absent or expired."""
+
+    @abstractmethod
+    async def set(self, key: str, value: str, ttl_seconds: float) -> None:
+        """Store *value* under *key* for *ttl_seconds*, replacing any earlier value and restarting its TTL.
+
+        A key holds either a value or a counter, never both: callers use
+        distinct key prefixes for the two.
+        """
+
+    @abstractmethod
     async def delete(self, key: str) -> None:
-        """Drop *key*'s counter. Deleting an absent key is not an error."""
+        """Drop *key*'s counter or value. Deleting an absent key is not an error."""
 
     @abstractmethod
     async def publish(self, channel: str, message: str) -> None:
@@ -136,6 +148,8 @@ class InMemorySharedState(SharedState):
     def __init__(self) -> None:
         # key -> (count, window end on the monotonic clock)
         self._windows: dict[str, tuple[int, float]] = {}
+        # key -> (value, expiry on the monotonic clock)
+        self._values: dict[str, tuple[str, float]] = {}
         # channel -> one queue per active subscriber
         self._subscribers: dict[str, set[asyncio.Queue[str]]] = {}
 
@@ -158,8 +172,21 @@ class InMemorySharedState(SharedState):
             return None
         return WindowCount(count=current[0], ttl_seconds=current[1] - now)
 
+    async def get(self, key: str) -> str | None:
+        current = self._values.get(key)
+        if current is None:
+            return None
+        if current[1] <= time.monotonic():
+            del self._values[key]
+            return None
+        return current[0]
+
+    async def set(self, key: str, value: str, ttl_seconds: float) -> None:
+        self._values[key] = (value, time.monotonic() + ttl_seconds)
+
     async def delete(self, key: str) -> None:
         self._windows.pop(key, None)
+        self._values.pop(key, None)
 
     async def publish(self, channel: str, message: str) -> None:
         for queue in self._subscribers.get(channel, ()):
@@ -218,6 +245,23 @@ class RedisSharedState(SharedState):
             # The window closed between the two reads.
             return None
         return WindowCount(count=int(raw), ttl_seconds=ttl_ms / 1000)
+
+    async def get(self, key: str) -> str | None:
+        try:
+            raw = await self._client.get(self._prefix + key)
+        except (RedisError, OSError) as exc:
+            raise SharedStateUnavailableError(str(exc)) from exc
+        if raw is None:
+            return None
+        return raw.decode() if isinstance(raw, bytes) else raw
+
+    async def set(self, key: str, value: str, ttl_seconds: float) -> None:
+        try:
+            await self._client.set(
+                self._prefix + key, value, px=max(1, round(ttl_seconds * 1000))
+            )
+        except (RedisError, OSError) as exc:
+            raise SharedStateUnavailableError(str(exc)) from exc
 
     async def delete(self, key: str) -> None:
         try:
@@ -280,6 +324,20 @@ class FallbackSharedState(SharedState):
         except SharedStateUnavailableError as exc:
             self._log_unavailable(exc)
             return await self._fallback.get_window(key)
+
+    async def get(self, key: str) -> str | None:
+        try:
+            return await self.primary.get(key)
+        except SharedStateUnavailableError as exc:
+            self._log_unavailable(exc)
+            return await self._fallback.get(key)
+
+    async def set(self, key: str, value: str, ttl_seconds: float) -> None:
+        try:
+            await self.primary.set(key, value, ttl_seconds)
+        except SharedStateUnavailableError as exc:
+            self._log_unavailable(exc)
+            await self._fallback.set(key, value, ttl_seconds)
 
     async def delete(self, key: str) -> None:
         # The fallback copy goes first so it is cleared even if the store is down.

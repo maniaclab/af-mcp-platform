@@ -41,6 +41,10 @@ from af_mcp_broker.principal_cache import PrincipalUnavailableError
 
 if TYPE_CHECKING:
     from af_mcp_broker.credmon.sync import CredmonSyncService
+    from af_mcp_broker.mcp.lint_observations import (
+        LintObservationStore,
+        ServiceLintObservation,
+    )
 
 logger = structlog.get_logger(__name__)
 
@@ -231,42 +235,92 @@ class AnnotationMismatchResponse(BaseModel):
     permission: str
 
 
+class LintServiceStatus(BaseModel):
+    """When one service's tool listing was last linted, or None if no observation is on record."""
+
+    model_config = ConfigDict(frozen=True)
+
+    service: str
+    # Epoch seconds. None means no observation is on record: either nobody has
+    # listed the service within ``retention_seconds``, or the store lost it.
+    last_observed: float | None
+
+
+class AnnotationMismatchesResponse(BaseModel):
+    """The annotation/policy mismatches on record, and which services that record covers."""
+
+    model_config = ConfigDict(frozen=True)
+
+    retention_seconds: float
+    services: list[LintServiceStatus]
+    mismatches: list[AnnotationMismatchResponse]
+
+
+async def _lint_observations(request: Request) -> list[ServiceLintObservation | None]:
+    """Each non-builtin service's last lint observation, in service-name order; None where there is none."""
+    store: LintObservationStore = request.app.state.lint_observations
+    names = sorted(
+        s.name for s in _get_registry(request).all_services() if not s.builtin
+    )
+    return [await store.get(name) for name in names]
+
+
+def _lint_service_statuses(
+    request: Request, observations: list[ServiceLintObservation | None]
+) -> list[LintServiceStatus]:
+    names = sorted(
+        s.name for s in _get_registry(request).all_services() if not s.builtin
+    )
+    return [
+        LintServiceStatus(service=name, last_observed=obs.observed_at if obs else None)
+        for name, obs in zip(names, observations, strict=True)
+    ]
+
+
 @router.get(
     "/annotation-mismatches",
-    response_model=list[AnnotationMismatchResponse],
+    response_model=AnnotationMismatchesResponse,
     summary="List tools whose declared annotations disagree with policy.yaml (admin only)",
     description=(
         "Every tool whose declared read_only_hint annotation disagrees with "
         "policy.yaml's resolved action_type, as observed the last time a "
-        "caller listed that service's tools through /mcp -- this is a "
-        "read of EntitlementMiddleware's own lint (mcp/middleware/"
-        "entitlement_mw.py), not a second, separately-probed comparison, so "
-        "it can never disagree with what the structlog warning/Prometheus "
-        "counter already recorded. Visibility only: policy.yaml stays "
-        "authoritative for actual enforcement (issue #238 B.8's "
+        "caller listed that service's tools through /mcp on any replica -- "
+        "this is a read of EntitlementMiddleware's own lint (mcp/middleware/"
+        "entitlement_mw.py), recorded in the shared state store, not a "
+        "second, separately-probed comparison. Visibility only: policy.yaml "
+        "stays authoritative for actual enforcement (issue #238 B.8's "
         "'forward + lint' decision) -- a mismatch here means the "
         "hand-maintained policy glob and the backend's own declaration "
-        "disagree, not that either side is necessarily wrong. Empty until "
-        "at least one caller has listed the affected service's tools since "
-        "this broker process started."
+        "disagree, not that either side is necessarily wrong. 'services' "
+        "says when each service was last observed; a service with "
+        "last_observed null has no observation on record (nobody has listed "
+        "it within 'retention_seconds'), so an empty 'mismatches' says "
+        "nothing about it."
     ),
 )
 async def get_annotation_mismatches(
     request: Request,
     _principal: Annotated[Principal, Depends(require_admin)],
-) -> list[AnnotationMismatchResponse]:
-    registry = _get_registry(request)
-    return [
-        AnnotationMismatchResponse(
-            service=m.service,
-            tool=m.tool,
-            declared_read_only_hint=m.declared_read_only_hint,
-            resolved_action_type=m.resolved_action_type,
-            resolved_via=m.resolved_via,
-            permission=m.permission,
-        )
-        for m in registry.annotation_mismatches()
-    ]
+) -> AnnotationMismatchesResponse:
+    observations = await _lint_observations(request)
+    store: LintObservationStore = request.app.state.lint_observations
+    return AnnotationMismatchesResponse(
+        retention_seconds=store.retention_seconds,
+        services=_lint_service_statuses(request, observations),
+        mismatches=[
+            AnnotationMismatchResponse(
+                service=m.service,
+                tool=m.tool,
+                declared_read_only_hint=m.declared_read_only_hint,
+                resolved_action_type=m.resolved_action_type,
+                resolved_via=m.resolved_via,
+                permission=m.permission,
+            )
+            for obs in observations
+            if obs is not None
+            for m in sorted(obs.annotation_mismatches, key=lambda m: m.tool)
+        ],
+    )
 
 
 class ToolMappingDriftResponse(BaseModel):
@@ -286,9 +340,19 @@ class ToolMappingDriftResponse(BaseModel):
     unroutable: list[str]
 
 
+class ToolMappingDriftReport(BaseModel):
+    """The tool-mapping drift on record, and which services that record covers."""
+
+    model_config = ConfigDict(frozen=True)
+
+    retention_seconds: float
+    services: list[LintServiceStatus]
+    drift: list[ToolMappingDriftResponse]
+
+
 @router.get(
     "/tool-mapping-drift",
-    response_model=list[ToolMappingDriftResponse],
+    response_model=ToolMappingDriftReport,
     summary="List services whose tools and required_permission mapping have drifted (admin only)",
     description=(
         "Per service with a dict-form required_permission: 'unmapped' tools "
@@ -301,28 +365,37 @@ class ToolMappingDriftResponse(BaseModel):
         "caller can reach; 'advertised'/'routable' count the listing with "
         "and without them. Names are wire (namespaced) tool names. Read "
         "from EntitlementMiddleware's own lint, as observed the last time a "
-        "caller listed that service's tools through /mcp, so it is empty "
-        "until at least one caller has done so since this broker process "
-        "started. Visibility only."
+        "caller listed that service's tools through /mcp on any replica, "
+        "recorded in the shared state store. 'services' says when each "
+        "service was last observed; a service with last_observed null has no "
+        "observation on record (nobody has listed it within "
+        "'retention_seconds'), so an empty 'drift' says nothing about it. "
+        "Visibility only."
     ),
 )
 async def get_tool_mapping_drift(
     request: Request,
     _principal: Annotated[Principal, Depends(require_admin)],
-) -> list[ToolMappingDriftResponse]:
-    registry = _get_registry(request)
-    return [
-        ToolMappingDriftResponse(
-            service=d.service,
-            prefix=d.prefix,
-            advertised=d.advertised,
-            routable=d.routable,
-            unmapped=list(d.unmapped),
-            stale=list(d.stale),
-            unroutable=list(d.unroutable),
-        )
-        for d in registry.tool_mapping_drifts()
-    ]
+) -> ToolMappingDriftReport:
+    observations = await _lint_observations(request)
+    store: LintObservationStore = request.app.state.lint_observations
+    return ToolMappingDriftReport(
+        retention_seconds=store.retention_seconds,
+        services=_lint_service_statuses(request, observations),
+        drift=[
+            ToolMappingDriftResponse(
+                service=obs.tool_mapping_drift.service,
+                prefix=obs.tool_mapping_drift.prefix,
+                advertised=obs.tool_mapping_drift.advertised,
+                routable=obs.tool_mapping_drift.routable,
+                unmapped=list(obs.tool_mapping_drift.unmapped),
+                stale=list(obs.tool_mapping_drift.stale),
+                unroutable=list(obs.tool_mapping_drift.unroutable),
+            )
+            for obs in observations
+            if obs is not None and obs.tool_mapping_drift is not None
+        ],
+    )
 
 
 # ---------------------------------------------------------------------------
