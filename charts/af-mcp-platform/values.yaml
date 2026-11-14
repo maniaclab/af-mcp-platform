@@ -618,43 +618,63 @@ broker:
         name: ""
         key: "uri"
 
+  # OTLP TRANSPORT shared by every OpenTelemetry signal the broker can emit
+  # (traces, metrics; broker tracing.py / otel_metrics.py): the collector
+  # endpoint, its auth headers and the NetworkPolicy egress rule to it. The
+  # per-signal switches are broker.tracing.enabled and
+  # broker.metrics.otlp.enabled below; the chart fails to render if one is on
+  # while `endpoint` is empty. The broker is an emitter only -- no backend is
+  # shipped or assumed; point `endpoint` at any OTLP/HTTP collector. With every
+  # signal off this block renders nothing.
+  otlp:
+    # OTLP/HTTP collector base URL (the SDK appends each signal's /v1/<signal>
+    # path itself), e.g. http://otel-collector.observability:4318
+    endpoint: ""
+    # Request headers for the collector, rendered as OTEL_EXPORTER_OTLP_HEADERS
+    # ("k1=v1,k2=v2") for every signal. Set at most one of `value` and
+    # `existingSecret`. `value` is for non-secret headers (e.g. an MLflow
+    # `x-mlflow-experiment-id=3`); put anything credential-bearing (e.g.
+    # `authorization=Bearer ...`) in a Secret so it never sits in values.
+    headers:
+      value: ""
+      # Secret whose `key` holds the whole header string, rendered through
+      # secretKeyRef. Only used when `name` is set.
+      existingSecret:
+        name: ""
+        key: "headers"
+    # Selects the collector for the broker's NetworkPolicy egress rule
+    # (rendered when any signal is enabled and networkPolicy.enabled) -- same
+    # shape as broker.usage.postgres.networkPolicy above. namespaceSelector /
+    # podSelector are matchLabels maps: an empty namespaceSelector selects the
+    # release namespace; an empty podSelector allows any pod there.
+    networkPolicy:
+      namespaceSelector: {}
+      podSelector: {}
+      port: 4318
+
   # OpenTelemetry trace EMISSION (broker tracing.py, observability roadmap
-  # PR D). The broker is an emitter only -- no trace backend is shipped or
-  # assumed; point `endpoint` at any OTLP/HTTP collector. Disabled (the
-  # default) renders nothing: no env vars, no NetworkPolicy egress, and the
-  # broker installs no SDK tracer provider (every OTel call no-ops).
+  # PR D). Disabled (the default) renders no trace configuration and the
+  # broker installs no SDK tracer provider (every OTel call no-ops). Collector,
+  # headers and egress come from broker.otlp above.
   tracing:
     enabled: false
-    # OTLP/HTTP collector base URL, rendered as OTEL_EXPORTER_OTLP_ENDPOINT
-    # (the SDK appends the /v1/traces signal path itself), e.g.
-    # http://otel-collector.observability:4318
-    endpoint: ""
     # Head sampling ratio in [0, 1]. When set, rendered as
     # OTEL_TRACES_SAMPLER=parentbased_traceidratio with
     # OTEL_TRACES_SAMPLER_ARG=<ratio>; empty means the SDK default
     # (parentbased_always_on, i.e. every trace -- equivalent to 1.0), fine
     # at tool-call volumes.
     sampleRatio: ""
-    # Selects the collector for the broker's NetworkPolicy egress rule
-    # (rendered only when enabled and networkPolicy.enabled) -- same shape
-    # as broker.usage.postgres.networkPolicy above. namespaceSelector /
-    # podSelector are matchLabels maps: an empty namespaceSelector selects
-    # the release namespace; an empty podSelector allows any pod there.
-    networkPolicy:
-      namespaceSelector: {}
-      podSelector: {}
-      port: 4318
 
   # OpenTelemetry aggregate METRICS emission over OTLP (broker
   # otel_metrics.py): calls, errors, duration and result-size sums by
   # service, method, action_type and outcome -- never per-user. Off by
   # default, rendering nothing. Prometheus on :9090 is independent and
-  # unchanged. The collector is SHARED with tracing: the endpoint comes from
-  # broker.tracing.endpoint (required when metrics are enabled) and the
-  # NetworkPolicy egress rule from broker.tracing.networkPolicy, which is
-  # rendered when either signal is enabled. With tracing disabled the
-  # endpoint is rendered as OTEL_EXPORTER_OTLP_METRICS_ENDPOINT so enabling
-  # metrics does not switch tracing on.
+  # unchanged. Collector, headers and egress come from broker.otlp above.
+  # With tracing disabled the endpoint is rendered as
+  # OTEL_EXPORTER_OTLP_METRICS_ENDPOINT rather than the generic
+  # OTEL_EXPORTER_OTLP_ENDPOINT, because the broker treats the generic
+  # variable as its tracing on/off gate and enabling metrics must not switch
+  # tracing on.
   metrics:
     otlp:
       enabled: false

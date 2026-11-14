@@ -622,7 +622,7 @@ request ID as a label on any future metric for the same reason.
 The broker can emit OpenTelemetry traces (`tracing.py`) — it is an
 **emitter only**: no trace backend is shipped or assumed. Tracing is
 env-gated and off by default: set `OTEL_EXPORTER_OTLP_ENDPOINT` (chart:
-`broker.tracing.{enabled, endpoint}`) to point span export at any OTLP/HTTP
+`broker.tracing.enabled` with `broker.otlp.endpoint`) to point span export at any OTLP/HTTP
 collector (Grafana Tempo, Jaeger, an OTel Collector, …). With the endpoint
 unset, no SDK tracer provider is installed and every OTel API call — the
 broker's own spans and fastmcp's native ones alike — no-ops at zero

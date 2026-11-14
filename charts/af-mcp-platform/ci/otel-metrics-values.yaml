@@ -17,12 +17,12 @@ broker:
   # opt-in; this file is not about shared state, so it opts in.
   sharedState:
     allowPerReplicaState: true
+  # Tracing stays disabled: the collector endpoint and NetworkPolicy shape are
+  # shared with it, and metrics must not switch tracing on.
   metrics:
     otlp:
       enabled: true
-  # Tracing stays disabled: the collector endpoint and NetworkPolicy shape are
-  # shared with it, and metrics must not switch tracing on.
-  tracing:
+  otlp:
     endpoint: "http://otel-collector.observability:4318"
     networkPolicy:
       namespaceSelector:
