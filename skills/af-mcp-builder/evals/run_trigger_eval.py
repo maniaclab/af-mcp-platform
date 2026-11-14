@@ -66,7 +66,7 @@ def run_one(args):
         "WebSearch",
     ]
     env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
-    p = subprocess.Popen(
+    p = subprocess.Popen(  # noqa: S603 -- argv list (no shell) for the claude CLI; the query is a single argv entry
         cmd,
         cwd=sb,
         env=env,
