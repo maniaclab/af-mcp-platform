@@ -1958,7 +1958,7 @@ def _build_namespaced_aggregator(
     monkeypatch: pytest.MonkeyPatch,
     settings: Any,
     clients: dict[str, _CountingListClient],
-) -> FastMCP:
+) -> tuple[FastMCP, aggregator.BackendProviders]:
     """Build an aggregator through ``build_aggregator`` so every backend is registered namespaced, exactly as in production.
 
     ``clients`` maps a service name to the double its backend connection
@@ -1972,9 +1972,15 @@ def _build_namespaced_aggregator(
         "_make_client_factory",
         lambda spec, *_args, **_kwargs: lambda: clients[spec.name],
     )
-    return build_aggregator(
-        registry, settings, EntitlementPolicy(), CredentialRegistry()
+    backend_providers = aggregator.BackendProviders()
+    mcp = build_aggregator(
+        registry,
+        settings,
+        EntitlementPolicy(),
+        CredentialRegistry(),
+        backend_providers=backend_providers,
     )
+    return mcp, backend_providers
 
 
 async def test_invalidate_subject_cache_helper_targets_one_service(
@@ -1982,14 +1988,14 @@ async def test_invalidate_subject_cache_helper_targets_one_service(
 ) -> None:
     client_a = _CountingListClient(tools=[_tool("widget")])
     client_b = _CountingListClient(tools=[_tool("widget")])
-    mcp = _build_namespaced_aggregator(
+    mcp, backend_providers = _build_namespaced_aggregator(
         monkeypatch, settings, {"svc-a": client_a, "svc-b": client_b}
     )
     _patch_context(monkeypatch, make_principal(subject="alice"), active_backend=None)
     await mcp._list_tools()
     assert (client_a.call_count, client_b.call_count) == (1, 1)
 
-    aggregator.invalidate_subject_cache(mcp, "alice", target="svc-a")
+    aggregator.invalidate_subject_cache(backend_providers, "alice", target="svc-a")
     await mcp._list_tools()
 
     assert client_a.call_count == 2  # svc-a's cache was dropped
@@ -2001,13 +2007,13 @@ async def test_invalidate_subject_cache_helper_targets_all_services_when_none(
 ) -> None:
     client_a = _CountingListClient(tools=[_tool("widget")])
     client_b = _CountingListClient(tools=[_tool("widget")])
-    mcp = _build_namespaced_aggregator(
+    mcp, backend_providers = _build_namespaced_aggregator(
         monkeypatch, settings, {"svc-a": client_a, "svc-b": client_b}
     )
     _patch_context(monkeypatch, make_principal(subject="alice"), active_backend=None)
     await mcp._list_tools()
 
-    aggregator.invalidate_subject_cache(mcp, "alice")
+    aggregator.invalidate_subject_cache(backend_providers, "alice")
     await mcp._list_tools()
 
     assert client_a.call_count == 2
@@ -2019,7 +2025,7 @@ async def test_invalidate_all_subject_caches_drops_every_subject_on_every_servic
 ) -> None:
     client_a = _CountingListClient(tools=[_tool("widget")])
     client_b = _CountingListClient(tools=[_tool("widget")])
-    mcp = _build_namespaced_aggregator(
+    mcp, backend_providers = _build_namespaced_aggregator(
         monkeypatch, settings, {"svc-a": client_a, "svc-b": client_b}
     )
     for subject in ("alice", "bob"):
@@ -2029,7 +2035,7 @@ async def test_invalidate_all_subject_caches_drops_every_subject_on_every_servic
         await mcp._list_tools()
     assert (client_a.call_count, client_b.call_count) == (2, 2)
 
-    aggregator.invalidate_all_subject_caches(mcp)
+    aggregator.invalidate_all_subject_caches(backend_providers)
 
     for subject in ("alice", "bob"):
         _patch_context(

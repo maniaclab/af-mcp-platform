@@ -20,7 +20,6 @@ from test_identities import _AUTH, ALIAS, _configure_oauth21_env
 
 from af_mcp_broker.app import app as broker_app
 from af_mcp_broker.mcp.aggregator import (
-    _backend_providers,
     _ObservableProxyProvider,
     _SubjectListCacheEntry,
 )
@@ -37,7 +36,7 @@ _PUBSUB_TIMEOUT_SECONDS = 5
 
 
 def _first_provider() -> _ObservableProxyProvider:
-    return next(iter(_backend_providers[broker_app.state.mcp_aggregator].values()))
+    return broker_app.state.backend_providers.values()[0]
 
 
 async def _await_app_subscribed(shared_state_url: str) -> None:

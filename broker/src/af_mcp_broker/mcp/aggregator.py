@@ -14,7 +14,6 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-import weakref
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 import httpx2
@@ -1829,20 +1828,41 @@ class _ObservableProxyProvider(ProxyProvider):
             self._warned_missing_exclude_tools = True
 
 
-# Each aggregator's backend providers, by service name. fastmcp wraps a
-# namespaced provider in a private ``_WrappedProvider`` when it is added, so
-# ``mcp.providers`` never holds our ``_ObservableProxyProvider`` instances
-# directly; ``_register_services`` records them here instead so the
-# invalidation helpers below reach the real objects.
-_backend_providers: weakref.WeakKeyDictionary[
-    FastMCP, dict[str, _ObservableProxyProvider]
-] = weakref.WeakKeyDictionary()
+class BackendProviders:
+    """The ``_ObservableProxyProvider`` of every proxied backend, by service name.
+
+    fastmcp wraps a namespaced provider in a private ``_WrappedProvider`` when
+    it is added, so ``mcp.providers`` never holds our providers directly.
+    ``_register_services`` records them here instead, and the invalidation
+    helpers below reach the real objects through this holder. One instance is
+    shared by ``build_aggregator`` and every later ``populate_aggregator`` on
+    the same aggregator, which refresh its contents in place.
+    """
+
+    def __init__(self) -> None:
+        self._by_service: dict[str, _ObservableProxyProvider] = {}
+
+    def replace(self, providers: dict[str, _ObservableProxyProvider]) -> None:
+        """Make *providers* (keyed by ``ServiceSpec.name``) the recorded set."""
+        self._by_service = providers
+
+    def get(self, service_name: str) -> _ObservableProxyProvider:
+        """Return the provider for *service_name*; ``KeyError`` if none is registered."""
+        return self._by_service[service_name]
+
+    def items(self) -> list[tuple[str, _ObservableProxyProvider]]:
+        """Return every ``(service name, provider)`` pair."""
+        return list(self._by_service.items())
+
+    def values(self) -> list[_ObservableProxyProvider]:
+        """Return every recorded provider."""
+        return list(self._by_service.values())
 
 
 def invalidate_subject_cache(
-    mcp: FastMCP, subject: str, target: str | None = None
+    backend_providers: BackendProviders, subject: str, target: str | None = None
 ) -> None:
-    """Drop *subject*'s cached listing entries (every kind: tools, resources, resource templates, prompts) across ``mcp``'s providers -- one service (*target*) or every service.
+    """Drop *subject*'s cached listing entries (every kind: tools, resources, resource templates, prompts) across *backend_providers* -- one service (*target*) or every service.
 
     Called wherever a subject's linked identity changes (unlink, credential
     revocation, or a completed link -- see app.py's ``CredentialCache``
@@ -1852,14 +1872,14 @@ def invalidate_subject_cache(
     ``ServiceSpec.name`` affected; omitted, every service's cache entry for
     *subject* is dropped.
     """
-    for service_name, provider in _backend_providers.get(mcp, {}).items():
+    for service_name, provider in backend_providers.items():
         if target is None or service_name == target:
             provider.invalidate_subject(subject)
 
 
-def invalidate_all_subject_caches(mcp: FastMCP) -> None:
-    """Drop every subject's cached listing entries across all of ``mcp``'s providers (see ``_ObservableProxyProvider.invalidate_all_subjects``)."""
-    for provider in _backend_providers.get(mcp, {}).values():
+def invalidate_all_subject_caches(backend_providers: BackendProviders) -> None:
+    """Drop every subject's cached listing entries across all of *backend_providers* (see ``_ObservableProxyProvider.invalidate_all_subjects``)."""
+    for provider in backend_providers.values():
         provider.invalidate_all_subjects()
 
 
@@ -1877,6 +1897,7 @@ def build_aggregator(
     maintenance_mode_store: MaintenanceModeStore | None = None,
     job_credentials: JobCredentialGuide | None = None,
     shared_state: SharedState | None = None,
+    backend_providers: BackendProviders | None = None,
 ) -> FastMCP:
     """Construct a fully-wired aggregator FastMCP instance.
 
@@ -1924,6 +1945,11 @@ def build_aggregator(
     *identity_provider_configs*/*target_to_alias* default to empty for the
     same eager-build reason -- af_list_identities/af_list_mcp_servers simply
     report nothing until ``populate_aggregator`` supplies the real ones.
+
+    *backend_providers* receives the per-backend providers this build creates
+    (see ``BackendProviders``); pass the same holder to every
+    ``populate_aggregator`` call on this aggregator. Left None, the providers
+    are recorded in a holder nothing else can reach.
     """
     # instructions is the model-facing "dual enforcement" layer (finding #6):
     # a platform preamble plus each service's agent_policy, surfaced to clients
@@ -1957,6 +1983,7 @@ def build_aggregator(
         broker_token_issuer=broker_token_issuer,
         target_to_alias=target_to_alias,
         identity_provider_configs=identity_provider_configs,
+        backend_providers=backend_providers or BackendProviders(),
     )
     register_diagnostic_tools(
         mcp,
@@ -2006,6 +2033,7 @@ def populate_aggregator(
     job_credentials: JobCredentialGuide | None = None,
     shared_state: SharedState | None = None,
     lint_observations: LintObservationStore | None = None,
+    backend_providers: BackendProviders | None = None,
 ) -> None:
     """Refresh an aggregator built by ``build_aggregator`` with a freshly loaded registry/settings/policy/credential_registry/pat_backend/principal_cache/identity_providers/identity_provider_configs/target_to_alias/maintenance_mode_store/shared_state/lint_observations.
 
@@ -2019,6 +2047,8 @@ def populate_aggregator(
     ServiceRegistry and EntitlementPolicy are themselves rebuilt from scratch
     on every lifespan entry rather than merged -- the af_* diagnostic tools
     (register_diagnostic_tools) follow the same rebuild-from-scratch pattern.
+    *backend_providers* must be the holder ``build_aggregator`` was given, so
+    cache invalidation keeps reaching the rebuilt providers.
     """
     identity_mw, entitlement_mw, authorization_mw = _find_middleware(mcp)
     # Recompose the model-facing instructions from the real registry: the eager
@@ -2046,6 +2076,7 @@ def populate_aggregator(
         broker_token_issuer=broker_token_issuer,
         target_to_alias=target_to_alias,
         identity_provider_configs=identity_provider_configs,
+        backend_providers=backend_providers or BackendProviders(),
     )
     register_diagnostic_tools(
         mcp,
@@ -2071,6 +2102,7 @@ def _register_services(
     broker_token_issuer: BrokerTokenIssuer | None = None,
     target_to_alias: dict[str, str] | None = None,
     identity_provider_configs: dict[str, IdentityProviderConfig] | None = None,
+    backend_providers: BackendProviders,
 ) -> None:
     mcp.providers.clear()
     # mcp.providers.clear() above wipes every provider, including
@@ -2083,8 +2115,8 @@ def _register_services(
     # every call: it carries no per-call state of its own, and the list was
     # just cleared, so this never produces a duplicate entry.
     mcp.add_provider(mcp.local_provider)
-    backend_providers: dict[str, _ObservableProxyProvider] = {}
-    _backend_providers[mcp] = backend_providers
+    providers: dict[str, _ObservableProxyProvider] = {}
+    backend_providers.replace(providers)
     for spec in registry.all_services():
         if spec.builtin:
             # The builtin gateway service (issue #240) has no backend to
@@ -2112,7 +2144,7 @@ def _register_services(
         )
         namespace = spec.prefix if spec.apply_namespace else ""
         mcp.add_provider(provider, namespace=namespace)
-        backend_providers[spec.name] = provider
+        providers[spec.name] = provider
 
 
 def _find_middleware(

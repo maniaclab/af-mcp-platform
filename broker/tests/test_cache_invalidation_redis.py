@@ -44,19 +44,21 @@ class _Replica:
         self.client = client
         self.store = RedisSharedState(store_url)
         with pytest.MonkeyPatch.context() as monkeypatch:
-            self.mcp = _build_namespaced_aggregator(
+            self.mcp, self.backend_providers = _build_namespaced_aggregator(
                 monkeypatch,
                 Settings(oidc_issuer=ISSUER, oidc_audience=AUDIENCE),
                 {"example": client},
             )
         # Some tests need the raw listing error, which the aggregate swallows.
-        self.provider = aggregator._backend_providers[self.mcp]["example"]
+        self.provider = self.backend_providers.get("example")
         self.invalidator = ListCacheInvalidator(
             self.store,
             invalidate=lambda subject, target: aggregator.invalidate_subject_cache(
-                self.mcp, subject, target
+                self.backend_providers, subject, target
             ),
-            invalidate_all=lambda: aggregator.invalidate_all_subject_caches(self.mcp),
+            invalidate_all=lambda: aggregator.invalidate_all_subject_caches(
+                self.backend_providers
+            ),
             retry_delays=(0.05, 0.2),
         )
 
