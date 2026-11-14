@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 
 import mcp_types
 import pytest
+import structlog.testing
 from conftest import (
     AUDIENCE,
     ISSUER,
@@ -361,12 +362,72 @@ async def test_rejected_credential_prompt_says_relink(
 # ---------------------------------------------------------------------------
 
 
-async def test_legacy_protocol_client_gets_the_unchanged_error(
+async def test_legacy_protocol_client_without_elicitation_gets_the_unchanged_error(
     mrtr_settings, build_replica, sig_key, prime_jwks
 ) -> None:
     prime_jwks([sig_key.jwk])
     provider = _FakeProvider(linked=False)
-    prompts = _Prompts()
+    token = sig_key.sign(make_claims())
+
+    async with (
+        run_aggregator_async(build_replica(mrtr_settings, provider)) as server,
+        _client(server, token, mode="legacy", handler=None) as client,
+    ):
+        with pytest.raises(ToolError) as excinfo:
+            await client.call_tool("toy_seen_authorization", {})
+
+    text = str(excinfo.value)
+    assert _NOT_LINKED_TEXT in text
+    assert f"{_identities_url(mrtr_settings)}" in text
+    assert "af_link_identity" in text
+
+
+class _LegacyPrompts:
+    """A handshake-era elicitation handler: answers the select form with one option."""
+
+    def __init__(self, choice: str | None, act: Any = None) -> None:
+        self.messages: list[str] = []
+        self._choice = choice
+        self._act = act
+
+    async def __call__(self, message, response_type, params, context):
+        self.messages.append(message)
+        if self._act is not None:
+            self._act()
+        if self._choice is None:
+            return ElicitResult(action="decline")
+        return ElicitResult(action="accept", content={"value": self._choice})
+
+
+_TRY_AGAIN = "I've linked it \u2014 try again"
+
+
+async def test_legacy_protocol_client_with_elicitation_gets_the_form_prompt_then_succeeds(
+    mrtr_settings, build_replica, sig_key, prime_jwks, audits
+) -> None:
+    prime_jwks([sig_key.jwk])
+    provider = _FakeProvider(linked=False)
+    prompts = _LegacyPrompts(_TRY_AGAIN, act=lambda: setattr(provider, "linked", True))
+    token = sig_key.sign(make_claims())
+
+    async with (
+        run_aggregator_async(build_replica(mrtr_settings, provider)) as server,
+        _client(server, token, mode="legacy", handler=prompts) as client,
+    ):
+        result = await client.call_tool("toy_seen_authorization", {})
+
+    assert result.data == "Bearer minted-for-user-123"
+    assert len(prompts.messages) == 1
+    assert _identities_url(mrtr_settings) in prompts.messages[0]
+    assert [a.outcome for a in audits] == ["success"]
+
+
+async def test_legacy_protocol_client_declining_the_form_gets_the_plain_error(
+    mrtr_settings, build_replica, sig_key, prime_jwks
+) -> None:
+    prime_jwks([sig_key.jwk])
+    provider = _FakeProvider(linked=False)
+    prompts = _LegacyPrompts(None)
     token = sig_key.sign(make_claims())
 
     async with (
@@ -376,11 +437,77 @@ async def test_legacy_protocol_client_gets_the_unchanged_error(
         with pytest.raises(ToolError) as excinfo:
             await client.call_tool("toy_seen_authorization", {})
 
-    text = str(excinfo.value)
-    assert _NOT_LINKED_TEXT in text
-    assert f"{_identities_url(mrtr_settings)}" in text
-    assert "af_link_identity" in text
-    assert prompts.messages == []
+    assert _NOT_LINKED_TEXT in str(excinfo.value)
+    assert len(prompts.messages) == 1
+    assert provider.issue_calls == 0
+
+
+async def test_legacy_protocol_client_confirming_without_linking_is_prompted_once(
+    mrtr_settings, build_replica, sig_key, prime_jwks
+) -> None:
+    prime_jwks([sig_key.jwk])
+    provider = _FakeProvider(linked=False)
+    prompts = _LegacyPrompts(_TRY_AGAIN)
+    token = sig_key.sign(make_claims())
+
+    async with (
+        run_aggregator_async(build_replica(mrtr_settings, provider)) as server,
+        _client(server, token, mode="legacy", handler=prompts) as client,
+    ):
+        with pytest.raises(ToolError) as excinfo:
+            await client.call_tool("toy_seen_authorization", {})
+
+    assert _NOT_LINKED_TEXT in str(excinfo.value)
+    assert len(prompts.messages) == 1
+
+
+async def test_legacy_elicit_failure_is_logged_and_falls_back_to_the_plain_error(
+    mrtr_settings, build_replica, sig_key, prime_jwks
+) -> None:
+    prime_jwks([sig_key.jwk])
+    provider = _FakeProvider(linked=False)
+
+    async def exploding(message, response_type, params, context):
+        raise RuntimeError("client exploded")
+
+    token = sig_key.sign(make_claims())
+
+    with structlog.testing.capture_logs() as logs:
+        async with (
+            run_aggregator_async(build_replica(mrtr_settings, provider)) as server,
+            _client(server, token, mode="legacy", handler=exploding) as client,
+        ):
+            with pytest.raises(ToolError) as excinfo:
+                await client.call_tool("toy_seen_authorization", {})
+
+    assert _NOT_LINKED_TEXT in str(excinfo.value)
+    warnings = [
+        entry for entry in logs if entry["event"] == "mcp.portal_prompt_elicit_failed"
+    ]
+    assert len(warnings) == 1
+    assert warnings[0]["log_level"] == "warning"
+    assert warnings[0]["exc_type"]
+
+
+async def test_legacy_needs_unlock_with_elicitation_gets_the_form_then_succeeds(
+    mrtr_settings, build_replica, sig_key, prime_jwks
+) -> None:
+    prime_jwks([sig_key.jwk])
+    provider = _FakeProvider(needs_unlock=True)
+    prompts = _LegacyPrompts(
+        _TRY_AGAIN, act=lambda: setattr(provider, "needs_unlock", False)
+    )
+    token = sig_key.sign(make_claims())
+
+    async with (
+        run_aggregator_async(build_replica(mrtr_settings, provider)) as server,
+        _client(server, token, mode="legacy", handler=prompts) as client,
+    ):
+        result = await client.call_tool("toy_seen_authorization", {})
+
+    assert result.data == "Bearer minted-for-user-123"
+    portal = mrtr_settings.portal_url.rstrip("/")
+    assert f"{portal}{_UNLOCK_ENDPOINT}" in prompts.messages[0]
 
 
 async def test_modern_client_without_elicitation_gets_the_unchanged_error(
@@ -448,7 +575,7 @@ async def test_needs_unlock_prompts_with_unlock_page_then_retry_succeeds(
     assert [a.outcome for a in audits] == ["input_required", "success"]
 
 
-async def test_needs_unlock_legacy_client_gets_the_unchanged_error(
+async def test_needs_unlock_legacy_client_without_elicitation_gets_the_unchanged_error(
     mrtr_settings, build_replica, sig_key, prime_jwks
 ) -> None:
     prime_jwks([sig_key.jwk])
@@ -457,7 +584,7 @@ async def test_needs_unlock_legacy_client_gets_the_unchanged_error(
 
     async with (
         run_aggregator_async(build_replica(mrtr_settings, provider)) as server,
-        _client(server, token, mode="legacy", handler=_Prompts()) as client,
+        _client(server, token, mode="legacy", handler=None) as client,
     ):
         with pytest.raises(ToolError) as excinfo:
             await client.call_tool("toy_seen_authorization", {})

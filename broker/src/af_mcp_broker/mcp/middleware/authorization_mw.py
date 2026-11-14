@@ -30,8 +30,10 @@ from af_mcp_broker.mcp.errors import (
 )
 from af_mcp_broker.mcp.input_required import (
     InvalidInputRequiredStateError,
-    client_supports_input_required,
+    PromptRoute,
+    elicit_portal_action,
     input_required_result,
+    prompt_route,
     without_continuation,
 )
 from af_mcp_broker.shared_state import FallbackSharedState
@@ -473,7 +475,27 @@ class AuthorizationMiddleware(Middleware):
                     if is_portal_retry
                     else contextlib.nullcontext()
                 ):
-                    result = await call_next(context)
+                    try:
+                        result = await call_next(context)
+                    except ActionRequiredError as blocked:
+                        # A handshake-era client that can elicit is asked now,
+                        # and the call runs once more if the user says they
+                        # acted. The block precedes any backend request, so
+                        # re-running it repeats nothing. Still blocked the
+                        # second time, the plain error propagates: one prompt
+                        # per call.
+                        if is_portal_retry or (
+                            prompt_route(
+                                fastmcp_context,
+                                can_seal_state=self.input_required_state is not None,
+                            )
+                            is not PromptRoute.ELICIT
+                            or not await elicit_portal_action(
+                                fastmcp_context, blocked.prompt
+                            )
+                        ):
+                            raise
+                        result = await call_next(context)
             except Exception as exc:
                 duration = time.perf_counter() - started
                 # A call blocked on something only the user can do in the
@@ -484,7 +506,8 @@ class AuthorizationMiddleware(Middleware):
                     isinstance(exc, ActionRequiredError)
                     and not is_portal_retry
                     and self.input_required_state is not None
-                    and client_supports_input_required(fastmcp_context)
+                    and prompt_route(fastmcp_context, can_seal_state=True)
+                    is PromptRoute.INPUT_REQUIRED
                 ):
                     _record_invocation(service.name, tool_name, action_type)
                     span.set_attribute("af.outcome", "input_required")

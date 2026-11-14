@@ -9,6 +9,11 @@ retries the original call with the echoed ``request_state``; the broker
 verifies that state and runs the call again, re-checking linkage and unlock
 state from scratch.
 
+A handshake-era client that can elicit is asked the same thing as a
+server-initiated form-mode elicitation within the request (``elicit_portal_action``),
+and a client that can do neither gets the plain error. ``prompt_route`` is the
+one place that chooses.
+
 The prompt never asks for a secret: its form schema has no fields. The portal
 remains the only place a passphrase or credential is entered.
 
@@ -27,14 +32,17 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import enum
 import hashlib
 import hmac
 import time
 from typing import TYPE_CHECKING, Any
 
 import mcp_types
+import structlog
 from cryptography.fernet import Fernet, InvalidToken
 from fastmcp.server.dependencies import fastmcp_request_ctx
+from fastmcp.server.elicitation import AcceptedElicitation
 from fastmcp.tools.base import InputRequiredToolResult
 from mcp.server.request_state import RequestStateSecurity
 from mcp_types.version import MODERN_PROTOCOL_VERSIONS
@@ -53,6 +61,12 @@ if TYPE_CHECKING:
 # enter a passphrase in the portal, short enough that a leaked state is
 # worthless soon after. Matches the transport's own request_state ttl.
 INPUT_REQUIRED_TTL_SECONDS = 600
+
+logger = structlog.get_logger(__name__)
+
+# The two answers a handshake-era elicitation offers.
+ELICIT_RETRY_OPTION = "I've linked it \u2014 try again"
+ELICIT_CANCEL_OPTION = "Cancel"
 
 # Key of the one embedded request in the InputRequiredResult.
 INPUT_REQUEST_KEY = "portal_action"
@@ -162,6 +176,12 @@ def request_state_security(settings: Settings) -> RequestStateSecurity | None:
     A per-process key would reject a retry that lands on another replica, so
     every replica derives the same key from the shared secret. ``ttl`` matches
     ``INPUT_REQUIRED_TTL_SECONDS``.
+
+    The policy is fixed when ``build_aggregator`` constructs the ``FastMCP``;
+    ``populate_aggregator`` cannot swap it afterwards (the SDK builds its
+    request-state boundary at construction). ``app.py`` builds the aggregator
+    from ``Settings()`` read from the environment, the same source the
+    lifespan's settings come from, so the two agree in a deployment.
     """
     key = settings.broker_state_key.get_secret_value()
     if not key:
@@ -172,27 +192,66 @@ def request_state_security(settings: Settings) -> RequestStateSecurity | None:
     return RequestStateSecurity(keys=[transport_key], ttl=INPUT_REQUIRED_TTL_SECONDS)
 
 
-def client_supports_input_required(ctx: Context) -> bool:
-    """Whether *ctx*'s client can answer an ``InputRequiredResult`` carrying a form prompt.
+class PromptRoute(enum.Enum):
+    """How a blocked call asks the user to act in the portal, decided by what the client negotiated."""
 
-    Two conditions, both read from the negotiated connection rather than
-    guessed: the protocol era is one that has multi-round-trip results
-    (2026-07-28 and later; earlier eras have no such result type), and the
-    client declared form-mode elicitation (a URL-only declaration cannot
-    render the form). A client without the second would auto-retry a state-only
-    result in a loop with no user in it.
+    # 2026-07-28+ protocol and form elicitation: an InputRequiredResult.
+    INPUT_REQUIRED = "input_required"
+    # Handshake-era protocol and form elicitation: a server-initiated
+    # form-mode elicitation, answered within the same request.
+    ELICIT = "elicit"
+    # Anything else: the plain error text.
+    PLAIN = "plain"
+
+
+def prompt_route(ctx: Context, *, can_seal_state: bool) -> PromptRoute:
+    """Decide how to prompt *ctx*'s client; the one place that branches on era and capability.
+
+    Read from the negotiated connection, not guessed from a client name.
+    Both prompting routes need the client to have declared form-mode
+    elicitation (a URL-only declaration cannot render the form; an empty
+    ``elicitation: {}`` is form mode by the spec's backward-compat rule). A
+    modern client without it would auto-retry a state-only result in a loop
+    with no user in it, so it gets the plain error.
+
+    The input-required route additionally needs *can_seal_state*: without a
+    ``broker_state_key`` there is nothing to seal ``request_state`` with. The
+    handshake-era route is a synchronous round trip and needs no state.
     """
     request_context = ctx.request_context
     if request_context is None:
-        return False
-    if request_context.protocol_version not in MODERN_PROTOCOL_VERSIONS:
-        return False
+        return PromptRoute.PLAIN
     capabilities = ctx.session.client_capabilities
     if capabilities is None or capabilities.elicitation is None:
-        return False
+        return PromptRoute.PLAIN
     elicitation = capabilities.elicitation
-    # An empty `elicitation: {}` is form mode by the spec's backward-compat rule.
-    return elicitation.form is not None or elicitation.url is None
+    if elicitation.form is None and elicitation.url is not None:
+        return PromptRoute.PLAIN
+    if request_context.protocol_version in MODERN_PROTOCOL_VERSIONS:
+        return PromptRoute.INPUT_REQUIRED if can_seal_state else PromptRoute.PLAIN
+    return PromptRoute.ELICIT
+
+
+async def elicit_portal_action(ctx: Context, prompt: str) -> bool:
+    """Ask a handshake-era client to confirm it has acted in the portal; return True only if the user chose to retry.
+
+    A decline, a cancel and a failure of the round trip all return False, so
+    the caller falls back to the plain error. A failure is logged at warning
+    level with its type rather than swallowed: it is a client or transport
+    fault worth seeing, not an expected outcome.
+    """
+    try:
+        result = await ctx.elicit(prompt, [ELICIT_RETRY_OPTION, ELICIT_CANCEL_OPTION])  # type: ignore[arg-type]
+    except Exception as exc:  # noqa: BLE001 -- falls back to the plain error, logged
+        logger.warning(
+            "mcp.portal_prompt_elicit_failed",
+            exc_type=type(exc).__name__,
+            error=str(exc),
+        )
+        return False
+    return (
+        isinstance(result, AcceptedElicitation) and result.data == ELICIT_RETRY_OPTION
+    )
 
 
 def input_required_result(prompt: str, request_state: str) -> InputRequiredToolResult:
