@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-import httpx
+import httpx2
 import structlog
 
 from af_mcp_broker.credentials.errors import (
@@ -89,7 +89,7 @@ class Krb5TokenServiceClient:
         issuer: BrokerTokenIssuer,
         service_url: str,
         audience: str = "krb5-token-service",
-        http_client: httpx.AsyncClient | None = None,
+        http_client: httpx2.AsyncClient | None = None,
     ) -> None:
         self._issuer = issuer
         # AnyHttpUrl normalizes a bare origin to a trailing-slash form;
@@ -103,7 +103,7 @@ class Krb5TokenServiceClient:
             component="Krb5TokenServiceClient"
         )
 
-    def _http(self) -> httpx.AsyncClient:
+    def _http(self) -> httpx2.AsyncClient:
         return self._http_client if self._http_client is not None else get_http_client()
 
     async def mint(
@@ -161,7 +161,7 @@ class Krb5TokenServiceClient:
                 json=body,
                 timeout=30.0,
             )
-        except httpx.HTTPError as exc:
+        except httpx2.HTTPError as exc:
             self._log.warning(
                 "krb5_token.mint.unreachable", subject=subject, error=str(exc)
             )
@@ -169,15 +169,15 @@ class Krb5TokenServiceClient:
                 "krb5-token-service could not be reached."
             ) from exc
 
-        if resp.status_code == httpx.codes.BAD_REQUEST:
+        if resp.status_code == httpx2.codes.BAD_REQUEST:
             raise Krb5TokenBadCredentialError
-        if resp.status_code == httpx.codes.FORBIDDEN:
+        if resp.status_code == httpx2.codes.FORBIDDEN:
             raise Krb5TokenAccountError
-        if resp.status_code == httpx.codes.UNPROCESSABLE_ENTITY:
+        if resp.status_code == httpx2.codes.UNPROCESSABLE_ENTITY:
             raise Krb5TokenInvalidRequestError
-        if resp.status_code == httpx.codes.TOO_MANY_REQUESTS:
+        if resp.status_code == httpx2.codes.TOO_MANY_REQUESTS:
             raise Krb5TokenRateLimitedError(resp.headers.get("Retry-After"))
-        if resp.status_code != httpx.codes.OK:
+        if resp.status_code != httpx2.codes.OK:
             # Status code only -- the response body may carry service
             # internals and must reach neither the log nor the caller.
             self._log.warning(
@@ -217,7 +217,7 @@ class Krb5TokenServiceClient:
                 json={"ccache_b64": ccache_b64},
                 timeout=30.0,
             )
-        except httpx.HTTPError as exc:
+        except httpx2.HTTPError as exc:
             self._log.warning(
                 "krb5_token.renew.unreachable", subject=subject, error=str(exc)
             )
@@ -225,11 +225,11 @@ class Krb5TokenServiceClient:
                 "krb5-token-service could not be reached."
             ) from exc
 
-        if resp.status_code == httpx.codes.UNPROCESSABLE_ENTITY:
+        if resp.status_code == httpx2.codes.UNPROCESSABLE_ENTITY:
             raise Krb5TokenInvalidCcacheError
-        if resp.status_code == httpx.codes.BAD_REQUEST:
+        if resp.status_code == httpx2.codes.BAD_REQUEST:
             raise Krb5TokenRenewalWindowClosedError
-        if resp.status_code != httpx.codes.OK:
+        if resp.status_code != httpx2.codes.OK:
             # Status code only -- the response body may carry service
             # internals and must reach neither the log nor the caller.
             self._log.warning(

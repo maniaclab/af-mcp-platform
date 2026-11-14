@@ -8,7 +8,7 @@ from __future__ import annotations
 # auth-gated backend that 401s any request without a recognized minted
 # bearer (rucio-mcp's shape), and a dead URL. Real HTTP backends throughout,
 # no transport mocks -- only the FastAPI route itself is driven in-process
-# via httpx's ASGITransport.
+# via httpx2's ASGITransport.
 import asyncio
 import json
 import re
@@ -16,7 +16,7 @@ import time
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
-import httpx
+import httpx2
 import pytest
 from conftest import (
     HungBackend,
@@ -282,13 +282,13 @@ def _make_app(
 
 
 @asynccontextmanager
-async def _api_client(app: FastAPI) -> AsyncIterator[httpx.AsyncClient]:
-    transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+async def _api_client(app: FastAPI) -> AsyncIterator[httpx2.AsyncClient]:
+    transport = httpx2.ASGITransport(app=app)
+    async with httpx2.AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
 
 
-async def _get_tools(app: FastAPI, backend: str) -> httpx.Response:
+async def _get_tools(app: FastAPI, backend: str) -> httpx2.Response:
     async with _api_client(app) as client:
         return await client.get(f"/v1/catalog/{backend}/tools")
 

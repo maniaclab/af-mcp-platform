@@ -16,7 +16,7 @@ import json
 from typing import TYPE_CHECKING
 
 import anyio
-import httpx
+import httpx2
 import pytest
 
 from af_mcp_broker.credmon.htcondor_api import HTCondorApiCredentialStore
@@ -39,25 +39,25 @@ def token_file(tmp_path: Path) -> Path:
 @pytest.fixture
 def make_store(
     token_file: Path,
-) -> Callable[..., tuple[HTCondorApiCredentialStore, list[httpx.Request]]]:
+) -> Callable[..., tuple[HTCondorApiCredentialStore, list[httpx2.Request]]]:
     def _make(
-        responder: httpx.Response | Exception | None = None,
+        responder: httpx2.Response | Exception | None = None,
         api_url: str = _API_URL,
-    ) -> tuple[HTCondorApiCredentialStore, list[httpx.Request]]:
-        requests: list[httpx.Request] = []
+    ) -> tuple[HTCondorApiCredentialStore, list[httpx2.Request]]:
+        requests: list[httpx2.Request] = []
 
-        def handler(request: httpx.Request) -> httpx.Response:
+        def handler(request: httpx2.Request) -> httpx2.Response:
             requests.append(request)
             if isinstance(responder, Exception):
                 raise responder
             if responder is None:
-                return httpx.Response(201, json={"exists": True})
+                return httpx2.Response(201, json={"exists": True})
             return responder
 
         store = HTCondorApiCredentialStore(
             api_url=api_url,
             token_file=token_file,
-            http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+            http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
         )
         return store, requests
 
@@ -98,7 +98,7 @@ async def test_trailing_slash_in_api_url_is_normalized(make_store) -> None:
 
 async def test_error_status_raises_with_status_and_detail(make_store) -> None:
     store, _ = make_store(
-        httpx.Response(
+        httpx2.Response(
             500, json={"error": "Failed to store service credential: denied"}
         )
     )
@@ -115,7 +115,7 @@ async def test_error_status_raises_with_status_and_detail(make_store) -> None:
 
 
 async def test_transport_error_raises_credential_store_error(make_store) -> None:
-    store, _ = make_store(httpx.ConnectError("connection refused"))
+    store, _ = make_store(httpx2.ConnectError("connection refused"))
 
     with pytest.raises(CredentialStoreError, match="could not be reached"):
         await store.store_service_credential(

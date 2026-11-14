@@ -10,7 +10,7 @@ from __future__ import annotations
 import socket
 from typing import Any
 
-import httpx
+import httpx2
 import pytest
 
 from af_mcp_broker.cimd_client import (
@@ -152,59 +152,59 @@ class TestBuildClientFromDocument:
 
 class TestFetchClientDocument:
     async def test_fetches_and_parses_json(self) -> None:
-        def handler(request: httpx.Request) -> httpx.Response:
-            return httpx.Response(200, json=_document())
+        def handler(request: httpx2.Request) -> httpx2.Response:
+            return httpx2.Response(200, json=_document())
 
-        transport = httpx.MockTransport(handler)
-        async with httpx.AsyncClient(transport=transport) as client:
+        transport = httpx2.MockTransport(handler)
+        async with httpx2.AsyncClient(transport=transport) as client:
             doc = await fetch_client_document(_CLIENT_URL, client=client)
         assert doc["client_id"] == _CLIENT_URL
 
     async def test_http_error_raises_cimd_error(self) -> None:
-        def handler(request: httpx.Request) -> httpx.Response:
-            return httpx.Response(404)
+        def handler(request: httpx2.Request) -> httpx2.Response:
+            return httpx2.Response(404)
 
-        transport = httpx.MockTransport(handler)
-        async with httpx.AsyncClient(transport=transport) as client:
+        transport = httpx2.MockTransport(handler)
+        async with httpx2.AsyncClient(transport=transport) as client:
             with pytest.raises(CimdError, match="failed to fetch"):
                 await fetch_client_document(_CLIENT_URL, client=client)
 
     async def test_non_json_raises_cimd_error(self) -> None:
-        def handler(request: httpx.Request) -> httpx.Response:
-            return httpx.Response(200, content=b"not json")
+        def handler(request: httpx2.Request) -> httpx2.Response:
+            return httpx2.Response(200, content=b"not json")
 
-        transport = httpx.MockTransport(handler)
-        async with httpx.AsyncClient(transport=transport) as client:
+        transport = httpx2.MockTransport(handler)
+        async with httpx2.AsyncClient(transport=transport) as client:
             with pytest.raises(CimdError, match="not valid JSON"):
                 await fetch_client_document(_CLIENT_URL, client=client)
 
     async def test_non_object_json_raises_cimd_error(self) -> None:
-        def handler(request: httpx.Request) -> httpx.Response:
-            return httpx.Response(200, json=[1, 2, 3])
+        def handler(request: httpx2.Request) -> httpx2.Response:
+            return httpx2.Response(200, json=[1, 2, 3])
 
-        transport = httpx.MockTransport(handler)
-        async with httpx.AsyncClient(transport=transport) as client:
+        transport = httpx2.MockTransport(handler)
+        async with httpx2.AsyncClient(transport=transport) as client:
             with pytest.raises(CimdError, match="JSON object"):
                 await fetch_client_document(_CLIENT_URL, client=client)
 
     async def test_oversized_document_raises_cimd_error(self) -> None:
-        def handler(request: httpx.Request) -> httpx.Response:
-            return httpx.Response(200, json=_document(padding="x" * 1000))
+        def handler(request: httpx2.Request) -> httpx2.Response:
+            return httpx2.Response(200, json=_document(padding="x" * 1000))
 
-        transport = httpx.MockTransport(handler)
-        async with httpx.AsyncClient(transport=transport) as client:
+        transport = httpx2.MockTransport(handler)
+        async with httpx2.AsyncClient(transport=transport) as client:
             with pytest.raises(CimdError, match="too large"):
                 await fetch_client_document(_CLIENT_URL, client=client, max_bytes=100)
 
 
 class TestResolveCimdClient:
     async def test_full_resolution(self) -> None:
-        def handler(request: httpx.Request) -> httpx.Response:
+        def handler(request: httpx2.Request) -> httpx2.Response:
             assert str(request.url) == _CLIENT_URL
-            return httpx.Response(200, json=_document())
+            return httpx2.Response(200, json=_document())
 
-        transport = httpx.MockTransport(handler)
-        async with httpx.AsyncClient(transport=transport) as client:
+        transport = httpx2.MockTransport(handler)
+        async with httpx2.AsyncClient(transport=transport) as client:
             resolved = await resolve_cimd_client(_CLIENT_URL, client=client)
         assert resolved.client_id == _CLIENT_URL
         assert resolved.client_name == "Test Client"
@@ -212,12 +212,12 @@ class TestResolveCimdClient:
     async def test_unsafe_url_never_fetched(self) -> None:
         calls: list[str] = []
 
-        def handler(request: httpx.Request) -> httpx.Response:
+        def handler(request: httpx2.Request) -> httpx2.Response:
             calls.append(str(request.url))
-            return httpx.Response(200, json=_document())
+            return httpx2.Response(200, json=_document())
 
-        transport = httpx.MockTransport(handler)
-        async with httpx.AsyncClient(transport=transport) as client:
+        transport = httpx2.MockTransport(handler)
+        async with httpx2.AsyncClient(transport=transport) as client:
             with pytest.raises(CimdError):
                 await resolve_cimd_client("https://127.0.0.1/client", client=client)
         assert calls == []

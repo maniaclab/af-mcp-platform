@@ -17,7 +17,7 @@ import json
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-import httpx
+import httpx2
 import pytest
 import structlog
 from pydantic import SecretStr
@@ -69,8 +69,8 @@ def issuer() -> BrokerTokenIssuer:
 @pytest.fixture
 def make_client(
     issuer: BrokerTokenIssuer,
-) -> Callable[..., tuple[VomsTokenServiceClient, list[httpx.Request]]]:
-    """Build a client whose HTTP layer is a ``httpx.MockTransport``.
+) -> Callable[..., tuple[VomsTokenServiceClient, list[httpx2.Request]]]:
+    """Build a client whose HTTP layer is a ``httpx2.MockTransport``.
 
     Returns ``(client, requests)`` where *requests* records every request
     the client sent. *responder* maps a request to a response (default: 200
@@ -79,21 +79,21 @@ def make_client(
     """
 
     def _make(
-        responder: httpx.Response | Exception | None = None,
+        responder: httpx2.Response | Exception | None = None,
         service_url: str = _SERVICE_URL,
         **kwargs: object,
-    ) -> tuple[VomsTokenServiceClient, list[httpx.Request]]:
-        requests: list[httpx.Request] = []
+    ) -> tuple[VomsTokenServiceClient, list[httpx2.Request]]:
+        requests: list[httpx2.Request] = []
 
-        def handler(request: httpx.Request) -> httpx.Response:
+        def handler(request: httpx2.Request) -> httpx2.Response:
             requests.append(request)
             if isinstance(responder, Exception):
                 raise responder
             if responder is None:
-                return httpx.Response(200, json=_MINT_RESPONSE)
+                return httpx2.Response(200, json=_MINT_RESPONSE)
             return responder
 
-        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
         client = VomsTokenServiceClient(
             issuer=issuer,
             service_url=service_url,
@@ -189,7 +189,7 @@ class TestMintResponse:
     async def test_naive_expires_at_is_interpreted_as_utc(self, make_client) -> None:
         response = dict(_MINT_RESPONSE)
         response["expires_at"] = "2030-06-15T12:00:00"  # no tzinfo
-        client, _ = make_client(httpx.Response(200, json=response))
+        client, _ = make_client(httpx2.Response(200, json=response))
         minted = await _mint(client)
         assert minted.not_after == pytest.approx(_EXPECTED_NOT_AFTER)
 
@@ -203,7 +203,7 @@ class TestMintResponse:
         a real user) is data, not a compat concern -- it must round-trip,
         not raise."""
         response = dict(_MINT_RESPONSE, nickname=None)
-        client, _ = make_client(httpx.Response(200, json=response))
+        client, _ = make_client(httpx2.Response(200, json=response))
         minted = await _mint(client)
         assert minted.nickname is None
 
@@ -214,14 +214,14 @@ class TestMintResponse:
         skew to tolerate."""
         response = dict(_MINT_RESPONSE)
         del response["nickname"]
-        client, _ = make_client(httpx.Response(200, json=response))
+        client, _ = make_client(httpx2.Response(200, json=response))
         with pytest.raises(KeyError):
             await _mint(client)
 
 
 class TestMintFailures:
     async def test_400_is_bad_passphrase(self, make_client) -> None:
-        client, _ = make_client(httpx.Response(400, json={"detail": "bad passphrase"}))
+        client, _ = make_client(httpx2.Response(400, json={"detail": "bad passphrase"}))
         with pytest.raises(VomsServiceBadPassphraseError):
             await _mint(client)
 
@@ -230,7 +230,7 @@ class TestMintFailures:
         self, make_client, status_code: int
     ) -> None:
         client, _ = make_client(
-            httpx.Response(status_code, json={"detail": "internals"})
+            httpx2.Response(status_code, json={"detail": "internals"})
         )
         with pytest.raises(VomsServiceMintError):
             await _mint(client)
@@ -238,14 +238,14 @@ class TestMintFailures:
     async def test_infra_failure_is_not_a_bad_passphrase(self, make_client) -> None:
         """The two failure types must stay disjoint: callers rate-limit on
         one and not the other."""
-        client, _ = make_client(httpx.Response(502, json={"detail": "boom"}))
+        client, _ = make_client(httpx2.Response(502, json={"detail": "boom"}))
         with pytest.raises(VomsServiceMintError) as excinfo:
             await _mint(client)
         assert not isinstance(excinfo.value, VomsServiceBadPassphraseError)
 
     async def test_422_is_rejected(self, make_client) -> None:
         client, _ = make_client(
-            httpx.Response(422, json={"detail": _CERTIFICATE_EXPIRED_DETAIL})
+            httpx2.Response(422, json={"detail": _CERTIFICATE_EXPIRED_DETAIL})
         )
         with pytest.raises(VomsServiceRejectedError):
             await _mint(client)
@@ -256,7 +256,7 @@ class TestMintFailures:
         template-built, non-sensitive strings by design
         (maniaclab/voms-token-service#16, #18)."""
         client, _ = make_client(
-            httpx.Response(422, json={"detail": _CERTIFICATE_EXPIRED_DETAIL})
+            httpx2.Response(422, json={"detail": _CERTIFICATE_EXPIRED_DETAIL})
         )
         with pytest.raises(VomsServiceRejectedError) as excinfo:
             await _mint(client)
@@ -269,7 +269,7 @@ class TestMintFailures:
         rejection (maniaclab/voms-token-service#18's voms allowlist) relays
         exactly the same way as an expired certificate does above."""
         client, _ = make_client(
-            httpx.Response(422, json={"detail": _VOMS_NOT_ALLOWED_DETAIL})
+            httpx2.Response(422, json={"detail": _VOMS_NOT_ALLOWED_DETAIL})
         )
         with pytest.raises(VomsServiceRejectedError) as excinfo:
             await _mint(client)
@@ -279,7 +279,7 @@ class TestMintFailures:
         """The two failure types must stay disjoint, same reasoning as
         test_infra_failure_is_not_a_bad_passphrase above."""
         client, _ = make_client(
-            httpx.Response(422, json={"detail": _CERTIFICATE_EXPIRED_DETAIL})
+            httpx2.Response(422, json={"detail": _CERTIFICATE_EXPIRED_DETAIL})
         )
         with pytest.raises(VomsServiceRejectedError) as excinfo:
             await _mint(client)
@@ -292,30 +292,30 @@ class TestMintFailures:
         """A 422 with no parseable `detail` (a service contract drift, not
         expected in practice) must still raise the specific error type with
         a safe fixed message, never crash trying to read a missing key."""
-        client, _ = make_client(httpx.Response(422, text="not json"))
+        client, _ = make_client(httpx2.Response(422, text="not json"))
         with pytest.raises(VomsServiceRejectedError) as excinfo:
             await _mint(client)
         assert excinfo.value.detail
 
     async def test_connection_error_is_infra_failure(self, make_client) -> None:
-        client, _ = make_client(httpx.ConnectError("connection refused"))
+        client, _ = make_client(httpx2.ConnectError("connection refused"))
         with pytest.raises(VomsServiceMintError):
             await _mint(client)
 
     async def test_timeout_is_infra_failure(self, make_client) -> None:
-        client, _ = make_client(httpx.ReadTimeout("timed out"))
+        client, _ = make_client(httpx2.ReadTimeout("timed out"))
         with pytest.raises(VomsServiceMintError):
             await _mint(client)
 
     @pytest.mark.parametrize(
         "responder",
         [
-            httpx.Response(400, json={"detail": "bad passphrase"}),
-            httpx.Response(502, text="hunter2-passphrase leaked into an error page"),
+            httpx2.Response(400, json={"detail": "bad passphrase"}),
+            httpx2.Response(502, text="hunter2-passphrase leaked into an error page"),
         ],
     )
     async def test_error_messages_never_carry_the_passphrase_or_body(
-        self, make_client, responder: httpx.Response
+        self, make_client, responder: httpx2.Response
     ) -> None:
         client, _ = make_client(responder)
         with pytest.raises((VomsServiceBadPassphraseError, VomsServiceMintError)) as e:
@@ -368,14 +368,14 @@ class TestRequestCorrelation:
     async def test_preflight_sends_the_bound_correlation_id(self, make_client) -> None:
         structlog.contextvars.clear_contextvars()
         structlog.contextvars.bind_contextvars(correlation_id="corr-342")
-        client, requests = make_client(httpx.Response(200, json=_PREFLIGHT_RESPONSE))
+        client, requests = make_client(httpx2.Response(200, json=_PREFLIGHT_RESPONSE))
         await client.preflight(subject="user-123", unixname="auser")
         assert requests[0].headers["x-request-id"] == "corr-342"
 
 
 class TestPreflight:
     async def test_gets_v1_preflight_for_the_unixname(self, make_client) -> None:
-        client, requests = make_client(httpx.Response(200, json=_PREFLIGHT_RESPONSE))
+        client, requests = make_client(httpx2.Response(200, json=_PREFLIGHT_RESPONSE))
         await client.preflight(subject="user-123", unixname="auser")
         assert len(requests) == 1
         assert requests[0].method == "GET"
@@ -384,7 +384,7 @@ class TestPreflight:
     async def test_bearer_token_is_broker_issued_with_service_audience(
         self, make_client, issuer: BrokerTokenIssuer
     ) -> None:
-        client, requests = make_client(httpx.Response(200, json=_PREFLIGHT_RESPONSE))
+        client, requests = make_client(httpx2.Response(200, json=_PREFLIGHT_RESPONSE))
         await client.preflight(subject="user-123", unixname="auser")
         claims = issuer.verify(
             requests[0].headers["authorization"].removeprefix("Bearer ")
@@ -394,7 +394,7 @@ class TestPreflight:
         assert claims["aud"] == "voms-token-service"
 
     async def test_response_body_is_passed_through_verbatim(self, make_client) -> None:
-        client, _ = make_client(httpx.Response(200, json=_PREFLIGHT_RESPONSE))
+        client, _ = make_client(httpx2.Response(200, json=_PREFLIGHT_RESPONSE))
         body = await client.preflight(subject="user-123", unixname="auser")
         assert body == _PREFLIGHT_RESPONSE
 
@@ -403,18 +403,18 @@ class TestPreflight:
         self, make_client, status_code: int
     ) -> None:
         client, _ = make_client(
-            httpx.Response(status_code, json={"detail": "internals"})
+            httpx2.Response(status_code, json={"detail": "internals"})
         )
         with pytest.raises(VomsServicePreflightError):
             await client.preflight(subject="user-123", unixname="auser")
 
     async def test_connection_error_raises_preflight_error(self, make_client) -> None:
-        client, _ = make_client(httpx.ConnectError("connection refused"))
+        client, _ = make_client(httpx2.ConnectError("connection refused"))
         with pytest.raises(VomsServicePreflightError):
             await client.preflight(subject="user-123", unixname="auser")
 
     async def test_timeout_raises_preflight_error(self, make_client) -> None:
-        client, _ = make_client(httpx.ReadTimeout("timed out"))
+        client, _ = make_client(httpx2.ReadTimeout("timed out"))
         with pytest.raises(VomsServicePreflightError):
             await client.preflight(subject="user-123", unixname="auser")
 
@@ -422,7 +422,7 @@ class TestPreflight:
         self, make_client
     ) -> None:
         client, _ = make_client(
-            httpx.Response(500, text="/home/auser internals leaked")
+            httpx2.Response(500, text="/home/auser internals leaked")
         )
         with pytest.raises(VomsServicePreflightError) as e:
             await client.preflight(subject="user-123", unixname="auser")
