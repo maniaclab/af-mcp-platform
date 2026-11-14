@@ -49,6 +49,8 @@ def _sample(name: str, labels: dict[str, str]) -> float:
 class _FakeFastMCPContext:
     def __init__(self, state: dict[str, Any]) -> None:
         self._state = state
+        # No multi-round-trip continuation on these calls (SEP-2322).
+        self.request_state: str | None = None
 
     async def get_state(self, key: str) -> Any:
         return self._state.get(key)

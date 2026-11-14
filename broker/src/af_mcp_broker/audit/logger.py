@@ -33,10 +33,12 @@ class AuditRecord:
     audit_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     mcp_service: str | None = None
     execution_model: str | None = None
-    # "success" | "denied" | "rate_limited" | "error" -- lets a single audit
-    # line cover both a completed tool call and an authorization denial, a
-    # rate-limit refusal (policy.yaml's rate_limits) or a downstream
-    # failure, rather than only ever recording successes.
+    # "success" | "denied" | "rate_limited" | "input_required" | "error" --
+    # lets a single audit line cover both a completed tool call and an
+    # authorization denial, a rate-limit refusal (policy.yaml's rate_limits),
+    # a call answered with a multi-round-trip portal prompt (the user must
+    # link or unlock something, then the client retries -- not a failure) or a
+    # downstream failure, rather than only ever recording successes.
     outcome: str = "success"
     error: str | None = None
     # Sorted list of permission names, or None -- the calling PAT's
