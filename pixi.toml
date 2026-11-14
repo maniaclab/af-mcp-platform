@@ -3,12 +3,12 @@ name = "af-mcp-platform"
 version = "0.5.4"
 channels = ["conda-forge"]
 platforms = ["linux-64", "osx-arm64", "osx-64"]
-# Pinned to an explicit date rather than a rolling window: fastmcp 4.0.4
-# (2026-09-17), mcp 2.2.0 (2026-09-12), and httpx2 2.13.0 (2026-09-16) would
-# otherwise fall outside a rolling "7d" window and the solver would report
-# "no newer version" for the fastmcp v4 bump below. This affects every
-# package's solve, not just the MCP stack -- bump the date deliberately.
-exclude-newer = "2026-09-18"
+# Pinned to an explicit date rather than a rolling window: fastmcp 4.2.0
+# (2026-11-13) would otherwise fall outside a rolling "7d" window as soon as it
+# aged out and the solver would report "no newer version" for the fastmcp pin
+# below. This affects every package's solve (conda and PyPI), not just the MCP
+# stack -- bump the date deliberately.
+exclude-newer = "2026-11-14"
 
 [dependencies]
 python = ">=3.12,<3.13"
@@ -25,8 +25,10 @@ pydantic-settings = ">=2.3"
 pyjwt = ">=2.8"
 cryptography = ">=42"
 httpx2 = ">=2.7.0,<3"
+# Floor required by fastmcp-slim 4.2.0 (installed from PyPI, see below); the
+# older certifi in the lock would otherwise pin the PyPI solve.
+certifi = ">=2026.10.19"
 structlog = ">=24.4"
-fastmcp = ">=4.0.4,<5"
 # 7.x pins starlette<1.0.0, which conflicts with fastmcp's starlette>=1.0.1.
 prometheus-fastapi-instrumentator = ">=8.0"
 kubernetes_asyncio = ">=30.0"
@@ -39,6 +41,17 @@ opentelemetry-exporter-otlp-proto-http = ">=1.44"
 opentelemetry-instrumentation-fastapi = ">=0.65b0"
 
 [feature.broker.pypi-dependencies]
+# fastmcp >=4.2 wires the mcp SDK's get_tool_input_schema hook (mcp >=2.3),
+# which ends the per-call tools/list fan-out (issue #333). conda-forge has
+# fastmcp only up to 4.1.8, and 4.2's newer dependencies (uncalled-for 0.6.1,
+# joserfc 1.8.0, openapi-pydantic 0.6.0, py-key-value-aio 0.4.6, mcp-types
+# 2.3.0, ...) are also ahead of conda-forge, so the stack comes from PyPI for
+# now. conda-forge/fastmcp-feedstock#70 (fastmcp v4.2.0) tracks the conda
+# release: once it and the dependency feedstocks publish, move these back to
+# [feature.broker.dependencies]. fastmcp's starlette>=1.0.1 requirement is
+# unchanged, so the 7.x prometheus-fastapi-instrumentator pin below still holds.
+fastmcp = ">=4.2.0,<5"
+mcp = ">=2.3.0,<3"
 # Editable install triggers hatch-vcs to generate _version.py from git tags.
 af-mcp-broker = {path = "broker/", editable = true}
 tokencost = ">=0.1.26, <0.2"
