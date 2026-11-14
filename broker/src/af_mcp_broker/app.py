@@ -88,7 +88,6 @@ from af_mcp_broker.maintenance import (
     VaultMaintenanceModeStore,
 )
 from af_mcp_broker.mcp.aggregator import (
-    BackendProviders,
     build_aggregator,
     build_asgi_auth_middleware,
     invalidate_all_subject_caches,
@@ -1092,7 +1091,6 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         job_credentials=job_credentials,
         shared_state=shared_state,
         lint_observations=lint_observations,
-        backend_providers=application.state.backend_providers,
     )
 
     # --- Audit: without init the module drops every record. Honor AUDIT_LOG_FILE.
@@ -1266,13 +1264,11 @@ _mcp_aggregator_placeholder_settings = Settings()
 # like MCP_STATELESS_HTTP below, Settings() reads the env synchronously at
 # construction, so the placeholder instance already carries the real value.
 init_tracing(_mcp_aggregator_placeholder_settings)
-_backend_providers = BackendProviders()
 _mcp_aggregator = build_aggregator(
     ServiceRegistry(),
     _mcp_aggregator_placeholder_settings,
     EntitlementPolicy(),
     CredentialRegistry(),
-    backend_providers=_backend_providers,
 )
 # stateless_http (issue #128): unlike policy_file/services_file, Settings()
 # reads env vars synchronously at construction, so the placeholder instance
@@ -1320,7 +1316,7 @@ app.mount("/mcp", _mcp_aggregator_app)
 # lists the builtin gateway service's methods straight from this instance's
 # local provider instead of HTTP-fetching a backend (issue #240).
 app.state.mcp_aggregator = _mcp_aggregator
-app.state.backend_providers = _backend_providers
+app.state.backend_providers = _mcp_aggregator.backend_providers
 
 app.include_router(v1_router)
 app.include_router(wellknown_router)

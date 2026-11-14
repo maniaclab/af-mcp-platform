@@ -1859,6 +1859,19 @@ class BackendProviders:
         return list(self._by_service.values())
 
 
+class Aggregator(FastMCP):
+    """The aggregator FastMCP instance, owning the ``BackendProviders`` its backends are recorded in.
+
+    Owning the holder makes one holder per aggregator structural:
+    ``_register_services`` refreshes it on every build and populate, and
+    callers read it from here rather than being handed a copy.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.backend_providers = BackendProviders()
+
+
 def invalidate_subject_cache(
     backend_providers: BackendProviders, subject: str, target: str | None = None
 ) -> None:
@@ -1897,8 +1910,7 @@ def build_aggregator(
     maintenance_mode_store: MaintenanceModeStore | None = None,
     job_credentials: JobCredentialGuide | None = None,
     shared_state: SharedState | None = None,
-    backend_providers: BackendProviders | None = None,
-) -> FastMCP:
+) -> Aggregator:
     """Construct a fully-wired aggregator FastMCP instance.
 
     Registers IdentityMiddleware first (so it runs outermost among these
@@ -1945,11 +1957,6 @@ def build_aggregator(
     *identity_provider_configs*/*target_to_alias* default to empty for the
     same eager-build reason -- af_list_identities/af_list_mcp_servers simply
     report nothing until ``populate_aggregator`` supplies the real ones.
-
-    *backend_providers* receives the per-backend providers this build creates
-    (see ``BackendProviders``); pass the same holder to every
-    ``populate_aggregator`` call on this aggregator. Left None, the providers
-    are recorded in a holder nothing else can reach.
     """
     # instructions is the model-facing "dual enforcement" layer (finding #6):
     # a platform preamble plus each service's agent_policy, surfaced to clients
@@ -1957,7 +1964,7 @@ def build_aggregator(
     # available at construction -- the eager module-scope build starts with an
     # empty registry (see app.py), so populate_aggregator recomposes below once
     # the real registry is loaded, mirroring how settings/policy get pushed in.
-    mcp = FastMCP(
+    mcp = Aggregator(
         name="af-mcp-aggregator",
         instructions=compose_agent_instructions(registry, job_credentials),
     )
@@ -1983,7 +1990,6 @@ def build_aggregator(
         broker_token_issuer=broker_token_issuer,
         target_to_alias=target_to_alias,
         identity_provider_configs=identity_provider_configs,
-        backend_providers=backend_providers or BackendProviders(),
     )
     register_diagnostic_tools(
         mcp,
@@ -2018,7 +2024,7 @@ def build_asgi_auth_middleware(mcp: FastMCP) -> Middleware:
 
 
 def populate_aggregator(
-    mcp: FastMCP,
+    mcp: Aggregator,
     registry: ServiceRegistry,
     settings: Settings,
     policy: EntitlementPolicy,
@@ -2033,7 +2039,6 @@ def populate_aggregator(
     job_credentials: JobCredentialGuide | None = None,
     shared_state: SharedState | None = None,
     lint_observations: LintObservationStore | None = None,
-    backend_providers: BackendProviders | None = None,
 ) -> None:
     """Refresh an aggregator built by ``build_aggregator`` with a freshly loaded registry/settings/policy/credential_registry/pat_backend/principal_cache/identity_providers/identity_provider_configs/target_to_alias/maintenance_mode_store/shared_state/lint_observations.
 
@@ -2047,8 +2052,6 @@ def populate_aggregator(
     ServiceRegistry and EntitlementPolicy are themselves rebuilt from scratch
     on every lifespan entry rather than merged -- the af_* diagnostic tools
     (register_diagnostic_tools) follow the same rebuild-from-scratch pattern.
-    *backend_providers* must be the holder ``build_aggregator`` was given, so
-    cache invalidation keeps reaching the rebuilt providers.
     """
     identity_mw, entitlement_mw, authorization_mw = _find_middleware(mcp)
     # Recompose the model-facing instructions from the real registry: the eager
@@ -2076,7 +2079,6 @@ def populate_aggregator(
         broker_token_issuer=broker_token_issuer,
         target_to_alias=target_to_alias,
         identity_provider_configs=identity_provider_configs,
-        backend_providers=backend_providers or BackendProviders(),
     )
     register_diagnostic_tools(
         mcp,
@@ -2093,7 +2095,7 @@ def populate_aggregator(
 
 
 def _register_services(
-    mcp: FastMCP,
+    mcp: Aggregator,
     registry: ServiceRegistry,
     credential_registry: CredentialRegistry,
     settings: Settings,
@@ -2102,7 +2104,6 @@ def _register_services(
     broker_token_issuer: BrokerTokenIssuer | None = None,
     target_to_alias: dict[str, str] | None = None,
     identity_provider_configs: dict[str, IdentityProviderConfig] | None = None,
-    backend_providers: BackendProviders,
 ) -> None:
     mcp.providers.clear()
     # mcp.providers.clear() above wipes every provider, including
@@ -2116,7 +2117,7 @@ def _register_services(
     # just cleared, so this never produces a duplicate entry.
     mcp.add_provider(mcp.local_provider)
     providers: dict[str, _ObservableProxyProvider] = {}
-    backend_providers.replace(providers)
+    mcp.backend_providers.replace(providers)
     for spec in registry.all_services():
         if spec.builtin:
             # The builtin gateway service (issue #240) has no backend to

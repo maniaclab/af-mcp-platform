@@ -1972,15 +1972,10 @@ def _build_namespaced_aggregator(
         "_make_client_factory",
         lambda spec, *_args, **_kwargs: lambda: clients[spec.name],
     )
-    backend_providers = aggregator.BackendProviders()
     mcp = build_aggregator(
-        registry,
-        settings,
-        EntitlementPolicy(),
-        CredentialRegistry(),
-        backend_providers=backend_providers,
+        registry, settings, EntitlementPolicy(), CredentialRegistry()
     )
-    return mcp, backend_providers
+    return mcp, mcp.backend_providers
 
 
 async def test_invalidate_subject_cache_helper_targets_one_service(
