@@ -120,6 +120,12 @@ class _DownState(SharedState):
     async def delete(self, key: str) -> None:
         raise SharedStateUnavailableError("down")
 
+    async def get(self, key: str) -> str | None:
+        raise SharedStateUnavailableError("down")
+
+    async def set(self, key: str, value: str, ttl_seconds: float) -> None:
+        raise SharedStateUnavailableError("down")
+
     async def publish(self, channel: str, message: str) -> None:
         raise SharedStateUnavailableError("down")
 
@@ -218,3 +224,57 @@ async def test_fallback_delegates_pubsub_to_the_primary() -> None:
         assert await _next_message(messages) == "via-primary"
         await store.publish("c", "via-fallback-wrapper")
         assert await _next_message(messages) == "via-fallback-wrapper"
+
+
+# --- get / set with TTL --------------------------------------------------------
+
+
+async def test_set_then_get_round_trips(clock: _Clock) -> None:
+    store = InMemorySharedState()
+    await store.set("k", "v", 60)
+    assert await store.get("k") == "v"
+
+
+async def test_get_of_an_absent_key_is_none(clock: _Clock) -> None:
+    assert await InMemorySharedState().get("k") is None
+
+
+async def test_set_overwrites_and_restarts_the_ttl(clock: _Clock) -> None:
+    store = InMemorySharedState()
+    await store.set("k", "old", 60)
+    clock.now += 50
+    await store.set("k", "new", 60)
+    clock.now += 50
+    assert await store.get("k") == "new"
+
+
+async def test_value_expires_after_its_ttl(clock: _Clock) -> None:
+    store = InMemorySharedState()
+    await store.set("k", "v", 60)
+    clock.now += 61
+    assert await store.get("k") is None
+
+
+async def test_delete_clears_a_value(clock: _Clock) -> None:
+    store = InMemorySharedState()
+    await store.set("k", "v", 60)
+    await store.delete("k")
+    assert await store.get("k") is None
+
+
+async def test_fallback_keeps_values_per_replica_and_logs_when_the_primary_is_down(
+    clock: _Clock,
+) -> None:
+    store = _fallback(_DownState())
+    with structlog.testing.capture_logs() as logs:
+        await store.set("k", "v", 60)
+        assert await store.get("k") == "v"
+    assert [e["event"] for e in logs] == ["test.shared_state_unavailable"] * 2
+
+
+async def test_fallback_delegates_values_to_a_reachable_primary(clock: _Clock) -> None:
+    primary = InMemorySharedState()
+    store = _fallback(primary)
+    await store.set("k", "v", 60)
+    assert await primary.get("k") == "v"
+    assert await store.get("k") == "v"
