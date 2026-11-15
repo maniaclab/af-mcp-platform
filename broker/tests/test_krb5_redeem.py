@@ -700,35 +700,6 @@ class TestRedeemHandsFreeRenewal:
         assert record.error
 
 
-class TestKeylessBoot:
-    def test_krb5_backend_without_signing_key_boots_and_503s_redeem(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path, app_client_factory
-    ) -> None:
-        """Mirrors test_x509_redeem.py's
-        test_x509_backend_without_signing_key_boots_and_503s_redeem, adapted
-        for krb5: ANY
-        krb5-token identity_providers entry always implies the signing key
-        requirement (app.py's fail-closed check groups krb5-token in with
-        broker-issued/condor-token), so the only way to reach a booted app
-        with issuer=None and a krb5 target configured is to have an
-        auth_type: krb5 service in services.yaml with NO covering
-        krb5-token identity_providers entry at all (there is no drift check
-        for that the way _validate_x509_provider_targets enforces for x509 --
-        see app.py's krb5_targets comment). The redeem endpoint still answers
-        503 until a signing key is mounted -- enforcement at point of use."""
-        services_file = tmp_path / "services.yaml"
-        services_file.write_text(_BACKENDS_YAML)
-        monkeypatch.setenv("SERVICES_FILE", str(services_file))
-        monkeypatch.setenv("IDENTITY_PROVIDERS", json.dumps([]))
-        monkeypatch.delenv("BROKER_SIGNING_KEY_FILE", raising=False)
-
-        with app_client_factory() as (client, _):
-            resp = client.post(
-                _REDEEM, json={}, headers={"Authorization": "Bearer whatever"}
-            )
-        assert resp.status_code == 503
-
-
 def _enable_credmon(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Turn on the credmon integration with a valid htcondor-api config. The sync loop sleeps one poll interval (60s) before its first tick, so booting the app in a test starts no background sync against the network."""
     token_file = tmp_path / "credmon-htcondor-api-token"

@@ -699,7 +699,10 @@ broker-signed tokens (`broker-issued`, `condor-token`, `krb5-token`,
 `servicex-token`, `x509`) with no signing key configured refuses to boot (a
 startup `RuntimeError` naming the affected services, consistent with the
 `unreachable_permissions`/`ungated_backends` checks) rather than failing at
-first request; a broker with none of those entries boots cleanly with the
+first request. Likewise an `auth_type: krb5` or `auth_type: servicex` service
+not targeted by a `krb5-token` / `servicex-token` entry refuses to boot, so
+every service that authenticates with a broker-signed token is guaranteed
+the key at runtime; a broker with none of those entries boots cleanly with the
 feature absent (`/.well-known/jwks.json` answers 503). A service with `requires_posix` whose caller has no POSIX identity
 gets an actionable 404 naming the backend at issue time — the same
 point-of-use requirement as x509's `PosixIdentityRequiredError`.

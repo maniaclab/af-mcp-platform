@@ -246,6 +246,9 @@ proxies (ami-mcp's `--auth broker`, via the `af-credentials` library). The new s
 `targets` — every `auth_type: x509` service needs an explicit entry
 covering it, or the broker refuses to start naming it (there is no
 synthesized fallback; see "Adding a new Identity Provider" above).
+`auth_type: krb5` and `auth_type: servicex` services follow the same rule with
+a `krb5-token` / `servicex-token` entry: one with no covering entry of the
+matching type also refuses to boot, naming it.
 For a `bearer` service, the aggregator also attempts a best-effort per-user
 credential mint during `tools/list` (not only `tools/call`), so a service
 whose own MCP endpoint requires auth just to list tools (e.g. rucio-mcp)
