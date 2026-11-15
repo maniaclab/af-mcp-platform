@@ -42,6 +42,7 @@ from test_request_logging import _capturing_info
 
 from af_mcp_broker import identity as identity_module
 from af_mcp_broker import retry_after as retry_after_module
+from af_mcp_broker.api.auth import keycloak_dependency
 from af_mcp_broker.app import app
 from af_mcp_broker.config import Settings
 from af_mcp_broker.credentials import (
@@ -55,7 +56,7 @@ from af_mcp_broker.credentials import (
 from af_mcp_broker.credentials import oidc as oidc_module
 from af_mcp_broker.credentials.condor import CondorTokenProvider
 from af_mcp_broker.credentials.oauth21 import InMemoryTokenStore
-from af_mcp_broker.identity import get_principal, keycloak_dependency
+from af_mcp_broker.identity import get_principal
 from af_mcp_broker.maintenance import MaintenanceState
 from af_mcp_broker.mcp.aggregator import _make_client_factory
 from af_mcp_broker.retry_after import DEFAULT_RETRY_AFTER_SECONDS

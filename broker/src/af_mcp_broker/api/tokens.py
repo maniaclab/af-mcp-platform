@@ -74,6 +74,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from af_mcp_broker.api.auth import keycloak_dependency
 from af_mcp_broker.api.errors import RateLimitedHTTPException
 from af_mcp_broker.audit import AuditRecord, write_audit
 from af_mcp_broker.authorization import get_principal_permissions
@@ -81,7 +82,6 @@ from af_mcp_broker.broker_state import get_broker_state, get_state_settings
 from af_mcp_broker.config import (
     Settings,  # noqa: TC001 -- FastAPI resolves the dependency annotations at runtime
 )
-from af_mcp_broker.identity import keycloak_dependency
 from af_mcp_broker.pat import mint_pat
 from af_mcp_broker.principal import Principal
 from af_mcp_broker.retry_after import RateLimiter

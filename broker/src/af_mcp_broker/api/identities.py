@@ -8,6 +8,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict
 
+from af_mcp_broker.api.auth import keycloak_dependency
 from af_mcp_broker.authorization import is_admin
 from af_mcp_broker.broker_state import get_broker_state
 from af_mcp_broker.credentials import (
@@ -16,7 +17,6 @@ from af_mcp_broker.credentials import (
     ServiceXProvider,
     X509Provider,
 )
-from af_mcp_broker.identity import keycloak_dependency
 from af_mcp_broker.principal import Principal
 
 if TYPE_CHECKING:

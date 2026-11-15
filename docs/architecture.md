@@ -537,9 +537,9 @@ non-Optional, validated once when the record is read.
 Extracts and validates the AF principal from the incoming request.
 
 - Validates the caller's Keycloak-issued JWT directly (`HTTPBearer` +
-  `keycloak_dependency`) — there's no ForwardAuth proxy forwarding it; every
-  caller (portal SPA, Claude Desktop, `curl`) presents its own Bearer. See
-  [docs/auth.md](auth.md) for the per-client-identity breakdown.
+  `keycloak_dependency` in `api/auth.py`) — there's no ForwardAuth proxy
+  forwarding it; every caller (portal SPA, Claude Desktop, `curl`) presents
+  its own Bearer. See [docs/auth.md](auth.md) for the per-client-identity breakdown.
 - Resolves the POSIX `uid` / `gid` for the principal (needed for x509
   minting, which voms-token-service performs as that user).
 - Produces a `Principal` dataclass that flows through the rest of the call.
