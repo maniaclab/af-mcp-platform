@@ -94,7 +94,7 @@ from af_mcp_broker.mcp.aggregator import (
 )
 from af_mcp_broker.mcp.cache_invalidation import ListCacheInvalidator
 from af_mcp_broker.mcp.lint_observations import LintObservationStore
-from af_mcp_broker.mcp.registry import ServiceRegistry
+from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
 from af_mcp_broker.mcp_auth_codes import McpAuthCodeStore
 from af_mcp_broker.otel_metrics import init_otel_metrics, shutdown_otel_metrics
 from af_mcp_broker.principal_cache import (
@@ -167,6 +167,49 @@ def _validate_x509_provider_targets(
             "auth_type to x509 in services.yaml, or remove the target."
         )
         raise RuntimeError(msg)
+
+
+# auth_type -> the identity_providers entry type whose provider supplies that
+# auth_type's credential. x509 has its own two-direction check
+# (_validate_x509_provider_targets); krb5 and servicex services are only
+# validated for coverage, since a krb5-token/servicex-token entry may also
+# target an ordinary bearer-auth backend.
+_AUTH_TYPE_ENTRY_TYPES = {"krb5": "krb5-token", "servicex": "servicex-token"}
+
+
+def _validate_identity_token_auth_type_coverage(
+    identity_providers_cfgs: Iterable[IdentityProviderConfig],
+    services: Iterable[ServiceSpec],
+) -> None:
+    """Refuse to boot when an ``auth_type: krb5``/``servicex`` service is not targeted by an entry of the matching type.
+
+    Such a service is authenticated with an AF Broker Identity Token, and its
+    credential provider exists only through its entry. Without one the
+    service could never be served, and the broker would have no reason to
+    hold the signing key it needs, so the gap is reported here, naming the
+    service, instead of at the first request.
+    """
+    cfgs = list(identity_providers_cfgs)
+    specs = list(services)
+    for auth_type, entry_type in _AUTH_TYPE_ENTRY_TYPES.items():
+        covered = {
+            target for cfg in cfgs if cfg.type == entry_type for target in cfg.targets
+        }
+        uncovered = sorted(
+            spec.name
+            for spec in specs
+            if spec.auth_type == auth_type and spec.name not in covered
+        )
+        if uncovered:
+            msg = (
+                f"The following auth_type: {auth_type} services are not "
+                f"targeted by any {entry_type} identity_providers entry: "
+                f"{uncovered}. They would have no credential provider. Add "
+                f"an entry covering them (type: {entry_type}, targets: "
+                f"{uncovered}, service_url: <token service base URL>), or "
+                "change their auth_type."
+            )
+            raise RuntimeError(msg)
 
 
 # identity_providers types whose providers authenticate to their service with
@@ -486,6 +529,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
                 audiences[f"{prefix}{kind}"] = targets[0]
     identity_provider_cfg_list = list(settings.identity_providers)
     _validate_x509_provider_targets(settings.identity_providers, set(x509_targets))
+    _validate_identity_token_auth_type_coverage(settings.identity_providers, services)
     has_x509_cfg = any(cfg.type == "x509" for cfg in identity_provider_cfg_list)
     # service_url is mandatory on every krb5-token entry (Settings' own
     # validation), so any such entry always implies the krb5 Vault store

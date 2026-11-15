@@ -542,6 +542,27 @@ async def _require_linked_to_list(
     await _raise_unless_linked_to_list(spec, provider, principal)
 
 
+def _require_signing_issuer(
+    spec: ServiceSpec, broker_token_issuer: BrokerTokenIssuer | None
+) -> BrokerTokenIssuer:
+    """Return the broker's signing issuer for an x509/krb5/servicex *spec*, which authenticates its backend with an AF Broker Identity Token.
+
+    Boot validation guarantees the issuer for every such service: each is
+    covered by an entry whose provider needs the signing key, and a
+    deployment with such an entry and no key refuses to start. A missing
+    issuer here is therefore a wiring bug in the caller, not a deployment
+    state, and is reported as one.
+    """
+    if broker_token_issuer is None:
+        msg = (
+            f"Service '{spec.name}' (auth_type: {spec.auth_type}) needs the "
+            "broker's signing key to mint AF Broker Identity Tokens, but no "
+            "BrokerTokenIssuer was supplied."
+        )
+        raise RuntimeError(msg)
+    return broker_token_issuer
+
+
 async def resolve_list_time_credential(
     spec: ServiceSpec,
     credential_registry: CredentialRegistry,
@@ -559,8 +580,8 @@ async def resolve_list_time_credential(
     - "x509"/"krb5"/"servicex": share one code path here -- a locally-signed
       AF Broker Identity Token, mirroring ``_x509_factory``'s/
       ``_krb5_factory``'s/``_servicex_factory``'s identical list-time
-      branches; with no issuer configured the connection proceeds bare
-      (``(None, None)``), same as the aggregator. The backend redeems the
+      branches; boot validation guarantees the issuer for these services
+      (see ``_require_signing_issuer``). The backend redeems the
       actual proxy/ticket/access-token itself via ``POST /v1/credentials/
       x509/redeem``, ``.../krb5/redeem``, or ``.../servicex/redeem``
       respectively; this function must never call ``provider.issue()`` for
@@ -580,10 +601,9 @@ async def resolve_list_time_credential(
     if spec.auth_type == "none":
         return ListTimeCredential({}, None)
     if spec.auth_type in ("x509", "krb5", "servicex"):
-        if broker_token_issuer is None:
-            return ListTimeCredential(None, None)
+        issuer = _require_signing_issuer(spec, broker_token_issuer)
         await _require_linked_to_list(spec, credential_registry, principal)
-        token, _ = broker_token_issuer.mint(principal.subject, spec.effective_audience)
+        token, _ = issuer.mint(principal.subject, spec.effective_audience)
         return ListTimeCredential({"Authorization": f"Bearer {token}"}, None)
     return await _resolve_list_time_headers(spec, credential_registry, principal)
 
@@ -644,7 +664,7 @@ async def _identity_token_list_client(
     spec: ServiceSpec,
     credential_registry: CredentialRegistry,
     policy: EntitlementPolicy,
-    broker_token_issuer: BrokerTokenIssuer | None,
+    issuer: BrokerTokenIssuer,
 ) -> Client:
     """List-time client for an x509/krb5/servicex service: an identity header for a caller who has linked the credential the backend will redeem.
 
@@ -654,10 +674,8 @@ async def _identity_token_list_client(
     request is made.
     """
     principal = await _require_entitled_list_principal(ctx, spec, policy)
-    if broker_token_issuer is None:
-        return _build_client(spec)
     await _require_linked_to_list(spec, credential_registry, principal)
-    token, _ = broker_token_issuer.mint(principal.subject, spec.effective_audience)
+    token, _ = issuer.mint(principal.subject, spec.effective_audience)
     await ctx.set_state(
         f"__list_credential_status__:{spec.name}",
         (True, None),
@@ -1085,12 +1103,13 @@ def _make_client_factory(
         return _none_factory
 
     if spec.auth_type == "x509":
+        issuer = _require_signing_issuer(spec, broker_token_issuer)
 
         async def _x509_factory() -> Client:
             ctx = get_context()
             if await ctx.get_state("authorized_call_target") != spec.name:
                 return await _identity_token_list_client(
-                    ctx, spec, credential_registry, policy, broker_token_issuer
+                    ctx, spec, credential_registry, policy, issuer
                 )
 
             principal = await ctx.get_state("principal")
@@ -1098,14 +1117,6 @@ def _make_client_factory(
                 raise ToolError(
                     "No authenticated principal available for this tool call"
                 )
-            if broker_token_issuer is None:
-                raise ToolError(
-                    f"Service '{spec.name}' is an x509 service, which needs the "
-                    "broker to sign AF Broker Identity Tokens, but no signing key "
-                    "is configured (chart: broker.identityToken."
-                    "existingSigningKeySecret)."
-                )
-
             try:
                 provider = await credential_registry.resolve(spec.name)
             except KeyError as exc:
@@ -1130,20 +1141,19 @@ def _make_client_factory(
 
             # Identity assertion only (sub/aud): the service redeems the proxy
             # with this token; it has no use for POSIX claims.
-            token, _ = broker_token_issuer.mint(
-                principal.subject, spec.effective_audience
-            )
+            token, _ = issuer.mint(principal.subject, spec.effective_audience)
             return _build_client(spec, headers={"Authorization": f"Bearer {token}"})
 
         return _x509_factory
 
     if spec.auth_type == "krb5":
+        issuer = _require_signing_issuer(spec, broker_token_issuer)
 
         async def _krb5_factory() -> Client:
             ctx = get_context()
             if await ctx.get_state("authorized_call_target") != spec.name:
                 return await _identity_token_list_client(
-                    ctx, spec, credential_registry, policy, broker_token_issuer
+                    ctx, spec, credential_registry, policy, issuer
                 )
 
             principal = await ctx.get_state("principal")
@@ -1151,14 +1161,6 @@ def _make_client_factory(
                 raise ToolError(
                     "No authenticated principal available for this tool call"
                 )
-            if broker_token_issuer is None:
-                raise ToolError(
-                    f"Service '{spec.name}' is a krb5 service, which needs the "
-                    "broker to sign AF Broker Identity Tokens, but no signing key "
-                    "is configured (chart: broker.identityToken."
-                    "existingSigningKeySecret)."
-                )
-
             try:
                 provider = await credential_registry.resolve(spec.name)
             except KeyError as exc:
@@ -1183,20 +1185,19 @@ def _make_client_factory(
 
             # Identity assertion only (sub/aud): the service redeems the
             # ticket with this token; it has no use for POSIX claims.
-            token, _ = broker_token_issuer.mint(
-                principal.subject, spec.effective_audience
-            )
+            token, _ = issuer.mint(principal.subject, spec.effective_audience)
             return _build_client(spec, headers={"Authorization": f"Bearer {token}"})
 
         return _krb5_factory
 
     if spec.auth_type == "servicex":
+        issuer = _require_signing_issuer(spec, broker_token_issuer)
 
         async def _servicex_factory() -> Client:
             ctx = get_context()
             if await ctx.get_state("authorized_call_target") != spec.name:
                 return await _identity_token_list_client(
-                    ctx, spec, credential_registry, policy, broker_token_issuer
+                    ctx, spec, credential_registry, policy, issuer
                 )
 
             principal = await ctx.get_state("principal")
@@ -1204,14 +1205,6 @@ def _make_client_factory(
                 raise ToolError(
                     "No authenticated principal available for this tool call"
                 )
-            if broker_token_issuer is None:
-                raise ToolError(
-                    f"Service '{spec.name}' is a servicex service, which needs "
-                    "the broker to sign AF Broker Identity Tokens, but no "
-                    "signing key is configured (chart: broker.identityToken."
-                    "existingSigningKeySecret)."
-                )
-
             try:
                 provider = await credential_registry.resolve(spec.name)
             except KeyError as exc:
@@ -1236,9 +1229,7 @@ def _make_client_factory(
 
             # Identity assertion only (sub/aud): the service redeems the
             # access token with this token; it has no use for POSIX claims.
-            token, _ = broker_token_issuer.mint(
-                principal.subject, spec.effective_audience
-            )
+            token, _ = issuer.mint(principal.subject, spec.effective_audience)
             return _build_client(spec, headers={"Authorization": f"Bearer {token}"})
 
         return _servicex_factory

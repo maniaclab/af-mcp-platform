@@ -484,7 +484,11 @@ async def test_client_factory_x509_auth_type_applies_backend_timeout(
     _patch_context(monkeypatch, make_principal(), active_backend=None)
     spec = _spec(auth_type="x509", timeout_seconds=5.0)
     client = await _make_client_factory(
-        spec, CredentialRegistry(), settings, _OPEN_POLICY
+        spec,
+        CredentialRegistry(),
+        settings,
+        _OPEN_POLICY,
+        broker_token_issuer=_make_issuer(),
     )()
     assert client._session_kwargs["read_timeout_seconds"] == 5.0
 
@@ -538,7 +542,13 @@ async def test_client_factory_x509_call_without_principal_raises(
 ) -> None:
     _patch_context(monkeypatch, None)
     spec = _spec(auth_type="x509")
-    factory = _make_client_factory(spec, CredentialRegistry(), settings, _OPEN_POLICY)
+    factory = _make_client_factory(
+        spec,
+        CredentialRegistry(),
+        settings,
+        _OPEN_POLICY,
+        broker_token_issuer=_make_issuer(),
+    )
     with pytest.raises(ToolError, match="principal"):
         await factory()
 
@@ -552,10 +562,15 @@ async def test_client_factory_x509_auth_type_lists_without_raising(
     error above."""
     _patch_context(monkeypatch, make_principal(), active_backend=None)
     spec = _spec(auth_type="x509")
-    factory = _make_client_factory(spec, CredentialRegistry(), settings, _OPEN_POLICY)
+    factory = _make_client_factory(
+        spec,
+        CredentialRegistry(),
+        settings,
+        _OPEN_POLICY,
+        broker_token_issuer=_make_issuer(),
+    )
     client = await factory()
     assert isinstance(client, Client)
-    assert "Authorization" not in client.transport.headers
 
 
 async def test_client_factory_bearer_injects_minted_token_not_inbound(
@@ -2380,14 +2395,29 @@ async def test_client_factory_x509_call_time_aud_uses_effective_audience(
     assert claims["aud"] == "ami-mcp"
 
 
-async def test_client_factory_x509_without_issuer_is_toolerror(
-    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("auth_type", ["x509", "krb5", "servicex"])
+def test_client_factory_for_identity_token_service_requires_issuer(
+    settings: Any, auth_type: str
 ) -> None:
-    _patch_context(monkeypatch, make_principal(subject="sub-abc"))
-    spec = _spec(auth_type="x509")
+    """An x509/krb5/servicex service can only be served with a signing key (boot validation guarantees one), so building its factory without one is a wiring bug reported at construction."""
+    spec = _spec(auth_type=auth_type)
 
-    with pytest.raises(ToolError, match="signing key"):
-        await _make_client_factory(spec, CredentialRegistry(), settings, _OPEN_POLICY)()
+    with pytest.raises(RuntimeError, match="signing key") as excinfo:
+        _make_client_factory(spec, CredentialRegistry(), settings, _OPEN_POLICY)
+
+    assert spec.name in str(excinfo.value)
+
+
+@pytest.mark.parametrize("auth_type", ["x509", "krb5", "servicex"])
+async def test_resolve_list_time_credential_for_identity_token_service_requires_issuer(
+    make_principal, auth_type: str
+) -> None:
+    spec = _spec(auth_type=auth_type)
+
+    with pytest.raises(RuntimeError, match="signing key"):
+        await resolve_list_time_credential(
+            spec, CredentialRegistry(), make_principal(subject="sub-abc")
+        )
 
 
 async def test_client_factory_x509_not_linked_raises_friendly_error(
@@ -2609,19 +2639,6 @@ async def test_resolve_list_time_credential_x509_aud_uses_effective_audience(
     assert claims["aud"] == "ami-mcp"
 
 
-async def test_client_factory_x509_list_time_without_issuer_connects_bare(
-    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _patch_context(monkeypatch, make_principal(subject="sub-abc"), active_backend=None)
-    spec = _spec(auth_type="x509")
-
-    client = await _make_client_factory(
-        spec, CredentialRegistry(), settings, _OPEN_POLICY
-    )()
-
-    assert "Authorization" not in client.transport.headers
-
-
 async def test_resolve_list_time_credential_krb5_mints_not_provider_issue(
     settings: Any, make_principal
 ) -> None:
@@ -2674,7 +2691,11 @@ async def test_client_factory_krb5_auth_type_applies_backend_timeout(
     _patch_context(monkeypatch, make_principal(), active_backend=None)
     spec = _spec(auth_type="krb5", timeout_seconds=5.0)
     client = await _make_client_factory(
-        spec, CredentialRegistry(), settings, _OPEN_POLICY
+        spec,
+        CredentialRegistry(),
+        settings,
+        _OPEN_POLICY,
+        broker_token_issuer=_make_issuer(),
     )()
     assert client._session_kwargs["read_timeout_seconds"] == 5.0
 
@@ -2684,7 +2705,13 @@ async def test_client_factory_krb5_call_without_principal_raises(
 ) -> None:
     _patch_context(monkeypatch, None)
     spec = _spec(auth_type="krb5")
-    factory = _make_client_factory(spec, CredentialRegistry(), settings, _OPEN_POLICY)
+    factory = _make_client_factory(
+        spec,
+        CredentialRegistry(),
+        settings,
+        _OPEN_POLICY,
+        broker_token_issuer=_make_issuer(),
+    )
     with pytest.raises(ToolError, match="principal"):
         await factory()
 
@@ -2698,10 +2725,15 @@ async def test_client_factory_krb5_auth_type_lists_without_raising(
     error above."""
     _patch_context(monkeypatch, make_principal(), active_backend=None)
     spec = _spec(auth_type="krb5")
-    factory = _make_client_factory(spec, CredentialRegistry(), settings, _OPEN_POLICY)
+    factory = _make_client_factory(
+        spec,
+        CredentialRegistry(),
+        settings,
+        _OPEN_POLICY,
+        broker_token_issuer=_make_issuer(),
+    )
     client = await factory()
     assert isinstance(client, Client)
-    assert "Authorization" not in client.transport.headers
 
 
 async def test_client_factory_krb5_injects_broker_identity_jwt_not_provider_issue(
@@ -2754,18 +2786,6 @@ async def test_client_factory_krb5_call_time_aud_uses_effective_audience(
     assert claims["aud"] == "krb5-mcp"
 
 
-async def test_client_factory_krb5_without_issuer_is_toolerror(
-    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _patch_context(monkeypatch, make_principal(subject="sub-abc"))
-    spec = _spec(auth_type="krb5")
-
-    with pytest.raises(ToolError, match="signing key") as excinfo:
-        await _make_client_factory(spec, CredentialRegistry(), settings, _OPEN_POLICY)()
-
-    assert "krb5 service" in str(excinfo.value)
-
-
 async def test_client_factory_krb5_not_linked_raises_friendly_error(
     settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2802,19 +2822,6 @@ async def test_client_factory_krb5_list_time_injects_header_best_effort(
     )()
 
     assert client.transport.headers["Authorization"].startswith("Bearer ")
-
-
-async def test_client_factory_krb5_list_time_without_issuer_connects_bare(
-    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _patch_context(monkeypatch, make_principal(subject="sub-abc"), active_backend=None)
-    spec = _spec(auth_type="krb5")
-
-    client = await _make_client_factory(
-        spec, CredentialRegistry(), settings, _OPEN_POLICY
-    )()
-
-    assert "Authorization" not in client.transport.headers
 
 
 # ---------------------------------------------------------------------------
