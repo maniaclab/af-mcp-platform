@@ -484,10 +484,11 @@ broker:
 
   # Transport carrying success/error audit records from the tool-call hot
   # path to the metering worker that measures and writes them (broker
-  # metering.py). Only "in-process" (a bounded in-process queue plus a
-  # background worker) exists today; the broker fails closed at startup on
-  # any unknown value, so never set a backend before its implementation
-  # ships. Metering is best-effort; audit records are authoritative.
+  # metering.py). "in-process" (a bounded in-process queue plus a
+  # background worker) is the deployed backend; "inline" measures and writes
+  # in the tool call itself (tests, local dev). The broker fails closed at
+  # startup on any unknown value, so never set a backend before its
+  # implementation ships. Metering is best-effort; audit records are authoritative.
   metering:
     backend: "in-process"
 

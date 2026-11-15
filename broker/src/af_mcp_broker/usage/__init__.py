@@ -2,10 +2,10 @@
 
 See ``usage/store.py`` for the store contract and the design constraints
 (best-effort, audit records authoritative, no dollars stored). This module
-owns the process-wide wiring, mirroring ``metering.py``'s shape: a
-module-level store selected by ``settings.usage_store_backend``,
-initialized/closed from ``app.py``'s lifespan, and a never-raising
-``record_usage`` helper the metering pipeline calls after each audit write.
+builds the store selected by ``settings.usage_store_backend`` (the lifespan
+owns it and hands it to its consumers) and provides the never-raising
+``record_usage``/``record_usage_batch`` helpers the metering backends call,
+with the store they feed, after each audit write.
 """
 
 from __future__ import annotations
@@ -36,18 +36,13 @@ __all__ = [
     "UsageAggregate",
     "UsageBatcher",
     "UsageStore",
-    "aclose_usage_store",
     "build_usage_store",
     "counts_as_usage",
-    "get_usage_store",
-    "init_usage_store",
     "record_usage",
     "record_usage_batch",
 ]
 
 logger = structlog.get_logger(__name__)
-
-_store: UsageStore | None = None
 
 
 def build_usage_store(settings: Settings) -> UsageStore:
@@ -81,35 +76,8 @@ def build_usage_store(settings: Settings) -> UsageStore:
     return store
 
 
-async def init_usage_store(settings: Settings) -> UsageStore:
-    """Create, start, and install the process-wide store (app.py lifespan).
-
-    The implementation is selected by ``settings.usage_store_backend``. With
-    ``settings.usage_events_otlp_enabled`` the store is wrapped so each
-    recorded usage is also emitted as an OTel log record (``otel_events.py``).
-    """
-    global _store
-    _store = build_usage_store(settings)
-    await _store.start()
-    return _store
-
-
-async def aclose_usage_store() -> None:
-    """Close and uninstall the process-wide store (app.py lifespan shutdown)."""
-    global _store
-    if _store is None:
-        return
-    await _store.aclose()
-    _store = None
-
-
-def get_usage_store() -> UsageStore | None:
-    """Return the installed process-wide store, or None outside the lifespan."""
-    return _store
-
-
-async def record_usage(record: AuditRecord) -> None:
-    """Account *record* in the installed store, if it counts as usage.
+async def record_usage(store: UsageStore, record: AuditRecord) -> None:
+    """Account *record* in *store*, if it counts as usage.
 
     Only tool-call records (``mcp_service`` set) with outcome success or
     error are usage -- denied/unmapped calls are security events that live
@@ -118,12 +86,10 @@ async def record_usage(record: AuditRecord) -> None:
     existing metering-worker error counter without ever affecting the audit
     write (which the caller performs FIRST) or the tool call itself.
     """
-    if _store is None:
-        return
     if not counts_as_usage(record):
         return
     try:
-        await _store.record(record)
+        await store.record(record)
     except Exception as exc:  # noqa: BLE001 -- usage must never lose an audit line
         metrics.metering_worker_errors_total.inc()
         logger.warning("usage_record_failed", audit_id=record.audit_id, error=str(exc))
@@ -134,8 +100,8 @@ def counts_as_usage(record: AuditRecord) -> bool:
     return record.mcp_service is not None and record.outcome in ("success", "error")
 
 
-async def record_usage_batch(records: list[AuditRecord]) -> None:
-    """Account *records* (already filtered by ``counts_as_usage``) in one store call.
+async def record_usage_batch(store: UsageStore, records: list[AuditRecord]) -> None:
+    """Account *records* (already filtered by ``counts_as_usage``) in one *store* call.
 
     Never raises, like ``record_usage``. A batch failure may be all-or-nothing
     (the Postgres store's is), so every row is counted on the metering-worker
@@ -143,10 +109,8 @@ async def record_usage_batch(records: list[AuditRecord]) -> None:
     and the audit_ids are logged so the rows can be rebuilt from the
     authoritative audit log.
     """
-    if _store is None:
-        return
     try:
-        await _store.record_many(records)
+        await store.record_many(records)
     except Exception as exc:  # noqa: BLE001 -- usage must never lose an audit line
         metrics.metering_worker_errors_total.inc(len(records))
         logger.warning(

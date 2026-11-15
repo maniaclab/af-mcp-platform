@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
-from broker_state_helpers import aggregator_stores
+from broker_state_helpers import aggregator_inputs
 from conftest import make_claims, run_aggregator_async, run_inprocess_server
 from fastmcp import FastMCP
 from fastmcp.server.dependencies import get_context
@@ -71,7 +71,7 @@ def aggregator(settings, progress_backend_url, static_principal_cache):
 
     async def _run():
         mcp = build_aggregator(
-            registry, settings, policy, CredentialRegistry(), **aggregator_stores()
+            registry, settings, policy, CredentialRegistry(), **aggregator_inputs()
         )
         async with run_aggregator_async(
             mcp, path="/mcp", settings=settings, principal_cache=principal_cache

@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from broker_state_helpers import aggregator_stores
+from broker_state_helpers import aggregator_inputs
 from conftest import make_claims, run_aggregator_async
 from fastmcp.exceptions import ToolError
 from pydantic import SecretStr
@@ -36,11 +36,9 @@ from af_mcp_broker.service_registry import (
     ServiceSpec,
     identity_provider_url,
 )
-from af_mcp_broker.usage import aclose_usage_store, init_usage_store
+from af_mcp_broker.usage import InMemoryUsageStore
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
-
     from af_mcp_broker.principal import Principal
     from af_mcp_broker.usage import UsageStore
 
@@ -112,7 +110,7 @@ async def test_af_tools_declare_a_proper_object_output_schema(
         settings,
         EntitlementPolicy(),
         CredentialRegistry(),
-        **aggregator_stores(),
+        **aggregator_inputs(),
     )
 
     async with (
@@ -159,7 +157,7 @@ async def test_af_tools_declare_read_only_annotations(
         settings,
         EntitlementPolicy(),
         CredentialRegistry(),
-        **aggregator_stores(),
+        **aggregator_inputs(),
     )
 
     async with (
@@ -193,7 +191,7 @@ async def test_af_whoami_returns_subject_groups_and_permissions(
     policy = EntitlementPolicy(group_permissions={"atlas": ["read_data"]})
 
     mcp = build_aggregator(
-        ServiceRegistry(), settings, policy, CredentialRegistry(), **aggregator_stores()
+        ServiceRegistry(), settings, policy, CredentialRegistry(), **aggregator_inputs()
     )
 
     async with (
@@ -233,9 +231,10 @@ async def test_af_list_identities_reflects_linkage_per_provider(
         settings,
         EntitlementPolicy(),
         CredentialRegistry(),
-        identity_providers=identity_providers,
-        identity_provider_configs=identity_provider_configs,
-        **aggregator_stores(),
+        **aggregator_inputs(
+            identity_providers=identity_providers,
+            identity_provider_configs=identity_provider_configs,
+        ),
     )
 
     async with (
@@ -290,12 +289,13 @@ async def test_af_list_identities_describes_job_credentials_when_credmon_is_wire
         settings,
         EntitlementPolicy(),
         CredentialRegistry(),
-        identity_providers=identity_providers,
-        identity_provider_configs=identity_provider_configs,
         job_credentials=JobCredentialGuide(
             service_prefix="af_", kinds=frozenset({"krb5", "x509"})
         ),
-        **aggregator_stores(),
+        **aggregator_inputs(
+            identity_providers=identity_providers,
+            identity_provider_configs=identity_provider_configs,
+        ),
     )
 
     async with (
@@ -343,9 +343,10 @@ async def test_af_link_identity_returns_portal_url_and_linked_status(
         settings,
         EntitlementPolicy(),
         CredentialRegistry(),
-        identity_providers=identity_providers,
-        identity_provider_configs=identity_provider_configs,
-        **aggregator_stores(),
+        **aggregator_inputs(
+            identity_providers=identity_providers,
+            identity_provider_configs=identity_provider_configs,
+        ),
     )
 
     async with (
@@ -391,9 +392,10 @@ async def test_af_link_identity_unknown_provider_raises_tool_error(
         settings,
         EntitlementPolicy(),
         CredentialRegistry(),
-        identity_providers=identity_providers,
-        identity_provider_configs=identity_provider_configs,
-        **aggregator_stores(),
+        **aggregator_inputs(
+            identity_providers=identity_providers,
+            identity_provider_configs=identity_provider_configs,
+        ),
     )
 
     async with (
@@ -535,8 +537,7 @@ async def test_af_list_mcp_servers_reuses_service_status_and_identity_join(
         settings,
         EntitlementPolicy(group_permissions={"atlas": ["read_data"]}),
         credential_registry,
-        target_to_alias=target_to_alias,
-        **aggregator_stores(),
+        **aggregator_inputs(target_to_alias=target_to_alias),
     )
 
     async with (
@@ -606,7 +607,7 @@ async def test_diagnostic_tools_visible_to_principal_with_no_permissions(
     policy = EntitlementPolicy(group_permissions={"atlas": ["read_data"]})
 
     mcp = build_aggregator(
-        registry, settings, policy, CredentialRegistry(), **aggregator_stores()
+        registry, settings, policy, CredentialRegistry(), **aggregator_inputs()
     )
 
     async with (
@@ -653,7 +654,7 @@ async def test_af_whoami_call_is_audited_and_metered_as_the_gateway_service(
         settings,
         EntitlementPolicy(),
         CredentialRegistry(),
-        **aggregator_stores(),
+        **aggregator_inputs(),
     )
 
     async with (
@@ -675,8 +676,8 @@ async def test_af_whoami_call_is_audited_and_metered_as_the_gateway_service(
     assert line["duration_ms"] >= 0.0
     # The success path measures the result exactly like a proxied call's --
     # af_whoami returned a non-empty structured payload, so both fields are
-    # populated (no pipeline installed in this harness, so the fallback
-    # measured and wrote synchronously).
+    # populated (this harness's inline metering backend measured and wrote
+    # synchronously).
     assert line["result_bytes"] > 0
     assert line["result_tokens_est"] > 0
 
@@ -722,10 +723,11 @@ async def test_no_diagnostic_tool_response_contains_a_url(
         settings,
         EntitlementPolicy(),
         credential_registry,
-        identity_providers=identity_providers,
-        identity_provider_configs=identity_provider_configs,
-        target_to_alias=target_to_alias,
-        **aggregator_stores(),
+        **aggregator_inputs(
+            identity_providers=identity_providers,
+            identity_provider_configs=identity_provider_configs,
+            target_to_alias=target_to_alias,
+        ),
     )
 
     async with (
@@ -748,17 +750,13 @@ async def test_no_diagnostic_tool_response_contains_a_url(
 # af_usage -- the caller's own usage summary through the MCP surface, the
 # same data GET /v1/usage serves (both are thin wrappers over
 # usage/summary.py's build_usage_summary). Seeded through the usage store
-# handed to build_aggregator, which is also the process-wide store (as in
-# app.py's lifespan) so the metering pipeline's own records land in it.
+# handed to build_aggregator.
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture
-async def usage_store(settings: Any) -> AsyncIterator[UsageStore]:
-    """Install (and tear down) the process-wide in-memory usage store, as app.py's lifespan would."""
-    store = await init_usage_store(settings)
-    yield store
-    await aclose_usage_store()
+def usage_store() -> UsageStore:
+    return InMemoryUsageStore()
 
 
 def _usage_record(**overrides: Any) -> AuditRecord:
@@ -795,7 +793,7 @@ async def _call_af_usage(
         settings,
         EntitlementPolicy(),
         CredentialRegistry(),
-        **aggregator_stores(usage_store=usage_store),
+        **aggregator_inputs(usage_store=usage_store),
     )
     async with (
         run_aggregator_async(
@@ -946,7 +944,7 @@ async def test_af_list_mcp_servers_reports_docs_url_and_granting_groups(
             group_permissions={"/connect/atlas-af": ["read_data"], "other": []}
         ),
         CredentialRegistry(),
-        **aggregator_stores(),
+        **aggregator_inputs(),
     )
 
     async with (

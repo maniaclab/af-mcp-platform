@@ -6,7 +6,7 @@ import json
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from broker_state_helpers import aggregator_stores
+from broker_state_helpers import aggregator_inputs
 from conftest import make_claims, run_aggregator_async, run_inprocess_server
 from fastmcp import Client, FastMCP
 from fastmcp.exceptions import ToolError
@@ -76,7 +76,7 @@ def _serve(
         settings,
         policy,
         CredentialRegistry(),
-        **aggregator_stores(InMemorySharedState()),
+        **aggregator_inputs(InMemorySharedState()),
     )
     return run_aggregator_async(
         mcp, path="/mcp", settings=settings, principal_cache=principal_cache

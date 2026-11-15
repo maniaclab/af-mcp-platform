@@ -456,8 +456,7 @@ What the layering means in practice:
   (`BrokerState.settings`, the only settings source in the running app), and
   `broker_state_of(app)` for code that holds the app. `get_settings()` (an
   `lru_cache`) is read only where no app exists: the tracing instrumentation
-  at import time and the metering fallback with no pipeline installed. It
-  sits below
+  at import time. It sits below
   `identity` (which reads the principal cache and the dev-bypass principal
   from it) and above every subsystem it holds, so `api`, `mcp` and `identity`
   can all import it while construction stays in `wiring`. A component a
@@ -812,8 +811,12 @@ and a background worker measures the result (`result_bytes`,
 measurement or audit I/O. DENIED and UNMAPPED records stay synchronous
 inline: they are security-relevant and have nothing to measure. Metering is
 best-effort; audit records are authoritative. The transport behind the
-pipeline is a config-selected backend (`METERING_BACKEND`); only
-`in_process` exists today, and the broker fails closed on any other value.
+pipeline is a config-selected backend (`METERING_BACKEND`): `in_process` (the
+queue and worker) or `inline` (measure and write in the tool call itself, for
+tests and local dev); the broker fails closed on any other value. The lifespan
+builds the backend over the usage store it feeds and passes it to the
+authorization middleware; nothing is installed process-wide, and an audit
+write that fails inline raises to the caller.
 
 Prometheus metrics expose per-tool latency histograms and error counters,
 served as `/metrics` on a dedicated port (9090, `METRICS_PORT`) so the

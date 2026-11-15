@@ -13,13 +13,13 @@ from typing import Any
 
 import pytest
 
-from af_mcp_broker import metering
 from af_mcp_broker.config import Settings
 from af_mcp_broker.credentials import CredentialRegistry
 from af_mcp_broker.credentials.stores import VaultLinkStores
 from af_mcp_broker.maintenance import InMemoryMaintenanceModeStore
+from af_mcp_broker.metering import InProcessMeteringBackend
 from af_mcp_broker.shared_state import InMemorySharedState
-from af_mcp_broker.usage import InMemoryUsageStore, get_usage_store
+from af_mcp_broker.usage import InMemoryUsageStore
 from af_mcp_broker.wiring import lifecycle
 from af_mcp_broker.wiring.lifecycle import (
     open_shared_state,
@@ -95,54 +95,93 @@ class TestStartMaintenanceStore:
         assert events == ["maintenance.start", "maintenance.aclose"]
 
 
+class _RecordingUsageStore(InMemoryUsageStore):
+    def __init__(self, events: list[str]) -> None:
+        super().__init__()
+        self._events = events
+
+    async def aclose(self) -> None:
+        self._events.append("usage.close")
+
+
+class _RecordingMetering(InProcessMeteringBackend):
+    def __init__(self, events: list[str], usage_store: InMemoryUsageStore) -> None:
+        super().__init__(_settings(), usage_store)
+        self._events = events
+
+    async def aclose(self) -> None:
+        self._events.append("metering.drain")
+        await super().aclose()
+
+
 class TestUsageAndMetering:
-    async def test_usage_store_is_installed_then_uninstalled(self) -> None:
+    async def test_usage_store_is_returned_then_closed_with_the_stack(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        events: list[str] = []
+        built = _RecordingUsageStore(events)
+        monkeypatch.setattr(lifecycle, "build_usage_store", lambda settings: built)
+
         async with AsyncExitStack() as stack:
             store = await start_usage_store(_settings(), stack)
-            assert isinstance(store, InMemoryUsageStore)
-            assert get_usage_store() is store
+            assert store is built
+            assert events == []
 
-        assert get_usage_store() is None
+        assert events == ["usage.close"]
 
-    async def test_metering_pipeline_is_installed_then_uninstalled(self) -> None:
+    async def test_metering_pipeline_is_returned_running_then_drained(self) -> None:
         async with AsyncExitStack() as stack:
-            await start_metering_pipeline(_settings(), stack)
-            assert metering._pipeline is not None
+            backend = await start_metering_pipeline(
+                _settings(), InMemoryUsageStore(), stack
+            )
+            assert isinstance(backend, InProcessMeteringBackend)
+            assert backend.is_running
 
-        assert metering._pipeline is None
+        assert not backend.is_running
+
+    async def test_metering_feeds_the_usage_store_it_is_given(self) -> None:
+        usage_store = InMemoryUsageStore()
+        async with AsyncExitStack() as stack:
+            backend = await start_metering_pipeline(_settings(), usage_store, stack)
+
+        assert backend.usage_store is usage_store
 
     async def test_metering_drains_before_the_usage_store_closes(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         events: list[str] = []
-
-        async def _drain() -> None:
-            events.append("metering.drain")
-
-        async def _close_usage() -> None:
-            events.append("usage.close")
-
-        monkeypatch.setattr(lifecycle, "aclose_metering_pipeline", _drain)
-        monkeypatch.setattr(lifecycle, "aclose_usage_store", _close_usage)
+        usage_store = _RecordingUsageStore(events)
+        monkeypatch.setattr(
+            lifecycle, "build_usage_store", lambda settings: usage_store
+        )
+        monkeypatch.setattr(
+            lifecycle,
+            "build_metering_backend",
+            lambda settings, store: _RecordingMetering(events, store),
+        )
 
         async with AsyncExitStack() as stack:
-            await start_usage_store(_settings(), stack)
-            await start_metering_pipeline(_settings(), stack)
+            store = await start_usage_store(_settings(), stack)
+            await start_metering_pipeline(_settings(), store, stack)
 
         assert events == ["metering.drain", "usage.close"]
 
     async def test_a_failure_after_both_started_closes_both(self) -> None:
+        backends: list[InProcessMeteringBackend] = []
+
         async def _start_then_fail() -> None:
             async with AsyncExitStack() as stack:
-                await start_usage_store(_settings(), stack)
-                await start_metering_pipeline(_settings(), stack)
+                store = await start_usage_store(_settings(), stack)
+                backends.append(
+                    await start_metering_pipeline(_settings(), store, stack)
+                )
                 raise RuntimeError("later builder failed")
 
         with pytest.raises(RuntimeError, match="later builder failed"):
             await _start_then_fail()
 
-        assert get_usage_store() is None
-        assert metering._pipeline is None
+        (backend,) = backends
+        assert not backend.is_running
 
 
 class TestStartMetricsServer:

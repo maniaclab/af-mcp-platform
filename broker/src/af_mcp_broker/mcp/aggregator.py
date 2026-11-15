@@ -86,6 +86,7 @@ if TYPE_CHECKING:
     from af_mcp_broker.credmon.guidance import JobCredentialGuide
     from af_mcp_broker.lint_observations import LintObservationStore
     from af_mcp_broker.maintenance import MaintenanceModeStore
+    from af_mcp_broker.metering import MeteringBackend
     from af_mcp_broker.principal import Principal
     from af_mcp_broker.principal_cache import PrincipalCache
     from af_mcp_broker.service_registry import ServiceRegistry, ServiceSpec
@@ -1355,9 +1356,10 @@ def build_aggregator(
     shared_state: SharedState,
     usage_store: UsageStore,
     lint_observations: LintObservationStore,
-    identity_providers: dict[str, CredentialProvider] | None = None,
-    identity_provider_configs: dict[str, IdentityProviderConfig] | None = None,
-    target_to_alias: dict[str, str] | None = None,
+    metering: MeteringBackend,
+    identity_providers: dict[str, CredentialProvider],
+    identity_provider_configs: dict[str, IdentityProviderConfig],
+    target_to_alias: dict[str, str],
     broker_token_issuer: BrokerTokenIssuer | None = None,
     job_credentials: JobCredentialGuide | None = None,
     backend_providers: BackendProviders | None = None,
@@ -1392,9 +1394,11 @@ def build_aggregator(
     invariant actually cares about.
 
     *shared_state* backs ``policy.rate_limits``; *usage_store* answers af_usage; *lint_observations* is where
-    the tool-listing lint's findings are recorded. *identity_providers*/
-    *identity_provider_configs*/*target_to_alias* default to empty:
-    af_list_identities/af_list_mcp_servers then report nothing.
+    the tool-listing lint's findings are recorded; *metering* carries each
+    call's audit record to be measured and written. *identity_providers*/
+    *identity_provider_configs*/*target_to_alias* feed
+    af_list_identities/af_list_mcp_servers; they are required so a caller
+    cannot silently publish an aggregator that reports nothing.
     *backend_providers* is the holder the proxied backends are recorded in;
     omitted, the aggregator creates its own.
     """
@@ -1407,12 +1411,14 @@ def build_aggregator(
         backend_providers=backend_providers,
     )
     mcp.add_middleware(IdentityMiddleware())
-    entitlement_mw = EntitlementMiddleware(registry, policy)
-    entitlement_mw.use_lint_store(lint_observations)
-    mcp.add_middleware(entitlement_mw)
-    authorization_mw = AuthorizationMiddleware(registry, policy)
-    authorization_mw.use_shared_state(shared_state)
-    mcp.add_middleware(authorization_mw)
+    mcp.add_middleware(
+        EntitlementMiddleware(registry, policy, lint_store=lint_observations)
+    )
+    mcp.add_middleware(
+        AuthorizationMiddleware(
+            registry, policy, shared_state=shared_state, metering=metering
+        )
+    )
     _register_services(
         mcp,
         registry,
@@ -1428,9 +1434,9 @@ def build_aggregator(
         registry,
         policy,
         credential_registry,
-        identity_providers or {},
-        identity_provider_configs or {},
-        target_to_alias or {},
+        identity_providers,
+        identity_provider_configs,
+        target_to_alias,
         settings,
         shared_state,
         usage_store,

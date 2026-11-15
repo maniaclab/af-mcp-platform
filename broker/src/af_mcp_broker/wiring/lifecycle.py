@@ -15,9 +15,9 @@ from prometheus_client import start_http_server
 from af_mcp_broker.credmon.factory import build_credmon_sync
 from af_mcp_broker.identity import get_jwks
 from af_mcp_broker.maintenance import build_maintenance_store
-from af_mcp_broker.metering import aclose_metering_pipeline, init_metering_pipeline
+from af_mcp_broker.metering import build_metering_backend
 from af_mcp_broker.shared_state import build_shared_state
-from af_mcp_broker.usage import aclose_usage_store, init_usage_store
+from af_mcp_broker.usage import build_usage_store
 
 if TYPE_CHECKING:
     from contextlib import AsyncExitStack
@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from af_mcp_broker.credentials.stores import VaultLinkStores
     from af_mcp_broker.credmon.sync import CredmonSyncService
     from af_mcp_broker.maintenance import MaintenanceModeStore
+    from af_mcp_broker.metering import MeteringBackend
     from af_mcp_broker.principal_cache import PrincipalCache
     from af_mcp_broker.shared_state import SharedState
     from af_mcp_broker.usage import UsageStore
@@ -72,21 +73,26 @@ async def start_usage_store(settings: Settings, stack: AsyncExitStack) -> UsageS
     miss the store, and closed only after the pipeline drains: drained records
     are still being accounted right up to the last audit write.
     """
-    usage_store = await init_usage_store(settings)
-    stack.push_async_callback(aclose_usage_store)
+    usage_store = build_usage_store(settings)
+    await usage_store.start()
+    stack.push_async_callback(usage_store.aclose)
     return usage_store
 
 
-async def start_metering_pipeline(settings: Settings, stack: AsyncExitStack) -> None:
-    """Start the background metering worker (metering.py) and register its drain on *stack*.
+async def start_metering_pipeline(
+    settings: Settings, usage_store: UsageStore, stack: AsyncExitStack
+) -> MeteringBackend:
+    """Start the metering backend (metering.py), feeding *usage_store*, and register its drain on *stack*.
 
-    Success/error audit records are measured and written by the worker so tool
-    calls never wait on measurement or audit I/O; without it the helper
-    degrades to inline. The drain keeps audit lines from being lost on a
+    With the default ``in_process`` backend, success/error audit records are
+    measured and written by a background worker so tool calls never wait on
+    measurement or audit I/O. The drain keeps audit lines from being lost on a
     graceful stop, so it must run before the audit output is closed.
     """
-    await init_metering_pipeline(settings)
-    stack.push_async_callback(aclose_metering_pipeline)
+    backend = build_metering_backend(settings, usage_store)
+    await backend.start()
+    stack.push_async_callback(backend.aclose)
+    return backend
 
 
 def start_metrics_server(settings: Settings, stack: AsyncExitStack) -> int | None:

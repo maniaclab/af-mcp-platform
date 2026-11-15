@@ -23,6 +23,7 @@ from test_usage_postgres import _record
 from af_mcp_broker import metering as pipeline
 from af_mcp_broker import otel_metrics, tracing
 from af_mcp_broker.config import Settings
+from af_mcp_broker.usage import InMemoryUsageStore
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -229,12 +230,14 @@ def test_a_failing_instrument_never_raises_into_the_caller(
 # --- metering pipeline wiring ----------------------------------------------
 
 
-async def test_inline_fallback_path_records_metrics(
+async def test_inline_backend_records_metrics(
     reader: InMemoryMetricReader,
 ) -> None:
-    """With no pipeline installed, submit_metered_audit measures and writes
-    inline; that path must feed the metrics too."""
-    await pipeline.submit_metered_audit(_record(), None)
+    """The inline backend measures and writes in the caller's call; that
+    path must feed the metrics too."""
+    await pipeline.InlineMeteringBackend(Settings(), InMemoryUsageStore()).submit(
+        _record(), None
+    )
 
     (point,) = _points(reader, "af_mcp.tool.calls")
     assert point.value == 1
@@ -243,7 +246,7 @@ async def test_inline_fallback_path_records_metrics(
 async def test_metering_worker_records_metrics_with_measured_sizes(
     reader: InMemoryMetricReader,
 ) -> None:
-    backend = pipeline.InProcessMeteringBackend(settings=Settings())
+    backend = pipeline.InProcessMeteringBackend(Settings(), InMemoryUsageStore())
     await backend.start()
     try:
         await backend.submit(_record(result_bytes=None, result_tokens_est=None), None)
@@ -257,7 +260,9 @@ async def test_metering_worker_records_metrics_with_measured_sizes(
 async def test_queue_overflow_path_records_metrics(
     reader: InMemoryMetricReader,
 ) -> None:
-    backend = pipeline.InProcessMeteringBackend(settings=Settings(), maxsize=1)
+    backend = pipeline.InProcessMeteringBackend(
+        Settings(), InMemoryUsageStore(), maxsize=1
+    )
     # Not started: the first submit fills the queue, the second overflows
     # and is written inline.
     await backend.submit(_record(audit_id="queued"), None)

@@ -14,7 +14,10 @@ from af_mcp_broker.config import Settings
 from af_mcp_broker.credentials import CredentialCache, CredentialRegistry
 from af_mcp_broker.lint_observations import LintObservationStore
 from af_mcp_broker.maintenance import InMemoryMaintenanceModeStore
+from af_mcp_broker.mcp.middleware.authorization_mw import AuthorizationMiddleware
+from af_mcp_broker.mcp.middleware.entitlement_mw import EntitlementMiddleware
 from af_mcp_broker.mcp.middleware.identity_mw import AsgiAuthMiddleware
+from af_mcp_broker.metering import InlineMeteringBackend
 from af_mcp_broker.service_registry import ServiceRegistry
 from af_mcp_broker.shared_state import InMemorySharedState
 from af_mcp_broker.token_registry import InMemoryTokenRegistryBackend, TokenRegistry
@@ -23,6 +26,7 @@ from af_mcp_broker.usage.store import InMemoryUsageStore
 if TYPE_CHECKING:
     from starlette.applications import Starlette
 
+    from af_mcp_broker.metering import MeteringBackend
     from af_mcp_broker.principal_cache import PrincipalCache
     from af_mcp_broker.shared_state import SharedState
     from af_mcp_broker.token_registry import TokenRegistryBackend
@@ -79,16 +83,60 @@ def set_broker_state(app: Starlette, **changes: Any) -> None:
     app.state.broker = replace(app.state.broker, **changes)
 
 
-def aggregator_stores(
-    shared_state: SharedState | None = None, usage_store: UsageStore | None = None
+def aggregator_inputs(
+    shared_state: SharedState | None = None,
+    usage_store: UsageStore | None = None,
+    metering: MeteringBackend | None = None,
+    **overrides: Any,
 ) -> dict[str, Any]:
-    """The stores ``build_aggregator`` requires, as keyword arguments: *shared_state*, *usage_store* (each a fresh in-memory one when omitted) and the lint-observation store over the shared state."""
+    """The keyword arguments ``build_aggregator`` requires, with *overrides* replacing named ones.
+
+    *shared_state* and *usage_store* are fresh in-memory stores when omitted;
+    the lint-observation store is built over the shared state. *metering* is
+    an inline backend over the usage store when omitted. The identity maps
+    are empty unless overridden.
+    """
     shared_state = shared_state or InMemorySharedState()
-    return {
+    usage_store = usage_store or InMemoryUsageStore()
+    inputs: dict[str, Any] = {
         "shared_state": shared_state,
-        "usage_store": usage_store or InMemoryUsageStore(),
+        "usage_store": usage_store,
         "lint_observations": LintObservationStore(shared_state),
+        "metering": metering or InlineMeteringBackend(Settings(), usage_store),
+        "identity_providers": {},
+        "identity_provider_configs": {},
+        "target_to_alias": {},
     }
+    inputs.update(overrides)
+    return inputs
+
+
+def authorization_middleware(
+    registry: ServiceRegistry,
+    policy: EntitlementPolicy,
+    shared_state: SharedState | None = None,
+    metering: MeteringBackend | None = None,
+) -> AuthorizationMiddleware:
+    """An ``AuthorizationMiddleware`` over fresh in-memory shared state and an inline metering backend unless given."""
+    return AuthorizationMiddleware(
+        registry,
+        policy,
+        shared_state=shared_state or InMemorySharedState(),
+        metering=metering or InlineMeteringBackend(Settings(), InMemoryUsageStore()),
+    )
+
+
+def entitlement_middleware(
+    registry: ServiceRegistry,
+    policy: EntitlementPolicy,
+    lint_store: LintObservationStore | None = None,
+) -> EntitlementMiddleware:
+    """An ``EntitlementMiddleware`` recording lint findings in an in-memory store unless *lint_store* is given."""
+    return EntitlementMiddleware(
+        registry,
+        policy,
+        lint_store=lint_store or LintObservationStore(InMemorySharedState()),
+    )
 
 
 def asgi_auth_middleware(

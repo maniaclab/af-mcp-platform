@@ -18,7 +18,7 @@ import json
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from broker_state_helpers import aggregator_stores
+from broker_state_helpers import aggregator_inputs
 from fastmcp import FastMCP
 from fastmcp.server.dependencies import get_http_headers
 from test_broker_issued import (
@@ -254,7 +254,7 @@ async def test_aggregator_injects_broker_identity_token(
     credential_registry.register("toy", provider)
     policy = EntitlementPolicy(group_permissions={"atlas": ["read_data"]})
     mcp = build_aggregator(
-        registry, settings, policy, credential_registry, **aggregator_stores()
+        registry, settings, policy, credential_registry, **aggregator_inputs()
     )
     inbound_token = sig_key.sign(make_claims())
 

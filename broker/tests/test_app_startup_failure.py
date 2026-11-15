@@ -3,7 +3,7 @@
 The lifespan registers each resource's close on one ``AsyncExitStack`` as it is
 built, so a later builder raising still tears down the earlier ones, in reverse
 build order, instead of leaking them (janitor tasks, the metrics server's
-port, the installed usage store and metering worker).
+port, the usage store and metering worker).
 """
 
 from __future__ import annotations
@@ -14,11 +14,11 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 import af_mcp_broker.app as app_module
-from af_mcp_broker import metering
 from af_mcp_broker.credentials import CredentialCache
 from af_mcp_broker.mcp.cache_invalidation import ListCacheInvalidator
+from af_mcp_broker.metering import InProcessMeteringBackend
 from af_mcp_broker.shared_state import InMemorySharedState
-from af_mcp_broker.usage import get_usage_store
+from af_mcp_broker.usage import InMemoryUsageStore
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -32,6 +32,8 @@ def closed(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     original_stop_janitor = CredentialCache.stop_janitor
     original_stop_invalidator = ListCacheInvalidator.stop
     original_close = InMemorySharedState.close
+    original_drain = InProcessMeteringBackend.aclose
+    original_close_usage = InMemoryUsageStore.aclose
 
     async def _stop_janitor(self: CredentialCache) -> None:
         events.append("credential_cache.janitor")
@@ -45,6 +47,16 @@ def closed(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         events.append("shared_state")
         await original_close(self)
 
+    async def _drain(self: InProcessMeteringBackend) -> None:
+        events.append("metering")
+        await original_drain(self)
+
+    async def _close_usage(self: InMemoryUsageStore) -> None:
+        events.append("usage_store")
+        await original_close_usage(self)
+
+    monkeypatch.setattr(InProcessMeteringBackend, "aclose", _drain)
+    monkeypatch.setattr(InMemoryUsageStore, "aclose", _close_usage)
     monkeypatch.setattr(CredentialCache, "stop_janitor", _stop_janitor)
     monkeypatch.setattr(ListCacheInvalidator, "stop", _stop_invalidator)
     monkeypatch.setattr(InMemorySharedState, "close", _close)
@@ -73,8 +85,6 @@ def test_a_failure_before_the_stores_start_closes_the_credential_subsystem_in_re
         "list_cache_invalidator",
         "shared_state",
     ]
-    assert get_usage_store() is None
-    assert metering._pipeline is None
 
 
 def test_a_failure_after_every_builder_ran_closes_all_of_them(
@@ -88,12 +98,12 @@ def test_a_failure_after_every_builder_ran_closes_all_of_them(
         pass
 
     assert closed == [
+        "metering",
+        "usage_store",
         "credential_cache.janitor",
         "list_cache_invalidator",
         "shared_state",
     ]
-    assert get_usage_store() is None
-    assert metering._pipeline is None
     port = app_module.app.state.broker.metrics_port
     assert port is not None
     with pytest.raises(OSError):  # noqa: PT011 -- connection refused, any OSError subclass

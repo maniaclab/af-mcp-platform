@@ -34,15 +34,17 @@ logger = structlog.get_logger(__name__)
 
 
 class EntitlementMiddleware(Middleware):
-    def __init__(self, registry: ServiceRegistry, policy: EntitlementPolicy) -> None:
+    def __init__(
+        self,
+        registry: ServiceRegistry,
+        policy: EntitlementPolicy,
+        *,
+        lint_store: LintObservationStore,
+    ) -> None:
         self.registry = registry
         self.policy = policy
         # Where each listing's lint findings are recorded for the admin
-        # tables (see lint_observations.py); None records nothing.
-        self.lint_store: LintObservationStore | None = None
-
-    def use_lint_store(self, lint_store: LintObservationStore) -> None:
-        """Record every listing's lint findings in *lint_store*."""
+        # tables (see lint_observations.py).
         self.lint_store = lint_store
 
     async def on_list_tools(
@@ -219,8 +221,6 @@ class EntitlementMiddleware(Middleware):
         an unreachable backend or a caller with no linked credential, so
         saying "observed" would be wrong.
         """
-        if self.lint_store is None:
-            return
         listed = {tool.name for tool in tools}
         observed: set[str] = set()
         for tool in tools:

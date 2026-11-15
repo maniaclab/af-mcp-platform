@@ -16,7 +16,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from broker_state_helpers import aggregator_stores, set_broker_state
+from broker_state_helpers import aggregator_inputs, set_broker_state
 from conftest import make_claims, run_aggregator_async, run_inprocess_server
 from fastmcp import FastMCP
 
@@ -195,7 +195,7 @@ async def _serve_mcp(
         settings,
         EntitlementPolicy(group_permissions={"__authenticated__": []}),
         CredentialRegistry(),
-        **aggregator_stores(),
+        **aggregator_inputs(),
     )
     return run_aggregator_async(
         mcp,

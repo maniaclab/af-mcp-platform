@@ -8,6 +8,7 @@ import httpx2
 import mcp.types as mt
 import pytest
 import structlog.testing
+from broker_state_helpers import authorization_middleware
 from fastmcp.exceptions import AuthorizationError, ToolError
 from fastmcp.tools.base import ToolResult
 from prometheus_client import REGISTRY
@@ -19,10 +20,7 @@ from af_mcp_broker.authorization.errors import ToolRateLimitError
 from af_mcp_broker.config import Settings
 from af_mcp_broker.mcp.middleware import authorization_mw
 from af_mcp_broker.mcp.middleware.authorization_mw import AuthorizationMiddleware
-from af_mcp_broker.metering import (
-    aclose_metering_pipeline,
-    init_metering_pipeline,
-)
+from af_mcp_broker.metering import InlineMeteringBackend, InProcessMeteringBackend
 from af_mcp_broker.service_registry import (
     DIAGNOSTIC_TOOL_NAMES,
     ServiceRegistry,
@@ -33,6 +31,7 @@ from af_mcp_broker.shared_state import (
     RedisSharedState,
     WindowCount,
 )
+from af_mcp_broker.usage import InMemoryUsageStore
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -167,10 +166,10 @@ def captured_audits(monkeypatch: pytest.MonkeyPatch) -> list[AuditRecord]:
         records.append(record)
 
     monkeypatch.setattr(authorization_mw, "write_audit", _fake_write_audit)
-    # Success/error records flow through the metering pipeline's helper,
-    # whose uninitialized fallback (no pipeline installed in unit tests)
-    # measures and writes via pipeline.write_audit -- patch that too so
-    # every audit path in the middleware lands here.
+    # Success/error records flow through the metering backend, whose inline
+    # implementation (the one these tests build) measures and writes via
+    # pipeline.write_audit -- patch that too so every audit path in the
+    # middleware lands here.
     monkeypatch.setattr(pipeline, "write_audit", _fake_write_audit)
     return records
 
@@ -184,7 +183,7 @@ async def test_is_error_result_audits_as_error_not_success(
     library re-raises here) must never be audited as a success just because
     call_next didn't raise -- see _tool_result_error_text's docstring for
     the real-world case this went undetected in."""
-    mw = AuthorizationMiddleware(registry, policy)
+    mw = authorization_middleware(registry, policy)
     principal = make_principal(groups=["atlas"])
     context = _call_tool_context("rucio_list_dids", {"scope": "foo"}, principal)
     fake_result = ToolResult(
@@ -213,7 +212,7 @@ async def test_is_error_result_audits_as_error_not_success(
 async def test_entitled_call_proceeds_and_audits_success(
     registry, policy, make_principal, captured_audits
 ) -> None:
-    mw = AuthorizationMiddleware(registry, policy)
+    mw = authorization_middleware(registry, policy)
     principal = make_principal(groups=["atlas"])
     context = _call_tool_context("rucio_list_dids", {"scope": "foo"}, principal)
     fake_result = ToolResult(content=[])
@@ -244,7 +243,7 @@ async def test_entitled_call_proceeds_and_audits_success(
 async def test_unentitled_call_denied_before_call_next(
     registry, policy, make_principal, captured_audits
 ) -> None:
-    mw = AuthorizationMiddleware(registry, policy)
+    mw = authorization_middleware(registry, policy)
     principal = make_principal(groups=[])
     context = _call_tool_context("rucio_list_dids", {}, principal)
     call_next = _CallNextRecorder()
@@ -270,7 +269,7 @@ async def test_af_method_call_flows_through_the_builtin_service(
     af_link_identity are the bootstrap methods a zero-permission caller
     needs), and unlike issue #153's bypass the call is now audited and
     metered with service=af-mcp."""
-    mw = AuthorizationMiddleware(registry, policy)
+    mw = authorization_middleware(registry, policy)
     principal = make_principal(groups=[])
     context = _call_tool_context(tool_name, {}, principal)
     fake_result = ToolResult(content=[])
@@ -299,7 +298,7 @@ async def test_af_method_call_never_sets_authorized_call_target(
     credential for a proxied service, and the builtin af-mcp service has no
     credential and no forwarding -- the FastMCP server dispatches its own
     registered tools locally."""
-    mw = AuthorizationMiddleware(registry, policy)
+    mw = authorization_middleware(registry, policy)
     principal = make_principal(groups=[])
     context = _call_tool_context(tool_name, {}, principal)
     call_next = _CallNextRecorder(result=ToolResult(content=[]))
@@ -315,7 +314,7 @@ async def test_unentitled_call_denied_audit_carries_no_permission_grant_when_not
 ) -> None:
     """The common case (a JWT, or an identity PAT -- permission_grant=None)
     must not fabricate a grant in the audit record."""
-    mw = AuthorizationMiddleware(registry, policy)
+    mw = authorization_middleware(registry, policy)
     principal = make_principal(groups=[])
     context = _call_tool_context("rucio_list_dids", {}, principal)
     call_next = _CallNextRecorder()
@@ -335,7 +334,7 @@ async def test_denied_call_audit_carries_the_scoped_pats_permission_grant(
     principal holds it, but this PAT is scoped away from it" -- the whole
     point of this field (see AuditRecord.principal_permission_grant's
     docstring)."""
-    mw = AuthorizationMiddleware(registry, policy)
+    mw = authorization_middleware(registry, policy)
     # In the "atlas" group (which read_data below would normally grant), but
     # this particular PAT is scoped to submit_jobs only -- read_data is
     # denied even though the principal's groups would otherwise allow it.
@@ -360,7 +359,7 @@ async def test_audit_token_id_copied_on_all_four_outcome_paths(
     lookup_id from Principal.token_id into the record, so a leaked PAT's
     calls can be isolated (and that one token revoked) without guessing
     among the owner's other tokens."""
-    mw = AuthorizationMiddleware(registry, policy)
+    mw = authorization_middleware(registry, policy)
     principal = make_principal(groups=["atlas"], token_id="pat-lookup-1")
 
     # success
@@ -402,7 +401,7 @@ async def test_jwt_call_audit_token_id_is_none(
     """A session JWT resolves to Principal.token_id=None (the default), so
     its audit lines carry token_id null -- only a PAT ever attributes a call
     to a specific token (issue #247)."""
-    mw = AuthorizationMiddleware(registry, policy)
+    mw = authorization_middleware(registry, policy)
     principal = make_principal(groups=["atlas"])
     await mw.on_call_tool(
         _call_tool_context("rucio_list_dids", {}, principal),
@@ -415,7 +414,7 @@ async def test_jwt_call_audit_token_id_is_none(
 async def test_unknown_tool_prefix_denied(
     registry, policy, make_principal, captured_audits
 ) -> None:
-    mw = AuthorizationMiddleware(registry, policy)
+    mw = authorization_middleware(registry, policy)
     principal = make_principal(groups=["atlas"])
     context = _call_tool_context("mystery_tool", {}, principal)
     call_next = _CallNextRecorder()
@@ -431,7 +430,7 @@ async def test_unknown_tool_prefix_denied(
 async def test_open_target_requires_no_permission(
     registry, policy, make_principal, captured_audits
 ) -> None:
-    mw = AuthorizationMiddleware(registry, policy)
+    mw = authorization_middleware(registry, policy)
     principal = make_principal(groups=[])
     context = _call_tool_context("docs_search", {}, principal)
     fake_result = ToolResult(content=[])
@@ -449,7 +448,7 @@ async def test_omitted_permission_target_requires_no_permission(
     """A backend that omits required_permission has no permission gate --
     the credential layer gates it instead (issue #60) -- so any
     authenticated principal, regardless of groups, must pass this check."""
-    mw = AuthorizationMiddleware(registry, policy)
+    mw = authorization_middleware(registry, policy)
     principal = make_principal(groups=[])
     context = _call_tool_context("credentialed_ping", {}, principal)
     fake_result = ToolResult(content=[])
@@ -468,7 +467,7 @@ async def test_missing_principal_fails_closed_without_audit(
     principal by the time this runs; if it somehow didn't, fail closed --
     mirroring entitlement_mw's identical defensive branch -- without
     fabricating an audit record for a principal we don't have."""
-    mw = AuthorizationMiddleware(registry, policy)
+    mw = authorization_middleware(registry, policy)
     context = _call_tool_context("rucio_list_dids", {}, None)
     call_next = _CallNextRecorder()
 
@@ -482,7 +481,7 @@ async def test_missing_principal_fails_closed_without_audit(
 async def test_missing_fastmcp_context_fails_closed(
     registry, policy, captured_audits
 ) -> None:
-    mw = AuthorizationMiddleware(registry, policy)
+    mw = authorization_middleware(registry, policy)
     context = _FakeMiddlewareContext(
         mt.CallToolRequestParams(name="rucio_list_dids", arguments={}), None
     )
@@ -502,7 +501,7 @@ async def test_call_next_failure_audited_as_error_and_reraised(
     credential resolution, or the backend call itself -- must still produce
     exactly one audit line, recorded as an error rather than silently
     dropped, and the original exception must propagate unchanged."""
-    mw = AuthorizationMiddleware(registry, policy)
+    mw = authorization_middleware(registry, policy)
     principal = make_principal(groups=["atlas"])
     context = _call_tool_context("rucio_list_dids", {}, principal)
     boom = RuntimeError("credential provider unreachable")
@@ -540,7 +539,7 @@ async def test_transient_connection_failure_audited_with_error_class(
     timeout) is audited outcome=error with error_class="transient_connection"
     -- observability only, the exception still propagates unchanged (issue
     #216 A.3)."""
-    mw = AuthorizationMiddleware(registry, policy)
+    mw = authorization_middleware(registry, policy)
     principal = make_principal(groups=["atlas"])
     context = _call_tool_context("rucio_list_dids", {}, principal)
     call_next = _CallNextRecorder(error=_tool_error_from_transient())
@@ -559,7 +558,7 @@ async def test_success_carries_no_error_class(
 ) -> None:
     """A success is not a failed call, so error_class stays None (issue #216
     A.3's two-value-plus-null shape)."""
-    mw = AuthorizationMiddleware(registry, policy)
+    mw = authorization_middleware(registry, policy)
     principal = make_principal(groups=["atlas"])
     context = _call_tool_context("rucio_list_dids", {"scope": "foo"}, principal)
     call_next = _CallNextRecorder(result=ToolResult(content=[]))
@@ -575,7 +574,7 @@ async def test_denied_call_carries_no_error_class(
 ) -> None:
     """A denial never executed a backend call, so error_class stays None --
     it is an authorization outcome, not a backend failure (issue #216 A.3)."""
-    mw = AuthorizationMiddleware(registry, policy)
+    mw = authorization_middleware(registry, policy)
     principal = make_principal(groups=[])
     context = _call_tool_context("rucio_list_dids", {}, principal)
     call_next = _CallNextRecorder()
@@ -592,7 +591,7 @@ async def test_success_records_duration_and_observes_histogram(
 ) -> None:
     """A successful call must meter the downstream call's wall time into
     both the audit record (duration_ms) and the duration histogram."""
-    mw = AuthorizationMiddleware(registry, policy)
+    mw = authorization_middleware(registry, policy)
     principal = make_principal(groups=["atlas"])
     context = _call_tool_context("rucio_list_dids", {"scope": "foo"}, principal)
     call_next = _CallNextRecorder(result=ToolResult(content=[]))
@@ -624,7 +623,7 @@ async def test_success_records_result_bytes_and_tokens(
     metering pipeline -- metering.py -- not on the hot path) and
     records both fields; the measurement sees the very ToolResult call_next
     returned."""
-    mw = AuthorizationMiddleware(registry, policy)
+    mw = authorization_middleware(registry, policy)
     principal = make_principal(groups=["atlas"])
     context = _call_tool_context("rucio_list_dids", {"scope": "foo"}, principal)
     fake_result = ToolResult(content=[mt.TextContent(type="text", text="hello")])
@@ -651,7 +650,7 @@ async def test_call_next_failure_records_duration_but_no_result_fields(
 ) -> None:
     """An error downstream still has a measurable duration (the call ran and
     failed), but produced no result to measure."""
-    mw = AuthorizationMiddleware(registry, policy)
+    mw = authorization_middleware(registry, policy)
     principal = make_principal(groups=["atlas"])
     context = _call_tool_context("rucio_list_dids", {}, principal)
     call_next = _CallNextRecorder(error=RuntimeError("boom"))
@@ -686,7 +685,7 @@ async def test_denied_call_leaves_metering_fields_none(
 ) -> None:
     """A denial never reaches call_next -- nothing executed, so there is no
     duration and no result to measure."""
-    mw = AuthorizationMiddleware(registry, policy)
+    mw = authorization_middleware(registry, policy)
     principal = make_principal(groups=[])
     context = _call_tool_context("rucio_list_dids", {}, principal)
     call_next = _CallNextRecorder()
@@ -711,7 +710,7 @@ async def test_denied_call_leaves_metering_fields_none(
 async def test_dict_form_permission_allows_the_tool_it_names(
     registry, policy, make_principal, captured_audits
 ) -> None:
-    mw = AuthorizationMiddleware(registry, policy)
+    mw = authorization_middleware(registry, policy)
     principal = make_principal(
         groups=["atlas"]
     )  # holds read_monitoring, not manage_jobs
@@ -731,7 +730,7 @@ async def test_dict_form_permission_falls_back_to_default_for_other_tools(
 ) -> None:
     """condor_submit_job isn't an explicit key -- it falls back to
     __default__ (manage_jobs), which this atlas principal doesn't hold."""
-    mw = AuthorizationMiddleware(registry, policy)
+    mw = authorization_middleware(registry, policy)
     principal = make_principal(groups=["atlas"])
     context = _call_tool_context("condor_submit_job", {}, principal)
     call_next = _CallNextRecorder()
@@ -746,7 +745,7 @@ async def test_dict_form_permission_falls_back_to_default_for_other_tools(
 async def test_dict_form_permission_grants_default_to_a_holder(
     registry, policy, make_principal, captured_audits
 ) -> None:
-    mw = AuthorizationMiddleware(registry, policy)
+    mw = authorization_middleware(registry, policy)
     principal = make_principal(groups=["af-admins"])
     context = _call_tool_context("condor_submit_job", {}, principal)
     fake_result = ToolResult(content=[])
@@ -773,7 +772,7 @@ async def test_dict_form_permission_without_default_disables_unlisted_tool(
             required_permission={"read_thing": "read_monitoring"},
         )
     )
-    mw = AuthorizationMiddleware(reg, policy)
+    mw = authorization_middleware(reg, policy)
     principal = make_principal(groups=["af-admins"])
     context = _call_tool_context("strict_unlisted_tool", {}, principal)
     call_next = _CallNextRecorder()
@@ -797,7 +796,7 @@ async def test_dict_form_permission_without_default_disables_unlisted_tool(
 async def test_entitled_call_increments_invocation_counters(
     registry, policy, make_principal, captured_audits
 ) -> None:
-    mw = AuthorizationMiddleware(registry, policy)
+    mw = authorization_middleware(registry, policy)
     principal = make_principal(groups=["atlas"])
     context = _call_tool_context("rucio_list_dids", {"scope": "foo"}, principal)
     call_next = _CallNextRecorder(result=ToolResult(content=[]))
@@ -833,7 +832,7 @@ async def test_entitled_call_increments_invocation_counters(
 async def test_unentitled_call_increments_invocation_and_denied_counters(
     registry, policy, make_principal, captured_audits
 ) -> None:
-    mw = AuthorizationMiddleware(registry, policy)
+    mw = authorization_middleware(registry, policy)
     principal = make_principal(groups=[])
     context = _call_tool_context("rucio_list_dids", {}, principal)
     call_next = _CallNextRecorder()
@@ -875,7 +874,7 @@ async def test_unknown_tool_prefix_increments_unmapped_counter_only(
     and unbounded -- it must land only in the label-free
     tool_invocations_unmapped_total, never in a per-tool or per-backend
     counter (see metrics.py's cardinality policy)."""
-    mw = AuthorizationMiddleware(registry, policy)
+    mw = authorization_middleware(registry, policy)
     principal = make_principal(groups=["atlas"])
     context = _call_tool_context("mystery_tool", {}, principal)
     call_next = _CallNextRecorder()
@@ -891,7 +890,7 @@ async def test_unknown_tool_prefix_increments_unmapped_counter_only(
 async def test_call_next_failure_increments_invocation_counters_not_denied(
     registry, policy, make_principal, captured_audits
 ) -> None:
-    mw = AuthorizationMiddleware(registry, policy)
+    mw = authorization_middleware(registry, policy)
     principal = make_principal(groups=["atlas"])
     context = _call_tool_context("rucio_list_dids", {}, principal)
     call_next = _CallNextRecorder(error=RuntimeError("credential provider unreachable"))
@@ -946,9 +945,10 @@ async def test_success_audit_flows_through_metering_pipeline(
     over and returns without writing; after the pipeline drains, the line
     carries the same fields the old inline path produced -- including the
     measurement the worker performed."""
-    await init_metering_pipeline(Settings())
+    backend = InProcessMeteringBackend(Settings(), InMemoryUsageStore())
+    await backend.start()
     try:
-        mw = AuthorizationMiddleware(registry, policy)
+        mw = authorization_middleware(registry, policy, metering=backend)
         principal = make_principal(groups=["atlas"])
         context = _call_tool_context("rucio_list_dids", {"scope": "foo"}, principal)
         fake_result = ToolResult(
@@ -963,7 +963,7 @@ async def test_success_audit_flows_through_metering_pipeline(
         # the worker cannot have run between enqueue and here).
         assert audit_buffer.getvalue() == ""
     finally:
-        await aclose_metering_pipeline()
+        await backend.aclose()
 
     line = json.loads(audit_buffer.getvalue().strip())
     assert line["event"] == "audit"
@@ -991,9 +991,10 @@ async def test_denied_audit_written_inline_not_via_pipeline(
     """A denial is security-relevant and has nothing to measure: its audit
     line must be on disk before the AuthorizationError even propagates --
     no drain required."""
-    await init_metering_pipeline(Settings())
+    backend = InProcessMeteringBackend(Settings(), InMemoryUsageStore())
+    await backend.start()
     try:
-        mw = AuthorizationMiddleware(registry, policy)
+        mw = authorization_middleware(registry, policy, metering=backend)
         principal = make_principal(groups=[])
         context = _call_tool_context("rucio_list_dids", {}, principal)
 
@@ -1004,7 +1005,7 @@ async def test_denied_audit_written_inline_not_via_pipeline(
         assert line["outcome"] == "denied"
         assert line["target"] == "rucio"
     finally:
-        await aclose_metering_pipeline()
+        await backend.aclose()
 
 
 async def test_audit_request_id_is_the_requests_correlation_id(
@@ -1014,7 +1015,7 @@ async def test_audit_request_id_is_the_requests_correlation_id(
     the audit, request and usage lines of one tool call share one id."""
     structlog.contextvars.clear_contextvars()
     structlog.contextvars.bind_contextvars(correlation_id="corr-42")
-    mw = AuthorizationMiddleware(registry, policy)
+    mw = authorization_middleware(registry, policy)
     principal = make_principal(groups=["atlas"])
     context = _call_tool_context("rucio_list_dids", {}, principal)
 
@@ -1055,9 +1056,9 @@ def _rate_limited_middleware(
     store: shared_state.SharedState | None = None,
 ) -> AuthorizationMiddleware:
     policy.rate_limits = list(rules)
-    mw = AuthorizationMiddleware(registry, policy)
-    mw.use_shared_state(store or InMemorySharedState())
-    return mw
+    return authorization_middleware(
+        registry, policy, shared_state=store or InMemorySharedState()
+    )
 
 
 async def test_rate_limited_call_is_refused_before_call_next_with_retry_info(
@@ -1146,24 +1147,6 @@ async def test_entitlement_denial_comes_first_and_is_not_counted(
     )
 
 
-async def test_rate_limits_without_a_store_refuse_the_call(
-    registry, policy, make_principal, captured_audits
-) -> None:
-    # A middleware that was never given a store must not count in a private
-    # default one: that would silently make the limits per replica.
-    policy.rate_limits = [RateLimitRule(1, 60, tool="rucio_*")]
-    mw = AuthorizationMiddleware(registry, policy)
-    call_next = _CallNextRecorder()
-    principal = make_principal(groups=["atlas"])
-
-    with pytest.raises(RuntimeError, match="shared state"):
-        await mw.on_call_tool(
-            _call_tool_context("rucio_list_dids", {}, principal), call_next
-        )
-
-    assert not call_next.called
-
-
 async def test_rate_limit_budgets_are_per_principal(
     registry, policy, make_principal, captured_audits
 ) -> None:
@@ -1196,8 +1179,7 @@ async def test_no_rate_limits_never_refuses_and_leaves_counter_untouched(
     registry, policy, make_principal, captured_audits
 ) -> None:
     store = _SpyState()
-    mw = AuthorizationMiddleware(registry, policy)
-    mw.use_shared_state(store)
+    mw = authorization_middleware(registry, policy, shared_state=store)
     principal = make_principal(groups=["atlas"])
     for _ in range(5):
         await mw.on_call_tool(
@@ -1313,7 +1295,7 @@ async def test_denial_names_the_granting_groups(
     policy, make_principal, captured_audits
 ) -> None:
     registry = _registry_with_rucio(docs_url="https://docs.example.org/rucio")
-    mw = AuthorizationMiddleware(registry, policy)
+    mw = authorization_middleware(registry, policy)
     context = _call_tool_context("rucio_list_dids", {}, make_principal(groups=[]))
 
     with pytest.raises(AuthorizationError) as excinfo:
@@ -1341,7 +1323,7 @@ async def test_denial_without_groups_keeps_the_original_message(
     """No group grants read_data: nothing to add."""
     registry = _registry_with_rucio()
     policy = EntitlementPolicy(group_permissions={"__authenticated__": []})
-    mw = AuthorizationMiddleware(registry, policy)
+    mw = authorization_middleware(registry, policy)
     context = _call_tool_context("rucio_list_dids", {}, make_principal(groups=[]))
 
     with pytest.raises(AuthorizationError) as excinfo:
@@ -1371,7 +1353,7 @@ async def test_denial_for_a_per_tool_permission_names_that_tools_groups(
             auth_type="none",
         )
     )
-    mw = AuthorizationMiddleware(registry, policy)
+    mw = authorization_middleware(registry, policy)
 
     messages = {}
     for tool in ("condor_query_jobs", "condor_submit_job"):
@@ -1402,7 +1384,7 @@ async def test_denial_of_an_unmapped_tool_names_no_groups(
         )
     )
     policy = EntitlementPolicy(group_permissions={"atlas": ["read_data"]})
-    mw = AuthorizationMiddleware(registry, policy)
+    mw = authorization_middleware(registry, policy)
     context = _call_tool_context("condor_submit_job", {}, make_principal(groups=[]))
 
     with pytest.raises(AuthorizationError) as excinfo:
@@ -1411,3 +1393,55 @@ async def test_denial_of_an_unmapped_tool_names_no_groups(
     assert str(excinfo.value) == (
         "Authorization denied: target 'condor' has no permission mapping for this tool"
     )
+
+
+# ---------------------------------------------------------------------------
+# Constructor-injected collaborators: the shared state and the metering
+# backend are required arguments, and the middleware submits to the backend
+# it was given rather than to anything process-wide.
+# ---------------------------------------------------------------------------
+
+
+class _RecordingMetering(InlineMeteringBackend):
+    def __init__(self) -> None:
+        super().__init__(Settings(), InMemoryUsageStore())
+        self.submitted: list[AuditRecord] = []
+
+    async def submit(self, record: AuditRecord, result: ToolResult | None) -> None:
+        self.submitted.append(record)
+
+
+def test_the_constructor_requires_shared_state_and_metering(registry, policy) -> None:
+    with pytest.raises(TypeError):
+        AuthorizationMiddleware(registry, policy)  # type: ignore[call-arg]
+
+
+async def test_success_is_submitted_to_the_metering_backend_it_was_given(
+    registry, policy, make_principal, captured_audits
+) -> None:
+    metering = _RecordingMetering()
+    mw = authorization_middleware(registry, policy, metering=metering)
+    context = _call_tool_context(
+        "rucio_list_dids", {}, make_principal(groups=["atlas"])
+    )
+
+    await mw.on_call_tool(context, _CallNextRecorder(result=ToolResult(content=[])))
+
+    assert [r.outcome for r in metering.submitted] == ["success"]
+    assert captured_audits == []
+
+
+async def test_a_failing_audit_write_raises_to_the_tool_caller(
+    registry, policy, make_principal, monkeypatch
+) -> None:
+    async def _failing_write_audit(record: AuditRecord) -> None:
+        raise RuntimeError("audit output unavailable")
+
+    monkeypatch.setattr(pipeline, "write_audit", _failing_write_audit)
+    mw = authorization_middleware(registry, policy)
+    context = _call_tool_context(
+        "rucio_list_dids", {}, make_principal(groups=["atlas"])
+    )
+
+    with pytest.raises(RuntimeError, match="audit output unavailable"):
+        await mw.on_call_tool(context, _CallNextRecorder(result=ToolResult(content=[])))
