@@ -21,7 +21,7 @@ from af_mcp_broker.credentials.errors import (
     PosixIdentityRequiredError,
     VomsServiceBadPassphraseError,
 )
-from af_mcp_broker.credentials.x509_vault import StoredX509Credential
+from af_mcp_broker.credentials.x509_vault import X509Proxy
 from af_mcp_broker.principal import PosixPrincipal
 
 if TYPE_CHECKING:
@@ -398,9 +398,7 @@ class X509Provider(CredentialProvider):
         )
         return await self._cache_stored_record(principal, target, record)
 
-    async def renew_from_stored_link(
-        self, subject: str, target: str
-    ) -> StoredX509Credential:
+    async def renew_from_stored_link(self, subject: str, target: str) -> X509Proxy:
         """Mint a fresh proxy with *subject*'s Vault-stored passphrase and persist it — the hands-free renewal step.
 
         Public (also called by the redeem endpoint's renewal path, which
@@ -422,11 +420,6 @@ class X509Provider(CredentialProvider):
             raise NeedsUnlockError(
                 target=target, reason="not_linked", unlock_endpoint="/v1/x509/proxy"
             )
-        # get_link() guarantees the link half is complete; narrow for mypy.
-        assert link.passphrase is not None  # noqa: S101 -- mypy narrowing of an invariant validated upstream
-        assert link.unixname is not None  # noqa: S101 -- mypy narrowing of an invariant validated upstream
-        assert link.uid is not None  # noqa: S101 -- mypy narrowing of an invariant validated upstream
-        assert link.gid is not None  # noqa: S101 -- mypy narrowing of an invariant validated upstream
         try:
             minted = await self._voms_client.mint(
                 subject=subject,
@@ -445,9 +438,7 @@ class X509Provider(CredentialProvider):
             ) from exc
         return await self._store_minted_proxy(subject, minted)
 
-    async def _store_minted_proxy(
-        self, subject: str, minted: MintedProxy
-    ) -> StoredX509Credential:
+    async def _store_minted_proxy(self, subject: str, minted: MintedProxy) -> X509Proxy:
         """Persist *minted* in Vault and return it as a stored record."""
         await self._vault_store.store_proxy(
             subject,
@@ -469,7 +460,7 @@ class X509Provider(CredentialProvider):
             not_after=minted.not_after,
             source="voms_token_service",
         )
-        return StoredX509Credential(
+        return X509Proxy(
             proxy_pem=SecretStr(minted.pem),
             dn=minted.dn,
             voms_attributes=list(minted.voms_attributes),
@@ -478,7 +469,7 @@ class X509Provider(CredentialProvider):
         )
 
     async def _cache_stored_record(
-        self, principal: Principal, target: str, record: StoredX509Credential
+        self, principal: Principal, target: str, record: X509Proxy
     ) -> IssuedCredential:
         """Build the redeem-kind credential for *record* and cache it in memory.
 
@@ -489,8 +480,6 @@ class X509Provider(CredentialProvider):
         passing the principal's uid unconditionally is harmless: the
         counter only ever holds entries for genuine failures.
         """
-        # only called with a proxy present
-        assert record.not_after is not None  # noqa: S101
         meta = ProxyMeta(
             dn=record.dn or "",
             voms_attributes=list(record.voms_attributes),

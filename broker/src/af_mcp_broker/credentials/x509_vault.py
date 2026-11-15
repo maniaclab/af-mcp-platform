@@ -81,6 +81,34 @@ class StoredX509Credential(BaseModel):
             and self.gid is not None
         )
 
+    def as_link(self) -> X509Link | None:
+        """Return this record as an ``X509Link`` when its link half is complete, else None."""
+        if not self.has_link:
+            return None
+        return X509Link.model_validate(self.model_dump())
+
+    def as_proxy(self) -> X509Proxy | None:
+        """Return this record as an ``X509Proxy`` when it holds a proxy, else None."""
+        if self.proxy_pem is None or self.not_after is None:
+            return None
+        return X509Proxy.model_validate(self.model_dump())
+
+
+class X509Link(StoredX509Credential):
+    """A record whose link half is complete: the passphrase and the full POSIX identity a re-mint asserts are all present."""
+
+    passphrase: SecretStr
+    unixname: str
+    uid: int
+    gid: int
+
+
+class X509Proxy(StoredX509Credential):
+    """A record that holds a proxy: the PEM and its expiry are present."""
+
+    proxy_pem: SecretStr
+    not_after: float
+
 
 class VaultX509Store:
     """Per-subject x509 link/proxy store backed by Vault/OpenBao KV-v2.
@@ -147,13 +175,13 @@ class VaultX509Store:
         record, _version = got
         return record
 
-    async def get_link(self, subject: str) -> StoredX509Credential | None:
+    async def get_link(self, subject: str) -> X509Link | None:
         """Return the record when its link half is complete (passphrase + POSIX identity), else None."""
         got = await self._read(subject)
         if got is None:
             return None
         record, _version = got
-        return record if record.has_link else None
+        return record.as_link()
 
     async def store_proxy(
         self,
@@ -188,7 +216,7 @@ class VaultX509Store:
 
     async def get_proxy(
         self, subject: str, min_remaining: float = 0.0
-    ) -> StoredX509Credential | None:
+    ) -> X509Proxy | None:
         """Return the record when it holds a proxy with at least *min_remaining* seconds of validity left, else None.
 
         Expiry-aware by design: an expired (or nearly-expired) proxy is
@@ -200,11 +228,10 @@ class VaultX509Store:
         if got is None:
             return None
         record, _version = got
-        if record.proxy_pem is None or record.not_after is None:
+        proxy = record.as_proxy()
+        if proxy is None or proxy.not_after - time.time() < min_remaining:
             return None
-        if record.not_after - time.time() < min_remaining:
-            return None
-        return record
+        return proxy
 
     async def clear_proxy(self, subject: str) -> None:
         """Remove *subject*'s stored proxy while keeping the link half.

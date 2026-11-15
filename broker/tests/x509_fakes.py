@@ -15,7 +15,11 @@ from typing import Any
 from pydantic import SecretStr
 
 from af_mcp_broker.credentials.voms_service import MintedProxy
-from af_mcp_broker.credentials.x509_vault import StoredX509Credential
+from af_mcp_broker.credentials.x509_vault import (
+    StoredX509Credential,
+    X509Link,
+    X509Proxy,
+)
 
 PEM = "-----BEGIN CERTIFICATE-----\nFAKE\n-----END CERTIFICATE-----\n"
 DN = "/DC=ch/DC=cern/CN=Test User"
@@ -42,11 +46,9 @@ class FakeX509Store:
             passphrase=passphrase, unixname=unixname, uid=uid, gid=gid
         )
 
-    async def get_link(self, subject: str) -> StoredX509Credential | None:
+    async def get_link(self, subject: str) -> X509Link | None:
         record = self.records.get(subject)
-        if record is None or not record.has_link:
-            return None
-        return record
+        return record.as_link() if record is not None else None
 
     async def get(self, subject: str) -> StoredX509Credential | None:
         return self.records.get(subject)
@@ -74,13 +76,12 @@ class FakeX509Store:
 
     async def get_proxy(
         self, subject: str, min_remaining: float = 0.0
-    ) -> StoredX509Credential | None:
+    ) -> X509Proxy | None:
         record = self.records.get(subject)
-        if record is None or record.proxy_pem is None or record.not_after is None:
+        proxy = record.as_proxy() if record is not None else None
+        if proxy is None or proxy.not_after - time.time() < min_remaining:
             return None
-        if record.not_after - time.time() < min_remaining:
-            return None
-        return record
+        return proxy
 
     async def clear_proxy(self, subject: str) -> None:
         record = self.records.get(subject)

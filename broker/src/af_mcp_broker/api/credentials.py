@@ -886,8 +886,6 @@ async def proxy_status(
     record = await provider.vault_store.get_proxy(principal.subject)
     if record is None:
         return ProxyCacheStatus(cached=False)
-    # get_proxy only returns records with a proxy; narrow for mypy.
-    assert record.not_after is not None  # noqa: S101 -- mypy narrowing of an invariant validated upstream
     return ProxyCacheStatus(
         cached=True,
         dn=record.dn,
@@ -1057,10 +1055,6 @@ async def _redeem_from_vault(
                 detail="Proxy renewal is temporarily unavailable — retry later.",
             ) from exc
         renewed = True
-
-    # renew_from_stored_link/get_proxy only return records with a proxy.
-    assert record.proxy_pem is not None  # noqa: S101 -- mypy narrowing of an invariant validated upstream
-    assert record.not_after is not None  # noqa: S101 -- mypy narrowing of an invariant validated upstream
 
     await write_audit(
         _release_audit(
@@ -1469,9 +1463,6 @@ async def redeem_servicex_token(request: Request) -> ServiceXRedeemResponse:
             ) from exc
         renewed = True
 
-    # get_token/redeem_from_link guarantee this
-    assert record.access_token is not None  # noqa: S101
-    assert record.expires_at is not None  # noqa: S101 -- mypy narrowing of an invariant validated upstream
     now = time.time()
 
     await write_audit(

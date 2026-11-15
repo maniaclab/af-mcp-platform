@@ -32,16 +32,14 @@ from af_mcp_broker.credentials.errors import (
     NeedsUnlockError,
     ServiceXBadRefreshTokenError,
 )
+from af_mcp_broker.credentials.servicex_vault import ServiceXToken
 
 if TYPE_CHECKING:
     from pydantic import SecretBytes
 
     from af_mcp_broker.credentials.cache import CredentialCache
     from af_mcp_broker.credentials.servicex_service import ServiceXTokenServiceClient
-    from af_mcp_broker.credentials.servicex_vault import (
-        StoredServiceXCredential,
-        VaultServiceXStore,
-    )
+    from af_mcp_broker.credentials.servicex_vault import VaultServiceXStore
     from af_mcp_broker.principal import Principal
 
 _LINK_ENDPOINT = "/v1/servicex/link"
@@ -156,9 +154,7 @@ class ServiceXProvider(CredentialProvider):
             principal.subject, target, min_remaining_seconds, _do_redeem
         )
 
-    async def redeem_from_link(
-        self, subject: str, target: str
-    ) -> StoredServiceXCredential:
+    async def redeem_from_link(self, subject: str, target: str) -> ServiceXToken:
         """Redeem a fresh access token with *subject*'s Vault-stored refresh token and persist it -- the hands-free renewal step.
 
         Public (also called by the redeem endpoint's renewal path, which
@@ -180,8 +176,6 @@ class ServiceXProvider(CredentialProvider):
             raise NeedsUnlockError(
                 target=target, reason="not_linked", unlock_endpoint=_LINK_ENDPOINT
             )
-        # get_link() guarantees the link half is complete; narrow for mypy.
-        assert link.refresh_token is not None  # noqa: S101 -- mypy narrowing of an invariant validated upstream
         try:
             redeemed = await self._servicex_client.redeem(
                 subject=subject, refresh_token=link.refresh_token
@@ -200,11 +194,10 @@ class ServiceXProvider(CredentialProvider):
         )
         # Built directly from the redeem result rather than re-reading Vault
         # (same shortcut X509Provider._store_minted_proxy takes).
-        return link.model_copy(
-            update={
-                "access_token": SecretStr(redeemed.access_token),
-                "expires_at": redeemed.expires_at,
-            }
+        return ServiceXToken(
+            refresh_token=link.refresh_token,
+            access_token=SecretStr(redeemed.access_token),
+            expires_at=redeemed.expires_at,
         )
 
     async def revoke(self, principal: Principal, target: str) -> None:  # noqa: ARG002 (interface)
@@ -239,12 +232,7 @@ class ServiceXProvider(CredentialProvider):
             return None
         return self._build_credential(target, record)
 
-    def _build_credential(
-        self, target: str, record: StoredServiceXCredential
-    ) -> IssuedCredential:
-        # only called with a token present
-        assert record.access_token is not None  # noqa: S101
-        assert record.expires_at is not None  # noqa: S101 -- mypy narrowing of an invariant validated upstream
+    def _build_credential(self, target: str, record: ServiceXToken) -> IssuedCredential:
         return IssuedCredential(
             cred_class=self.cred_class,
             target=target,

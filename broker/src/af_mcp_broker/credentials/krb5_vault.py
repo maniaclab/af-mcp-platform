@@ -68,6 +68,43 @@ class StoredKrb5Credential:
     def has_ticket(self) -> bool:
         return self.ccache_b64 is not None and self.not_after is not None
 
+    def as_link(self) -> Krb5Link | None:
+        """Return the link half as a ``Krb5Link`` when it is complete (username + keytab), else None."""
+        if self.username is None or self.keytab_b64 is None:
+            return None
+        return Krb5Link(username=self.username, keytab_b64=self.keytab_b64)
+
+    def as_ticket(self) -> Krb5Ticket | None:
+        """Return the ticket half as a ``Krb5Ticket`` when it is complete (ccache + not_after), else None."""
+        if self.ccache_b64 is None or self.not_after is None:
+            return None
+        return Krb5Ticket(
+            ccache_b64=self.ccache_b64,
+            not_after=self.not_after,
+            principal=self.principal,
+            realm=self.realm,
+            renew_until=self.renew_until,
+        )
+
+
+@dataclass(frozen=True)
+class Krb5Link:
+    """A krb5 record's complete link half: the username and keytab a keytab re-mint needs."""
+
+    username: str
+    keytab_b64: SecretStr
+
+
+@dataclass(frozen=True)
+class Krb5Ticket:
+    """A krb5 record's complete ticket half: the ccache and its ``not_after`` deadline, plus the metadata that may be absent."""
+
+    ccache_b64: SecretStr
+    not_after: float  # epoch seconds (UTC)
+    principal: str | None = None
+    realm: str | None = None
+    renew_until: float | None = None  # epoch seconds (UTC)
+
 
 class Krb5VaultStore:
     """Per-subject krb5 link/ticket store backed by Vault/OpenBao KV-v2.
@@ -108,13 +145,13 @@ class Krb5VaultStore:
 
         await self._write_cas_retry(subject, _merge)
 
-    async def get_link(self, subject: str) -> StoredKrb5Credential | None:
-        """Return the record when its link half is complete (username + keytab), else None."""
+    async def get_link(self, subject: str) -> Krb5Link | None:
+        """Return the link half when it is complete (username + keytab), else None."""
         got = await self._read(subject)
         if got is None:
             return None
         record, _version = got
-        return record if record.has_link else None
+        return record.as_link()
 
     async def store_ticket(
         self,
@@ -143,8 +180,8 @@ class Krb5VaultStore:
 
     async def get_ticket(
         self, subject: str, min_remaining: float = 0.0
-    ) -> StoredKrb5Credential | None:
-        """Return the record when it holds a ticket with at least *min_remaining* seconds of validity left, else None.
+    ) -> Krb5Ticket | None:
+        """Return the ticket when the record holds one with at least *min_remaining* seconds of validity left, else None.
 
         Expiry-aware by design: an expired (or nearly-expired) ticket is
         reported as absent so callers fall through to the renewal/re-mint
@@ -154,16 +191,13 @@ class Krb5VaultStore:
         if got is None:
             return None
         record, _version = got
-        if not record.has_ticket:
+        ticket = record.as_ticket()
+        if ticket is None or ticket.not_after - time.time() < min_remaining:
             return None
-        # has_ticket guarantees this
-        assert record.not_after is not None  # noqa: S101
-        if record.not_after - time.time() < min_remaining:
-            return None
-        return record
+        return ticket
 
-    async def get_renewable_ticket(self, subject: str) -> StoredKrb5Credential | None:
-        """Return the record when its ticket half is still within its own ``renew_until`` window, else None.
+    async def get_renewable_ticket(self, subject: str) -> Krb5Ticket | None:
+        """Return the ticket when its ticket half is still within its own ``renew_until`` window, else None.
 
         Deliberately separate from ``get_ticket``: this answers "is there a
         ccache that ``client.renew()`` can still extend", which stays true
@@ -174,11 +208,12 @@ class Krb5VaultStore:
         if got is None:
             return None
         record, _version = got
-        if not record.has_ticket:
+        ticket = record.as_ticket()
+        if ticket is None:
             return None
-        if record.renew_until is None or record.renew_until <= time.time():
+        if ticket.renew_until is None or ticket.renew_until <= time.time():
             return None
-        return record
+        return ticket
 
     async def clear_ticket(self, subject: str) -> None:
         """Remove *subject*'s stored ticket while keeping the link half.

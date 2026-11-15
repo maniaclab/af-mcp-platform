@@ -92,8 +92,8 @@ if TYPE_CHECKING:
         MintedTicket,
     )
     from af_mcp_broker.credentials.krb5_vault import (
+        Krb5Ticket,
         Krb5VaultStore,
-        StoredKrb5Credential,
     )
     from af_mcp_broker.principal import Principal
 
@@ -401,8 +401,6 @@ class KrbTokenProvider(CredentialProvider):
         renew_infra_error: Krb5TokenMintError | None = None
         renewable = await self._vault_store.get_renewable_ticket(subject)
         if renewable is not None:
-            # has_ticket guarantees this
-            assert renewable.ccache_b64 is not None  # noqa: S101
             ccache_b64 = renewable.ccache_b64.get_secret_value()
 
             async def _do_renew() -> IssuedCredential:
@@ -453,10 +451,6 @@ class KrbTokenProvider(CredentialProvider):
         # Tier 4: remint from a previously-bootstrapped, stored keytab.
         link = await self._vault_store.get_link(subject)
         if link is not None:
-            # has_link guarantees this
-            assert link.username is not None  # noqa: S101
-            # has_link guarantees this
-            assert link.keytab_b64 is not None  # noqa: S101
             link_username = link.username
             link_keytab_b64 = link.keytab_b64
 
@@ -521,7 +515,7 @@ class KrbTokenProvider(CredentialProvider):
         renew_until: float | None,
         tier: str | None,
     ) -> IssuedCredential:
-        """Build an ``IssuedCredential`` from a ticket's primitive fields, shared by ``_cred_from_ticket`` (a freshly minted/renewed ``MintedTicket``) and ``_serve_stored_ticket`` (a Vault-stored ``StoredKrb5Credential``, whose ``SecretStr`` fields the caller must unwrap first).
+        """Build an ``IssuedCredential`` from a ticket's primitive fields, shared by ``_cred_from_ticket`` (a freshly minted/renewed ``MintedTicket``) and ``_serve_stored_ticket`` (a Vault-stored ``Krb5Ticket``, whose ``SecretStr`` fields the caller must unwrap first).
 
         ``tier`` (``None`` for a caller that doesn't track one, e.g.
         ``peek_ticket()``) rides in ``payload["tier"]`` so a caller surfacing
@@ -600,7 +594,7 @@ class KrbTokenProvider(CredentialProvider):
         return cred
 
     async def _serve_stored_ticket(
-        self, subject: str, target: str, record: StoredKrb5Credential, *, tier: str
+        self, subject: str, target: str, record: Krb5Ticket, *, tier: str
     ) -> IssuedCredential:
         """Build a credential from a Vault-stored ticket *record* and repopulate the in-process cache with it -- no service call, since Vault already has a ticket with enough validity left.
 
@@ -609,10 +603,6 @@ class KrbTokenProvider(CredentialProvider):
         ``peek_ticket()`` below, neither of which has any other use here for
         a full ``Principal``.
         """
-        # has_ticket guarantees this
-        assert record.ccache_b64 is not None  # noqa: S101
-        # has_ticket guarantees this
-        assert record.not_after is not None  # noqa: S101
         cred = self._build_credential(
             target,
             ccache_b64=record.ccache_b64.get_secret_value(),
