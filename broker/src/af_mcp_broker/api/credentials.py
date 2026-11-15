@@ -557,11 +557,6 @@ async def create_proxy(
         await provider.issue(
             principal, target, passphrase=passphrase, remember=body.remember
         )
-    except PermissionError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=str(exc),
-        ) from exc
     except PosixIdentityRequiredError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
