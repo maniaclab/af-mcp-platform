@@ -66,6 +66,16 @@ pixi run -e portal dev
 Every fetch the Vue islands make goes through the vite proxy to the broker
 you started in terminal 1.
 
+## Uvicorn lifecycle lines
+
+uvicorn's own lifecycle lines (`Started server process`, `Application startup
+complete.`, the `--reload` watcher's file-change messages) stay plain text under
+`pixi run -e dev broker`, because that task does not pass `--log-config`. They
+are what you read while editing code, and the broker's own lines are already
+JSON either way. To see them as JSON, as in the image, run
+`uvicorn af_mcp_broker.app:app --port 8080 --log-config broker/src/af_mcp_broker/uvicorn_log_config.json`
+or `python -m af_mcp_broker`.
+
 ## Getting past auth for UI work
 
 At this point the broker will 401 on every `/v1/*` call because no bearer
