@@ -34,7 +34,7 @@ from af_mcp_broker.credentials.errors import (
 )
 from af_mcp_broker.errors import require
 from af_mcp_broker.identity import keycloak_dependency
-from af_mcp_broker.logging import bind_subject
+from af_mcp_broker.logging import bind_parent_request_id, bind_subject
 from af_mcp_broker.principal import PosixPrincipal, Principal
 from af_mcp_broker.retry_after import retry_after_seconds
 
@@ -289,7 +289,7 @@ def _bind_parent_request_id(claims: dict[str, Any]) -> None:
     client request has no ``rid``.
     """
     if rid := claims.get("rid"):
-        structlog.contextvars.bind_contextvars(parent_request_id=rid)
+        bind_parent_request_id(rid)
 
 
 def notify_identity_linked(request: Request, subject: str, alias: str | None) -> None:

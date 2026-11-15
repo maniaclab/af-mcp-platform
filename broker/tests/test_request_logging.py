@@ -45,7 +45,7 @@ if TYPE_CHECKING:
 from broker_state_helpers import asgi_auth_middleware
 
 import af_mcp_broker.app as app_module
-from af_mcp_broker.logging import bind_subject
+from af_mcp_broker.logging import bind_parent_request_id, bind_subject
 from af_mcp_broker.mcp.middleware import identity_mw
 
 
@@ -312,6 +312,42 @@ def test_v1_finished_carries_the_subject_bound_while_handling(
 
     finished = next(e for e in events if e["event"] == "http.request.finished")
     assert finished["subject"] == "user-123"
+
+
+async def _v1_binds_parent_request_id(request: Request) -> Response:
+    del request
+    bind_parent_request_id("tool-call-id")
+    return JSONResponse({"ok": True})
+
+
+def test_v1_finished_carries_the_parent_request_id_bound_while_handling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Like the subject, a parent request id bound by the handler's child task
+    must reach the middleware's ``finished`` line."""
+    test_app = Starlette(routes=[Route("/v1/redeem", _v1_binds_parent_request_id)])
+    test_app.add_middleware(
+        BaseHTTPMiddleware, dispatch=app_module._bind_request_logging_context
+    )
+    events = _capturing_info(monkeypatch, app_module.logger)
+
+    with TestClient(test_app) as client:
+        client.get("/v1/redeem")
+
+    finished = next(e for e in events if e["event"] == "http.request.finished")
+    assert finished["parent_request_id"] == "tool-call-id"
+
+
+def test_v1_finished_has_no_parent_request_id_when_none_was_bound(
+    monkeypatch: pytest.MonkeyPatch, v1_logging_app: Starlette
+) -> None:
+    events = _capturing_info(monkeypatch, app_module.logger)
+
+    with TestClient(v1_logging_app) as client:
+        client.get("/v1/ok")
+
+    finished = next(e for e in events if e["event"] == "http.request.finished")
+    assert "parent_request_id" not in finished
 
 
 async def test_mcp_finished_carries_method_and_path(
