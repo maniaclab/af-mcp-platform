@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Annotated
 from urllib.parse import urlencode
 
@@ -18,7 +19,6 @@ from af_mcp_broker.credentials.oauth21 import (
     TokenStore,
     normalize_token_response,
 )
-from af_mcp_broker.errors import require
 from af_mcp_broker.identity import keycloak_dependency
 from af_mcp_broker.oauth_state import (
     NONCE_COOKIE_NAME,
@@ -148,6 +148,39 @@ def _prefers_json(accept: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class _CallbackSuccess:
+    """A backend AS redirect carrying the authorization ``code``."""
+
+    code: str
+
+
+@dataclass(frozen=True)
+class _CallbackFailure:
+    """A backend AS redirect carrying an OAuth ``error`` (OAuth 2.1 §4.1.2.1)."""
+
+    error: str
+    error_description: str | None
+    error_uri: str | None
+
+
+def _parse_callback_outcome(
+    code: str | None,
+    error: str | None,
+    error_description: str | None,
+    error_uri: str | None,
+) -> _CallbackSuccess | _CallbackFailure:
+    """Classify the callback's query parameters; ``error`` wins over ``code``, and neither is a 400."""
+    if error is not None:
+        return _CallbackFailure(error, error_description, error_uri)
+    if code is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing code or error in callback",
+        )
+    return _CallbackSuccess(code)
+
+
 @router.get(
     "/oauth/authorize/{alias}",
     summary="Begin an OAuth 2.1 account-linking flow",
@@ -271,14 +304,10 @@ async def callback(
     """
     provider = _resolve_provider(request, alias)
 
-    if code is None and error is None:
-        # A compliant AS always sends one or the other. Don't attempt to
-        # decrypt state for this case -- we have no reason to trust a
-        # request shaped like this came from the AS at all.
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Missing code or error in callback",
-        )
+    # A compliant AS always sends one or the other. Don't attempt to decrypt
+    # state for a request with neither -- we have no reason to trust a request
+    # shaped like this came from the AS at all.
+    outcome = _parse_callback_outcome(code, error, error_description, error_uri)
 
     cookie_nonce = request.cookies.get(NONCE_COOKIE_NAME)
     if cookie_nonce is None:
@@ -309,33 +338,31 @@ async def callback(
             detail="OAuth state alias does not match callback URL",
         )
 
-    if error is not None:
+    if isinstance(outcome, _CallbackFailure):
         log.warning(
             "oauth21.callback.backend_error",
             alias=alias,
             subject=payload.sub,
-            error=error,
-            error_description=error_description,
+            error=outcome.error,
+            error_description=outcome.error_description,
         )
         redirect_url = append_linked_error_params(
             payload.return_url,
             alias,
-            error,
-            error_description=error_description,
-            error_uri=error_uri,
+            outcome.error,
+            error_description=outcome.error_description,
+            error_uri=outcome.error_uri,
         )
         response = RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
         response.delete_cookie(NONCE_COOKIE_NAME, path=NONCE_COOKIE_PATH)
         return response
-
-    code = require(code, "a callback with neither code nor error was rejected above")
 
     redirect_uri = _callback_url(settings, alias)
     resp = await get_broker_state(request).http_client.post(
         provider.token_endpoint,
         data={
             "grant_type": "authorization_code",
-            "code": code,
+            "code": outcome.code,
             "redirect_uri": redirect_uri,
             "code_verifier": payload.pkce_verifier,
             **provider.client_auth_params(),
