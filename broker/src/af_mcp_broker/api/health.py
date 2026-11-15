@@ -23,7 +23,6 @@ class ReadinessResponse(BaseModel):
 
     status: str
     jwks_reachable: bool
-    services_loaded: bool
     services_count: int
 
 
@@ -48,10 +47,8 @@ async def readyz(
 ) -> ReadinessResponse:
     """Return 200 as long as JWKS is reachable.
 
-    An empty service list is a valid degraded state — /v1/identities,
-    /v1/permissions, and /v1/x509/proxy don't need any service configured
-    (issue #29) — so services_loaded/services_count are informational only
-    and never gate the HTTP status.
+    A broker whose services file is missing or empty never boots, so
+    services_count is informational only and never gates the HTTP status.
     """
     state = get_broker_state(request)
     settings = state.settings
@@ -63,10 +60,6 @@ async def readyz(
     except Exception:  # noqa: BLE001  # readiness probe: broad catch is intentional
         logger.warning("readyz_jwks_check_failed")
 
-    # services_loaded/services are set on the BrokerState during the lifespan
-    # startup handler. services_loaded reflects whether services.yaml parsed
-    # without error, not whether any service is configured.
-    services_ok = state.services_loaded
     services_count = len(state.services)
 
     if not jwks_ok:
@@ -75,6 +68,5 @@ async def readyz(
     return ReadinessResponse(
         status="ready" if jwks_ok else "not_ready",
         jwks_reachable=jwks_ok,
-        services_loaded=services_ok,
         services_count=services_count,
     )

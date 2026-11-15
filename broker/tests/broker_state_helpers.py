@@ -38,7 +38,6 @@ def make_broker_state(**overrides: Any) -> BrokerState:
         "entitlement_policy": EntitlementPolicy(),
         "service_registry": ServiceRegistry(),
         "services": [],
-        "services_loaded": False,
         "credential_cache": CredentialCache(),
         "credential_registry": CredentialRegistry(),
         "x509_provider": None,

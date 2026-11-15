@@ -32,16 +32,12 @@ class ServiceCatalog:
     carries the builtin gateway service entry too (issue #240), which needs
     none of the startup validation (permission "__none__", no credential, no
     x509) and would otherwise mask an empty services.yaml from the
-    ``no_services_configured`` warning and inflate /readyz's services_count.
-    *services_loaded* means "services.yaml parsed without error": an empty
-    ``services: []`` is a valid, successfully-parsed degraded state
-    (issue #29); it is only False when the file is missing.
+    non-empty check and inflate /readyz's services_count.
     """
 
     entitlement_policy: EntitlementPolicy
     service_registry: ServiceRegistry
     services: list[ServiceSpec]
-    services_loaded: bool
 
 
 def _load_nonempty_policy(path: str) -> EntitlementPolicy:
@@ -64,12 +60,26 @@ def _load_nonempty_policy(path: str) -> EntitlementPolicy:
     return policy
 
 
-def build_service_catalog(settings: Settings) -> ServiceCatalog:
-    """Load the policy and service registry and refuse to boot on a missing or empty policy or an undeclared or ungranted service permission.
+def _load_nonempty_registry(path: str, builtin_service_name: str) -> ServiceRegistry:
+    """Load the service registry at *path*, refusing a file that is missing, unreadable, invalid or defines no services.
 
-    A missing services file degrades gracefully (an empty registry), with a
-    warning.
+    A broker with no services to route to authenticates users and then serves
+    nothing, so it must never become ready.
     """
+    registry = ServiceRegistry(builtin_service_name)
+    try:
+        registry.load(path)
+    except (OSError, yaml.YAMLError, ValueError, KeyError, TypeError) as exc:
+        msg = f"cannot read the service registry at SERVICES_FILE={path!r}: {exc!r}"
+        raise RuntimeError(msg) from exc
+    if not any(not spec.builtin for spec in registry.all_services()):
+        msg = f"the service registry at SERVICES_FILE={path!r} defines no services"
+        raise RuntimeError(msg)
+    return registry
+
+
+def build_service_catalog(settings: Settings) -> ServiceCatalog:
+    """Load the policy and service registry and refuse to boot on a missing or empty policy or registry, or an undeclared or ungranted service permission."""
     # --- Authorization: the authorization/ engine matches the shipped policy.yaml.
     entitlement_policy = _load_nonempty_policy(settings.policy_file)
     # Observability for issue #125: the effective group -> permission mapping
@@ -87,13 +97,9 @@ def build_service_catalog(settings: Settings) -> ServiceCatalog:
     )
 
     # --- Service registry (config-only; adding a service needs no code change).
-    service_registry = ServiceRegistry(settings.builtin_service_name)
-    try:
-        service_registry.load(settings.services_file)
-        services_loaded = True
-    except FileNotFoundError:
-        logger.warning("services_file_not_found", path=settings.services_file)
-        services_loaded = False
+    service_registry = _load_nonempty_registry(
+        settings.services_file, settings.builtin_service_name
+    )
     services = [spec for spec in service_registry.all_services() if not spec.builtin]
 
     validate_service_permissions(services, entitlement_policy)
@@ -101,7 +107,6 @@ def build_service_catalog(settings: Settings) -> ServiceCatalog:
         entitlement_policy=entitlement_policy,
         service_registry=service_registry,
         services=services,
-        services_loaded=services_loaded,
     )
 
 

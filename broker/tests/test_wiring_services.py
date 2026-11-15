@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from conftest import SHIPPED_POLICY
+from conftest import SHIPPED_POLICY, SHIPPED_SERVICES
 
 from af_mcp_broker.config import (
     KeycloakBrokeredProviderConfig,
@@ -69,29 +69,66 @@ class TestBuildServiceCatalog:
         )
 
         assert [spec.name for spec in catalog.services] == ["rucio"]
-        assert catalog.services_loaded is True
         assert catalog.entitlement_policy.group_permissions == {"atlas": ["read_data"]}
         # The registry carries the builtin gateway service too; `services` does not.
         assert any(spec.builtin for spec in catalog.service_registry.all_services())
 
-    def test_an_empty_services_file_is_loaded_not_missing(self, tmp_path: Path) -> None:
-        catalog = build_service_catalog(_settings(tmp_path, ""))
-
-        assert catalog.services == []
-        assert catalog.services_loaded is True
-
-    def test_a_missing_services_file_degrades_to_an_empty_registry(
-        self, tmp_path: Path
-    ) -> None:
-        settings = _settings(tmp_path, None)
+    def test_the_shipped_dev_services_are_accepted(self, tmp_path: Path) -> None:
+        settings = _settings(tmp_path, "")
+        settings.services_file = str(SHIPPED_SERVICES)
+        settings.policy_file = str(SHIPPED_POLICY)
 
         catalog = build_service_catalog(settings)
 
-        assert catalog.services == []
-        assert catalog.services_loaded is False
+        assert catalog.services
+
+    def test_refuses_a_missing_services_file(self, tmp_path: Path) -> None:
+        settings = _settings(tmp_path, None)
+
+        with pytest.raises(RuntimeError, match="SERVICES_FILE") as excinfo:
+            build_service_catalog(settings)
+
+        assert str(tmp_path / "services.yaml") in str(excinfo.value)
+
+    def test_refuses_an_unreadable_services_file(self, tmp_path: Path) -> None:
+        settings = _settings(tmp_path, None)
+        (tmp_path / "services.yaml").mkdir()
+
+        with pytest.raises(RuntimeError, match="SERVICES_FILE"):
+            build_service_catalog(settings)
+
+    @pytest.mark.parametrize(
+        "services_text",
+        ["services: [unclosed\n", "services:\n  - prefix: rucio\n"],
+        ids=["malformed-yaml", "entry-without-name-and-url"],
+    )
+    def test_refuses_an_invalid_services_file(
+        self, tmp_path: Path, services_text: str
+    ) -> None:
+        settings = _settings(tmp_path, None)
+        (tmp_path / "services.yaml").write_text(services_text)
+
+        with pytest.raises(RuntimeError, match="SERVICES_FILE"):
+            build_service_catalog(settings)
+
+    @pytest.mark.parametrize(
+        "services_text",
+        ["", "services: []\n", "services:\n", "other: {}\n"],
+        ids=["empty-file", "empty-list", "null-list", "no-services-key"],
+    )
+    def test_refuses_a_services_file_that_defines_no_services(
+        self, tmp_path: Path, services_text: str
+    ) -> None:
+        settings = _settings(tmp_path, None)
+        (tmp_path / "services.yaml").write_text(services_text)
+
+        with pytest.raises(RuntimeError, match="SERVICES_FILE") as excinfo:
+            build_service_catalog(settings)
+
+        assert str(tmp_path / "services.yaml") in str(excinfo.value)
 
     def test_the_shipped_dev_policy_is_accepted(self, tmp_path: Path) -> None:
-        settings = _settings(tmp_path, "")
+        settings = _settings(tmp_path, _service("rucio", "bearer"))
         settings.policy_file = str(SHIPPED_POLICY)
 
         catalog = build_service_catalog(settings)

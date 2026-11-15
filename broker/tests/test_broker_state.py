@@ -21,7 +21,6 @@ _FIELDS = {
     "entitlement_policy",
     "service_registry",
     "services",
-    "services_loaded",
     "credential_cache",
     "credential_registry",
     "x509_provider",
@@ -61,7 +60,6 @@ _FROM_GROUPS_OR_CREATED = {
     "entitlement_policy",
     "service_registry",
     "services",
-    "services_loaded",
     "x509_targets",
     "krb5_targets",
     "servicex_targets",
@@ -110,7 +108,6 @@ def test_build_flattens_the_groups_the_lifespan_builds() -> None:
         entitlement_policy=marks["entitlement_policy"],
         service_registry=marks["service_registry"],
         services=marks["services"],
-        services_loaded=marks["services_loaded"],
     )
     targets = SimpleNamespace(
         x509_targets=marks["x509_targets"],
