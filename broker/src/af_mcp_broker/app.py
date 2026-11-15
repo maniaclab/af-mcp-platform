@@ -486,9 +486,11 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     list_cache_invalidator = ListCacheInvalidator(
         shared_state,
         invalidate=lambda subject, target: invalidate_subject_cache(
-            _mcp_aggregator, subject, target
+            application.state.backend_providers, subject, target
         ),
-        invalidate_all=lambda: invalidate_all_subject_caches(_mcp_aggregator),
+        invalidate_all=lambda: invalidate_all_subject_caches(
+            application.state.backend_providers
+        ),
     )
     list_cache_invalidator.start()
     #
@@ -1300,6 +1302,7 @@ app.mount("/mcp", _mcp_aggregator_app)
 # lists the builtin gateway service's methods straight from this instance's
 # local provider instead of HTTP-fetching a backend (issue #240).
 app.state.mcp_aggregator = _mcp_aggregator
+app.state.backend_providers = _mcp_aggregator.backend_providers
 
 app.include_router(v1_router)
 app.include_router(wellknown_router)
