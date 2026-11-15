@@ -329,7 +329,7 @@ class TestExampleLogs:
             "outcome",
         } <= set(tool_lines[0])
         assert tool_lines[0]["subject"] == "user-sub-1"
-        assert tool_lines[0]["outcome"] == "ok"
+        assert tool_lines[0]["outcome"] == "success"
 
     def test_healthz_writes_no_access_line_but_failures_are_kept(
         self, start_example: Callable[[], Example], jwks: JwksServer

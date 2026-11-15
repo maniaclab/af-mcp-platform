@@ -631,6 +631,7 @@ neither logs the other's requests.
 | `method`, `path` | `received`, `finished` | HTTP method and path. Never the query string, which may carry secrets. On `finished` each matched path parameter is shown as `{name}` (`/v1/admin/tokens/{lookup_id}`) so lines group by endpoint. |
 | `status_code`, `duration_ms`, `exc_type` | `finished` | Response status (`null` when the request raised or the client disconnected first), wall time since `received`, and the exception class if one escaped. |
 | `subject` | `finished` | The caller, once known. `received` never has it: it logs before identity resolves. Backend credential redeems (`/v1/credentials/*/redeem`) authenticate with a broker-issued token, and their `subject` is that token's `sub`. |
+| `parent_request_id` | `finished` | Only on a backend credential redeem whose token was minted for a tool call: that call's `correlation_id`, so the redeem's request lines join to the call. The redeem's own id stays in `correlation_id`. Absent on every other request. |
 
 ## Process and portal log lines
 
@@ -640,8 +641,10 @@ lifecycle lines (`Started server process`, `Waiting for application startup.`,
 counterparts), which are `event` lines on logger `uvicorn.error` at `info`.
 uvicorn configures its loggers before the broker's code is imported, so the
 image starts it with `--log-config
-broker/src/af_mcp_broker/uvicorn_log_config.json` (`Containerfile.broker`);
-`pixi run -e dev broker` does not pass it and keeps uvicorn's plain-text lines.
+broker/src/af_mcp_broker/uvicorn_log_config.json` (`Containerfile.broker`), and
+`python -m af_mcp_broker` (the `af-mcp-broker` script) loads the same file.
+`pixi run -e dev broker` does not pass it and keeps uvicorn's plain-text lines
+(see [Local development](local-development.md#uvicorn-lifecycle-lines)).
 `uvicorn.access` stays at `warning`: the `http.request.received` /
 `http.request.finished` lines carry the method, path, status and duration of
 every request, with the correlation id.

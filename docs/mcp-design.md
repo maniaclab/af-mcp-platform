@@ -896,8 +896,8 @@ Distributed tracing is never a deployment requirement for a backend.
   `logger`, `event` (a short stable name such as `tool.call`, with data in
   fields rather than interpolated into the string), `request_id` (L1), `subject`
   (the verified token's `sub`, when known, never an argument), `tool`,
-  `duration_ms` and `outcome` (`ok` or `error`). Write one `tool.call` line per
-  tool invocation carrying `tool`, `duration_ms`, `outcome` and `subject`, and
+  `duration_ms` and `outcome` (`success` or `error`, the values the broker's
+  audit line uses). Write one `tool.call` line per tool invocation carrying `tool`, `duration_ms`, `outcome` and `subject`, and
   put an error's category and detail in fields on that line. Never log a token,
   a credential, or a tool's arguments or results (U3).
 - **Why.** The platform's logs are queried by field. A free-text line cannot be

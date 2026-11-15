@@ -21,8 +21,10 @@ from typing import TYPE_CHECKING
 import pytest
 from audit_lines import audit_lines
 from pydantic import SecretStr
+from test_request_logging import _capturing_info
 from x509_fakes import FakeVomsClient, FakeX509Store
 
+import af_mcp_broker.app as app_module
 from af_mcp_broker.identity import keycloak_dependency
 
 if TYPE_CHECKING:
@@ -287,6 +289,32 @@ class TestRedeemParentRequestId:
         assert [line["action"] for line in lines] == ["x509_proxy_release"]
         assert lines[0]["parent_request_id"] == "tool-call-id"
         assert lines[0]["request_id"] != "tool-call-id"  # the token's jti
+
+    def test_request_finished_line_names_the_minting_tool_call_as_parent(
+        self, x509_redeem_env, app_client_factory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        x509_redeem_env()
+        events = _capturing_info(monkeypatch, app_module.logger)
+        with app_client_factory() as (client, _):
+            _seed_vault_proxy(client, subject="sub-abc")
+            token, _ = client.app.state.broker.broker_token_issuer.mint(
+                "sub-abc",
+                "ami",
+                uid=1000,
+                gid=1000,
+                unixname="tuser",
+                request_id="tool-call-id",
+            )
+            resp = client.post(
+                _REDEEM, json={}, headers={"Authorization": f"Bearer {token}"}
+            )
+        assert resp.status_code == 200, resp.text
+        finished = next(
+            e
+            for e in events
+            if e["event"] == "http.request.finished" and e["path"] == _REDEEM
+        )
+        assert finished["parent_request_id"] == "tool-call-id"
 
     def test_release_audit_line_has_no_parent_for_a_token_without_rid(
         self, x509_redeem_env, app_client_factory, capsys: pytest.CaptureFixture[str]
