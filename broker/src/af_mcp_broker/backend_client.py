@@ -27,6 +27,7 @@ from af_mcp_broker.backend_errors import (
 )
 from af_mcp_broker.credentials import CredentialKind
 from af_mcp_broker.credentials.errors import CredentialError, NeedsUnlockError
+from af_mcp_broker.logging import current_correlation_id, request_id_headers
 from af_mcp_broker.service_registry import namespaced_tool_name
 
 if TYPE_CHECKING:
@@ -100,6 +101,18 @@ def report_401(
     return _hook
 
 
+async def _stamp_request_id(request: httpx2.Request) -> None:
+    """Send the broker's own ``correlation_id`` to the backend as ``X-Request-ID``.
+
+    Read when the request is sent, from the contextvars of the call that
+    sends it, so the id is the one the broker logged for that client request.
+    Replaces any ``X-Request-ID`` already on the request: the broker's id is
+    the only one a backend may log. A request sent outside any client
+    request has no id to send.
+    """
+    request.headers.update(request_id_headers())
+
+
 def unauthorized_raising_httpx_client_factory(
     headers: dict[str, str] | None = None,
     timeout: httpx2.Timeout | None = None,
@@ -129,6 +142,7 @@ def unauthorized_raising_httpx_client_factory(
     if auth is not None:
         client_kwargs["auth"] = auth
     client = httpx2.AsyncClient(**client_kwargs)
+    client.event_hooks.setdefault("request", []).append(_stamp_request_id)
     response_hooks = client.event_hooks.setdefault("response", [])
     if on_unauthorized is not None:
         response_hooks.append(report_401(on_unauthorized))
@@ -565,7 +579,11 @@ async def resolve_list_time_credential(
     if spec.auth_type in ("x509", "krb5", "servicex"):
         issuer = require_signing_issuer(spec, broker_token_issuer)
         await require_linked_to_list(spec, credential_registry, principal)
-        token, _ = issuer.mint(principal.subject, spec.effective_audience)
+        token, _ = issuer.mint(
+            principal.subject,
+            spec.effective_audience,
+            request_id=current_correlation_id(),
+        )
         return ListTimeCredential({"Authorization": f"Bearer {token}"}, None)
     return await resolve_list_time_headers(spec, credential_registry, principal)
 

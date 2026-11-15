@@ -306,9 +306,11 @@ async def test_bind_request_logging_context_binds_a_fresh_correlation_id() -> No
     structlog.contextvars.clear_contextvars()
     # A SimpleNamespace stand-in for Request is enough here: issue #322's
     # http.request.received/finished logging (exercised in full by
-    # test_request_logging.py) only reads request.method/request.url.path,
-    # never anything requiring a real Starlette Request.
-    request = SimpleNamespace(method="GET", url=SimpleNamespace(path="/v1/whoami"))
+    # test_request_logging.py) only reads request.method/request.url.path/
+    # request.scope, never anything requiring a real Starlette Request.
+    request = SimpleNamespace(
+        method="GET", url=SimpleNamespace(path="/v1/whoami"), scope={}
+    )
     response = SimpleNamespace(status_code=200)
 
     async def call_next(request: Any) -> Any:

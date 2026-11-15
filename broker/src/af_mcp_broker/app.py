@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from contextlib import AsyncExitStack, asynccontextmanager
-from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -17,7 +16,7 @@ from pydantic import ValidationError
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from af_mcp_broker._version import version as __version__
-from af_mcp_broker.api.errors import CorrelatedHTTPException
+from af_mcp_broker.api.errors import CorrelatedHTTPException, RateLimitedHTTPException
 from af_mcp_broker.api.router import router as v1_router
 from af_mcp_broker.api.wellknown import router as wellknown_router
 from af_mcp_broker.broker_state import broker_state_of
@@ -53,6 +52,7 @@ from af_mcp_broker.logging import (
 from af_mcp_broker.maintenance import MaintenanceModeError
 from af_mcp_broker.mcp.aggregator import BackendProviders
 from af_mcp_broker.otel_metrics import init_otel_metrics, shutdown_otel_metrics
+from af_mcp_broker.retry_after import retry_after_seconds, retry_at_timestamp
 from af_mcp_broker.tracing import init_tracing, instrument_fastapi, shutdown_tracing
 from af_mcp_broker.wiring.aggregator import (
     build_job_credential_guide,
@@ -343,6 +343,19 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[dict[str, Any], None]
 # ---------------------------------------------------------------------------
 
 
+# Where the /mcp aggregator is mounted. identity_mw.AsgiAuthMiddleware owns
+# request logging below this prefix: it is pure ASGI, so the ``subject`` it
+# binds is visible to its own ``finished`` line, whereas this
+# BaseHTTPMiddleware runs the app in a child task and never sees contextvars
+# bound inside it. Logging /mcp here too would emit a second
+# received/finished pair under a second correlation_id.
+_MCP_MOUNT_PATH = "/mcp"
+
+
+def _is_mcp_path(path: str) -> bool:
+    return path == _MCP_MOUNT_PATH or path.startswith(_MCP_MOUNT_PATH + "/")
+
+
 async def _mcp_mount(scope: Scope, receive: Receive, send: Send) -> None:
     """Serve ``/mcp`` with the ASGI app the lifespan built, read from the broker state at request time.
 
@@ -371,9 +384,9 @@ app = FastAPI(
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
 # Mount the MCP aggregator at /mcp. Requests to /mcp/** are handled entirely
-# by the aggregator sub-application; they do not pass through the broker's
-# FastAPI middleware chain after the mount point.
-app.mount("/mcp", _mcp_mount)
+# by the aggregator sub-application; the FastAPI router and its dependencies
+# never see them.
+app.mount(_MCP_MOUNT_PATH, _mcp_mount)
 
 app.include_router(v1_router)
 app.include_router(wellknown_router)
@@ -396,6 +409,24 @@ instrument_fastapi(app, get_settings())
 _REQUEST_LOGGING_EXCLUDED_PATHS = frozenset({"/v1/healthz", "/v1/readyz"})
 
 
+def _path_template(request: Request) -> str:
+    """Return the request path with each matched path parameter shown as ``{name}``.
+
+    Keeps ids ("/v1/admin/tokens/{lookup_id}") out of the finished line's
+    path so it groups by endpoint. The router fills ``path_params`` on the
+    shared scope while ``call_next`` runs; a path no route matched has none
+    and is returned as is. Built from the public ``path_params`` rather than
+    the matched route, whose ``path`` omits the router prefix.
+    """
+    names = {
+        str(value): name for name, value in request.scope.get("path_params", {}).items()
+    }
+    return "/".join(
+        "{" + names[segment] + "}" if segment in names else segment
+        for segment in request.url.path.split("/")
+    )
+
+
 @app.middleware("http")
 async def _bind_request_logging_context(request: Request, call_next):  # type: ignore[no-untyped-def]
     """Binds a fresh correlation_id to structlog's contextvars for every /v1 request (issue #281) and logs its receipt/completion (issue #322).
@@ -404,10 +435,10 @@ async def _bind_request_logging_context(request: Request, call_next):  # type: i
     identity resolves (see identity.py's ``get_principal``/its own
     dev-bypass branch), so both fields appear on every log line for the
     rest of the request -- including ``_http_exception_handler``'s --
-    without every call site threading them through by hand. Runs outside
-    the /mcp mount entirely (see the mount comment above), which is why
-    identity_mw.AsgiAuthMiddleware binds its own correlation_id the same
-    way for that surface.
+    without every call site threading them through by hand. Requests under
+    the /mcp mount are left to identity_mw.AsgiAuthMiddleware, which binds
+    their correlation_id and logs their received/finished pair (see
+    ``_MCP_MOUNT_PATH``).
 
     ``http.request.received``/``http.request.finished`` are the only trace
     of a request that stalls or dies before anything downstream logs -- see
@@ -417,7 +448,9 @@ async def _bind_request_logging_context(request: Request, call_next):  # type: i
     logged exactly once per request.
     """
     bind_new_correlation_id()
-    if request.url.path in _REQUEST_LOGGING_EXCLUDED_PATHS:
+    if request.url.path in _REQUEST_LOGGING_EXCLUDED_PATHS or _is_mcp_path(
+        request.url.path
+    ):
         return await call_next(request)
 
     start_time = log_request_received(
@@ -435,7 +468,12 @@ async def _bind_request_logging_context(request: Request, call_next):  # type: i
         return response
     finally:
         log_request_finished(
-            logger, start_time=start_time, status_code=status_code, exc_type=exc_type
+            logger,
+            start_time=start_time,
+            method=request.method,
+            path=_path_template(request),
+            status_code=status_code,
+            exc_type=exc_type,
         )
 
 
@@ -485,8 +523,12 @@ except ImportError:
 @app.exception_handler(HTTPException)
 async def _http_exception_handler(request: Request, exc: HTTPException) -> Response:
     # Delegate to FastAPI's built-in handler so WWW-Authenticate headers etc.
-    # are preserved, then let structlog capture the event.
-    logger.info(
+    # are preserved, then let structlog capture the event. A 5xx is the
+    # broker's (or a backend's) failure and logs at error so alerting on
+    # error-level lines sees /v1 outages; a 4xx is the caller's mistake or an
+    # expected refusal (auth, validation, rate limit) and stays at info.
+    log = logger.error if exc.status_code >= 500 else logger.info
+    log(
         "http_exception",
         status_code=exc.status_code,
         detail=exc.detail,
@@ -505,6 +547,16 @@ async def _http_exception_handler(request: Request, exc: HTTPException) -> Respo
     # already structured/already carries its own correlation_id where one
     # makes sense -- overwriting it here would be a regression, not a fix.
     # A 4xx opts in by raising CorrelatedHTTPException (issue #342).
+    if isinstance(exc, RateLimitedHTTPException):
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={
+                "detail": exc.detail,
+                "retry_after_seconds": exc.retry_after_seconds,
+                "retry_at": retry_at_timestamp(exc.retry_after_seconds),
+            },
+            headers=exc.headers,
+        )
     if (
         exc.status_code >= 500 or isinstance(exc, CorrelatedHTTPException)
     ) and isinstance(exc.detail, str):
@@ -559,17 +611,17 @@ async def _identity_error_handler(request: Request, exc: IdentityError) -> Respo
 
 @app.exception_handler(CredentialError)
 async def _credential_error_handler(request: Request, exc: CredentialError) -> Response:
-    headers = (
-        {"Retry-After": exc.retry_after}
-        if isinstance(exc, CredentialRateLimitedError) and exc.retry_after is not None
-        else None
-    )
+    if isinstance(exc, CredentialRateLimitedError):
+        return await _http_exception_handler(
+            request,
+            RateLimitedHTTPException(
+                exc.detail, retry_after_seconds=retry_after_seconds(exc.retry_after)
+            ),
+        )
     return await _http_exception_handler(
         request,
         HTTPException(
-            status_code=_CREDENTIAL_ERROR_STATUS[type(exc)],
-            detail=exc.detail,
-            headers=headers,
+            status_code=_CREDENTIAL_ERROR_STATUS[type(exc)], detail=exc.detail
         ),
     )
 
@@ -608,7 +660,7 @@ async def _validation_error_handler(
 @app.exception_handler(UnlockRateLimitError)
 async def _rate_limit_error_handler(
     request: Request, exc: UnlockRateLimitError
-) -> JSONResponse:
+) -> Response:
     # UnlockRateLimitError is raised by CredentialCache.record_failed_unlock()/
     # check_unlock_rate_limit() on the x509 credential-issuance path (bad
     # passphrase / minting-backend failures against a colocated user's
@@ -616,20 +668,10 @@ async def _rate_limit_error_handler(
     # Map it to 429 with Retry-After so well-behaved clients — and the portal
     # — back off instead of hammering the endpoint.
     retry_after = exc.retry_after_seconds
-    retry_at = datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=retry_after)
-    logger.info(
-        "rate_limit_exceeded",
-        path=request.url.path,
-        retry_after_seconds=retry_after,
-    )
-    return JSONResponse(
-        status_code=429,
-        content={
-            "detail": (
-                f"Too many failed unlock attempts. Try again in {retry_after} seconds."
-            ),
-            "retry_after_seconds": retry_after,
-            "retry_at": retry_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        },
-        headers={"Retry-After": str(retry_after)},
+    return await _http_exception_handler(
+        request,
+        RateLimitedHTTPException(
+            f"Too many failed unlock attempts. Try again in {retry_after} seconds.",
+            retry_after_seconds=retry_after,
+        ),
     )

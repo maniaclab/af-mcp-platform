@@ -19,6 +19,7 @@ from af_mcp_broker.identity import (
     issuer_is_local,
 )
 from af_mcp_broker.logging import (
+    bind_client_request_id,
     bind_new_correlation_id,
     bind_subject,
     log_request_finished,
@@ -191,6 +192,9 @@ class AsgiAuthMiddleware:
         # (app.py's mount comment) -- this is the only place that can bind a
         # correlation_id for this surface (issue #281).
         bind_new_correlation_id()
+        client_request_id = dict(scope.get("headers") or []).get(b"x-request-id")
+        if client_request_id is not None:
+            bind_client_request_id(client_request_id.decode("latin-1"))
 
         # issue #322: there is no Response object at this ASGI layer to read
         # a status code off (unlike /v1's call_next-based middleware), so
@@ -201,9 +205,9 @@ class AsgiAuthMiddleware:
         # returned -- for a streaming (SSE) /mcp response that's when the
         # stream ends, not when headers go out, since headers are just one
         # of the messages this wrapper passes through on the way there.
-        start_time = log_request_received(
-            logger, method=scope.get("method", ""), path=scope.get("path", "")
-        )
+        method = scope.get("method", "")
+        path = scope.get("path", "")
+        start_time = log_request_received(logger, method=method, path=path)
         status_code: int | None = None
         exc_type: str | None = None
 
@@ -222,6 +226,8 @@ class AsgiAuthMiddleware:
             log_request_finished(
                 logger,
                 start_time=start_time,
+                method=method,
+                path=path,
                 status_code=status_code,
                 exc_type=exc_type,
             )

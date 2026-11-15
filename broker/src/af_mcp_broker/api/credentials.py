@@ -8,7 +8,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, SecretBytes, SecretStr
 
-from af_mcp_broker.api.errors import CorrelatedHTTPException
+from af_mcp_broker.api.errors import CorrelatedHTTPException, RateLimitedHTTPException
 from af_mcp_broker.audit.logger import AuditRecord, write_audit
 from af_mcp_broker.broker_state import get_broker_state
 from af_mcp_broker.credentials import (
@@ -34,7 +34,9 @@ from af_mcp_broker.credentials.errors import (
 )
 from af_mcp_broker.errors import require
 from af_mcp_broker.identity import keycloak_dependency
+from af_mcp_broker.logging import bind_subject
 from af_mcp_broker.principal import PosixPrincipal, Principal
+from af_mcp_broker.retry_after import retry_after_seconds
 
 if TYPE_CHECKING:
     from af_mcp_broker.config import IdentityProviderConfig
@@ -275,6 +277,19 @@ def _krb5_expires_at(cred: _IssuedCredential) -> float:
 
 def _iso(epoch: float) -> str:
     return datetime.fromtimestamp(epoch, tz=UTC).isoformat()
+
+
+def _bind_parent_request_id(claims: dict[str, Any]) -> None:
+    """Log the rest of a redeem request under its minting tool call's id.
+
+    A broker identity token's ``rid`` is the ``correlation_id`` of the client
+    request the broker minted it for. Bound as ``parent_request_id``, it lands
+    on every line of the redeem, the credential-release audit line included,
+    while ``request_id`` keeps the token's ``jti``. A token minted outside a
+    client request has no ``rid``.
+    """
+    if rid := claims.get("rid"):
+        structlog.contextvars.bind_contextvars(parent_request_id=rid)
 
 
 def notify_identity_linked(request: Request, subject: str, alias: str | None) -> None:
@@ -704,11 +719,8 @@ async def create_krb5_ticket(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
         ) from exc
     except Krb5TokenRateLimitedError as exc:
-        headers = {"Retry-After": exc.retry_after} if exc.retry_after else None
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=str(exc),
-            headers=headers,
+        raise RateLimitedHTTPException(
+            str(exc), retry_after_seconds=retry_after_seconds(exc.retry_after)
         ) from exc
     except Krb5TokenMintError as exc:
         raise HTTPException(
@@ -768,11 +780,8 @@ async def link_krb5_keytab(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
         ) from exc
     except Krb5TokenRateLimitedError as exc:
-        headers = {"Retry-After": exc.retry_after} if exc.retry_after else None
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=str(exc),
-            headers=headers,
+        raise RateLimitedHTTPException(
+            str(exc), retry_after_seconds=retry_after_seconds(exc.retry_after)
         ) from exc
     except Krb5TokenMintError as exc:
         raise HTTPException(
@@ -1097,6 +1106,8 @@ async def redeem_x509_proxy(request: Request) -> ProxyRedeemResponse:
         )
 
     subject: str = claims["sub"]
+    bind_subject(subject)
+    _bind_parent_request_id(claims)
     token_aud: str = claims["aud"]
     request_id = claims.get("jti", "")
 
@@ -1189,6 +1200,8 @@ async def redeem_krb5_ticket(request: Request) -> KrbTicketRedeemResponse:
         )
 
     subject: str = claims["sub"]
+    bind_subject(subject)
+    _bind_parent_request_id(claims)
     token_aud: str = claims["aud"]
     request_id = claims.get("jti", "")
 
@@ -1346,6 +1359,8 @@ async def redeem_servicex_token(request: Request) -> ServiceXRedeemResponse:
         )
 
     subject: str = claims["sub"]
+    bind_subject(subject)
+    _bind_parent_request_id(claims)
     token_aud: str = claims["aud"]
     request_id = claims.get("jti", "")
 

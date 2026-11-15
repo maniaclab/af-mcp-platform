@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from pydantic import SecretStr
+from rate_limited_helpers import assert_rate_limited_shape
 from test_broker_issued import _make_rsa_key, _private_pem
 from test_krb5_token import FakeKrb5VaultStore
 
@@ -43,6 +44,7 @@ from af_mcp_broker.credentials.errors import (
     Krb5TokenRateLimitedError,
 )
 from af_mcp_broker.credentials.krb5_service import MintedTicket
+from af_mcp_broker.retry_after import DEFAULT_RETRY_AFTER_SECONDS
 from af_mcp_broker.vault_kv import VaultKV
 
 if TYPE_CHECKING:
@@ -356,8 +358,31 @@ def test_rate_limited_maps_to_429_with_retry_after(krb5_app) -> None:
         json={"username": "tuser", "password": "hunter2"},
     )
 
-    assert resp.status_code == 429, resp.text
-    assert resp.headers["retry-after"] == "30"
+    body = assert_rate_limited_shape(resp, retry_after=30)
+    assert body["detail"] == "krb5-token-service rate-limited this request."
+
+
+def test_rate_limited_without_service_retry_after_uses_the_default(krb5_app) -> None:
+    client, _state, fake_client = krb5_app
+    fake_client.outcome = Krb5TokenRateLimitedError(None)
+
+    resp = client.post(
+        "/v1/krb5/ticket",
+        json={"username": "tuser", "password": "hunter2"},
+    )
+
+    assert_rate_limited_shape(resp, retry_after=DEFAULT_RETRY_AFTER_SECONDS)
+
+
+def test_keytab_link_rate_limited_has_the_same_shape(krb5_app) -> None:
+    client, _state, fake_client = krb5_app
+    fake_client.outcome = Krb5TokenRateLimitedError("30")
+
+    resp = client.post(
+        "/v1/krb5/keytab", json={"username": "tuser", "keytab_b64": "a2V5dGFi"}
+    )
+
+    assert_rate_limited_shape(resp, retry_after=30)
 
 
 # ---------------------------------------------------------------------------

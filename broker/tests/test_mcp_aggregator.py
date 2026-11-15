@@ -57,6 +57,7 @@ from af_mcp_broker.credentials.errors import (
     CredentialServiceError,
     NeedsUnlockError,
 )
+from af_mcp_broker.logging import bind_new_correlation_id
 from af_mcp_broker.mcp import aggregator
 from af_mcp_broker.mcp.aggregator import (
     _make_client_factory,
@@ -2337,6 +2338,49 @@ async def test_client_factory_x509_injects_broker_identity_jwt(
     assert claims is not None
     assert claims["sub"] == "sub-abc"
     assert claims["aud"] == "example"
+
+
+async def test_client_factory_x509_token_carries_the_calls_correlation_id_as_rid(
+    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The backend redeems with this token, and its redeem audit line names
+    ``rid`` as the parent request, joining the release to this tool call."""
+    _patch_context(monkeypatch, make_principal(subject="sub-abc"))
+    bind_new_correlation_id()
+    issuer = _make_issuer()
+    spec = _spec(auth_type="x509")
+    registry = CredentialRegistry()
+    registry.register(spec.name, _FakeProvider(linked=True))
+
+    client = await _make_client_factory(
+        spec, registry, settings, _OPEN_POLICY, broker_token_issuer=issuer
+    )()
+
+    claims = issuer.verify(
+        client.transport.headers["Authorization"].removeprefix("Bearer ")
+    )
+    assert claims is not None
+    assert claims["rid"] == structlog.contextvars.get_contextvars()["correlation_id"]
+
+
+async def test_resolve_list_time_credential_token_carries_the_correlation_id_as_rid(
+    settings: Any, make_principal
+) -> None:
+    bind_new_correlation_id()
+    issuer = _make_issuer()
+    spec = _spec(name="ami_service", auth_type="x509", audience="ami-mcp")
+
+    headers, _, _ = await resolve_list_time_credential(
+        spec,
+        CredentialRegistry(),
+        make_principal(subject="sub-abc"),
+        broker_token_issuer=issuer,
+    )
+
+    assert headers is not None
+    claims = issuer.verify(headers["Authorization"].removeprefix("Bearer "))
+    assert claims is not None
+    assert claims["rid"] == structlog.contextvars.get_contextvars()["correlation_id"]
 
 
 async def test_client_factory_x509_call_time_aud_uses_effective_audience(

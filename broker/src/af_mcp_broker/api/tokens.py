@@ -74,6 +74,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from af_mcp_broker.api.errors import RateLimitedHTTPException
 from af_mcp_broker.audit import AuditRecord, write_audit
 from af_mcp_broker.authorization import get_principal_permissions
 from af_mcp_broker.broker_state import get_broker_state, get_state_settings
@@ -281,8 +282,8 @@ async def mint_token(
     try:
         await registry.check_mint_rate_limit(principal.subject)
     except PatMintRateLimitError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=str(exc)
+        raise RateLimitedHTTPException(
+            str(exc), retry_after_seconds=exc.retry_after_seconds
         ) from exc
 
     # Permission PAT grant (issue #144 step 4) -- see MintTokenRequest
