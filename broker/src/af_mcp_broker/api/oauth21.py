@@ -19,7 +19,6 @@ from af_mcp_broker.credentials.oauth21 import (
     normalize_token_response,
 )
 from af_mcp_broker.errors import require
-from af_mcp_broker.http import get_http_client
 from af_mcp_broker.identity import keycloak_dependency
 from af_mcp_broker.oauth_state import (
     NONCE_COOKIE_NAME,
@@ -332,7 +331,7 @@ async def callback(
     code = require(code, "a callback with neither code nor error was rejected above")
 
     redirect_uri = _callback_url(settings, alias)
-    resp = await get_http_client().post(
+    resp = await get_broker_state(request).http_client.post(
         provider.token_endpoint,
         data={
             "grant_type": "authorization_code",

@@ -68,6 +68,7 @@ from af_mcp_broker.service_status import RELINK_DETAIL
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Sequence
 
+    import httpx2
     from fastmcp import Context
     from fastmcp.client import Client
     from fastmcp.prompts import Prompt
@@ -1449,6 +1450,7 @@ def build_asgi_middleware(
     pat_backend: TokenRegistryBackend | None,
     principal_cache: PrincipalCache | None,
     maintenance_mode_store: MaintenanceModeStore,
+    http_client: httpx2.AsyncClient,
 ) -> list[Middleware]:
     """Return the Starlette middleware specs that gate /mcp at the ASGI layer, outermost first.
 
@@ -1468,6 +1470,7 @@ def build_asgi_middleware(
             settings=settings,
             pat_backend=pat_backend,
             principal_cache=principal_cache,
+            http_client=http_client,
         ),
         Middleware(
             AsgiMaintenanceMiddleware,

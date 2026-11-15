@@ -56,14 +56,14 @@ class _FakeClient:
         return _FakeResponse()
 
 
-async def test_fetch_brokered_token_sends_real_token(monkeypatch):
+async def test_fetch_brokered_token_sends_real_token():
     """Regression for bug 2 — the real token, not the masked SecretStr repr."""
-    monkeypatch.setattr(oidc, "get_http_client", _FakeClient)
 
     provider = oidc.OIDCProvider(
         settings=Settings(oidc_issuer="https://keycloak.test/realms/connect"),
         cache=CredentialCache(),
         alias="atlas-oidc",
+        http_client=_FakeClient(),
     )
     token, _expires_at = await provider._fetch_brokered_token(_principal())
 
@@ -73,7 +73,7 @@ async def test_fetch_brokered_token_sends_real_token(monkeypatch):
     assert "*" not in auth
 
 
-async def test_fetch_brokered_token_raises_403_with_actionable_detail(monkeypatch):
+async def test_fetch_brokered_token_raises_403_with_actionable_detail():
     """A 403 from Keycloak's broker endpoint means the caller lacks the
     `read-token` client role — surface that distinctly from the existing
     401 (session expired)/404 (never linked) handling rather than letting
@@ -83,19 +83,18 @@ async def test_fetch_brokered_token_raises_403_with_actionable_detail(monkeypatc
         async def get(self, url: str, headers: dict[str, str], **kwargs: Any):
             return httpx2.Response(403)
 
-    monkeypatch.setattr(oidc, "get_http_client", _ForbiddenClient)
-
     provider = oidc.OIDCProvider(
         settings=Settings(oidc_issuer="https://keycloak.test/realms/connect"),
         cache=CredentialCache(),
         alias="atlas-oidc",
+        http_client=_ForbiddenClient(),
     )
 
     with pytest.raises(CredentialForbiddenError):
         await provider._fetch_brokered_token(_principal())
 
 
-async def test_fetch_brokered_token_uses_internal_url_when_set(monkeypatch):
+async def test_fetch_brokered_token_uses_internal_url_when_set():
     """The stored-brokered-token fetch is a server-side call and must follow
     oidc_internal_url, not the externally-advertised issuer."""
     captured_urls: list[str] = []
@@ -107,8 +106,6 @@ async def test_fetch_brokered_token_uses_internal_url_when_set(monkeypatch):
             captured_urls.append(url)
             return _FakeResponse()
 
-    monkeypatch.setattr(oidc, "get_http_client", _UrlCapturingClient)
-
     internal = "http://keycloak.svc.test:8080/realms/connect"
     provider = oidc.OIDCProvider(
         settings=Settings(
@@ -117,6 +114,7 @@ async def test_fetch_brokered_token_uses_internal_url_when_set(monkeypatch):
         ),
         cache=CredentialCache(),
         alias="atlas-oidc",
+        http_client=_UrlCapturingClient(),
     )
     await provider._fetch_brokered_token(_principal())
 
@@ -151,94 +149,90 @@ class _FakeLinkClient:
         return httpx2.Response(self.status_code)
 
 
-def _make_provider() -> oidc.OIDCProvider:
+def _make_provider(http_client: Any) -> oidc.OIDCProvider:
     return oidc.OIDCProvider(
         settings=Settings(oidc_issuer="https://keycloak.test/realms/connect"),
         cache=CredentialCache(),
         alias="atlas-oidc",
+        http_client=http_client,
     )
 
 
-async def test_is_linked_true_on_200(monkeypatch):
+async def test_is_linked_true_on_200():
     client = _FakeLinkClient(status_code=200)
-    monkeypatch.setattr(oidc, "get_http_client", lambda: client)
 
-    assert await _make_provider().is_linked(_principal()) is True
+    assert await _make_provider(http_client=client).is_linked(_principal()) is True
     assert client.head_calls == 1
 
 
 @pytest.mark.parametrize("status_code", [403, 404])
-async def test_is_linked_false_on_4xx(monkeypatch, status_code):
+async def test_is_linked_false_on_4xx(status_code):
     client = _FakeLinkClient(status_code=status_code)
-    monkeypatch.setattr(oidc, "get_http_client", lambda: client)
 
-    assert await _make_provider().is_linked(_principal()) is False
+    assert await _make_provider(http_client=client).is_linked(_principal()) is False
 
 
-async def test_link_status_flags_permission_denied_on_403(monkeypatch):
+async def test_link_status_flags_permission_denied_on_403():
     """A 403 means the caller's own bearer token lacks the `read-token`
     client role Keycloak's broker endpoint requires — distinct from "not
     linked yet" (issue: users blocked from ever seeing a completed link
     reflected, with no indication the real cause is a missing role)."""
     client = _FakeLinkClient(status_code=403)
-    monkeypatch.setattr(oidc, "get_http_client", lambda: client)
 
-    status = await _make_provider().link_status(_principal())
+    status = await _make_provider(http_client=client).link_status(_principal())
 
     assert status.linked is False
     assert status.permission_denied is True
 
 
-async def test_link_status_not_permission_denied_on_404(monkeypatch):
+async def test_link_status_not_permission_denied_on_404():
     """404 (no stored token yet) must NOT be flagged as permission_denied —
     only 403 means the role, not the linkage, is the blocker."""
     client = _FakeLinkClient(status_code=404)
-    monkeypatch.setattr(oidc, "get_http_client", lambda: client)
 
-    status = await _make_provider().link_status(_principal())
+    status = await _make_provider(http_client=client).link_status(_principal())
 
     assert status.linked is False
     assert status.permission_denied is False
 
 
-async def test_link_status_not_permission_denied_on_network_error(monkeypatch):
+async def test_link_status_not_permission_denied_on_network_error():
     class _FailingClient:
         async def head(self, *args: Any, **kwargs: Any):
             raise httpx2.ConnectError("boom")
 
-    monkeypatch.setattr(oidc, "get_http_client", _FailingClient)
-
-    status = await _make_provider().link_status(_principal())
+    status = await _make_provider(http_client=_FailingClient()).link_status(
+        _principal()
+    )
 
     assert status.linked is False
     assert status.permission_denied is False
 
 
-async def test_is_linked_falls_back_to_get_when_head_unsupported(monkeypatch):
+async def test_is_linked_falls_back_to_get_when_head_unsupported():
     client = _FakeLinkClient(status_code=200, head_status=405)
-    monkeypatch.setattr(oidc, "get_http_client", lambda: client)
 
-    assert await _make_provider().is_linked(_principal()) is True
+    assert await _make_provider(http_client=client).is_linked(_principal()) is True
     assert client.head_calls == 1
     assert client.get_calls == 1
 
 
-async def test_is_linked_false_on_network_error(monkeypatch):
+async def test_is_linked_false_on_network_error():
     class _FailingClient:
         async def head(self, *args: Any, **kwargs: Any):
             raise httpx2.ConnectError("boom")
 
-    monkeypatch.setattr(oidc, "get_http_client", _FailingClient)
+    assert (
+        await _make_provider(http_client=_FailingClient()).is_linked(_principal())
+        is False
+    )
 
-    assert await _make_provider().is_linked(_principal()) is False
 
-
-async def test_is_linked_respects_cache_within_ttl(monkeypatch):
+async def test_is_linked_respects_cache_within_ttl():
     """Two calls inside the TTL window must cost exactly one Keycloak probe."""
     client = _FakeLinkClient(status_code=200)
-    monkeypatch.setattr(oidc, "get_http_client", lambda: client)
 
-    provider = _make_provider()
+    provider = _make_provider(http_client=client)
     principal = _principal()
 
     assert await provider.is_linked(principal) is True
@@ -246,11 +240,10 @@ async def test_is_linked_respects_cache_within_ttl(monkeypatch):
     assert client.head_calls == 1
 
 
-async def test_is_linked_reprobes_after_ttl_expires(monkeypatch):
+async def test_is_linked_reprobes_after_ttl_expires():
     client = _FakeLinkClient(status_code=200)
-    monkeypatch.setattr(oidc, "get_http_client", lambda: client)
 
-    provider = _make_provider()
+    provider = _make_provider(http_client=client)
     principal = _principal()
 
     assert await provider.is_linked(principal) is True
@@ -281,13 +274,12 @@ class _CountingTokenClient:
         return _FakeResponse()
 
 
-async def test_issue_single_flights_concurrent_misses(monkeypatch):
+async def test_issue_single_flights_concurrent_misses():
     """N concurrent issue() calls for the same (uid, target) must cost
     exactly one Keycloak brokered-token fetch (issue #94)."""
     client = _CountingTokenClient()
-    monkeypatch.setattr(oidc, "get_http_client", lambda: client)
 
-    provider = _make_provider()
+    provider = _make_provider(http_client=client)
     principal = _principal()
 
     results = await asyncio.gather(
@@ -298,7 +290,7 @@ async def test_issue_single_flights_concurrent_misses(monkeypatch):
     assert all(r.payload["access_token"] == "iam-token" for r in results)
 
 
-async def test_issue_different_targets_do_not_serialize(monkeypatch):
+async def test_issue_different_targets_do_not_serialize():
     """Concurrent misses for different targets must not block on each
     other's single-flight lock."""
     entered: list[str] = []
@@ -314,9 +306,7 @@ async def test_issue_different_targets_do_not_serialize(monkeypatch):
             await asyncio.wait_for(both_entered.wait(), timeout=2.0)
             return _FakeResponse()
 
-    monkeypatch.setattr(oidc, "get_http_client", _BlockingClient)
-
-    provider = _make_provider()
+    provider = _make_provider(http_client=_BlockingClient())
     principal = _principal()
 
     results = await asyncio.wait_for(
@@ -362,15 +352,14 @@ class _FakeResponseWithToken:
         return {"access_token": self._token, "expires_in": 3600}
 
 
-async def test_issue_does_not_collide_for_two_posix_less_principals(monkeypatch):
+async def test_issue_does_not_collide_for_two_posix_less_principals():
     """Two different principals with no POSIX identity (both uid=None) must
     never share a cached credential -- the CredentialCache key is
     principal.subject, not uid, precisely so this can't happen (issue #148).
     """
     client = _PerCallTokenClient()
-    monkeypatch.setattr(oidc, "get_http_client", lambda: client)
 
-    provider = _make_provider()
+    provider = _make_provider(http_client=client)
     alice = _principal(subject="alice", uid=None, gid=None, unixname=None)
     bob = _principal(subject="bob", uid=None, gid=None, unixname=None)
 

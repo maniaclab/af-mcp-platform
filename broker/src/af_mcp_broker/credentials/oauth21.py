@@ -22,7 +22,6 @@ from af_mcp_broker.credentials.errors import (
     CredentialReauthRequiredError,
     VersionConflictError,
 )
-from af_mcp_broker.http import get_http_client
 
 if TYPE_CHECKING:
     from pydantic import SecretBytes
@@ -259,7 +258,10 @@ class OAuth21Provider(CredentialProvider):
         client_id: str,
         client_secret: SecretStr | None = None,
         revocation_endpoint: str | None = None,
+        *,
+        http_client: httpx2.AsyncClient,
     ) -> None:
+        self._http_client = http_client
         self._alias = alias
         self._targets = targets
         self._authorization_endpoint = authorization_endpoint
@@ -511,7 +513,7 @@ class OAuth21Provider(CredentialProvider):
                 token = cred.access_token
                 token_type_hint = "access_token"  # noqa: S105 -- RFC 7009 token_type_hint value, not a secret
             try:
-                resp = await get_http_client().post(
+                resp = await self._http_client.post(
                     self._revocation_endpoint,
                     data={
                         "token": token.get_secret_value(),
@@ -540,7 +542,7 @@ class OAuth21Provider(CredentialProvider):
             raise CredentialReauthRequiredError(
                 detail=f"No refresh token available for alias {self._alias!r}.",
             )
-        resp = await get_http_client().post(
+        resp = await self._http_client.post(
             self._token_endpoint,
             data={
                 "grant_type": "refresh_token",

@@ -9,11 +9,11 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import httpx2
 import pytest
 from pydantic import SecretStr
 
 from af_mcp_broker.config import Settings
-from af_mcp_broker.credentials import service as service_module
 from af_mcp_broker.credentials.service import ServiceProvider
 from af_mcp_broker.principal import Principal
 
@@ -32,7 +32,9 @@ def _principal() -> Principal:
 
 @pytest.mark.asyncio
 async def test_is_linked_always_true():
-    provider = ServiceProvider(settings=SimpleNamespace())
+    provider = ServiceProvider(
+        settings=SimpleNamespace(), http_client=httpx2.AsyncClient()
+    )
 
     assert await provider.is_linked(_principal()) is True
 
@@ -55,7 +57,6 @@ async def test_client_credentials_grant_uses_internal_url_when_set(monkeypatch):
             captured_urls.append(url)
             return _FakeResponse()
 
-    monkeypatch.setattr(service_module, "get_http_client", _UrlCapturingClient)
     monkeypatch.delenv("AF_SERVICE_TOKEN", raising=False)
     monkeypatch.delenv("AF_SERVICE_TOKEN_FILE", raising=False)
     monkeypatch.setenv("AF_SERVICE_CLIENT_ID", "svc-client")
@@ -66,7 +67,8 @@ async def test_client_credentials_grant_uses_internal_url_when_set(monkeypatch):
         settings=Settings(
             oidc_issuer="https://keycloak.test/realms/connect",
             oidc_internal_url=internal,
-        )
+        ),
+        http_client=_UrlCapturingClient(),
     )
     token, _expires_at = await provider._refresh_service_token()
 

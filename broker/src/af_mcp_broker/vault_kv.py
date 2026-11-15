@@ -25,7 +25,6 @@ import anyio
 import structlog
 
 from af_mcp_broker.errors import BrokerError
-from af_mcp_broker.http import get_http_client
 
 if TYPE_CHECKING:
     import httpx2
@@ -65,7 +64,7 @@ class VaultKV:
         auth_role: str,
         kv_mount: str,
         sa_token_path: str,
-        http_client: httpx2.AsyncClient | None = None,
+        http_client: httpx2.AsyncClient,
     ) -> None:
         self._addr = addr.rstrip("/")
         self._auth_mount = auth_mount
@@ -79,9 +78,6 @@ class VaultKV:
         self._auth_lock = asyncio.Lock()
 
         self._log = structlog.get_logger(__name__).bind(component="VaultKV")
-
-    def _http(self) -> httpx2.AsyncClient:
-        return self._http_client if self._http_client is not None else get_http_client()
 
     async def _authenticate(self) -> str:
         """Return a valid Vault client token, re-authenticating if the cached one is missing or within ``_AUTH_SAFETY_MARGIN_SECONDS`` of expiry.
@@ -102,7 +98,7 @@ class VaultKV:
                 return self._client_token
 
             jwt = (await anyio.Path(self._sa_token_path).read_text()).strip()
-            resp = await self._http().post(
+            resp = await self._http_client.post(
                 f"{self._addr}/v1/auth/{self._auth_mount}/login",
                 json={"role": self._auth_role, "jwt": jwt},
                 timeout=10.0,
@@ -127,7 +123,7 @@ class VaultKV:
     async def get(self, path: str) -> tuple[dict[str, Any], int] | None:
         """KV-v2 data read. Returns ``(data, version)``, or None on a 404."""
         token = await self._authenticate()
-        resp = await self._http().get(
+        resp = await self._http_client.get(
             f"{self._addr}/v1/{self._kv_mount}/data/{path}",
             headers={"X-Vault-Token": token},
             timeout=10.0,
@@ -149,7 +145,7 @@ class VaultKV:
         token = await self._authenticate()
         cas = 0 if expected_version is None else expected_version
 
-        resp = await self._http().post(
+        resp = await self._http_client.post(
             f"{self._addr}/v1/{self._kv_mount}/data/{path}",
             headers={"X-Vault-Token": token},
             json={"options": {"cas": cas}, "data": data},
@@ -174,7 +170,7 @@ class VaultKV:
     async def list(self, path: str) -> list[str]:
         """KV-v2 metadata LIST: immediate child keys under *path*, or ``[]`` on a 404 (path has no children)."""
         token = await self._authenticate()
-        resp = await self._http().request(
+        resp = await self._http_client.request(
             "LIST",
             f"{self._addr}/v1/{self._kv_mount}/metadata/{path}",
             headers={"X-Vault-Token": token},
@@ -195,7 +191,7 @@ class VaultKV:
         # would leave metadata behind, permanently breaking a subsequent
         # write_cas(expected_version=None) (cas=0) for this path.
         token = await self._authenticate()
-        resp = await self._http().delete(
+        resp = await self._http_client.delete(
             f"{self._addr}/v1/{self._kv_mount}/metadata/{path}",
             headers={"X-Vault-Token": token},
             timeout=10.0,

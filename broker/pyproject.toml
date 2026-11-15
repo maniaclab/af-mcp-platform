@@ -87,7 +87,7 @@ extend-select = [
 ignore = [
   "PLR09",   # Too many <...>
   "PLR2004", # Magic value used in comparison
-  "PLW0603", # Module-level singletons (http client, audit logger)
+  "PLW0603", # Module-level singletons (tracer and meter providers, token-encoding cache)
   "TRY003",  # Long exception messages inline — custom exception classes would be over-engineering
   "EM101",   # String literal in exception — assign-to-variable pattern adds noise, not clarity
   "EM102",   # f-string in exception — same rationale as EM101
@@ -256,7 +256,7 @@ layers = [
   "tracing | principal_cache | mcp_auth_codes | authorization",
   "principal_directory | token_registry",
   "config | otel_resource | vault_kv | shared_state | oauth_state | cimd_client | backend_errors",
-  "errors | constants | principal | http | logging | metrics | _version | pat",
+  "errors | constants | principal | logging | metrics | _version | pat",
 ]
 
 [[tool.importlinter.contracts]]

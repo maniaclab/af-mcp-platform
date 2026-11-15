@@ -70,7 +70,6 @@ from af_mcp_broker.cimd_client import (
 from af_mcp_broker.config import (
     Settings,  # noqa: TC001 -- FastAPI resolves the dependency annotations at runtime
 )
-from af_mcp_broker.http import get_http_client
 from af_mcp_broker.identity import decode_broker_bearer, get_jwks
 from af_mcp_broker.mcp_auth_codes import McpAuthCodeRecord
 from af_mcp_broker.oauth_state import (
@@ -195,7 +194,7 @@ def _pkce_challenge_matches(verifier: str, challenge: str) -> bool:
 
 
 async def _access_token_denial_reason(
-    access_token: str | None, settings: Settings
+    access_token: str | None, settings: Settings, http_client: httpx2.AsyncClient
 ) -> str | None:
     """Return why the login exchange's access token fails the broker-audience gate, or None when it passes.
 
@@ -213,7 +212,7 @@ async def _access_token_denial_reason(
     """
     if not access_token:
         return "token response carries no access_token"
-    keys = await get_jwks(settings)
+    keys = await get_jwks(settings, http_client)
     try:
         decode_broker_bearer(access_token, keys, settings)
     except jwt.InvalidAudienceError:
@@ -223,7 +222,9 @@ async def _access_token_denial_reason(
     return None
 
 
-async def _verify_keycloak_id_token(id_token: str, settings: Settings) -> str:
+async def _verify_keycloak_id_token(
+    id_token: str, settings: Settings, http_client: httpx2.AsyncClient
+) -> str:
     """Verify *id_token*'s signature/issuer/expiry and return its `sub` claim.
 
     Audience is the broker's own login client id, not `settings.oidc_audience`
@@ -233,7 +234,7 @@ async def _verify_keycloak_id_token(id_token: str, settings: Settings) -> str:
     Entitlement to the platform is checked separately, against the exchange's
     access token -- see `_access_token_denial_reason`.
     """
-    keys = await get_jwks(settings)
+    keys = await get_jwks(settings, http_client)
     header = jwt.get_unverified_header(id_token)
     kid = header.get("kid")
     key_data = next((k for k in keys if k.get("kid") == kid), None)
@@ -345,7 +346,9 @@ async def authorize(
         raise _bad_request("client_id and redirect_uri are required")
 
     try:
-        cimd_client = await resolve_cimd_client(client_id, client=get_http_client())
+        cimd_client = await resolve_cimd_client(
+            client_id, client=get_broker_state(request).http_client
+        )
     except CimdError as exc:
         raise _bad_request(f"Invalid client_id: {exc}") from exc
 
@@ -454,7 +457,7 @@ async def keycloak_login_callback(
         raise _bad_request("Missing code or error in callback")
 
     try:
-        resp = await get_http_client().post(
+        resp = await get_broker_state(request).http_client.post(
             _keycloak_token_endpoint(settings),
             data={
                 "grant_type": "authorization_code",
@@ -483,8 +486,9 @@ async def keycloak_login_callback(
     # this login. access_denied, not server_error -- the platform worked; the
     # user is not entitled, symmetric with the TokenAudienceError a JWT
     # caller gets on /mcp.
+    http_client = get_broker_state(request).http_client
     denial_reason = await _access_token_denial_reason(
-        token_response.get("access_token"), settings
+        token_response.get("access_token"), settings, http_client
     )
     if denial_reason is not None:
         log.warning("mcp_oauth.bootstrap_not_entitled", reason=denial_reason)
@@ -494,7 +498,7 @@ async def keycloak_login_callback(
         response.delete_cookie(MCP_NONCE_COOKIE_NAME, path=MCP_NONCE_COOKIE_PATH)
         return response
 
-    principal_id = await _verify_keycloak_id_token(id_token, settings)
+    principal_id = await _verify_keycloak_id_token(id_token, settings, http_client)
 
     auth_code_store = _auth_code_store(request)
     mcp_code = auth_code_store.put(

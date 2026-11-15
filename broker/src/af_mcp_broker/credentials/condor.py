@@ -41,7 +41,6 @@ from af_mcp_broker.credentials.errors import (
     CredentialRateLimitedError,
     CredentialServiceError,
 )
-from af_mcp_broker.http import get_http_client
 from af_mcp_broker.logging import request_id_headers
 from af_mcp_broker.principal import PosixPrincipal
 
@@ -87,7 +86,10 @@ class CondorTokenProvider(CredentialProvider):
         targets: frozenset[str],
         service_url: str,
         audience: str = "condor-token-service",
+        *,
+        http_client: httpx2.AsyncClient,
     ) -> None:
+        self._http_client = http_client
         self._issuer = issuer
         self._cache = cache
         self._alias = alias
@@ -204,7 +206,7 @@ class CondorTokenProvider(CredentialProvider):
             unixname=principal.unixname,
         )
         try:
-            resp = await get_http_client().post(
+            resp = await self._http_client.post(
                 self._token_endpoint,
                 headers={
                     "Authorization": f"Bearer {broker_token}",

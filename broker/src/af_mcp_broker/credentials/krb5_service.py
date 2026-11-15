@@ -42,7 +42,6 @@ from af_mcp_broker.credentials.errors import (
     Krb5TokenRateLimitedError,
     Krb5TokenRenewalWindowClosedError,
 )
-from af_mcp_broker.http import get_http_client
 from af_mcp_broker.logging import request_id_headers
 
 if TYPE_CHECKING:
@@ -89,7 +88,7 @@ class Krb5TokenServiceClient:
         issuer: BrokerTokenIssuer,
         service_url: str,
         audience: str = "krb5-token-service",
-        http_client: httpx2.AsyncClient | None = None,
+        http_client: httpx2.AsyncClient,
     ) -> None:
         self._issuer = issuer
         # AnyHttpUrl normalizes a bare origin to a trailing-slash form;
@@ -102,9 +101,6 @@ class Krb5TokenServiceClient:
         self._log = structlog.get_logger(__name__).bind(
             component="Krb5TokenServiceClient"
         )
-
-    def _http(self) -> httpx2.AsyncClient:
-        return self._http_client if self._http_client is not None else get_http_client()
 
     async def mint(
         self,
@@ -150,7 +146,7 @@ class Krb5TokenServiceClient:
             body["renewable_lifetime"] = renewable_lifetime
 
         try:
-            resp = await self._http().post(
+            resp = await self._http_client.post(
                 self._mint_endpoint,
                 headers={
                     "Authorization": f"Bearer {broker_token}",
@@ -206,7 +202,7 @@ class Krb5TokenServiceClient:
         """
         broker_token, _ = self._issuer.mint(subject, self._audience)
         try:
-            resp = await self._http().post(
+            resp = await self._http_client.post(
                 f"{self._base_url}/v1/renew",
                 headers={
                     "Authorization": f"Bearer {broker_token}",

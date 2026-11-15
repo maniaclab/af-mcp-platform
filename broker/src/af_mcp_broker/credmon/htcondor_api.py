@@ -17,7 +17,6 @@ import httpx2
 import structlog
 
 from af_mcp_broker.credmon.storer import CredentialStoreClient, CredentialStoreError
-from af_mcp_broker.http import get_http_client
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -40,7 +39,7 @@ class HTCondorApiCredentialStore(CredentialStoreClient):
         *,
         api_url: str,
         token_file: Path,
-        http_client: httpx2.AsyncClient | None = None,
+        http_client: httpx2.AsyncClient,
     ) -> None:
         self._base_url = api_url.rstrip("/")
         self._token_file = token_file
@@ -48,9 +47,6 @@ class HTCondorApiCredentialStore(CredentialStoreClient):
         self._log = structlog.get_logger(__name__).bind(
             component="HTCondorApiCredentialStore"
         )
-
-    def _http(self) -> httpx2.AsyncClient:
-        return self._http_client if self._http_client is not None else get_http_client()
 
     async def store_service_credential(
         self, *, user: str, service: str, credential: dict[str, str]
@@ -66,7 +62,7 @@ class HTCondorApiCredentialStore(CredentialStoreClient):
                 f"htcondor-api token file {self._token_file} could not be read."
             ) from exc
         try:
-            resp = await self._http().post(
+            resp = await self._http_client.post(
                 f"{self._base_url}/api/v1/creds/service/{service}",
                 headers={"Authorization": f"Bearer {token}"},
                 json={

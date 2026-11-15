@@ -124,6 +124,7 @@ def _make_provider(
     revocation_endpoint: str | None = None,
     client_id: str = CLIENT_ID,
     client_secret: SecretStr | None = None,
+    http_client: Any = None,
 ) -> OAuth21Provider:
     return OAuth21Provider(
         alias=ALIAS,
@@ -136,13 +137,13 @@ def _make_provider(
         client_id=client_id,
         client_secret=client_secret,
         revocation_endpoint=revocation_endpoint,
+        http_client=http_client or httpx2.AsyncClient(),
     )
 
 
 class _FakeTokenClient:
-    """Fake httpx2 client capturing token-endpoint POSTs, for monkeypatching
-    ``get_http_client`` in both the provider (refresh) and route (exchange)
-    code paths.
+    """Fake httpx2 client capturing token-endpoint POSTs, injected as the
+    provider's client (refresh) or as the app's shared client (exchange).
     """
 
     def __init__(self, status_code: int = 200, json_body: dict[str, Any] | None = None):
@@ -573,9 +574,7 @@ async def test_issue_returns_bearer_when_plenty_of_life() -> None:
     assert issued.kind.value == "bearer"
 
 
-async def test_issue_refreshes_when_within_window(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_issue_refreshes_when_within_window() -> None:
     store = InMemoryTokenStore()
     await store.write_cas(
         SUBJECT,
@@ -583,15 +582,11 @@ async def test_issue_refreshes_when_within_window(
         _make_cred(expires_at=datetime.now(UTC) + timedelta(seconds=60)),
         expected_version=None,
     )
-    provider = _make_provider(store)
-
     fake_client = _FakeTokenClient(
         status_code=200,
         json_body={"access_token": "access-token-2", "expires_in": 3600},
     )
-    monkeypatch.setattr(
-        "af_mcp_broker.credentials.oauth21.get_http_client", lambda: fake_client
-    )
+    provider = _make_provider(store, http_client=fake_client)
 
     issued = await provider.issue(_principal(), ALIAS)
 
@@ -621,9 +616,7 @@ async def test_issue_raises_404_when_missing() -> None:
         await provider.issue(_principal(), ALIAS)
 
 
-async def test_issue_raises_401_when_refresh_fails(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_issue_raises_401_when_refresh_fails() -> None:
     store = InMemoryTokenStore()
     await store.write_cas(
         SUBJECT,
@@ -631,14 +624,10 @@ async def test_issue_raises_401_when_refresh_fails(
         _make_cred(expires_at=datetime.now(UTC) + timedelta(seconds=10)),
         expected_version=None,
     )
-    provider = _make_provider(store)
-
     fake_client = _FakeTokenClient(
         status_code=400, json_body={"error": "invalid_grant"}
     )
-    monkeypatch.setattr(
-        "af_mcp_broker.credentials.oauth21.get_http_client", lambda: fake_client
-    )
+    provider = _make_provider(store, http_client=fake_client)
 
     with pytest.raises(CredentialReauthRequiredError):
         await provider.issue(_principal(), ALIAS)
@@ -701,22 +690,17 @@ async def test_issue_serves_token_without_expiry_and_reports_no_expiry() -> None
     assert issued.expires_at is None
 
 
-async def test_issue_never_refreshes_token_without_expiry(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_issue_never_refreshes_token_without_expiry() -> None:
     """A token with no known expiry is never inside the refresh window, even
     when a refresh token happens to be stored alongside it."""
     store = InMemoryTokenStore()
     await store.write_cas(
         SUBJECT, ALIAS, _make_cred(expires_at=None), expected_version=None
     )
-    provider = _make_provider(store)
     fake_client = _FakeTokenClient(
         status_code=200, json_body={"access_token": "access-token-2"}
     )
-    monkeypatch.setattr(
-        "af_mcp_broker.credentials.oauth21.get_http_client", lambda: fake_client
-    )
+    provider = _make_provider(store, http_client=fake_client)
 
     issued = await provider.issue(_principal(), ALIAS)
 
@@ -810,21 +794,16 @@ async def test_mark_rejected_loses_a_write_race_quietly() -> None:
     assert await provider.is_linked(_principal()) is True
 
 
-async def test_mark_rejected_refreshes_once_instead_of_rejecting(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_mark_rejected_refreshes_once_instead_of_rejecting() -> None:
     """With a refresh token, a 401 first earns one refresh: the AS may still
     honor the refresh token, so the user need not re-link."""
     store = InMemoryTokenStore()
     await store.write_cas(SUBJECT, ALIAS, _make_cred(), expected_version=None)
-    provider = _make_provider(store)
     fake_client = _FakeTokenClient(
         status_code=200,
         json_body={"access_token": "access-token-2", "expires_in": 3600},
     )
-    monkeypatch.setattr(
-        "af_mcp_broker.credentials.oauth21.get_http_client", lambda: fake_client
-    )
+    provider = _make_provider(store, http_client=fake_client)
 
     await provider.mark_rejected(_principal(), "access-token-1")
 
@@ -837,9 +816,7 @@ async def test_mark_rejected_refreshes_once_instead_of_rejecting(
     assert stored[0].refreshed_after_rejection is True
 
 
-async def test_mark_rejected_rejects_a_token_already_refreshed_after_a_401(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_mark_rejected_rejects_a_token_already_refreshed_after_a_401() -> None:
     """A second 401, for the token that refresh produced, rejects it: one
     refresh per rejection, never a refresh loop against a backend that
     rejects everything."""
@@ -850,13 +827,10 @@ async def test_mark_rejected_rejects_a_token_already_refreshed_after_a_401(
         _make_cred(refreshed_after_rejection=True),
         expected_version=None,
     )
-    provider = _make_provider(store)
     fake_client = _FakeTokenClient(
         status_code=200, json_body={"access_token": "access-token-2"}
     )
-    monkeypatch.setattr(
-        "af_mcp_broker.credentials.oauth21.get_http_client", lambda: fake_client
-    )
+    provider = _make_provider(store, http_client=fake_client)
 
     await provider.mark_rejected(_principal(), "access-token-1")
 
@@ -864,18 +838,13 @@ async def test_mark_rejected_rejects_a_token_already_refreshed_after_a_401(
     assert await provider.is_linked(_principal()) is False
 
 
-async def test_mark_rejected_rejects_when_the_as_refuses_the_refresh(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_mark_rejected_rejects_when_the_as_refuses_the_refresh() -> None:
     store = InMemoryTokenStore()
     await store.write_cas(SUBJECT, ALIAS, _make_cred(), expected_version=None)
-    provider = _make_provider(store)
     fake_client = _FakeTokenClient(
         status_code=400, json_body={"error": "invalid_grant"}
     )
-    monkeypatch.setattr(
-        "af_mcp_broker.credentials.oauth21.get_http_client", lambda: fake_client
-    )
+    provider = _make_provider(store, http_client=fake_client)
 
     await provider.mark_rejected(_principal(), "access-token-1")
 
@@ -885,19 +854,16 @@ async def test_mark_rejected_rejects_when_the_as_refuses_the_refresh(
     assert stored[0].access_token.get_secret_value() == "access-token-1"
 
 
-async def test_mark_rejected_leaves_the_token_alone_when_the_as_is_unreachable(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_mark_rejected_leaves_the_token_alone_when_the_as_is_unreachable() -> (
+    None
+):
     """A 5xx from the AS says nothing about the refresh token: leave the
     credential as it was, so the next 401 tries again, rather than forcing a
     re-link over an AS outage."""
     store = InMemoryTokenStore()
     await store.write_cas(SUBJECT, ALIAS, _make_cred(), expected_version=None)
-    provider = _make_provider(store)
     fake_client = _FakeTokenClient(status_code=503, json_body={})
-    monkeypatch.setattr(
-        "af_mcp_broker.credentials.oauth21.get_http_client", lambda: fake_client
-    )
+    provider = _make_provider(store, http_client=fake_client)
 
     with structlog.testing.capture_logs() as logs:
         await provider.mark_rejected(_principal(), "access-token-1")
@@ -911,9 +877,7 @@ async def test_mark_rejected_leaves_the_token_alone_when_the_as_is_unreachable(
     assert logs[0]["log_level"] == "warning"
 
 
-async def test_issue_refresh_clears_refreshed_after_rejection(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_issue_refresh_clears_refreshed_after_rejection() -> None:
     """A routine refresh starts a fresh token lifetime, so a later 401 earns
     its own refresh again."""
     store = InMemoryTokenStore()
@@ -926,14 +890,11 @@ async def test_issue_refresh_clears_refreshed_after_rejection(
         ),
         expected_version=None,
     )
-    provider = _make_provider(store)
     fake_client = _FakeTokenClient(
         status_code=200,
         json_body={"access_token": "access-token-2", "expires_in": 3600},
     )
-    monkeypatch.setattr(
-        "af_mcp_broker.credentials.oauth21.get_http_client", lambda: fake_client
-    )
+    provider = _make_provider(store, http_client=fake_client)
 
     await provider.issue(_principal(), ALIAS)
 
@@ -1015,19 +976,18 @@ async def test_catalog_says_rejected_for_a_stored_rejected_credential() -> None:
     assert detail.startswith("Your linked credential was rejected")
 
 
-async def test_catalog_ignores_an_unauthorized_listing_record_the_provider_resolved(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_catalog_ignores_an_unauthorized_listing_record_the_provider_resolved() -> (
+    None
+):
     """The provider, not the per-caller "unauthorized" listing record, decides
     whether an oauth21 credential is rejected. A 401 that a refresh resolved
     leaves the credential usable, so the record it also left behind must not
     keep the catalog on "rejected"."""
     store = InMemoryTokenStore()
     await store.write_cas(SUBJECT, ALIAS, _make_cred(), expected_version=None)
-    provider = _make_provider(store)
-    monkeypatch.setattr(
-        "af_mcp_broker.credentials.oauth21.get_http_client",
-        lambda: _FakeTokenClient(
+    provider = _make_provider(
+        store,
+        http_client=_FakeTokenClient(
             status_code=200,
             json_body={"access_token": "access-token-2", "expires_in": 3600},
         ),
@@ -1041,18 +1001,12 @@ async def test_catalog_ignores_an_unauthorized_listing_record_the_provider_resol
     assert (status, link_state) == ("available", None)
 
 
-async def test_catalog_does_not_claim_rejected_when_the_as_is_unreachable(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_catalog_does_not_claim_rejected_when_the_as_is_unreachable() -> None:
     """An authorization-server outage leaves the credential as it was, so
     the catalog must not call it rejected."""
     store = InMemoryTokenStore()
     await store.write_cas(SUBJECT, ALIAS, _make_cred(), expected_version=None)
-    provider = _make_provider(store)
-    monkeypatch.setattr(
-        "af_mcp_broker.credentials.oauth21.get_http_client",
-        lambda: _FakeTokenClient(status_code=503),
-    )
+    provider = _make_provider(store, http_client=_FakeTokenClient(status_code=503))
     service_registry = ServiceRegistry()
 
     await provider.mark_rejected(_principal(), "access-token-1")
@@ -1099,15 +1053,11 @@ async def test_issue_handles_version_conflict_during_refresh(
         _make_cred(expires_at=datetime.now(UTC) + timedelta(seconds=10)),
         expected_version=None,
     )  # version 1
-    provider = _make_provider(store)
-
     fake_client = _FakeTokenClient(
         status_code=200,
         json_body={"access_token": "our-refresh-token", "expires_in": 3600},
     )
-    monkeypatch.setattr(
-        "af_mcp_broker.credentials.oauth21.get_http_client", lambda: fake_client
-    )
+    provider = _make_provider(store, http_client=fake_client)
 
     real_write_cas = store.write_cas
     call_count = 0
@@ -1140,9 +1090,7 @@ def test_provider_exposes_client_id() -> None:
     assert provider.client_id == CONFIDENTIAL_CLIENT_ID
 
 
-async def test_issue_refresh_sends_client_secret_when_confidential(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_issue_refresh_sends_client_secret_when_confidential() -> None:
     store = InMemoryTokenStore()
     await store.write_cas(
         SUBJECT,
@@ -1150,18 +1098,15 @@ async def test_issue_refresh_sends_client_secret_when_confidential(
         _make_cred(expires_at=datetime.now(UTC) + timedelta(seconds=60)),
         expected_version=None,
     )
-    provider = _make_provider(
-        store,
-        client_id=CONFIDENTIAL_CLIENT_ID,
-        client_secret=SecretStr(CONFIDENTIAL_CLIENT_SECRET),
-    )
-
     fake_client = _FakeTokenClient(
         status_code=200,
         json_body={"access_token": "access-token-2", "expires_in": 3600},
     )
-    monkeypatch.setattr(
-        "af_mcp_broker.credentials.oauth21.get_http_client", lambda: fake_client
+    provider = _make_provider(
+        store,
+        client_id=CONFIDENTIAL_CLIENT_ID,
+        client_secret=SecretStr(CONFIDENTIAL_CLIENT_SECRET),
+        http_client=fake_client,
     )
 
     await provider.issue(_principal(), ALIAS)
@@ -1172,9 +1117,7 @@ async def test_issue_refresh_sends_client_secret_when_confidential(
     assert sent["client_secret"] == CONFIDENTIAL_CLIENT_SECRET
 
 
-async def test_issue_refresh_omits_client_secret_when_public(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_issue_refresh_omits_client_secret_when_public() -> None:
     store = InMemoryTokenStore()
     await store.write_cas(
         SUBJECT,
@@ -1182,15 +1125,11 @@ async def test_issue_refresh_omits_client_secret_when_public(
         _make_cred(expires_at=datetime.now(UTC) + timedelta(seconds=60)),
         expected_version=None,
     )
-    provider = _make_provider(store)
-
     fake_client = _FakeTokenClient(
         status_code=200,
         json_body={"access_token": "access-token-2", "expires_in": 3600},
     )
-    monkeypatch.setattr(
-        "af_mcp_broker.credentials.oauth21.get_http_client", lambda: fake_client
-    )
+    provider = _make_provider(store, http_client=fake_client)
 
     await provider.issue(_principal(), ALIAS)
 
@@ -1202,19 +1141,13 @@ async def test_issue_refresh_omits_client_secret_when_public(
 # ---------------------------------------------------------------------------
 
 
-async def test_revoke_without_revocation_endpoint_only_deletes_locally(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_revoke_without_revocation_endpoint_only_deletes_locally() -> None:
     """No revocation_endpoint configured -- best-effort upstream call is
     skipped entirely, but the stored token is still deleted."""
     store = InMemoryTokenStore()
     await store.write_cas(SUBJECT, ALIAS, _make_cred(), expected_version=None)
-    provider = _make_provider(store)
-
     fake_client = _FakeTokenClient()
-    monkeypatch.setattr(
-        "af_mcp_broker.credentials.oauth21.get_http_client", lambda: fake_client
-    )
+    provider = _make_provider(store, http_client=fake_client)
 
     await provider.revoke(_principal(), ALIAS)
 
@@ -1222,16 +1155,12 @@ async def test_revoke_without_revocation_endpoint_only_deletes_locally(
     assert await store.get(SUBJECT, ALIAS) is None
 
 
-async def test_revoke_with_revocation_endpoint_posts_token_and_deletes(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_revoke_with_revocation_endpoint_posts_token_and_deletes() -> None:
     store = InMemoryTokenStore()
     await store.write_cas(SUBJECT, ALIAS, _make_cred(), expected_version=None)
-    provider = _make_provider(store, revocation_endpoint=REVOCATION_ENDPOINT)
-
     fake_client = _FakeTokenClient(status_code=200)
-    monkeypatch.setattr(
-        "af_mcp_broker.credentials.oauth21.get_http_client", lambda: fake_client
+    provider = _make_provider(
+        store, revocation_endpoint=REVOCATION_ENDPOINT, http_client=fake_client
     )
 
     await provider.revoke(_principal(), ALIAS)
@@ -1245,21 +1174,16 @@ async def test_revoke_with_revocation_endpoint_posts_token_and_deletes(
     assert await store.get(SUBJECT, ALIAS) is None
 
 
-async def test_revoke_sends_client_secret_when_confidential(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_revoke_sends_client_secret_when_confidential() -> None:
     store = InMemoryTokenStore()
     await store.write_cas(SUBJECT, ALIAS, _make_cred(), expected_version=None)
+    fake_client = _FakeTokenClient(status_code=200)
     provider = _make_provider(
         store,
         revocation_endpoint=REVOCATION_ENDPOINT,
         client_id=CONFIDENTIAL_CLIENT_ID,
         client_secret=SecretStr(CONFIDENTIAL_CLIENT_SECRET),
-    )
-
-    fake_client = _FakeTokenClient(status_code=200)
-    monkeypatch.setattr(
-        "af_mcp_broker.credentials.oauth21.get_http_client", lambda: fake_client
+        http_client=fake_client,
     )
 
     await provider.revoke(_principal(), ALIAS)
@@ -1270,18 +1194,14 @@ async def test_revoke_sends_client_secret_when_confidential(
     assert sent["client_secret"] == CONFIDENTIAL_CLIENT_SECRET
 
 
-async def test_revoke_falls_back_to_access_token_when_no_refresh_token(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_revoke_falls_back_to_access_token_when_no_refresh_token() -> None:
     store = InMemoryTokenStore()
     await store.write_cas(
         SUBJECT, ALIAS, _make_cred(refresh_token=None), expected_version=None
     )
-    provider = _make_provider(store, revocation_endpoint=REVOCATION_ENDPOINT)
-
     fake_client = _FakeTokenClient(status_code=200)
-    monkeypatch.setattr(
-        "af_mcp_broker.credentials.oauth21.get_http_client", lambda: fake_client
+    provider = _make_provider(
+        store, revocation_endpoint=REVOCATION_ENDPOINT, http_client=fake_client
     )
 
     await provider.revoke(_principal(), ALIAS)
@@ -1292,18 +1212,14 @@ async def test_revoke_falls_back_to_access_token_when_no_refresh_token(
     assert call["data"]["token_type_hint"] == "access_token"
 
 
-async def test_revoke_upstream_failure_still_deletes_locally(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_revoke_upstream_failure_still_deletes_locally() -> None:
     """The revocation-endpoint call is best-effort -- an unreachable or
     rejecting backend AS must never block the local unlink."""
     store = InMemoryTokenStore()
     await store.write_cas(SUBJECT, ALIAS, _make_cred(), expected_version=None)
-    provider = _make_provider(store, revocation_endpoint=REVOCATION_ENDPOINT)
-
     fake_client = _FakeTokenClient(status_code=500)
-    monkeypatch.setattr(
-        "af_mcp_broker.credentials.oauth21.get_http_client", lambda: fake_client
+    provider = _make_provider(
+        store, revocation_endpoint=REVOCATION_ENDPOINT, http_client=fake_client
     )
 
     await provider.revoke(_principal(), ALIAS)
@@ -1312,19 +1228,16 @@ async def test_revoke_upstream_failure_still_deletes_locally(
     assert await store.get(SUBJECT, ALIAS) is None
 
 
-async def test_revoke_upstream_unreachable_still_deletes_locally(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_revoke_upstream_unreachable_still_deletes_locally() -> None:
     store = InMemoryTokenStore()
     await store.write_cas(SUBJECT, ALIAS, _make_cred(), expected_version=None)
-    provider = _make_provider(store, revocation_endpoint=REVOCATION_ENDPOINT)
 
     class _RaisingClient:
         async def post(self, *args: Any, **kwargs: Any) -> httpx2.Response:
             raise httpx2.ConnectError("connection refused")
 
-    monkeypatch.setattr(
-        "af_mcp_broker.credentials.oauth21.get_http_client", _RaisingClient
+    provider = _make_provider(
+        store, revocation_endpoint=REVOCATION_ENDPOINT, http_client=_RaisingClient()
     )
 
     await provider.revoke(_principal(), ALIAS)
@@ -1332,17 +1245,13 @@ async def test_revoke_upstream_unreachable_still_deletes_locally(
     assert await store.get(SUBJECT, ALIAS) is None
 
 
-async def test_revoke_when_nothing_stored_is_a_noop(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_revoke_when_nothing_stored_is_a_noop() -> None:
     """Unlinking an alias with no stored token must not attempt an upstream
     call -- there is no token to revoke -- and must not raise."""
     store = InMemoryTokenStore()
-    provider = _make_provider(store, revocation_endpoint=REVOCATION_ENDPOINT)
-
     fake_client = _FakeTokenClient()
-    monkeypatch.setattr(
-        "af_mcp_broker.credentials.oauth21.get_http_client", lambda: fake_client
+    provider = _make_provider(
+        store, revocation_endpoint=REVOCATION_ENDPOINT, http_client=fake_client
     )
 
     await provider.revoke(_principal(), ALIAS)
@@ -1552,7 +1461,7 @@ def test_callback_completes_flow_and_stores_credential(
         },
     )
     monkeypatch.setattr(
-        "af_mcp_broker.api.oauth21.get_http_client", lambda: fake_token_client
+        "af_mcp_broker.app.build_http_client", lambda _stack: fake_token_client
     )
 
     with app_client_factory() as (client, _state):
@@ -1615,7 +1524,7 @@ def test_callback_notifies_listing_caches_for_the_linking_subject(
         json_body={"access_token": "linked-access-token", "expires_in": 3600},
     )
     monkeypatch.setattr(
-        "af_mcp_broker.api.oauth21.get_http_client", lambda: fake_token_client
+        "af_mcp_broker.app.build_http_client", lambda _stack: fake_token_client
     )
 
     with app_client_factory() as (client, _state):
@@ -1697,7 +1606,7 @@ def test_callback_never_calls_keycloak_dependency(
         json_body={"access_token": "linked-access-token", "expires_in": 3600},
     )
     monkeypatch.setattr(
-        "af_mcp_broker.api.oauth21.get_http_client", lambda: fake_token_client
+        "af_mcp_broker.app.build_http_client", lambda _stack: fake_token_client
     )
 
     with app_client_factory() as (client, _state):
@@ -1793,7 +1702,7 @@ def test_callback_sends_client_secret_post_when_confidential(
         },
     )
     monkeypatch.setattr(
-        "af_mcp_broker.api.oauth21.get_http_client", lambda: fake_token_client
+        "af_mcp_broker.app.build_http_client", lambda _stack: fake_token_client
     )
 
     with app_client_factory() as (client, _state):
@@ -1824,7 +1733,7 @@ def test_callback_omits_client_secret_when_public(
         json_body={"access_token": "linked-access-token", "expires_in": 3600},
     )
     monkeypatch.setattr(
-        "af_mcp_broker.api.oauth21.get_http_client", lambda: fake_token_client
+        "af_mcp_broker.app.build_http_client", lambda _stack: fake_token_client
     )
 
     with app_client_factory() as (client, _state):
@@ -1848,7 +1757,7 @@ def test_callback_relink_clears_a_rejected_credential(
         status_code=200, json_body={"access_token": "relinked-access-token"}
     )
     monkeypatch.setattr(
-        "af_mcp_broker.api.oauth21.get_http_client", lambda: fake_token_client
+        "af_mcp_broker.app.build_http_client", lambda _stack: fake_token_client
     )
 
     with app_client_factory() as (client, _state):

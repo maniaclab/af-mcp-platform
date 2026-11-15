@@ -1,7 +1,7 @@
 """Tests for KeycloakPrincipalDirectory (issue #144 step 2a).
 
-Fakes the Keycloak Admin REST API + token endpoint via monkeypatching
-``principal_directory.get_http_client`` -- never a real Keycloak.
+Fakes the Keycloak Admin REST API + token endpoint by injecting
+the ``http_client`` the directory is built with -- never a real Keycloak.
 """
 
 from __future__ import annotations
@@ -10,7 +10,6 @@ from typing import Any
 
 import pytest
 
-from af_mcp_broker import principal_directory as principal_directory_module
 from af_mcp_broker.config import Settings
 from af_mcp_broker.principal_directory import (
     KeycloakPrincipalDirectory,
@@ -70,10 +69,8 @@ class _FakeKeycloakAdmin:
 
 
 @pytest.fixture
-def fake_admin(monkeypatch: pytest.MonkeyPatch) -> _FakeKeycloakAdmin:
-    fake = _FakeKeycloakAdmin()
-    monkeypatch.setattr(principal_directory_module, "get_http_client", lambda: fake)
-    return fake
+def fake_admin() -> _FakeKeycloakAdmin:
+    return _FakeKeycloakAdmin()
 
 
 @pytest.fixture
@@ -81,8 +78,15 @@ def settings() -> Settings:
     return Settings(oidc_issuer=ISSUER)
 
 
-def _directory(settings: Settings) -> KeycloakPrincipalDirectory:
-    return KeycloakPrincipalDirectory(settings, "admin-client", "admin-secret")
+def _directory(
+    settings: Settings, fake_admin: _FakeKeycloakAdmin
+) -> KeycloakPrincipalDirectory:
+    return KeycloakPrincipalDirectory(
+        settings,
+        "admin-client",
+        "admin-secret",
+        fake_admin,  # type: ignore[arg-type]
+    )
 
 
 def test_admin_base_url_derivation() -> None:
@@ -108,7 +112,9 @@ async def test_backchannel_calls_use_internal_url_when_set(
     }
     fake_admin.groups["user-123"] = []
 
-    directory = _directory(Settings(oidc_issuer=ISSUER, oidc_internal_url=internal))
+    directory = _directory(
+        Settings(oidc_issuer=ISSUER, oidc_internal_url=internal), fake_admin
+    )
     await directory.resolve("user-123")
 
     assert fake_admin.token_urls == [f"{internal}/protocol/openid-connect/token"]
@@ -131,7 +137,7 @@ async def test_resolve_returns_attributes_and_groups(
         {"id": "g2", "name": "af-admins", "path": "/af-admins"},
     ]
 
-    directory = _directory(settings)
+    directory = _directory(settings, fake_admin)
     attrs = await directory.resolve("user-123")
 
     assert attrs.uid == 50123
@@ -153,7 +159,7 @@ async def test_resolve_uses_group_name_not_path(
     }
     fake_admin.groups["user-123"] = [{"name": "atlas", "path": "/some/nested/atlas"}]
 
-    directory = _directory(settings)
+    directory = _directory(settings, fake_admin)
     attrs = await directory.resolve("user-123")
 
     assert attrs.groups == ["atlas"]
@@ -162,7 +168,7 @@ async def test_resolve_uses_group_name_not_path(
 async def test_resolve_unknown_user_raises_principal_not_found(
     settings: Settings, fake_admin: _FakeKeycloakAdmin
 ) -> None:
-    directory = _directory(settings)
+    directory = _directory(settings, fake_admin)
     with pytest.raises(PrincipalNotFoundError):
         await directory.resolve("no-such-user")
 
@@ -173,7 +179,7 @@ async def test_resolve_disabled_user_raises_principal_disabled(
     fake_admin.users["user-123"] = {"enabled": False, "email": "user@example.org"}
     fake_admin.groups["user-123"] = [{"name": "atlas", "path": "/atlas"}]
 
-    directory = _directory(settings)
+    directory = _directory(settings, fake_admin)
     with pytest.raises(PrincipalDisabledError) as exc:
         await directory.resolve("user-123")
 
@@ -203,7 +209,7 @@ async def test_resolve_enabled_user_resolves(
     fake_admin.users["user-123"] = user
     fake_admin.groups["user-123"] = []
 
-    attrs = await _directory(settings).resolve("user-123")
+    attrs = await _directory(settings, fake_admin).resolve("user-123")
 
     assert attrs.email == "user@example.org"
 
@@ -217,7 +223,7 @@ async def test_resolve_non_true_enabled_value_is_treated_as_disabled(
     fake_admin.groups["user-123"] = []
 
     with pytest.raises(PrincipalDisabledError):
-        await _directory(settings).resolve("user-123")
+        await _directory(settings, fake_admin).resolve("user-123")
 
 
 async def test_resolve_leaves_missing_posix_attributes_none(
@@ -231,7 +237,7 @@ async def test_resolve_leaves_missing_posix_attributes_none(
     }  # gid/unixname missing
     fake_admin.groups["user-123"] = []
 
-    directory = _directory(settings)
+    directory = _directory(settings, fake_admin)
     attrs = await directory.resolve("user-123")
 
     assert attrs.uid == 1
@@ -247,7 +253,7 @@ async def test_resolve_all_posix_attributes_absent(
     fake_admin.users["user-123"] = {"attributes": {}}
     fake_admin.groups["user-123"] = []
 
-    directory = _directory(settings)
+    directory = _directory(settings, fake_admin)
     attrs = await directory.resolve("user-123")
 
     assert attrs.uid is None
@@ -282,7 +288,7 @@ async def test_resolve_uses_configured_attribute_names(
     }
     fake_admin.groups["user-123"] = []
 
-    directory = _directory(settings)
+    directory = _directory(settings, fake_admin)
     attrs = await directory.resolve("user-123")
 
     assert attrs.uid == 50123
@@ -312,7 +318,7 @@ async def test_resolve_respects_group_full_path_setting(
     }
     fake_admin.groups["user-123"] = [{"name": "atlas", "path": "/atlas/users"}]
 
-    directory = _directory(settings)
+    directory = _directory(settings, fake_admin)
     attrs = await directory.resolve("user-123")
 
     assert attrs.groups == ["/atlas/users"]
@@ -330,7 +336,7 @@ async def test_resolve_defaults_email_to_empty_string_when_absent(
     }
     fake_admin.groups["user-123"] = []
 
-    directory = _directory(settings)
+    directory = _directory(settings, fake_admin)
     attrs = await directory.resolve("user-123")
 
     assert attrs.email == ""
@@ -344,7 +350,7 @@ async def test_admin_token_is_cached_across_calls(
     }
     fake_admin.groups["user-123"] = []
 
-    directory = _directory(settings)
+    directory = _directory(settings, fake_admin)
     await directory.resolve("user-123")
     await directory.resolve("user-123")
 
@@ -360,7 +366,7 @@ async def test_admin_token_refreshes_once_expired(
     fake_admin.groups["user-123"] = []
     fake_admin.token_expires_in = 30  # inside the refresh buffer immediately
 
-    directory = _directory(settings)
+    directory = _directory(settings, fake_admin)
     await directory.resolve("user-123")
     await directory.resolve("user-123")
 

@@ -32,7 +32,6 @@ from af_mcp_broker.credentials.errors import (
     UnlockRateLimitError,
 )
 from af_mcp_broker.credentials.stores import VaultLinkStores, build_vault_link_stores
-from af_mcp_broker.http import aclose_http_client
 from af_mcp_broker.identity import (
     AdminRequiredError,
     IdentityError,
@@ -70,6 +69,7 @@ from af_mcp_broker.wiring.credentials import (
     build_state_cipher,
     resolve_x509_provider,
 )
+from af_mcp_broker.wiring.http_client import build_http_client
 from af_mcp_broker.wiring.identity import (
     build_dev_bypass_principal,
     build_mcp_auth_code_store,
@@ -184,7 +184,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[dict[str, Any], None]
         # flushed too.
         stack.callback(shutdown_tracing)
         stack.callback(close_audit_logging)
-        stack.push_async_callback(aclose_http_client)
+        http_client = build_http_client(stack)
 
         dev_principal = build_dev_bypass_principal(settings)
         _warn_replica_hazards(settings)
@@ -203,7 +203,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[dict[str, Any], None]
         credential_cache = build_credential_cache(
             settings, shared_state, list_cache_invalidator, stack
         )
-        vault_kv = await build_vault_kv(settings)
+        vault_kv = await build_vault_kv(settings, http_client)
         oauth21_token_store = build_oauth21_token_store(settings, vault_kv)
         oauth21_state_cipher = build_state_cipher(settings)
         broker_token_issuer = build_broker_token_issuer(settings)
@@ -219,6 +219,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[dict[str, Any], None]
             issuer=broker_token_issuer,
             token_store=oauth21_token_store,
             link_stores=link_stores,
+            http_client=http_client,
         )
         await validate_services_gated(catalog.services, providers.registry)
         x509_provider = await resolve_x509_provider(
@@ -230,7 +231,10 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[dict[str, Any], None]
         )
         token_registries = build_token_registry(settings, vault_kv, shared_state)
         principal_cache = build_principal_cache(
-            settings, vault_kv, dev_bypass_active=dev_principal is not None
+            settings,
+            vault_kv,
+            http_client,
+            dev_bypass_active=dev_principal is not None,
         )
         maintenance_mode_store = await start_maintenance_store(
             settings, vault_kv, stack
@@ -268,6 +272,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[dict[str, Any], None]
             pat_backend=token_registries.backend,
             principal_cache=principal_cache,
             maintenance_mode_store=maintenance_mode_store,
+            http_client=http_client,
         )
 
         metrics_port = start_metrics_server(settings, stack)
@@ -280,10 +285,12 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[dict[str, Any], None]
             link_stores=link_stores,
             vault_kv=vault_kv,
             principal_cache=principal_cache,
+            http_client=http_client,
             stack=stack,
         )
         application.state.broker = build_broker_state(
             settings,
+            http_client=http_client,
             catalog=catalog,
             targets=targets,
             providers=providers,
@@ -307,7 +314,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[dict[str, Any], None]
             metrics_port=metrics_port,
         )
 
-        await prime_jwks_cache(settings)
+        await prime_jwks_cache(settings, http_client)
         logger.info(
             "af_mcp_broker_started",
             version=__version__,

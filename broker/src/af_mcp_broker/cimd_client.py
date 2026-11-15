@@ -160,7 +160,7 @@ async def fetch_client_document(
 ) -> dict[str, Any]:
     """Fetch and JSON-parse the CIMD document at *client_id_url*.
 
-    Redirects are not followed by the shared client (see http.py) -- a
+    Redirects are not followed by the shared client (see wiring/http_client.py) -- a
     redirect after the SSRF check below could bypass the resolved-address
     guard, and the self-reference check in ``build_client_from_document``
     assumes the document came from the exact requested URL. Raises

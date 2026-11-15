@@ -14,6 +14,7 @@ from af_mcp_broker.principal_directory import KeycloakPrincipalDirectory
 from af_mcp_broker.token_registry import TokenRegistry, build_token_registry_backend
 
 if TYPE_CHECKING:
+    import httpx2
     from cryptography.fernet import Fernet
 
     from af_mcp_broker.config import Settings
@@ -59,7 +60,11 @@ def build_dev_bypass_principal(settings: Settings) -> Principal | None:
 
 
 def build_principal_cache(
-    settings: Settings, vault_kv: VaultKV | None, *, dev_bypass_active: bool
+    settings: Settings,
+    vault_kv: VaultKV | None,
+    http_client: httpx2.AsyncClient,
+    *,
+    dev_bypass_active: bool,
 ) -> PrincipalCache | None:
     """Build the principal cache (issue #144 steps 2a/3/3b), or None under the dev bypass with no Keycloak admin account.
 
@@ -104,7 +109,7 @@ def build_principal_cache(
         )
         raise RuntimeError(msg)
     principal_directory = KeycloakPrincipalDirectory(
-        settings, admin_client_id, admin_client_secret
+        settings, admin_client_id, admin_client_secret, http_client
     )
     # Persistence service for the cache (issue #144 step 2b), sharing the
     # process-wide vault_kv transport instance when Vault-backed.

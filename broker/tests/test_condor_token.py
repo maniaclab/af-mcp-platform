@@ -29,7 +29,6 @@ from test_broker_issued import (
 
 from af_mcp_broker import metrics
 from af_mcp_broker.credentials import CredentialKind, ExecutionModel
-from af_mcp_broker.credentials import condor as condor_module
 from af_mcp_broker.credentials.broker_issued import BrokerTokenIssuer
 from af_mcp_broker.credentials.cache import CredentialCache
 from af_mcp_broker.credentials.condor import CondorTokenProvider
@@ -87,9 +86,12 @@ def issuer() -> BrokerTokenIssuer:
 
 
 @pytest.fixture
-def provider_factory(issuer: BrokerTokenIssuer):
+def provider_factory(issuer: BrokerTokenIssuer, fake_client: _FakeCondorClient):
     def _make(
-        *, audience: str = "condor-token-service", service_url: str = SERVICE_URL
+        *,
+        audience: str = "condor-token-service",
+        service_url: str = SERVICE_URL,
+        http_client: Any = None,
     ) -> tuple[CondorTokenProvider, CredentialCache]:
         cache = CredentialCache()
         provider = CondorTokenProvider(
@@ -99,6 +101,7 @@ def provider_factory(issuer: BrokerTokenIssuer):
             targets=frozenset({"condor-mcp"}),
             service_url=service_url,
             audience=audience,
+            http_client=http_client or fake_client,
         )
         return provider, cache
 
@@ -106,17 +109,15 @@ def provider_factory(issuer: BrokerTokenIssuer):
 
 
 @pytest.fixture
-def fake_client(monkeypatch: pytest.MonkeyPatch) -> _FakeCondorClient:
-    client = _FakeCondorClient()
-    monkeypatch.setattr(condor_module, "get_http_client", lambda: client)
-    return client
+def fake_client() -> _FakeCondorClient:
+    return _FakeCondorClient()
 
 
 def _install_client(
-    monkeypatch: pytest.MonkeyPatch, responses: list[httpx2.Response]
+    client: _FakeCondorClient, responses: list[httpx2.Response]
 ) -> _FakeCondorClient:
-    client = _FakeCondorClient(responses)
-    monkeypatch.setattr(condor_module, "get_http_client", lambda: client)
+    """Have *client* (the one ``provider_factory`` hands its providers) answer with *responses*."""
+    client.responses = responses
     return client
 
 
@@ -158,10 +159,10 @@ async def test_issue_posts_to_the_service_token_endpoint(
 
 
 async def test_issue_expires_at_comes_from_the_service_response(
-    provider_factory, make_principal, monkeypatch: pytest.MonkeyPatch
+    provider_factory, make_principal, fake_client
 ) -> None:
     body = _token_response(expires_in_seconds=1800)
-    _install_client(monkeypatch, [httpx2.Response(200, json=body)])
+    _install_client(fake_client, [httpx2.Response(200, json=body)])
     provider, _ = provider_factory()
 
     cred = await provider.issue(make_principal(), "condor-mcp")
@@ -252,13 +253,13 @@ async def test_issue_cache_hit_skips_http(
 
 
 async def test_issue_remints_when_cached_token_is_below_min_remaining(
-    provider_factory, make_principal, monkeypatch: pytest.MonkeyPatch
+    provider_factory, make_principal, fake_client
 ) -> None:
     """A cached IDTOKEN with fewer than min_remaining seconds left is a
     cache miss (CredentialCache semantics) -- the expiry stored from the
     service's expires_at is what makes this happen."""
     client = _install_client(
-        monkeypatch,
+        fake_client,
         [httpx2.Response(200, json=_token_response(expires_in_seconds=100))],
     )
     provider, _ = provider_factory()
@@ -271,7 +272,7 @@ async def test_issue_remints_when_cached_token_is_below_min_remaining(
 
 
 async def test_issue_single_flights_concurrent_misses(
-    provider_factory, make_principal, monkeypatch: pytest.MonkeyPatch
+    provider_factory, make_principal
 ) -> None:
     """N concurrent issue() calls for the same (subject, target) must cost
     exactly one service exchange (issue #94's pattern)."""
@@ -285,8 +286,7 @@ async def test_issue_single_flights_concurrent_misses(
             return await super().post(url, headers=headers, **kwargs)
 
     client = _SlowClient()
-    monkeypatch.setattr(condor_module, "get_http_client", lambda: client)
-    provider, _ = provider_factory()
+    provider, _ = provider_factory(http_client=client)
     principal = make_principal(subject="sub-abc")
 
     results = await asyncio.gather(
@@ -339,13 +339,13 @@ async def test_issue_without_posix_identity_raises_404(
 
 @pytest.mark.parametrize("upstream_status", [401, 403, 502])
 async def test_issue_maps_service_failures_to_502_with_generic_detail(
-    provider_factory, make_principal, monkeypatch: pytest.MonkeyPatch, upstream_status
+    provider_factory, make_principal, fake_client, upstream_status
 ) -> None:
     """401 (broker token rejected) and 403 (no unixname claim) are
     broker<->service contract failures, not something the caller can act on;
     502 is minting failed. All map to a generic 502."""
     _install_client(
-        monkeypatch,
+        fake_client,
         [httpx2.Response(upstream_status, json={"detail": _UPSTREAM_DETAIL})],
     )
     provider, _ = provider_factory()
@@ -357,10 +357,10 @@ async def test_issue_maps_service_failures_to_502_with_generic_detail(
 
 
 async def test_issue_passes_through_429_with_retry_after(
-    provider_factory, make_principal, monkeypatch: pytest.MonkeyPatch
+    provider_factory, make_principal, fake_client
 ) -> None:
     _install_client(
-        monkeypatch,
+        fake_client,
         [
             httpx2.Response(
                 429,
@@ -378,25 +378,24 @@ async def test_issue_passes_through_429_with_retry_after(
 
 
 async def test_issue_maps_network_errors_to_502(
-    provider_factory, make_principal, monkeypatch: pytest.MonkeyPatch
+    provider_factory, make_principal
 ) -> None:
     class _FailingClient:
         async def post(self, *args: Any, **kwargs: Any) -> httpx2.Response:
             raise httpx2.ConnectError("boom")
 
-    monkeypatch.setattr(condor_module, "get_http_client", _FailingClient)
-    provider, _ = provider_factory()
+    provider, _ = provider_factory(http_client=_FailingClient())
 
     with pytest.raises(CredentialServiceError):
         await provider.issue(make_principal(), "condor-mcp")
 
 
 async def test_issue_failure_does_not_cache(
-    provider_factory, make_principal, monkeypatch: pytest.MonkeyPatch
+    provider_factory, make_principal, fake_client
 ) -> None:
     """A failed exchange must not poison the cache -- the next call retries."""
     client = _install_client(
-        monkeypatch,
+        fake_client,
         [
             httpx2.Response(502, json={"detail": "Token minting failed."}),
             httpx2.Response(200, json=_token_response()),

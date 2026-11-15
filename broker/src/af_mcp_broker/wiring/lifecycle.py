@@ -22,6 +22,8 @@ from af_mcp_broker.usage import build_usage_store
 if TYPE_CHECKING:
     from contextlib import AsyncExitStack
 
+    import httpx2
+
     from af_mcp_broker.config import Settings
     from af_mcp_broker.credentials import BrokerTokenIssuer, CredentialRegistry
     from af_mcp_broker.credentials.stores import VaultLinkStores
@@ -120,6 +122,7 @@ async def start_credmon_sync(
     link_stores: VaultLinkStores,
     vault_kv: VaultKV | None,
     principal_cache: PrincipalCache | None,
+    http_client: httpx2.AsyncClient,
     stack: AsyncExitStack,
 ) -> CredmonSyncService | None:
     """Build and start the HTCondor credmon storer (docs/credmon.md), or return None when it is disabled.
@@ -145,16 +148,17 @@ async def start_credmon_sync(
         },
         vault_kv=vault_kv,
         principal_cache=principal_cache,
+        http_client=http_client,
     )
     credmon_sync.start()
     stack.push_async_callback(credmon_sync.stop)
     return credmon_sync
 
 
-async def prime_jwks_cache(settings: Settings) -> None:
+async def prime_jwks_cache(settings: Settings, http_client: httpx2.AsyncClient) -> None:
     """Prime the JWKS cache so the first request does not pay the latency cost of a remote fetch."""
     try:
-        keys = await get_jwks(settings)
+        keys = await get_jwks(settings, http_client)
         logger.info("jwks_cache_primed", key_count=len(keys))
     except Exception as exc:  # noqa: BLE001  # non-fatal prime; broad catch intentional
         # Non-fatal at startup — the cache will be retried on the first request.

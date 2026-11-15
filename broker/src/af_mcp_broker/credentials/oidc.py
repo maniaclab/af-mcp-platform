@@ -19,7 +19,6 @@ from af_mcp_broker.credentials.errors import (
     CredentialNotFoundError,
     CredentialReauthRequiredError,
 )
-from af_mcp_broker.http import get_http_client
 
 if TYPE_CHECKING:
     from pydantic import SecretBytes
@@ -97,8 +96,11 @@ class OIDCProvider(CredentialProvider):
         cache: CredentialCache,
         alias: str,
         targets: frozenset[str] = _DEFAULT_OIDC_TARGETS,
+        *,
+        http_client: httpx2.AsyncClient,
     ) -> None:
         self._settings = settings
+        self._http_client = http_client
         self._cache = cache
         self._alias = alias
         self._targets = targets
@@ -147,13 +149,13 @@ class OIDCProvider(CredentialProvider):
         broker_token_url = f"{self._settings.oidc_backchannel_url.rstrip('/')}/broker/{self._alias}/token"
         headers = {"Authorization": f"Bearer {principal.raw_token.get_secret_value()}"}
         try:
-            resp = await get_http_client().head(
+            resp = await self._http_client.head(
                 broker_token_url, headers=headers, timeout=10.0
             )
             if resp.status_code == 405:
                 # Some Keycloak versions don't allow HEAD on this endpoint —
                 # fall back to a minimal GET and discard the body.
-                resp = await get_http_client().get(
+                resp = await self._http_client.get(
                     broker_token_url, headers=headers, timeout=10.0
                 )
         except httpx2.HTTPError as exc:
@@ -248,7 +250,7 @@ class OIDCProvider(CredentialProvider):
         """
         broker_token_url = f"{self._settings.oidc_backchannel_url.rstrip('/')}/broker/{self._alias}/token"
 
-        resp = await get_http_client().get(
+        resp = await self._http_client.get(
             broker_token_url,
             headers={
                 "Authorization": f"Bearer {principal.raw_token.get_secret_value()}"

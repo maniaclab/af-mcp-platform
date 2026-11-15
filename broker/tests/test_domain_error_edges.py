@@ -49,7 +49,6 @@ from af_mcp_broker.credentials import (
     CredentialRegistry,
     OAuth21Provider,
 )
-from af_mcp_broker.credentials import condor as condor_module
 from af_mcp_broker.credentials import oidc as oidc_module
 from af_mcp_broker.credentials.condor import CondorTokenProvider
 from af_mcp_broker.credentials.oauth21 import InMemoryTokenStore
@@ -129,12 +128,12 @@ async def _raised(awaitable: Awaitable[Any]) -> BaseException:
 # ---------------------------------------------------------------------------
 
 
-async def _oauth21_not_stored(make_principal, monkeypatch) -> BaseException:
+async def _oauth21_not_stored(make_principal) -> BaseException:
     provider = _make_provider(InMemoryTokenStore())
     return await _raised(provider.issue(make_principal(subject=SUBJECT), ALIAS))
 
 
-async def _oauth21_rejected(make_principal, monkeypatch) -> BaseException:
+async def _oauth21_rejected(make_principal) -> BaseException:
     store = InMemoryTokenStore()
     await store.write_cas(
         SUBJECT,
@@ -147,9 +146,7 @@ async def _oauth21_rejected(make_principal, monkeypatch) -> BaseException:
     )
 
 
-async def _oauth21_expired_without_refresh(
-    make_principal, monkeypatch
-) -> BaseException:
+async def _oauth21_expired_without_refresh(make_principal) -> BaseException:
     store = InMemoryTokenStore()
     await store.write_cas(
         SUBJECT,
@@ -164,7 +161,7 @@ async def _oauth21_expired_without_refresh(
     )
 
 
-async def _oauth21_refresh_rejected(make_principal, monkeypatch) -> BaseException:
+async def _oauth21_refresh_rejected(make_principal) -> BaseException:
     store = InMemoryTokenStore()
     await store.write_cas(
         SUBJECT,
@@ -172,10 +169,11 @@ async def _oauth21_refresh_rejected(make_principal, monkeypatch) -> BaseExceptio
         _make_cred(expires_at=datetime.now(UTC) + timedelta(seconds=10)),
         expected_version=None,
     )
-    provider: OAuth21Provider = _make_provider(store)
-    monkeypatch.setattr(
-        "af_mcp_broker.credentials.oauth21.get_http_client",
-        lambda: _FakeTokenClient(status_code=400, json_body={"error": "invalid_grant"}),
+    provider: OAuth21Provider = _make_provider(
+        store,
+        http_client=_FakeTokenClient(
+            status_code=400, json_body={"error": "invalid_grant"}
+        ),
     )
     return await _raised(provider.issue(make_principal(subject=SUBJECT), ALIAS))
 
@@ -191,21 +189,19 @@ class _KeycloakStatusClient:
 
 
 def _oidc_producer(status_code: int):
-    async def _produce(make_principal, monkeypatch) -> BaseException:
-        monkeypatch.setattr(
-            oidc_module, "get_http_client", lambda: _KeycloakStatusClient(status_code)
-        )
+    async def _produce(make_principal) -> BaseException:
         provider = oidc_module.OIDCProvider(
             settings=Settings(oidc_issuer="https://keycloak.test/realms/connect"),
             cache=CredentialCache(),
             alias="atlas-oidc",
+            http_client=_KeycloakStatusClient(status_code),
         )
         return await _raised(provider._fetch_brokered_token(make_principal()))
 
     return _produce
 
 
-def _condor_provider() -> CondorTokenProvider:
+def _condor_provider(http_client: Any) -> CondorTokenProvider:
     return CondorTokenProvider(
         issuer=BrokerTokenIssuer(
             private_key_pem=_private_pem(_make_rsa_key()),
@@ -217,19 +213,20 @@ def _condor_provider() -> CondorTokenProvider:
         targets=frozenset({"condor-mcp"}),
         service_url=SERVICE_URL,
         audience="condor-token-service",
+        http_client=http_client,
     )
 
 
-async def _condor_no_posix(make_principal, monkeypatch) -> BaseException:
+async def _condor_no_posix(make_principal) -> BaseException:
     return await _raised(
-        _condor_provider().issue(
+        _condor_provider(httpx2.AsyncClient()).issue(
             make_principal(uid=None, gid=None, unixname=None), "condor-mcp"
         )
     )
 
 
 def _condor_exchange_producer(response: httpx2.Response | Exception):
-    async def _produce(make_principal, monkeypatch) -> BaseException:
+    async def _produce(make_principal) -> BaseException:
         if isinstance(response, Exception):
 
             class _FailingClient:
@@ -239,13 +236,14 @@ def _condor_exchange_producer(response: httpx2.Response | Exception):
             client: Any = _FailingClient()
         else:
             client = _FakeCondorClient([response])
-        monkeypatch.setattr(condor_module, "get_http_client", lambda: client)
-        return await _raised(_condor_provider().issue(make_principal(), "condor-mcp"))
+        return await _raised(
+            _condor_provider(client).issue(make_principal(), "condor-mcp")
+        )
 
     return _produce
 
 
-async def _broker_issued_no_posix(make_principal, monkeypatch) -> BaseException:
+async def _broker_issued_no_posix(make_principal) -> BaseException:
     provider = BrokerIssuedProvider(
         issuer=BrokerTokenIssuer(
             private_key_pem=_private_pem(_make_rsa_key()),
@@ -340,7 +338,7 @@ _IDS = [row[0] for row in _CREDENTIAL_FAILURES]
 async def test_mcp_edge_surfaces_the_credential_failure_detail_as_a_tool_error(
     producer, status_code, detail, headers, make_principal, settings, monkeypatch
 ) -> None:
-    exc = await producer(make_principal, monkeypatch)
+    exc = await producer(make_principal)
     _patch_context(monkeypatch, make_principal())
     spec = _spec(auth_type="bearer")
     registry = CredentialRegistry()
@@ -366,7 +364,7 @@ async def test_v1_edge_sends_the_credential_failure_status_detail_and_headers(
     app_client_factory,
     monkeypatch,
 ) -> None:
-    exc = await producer(make_principal, monkeypatch)
+    exc = await producer(make_principal)
     with app_client_factory() as (client, _state):
         client.app.state.broker.credential_registry.register(
             _TARGET,
@@ -398,11 +396,10 @@ class _UnreachableJwksClient:
 
 
 @pytest.fixture
-def unreachable_jwks(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> str:
-    """Make the JWKS endpoint unreachable with nothing cached; returns its URI."""
+def unreachable_jwks(settings: Settings) -> _UnreachableJwksClient:
+    """A client that cannot reach the JWKS endpoint, with nothing cached for it."""
     identity_module._jwks_cache.pop(settings.oidc_jwks_uri, None)
-    monkeypatch.setattr(identity_module, "get_http_client", _UnreachableJwksClient)
-    return settings.oidc_jwks_uri
+    return _UnreachableJwksClient()
 
 
 def test_v1_edge_sends_502_with_correlation_id_when_the_jwks_is_unreachable(
@@ -412,7 +409,7 @@ def test_v1_edge_sends_502_with_correlation_id_when_the_jwks_is_unreachable(
     token = sig_key.sign(make_claims())
 
     async def _authenticate() -> Principal:
-        return await get_principal(token, settings, cache)
+        return await get_principal(token, settings, cache, unreachable_jwks)
 
     with app_client_factory() as (client, _state):
         app.dependency_overrides[keycloak_dependency] = _authenticate
@@ -420,7 +417,7 @@ def test_v1_edge_sends_502_with_correlation_id_when_the_jwks_is_unreachable(
 
     assert resp.status_code == 502
     body = resp.json()
-    assert body["detail"] == f"Unable to reach JWKS endpoint: {unreachable_jwks}"
+    assert body["detail"] == f"Unable to reach JWKS endpoint: {settings.oidc_jwks_uri}"
     assert body["correlation_id"]
 
 
@@ -429,7 +426,7 @@ async def test_mcp_edge_collapses_an_unreachable_jwks_into_the_vague_401(
 ) -> None:
     token = sig_key.sign(make_claims())
     inner = _InnerApp()
-    middleware = asgi_auth_middleware(inner, settings)
+    middleware = asgi_auth_middleware(inner, settings, http_client=unreachable_jwks)
 
     messages = await _run(middleware, _http_scope({"authorization": f"Bearer {token}"}))
 

@@ -8,6 +8,7 @@ from af_mcp_broker.credmon.guidance import JobCredentialGuide, wired_kinds
 from af_mcp_broker.mcp.aggregator import build_aggregator, build_asgi_middleware
 
 if TYPE_CHECKING:
+    import httpx2
     from fastmcp.server.http import StarletteWithLifespan
 
     from af_mcp_broker.config import Settings
@@ -87,6 +88,7 @@ def build_mcp_app(
     pat_backend: TokenRegistryBackend,
     principal_cache: PrincipalCache | None,
     maintenance_mode_store: MaintenanceModeStore,
+    http_client: httpx2.AsyncClient,
 ) -> StarletteWithLifespan:
     """Build the ASGI app serving *aggregator* at ``/mcp``, gated by the identity and maintenance middleware.
 
@@ -102,6 +104,10 @@ def build_mcp_app(
         path="/",
         stateless_http=settings.mcp_stateless_http,
         middleware=build_asgi_middleware(
-            settings, pat_backend, principal_cache, maintenance_mode_store
+            settings,
+            pat_backend,
+            principal_cache,
+            maintenance_mode_store,
+            http_client,
         ),
     )

@@ -996,8 +996,7 @@ def test_unlink_oauth21_alias_204_even_when_revocation_endpoint_fails(
             return httpx2.Response(500, request=httpx2.Request("POST", args[0]))
 
     monkeypatch.setattr(
-        "af_mcp_broker.credentials.oauth21.get_http_client",
-        _RejectingClient,
+        "af_mcp_broker.app.build_http_client", lambda _stack: _RejectingClient()
     )
 
     with app_client_factory() as (client, state):

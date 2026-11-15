@@ -5,6 +5,7 @@ import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+import httpx2
 import pytest
 from broker_state_helpers import aggregator_inputs
 from conftest import make_claims, run_aggregator_async
@@ -525,6 +526,7 @@ async def test_af_list_mcp_servers_reuses_service_status_and_identity_join(
             scope="",
             store=oauth_store,
             client_id="client",
+            http_client=httpx2.AsyncClient(),
         ),
     )
     unlinked_provider = _FakeIdentityProvider(linked=False)

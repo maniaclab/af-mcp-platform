@@ -18,6 +18,7 @@ from af_mcp_broker.wiring.state import build_broker_state
 # update this set alongside the dataclass.
 _FIELDS = {
     "settings",
+    "http_client",
     "entitlement_policy",
     "service_registry",
     "services",

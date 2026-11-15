@@ -19,7 +19,6 @@ from af_mcp_broker.config import (
     Settings,  # noqa: TC001 -- FastAPI resolves the dependency annotations at runtime
 )
 from af_mcp_broker.errors import BrokerError
-from af_mcp_broker.http import get_http_client
 from af_mcp_broker.logging import bind_subject, current_correlation_id
 from af_mcp_broker.principal import Principal
 from af_mcp_broker.principal_cache import (
@@ -28,6 +27,8 @@ from af_mcp_broker.principal_cache import (
 )
 
 if TYPE_CHECKING:
+    import httpx2
+
     from af_mcp_broker.principal_cache import PrincipalCache
 
 logger = structlog.get_logger(__name__)
@@ -65,14 +66,16 @@ def _get_jwks_lock(uri: str) -> asyncio.Lock:
     return entry[1]
 
 
-async def _fetch_jwks(jwks_uri: str) -> list[dict[str, Any]]:
+async def _fetch_jwks(
+    jwks_uri: str, http_client: httpx2.AsyncClient
+) -> list[dict[str, Any]]:
     """Fetch JWKS from upstream, bypassing the TTL cache.
 
     Raises ``JwksUnavailableError`` when the upstream is unreachable so callers
     higher up the stack can surface a useful error rather than a raw 500.
     """
     try:
-        resp = await get_http_client().get(jwks_uri, timeout=10.0)
+        resp = await http_client.get(jwks_uri, timeout=10.0)
         resp.raise_for_status()
         return resp.json()["keys"]
     except Exception as exc:
@@ -82,7 +85,9 @@ async def _fetch_jwks(jwks_uri: str) -> list[dict[str, Any]]:
         ) from exc
 
 
-async def get_jwks(settings: Settings) -> list[dict[str, Any]]:
+async def get_jwks(
+    settings: Settings, http_client: httpx2.AsyncClient
+) -> list[dict[str, Any]]:
     """Return JWKS keys, using a 5-minute in-process TTL cache.
 
     Concurrent refreshes of the same URI are deduplicated, and a refresh
@@ -104,7 +109,7 @@ async def get_jwks(settings: Settings) -> list[dict[str, Any]]:
             return entry.keys
 
         try:
-            keys = await _fetch_jwks(uri)
+            keys = await _fetch_jwks(uri, http_client)
         except JwksUnavailableError:
             if entry is not None:
                 logger.warning("jwks_refresh_failed_serving_stale", uri=uri)
@@ -329,6 +334,7 @@ async def get_principal(
     token: str,
     settings: Settings,
     principal_cache: PrincipalCache | None,
+    http_client: httpx2.AsyncClient,
     caller_path: str | None = None,
 ) -> Principal:
     """Validate a Bearer token and return the extracted Principal.
@@ -366,7 +372,7 @@ async def get_principal(
     later by a different concurrent request -- this function otherwise gives
     no indication of which endpoint invoked it. Never affects the outcome.
     """
-    keys = await get_jwks(settings)
+    keys = await get_jwks(settings, http_client)
 
     error: Exception | str | None = None
     expired = False
@@ -510,6 +516,7 @@ async def keycloak_dependency(
         credentials.credentials,
         settings,
         principal_cache,
+        state.http_client,
         caller_path=request.url.path,
     )
 
