@@ -28,10 +28,10 @@ from typing import TYPE_CHECKING, Any, assert_never
 
 import asyncpg  # type: ignore[import-untyped]
 import structlog
-from fastapi import HTTPException, status
 
 from af_mcp_broker import metrics
 from af_mcp_broker.authorization import is_admin
+from af_mcp_broker.constants import POOL_MAX_SIZE, POOL_MIN_SIZE
 from af_mcp_broker.errors import BrokerError, require
 from af_mcp_broker.vault_kv import CasConflictError, VaultKV
 
@@ -46,6 +46,17 @@ logger = structlog.get_logger(__name__)
 
 class MaintenanceStateConflictError(BrokerError):
     """Raised by ``MaintenanceModeStore.set`` when a concurrent writer already changed the state."""
+
+
+class MaintenanceModeError(BrokerError):
+    """Raised by ``check_not_maintenance`` when maintenance mode blocks the caller.
+
+    *detail* is the client-visible message, including the operator's reason.
+    """
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(detail)
+        self.detail = detail
 
 
 @dataclass(frozen=True)
@@ -212,19 +223,6 @@ ON CONFLICT (id) DO UPDATE SET
 
 _SELECT = "SELECT enabled, reason, enabled_by, enabled_at FROM af_mcp_maintenance_mode WHERE id = 1"
 
-# asyncpg.create_pool()'s own defaults are min_size=10, max_size=10 --
-# eagerly opening 10 connections per replica at start(), regardless of
-# actual load. This DSN commonly shares one small Postgres instance with
-# PostgresUsageStore's own pool (usage/postgres.py) and, in production, with
-# a second broker deployment pointed at a sibling database on the same
-# server -- the unbounded defaults exhausted the instance's max_connections
-# during a routine rolling restart, once a second platform instance
-# (sharing the same Postgres server) was stood up alongside this one
-# (2026-09-19 production incident). Bounded down here rather than left at
-# the driver's default.
-_POOL_MIN_SIZE = 1
-_POOL_MAX_SIZE = 5
-
 
 class PostgresMaintenanceModeStore(MaintenanceModeStore):
     """``MaintenanceModeStore`` backed by a single-row Postgres table (asyncpg)."""
@@ -235,7 +233,7 @@ class PostgresMaintenanceModeStore(MaintenanceModeStore):
 
     async def start(self) -> None:
         self._pool = await asyncpg.create_pool(
-            self._dsn, min_size=_POOL_MIN_SIZE, max_size=_POOL_MAX_SIZE
+            self._dsn, min_size=POOL_MIN_SIZE, max_size=POOL_MAX_SIZE
         )
         async with self._pool.acquire() as conn:
             await conn.execute(_DDL)
@@ -336,7 +334,7 @@ async def check_not_maintenance(
     settings: Settings,
     store: MaintenanceModeStore,
 ) -> None:
-    """Raise HTTPException(503) when maintenance mode is on and *principal* is not an admin.
+    """Raise ``MaintenanceModeError`` when maintenance mode is on and *principal* is not an admin.
 
     Called from /v1 (``api.maintenance_gate.require_not_in_maintenance``) and
     /mcp (``mcp.middleware.maintenance_mw.AsgiMaintenanceMiddleware``) right
@@ -370,14 +368,14 @@ async def check_not_maintenance(
     detail = "The broker is in maintenance mode."
     if state.reason:
         detail = f"{detail} Reason: {state.reason}"
-    raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail)
+    raise MaintenanceModeError(detail)
 
 
 async def check_not_maintenance_or_fail_open(
     principal: Principal,
     settings: Settings,
     store: MaintenanceModeStore,
-) -> HTTPException | None:
+) -> MaintenanceModeError | None:
     """Run ``check_not_maintenance``, converting its store-unavailability fail-open behavior into a return value instead of a raise.
 
     Both call sites (/v1's ``api.maintenance_gate.require_not_in_maintenance``, a FastAPI
@@ -387,7 +385,7 @@ async def check_not_maintenance_or_fail_open(
     unreachable" observability -- log at ERROR with a traceback and increment
     ``metrics.maintenance_store_unavailable_total`` -- but differ in how they
     actually deliver a block to the caller, which is why this returns the
-    ``HTTPException`` to raise/send rather than raising or sending it
+    ``MaintenanceModeError`` to raise/send rather than raising or sending it
     directly. Returns ``None`` when the caller is not blocked, whether
     because maintenance mode is off, the caller is an admin, or the store
     was unreachable (fail open -- see ``check_not_maintenance``'s docstring
@@ -395,7 +393,7 @@ async def check_not_maintenance_or_fail_open(
     """
     try:
         await check_not_maintenance(principal, settings, store)
-    except HTTPException as exc:
+    except MaintenanceModeError as exc:
         return exc
     except Exception as exc:
         # .exception(), not .warning(): this is silently overriding an

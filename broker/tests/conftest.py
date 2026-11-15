@@ -622,6 +622,7 @@ async def run_aggregator_async(
             pat_backend,
             principal_cache,
             maintenance_mode_store or InMemoryMaintenanceModeStore(),
+            httpx2.AsyncClient(),
         ),
     ) as server:
         yield server

@@ -448,8 +448,8 @@ def test_lifespan_boots_with_vault_backend_on_successful_trial_auth(
     _bootstrap_oauth21_vault_env(monkeypatch, sa_token_path)
     fake = _FakeVault()
     monkeypatch.setattr(
-        "af_mcp_broker.vault_kv.get_http_client",
-        lambda: httpx2.AsyncClient(transport=httpx2.MockTransport(fake.handle)),
+        "af_mcp_broker.app.build_http_client",
+        lambda _stack: httpx2.AsyncClient(transport=httpx2.MockTransport(fake.handle)),
     )
 
     app = _fresh_app()
@@ -469,8 +469,10 @@ def test_lifespan_fails_fast_when_vault_login_rejected(
         )
 
     monkeypatch.setattr(
-        "af_mcp_broker.vault_kv.get_http_client",
-        lambda: httpx2.AsyncClient(transport=httpx2.MockTransport(_reject_login)),
+        "af_mcp_broker.app.build_http_client",
+        lambda _stack: httpx2.AsyncClient(
+            transport=httpx2.MockTransport(_reject_login)
+        ),
     )
 
     app = _fresh_app()

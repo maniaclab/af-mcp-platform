@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from fastapi import HTTPException
 from fastmcp.exceptions import ToolError
 from test_mcp_aggregator import (
     _FakeFastMCPContext,
@@ -16,7 +15,10 @@ from test_mcp_aggregator import (
 from af_mcp_broker.authorization import EntitlementPolicy
 from af_mcp_broker.backend_errors import NotLinkedForListingError
 from af_mcp_broker.credentials import CredentialRegistry
-from af_mcp_broker.credentials.errors import NeedsUnlockError
+from af_mcp_broker.credentials.errors import (
+    CredentialReauthRequiredError,
+    NeedsUnlockError,
+)
 from af_mcp_broker.mcp.aggregator import (
     _bearer_call_client,
     _bearer_factory,
@@ -116,11 +118,11 @@ class TestIssueCallCredential:
         with pytest.raises(ToolError, match="/v1/unlock/x"):
             await _issue_call_credential(provider, make_principal(), _spec(), settings)
 
-    async def test_http_exception_detail_is_surfaced(
+    async def test_credential_error_detail_is_surfaced(
         self, settings: Any, make_principal
     ) -> None:
         provider = _FakeProvider(
-            http_error=HTTPException(status_code=401, detail="session expired")
+            http_error=CredentialReauthRequiredError("session expired")
         )
 
         with pytest.raises(ToolError, match="session expired"):

@@ -12,11 +12,10 @@ import time
 
 import pytest
 import structlog
-from fastapi import HTTPException
 
 from af_mcp_broker.authorization import get_principal_permissions
 from af_mcp_broker.config import Settings
-from af_mcp_broker.identity import TokenExpiredError
+from af_mcp_broker.identity import InvalidTokenError, TokenExpiredError
 from af_mcp_broker.pat import mint_pat
 from af_mcp_broker.pat_auth import LastUsedTracker, resolve_pat_principal
 from af_mcp_broker.principal_cache import InMemoryPrincipalCacheBackend, PrincipalCache
@@ -305,11 +304,10 @@ async def test_permission_grant_exceeding_current_permissions_is_still_clipped(
 async def test_malformed_token_rejected(
     settings, pat_backend, principal_cache, tracker
 ) -> None:
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(InvalidTokenError):
         await resolve_pat_principal(
             "mcp_pat_not-well-formed", settings, pat_backend, principal_cache, tracker
         )
-    assert exc.value.status_code == 401
 
 
 async def test_unknown_lookup_id_rejected(
@@ -317,11 +315,10 @@ async def test_unknown_lookup_id_rejected(
 ) -> None:
     plaintext, _, _ = mint_pat()  # never stored
 
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(InvalidTokenError):
         await resolve_pat_principal(
             plaintext, settings, pat_backend, principal_cache, tracker
         )
-    assert exc.value.status_code == 401
 
 
 async def test_wrong_secret_rejected(
@@ -334,11 +331,10 @@ async def test_wrong_secret_rejected(
     lookup_id = token.split("_")[2]
     tampered = f"mcp_pat_{lookup_id}_wrong-secret-value"
 
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(InvalidTokenError):
         await resolve_pat_principal(
             tampered, settings, pat_backend, principal_cache, tracker
         )
-    assert exc.value.status_code == 401
 
 
 async def test_revoked_pat_rejected(
@@ -349,11 +345,10 @@ async def test_revoked_pat_rejected(
     )
     token = await _mint_and_store(pat_backend, principal_id="kc-sub-1", revoked=True)
 
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(InvalidTokenError):
         await resolve_pat_principal(
             token, settings, pat_backend, principal_cache, tracker
         )
-    assert exc.value.status_code == 401
 
 
 async def test_pat_accepted_then_refused_on_the_next_request_after_revoke(
@@ -373,11 +368,10 @@ async def test_pat_accepted_then_refused_on_the_next_request_after_revoke(
 
     await pat_backend.revoke("kc-sub-1", lookup_id, revoked_at=time.time())
 
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(InvalidTokenError):
         await resolve_pat_principal(
             token, settings, pat_backend, principal_cache, tracker
         )
-    assert exc.value.status_code == 401
 
 
 async def test_expired_pat_raises_token_expired_error_with_portal_hint(
@@ -428,11 +422,10 @@ async def test_principal_cache_unavailable_maps_to_vague_401(
     )
     token = await _mint_and_store(pat_backend, principal_id="kc-sub-1")
 
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(InvalidTokenError) as exc:
         await resolve_pat_principal(
             token, settings, pat_backend, principal_cache, tracker
         )
-    assert exc.value.status_code == 401
     assert exc.value.detail == "Invalid bearer token"
 
 

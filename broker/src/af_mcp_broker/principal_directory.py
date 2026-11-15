@@ -68,9 +68,10 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from af_mcp_broker.errors import BrokerError
-from af_mcp_broker.http import get_http_client
 
 if TYPE_CHECKING:
+    import httpx2
+
     from af_mcp_broker.config import Settings
 
 log = structlog.get_logger(__name__)
@@ -183,8 +184,10 @@ class KeycloakPrincipalDirectory(PrincipalDirectory):
         settings: Settings,
         admin_client_id: str,
         admin_client_secret: str,
+        http_client: httpx2.AsyncClient,
     ) -> None:
         self._settings = settings
+        self._http_client = http_client
         self._admin_client_id = admin_client_id
         self._admin_client_secret = admin_client_secret
         self._admin_base = _admin_base_url(settings.oidc_backchannel_url)
@@ -199,7 +202,7 @@ class KeycloakPrincipalDirectory(PrincipalDirectory):
     async def resolve(self, principal_id: str) -> PrincipalAttributes:
         token = await self._get_admin_token()
         headers = {"Authorization": f"Bearer {token}"}
-        client = get_http_client()
+        client = self._http_client
 
         user_resp = await client.get(
             f"{self._admin_base}/users/{principal_id}", headers=headers, timeout=10.0
@@ -269,7 +272,7 @@ class KeycloakPrincipalDirectory(PrincipalDirectory):
 
     async def _refresh_admin_token(self) -> tuple[str, float]:
         token_endpoint = f"{self._settings.oidc_backchannel_url.rstrip('/')}/protocol/openid-connect/token"
-        resp = await get_http_client().post(
+        resp = await self._http_client.post(
             token_endpoint,
             data={
                 "grant_type": "client_credentials",

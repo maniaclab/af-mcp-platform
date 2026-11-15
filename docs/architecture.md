@@ -418,12 +418,11 @@ flowchart TB
         m_errors["errors"]
         m_constants["constants"]
         m_principal["principal"]
-        m_http["http"]
         m_logging["logging"]
         m_metrics["metrics"]
         m_version["_version"]
         m_pat["pat"]
-        m_errors ~~~ m_constants ~~~ m_principal ~~~ m_http ~~~ m_logging ~~~ m_metrics ~~~ m_version ~~~ m_pat
+        m_errors ~~~ m_constants ~~~ m_principal ~~~ m_logging ~~~ m_metrics ~~~ m_version ~~~ m_pat
     end
     appL --> wiring --> edges --> tokenid --> ident --> stateL --> features --> providers --> meteringL --> otelL --> usageL --> auditL --> platform --> stores --> settings --> leaf
 ```
@@ -468,6 +467,15 @@ What the layering means in practice:
   settings and stores, passed as constructor arguments, and published on the
   state as `mcp_aggregator` and `mcp_app`; `app.py` mounts a thin ASGI
   callable that serves `mcp_app` from the state.
+- Only `api`, `mcp` and `app.py` speak HTTP errors. Everything below raises a
+  `BrokerError` subclass from its subsystem (`credentials/errors.py`'s
+  `CredentialError` family, `identity.py`'s `IdentityError` family,
+  `maintenance.MaintenanceModeError`); the status code and headers live in
+  `app.py`'s exception handlers for `/v1`, and `/mcp` turns the same errors
+  into a tool error (`mcp.aggregator`) or an ASGI error response
+  (`mcp.middleware`). Ruff's banned-api rule (`TID251` in
+  `broker/pyproject.toml`) rejects an import of `HTTPException` outside those
+  packages.
 - By convention a module does not import another module's `_private` name;
   anything shared is public in the module that owns it.
 
@@ -479,10 +487,17 @@ A builder that needs one subsystem lives beside it (for example
 `maintenance.build_maintenance_store`, `token_registry.
 build_token_registry_backend`, `credentials.stores.build_vault_link_stores`);
 glue that needs several subsystems lives in the `wiring` package (service
-catalog and identity targets, the Vault client, the credential cache and
-providers, the principal cache and token registry, the lifetime resources,
+catalog and identity targets, the shared outbound HTTP client, the Vault
+client, the credential cache and providers, the principal cache and token registry, the lifetime resources,
 the aggregator and its ASGI app). `wiring.state.build_broker_state` assembles the built
 subsystems into the `BrokerState` the lifespan stores as `app.state.broker`.
+
+The one pooled outbound `httpx2.AsyncClient` (`wiring.http_client.build_http_client`)
+is built first and stored as `BrokerState.http_client`. Builders receive it as
+an explicit argument and pass it to the components that call out (credential
+providers and token-service clients, the Vault transport, the principal
+directory, the JWKS fetch); routes read it from the state. No module holds a
+client of its own.
 
 Every resource with a close registers it on one `contextlib.AsyncExitStack`
 when it is built, so shutdown closes in reverse build order and a builder that

@@ -286,7 +286,7 @@ def test_authorize_never_calls_keycloak_dependency(
     _configure_env(monkeypatch, fernet_key)
     fake_client = _FakeMcpOAuthHttpClient(_cimd_doc(), id_token="unused")
     monkeypatch.setattr(
-        "af_mcp_broker.api.mcp_oauth.get_http_client", lambda: fake_client
+        "af_mcp_broker.app.build_http_client", lambda _stack: fake_client
     )
     _, mcp_challenge = generate_pkce_pair()
 
@@ -350,7 +350,7 @@ def test_full_bootstrap_round_trip_yields_working_pat(
         _cimd_doc(), id_token, access_token=access_token
     )
     monkeypatch.setattr(
-        "af_mcp_broker.api.mcp_oauth.get_http_client", lambda: fake_client
+        "af_mcp_broker.app.build_http_client", lambda _stack: fake_client
     )
 
     mcp_verifier, mcp_challenge = generate_pkce_pair()
@@ -579,7 +579,7 @@ def test_keycloak_callback_denies_access_token_without_gateway_audience(
         _cimd_doc(), _valid_login_id_token(sig_key), access_token=access_token
     )
     monkeypatch.setattr(
-        "af_mcp_broker.api.mcp_oauth.get_http_client", lambda: fake_client
+        "af_mcp_broker.app.build_http_client", lambda _stack: fake_client
     )
 
     with app_client_factory() as (client, _):
@@ -600,7 +600,7 @@ def test_keycloak_callback_denies_missing_access_token(
         _cimd_doc(), _valid_login_id_token(sig_key), access_token=None
     )
     monkeypatch.setattr(
-        "af_mcp_broker.api.mcp_oauth.get_http_client", lambda: fake_client
+        "af_mcp_broker.app.build_http_client", lambda _stack: fake_client
     )
 
     with app_client_factory() as (client, _):
@@ -620,7 +620,7 @@ def test_keycloak_callback_denies_garbage_access_token(
         _cimd_doc(), _valid_login_id_token(sig_key), access_token="not-a-jwt"
     )
     monkeypatch.setattr(
-        "af_mcp_broker.api.mcp_oauth.get_http_client", lambda: fake_client
+        "af_mcp_broker.app.build_http_client", lambda _stack: fake_client
     )
 
     with app_client_factory() as (client, _):
@@ -651,7 +651,7 @@ def test_keycloak_callback_denies_expired_access_token(
         _cimd_doc(), _valid_login_id_token(sig_key), access_token=access_token
     )
     monkeypatch.setattr(
-        "af_mcp_broker.api.mcp_oauth.get_http_client", lambda: fake_client
+        "af_mcp_broker.app.build_http_client", lambda _stack: fake_client
     )
 
     with app_client_factory() as (client, _):
@@ -670,7 +670,7 @@ def test_authorize_rejects_unregistered_redirect_uri(
     _configure_env(monkeypatch, Fernet.generate_key().decode())
     fake_client = _FakeMcpOAuthHttpClient(_cimd_doc(), "unused")
     monkeypatch.setattr(
-        "af_mcp_broker.api.mcp_oauth.get_http_client", lambda: fake_client
+        "af_mcp_broker.app.build_http_client", lambda _stack: fake_client
     )
     _, mcp_challenge = generate_pkce_pair()
 
@@ -696,7 +696,7 @@ def test_authorize_rejects_missing_pkce(
     _configure_env(monkeypatch, Fernet.generate_key().decode())
     fake_client = _FakeMcpOAuthHttpClient(_cimd_doc(), "unused")
     monkeypatch.setattr(
-        "af_mcp_broker.api.mcp_oauth.get_http_client", lambda: fake_client
+        "af_mcp_broker.app.build_http_client", lambda _stack: fake_client
     )
 
     with app_client_factory() as (client, _):

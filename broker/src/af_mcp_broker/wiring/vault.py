@@ -9,12 +9,16 @@ import structlog
 from af_mcp_broker.vault_kv import VaultKV
 
 if TYPE_CHECKING:
+    import httpx2
+
     from af_mcp_broker.config import Settings
 
 logger = structlog.get_logger(__name__)
 
 
-async def build_vault_kv(settings: Settings) -> VaultKV | None:
+async def build_vault_kv(
+    settings: Settings, http_client: httpx2.AsyncClient
+) -> VaultKV | None:
     """Return the authenticated Vault client, or None when no configured subsystem uses Vault (``Settings.uses_vault``).
 
     One VaultKV instance (one K8s auth login per process) is shared by every
@@ -34,6 +38,7 @@ async def build_vault_kv(settings: Settings) -> VaultKV | None:
         auth_role=settings.vault_auth_role,
         kv_mount=settings.vault_kv_mount,
         sa_token_path=settings.vault_sa_token_path,
+        http_client=http_client,
     )
     # Trial authentication only -- proves the K8s auth flow works (SA JWT
     # readable, Vault reachable, role accepted) without touching any

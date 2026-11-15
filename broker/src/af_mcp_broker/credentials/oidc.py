@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, ClassVar
 
 import httpx2
 import structlog
-from fastapi import HTTPException
 
 from af_mcp_broker.credentials.base import (
     CredentialKind,
@@ -15,7 +14,11 @@ from af_mcp_broker.credentials.base import (
     ExecutionModel,
     IssuedCredential,
 )
-from af_mcp_broker.http import get_http_client
+from af_mcp_broker.credentials.errors import (
+    CredentialForbiddenError,
+    CredentialNotFoundError,
+    CredentialReauthRequiredError,
+)
 
 if TYPE_CHECKING:
     from pydantic import SecretBytes
@@ -93,8 +96,11 @@ class OIDCProvider(CredentialProvider):
         cache: CredentialCache,
         alias: str,
         targets: frozenset[str] = _DEFAULT_OIDC_TARGETS,
+        *,
+        http_client: httpx2.AsyncClient,
     ) -> None:
         self._settings = settings
+        self._http_client = http_client
         self._cache = cache
         self._alias = alias
         self._targets = targets
@@ -143,13 +149,13 @@ class OIDCProvider(CredentialProvider):
         broker_token_url = f"{self._settings.oidc_backchannel_url.rstrip('/')}/broker/{self._alias}/token"
         headers = {"Authorization": f"Bearer {principal.raw_token.get_secret_value()}"}
         try:
-            resp = await get_http_client().head(
+            resp = await self._http_client.head(
                 broker_token_url, headers=headers, timeout=10.0
             )
             if resp.status_code == 405:
                 # Some Keycloak versions don't allow HEAD on this endpoint —
                 # fall back to a minimal GET and discard the body.
-                resp = await get_http_client().get(
+                resp = await self._http_client.get(
                     broker_token_url, headers=headers, timeout=10.0
                 )
         except httpx2.HTTPError as exc:
@@ -176,9 +182,9 @@ class OIDCProvider(CredentialProvider):
         the narrower failure modes of the fetch itself.
 
         Raises:
-            HTTPException(401): if the Keycloak brokered-token endpoint rejects
-                the principal's token (session expired — user must re-link).
-            HTTPException(404): if no brokered token is stored yet (user must
+            CredentialReauthRequiredError: if the Keycloak brokered-token endpoint
+                rejects the principal's token (session expired — user must re-link).
+            CredentialNotFoundError: if no brokered token is stored yet (user must
                 link their ATLAS account from the portal's Identities page).
 
         """
@@ -238,13 +244,13 @@ class OIDCProvider(CredentialProvider):
 
         Returns ``(iam_access_token, expires_at_epoch)``.
 
-        Raises HTTPException on 401 (session expired), 403 (caller's token
+        Raises a ``CredentialError`` on 401 (session expired), 403 (caller's token
         lacks the `read-token` client role — see ``OIDCLinkStatus``), and
         404 (no stored token — user must re-link).
         """
         broker_token_url = f"{self._settings.oidc_backchannel_url.rstrip('/')}/broker/{self._alias}/token"
 
-        resp = await get_http_client().get(
+        resp = await self._http_client.get(
             broker_token_url,
             headers={
                 "Authorization": f"Bearer {principal.raw_token.get_secret_value()}"
@@ -253,8 +259,7 @@ class OIDCProvider(CredentialProvider):
         )
 
         if resp.status_code == 401:
-            raise HTTPException(
-                status_code=401,
+            raise CredentialReauthRequiredError(
                 detail=(
                     "Your Keycloak session has expired or the ATLAS IAM "
                     "identity link is invalid. Please re-authenticate and "
@@ -263,8 +268,7 @@ class OIDCProvider(CredentialProvider):
                 ),
             )
         if resp.status_code == 403:
-            raise HTTPException(
-                status_code=403,
+            raise CredentialForbiddenError(
                 detail=(
                     "Your account isn't authorized to retrieve a stored "
                     "ATLAS IAM token. Contact the platform team to be "
@@ -273,8 +277,7 @@ class OIDCProvider(CredentialProvider):
                 ),
             )
         if resp.status_code == 404:
-            raise HTTPException(
-                status_code=404,
+            raise CredentialNotFoundError(
                 detail=(
                     "No ATLAS IAM token stored for your account. "
                     "Link your ATLAS account from the portal's Identities page."

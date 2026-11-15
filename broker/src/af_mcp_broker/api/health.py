@@ -55,7 +55,7 @@ async def readyz(
 
     jwks_ok = False
     try:
-        keys = await get_jwks(settings)
+        keys = await get_jwks(settings, state.http_client)
         jwks_ok = len(keys) > 0
     except Exception:  # noqa: BLE001  # readiness probe: broad catch is intentional
         logger.warning("readyz_jwks_check_failed")

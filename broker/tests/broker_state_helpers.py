@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
+import httpx2
 from fastmcp import FastMCP
 
 from af_mcp_broker.authorization import EntitlementPolicy
@@ -39,6 +40,7 @@ def make_broker_state(**overrides: Any) -> BrokerState:
     mcp_aggregator = overrides.get("mcp_aggregator") or FastMCP("test")
     fields: dict[str, Any] = {
         "settings": Settings(),
+        "http_client": httpx2.AsyncClient(),
         "entitlement_policy": EntitlementPolicy(),
         "service_registry": ServiceRegistry(),
         "services": [],
@@ -143,6 +145,17 @@ def asgi_auth_middleware(
     settings: Settings,
     pat_backend: TokenRegistryBackend | None = None,
     principal_cache: PrincipalCache | None = None,
+    http_client: httpx2.AsyncClient | None = None,
 ) -> AsgiAuthMiddleware:
-    """An ``AsgiAuthMiddleware`` in front of *app*; PATs are rejected unless both *pat_backend* and *principal_cache* are given."""
-    return AsgiAuthMiddleware(app, settings, pat_backend, principal_cache)
+    """An ``AsgiAuthMiddleware`` in front of *app*; PATs are rejected unless both *pat_backend* and *principal_cache* are given.
+
+    *http_client* is a plain unconnected client unless given (the JWKS fetch
+    is the only outbound call the middleware makes).
+    """
+    return AsgiAuthMiddleware(
+        app,
+        settings,
+        pat_backend,
+        principal_cache,
+        http_client or httpx2.AsyncClient(),
+    )

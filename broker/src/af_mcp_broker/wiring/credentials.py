@@ -47,6 +47,8 @@ from af_mcp_broker.wiring.checks import (
 if TYPE_CHECKING:
     from contextlib import AsyncExitStack
 
+    import httpx2
+
     from af_mcp_broker.config import IdentityProviderConfig, Settings
     from af_mcp_broker.credentials import (
         BrokerTokenIssuer,
@@ -201,6 +203,7 @@ class _ProviderDeps:
     issuer: BrokerTokenIssuer | None
     token_store: TokenStore | None
     link_stores: VaultLinkStores
+    http_client: httpx2.AsyncClient
 
 
 # The invariants below are established by build_broker_token_issuer's
@@ -259,6 +262,7 @@ def _build_oauth21_provider(
         revocation_endpoint=(
             str(cfg.revocation_endpoint) if cfg.revocation_endpoint else None
         ),
+        http_client=deps.http_client,
     )
 
 
@@ -273,6 +277,7 @@ def _build_provider(
                 deps.cache,
                 alias=cfg.alias,
                 targets=frozenset(cfg.targets),
+                http_client=deps.http_client,
             )
         case OAuth21DirectProviderConfig():
             return _build_oauth21_provider(cfg, deps)
@@ -286,6 +291,7 @@ def _build_provider(
                 targets=frozenset(cfg.targets),
                 service_url=str(cfg.service_url),
                 audience=cfg.audience,
+                http_client=deps.http_client,
             )
         case KrbTokenProviderConfig():
             return KrbTokenProvider(
@@ -293,6 +299,7 @@ def _build_provider(
                     issuer=require(deps.issuer, _ISSUER_INVARIANT),
                     service_url=str(cfg.service_url),
                     audience=cfg.audience,
+                    http_client=deps.http_client,
                 ),
                 cache=deps.cache,
                 alias=cfg.alias,
@@ -317,6 +324,7 @@ def _build_provider(
                     audience=cfg.audience,
                     voms=cfg.voms,
                     valid=cfg.valid,
+                    http_client=deps.http_client,
                 ),
                 vault_store=require(
                     deps.link_stores.x509,
@@ -329,6 +337,7 @@ def _build_provider(
                     issuer=require(deps.issuer, _ISSUER_INVARIANT),
                     service_url=str(cfg.service_url),
                     audience=cfg.audience,
+                    http_client=deps.http_client,
                 ),
                 vault_store=require(
                     deps.link_stores.servicex,
@@ -353,6 +362,7 @@ def build_credential_providers(
     issuer: BrokerTokenIssuer | None,
     token_store: TokenStore | None,
     link_stores: VaultLinkStores,
+    http_client: httpx2.AsyncClient,
 ) -> CredentialProviders:
     """Build one ``CredentialProvider`` per configured ``identity_providers`` entry, registered for the entry's targets.
 
@@ -375,6 +385,7 @@ def build_credential_providers(
         issuer=issuer,
         token_store=token_store,
         link_stores=link_stores,
+        http_client=http_client,
     )
     registry = CredentialRegistry()
     providers: dict[str, CredentialProvider] = {}

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any, get_args, get_type_hints
 
+import httpx2
 import pytest
 
 from af_mcp_broker.config import Settings
@@ -62,6 +63,7 @@ def vault_kv() -> VaultKV:
         auth_role="r",
         kv_mount="secret",
         sa_token_path="/nonexistent",
+        http_client=httpx2.AsyncClient(),
     )
 
 

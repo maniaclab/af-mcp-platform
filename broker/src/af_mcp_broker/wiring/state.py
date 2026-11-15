@@ -8,6 +8,7 @@ from af_mcp_broker.backend_client import ToolListingCache
 from af_mcp_broker.broker_state import BrokerState
 
 if TYPE_CHECKING:
+    import httpx2
     from cryptography.fernet import Fernet
     from fastmcp import FastMCP
     from starlette.types import ASGIApp
@@ -37,6 +38,7 @@ if TYPE_CHECKING:
 def build_broker_state(
     settings: Settings,
     *,
+    http_client: httpx2.AsyncClient,
     catalog: ServiceCatalog,
     targets: IdentityTargets,
     providers: CredentialProviders,
@@ -62,6 +64,7 @@ def build_broker_state(
     """Flatten the lifespan's built subsystems (and the groups they come in) into one ``BrokerState``, with a cold tool-listing cache."""
     return BrokerState(
         settings=settings,
+        http_client=http_client,
         entitlement_policy=catalog.entitlement_policy,
         service_registry=catalog.service_registry,
         services=catalog.services,

@@ -5,6 +5,7 @@ import re
 import time
 from typing import TYPE_CHECKING, Any
 
+import httpx2
 import pytest
 from broker_state_helpers import aggregator_inputs
 from conftest import (
@@ -623,7 +624,11 @@ async def test_replica_split_session_continuity(
             path="/mcp",
             stateless_http=stateless,
             middleware=build_asgi_middleware(
-                settings, None, principal_cache, InMemoryMaintenanceModeStore()
+                settings,
+                None,
+                principal_cache,
+                InMemoryMaintenanceModeStore(),
+                httpx2.AsyncClient(),
             ),
         )
 

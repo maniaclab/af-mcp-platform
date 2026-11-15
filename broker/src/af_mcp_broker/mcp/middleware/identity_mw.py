@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import structlog
-from fastapi import HTTPException, status
+from fastapi import status
 from fastmcp.exceptions import AuthorizationError
 from fastmcp.server.dependencies import get_http_request
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
@@ -11,8 +11,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from af_mcp_broker.identity import (
+    IdentityError,
     PrincipalDirectoryUnavailableError,
-    TokenAudienceError,
     TokenExpiredError,
     build_dev_principal,
     get_principal,
@@ -28,6 +28,7 @@ from af_mcp_broker.pat import PAT_PREFIX
 from af_mcp_broker.pat_auth import LastUsedTracker, resolve_pat_principal
 
 if TYPE_CHECKING:
+    import httpx2
     from starlette.types import Message, Receive, Scope, Send
 
     from af_mcp_broker.config import Settings
@@ -172,9 +173,11 @@ class AsgiAuthMiddleware:
         settings: Settings,
         pat_backend: TokenRegistryBackend | None,
         principal_cache: PrincipalCache | None,
+        http_client: httpx2.AsyncClient,
     ) -> None:
         self.app = app
         self._settings = settings
+        self._http_client = http_client
         self._pat_backend = pat_backend
         self._principal_cache = principal_cache
         self._pat_last_used_tracker = LastUsedTracker()
@@ -291,6 +294,7 @@ class AsgiAuthMiddleware:
                         token,
                         settings,
                         principal_cache,
+                        self._http_client,
                         caller_path=scope.get("path"),
                     )
             except TokenExpiredError:
@@ -325,7 +329,7 @@ class AsgiAuthMiddleware:
                     str(exc.detail),
                 )
                 return
-            except (HTTPException, TokenAudienceError) as exc:
+            except IdentityError as exc:
                 logger.warning("mcp_identity_validation_failed", error=str(exc.detail))
                 # Deliberately vague -- see the module docstring: never
                 # repeat which claim, issuer/audience, or JWKS detail failed

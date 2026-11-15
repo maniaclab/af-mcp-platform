@@ -14,13 +14,13 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-async def _ok_jwks(settings: Any) -> list[dict[str, Any]]:
-    del settings
+async def _ok_jwks(settings: Any, http_client: Any) -> list[dict[str, Any]]:
+    del settings, http_client
     return [{"kid": "test-key"}]
 
 
-async def _unreachable_jwks(settings: Any) -> list[dict[str, Any]]:
-    del settings
+async def _unreachable_jwks(settings: Any, http_client: Any) -> list[dict[str, Any]]:
+    del settings, http_client
     raise RuntimeError("jwks endpoint unreachable")
 
 

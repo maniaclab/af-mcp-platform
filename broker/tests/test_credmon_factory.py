@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+import httpx2
 import pytest
 from _credmon_fake_vault import FakeVault, make_vault_kv
 from test_broker_issued import ISSUER_URL, _make_rsa_key, _private_pem
@@ -53,6 +54,7 @@ async def test_refuses_without_signing_key(
             store_prefixes={},
             vault_kv=make_vault_kv(FakeVault(), tmp_path),
             principal_cache=cache,
+            http_client=httpx2.AsyncClient(),
         )
 
 
@@ -69,6 +71,7 @@ async def test_refuses_without_vault(
             store_prefixes={},
             vault_kv=None,
             principal_cache=cache,
+            http_client=httpx2.AsyncClient(),
         )
 
 
@@ -82,6 +85,7 @@ async def test_refuses_without_principal_directory(tmp_path: Path, issuer) -> No
             store_prefixes={},
             vault_kv=make_vault_kv(FakeVault(), tmp_path),
             principal_cache=None,
+            http_client=httpx2.AsyncClient(),
         )
 
 
@@ -100,6 +104,7 @@ async def test_refuses_unreadable_token_file(
             store_prefixes={},
             vault_kv=make_vault_kv(FakeVault(), tmp_path),
             principal_cache=cache,
+            http_client=httpx2.AsyncClient(),
         )
 
 
@@ -115,6 +120,7 @@ async def test_kinds_without_targets_are_skipped(
         store_prefixes={},
         vault_kv=make_vault_kv(FakeVault(), tmp_path),
         principal_cache=cache,
+        http_client=httpx2.AsyncClient(),
     )
 
     assert sync.kinds == []

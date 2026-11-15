@@ -229,3 +229,48 @@ class PosixIdentityRequiredError(BrokerError):
             "set. Contact your Analysis Facility operator to request a grid "
             "identity."
         )
+
+
+class CredentialError(BrokerError):
+    """Base of the credential-issuance failures that carry a client-visible *detail*.
+
+    *detail* is exactly what the caller is allowed to see. Each subclass names
+    a cause; ``app.py`` maps it onto an HTTP status for /v1 and the
+    aggregator surfaces *detail* as the tool error on /mcp, so the providers
+    stay free of transport concerns.
+    """
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(detail)
+        self.detail = detail
+
+
+class CredentialNotFoundError(CredentialError):
+    """Raised when the caller has nothing to issue from: no stored token, or no POSIX identity the service requires."""
+
+
+class CredentialReauthRequiredError(CredentialError):
+    """Raised when the stored credential is unusable and the user must re-authenticate or re-link: expired, rejected, or refused by its issuer."""
+
+
+class CredentialForbiddenError(CredentialError):
+    """Raised when the caller is authenticated but not allowed to retrieve this credential."""
+
+
+class CredentialServiceError(CredentialError):
+    """Raised when the credential service the provider exchanges with is unreachable or failed.
+
+    *detail* never carries the service's response body.
+    """
+
+
+class CredentialRateLimitedError(CredentialError):
+    """Raised when the credential service rate-limited the exchange.
+
+    ``retry_after`` carries the service's ``Retry-After`` header verbatim
+    (``None`` if absent) so /v1 can pass it through.
+    """
+
+    def __init__(self, detail: str, *, retry_after: str | None) -> None:
+        super().__init__(detail)
+        self.retry_after = retry_after

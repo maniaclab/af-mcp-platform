@@ -3,12 +3,12 @@ from __future__ import annotations
 import asyncio
 import math
 import uuid
+from abc import ABC, abstractmethod
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any, ClassVar, Protocol
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import httpx2
 import structlog
-from fastapi import HTTPException
 from pydantic import AnyHttpUrl, BaseModel, SecretStr, field_validator
 
 from af_mcp_broker.credentials.base import (
@@ -17,8 +17,11 @@ from af_mcp_broker.credentials.base import (
     ExecutionModel,
     IssuedCredential,
 )
-from af_mcp_broker.credentials.errors import VersionConflictError
-from af_mcp_broker.http import get_http_client
+from af_mcp_broker.credentials.errors import (
+    CredentialNotFoundError,
+    CredentialReauthRequiredError,
+    VersionConflictError,
+)
 
 if TYPE_CHECKING:
     from pydantic import SecretBytes
@@ -85,7 +88,7 @@ class StoredOAuthCredential(BaseModel):
         return value
 
 
-class TokenStore(Protocol):
+class TokenStore(ABC):
     """Abstract persistence for per-subject, per-alias OAuth 2.1 credentials.
 
     Implementations provide compare-and-swap (CAS) semantics on write so
@@ -93,12 +96,14 @@ class TokenStore(Protocol):
     silently clobber a fresher write with a stale one.
     """
 
+    @abstractmethod
     async def get(
         self, subject: str, alias: str
     ) -> tuple[StoredOAuthCredential, int] | None:
         """Return the stored credential and its version, or None if absent."""
         ...
 
+    @abstractmethod
     async def write_cas(
         self,
         subject: str,
@@ -115,16 +120,17 @@ class TokenStore(Protocol):
         """
         ...
 
+    @abstractmethod
     async def delete(self, subject: str, alias: str) -> None:
         """Remove the stored credential, if any. Idempotent."""
         ...
 
 
-class InMemoryTokenStore:
+class InMemoryTokenStore(TokenStore):
     """In-process ``TokenStore`` — single-replica only, lost on restart.
 
     Sufficient for PR1's validation scope (see issue #66 D5); a persistent
-    implementation of the same protocol (Vault-backed) lands in a later PR.
+    implementation of the same interface (Vault-backed) lands in a later PR.
     """
 
     def __init__(self) -> None:
@@ -252,7 +258,10 @@ class OAuth21Provider(CredentialProvider):
         client_id: str,
         client_secret: SecretStr | None = None,
         revocation_endpoint: str | None = None,
+        *,
+        http_client: httpx2.AsyncClient,
     ) -> None:
+        self._http_client = http_client
         self._alias = alias
         self._targets = targets
         self._authorization_endpoint = authorization_endpoint
@@ -359,7 +368,7 @@ class OAuth21Provider(CredentialProvider):
         if cred.refresh_token is not None and not cred.refreshed_after_rejection:
             try:
                 refreshed = await self._refresh(cred)
-            except HTTPException:
+            except CredentialReauthRequiredError:
                 pass  # the AS refused the refresh token: reject below
             except httpx2.HTTPError as exc:
                 self._log.warning(
@@ -412,16 +421,15 @@ class OAuth21Provider(CredentialProvider):
         the narrower failure modes of the read/refresh itself.
 
         Raises:
-            HTTPException(404): if no token is stored yet for this alias.
-            HTTPException(401): if the stored token cannot be refreshed
+            CredentialNotFoundError: if no token is stored yet for this alias.
+            CredentialReauthRequiredError: if the stored token cannot be refreshed
                 (expired/missing refresh_token, or the backend AS rejects the
                 refresh attempt) — the user must re-link.
 
         """
         entry = await self._store.get(principal.subject, self._alias)
         if entry is None:
-            raise HTTPException(
-                status_code=404,
+            raise CredentialNotFoundError(
                 detail=(
                     f"No OAuth 2.1 token stored for alias {self._alias!r}. "
                     "Link this account from the portal's Identities page."
@@ -430,8 +438,7 @@ class OAuth21Provider(CredentialProvider):
         cred, version = entry
 
         if cred.rejected_at is not None:
-            raise HTTPException(
-                status_code=401,
+            raise CredentialReauthRequiredError(
                 detail=(
                     f"OAuth 2.1 token for alias {self._alias!r} was rejected "
                     "by the service. Please re-link this account from the "
@@ -445,8 +452,7 @@ class OAuth21Provider(CredentialProvider):
             # the stored token itself: serve it for as long as it is usable.
             if self._usable_seconds(cred) > 0:
                 return self._to_issued(cred, target)
-            raise HTTPException(
-                status_code=401,
+            raise CredentialReauthRequiredError(
                 detail=(
                     f"OAuth 2.1 token for alias {self._alias!r} has expired "
                     "and no refresh token is available. Please re-link this "
@@ -471,8 +477,7 @@ class OAuth21Provider(CredentialProvider):
             self._log.info("oauth21.issue.refresh_race", subject=principal.subject)
             raced_entry = await self._store.get(principal.subject, self._alias)
             if raced_entry is None:
-                raise HTTPException(
-                    status_code=404,
+                raise CredentialNotFoundError(
                     detail=(
                         f"No OAuth 2.1 token stored for alias {self._alias!r}. "
                         "Link this account from the portal's Identities page."
@@ -508,7 +513,7 @@ class OAuth21Provider(CredentialProvider):
                 token = cred.access_token
                 token_type_hint = "access_token"  # noqa: S105 -- RFC 7009 token_type_hint value, not a secret
             try:
-                resp = await get_http_client().post(
+                resp = await self._http_client.post(
                     self._revocation_endpoint,
                     data={
                         "token": token.get_secret_value(),
@@ -530,15 +535,14 @@ class OAuth21Provider(CredentialProvider):
     async def _refresh(self, cred: StoredOAuthCredential) -> StoredOAuthCredential:
         """POST the refresh_token grant to the backend's token endpoint.
 
-        Raises HTTPException(401) when the backend rejects the refresh
+        Raises CredentialReauthRequiredError when the backend rejects the refresh
         (400/401 — refresh token invalid, revoked, or expired).
         """
         if cred.refresh_token is None:  # pragma: no cover - guarded by caller
-            raise HTTPException(
-                status_code=401,
+            raise CredentialReauthRequiredError(
                 detail=f"No refresh token available for alias {self._alias!r}.",
             )
-        resp = await get_http_client().post(
+        resp = await self._http_client.post(
             self._token_endpoint,
             data={
                 "grant_type": "refresh_token",
@@ -553,8 +557,7 @@ class OAuth21Provider(CredentialProvider):
                 subject=cred.subject,
                 status_code=resp.status_code,
             )
-            raise HTTPException(
-                status_code=401,
+            raise CredentialReauthRequiredError(
                 detail=(
                     f"OAuth 2.1 token for alias {self._alias!r} could not be "
                     "refreshed; please re-link this account from the "

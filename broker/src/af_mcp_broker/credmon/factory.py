@@ -20,6 +20,8 @@ from af_mcp_broker.errors import require
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
+    import httpx2
+
     from af_mcp_broker.config import Settings
     from af_mcp_broker.credentials.base import CredentialRegistry
     from af_mcp_broker.credentials.broker_issued import BrokerTokenIssuer
@@ -44,6 +46,7 @@ async def build_credmon_sync(
     store_prefixes: Mapping[str, str],
     vault_kv: VaultKV | None,
     principal_cache: PrincipalCache | None,
+    http_client: httpx2.AsyncClient,
 ) -> CredmonSyncService:
     """Wire a ``CredmonSyncService`` for every requested kind that has an identity provider configured.
 
@@ -114,6 +117,7 @@ async def build_credmon_sync(
         client=HTCondorApiCredentialStore(
             api_url=str(api_url),
             token_file=token_file,
+            http_client=http_client,
         ),
         audience_prefix=settings.credmon_audience_prefix,
         service_prefix=settings.credmon_service_prefix,

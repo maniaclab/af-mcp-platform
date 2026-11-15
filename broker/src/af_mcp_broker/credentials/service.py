@@ -16,9 +16,9 @@ from af_mcp_broker.credentials.base import (
     ExecutionModel,
     IssuedCredential,
 )
-from af_mcp_broker.http import get_http_client
 
 if TYPE_CHECKING:
+    import httpx2
     from pydantic import SecretBytes
 
     from af_mcp_broker.config import Settings
@@ -57,8 +57,11 @@ class ServiceProvider(CredentialProvider):
         self,
         settings: Settings,
         targets: frozenset[str] = _DEFAULT_SERVICE_TARGETS,
+        *,
+        http_client: httpx2.AsyncClient,
     ) -> None:
         self._settings = settings
+        self._http_client = http_client
         self._targets = targets
         self._log = structlog.get_logger(__name__).bind(provider="ServiceProvider")
 
@@ -176,7 +179,7 @@ class ServiceProvider(CredentialProvider):
             )
 
         token_endpoint = f"{self._settings.oidc_backchannel_url.rstrip('/')}/protocol/openid-connect/token"
-        resp = await get_http_client().post(
+        resp = await self._http_client.post(
             token_endpoint,
             data={
                 "grant_type": "client_credentials",

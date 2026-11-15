@@ -107,6 +107,7 @@ from typing import TYPE_CHECKING, Any, assert_never
 
 import structlog
 
+from af_mcp_broker.constants import MAX_CAS_RETRIES
 from af_mcp_broker.errors import BrokerError, require
 from af_mcp_broker.shared_state import FallbackSharedState, InMemorySharedState
 from af_mcp_broker.vault_kv import CasConflictError, VaultError, VaultKV
@@ -118,12 +119,6 @@ if TYPE_CHECKING:
     from af_mcp_broker.shared_state import SharedState
 
 log = structlog.get_logger(__name__)
-
-# Bounded retry budget for the read-modify-write CAS loops below -- a
-# genuine conflict storm this deep would indicate something pathological
-# (far beyond two replicas racing once), so failing loudly past this point
-# is preferable to retrying forever.
-_MAX_CAS_RETRIES = 5
 
 
 class DuplicateNameError(BrokerError):
@@ -554,7 +549,7 @@ class VaultTokenRegistryBackend(TokenRegistryBackend):
     See this module's docstring for the KV layout and the write-ordering
     rationale in ``revoke()``. Not thread-safe across processes beyond
     Vault's own CAS guarantees -- concurrent writers for the same principal
-    retry on a version conflict (bounded by ``_MAX_CAS_RETRIES``), exactly
+    retry on a version conflict (bounded by ``MAX_CAS_RETRIES``), exactly
     like ``credentials/oauth21.py``'s ``OAuth21Provider`` handles refresh
     races.
     """
@@ -575,7 +570,7 @@ class VaultTokenRegistryBackend(TokenRegistryBackend):
     async def add(self, record: TokenRecord) -> None:
         path = self._principal_path(record.principal_id)
         now = time.time()
-        for _attempt in range(_MAX_CAS_RETRIES):
+        for _attempt in range(MAX_CAS_RETRIES):
             current = await self._vault_kv.get(path)
             data, version = current if current is not None else ({}, None)
             # Re-checked on every retry against the just-re-read data, not
@@ -644,7 +639,7 @@ class VaultTokenRegistryBackend(TokenRegistryBackend):
             return None
 
         path = self._principal_path(principal_id)
-        for _attempt in range(_MAX_CAS_RETRIES):
+        for _attempt in range(MAX_CAS_RETRIES):
             current = await self._vault_kv.get(path)
             if current is None:
                 return None
@@ -670,7 +665,7 @@ class VaultTokenRegistryBackend(TokenRegistryBackend):
         self, principal_id: str, revoked_at: float
     ) -> list[TokenRecord]:
         path = self._principal_path(principal_id)
-        for _attempt in range(_MAX_CAS_RETRIES):
+        for _attempt in range(MAX_CAS_RETRIES):
             current = await self._vault_kv.get(path)
             if current is None:
                 return []
@@ -700,7 +695,7 @@ class VaultTokenRegistryBackend(TokenRegistryBackend):
         self, principal_id: str, lookup_id: str, at: float
     ) -> None:
         path = self._principal_path(principal_id)
-        for _attempt in range(_MAX_CAS_RETRIES):
+        for _attempt in range(MAX_CAS_RETRIES):
             current = await self._vault_kv.get(path)
             if current is None:
                 return
@@ -743,7 +738,7 @@ class VaultTokenRegistryBackend(TokenRegistryBackend):
         """
         removed: list[str] = []
         emptied = False
-        for _attempt in range(_MAX_CAS_RETRIES):
+        for _attempt in range(MAX_CAS_RETRIES):
             current = await self._vault_kv.get(path)
             if current is None:
                 # Already gone -- a concurrent sweep/revoke/expiry race.

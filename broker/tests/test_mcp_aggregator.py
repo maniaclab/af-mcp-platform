@@ -10,7 +10,6 @@ import httpx2
 import pytest
 import structlog
 from broker_state_helpers import aggregator_inputs
-from fastapi import HTTPException
 from fastmcp import FastMCP
 from fastmcp.client import Client
 from fastmcp.client.transports import StreamableHttpTransport
@@ -52,7 +51,12 @@ from af_mcp_broker.credentials import (
     IssuedCredential,
 )
 from af_mcp_broker.credentials.broker_issued import BrokerTokenIssuer
-from af_mcp_broker.credentials.errors import NeedsUnlockError
+from af_mcp_broker.credentials.errors import (
+    CredentialError,
+    CredentialNotFoundError,
+    CredentialServiceError,
+    NeedsUnlockError,
+)
 from af_mcp_broker.mcp import aggregator
 from af_mcp_broker.mcp.aggregator import (
     _make_client_factory,
@@ -123,7 +127,7 @@ class _FakeProvider(CredentialProvider):
         linked: bool = True,
         token: str | None = "minted-token",
         needs_unlock: NeedsUnlockError | None = None,
-        http_error: HTTPException | None = None,
+        http_error: CredentialError | None = None,
         rejected: bool = False,
     ) -> None:
         self.linked = linked
@@ -662,9 +666,7 @@ async def test_client_factory_uncredentialed_list_time_401_reports_nothing(
     failed) says nothing about any stored credential."""
     _patch_context(monkeypatch, make_principal(subject="sub-abc"), active_backend=None)
     spec = _spec(auth_type="bearer")
-    provider = _FakeProvider(
-        http_error=HTTPException(status_code=503, detail="token endpoint down")
-    )
+    provider = _FakeProvider(http_error=CredentialServiceError("token endpoint down"))
     registry = CredentialRegistry()
     registry.register(spec.name, provider)
 
@@ -782,13 +784,13 @@ async def test_client_factory_bearer_needs_unlock_raises_friendly_error(
     assert "/v1/x509/proxy" in str(excinfo.value)
 
 
-async def test_client_factory_bearer_provider_http_exception_surfaces_detail(
+async def test_client_factory_bearer_provider_credential_error_surfaces_detail(
     settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _patch_context(monkeypatch, make_principal())
     spec = _spec(auth_type="bearer")
     provider = _FakeProvider(
-        http_error=HTTPException(status_code=404, detail="No ATLAS IAM token stored")
+        http_error=CredentialNotFoundError("No ATLAS IAM token stored")
     )
     registry = CredentialRegistry()
     registry.register(spec.name, provider)
@@ -876,9 +878,7 @@ async def test_client_factory_bearer_list_time_mint_failure_stays_unavailable(
     outcome is classified "unavailable"."""
     ctx = _patch_context(monkeypatch, make_principal(), active_backend=None)
     spec = _spec(auth_type="bearer")
-    provider = _FakeProvider(
-        http_error=HTTPException(status_code=503, detail="token endpoint down")
-    )
+    provider = _FakeProvider(http_error=CredentialServiceError("token endpoint down"))
     registry = CredentialRegistry()
     registry.register(spec.name, provider)
     factory = _make_client_factory(spec, registry, settings, _OPEN_POLICY)

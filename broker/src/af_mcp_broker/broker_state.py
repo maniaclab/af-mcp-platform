@@ -19,6 +19,7 @@ from fastapi import (
 )
 
 if TYPE_CHECKING:
+    import httpx2
     from cryptography.fernet import Fernet
     from fastmcp import FastMCP
     from starlette.applications import Starlette
@@ -55,13 +56,15 @@ class BrokerState:
     """Every subsystem the request path reads, as built by the lifespan.
 
     *services* is the operator-configured services only (the registry also
-    carries the builtin gateway service). *dev_bypass_principal* is set only
+    carries the builtin gateway service). *http_client* is the one pooled
+    outbound client the lifespan opens and closes. *dev_bypass_principal* is set only
     while the local-dev auth bypass is active. *metrics_port* is the port the
     metrics server bound, or None when it is disabled. *mcp_app* is the ASGI
     app serving *mcp_aggregator* at ``/mcp``.
     """
 
     settings: Settings
+    http_client: httpx2.AsyncClient
     entitlement_policy: EntitlementPolicy
     service_registry: ServiceRegistry
     services: list[ServiceSpec]

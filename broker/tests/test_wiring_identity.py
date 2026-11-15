@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import httpx2
 import pytest
 from cryptography.fernet import Fernet
 
@@ -56,6 +57,7 @@ def vault_kv() -> VaultKV:
         auth_role="r",
         kv_mount="secret",
         sa_token_path="/nonexistent",
+        http_client=httpx2.AsyncClient(),
     )
 
 
@@ -87,7 +89,9 @@ class TestBuildPrincipalCache:
             keycloak_admin_client_id="admin", keycloak_admin_client_secret="s"
         )
 
-        cache = build_principal_cache(settings, None, dev_bypass_active=False)
+        cache = build_principal_cache(
+            settings, None, httpx2.AsyncClient(), dev_bypass_active=False
+        )
 
         assert isinstance(cache, PrincipalCache)
         assert isinstance(cache._backend, InMemoryPrincipalCacheBackend)
@@ -99,19 +103,28 @@ class TestBuildPrincipalCache:
             principal_cache_backend="vault",
         )
 
-        cache = build_principal_cache(settings, vault_kv, dev_bypass_active=False)
+        cache = build_principal_cache(
+            settings, vault_kv, httpx2.AsyncClient(), dev_bypass_active=False
+        )
 
         assert cache is not None
         assert isinstance(cache._backend, VaultPrincipalCacheBackend)
 
     def test_is_none_under_the_dev_bypass_without_an_admin_account(self) -> None:
-        assert build_principal_cache(_settings(), None, dev_bypass_active=True) is None
+        assert (
+            build_principal_cache(
+                _settings(), None, httpx2.AsyncClient(), dev_bypass_active=True
+            )
+            is None
+        )
 
     def test_refuses_to_boot_without_an_admin_account_or_the_bypass(self) -> None:
         with pytest.raises(
             RuntimeError, match="KEYCLOAK_ADMIN_CLIENT_ID/KEYCLOAK_ADMIN_CLIENT_SECRET"
         ):
-            build_principal_cache(_settings(), None, dev_bypass_active=False)
+            build_principal_cache(
+                _settings(), None, httpx2.AsyncClient(), dev_bypass_active=False
+            )
 
 
 class TestBuildTokenRegistry:
@@ -145,7 +158,7 @@ class TestBuildMcpAuthCodeStore:
 
 class TestBuildVaultKv:
     async def test_is_none_when_no_subsystem_uses_vault(self) -> None:
-        assert await build_vault_kv(_settings()) is None
+        assert await build_vault_kv(_settings(), httpx2.AsyncClient()) is None
 
     async def test_authenticates_once_at_startup_when_a_subsystem_uses_vault(
         self, monkeypatch: pytest.MonkeyPatch
@@ -158,7 +171,9 @@ class TestBuildVaultKv:
 
         monkeypatch.setattr(VaultKV, "_authenticate", _authenticate)
 
-        built = await build_vault_kv(_settings(maintenance_mode_backend="vault"))
+        built = await build_vault_kv(
+            _settings(maintenance_mode_backend="vault"), httpx2.AsyncClient()
+        )
 
         assert built is not None
         assert calls == [built]
@@ -174,7 +189,9 @@ class TestBuildVaultKv:
         with pytest.raises(
             RuntimeError, match="Vault K8s auth failed at startup: SA token unreadable"
         ):
-            await build_vault_kv(_settings(token_registry_backend="vault"))
+            await build_vault_kv(
+                _settings(token_registry_backend="vault"), httpx2.AsyncClient()
+            )
 
     def test_an_identity_entry_that_persists_in_vault_counts_as_using_vault(
         self,

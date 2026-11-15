@@ -17,28 +17,40 @@ from pydantic import ValidationError
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from af_mcp_broker._version import version as __version__
+from af_mcp_broker.api.errors import CorrelatedHTTPException
 from af_mcp_broker.api.router import router as v1_router
 from af_mcp_broker.api.wellknown import router as wellknown_router
 from af_mcp_broker.broker_state import broker_state_of
 from af_mcp_broker.config import Settings, get_settings
-from af_mcp_broker.credentials.errors import UnlockRateLimitError
+from af_mcp_broker.credentials.errors import (
+    CredentialError,
+    CredentialForbiddenError,
+    CredentialNotFoundError,
+    CredentialRateLimitedError,
+    CredentialReauthRequiredError,
+    CredentialServiceError,
+    UnlockRateLimitError,
+)
 from af_mcp_broker.credentials.stores import VaultLinkStores, build_vault_link_stores
-from af_mcp_broker.http import aclose_http_client
 from af_mcp_broker.identity import (
+    AdminRequiredError,
     IdentityError,
+    InvalidTokenError,
+    JwksUnavailableError,
+    NotAuthenticatedError,
     PrincipalDirectoryUnavailableError,
     TokenAudienceError,
     TokenExpiredError,
 )
 from af_mcp_broker.lint_observations import LintObservationStore
 from af_mcp_broker.logging import (
-    CorrelatedHTTPException,
     bind_new_correlation_id,
     close_audit_logging,
     configure_logging,
     log_request_finished,
     log_request_received,
 )
+from af_mcp_broker.maintenance import MaintenanceModeError
 from af_mcp_broker.mcp.aggregator import BackendProviders
 from af_mcp_broker.otel_metrics import init_otel_metrics, shutdown_otel_metrics
 from af_mcp_broker.tracing import init_tracing, instrument_fastapi, shutdown_tracing
@@ -57,6 +69,7 @@ from af_mcp_broker.wiring.credentials import (
     build_state_cipher,
     resolve_x509_provider,
 )
+from af_mcp_broker.wiring.http_client import build_http_client
 from af_mcp_broker.wiring.identity import (
     build_dev_bypass_principal,
     build_mcp_auth_code_store,
@@ -171,7 +184,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[dict[str, Any], None]
         # flushed too.
         stack.callback(shutdown_tracing)
         stack.callback(close_audit_logging)
-        stack.push_async_callback(aclose_http_client)
+        http_client = build_http_client(stack)
 
         dev_principal = build_dev_bypass_principal(settings)
         _warn_replica_hazards(settings)
@@ -190,7 +203,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[dict[str, Any], None]
         credential_cache = build_credential_cache(
             settings, shared_state, list_cache_invalidator, stack
         )
-        vault_kv = await build_vault_kv(settings)
+        vault_kv = await build_vault_kv(settings, http_client)
         oauth21_token_store = build_oauth21_token_store(settings, vault_kv)
         oauth21_state_cipher = build_state_cipher(settings)
         broker_token_issuer = build_broker_token_issuer(settings)
@@ -206,6 +219,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[dict[str, Any], None]
             issuer=broker_token_issuer,
             token_store=oauth21_token_store,
             link_stores=link_stores,
+            http_client=http_client,
         )
         await validate_services_gated(catalog.services, providers.registry)
         x509_provider = await resolve_x509_provider(
@@ -217,7 +231,10 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[dict[str, Any], None]
         )
         token_registries = build_token_registry(settings, vault_kv, shared_state)
         principal_cache = build_principal_cache(
-            settings, vault_kv, dev_bypass_active=dev_principal is not None
+            settings,
+            vault_kv,
+            http_client,
+            dev_bypass_active=dev_principal is not None,
         )
         maintenance_mode_store = await start_maintenance_store(
             settings, vault_kv, stack
@@ -255,6 +272,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[dict[str, Any], None]
             pat_backend=token_registries.backend,
             principal_cache=principal_cache,
             maintenance_mode_store=maintenance_mode_store,
+            http_client=http_client,
         )
 
         metrics_port = start_metrics_server(settings, stack)
@@ -267,10 +285,12 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[dict[str, Any], None]
             link_stores=link_stores,
             vault_kv=vault_kv,
             principal_cache=principal_cache,
+            http_client=http_client,
             stack=stack,
         )
         application.state.broker = build_broker_state(
             settings,
+            http_client=http_client,
             catalog=catalog,
             targets=targets,
             providers=providers,
@@ -294,7 +314,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[dict[str, Any], None]
             metrics_port=metrics_port,
         )
 
-        await prime_jwks_cache(settings)
+        await prime_jwks_cache(settings, http_client)
         logger.info(
             "af_mcp_broker_started",
             version=__version__,
@@ -498,17 +518,33 @@ async def _http_exception_handler(request: Request, exc: HTTPException) -> Respo
     return await http_exception_handler(request, exc)
 
 
-# identity.py raises domain exceptions (it is also reached from /mcp, which
-# translates them itself in mcp/middleware/identity_mw.py); /v1 maps each onto
-# the HTTPException the caller has always received, routed through
-# _http_exception_handler so logging and 5xx correlation_id folding are
-# unchanged. The status code and headers live here, not on the domain classes.
+# Everything below the edge raises domain exceptions rather than
+# HTTPException. identity.py's are also reached from /mcp, which translates
+# them itself in mcp/middleware/identity_mw.py; /v1 maps each onto an
+# HTTPException, routed through _http_exception_handler so logging and 5xx
+# correlation_id folding apply to it like to any other. The status code and
+# headers live here, not on the domain classes.
 _IDENTITY_ERROR_RESPONSES: dict[
     type[IdentityError], tuple[int, dict[str, str] | None]
 ] = {
     TokenExpiredError: (status.HTTP_401_UNAUTHORIZED, {"WWW-Authenticate": "Bearer"}),
     TokenAudienceError: (status.HTTP_401_UNAUTHORIZED, {"WWW-Authenticate": "Bearer"}),
     PrincipalDirectoryUnavailableError: (status.HTTP_503_SERVICE_UNAVAILABLE, None),
+    InvalidTokenError: (status.HTTP_401_UNAUTHORIZED, {"WWW-Authenticate": "Bearer"}),
+    NotAuthenticatedError: (
+        status.HTTP_401_UNAUTHORIZED,
+        {"WWW-Authenticate": "Bearer"},
+    ),
+    JwksUnavailableError: (status.HTTP_502_BAD_GATEWAY, None),
+    AdminRequiredError: (status.HTTP_403_FORBIDDEN, None),
+}
+
+_CREDENTIAL_ERROR_STATUS: dict[type[CredentialError], int] = {
+    CredentialNotFoundError: status.HTTP_404_NOT_FOUND,
+    CredentialReauthRequiredError: status.HTTP_401_UNAUTHORIZED,
+    CredentialForbiddenError: status.HTTP_403_FORBIDDEN,
+    CredentialServiceError: status.HTTP_502_BAD_GATEWAY,
+    CredentialRateLimitedError: status.HTTP_429_TOO_MANY_REQUESTS,
 }
 
 
@@ -518,6 +554,35 @@ async def _identity_error_handler(request: Request, exc: IdentityError) -> Respo
     return await _http_exception_handler(
         request,
         HTTPException(status_code=status_code, detail=exc.detail, headers=headers),
+    )
+
+
+@app.exception_handler(CredentialError)
+async def _credential_error_handler(request: Request, exc: CredentialError) -> Response:
+    headers = (
+        {"Retry-After": exc.retry_after}
+        if isinstance(exc, CredentialRateLimitedError) and exc.retry_after is not None
+        else None
+    )
+    return await _http_exception_handler(
+        request,
+        HTTPException(
+            status_code=_CREDENTIAL_ERROR_STATUS[type(exc)],
+            detail=exc.detail,
+            headers=headers,
+        ),
+    )
+
+
+@app.exception_handler(MaintenanceModeError)
+async def _maintenance_mode_error_handler(
+    request: Request, exc: MaintenanceModeError
+) -> Response:
+    return await _http_exception_handler(
+        request,
+        HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=exc.detail
+        ),
     )
 
 

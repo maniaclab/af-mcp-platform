@@ -14,7 +14,6 @@ from conftest import (
     run_inprocess_asgi_app,
     run_inprocess_server,
 )
-from fastapi import HTTPException
 from fastmcp import Client, FastMCP
 from fastmcp.exceptions import ToolError
 from fastmcp.server.auth.providers.jwt import StaticTokenVerifier
@@ -30,7 +29,10 @@ from af_mcp_broker.credentials import (
     ExecutionModel,
     IssuedCredential,
 )
-from af_mcp_broker.credentials.errors import NeedsUnlockError
+from af_mcp_broker.credentials.errors import (
+    CredentialReauthRequiredError,
+    NeedsUnlockError,
+)
 from af_mcp_broker.credentials.oauth21 import (
     InMemoryTokenStore,
     OAuth21Provider,
@@ -341,6 +343,8 @@ class _VerifyingBackend:
 
     mcp_url: str
     token_endpoint: str
+    # The client an OAuth21Provider refreshes through, routed to the token endpoint.
+    http_client: httpx2.AsyncClient
     # What the token endpoint hands out on the next refresh_token grant.
     next_access_token: str = _ACCEPTED_TOKEN
     refresh_grants: int = 0
@@ -375,7 +379,7 @@ async def verifying_backend(
         )
 
     app = mcp.http_app(path="/mcp")
-    # OAuth21Provider refreshes through the process-wide plain-httpx2 client,
+    # OAuth21Provider refreshes through its own plain-httpx2 client,
     # not the aggregator's backend client factory, so the backend's token
     # endpoint needs its own in-process route. Only this backend's host is
     # routed in-process; any other (an unreachable authorization server) still
@@ -388,11 +392,10 @@ async def verifying_backend(
             }
         ) as token_client,
     ):
-        monkeypatch.setattr(
-            "af_mcp_broker.credentials.oauth21.get_http_client", lambda: token_client
-        )
         backend = _VerifyingBackend(
-            mcp_url=f"{base_url}/mcp", token_endpoint=f"{base_url}/oauth/token"
+            mcp_url=f"{base_url}/mcp",
+            token_endpoint=f"{base_url}/oauth/token",
+            http_client=token_client,
         )
         yield backend
 
@@ -401,6 +404,7 @@ async def _oauth21_provider_holding(
     access_token: str,
     *,
     token_endpoint: str,
+    http_client: httpx2.AsyncClient,
     refresh_token: str | None = None,
     rejected: bool = False,
 ) -> OAuth21Provider:
@@ -432,6 +436,7 @@ async def _oauth21_provider_holding(
         scope="read:user",
         store=store,
         client_id="toy-client",
+        http_client=http_client,
     )
 
 
@@ -441,7 +446,9 @@ async def test_backend_401_marks_the_oauth21_credential_rejected(
     """No refresh token (Indico, JupyterHub): the first 401 rejects."""
     prime_jwks([sig_key.jwk])
     provider = await _oauth21_provider_holding(
-        "revoked-token", token_endpoint=verifying_backend.token_endpoint
+        "revoked-token",
+        token_endpoint=verifying_backend.token_endpoint,
+        http_client=verifying_backend.http_client,
     )
     aggregator_app.directory.groups_by_subject["user-123"] = ["atlas"]
     token = sig_key.sign(make_claims())
@@ -453,7 +460,7 @@ async def test_backend_401_marks_the_oauth21_credential_rejected(
 
     principal = make_principal(subject="user-123")
     assert await provider.is_linked(principal) is False
-    with pytest.raises(HTTPException, match="rejected"):
+    with pytest.raises(CredentialReauthRequiredError, match="rejected"):
         await provider.issue(principal, "toy")
     assert verifying_backend.refresh_grants == 0
 
@@ -463,7 +470,9 @@ async def test_backend_accepting_the_credential_leaves_it_linked(
 ) -> None:
     prime_jwks([sig_key.jwk])
     provider = await _oauth21_provider_holding(
-        _ACCEPTED_TOKEN, token_endpoint=verifying_backend.token_endpoint
+        _ACCEPTED_TOKEN,
+        token_endpoint=verifying_backend.token_endpoint,
+        http_client=verifying_backend.http_client,
     )
     aggregator_app.directory.groups_by_subject["user-123"] = ["atlas"]
     token = sig_key.sign(make_claims())
@@ -488,6 +497,7 @@ async def test_backend_401_refreshes_a_refreshable_credential_instead(
     provider = await _oauth21_provider_holding(
         "stale-token",
         token_endpoint=verifying_backend.token_endpoint,
+        http_client=verifying_backend.http_client,
         refresh_token="refresh-1",
     )
     aggregator_app.directory.groups_by_subject["user-123"] = ["atlas"]
@@ -512,6 +522,7 @@ async def test_backend_401_for_the_refreshed_token_rejects_it(
     provider = await _oauth21_provider_holding(
         "stale-token",
         token_endpoint=verifying_backend.token_endpoint,
+        http_client=verifying_backend.http_client,
         refresh_token="refresh-1",
     )
     aggregator_app.directory.groups_by_subject["user-123"] = ["atlas"]
@@ -549,7 +560,9 @@ async def test_rejected_oauth21_credential_reads_as_rejected_in_the_catalog(
     "rejected" (re-link), not "not_linked", though ``is_linked()`` is False."""
     prime_jwks([sig_key.jwk])
     provider = await _oauth21_provider_holding(
-        "revoked-token", token_endpoint=verifying_backend.token_endpoint
+        "revoked-token",
+        token_endpoint=verifying_backend.token_endpoint,
+        http_client=verifying_backend.http_client,
     )
     aggregator_app.directory.groups_by_subject["user-123"] = ["atlas"]
     token = sig_key.sign(make_claims())
@@ -573,7 +586,10 @@ async def test_call_with_a_rejected_oauth21_credential_says_relink(
     caller it was rejected and to re-link -- not that nothing is linked."""
     prime_jwks([sig_key.jwk])
     provider = await _oauth21_provider_holding(
-        "revoked-token", token_endpoint=verifying_backend.token_endpoint, rejected=True
+        "revoked-token",
+        token_endpoint=verifying_backend.token_endpoint,
+        http_client=verifying_backend.http_client,
+        rejected=True,
     )
     aggregator_app.directory.groups_by_subject["user-123"] = ["atlas"]
     token = sig_key.sign(make_claims())
@@ -598,6 +614,7 @@ async def test_refreshed_oauth21_credential_leaves_no_rejection_in_the_catalog(
     provider = await _oauth21_provider_holding(
         "stale-token",
         token_endpoint=verifying_backend.token_endpoint,
+        http_client=verifying_backend.http_client,
         refresh_token="refresh-1",
     )
     aggregator_app.directory.groups_by_subject["user-123"] = ["atlas"]
@@ -624,6 +641,7 @@ async def test_unreachable_authorization_server_leaves_the_catalog_unrejected(
     provider = await _oauth21_provider_holding(
         "stale-token",
         token_endpoint="http://127.0.0.1:1/oauth/token",
+        http_client=verifying_backend.http_client,
         refresh_token="refresh-1",
     )
     aggregator_app.directory.groups_by_subject["user-123"] = ["atlas"]

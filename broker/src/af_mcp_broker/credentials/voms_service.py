@@ -44,7 +44,6 @@ from af_mcp_broker.credentials.errors import (
     VomsServicePreflightError,
     VomsServiceRejectedError,
 )
-from af_mcp_broker.http import get_http_client
 from af_mcp_broker.logging import request_id_headers
 
 if TYPE_CHECKING:
@@ -103,7 +102,7 @@ class VomsTokenServiceClient:
         audience: str = "voms-token-service",
         voms: str = "atlas",
         valid: str = "192:00",
-        http_client: httpx2.AsyncClient | None = None,
+        http_client: httpx2.AsyncClient,
     ) -> None:
         self._issuer = issuer
         # AnyHttpUrl normalizes a bare origin to a trailing-slash form;
@@ -118,9 +117,6 @@ class VomsTokenServiceClient:
         self._log = structlog.get_logger(__name__).bind(
             component="VomsTokenServiceClient"
         )
-
-    def _http(self) -> httpx2.AsyncClient:
-        return self._http_client if self._http_client is not None else get_http_client()
 
     async def mint(
         self,
@@ -152,7 +148,7 @@ class VomsTokenServiceClient:
         """
         broker_token, _ = self._issuer.mint(subject, self._audience)
         try:
-            resp = await self._http().post(
+            resp = await self._http_client.post(
                 self._mint_endpoint,
                 headers={
                     "Authorization": f"Bearer {broker_token}",
@@ -239,7 +235,7 @@ class VomsTokenServiceClient:
         """
         broker_token, _ = self._issuer.mint(subject, self._audience)
         try:
-            resp = await self._http().get(
+            resp = await self._http_client.get(
                 f"{self._base_url}/v1/preflight/{unixname}",
                 headers={
                     "Authorization": f"Bearer {broker_token}",

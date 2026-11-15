@@ -12,6 +12,7 @@ from __future__ import annotations
 import time
 from typing import Annotated
 
+import httpx2
 import pytest
 from conftest import make_claims
 from fastapi import Header
@@ -33,10 +34,11 @@ def v1_client(
     """
     cache, directory = static_principal_cache
     prime_jwks([sig_key.jwk])
+    http_client = httpx2.AsyncClient()  # the primed JWKS cache means it never sends
 
     async def _authenticate(authorization: Annotated[str, Header()]):
         return await get_principal(
-            authorization.removeprefix("Bearer "), settings, cache
+            authorization.removeprefix("Bearer "), settings, cache, http_client
         )
 
     def _sign(**claims):

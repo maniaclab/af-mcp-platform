@@ -6,6 +6,7 @@ import asyncio
 from contextlib import AsyncExitStack
 from typing import TYPE_CHECKING, Any
 
+import httpx2
 import pytest
 from cryptography.fernet import Fernet
 from x509_fakes import FakeX509Store
@@ -77,6 +78,7 @@ def vault_kv() -> VaultKV:
         auth_role="r",
         kv_mount="secret",
         sa_token_path="/nonexistent",
+        http_client=httpx2.AsyncClient(),
     )
 
 
@@ -197,6 +199,7 @@ class TestBuildCredentialProviders:
             issuer=issuer,
             token_store=token_store,
             link_stores=link_stores or VaultLinkStores(),
+            http_client=httpx2.AsyncClient(),
         )
 
     def test_builds_one_provider_per_entry_in_config_order_and_registers_targets(
@@ -308,6 +311,7 @@ class TestResolveX509Provider:
             issuer=build_broker_token_issuer(settings),
             token_store=None,
             link_stores=VaultLinkStores(x509=FakeX509Store()),  # type: ignore[arg-type]
+            http_client=httpx2.AsyncClient(),
         )
 
         resolved = await resolve_x509_provider(built.registry, ["ami", "ami2"])
@@ -327,6 +331,7 @@ class TestResolveX509Provider:
             issuer=None,
             token_store=None,
             link_stores=VaultLinkStores(),
+            http_client=httpx2.AsyncClient(),
         )
 
         with pytest.raises(TypeError, match="not X509Provider"):

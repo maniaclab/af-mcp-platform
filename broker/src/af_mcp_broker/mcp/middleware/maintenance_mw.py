@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from fastapi import status
+
 from af_mcp_broker.maintenance import check_not_maintenance_or_fail_open
 from af_mcp_broker.mcp.middleware.identity_mw import send_error
 
@@ -61,7 +63,7 @@ class AsgiMaintenanceMiddleware:
                 scope,
                 receive,
                 send,
-                maintenance_exc.status_code,
+                status.HTTP_503_SERVICE_UNAVAILABLE,
                 str(maintenance_exc.detail),
             )
             return

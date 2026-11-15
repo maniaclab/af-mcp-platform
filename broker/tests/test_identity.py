@@ -5,15 +5,16 @@ import time
 from types import SimpleNamespace
 from typing import Any
 
+import httpx2
 import pytest
 import structlog
 from broker_state_helpers import make_broker_state
 from conftest import AUDIENCE, RaisingTokenRegistryBackend, make_claims
-from fastapi import HTTPException
 
 from af_mcp_broker import identity as identity_module
 from af_mcp_broker.authorization import get_principal_permissions
 from af_mcp_broker.identity import (
+    InvalidTokenError,
     PrincipalDirectoryUnavailableError,
     TokenAudienceError,
     TokenExpiredError,
@@ -25,6 +26,9 @@ from af_mcp_broker.token_registry import (
     InMemoryTokenRegistryBackend,
     TokenRecord,
 )
+
+# The JWKS cache is primed in every test below, so this client never sends a request.
+_NO_NETWORK = httpx2.AsyncClient()
 
 
 async def test_get_principal_selects_signing_key_when_listed_second(
@@ -40,7 +44,7 @@ async def test_get_principal_selects_signing_key_when_listed_second(
     prime_jwks([enc_key.jwk, sig_key.jwk])
     token = sig_key.sign(make_claims())
 
-    principal = await get_principal(token, settings, cache)
+    principal = await get_principal(token, settings, cache, _NO_NETWORK)
 
     assert principal.subject == "user-123"
 
@@ -54,7 +58,7 @@ async def test_expired_token_raises_401(
     token = sig_key.sign(make_claims(iat=now - 600, exp=now - 300))
 
     with pytest.raises(TokenExpiredError) as exc:
-        await get_principal(token, settings, cache)
+        await get_principal(token, settings, cache, _NO_NETWORK)
     assert exc.value.detail == "Invalid or expired token"
 
 
@@ -66,7 +70,7 @@ async def test_wrong_audience_raises_401(
     token = sig_key.sign(make_claims(aud="some-other-service"))
 
     with pytest.raises(TokenAudienceError) as exc:
-        await get_principal(token, settings, cache)
+        await get_principal(token, settings, cache, _NO_NETWORK)
     assert exc.value.detail["error"] == "insufficient_scope"
 
 
@@ -85,7 +89,7 @@ async def test_wrong_audience_raises_token_audience_error_with_correlation_id(
     token = sig_key.sign(make_claims(aud="some-other-service"))
 
     with pytest.raises(TokenAudienceError) as exc:
-        await get_principal(token, settings, cache)
+        await get_principal(token, settings, cache, _NO_NETWORK)
 
     assert exc.value.detail["error"] == "insufficient_scope"
     correlation_id = exc.value.detail["correlation_id"]
@@ -127,7 +131,7 @@ async def test_wrong_audience_logs_actual_and_expected_audience(
     monkeypatch.setattr(identity_module.logger, "warning", _capture)
 
     with pytest.raises(TokenAudienceError):
-        await get_principal(token, settings, cache)
+        await get_principal(token, settings, cache, _NO_NETWORK)
 
     mismatch_entries = [
         kwargs for event, kwargs in events if event == "jwt_audience_mismatch"
@@ -145,9 +149,8 @@ async def test_no_matching_kid_raises_401(
     prime_jwks([enc_key.jwk])  # signing key not published
     token = sig_key.sign(make_claims())
 
-    with pytest.raises(HTTPException) as exc:
-        await get_principal(token, settings, cache)
-    assert exc.value.status_code == 401
+    with pytest.raises(InvalidTokenError):
+        await get_principal(token, settings, cache, _NO_NETWORK)
 
 
 # ---------------------------------------------------------------------------
@@ -167,7 +170,7 @@ async def test_jwt_principal_has_no_token_id(
     prime_jwks([sig_key.jwk])
     token = sig_key.sign(make_claims())
 
-    principal = await get_principal(token, settings, cache)
+    principal = await get_principal(token, settings, cache, _NO_NETWORK)
 
     assert principal.token_id is None
 
@@ -183,7 +186,7 @@ async def test_get_principal_binds_subject_to_structlog_context(
     token = sig_key.sign(make_claims())
     structlog.contextvars.clear_contextvars()
 
-    principal = await get_principal(token, settings, cache)
+    principal = await get_principal(token, settings, cache, _NO_NETWORK)
 
     assert structlog.contextvars.get_contextvars()["subject"] == principal.subject
 
@@ -225,7 +228,7 @@ async def test_jwt_with_no_groups_claim_resolves_via_directory(
     del claims["groups"]
     token = sig_key.sign(claims)
 
-    principal = await get_principal(token, settings, cache)
+    principal = await get_principal(token, settings, cache, _NO_NETWORK)
 
     assert principal.groups == ["atlas"]
 
@@ -244,7 +247,7 @@ async def test_jwt_groups_claim_is_ignored_directory_is_authoritative(
     prime_jwks([sig_key.jwk])
     token = sig_key.sign(make_claims(groups=["atlas", "totally-different-group"]))
 
-    principal = await get_principal(token, settings, cache)
+    principal = await get_principal(token, settings, cache, _NO_NETWORK)
 
     assert principal.groups == ["af-admins"]
     assert principal.groups != ["atlas", "totally-different-group"]
@@ -267,7 +270,7 @@ async def test_cold_cache_directory_outage_raises_actionable_error(
     token = sig_key.sign(make_claims())
 
     with pytest.raises(PrincipalDirectoryUnavailableError) as exc:
-        await get_principal(token, settings, cache)
+        await get_principal(token, settings, cache, _NO_NETWORK)
 
     detail = str(exc.value.detail).lower()
     assert "unavailable" in detail or "outage" in detail
@@ -283,16 +286,15 @@ async def test_get_principal_rejects_jwt_of_user_disabled_after_cache_warmed(
     cache, directory = static_principal_cache
     prime_jwks([sig_key.jwk])
     token = sig_key.sign(make_claims())
-    await get_principal(token, settings, cache)  # warms the cache
+    await get_principal(token, settings, cache, _NO_NETWORK)  # warms the cache
 
     directory.disabled_subjects.add("user-123")
     real_monotonic = time.monotonic
     monkeypatch.setattr(time, "monotonic", lambda: real_monotonic() + 2000.0)
-    with pytest.raises(HTTPException) as exc:
-        await get_principal(token, settings, cache)
+    with pytest.raises(InvalidTokenError) as exc:
+        await get_principal(token, settings, cache, _NO_NETWORK)
 
     assert not isinstance(exc.value, PrincipalDirectoryUnavailableError)
-    assert exc.value.status_code == 401
     assert exc.value.detail == "Invalid or expired token"
 
 
@@ -322,10 +324,9 @@ async def test_resolve_pat_principal_rejects_pat_of_user_disabled_after_cache_wa
     directory.disabled_subjects.add("user-123")
     real_monotonic = time.monotonic
     monkeypatch.setattr(time, "monotonic", lambda: real_monotonic() + 2000.0)
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(InvalidTokenError) as exc:
         await resolve_pat_principal(plaintext, settings, backend, cache, tracker)
 
-    assert exc.value.status_code == 401
     assert exc.value.detail == "Invalid bearer token"
 
 
@@ -341,7 +342,7 @@ async def test_get_principal_without_a_configured_directory_raises_actionable_er
     token = sig_key.sign(make_claims())
 
     with pytest.raises(PrincipalDirectoryUnavailableError) as exc:
-        await get_principal(token, settings, None)
+        await get_principal(token, settings, None, _NO_NETWORK)
 
     assert "unavailable" in str(exc.value.detail)
 
@@ -359,7 +360,9 @@ async def test_jwt_and_pat_for_same_principal_get_identical_permissions(
 
     prime_jwks([sig_key.jwk])
     jwt_token = sig_key.sign(make_claims())
-    jwt_principal = await get_principal(jwt_token, settings, principal_cache)
+    jwt_principal = await get_principal(
+        jwt_token, settings, principal_cache, _NO_NETWORK
+    )
 
     pat_backend = InMemoryTokenRegistryBackend()
     plaintext, lookup_id, secret_hash = mint_pat()
@@ -412,7 +415,7 @@ async def test_jwt_with_no_posix_claim_resolves_via_directory(
     del claims["posix"]
     token = sig_key.sign(claims)
 
-    principal = await get_principal(token, settings, cache)
+    principal = await get_principal(token, settings, cache, _NO_NETWORK)
 
     assert principal.uid == 60001
     assert principal.gid == 6000
@@ -440,7 +443,7 @@ async def test_jwt_posix_claim_is_ignored_directory_is_authoritative(
         make_claims(posix={"uid": 50123, "gid": 5000, "unixname": "auser"})
     )
 
-    principal = await get_principal(token, settings, cache)
+    principal = await get_principal(token, settings, cache, _NO_NETWORK)
 
     assert principal.uid == 70002
     assert principal.gid == 7000
@@ -462,7 +465,7 @@ async def test_principal_with_no_posix_anywhere_still_authenticates(
     del claims["posix"]
     token = sig_key.sign(claims)
 
-    principal = await get_principal(token, settings, cache)
+    principal = await get_principal(token, settings, cache, _NO_NETWORK)
 
     assert principal.uid is None
     assert principal.gid is None
@@ -488,7 +491,9 @@ async def test_jwt_and_pat_for_same_principal_get_identical_posix(
 
     prime_jwks([sig_key.jwk])
     jwt_token = sig_key.sign(make_claims())
-    jwt_principal = await get_principal(jwt_token, settings, principal_cache)
+    jwt_principal = await get_principal(
+        jwt_token, settings, principal_cache, _NO_NETWORK
+    )
 
     pat_backend = InMemoryTokenRegistryBackend()
     plaintext, lookup_id, secret_hash = mint_pat()

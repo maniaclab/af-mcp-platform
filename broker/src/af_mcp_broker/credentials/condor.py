@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, ClassVar
 
 import httpx2
 import structlog
-from fastapi import HTTPException, status
+from fastapi import status
 
 from af_mcp_broker import metrics
 from af_mcp_broker.credentials.base import (
@@ -36,7 +36,11 @@ from af_mcp_broker.credentials.base import (
     ExecutionModel,
     IssuedCredential,
 )
-from af_mcp_broker.http import get_http_client
+from af_mcp_broker.credentials.errors import (
+    CredentialNotFoundError,
+    CredentialRateLimitedError,
+    CredentialServiceError,
+)
 from af_mcp_broker.logging import request_id_headers
 from af_mcp_broker.principal import PosixPrincipal
 
@@ -59,7 +63,7 @@ class CondorTokenProvider(CredentialProvider):
     per-target config here — the service mints
     ``condor_token_create -identity <unixname>@...``, so a principal without
     a POSIX identity can never receive an IDTOKEN; that requirement is
-    enforced at ``issue()`` time as an ``HTTPException(404)`` naming the
+    enforced at ``issue()`` time as a ``CredentialNotFoundError`` naming the
     target, the same point-of-use shape (and the same aggregator ``bearer``
     delivery branch) as ``BrokerIssuedProvider``'s ``requires_posix`` check.
 
@@ -82,7 +86,10 @@ class CondorTokenProvider(CredentialProvider):
         targets: frozenset[str],
         service_url: str,
         audience: str = "condor-token-service",
+        *,
+        http_client: httpx2.AsyncClient,
     ) -> None:
+        self._http_client = http_client
         self._issuer = issuer
         self._cache = cache
         self._alias = alias
@@ -109,19 +116,18 @@ class CondorTokenProvider(CredentialProvider):
         """Return a bearer credential carrying a fresh (or still-valid cached) HTCondor IDTOKEN for *(principal, target)*.
 
         Raises:
-            HTTPException(404): when the principal has no POSIX identity —
+            CredentialNotFoundError: when the principal has no POSIX identity —
                 see the class docstring.
-            HTTPException(429): when condor-token-service rate-limits the
-                exchange (``Retry-After`` passed through).
-            HTTPException(502): when the exchange fails for any other
+            CredentialRateLimitedError: when condor-token-service rate-limits
+                the exchange (``Retry-After`` carried on the error).
+            CredentialServiceError: when the exchange fails for any other
                 reason (service unreachable, broker token rejected, minting
                 failed) — generic detail only.
 
         """
         posix = PosixPrincipal.from_principal(principal)
         if posix is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
+            raise CredentialNotFoundError(
                 detail=(
                     f"Service {target!r} requires a POSIX identity "
                     "(uid/gid/unixname) — HTCondor IDTOKENs are minted for "
@@ -200,7 +206,7 @@ class CondorTokenProvider(CredentialProvider):
             unixname=principal.unixname,
         )
         try:
-            resp = await get_http_client().post(
+            resp = await self._http_client.post(
                 self._token_endpoint,
                 headers={
                     "Authorization": f"Bearer {broker_token}",
@@ -215,24 +221,17 @@ class CondorTokenProvider(CredentialProvider):
                 target=target,
                 error=str(exc),
             )
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
+            raise CredentialServiceError(
                 detail="The HTCondor credential service could not be reached.",
             ) from exc
 
         if resp.status_code == status.HTTP_429_TOO_MANY_REQUESTS:
-            headers = (
-                {"Retry-After": resp.headers["Retry-After"]}
-                if "Retry-After" in resp.headers
-                else None
-            )
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            raise CredentialRateLimitedError(
                 detail=(
                     "The HTCondor credential service rate-limited this "
                     "request. Retry later."
                 ),
-                headers=headers,
+                retry_after=resp.headers.get("Retry-After"),
             )
         if resp.status_code != status.HTTP_200_OK:
             # Status code only -- the response body may carry service
@@ -243,8 +242,7 @@ class CondorTokenProvider(CredentialProvider):
                 target=target,
                 upstream_status=resp.status_code,
             )
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
+            raise CredentialServiceError(
                 detail="HTCondor credential issuance failed.",
             )
 
