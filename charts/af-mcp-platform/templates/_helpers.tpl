@@ -396,6 +396,12 @@ startup refusal (Settings._validate_replica_state_config) for the chart path.
 - name: SHARED_STATE_URL
   value: {{ .Values.broker.sharedState.url | quote }}
 {{- end }}
+{{- if include "af-mcp-platform.sharedState.configured" . }}
+# Namespace of every key and pub/sub channel on the store; defaults to the
+# release name so releases sharing one store never see each other's state.
+- name: SHARED_STATE_KEY_PREFIX
+  value: {{ .Values.broker.sharedState.keyPrefix | default (printf "%s:" .Release.Name) | quote }}
+{{- end }}
 {{- if .Values.broker.sharedState.allowPerReplicaState }}
 - name: ALLOW_PER_REPLICA_STATE
   value: "true"

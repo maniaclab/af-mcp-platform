@@ -42,6 +42,7 @@ if TYPE_CHECKING:
 _SOCKET_TIMEOUT_SECONDS = 2.0
 
 # Namespaces this broker's keys on a store an operator may share with others.
+# Settings.shared_state_key_prefix overrides it per release.
 _DEFAULT_KEY_PREFIX = "af-mcp:"
 
 # Atomic fixed-window increment. The window starts at the first increment (the
@@ -365,12 +366,16 @@ class FallbackSharedState(SharedState):
         self._log.warning(self._event, error=str(exc), effect=self._effect)
 
 
-def build_shared_state(url: str | None) -> SharedState:
-    """Return the backend for *url*: in-memory when empty, redis for ``redis(s)://``."""
+def build_shared_state(url: str | None, *, key_prefix: str) -> SharedState:
+    """Return the backend for *url*: in-memory when empty, redis for ``redis(s)://``.
+
+    *key_prefix* namespaces the redis keys and pub/sub channels; the in-memory
+    backend has no shared namespace and ignores it.
+    """
     if not url:
         return InMemorySharedState()
     if url.startswith(("redis://", "rediss://")):
-        return RedisSharedState(url)
+        return RedisSharedState(url, key_prefix=key_prefix)
     raise ValueError(
         "SHARED_STATE_URL must start with redis:// or rediss:// "
         "(any redis-protocol server, e.g. Redis or Valkey, works)"

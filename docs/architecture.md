@@ -155,7 +155,19 @@ broker:
       port: 6379
 ```
 
-Outside the chart set `SHARED_STATE_URL` (and `MCP_REPLICA_COUNT`) directly.
+Every key and pub/sub channel the broker uses on the store starts with
+`broker.sharedState.keyPrefix` (env `SHARED_STATE_KEY_PREFIX`). The chart
+defaults it to `<release name>:`, so two releases can share one store without
+seeing each other's counters or cache invalidations. A redis database number
+in the URL does not isolate them: pub/sub ignores it. Changing the prefix on a
+running release drops the state held under the old prefix once. That state is
+short-lived (rate-limit windows, PAT mint windows, authorization codes, lint
+tables), so the effect is a reset of those counters and a brief reset of the
+cross-replica cache invalidation, not data loss.
+
+Outside the chart set `SHARED_STATE_URL` (and `MCP_REPLICA_COUNT`) directly,
+and `SHARED_STATE_KEY_PREFIX` to something unique per release (default
+`af-mcp:`).
 
 Per-replica state in the broker, what happens at more than one replica
 without a store, and what each item does when the store is down. "Phase"

@@ -117,3 +117,33 @@ def test_app_enforces_the_cap_other_replicas_already_spent(
         )
 
     assert resp.status_code == 429, resp.text
+
+
+def test_app_counts_mints_only_under_its_configured_key_prefix(
+    app_client_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+    shared_state_url: str,
+    make_principal: Callable[..., Any],
+) -> None:
+    """``SHARED_STATE_KEY_PREFIX`` scopes the window: mints another release counted under its own prefix do not count here."""
+    monkeypatch.setenv("SHARED_STATE_URL", shared_state_url)
+    # A prefix no other test uses, so nothing on the session-wide server counts.
+    monkeypatch.setenv("SHARED_STATE_KEY_PREFIX", f"release-{uuid.uuid4()}:")
+    subject = make_principal().subject
+
+    async def spend_cap_under_the_default_prefix() -> None:
+        other_release = RedisSharedState(shared_state_url)
+        try:
+            for _ in range(_MAX_MINTS):
+                await other_release.incr_window(pat_mint_key(subject), 3600)
+        finally:
+            await other_release.close()
+
+    asyncio.run(spend_cap_under_the_default_prefix())
+
+    with app_client_factory() as (client, _):
+        resp = client.post(
+            "/v1/tokens", json={"name": "t"}, headers={"Authorization": "Bearer test"}
+        )
+
+    assert resp.status_code == 200, resp.text

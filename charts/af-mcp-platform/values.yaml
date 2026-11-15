@@ -593,6 +593,14 @@ broker:
     existingSecret:
       name: ""
       key: "url"
+    # Prefix on every key and pub/sub channel the broker uses on the store,
+    # rendered as SHARED_STATE_KEY_PREFIX. Empty means "<release name>:".
+    # Releases sharing one store MUST differ here: pub/sub is not scoped by
+    # the redis database number, so a shared prefix makes each release receive
+    # the other's cache invalidations. Changing it orphans the keys written
+    # under the old prefix (rate-limit windows, PAT mint windows, auth codes,
+    # lint tables); they are short-lived and rebuild on use.
+    keyPrefix: ""
     # Explicit opt-in to replicaCount > 1 with no shared store. Consequences:
     # the unlock brute-force budget (5 failures / 15 min per uid) is
     # multiplied by the replica count, and replica-local caches (the per-user

@@ -522,6 +522,16 @@ class Settings(BaseSettings):
     # hatch is set. The URL may embed a password; supply it from a Secret.
     shared_state_url: str | None = None
 
+    # Prefix on every redis key and pub/sub channel the shared state store
+    # uses. Two releases on one redis server MUST differ here: pub/sub is not
+    # scoped by the redis database number, so a shared prefix makes each
+    # release receive the other's cache invalidations, and counters live in
+    # one namespace unless the database numbers also differ. The chart sets
+    # it to "<release name>:". Changing it orphans the keys written under the
+    # old prefix (rate-limit windows, PAT mint windows, auth codes, lint
+    # tables), which are short-lived. Ignored without shared_state_url.
+    shared_state_key_prefix: str = "af-mcp:"
+
     # Escape hatch for running mcp_replica_count > 1 with no shared_state_url.
     # Per-replica state then multiplies the unlock brute-force budget by the
     # replica count and leaves other replica-local caches inconsistent (see
