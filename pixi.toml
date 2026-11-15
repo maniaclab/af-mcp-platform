@@ -59,8 +59,13 @@ import-linter = ">=2.0"
 
 # The broker refuses to boot without a non-empty entitlement policy and a
 # non-empty service registry, so local runs point POLICY_FILE and
-# SERVICES_FILE at the dev-only files shipped in the package.
-[feature.broker.activation.env]
+# SERVICES_FILE at the dev-only files shipped in the package. This lives in
+# its own feature, never in `broker`: Containerfile.broker bakes
+# `pixi shell-hook --environment broker` into the image entrypoint, which
+# exports activation vars over the deployment's env, so anything set on a
+# feature of the `broker` environment would override production config
+# (broker/tests/test_pixi_environments.py guards this).
+[feature.localdev.activation.env]
 POLICY_FILE = "${PIXI_PROJECT_ROOT}/broker/src/af_mcp_broker/authorization/policy.yaml"
 SERVICES_FILE = "${PIXI_PROJECT_ROOT}/broker/src/af_mcp_broker/mcp/services.yaml"
 
@@ -133,7 +138,7 @@ OIDC_ISSUER = "http://localhost:8081/realms/dev"
 
 [environments]
 broker = {features = ["broker"], solve-group = "default"}
-dev = {features = ["broker", "dev"], solve-group = "default"}
+dev = {features = ["broker", "dev", "localdev"], solve-group = "default"}
 portal = {features = ["portal"], no-default-feature = true}
-bypass = {features = ["broker", "bypass"], solve-group = "default"}
+bypass = {features = ["broker", "bypass", "localdev"], solve-group = "default"}
 docs = {features = ["docs"], solve-group = "default"}
