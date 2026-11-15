@@ -70,5 +70,17 @@
   {"id": "cn4", "split": "test", "should_trigger": false, "source": "chatgpt",
    "query": "Review the error-handling architecture in our FastAPI application."},
   {"id": "cn5", "split": "train", "should_trigger": false, "source": "chatgpt",
-   "query": "How should I configure HTCondor authentication and token issuance on the Analysis Facility?"}
+   "query": "How should I configure HTCondor authentication and token issuance on the Analysis Facility?"},
+  {"id": "p15", "split": "train", "should_trigger": true, "source": "example-server",
+   "query": "I need to write a new MCP server for our group's EOS quota checker that will sit behind the AF gateway. is there a working example I can start from, so the auth, logging and tool conventions are right from the first commit?"},
+  {"id": "p16", "split": "test", "should_trigger": true, "source": "example-server",
+   "query": "scaffold a fastmcp backend for the AF MCP platform that wraps our beam-scheduler client library. it should verify the broker token, log the request id and come out clean on the audit script"},
+  {"id": "p17", "split": "test", "should_trigger": true, "source": "example-server",
+   "query": "my backend MCP server logs nothing useful when a call fails behind the AF gateway. how should it log the request id the broker sends, and what should each log line contain?"},
+  {"id": "p18", "split": "train", "should_trigger": true, "source": "example-server",
+   "query": "how should a backend behind the AF MCP gateway verify the broker's tokens against its JWKS without fetching the key set on every request?"},
+  {"id": "n11", "split": "train", "should_trigger": false, "source": "example-server",
+   "query": "add structured JSON logging and a request-id middleware to our internal wiki's Flask app, and stop logging the kubelet health checks"},
+  {"id": "n12", "split": "test", "should_trigger": false, "source": "example-server",
+   "query": "write a new MCP server in TypeScript that wraps the GitHub API for my own Claude Desktop, over stdio, with a couple of read-only tools"}
 ]

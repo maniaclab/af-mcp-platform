@@ -31,6 +31,9 @@ python skills/af-mcp-builder/evals/score_trigger_results.py --pool run1.json run
 Write a description against the train split and report the test split; the split
 is fixed so that candidates are compared on the same queries. Raw per-query
 results of the descriptions tried so far are in `trigger_results/`.
+Queries with `"source": "example-server"` cover starting a new server and the
+backend logging and JWKS-caching rules; `with_example_server_queries.json` is the
+current description scored on the full set.
 
 Metrics are pooled over runs, not queries. A query that fires in 2 of 3 runs adds
 2 true positives and 1 false negative when it should trigger, and 2 false
@@ -82,6 +85,9 @@ adopting it.
 
 ## Behaviour evals
 
+The compliant case is the skill's reference server,
+`references/example-server/`, so there is one source of truth for "a server that
+fits"; `fixtures/` keeps only the non-compliant servers.
 `evals.json` follows the skill-creator schema. Prompts name fixture paths relative
 to the skill directory. The guide's canonical URL is not reachable before the
 guide is merged to `main`, so a run gives the agent a local stand-in path for it;

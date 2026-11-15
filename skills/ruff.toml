@@ -9,8 +9,10 @@ extend-exclude = ["af-mcp-builder/evals/fixtures"]
 [lint.per-file-ignores]
 # Mirrors the broker's tests/** ignores (see broker/pyproject.toml): asserts,
 # fake secrets, subprocess-launched fixture servers, and positional booleans
-# in test helpers (FBT003 also covers calls to those helpers).
-"**/tests/**" = ["ARG", "FBT", "S101", "S105", "S106", "S603", "S607"]
+# in test helpers (FBT003 also covers calls to those helpers). S310: the tests
+# probe http servers on 127.0.0.1 that they start themselves.
+# The reference server keeps its tests beside its package, so test_*.py counts too.
+"{**/tests/**,**/test_*.py}" = ["ARG", "FBT", "S101", "S105", "S106", "S310", "S603", "S607"]
 # The audit script is a CLI: it prints its report and exits with its status,
 # and it probes the http(s) MCP server URL the operator passes on the command
 # line, so S310's url-scheme audit does not apply.
