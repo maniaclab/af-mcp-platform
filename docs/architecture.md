@@ -503,18 +503,27 @@ Every resource with a close registers it on one `contextlib.AsyncExitStack`
 when it is built, so shutdown closes in reverse build order and a builder that
 raises partway through startup still closes everything built before it.
 
-A backend selected by a `Literal` setting (`maintenance_mode_backend`,
-`token_store_backend`, `token_registry_backend`, `principal_cache_backend`,
-`usage_store_backend`, `metering_backend`) is built by a `build_*` function
-that `match`es on the setting and ends in `assert_never`, so mypy fails when a
-backend name is added to the `Literal` without a branch. `shared_state` is
-chosen by the URL scheme of `SHARED_STATE_URL`, not by a `Literal`, and keeps
-its own `build_shared_state`.
+A backend selected by a `Literal` setting (`token_store_backend`,
+`token_registry_backend`, `principal_cache_backend`, `metering_backend`) is
+built by a `build_*` function that `match`es on the setting and ends in
+`assert_never`, so mypy fails when a backend name is added to the `Literal`
+without a branch. `usage_store_backend` and `maintenance_mode_backend` select
+through `Settings.usage_store` and `Settings.maintenance_store`, unions of
+typed configs whose Postgres variant carries its DSN, so the builder matches on
+the config class and receives the DSN non-Optional. `shared_state` is chosen by
+the URL scheme of `SHARED_STATE_URL`, not by a `Literal`, and keeps its own
+`build_shared_state`.
 
-An `Optional` that startup validation guarantees is present (the Vault client
-when `Settings.uses_vault`, a DSN a validator requires, the signing-key issuer
-when an entry needs it) is narrowed with `errors.require`, which raises
-`RuntimeError` with a message, not an `assert`. The Vault stores return typed
+`Settings` keeps the flat, env-var-shaped fields operators set. Feature
+settings that must be present together are also exposed as typed sub-configs
+built from them (`Settings.vault`, `Settings.credmon_api`, and the two store
+unions above); the model validators still raise the same errors at startup, and
+a sub-config can only be constructed with every field present.
+
+An `Optional` runtime handle whose presence mirrors the configuration (the
+Vault client when `Settings.uses_vault`, the signing-key issuer when an entry
+needs it, the per-kind Vault link stores) is narrowed with `errors.require`,
+which raises `RuntimeError` with a message, not an `assert`. The Vault stores return typed
 link, ticket and proxy records (`X509Link`, `X509Proxy`, `Krb5Link`,
 `Krb5Ticket`, `ServiceXLink`, `ServiceXToken`) whose required fields are
 non-Optional, validated once when the record is read.
