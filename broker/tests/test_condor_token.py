@@ -16,7 +16,7 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-import httpx
+import httpx2
 import jwt
 import pytest
 import structlog
@@ -55,20 +55,20 @@ def _token_response(
 
 
 class _FakeCondorClient:
-    """Fake httpx client for the condor-token-service exchange.
+    """Fake httpx2 client for the condor-token-service exchange.
 
     Records every POST (url + headers) so tests can assert the broker
     identity token actually presented, and returns a configurable
-    ``httpx.Response`` per call.
+    ``httpx2.Response`` per call.
     """
 
-    def __init__(self, responses: list[httpx.Response] | None = None) -> None:
-        self.responses = responses or [httpx.Response(200, json=_token_response())]
+    def __init__(self, responses: list[httpx2.Response] | None = None) -> None:
+        self.responses = responses or [httpx2.Response(200, json=_token_response())]
         self.calls: list[tuple[str, dict[str, str]]] = []
 
     async def post(
         self, url: str, headers: dict[str, str], **kwargs: Any
-    ) -> httpx.Response:
+    ) -> httpx2.Response:
         self.calls.append((url, dict(headers)))
         return self.responses[min(len(self.calls) - 1, len(self.responses) - 1)]
 
@@ -109,7 +109,7 @@ def fake_client(monkeypatch: pytest.MonkeyPatch) -> _FakeCondorClient:
 
 
 def _install_client(
-    monkeypatch: pytest.MonkeyPatch, responses: list[httpx.Response]
+    monkeypatch: pytest.MonkeyPatch, responses: list[httpx2.Response]
 ) -> _FakeCondorClient:
     client = _FakeCondorClient(responses)
     monkeypatch.setattr(condor_module, "get_http_client", lambda: client)
@@ -157,7 +157,7 @@ async def test_issue_expires_at_comes_from_the_service_response(
     provider_factory, make_principal, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     body = _token_response(expires_in_seconds=1800)
-    _install_client(monkeypatch, [httpx.Response(200, json=body)])
+    _install_client(monkeypatch, [httpx2.Response(200, json=body)])
     provider, _ = provider_factory()
 
     cred = await provider.issue(make_principal(), "condor-mcp")
@@ -255,7 +255,7 @@ async def test_issue_remints_when_cached_token_is_below_min_remaining(
     service's expires_at is what makes this happen."""
     client = _install_client(
         monkeypatch,
-        [httpx.Response(200, json=_token_response(expires_in_seconds=100))],
+        [httpx2.Response(200, json=_token_response(expires_in_seconds=100))],
     )
     provider, _ = provider_factory()
     principal = make_principal(subject="sub-abc")
@@ -275,7 +275,7 @@ async def test_issue_single_flights_concurrent_misses(
     class _SlowClient(_FakeCondorClient):
         async def post(
             self, url: str, headers: dict[str, str], **kwargs: Any
-        ) -> httpx.Response:
+        ) -> httpx2.Response:
             # Force a real suspension so concurrent callers actually overlap.
             await asyncio.sleep(0.01)
             return await super().post(url, headers=headers, **kwargs)
@@ -343,7 +343,7 @@ async def test_issue_maps_service_failures_to_502_with_generic_detail(
     502 is minting failed. All map to a generic 502."""
     _install_client(
         monkeypatch,
-        [httpx.Response(upstream_status, json={"detail": _UPSTREAM_DETAIL})],
+        [httpx2.Response(upstream_status, json={"detail": _UPSTREAM_DETAIL})],
     )
     provider, _ = provider_factory()
 
@@ -360,7 +360,7 @@ async def test_issue_passes_through_429_with_retry_after(
     _install_client(
         monkeypatch,
         [
-            httpx.Response(
+            httpx2.Response(
                 429,
                 json={"detail": "Rate limit exceeded; retry later."},
                 headers={"Retry-After": "17"},
@@ -380,8 +380,8 @@ async def test_issue_maps_network_errors_to_502(
     provider_factory, make_principal, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     class _FailingClient:
-        async def post(self, *args: Any, **kwargs: Any) -> httpx.Response:
-            raise httpx.ConnectError("boom")
+        async def post(self, *args: Any, **kwargs: Any) -> httpx2.Response:
+            raise httpx2.ConnectError("boom")
 
     monkeypatch.setattr(condor_module, "get_http_client", _FailingClient)
     provider, _ = provider_factory()
@@ -399,8 +399,8 @@ async def test_issue_failure_does_not_cache(
     client = _install_client(
         monkeypatch,
         [
-            httpx.Response(502, json={"detail": "Token minting failed."}),
-            httpx.Response(200, json=_token_response()),
+            httpx2.Response(502, json={"detail": "Token minting failed."}),
+            httpx2.Response(200, json=_token_response()),
         ],
     )
     provider, _ = provider_factory()

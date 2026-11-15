@@ -14,9 +14,7 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
-import httpcore
 import httpcore2
-import httpx
 import httpx2
 import pytest
 import structlog
@@ -188,8 +186,6 @@ def test_configure_logging_emits_fastmcp_records_as_json(
 # installed libraries rather than spelled out here: httpx2 (and its httpcore2
 # transport) log under "httpx2"/"httpcore2.*", not "httpx"/"httpcore".
 _HTTP_CLIENT_LOGGERS = [
-    pytest.param(httpx._client.logger, id="httpx"),
-    pytest.param(httpcore._async.http11.logger, id="httpcore"),
     pytest.param(httpx2._client.logger, id="httpx2"),
     pytest.param(httpcore2._async.http11.logger, id="httpcore2"),
 ]

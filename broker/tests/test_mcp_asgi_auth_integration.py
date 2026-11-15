@@ -26,7 +26,7 @@ from af_mcp_broker.token_registry import InMemoryTokenRegistryBackend, TokenReco
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-    import httpx
+    import httpx2
     from fastmcp.utilities.tests import ASGIServer
 
 # ---------------------------------------------------------------------------
@@ -53,7 +53,7 @@ _INIT_BODY = {
 }
 
 
-async def _post(server: ASGIServer, headers: dict[str, str]) -> httpx.Response:
+async def _post(server: ASGIServer, headers: dict[str, str]) -> httpx2.Response:
     """POST a raw MCP initialize request, so a genuine HTTP 401 vs. a 200
     carrying a JSON-RPC error is directly inspectable -- fastmcp's own Client
     would otherwise turn either shape into some kind of raised exception,

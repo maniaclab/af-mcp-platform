@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
 
-import httpx
+import httpx2
 import structlog
 
 from af_mcp_broker.errors import BrokerError
@@ -152,8 +152,8 @@ async def assert_safe_url(
 async def fetch_client_document(
     client_id_url: str,
     *,
-    client: httpx.AsyncClient,
-    # Forwarded to httpx as its per-request timeout; no asyncio/anyio
+    client: httpx2.AsyncClient,
+    # Forwarded to httpx2 as its per-request timeout; no asyncio/anyio
     # cancel scope is involved, so ASYNC109's cancel-scope advice does not apply.
     timeout: float = _FETCH_TIMEOUT,  # noqa: ASYNC109
     max_bytes: int = _MAX_DOC_BYTES,
@@ -171,7 +171,7 @@ async def fetch_client_document(
             client_id_url, headers={"Accept": "application/json"}, timeout=timeout
         )
         response.raise_for_status()
-    except httpx.HTTPError as exc:
+    except httpx2.HTTPError as exc:
         msg = f"failed to fetch CIMD document: {exc}"
         raise CimdError(msg) from exc
 
@@ -220,8 +220,8 @@ def build_client_from_document(doc: dict[str, Any], client_id_url: str) -> CimdC
 async def resolve_cimd_client(
     client_id: str,
     *,
-    client: httpx.AsyncClient,
-    # Forwarded to httpx as its per-request timeout; no asyncio/anyio
+    client: httpx2.AsyncClient,
+    # Forwarded to httpx2 as its per-request timeout; no asyncio/anyio
     # cancel scope is involved, so ASYNC109's cancel-scope advice does not apply.
     timeout: float = _FETCH_TIMEOUT,  # noqa: ASYNC109
     resolver: Resolver | None = None,

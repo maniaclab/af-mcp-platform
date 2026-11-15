@@ -6,7 +6,7 @@ import json
 import time
 from typing import TYPE_CHECKING, Any
 
-import httpx
+import httpx2
 import pytest
 from fastapi import HTTPException
 
@@ -73,11 +73,11 @@ class _FakeMaintenanceVault:
         self.entries: dict[str, dict[str, Any]] = {}
         self.login_lease_duration = login_lease_duration
 
-    def handle(self, request: httpx.Request) -> httpx.Response:
+    def handle(self, request: httpx2.Request) -> httpx2.Response:
         path = request.url.path.removeprefix("/v1/")
 
         if path == f"auth/{AUTH_MOUNT}/login" and request.method == "POST":
-            return httpx.Response(
+            return httpx2.Response(
                 200,
                 json={
                     "auth": {
@@ -91,7 +91,7 @@ class _FakeMaintenanceVault:
 
         data_prefix = f"{KV_MOUNT}/data/"
         if not path.startswith(data_prefix):
-            return httpx.Response(
+            return httpx2.Response(
                 404, json={"errors": ["unknown path"]}, request=request
             )
         key = path[len(data_prefix) :]
@@ -99,8 +99,8 @@ class _FakeMaintenanceVault:
         if request.method == "GET":
             entry = self.entries.get(key)
             if entry is None:
-                return httpx.Response(404, json={"errors": []}, request=request)
-            return httpx.Response(
+                return httpx2.Response(404, json={"errors": []}, request=request)
+            return httpx2.Response(
                 200,
                 json={
                     "data": {
@@ -116,7 +116,7 @@ class _FakeMaintenanceVault:
             cas = body["options"]["cas"]
             current_version = self.entries.get(key, {}).get("version", 0)
             if cas != current_version:
-                return httpx.Response(
+                return httpx2.Response(
                     400,
                     json={
                         "errors": [
@@ -127,11 +127,11 @@ class _FakeMaintenanceVault:
                 )
             new_version = current_version + 1
             self.entries[key] = {"data": body["data"], "version": new_version}
-            return httpx.Response(
+            return httpx2.Response(
                 200, json={"data": {"version": new_version}}, request=request
             )
 
-        return httpx.Response(
+        return httpx2.Response(
             404, json={"errors": ["unhandled"]}, request=request
         )  # pragma: no cover
 
@@ -156,7 +156,9 @@ def vault_kv(fake_vault: _FakeMaintenanceVault, sa_token_path: Path) -> VaultKV:
         auth_role=AUTH_ROLE,
         kv_mount=KV_MOUNT,
         sa_token_path=str(sa_token_path),
-        http_client=httpx.AsyncClient(transport=httpx.MockTransport(fake_vault.handle)),
+        http_client=httpx2.AsyncClient(
+            transport=httpx2.MockTransport(fake_vault.handle)
+        ),
     )
 
 

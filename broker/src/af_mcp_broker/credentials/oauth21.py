@@ -6,7 +6,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol
 
-import httpx
+import httpx2
 import structlog
 from fastapi import HTTPException
 from pydantic import AnyHttpUrl, BaseModel, SecretStr, field_validator
@@ -361,7 +361,7 @@ class OAuth21Provider(CredentialProvider):
                 refreshed = await self._refresh(cred)
             except HTTPException:
                 pass  # the AS refused the refresh token: reject below
-            except httpx.HTTPError as exc:
+            except httpx2.HTTPError as exc:
                 self._log.warning(
                     "oauth21.mark_rejected.refresh_failed",
                     subject=principal.subject,
@@ -518,7 +518,7 @@ class OAuth21Provider(CredentialProvider):
                     timeout=10.0,
                 )
                 resp.raise_for_status()
-            except httpx.HTTPError as exc:
+            except httpx2.HTTPError as exc:
                 self._log.warning(
                     "oauth21.revoke.upstream_failed",
                     subject=principal.subject,

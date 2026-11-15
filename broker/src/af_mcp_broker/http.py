@@ -1,4 +1,4 @@
-"""Process-wide shared httpx client.
+"""Process-wide shared httpx2 client.
 
 One pooled ``AsyncClient`` serves all outbound broker HTTP (JWKS fetches,
 Keycloak token calls, loopback /v1 calls) instead of a new client — and a
@@ -7,16 +7,16 @@ new connection pool — per request. The lifespan closes it on shutdown.
 
 from __future__ import annotations
 
-import httpx
+import httpx2
 
-_client: httpx.AsyncClient | None = None
+_client: httpx2.AsyncClient | None = None
 
 
-def get_http_client() -> httpx.AsyncClient:
+def get_http_client() -> httpx2.AsyncClient:
     """Return the shared client, creating it on first use."""
     global _client
     if _client is None or _client.is_closed:
-        _client = httpx.AsyncClient(timeout=10.0)
+        _client = httpx2.AsyncClient(timeout=10.0)
     return _client
 
 

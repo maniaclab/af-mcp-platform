@@ -1,6 +1,6 @@
 """Tests for the Vault-backed ``TokenStore`` (issue #66 PR3).
 
-A fake Vault HTTP API is built with ``httpx.MockTransport`` -- no real Vault
+A fake Vault HTTP API is built with ``httpx2.MockTransport`` -- no real Vault
 process, no ``hvac``. Covers KV-v2 CAS read/write/delete semantics, the
 ``SecretStr`` round trip through storage, and error mapping. The
 Kubernetes auth login/re-auth flow this store's ``VaultKV`` uses is covered
@@ -15,7 +15,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-import httpx
+import httpx2
 import pytest
 from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
@@ -91,13 +91,13 @@ class _FakeVault:
         subject, _, alias = rest.partition("/")
         return subject, alias
 
-    def handle(self, request: httpx.Request) -> httpx.Response:
+    def handle(self, request: httpx2.Request) -> httpx2.Response:
         path = request.url.path.removeprefix("/v1/")
 
         if path == f"auth/{AUTH_MOUNT}/login" and request.method == "POST":
             body = _json_body(request)
             self.login_calls.append(body)
-            return httpx.Response(
+            return httpx2.Response(
                 200,
                 json={
                     "auth": {
@@ -111,12 +111,12 @@ class _FakeVault:
 
         key = self._kv_key_from_path(path)
         if key is None:
-            return httpx.Response(
+            return httpx2.Response(
                 404, json={"errors": ["unknown path"]}, request=request
             )
 
         if self.kv_status is not None:
-            return httpx.Response(
+            return httpx2.Response(
                 self.kv_status, json={"errors": ["internal error"]}, request=request
             )
 
@@ -125,8 +125,8 @@ class _FakeVault:
         if request.method == "GET":
             entry = self.entries.get(key)
             if entry is None:
-                return httpx.Response(404, json={"errors": []}, request=request)
-            return httpx.Response(
+                return httpx2.Response(404, json={"errors": []}, request=request)
+            return httpx2.Response(
                 200,
                 json={
                     "data": {
@@ -142,7 +142,7 @@ class _FakeVault:
             cas = body["options"]["cas"]
             current_version = self.entries.get(key, {}).get("version", 0)
             if cas != current_version:
-                return httpx.Response(
+                return httpx2.Response(
                     400,
                     json={
                         "errors": [
@@ -153,20 +153,20 @@ class _FakeVault:
                 )
             new_version = current_version + 1
             self.entries[key] = {"data": body["data"], "version": new_version}
-            return httpx.Response(
+            return httpx2.Response(
                 200, json={"data": {"version": new_version}}, request=request
             )
 
         if request.method == "DELETE" and is_metadata:
             self.entries.pop(key, None)
-            return httpx.Response(204, request=request)
+            return httpx2.Response(204, request=request)
 
-        return httpx.Response(
+        return httpx2.Response(
             404, json={"errors": ["unhandled"]}, request=request
         )  # pragma: no cover
 
 
-def _json_body(request: httpx.Request) -> dict[str, Any]:
+def _json_body(request: httpx2.Request) -> dict[str, Any]:
 
     return json.loads(request.content.decode())
 
@@ -178,7 +178,7 @@ def _make_store(fake: _FakeVault, sa_token_path: Path) -> VaultTokenStore:
         auth_role=AUTH_ROLE,
         kv_mount=KV_MOUNT,
         sa_token_path=str(sa_token_path),
-        http_client=httpx.AsyncClient(transport=httpx.MockTransport(fake.handle)),
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(fake.handle)),
     )
     return VaultTokenStore(vault_kv=vault_kv, kv_path_prefix=KV_PATH_PREFIX)
 
@@ -439,7 +439,7 @@ def test_lifespan_boots_with_vault_backend_on_successful_trial_auth(
     fake = _FakeVault()
     monkeypatch.setattr(
         "af_mcp_broker.vault_kv.get_http_client",
-        lambda: httpx.AsyncClient(transport=httpx.MockTransport(fake.handle)),
+        lambda: httpx2.AsyncClient(transport=httpx2.MockTransport(fake.handle)),
     )
 
     app = _fresh_app()
@@ -453,14 +453,14 @@ def test_lifespan_fails_fast_when_vault_login_rejected(
 ) -> None:
     _bootstrap_oauth21_vault_env(monkeypatch, sa_token_path)
 
-    def _reject_login(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def _reject_login(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             403, json={"errors": ["permission denied"]}, request=request
         )
 
     monkeypatch.setattr(
         "af_mcp_broker.vault_kv.get_http_client",
-        lambda: httpx.AsyncClient(transport=httpx.MockTransport(_reject_login)),
+        lambda: httpx2.AsyncClient(transport=httpx2.MockTransport(_reject_login)),
     )
 
     app = _fresh_app()

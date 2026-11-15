@@ -781,7 +781,7 @@ credential stops reading as rejected immediately.
 A backend that answers a JSON-RPC request with HTTP 200 and something that is
 not a JSON document (an undecoded gzip body, an HTML page from a proxy) fails
 the request as soon as the response arrives (`BackendInvalidResponseError`, raised
-from an httpx response hook in `mcp/aggregator.py`). It logs
+from an httpx2 response hook in `mcp/aggregator.py`). It logs
 `aggregator.backend_invalid_response` with the service, status code, content
 type and what was wrong, never the body; a listing records `unavailable`, and a
 `tools/call` returns an error naming the service and saying it returned an

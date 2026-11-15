@@ -5,7 +5,7 @@ import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar
 
-import httpx
+import httpx2
 import structlog
 from fastapi import HTTPException
 
@@ -152,7 +152,7 @@ class OIDCProvider(CredentialProvider):
                 resp = await get_http_client().get(
                     broker_token_url, headers=headers, timeout=10.0
                 )
-        except httpx.HTTPError as exc:
+        except httpx2.HTTPError as exc:
             self._log.warning(
                 "oidc.is_linked.probe_failed", uid=principal.uid, error=str(exc)
             )
