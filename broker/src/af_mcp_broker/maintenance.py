@@ -147,7 +147,7 @@ class VaultMaintenanceModeStore(MaintenanceModeStore):
         self._path = f"{kv_path_prefix.strip('/')}/{_KV_KEY}"
 
     async def start(self) -> None:
-        """Nothing to acquire -- vault_kv is already authenticated by app.py's lifespan."""
+        """Nothing to acquire -- vault_kv is already authenticated by wiring/vault.py's startup trial authentication."""
 
     async def aclose(self) -> None:
         """Nothing to release."""

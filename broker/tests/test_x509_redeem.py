@@ -77,7 +77,7 @@ def x509_redeem_env(
         # When a test uses a service whose name differs from conftest's default
         # x509 target ("ami"), it must also point the x509 identity_providers
         # entry at the new name, or the broker refuses to boot
-        # (_validate_x509_provider_targets).
+        # (validate_x509_provider_targets).
         if x509_targets is not None:
             monkeypatch.setenv(
                 "IDENTITY_PROVIDERS",

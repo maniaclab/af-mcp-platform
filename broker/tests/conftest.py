@@ -87,8 +87,8 @@ SHIPPED_SERVICES = _SRC / "mcp" / "services.yaml"
 # replaced the single `oidc_idp_alias`-derived singleton with per-entry
 # `identity_providers` config; plus an x509 entry covering SHIPPED_SERVICES'
 # "ami" — every `auth_type: x509` backend must be covered by an explicit
-# entry or the broker refuses to start (app.py's
-# `_validate_x509_provider_targets`), so this fixture supplies the minimal
+# entry or the broker refuses to start (wiring/checks.py's
+# `validate_x509_provider_targets`), so this fixture supplies the minimal
 # one the shipped services.yaml needs. Tests that care
 # about a specific `identity_providers` shape (test_identities.py,
 # test_oauth21*.py, test_wellknown_cimd.py) override IDENTITY_PROVIDERS
