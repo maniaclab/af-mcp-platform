@@ -6,8 +6,9 @@ description: Use this skill whenever someone is building, designing, extending, 
 
 # AF MCP Builder
 
-Audit an MCP server's codebase against the AF MCP design guide and report what
-must change for the server to fit the platform. The platform adds nothing
+Start an MCP server from the reference example, or audit an existing server's
+codebase against the AF MCP design guide and report what must change for the
+server to fit the platform. The platform adds nothing
 special: a backend fits if it follows the MCP specification plus the
 conventions in the guide.
 
@@ -32,7 +33,7 @@ restate or reinterpret the rules in the report. The guide pins MCP spec revision
 ### Index of items
 
 MUST items block onboarding. SHOULD items are expected, and a deviation needs a
-stated reason.
+stated reason. MAY items are optional and are never a finding.
 
 | ID | Level | Rule |
 |----|-------|------|
@@ -66,6 +67,11 @@ stated reason.
 | U4 | MUST | Fetch x509/krb5 credentials from the broker's redeem routes, per call, deleted after; no secrets stored |
 | U5 | MUST | Read no permissions or groups from the token |
 | U6 | MUST | No tool takes a username or owner; derive it from the verified identity |
+| U7 | SHOULD | Cache the broker JWKS with a TTL; refetch early only on an unknown `kid`, rate limited |
+| L1 | SHOULD | Log the `X-Request-ID` header as `request_id` on every line of the request |
+| L2 | SHOULD | One JSON object per line: `timestamp`, `level`, `logger`, `event`, `request_id`, `subject`, `tool`, `duration_ms`, `outcome` |
+| L3 | SHOULD | No access-log line for a successful health probe; failing probes stay |
+| L4 | MAY | OpenTelemetry spans, continuing the `traceparent` in `_meta`, configured by `OTEL_*`; never required |
 | P1 | MUST | Tool names carry the service prefix the registry routes on |
 | P2 | SHOULD | The service entry carries an `agent_policy`; facility know-how goes in `instructions` or a skill |
 | P3 | MUST | The service entry declares `trust_tier` |
@@ -73,6 +79,24 @@ stated reason.
 | P5 | SHOULD | A server with write tools can be started read-only |
 | I1 | SHOULD | Wrap the native client library; parse artifacts, never CLI prose |
 | T1 | SHOULD | Descriptions, examples, caps and error strings are tested against the real service |
+
+## Starting a new server
+
+When there is no code yet, or the code is a first cut, start from the reference
+server instead of from the rules alone: `references/example-server/`. It is a
+small, runnable fastmcp server over a fake in-memory data source that follows
+every MUST and SHOULD in the guide that applies to a read-only server, and the
+skill's tests keep it that way. Read its `ARCHITECTURE.md` first: it gives the
+layout, the request flow from broker token to tool to data client to result, and
+a table from each part of the code to the guide item it implements. Then copy the
+shape, replace `shelf_mcp/data.py` with the service's native client library, and
+rename the `shelf` prefix. Run the audit (Procedure, step 3) on the result.
+
+Copy the example's choices, not only its layout: broker-token verification with
+a cached JWKS, stateless streamable HTTP, typed outputs with `structuredContent`,
+annotations, `ToolError` with a next step, JSON logs carrying `request_id` from
+`X-Request-ID`, a `/healthz` that writes no access line, and spans that are off
+unless `OTEL_*` is set.
 
 ## Procedure
 
@@ -130,6 +154,7 @@ stated reason.
    | B1, B2, B3 | Listing and search tools: default and maximum limit, a truncation note, a cursor, whether the upstream iterator is paged or fully fetched. Long calls: progress, cancellation, a handle. Shared backends: a per-caller limit. |
    | X1, X2, X3 | How the HTTP app is built: stateless option, module-level state keyed by session or connection, caches keyed by identity. The auth verifier: does it run at the transport and answer 401? Does `tools/list` call downstream? |
    | U1, U2, U5 | Token verification: JWKS source, `iss`, `exp`, and an exact `aud` check; any use of groups or permissions claims; any second way in; any outbound call that forwards the incoming `Authorization` header. |
+   | U7, L1, L2, L3 | The verifier: is the JWKS fetched per request, or cached with a TTL and an early refetch only on an unknown `kid`? The logging setup: is `X-Request-ID` bound to `request_id` at the HTTP edge, are lines JSON with the standard fields, does a successful `/healthz` write an access line? A SHOULD row, never a MUST. L4 (spans) is optional: do not report its absence. The wire audit cannot see any of these. |
    | U3, U4, U6 | Tool arguments and results for credentials and for owner or username parameters; where the server gets a proxy or ticket (the broker's redeem routes, or something else); whether the temporary file is deleted on failure too. |
    | N3, N4, O3, I1, T1 | Descriptions for domain quirks and examples that were never run; the tool count and UI-only tools; raw backend rows and unconverted units; `subprocess` output parsed as text; tests that run against a real service. |
    | P1 to P5, X4 | The server's name handling (`apply_namespace`), and the service's `services.yaml` entry if the user has it: `agent_policy`, `trust_tier`, `exclude_tools`, a read-only mode. Client-specific behaviour. |

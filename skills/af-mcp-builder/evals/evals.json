@@ -29,18 +29,18 @@
     {
       "id": 2,
       "name": "audit-compliant-fastmcp-guide-unreachable",
-      "prompt": "Quick sanity check before I register it: can you audit evals/fixtures/compliant-python/server.py against the AF MCP guide? Prefix is `shelf`. Note that you cannot fetch anything from the network in this environment and there is no af-mcp-platform checkout, so work from what you have. The shelf_client package is not installed, so the server cannot be started.",
+      "prompt": "Quick sanity check before I register it: can you audit the server in references/example-server/shelf_mcp/ against the AF MCP guide? Prefix is `shelf`. Note that you cannot fetch anything from the network in this environment and there is no af-mcp-platform checkout, so work from what you have. Assume the server cannot be started here.",
       "expected_output": "No MUST findings; heuristic or unchecked items listed honestly; the report says the guide could not be read.",
       "files": [
-        "evals/fixtures/compliant-python/server.py"
+        "references/example-server/shelf_mcp/server.py"
       ],
       "assertions": [
         "Reports no MUST finding against the server's tools for N1, N2, S1, O1, A1, E1, X1, U3 or U6",
         "Does not report the JSON text block that fastmcp derives from structuredContent as an O2 finding",
         "States that the mechanical audit was not run, and why",
-        "Lists the items that could not be checked from the source (for example U2 JWKS wiring, P1-P5 services.yaml, E3, B2, T1)",
+        "Lists the items that could not be checked from the source (for example P1-P5 services.yaml, B2, T1)",
         "States that the full guide was not read, or that the audit used the skill's index of rules",
-        "Does not invent MUST findings: every finding row cites a real line of server.py"
+        "Does not invent MUST findings: every finding row cites a real line of the example server source"
       ]
     },
     {
