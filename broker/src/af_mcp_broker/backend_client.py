@@ -238,7 +238,9 @@ class RelayingClientSession(ClientSession):
     """
 
     async def validate_tool_result(
-        self, name: str, result: CallToolResult
+        self,
+        name: str,  # noqa: ARG002 -- signature fixed by the override
+        result: CallToolResult,  # noqa: ARG002 -- signature fixed by the override
     ) -> None:
         return None
 
@@ -539,8 +541,8 @@ async def resolve_list_time_credential(
 
     - "none": no per-user credential concept at all -> ``({}, None)``.
     - "x509"/"krb5"/"servicex": share one code path here -- a locally-signed
-      AF Broker Identity Token, mirroring ``_x509_factory``'s/
-      ``_krb5_factory``'s/``_servicex_factory``'s identical list-time
+      AF Broker Identity Token, mirroring ``_identity_token_factory``'s
+      identical list-time
       branches; boot validation guarantees the issuer for these services
       (see ``require_signing_issuer``). The backend redeems the
       actual proxy/ticket/access-token itself via ``POST /v1/credentials/
