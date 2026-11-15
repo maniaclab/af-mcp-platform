@@ -12,16 +12,16 @@ from fastmcp.exceptions import AuthorizationError, ToolError
 from fastmcp.tools.base import ToolResult
 from prometheus_client import REGISTRY
 
+from af_mcp_broker import metering as pipeline
 from af_mcp_broker import shared_state
-from af_mcp_broker.audit import pipeline
-from af_mcp_broker.audit.pipeline import (
-    aclose_metering_pipeline,
-    init_metering_pipeline,
-)
 from af_mcp_broker.authorization import EntitlementPolicy, RateLimitRule
 from af_mcp_broker.authorization.errors import ToolRateLimitError
 from af_mcp_broker.mcp.middleware import authorization_mw
 from af_mcp_broker.mcp.middleware.authorization_mw import AuthorizationMiddleware
+from af_mcp_broker.metering import (
+    aclose_metering_pipeline,
+    init_metering_pipeline,
+)
 from af_mcp_broker.service_registry import (
     DIAGNOSTIC_TOOL_NAMES,
     ServiceRegistry,
@@ -620,7 +620,7 @@ async def test_success_records_result_bytes_and_tokens(
     registry, policy, make_principal, captured_audits, monkeypatch
 ) -> None:
     """The success path measures the result via audit.measure (in the
-    metering pipeline -- audit/pipeline.py -- not on the hot path) and
+    metering pipeline -- metering.py -- not on the hot path) and
     records both fields; the measurement sees the very ToolResult call_next
     returned."""
     mw = AuthorizationMiddleware(registry, policy)
@@ -946,7 +946,7 @@ async def test_call_next_failure_increments_invocation_counters_not_denied(
 
 
 # ---------------------------------------------------------------------------
-# Metering pipeline integration (audit/pipeline.py): with a real pipeline
+# Metering pipeline integration (metering.py): with a real pipeline
 # installed, success/error audit lines are measured and written by the
 # background worker so the tool call never waits on them; denied lines stay
 # synchronous inline (security-relevant, nothing to measure).

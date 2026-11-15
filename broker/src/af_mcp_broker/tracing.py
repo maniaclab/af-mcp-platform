@@ -15,7 +15,7 @@ unreachable collector must not fail startup or a tool call.
 Division of labor (the trace <-> audit join): spans carry identity, outcome,
 and timing; measurements (result bytes / token estimates) stay in the audit
 log, whose records are written by a background worker AFTER the response
-returns (audit/pipeline.py) and therefore can never be span attributes. The
+returns (metering.py) and therefore can never be span attributes. The
 two are joined on ``AuditRecord.trace_id`` (:func:`current_trace_id`).
 
 Testability: ``trace.set_tracer_provider`` is once-only per process, so tests

@@ -610,7 +610,7 @@ deliberately accepted side effect: `af_usage` meters itself, so each call
 to it appears in the very usage data it reports.
 
 Success and error records reach the log through the metering pipeline
-(`audit/pipeline.py`): the hot path enqueues `(record, result)` and returns,
+(`metering.py`): the hot path enqueues `(record, result)` and returns,
 and a background worker measures the result (`result_bytes`,
 `result_tokens_est`) and writes the line — a tool call never waits on
 measurement or audit I/O. DENIED and UNMAPPED records stay synchronous

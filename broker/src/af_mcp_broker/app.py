@@ -25,10 +25,6 @@ from af_mcp_broker._version import version as __version__
 from af_mcp_broker.api.router import router as v1_router
 from af_mcp_broker.api.tokens import TokenRegistry
 from af_mcp_broker.api.wellknown import router as wellknown_router
-from af_mcp_broker.audit.pipeline import (
-    aclose_metering_pipeline,
-    init_metering_pipeline,
-)
 from af_mcp_broker.authorization import (
     DISABLED_PERMISSION,
     PERMISSIONS,
@@ -95,6 +91,10 @@ from af_mcp_broker.mcp.aggregator import (
 )
 from af_mcp_broker.mcp.cache_invalidation import ListCacheInvalidator
 from af_mcp_broker.mcp_auth_codes import McpAuthCodeStore
+from af_mcp_broker.metering import (
+    aclose_metering_pipeline,
+    init_metering_pipeline,
+)
 from af_mcp_broker.otel_metrics import init_otel_metrics, shutdown_otel_metrics
 from af_mcp_broker.principal_cache import (
     InMemoryPrincipalCacheBackend,
@@ -1114,7 +1114,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # first record is counted.
     init_otel_metrics(settings)
     # --- Metering: success/error audit records are measured and written by a
-    # background worker (audit/pipeline.py) so tool calls never wait on
+    # background worker (metering.py) so tool calls never wait on
     # measurement or audit I/O; without init the helper degrades to inline.
     # The transport is the MeteringBackend selected by METERING_BACKEND.
     await init_metering_pipeline(settings)

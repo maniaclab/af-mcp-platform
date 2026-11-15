@@ -360,7 +360,7 @@ class Settings(BaseSettings):
     # byte measurement is unaffected).
     token_estimate_encoding: str = "o200k_base"  # noqa: S105 -- tiktoken encoding name, not a secret
 
-    # Which MeteringBackend implementation (audit/pipeline.py) carries
+    # Which MeteringBackend implementation (metering.py) carries
     # success/error audit records from the tool-call hot path to the worker
     # that measures and writes them. The single-valued Literal is deliberate:
     # the extension point exists (a future distributed backend, e.g. taskiq,
@@ -385,7 +385,7 @@ class Settings(BaseSettings):
     # wired in the chart via broker.usage.postgres.existingSecret.
     usage_postgres_dsn: SecretStr | None = None
 
-    # The metering worker (audit/pipeline.py) buffers usage records and hands
+    # The metering worker (metering.py) buffers usage records and hands
     # them to the usage store as one batch -- one round trip instead of one per
     # tool call -- once usage_batch_max records have accumulated or
     # usage_batch_interval_ms have elapsed since the first buffered record,

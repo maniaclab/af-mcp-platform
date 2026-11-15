@@ -107,7 +107,7 @@ tool_invocations_unmapped_total = Counter(
 metering_queue_overflow_total = Counter(
     "af_mcp_metering_queue_overflow_total",
     "Audit records that found the metering pipeline's queue full and were "
-    "written inline without measurement instead (audit/pipeline.py) -- "
+    "written inline without measurement instead (metering.py) -- "
     "nothing is dropped, but a nonzero rate means tool calls are paying "
     "for audit I/O again. No labels -- see module docstring.",
 )
@@ -115,7 +115,7 @@ metering_queue_overflow_total = Counter(
 metering_queue_depth = Gauge(
     "af_mcp_metering_queue_depth",
     "Audit records currently waiting in the metering pipeline's queue "
-    "(audit/pipeline.py), updated after every enqueue and dequeue. No "
+    "(metering.py), updated after every enqueue and dequeue. No "
     "labels -- see module docstring.",
 )
 
@@ -125,7 +125,7 @@ metering_queue_delay_seconds = Gauge(
     "dequeued. A rising value means the worker is falling behind the "
     "enqueue rate; together with metering_queue_depth and "
     "metering_queue_overflow_total this is the empirical trigger for "
-    "introducing a distributed metering backend (audit/pipeline.py's "
+    "introducing a distributed metering backend (metering.py's "
     "MeteringBackend seam). No labels -- see module docstring.",
 )
 
@@ -138,7 +138,7 @@ metering_worker_processed_total = Counter(
 metering_worker_errors_total = Counter(
     "af_mcp_metering_worker_errors_total",
     "Measurement or audit-write failures in the metering pipeline's "
-    "processing path (audit/pipeline.py's warning sites) -- the record is "
+    "processing path (metering.py's warning sites) -- the record is "
     "still written unmeasured where possible, never dropped. No labels -- "
     "see module docstring.",
 )
@@ -147,7 +147,7 @@ metering_records_missing_measurements_total = Counter(
     "af_mcp_metering_records_missing_measurements_total",
     "Success-path audit records written WITHOUT result measurements even "
     "though a result was present to measure: the queue-overflow inline "
-    "fallback and the measurement-failure path (audit/pipeline.py). No "
+    "fallback and the measurement-failure path (metering.py). No "
     "labels -- see module docstring.",
 )
 

@@ -326,7 +326,7 @@ three of them are also its scaling trigger: a rising
 `metering_queue_depth`, `metering_queue_delay_seconds`, or
 `metering_queue_overflow_total` is the empirical signal to move metering
 off the in-process queue onto a distributed backend. The seam already
-exists — `MeteringBackend` in `audit/pipeline.py`, selected by
+exists — `MeteringBackend` in `metering.py`, selected by
 `METERING_BACKEND` (chart: `broker.metering.backend`) — but only
 `in_process` is implemented today (the broker fails closed on any other
 value); a future taskiq-style transport is one new backend entry, not a

@@ -1,7 +1,7 @@
 """Per-user usage accounting store (observability roadmap PR C).
 
 The broker itself is the metering system: the metering pipeline
-(``audit/pipeline.py``) hands every success/error tool-call ``AuditRecord``
+(``metering.py``) hands every success/error tool-call ``AuditRecord``
 to a ``UsageStore``, which accumulates per-(day, service, method, outcome)
 aggregates that ``GET /v1/usage`` serves back to the calling user. Usage is
 best-effort by the same contract as metering -- the audit log stays

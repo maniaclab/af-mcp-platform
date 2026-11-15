@@ -20,8 +20,8 @@ from _otlp_collector import OtlpCollector
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from test_usage_postgres import _record
 
+from af_mcp_broker import metering as pipeline
 from af_mcp_broker import otel_metrics, tracing
-from af_mcp_broker.audit import pipeline
 from af_mcp_broker.config import Settings
 
 if TYPE_CHECKING:

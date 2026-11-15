@@ -2,7 +2,7 @@
 
 See ``usage/store.py`` for the store contract and the design constraints
 (best-effort, audit records authoritative, no dollars stored). This module
-owns the process-wide wiring, mirroring ``audit/pipeline.py``'s shape: a
+owns the process-wide wiring, mirroring ``metering.py``'s shape: a
 module-level store selected by ``settings.usage_store_backend``,
 initialized/closed from ``app.py``'s lifespan, and a never-raising
 ``record_usage`` helper the metering pipeline calls after each audit write.

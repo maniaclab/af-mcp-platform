@@ -792,7 +792,7 @@ def test_vault_config_required_by_x509_entry():
 
 
 # ---------------------------------------------------------------------------
-# Metering backend selection (audit/pipeline.py's MeteringBackend seam)
+# Metering backend selection (metering.py's MeteringBackend seam)
 # ---------------------------------------------------------------------------
 
 
