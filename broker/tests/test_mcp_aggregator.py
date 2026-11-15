@@ -53,7 +53,10 @@ from af_mcp_broker.mcp.aggregator import (
     populate_aggregator,
     resolve_list_time_credential,
 )
-from af_mcp_broker.mcp.errors import NotLinkedForListingError
+from af_mcp_broker.mcp.errors import (
+    NotEntitledForListingError,
+    NotLinkedForListingError,
+)
 from af_mcp_broker.mcp.middleware.authorization_mw import AuthorizationMiddleware
 from af_mcp_broker.mcp.middleware.entitlement_mw import EntitlementMiddleware
 from af_mcp_broker.mcp.middleware.identity_mw import IdentityMiddleware
@@ -473,12 +476,12 @@ def test_client_factory_none_auth_type_applies_backend_timeout(settings: Any) ->
 
 
 async def test_client_factory_x509_auth_type_applies_backend_timeout(
-    settings: Any, monkeypatch: pytest.MonkeyPatch
+    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # active_backend=None takes the tools/list-refresh path (connect without
     # raising the not-yet-supported error), so the timeout can be inspected
     # on the returned Client the same way as the "none" branch above.
-    _patch_context(monkeypatch, None, active_backend=None)
+    _patch_context(monkeypatch, make_principal(), active_backend=None)
     spec = _spec(auth_type="x509", timeout_seconds=5.0)
     client = await _make_client_factory(
         spec, CredentialRegistry(), settings, _OPEN_POLICY
@@ -541,13 +544,13 @@ async def test_client_factory_x509_call_without_principal_raises(
 
 
 async def test_client_factory_x509_auth_type_lists_without_raising(
-    settings: Any, monkeypatch: pytest.MonkeyPatch
+    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A tools/list schema-cache refresh must still be able to connect to an
     x509 backend to enumerate its tools -- only an actual tools/call (signalled
     by authorized_call_target matching this backend) hits the not-yet-supported
     error above."""
-    _patch_context(monkeypatch, None, active_backend=None)
+    _patch_context(monkeypatch, make_principal(), active_backend=None)
     spec = _spec(auth_type="x509")
     factory = _make_client_factory(spec, CredentialRegistry(), settings, _OPEN_POLICY)
     client = await factory()
@@ -935,11 +938,12 @@ async def test_client_factory_bearer_list_time_mints_when_entitled_and_linked(
 async def test_client_factory_bearer_list_time_skips_mint_when_not_entitled(
     settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A caller who lacks the backend's required_permission shouldn't trigger
-    a mint attempt during a listing at all -- EntitlementMiddleware already
-    hides this backend's tools from such a caller's own tools/list response,
-    so minting would just be wasted work (proven with an empty issue_calls
-    list on a provider that WOULD otherwise happily mint)."""
+    """A caller who lacks the backend's required_permission is skipped during
+    a listing before any mint attempt or backend request --
+    EntitlementMiddleware already hides this backend's tools from such a
+    caller's own tools/list response, so both would be wasted work (proven
+    with an empty issue_calls list on a provider that WOULD otherwise happily
+    mint)."""
     policy = EntitlementPolicy(group_permissions={"atlas": ["read_data"]})
     principal = make_principal(groups=[])  # lacks read_data
     _patch_context(monkeypatch, principal, active_backend=None)
@@ -949,9 +953,9 @@ async def test_client_factory_bearer_list_time_skips_mint_when_not_entitled(
     registry.register(spec.name, provider)
     factory = _make_client_factory(spec, registry, settings, policy)
 
-    client = await factory()
+    with pytest.raises(NotEntitledForListingError):
+        await factory()
 
-    assert "Authorization" not in client.transport.headers
     assert provider.issue_calls == []
 
 
@@ -2662,12 +2666,12 @@ async def test_resolve_list_time_credential_krb5_mints_not_provider_issue(
 
 
 async def test_client_factory_krb5_auth_type_applies_backend_timeout(
-    settings: Any, monkeypatch: pytest.MonkeyPatch
+    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # active_backend=None takes the tools/list-refresh path (connect without
     # raising the not-yet-supported error), so the timeout can be inspected
     # on the returned Client the same way as the "none"/"x509" branches above.
-    _patch_context(monkeypatch, None, active_backend=None)
+    _patch_context(monkeypatch, make_principal(), active_backend=None)
     spec = _spec(auth_type="krb5", timeout_seconds=5.0)
     client = await _make_client_factory(
         spec, CredentialRegistry(), settings, _OPEN_POLICY
@@ -2686,13 +2690,13 @@ async def test_client_factory_krb5_call_without_principal_raises(
 
 
 async def test_client_factory_krb5_auth_type_lists_without_raising(
-    settings: Any, monkeypatch: pytest.MonkeyPatch
+    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A tools/list schema-cache refresh must still be able to connect to a
     krb5 backend to enumerate its tools -- only an actual tools/call (signalled
     by authorized_call_target matching this backend) hits the not-yet-supported
     error above."""
-    _patch_context(monkeypatch, None, active_backend=None)
+    _patch_context(monkeypatch, make_principal(), active_backend=None)
     spec = _spec(auth_type="krb5")
     factory = _make_client_factory(spec, CredentialRegistry(), settings, _OPEN_POLICY)
     client = await factory()

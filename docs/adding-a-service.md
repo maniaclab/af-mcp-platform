@@ -267,6 +267,11 @@ mint that fails for an operational reason is `unavailable`, not
 `not_linked`. A `bearer` service with no resolvable credential provider is
 still listed without a credential.
 
+A caller who holds none of the service's required permissions is skipped for
+every auth type before any credential is minted or request sent, and recorded
+as `not_entitled` (INFO). This is not a link prompt: a direct call is refused
+by the per-tool permission check.
+
 `tools_cache_ttl` (seconds, default 300, matching fastmcp's own
 `ProxyProvider` default) controls how long a cached component list for this
 service may be served from a by-name lookup (e.g. resolving a tool during a

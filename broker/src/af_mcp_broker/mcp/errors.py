@@ -127,3 +127,15 @@ class NotLinkedForListingError(BrokerError):
     def __init__(self, message: str, *, rejected: bool = False) -> None:
         super().__init__(message)
         self.rejected = rejected
+
+
+class NotEntitledForListingError(BrokerError):
+    """A caller who holds none of the permissions a service can require cannot list that service's tools.
+
+    Raised before any credential is minted and before any request reaches
+    the backend: EntitlementMiddleware hides the service's tools from this
+    caller anyway, so the listing could only be discarded.
+    ``_classify_list_failure`` maps it to ``"not_entitled"``. Unlike
+    ``NotLinkedForListingError`` it is not a prompt to link an identity, and
+    a direct call is refused by AuthorizationMiddleware's per-tool check.
+    """

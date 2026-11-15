@@ -49,6 +49,7 @@ from af_mcp_broker.mcp.diagnostics import register_diagnostic_tools
 from af_mcp_broker.mcp.errors import (
     BackendInvalidResponseError,
     ListDeadlineExceededError,
+    NotEntitledForListingError,
     NotLinkedForListingError,
 )
 from af_mcp_broker.mcp.instructions import compose_agent_instructions
@@ -499,6 +500,8 @@ async def _classify_list_failure(exc: Exception, service_name: str) -> tuple[str
     ``"not_linked"`` outright, or ``"unauthorized"`` -- the stored credential
     was rejected -- when it says ``rejected``.
     """
+    if isinstance(exc, NotEntitledForListingError):
+        return "not_entitled", str(exc)
     if isinstance(exc, NotLinkedForListingError):
         return ("unauthorized" if exc.rejected else "not_linked"), str(exc)
     if isinstance(exc, ListDeadlineExceededError):
@@ -588,19 +591,79 @@ async def resolve_list_time_credential(
 def _might_be_entitled(
     principal: Principal, spec: ServiceSpec, policy: EntitlementPolicy
 ) -> bool:
-    """Return whether a list-time credential mint for *spec* is worth attempting at all.
+    """Return whether *principal* may list *spec*'s tools at all: whether it holds any permission *spec* can require.
 
-    Best-effort: this runs for a caller with no specific tool_name in hand
-    yet (a tools/list request, or a stale-cache _get_tool() refresh) -- not a
-    security boundary of its own (EntitlementMiddleware already hides a
-    service's tools from a caller with no chance of using any of them; a
+    Runs for a caller with no specific tool_name in hand yet (a tools/list
+    request, or a stale-cache _get_tool() refresh), so it is a whole-service
+    check. It is not the security boundary: EntitlementMiddleware hides the
+    service's tools from a caller with no chance of using any of them, and a
     caller who slips past this and calls one anyway is still stopped by
-    AuthorizationMiddleware's real per-tool check). True if *spec* has no
-    permission gate at all, or the caller holds at least one of the
-    permissions it can require across any of its tools.
+    AuthorizationMiddleware's real per-tool check. It decides only whether a
+    listing is worth attempting: ``_require_entitled_list_principal`` skips
+    the service for a caller it rejects, before any credential is minted or
+    request sent. True if *spec* has no permission gate at all, or the caller
+    holds at least one of the permissions it can require across any of its
+    tools.
     """
     required = spec.all_required_permissions()
     return not required or bool(required & get_principal_permissions(principal, policy))
+
+
+async def _require_entitled_list_principal(
+    ctx: Context, spec: ServiceSpec, policy: EntitlementPolicy
+) -> Principal:
+    """Return the caller's principal for a list-time connection to *spec*, or raise before any credential is minted or request is sent.
+
+    Shared by every credentialed client factory so the rule lives in one
+    place. A caller holding none of the permissions *spec* can require is
+    skipped with ``NotEntitledForListingError``: EntitlementMiddleware hides
+    the service's tools from them, so a listing could only be discarded --
+    and a bare request would make a backend that needs a credential answer
+    401, logged as a failure. IdentityMiddleware sets the principal on every
+    authenticated /mcp request, so its absence is a broker bug, not a caller
+    state.
+    """
+    principal = await ctx.get_state("principal")
+    if principal is None:
+        msg = (
+            f"Cannot list tools for service '{spec.name}': no authenticated "
+            "principal on the request context."
+        )
+        raise RuntimeError(msg)
+    if not _might_be_entitled(principal, spec, policy):
+        msg = (
+            f"Service '{spec.name}' lists its tools only for callers holding "
+            "one of its required permissions."
+        )
+        raise NotEntitledForListingError(msg)
+    return principal
+
+
+async def _identity_token_list_client(
+    ctx: Context,
+    spec: ServiceSpec,
+    credential_registry: CredentialRegistry,
+    policy: EntitlementPolicy,
+    broker_token_issuer: BrokerTokenIssuer | None,
+) -> Client:
+    """List-time client for an x509/krb5/servicex service: an identity header for a caller who has linked the credential the backend will redeem.
+
+    Minting is a local signature, so there is no network to fail. An
+    unentitled caller (``_require_entitled_list_principal``) or an unlinked
+    one (``_require_linked_to_list``) raises before anything is minted or any
+    request is made.
+    """
+    principal = await _require_entitled_list_principal(ctx, spec, policy)
+    if broker_token_issuer is None:
+        return _build_client(spec)
+    await _require_linked_to_list(spec, credential_registry, principal)
+    token, _ = broker_token_issuer.mint(principal.subject, spec.effective_audience)
+    await ctx.set_state(
+        f"__list_credential_status__:{spec.name}",
+        (True, None),
+        serializable=False,
+    )
+    return _build_client(spec, headers={"Authorization": f"Bearer {token}"})
 
 
 class ToolListingEntry(NamedTuple):
@@ -968,7 +1031,9 @@ def _make_client_factory(
     caller who has linked the credential, and raises ``NotLinkedForListingError``
     for one who has not -- before minting anything or contacting the
     backend, so that service simply contributes no tools to that caller's
-    list.
+    list. A caller holding none of the service's permissions
+    (``_might_be_entitled``) is skipped the same way, with
+    ``NotEntitledForListingError``, for every auth type below.
 
     For "bearer", that same "wasteful and wrong" framing used to justify
     skipping credential resolution entirely during a listing -- until issue
@@ -1024,26 +1089,9 @@ def _make_client_factory(
         async def _x509_factory() -> Client:
             ctx = get_context()
             if await ctx.get_state("authorized_call_target") != spec.name:
-                # tools/list (or a stale-cache refresh): identity header for a
-                # caller who has linked the credential the backend will
-                # redeem -- minting is a local signature, so there is no
-                # network to fail. An unlinked caller raises before anything
-                # is minted or any request is made (_require_linked_to_list).
-                principal = await ctx.get_state("principal")
-                if principal is None or broker_token_issuer is None:
-                    return _build_client(spec)
-                if not _might_be_entitled(principal, spec, policy):
-                    return _build_client(spec)
-                await _require_linked_to_list(spec, credential_registry, principal)
-                token, _ = broker_token_issuer.mint(
-                    principal.subject, spec.effective_audience
+                return await _identity_token_list_client(
+                    ctx, spec, credential_registry, policy, broker_token_issuer
                 )
-                await ctx.set_state(
-                    f"__list_credential_status__:{spec.name}",
-                    (True, None),
-                    serializable=False,
-                )
-                return _build_client(spec, headers={"Authorization": f"Bearer {token}"})
 
             principal = await ctx.get_state("principal")
             if principal is None:
@@ -1094,26 +1142,9 @@ def _make_client_factory(
         async def _krb5_factory() -> Client:
             ctx = get_context()
             if await ctx.get_state("authorized_call_target") != spec.name:
-                # tools/list (or a stale-cache refresh): identity header for a
-                # caller who has linked the credential the backend will
-                # redeem -- minting is a local signature, so there is no
-                # network to fail. An unlinked caller raises before anything
-                # is minted or any request is made (_require_linked_to_list).
-                principal = await ctx.get_state("principal")
-                if principal is None or broker_token_issuer is None:
-                    return _build_client(spec)
-                if not _might_be_entitled(principal, spec, policy):
-                    return _build_client(spec)
-                await _require_linked_to_list(spec, credential_registry, principal)
-                token, _ = broker_token_issuer.mint(
-                    principal.subject, spec.effective_audience
+                return await _identity_token_list_client(
+                    ctx, spec, credential_registry, policy, broker_token_issuer
                 )
-                await ctx.set_state(
-                    f"__list_credential_status__:{spec.name}",
-                    (True, None),
-                    serializable=False,
-                )
-                return _build_client(spec, headers={"Authorization": f"Bearer {token}"})
 
             principal = await ctx.get_state("principal")
             if principal is None:
@@ -1164,26 +1195,9 @@ def _make_client_factory(
         async def _servicex_factory() -> Client:
             ctx = get_context()
             if await ctx.get_state("authorized_call_target") != spec.name:
-                # tools/list (or a stale-cache refresh): identity header for a
-                # caller who has linked the credential the backend will
-                # redeem -- minting is a local signature, so there is no
-                # network to fail. An unlinked caller raises before anything
-                # is minted or any request is made (_require_linked_to_list).
-                principal = await ctx.get_state("principal")
-                if principal is None or broker_token_issuer is None:
-                    return _build_client(spec)
-                if not _might_be_entitled(principal, spec, policy):
-                    return _build_client(spec)
-                await _require_linked_to_list(spec, credential_registry, principal)
-                token, _ = broker_token_issuer.mint(
-                    principal.subject, spec.effective_audience
+                return await _identity_token_list_client(
+                    ctx, spec, credential_registry, policy, broker_token_issuer
                 )
-                await ctx.set_state(
-                    f"__list_credential_status__:{spec.name}",
-                    (True, None),
-                    serializable=False,
-                )
-                return _build_client(spec, headers={"Authorization": f"Bearer {token}"})
 
             principal = await ctx.get_state("principal")
             if principal is None:
@@ -1239,21 +1253,7 @@ def _make_client_factory(
             # outright, and _resolve_list_time_headers for the non-fatal
             # failure handling this requires (an unlinked caller raises
             # NotLinkedForListingError instead).
-            principal = await ctx.get_state("principal")
-            if principal is None:
-                # identity_mw should always have set this by now; there is
-                # no principal to mint a credential for either way.
-                return _build_client(spec)
-
-            # Same permission gate AuthorizationMiddleware applies to an
-            # actual call -- a caller who could never pass it shouldn't
-            # trigger a mint attempt at all; EntitlementMiddleware already
-            # hides this service's tools from such a caller's own tools/list
-            # response, so this is just avoiding wasted work, not a security
-            # boundary of its own.
-            if not _might_be_entitled(principal, spec, policy):
-                return _build_client(spec)
-
+            principal = await _require_entitled_list_principal(ctx, spec, policy)
             resolved = await _resolve_list_time_headers(
                 spec, credential_registry, principal
             )
@@ -1650,9 +1650,12 @@ class _ObservableProxyProvider(ProxyProvider):
                 # on replaying it to resolve a direct call to the stand-in
                 # instead of re-running the client factory's authorized
                 # branch, whose friendly error AggregateProvider swallows.
+                # An unentitled caller is never cached: the check costs no
+                # request, and a permission granted since must apply at once.
                 reason, _ = await _classify_list_failure(exc, self._service_name)
-                if reason != "unauthorized" or isinstance(
-                    exc, NotLinkedForListingError
+                if reason != "not_entitled" and (
+                    reason != "unauthorized"
+                    or isinstance(exc, NotLinkedForListingError)
                 ):
                     self._subject_list_cache[key] = _SubjectListCacheEntry(
                         error=exc, timestamp=time.monotonic()
@@ -1675,31 +1678,31 @@ class _ObservableProxyProvider(ProxyProvider):
     # exception, which they rely on.
 
     async def list_tools(self) -> Sequence[Tool]:
-        """List this service's tools, or none for a caller who has not linked the credential."""
+        """List this service's tools, or none for a caller who has not linked the credential or holds none of its permissions."""
         try:
             return await super().list_tools()
-        except NotLinkedForListingError:
+        except (NotLinkedForListingError, NotEntitledForListingError):
             return []
 
     async def list_resources(self) -> Sequence[Resource]:
-        """List this service's resources, or none for a caller who has not linked the credential."""
+        """List this service's resources, or none for a caller who has not linked the credential or holds none of its permissions."""
         try:
             return await super().list_resources()
-        except NotLinkedForListingError:
+        except (NotLinkedForListingError, NotEntitledForListingError):
             return []
 
     async def list_resource_templates(self) -> Sequence[ResourceTemplate]:
-        """List this service's resource templates, or none for a caller who has not linked the credential."""
+        """List this service's resource templates, or none for a caller who has not linked the credential or holds none of its permissions."""
         try:
             return await super().list_resource_templates()
-        except NotLinkedForListingError:
+        except (NotLinkedForListingError, NotEntitledForListingError):
             return []
 
     async def list_prompts(self) -> Sequence[Prompt]:
-        """List this service's prompts, or none for a caller who has not linked the credential."""
+        """List this service's prompts, or none for a caller who has not linked the credential or holds none of its permissions."""
         try:
             return await super().list_prompts()
-        except NotLinkedForListingError:
+        except (NotLinkedForListingError, NotEntitledForListingError):
             return []
 
     async def _list_tools(self) -> Sequence[Tool]:
@@ -1732,9 +1735,16 @@ class _ObservableProxyProvider(ProxyProvider):
         except Exception as exc:
             reason, detail = await _classify_list_failure(exc, self._service_name)
             subject = await self._caller_subject("tools")
-            self._registry.record_list_failure(self._service_name, reason, subject)
-            # An unlinked caller is an expected state, not a fault.
-            log = logger.info if reason == "not_linked" else logger.warning
+            # An unentitled caller is not a failure of the service, so it
+            # leaves no record for the catalog to surface.
+            if reason != "not_entitled":
+                self._registry.record_list_failure(self._service_name, reason, subject)
+            # An unlinked or unentitled caller is an expected state, not a fault.
+            log = (
+                logger.info
+                if reason in ("not_linked", "not_entitled")
+                else logger.warning
+            )
             log(
                 "aggregator.service_list_failed",
                 service=self._service_name,
