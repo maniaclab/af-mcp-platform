@@ -451,17 +451,24 @@ What the layering means in practice:
   `backend_errors`, `service_registry` and `lint_observations`.
 - `broker_state` holds the `BrokerState` dataclass the lifespan stores once on
   `app.state.broker`, and the accessors that read it back:
-  `get_broker_state(request)` for `/v1` routes and `identity`, and
-  `broker_state_of(app)` for code that holds the app. It sits below
+  `get_broker_state(request)` for `/v1` routes and `identity`,
+  `get_state_settings(request)` for the `Settings` the lifespan loaded
+  (`BrokerState.settings`, the only settings source in the running app), and
+  `broker_state_of(app)` for code that holds the app. `get_settings()` (an
+  `lru_cache`) is read only where no app exists: the tracing instrumentation
+  at import time and the metering fallback with no pipeline installed. It
+  sits below
   `identity` (which reads the principal cache and the dev-bypass principal
   from it) and above every subsystem it holds, so `api`, `mcp` and `identity`
   can all import it while construction stays in `wiring`. A component a
   deployment may lack is an explicit `X | None` field and each consumer decides
   what absence means; every other field is required, so a state missing one
   cannot be built. A request reaching an app with no state stored fails with
-  a `RuntimeError` rather than falling back to defaults. The `/mcp` ASGI
-  middleware is built before the lifespan runs and receives a `get_state`
-  callable that returns the state at request time.
+  a `RuntimeError` rather than falling back to defaults. The aggregator and its
+  `/mcp` ASGI app are built by the lifespan from the loaded registry, policy,
+  settings and stores, passed as constructor arguments, and published on the
+  state as `mcp_aggregator` and `mcp_app`; `app.py` mounts a thin ASGI
+  callable that serves `mcp_app` from the state.
 - By convention a module does not import another module's `_private` name;
   anything shared is public in the module that owns it.
 
@@ -475,7 +482,7 @@ build_token_registry_backend`, `credentials.stores.build_vault_link_stores`);
 glue that needs several subsystems lives in the `wiring` package (service
 catalog and identity targets, the Vault client, the credential cache and
 providers, the principal cache and token registry, the lifetime resources,
-aggregator population). `wiring.state.build_broker_state` assembles the built
+the aggregator and its ASGI app). `wiring.state.build_broker_state` assembles the built
 subsystems into the `BrokerState` the lifespan stores as `app.state.broker`.
 
 Every resource with a close registers it on one `contextlib.AsyncExitStack`
