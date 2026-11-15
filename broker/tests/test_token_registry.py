@@ -20,16 +20,18 @@ import structlog
 if TYPE_CHECKING:
     from pathlib import Path
 
+from af_mcp_broker.constants import MAX_CAS_RETRIES
 from af_mcp_broker.token_registry import (
     DuplicateNameError,
     InMemoryTokenRegistryBackend,
     SweepStats,
     TokenRecord,
+    TokenRegistry,
     TokenRegistryBackend,
     VaultTokenRegistryBackend,
     _record_from_fields,
 )
-from af_mcp_broker.vault_kv import VaultKV
+from af_mcp_broker.vault_kv import CasConflictError, VaultError, VaultKV
 
 ADDR = "https://vault.invalid"
 AUTH_MOUNT = "kubernetes"
@@ -423,8 +425,10 @@ async def test_touch_last_used_sets_the_field(backend: TokenRegistryBackend) -> 
 async def test_touch_last_used_unknown_lookup_id_is_a_noop(
     backend: TokenRegistryBackend,
 ) -> None:
-    # Must not raise.
     await backend.touch_last_used("p1", "does-not-exist", at=999.0)
+
+    assert await backend.get("p1", "does-not-exist") is None
+    assert await backend.list_for_principal("p1") == []
 
 
 async def test_touch_last_used_wrong_principal_is_a_noop(
@@ -587,6 +591,12 @@ async def test_add_allows_name_that_collides_with_a_never_expiring_but_revoked_t
     await backend.add(
         _make_record(lookup_id="lookup-2", principal_id="p1", name="claude-desktop")
     )
+
+    rows = {r.lookup_id: r for r in await backend.list_for_principal("p1")}
+    assert set(rows) == {"lookup-1", "lookup-2"}
+    assert rows["lookup-1"].revoked_at is not None
+    assert rows["lookup-2"].revoked_at is None
+    assert rows["lookup-2"].name == "claude-desktop"
 
 
 # ---------------------------------------------------------------------------
@@ -1175,3 +1185,209 @@ async def test_vault_revoke_all_retries_on_concurrent_cas_conflict(
     rows = {r.lookup_id: r for r in await replica_a.list_for_principal("p1")}
     assert set(rows) == {"a", "b"}
     assert rows["a"].revoked_at == 3.0
+
+
+# ---------------------------------------------------------------------------
+# Vault CAS retry loops: every read-modify-write retries on a conflict, up to
+# MAX_CAS_RETRIES attempts. The fake conflicts on the principal entry's first
+# N write attempts (state untouched, as a real lost race leaves it), so each
+# loop's retry and its exhaustion are both exercised.
+# ---------------------------------------------------------------------------
+
+
+def _conflict_on_principal_writes(
+    backend: VaultTokenRegistryBackend, path: str, conflicts: int
+) -> list[str]:
+    """Make the first *conflicts* ``write_cas`` calls on *path* raise ``CasConflictError``; return the log of every attempt on *path*."""
+    real_write_cas = backend._vault_kv.write_cas
+    attempts: list[str] = []
+
+    async def write_cas(write_path: str, data: dict[str, Any], version: Any) -> Any:
+        if write_path == path:
+            attempts.append(write_path)
+            if len(attempts) <= conflicts:
+                raise CasConflictError(write_path)
+        return await real_write_cas(write_path, data, version)
+
+    backend._vault_kv.write_cas = write_cas  # type: ignore[method-assign]
+    return attempts
+
+
+async def _seed_two(backend: VaultTokenRegistryBackend) -> None:
+    await backend.add(_make_record(lookup_id="a", principal_id="p1", name="a"))
+    await backend.add(_make_record(lookup_id="b", principal_id="p1", name="b"))
+
+
+async def _op_add(backend: VaultTokenRegistryBackend) -> None:
+    await backend.add(_make_record(lookup_id="new", principal_id="p1", name="new"))
+
+
+async def _op_revoke(backend: VaultTokenRegistryBackend) -> None:
+    await backend.revoke("p1", "a", revoked_at=7.0)
+
+
+async def _op_revoke_all(backend: VaultTokenRegistryBackend) -> None:
+    await backend.revoke_all("p1", revoked_at=7.0)
+
+
+async def _op_touch(backend: VaultTokenRegistryBackend) -> None:
+    await backend.touch_last_used("p1", "a", at=555.0)
+
+
+async def _op_delete_inactive(backend: VaultTokenRegistryBackend) -> None:
+    await backend.delete_inactive("p1", now=time.time())
+
+
+async def _op_sweep_expired(backend: VaultTokenRegistryBackend) -> None:
+    await backend.sweep_expired(grace_seconds=0)
+
+
+async def _state_add(backend: VaultTokenRegistryBackend) -> None:
+    assert {r.lookup_id for r in await backend.list_for_principal("p1")} == {
+        "a",
+        "b",
+        "new",
+    }
+
+
+async def _state_revoke(backend: VaultTokenRegistryBackend) -> None:
+    a = await backend.get("p1", "a")
+    assert a is not None
+    assert a.revoked_at == 7.0
+
+
+async def _state_revoke_all(backend: VaultTokenRegistryBackend) -> None:
+    rows = await backend.list_for_principal("p1")
+    assert [r.revoked_at for r in rows] == [7.0, 7.0]
+
+
+async def _state_touch(backend: VaultTokenRegistryBackend) -> None:
+    a = await backend.get("p1", "a")
+    assert a is not None
+    assert a.last_used_at == 555.0
+
+
+async def _state_removed(backend: VaultTokenRegistryBackend) -> None:
+    assert [r.lookup_id for r in await backend.list_for_principal("p1")] == ["b"]
+
+
+async def _unchanged_two(backend: VaultTokenRegistryBackend) -> None:
+    rows = await backend.list_for_principal("p1")
+    assert {r.lookup_id for r in rows} == {"a", "b"}
+    assert all(r.revoked_at is None and r.last_used_at is None for r in rows)
+
+
+async def _unchanged_two_with_a_inactive(backend: VaultTokenRegistryBackend) -> None:
+    rows = await backend.list_for_principal("p1")
+    assert {r.lookup_id for r in rows} == {"a", "b"}
+
+
+async def _seed_one_inactive(backend: VaultTokenRegistryBackend) -> None:
+    """Two records; "a" is revoked (so inactive), "b" is active."""
+    await _seed_two(backend)
+    await backend.revoke("p1", "a", revoked_at=1.0)
+
+
+async def _seed_one_expired(backend: VaultTokenRegistryBackend) -> None:
+    """Two records; "a" expired long ago, "b" is active."""
+    await backend.add(
+        _make_record(lookup_id="b", principal_id="p1", name="b", expires_at=None)
+    )
+    fake_entry_path = backend._principal_path("p1")
+    current = await backend._vault_kv.get(fake_entry_path)
+    assert current is not None
+    data, version = current
+    data["a"] = {**data["b"], "lookup_id": "a", "name": "a", "expires_at": 1.0}
+    await backend._vault_kv.write_cas(fake_entry_path, data, version)
+
+
+# (seed, operation, state after success, state after retry exhaustion,
+# whether exhaustion raises VaultError)
+_CAS_CASES = {
+    "add": (_seed_two, _op_add, _state_add, _unchanged_two, True),
+    "revoke": (_seed_two, _op_revoke, _state_revoke, _unchanged_two, True),
+    "revoke_all": (_seed_two, _op_revoke_all, _state_revoke_all, _unchanged_two, True),
+    # touch_last_used is best-effort: exhaustion logs rather than raises.
+    "touch_last_used": (_seed_two, _op_touch, _state_touch, _unchanged_two, False),
+    "delete_inactive": (
+        _seed_one_inactive,
+        _op_delete_inactive,
+        _state_removed,
+        _unchanged_two_with_a_inactive,
+        True,
+    ),
+    "sweep_expired": (
+        _seed_one_expired,
+        _op_sweep_expired,
+        _state_removed,
+        _unchanged_two_with_a_inactive,
+        True,
+    ),
+}
+
+
+@pytest.mark.parametrize("case", list(_CAS_CASES))
+async def test_vault_cas_loop_retries_repeated_conflicts_then_succeeds(
+    case: str, sa_token_path: Path
+) -> None:
+    seed, operation, state_after, _, _ = _CAS_CASES[case]
+    fake = _FakeRegistryVault()
+    backend = _make_vault_backend(fake, sa_token_path)
+    await seed(backend)
+    attempts = _conflict_on_principal_writes(
+        backend, _PRINCIPAL_KEY, MAX_CAS_RETRIES - 1
+    )
+
+    await operation(backend)
+
+    # The last allowed attempt is the one that lands.
+    assert len(attempts) == MAX_CAS_RETRIES
+    await state_after(backend)
+
+
+@pytest.mark.parametrize("case", list(_CAS_CASES))
+async def test_vault_cas_loop_gives_up_after_the_retry_budget(
+    case: str, sa_token_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    seed, operation, _, state_unchanged, raises = _CAS_CASES[case]
+    fake = _FakeRegistryVault()
+    backend = _make_vault_backend(fake, sa_token_path)
+    await seed(backend)
+    attempts = _conflict_on_principal_writes(backend, _PRINCIPAL_KEY, MAX_CAS_RETRIES)
+
+    if raises:
+        with pytest.raises(VaultError, match="retry budget"):
+            await operation(backend)
+    else:
+        with structlog.testing.capture_logs() as logs:
+            await operation(backend)
+        assert [e["event"] for e in logs] == [
+            "token_registry.touch_last_used_retry_budget_exceeded"
+        ]
+
+    assert len(attempts) == MAX_CAS_RETRIES
+    await state_unchanged(backend)
+
+
+# ---------------------------------------------------------------------------
+# TokenRegistry: the revoke/revoke_all/put log lines fire only when the
+# backend actually changed a record.
+# ---------------------------------------------------------------------------
+
+
+async def test_registry_revoke_logs_only_when_a_record_was_revoked() -> None:
+    with structlog.testing.capture_logs() as logs:
+        registry = TokenRegistry(InMemoryTokenRegistryBackend())
+        await registry.put(_make_record(lookup_id="a", principal_id="p1"))
+        logs.clear()
+
+        assert await registry.revoke("p1", "missing") is None
+        assert logs == []
+
+        revoked = await registry.revoke("p1", "a")
+
+    assert revoked is not None
+    assert revoked.revoked_at is not None
+    assert [(e["event"], e["lookup_id"], e["principal_id"]) for e in logs] == [
+        ("token_registry.revoked", "a", "p1")
+    ]
