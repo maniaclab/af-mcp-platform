@@ -393,6 +393,28 @@ class TestRedeem:
         )
         assert finished["subject"] == "sub-abc"
 
+    def test_request_finished_line_names_the_minting_tool_call_as_parent(
+        self, krb5_redeem_env, app_client_factory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        krb5_redeem_env()
+        events = _capturing_info(monkeypatch, app_module.logger)
+        with app_client_factory() as (client, _):
+            _fake_vault_store(client)
+            _seed_cache_ticket(client, subject="sub-abc")
+            token, _ = client.app.state.broker.broker_token_issuer.mint(
+                "sub-abc", _TARGET, request_id="tool-call-id"
+            )
+            resp = client.post(
+                _REDEEM, json={}, headers={"Authorization": f"Bearer {token}"}
+            )
+        assert resp.status_code == 200, resp.text
+        finished = next(
+            e
+            for e in events
+            if e["event"] == "http.request.finished" and e["path"] == _REDEEM
+        )
+        assert finished["parent_request_id"] == "tool-call-id"
+
     def test_cache_hit_with_90_seconds_remaining_still_redeems(
         self, krb5_redeem_env, app_client_factory
     ) -> None:
