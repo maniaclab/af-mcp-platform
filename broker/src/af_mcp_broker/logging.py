@@ -24,9 +24,10 @@ _MAX_CLIENT_REQUEST_ID_LENGTH = 128
 
 # One mutable dict per request, shared by reference with every task the
 # request spawns. /v1's BaseHTTPMiddleware runs the route in a child task
-# whose contextvar writes (``bind_subject``) never reach the middleware's own
-# context; mutating this dict does, so the middleware's ``finished`` line can
-# still name the caller.
+# whose contextvar writes (``bind_subject``, ``bind_parent_request_id``) never
+# reach the middleware's own context; mutating this dict does, so the
+# middleware's ``finished`` line can still name the caller and the request's
+# parent.
 _request_identity: ContextVar[dict[str, str] | None] = ContextVar(
     "request_identity", default=None
 )
@@ -220,6 +221,14 @@ def request_id_headers() -> dict[str, str]:
     return {"X-Request-ID": correlation_id} if correlation_id else {}
 
 
+def _bind_request_identity(**fields: str) -> None:
+    """Bind *fields* to structlog's contextvars and to the request's ``_request_identity`` dict, which ``log_request_finished`` reads back."""
+    structlog.contextvars.bind_contextvars(**fields)
+    request_identity = _request_identity.get()
+    if request_identity is not None:
+        request_identity.update(fields)
+
+
 def bind_subject(subject: str) -> None:
     """Bind *subject* to structlog's contextvars for the rest of the current request (issue #281).
 
@@ -228,10 +237,17 @@ def bind_subject(subject: str) -> None:
     on both /v1 and /mcp -- so every log line downstream of identity
     resolution, on either surface, carries who made the call.
     """
-    structlog.contextvars.bind_contextvars(subject=subject)
-    request_identity = _request_identity.get()
-    if request_identity is not None:
-        request_identity["subject"] = subject
+    _bind_request_identity(subject=subject)
+
+
+def bind_parent_request_id(parent_request_id: str) -> None:
+    """Bind *parent_request_id* for the rest of the current request: the ``correlation_id`` of the client request a broker identity token was minted for.
+
+    Set by a backend credential redeem, whose own ``correlation_id`` names the
+    redeem; this joins every line of it, the ``finished`` line included, to
+    the tool call that caused it.
+    """
+    _bind_request_identity(parent_request_id=parent_request_id)
 
 
 def bind_client_request_id(client_request_id: str) -> None:
@@ -283,17 +299,17 @@ def log_request_finished(
     ``configure_logging``'s ``merge_contextvars`` processor merges it into
     this line automatically. A caller whose handler ran in a child task
     (/v1's BaseHTTPMiddleware) never sees that binding, so the subject
-    ``bind_subject`` recorded in ``_request_identity`` is read back here.
+    ``bind_subject`` recorded in ``_request_identity`` is read back here, as
+    is a ``parent_request_id`` from ``bind_parent_request_id``.
 
     ``method`` and ``path`` repeat what ``received`` logged so a ``finished``
     line is attributable on its own; *path* is the route template where the
     router matched one, and never carries a query string.
     """
     duration_ms = (time.monotonic() - start_time) * 1000
-    subject = (_request_identity.get() or {}).get("subject")
     bound_logger.info(
         "http.request.finished",
-        **({"subject": subject} if subject else {}),
+        **(_request_identity.get() or {}),
         method=method,
         path=path,
         status_code=status_code,
