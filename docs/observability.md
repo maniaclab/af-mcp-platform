@@ -33,11 +33,10 @@ record (and the usage store accumulates them):
 
 Be clear about what the token number is: an estimate of what each tool
 result would inject into an LLM client's context — **not**
-provider-reported usage, and **not** the user's full LLM spend (their
+provider-reported usage, and **not** the user's full token volume (their
 prompts, the model's own output, and every non-tool token are invisible to
-the broker). Dollars are never stored — only tokens — so cost is derived
-at read time from a price table (see the next section) and repricing is a
-config change, not a migration.
+the broker). The broker reports token counts only and attaches no monetary
+figure to them.
 
 A record whose measurement failed (or that arrived via the queue-overflow
 inline fallback) is still written and still counts as a call — its
@@ -66,10 +65,6 @@ Query parameters:
 
 - `days` — trailing window in UTC calendar days, today inclusive
   (`1..365`, default `30`; `days=1` is just today).
-- `model` — the [tokencost](https://github.com/AgentOps-AI/tokencost)
-  price-table key whose *input* rate turns token estimates into
-  `estimated_cost_usd`. Defaults to the broker's `cost_reference_model`
-  (currently `claude-sonnet-4-20250514`); an unknown key is a 422.
 
 ```bash
 read -s -p "Bearer token: " MCP_BEARER_TOKEN
@@ -85,14 +80,12 @@ Trimmed response:
 {
   "subject": "f1b0…",
   "window_days": 7,
-  "cost_model": "claude-sonnet-4-20250514",
   "totals": {
     "calls": 42,
     "errors": 1,
     "duration_ms": 91834.2,
     "result_bytes": 1048576,
-    "result_tokens_est": 262144,
-    "estimated_cost_usd": 0.786432
+    "result_tokens_est": 262144
   },
   "by_service": [
     {
@@ -100,8 +93,7 @@ Trimmed response:
       "calls": 30,
       "errors": 0,
       "result_bytes": 917504,
-      "result_tokens_est": 229376,
-      "estimated_cost_usd": 0.688128
+      "result_tokens_est": 229376
     }
   ],
   "by_day": [
@@ -113,14 +105,13 @@ Trimmed response:
 **Honesty caveats** (verbatim from the endpoint's own description): token
 counts are a tiktoken (o200k) ESTIMATE of the tool-result text injected
 into the LLM client's context — not provider-reported usage, and not the
-user's full LLM spend — and `estimated_cost_usd` is that estimate priced
-at the chosen model's input rate.
+user's full token volume.
 
 An MCP client doesn't need to leave the MCP surface for this: the
 broker-native `af_usage` method (alongside `af_whoami` and the builtin
 `gateway_service` service's other methods) returns the same payload — totals,
 `by_service`, `by_day` — for the calling principal, with the same
-`days`/`model` parameters and the same honesty caveats in its tool
+`days` parameter and the same honesty caveats in its tool
 description, so the LLM can relay them.
 
 `af_*` calls are themselves audited and metered like every other call
@@ -588,6 +579,43 @@ ID from a user's report (or a trace found in the collector), the audit
 log's `trace_id` field finds the exact invocations — and their
 measurements, which live only in the audit log and usage store, never on
 spans.
+
+## Audit log line shape
+
+Audit records are emitted through structlog, so an audit line has the same
+shape as every other broker log line. Each is one JSON object with
+`event: "audit"`:
+
+| Field | Meaning |
+|---|---|
+| `timestamp` | ISO 8601 UTC time the line was **written**. |
+| `level` | Always `info`. |
+| `logger` | `af_mcp_broker.audit.logger`. |
+| `correlation_id`, `subject` | The request's correlation id and caller, when the record was written inside a request. A queued tool-call record carries the ids of the request that submitted it. |
+| `recorded_at` | ISO 8601 UTC time the record was **created**; for a record the metering worker wrote later, earlier than `timestamp`. |
+| `request_id` | For tool calls, the request's `correlation_id`, so the audit, `http.request.*` and usage lines of one call share one id. Other record types keep their own identifier (a token `jti`, a PAT `lookup_id`). |
+| everything else | The `AuditRecord` fields: `audit_id`, `principal_sub`, `principal_uid`, `permission`, `target`, `action`, `action_type`, `args_summary`, `outcome`, `error`, and the metering and attribution fields above. |
+
+Where the lines go: `AUDIT_LOG_FILE` is `-` (stdout, the default) or a file
+path opened for appending. Either way the line is written through the audit
+handler, never through the root handler, so the audit destination does not
+change what other log lines look like. The stdout destination resolves
+`sys.stdout` at each write rather than holding the stream it saw at startup.
+
+Audit writes fail loudly. A failure to write a line raises to the code that
+produced the record: the denial path, the inline fallback (no pipeline
+running, or a full metering queue) and the credential and token endpoints
+all surface it to the request. The metering worker has no caller to raise
+to, so it logs `metering_audit_write_failed` at `error` level with the
+traceback and the lost record's `audit_id`, `principal_sub`, `target`,
+`action` and `outcome`, increments `af_mcp_metering_worker_errors_total`, and
+keeps processing the queue.
+
+Admin state changes are audited like tool calls: toggling maintenance mode
+writes a `maintenance_enable` or `maintenance_disable` record (caller,
+enabled or disabled, the reason given) and logs `maintenance_mode_changed`
+at `info`. A toggle that loses the compare-and-set race changed nothing and
+writes neither.
 
 ## Correlation ids on calls to token services
 

@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-import httpx
+import httpx2
 import pytest
 import structlog
 from conftest import configure_x509_service_env
@@ -136,7 +136,7 @@ def _make_provider(
 
 
 class _FakeTokenClient:
-    """Fake httpx client capturing token-endpoint POSTs, for monkeypatching
+    """Fake httpx2 client capturing token-endpoint POSTs, for monkeypatching
     ``get_http_client`` in both the provider (refresh) and route (exchange)
     code paths.
     """
@@ -148,12 +148,12 @@ class _FakeTokenClient:
 
     async def post(
         self, url: str, data: dict[str, Any], **kwargs: Any
-    ) -> httpx.Response:
+    ) -> httpx2.Response:
         self.calls.append({"url": url, "data": data})
         # `request=` must be set -- `Response.raise_for_status()` (called by
         # the production code on success too) requires it even for 2xx.
-        return httpx.Response(
-            self.status_code, json=self.json_body, request=httpx.Request("POST", url)
+        return httpx2.Response(
+            self.status_code, json=self.json_body, request=httpx2.Request("POST", url)
         )
 
 
@@ -1323,8 +1323,8 @@ async def test_revoke_upstream_unreachable_still_deletes_locally(
     provider = _make_provider(store, revocation_endpoint=REVOCATION_ENDPOINT)
 
     class _RaisingClient:
-        async def post(self, *args: Any, **kwargs: Any) -> httpx.Response:
-            raise httpx.ConnectError("connection refused")
+        async def post(self, *args: Any, **kwargs: Any) -> httpx2.Response:
+            raise httpx2.ConnectError("connection refused")
 
     monkeypatch.setattr(
         "af_mcp_broker.credentials.oauth21.get_http_client", _RaisingClient

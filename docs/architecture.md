@@ -155,7 +155,19 @@ broker:
       port: 6379
 ```
 
-Outside the chart set `SHARED_STATE_URL` (and `MCP_REPLICA_COUNT`) directly.
+Every key and pub/sub channel the broker uses on the store starts with
+`broker.sharedState.keyPrefix` (env `SHARED_STATE_KEY_PREFIX`). The chart
+defaults it to `<release name>:`, so two releases can share one store without
+seeing each other's counters or cache invalidations. A redis database number
+in the URL does not isolate them: pub/sub ignores it. Changing the prefix on a
+running release drops the state held under the old prefix once. That state is
+short-lived (rate-limit windows, PAT mint windows, authorization codes, lint
+tables), so the effect is a reset of those counters and a brief reset of the
+cross-replica cache invalidation, not data loss.
+
+Outside the chart set `SHARED_STATE_URL` (and `MCP_REPLICA_COUNT`) directly,
+and `SHARED_STATE_KEY_PREFIX` to something unique per release (default
+`af-mcp:`).
 
 Per-replica state in the broker, what happens at more than one replica
 without a store, and what each item does when the store is down. "Phase"
@@ -714,7 +726,7 @@ Key endpoints:
 |---|---|---|
 | `GET` | `/v1/identities` | Caller identity, linked accounts, linkable providers |
 | `GET` | `/v1/permissions` | Caller's granted permissions |
-| `POST` | `/v1/authorize` | Check one entitlement (used by the aggregator per call) |
+| `POST` | `/v1/authorize` | Check one entitlement (the aggregator calls the same in-process function rather than this route) |
 | `GET` | `/v1/catalog` | Services visible to the caller, each with a per-caller `status`; `link_required` services carry `link_state` (`not_linked` or `rejected`, a linked credential the service refused), `null` for every other status; every entry carries `docs_url`, and `permission_required` entries carry `granting_groups` (see [Adding a Service](adding-a-service.md#docs_url-linking-to-where-the-service-is-described)) |
 | `POST` | `/v1/credential` | Issue or return a cached credential for a target |
 | `POST` | `/v1/x509/proxy` | Mint and cache a VOMS proxy (passphrase unlock) |
@@ -751,6 +763,7 @@ status it can change:
 | `unavailable` | the backend (down, not answering within the listing deadline `MCP_LIST_TIMEOUT_SECONDS`, an unexplained 401, or a reply the broker cannot parse) | the service, seen by every caller | `unavailable` |
 | `unauthorized` | one caller's credential, which the backend rejected, or a stored `oauth21` credential already marked rejected (no request is sent for it) | that caller and service only | `link_required` ("re-link"), `link_state: "rejected"`; not used for an `oauth21` credential, see below |
 | `not_linked` | one caller, who has no credential for the service; logged at INFO. A credentialed service's (`bearer`, `x509`, `krb5`, `servicex`) tools are listed only for a caller who has linked the credential, so for an unlinked caller the listing is skipped without minting a credential or contacting the backend | that caller and service only | `link_required` ("link") |
+| `not_entitled` | one caller, who holds none of the permissions the service can require; logged at INFO. Every credentialed service (`bearer`, `x509`, `krb5`, `servicex`) skips the listing without minting a credential or contacting the backend, since the caller's tools are hidden anyway (a bare request to a backend that needs a credential would only be logged as a 401). It is not a prompt to link an identity. Not recorded, so the catalog shows `permission_required`, and a direct call is refused by the per-tool permission check | no one | `permission_required` |
 
 `link_required` carries a `link_state` saying why: `not_linked` when
 `provider.is_linked()` is false, `rejected` when the caller linked and the
@@ -767,7 +780,7 @@ credential stops reading as rejected immediately.
 A backend that answers a JSON-RPC request with HTTP 200 and something that is
 not a JSON document (an undecoded gzip body, an HTML page from a proxy) fails
 the request as soon as the response arrives (`BackendInvalidResponseError`, raised
-from an httpx response hook in `mcp/aggregator.py`). It logs
+from an httpx2 response hook in `mcp/aggregator.py`). It logs
 `aggregator.backend_invalid_response` with the service, status code, content
 type and what was wrong, never the body; a listing records `unavailable`, and a
 `tools/call` returns an error naming the service and saying it returned an

@@ -78,6 +78,7 @@ extend-select = [
   "SLOT", # flake8-slots
   "T10",  # flake8-debugger
   "T20",  # flake8-print
+  "TID",  # flake8-tidy-imports
   "TC",   # flake8-type-checking
   "TRY",  # tryceratops
   "UP",   # pyupgrade
@@ -122,6 +123,11 @@ ignore = [
 # spikes/ are exploratory validation scripts, not production code — allow
 # prints, broad excepts, and other conveniences useful in scratch work.
 "spikes/**" = ["ARG", "BLE", "EM", "PLR", "PTH", "T20", "TRY"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+# One HTTP client stack: fastmcp and the mcp SDK are httpx2-only, so the broker
+# shares httpx2's connection pooling, timeouts and exception hierarchy.
+"httpx".msg = "use httpx2"
 
 [tool.ruff.lint.isort]
 known-first-party = ["af_mcp_broker"]

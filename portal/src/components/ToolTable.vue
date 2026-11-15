@@ -5,6 +5,7 @@ import { permissionLabel } from '../lib/permissionLabel';
 import { parseToolDescription } from '../lib/toolDescription';
 import { Eye, Pencil } from '@lucide/vue';
 import PopoverTooltip from './PopoverTooltip.vue';
+import MarkdownText from './ui/MarkdownText.vue';
 
 const props = defineProps<{
   tools: CatalogTool[];
@@ -60,7 +61,7 @@ function permissionNote(permission: string): string {
 <template>
   <!--
     One row per tool. The description column wraps normally at any width (a
-    docstring's own newlines are preserved, and a single long unbreakable
+    description is rendered as Markdown, and a single long unbreakable
     example string such as a full dataset name cannot force the page into
     horizontal scroll); the box scrolls sideways only for a very narrow
     viewport.
@@ -104,7 +105,7 @@ function permissionNote(permission: string): string {
             </PopoverTooltip>
           </td>
           <td>
-            <p class="tool-table__summary">{{ teaser }}</p>
+            <MarkdownText class="tool-table__summary" :source="teaser" />
 
             <button
               v-if="hasMore"
@@ -119,18 +120,18 @@ function permissionNote(permission: string): string {
             </button>
 
             <template v-if="hasMore && expanded.has(tool.name)">
-              <p v-if="restSummary" class="tool-table__summary">{{ restSummary }}</p>
+              <MarkdownText v-if="restSummary" class="tool-table__summary" :source="restSummary" />
 
               <dl v-if="parsed.args.length > 0" class="tool-table__args">
                 <div v-for="arg in parsed.args" :key="arg.name" class="tool-table__arg-row">
                   <dt class="tool-table__arg-name">{{ arg.name }}</dt>
-                  <dd class="tool-table__arg-desc">{{ arg.desc }}</dd>
+                  <dd class="tool-table__arg-desc"><MarkdownText inline :source="arg.desc" /></dd>
                 </div>
               </dl>
 
               <p v-if="parsed.returns" class="tool-table__returns">
                 <span class="tool-table__returns-label">Returns:</span>
-                {{ parsed.returns }}
+                <MarkdownText inline :source="parsed.returns" />
               </p>
             </template>
           </td>
@@ -162,10 +163,6 @@ function permissionNote(permission: string): string {
 .tool-table__summary {
   margin: 0;
   color: var(--color-af-text-secondary);
-  /* Preserves the docstring's own paragraph breaks and indented example
-     blocks as authored, rather than collapsing them into one run-on line. */
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
   min-width: 16rem;
 }
 
@@ -206,6 +203,7 @@ function permissionNote(permission: string): string {
 }
 
 .tool-table__returns-label {
+  margin-right: var(--space-4);
   font-weight: 500;
   color: var(--color-af-text);
 }

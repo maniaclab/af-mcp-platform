@@ -93,8 +93,8 @@ def test_lifespan_wires_on_link_to_the_targeted_service_and_subject_only(
     per-caller record for the targeted service, and nothing else."""
     with app_client_factory() as (client, _state):
         registry = client.app.state.service_registry
-        rucio = _find_service_provider(app_module._mcp_aggregator, "rucio")
-        ami = _find_service_provider(app_module._mcp_aggregator, "ami")
+        rucio = _find_service_provider(app_module.app.state, "rucio")
+        ami = _find_service_provider(app_module.app.state, "ami")
         for provider in (rucio, ami):
             _seed_negative_entry(provider, "alice")
             _seed_negative_entry(provider, "bob")
@@ -116,7 +116,7 @@ async def test_lifespan_revoke_also_drops_the_per_caller_record(
 ) -> None:
     with app_client_factory() as (client, _state):
         registry = client.app.state.service_registry
-        rucio = _find_service_provider(app_module._mcp_aggregator, "rucio")
+        rucio = _find_service_provider(app_module.app.state, "rucio")
         _seed_negative_entry(rucio, "alice")
         registry.record_list_failure("rucio", "unauthorized", "alice")
 

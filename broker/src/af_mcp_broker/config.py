@@ -353,7 +353,7 @@ class Settings(BaseSettings):
     # tiktoken encoding name used to ESTIMATE how many tokens a tool
     # result's serialized text would occupy if injected into an LLM
     # client's context (AuditRecord.result_tokens_est -- see
-    # audit/measure.py). It is an estimate of context-injection cost, not a
+    # audit/measure.py). It is an estimate of context-injection size, not a
     # provider-reported count: different LLMs tokenize differently, and
     # o200k_base is simply a reasonable modern reference tokenizer. Empty
     # string disables token estimation entirely (the field stays None;
@@ -436,12 +436,6 @@ class Settings(BaseSettings):
     # cache. Not applied to in_memory, where a read is a field access.
     maintenance_mode_cache_ttl_seconds: float = Field(default=5.0, ge=0)
 
-    # Model key (a tokencost.TOKEN_COSTS entry) whose *input* token price
-    # turns GET /v1/usage's result_tokens_est sums into estimated_cost_usd at
-    # read time. Dollars are never stored -- only tokens -- so repricing is a
-    # config change, not a migration. Overridable per-request via ?model=.
-    cost_reference_model: str = "claude-sonnet-4-20250514"
-
     # OTLP/HTTP collector base URL (e.g. http://collector:4318): TRANSPORT
     # only, shared by every OTel signal (traces, metrics, usage events). It
     # turns nothing on by itself; each signal has its own switch, and an
@@ -520,6 +514,16 @@ class Settings(BaseSettings):
     # refuses to start more than one replica without a store unless the escape
     # hatch is set. The URL may embed a password; supply it from a Secret.
     shared_state_url: str | None = None
+
+    # Prefix on every redis key and pub/sub channel the shared state store
+    # uses. Two releases on one redis server MUST differ here: pub/sub is not
+    # scoped by the redis database number, so a shared prefix makes each
+    # release receive the other's cache invalidations, and counters live in
+    # one namespace unless the database numbers also differ. The chart sets
+    # it to "<release name>:". Changing it orphans the keys written under the
+    # old prefix (rate-limit windows, PAT mint windows, auth codes, lint
+    # tables), which are short-lived. Ignored without shared_state_url.
+    shared_state_key_prefix: str = "af-mcp:"
 
     # Escape hatch for running mcp_replica_count > 1 with no shared_state_url.
     # Per-replica state then multiplies the unlock brute-force budget by the

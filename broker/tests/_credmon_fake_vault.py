@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
-import httpx
+import httpx2
 
 from af_mcp_broker.vault_kv import VaultKV
 
@@ -27,10 +27,10 @@ class FakeVault:
         # Full KV path (below the mount) -> {"data": ..., "version": ...}.
         self.entries: dict[str, dict[str, Any]] = {}
 
-    def handle(self, request: httpx.Request) -> httpx.Response:
+    def handle(self, request: httpx2.Request) -> httpx2.Response:
         path = request.url.path.removeprefix("/v1/")
         if path == f"auth/{AUTH_MOUNT}/login":
-            return httpx.Response(
+            return httpx2.Response(
                 200,
                 json={"auth": {"client_token": "t", "lease_duration": 3600}},
                 request=request,
@@ -39,9 +39,9 @@ class FakeVault:
             prefix = f"{KV_MOUNT}/{verb}/"
             if path.startswith(prefix):
                 return self._kv(request, verb, path[len(prefix) :])
-        return httpx.Response(404, json={"errors": ["unknown path"]}, request=request)
+        return httpx2.Response(404, json={"errors": ["unknown path"]}, request=request)
 
-    def _kv(self, request: httpx.Request, verb: str, key: str) -> httpx.Response:
+    def _kv(self, request: httpx2.Request, verb: str, key: str) -> httpx2.Response:
         if request.method == "LIST" and verb == "metadata":
             base = key.rstrip("/") + "/"
             children = sorted(
@@ -53,15 +53,15 @@ class FakeVault:
                 }
             )
             if not children:
-                return httpx.Response(404, json={"errors": []}, request=request)
-            return httpx.Response(
+                return httpx2.Response(404, json={"errors": []}, request=request)
+            return httpx2.Response(
                 200, json={"data": {"keys": children}}, request=request
             )
         if request.method == "GET" and verb == "data":
             entry = self.entries.get(key)
             if entry is None:
-                return httpx.Response(404, json={"errors": []}, request=request)
-            return httpx.Response(
+                return httpx2.Response(404, json={"errors": []}, request=request)
+            return httpx2.Response(
                 200,
                 json={
                     "data": {
@@ -75,19 +75,19 @@ class FakeVault:
             body = json.loads(request.content.decode())
             current = self.entries.get(key, {}).get("version", 0)
             if body["options"]["cas"] != current:
-                return httpx.Response(
+                return httpx2.Response(
                     400,
                     json={"errors": ["check-and-set parameter did not match"]},
                     request=request,
                 )
             self.entries[key] = {"data": body["data"], "version": current + 1}
-            return httpx.Response(
+            return httpx2.Response(
                 200, json={"data": {"version": current + 1}}, request=request
             )
         if request.method == "DELETE" and verb == "metadata":
             self.entries.pop(key, None)
-            return httpx.Response(204, request=request)
-        return httpx.Response(404, json={"errors": ["unhandled"]}, request=request)
+            return httpx2.Response(204, request=request)
+        return httpx2.Response(404, json={"errors": ["unhandled"]}, request=request)
 
 
 def make_vault_kv(fake: FakeVault, tmp_path: Path) -> VaultKV:
@@ -99,5 +99,5 @@ def make_vault_kv(fake: FakeVault, tmp_path: Path) -> VaultKV:
         auth_role="af-mcp-broker",
         kv_mount=KV_MOUNT,
         sa_token_path=str(sa_token),
-        http_client=httpx.AsyncClient(transport=httpx.MockTransport(fake.handle)),
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(fake.handle)),
     )

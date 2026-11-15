@@ -35,7 +35,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-import httpx
+import httpx2
 import structlog
 
 from af_mcp_broker.credentials.errors import (
@@ -103,7 +103,7 @@ class VomsTokenServiceClient:
         audience: str = "voms-token-service",
         voms: str = "atlas",
         valid: str = "192:00",
-        http_client: httpx.AsyncClient | None = None,
+        http_client: httpx2.AsyncClient | None = None,
     ) -> None:
         self._issuer = issuer
         # AnyHttpUrl normalizes a bare origin to a trailing-slash form;
@@ -119,7 +119,7 @@ class VomsTokenServiceClient:
             component="VomsTokenServiceClient"
         )
 
-    def _http(self) -> httpx.AsyncClient:
+    def _http(self) -> httpx2.AsyncClient:
         return self._http_client if self._http_client is not None else get_http_client()
 
     async def mint(
@@ -170,7 +170,7 @@ class VomsTokenServiceClient:
                 },
                 timeout=90.0,
             )
-        except httpx.HTTPError as exc:
+        except httpx2.HTTPError as exc:
             self._log.warning(
                 "voms_service.mint.unreachable", subject=subject, error=str(exc)
             )
@@ -178,9 +178,9 @@ class VomsTokenServiceClient:
                 "voms-token-service could not be reached."
             ) from exc
 
-        if resp.status_code == httpx.codes.BAD_REQUEST:
+        if resp.status_code == httpx2.codes.BAD_REQUEST:
             raise VomsServiceBadPassphraseError
-        if resp.status_code == httpx.codes.UNPROCESSABLE_ENTITY:
+        if resp.status_code == httpx2.codes.UNPROCESSABLE_CONTENT:
             # Unlike every other non-200 branch here, this body's `detail`
             # is safe to read and relay -- see VomsServiceRejectedError's
             # docstring. A malformed or unexpected body still degrades to a
@@ -192,7 +192,7 @@ class VomsTokenServiceClient:
             raise VomsServiceRejectedError(
                 detail if isinstance(detail, str) else _REJECTED_FALLBACK_DETAIL
             )
-        if resp.status_code != httpx.codes.OK:
+        if resp.status_code != httpx2.codes.OK:
             # Status code only — the response body may carry service
             # internals and must reach neither the log nor the caller.
             self._log.warning(
@@ -247,7 +247,7 @@ class VomsTokenServiceClient:
                 },
                 timeout=15.0,
             )
-        except httpx.HTTPError as exc:
+        except httpx2.HTTPError as exc:
             self._log.warning(
                 "voms_service.preflight.unreachable", subject=subject, error=str(exc)
             )
@@ -255,7 +255,7 @@ class VomsTokenServiceClient:
                 "voms-token-service could not be reached."
             ) from exc
 
-        if resp.status_code != httpx.codes.OK:
+        if resp.status_code != httpx2.codes.OK:
             # Status code only — the response body may carry service
             # internals (home-directory paths) and must reach neither the
             # log nor the caller.

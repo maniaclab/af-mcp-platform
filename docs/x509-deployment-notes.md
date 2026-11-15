@@ -136,7 +136,11 @@ versions). This prefix is deliberately distinct from
 `VAULT_KV_PATH_PREFIX`/`TOKEN_REGISTRY_KV_PATH_PREFIX`/
 `PRINCIPAL_CACHE_KV_PATH_PREFIX` so the four stores never collide, and it
 holds the platform's most sensitive material — scope the policy to exactly
-this prefix, nothing broader.
+this prefix, nothing broader. The chart renders it from
+`broker.vault.x509KvPathPrefix` (default `mcp/x509`); the krb5, ServiceX and
+credmon-state prefixes are `broker.vault.krb5KvPathPrefix`,
+`servicexKvPathPrefix` and `credmonKvPathPrefix`. Two releases sharing one
+KV mount must set distinct values for every Vault prefix.
 
 ### The link / re-link UX
 

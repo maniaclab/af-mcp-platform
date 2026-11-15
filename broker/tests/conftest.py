@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import itertools
 import json
+import logging
 import shutil
 import socket
 import socketserver
@@ -43,7 +44,9 @@ from af_mcp_broker.app import app as broker_app
 from af_mcp_broker.audit import measure
 from af_mcp_broker.authorization import load_policy
 from af_mcp_broker.config import Settings, get_settings
+from af_mcp_broker.credmon.state import CredmonSyncState
 from af_mcp_broker.identity import Principal, keycloak_dependency
+from af_mcp_broker.logging import AUDIT_LOGGER_NAME, configure_logging
 from af_mcp_broker.mcp import aggregator as aggregator_module
 from af_mcp_broker.mcp import cache_invalidation, lint_observations
 from af_mcp_broker.mcp.aggregator import build_asgi_auth_middleware
@@ -116,6 +119,42 @@ class _StubTiktokenEncoding:
 
     def encode(self, text: str, **kwargs: Any) -> list[int]:
         return [0] * max(1, len(text) // 4)
+
+
+class AuditBuffer:
+    """Reads back the audit lines ``configure_logging`` wrote to a file."""
+
+    def __init__(self, path: Path) -> None:
+        self._path = path
+
+    def getvalue(self) -> str:
+        return self._path.read_text() if self._path.exists() else ""
+
+    def lines(self) -> list[dict[str, Any]]:
+        return [json.loads(line) for line in self.getvalue().splitlines()]
+
+
+@pytest.fixture
+def audit_buffer(tmp_path: Path) -> Iterator[AuditBuffer]:
+    """Route audit lines to a file through the real ``configure_logging``.
+
+    Everything ``configure_logging`` changes (handlers, levels, structlog's
+    configuration) is restored afterwards so no later test logs to this
+    test's handlers.
+    """
+    loggers = [logging.getLogger(name) for name in ("", "fastmcp", AUDIT_LOGGER_NAME)]
+    saved = [(lg, lg.handlers[:], lg.level, lg.propagate) for lg in loggers]
+    structlog_config = structlog.get_config()
+    path = tmp_path / "audit.log"
+    configure_logging("INFO", audit_log_file=str(path))
+    yield AuditBuffer(path)
+    for handler in logging.getLogger(AUDIT_LOGGER_NAME).handlers:
+        handler.close()
+    for lg, handlers, level, propagate in saved:
+        lg.handlers = handlers
+        lg.setLevel(level)
+        lg.propagate = propagate
+    structlog.configure(**structlog_config)
 
 
 @pytest.fixture(autouse=True)
@@ -771,3 +810,31 @@ def app_client_factory(
 def app_client(app_client_factory) -> Iterator[tuple[TestClient, dict]]:
     with app_client_factory() as pair:
         yield pair
+
+
+class InMemoryCredmonSyncState(CredmonSyncState):
+    """Single-process state for tests (no Vault): one replica, so the lease always goes to whoever asks while unexpired-or-own."""
+
+    def __init__(self) -> None:
+        self._holder: str | None = None
+        self._expires_at = 0.0
+        self._status: dict[str, Any] | None = None
+
+    async def try_acquire_lease(
+        self, holder: str, *, ttl_seconds: float, now: float
+    ) -> bool:
+        if self._holder not in (None, holder) and self._expires_at > now:
+            return False
+        self._holder = holder
+        self._expires_at = now + ttl_seconds
+        return True
+
+    async def release_lease(self, holder: str, *, now: float) -> None:
+        if self._holder == holder:
+            self._expires_at = now
+
+    async def write_status(self, status: dict[str, Any]) -> None:
+        self._status = dict(status)
+
+    async def read_status(self) -> dict[str, Any] | None:
+        return dict(self._status) if self._status is not None else None

@@ -10,6 +10,7 @@ import type { StatusSeverity } from '../lib/serviceStatus';
 import { resolveToolListing, toolCountLabel } from '../lib/serverTools';
 import { useFetchOnExpand } from '../lib/useFetchOnExpand';
 import Disclosure from './ui/Disclosure.vue';
+import MarkdownText from './ui/MarkdownText.vue';
 import StatusMark from './ui/StatusMark.vue';
 import PopoverTooltip from './PopoverTooltip.vue';
 import ToolTable from './ToolTable.vue';
@@ -120,7 +121,7 @@ const toolsView = computed(() =>
       </div>
     </div>
 
-    <p v-if="server.description" class="bc__description">{{ server.description }}</p>
+    <MarkdownText v-if="server.description" class="bc__description" :source="server.description" />
 
     <!-- Status detail: what to do when the status word alone does not say. -->
     <p v-if="showStatusDetail" class="bc__status-detail" role="status">

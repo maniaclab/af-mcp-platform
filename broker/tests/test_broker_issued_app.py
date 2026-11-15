@@ -314,21 +314,9 @@ def test_identities_lists_broker_issued_provider_as_linked(
 # ---------------------------------------------------------------------------
 
 
-def _find_service_provider(mcp: FastMCP, service_name: str) -> Any:
-    """Fish one backend's _ObservableProxyProvider out of the aggregator.
-
-    Namespaced providers sit behind fastmcp's ``_WrappedProvider`` (its
-    ``_inner`` attribute holds ours) -- private internals, same caveat as
-    ``_ObservableProxyProvider``'s docstring: re-check on a fastmcp bump.
-    """
-    for provider in mcp.providers:
-        inner = getattr(provider, "_inner", provider)
-        if (
-            isinstance(inner, aggregator_module._ObservableProxyProvider)
-            and inner._service_name == service_name
-        ):
-            return inner
-    raise AssertionError(f"no provider registered for backend {service_name!r}")
+def _find_service_provider(state: Any, service_name: str) -> Any:
+    """Return one backend's ``_ObservableProxyProvider`` from the app's recorded providers."""
+    return state.backend_providers.get(service_name)
 
 
 def test_lifespan_threads_issuer_into_x509_client_factory(
@@ -351,7 +339,7 @@ def test_lifespan_threads_issuer_into_x509_client_factory(
         # their x509 identity.
         seed_x509_link(client.app.state.x509_provider.vault_store)
         # SHIPPED_SERVICES' "ami" is its auth_type: x509 entry.
-        ami_provider = _find_service_provider(app_module._mcp_aggregator, "ami")
+        ami_provider = _find_service_provider(app_module.app.state, "ami")
         # A list-time invocation (no authorized_call_target) by an entitled
         # principal: the factory attaches the identity header best-effort --
         # exactly the connection that goes out bare and 401s in production

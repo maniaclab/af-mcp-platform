@@ -68,9 +68,10 @@ _STATUS_DETAILS: dict[str, str] = {
     # Distinct from "unavailable" (issue #280): a connection-level refusal
     # means the service couldn't even be reached, but this means a request
     # WAS sent and never got a correlated response back in time -- usually a
-    # slow/unresponsive backend, though a known mcp SDK gap (fixed upstream
-    # in mcp>=2.0, not yet in the pinned 1.x line) can also produce this
-    # exact symptom for a malformed response, hence "may be slow, or may
+    # slow/unresponsive backend, though an mcp SDK gap in 1.x (a malformed
+    # response never reached the caller) could also produce this exact
+    # symptom. The pinned mcp 2.x delivers a JSON-RPC error for a malformed
+    # response instead, but the wording still says "may be slow, or may
     # have sent something unexpected" rather than claiming certainty.
     "timeout": (
         "This service did not respond in time. It may be slow or "

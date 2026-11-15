@@ -93,19 +93,74 @@ async def test_keys_are_independent(clock: _Clock) -> None:
 
 
 def test_build_shared_state_defaults_to_in_memory() -> None:
-    assert isinstance(build_shared_state(None), InMemorySharedState)
-    assert isinstance(build_shared_state(""), InMemorySharedState)
+    assert isinstance(build_shared_state(None, key_prefix="p:"), InMemorySharedState)
+    assert isinstance(build_shared_state("", key_prefix="p:"), InMemorySharedState)
 
 
 @pytest.mark.parametrize("url", ["redis://cache:6379/0", "rediss://cache:6380/0"])
 def test_build_shared_state_selects_redis_for_redis_urls(url: str) -> None:
-    assert isinstance(build_shared_state(url), RedisSharedState)
+    assert isinstance(build_shared_state(url, key_prefix="p:"), RedisSharedState)
 
 
 @pytest.mark.parametrize("url", ["http://cache:6379", "cache:6379", "valkey://x"])
 def test_build_shared_state_rejects_other_schemes(url: str) -> None:
     with pytest.raises(ValueError, match="redis://"):
-        build_shared_state(url)
+        build_shared_state(url, key_prefix="p:")
+
+
+class _RecordingPubSub:
+    """Records the channels subscribed to; yields no messages."""
+
+    def __init__(self, calls: list[tuple[str, str]]) -> None:
+        self._calls = calls
+
+    async def subscribe(self, channel: str) -> None:
+        self._calls.append(("subscribe", channel))
+
+    async def aclose(self) -> None:
+        pass
+
+
+class _RecordingClient:
+    """Stands in for the redis client; records the key or channel of each call."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    async def get(self, key: str) -> None:
+        self.calls.append(("get", key))
+
+    async def set(self, key: str, value: str, px: int) -> None:
+        self.calls.append(("set", key))
+
+    async def delete(self, key: str) -> None:
+        self.calls.append(("delete", key))
+
+    async def publish(self, channel: str, message: str) -> None:
+        self.calls.append(("publish", channel))
+
+    def pubsub(self) -> _RecordingPubSub:
+        return _RecordingPubSub(self.calls)
+
+
+async def test_build_shared_state_applies_the_key_prefix_to_keys_and_channels() -> None:
+    backend = build_shared_state("redis://cache:6379/0", key_prefix="rel-a:")
+    assert isinstance(backend, RedisSharedState)
+    client = _RecordingClient()
+    backend._client = client  # type: ignore[assignment]
+    await backend.get("k")
+    await backend.set("k", "v", 1)
+    await backend.delete("k")
+    await backend.publish("c", "m")
+    async with backend.subscribe("c"):
+        pass
+    assert client.calls == [
+        ("get", "rel-a:k"),
+        ("set", "rel-a:k"),
+        ("delete", "rel-a:k"),
+        ("publish", "rel-a:c"),
+        ("subscribe", "rel-a:c"),
+    ]
 
 
 class _DownState(SharedState):

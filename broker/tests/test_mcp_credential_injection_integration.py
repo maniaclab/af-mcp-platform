@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-import httpx
+import httpx2
 import pytest
 from conftest import (
     make_claims,
@@ -376,16 +376,16 @@ async def verifying_backend(
         )
 
     app = mcp.http_app(path="/mcp")
-    # OAuth21Provider refreshes through the process-wide plain-httpx client,
+    # OAuth21Provider refreshes through the process-wide plain-httpx2 client,
     # not the aggregator's backend client factory, so the backend's token
     # endpoint needs its own in-process route. Only this backend's host is
     # routed in-process; any other (an unreachable authorization server) still
     # fails to connect for real.
     async with (
         run_inprocess_asgi_app(app) as base_url,
-        httpx.AsyncClient(
+        httpx2.AsyncClient(
             mounts={
-                base_url.replace("http://", "all://", 1): httpx.ASGITransport(app=app)
+                base_url.replace("http://", "all://", 1): httpx2.ASGITransport(app=app)
             }
         ) as token_client,
     ):

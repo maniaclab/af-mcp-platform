@@ -112,14 +112,12 @@ const SUBJECTS: UsageSubjectsResponse = {
 const USAGE: UsageResponse = {
   subject: 'sub-1',
   window_days: 30,
-  cost_model: 'claude-sonnet-4-20250514',
   totals: {
     calls: 7,
     errors: 0,
     duration_ms: 12.3,
     result_bytes: 4096,
     result_tokens_est: 900,
-    estimated_cost_usd: 0.003,
   },
   by_service: [],
   by_day: [],
@@ -201,7 +199,6 @@ describe('AdminPage', () => {
 
     expect(fetchUsage).toHaveBeenCalledWith(30, 'sub-1');
     expect(wrapper.text()).toContain('900');
-    expect(wrapper.text()).toContain('$0.003');
   });
 
   it('renders the empty-state placeholder and no dropdown when no subject has recorded usage', async () => {
@@ -257,20 +254,20 @@ describe('AdminPage', () => {
     resolveSecond({
       ...USAGE,
       subject: 'sub-2',
-      totals: { ...USAGE.totals, estimated_cost_usd: 0.099 },
+      totals: { ...USAGE.totals, result_tokens_est: 9999 },
     });
     await flushPromises();
     resolveFirst({
       ...USAGE,
       subject: 'sub-1',
-      totals: { ...USAGE.totals, estimated_cost_usd: 0.001 },
+      totals: { ...USAGE.totals, result_tokens_est: 1111 },
     });
     await flushPromises();
 
     expect(fetchUsage).toHaveBeenCalledWith(30, 'sub-1');
     expect(fetchUsage).toHaveBeenCalledWith(30, 'sub-2');
-    expect(wrapper.text()).toContain('$0.099');
-    expect(wrapper.text()).not.toContain('$0.001');
+    expect(wrapper.text()).toContain('9,999');
+    expect(wrapper.text()).not.toContain('1,111');
   });
 });
 

@@ -9,7 +9,7 @@ deliberately, not gaps to fill in later:
   ``InMemoryTokenStore``/``InMemoryTokenRegistryBackend`` share no code with
   this module and shouldn't; a shared ABC across such different storage
   models would only blur what each implementation actually guarantees.
-* no ``hvac`` dependency -- talks to Vault's HTTP API directly via httpx, the
+* no ``hvac`` dependency -- talks to Vault's HTTP API directly via httpx2, the
   same way the rest of the broker talks to Keycloak.
 * no inheritance -- consumers hold a ``VaultKV`` instance (composition), they
   never subclass it.
@@ -28,7 +28,7 @@ from af_mcp_broker.errors import BrokerError
 from af_mcp_broker.http import get_http_client
 
 if TYPE_CHECKING:
-    import httpx
+    import httpx2
 
 # Vault K8s auth tokens are re-minted this many seconds before their lease
 # actually expires, so a call that starts just under the wire never presents
@@ -65,7 +65,7 @@ class VaultKV:
         auth_role: str,
         kv_mount: str,
         sa_token_path: str,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: httpx2.AsyncClient | None = None,
     ) -> None:
         self._addr = addr.rstrip("/")
         self._auth_mount = auth_mount
@@ -80,7 +80,7 @@ class VaultKV:
 
         self._log = structlog.get_logger(__name__).bind(component="VaultKV")
 
-    def _http(self) -> httpx.AsyncClient:
+    def _http(self) -> httpx2.AsyncClient:
         return self._http_client if self._http_client is not None else get_http_client()
 
     async def _authenticate(self) -> str:

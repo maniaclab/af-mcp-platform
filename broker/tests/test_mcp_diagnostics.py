@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import io
 import json
 import time
 from datetime import UTC, datetime
@@ -10,10 +9,8 @@ import pytest
 from conftest import make_claims, run_aggregator_async
 from fastmcp.exceptions import ToolError
 from pydantic import SecretStr
-from tokencost import calculate_cost_by_tokens  # type: ignore[import-untyped]
 
 from af_mcp_broker.audit import AuditRecord
-from af_mcp_broker.audit.logger import init_audit_logger
 from af_mcp_broker.authorization import EntitlementPolicy
 from af_mcp_broker.config import KeycloakBrokeredProviderConfig, KrbTokenProviderConfig
 from af_mcp_broker.credentials import (
@@ -624,7 +621,11 @@ async def test_diagnostic_tools_visible_to_principal_with_no_permissions(
 
 
 async def test_af_whoami_call_is_audited_and_metered_as_the_gateway_service(
-    settings: Any, sig_key: Any, prime_jwks: Any, static_principal_cache: Any
+    settings: Any,
+    sig_key: Any,
+    prime_jwks: Any,
+    static_principal_cache: Any,
+    audit_buffer,
 ) -> None:
     """Issue #240: with the DIAGNOSTIC_TOOL_NAMES bypass gone, a successful
     af_* call produces an audit line like any other call -- service af-mcp,
@@ -635,9 +636,6 @@ async def test_af_whoami_call_is_audited_and_metered_as_the_gateway_service(
     directory.groups_by_subject["user-123"] = []
     prime_jwks([sig_key.jwk])
     token = sig_key.sign(make_claims())
-
-    buffer = io.StringIO()
-    init_audit_logger(buffer)
 
     mcp = build_aggregator(
         ServiceRegistry(),
@@ -653,7 +651,7 @@ async def test_af_whoami_call_is_audited_and_metered_as_the_gateway_service(
     ):
         await client.call_tool(WHOAMI_TOOL_NAME, {})
 
-    line = json.loads(buffer.getvalue().strip())
+    line = json.loads(audit_buffer.getvalue().strip())
     assert line["event"] == "audit"
     assert line["outcome"] == "success"
     assert line["mcp_service"] == "gateway_service"
@@ -816,17 +814,19 @@ async def test_af_usage_returns_only_the_callers_usage(
     body = result.structured_content
     assert body["subject"] == "user-123"
     assert body["window_days"] == 30
-    assert body["cost_model"] == settings.cost_reference_model
-    expected_cost = float(
-        calculate_cost_by_tokens(
-            1000, settings.cost_reference_model, token_type="input"
-        )
-    )
     assert body["totals"]["calls"] == 2
     assert body["totals"]["errors"] == 1
+    # Token counts only: no price, dollar, or model field on the totals.
+    assert set(body["totals"]) == {
+        "calls",
+        "errors",
+        "duration_ms",
+        "result_bytes",
+        "result_tokens_est",
+    }
+    assert "cost_model" not in body
     # someone-else's 7 tokens must never leak into user-123's summary.
     assert body["totals"]["result_tokens_est"] == 1000
-    assert body["totals"]["estimated_cost_usd"] == pytest.approx(expected_cost)
     assert [s["service"] for s in body["by_service"]] == ["rucio"]
     assert body["by_service"][0]["calls"] == 2
     assert body["by_service"][0]["errors"] == 1
@@ -834,15 +834,15 @@ async def test_af_usage_returns_only_the_callers_usage(
     assert body["by_day"][0]["calls"] == 2
 
 
-async def test_af_usage_days_and_model_parameters(
+async def test_af_usage_days_parameter(
     settings: Any,
     sig_key: Any,
     prime_jwks: Any,
     static_principal_cache: Any,
     usage_store: UsageStore,
 ) -> None:
-    """days narrows the trailing window; model reprices it -- the same
-    semantics as GET /v1/usage's query parameters."""
+    """days narrows the trailing window -- the same semantics as GET
+    /v1/usage's query parameter."""
     principal_cache, directory = static_principal_cache
     directory.groups_by_subject["user-123"] = []
     prime_jwks([sig_key.jwk])
@@ -858,50 +858,16 @@ async def test_af_usage_days_and_model_parameters(
     assert narrow.structured_content["totals"]["calls"] == 1
     assert narrow.structured_content["totals"]["result_tokens_est"] == 1000
 
-    # Any second Claude key from the bundled table works; pinned so a
-    # tokencost upgrade that drops it fails loudly (same reasoning as
-    # test_usage_api.py's PINNED_MODEL).
-    other = "claude-3-5-sonnet-20241022"
-    repriced = await _call_af_usage(
-        settings, principal_cache, token, {"days": 30, "model": other}
-    )
-    body = repriced.structured_content
-    assert body["cost_model"] == other
+    wide = await _call_af_usage(settings, principal_cache, token, {"days": 30})
+    body = wide.structured_content
     # af_usage now meters itself (issue #240): the narrow call above shows up
     # here as one af-mcp call -- an accepted, deliberately visible side
-    # effect of routing af_* through the normal audit/metering path. The
-    # seeded rucio rows still price exactly as before.
+    # effect of routing af_* through the normal audit/metering path.
     per_service = {s["service"]: s for s in body["by_service"]}
     assert per_service["rucio"]["calls"] == 2
     assert per_service["gateway_service"]["calls"] == 1
     assert body["totals"]["calls"] == 3
-    assert per_service["rucio"]["estimated_cost_usd"] == pytest.approx(
-        float(calculate_cost_by_tokens(1500, other, token_type="input"))
-    )
-
-
-async def test_af_usage_unknown_model_raises_tool_error(
-    settings: Any,
-    sig_key: Any,
-    prime_jwks: Any,
-    static_principal_cache: Any,
-    usage_store: UsageStore,
-) -> None:
-    """An unknown price-table key is a clean ToolError naming the model --
-    mirroring the endpoint's 422 -- and must not enumerate the table."""
-    principal_cache, directory = static_principal_cache
-    directory.groups_by_subject["user-123"] = []
-    prime_jwks([sig_key.jwk])
-    token = sig_key.sign(make_claims())
-
-    with pytest.raises(ToolError) as excinfo:
-        await _call_af_usage(
-            settings, principal_cache, token, {"model": "not-a-real-model"}
-        )
-
-    assert "not-a-real-model" in str(excinfo.value)
-    # The table has thousands of keys -- the error must not enumerate them.
-    assert settings.cost_reference_model not in str(excinfo.value)
+    assert per_service["rucio"]["result_tokens_est"] == 1500
 
 
 async def test_af_usage_without_installed_store_degrades_to_empty_window(

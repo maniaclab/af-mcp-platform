@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-import uuid
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Annotated, Any
 from urllib.parse import urlparse
@@ -18,7 +17,7 @@ from af_mcp_broker.authorization import is_admin
 from af_mcp_broker.config import Settings, get_settings
 from af_mcp_broker.errors import BrokerError
 from af_mcp_broker.http import get_http_client
-from af_mcp_broker.logging import bind_subject
+from af_mcp_broker.logging import bind_subject, current_correlation_id
 from af_mcp_broker.maintenance import check_not_maintenance_or_fail_open
 from af_mcp_broker.principal_cache import (
     PrincipalRejectedError,
@@ -436,7 +435,7 @@ async def get_principal(
         caller_path=caller_path,
     )
     if wrong_audience:
-        correlation_id = uuid.uuid4().hex
+        correlation_id = current_correlation_id()
         logger.warning(
             "jwt_audience_mismatch",
             subject=_peek_sub(token),

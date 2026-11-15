@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import io
 import json
 import uuid
 from typing import TYPE_CHECKING, Any
@@ -15,7 +14,6 @@ from prometheus_client import REGISTRY
 
 from af_mcp_broker import shared_state
 from af_mcp_broker.audit import pipeline
-from af_mcp_broker.audit.logger import init_audit_logger
 from af_mcp_broker.audit.pipeline import (
     aclose_metering_pipeline,
     init_metering_pipeline,
@@ -956,14 +954,15 @@ async def test_call_next_failure_increments_invocation_counters_not_denied(
 
 
 async def test_success_audit_flows_through_metering_pipeline(
-    registry, policy, make_principal
+    registry,
+    policy,
+    make_principal,
+    audit_buffer,
 ) -> None:
     """With a real pipeline installed the success path hands the record
     over and returns without writing; after the pipeline drains, the line
     carries the same fields the old inline path produced -- including the
     measurement the worker performed."""
-    buffer = io.StringIO()
-    init_audit_logger(buffer)
     await init_metering_pipeline()
     try:
         mw = AuthorizationMiddleware(registry, policy)
@@ -979,11 +978,11 @@ async def test_success_audit_flows_through_metering_pipeline(
         # The tool call returned without waiting on measurement or audit
         # I/O: nothing has been written yet (put_nowait never yields, so
         # the worker cannot have run between enqueue and here).
-        assert buffer.getvalue() == ""
+        assert audit_buffer.getvalue() == ""
     finally:
         await aclose_metering_pipeline()
 
-    line = json.loads(buffer.getvalue().strip())
+    line = json.loads(audit_buffer.getvalue().strip())
     assert line["event"] == "audit"
     assert line["outcome"] == "success"
     assert line["error"] is None
@@ -1001,13 +1000,14 @@ async def test_success_audit_flows_through_metering_pipeline(
 
 
 async def test_denied_audit_written_inline_not_via_pipeline(
-    registry, policy, make_principal
+    registry,
+    policy,
+    make_principal,
+    audit_buffer,
 ) -> None:
     """A denial is security-relevant and has nothing to measure: its audit
     line must be on disk before the AuthorizationError even propagates --
     no drain required."""
-    buffer = io.StringIO()
-    init_audit_logger(buffer)
     await init_metering_pipeline()
     try:
         mw = AuthorizationMiddleware(registry, policy)
@@ -1017,11 +1017,29 @@ async def test_denied_audit_written_inline_not_via_pipeline(
         with pytest.raises(AuthorizationError):
             await mw.on_call_tool(context, _CallNextRecorder())
 
-        line = json.loads(buffer.getvalue().strip())
+        line = json.loads(audit_buffer.getvalue().strip())
         assert line["outcome"] == "denied"
         assert line["target"] == "rucio"
     finally:
         await aclose_metering_pipeline()
+
+
+async def test_audit_request_id_is_the_requests_correlation_id(
+    registry, policy, make_principal, captured_audits
+) -> None:
+    """The record's request_id is the request's bound correlation_id, so
+    the audit, request and usage lines of one tool call share one id."""
+    structlog.contextvars.clear_contextvars()
+    structlog.contextvars.bind_contextvars(correlation_id="corr-42")
+    mw = AuthorizationMiddleware(registry, policy)
+    principal = make_principal(groups=["atlas"])
+    context = _call_tool_context("rucio_list_dids", {}, principal)
+
+    await mw.on_call_tool(context, _CallNextRecorder(result=ToolResult(content=[])))
+    structlog.contextvars.clear_contextvars()
+
+    (record,) = captured_audits
+    assert record.request_id == "corr-42"
 
 
 # ---------------------------------------------------------------------------

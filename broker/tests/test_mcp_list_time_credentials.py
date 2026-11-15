@@ -880,3 +880,71 @@ async def test_rejected_caller_calling_an_unlisted_tool_still_gets_a_friendly_er
             assert "Unknown tool" not in str(excinfo.value)
 
     assert env.backend_requests == []
+
+
+async def test_unentitled_caller_lists_without_contacting_a_mint_and_inject_backend(
+    mint_and_inject_env: _MintAndInjectEnv, sig_key: Any, prime_jwks: Any
+) -> None:
+    """A caller holding none of the service's permissions has no credential the
+    backend could redeem, so the broker must not send it a bare request (a
+    krb5-credentialed backend answers that with a 401 the broker then logs as
+    an error)."""
+    prime_jwks([sig_key.jwk])
+    env = mint_and_inject_env
+    token = sig_key.sign(make_claims(sub="user-erin"))  # no groups, no permissions
+
+    async with _bearer_client(env.server, token) as client:
+        names = {t.name for t in await client.list_tools()}
+
+    assert "redeemer_whoami" not in names
+    assert env.backend_requests == []
+    assert env.minted_subjects == []
+    assert env.provider.issue_calls == []
+
+
+async def test_unentitled_caller_listing_is_an_info_skip_not_a_warning(
+    mint_and_inject_env: _MintAndInjectEnv,
+    sig_key: Any,
+    prime_jwks: Any,
+    fastmcp_log_records: list[logging.LogRecord],
+    list_failure_events: list[tuple[str, dict[str, Any]]],
+) -> None:
+    """The skip is classified ``not_entitled`` and logged at INFO, with no
+    fastmcp warning for any listing kind, and is not recorded as a failure the
+    catalog would surface."""
+    prime_jwks([sig_key.jwk])
+    env = mint_and_inject_env
+    token = sig_key.sign(make_claims(sub="user-erin"))
+
+    async with _bearer_client(env.server, token) as client:
+        await client.list_tools()
+        await client.list_resources()
+        await client.list_resource_templates()
+        await client.list_prompts()
+
+    assert [
+        r.getMessage() for r in fastmcp_log_records if r.levelno >= logging.WARNING
+    ] == []
+    assert {
+        (level, fields["service"], fields["reason"])
+        for level, fields in list_failure_events
+    } == {("info", "redeemer", "not_entitled")}
+    assert env.registry.recent_list_failure("redeemer", "user-erin") is None
+
+
+async def test_unentitled_caller_calling_a_tool_gets_the_permission_denial(
+    mint_and_inject_env: _MintAndInjectEnv, sig_key: Any, prime_jwks: Any
+) -> None:
+    """Calls stay governed by AuthorizationMiddleware: the denial names the
+    permission and never points the caller at identity linking."""
+    prime_jwks([sig_key.jwk])
+    env = mint_and_inject_env
+    token = sig_key.sign(make_claims(sub="user-erin"))
+
+    async with _bearer_client(env.server, token) as client:
+        with pytest.raises(ToolError, match="Authorization denied") as excinfo:
+            await client.call_tool("redeemer_whoami", {})
+
+    assert "not linked" not in str(excinfo.value)
+    assert env.backend_requests == []
+    assert env.minted_subjects == []
