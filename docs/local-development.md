@@ -24,25 +24,28 @@ past that instead of standing up a real Keycloak locally.
 **Terminal 1 — broker on :8080:**
 
 ```bash
-pixi run broker
+pixi run -e dev broker
 ```
 
 Starts uvicorn with `--reload`. API is at <http://localhost:8080/docs>.
 
 > The broker also refuses to boot when `POLICY_FILE` is missing, unreadable
-> or grants no permissions, with or without the bypass below. The pixi
-> `broker` feature sets `POLICY_FILE` to the dev-only policy at
-> `broker/src/af_mcp_broker/authorization/policy.yaml` (ATLAS AF group
-> names), so `pixi run broker` works out of the box. To use your own, export
+> or grants no permissions, with or without the bypass below. The pixi `dev`
+> and `bypass` environments (their `localdev` feature) set `POLICY_FILE` to
+> the dev-only policy at `broker/src/af_mcp_broker/authorization/policy.yaml`
+> (ATLAS AF group names), so `pixi run -e dev broker` works out of the box.
+> The `broker` environment, which the container image is built from, sets
+> neither path: the image's entrypoint would export them over the deployment's
+> own configuration. To use your own, export
 > `POLICY_FILE=/path/to/policy.yaml` first; it needs at least one group that
 > maps to a non-empty permission list.
 >
 > It likewise refuses to boot when `SERVICES_FILE` is missing, unreadable,
-> invalid or defines no services. The `broker` feature sets `SERVICES_FILE` to
+> invalid or defines no services. The `localdev` feature sets `SERVICES_FILE` to
 > the dev registry at `broker/src/af_mcp_broker/mcp/services.yaml`; export
 > `SERVICES_FILE=/path/to/services.yaml` to use your own.
 
-> Plain `pixi run broker` refuses to start unless a Keycloak admin service
+> `pixi run -e dev broker` refuses to start unless a Keycloak admin service
 > account is configured: every credential type (JWT included, not just
 > PATs) resolves its groups and POSIX identity from that account, so a
 > broker with neither it nor the bypass below configured can never
@@ -83,7 +86,7 @@ Equivalent long form, for one-off overrides:
 # different group here if your own POLICY_FILE uses a different mapping
 export BROKER_DEV_INSECURE_PRINCIPAL='{"uid":1000,"gid":1000,"unixname":"devuser","email":"dev@localhost","groups":["atlas"]}'
 export OIDC_ISSUER=http://localhost:8081/realms/dev
-pixi run broker
+pixi run -e dev broker
 ```
 
 You should see a very loud warning line at startup:
