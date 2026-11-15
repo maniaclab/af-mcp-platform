@@ -15,10 +15,12 @@ import structlog
 from fastapi import HTTPException
 from fastmcp.client import Client
 from fastmcp.client.transports import StreamableHttpTransport
+from fastmcp.client.transports.base import TransportOptions
 from fastmcp.server.providers.proxy import (
     default_proxy_log_handler,
     default_proxy_progress_handler,
 )
+from mcp.client.session import ClientSession
 
 from af_mcp_broker.backend_errors import (
     BackendInvalidResponseError,
@@ -31,7 +33,7 @@ from af_mcp_broker.service_registry import namespaced_tool_name
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterator
 
-    from mcp.types import ToolAnnotations
+    from mcp.types import CallToolResult, ToolAnnotations
 
     from af_mcp_broker.credentials import (
         CredentialProvider,
@@ -221,6 +223,44 @@ def _checked_httpx_client_factory(
     return factory
 
 
+class RelayingClientSession(ClientSession):
+    """A ``ClientSession`` that relays a tool result without validating it against the tool's output schema.
+
+    ``ClientSession.call_tool`` learns the output schema by listing the
+    backend's tools -- a full extra ``tools/list`` round trip on every call --
+    and raises if the structured content disagrees with it. The aggregator
+    skips that listing and validates against the schema it already holds
+    instead (``OutputSchemaMiddleware`` in mcp/middleware/output_schema_mw.py).
+    This is the same session fastmcp's own proxy uses for its backend
+    connections (``fastmcp.server.providers.proxy._ForwardingClientSession``,
+    private in fastmcp 4.0.4), re-declared here against the public
+    ``ClientSession.validate_tool_result`` hook.
+    """
+
+    async def validate_tool_result(
+        self,
+        name: str,  # noqa: ARG002 -- signature fixed by the override
+        result: CallToolResult,  # noqa: ARG002 -- signature fixed by the override
+    ) -> None:
+        return None
+
+
+class BackendClient(Client):
+    """The ``Client`` for one backend connection: relays results and never forwards the caller's headers.
+
+    ``fastmcp.Client`` exposes no public way to choose its session class, so
+    ``_transport_options`` (fastmcp 4.0.4; the attribute ``ProxyClient`` itself
+    sets) is the single place it is set, to ``RelayingClientSession`` only.
+    ``forward_incoming_headers`` stays at ``TransportOptions``'s default of
+    False: ``ProxyClient`` turns it on, which is why it is not used here (see
+    ``_make_client_factory`` in mcp/aggregator.py).
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._transport_options = TransportOptions(session_class=RelayingClientSession)
+
+
 def build_client(
     spec: ServiceSpec,
     headers: dict[str, str] | None = None,
@@ -248,7 +288,7 @@ def build_client(
     accepts the connection but never speaks would hold the caller (issue
     #386).
     """
-    return Client(
+    return BackendClient(
         StreamableHttpTransport(
             spec.url,
             headers=headers,
@@ -501,8 +541,8 @@ async def resolve_list_time_credential(
 
     - "none": no per-user credential concept at all -> ``({}, None)``.
     - "x509"/"krb5"/"servicex": share one code path here -- a locally-signed
-      AF Broker Identity Token, mirroring ``_x509_factory``'s/
-      ``_krb5_factory``'s/``_servicex_factory``'s identical list-time
+      AF Broker Identity Token, mirroring ``_identity_token_factory``'s
+      identical list-time
       branches; boot validation guarantees the issuer for these services
       (see ``require_signing_issuer``). The backend redeems the
       actual proxy/ticket/access-token itself via ``POST /v1/credentials/

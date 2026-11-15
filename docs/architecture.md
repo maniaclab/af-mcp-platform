@@ -1062,7 +1062,15 @@ the simplest correct thing. The extraction path if it becomes necessary:
    the minted credential injected as `Authorization: Bearer <token>` — the
    caller's own inbound bearer is never forwarded.
 6. The backend's response streams back through the aggregator to the LLM
-   client.
+   client. The aggregator forwards the call without the backend client
+   re-listing the backend's tools, then validates the result's structured
+   content against the tool's output schema taken from its cached listing
+   (compiled once per schema). A violation fails the call with the SDK's
+   `Invalid structured content returned by tool ...` text and is audited as
+   `error`. With a cached listing a call costs the backend one `tools/call`
+   (plus the connection handshake); a cold or expired listing costs one extra
+   `tools/list`, after which calls are back to one request. A tool-reported
+   `isError` result is relayed unvalidated.
 7. `AuthorizationMiddleware` writes a structured audit log line
    (`outcome: "success"`/`"denied"`/`"rate_limited"`/`"error"`) and updates Prometheus
    counters exactly once per call, regardless of outcome.

@@ -11,6 +11,7 @@ from __future__ import annotations
 # its docstring.
 import asyncio
 import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -57,6 +58,7 @@ from af_mcp_broker.mcp.middleware.identity_mw import (
     IdentityMiddleware,
 )
 from af_mcp_broker.mcp.middleware.maintenance_mw import AsgiMaintenanceMiddleware
+from af_mcp_broker.mcp.middleware.output_schema_mw import OutputSchemaMiddleware
 from af_mcp_broker.service_registry import (
     LINK_IDENTITY_TOOL_NAME,
     LIST_IDENTITIES_TOOL_NAME,
@@ -81,6 +83,7 @@ if TYPE_CHECKING:
     from af_mcp_broker.credentials import (
         CredentialProvider,
         CredentialRegistry,
+        IssuedCredential,
     )
     from af_mcp_broker.credentials.broker_issued import BrokerTokenIssuer
     from af_mcp_broker.credmon.guidance import JobCredentialGuide
@@ -242,7 +245,7 @@ def _not_linked_error(
 ) -> ToolError:
     """Build the "identity not linked" ``ToolError``, or, when *rejected*, the "credential rejected, re-link" one.
 
-    Shared by ``_bearer_factory`` and ``_x509_factory`` (via
+    Shared by ``_bearer_call_client`` and ``_identity_token_call_client`` (via
     ``_require_linked``) so the message text -- and the portal deep link it
     names -- can never drift between the two ``auth_type`` branches (stage 1
     of the elicitation/link-identity design: today's LLM clients already
@@ -294,7 +297,7 @@ def _client_supports_elicitation(ctx: Context) -> bool:
     error on anyway. Note this only confirms the client declared *some*
     elicitation mode: the MCP spec's ``ElicitationCapability`` further
     distinguishes "form" vs "url" mode, and ``check_client_capability``
-    (as pinned, fastmcp 3.4.4) does not drill into that distinction -- a
+    (as pinned, mcp 2.2.0) does not drill into that distinction -- a
     client that declared only URL-mode support (issue #194, not implemented
     here) still passes this check. ``_require_linked``'s own ``except``
     around the ``elicit()`` call is what actually catches that case, so this
@@ -330,14 +333,14 @@ async def _require_linked(
 ) -> None:
     """Gate a call on *principal* having linked *provider*, trying a real elicitation before giving up.
 
-    Shared by ``_bearer_factory`` and ``_x509_factory`` -- stage 2a of the
+    Shared by ``_bearer_call_client`` and ``_identity_token_call_client`` -- stage 2a of the
     elicitation/link-identity design (following stage 1's plain-text
     ``_not_linked_error``). Returns normally (proceed) if already linked --
     the common case, and the only path that doesn't need a request context
     at all. Otherwise, tries one form-mode ``ctx.elicit()`` round trip
     asking the caller to link then retry, before falling back to stage 1's
     plain ``ToolError``. There is no URL-mode elicitation in the pinned
-    fastmcp version (3.4.4) -- no way to have the client auto-open the
+    fastmcp version (4.0.4) -- no way to have the client auto-open the
     portal link for the caller -- so this is deliberately form-mode only;
     true URL-mode elicitation is tracked separately (issue #194).
 
@@ -370,14 +373,7 @@ async def _require_linked(
             if rejected
             else f"You need to link {display_name} before I can do this. Visit "
             f"{url} to link it, then let me know when you're done.",
-            [_ELICIT_RETRY_OPTION, _ELICIT_CANCEL_OPTION],  # type: ignore[arg-type]
-            # mypy 2.3.0 misresolves fastmcp 3.4.4's Context.elicit overloads
-            # for a plain list[str] (it picks the response_type=None-only
-            # overload regardless of the argument's actual type -- reproduced
-            # with a minimal repro outside this codebase, so this is a
-            # library/mypy interaction, not a real type error); the select
-            # (list[str]) overload's runtime behavior is exercised directly
-            # by this module's tests.
+            [_ELICIT_RETRY_OPTION, _ELICIT_CANCEL_OPTION],
         )
     except Exception:  # noqa: BLE001 -- fall back to stage 1, see docstring
         raise not_linked from None
@@ -403,6 +399,164 @@ async def _require_linked(
     )
 
 
+@dataclass(frozen=True)
+class _LinkGate:
+    """What an authorized tools/call to one service must establish about its caller before a credential is minted: an authenticated principal who has linked the service's credential.
+
+    Shared by every credentialed ``auth_type`` so the checks and their order
+    live in one place. ``authorize`` gates on linkage BEFORE anything is
+    minted: without it an unlinked caller would receive a credential and the
+    failure would only surface as whatever generic error the service's own
+    redeem call produced, never a "go link your identity" message. It also
+    tries a real elicitation before giving up -- see ``_require_linked``'s
+    docstring.
+    """
+
+    spec: ServiceSpec
+    credential_registry: CredentialRegistry
+    settings: Settings
+    target_to_alias: dict[str, str] | None
+    identity_provider_configs: dict[str, IdentityProviderConfig] | None
+
+    async def authorize(self, ctx: Context) -> tuple[CredentialProvider, Principal]:
+        """Return the service's credential provider and the caller's principal, or raise a ``ToolError`` before anything is minted."""
+        principal = await ctx.get_state("principal")
+        if principal is None:
+            # identity_mw should always have set this by now; fail closed
+            # rather than mint a credential for no one.
+            raise ToolError("No authenticated principal available for this tool call")
+
+        try:
+            provider = await self.credential_registry.resolve(self.spec.name)
+        except KeyError as exc:
+            raise ToolError(str(exc)) from exc
+
+        await _require_linked(
+            provider,
+            principal,
+            self.spec,
+            self.settings,
+            self.target_to_alias,
+            self.identity_provider_configs,
+        )
+        return provider, principal
+
+
+async def _is_authorized_call(ctx: Context, spec: ServiceSpec) -> bool:
+    """Whether the current request is an authorized tools/call targeting *spec*, as opposed to a listing or any other invocation of its client factory.
+
+    ``authorized_call_target`` is request-scoped state set by
+    ``AuthorizationMiddleware`` right before it calls ``call_next``.
+    """
+    return await ctx.get_state("authorized_call_target") == spec.name
+
+
+async def _identity_token_call_client(
+    ctx: Context, gate: _LinkGate, issuer: BrokerTokenIssuer
+) -> Client:
+    """Call-time client for an x509/krb5/servicex service: an AF Broker Identity Token the service redeems the caller's credential with.
+
+    Identity assertion only (sub/aud): the service redeems the proxy, ticket
+    or access token server-side with this token and has no use for POSIX
+    claims.
+    """
+    _provider, principal = await gate.authorize(ctx)
+    token, _ = issuer.mint(principal.subject, gate.spec.effective_audience)
+    return build_client(gate.spec, headers={"Authorization": f"Bearer {token}"})
+
+
+async def _issue_call_credential(
+    provider: CredentialProvider,
+    principal: Principal,
+    spec: ServiceSpec,
+    settings: Settings,
+) -> IssuedCredential:
+    """Mint *principal*'s credential for *spec*, turning a provider failure into the ``ToolError`` the caller sees."""
+    try:
+        return await provider.issue(principal, spec.name)
+    except NeedsUnlockError as exc:
+        portal = settings.portal_url.rstrip("/")
+        raise ToolError(
+            f"Credential unlock required. Visit the portal: "
+            f"{portal}{exc.unlock_endpoint}"
+        ) from exc
+    except HTTPException as exc:
+        # OIDCProvider.issue() raises HTTPException directly (401 session
+        # expired, 404 no stored token) rather than NeedsUnlockError -- surface
+        # its detail the same way FastAPI's own handler would at /v1.
+        raise ToolError(str(exc.detail)) from exc
+
+
+async def _bearer_call_client(ctx: Context, gate: _LinkGate) -> Client:
+    """Call-time client for a bearer service: the caller's own minted credential as ``Authorization: Bearer``."""
+    provider, principal = await gate.authorize(ctx)
+    cred = await _issue_call_credential(provider, principal, gate.spec, gate.settings)
+    call_headers, on_unauthorized = bearer_injection(provider, principal, cred)
+    return build_client(
+        gate.spec, headers=call_headers, on_unauthorized=on_unauthorized
+    )
+
+
+async def _bearer_list_client(
+    ctx: Context,
+    spec: ServiceSpec,
+    credential_registry: CredentialRegistry,
+    policy: EntitlementPolicy,
+) -> Client:
+    """List-time client for a bearer service: a best-effort credential when the caller is entitled, an ``NotLinkedForListingError`` when they have not linked it.
+
+    See ``_make_client_factory``'s docstring for why a best-effort mint is
+    attempted here rather than skipped outright, and
+    ``resolve_list_time_headers`` for the non-fatal failure handling this
+    requires.
+    """
+    principal = await _require_entitled_list_principal(ctx, spec, policy)
+    resolved = await resolve_list_time_headers(spec, credential_registry, principal)
+    # Keyed per service (not a single shared key) since one
+    # tools/list request fans out to every service's factory
+    # concurrently -- see _classify_list_failure's use of this.
+    await ctx.set_state(
+        f"__list_credential_status__:{spec.name}",
+        (resolved.headers is not None, resolved.skip_reason),
+        serializable=False,
+    )
+    return build_client(
+        spec,
+        headers=resolved.headers or {},
+        on_unauthorized=resolved.on_unauthorized,
+    )
+
+
+def _identity_token_factory(
+    gate: _LinkGate, policy: EntitlementPolicy, issuer: BrokerTokenIssuer
+) -> ClientFactoryT:
+    """Client factory for an x509/krb5/servicex service."""
+
+    async def _factory() -> Client:
+        ctx = get_context()
+        if not await _is_authorized_call(ctx, gate.spec):
+            return await _identity_token_list_client(
+                ctx, gate.spec, gate.credential_registry, policy, issuer
+            )
+        return await _identity_token_call_client(ctx, gate, issuer)
+
+    return _factory
+
+
+def _bearer_factory(gate: _LinkGate, policy: EntitlementPolicy) -> ClientFactoryT:
+    """Client factory for a bearer service."""
+
+    async def _factory() -> Client:
+        ctx = get_context()
+        if not await _is_authorized_call(ctx, gate.spec):
+            return await _bearer_list_client(
+                ctx, gate.spec, gate.credential_registry, policy
+            )
+        return await _bearer_call_client(ctx, gate)
+
+    return _factory
+
+
 def _make_client_factory(
     spec: ServiceSpec,
     credential_registry: CredentialRegistry,
@@ -415,10 +569,10 @@ def _make_client_factory(
 ) -> ClientFactoryT:
     """Build a ProxyProvider client_factory for one service.
 
-    Security property: constructing a plain ``Client`` around an explicit
-    transport object never sets ``forward_incoming_headers`` -- it stays
-    unset (``Client._transport_options is None``), so ``TransportOptions``'s
-    own default of False applies. fastmcp's ``ProxyClient`` convenience
+    Security property: constructing a ``BackendClient`` (a plain ``Client``
+    that only swaps in a result-relaying session class) around an explicit
+    transport object never sets ``forward_incoming_headers`` -- its
+    ``TransportOptions`` leave it at the default of False. fastmcp's ``ProxyClient`` convenience
     wrapper unconditionally sets that flag to True for HTTP transports
     (intended for proxies that should forward the caller's credentials), so
     it is deliberately not used here: the broker's own AF-internal bearer
@@ -551,209 +705,18 @@ def _make_client_factory(
 
         return _none_factory
 
-    if spec.auth_type == "x509":
+    gate = _LinkGate(
+        spec,
+        credential_registry,
+        settings,
+        target_to_alias,
+        identity_provider_configs,
+    )
+    if spec.auth_type in ("x509", "krb5", "servicex"):
         issuer = require_signing_issuer(spec, broker_token_issuer)
+        return _identity_token_factory(gate, policy, issuer)
 
-        async def _x509_factory() -> Client:
-            ctx = get_context()
-            if await ctx.get_state("authorized_call_target") != spec.name:
-                return await _identity_token_list_client(
-                    ctx, spec, credential_registry, policy, issuer
-                )
-
-            principal = await ctx.get_state("principal")
-            if principal is None:
-                raise ToolError(
-                    "No authenticated principal available for this tool call"
-                )
-            try:
-                provider = await credential_registry.resolve(spec.name)
-            except KeyError as exc:
-                raise ToolError(str(exc)) from exc
-
-            # Same linkage gate _bearer_factory applies BEFORE minting --
-            # without it an unlinked caller got a broker identity token
-            # unconditionally, and the failure only ever surfaced as
-            # whatever generic error the service's own redeem call happened
-            # to produce (e.g. a bare 404 from POST /v1/credentials/x509/
-            # redeem), never a "go link your identity" message. Now also
-            # tries a real elicitation before giving up -- see
-            # _require_linked's docstring.
-            await _require_linked(
-                provider,
-                principal,
-                spec,
-                settings,
-                target_to_alias,
-                identity_provider_configs,
-            )
-
-            # Identity assertion only (sub/aud): the service redeems the proxy
-            # with this token; it has no use for POSIX claims.
-            token, _ = issuer.mint(principal.subject, spec.effective_audience)
-            return build_client(spec, headers={"Authorization": f"Bearer {token}"})
-
-        return _x509_factory
-
-    if spec.auth_type == "krb5":
-        issuer = require_signing_issuer(spec, broker_token_issuer)
-
-        async def _krb5_factory() -> Client:
-            ctx = get_context()
-            if await ctx.get_state("authorized_call_target") != spec.name:
-                return await _identity_token_list_client(
-                    ctx, spec, credential_registry, policy, issuer
-                )
-
-            principal = await ctx.get_state("principal")
-            if principal is None:
-                raise ToolError(
-                    "No authenticated principal available for this tool call"
-                )
-            try:
-                provider = await credential_registry.resolve(spec.name)
-            except KeyError as exc:
-                raise ToolError(str(exc)) from exc
-
-            # Same linkage gate _bearer_factory applies BEFORE minting --
-            # without it an unlinked caller got a broker identity token
-            # unconditionally, and the failure only ever surfaced as
-            # whatever generic error the service's own redeem call happened
-            # to produce (e.g. a bare 404 from POST /v1/credentials/krb5/
-            # redeem), never a "go link your identity" message. Now also
-            # tries a real elicitation before giving up -- see
-            # _require_linked's docstring.
-            await _require_linked(
-                provider,
-                principal,
-                spec,
-                settings,
-                target_to_alias,
-                identity_provider_configs,
-            )
-
-            # Identity assertion only (sub/aud): the service redeems the
-            # ticket with this token; it has no use for POSIX claims.
-            token, _ = issuer.mint(principal.subject, spec.effective_audience)
-            return build_client(spec, headers={"Authorization": f"Bearer {token}"})
-
-        return _krb5_factory
-
-    if spec.auth_type == "servicex":
-        issuer = require_signing_issuer(spec, broker_token_issuer)
-
-        async def _servicex_factory() -> Client:
-            ctx = get_context()
-            if await ctx.get_state("authorized_call_target") != spec.name:
-                return await _identity_token_list_client(
-                    ctx, spec, credential_registry, policy, issuer
-                )
-
-            principal = await ctx.get_state("principal")
-            if principal is None:
-                raise ToolError(
-                    "No authenticated principal available for this tool call"
-                )
-            try:
-                provider = await credential_registry.resolve(spec.name)
-            except KeyError as exc:
-                raise ToolError(str(exc)) from exc
-
-            # Same linkage gate _bearer_factory applies BEFORE minting --
-            # without it an unlinked caller got a broker identity token
-            # unconditionally, and the failure only ever surfaced as
-            # whatever generic error the service's own redeem call happened
-            # to produce (e.g. a bare 404 from POST /v1/credentials/
-            # servicex/redeem), never a "go link your identity" message. Now
-            # also tries a real elicitation before giving up -- see
-            # _require_linked's docstring.
-            await _require_linked(
-                provider,
-                principal,
-                spec,
-                settings,
-                target_to_alias,
-                identity_provider_configs,
-            )
-
-            # Identity assertion only (sub/aud): the service redeems the
-            # access token with this token; it has no use for POSIX claims.
-            token, _ = issuer.mint(principal.subject, spec.effective_audience)
-            return build_client(spec, headers={"Authorization": f"Bearer {token}"})
-
-        return _servicex_factory
-
-    async def _bearer_factory() -> Client:
-        ctx = get_context()
-        if await ctx.get_state("authorized_call_target") != spec.name:
-            # Not an authorized tools/call for this service -- most commonly
-            # a tools/list request (or a stale-cache _get_tool() refresh
-            # triggered by one). See the docstring above for why a
-            # best-effort mint is attempted here rather than skipped
-            # outright, and resolve_list_time_headers for the non-fatal
-            # failure handling this requires (an unlinked caller raises
-            # NotLinkedForListingError instead).
-            principal = await _require_entitled_list_principal(ctx, spec, policy)
-            resolved = await resolve_list_time_headers(
-                spec, credential_registry, principal
-            )
-            # Keyed per service (not a single shared key) since one
-            # tools/list request fans out to every service's factory
-            # concurrently -- see _classify_list_failure's use of this.
-            await ctx.set_state(
-                f"__list_credential_status__:{spec.name}",
-                (resolved.headers is not None, resolved.skip_reason),
-                serializable=False,
-            )
-            return build_client(
-                spec,
-                headers=resolved.headers or {},
-                on_unauthorized=resolved.on_unauthorized,
-            )
-
-        principal = await ctx.get_state("principal")
-        if principal is None:
-            # identity_mw should always have set this by now; fail closed
-            # rather than mint a credential for no one.
-            raise ToolError("No authenticated principal available for this tool call")
-
-        try:
-            provider = await credential_registry.resolve(spec.name)
-        except KeyError as exc:
-            raise ToolError(str(exc)) from exc
-
-        # Gate on linkage BEFORE issue() so an unlinked user gets a clean
-        # error instead of an opaque failure surfacing from inside the
-        # provider -- mirrors api/credentials.py's issue_credential() check.
-        # Now also tries a real elicitation before giving up -- see
-        # _require_linked's docstring.
-        await _require_linked(
-            provider,
-            principal,
-            spec,
-            settings,
-            target_to_alias,
-            identity_provider_configs,
-        )
-
-        try:
-            cred = await provider.issue(principal, spec.name)
-        except NeedsUnlockError as exc:
-            portal = settings.portal_url.rstrip("/")
-            raise ToolError(
-                f"Credential unlock required. Visit the portal: "
-                f"{portal}{exc.unlock_endpoint}"
-            ) from exc
-        except HTTPException as exc:
-            # OIDCProvider.issue() raises HTTPException directly (401 session
-            # expired, 404 no stored token) rather than NeedsUnlockError -- surface
-            # its detail the same way FastAPI's own handler would at /v1.
-            raise ToolError(str(exc.detail)) from exc
-
-        call_headers, on_unauthorized = bearer_injection(provider, principal, cred)
-        return build_client(spec, headers=call_headers, on_unauthorized=on_unauthorized)
-
-    return _bearer_factory
+    return _bearer_factory(gate, policy)
 
 
 # Negative-cache TTL for a failed per-subject listing (issue #320): short
@@ -803,7 +766,7 @@ class _ObservableProxyProvider(ProxyProvider):
     """ProxyProvider that structured-logs a classified reason when its ``tools/list`` fails, then re-raises so ``AggregateProvider``'s existing ``provider_error_strategy="warn"`` still drops this service's contribution and keeps every other service's listing unaffected -- exactly today's degrade-gracefully behavior, just with an ``aggregator.service_list_failed`` structlog event on record instead of only fastmcp's own unparseable stdlib WARNING (see issue #121).
 
     Overrides only the private ``_list_tools()`` extension hook that
-    ``fastmcp.server.providers.proxy.ProxyProvider`` (pinned at 3.4.4, see
+    ``fastmcp.server.providers.proxy.ProxyProvider`` (pinned at 4.0.4, see
     pixi.lock) itself documents as a subclassing point -- but it's still
     third-party internals, not a public contract fastmcp guarantees stable.
     If ``_list_tools()``'s signature, its call sites (``_get_tool()``'s
@@ -1419,6 +1382,7 @@ def build_aggregator(
             registry, policy, shared_state=shared_state, metering=metering
         )
     )
+    mcp.add_middleware(OutputSchemaMiddleware())
     _register_services(
         mcp,
         registry,
