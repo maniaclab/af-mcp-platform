@@ -173,7 +173,7 @@ class Krb5TokenServiceClient:
             raise Krb5TokenBadCredentialError
         if resp.status_code == httpx2.codes.FORBIDDEN:
             raise Krb5TokenAccountError
-        if resp.status_code == httpx2.codes.UNPROCESSABLE_ENTITY:
+        if resp.status_code == httpx2.codes.UNPROCESSABLE_CONTENT:
             raise Krb5TokenInvalidRequestError
         if resp.status_code == httpx2.codes.TOO_MANY_REQUESTS:
             raise Krb5TokenRateLimitedError(resp.headers.get("Retry-After"))
@@ -225,7 +225,7 @@ class Krb5TokenServiceClient:
                 "krb5-token-service could not be reached."
             ) from exc
 
-        if resp.status_code == httpx2.codes.UNPROCESSABLE_ENTITY:
+        if resp.status_code == httpx2.codes.UNPROCESSABLE_CONTENT:
             raise Krb5TokenInvalidCcacheError
         if resp.status_code == httpx2.codes.BAD_REQUEST:
             raise Krb5TokenRenewalWindowClosedError

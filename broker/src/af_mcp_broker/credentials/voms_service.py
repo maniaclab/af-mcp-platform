@@ -182,7 +182,7 @@ class VomsTokenServiceClient:
 
         if resp.status_code == httpx2.codes.BAD_REQUEST:
             raise VomsServiceBadPassphraseError
-        if resp.status_code == httpx2.codes.UNPROCESSABLE_ENTITY:
+        if resp.status_code == httpx2.codes.UNPROCESSABLE_CONTENT:
             # Unlike every other non-200 branch here, this body's `detail`
             # is safe to read and relay -- see VomsServiceRejectedError's
             # docstring. A malformed or unexpected body still degrades to a
