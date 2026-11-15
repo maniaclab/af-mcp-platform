@@ -617,13 +617,39 @@ enabled or disabled, the reason given) and logs `maintenance_mode_changed`
 at `info`. A toggle that loses the compare-and-set race changed nothing and
 writes neither.
 
-## Correlation ids on calls to token services
+## Following one call end to end
 
-Every `/v1` request binds a `correlation_id` into the broker's log lines.
-Calls to the AF-internal token services (servicex, voms, krb5, condor) send
-it as `X-Request-ID`, so a token service that logs that header shares the id
-with the broker's line. 5xx bodies carry `correlation_id`, as does the
-ServiceX link rejection (400); other 4xx bodies do not.
+Every `/v1` and `/mcp` request gets a broker-generated `correlation_id`; a
+client cannot choose it. An `X-Request-ID` the client sent is logged on the
+request as `client_request_id` (truncated to 128 characters) so the client
+can find its call, and is never forwarded.
+
+| Where | Field | Value |
+|---|---|---|
+| Broker request lines (`http.request.received`/`finished`), every other broker line of the request | `correlation_id` | The request's id. `subject` names the caller once known. |
+| Audit record of a tool call | `request_id` and `correlation_id` | The same id. `audit_id` is unique to the record. |
+| Usage row (`af_mcp_usage_events`) | `request_id` | The same id, joined to the audit line by `request_id` or `audit_id`. |
+| Backend MCP server | `X-Request-ID` request header | The same id, on every HTTP request the broker makes to the backend for that call. A backend that logs the header shares the id with the broker. |
+| Token services (servicex, voms, krb5, condor) | `X-Request-ID` request header | The same id. |
+| Broker identity token minted for the call | `rid` claim | The same id (see [Auth § AF Broker Identity Token](auth.md)). |
+| Credential release when the backend redeems (`krb5_ticket_release`, x509 and servicex equivalents) | `parent_request_id` | The `rid` of the token, so the release joins to the tool call. |
+| Same credential-release line | `correlation_id`, `request_id` | The redeem request's own id, and the token's `jti`. These identify the redeem, not the tool call. |
+
+To follow one call, take its `correlation_id` (from a 5xx or error body, an
+audit line, or a client-side `X-Request-ID` found through `client_request_id`):
+
+1. `correlation_id=<id>` finds the request lines, the audit record and any
+   other broker line of the call.
+2. `request_id=<id>` in the usage store finds its usage row.
+3. `parent_request_id=<id>` finds every credential release the backend
+   redeemed for it. One tool call can produce several, one per backend HTTP
+   request that redeems; each is a real release and has its own `audit_id`.
+4. The backend's logs, where it logs `X-Request-ID`, carry the same id.
+
+`trace_id` joins the same lines to a trace when tracing is on. The W3C
+`traceparent` rides inside the MCP request's `_meta`, not an HTTP header, so
+it and `X-Request-ID` do not interact. 5xx bodies carry `correlation_id`, as
+does the ServiceX link rejection (400); other 4xx bodies do not.
 
 ## See also
 

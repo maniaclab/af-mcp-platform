@@ -332,6 +332,50 @@ class TestRedeem:
         assert 3500 < body["remaining_seconds"] <= 3600
         assert body["expires_at"]
 
+    def test_release_audit_line_names_the_minting_tool_call_as_parent(
+        self, krb5_redeem_env, app_client_factory, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The token's ``rid`` is the tool call that caused the redeem; the
+        release line keeps the token's ``jti`` as ``request_id`` and adds
+        ``rid`` as ``parent_request_id`` so the two join."""
+        krb5_redeem_env()
+        with app_client_factory() as (client, _):
+            _fake_vault_store(client)
+            _seed_cache_ticket(client, subject="sub-abc")
+            token, _ = client.app.state.broker.broker_token_issuer.mint(
+                "sub-abc", _TARGET, request_id="tool-call-id"
+            )
+            resp = client.post(
+                _REDEEM, json={}, headers={"Authorization": f"Bearer {token}"}
+            )
+        assert resp.status_code == 200, resp.text
+        audit_lines = [
+            json.loads(line)
+            for line in capsys.readouterr().out.splitlines()
+            if line.startswith("{") and '"event": "audit"' in line
+        ]
+        assert len(audit_lines) == 1
+        assert audit_lines[0]["action"] == "krb5_ticket_release"
+        assert audit_lines[0]["parent_request_id"] == "tool-call-id"
+        assert audit_lines[0]["request_id"] != "tool-call-id"  # the token's jti
+
+    def test_release_audit_line_has_no_parent_for_a_token_without_rid(
+        self, krb5_redeem_env, app_client_factory, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        krb5_redeem_env()
+        with app_client_factory() as (client, _):
+            _fake_vault_store(client)
+            _seed_cache_ticket(client, subject="sub-abc")
+            token = _mint(client)
+            client.post(_REDEEM, json={}, headers={"Authorization": f"Bearer {token}"})
+        audit_lines = [
+            json.loads(line)
+            for line in capsys.readouterr().out.splitlines()
+            if line.startswith("{") and '"event": "audit"' in line
+        ]
+        assert len(audit_lines) == 1
+        assert "parent_request_id" not in audit_lines[0]
+
     def test_cache_hit_with_90_seconds_remaining_still_redeems(
         self, krb5_redeem_env, app_client_factory
     ) -> None:
