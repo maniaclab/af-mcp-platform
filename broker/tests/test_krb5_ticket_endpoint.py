@@ -35,7 +35,9 @@ from pydantic import SecretStr
 from rate_limited_helpers import assert_rate_limited_shape
 from test_broker_issued import _make_rsa_key, _private_pem
 from test_krb5_token import FakeKrb5VaultStore
+from test_request_logging import _capturing_info
 
+from af_mcp_broker import retry_after as retry_after_module
 from af_mcp_broker.credentials import KrbTokenProvider
 from af_mcp_broker.credentials.errors import (
     Krb5TokenAccountError,
@@ -360,6 +362,23 @@ def test_rate_limited_maps_to_429_with_retry_after(krb5_app) -> None:
 
     body = assert_rate_limited_shape(resp, retry_after=30)
     assert body["detail"] == "krb5-token-service rate-limited this request."
+
+
+def test_rate_limited_logs_the_dedicated_event(
+    krb5_app, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, _state, fake_client = krb5_app
+    fake_client.outcome = Krb5TokenRateLimitedError("30")
+    events = _capturing_info(monkeypatch, retry_after_module.logger)
+
+    client.post(
+        "/v1/krb5/ticket",
+        json={"username": "tuser", "password": "hunter2"},
+    )
+
+    [event] = [e for e in events if e["event"] == "rate_limit_exceeded"]
+    assert event["limiter"] == "krb5_service"
+    assert event["retry_after_seconds"] == 30
 
 
 def test_rate_limited_without_service_retry_after_uses_the_default(krb5_app) -> None:

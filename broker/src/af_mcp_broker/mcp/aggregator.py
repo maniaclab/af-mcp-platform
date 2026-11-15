@@ -63,7 +63,12 @@ from af_mcp_broker.mcp.middleware.identity_mw import (
 )
 from af_mcp_broker.mcp.middleware.maintenance_mw import AsgiMaintenanceMiddleware
 from af_mcp_broker.mcp.middleware.output_schema_mw import OutputSchemaMiddleware
-from af_mcp_broker.retry_after import retry_after_seconds, retry_after_sentence
+from af_mcp_broker.retry_after import (
+    RateLimiter,
+    log_rate_limited,
+    retry_after_seconds,
+    retry_after_sentence,
+)
 from af_mcp_broker.service_registry import (
     LINK_IDENTITY_TOOL_NAME,
     LIST_IDENTITIES_TOOL_NAME,
@@ -497,10 +502,13 @@ async def _issue_call_credential(
         # stored token, ...) rather than NeedsUnlockError -- surface its
         # detail as the tool error, the text /v1 sends as the body.
         if isinstance(exc, CredentialRateLimitedError):
-            raise ToolError(
-                f"{exc.detail} "
-                f"{retry_after_sentence(retry_after_seconds(exc.retry_after))}"
-            ) from exc
+            wait = retry_after_seconds(exc.retry_after)
+            log_rate_limited(
+                subject=principal.subject,
+                limiter=RateLimiter.CREDENTIAL_SERVICE,
+                retry_after_seconds=wait,
+            )
+            raise ToolError(f"{exc.detail} {retry_after_sentence(wait)}") from exc
         raise ToolError(exc.detail) from exc
 
 

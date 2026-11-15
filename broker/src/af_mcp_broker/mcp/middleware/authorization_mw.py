@@ -25,7 +25,11 @@ from af_mcp_broker.backend_errors import (
     classify_backend_error,
 )
 from af_mcp_broker.logging import current_correlation_id
-from af_mcp_broker.retry_after import retry_after_sentence
+from af_mcp_broker.retry_after import (
+    RateLimiter,
+    log_rate_limited,
+    retry_after_sentence,
+)
 from af_mcp_broker.service_registry import RATE_LIMITS_TOOL_NAME
 from af_mcp_broker.shared_state import FallbackSharedState
 from af_mcp_broker.tracing import (
@@ -337,6 +341,12 @@ class AuthorizationMiddleware(Middleware):
                     service=service.name, action_type=action_type
                 ).inc()
                 span.set_attribute("af.outcome", "rate_limited")
+                log_rate_limited(
+                    subject=principal.subject,
+                    limiter=RateLimiter.TOOL_RATE_LIMIT,
+                    rule=f"{exc.limit}/{exc.window_seconds}s",
+                    retry_after_seconds=exc.retry_after_seconds,
+                )
                 await write_audit(
                     AuditRecord(
                         principal_sub=principal.subject,

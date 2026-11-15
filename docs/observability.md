@@ -697,6 +697,20 @@ error-level lines sees a `/v1` outage; a 4xx (authentication, validation,
 rate limit, conflict) logs at `info`, because it is the caller's request being
 refused as designed, not a broker failure.
 
+## Finding rate-limit refusals
+
+Every 429, on `/v1` and on `/mcp`, also logs one `rate_limit_exceeded` line at
+`info`, so a single search (`event=rate_limit_exceeded`) lists every lockout
+and rate-limit refusal. On `/v1` it comes beside the generic `http_exception`
+line; on `/mcp` it is the only line for the refusal besides the audit record.
+
+| Field | Value |
+|---|---|
+| `subject` | The caller, or `null` when no identity was bound yet. |
+| `limiter` | Which limiter refused: `x509_unlock` (too many failed passphrase attempts), `pat_mint` (PAT mint budget), `krb5_service` (krb5-token-service answered 429), `credential_service` (a credential service such as condor-token-service answered 429), `tool_rate_limit` (a `rate_limits` rule in `policy.yaml`). |
+| `rule` | For `tool_rate_limit`, the exceeded rule as `<limit>/<window_seconds>s`. `null` for a limiter with one budget. |
+| `retry_after_seconds` | The wait returned to the caller, the same value as the `Retry-After` header. |
+
 ## See also
 
 - [Architecture § Audit](architecture.md#4-audit) — the metering
