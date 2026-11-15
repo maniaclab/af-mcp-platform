@@ -76,6 +76,36 @@ class AuditFileHandler(_RaiseOnErrorMixin, logging.FileHandler):
     """Audit handler appending to a file."""
 
 
+def _shared_processors() -> list[Any]:
+    """Return the processors every log line goes through, whether it comes from structlog or from a stdlib logger."""
+    return [
+        structlog.contextvars.merge_contextvars,
+        structlog.stdlib.add_logger_name,
+        structlog.stdlib.add_log_level,
+        structlog.stdlib.PositionalArgumentsFormatter(),
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.StackInfoRenderer(),
+        PassphraseRedactProcessor(),
+    ]
+
+
+def build_json_formatter() -> structlog.stdlib.ProcessorFormatter:
+    """Return the formatter that renders a log record as one JSON line.
+
+    Shared by ``configure_logging`` and by ``uvicorn_log_config.json`` (as its
+    formatter factory), so uvicorn's lifecycle lines have the shape of the
+    broker's own lines from the first one on.
+    """
+    return structlog.stdlib.ProcessorFormatter(
+        processors=[
+            structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+            structlog.processors.ExceptionRenderer(),
+            structlog.processors.JSONRenderer(),
+        ],
+        foreign_pre_chain=_shared_processors(),
+    )
+
+
 def configure_logging(log_level: str = "INFO", audit_log_file: str = "-") -> None:
     """Wire structlog to emit JSON lines to stdout.
 
@@ -85,15 +115,7 @@ def configure_logging(log_level: str = "INFO", audit_log_file: str = "-") -> Non
 
     Call once at application startup before any log statements.
     """
-    shared_processors: list[Any] = [
-        structlog.contextvars.merge_contextvars,
-        structlog.stdlib.add_logger_name,
-        structlog.stdlib.add_log_level,
-        structlog.stdlib.PositionalArgumentsFormatter(),
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.StackInfoRenderer(),
-        PassphraseRedactProcessor(),
-    ]
+    shared_processors = _shared_processors()
 
     structlog.configure(
         processors=[
@@ -106,14 +128,7 @@ def configure_logging(log_level: str = "INFO", audit_log_file: str = "-") -> Non
         cache_logger_on_first_use=True,
     )
 
-    formatter = structlog.stdlib.ProcessorFormatter(
-        processors=[
-            structlog.stdlib.ProcessorFormatter.remove_processors_meta,
-            structlog.processors.ExceptionRenderer(),
-            structlog.processors.JSONRenderer(),
-        ],
-        foreign_pre_chain=shared_processors,
-    )
+    formatter = build_json_formatter()
 
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(formatter)

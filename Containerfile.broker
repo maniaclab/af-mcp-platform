@@ -55,4 +55,8 @@ EXPOSE 8080 9090
 ENTRYPOINT ["/app/entrypoint.sh"]
 # Single worker: each worker would race to bind the metrics port and keep its
 # own metrics registry. Scale with pod replicas instead.
-CMD ["uvicorn", "af_mcp_broker.app:app", "--host", "0.0.0.0", "--port", "8080"]
+# --log-config makes uvicorn's own lifecycle lines (server process, startup,
+# listening address, shutdown) JSON like the broker's, from the first line:
+# uvicorn configures its loggers before the app is imported, so the broker's
+# own logging setup is too late for them.
+CMD ["uvicorn", "af_mcp_broker.app:app", "--host", "0.0.0.0", "--port", "8080", "--log-config", "/app/broker/src/af_mcp_broker/uvicorn_log_config.json"]
