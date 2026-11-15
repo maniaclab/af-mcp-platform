@@ -32,6 +32,7 @@ from af_mcp_broker.credentials.errors import (
     VomsServicePreflightError,
     VomsServiceRejectedError,
 )
+from af_mcp_broker.errors import require
 from af_mcp_broker.identity import keycloak_dependency
 from af_mcp_broker.logging import CorrelatedHTTPException
 from af_mcp_broker.principal import PosixPrincipal, Principal
@@ -266,6 +267,11 @@ class ServiceXRedeemResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _krb5_expires_at(cred: _IssuedCredential) -> float:
+    """Return the end time of a krb5 *cred*, which always has one."""
+    return require(cred.expires_at, "a krb5 ticket always has an end time")
 
 
 def _iso(epoch: float) -> str:
@@ -658,8 +664,6 @@ async def link_servicex(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="ServiceX token linked but no metadata was cached",
         )
-    # get_token only returns records with a token
-    assert record.expires_at is not None  # noqa: S101
     return ServiceXTokenMetadata(
         target=target,
         expires_at=_iso(record.expires_at),
@@ -740,14 +744,13 @@ async def create_krb5_ticket(
     )
     payload = cred.payload
     renew_until = payload.get("renew_until")
-    # a krb5 ticket always has an end time
-    assert cred.expires_at is not None  # noqa: S101
+    expires_at = _krb5_expires_at(cred)
     return KrbTicketMetadata(
         target=target,
         principal=payload["principal"],
         realm=payload["realm"],
-        expires_at=_iso(cred.expires_at),
-        remaining_seconds=max(0, int(cred.expires_at - time.time())),
+        expires_at=_iso(expires_at),
+        remaining_seconds=max(0, int(expires_at - time.time())),
         renew_until=_iso(renew_until) if renew_until is not None else None,
         source=payload.get("tier"),
     )
@@ -805,14 +808,13 @@ async def link_krb5_keytab(
     )
     payload = cred.payload
     renew_until = payload.get("renew_until")
-    # a krb5 ticket always has an end time
-    assert cred.expires_at is not None  # noqa: S101
+    expires_at = _krb5_expires_at(cred)
     return KrbTicketMetadata(
         target=target,
         principal=payload["principal"],
         realm=payload["realm"],
-        expires_at=_iso(cred.expires_at),
-        remaining_seconds=max(0, int(cred.expires_at - time.time())),
+        expires_at=_iso(expires_at),
+        remaining_seconds=max(0, int(expires_at - time.time())),
         renew_until=_iso(renew_until) if renew_until is not None else None,
         source=payload.get("tier"),
     )
@@ -1317,14 +1319,13 @@ async def redeem_krb5_ticket(request: Request) -> KrbTicketRedeemResponse:
         )
     )
 
-    # a krb5 ticket always has an end time
-    assert cred.expires_at is not None  # noqa: S101
+    expires_at = _krb5_expires_at(cred)
     return KrbTicketRedeemResponse(
         ccache_b64=payload["ccache_b64"],
         principal=payload["principal"],
         realm=payload["realm"],
-        expires_at=_iso(cred.expires_at),
-        remaining_seconds=max(0, int(cred.expires_at - now)),
+        expires_at=_iso(expires_at),
+        remaining_seconds=max(0, int(expires_at - now)),
         renew_until=_iso(renew_until) if renew_until is not None else None,
     )
 

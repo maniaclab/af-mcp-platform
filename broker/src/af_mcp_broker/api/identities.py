@@ -308,6 +308,22 @@ async def get_identities(
     )
 
 
+def _typed_provider[P: CredentialProvider](
+    request: Request, alias: str, kind: type[P]
+) -> P:
+    """Return the identity provider registered under *alias*, which its ``identity_providers`` entry type guarantees is a *kind*."""
+    identity_providers: dict[str, CredentialProvider] = (
+        getattr(request.app.state, "identity_providers", None) or {}
+    )
+    provider = identity_providers[alias]
+    if not isinstance(provider, kind):
+        raise TypeError(
+            f"identity provider {alias!r} is a {type(provider).__name__}, "
+            f"not a {kind.__name__}"
+        )
+    return provider
+
+
 @router.delete(
     "/link/{provider}",
     status_code=status.HTTP_204_NO_CONTENT,
@@ -347,12 +363,7 @@ async def unlink_identity(
         return
 
     if cfg.type == "krb5-token":
-        identity_providers = (
-            getattr(request.app.state, "identity_providers", None) or {}
-        )
-        krb5_provider = identity_providers[provider]
-        # cfg.type guarantees this
-        assert isinstance(krb5_provider, KrbTokenProvider)  # noqa: S101
+        krb5_provider = _typed_provider(request, provider, KrbTokenProvider)
         await krb5_provider.unlink(principal)
 
         credential_cache = getattr(request.app.state, "credential_cache", None)
@@ -368,12 +379,7 @@ async def unlink_identity(
         return
 
     if cfg.type == "servicex-token":
-        identity_providers = (
-            getattr(request.app.state, "identity_providers", None) or {}
-        )
-        servicex_provider = identity_providers[provider]
-        # cfg.type guarantees this
-        assert isinstance(servicex_provider, ServiceXProvider)  # noqa: S101 -- mypy narrowing of an invariant validated upstream
+        servicex_provider = _typed_provider(request, provider, ServiceXProvider)
         await servicex_provider.unlink(principal)
 
         credential_cache = getattr(request.app.state, "credential_cache", None)

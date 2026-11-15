@@ -49,6 +49,7 @@ from af_mcp_broker.backend_errors import (
     NotLinkedForListingError,
 )
 from af_mcp_broker.credentials.errors import NeedsUnlockError
+from af_mcp_broker.errors import require
 from af_mcp_broker.mcp.diagnostics import register_diagnostic_tools
 from af_mcp_broker.mcp.instructions import compose_agent_instructions
 from af_mcp_broker.mcp.middleware.authorization_mw import AuthorizationMiddleware
@@ -1032,9 +1033,7 @@ class _ObservableProxyProvider(ProxyProvider):
         """Return a cached success's items, or re-raise a cached failure -- without repeating any side effects the original fetch already ran once, when the failure was first cached."""
         if entry.error is not None:
             raise entry.error
-        # invariant: exactly one of items/error is set
-        assert entry.items is not None  # noqa: S101
-        return entry.items
+        return require(entry.items, "exactly one of items/error is set")
 
     async def _cached_list(
         self, kind: str, fetch: Callable[[], Awaitable[Sequence[Any]]]

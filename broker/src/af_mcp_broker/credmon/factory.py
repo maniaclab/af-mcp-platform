@@ -15,6 +15,7 @@ from af_mcp_broker.credmon.htcondor_api import HTCondorApiCredentialStore
 from af_mcp_broker.credmon.storer import CredmonKind, CredmonStorer
 from af_mcp_broker.credmon.sync import CredmonSyncService
 from af_mcp_broker.credmon.vault import VaultCredmonSyncState, VaultSubjectSource
+from af_mcp_broker.errors import require
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -73,13 +74,18 @@ async def build_credmon_sync(
             "CREDMON_ENABLED requires the Keycloak principal directory: credd "
             "stores credentials per POSIX unixname, resolved from it."
         )
-    # Settings validator
-    assert settings.credmon_htcondor_api_url is not None  # noqa: S101
-    # Settings validator
-    assert settings.credmon_htcondor_api_token_file is not None  # noqa: S101
-    # Settings validator
-    assert settings.credmon_user_domain is not None  # noqa: S101
-    token_file = Path(settings.credmon_htcondor_api_token_file)
+    # Each is required by the Settings validator whenever credmon is enabled.
+    api_url = require(
+        settings.credmon_htcondor_api_url, "credmon_htcondor_api_url is required"
+    )
+    token_file_setting = require(
+        settings.credmon_htcondor_api_token_file,
+        "credmon_htcondor_api_token_file is required",
+    )
+    user_domain = require(
+        settings.credmon_user_domain, "credmon_user_domain is required"
+    )
+    token_file = Path(token_file_setting)
     try:
         # Checked once here so a missing mount refuses to boot; the client
         # itself re-reads the file on every store, so rotation needs no
@@ -106,13 +112,13 @@ async def build_credmon_sync(
         subjects=VaultSubjectSource(vault_kv, prefixes=store_prefixes),
         principal_cache=principal_cache,
         client=HTCondorApiCredentialStore(
-            api_url=str(settings.credmon_htcondor_api_url),
+            api_url=str(api_url),
             token_file=token_file,
         ),
         audience_prefix=settings.credmon_audience_prefix,
         service_prefix=settings.credmon_service_prefix,
         top_token_ttl_seconds=settings.credmon_top_token_ttl_seconds,
-        user_domain=settings.credmon_user_domain,
+        user_domain=user_domain,
     )
     log.info(
         "credmon.wired",
