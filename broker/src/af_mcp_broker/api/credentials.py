@@ -8,7 +8,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, SecretBytes, SecretStr
 
-from af_mcp_broker.api.errors import CorrelatedHTTPException
+from af_mcp_broker.api.errors import CorrelatedHTTPException, RateLimitedHTTPException
 from af_mcp_broker.audit.logger import AuditRecord, write_audit
 from af_mcp_broker.broker_state import get_broker_state
 from af_mcp_broker.credentials import (
@@ -36,6 +36,7 @@ from af_mcp_broker.errors import require
 from af_mcp_broker.identity import keycloak_dependency
 from af_mcp_broker.logging import bind_subject
 from af_mcp_broker.principal import PosixPrincipal, Principal
+from af_mcp_broker.retry_after import retry_after_seconds
 
 if TYPE_CHECKING:
     from af_mcp_broker.config import IdentityProviderConfig
@@ -718,11 +719,8 @@ async def create_krb5_ticket(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
         ) from exc
     except Krb5TokenRateLimitedError as exc:
-        headers = {"Retry-After": exc.retry_after} if exc.retry_after else None
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=str(exc),
-            headers=headers,
+        raise RateLimitedHTTPException(
+            str(exc), retry_after_seconds=retry_after_seconds(exc.retry_after)
         ) from exc
     except Krb5TokenMintError as exc:
         raise HTTPException(
@@ -782,11 +780,8 @@ async def link_krb5_keytab(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
         ) from exc
     except Krb5TokenRateLimitedError as exc:
-        headers = {"Retry-After": exc.retry_after} if exc.retry_after else None
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=str(exc),
-            headers=headers,
+        raise RateLimitedHTTPException(
+            str(exc), retry_after_seconds=retry_after_seconds(exc.retry_after)
         ) from exc
     except Krb5TokenMintError as exc:
         raise HTTPException(

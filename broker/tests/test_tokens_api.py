@@ -15,6 +15,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from rate_limited_helpers import assert_rate_limited_shape
 
 from af_mcp_broker import identity
 from af_mcp_broker.api import tokens as tokens_api
@@ -300,7 +301,9 @@ def test_mint_rate_limit_11th_call_429(app_client: tuple[TestClient, dict]) -> N
         assert resp.status_code == 200, resp.text
 
     resp = _mint(client, name="eleventh")
-    assert resp.status_code == 429, resp.text
+    body = assert_rate_limited_shape(resp)
+    assert 0 < body["retry_after_seconds"] <= 3600
+    assert str(body["retry_after_seconds"]) in body["detail"]
 
 
 def test_list_returns_own_tokens_only(

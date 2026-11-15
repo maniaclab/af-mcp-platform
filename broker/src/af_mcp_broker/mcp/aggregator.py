@@ -47,7 +47,11 @@ from af_mcp_broker.backend_errors import (
     NotEntitledForListingError,
     NotLinkedForListingError,
 )
-from af_mcp_broker.credentials.errors import CredentialError, NeedsUnlockError
+from af_mcp_broker.credentials.errors import (
+    CredentialError,
+    CredentialRateLimitedError,
+    NeedsUnlockError,
+)
 from af_mcp_broker.logging import current_correlation_id
 from af_mcp_broker.mcp.diagnostics import register_diagnostic_tools
 from af_mcp_broker.mcp.instructions import compose_agent_instructions
@@ -59,6 +63,7 @@ from af_mcp_broker.mcp.middleware.identity_mw import (
 )
 from af_mcp_broker.mcp.middleware.maintenance_mw import AsgiMaintenanceMiddleware
 from af_mcp_broker.mcp.middleware.output_schema_mw import OutputSchemaMiddleware
+from af_mcp_broker.retry_after import retry_after_seconds, retry_after_sentence
 from af_mcp_broker.service_registry import (
     LINK_IDENTITY_TOOL_NAME,
     LIST_IDENTITIES_TOOL_NAME,
@@ -491,6 +496,11 @@ async def _issue_call_credential(
         # Providers raise CredentialError (401 session expired, 404 no
         # stored token, ...) rather than NeedsUnlockError -- surface its
         # detail as the tool error, the text /v1 sends as the body.
+        if isinstance(exc, CredentialRateLimitedError):
+            raise ToolError(
+                f"{exc.detail} "
+                f"{retry_after_sentence(retry_after_seconds(exc.retry_after))}"
+            ) from exc
         raise ToolError(exc.detail) from exc
 
 

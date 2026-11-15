@@ -99,6 +99,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import math
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, replace
@@ -862,7 +863,14 @@ _MINT_RATE_WINDOW_SECONDS = 60 * 60
 
 
 class PatMintRateLimitError(BrokerError):
-    """Raised when a principal exceeds the mint-rate limit."""
+    """Raised when a principal exceeds the mint-rate limit.
+
+    *retry_after_seconds* is how long until the current mint window closes.
+    """
+
+    def __init__(self, message: str, *, retry_after_seconds: int) -> None:
+        super().__init__(message)
+        self.retry_after_seconds = retry_after_seconds
 
 
 def pat_mint_key(subject: str) -> str:
@@ -906,9 +914,11 @@ class TokenRegistry:
         """Raise PatMintRateLimitError if *subject* has hit the per-hour mint cap."""
         window = await self._shared_state.get_window(pat_mint_key(subject))
         if window is not None and window.count >= _MAX_MINTS_PER_HOUR:
+            retry_after_seconds = math.ceil(window.ttl_seconds)
             raise PatMintRateLimitError(
                 f"Too many tokens minted for subject={subject!r}. "
-                f"Try again in {int(window.ttl_seconds)}s."
+                f"Try again in {retry_after_seconds}s.",
+                retry_after_seconds=retry_after_seconds,
             )
 
     async def record_mint(self, subject: str) -> None:

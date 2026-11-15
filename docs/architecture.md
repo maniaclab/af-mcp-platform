@@ -773,6 +773,17 @@ wall-clock timestamp to render a countdown) are both served:
 }
 ```
 
+Every `/v1` 429 has this one shape: the `Retry-After` header in whole seconds
+and a JSON body of `detail`, `retry_after_seconds` and `retry_at`. The
+failed-unlock limit above, the per-hour PAT mint cap (`POST /v1/tokens`), the
+credential services' own limits (HTCondor on `/v1/credential`, krb5 on
+`/v1/krb5/ticket` and `/v1/krb5/keytab`) all raise `RateLimitedHTTPException`
+(`api/errors.py`). A backend that answers 429 without a usable
+`Retry-After` (absent, or the HTTP-date form) is reported with a 60 s default
+(`retry_after.py`). On `/mcp`, a `rate_limits` refusal and the same credential
+429 put the wait in the tool error message as
+`Retry-After: N seconds; retry_at: <timestamp>.`.
+
 #### Vault storage layering
 
 Two independent pieces of state persist to Vault/OpenBao KV-v2: the
