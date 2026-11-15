@@ -768,7 +768,7 @@ describe('fetchDashboardSummary() proxy renewal', () => {
     expect((await fetchDashboardSummary()).proxyAutoRenews).toBe(true);
   });
 
-  it('reports that it does not for an until-expiry link, a legacy entry or no x509 provider', async () => {
+  it('reports that it does not for an until-expiry link, an unlinked entry or no x509 provider', async () => {
     globalThis.fetch = identities([x509('until-expiry')]);
     expect((await fetchDashboardSummary()).proxyAutoRenews).toBe(false);
     window.sessionStorage.clear();

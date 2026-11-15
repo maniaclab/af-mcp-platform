@@ -226,8 +226,8 @@ export interface IdentityProvider {
   /** Custody mode of an x509 entry's link: "auto-renew" — the passphrase is
    * stored in the AF vault and proxies re-mint hands-free; "until-expiry" —
    * only the proxy is stored (the user declined passphrase custody), so the
-   * link lasts exactly as long as proxy_expires_at. Null when not linked, on
-   * legacy x509 entries, and on every non-x509 entry. */
+   * link lasts exactly as long as proxy_expires_at. Null when not linked and on
+   * every non-x509 entry. */
   x509_link_mode?: 'auto-renew' | 'until-expiry' | null;
   /** True only for a "krb5-token" entry with a durably linked keytab —
    * tickets remint hands-free indefinitely. Distinct from `linked`, which
@@ -647,8 +647,7 @@ export interface X509Preflight {
 
 /**
  * Fetches the caller's grid-certificate readiness checklist. Errors the
- * caller should expect: 501 — the facility's x509 entry mints via the legacy
- * path (no voms-token-service to ask); 502 — the service is unreachable.
+ * caller should expect: 502 — voms-token-service is unreachable.
  * See x509Identity.ts's x509PreflightErrorMessage for the display mapping.
  */
 export async function fetchX509Preflight(): Promise<X509Preflight> {
