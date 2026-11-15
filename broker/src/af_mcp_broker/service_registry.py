@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal, get_args
 from urllib.parse import urlsplit
 
-import yaml  # type: ignore[import-untyped]
+import yaml
 
 from af_mcp_broker.authorization import DISABLED_PERMISSION
 from af_mcp_broker.constants import BUILTIN_SERVICE_NAME

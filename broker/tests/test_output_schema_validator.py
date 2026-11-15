@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 
 import pytest
-from jsonschema.validators import validator_for  # type: ignore[import-untyped]
+from jsonschema.validators import validator_for
 
 from af_mcp_broker.mcp.middleware import output_schema_mw
 from af_mcp_broker.mcp.middleware.output_schema_mw import OutputSchemaValidator
