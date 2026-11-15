@@ -16,7 +16,8 @@ from af_mcp_broker.credentials import (
     ServiceXProvider,
     X509Provider,
 )
-from af_mcp_broker.identity import Principal, keycloak_dependency
+from af_mcp_broker.identity import keycloak_dependency
+from af_mcp_broker.principal import Principal
 
 if TYPE_CHECKING:
     from af_mcp_broker.config import IdentityProviderConfig

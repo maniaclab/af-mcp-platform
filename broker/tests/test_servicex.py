@@ -36,7 +36,7 @@ from af_mcp_broker.credentials.errors import (
 from af_mcp_broker.credentials.servicex import ServiceXProvider
 from af_mcp_broker.credentials.servicex_service import RedeemedServiceXToken
 from af_mcp_broker.credentials.servicex_vault import StoredServiceXCredential
-from af_mcp_broker.identity import Principal
+from af_mcp_broker.principal import Principal
 
 _REFRESH_TOKEN = "stored-refresh-token"
 _ACCESS_TOKEN = "fresh-access-token"

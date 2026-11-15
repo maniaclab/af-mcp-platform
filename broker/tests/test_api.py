@@ -11,11 +11,11 @@ from x509_fakes import seed_x509_link, seed_x509_proxy
 
 from af_mcp_broker.app import app
 from af_mcp_broker.authorization import EntitlementPolicy
+from af_mcp_broker.constants import BUILTIN_SERVICE_NAME
 from af_mcp_broker.credentials.base import CredentialKind, IssuedCredential
 from af_mcp_broker.credentials.oidc import OIDCProvider
 from af_mcp_broker.credentials.x509 import X509Provider
 from af_mcp_broker.mcp.registry import (
-    BUILTIN_SERVICE_NAME,
     LIST_IDENTITIES_TOOL_NAME,
     WHOAMI_TOOL_NAME,
     ServiceSpec,

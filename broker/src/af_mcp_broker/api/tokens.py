@@ -78,8 +78,9 @@ from af_mcp_broker.audit import AuditRecord, write_audit
 from af_mcp_broker.authorization import EntitlementPolicy, get_principal_permissions
 from af_mcp_broker.config import Settings, get_settings
 from af_mcp_broker.errors import BrokerError
-from af_mcp_broker.identity import Principal, keycloak_dependency
+from af_mcp_broker.identity import keycloak_dependency
 from af_mcp_broker.pat import mint_pat
+from af_mcp_broker.principal import Principal
 from af_mcp_broker.shared_state import (
     FallbackSharedState,
     InMemorySharedState,

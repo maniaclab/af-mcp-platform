@@ -86,10 +86,10 @@ if TYPE_CHECKING:
     )
     from af_mcp_broker.credentials.broker_issued import BrokerTokenIssuer
     from af_mcp_broker.credmon.guidance import JobCredentialGuide
-    from af_mcp_broker.identity import Principal
     from af_mcp_broker.maintenance import MaintenanceModeStore
     from af_mcp_broker.mcp.lint_observations import LintObservationStore
     from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
+    from af_mcp_broker.principal import Principal
     from af_mcp_broker.principal_cache import PrincipalCache
     from af_mcp_broker.shared_state import SharedState
     from af_mcp_broker.token_registry import TokenRegistryBackend

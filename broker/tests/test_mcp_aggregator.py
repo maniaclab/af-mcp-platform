@@ -70,7 +70,7 @@ from af_mcp_broker.mcp.registry import (
 )
 
 if TYPE_CHECKING:
-    from af_mcp_broker.identity import Principal
+    from af_mcp_broker.principal import Principal
 
 
 def _spec(**overrides: Any) -> ServiceSpec:

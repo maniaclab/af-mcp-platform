@@ -14,15 +14,16 @@ from af_mcp_broker.authorization import (
     get_principal_permissions,
     groups_granting_any,
 )
+from af_mcp_broker.constants import BUILTIN_SERVICE_NAME
 from af_mcp_broker.credentials import CredentialRegistry
-from af_mcp_broker.identity import Principal, keycloak_dependency
+from af_mcp_broker.identity import keycloak_dependency
 from af_mcp_broker.logging import current_correlation_id
 from af_mcp_broker.mcp.registry import (
-    BUILTIN_SERVICE_NAME,
     LIST_IDENTITIES_TOOL_NAME,
     WHOAMI_TOOL_NAME,
     ServiceRegistry,
 )
+from af_mcp_broker.principal import Principal
 
 if TYPE_CHECKING:
     from af_mcp_broker.mcp.registry import ServiceSpec

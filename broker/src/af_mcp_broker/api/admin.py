@@ -32,13 +32,14 @@ from pydantic import BaseModel, ConfigDict, Field
 from af_mcp_broker import metrics
 from af_mcp_broker.api.permissions import _get_registry
 from af_mcp_broker.audit import AuditRecord, write_audit
-from af_mcp_broker.identity import Principal, require_admin
+from af_mcp_broker.identity import require_admin
 from af_mcp_broker.logging import current_correlation_id
 from af_mcp_broker.maintenance import (
     MaintenanceModeStore,
     MaintenanceState,
     MaintenanceStateConflictError,
 )
+from af_mcp_broker.principal import Principal
 from af_mcp_broker.principal_cache import PrincipalUnavailableError
 
 if TYPE_CHECKING:

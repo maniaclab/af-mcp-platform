@@ -13,7 +13,8 @@ from pydantic import BaseModel, ConfigDict
 
 from af_mcp_broker.api.permissions import _get_policy
 from af_mcp_broker.authorization.rate_limit import read_rate_limit_usage
-from af_mcp_broker.identity import Principal, keycloak_dependency
+from af_mcp_broker.identity import keycloak_dependency
+from af_mcp_broker.principal import Principal
 
 if TYPE_CHECKING:
     from af_mcp_broker.authorization import EntitlementPolicy, RateLimitRule

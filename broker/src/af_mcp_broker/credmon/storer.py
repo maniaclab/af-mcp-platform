@@ -27,7 +27,7 @@ from pydantic import SecretStr
 
 from af_mcp_broker.audit.logger import AuditRecord, write_audit
 from af_mcp_broker.errors import BrokerError
-from af_mcp_broker.identity import Principal
+from af_mcp_broker.principal import Principal
 from af_mcp_broker.principal_cache import PrincipalUnavailableError
 
 if TYPE_CHECKING:

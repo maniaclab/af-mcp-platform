@@ -19,7 +19,7 @@ from pydantic import (
 )
 from pydantic_settings import BaseSettings
 
-from af_mcp_broker.mcp.registry import BUILTIN_SERVICE_NAME
+from af_mcp_broker.constants import BUILTIN_SERVICE_NAME
 
 log = structlog.get_logger(__name__)
 
@@ -338,7 +338,7 @@ class Settings(BaseSettings):
     # identity, and audit/usage `mcp_service` label. Deployment-configurable so
     # a facility can align it with its service-naming convention; the reserved
     # `af` prefix (and the af_* method wire-names) are unaffected. Default is
-    # registry.BUILTIN_SERVICE_NAME.
+    # constants.BUILTIN_SERVICE_NAME.
     builtin_service_name: str = BUILTIN_SERVICE_NAME
 
     # Keycloak group whose members see and can use every admin-only broker

@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
     from af_mcp_broker.audit import AuditRecord
-    from af_mcp_broker.identity import Principal
+    from af_mcp_broker.principal import Principal
 
 
 def _sample(name: str, labels: dict[str, str]) -> float:

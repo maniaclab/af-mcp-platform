@@ -36,8 +36,8 @@ if TYPE_CHECKING:
     import mcp.types as mt
     from fastmcp.tools.base import ToolResult
 
-    from af_mcp_broker.identity import Principal
     from af_mcp_broker.mcp.registry import ServiceRegistry
+    from af_mcp_broker.principal import Principal
     from af_mcp_broker.shared_state import SharedState
 
 logger = structlog.get_logger(__name__)

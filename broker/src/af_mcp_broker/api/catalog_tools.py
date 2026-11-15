@@ -29,13 +29,14 @@ from af_mcp_broker.authorization import (
     get_principal_permissions,
 )
 from af_mcp_broker.config import get_settings
-from af_mcp_broker.identity import Principal, keycloak_dependency
+from af_mcp_broker.identity import keycloak_dependency
 from af_mcp_broker.mcp.aggregator import (
     ToolListingEntry,
     fetch_service_tool_listing,
     resolve_list_time_credential,
 )
 from af_mcp_broker.mcp.errors import NotLinkedForListingError
+from af_mcp_broker.principal import Principal
 
 if TYPE_CHECKING:
     from af_mcp_broker.authorization import EntitlementPolicy

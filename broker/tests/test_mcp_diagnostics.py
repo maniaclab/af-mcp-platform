@@ -40,7 +40,7 @@ from af_mcp_broker.usage import aclose_usage_store, init_usage_store
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-    from af_mcp_broker.identity import Principal
+    from af_mcp_broker.principal import Principal
     from af_mcp_broker.usage import UsageStore
 
 # ---------------------------------------------------------------------------

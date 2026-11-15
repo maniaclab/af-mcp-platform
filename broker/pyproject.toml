@@ -129,6 +129,15 @@ ignore = [
 # shares httpx2's connection pooling, timeouts and exception hierarchy.
 "httpx".msg = "use httpx2"
 
+[tool.ruff.lint.flake8-type-checking]
+# FastAPI resolves route-handler annotations (``Annotated[Principal,
+# Depends(...)]``) at runtime; with ``from __future__ import annotations`` a
+# TYPE_CHECKING-only import leaves Principal unresolvable and FastAPI treats
+# the parameter as a request body (422). Ruff's non-strict mode only keeps the
+# import at runtime when a sibling name from the same import is used at
+# runtime, which a module of its own does not have.
+exempt-modules = ["typing", "af_mcp_broker.principal"]
+
 [tool.ruff.lint.isort]
 known-first-party = ["af_mcp_broker"]
 

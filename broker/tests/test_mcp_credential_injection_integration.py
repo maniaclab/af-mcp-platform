@@ -45,7 +45,7 @@ if TYPE_CHECKING:
     from fastmcp.utilities.tests import ASGIServer
     from starlette.requests import Request
 
-    from af_mcp_broker.identity import Principal
+    from af_mcp_broker.principal import Principal
 
 # ---------------------------------------------------------------------------
 # End-to-end coverage for real credential injection through the aggregator:

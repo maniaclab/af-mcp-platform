@@ -45,11 +45,12 @@ from af_mcp_broker.audit import measure
 from af_mcp_broker.authorization import load_policy
 from af_mcp_broker.config import Settings, get_settings
 from af_mcp_broker.credmon.state import CredmonSyncState
-from af_mcp_broker.identity import Principal, keycloak_dependency
+from af_mcp_broker.identity import keycloak_dependency
 from af_mcp_broker.logging import AUDIT_LOGGER_NAME, configure_logging
 from af_mcp_broker.mcp import aggregator as aggregator_module
 from af_mcp_broker.mcp import cache_invalidation, lint_observations
 from af_mcp_broker.mcp.aggregator import build_asgi_auth_middleware
+from af_mcp_broker.principal import Principal
 from af_mcp_broker.principal_cache import (
     InMemoryPrincipalCacheBackend,
     PrincipalCache,

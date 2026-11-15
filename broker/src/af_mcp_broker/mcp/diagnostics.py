@@ -44,8 +44,8 @@ if TYPE_CHECKING:
     from af_mcp_broker.config import IdentityProviderConfig, Settings
     from af_mcp_broker.credentials import CredentialProvider, CredentialRegistry
     from af_mcp_broker.credmon.guidance import JobCredentialGuide
-    from af_mcp_broker.identity import Principal
     from af_mcp_broker.mcp.registry import ServiceRegistry
+    from af_mcp_broker.principal import Principal
     from af_mcp_broker.shared_state import SharedState
 
 # Broker-native diagnostic tools (issue #153), registered directly on the

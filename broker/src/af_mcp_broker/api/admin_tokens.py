@@ -31,7 +31,8 @@ from af_mcp_broker.api.tokens import (
     _registry,
     _to_summary,
 )
-from af_mcp_broker.identity import Principal, require_admin
+from af_mcp_broker.identity import require_admin
+from af_mcp_broker.principal import Principal
 
 router = APIRouter(prefix="/admin/tokens", tags=["admin"])
 

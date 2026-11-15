@@ -10,7 +10,7 @@ import yaml  # type: ignore[import-untyped]
 
 if TYPE_CHECKING:
     from af_mcp_broker.config import Settings
-    from af_mcp_broker.identity import Principal
+    from af_mcp_broker.principal import Principal
 
 
 # Sentinel a per-tool required_permission resolution can produce

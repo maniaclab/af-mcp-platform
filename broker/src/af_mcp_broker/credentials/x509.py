@@ -33,7 +33,7 @@ if TYPE_CHECKING:
         VomsTokenServiceClient,
     )
     from af_mcp_broker.credentials.x509_vault import VaultX509Store
-    from af_mcp_broker.identity import Principal
+    from af_mcp_broker.principal import Principal
 
 log = structlog.get_logger(__name__)
 

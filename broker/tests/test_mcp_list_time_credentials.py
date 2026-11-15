@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 
     from fastmcp.utilities.tests import ASGIServer
 
-    from af_mcp_broker.identity import Principal
+    from af_mcp_broker.principal import Principal
 
 # ---------------------------------------------------------------------------
 # Regression coverage for issue #121: tools/list returned nothing for

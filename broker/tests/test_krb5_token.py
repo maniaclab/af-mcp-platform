@@ -30,7 +30,7 @@ from af_mcp_broker.credentials.errors import (
 from af_mcp_broker.credentials.krb5 import KrbTokenProvider
 from af_mcp_broker.credentials.krb5_service import MintedTicket
 from af_mcp_broker.credentials.krb5_vault import StoredKrb5Credential
-from af_mcp_broker.identity import Principal
+from af_mcp_broker.principal import Principal
 
 
 def make_principal(subject: str = "user1") -> Principal:

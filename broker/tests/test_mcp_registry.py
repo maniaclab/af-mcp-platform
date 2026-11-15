@@ -5,8 +5,8 @@ from pathlib import Path
 import pytest
 
 from af_mcp_broker.config import Settings
+from af_mcp_broker.constants import BUILTIN_SERVICE_NAME
 from af_mcp_broker.mcp.registry import (
-    BUILTIN_SERVICE_NAME,
     DIAGNOSTIC_TOOL_NAMES,
     DISABLED_PERMISSION,
     LINK_IDENTITY_TOOL_NAME,

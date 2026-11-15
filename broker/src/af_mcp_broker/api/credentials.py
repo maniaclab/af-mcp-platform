@@ -32,8 +32,9 @@ from af_mcp_broker.credentials.errors import (
     VomsServicePreflightError,
     VomsServiceRejectedError,
 )
-from af_mcp_broker.identity import Principal, keycloak_dependency
+from af_mcp_broker.identity import keycloak_dependency
 from af_mcp_broker.logging import CorrelatedHTTPException
+from af_mcp_broker.principal import Principal
 
 if TYPE_CHECKING:
     from af_mcp_broker.config import IdentityProviderConfig

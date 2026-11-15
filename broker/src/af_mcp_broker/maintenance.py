@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from af_mcp_broker.config import Settings
-    from af_mcp_broker.identity import Principal
+    from af_mcp_broker.principal import Principal
 
 logger = structlog.get_logger(__name__)
 

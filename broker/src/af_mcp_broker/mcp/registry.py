@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 import yaml  # type: ignore[import-untyped]
 
 from af_mcp_broker.authorization import DISABLED_PERMISSION
+from af_mcp_broker.constants import BUILTIN_SERVICE_NAME
 
 if TYPE_CHECKING:
     from af_mcp_broker.config import Settings
@@ -38,13 +39,6 @@ TrustTier = Literal["user-tier", "service-tier", "infrastructure-tier"]
 TRUST_TIERS: frozenset[str] = frozenset(get_args(TrustTier))
 
 RESERVED_PREFIX = "af"
-# Default name of the registry's self-registered entry for the broker's own
-# af_* methods (see _builtin_service_spec() below). Configurable per deployment
-# via BUILTIN_SERVICE_NAME (config.py) so a facility can align it with its
-# service-naming convention -- the `<backend>_service` form here. Only the
-# *name* is configurable; the reserved `af` prefix stays fixed because the
-# method wire-names (af_whoami, ...) are built from it.
-BUILTIN_SERVICE_NAME = "gateway_service"
 WHOAMI_TOOL_NAME = f"{RESERVED_PREFIX}_whoami"
 LIST_IDENTITIES_TOOL_NAME = f"{RESERVED_PREFIX}_list_identities"
 LIST_MCP_SERVERS_TOOL_NAME = f"{RESERVED_PREFIX}_list_mcp_servers"
