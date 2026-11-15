@@ -18,6 +18,7 @@ import json
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from broker_state_helpers import aggregator_stores
 from fastmcp import FastMCP
 from fastmcp.server.dependencies import get_http_headers
 from test_broker_issued import (
@@ -253,16 +254,14 @@ async def test_aggregator_injects_broker_identity_token(
     credential_registry.register("toy", provider)
     policy = EntitlementPolicy(group_permissions={"atlas": ["read_data"]})
     mcp = build_aggregator(
-        registry,
-        settings,
-        policy,
-        credential_registry,
-        principal_cache=principal_cache,
+        registry, settings, policy, credential_registry, **aggregator_stores()
     )
     inbound_token = sig_key.sign(make_claims())
 
     async with (
-        run_aggregator_async(mcp, path="/mcp") as server,
+        run_aggregator_async(
+            mcp, path="/mcp", settings=settings, principal_cache=principal_cache
+        ) as server,
         server.client(headers={"Authorization": f"Bearer {inbound_token}"}) as client,
     ):
         result = await client.call_tool("toy_seen_authorization", {})
@@ -302,10 +301,9 @@ def test_identities_lists_broker_issued_provider_as_linked(
 
 
 # ---------------------------------------------------------------------------
-# Lifespan -> aggregator wiring: app.py builds the aggregator eagerly, before
-# the signing key is loaded, so the lifespan's populate_aggregator() call is
-# the only way the real issuer can reach the x509 client factories (issue
-# #112's injection path). If it never arrives, every `auth_type: x509`
+# Lifespan -> aggregator wiring: the lifespan loads the signing key and hands
+# the real issuer to the aggregator's x509 client factories (issue #112's
+# injection path). If it never arrives, every `auth_type: x509`
 # backend connects with no Authorization header at list time (the backend
 # 401s and is dropped as "unavailable") and an authorized tools/call raises a
 # ToolError claiming no signing key is configured -- even though

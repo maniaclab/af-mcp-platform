@@ -138,15 +138,11 @@ class AuthorizationMiddleware(Middleware):
         registry: ServiceRegistry,
         policy: EntitlementPolicy,
     ) -> None:
-        # Mutable on purpose: populate_aggregator() refreshes these in place
-        # on every lifespan entry rather than constructing a new middleware
-        # instance each time (mirrors EntitlementMiddleware).
         self.registry = registry
         self.policy = policy
-        # The aggregator is built before the lifespan creates the store (see
-        # app.py's mount-time constraint), so the store arrives later through
-        # use_shared_state(). There is deliberately no default store: counting
-        # in a private in-memory one would silently make limits per replica.
+        # The store arrives through use_shared_state(). There is deliberately
+        # no default store: counting in a private in-memory one would silently
+        # make limits per replica.
         self.shared_state: FallbackSharedState | None = None
 
     def _denial_message(self, permission: str | None, reason: str) -> str:
@@ -170,9 +166,8 @@ class AuthorizationMiddleware(Middleware):
     def use_shared_state(self, shared_state: SharedState) -> None:
         """Back ``policy.rate_limits`` with *shared_state*.
 
-        Called again by populate_aggregator() once the lifespan has built the
-        store, as for registry and policy. While the store is unreachable
-        the budgets are counted per replica instead.
+        While the store is unreachable the budgets are counted per replica
+        instead.
         """
         self.shared_state = FallbackSharedState(
             shared_state,
@@ -182,7 +177,7 @@ class AuthorizationMiddleware(Middleware):
 
     def _require_shared_state(self) -> FallbackSharedState:
         # Refuse rather than count somewhere other than the shared store:
-        # populate_aggregator() installs both the rules and the store, so a
+        # build_aggregator() installs both the rules and the store, so a
         # missing store is a wiring bug, not a runtime condition.
         if self.shared_state is None:
             raise RuntimeError(

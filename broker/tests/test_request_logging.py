@@ -41,12 +41,10 @@ from test_mcp_middleware_identity import _http_scope, _InnerApp, _run, _status
 if TYPE_CHECKING:
     from starlette.requests import Request
 
+from broker_state_helpers import asgi_auth_middleware
+
 import af_mcp_broker.app as app_module
 from af_mcp_broker.mcp.middleware import identity_mw
-from af_mcp_broker.mcp.middleware.identity_mw import (
-    AsgiAuthMiddleware,
-    IdentityMiddleware,
-)
 
 
 def _capturing_info(
@@ -191,7 +189,7 @@ async def test_mcp_received_and_finished_have_matching_correlation_id(
 ) -> None:
     events = _capturing_info(monkeypatch, identity_mw.logger)
     inner = _InnerApp()
-    middleware = AsgiAuthMiddleware(inner, IdentityMiddleware(settings))
+    middleware = asgi_auth_middleware(inner, settings)
 
     # No Authorization header -- an early 401 still must log both lines.
     messages = await _run(middleware, _http_scope())
@@ -218,9 +216,7 @@ async def test_mcp_finished_carries_subject_for_an_authenticated_request(
     token = sig_key.sign(make_claims())
     events = _capturing_info(monkeypatch, identity_mw.logger)
     inner = _InnerApp()
-    middleware = AsgiAuthMiddleware(
-        inner, IdentityMiddleware(settings, principal_cache=principal_cache)
-    )
+    middleware = asgi_auth_middleware(inner, settings, principal_cache=principal_cache)
 
     messages = await _run(middleware, _http_scope({"authorization": f"Bearer {token}"}))
 
@@ -245,9 +241,7 @@ async def test_mcp_logs_leak_no_header_or_token(
     token = sig_key.sign(make_claims())
     events = _capturing_info(monkeypatch, identity_mw.logger)
     inner = _InnerApp()
-    middleware = AsgiAuthMiddleware(
-        inner, IdentityMiddleware(settings, principal_cache=principal_cache)
-    )
+    middleware = asgi_auth_middleware(inner, settings, principal_cache=principal_cache)
 
     await _run(middleware, _http_scope({"authorization": f"Bearer {token}"}))
 

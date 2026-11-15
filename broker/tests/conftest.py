@@ -20,13 +20,13 @@ if TYPE_CHECKING:
     from fastmcp import FastMCP
 
     from af_mcp_broker.maintenance import MaintenanceModeStore
+    from af_mcp_broker.token_registry import TokenRegistryBackend
 
 import fastmcp
 import httpx2
 import jwt
 import pytest
 import structlog
-from broker_state_helpers import asgi_state_getter
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.serialization import (
     Encoding,
@@ -50,6 +50,7 @@ from af_mcp_broker.credentials import stores as credential_stores_module
 from af_mcp_broker.credmon.state import CredmonSyncState
 from af_mcp_broker.identity import keycloak_dependency
 from af_mcp_broker.logging import AUDIT_LOGGER_NAME, configure_logging
+from af_mcp_broker.maintenance import InMemoryMaintenanceModeStore
 from af_mcp_broker.mcp import aggregator as aggregator_module
 from af_mcp_broker.mcp import cache_invalidation
 from af_mcp_broker.mcp.aggregator import build_asgi_middleware
@@ -594,6 +595,10 @@ async def run_aggregator_async(
     mcp: FastMCP,
     path: str = "/mcp",
     maintenance_mode_store: MaintenanceModeStore | None = None,
+    *,
+    settings: Settings,
+    pat_backend: TokenRegistryBackend | None = None,
+    principal_cache: PrincipalCache | None = None,
 ) -> AsyncIterator[ASGIServer]:
     """Serve an aggregator built by mcp.aggregator.build_aggregator() in-process
     through fastmcp's asgi_server (no socket, no uvicorn), and yield the
@@ -613,7 +618,10 @@ async def run_aggregator_async(
         mcp,
         path=path,
         middleware=build_asgi_middleware(
-            mcp, asgi_state_getter(mcp, maintenance_mode_store)
+            settings,
+            pat_backend,
+            principal_cache,
+            maintenance_mode_store or InMemoryMaintenanceModeStore(),
         ),
     ) as server:
         yield server

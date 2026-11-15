@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx2
 import pytest
+from broker_state_helpers import aggregator_stores
 from conftest import (
     make_claims,
     run_aggregator_async,
@@ -167,14 +168,12 @@ def aggregator_app(settings, toy_backend_url, policy, static_principal_cache):
         credential_registry = CredentialRegistry()
         credential_registry.register("toy", provider)
         mcp = build_aggregator(
-            registry,
-            settings,
-            policy,
-            credential_registry,
-            principal_cache=principal_cache,
+            registry, settings, policy, credential_registry, **aggregator_stores()
         )
         _run.service_registry = registry
-        async with run_aggregator_async(mcp, path="/mcp") as server:
+        async with run_aggregator_async(
+            mcp, path="/mcp", settings=settings, principal_cache=principal_cache
+        ) as server:
             yield server
 
     _run.directory = directory

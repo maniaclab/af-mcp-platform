@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from cryptography.fernet import Fernet
     from fastmcp import FastMCP
     from starlette.applications import Starlette
+    from starlette.types import ASGIApp
 
     from af_mcp_broker.authorization import EntitlementPolicy
     from af_mcp_broker.backend_client import ToolListingCache
@@ -57,7 +58,8 @@ class BrokerState:
     carries the builtin gateway service); *services_loaded* means
     ``services.yaml`` parsed without error. *dev_bypass_principal* is set only
     while the local-dev auth bypass is active. *metrics_port* is the port the
-    metrics server bound, or None when it is disabled.
+    metrics server bound, or None when it is disabled. *mcp_app* is the ASGI
+    app serving *mcp_aggregator* at ``/mcp``.
     """
 
     settings: Settings
@@ -92,6 +94,7 @@ class BrokerState:
     credmon_sync: CredmonSyncService | None
     tool_listing_cache: ToolListingCache
     mcp_aggregator: FastMCP
+    mcp_app: ASGIApp
     dev_bypass_principal: Principal | None
     metrics_port: int | None
 

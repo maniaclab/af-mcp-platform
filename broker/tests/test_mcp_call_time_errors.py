@@ -6,6 +6,7 @@ from typing import Any
 
 import mcp.types as mt
 import pytest
+from broker_state_helpers import aggregator_stores
 from conftest import make_claims, run_aggregator_async, run_inprocess_server
 from fastmcp import Client, FastMCP
 from fastmcp.exceptions import ToolError
@@ -123,15 +124,13 @@ async def test_upstream_mcp_level_error_passes_through_unchanged(
         )
         policy = EntitlementPolicy()
         mcp = build_aggregator(
-            registry,
-            settings,
-            policy,
-            CredentialRegistry(),
-            principal_cache=principal_cache,
+            registry, settings, policy, CredentialRegistry(), **aggregator_stores()
         )
 
         async with (
-            run_aggregator_async(mcp, path="/mcp") as server,
+            run_aggregator_async(
+                mcp, path="/mcp", settings=settings, principal_cache=principal_cache
+            ) as server,
             server.client(headers={"Authorization": f"Bearer {token}"}) as client,
         ):
             result = await client.call_tool_mcp("toy_boom", {})
@@ -178,15 +177,13 @@ async def test_slow_backend_call_times_out_cleanly_instead_of_hanging(
         )
         policy = EntitlementPolicy()
         mcp = build_aggregator(
-            registry,
-            settings,
-            policy,
-            CredentialRegistry(),
-            principal_cache=principal_cache,
+            registry, settings, policy, CredentialRegistry(), **aggregator_stores()
         )
 
         async with (
-            run_aggregator_async(mcp, path="/mcp") as server,
+            run_aggregator_async(
+                mcp, path="/mcp", settings=settings, principal_cache=principal_cache
+            ) as server,
             server.client(headers={"Authorization": f"Bearer {token}"}) as client,
         ):
             started = time.monotonic()

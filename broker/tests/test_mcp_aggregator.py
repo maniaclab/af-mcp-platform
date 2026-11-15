@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock
 import httpx2
 import pytest
 import structlog
+from broker_state_helpers import aggregator_stores
 from fastapi import HTTPException
 from fastmcp import FastMCP
 from fastmcp.client import Client
@@ -57,7 +58,6 @@ from af_mcp_broker.mcp.aggregator import (
     _make_client_factory,
     _require_linked,
     build_aggregator,
-    populate_aggregator,
 )
 from af_mcp_broker.mcp.middleware.authorization_mw import AuthorizationMiddleware
 from af_mcp_broker.mcp.middleware.entitlement_mw import EntitlementMiddleware
@@ -286,7 +286,11 @@ def _patch_context(
 
 def test_build_aggregator_returns_fastmcp(settings: Any) -> None:
     mcp = build_aggregator(
-        ServiceRegistry(), settings, EntitlementPolicy(), CredentialRegistry()
+        ServiceRegistry(),
+        settings,
+        EntitlementPolicy(),
+        CredentialRegistry(),
+        **aggregator_stores(),
     )
     assert isinstance(mcp, FastMCP)
 
@@ -300,7 +304,11 @@ def test_build_aggregator_wires_identity_before_entitlement_before_authorization
     prepends its own DereferenceRefsMiddleware, so assert relative order
     between ours rather than absolute list positions."""
     mcp = build_aggregator(
-        ServiceRegistry(), settings, EntitlementPolicy(), CredentialRegistry()
+        ServiceRegistry(),
+        settings,
+        EntitlementPolicy(),
+        CredentialRegistry(),
+        **aggregator_stores(),
     )
     identity_index = next(
         i for i, mw in enumerate(mcp.middleware) if isinstance(mw, IdentityMiddleware)
@@ -327,33 +335,17 @@ def test_build_aggregator_composes_model_facing_instructions(settings: Any) -> N
         _spec(name="widgets", prefix="widgets", agent_policy="Widgets are read-only.")
     )
     mcp = build_aggregator(
-        registry, settings, EntitlementPolicy(), CredentialRegistry()
+        registry,
+        settings,
+        EntitlementPolicy(),
+        CredentialRegistry(),
+        **aggregator_stores(),
     )
     assert mcp.instructions
     # deny-is-policy guidance from the preamble
     assert "retry" in mcp.instructions.lower()
     # the service's own model-facing policy
     assert "Widgets are read-only." in mcp.instructions
-
-
-def test_populate_aggregator_refreshes_instructions(settings: Any) -> None:
-    """build_aggregator is called eagerly with an empty registry (see app.py);
-    populate_aggregator must recompose the instructions once the real registry
-    is pushed in, or the eager build's instructions would omit every operator
-    service's agent_policy."""
-    mcp = build_aggregator(
-        ServiceRegistry(), settings, EntitlementPolicy(), CredentialRegistry()
-    )
-    assert "Widgets are read-only." not in (mcp.instructions or "")
-
-    real_registry = ServiceRegistry()
-    real_registry.register(
-        _spec(name="widgets", prefix="widgets", agent_policy="Widgets are read-only.")
-    )
-    populate_aggregator(
-        mcp, real_registry, settings, EntitlementPolicy(), CredentialRegistry()
-    )
-    assert "Widgets are read-only." in (mcp.instructions or "")
 
 
 # _register_services() re-adds mcp.local_provider (which the af_* diagnostic
@@ -369,89 +361,33 @@ def test_build_aggregator_registers_one_provider_per_backend(settings: Any) -> N
     registry.register(_spec(name="b", prefix="b"))
 
     mcp = build_aggregator(
-        registry, settings, EntitlementPolicy(), CredentialRegistry()
+        registry,
+        settings,
+        EntitlementPolicy(),
+        CredentialRegistry(),
+        **aggregator_stores(),
     )
 
     assert len(mcp.providers) == 2 + _LOCAL_PROVIDER_COUNT
 
 
-async def test_local_provider_tools_survive_populate_aggregator(settings: Any) -> None:
-    """Regression test: _register_services() clears mcp.providers wholesale
-    on every call (see its docstring), which would silently drop
-    mcp.local_provider -- and with it every af_* diagnostic tool
-    (mcp/diagnostics.py) -- from dispatch on the very next
-    populate_aggregator() refresh if it weren't re-added. af_whoami is a
-    stand-in for "any locally-registered tool stays reachable."""
+async def test_local_provider_tools_are_reachable_after_build(settings: Any) -> None:
+    """_register_services() clears mcp.providers wholesale (see its
+    docstring), which would silently drop mcp.local_provider -- and with it
+    every af_* diagnostic tool (mcp/diagnostics.py) -- from dispatch if it
+    weren't re-added. af_whoami is a stand-in for "any locally-registered
+    tool stays reachable."""
     mcp = build_aggregator(
-        ServiceRegistry(), settings, EntitlementPolicy(), CredentialRegistry()
-    )
-    populate_aggregator(
-        mcp, ServiceRegistry(), settings, EntitlementPolicy(), CredentialRegistry()
+        ServiceRegistry(),
+        settings,
+        EntitlementPolicy(),
+        CredentialRegistry(),
+        **aggregator_stores(),
     )
 
     tools = await mcp._list_tools()
 
     assert WHOAMI_TOOL_NAME in {t.name for t in tools}
-
-
-def test_populate_aggregator_replaces_providers_not_appends(settings: Any) -> None:
-    registry_a = ServiceRegistry()
-    registry_a.register(_spec(name="a", prefix="a"))
-    mcp = build_aggregator(
-        registry_a, settings, EntitlementPolicy(), CredentialRegistry()
-    )
-    assert len(mcp.providers) == 1 + _LOCAL_PROVIDER_COUNT
-
-    registry_b = ServiceRegistry()
-    registry_b.register(_spec(name="b", prefix="b"))
-    registry_b.register(_spec(name="c", prefix="c"))
-    populate_aggregator(
-        mcp, registry_b, settings, EntitlementPolicy(), CredentialRegistry()
-    )
-
-    assert len(mcp.providers) == 2 + _LOCAL_PROVIDER_COUNT
-
-
-def test_populate_aggregator_refreshes_middleware_state(settings: Any) -> None:
-    mcp = build_aggregator(
-        ServiceRegistry(), settings, EntitlementPolicy(), CredentialRegistry()
-    )
-    identity_mw = next(
-        mw for mw in mcp.middleware if isinstance(mw, IdentityMiddleware)
-    )
-    entitlement_mw = next(
-        mw for mw in mcp.middleware if isinstance(mw, EntitlementMiddleware)
-    )
-    authorization_mw = next(
-        mw for mw in mcp.middleware if isinstance(mw, AuthorizationMiddleware)
-    )
-
-    new_registry = ServiceRegistry()
-    new_registry.register(_spec(name="a", prefix="a"))
-    new_policy = EntitlementPolicy(group_permissions={"atlas": ["read_data"]})
-    new_settings = settings.model_copy(update={"oidc_audience": "something-else"})
-
-    populate_aggregator(
-        mcp, new_registry, new_settings, new_policy, CredentialRegistry()
-    )
-
-    assert identity_mw.settings is new_settings
-    assert entitlement_mw.registry is new_registry
-    assert entitlement_mw.policy is new_policy
-    assert authorization_mw.registry is new_registry
-    assert authorization_mw.policy is new_policy
-
-
-def test_populate_aggregator_raises_if_middleware_missing(settings: Any) -> None:
-    mcp = FastMCP(name="bare")
-    with pytest.raises(RuntimeError, match="build_aggregator"):
-        populate_aggregator(
-            mcp,
-            ServiceRegistry(),
-            settings,
-            EntitlementPolicy(),
-            CredentialRegistry(),
-        )
 
 
 def test_client_factory_builds_streamable_http_transport(settings: Any) -> None:
@@ -1995,7 +1931,11 @@ def _build_namespaced_aggregator(
         lambda spec, *_args, **_kwargs: lambda: clients[spec.name],
     )
     mcp = build_aggregator(
-        registry, settings, EntitlementPolicy(), CredentialRegistry()
+        registry,
+        settings,
+        EntitlementPolicy(),
+        CredentialRegistry(),
+        **aggregator_stores(),
     )
     return mcp, mcp.backend_providers
 

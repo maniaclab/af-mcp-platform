@@ -5,12 +5,10 @@ from __future__ import annotations
 # applied entitlement filtering, checked authorization, and (for
 # auth_type="bearer" services) minted and injected a per-user credential.
 #
-# app.py builds an aggregator eagerly (with an empty ServiceRegistry) so its
-# ASGI app exists at FastAPI-construction time for mounting at /mcp and for
-# combining lifespans; app.py's own lifespan then calls populate_aggregator()
-# once SERVICES_FILE/POLICY_FILE/the credential subsystem have actually been
-# loaded. The client_factory below deliberately never forwards the caller's
-# inbound Authorization header to a service; see its docstring.
+# app.py's lifespan builds the aggregator once SERVICES_FILE/POLICY_FILE/the
+# credential subsystem have been loaded. The client_factory below deliberately
+# never forwards the caller's inbound Authorization header to a service; see
+# its docstring.
 import asyncio
 import time
 from typing import TYPE_CHECKING, Any
@@ -79,7 +77,6 @@ if TYPE_CHECKING:
     from fastmcp.utilities.versions import VersionSpec
 
     from af_mcp_broker.authorization import EntitlementPolicy
-    from af_mcp_broker.broker_state import BrokerState
     from af_mcp_broker.config import IdentityProviderConfig, Settings
     from af_mcp_broker.credentials import (
         CredentialProvider,
@@ -88,6 +85,7 @@ if TYPE_CHECKING:
     from af_mcp_broker.credentials.broker_issued import BrokerTokenIssuer
     from af_mcp_broker.credmon.guidance import JobCredentialGuide
     from af_mcp_broker.lint_observations import LintObservationStore
+    from af_mcp_broker.maintenance import MaintenanceModeStore
     from af_mcp_broker.principal import Principal
     from af_mcp_broker.principal_cache import PrincipalCache
     from af_mcp_broker.service_registry import ServiceRegistry, ServiceSpec
@@ -1280,9 +1278,7 @@ class BackendProviders:
     fastmcp wraps a namespaced provider in a private ``_WrappedProvider`` when
     it is added, so ``mcp.providers`` never holds our providers directly.
     ``_register_services`` records them here instead, and the invalidation
-    helpers below reach the real objects through this holder. One instance is
-    shared by ``build_aggregator`` and every later ``populate_aggregator`` on
-    the same aggregator, which refresh its contents in place.
+    helpers below reach the real objects through this holder.
     """
 
     def __init__(self) -> None:
@@ -1309,13 +1305,20 @@ class Aggregator(FastMCP):
     """The aggregator FastMCP instance, owning the ``BackendProviders`` its backends are recorded in.
 
     Owning the holder makes one holder per aggregator structural:
-    ``_register_services`` refreshes it on every build and populate, and
-    callers read it from here rather than being handed a copy.
+    ``_register_services`` records into it and callers read it from here. A
+    caller that must hand the holder to something built before the aggregator
+    (the cache invalidator, which the credential providers the aggregator
+    needs depend on) creates it first and passes it in.
     """
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        *args: Any,
+        backend_providers: BackendProviders | None = None,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(*args, **kwargs)
-        self.backend_providers = BackendProviders()
+        self.backend_providers = backend_providers or BackendProviders()
 
 
 def invalidate_subject_cache(
@@ -1347,14 +1350,15 @@ def build_aggregator(
     settings: Settings,
     policy: EntitlementPolicy,
     credential_registry: CredentialRegistry,
-    pat_backend: TokenRegistryBackend | None = None,
-    principal_cache: PrincipalCache | None = None,
+    *,
+    shared_state: SharedState,
+    lint_observations: LintObservationStore,
     identity_providers: dict[str, CredentialProvider] | None = None,
     identity_provider_configs: dict[str, IdentityProviderConfig] | None = None,
     target_to_alias: dict[str, str] | None = None,
     broker_token_issuer: BrokerTokenIssuer | None = None,
     job_credentials: JobCredentialGuide | None = None,
-    shared_state: SharedState | None = None,
+    backend_providers: BackendProviders | None = None,
 ) -> Aggregator:
     """Construct a fully-wired aggregator FastMCP instance.
 
@@ -1385,39 +1389,27 @@ def build_aggregator(
     keeping given it's a no-op for everything this docstring's ordering
     invariant actually cares about.
 
-    *shared_state* backs ``policy.rate_limits``; with none, a policy that sets
-    rate limits refuses tool calls rather than count in a private store. The
-    eager build leaves it None and ``populate_aggregator`` supplies the real
-    store, like the arguments below.
-
-    *pat_backend*/*principal_cache* default to None here
-    because app.py builds the aggregator eagerly, before the real token
-    registry/principal cache exist (see the module-level comment above
-    ``_mcp_aggregator``) -- ``populate_aggregator`` pushes the real ones in
-    once the lifespan has them, same as settings/policy. *pat_backend*/
-    *principal_cache* being None means identity PATs are recognized by prefix
-    on ``/mcp`` but always rejected (see ``mcp/middleware/identity_mw.py``'s
-    ``AsgiAuthMiddleware``) -- a broker with no Keycloak admin service
-    account configured (issue #144 step 2a). *identity_providers*/
-    *identity_provider_configs*/*target_to_alias* default to empty for the
-    same eager-build reason -- af_list_identities/af_list_mcp_servers simply
-    report nothing until ``populate_aggregator`` supplies the real ones.
+    *shared_state* backs ``policy.rate_limits``; *lint_observations* is where
+    the tool-listing lint's findings are recorded. *identity_providers*/
+    *identity_provider_configs*/*target_to_alias* default to empty:
+    af_list_identities/af_list_mcp_servers then report nothing.
+    *backend_providers* is the holder the proxied backends are recorded in;
+    omitted, the aggregator creates its own.
     """
     # instructions is the model-facing "dual enforcement" layer (finding #6):
     # a platform preamble plus each service's agent_policy, surfaced to clients
-    # in the MCP initialize response. Composed here from whatever registry is
-    # available at construction -- the eager module-scope build starts with an
-    # empty registry (see app.py), so populate_aggregator recomposes below once
-    # the real registry is loaded, mirroring how settings/policy get pushed in.
+    # in the MCP initialize response.
     mcp = Aggregator(
         name="af-mcp-aggregator",
         instructions=compose_agent_instructions(registry, job_credentials),
+        backend_providers=backend_providers,
     )
-    mcp.add_middleware(IdentityMiddleware(settings, pat_backend, principal_cache))
-    mcp.add_middleware(EntitlementMiddleware(registry, policy))
+    mcp.add_middleware(IdentityMiddleware())
+    entitlement_mw = EntitlementMiddleware(registry, policy)
+    entitlement_mw.use_lint_store(lint_observations)
+    mcp.add_middleware(entitlement_mw)
     authorization_mw = AuthorizationMiddleware(registry, policy)
-    if shared_state is not None:
-        authorization_mw.use_shared_state(shared_state)
+    authorization_mw.use_shared_state(shared_state)
     mcp.add_middleware(authorization_mw)
     _register_services(
         mcp,
@@ -1438,105 +1430,43 @@ def build_aggregator(
         identity_provider_configs or {},
         target_to_alias or {},
         settings,
-        job_credentials,
         shared_state,
+        job_credentials,
     )
     return mcp
 
 
 def build_asgi_middleware(
-    mcp: FastMCP, get_state: Callable[[], BrokerState]
+    settings: Settings,
+    pat_backend: TokenRegistryBackend | None,
+    principal_cache: PrincipalCache | None,
+    maintenance_mode_store: MaintenanceModeStore,
 ) -> list[Middleware]:
     """Return the Starlette middleware specs that gate /mcp at the ASGI layer, outermost first.
 
     Enforces identity (issue #138/#144 step 1) and then maintenance mode for
-    ``mcp``'s http_app -- pass this into ``FastMCP.http_app(middleware=...)``
+    the aggregator's http_app -- pass this into ``FastMCP.http_app(middleware=...)``
     when mounting. The order is load-bearing: the maintenance gate reads the
     Principal the identity middleware stashes, so identity must wrap it.
 
-    Must be built from the same FastMCP instance ``build_aggregator()``
-    constructed: both middlewares share that instance's IdentityMiddleware
-    (found via ``_find_middleware``), which is the single mutable settings
-    handle ``populate_aggregator()`` keeps up to date --
-    see ``identity_mw.AsgiAuthMiddleware``'s docstring for why sharing it
-    rather than holding a second copy matters. The maintenance gate instead
-    reads the settings and maintenance store off the broker state *get_state*
-    returns at request time.
+    *pat_backend*/*principal_cache* being None means identity PATs are
+    recognized by prefix on ``/mcp`` but always rejected (see
+    ``mcp/middleware/identity_mw.py``'s ``AsgiAuthMiddleware``) -- a broker
+    with no Keycloak admin service account configured (issue #144 step 2a).
     """
-    identity_mw, _, _ = _find_middleware(mcp)
     return [
-        Middleware(AsgiAuthMiddleware, identity_mw=identity_mw),
-        Middleware(AsgiMaintenanceMiddleware, get_state=get_state),
+        Middleware(
+            AsgiAuthMiddleware,
+            settings=settings,
+            pat_backend=pat_backend,
+            principal_cache=principal_cache,
+        ),
+        Middleware(
+            AsgiMaintenanceMiddleware,
+            settings=settings,
+            maintenance_mode_store=maintenance_mode_store,
+        ),
     ]
-
-
-def populate_aggregator(
-    mcp: Aggregator,
-    registry: ServiceRegistry,
-    settings: Settings,
-    policy: EntitlementPolicy,
-    credential_registry: CredentialRegistry,
-    pat_backend: TokenRegistryBackend | None = None,
-    principal_cache: PrincipalCache | None = None,
-    identity_providers: dict[str, CredentialProvider] | None = None,
-    identity_provider_configs: dict[str, IdentityProviderConfig] | None = None,
-    target_to_alias: dict[str, str] | None = None,
-    broker_token_issuer: BrokerTokenIssuer | None = None,
-    job_credentials: JobCredentialGuide | None = None,
-    shared_state: SharedState | None = None,
-    lint_observations: LintObservationStore | None = None,
-) -> None:
-    """Refresh an aggregator built by ``build_aggregator`` with a freshly loaded registry/settings/policy/credential_registry/pat_backend/principal_cache/identity_providers/identity_provider_configs/target_to_alias/shared_state/lint_observations.
-
-    app.py's mount-time constraint means the aggregator's FastMCP instance
-    and ASGI app must exist before SERVICES_FILE/POLICY_FILE/the credential
-    subsystem are loaded (they are only read inside the async lifespan);
-    this function is how the lifespan pushes the real values into the
-    already-mounted instance. Safe to call more than once per process (every
-    lifespan entry, including repeated TestClient entries in tests): service
-    providers are replaced wholesale rather than appended to, mirroring how
-    ServiceRegistry and EntitlementPolicy are themselves rebuilt from scratch
-    on every lifespan entry rather than merged -- the af_* diagnostic tools
-    (register_diagnostic_tools) follow the same rebuild-from-scratch pattern.
-    """
-    identity_mw, entitlement_mw, authorization_mw = _find_middleware(mcp)
-    # Recompose the model-facing instructions from the real registry: the eager
-    # build (app.py) constructed mcp with an empty registry, so its instructions
-    # omitted every operator service's agent_policy until now (finding #6).
-    mcp.instructions = compose_agent_instructions(registry, job_credentials)
-    identity_mw.settings = settings
-    identity_mw.pat_backend = pat_backend
-    identity_mw.principal_cache = principal_cache
-    entitlement_mw.registry = registry
-    entitlement_mw.policy = policy
-    authorization_mw.registry = registry
-    authorization_mw.policy = policy
-    if shared_state is not None:
-        authorization_mw.use_shared_state(shared_state)
-    if lint_observations is not None:
-        entitlement_mw.use_lint_store(lint_observations)
-    _register_services(
-        mcp,
-        registry,
-        credential_registry,
-        settings,
-        policy,
-        broker_token_issuer=broker_token_issuer,
-        target_to_alias=target_to_alias,
-        identity_provider_configs=identity_provider_configs,
-    )
-    register_diagnostic_tools(
-        mcp,
-        registry,
-        policy,
-        credential_registry,
-        identity_providers or {},
-        identity_provider_configs or {},
-        target_to_alias or {},
-        settings,
-        job_credentials,
-        shared_state,
-    )
 
 
 def _register_services(
@@ -1556,10 +1486,8 @@ def _register_services(
     # construction) -- re-add it immediately so the af_* diagnostic tools
     # (mcp/diagnostics.py's register_diagnostic_tools(), which registers
     # directly onto that same LocalProvider instance) stay reachable through
-    # dispatch after every build_aggregator()/populate_aggregator() call,
-    # not just the first. Re-adding the same object is safe to repeat on
-    # every call: it carries no per-call state of its own, and the list was
-    # just cleared, so this never produces a duplicate entry.
+    # dispatch. Re-adding the same object never produces a duplicate entry:
+    # the list was just cleared.
     mcp.add_provider(mcp.local_provider)
     providers: dict[str, _ObservableProxyProvider] = {}
     mcp.backend_providers.replace(providers)
@@ -1591,24 +1519,3 @@ def _register_services(
         namespace = spec.prefix if spec.apply_namespace else ""
         mcp.add_provider(provider, namespace=namespace)
         providers[spec.name] = provider
-
-
-def _find_middleware(
-    mcp: FastMCP,
-) -> tuple[IdentityMiddleware, EntitlementMiddleware, AuthorizationMiddleware]:
-    identity_mw: IdentityMiddleware | None = None
-    entitlement_mw: EntitlementMiddleware | None = None
-    authorization_mw: AuthorizationMiddleware | None = None
-    for mw in mcp.middleware:
-        if isinstance(mw, IdentityMiddleware):
-            identity_mw = mw
-        elif isinstance(mw, EntitlementMiddleware):
-            entitlement_mw = mw
-        elif isinstance(mw, AuthorizationMiddleware):
-            authorization_mw = mw
-    if identity_mw is None or entitlement_mw is None or authorization_mw is None:
-        raise RuntimeError(
-            "aggregator is missing IdentityMiddleware/EntitlementMiddleware/"
-            "AuthorizationMiddleware -- was it built by build_aggregator()?"
-        )
-    return identity_mw, entitlement_mw, authorization_mw

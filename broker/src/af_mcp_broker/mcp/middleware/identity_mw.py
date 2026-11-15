@@ -159,20 +159,25 @@ class AsgiAuthMiddleware:
     See the module docstring above for why this has to live here rather
     than as a FastMCP Middleware.
 
-    Reads settings/pat_backend/principal_cache off *identity_mw* rather than
-    holding its own copy: identity_mw's attributes are already the single mutable
-    config handle ``aggregator.populate_aggregator()`` updates once app.py's
-    lifespan has the real Settings and caches. This middleware is
-    constructed once, from a placeholder Settings(), at app.py
-    module-import time (see its comment on why ``_mcp_aggregator_app`` must
-    exist before Settings() is loaded) -- reusing identity_mw's handle
-    avoids a second, separately-updated copy of the same mutable state that
-    could drift out of sync.
+    *pat_backend*/*principal_cache* are None when PAT support isn't
+    configured (no Keycloak admin service account): a PAT bearer is then
+    always rejected. The last-used throttle state is in-process and
+    ephemeral (see ``pat_auth.LastUsedTracker``), so it is built here rather
+    than passed in.
     """
 
-    def __init__(self, app: Any, identity_mw: IdentityMiddleware) -> None:
+    def __init__(
+        self,
+        app: Any,
+        settings: Settings,
+        pat_backend: TokenRegistryBackend | None,
+        principal_cache: PrincipalCache | None,
+    ) -> None:
         self.app = app
-        self._identity_mw = identity_mw
+        self._settings = settings
+        self._pat_backend = pat_backend
+        self._principal_cache = principal_cache
+        self._pat_last_used_tracker = LastUsedTracker()
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -221,9 +226,9 @@ class AsgiAuthMiddleware:
     async def _authenticate_and_dispatch(
         self, scope: Scope, receive: Receive, send: Send
     ) -> None:
-        settings = self._identity_mw.settings
-        pat_backend = self._identity_mw.pat_backend
-        principal_cache = self._identity_mw.principal_cache
+        settings = self._settings
+        pat_backend = self._pat_backend
+        principal_cache = self._principal_cache
 
         if settings.dev_insecure_principal is not None:
             # Local-dev auth bypass, mirroring app.py's lifespan check
@@ -279,7 +284,7 @@ class AsgiAuthMiddleware:
                         token,
                         settings,
                         *pat_deps,
-                        self._identity_mw.pat_last_used_tracker,
+                        self._pat_last_used_tracker,
                     )
                 else:
                     principal = await get_principal(
@@ -334,28 +339,6 @@ class AsgiAuthMiddleware:
 
 
 class IdentityMiddleware(Middleware):
-    def __init__(
-        self,
-        settings: Settings,
-        pat_backend: TokenRegistryBackend | None = None,
-        principal_cache: PrincipalCache | None = None,
-    ) -> None:
-        # on_request below reads none of these directly -- it is a thin
-        # hand-off (see the module docstring). They're kept here anyway
-        # because this instance is the single mutable config handle
-        # aggregator.populate_aggregator() already updates once app.py's
-        # lifespan has the real Settings/PAT store/principal
-        # cache; AsgiAuthMiddleware reads them off *this* instance rather
-        # than holding a second, separately-updated copy.
-        self.settings = settings
-        self.pat_backend = pat_backend
-        self.principal_cache = principal_cache
-        # Purely in-process, ephemeral throttle state for PAT last_used_at
-        # writes (see pat_auth.LastUsedTracker) -- constructed unconditionally
-        # (not a constructor param) since it has no external dependency and
-        # is harmless to build even when PAT support itself isn't configured.
-        self.pat_last_used_tracker = LastUsedTracker()
-
     async def on_request(
         self,
         context: MiddlewareContext[Any],

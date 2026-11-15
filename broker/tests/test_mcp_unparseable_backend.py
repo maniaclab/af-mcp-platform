@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from broker_state_helpers import aggregator_stores
 from conftest import (
     AUDIENCE,
     ISSUER,
@@ -172,9 +173,11 @@ async def _aggregator_server(
         settings,
         EntitlementPolicy(),
         CredentialRegistry(),
-        principal_cache=principal_cache,
+        **aggregator_stores(),
     )
-    async with run_aggregator_async(mcp, path="/mcp") as server:
+    async with run_aggregator_async(
+        mcp, path="/mcp", settings=settings, principal_cache=principal_cache
+    ) as server:
         yield server
 
 

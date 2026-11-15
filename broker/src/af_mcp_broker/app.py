@@ -2,26 +2,25 @@ from __future__ import annotations
 
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
+
+    from starlette.types import Receive, Scope, Send
 
 import structlog
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import JSONResponse, Response
-from fastmcp.utilities.lifespan import combine_lifespans
 from pydantic import ValidationError
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from af_mcp_broker._version import version as __version__
 from af_mcp_broker.api.router import router as v1_router
 from af_mcp_broker.api.wellknown import router as wellknown_router
-from af_mcp_broker.authorization import EntitlementPolicy
-from af_mcp_broker.broker_state import BrokerState, broker_state_of
-from af_mcp_broker.config import Settings
-from af_mcp_broker.credentials import CredentialRegistry
+from af_mcp_broker.broker_state import broker_state_of
+from af_mcp_broker.config import Settings, get_settings
 from af_mcp_broker.credentials.errors import UnlockRateLimitError
 from af_mcp_broker.credentials.stores import VaultLinkStores, build_vault_link_stores
 from af_mcp_broker.http import aclose_http_client
@@ -40,13 +39,13 @@ from af_mcp_broker.logging import (
     log_request_finished,
     log_request_received,
 )
-from af_mcp_broker.mcp.aggregator import build_aggregator, build_asgi_middleware
+from af_mcp_broker.mcp.aggregator import BackendProviders
 from af_mcp_broker.otel_metrics import init_otel_metrics, shutdown_otel_metrics
-from af_mcp_broker.service_registry import ServiceRegistry
 from af_mcp_broker.tracing import init_tracing, instrument_fastapi, shutdown_tracing
 from af_mcp_broker.wiring.aggregator import (
     build_job_credential_guide,
-    populate_mcp_aggregator,
+    build_mcp_aggregator,
+    build_mcp_app,
 )
 from af_mcp_broker.wiring.checks import validate_services_gated
 from af_mcp_broker.wiring.credentials import (
@@ -150,7 +149,7 @@ def _warn_replica_hazards(settings: Settings) -> None:
 
 
 @asynccontextmanager
-async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
+async def lifespan(application: FastAPI) -> AsyncGenerator[dict[str, Any], None]:
     """Build every subsystem in dependency order and tear them down in reverse.
 
     Each resource with a close registers it on the exit stack as it is built,
@@ -159,6 +158,12 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     async with AsyncExitStack() as stack:
         settings = Settings()
         configure_logging(settings.log_level, settings.audit_log_file)
+        # Tracing initializes before any FastMCP object exists: fastmcp 3.4.4
+        # acquires its tracer lazily per span, so this early placement is
+        # conservative rather than load-bearing (see init_tracing's docstring)
+        # -- but it guarantees nothing downstream can ever capture a pre-init
+        # no-op tracer. A no-op unless TRACING_ENABLED is set.
+        init_tracing(settings)
         # Teardown runs in reverse of the registrations below. Spans still
         # buffered in the batch processor are flushed (a no-op when tracing
         # was never enabled) after the audit output closes, which is after the
@@ -177,8 +182,12 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
             logger.warning("no_services_configured")
         targets = build_identity_targets(settings, catalog.services)
 
+        # Created ahead of the aggregator: the cache invalidator below reads
+        # it, and the credential providers the aggregator needs are built
+        # over that invalidator.
+        backend_providers = BackendProviders()
         list_cache_invalidator = build_list_cache_invalidator(
-            shared_state, _mcp_aggregator.backend_providers, stack
+            shared_state, backend_providers, stack
         )
         credential_cache = build_credential_cache(
             settings, shared_state, list_cache_invalidator, stack
@@ -220,18 +229,23 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         # tables (lint_observations.py): shared, so every replica reports the
         # same.
         lint_observations = LintObservationStore(shared_state)
-        populate_mcp_aggregator(
-            _mcp_aggregator,
+        mcp_aggregator = build_mcp_aggregator(
             settings,
             catalog=catalog,
             targets=targets,
             providers=providers,
-            pat_backend=token_registries.backend,
-            principal_cache=principal_cache,
+            backend_providers=backend_providers,
             broker_token_issuer=broker_token_issuer,
             job_credentials=build_job_credential_guide(settings, targets),
             shared_state=shared_state,
             lint_observations=lint_observations,
+        )
+        mcp_app = build_mcp_app(
+            mcp_aggregator,
+            settings,
+            pat_backend=token_registries.backend,
+            principal_cache=principal_cache,
+            maintenance_mode_store=maintenance_mode_store,
         )
 
         usage_store = await start_usage_store(settings, stack)
@@ -273,7 +287,8 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
             shared_state=shared_state,
             link_stores=link_stores,
             credmon_sync=credmon_sync,
-            mcp_aggregator=_mcp_aggregator,
+            mcp_aggregator=mcp_aggregator,
+            mcp_app=mcp_app,
             dev_bypass_principal=dev_principal,
             metrics_port=metrics_port,
         )
@@ -290,7 +305,15 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
             identity_provider_aliases=list(providers.providers),
         )
 
-        yield
+        # Entered last: it runs the session manager's task group, which wraps
+        # any error raised while it is open in an ExceptionGroup, so every
+        # startup step that can fail runs before it. It starts the
+        # StreamableHTTPSessionManager (omitting it makes every /mcp/**
+        # request 500) and may yield ASGI lifespan state, passed on below.
+        mcp_lifespan_state = await stack.enter_async_context(
+            mcp_app.lifespan(application)
+        )
+        yield dict(mcp_lifespan_state or {})
     logger.info("af_mcp_broker_stopped")
 
 
@@ -298,58 +321,15 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
 # Application factory
 # ---------------------------------------------------------------------------
 
-# The aggregator's FastMCP instance (and the ASGI app built from it) must
-# exist before FastAPI is constructed below: Starlette's Mount needs a
-# concrete ASGI app at `app.mount()` time, and combining the aggregator's own
-# lifespan (required so its StreamableHTTPSessionManager task group actually
-# starts — omitting this makes every /mcp/** request 500) means the ASGI
-# app's `.lifespan` must already exist when `lifespan=` is passed to
-# FastAPI() below. Settings()/ServiceRegistry() are only loaded inside the
-# async `lifespan()` above, which runs later — so this is built with an
-# empty registry and placeholder Settings()/EntitlementPolicy()/
-# CredentialRegistry(), and `lifespan()` calls `populate_aggregator()` to
-# push in the real values before the app starts serving requests.
-_mcp_aggregator_placeholder_settings = Settings()
-# Tracing (observability roadmap PR D) initializes before any FastMCP object
-# exists: fastmcp 3.4.4 acquires its tracer lazily per span, so this early
-# placement is conservative rather than load-bearing (see init_tracing's
-# docstring) -- but it guarantees nothing downstream can ever capture a
-# pre-init no-op tracer. A no-op unless TRACING_ENABLED is set;
-# like MCP_STATELESS_HTTP below, Settings() reads the env synchronously at
-# construction, so the placeholder instance already carries the real value.
-init_tracing(_mcp_aggregator_placeholder_settings)
-_mcp_aggregator = build_aggregator(
-    ServiceRegistry(),
-    _mcp_aggregator_placeholder_settings,
-    EntitlementPolicy(),
-    CredentialRegistry(),
-)
-# stateless_http (issue #128): unlike policy_file/services_file, Settings()
-# reads env vars synchronously at construction, so the placeholder instance
-# above already reflects the real MCP_STATELESS_HTTP value -- no need to
-# wait for populate_aggregator() to push in a later value.
-#
-# middleware=build_asgi_middleware(...) (issue #138/#144 step 1):
-# enforces identity (then maintenance mode) at the ASGI layer, in front of FastMCP's own
-# message-processing pipeline, so a missing/invalid/expired bearer token
-# produces a genuine HTTP 401 instead of a 200 carrying a JSON-RPC error --
-# see mcp/middleware/identity_mw.py's module docstring for the full mechanism
-# and why IdentityMiddleware (still registered inside build_aggregator()
-# above) survives alongside it as a thin hand-off rather than being removed.
 
+async def _mcp_mount(scope: Scope, receive: Receive, send: Send) -> None:
+    """Serve ``/mcp`` with the ASGI app the lifespan built, read from the broker state at request time.
 
-def _current_broker_state() -> BrokerState:
-    # The ASGI middleware below wraps a mounted sub-app, which has no handle on
-    # the parent app; it reads the state the lifespan stores on ``app`` (defined
-    # below) at request time.
-    return broker_state_of(app)
+    Starlette's Mount needs a concrete ASGI app at ``app.mount()`` time, which
+    is before the lifespan has built the aggregator and its app.
+    """
+    await broker_state_of(app).mcp_app(scope, receive, send)
 
-
-_mcp_aggregator_app = _mcp_aggregator.http_app(
-    path="/",
-    stateless_http=_mcp_aggregator_placeholder_settings.mcp_stateless_http,
-    middleware=build_asgi_middleware(_mcp_aggregator, _current_broker_state),
-)
 
 app = FastAPI(
     title="AF MCP Broker",
@@ -358,7 +338,7 @@ app = FastAPI(
         "Credential-brokered MCP gateway for an ATLAS Analysis Facility. "
         "Provides Identity, Authorization, Credentialing, and Audit subsystems."
     ),
-    lifespan=combine_lifespans(lifespan, _mcp_aggregator_app.lifespan),
+    lifespan=lifespan,
 )
 
 # Trust X-Forwarded-{Proto,For,Host} from the fronting proxy so ``request.url``
@@ -372,7 +352,7 @@ app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 # Mount the MCP aggregator at /mcp. Requests to /mcp/** are handled entirely
 # by the aggregator sub-application; they do not pass through the broker's
 # FastAPI middleware chain after the mount point.
-app.mount("/mcp", _mcp_aggregator_app)
+app.mount("/mcp", _mcp_mount)
 
 app.include_router(v1_router)
 app.include_router(wellknown_router)
@@ -380,7 +360,9 @@ app.include_router(wellknown_router)
 # HTTP-level spans for the /v1 surface, only when tracing is enabled -- a
 # no-op otherwise (no extra ASGI middleware). Health probes and the /mcp
 # mount are excluded; see tracing._EXCLUDED_URLS for why /mcp must stay out.
-instrument_fastapi(app, _mcp_aggregator_placeholder_settings)
+# Instrumenting must happen before the app starts, so this reads the settings
+# at import time, where no lifespan exists yet.
+instrument_fastapi(app, get_settings())
 
 
 # Kubelet's liveness/readiness probes hit these every few seconds; logging

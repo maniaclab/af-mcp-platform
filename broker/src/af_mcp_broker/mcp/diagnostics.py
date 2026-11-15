@@ -351,21 +351,14 @@ def register_diagnostic_tools(
     identity_provider_configs: dict[str, IdentityProviderConfig],
     target_to_alias: dict[str, str],
     settings: Settings,
+    shared_state: SharedState,
     job_credentials: JobCredentialGuide | None = None,
-    shared_state: SharedState | None = None,
 ) -> None:
     """(Re)register the af_* diagnostic tools on *mcp*, bound to the given state.
 
-    Called from both aggregator.py's build_aggregator() and
-    populate_aggregator(), mirroring _register_services()'s rebuild-from-
-    scratch pattern rather than middleware's mutate-in-place one: a fresh
-    populate_aggregator() call always supplies fresh registry/policy/
-    credential_registry/identity provider objects rather than mutating the
-    previous ones, so the tool closures below must be rebuilt to close over
-    the current ones -- any previous registration is removed first so this
-    is safe to call repeatedly without FastMCP logging a duplicate-tool
-    warning on every lifespan entry (including every test that calls
-    populate_aggregator() more than once).
+    Called from aggregator.py's build_aggregator(). Any previous registration
+    of the same tool names is removed first so this is safe to call again on
+    the same *mcp* without FastMCP logging a duplicate-tool warning.
     """
     for name in (
         WHOAMI_TOOL_NAME,

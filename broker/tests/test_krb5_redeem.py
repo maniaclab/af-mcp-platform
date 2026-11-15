@@ -27,7 +27,6 @@ from test_broker_issued import _make_rsa_key, _private_pem
 from test_krb5_token import FakeKrb5VaultStore, _FakeClient
 from test_krb5_token import _ticket as _minted_ticket
 
-from af_mcp_broker import app as app_module
 from af_mcp_broker.api import credentials as credentials_api
 from af_mcp_broker.credentials import (
     CredentialKind,
@@ -805,8 +804,8 @@ class TestCredmonWiring:
     ) -> None:
         krb5_redeem_env()
         _enable_credmon(monkeypatch, tmp_path)
-        with app_client_factory():
-            instructions = app_module._mcp_aggregator.instructions
+        with app_client_factory() as (client, _):
+            instructions = client.app.state.broker.mcp_aggregator.instructions
         assert instructions is not None
         assert "use_oauth_services = af_<kind>" in instructions
 
@@ -814,7 +813,7 @@ class TestCredmonWiring:
         self, krb5_redeem_env, app_client_factory
     ) -> None:
         krb5_redeem_env()
-        with app_client_factory():
-            instructions = app_module._mcp_aggregator.instructions
+        with app_client_factory() as (client, _):
+            instructions = client.app.state.broker.mcp_aggregator.instructions
         assert instructions is not None
         assert "use_oauth_services" not in instructions

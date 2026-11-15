@@ -245,24 +245,6 @@ async def test_dict_form_permission_hides_unlisted_tool_even_from_admin(
     assert result == []
 
 
-async def test_registry_and_policy_are_mutable_attributes(
-    registry, policy, make_principal
-):
-    """populate_aggregator() refreshes these in place on every lifespan
-    entry rather than constructing a new middleware instance."""
-    mw = EntitlementMiddleware(ServiceRegistry(), EntitlementPolicy())
-    mw.registry = registry
-    mw.policy = policy
-
-    principal = make_principal(groups=["atlas"])
-    context = _FakeMiddlewareContext(_FakeFastMCPContext({"principal": principal}))
-    tools = [_tool("rucio_list_dids")]
-
-    result = await mw.on_list_tools(context, _call_next_factory(tools))
-
-    assert {t.name for t in result} == {"rucio_list_dids"}
-
-
 # ---------------------------------------------------------------------------
 # Annotation/policy lint (issue #238 B.8): "rucio" requires "read_data",
 # which PERMISSIONS resolves to action_type "read".

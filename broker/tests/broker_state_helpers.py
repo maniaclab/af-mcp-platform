@@ -14,23 +14,24 @@ from af_mcp_broker.config import Settings
 from af_mcp_broker.credentials import CredentialCache, CredentialRegistry
 from af_mcp_broker.lint_observations import LintObservationStore
 from af_mcp_broker.maintenance import InMemoryMaintenanceModeStore
-from af_mcp_broker.mcp.middleware.identity_mw import IdentityMiddleware
+from af_mcp_broker.mcp.middleware.identity_mw import AsgiAuthMiddleware
 from af_mcp_broker.service_registry import ServiceRegistry
 from af_mcp_broker.shared_state import InMemorySharedState
 from af_mcp_broker.token_registry import InMemoryTokenRegistryBackend, TokenRegistry
 from af_mcp_broker.usage.store import InMemoryUsageStore
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from starlette.applications import Starlette
 
-    from af_mcp_broker.maintenance import MaintenanceModeStore
+    from af_mcp_broker.principal_cache import PrincipalCache
+    from af_mcp_broker.shared_state import SharedState
+    from af_mcp_broker.token_registry import TokenRegistryBackend
 
 
 def make_broker_state(**overrides: Any) -> BrokerState:
     """A ``BrokerState`` of empty in-memory subsystems, with *overrides* replacing named fields."""
     shared_state = InMemorySharedState()
+    mcp_aggregator = overrides.get("mcp_aggregator") or FastMCP("test")
     fields: dict[str, Any] = {
         "settings": Settings(),
         "entitlement_policy": EntitlementPolicy(),
@@ -63,7 +64,8 @@ def make_broker_state(**overrides: Any) -> BrokerState:
         "servicex_vault_store": None,
         "credmon_sync": None,
         "tool_listing_cache": ToolListingCache(),
-        "mcp_aggregator": FastMCP("test"),
+        "mcp_aggregator": mcp_aggregator,
+        "mcp_app": mcp_aggregator.http_app(path="/"),
         "dev_bypass_principal": None,
         "metrics_port": None,
     }
@@ -76,16 +78,20 @@ def set_broker_state(app: Starlette, **changes: Any) -> None:
     app.state.broker = replace(app.state.broker, **changes)
 
 
-def asgi_state_getter(
-    mcp: FastMCP, maintenance_mode_store: MaintenanceModeStore | None = None
-) -> Callable[[], BrokerState]:
-    """The ``get_state`` the /mcp ASGI middleware reads, for an aggregator mounted without the broker app.
+def aggregator_stores(shared_state: SharedState | None = None) -> dict[str, Any]:
+    """The stores ``build_aggregator`` requires, as keyword arguments: *shared_state* (or a fresh in-memory one) and the lint-observation store over it."""
+    shared_state = shared_state or InMemorySharedState()
+    return {
+        "shared_state": shared_state,
+        "lint_observations": LintObservationStore(shared_state),
+    }
 
-    Settings follow *mcp*'s identity middleware, which ``populate_aggregator``
-    keeps current; the maintenance store defaults to an empty (disabled) one.
-    """
-    identity_mw = next(m for m in mcp.middleware if isinstance(m, IdentityMiddleware))
-    base = make_broker_state(
-        maintenance_mode_store=maintenance_mode_store or InMemoryMaintenanceModeStore()
-    )
-    return lambda: replace(base, settings=identity_mw.settings)
+
+def asgi_auth_middleware(
+    app: Any,
+    settings: Settings,
+    pat_backend: TokenRegistryBackend | None = None,
+    principal_cache: PrincipalCache | None = None,
+) -> AsgiAuthMiddleware:
+    """An ``AsgiAuthMiddleware`` in front of *app*; PATs are rejected unless both *pat_backend* and *principal_cache* are given."""
+    return AsgiAuthMiddleware(app, settings, pat_backend, principal_cache)

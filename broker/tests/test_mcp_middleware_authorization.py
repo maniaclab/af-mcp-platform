@@ -785,24 +785,6 @@ async def test_dict_form_permission_without_default_disables_unlisted_tool(
     assert call_next.called is False
 
 
-async def test_registry_and_policy_are_mutable_attributes(
-    registry, policy, make_principal, captured_audits
-) -> None:
-    """populate_aggregator() refreshes these in place on every lifespan
-    entry rather than constructing a new middleware instance."""
-    mw = AuthorizationMiddleware(ServiceRegistry(), EntitlementPolicy())
-    mw.registry = registry
-    mw.policy = policy
-
-    principal = make_principal(groups=["atlas"])
-    context = _call_tool_context("rucio_list_dids", {}, principal)
-    call_next = _CallNextRecorder(result=ToolResult(content=[]))
-
-    await mw.on_call_tool(context, call_next)
-
-    assert captured_audits[0].outcome == "success"
-
-
 # ---------------------------------------------------------------------------
 # Prometheus invocation counters (issue #83 asked for per-identity counters;
 # Giordon declined that -- the audit log above already carries identity at
