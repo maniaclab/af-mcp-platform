@@ -33,15 +33,12 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import SecretStr
 
-from af_mcp_broker.vault_kv import CasConflictError, VaultKV
+from af_mcp_broker.credentials.cas import write_cas_retry
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-# Read-modify-write attempts before a CAS conflict is allowed to propagate.
-# Each retry re-reads the current version, so this only trips if another
-# writer keeps winning the race repeatedly.
-_CAS_ATTEMPTS = 3
+    from af_mcp_broker.vault_kv import VaultKV
 
 
 @dataclass(frozen=True)
@@ -245,26 +242,18 @@ class Krb5VaultStore:
         subject: str,
         build: Callable[[StoredKrb5Credential | None], StoredKrb5Credential],
     ) -> None:
-        """Read-modify-write *subject*'s record under CAS, retrying a bounded number of times on version conflicts.
+        """Read-modify-write *subject*'s record under CAS, absorbing version conflicts.
 
-        *build* maps the current record (or None) to the record to write.
-        Retrying re-reads the current version each attempt, so a concurrent
-        writer's bump is absorbed rather than surfaced — see the module
+        See ``write_cas_retry`` for the retry policy and the module
         docstring for why last-writer-wins is correct here.
         """
-        for attempt in range(_CAS_ATTEMPTS):
-            got = await self._read(subject)
-            current, version = got if got is not None else (None, None)
-            record = build(current)
-            try:
-                await self._vault_kv.write_cas(
-                    self._path(subject), _reveal_secrets(record), version
-                )
-            except CasConflictError:
-                if attempt == _CAS_ATTEMPTS - 1:
-                    raise
-                continue
-            return
+        await write_cas_retry(
+            self._vault_kv,
+            self._path(subject),
+            read=lambda: self._read(subject),
+            build=build,
+            reveal=_reveal_secrets,
+        )
 
 
 def _record_from_dict(data: dict[str, Any]) -> StoredKrb5Credential:

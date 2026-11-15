@@ -32,6 +32,7 @@ from fastapi import HTTPException, status
 
 from af_mcp_broker import metrics
 from af_mcp_broker.authorization import is_admin
+from af_mcp_broker.constants import POOL_MAX_SIZE, POOL_MIN_SIZE
 from af_mcp_broker.errors import BrokerError, require
 from af_mcp_broker.vault_kv import CasConflictError, VaultKV
 
@@ -212,19 +213,6 @@ ON CONFLICT (id) DO UPDATE SET
 
 _SELECT = "SELECT enabled, reason, enabled_by, enabled_at FROM af_mcp_maintenance_mode WHERE id = 1"
 
-# asyncpg.create_pool()'s own defaults are min_size=10, max_size=10 --
-# eagerly opening 10 connections per replica at start(), regardless of
-# actual load. This DSN commonly shares one small Postgres instance with
-# PostgresUsageStore's own pool (usage/postgres.py) and, in production, with
-# a second broker deployment pointed at a sibling database on the same
-# server -- the unbounded defaults exhausted the instance's max_connections
-# during a routine rolling restart, once a second platform instance
-# (sharing the same Postgres server) was stood up alongside this one
-# (2026-09-19 production incident). Bounded down here rather than left at
-# the driver's default.
-_POOL_MIN_SIZE = 1
-_POOL_MAX_SIZE = 5
-
 
 class PostgresMaintenanceModeStore(MaintenanceModeStore):
     """``MaintenanceModeStore`` backed by a single-row Postgres table (asyncpg)."""
@@ -235,7 +223,7 @@ class PostgresMaintenanceModeStore(MaintenanceModeStore):
 
     async def start(self) -> None:
         self._pool = await asyncpg.create_pool(
-            self._dsn, min_size=_POOL_MIN_SIZE, max_size=_POOL_MAX_SIZE
+            self._dsn, min_size=POOL_MIN_SIZE, max_size=POOL_MAX_SIZE
         )
         async with self._pool.acquire() as conn:
             await conn.execute(_DDL)

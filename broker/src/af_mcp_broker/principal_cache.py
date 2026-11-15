@@ -159,6 +159,7 @@ from typing import TYPE_CHECKING, Any, assert_never
 
 import structlog
 
+from af_mcp_broker.constants import MAX_CAS_RETRIES
 from af_mcp_broker.errors import BrokerError, require
 from af_mcp_broker.principal_directory import (
     PrincipalAttributes,
@@ -171,17 +172,6 @@ if TYPE_CHECKING:
     from af_mcp_broker.principal_directory import PrincipalDirectory
 
 log = structlog.get_logger(__name__)
-
-# Bounded retry budget for VaultPrincipalCacheBackend.put()'s read-modify-write
-# CAS loop -- mirrors token_registry.py's _MAX_CAS_RETRIES exactly (same
-# value, same rationale): a conflict storm this deep would indicate something
-# pathological, so failing loudly past this point is preferable to retrying
-# forever. Unlike the token registry, a lost race here is not itself a
-# correctness problem (this is a cache, not a set of uniqueness-checked
-# records) -- but exhausting the budget still means Vault didn't get this
-# principal's latest attributes, which is worth surfacing rather than
-# silently swallowing.
-_MAX_CAS_RETRIES = 5
 
 
 class PrincipalUnavailableError(BrokerError):
@@ -324,7 +314,7 @@ class VaultPrincipalCacheBackend(PrincipalCacheBackend):
 
     async def put(self, principal_id: str, record: PersistedPrincipalRecord) -> None:
         path = self._path(principal_id)
-        for _attempt in range(_MAX_CAS_RETRIES):
+        for _attempt in range(MAX_CAS_RETRIES):
             current = await self._vault_kv.get(path)
             version = current[1] if current is not None else None
             try:
