@@ -328,12 +328,16 @@ transitively (so, for example, `api` and `mcp` never import each other).
 
 ```mermaid
 flowchart TB
-    subgraph wiring["Wiring: the FastAPI app, lifespan and entry points"]
+    subgraph appL["App: the FastAPI app, lifespan and entry points"]
         direction LR
         m_app["app"]
         m_token_sweep["token_sweep"]
         m_main["__main__"]
         m_app ~~~ m_token_sweep ~~~ m_main
+    end
+    subgraph wiring["Wiring: the builders the lifespan calls"]
+        direction LR
+        m_wiring["wiring"]
     end
     subgraph edges["Edges: /v1 routers and the /mcp aggregator, independent of each other"]
         direction LR
@@ -417,7 +421,7 @@ flowchart TB
         m_pat["pat"]
         m_errors ~~~ m_constants ~~~ m_principal ~~~ m_http ~~~ m_logging ~~~ m_metrics ~~~ m_version ~~~ m_pat
     end
-    wiring --> edges --> tokenid --> ident --> features --> providers --> meteringL --> otelL --> usageL --> auditL --> platform --> stores --> settings --> leaf
+    appL --> wiring --> edges --> tokenid --> ident --> features --> providers --> meteringL --> otelL --> usageL --> auditL --> platform --> stores --> settings --> leaf
 ```
 
 An arrow means "may import from". Imports may skip layers downward; they may
@@ -445,6 +449,39 @@ What the layering means in practice:
   `app.state`, so the route modules share them under public names.
 - By convention a module does not import another module's `_private` name;
   anything shared is public in the module that owns it.
+
+### Startup: builders and teardown
+
+`app.lifespan` is a short sequence of calls, in dependency order, into
+builders: plain functions with explicit, typed inputs and a typed result.
+A builder that needs one subsystem lives beside it (for example
+`maintenance.build_maintenance_store`, `token_registry.
+build_token_registry_backend`, `credentials.stores.build_vault_link_stores`);
+glue that needs several subsystems lives in the `wiring` package (service
+catalog and identity targets, the Vault client, the credential cache and
+providers, the principal cache and token registry, the lifetime resources,
+aggregator population). `wiring.state.BrokerState.publish` assigns the built
+subsystems to the `app.state` attributes the routes read.
+
+Every resource with a close registers it on one `contextlib.AsyncExitStack`
+when it is built, so shutdown closes in reverse build order and a builder that
+raises partway through startup still closes everything built before it.
+
+A backend selected by a `Literal` setting (`maintenance_mode_backend`,
+`token_store_backend`, `token_registry_backend`, `principal_cache_backend`,
+`usage_store_backend`, `metering_backend`) is built by a `build_*` function
+that `match`es on the setting and ends in `assert_never`, so mypy fails when a
+backend name is added to the `Literal` without a branch. `shared_state` is
+chosen by the URL scheme of `SHARED_STATE_URL`, not by a `Literal`, and keeps
+its own `build_shared_state`.
+
+An `Optional` that startup validation guarantees is present (the Vault client
+when `Settings.uses_vault`, a DSN a validator requires, the signing-key issuer
+when an entry needs it) is narrowed with `errors.require`, which raises
+`RuntimeError` with a message, not an `assert`. The Vault stores return typed
+link, ticket and proxy records (`X509Link`, `X509Proxy`, `Krb5Link`,
+`Krb5Ticket`, `ServiceXLink`, `ServiceXToken`) whose required fields are
+non-Optional, validated once when the record is read.
 
 ---
 
