@@ -1,0 +1,3 @@
+# The service registry may not be empty.
+aggregator:
+  services: []

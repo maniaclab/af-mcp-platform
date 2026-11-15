@@ -17,3 +17,15 @@ broker:
     networkPolicy:
       cidr: "203.0.113.0/24"
       port: 6380
+
+# values.schema.json requires a non-empty service registry and group map.
+aggregator:
+  services:
+    - name: docs-example
+      prefix: docs
+      url: "http://docs-mcp.example.svc.cluster.local/mcp"
+      transport: http
+      required_permission: __none__
+entitlements:
+  group_permissions:
+    __authenticated__: [read_metadata]

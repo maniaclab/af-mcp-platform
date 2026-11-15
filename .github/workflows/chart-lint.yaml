@@ -43,6 +43,19 @@ jobs:
             --set image.broker.tag=sha-test \
             --set image.portal.tag=sha-test
 
+      # Every CI values file must pass values.schema.json (checked by both
+      # helm lint and helm template) and render.
+      - name: helm lint + template every ci values file
+        run: |
+          for values in charts/af-mcp-platform/ci/*-values.yaml; do
+            echo "== $values"
+            helm lint charts/af-mcp-platform -f "$values"
+            helm template af-mcp-platform charts/af-mcp-platform \
+              -f "$values" \
+              --set image.broker.tag=sha-test \
+              --set image.portal.tag=sha-test >/dev/null
+          done
+
       # ct lint / helm template above only confirm the chart renders without
       # erroring for ci/krb5-vault-values.yaml's shape of values -- neither
       # one asserts that VAULT_ADDR actually lands in the rendered output.

@@ -1,0 +1,4 @@
+# A backend selector outside the supported set.
+broker:
+  tokenRegistry:
+    backend: redis
