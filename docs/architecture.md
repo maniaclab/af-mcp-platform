@@ -311,6 +311,61 @@ The broker's effective privilege depends on configuration:
 
 ---
 
+## Import layers
+
+The broker's modules sit in fixed layers. A module imports only from layers
+below its own, and `if TYPE_CHECKING:` imports count the same as runtime ones.
+`import-linter` enforces this: the contracts live in `[tool.importlinter]` in
+`broker/pyproject.toml`, `pixi run -e dev lint-imports` runs them, and
+`lint-all` (the CI lint job) includes that task. The layer contract is
+exhaustive, so a new top-level module fails the check until it is placed in a
+layer on purpose.
+
+Highest layer first. Modules joined by `|` are independent siblings and may not
+import each other, directly or transitively.
+
+| Layer | Modules | Role |
+| --- | --- | --- |
+| Wiring | `app`, `token_sweep`, `__main__` | `app` builds the FastAPI app and the lifespan; the others are entry points |
+| Edges | `api` \| `mcp` | `/v1` routers and the `/mcp` aggregator with its ASGI and FastMCP middleware; neither imports the other |
+| Token identity | `pat_auth` | resolves a broker-issued PAT to a `Principal` |
+| Identity | `identity` | validates a Keycloak JWT; the FastAPI auth dependency |
+| Features | `credmon`, `backend_client`, `service_status`, `lint_observations`, `maintenance` | services the edges share, built on the layers below |
+| Providers | `credentials`, `service_registry` | credential providers; the registry of backend services |
+| Metering | `metering` | tool-call audit, usage and metrics pipeline |
+| OTel metrics | `otel_metrics` | OpenTelemetry meters |
+| Usage | `usage` | usage store |
+| Audit | `audit` | audit record, writer, result measurement |
+| Platform | `tracing`, `principal_cache`, `mcp_auth_codes`, `authorization` | caches, the entitlement policy, tracing |
+| Stores | `principal_directory`, `token_registry` | the directory client and the PAT registry |
+| Settings | `config`, `otel_resource`, `vault_kv`, `shared_state`, `oauth_state`, `cimd_client`, `backend_errors` | settings and infrastructure clients |
+| Leaf | `errors`, `constants`, `principal`, `http`, `logging`, `metrics`, `_version`, `pat` | no first-party imports |
+
+What the layering means in practice:
+
+- `Principal` and `PosixPrincipal` (a `Principal` whose `uid`, `gid` and
+  `unixname` are all present, built once by `PosixPrincipal.from_principal`)
+  live in `principal.py`, so authorization, credentials and maintenance use
+  them without depending on the HTTP layer. Constants such as
+  `BUILTIN_SERVICE_NAME` live in `constants.py`, so `config` depends on no
+  other first-party module.
+- `identity` answers "who is this?" and nothing else. The maintenance gate
+  runs after it, as its own step: the `/v1` dependency is
+  `api/maintenance_gate.py`'s `require_not_in_maintenance`, and on `/mcp` it is
+  `AsgiMaintenanceMiddleware`, installed inside `AsgiAuthMiddleware` by
+  `mcp.aggregator.build_asgi_middleware`. A caller who cannot be authenticated
+  gets a 401 before the gate is consulted.
+- What `api` and `mcp` both need lives below them under public names:
+  `service_status` (per-caller availability of a service), `backend_client`
+  (building the backend client and listing a service's tools),
+  `backend_errors`, `service_registry` and `lint_observations`.
+  `api/app_state.py` holds the accessors for what the lifespan puts on
+  `app.state`, so the route modules share them under public names.
+- By convention a module does not import another module's `_private` name;
+  anything shared is public in the module that owns it.
+
+---
+
 ## The Four Broker Subsystems
 
 ### 1. Identity

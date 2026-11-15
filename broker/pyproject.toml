@@ -189,3 +189,58 @@ asyncio_mode = "auto"
 # stack on expiry, so a residual hang becomes a diagnosable failure.
 timeout = 300
 timeout_method = "thread"
+
+[tool.importlinter]
+root_package = "af_mcp_broker"
+# Runtime and ``if TYPE_CHECKING:`` imports both count (import-linter's
+# default): a layering that only holds at runtime still hides an inverted
+# dependency. Layer names below are relative to the ``af_mcp_broker``
+# container.
+
+# Layers, highest first. A module may import from its own layer's siblings only
+# where the layer uses ``:`` (none do); ``|`` marks independent siblings, which
+# may not import each other directly or transitively. A module may import only
+# from layers below its own. ``exhaustive`` makes a new top-level module fail
+# the check until it is placed in a layer on purpose.
+#
+#   1. wiring        app builds the FastAPI app and the lifespan; token_sweep and
+#                    __main__ are entry points.
+#   2. edges         api (/v1 routers) and mcp (aggregator + ASGI/FastMCP
+#                    middleware). Independent: anything both need lives below.
+#   3. credentials   pat_auth resolves a broker PAT to a Principal; identity
+#                    validates a Keycloak JWT and is the FastAPI auth dependency.
+#   4. features      services built on the subsystems below that the edges share:
+#                    credential monitor, backend client, service status, lint
+#                    observations, maintenance gate store.
+#   5. registry      credential providers and the service registry.
+#   6. metering      the audit pipeline above the usage store and OTel metrics,
+#                    above the audit record writer.
+#   7. platform      stores, caches and the entitlement policy.
+#   8. settings      config and the infrastructure clients it sits beside.
+#   9. leaf          types, constants and helpers with no first-party imports.
+[[tool.importlinter.contracts]]
+name = "Broker import layers"
+type = "layers"
+containers = ["af_mcp_broker"]
+exhaustive = true
+layers = [
+  "app | token_sweep | __main__",
+  "api | mcp",
+  "pat_auth",
+  "identity",
+  "credmon | backend_client | service_status | lint_observations | maintenance",
+  "credentials | service_registry",
+  "metering",
+  "otel_metrics",
+  "usage",
+  "audit",
+  "tracing | principal_cache | mcp_auth_codes | authorization",
+  "principal_directory | token_registry",
+  "config | otel_resource | vault_kv | shared_state | oauth_state | cimd_client | backend_errors",
+  "errors | constants | principal | http | logging | metrics | _version | pat",
+]
+
+[[tool.importlinter.contracts]]
+name = "api and mcp are independent edges"
+type = "independence"
+modules = ["af_mcp_broker.api", "af_mcp_broker.mcp"]
