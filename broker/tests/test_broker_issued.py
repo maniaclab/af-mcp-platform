@@ -130,6 +130,16 @@ def test_mint_claim_set_is_exactly_the_documented_set(
     assert set(claims) == _BASE_CLAIMS
 
 
+def test_mint_with_request_id_carries_it_as_rid(issuer: BrokerTokenIssuer) -> None:
+    """``rid`` names the request that minted the token, so a backend's later
+    redeem call can be joined to the tool call that caused it."""
+    token, _ = issuer.mint("user-123", "condor-token-service", request_id="req-abc")
+    claims = jwt.decode(token, options={"verify_signature": False})
+
+    assert set(claims) == _BASE_CLAIMS | {"rid"}
+    assert claims["rid"] == "req-abc"
+
+
 def test_mint_never_carries_authorization_claims(issuer: BrokerTokenIssuer) -> None:
     """Deliberately absent: permissions, groups, or any authorization claim
     (issue #162 -- if a backend is ever written to test token.permissions,

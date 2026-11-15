@@ -14,7 +14,9 @@ cost with no trust gain.
 
 The token is an identity assertion, nothing more: ``iss``/``sub``/``aud``/
 ``exp``/``iat``/``jti``, plus ``uid``/``gid``/``unixname`` only for targets
-whose config declares they need POSIX identity. Deliberately absent:
+whose config declares they need POSIX identity, and ``rid`` (the minting
+client request's correlation id) on tokens minted for a tool call.
+Deliberately absent:
 permissions, groups, or any authorization claim -- authorization is an
 attribute of the principal, decided per-call by the broker's entitlement
 check, and must never migrate into tokens. Consumers verify against the
@@ -166,14 +168,21 @@ class BrokerTokenIssuer:
         gid: int | None = None,
         unixname: str | None = None,
         ttl_seconds: int | None = None,
+        request_id: str | None = None,
     ) -> tuple[str, int]:
         """Sign an identity-assertion JWT for *(subject, audience)*.
 
         Returns ``(token, expires_at_epoch)``. The claim set is EXACTLY
         ``iss``/``sub``/``aud``/``exp``/``iat``/``jti``, plus
         ``uid``/``gid``/``unixname`` when passed (the caller gates those on
-        per-target config) -- never a permission, group, or any other
-        authorization claim (issue #162).
+        per-target config) and ``rid`` when *request_id* is passed -- never a
+        permission, group, or any other authorization claim (issue #162).
+
+        *request_id* is the ``correlation_id`` of the client request the
+        token is minted for. It travels as the private ``rid`` claim so the
+        redeem call a backend later makes with this token is logged with
+        that request as its parent (``parent_request_id``). It identifies a
+        request, never a permission; verifiers may ignore it.
 
         *ttl_seconds* overrides the issuer-wide lifetime for this one token
         -- credmon top tokens sit in credd for hours, unlike the per-request
@@ -197,6 +206,8 @@ class BrokerTokenIssuer:
             claims["gid"] = gid
         if unixname is not None:
             claims["unixname"] = unixname
+        if request_id is not None:
+            claims["rid"] = request_id
         token = jwt.encode(
             claims, self._private_key, algorithm="RS256", headers={"kid": self.kid}
         )

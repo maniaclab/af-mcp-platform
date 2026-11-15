@@ -761,7 +761,9 @@ async def test_x509_backend_lists_with_broker_identity_token(
     mirroring the aggregator's _x509_factory list-time branch."""
 
     class _StubIssuer:
-        def mint(self, subject: str, target: str) -> tuple[str, float]:
+        def mint(
+            self, subject: str, target: str, *, request_id: str | None = None
+        ) -> tuple[str, float]:
             return f"token-for-{target}", time.time() + 300
 
     registry = ServiceRegistry()

@@ -20,6 +20,8 @@ if TYPE_CHECKING:
 # propagate into the audit destination.
 AUDIT_LOGGER_NAME = "af_mcp_broker.audit.logger"
 
+_MAX_CLIENT_REQUEST_ID_LENGTH = 128
+
 # One mutable dict per request, shared by reference with every task the
 # request spawns. /v1's BaseHTTPMiddleware runs the route in a child task
 # whose contextvar writes (``bind_subject``) never reach the middleware's own
@@ -230,6 +232,20 @@ def bind_subject(subject: str) -> None:
     request_identity = _request_identity.get()
     if request_identity is not None:
         request_identity["subject"] = subject
+
+
+def bind_client_request_id(client_request_id: str) -> None:
+    """Bind the caller-supplied ``X-Request-ID`` as ``client_request_id`` for the rest of the current request.
+
+    Recorded beside the broker's own ``correlation_id`` so a client can find
+    its call by the id it chose; it is never forwarded or used as the
+    ``correlation_id``, because an unauthenticated caller must not choose the
+    id that joins the broker's, the audit log's and the backends' lines.
+    Truncated, since the header is attacker-controlled.
+    """
+    structlog.contextvars.bind_contextvars(
+        client_request_id=client_request_id[:_MAX_CLIENT_REQUEST_ID_LENGTH]
+    )
 
 
 def log_request_received(bound_logger: BoundLogger, *, method: str, path: str) -> float:

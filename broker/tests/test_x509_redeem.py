@@ -19,6 +19,7 @@ import time
 from typing import TYPE_CHECKING
 
 import pytest
+from audit_lines import audit_lines
 from pydantic import SecretStr
 from x509_fakes import FakeVomsClient, FakeX509Store
 
@@ -259,3 +260,42 @@ class TestCredmonTopToken:
                 _REDEEM, json={}, headers={"Authorization": f"Bearer {token}"}
             )
         assert resp.status_code == 403
+
+
+class TestRedeemParentRequestId:
+    """A token's ``rid`` (the minting tool call) becomes the release line's ``parent_request_id``; ``request_id`` stays the token's ``jti``."""
+
+    def test_release_audit_line_names_the_minting_tool_call_as_parent(
+        self, x509_redeem_env, app_client_factory, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        x509_redeem_env()
+        with app_client_factory() as (client, _):
+            _seed_vault_proxy(client, subject="sub-abc")
+            token, _ = client.app.state.broker.broker_token_issuer.mint(
+                "sub-abc",
+                "ami",
+                uid=1000,
+                gid=1000,
+                unixname="tuser",
+                request_id="tool-call-id",
+            )
+            resp = client.post(
+                _REDEEM, json={}, headers={"Authorization": f"Bearer {token}"}
+            )
+        assert resp.status_code == 200, resp.text
+        lines = audit_lines(capsys.readouterr().out)
+        assert [line["action"] for line in lines] == ["x509_proxy_release"]
+        assert lines[0]["parent_request_id"] == "tool-call-id"
+        assert lines[0]["request_id"] != "tool-call-id"  # the token's jti
+
+    def test_release_audit_line_has_no_parent_for_a_token_without_rid(
+        self, x509_redeem_env, app_client_factory, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        x509_redeem_env()
+        with app_client_factory() as (client, _):
+            _seed_vault_proxy(client, subject="sub-abc")
+            token = _mint(client)
+            client.post(_REDEEM, json={}, headers={"Authorization": f"Bearer {token}"})
+        lines = audit_lines(capsys.readouterr().out)
+        assert [line["action"] for line in lines] == ["x509_proxy_release"]
+        assert "parent_request_id" not in lines[0]
