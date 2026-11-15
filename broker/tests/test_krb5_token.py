@@ -29,7 +29,11 @@ from af_mcp_broker.credentials.errors import (
 )
 from af_mcp_broker.credentials.krb5 import KrbTokenProvider
 from af_mcp_broker.credentials.krb5_service import MintedTicket
-from af_mcp_broker.credentials.krb5_vault import StoredKrb5Credential
+from af_mcp_broker.credentials.krb5_vault import (
+    Krb5Link,
+    Krb5Ticket,
+    StoredKrb5Credential,
+)
 from af_mcp_broker.principal import Principal
 
 
@@ -123,11 +127,9 @@ class FakeKrb5VaultStore:
         base = self.records.get(subject, StoredKrb5Credential())
         self.records[subject] = replace(base, username=username, keytab_b64=keytab_b64)
 
-    async def get_link(self, subject: str) -> StoredKrb5Credential | None:
+    async def get_link(self, subject: str) -> Krb5Link | None:
         record = self.records.get(subject)
-        if record is None or not record.has_link:
-            return None
-        return record
+        return record.as_link() if record is not None else None
 
     async def store_ticket(
         self,
@@ -151,22 +153,21 @@ class FakeKrb5VaultStore:
 
     async def get_ticket(
         self, subject: str, min_remaining: float = 0.0
-    ) -> StoredKrb5Credential | None:
+    ) -> Krb5Ticket | None:
         record = self.records.get(subject)
-        if record is None or not record.has_ticket:
+        ticket = record.as_ticket() if record is not None else None
+        if ticket is None or ticket.not_after - time.time() < min_remaining:
             return None
-        assert record.not_after is not None  # has_ticket guarantees this
-        if record.not_after - time.time() < min_remaining:
-            return None
-        return record
+        return ticket
 
-    async def get_renewable_ticket(self, subject: str) -> StoredKrb5Credential | None:
+    async def get_renewable_ticket(self, subject: str) -> Krb5Ticket | None:
         record = self.records.get(subject)
-        if record is None or not record.has_ticket:
+        ticket = record.as_ticket() if record is not None else None
+        if ticket is None:
             return None
-        if record.renew_until is None or record.renew_until <= time.time():
+        if ticket.renew_until is None or ticket.renew_until <= time.time():
             return None
-        return record
+        return ticket
 
     async def clear_ticket(self, subject: str) -> None:
         record = self.records.get(subject)

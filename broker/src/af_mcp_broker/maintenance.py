@@ -24,7 +24,7 @@ from __future__ import annotations
 import abc
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, assert_never
 
 import asyncpg  # type: ignore[import-untyped]
 import structlog
@@ -32,7 +32,7 @@ from fastapi import HTTPException, status
 
 from af_mcp_broker import metrics
 from af_mcp_broker.authorization import is_admin
-from af_mcp_broker.errors import BrokerError
+from af_mcp_broker.errors import BrokerError, require
 from af_mcp_broker.vault_kv import CasConflictError, VaultKV
 
 if TYPE_CHECKING:
@@ -147,7 +147,7 @@ class VaultMaintenanceModeStore(MaintenanceModeStore):
         self._path = f"{kv_path_prefix.strip('/')}/{_KV_KEY}"
 
     async def start(self) -> None:
-        """Nothing to acquire -- vault_kv is already authenticated by app.py's lifespan."""
+        """Nothing to acquire -- vault_kv is already authenticated by wiring/vault.py's startup trial authentication."""
 
     async def aclose(self) -> None:
         """Nothing to release."""
@@ -418,3 +418,43 @@ async def check_not_maintenance_or_fail_open(
         )
         metrics.maintenance_store_unavailable_total.inc()
     return None
+
+
+def build_maintenance_store(
+    settings: Settings, vault_kv: VaultKV | None
+) -> MaintenanceModeStore:
+    """Build the (not yet started) store selected by ``settings.maintenance_mode_backend``.
+
+    *vault_kv* is the process-wide Vault transport, present whenever
+    ``Settings.uses_vault`` holds (which the ``vault`` backend implies). The
+    ``match`` is exhaustive over the config Literal: ``assert_never`` makes
+    mypy fail when a backend name is added without a branch here.
+    """
+    store: MaintenanceModeStore
+    backend = settings.maintenance_mode_backend
+    match backend:
+        case "in_memory":
+            store = InMemoryMaintenanceModeStore()
+        case "vault":
+            store = VaultMaintenanceModeStore(
+                vault_kv=require(
+                    vault_kv, "maintenance_mode_backend=vault requires a Vault client"
+                ),
+                kv_path_prefix=settings.maintenance_mode_kv_path_prefix,
+            )
+        case "postgres":
+            dsn = require(
+                settings.maintenance_mode_effective_postgres_dsn,
+                "maintenance_mode_backend=postgres requires a DSN "
+                "(_validate_maintenance_mode_config)",
+            )
+            store = PostgresMaintenanceModeStore(dsn.get_secret_value())
+        case _:
+            assert_never(backend)
+    # In-memory reads are a field access, so only the network-backed stores
+    # get the TTL cache.
+    if backend != "in_memory" and settings.maintenance_mode_cache_ttl_seconds > 0:
+        store = CachingMaintenanceModeStore(
+            store, ttl_seconds=settings.maintenance_mode_cache_ttl_seconds
+        )
+    return store

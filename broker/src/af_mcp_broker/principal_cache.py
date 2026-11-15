@@ -155,11 +155,11 @@ import asyncio
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, assert_never
 
 import structlog
 
-from af_mcp_broker.errors import BrokerError
+from af_mcp_broker.errors import BrokerError, require
 from af_mcp_broker.principal_directory import (
     PrincipalAttributes,
     PrincipalNotActiveError,
@@ -167,6 +167,7 @@ from af_mcp_broker.principal_directory import (
 from af_mcp_broker.vault_kv import CasConflictError, VaultError, VaultKV
 
 if TYPE_CHECKING:
+    from af_mcp_broker.config import Settings
     from af_mcp_broker.principal_directory import PrincipalDirectory
 
 log = structlog.get_logger(__name__)
@@ -608,3 +609,28 @@ class PrincipalCache:
                 attributes=attributes, fetched_at=now, persisted_at=persisted_at
             )
             return attributes
+
+
+def build_principal_cache_backend(
+    settings: Settings, vault_kv: VaultKV | None
+) -> PrincipalCacheBackend:
+    """Build the persistence backend selected by ``settings.principal_cache_backend``.
+
+    *vault_kv* is the process-wide Vault transport, present whenever
+    ``Settings.uses_vault`` holds (which the ``vault`` backend implies). The
+    ``match`` is exhaustive over the config Literal: ``assert_never`` makes
+    mypy fail when a backend name is added without a branch here.
+    """
+    backend = settings.principal_cache_backend
+    match backend:
+        case "in_memory":
+            return InMemoryPrincipalCacheBackend()
+        case "vault":
+            return VaultPrincipalCacheBackend(
+                vault_kv=require(
+                    vault_kv, "principal_cache_backend=vault requires a Vault client"
+                ),
+                kv_path_prefix=settings.principal_cache_kv_path_prefix,
+            )
+        case _:
+            assert_never(backend)

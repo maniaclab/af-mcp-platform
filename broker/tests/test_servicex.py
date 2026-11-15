@@ -35,7 +35,11 @@ from af_mcp_broker.credentials.errors import (
 )
 from af_mcp_broker.credentials.servicex import ServiceXProvider
 from af_mcp_broker.credentials.servicex_service import RedeemedServiceXToken
-from af_mcp_broker.credentials.servicex_vault import StoredServiceXCredential
+from af_mcp_broker.credentials.servicex_vault import (
+    ServiceXLink,
+    ServiceXToken,
+    StoredServiceXCredential,
+)
 from af_mcp_broker.principal import Principal
 
 _REFRESH_TOKEN = "stored-refresh-token"
@@ -52,11 +56,9 @@ class FakeServiceXStore:
     async def store_link(self, subject: str, *, refresh_token: SecretStr) -> None:
         self.records[subject] = StoredServiceXCredential(refresh_token=refresh_token)
 
-    async def get_link(self, subject: str) -> StoredServiceXCredential | None:
+    async def get_link(self, subject: str) -> ServiceXLink | None:
         record = self.records.get(subject)
-        if record is None or not record.has_link:
-            return None
-        return record
+        return record.as_link() if record is not None else None
 
     async def store_token(
         self, subject: str, *, access_token: str, expires_at: float
@@ -71,13 +73,12 @@ class FakeServiceXStore:
 
     async def get_token(
         self, subject: str, min_remaining: float = 0.0
-    ) -> StoredServiceXCredential | None:
+    ) -> ServiceXToken | None:
         record = self.records.get(subject)
-        if record is None or record.access_token is None or record.expires_at is None:
+        token = record.as_token() if record is not None else None
+        if token is None or token.expires_at - time.time() < min_remaining:
             return None
-        if record.expires_at - time.time() < min_remaining:
-            return None
-        return record
+        return token
 
     async def clear_token(self, subject: str) -> None:
         record = self.records.get(subject)

@@ -259,28 +259,27 @@ class AsgiAuthMiddleware:
                 )
                 return
             token = auth_header[len("Bearer ") :]
-            is_pat = token.startswith(PAT_PREFIX)
-            if is_pat and (pat_backend is None or principal_cache is None):
-                # PAT support isn't configured (no Keycloak admin service
-                # account -- see Settings.keycloak_admin_client_id/_secret)
-                # -- reject the same vague way as any other invalid PAT
-                # rather than crash or leak config state.
-                await _send_401(scope, receive, send, "Invalid bearer token", settings)
-                return
+            # Identity PAT (issue #144 step 2a) -- recognized purely by prefix,
+            # so a non-mcp_pat_ bearer always falls through to the existing
+            # JWT path below unchanged.
+            pat_deps: tuple[TokenRegistryBackend, PrincipalCache] | None = None
+            if token.startswith(PAT_PREFIX):
+                if pat_backend is None or principal_cache is None:
+                    # PAT support isn't configured (no Keycloak admin service
+                    # account -- see Settings.keycloak_admin_client_id/_secret)
+                    # -- reject the same vague way as any other invalid PAT
+                    # rather than crash or leak config state.
+                    await _send_401(
+                        scope, receive, send, "Invalid bearer token", settings
+                    )
+                    return
+                pat_deps = (pat_backend, principal_cache)
             try:
-                if is_pat:
-                    # Identity PAT (issue #144 step 2a) -- recognized purely
-                    # by prefix, so a non-mcp_pat_ bearer always falls
-                    # through to the existing JWT path below unchanged.
-                    # Both are guaranteed non-None here by the guard above;
-                    # asserted rather than re-checked so mypy can narrow them.
-                    assert pat_backend is not None  # noqa: S101 -- mypy narrowing of an invariant validated upstream
-                    assert principal_cache is not None  # noqa: S101 -- mypy narrowing of an invariant validated upstream
+                if pat_deps is not None:
                     principal = await resolve_pat_principal(
                         token,
                         settings,
-                        pat_backend,
-                        principal_cache,
+                        *pat_deps,
                         self._identity_mw.pat_last_used_tracker,
                     )
                 else:

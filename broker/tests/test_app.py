@@ -11,7 +11,6 @@ import pytest
 import structlog
 
 import af_mcp_broker.app as app_module
-from af_mcp_broker.app import _build_target_to_alias
 from af_mcp_broker.config import (
     KeycloakBrokeredProviderConfig,
     OAuth21DirectProviderConfig,
@@ -19,6 +18,7 @@ from af_mcp_broker.config import (
 )
 from af_mcp_broker.mcp.aggregator import _find_middleware
 from af_mcp_broker.shared_state import RedisSharedState
+from af_mcp_broker.wiring.checks import build_target_to_alias
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -51,7 +51,7 @@ def test_build_target_to_alias_covers_all_auth_shapes() -> None:
         ),
     ]
 
-    mapping = _build_target_to_alias(identity_providers_cfgs)
+    mapping = build_target_to_alias(identity_providers_cfgs)
 
     assert mapping == {
         "rucio": "atlas-oidc",
@@ -64,7 +64,7 @@ def test_build_target_to_alias_covers_all_auth_shapes() -> None:
 def test_build_target_to_alias_uses_the_real_x509_entry_alias() -> None:
     """An operator-chosen x509 alias flows through to /v1/catalog's
     credential_provider — nothing hardcodes the "x509" string anymore."""
-    mapping = _build_target_to_alias(
+    mapping = build_target_to_alias(
         [
             X509ProviderConfig(
                 alias="grid-cert-atlas",

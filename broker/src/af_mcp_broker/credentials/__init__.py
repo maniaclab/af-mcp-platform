@@ -42,7 +42,12 @@ from af_mcp_broker.credentials.voms_service import (
 from af_mcp_broker.credentials.x509 import (
     X509Provider,
 )
-from af_mcp_broker.credentials.x509_vault import StoredX509Credential, VaultX509Store
+from af_mcp_broker.credentials.x509_vault import (
+    StoredX509Credential,
+    VaultX509Store,
+    X509Link,
+    X509Proxy,
+)
 from af_mcp_broker.vault_kv import VaultError
 
 __all__ = [
@@ -73,6 +78,8 @@ __all__ = [
     "VaultTokenStore",
     "VaultX509Store",
     "VomsTokenServiceClient",
+    "X509Link",
     "X509Provider",
+    "X509Proxy",
     "load_broker_token_issuer",
 ]

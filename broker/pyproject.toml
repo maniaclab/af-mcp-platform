@@ -203,21 +203,24 @@ root_package = "af_mcp_broker"
 # from layers below its own. ``exhaustive`` makes a new top-level module fail
 # the check until it is placed in a layer on purpose.
 #
-#   1. wiring        app builds the FastAPI app and the lifespan; token_sweep and
+#   1. app           app builds the FastAPI app and the lifespan; token_sweep and
 #                    __main__ are entry points.
-#   2. edges         api (/v1 routers) and mcp (aggregator + ASGI/FastMCP
+#   2. wiring        the builders the lifespan calls: glue that needs several
+#                    subsystems at once (a builder that needs one subsystem
+#                    lives beside it).
+#   3. edges         api (/v1 routers) and mcp (aggregator + ASGI/FastMCP
 #                    middleware). Independent: anything both need lives below.
-#   3. credentials   pat_auth resolves a broker PAT to a Principal; identity
+#   4. credentials   pat_auth resolves a broker PAT to a Principal; identity
 #                    validates a Keycloak JWT and is the FastAPI auth dependency.
-#   4. features      services built on the subsystems below that the edges share:
+#   5. features      services built on the subsystems below that the edges share:
 #                    credential monitor, backend client, service status, lint
 #                    observations, maintenance gate store.
-#   5. registry      credential providers and the service registry.
-#   6. metering      the audit pipeline above the usage store and OTel metrics,
+#   6. registry      credential providers and the service registry.
+#   7. metering      the audit pipeline above the usage store and OTel metrics,
 #                    above the audit record writer.
-#   7. platform      stores, caches and the entitlement policy.
-#   8. settings      config and the infrastructure clients it sits beside.
-#   9. leaf          types, constants and helpers with no first-party imports.
+#   8. platform      stores, caches and the entitlement policy.
+#   9. settings      config and the infrastructure clients it sits beside.
+#  10. leaf          types, constants and helpers with no first-party imports.
 [[tool.importlinter.contracts]]
 name = "Broker import layers"
 type = "layers"
@@ -225,6 +228,7 @@ containers = ["af_mcp_broker"]
 exhaustive = true
 layers = [
   "app | token_sweep | __main__",
+  "wiring",
   "api | mcp",
   "pat_auth",
   "identity",

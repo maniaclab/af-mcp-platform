@@ -59,6 +59,31 @@ class StoredServiceXCredential(BaseModel):
         """Whether the link half is complete enough to redeem from: a stored refresh token."""
         return self.refresh_token is not None
 
+    def as_link(self) -> ServiceXLink | None:
+        """Return this record as a ``ServiceXLink`` when it holds a refresh token, else None."""
+        if not self.has_link:
+            return None
+        return ServiceXLink.model_validate(self.model_dump())
+
+    def as_token(self) -> ServiceXToken | None:
+        """Return this record as a ``ServiceXToken`` when it holds an access token, else None."""
+        if self.access_token is None or self.expires_at is None:
+            return None
+        return ServiceXToken.model_validate(self.model_dump())
+
+
+class ServiceXLink(StoredServiceXCredential):
+    """A record whose link half is complete: the refresh token is present."""
+
+    refresh_token: SecretStr
+
+
+class ServiceXToken(StoredServiceXCredential):
+    """A record that holds an access token: the token and its expiry are present."""
+
+    access_token: SecretStr
+    expires_at: float
+
 
 class VaultServiceXStore:
     """Per-subject ServiceX link/token store backed by Vault/OpenBao KV-v2.
@@ -95,13 +120,13 @@ class VaultServiceXStore:
         record = StoredServiceXCredential(refresh_token=refresh_token)
         await self._write_cas_retry(subject, lambda _current: record)
 
-    async def get_link(self, subject: str) -> StoredServiceXCredential | None:
+    async def get_link(self, subject: str) -> ServiceXLink | None:
         """Return the record when its link half is complete (a stored refresh token), else None."""
         got = await self._read(subject)
         if got is None:
             return None
         record, _version = got
-        return record if record.has_link else None
+        return record.as_link()
 
     async def store_token(
         self, subject: str, *, access_token: str, expires_at: float
@@ -123,7 +148,7 @@ class VaultServiceXStore:
 
     async def get_token(
         self, subject: str, min_remaining: float = 0.0
-    ) -> StoredServiceXCredential | None:
+    ) -> ServiceXToken | None:
         """Return the record when it holds an access token with at least *min_remaining* seconds of validity left, else None.
 
         Expiry-aware by design: an expired (or nearly-expired) access token
@@ -134,11 +159,10 @@ class VaultServiceXStore:
         if got is None:
             return None
         record, _version = got
-        if record.access_token is None or record.expires_at is None:
+        token = record.as_token()
+        if token is None or token.expires_at - time.time() < min_remaining:
             return None
-        if record.expires_at - time.time() < min_remaining:
-            return None
-        return record
+        return token
 
     async def clear_token(self, subject: str) -> None:
         """Remove *subject*'s stored access token while keeping the link half.

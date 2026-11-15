@@ -1,70 +1,34 @@
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Iterable
-
-    from af_mcp_broker.config import IdentityProviderConfig
-    from af_mcp_broker.credentials import CredentialProvider
-    from af_mcp_broker.credmon.sync import CredmonSyncService
+    from collections.abc import AsyncGenerator
 
 import structlog
-from cryptography.fernet import Fernet
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import JSONResponse, Response
 from fastmcp.utilities.lifespan import combine_lifespans
-from prometheus_client import start_http_server
 from pydantic import ValidationError
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from af_mcp_broker._version import version as __version__
 from af_mcp_broker.api.router import router as v1_router
-from af_mcp_broker.api.tokens import TokenRegistry
 from af_mcp_broker.api.wellknown import router as wellknown_router
-from af_mcp_broker.authorization import (
-    DISABLED_PERMISSION,
-    PERMISSIONS,
-    EntitlementPolicy,
-    load_policy,
-)
+from af_mcp_broker.authorization import EntitlementPolicy
 from af_mcp_broker.config import Settings
-from af_mcp_broker.credentials import (
-    BrokerIssuedProvider,
-    BrokerIssuedTokenOptions,
-    CondorTokenProvider,
-    CredentialCache,
-    CredentialRegistry,
-    InMemoryTokenStore,
-    Krb5TokenServiceClient,
-    KrbTokenProvider,
-    OAuth21Provider,
-    OIDCProvider,
-    ServiceXProvider,
-    ServiceXTokenServiceClient,
-    VaultTokenStore,
-    VaultX509Store,
-    VomsTokenServiceClient,
-    X509Provider,
-    load_broker_token_issuer,
-)
+from af_mcp_broker.credentials import CredentialRegistry
 from af_mcp_broker.credentials.errors import UnlockRateLimitError
-from af_mcp_broker.credentials.krb5_vault import Krb5VaultStore
-from af_mcp_broker.credentials.servicex_vault import VaultServiceXStore
-from af_mcp_broker.credmon.factory import build_credmon_sync
-from af_mcp_broker.credmon.guidance import JobCredentialGuide, wired_kinds
+from af_mcp_broker.credentials.stores import VaultLinkStores, build_vault_link_stores
 from af_mcp_broker.http import aclose_http_client
 from af_mcp_broker.identity import (
     IdentityError,
     PrincipalDirectoryUnavailableError,
     TokenAudienceError,
     TokenExpiredError,
-    build_dev_principal,
-    get_jwks,
-    issuer_is_local,
 )
 from af_mcp_broker.lint_observations import LintObservationStore
 from af_mcp_broker.logging import (
@@ -75,218 +39,62 @@ from af_mcp_broker.logging import (
     log_request_finished,
     log_request_received,
 )
-from af_mcp_broker.maintenance import (
-    CachingMaintenanceModeStore,
-    InMemoryMaintenanceModeStore,
-    MaintenanceModeStore,
-    PostgresMaintenanceModeStore,
-    VaultMaintenanceModeStore,
-)
-from af_mcp_broker.mcp.aggregator import (
-    build_aggregator,
-    build_asgi_middleware,
-    invalidate_all_subject_caches,
-    invalidate_subject_cache,
-    populate_aggregator,
-)
-from af_mcp_broker.mcp.cache_invalidation import ListCacheInvalidator
-from af_mcp_broker.mcp_auth_codes import McpAuthCodeStore
-from af_mcp_broker.metering import (
-    aclose_metering_pipeline,
-    init_metering_pipeline,
-)
+from af_mcp_broker.mcp.aggregator import build_aggregator, build_asgi_middleware
 from af_mcp_broker.otel_metrics import init_otel_metrics, shutdown_otel_metrics
-from af_mcp_broker.principal_cache import (
-    InMemoryPrincipalCacheBackend,
-    PrincipalCache,
-    PrincipalCacheBackend,
-    VaultPrincipalCacheBackend,
-)
-from af_mcp_broker.principal_directory import KeycloakPrincipalDirectory
-from af_mcp_broker.service_registry import ServiceRegistry, ServiceSpec
-from af_mcp_broker.shared_state import build_shared_state
-from af_mcp_broker.token_registry import (
-    InMemoryTokenRegistryBackend,
-    TokenRegistryBackend,
-    VaultTokenRegistryBackend,
-)
+from af_mcp_broker.service_registry import ServiceRegistry
 from af_mcp_broker.tracing import init_tracing, instrument_fastapi, shutdown_tracing
-from af_mcp_broker.usage import aclose_usage_store, init_usage_store
-from af_mcp_broker.vault_kv import VaultKV
+from af_mcp_broker.wiring.aggregator import (
+    build_job_credential_guide,
+    populate_mcp_aggregator,
+)
+from af_mcp_broker.wiring.checks import validate_services_gated
+from af_mcp_broker.wiring.credentials import (
+    build_broker_token_issuer,
+    build_credential_cache,
+    build_credential_providers,
+    build_list_cache_invalidator,
+    build_oauth21_token_store,
+    build_state_cipher,
+    resolve_x509_provider,
+)
+from af_mcp_broker.wiring.identity import (
+    build_dev_bypass_principal,
+    build_mcp_auth_code_store,
+    build_principal_cache,
+    build_token_registry,
+)
+from af_mcp_broker.wiring.lifecycle import (
+    open_shared_state,
+    prime_jwks_cache,
+    start_credmon_sync,
+    start_maintenance_store,
+    start_metering_pipeline,
+    start_metrics_server,
+    start_usage_store,
+)
+from af_mcp_broker.wiring.services import build_identity_targets, build_service_catalog
+from af_mcp_broker.wiring.state import BrokerState
+from af_mcp_broker.wiring.vault import build_vault_kv
 
 logger = structlog.get_logger(__name__)
 
 
-def _build_target_to_alias(
-    identity_providers_cfgs: Iterable[IdentityProviderConfig],
-) -> dict[str, str]:
-    """Reverse map from service target name to the credential-provider alias that services it, surfaced on /v1/catalog as ``credential_provider`` (issue #90). Every target gets its entry's configured alias — x509 targets included, since x509 is an ordinary ``identity_providers`` type: every ``auth_type: x509`` service must be covered by an explicit entry (``_validate_x509_provider_targets`` refuses to boot otherwise), so this helper never needs a hardcoded synthetic alias. Targets with ``auth_type: none`` need no user credential and are simply absent from the mapping."""
-    target_to_alias: dict[str, str] = {}
-    for cfg in identity_providers_cfgs:
-        for target in cfg.targets:
-            target_to_alias[target] = cfg.alias
-    return target_to_alias
+def _warn_replica_hazards(settings: Settings) -> None:
+    """Warn, never fail, about configurations that misbehave with more than one broker replica.
 
-
-def _validate_x509_provider_targets(
-    identity_providers_cfgs: Iterable[IdentityProviderConfig],
-    x509_service_names: set[str],
-) -> None:
-    """Fail-closed drift protection between ``auth_type: x509`` services and explicit x509 ``identity_providers`` entries (both directions) — same reasoning as issue #60's required_permission consolidation: a mismatch is a typo, a stale services.yaml, or a missing entry, and a startup RuntimeError surfaces it as a visible rollout failure with zero outage risk.
-
-    Universal: there is no synthesized-entry escape hatch. Every
-    ``auth_type: x509`` service must be named in some explicit entry's
-    ``targets``, including deployments with zero x509 entries at all — an
-    x509 service with no covering entry refuses to boot naming it, the same
-    as one covered by the wrong entry.
+    ``mcp_replica_count`` is supplied by the chart; the broker cannot see
+    whether the external mechanisms these warnings mention exist, so they can
+    only warn.
     """
-    x509_cfgs = [cfg for cfg in identity_providers_cfgs if cfg.type == "x509"]
-    covered = {target for cfg in x509_cfgs for target in cfg.targets}
-    uncovered = sorted(x509_service_names - covered)
-    if uncovered:
-        msg = (
-            "The following auth_type: x509 services are not targeted by any "
-            f"x509 identity_providers entry: {uncovered}. They would have no "
-            "credential provider (and no catalog credential_provider alias) "
-            "at all. Add an entry covering them, e.g.:\n"
-            "  - type: x509\n"
-            "    alias: x509\n"
-            f"    targets: {uncovered}\n"
-            "    service_url: <voms-token-service base URL>\n"
-            "(voms/valid/audience are optional), or change their auth_type."
-        )
-        raise RuntimeError(msg)
-    not_x509 = sorted(covered - x509_service_names)
-    if not_x509:
-        msg = (
-            "The following x509 identity_providers targets are not "
-            f"auth_type: x509 services: {not_x509}. The aggregator only "
-            "injects the identity JWT (and the redeem endpoint only accepts "
-            "the audience) for auth_type: x509 services, so the entry would "
-            "silently do nothing for them. Fix the typo, set the service's "
-            "auth_type to x509 in services.yaml, or remove the target."
-        )
-        raise RuntimeError(msg)
-
-
-# auth_type -> the identity_providers entry type whose provider supplies that
-# auth_type's credential. x509 has its own two-direction check
-# (_validate_x509_provider_targets); krb5 and servicex services are only
-# validated for coverage, since a krb5-token/servicex-token entry may also
-# target an ordinary bearer-auth backend.
-_AUTH_TYPE_ENTRY_TYPES = {"krb5": "krb5-token", "servicex": "servicex-token"}
-
-
-def _validate_identity_token_auth_type_coverage(
-    identity_providers_cfgs: Iterable[IdentityProviderConfig],
-    services: Iterable[ServiceSpec],
-) -> None:
-    """Refuse to boot when an ``auth_type: krb5``/``servicex`` service is not targeted by an entry of the matching type.
-
-    Such a service is authenticated with an AF Broker Identity Token, and its
-    credential provider exists only through its entry. Without one the
-    service could never be served, and the broker would have no reason to
-    hold the signing key it needs, so the gap is reported here, naming the
-    service, instead of at the first request.
-    """
-    cfgs = list(identity_providers_cfgs)
-    specs = list(services)
-    for auth_type, entry_type in _AUTH_TYPE_ENTRY_TYPES.items():
-        covered = {
-            target for cfg in cfgs if cfg.type == entry_type for target in cfg.targets
-        }
-        uncovered = sorted(
-            spec.name
-            for spec in specs
-            if spec.auth_type == auth_type and spec.name not in covered
-        )
-        if uncovered:
-            msg = (
-                f"The following auth_type: {auth_type} services are not "
-                f"targeted by any {entry_type} identity_providers entry: "
-                f"{uncovered}. They would have no credential provider. Add "
-                f"an entry covering them (type: {entry_type}, targets: "
-                f"{uncovered}, service_url: <token service base URL>), or "
-                "change their auth_type."
-            )
-            raise RuntimeError(msg)
-
-
-# identity_providers types whose providers authenticate to their service with
-# an AF Broker Identity Token minted by the broker's own signing key.
-_BROKER_TOKEN_ENTRY_TYPES = frozenset(
-    {"broker-issued", "condor-token", "krb5-token", "servicex-token", "x509"}
-)
-
-
-def _broker_token_entries(
-    identity_providers_cfgs: Iterable[IdentityProviderConfig],
-) -> list[IdentityProviderConfig]:
-    """Return the entries whose providers need the broker's signing key."""
-    return [
-        cfg for cfg in identity_providers_cfgs if cfg.type in _BROKER_TOKEN_ENTRY_TYPES
-    ]
-
-
-def _describe_broker_token_entries(
-    entries: Iterable[IdentityProviderConfig],
-) -> str:
-    """Name each target service of *entries* with the entry that serves it, for the missing-signing-key boot error."""
-    described: list[str] = []
-    for cfg in entries:
-        targets = ", ".join(cfg.targets) if cfg.targets else "(no targets)"
-        described.append(f"{targets} ({cfg.type} entry {cfg.alias!r})")
-    return "; ".join(described)
-
-
-@asynccontextmanager
-async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
-    settings = Settings()
-    configure_logging(settings.log_level, settings.audit_log_file)
-
-    # --- Local-development auth bypass. When BROKER_DEV_INSECURE_PRINCIPAL is
-    # set we parse it into a Principal at startup and refuse to boot unless
-    # the configured issuer clearly points at a local host — this is the
-    # only line of defence against the bypass being enabled in production
-    # by mistake, so it must be loud and fail-closed.
-    application.state.dev_bypass_active = False
-    application.state.dev_bypass_principal = None
-    if settings.dev_insecure_principal is not None:
-        if not issuer_is_local(settings.oidc_issuer):
-            msg = (
-                "BROKER_DEV_INSECURE_PRINCIPAL is set but OIDC_ISSUER "
-                f"({settings.oidc_issuer!r}) does not look like a local "
-                "development host. Refusing to start. Local hosts are "
-                "'localhost', '127.0.0.1', '::1', or a hostname ending in "
-                "'.localhost' / '.local' / '.test'."
-            )
-            raise RuntimeError(msg)
-        # build_dev_principal raises RuntimeError with a clear message on
-        # bad JSON or missing required keys — propagate as-is.
-        dev_principal = build_dev_principal(settings.dev_insecure_principal)
-        application.state.dev_bypass_active = True
-        application.state.dev_bypass_principal = dev_principal
-        logger.warning(
-            "dev_auth_bypass_active",
-            message="AUTH BYPASSED — DO NOT USE IN PRODUCTION",
-            oidc_issuer=settings.oidc_issuer,
-            unixname=dev_principal.unixname,
-            uid=dev_principal.uid,
-        )
-
+    multi_replica = (
+        settings.mcp_replica_count is not None and settings.mcp_replica_count > 1
+    )
     # --- /mcp transport mode (issue #128): a stateful aggregator (the
     # fastmcp/mcp SDK default, mcp_stateless_http=False) pins a streamable-
     # HTTP session to the pod that created it -- safe only with an external
     # session-affinity mechanism (e.g. an ingress hashing on client IP) in
-    # front of more than one replica. The broker can't see whether that
-    # affinity exists, so this can only warn, not refuse to start; it warns
-    # whenever mcp_replica_count (chart-supplied) says there's more than one
-    # replica to possibly land on.
-    if (
-        not settings.mcp_stateless_http
-        and settings.mcp_replica_count is not None
-        and settings.mcp_replica_count > 1
-    ):
+    # front of more than one replica.
+    if not settings.mcp_stateless_http and multi_replica:
         logger.warning(
             "mcp_stateful_multi_replica",
             message=(
@@ -307,15 +115,9 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # in_memory backend is process-local, so toggling maintenance mode (via
     # the admin API, api/admin.py) only takes effect on the replica that
     # handled the toggle -- every other replica keeps admitting requests as
-    # if nothing changed. Same warn-never-fail shape as the
-    # mcp_stateful_multi_replica check above: a single-replica or local-dev
-    # deployment legitimately wants this default with no extra infra, so this
-    # can only warn.
-    if (
-        settings.maintenance_mode_backend == "in_memory"
-        and settings.mcp_replica_count is not None
-        and settings.mcp_replica_count > 1
-    ):
+    # if nothing changed. A single-replica or local-dev deployment
+    # legitimately wants this default with no extra infra.
+    if settings.maintenance_mode_backend == "in_memory" and multi_replica:
         logger.warning(
             "maintenance_mode_in_memory_multi_replica",
             message=(
@@ -332,11 +134,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # has already refused more than one replica without a store unless the
     # operator opted into per-replica state; this logs the opt-in so it is
     # visible in pod logs, never silent.
-    if (
-        not settings.shared_state_url
-        and settings.mcp_replica_count is not None
-        and settings.mcp_replica_count > 1
-    ):
+    if not settings.shared_state_url and multi_replica:
         logger.warning(
             "per_replica_state",
             message=(
@@ -348,902 +146,150 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
             ),
             replica_count=settings.mcp_replica_count,
         )
-    shared_state = build_shared_state(
-        settings.shared_state_url, key_prefix=settings.shared_state_key_prefix
-    )
 
-    # --- Authorization: the authorization/ engine matches the shipped policy.yaml.
-    try:
-        entitlement_policy = load_policy(settings.policy_file)
-    except FileNotFoundError:
-        logger.warning("policy_file_not_found", path=settings.policy_file)
-        entitlement_policy = EntitlementPolicy()
-    # Observability for issue #125: the effective group -> permission mapping
-    # is otherwise implicit (chart default vs. operator override vs. dev-only
-    # fallback all merge into the same in-memory EntitlementPolicy), so an
-    # operator reading pod logs has no other way to see which policy is
-    # actually live. Group/permission names only -- no tokens or secrets ever
-    # pass through here.
-    logger.info(
-        "policy.group_permissions_loaded",
-        group_permissions={
-            group: sorted(caps)
-            for group, caps in sorted(entitlement_policy.group_permissions.items())
-        },
-    )
 
-    # --- Service registry (config-only; adding a service needs no code change).
-    # services_loaded means "services.yaml parsed without error" — an empty
-    # `services: []` is a valid, successfully-parsed degraded state (issue #29);
-    # it is only False when the file is missing or fails to parse.
-    service_registry = ServiceRegistry(settings.builtin_service_name)
-    try:
-        service_registry.load(settings.services_file)
-        services_loaded = True
-    except FileNotFoundError:
-        logger.warning("services_file_not_found", path=settings.services_file)
-        services_loaded = False
-    # Operator-configured services only: the registry always carries the
-    # builtin gateway service entry too (issue #240), which needs none of the startup
-    # validation below (permission "__none__", no credential, no x509) and
-    # would otherwise mask an empty services.yaml from the warning here and
-    # inflate /readyz's services_count.
-    services = [spec for spec in service_registry.all_services() if not spec.builtin]
-    if not services:
-        logger.warning("no_services_configured")
+@asynccontextmanager
+async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
+    """Build every subsystem in dependency order and tear them down in reverse.
 
-    # A required_permission that is neither built-in nor declared under
-    # custom_permissions has no action_type to resolve (get_action_type
-    # would silently label it "read"), so refuse to start rather than
-    # mislabel a state-changing tool. "__none__" is not a permission, and
-    # "__disabled__" is the explicit opt-out sentinel.
-    unknown_permissions: list[tuple[str, str]] = [
-        (spec.name, permission)
-        for spec in services
-        for permission in spec.all_required_permissions()
-        if permission not in PERMISSIONS
-        and permission not in entitlement_policy.custom_permissions
-        and permission != DISABLED_PERMISSION
-    ]
-    if unknown_permissions:
-        msg = (
-            "The following services require a permission that is neither "
-            "built-in nor declared in custom_permissions, so its action "
-            "type (read vs. state_change) is unknown: "
-            f"{sorted(unknown_permissions)}. Declare each in "
-            "entitlements.custom_permissions (chart) / policy.yaml (local "
-            "dev), e.g. `exec_jobs: state_change`, or fix the typo."
+    Each resource with a close registers it on the exit stack as it is built,
+    so a failure in any later step still closes the earlier ones.
+    """
+    async with AsyncExitStack() as stack:
+        settings = Settings()
+        configure_logging(settings.log_level, settings.audit_log_file)
+        # Teardown runs in reverse of the registrations below. Spans still
+        # buffered in the batch processor are flushed (a no-op when tracing
+        # was never enabled) after the audit output closes, which is after the
+        # metering pipeline drains, so the last audit records' traces are
+        # flushed too.
+        stack.callback(shutdown_tracing)
+        stack.callback(close_audit_logging)
+        stack.push_async_callback(aclose_http_client)
+
+        dev_principal = build_dev_bypass_principal(settings)
+        application.state.dev_bypass_active = dev_principal is not None
+        application.state.dev_bypass_principal = dev_principal
+        _warn_replica_hazards(settings)
+        shared_state = open_shared_state(settings, stack)
+
+        catalog = build_service_catalog(settings)
+        if not catalog.services:
+            logger.warning("no_services_configured")
+        targets = build_identity_targets(settings, catalog.services)
+
+        list_cache_invalidator = build_list_cache_invalidator(
+            shared_state, application.state.backend_providers, stack
         )
-        raise RuntimeError(msg)
-
-    # A service's required_permission that no group in group_permissions
-    # grants makes that service unusable by every principal -- e.g. the
-    # operator never wrote a policy for it (a chart-rendered policy.yaml
-    # with a stale key name the broker doesn't read, issue #59) or typo'd
-    # the permission name. This is a hard startup failure, not a log line:
-    # this is Kubernetes, so a Deployment rollout with a failing new pod
-    # leaves the previous ReplicaSet serving traffic unaffected -- refusing
-    # to start surfaces the misconfiguration as a visible rollout failure /
-    # CrashLoopBackOff / k8s event with zero outage risk, which is strictly
-    # better than a log line an operator has to be watching for. (Distinct
-    # from the fail-closed check below, which guards against a service with
-    # *no* gate at all -- this one guards against a gate nobody can pass.)
-    granted_permissions = {
-        cap for caps in entitlement_policy.group_permissions.values() for cap in caps
-    }
-    # all_required_permissions() already excludes "__none__" and handles a
-    # dict-form required_permission's multiple values (each checked
-    # individually, so a typo in one per-tool entry is named without
-    # flagging its correctly-spelled siblings).
-    unreachable_permissions: list[tuple[str, str]] = [
-        (spec.name, permission)
-        for spec in services
-        for permission in spec.all_required_permissions()
-        if permission not in granted_permissions
-    ]
-    if unreachable_permissions:
-        msg = (
-            "The following services require a permission that no group in "
-            "group_permissions grants, so they are unreachable by every "
-            "principal (a forgotten policy entry or a typo'd permission "
-            f"name): {sorted(unreachable_permissions)}. Set "
-            "entitlements.group_permissions (chart) / policy.yaml (local "
-            "dev) so at least one group grants each missing permission."
+        credential_cache = build_credential_cache(
+            settings, shared_state, list_cache_invalidator, stack
         )
-        raise RuntimeError(msg)
-
-    # --- x509 services and the identity-provider config list: x509 is an
-    # ordinary `identity_providers` type with no synthesized fallback --
-    # every `auth_type: x509` service must be covered by an explicit entry,
-    # drift-checked both directions, fail-closed (_validate_x509_provider_
-    # targets). Every surface downstream — provider registration,
-    # /v1/catalog's credential_provider alias, /v1/identities — works from
-    # these real, operator-declared entries.
-    x509_targets: list[str] = [
-        spec.name for spec in services if spec.auth_type == "x509"
-    ]
-    # krb5-token has no analogous `auth_type` variant in services.yaml (its
-    # targets are ordinary bearer-auth backends, resolved to a
-    # KrbTokenProvider purely via `identity_providers`), so there is no
-    # drift to validate here the way `_validate_x509_provider_targets` does
-    # for x509 -- just collect every krb5-token entry's targets.
-    krb5_targets: list[str] = [
-        target
-        for cfg in settings.identity_providers
-        if cfg.type == "krb5-token"
-        for target in cfg.targets
-    ]
-    # Same reasoning as krb5_targets above: servicex-token has no analogous
-    # `auth_type` variant in services.yaml either, so just collect every
-    # servicex-token entry's targets -- used by /v1/servicex/link's
-    # "no explicit target, use the first configured one" default.
-    servicex_targets: list[str] = [
-        target
-        for cfg in settings.identity_providers
-        if cfg.type == "servicex-token"
-        for target in cfg.targets
-    ]
-    # Reverse map from the aud a backend presents to the x509 redeem endpoint
-    # (the service's effective_audience -- what the broker mints, issue #257)
-    # back to the x509 target name the proxy/provider are keyed under. Without
-    # it the redeem endpoint would keep assuming aud == target name, which the
-    # name/audience split invalidated -- the 2026-08-27 x509 proxy 403.
-    x509_audiences: dict[str, str] = {
-        spec.effective_audience: spec.name
-        for spec in services
-        if spec.auth_type == "x509"
-    }
-    # Same reverse map as x509_audiences above, for `auth_type: krb5`
-    # services -- the krb5 redeem endpoint's `aud` -> target lookup (no
-    # shipped services.yaml declares one yet; this is plumbing for a future
-    # backend, mirrored exactly so that endpoint's resolution works the day
-    # one does).
-    krb5_audiences: dict[str, str] = {
-        spec.effective_audience: spec.name
-        for spec in services
-        if spec.auth_type == "krb5"
-    }
-    # Same reverse map as x509_audiences/krb5_audiences above, for
-    # `auth_type: servicex` services -- the servicex redeem endpoint's `aud`
-    # -> target lookup (no shipped services.yaml declares one yet; this is
-    # plumbing for a future backend, mirrored exactly so that endpoint's
-    # resolution works the day one does -- see af-mcp-platform#295).
-    servicex_audiences: dict[str, str] = {
-        spec.effective_audience: spec.name
-        for spec in services
-        if spec.auth_type == "servicex"
-    }
-    # HTCondor credmon top tokens (docs/credmon.md): the credmon redeems a
-    # user's *identity*, not any particular service's credential, so its
-    # per-kind audience maps to that kind's first configured target -- the
-    # same default the user-facing /v1 surfaces resolve to. No condor
-    # service entry is involved; the identity just gains one more consumer.
-    if settings.credmon_enabled:
-        prefix = settings.credmon_audience_prefix
-        for kind, audiences, targets in (
-            ("x509", x509_audiences, x509_targets),
-            ("krb5", krb5_audiences, krb5_targets),
-            ("servicex", servicex_audiences, servicex_targets),
-        ):
-            if targets:
-                audiences[f"{prefix}{kind}"] = targets[0]
-    identity_provider_cfg_list = list(settings.identity_providers)
-    _validate_x509_provider_targets(settings.identity_providers, set(x509_targets))
-    _validate_identity_token_auth_type_coverage(settings.identity_providers, services)
-    has_x509_cfg = any(cfg.type == "x509" for cfg in identity_provider_cfg_list)
-    # service_url is mandatory on every krb5-token entry (Settings' own
-    # validation), so any such entry always implies the krb5 Vault store
-    # (Settings._validate_vault_config already refused to construct
-    # `settings` without the connection settings).
-    has_krb5_token_cfg = any(
-        cfg.type == "krb5-token" for cfg in identity_provider_cfg_list
-    )
-    # Same reasoning as has_krb5_token_cfg: service_url is mandatory on
-    # every servicex-token entry, so any such entry always implies the
-    # ServiceX Vault store.
-    has_servicex_token_cfg = any(
-        cfg.type == "servicex-token" for cfg in identity_provider_cfg_list
-    )
-
-    # --- Credential subsystem: cache + janitor + provider registry.
-    # The credential cache's link/revoke hooks (below) go through
-    # list_cache_invalidator, which drops this replica's cached listings and
-    # tells the other replicas to drop theirs (mcp/cache_invalidation.py).
-    list_cache_invalidator = ListCacheInvalidator(
-        shared_state,
-        invalidate=lambda subject, target: invalidate_subject_cache(
-            application.state.backend_providers, subject, target
-        ),
-        invalidate_all=lambda: invalidate_all_subject_caches(
-            application.state.backend_providers
-        ),
-    )
-    list_cache_invalidator.start()
-    #
-    # on_revoke wires issue #320's per-(subject, service) tools/list cache
-    # invalidation to every revoke() (and, by delegation, revoke_all()) call
-    # -- covering api/identities.py's unlink_identity (oauth21-direct/
-    # krb5-token/servicex-token, all three revoke through this cache) and
-    # api/credentials.py's `DELETE /v1/credential` (revoke_all) alike,
-    # without either module needing its own aggregator-cache-invalidation
-    # code. The janitor's own expiry sweep does NOT go through revoke() (see
-    # CredentialCache._expire()), so a credential simply expiring never fires
-    # this hook -- only an actual identity-affecting revoke does.
-    # _mcp_aggregator is the module-level FastMCP instance built below
-    # (before this lifespan runs) -- referenced here as a plain global, so
-    # the closure always sees whatever populate_aggregator() has since
-    # pushed into it, same as this lifespan's own later reference to it.
-    credential_cache = CredentialCache(
-        max_failed_unlocks=settings.credential_unlock_max_failures,
-        unlock_window_seconds=settings.credential_unlock_window_seconds,
-        shared_state=shared_state,
-        on_revoke=list_cache_invalidator.invalidate,
-        # The mirror of on_revoke for issue #355: the /v1 routes that complete
-        # a link call credential_cache.notify_linked(), so a caller who just
-        # linked does not wait out a cached "no tools" listing.
-        on_link=list_cache_invalidator.invalidate,
-    )
-    credential_cache.start_janitor()
-
-    credential_registry = CredentialRegistry()
-
-    # --- Vault/OpenBao transport: one VaultKV instance (one K8s auth login
-    # per process) shared by the oauth21 token store, the token registry,
-    # the principal cache, the maintenance-mode store, the x509 link/proxy
-    # store, and the krb5 link/ticket store below, whichever of the six (or
-    # more) is configured to use Vault — see vault_kv.py's module docstring
-    # for the transport/domain split.
-    # An x509 entry implies the x509 store: proxies and passphrases persist
-    # in Vault (Settings._validate_vault_config already refused to construct
-    # `settings` without the connection settings). A krb5-token entry implies the krb5 store unconditionally,
-    # same reasoning (see has_krb5_token_cfg above) -- a servicex-token entry
-    # implies the ServiceX store the same way (has_servicex_token_cfg).
-    vault_kv: VaultKV | None = None
-    if (
-        settings.token_store_backend == "vault"  # noqa: S105 -- backend selector name, not a secret
-        or settings.token_registry_backend == "vault"  # noqa: S105 -- backend selector name, not a secret
-        or settings.principal_cache_backend == "vault"
-        or settings.maintenance_mode_backend == "vault"
-        or has_x509_cfg
-        or has_krb5_token_cfg
-        or has_servicex_token_cfg
-    ):
-        vault_kv = VaultKV(
-            addr=settings.vault_addr,
-            auth_mount=settings.vault_auth_mount,
-            auth_role=settings.vault_auth_role,
-            kv_mount=settings.vault_kv_mount,
-            sa_token_path=settings.vault_sa_token_path,
+        vault_kv = await build_vault_kv(settings)
+        oauth21_token_store = build_oauth21_token_store(settings, vault_kv)
+        oauth21_state_cipher = build_state_cipher(settings)
+        broker_token_issuer = build_broker_token_issuer(settings)
+        link_stores = (
+            build_vault_link_stores(settings, vault_kv)
+            if vault_kv is not None
+            else VaultLinkStores()
         )
-        # Trial authentication only -- proves the K8s auth flow works (SA JWT
-        # readable, Vault reachable, role accepted) without touching any
-        # stored credential or token-registry entry. A misconfigured Vault
-        # backend is a security-sensitive state; refusing to start is safer
-        # than silently degrading to a broker that can't persist state.
-        try:
-            await vault_kv._authenticate()
-        except Exception as exc:
-            logger.exception("vault_auth.failed")
-            raise RuntimeError(f"Vault K8s auth failed at startup: {exc}") from exc
-        logger.info("vault_auth.ok", vault_addr=settings.vault_addr)
-
-    # --- Identity providers (issue #66 PR4): one CredentialProvider instance
-    # per configured `identity_providers` entry, keyed by alias — either
-    # Keycloak's stored-broker-token pattern (`keycloak-brokered`,
-    # OIDCProvider) or the broker acting as a direct OAuth 2.1 client
-    # (`oauth21-direct`, OAuth21Provider), sharing a single token store
-    # (in-memory or Vault-backed, per `settings.token_store_backend` — issue
-    # #66 PR3). `Settings._validate_oauth21_config` already refused to
-    # construct `settings` above if an oauth21-direct entry is configured
-    # without broker_state_key/oauth21_client_id, so both are guaranteed
-    # present here whenever an oauth21-direct entry exists.
-    identity_providers: dict[str, CredentialProvider] = {}
-    identity_provider_configs: dict[str, IdentityProviderConfig] = {}
-    oauth21_token_store: InMemoryTokenStore | VaultTokenStore | None = None
-    oauth21_state_cipher = None
-    has_oauth21_provider = any(
-        cfg.type == "oauth21-direct" for cfg in settings.identity_providers
-    )
-    if has_oauth21_provider:
-        if settings.token_store_backend == "vault":  # noqa: S105 -- backend selector name, not a secret
-            # guaranteed by the check above
-            assert vault_kv is not None  # noqa: S101
-            oauth21_token_store = VaultTokenStore(
-                vault_kv=vault_kv,
-                kv_path_prefix=settings.vault_kv_path_prefix,
-            )
-        else:
-            oauth21_token_store = InMemoryTokenStore()
-    # The Fernet cipher is shared by two independent flows that both encrypt
-    # in-flight OAuth 2.1 state (oauth_state.py): backend-account-linking
-    # (oauth21-direct identity_providers, above) and the MCP OAuth discovery
-    # bootstrap flow (issue #140, api/mcp_oauth.py). Either configuring this
-    # cipher on its own -- Settings._validate_oauth21_config/
-    # _validate_mcp_oauth_config already refused to construct `settings`
-    # above if either is configured without broker_state_key.
-    if has_oauth21_provider or settings.keycloak_login_client_id:
-        oauth21_state_cipher = Fernet(
-            settings.broker_state_key.get_secret_value().encode()
-        )
-
-    # --- AF Broker Identity Token issuer (issue #162): the broker's own
-    # RS256 signing key for the identity-assertion JWTs the native providers
-    # (BrokerIssuedProvider, CondorTokenProvider's service exchange --
-    # issue #169, KrbTokenProvider, ServiceXProvider, and X509Provider's
-    # voms-token-service mint calls) mint for AF-native services. None only
-    # when no BROKER_SIGNING_KEY_FILE is set -- a valid local-dev state for a
-    # deployment with no such entry; load_broker_token_issuer itself raises
-    # RuntimeError on an unreadable/invalid key or a missing issuer URL. The
-    # fail-closed check below is the remaining gap: an identity_providers
-    # entry that needs broker-signed tokens (and therefore every service
-    # resolving to it) with no signing key configured at all must refuse to
-    # boot rather than fail at first request -- same
-    # rollout-failure-over-silent-breakage reasoning as
-    # unreachable_permissions above. The aggregator also injects a
-    # broker-issued identity JWT for auth_type: x509 targets and the redeem
-    # endpoint verifies it, so x509 is covered by the same requirement.
-    broker_token_issuer = load_broker_token_issuer(settings)
-    if broker_token_issuer is None:
-        needing_signing_key = _broker_token_entries(settings.identity_providers)
-        if needing_signing_key:
-            msg = (
-                "identity_providers contains entries that need the broker to "
-                "sign AF Broker Identity Tokens, but BROKER_SIGNING_KEY_FILE "
-                "is not set. Affected services: "
-                f"{_describe_broker_token_entries(needing_signing_key)}. "
-                "Mount the RS256 signing key (chart: broker.identityToken."
-                "existingSigningKeySecret) or remove the entries "
-                "-- see docs/auth.md's 'AF Broker Identity Token' section."
-            )
-            raise RuntimeError(msg)
-
-    # --- x509 Vault link/proxy store, shared by every x509 entry: one KV
-    # record per subject regardless of how many entries exist (issue #112's
-    # custodianship model — the link is per user, not per service).
-    x509_vault_store: VaultX509Store | None = None
-    if has_x509_cfg:
-        # guaranteed by the vault block above
-        assert vault_kv is not None  # noqa: S101
-        x509_vault_store = VaultX509Store(
-            vault_kv=vault_kv, kv_path_prefix=settings.x509_kv_path_prefix
-        )
-        logger.info(
-            "x509_voms_service_mode",
-            kv_path_prefix=settings.x509_kv_path_prefix,
-        )
-
-    # --- krb5 Vault link/ticket store, shared by every krb5-token entry: one
-    # KV record per subject regardless of how many entries exist, same
-    # per-user-not-per-service reasoning as x509_vault_store above.
-    krb5_vault_store: Krb5VaultStore | None = None
-    if has_krb5_token_cfg:
-        # guaranteed by the vault block above
-        assert vault_kv is not None  # noqa: S101
-        krb5_vault_store = Krb5VaultStore(
-            vault_kv=vault_kv, kv_path_prefix=settings.krb5_kv_path_prefix
-        )
-        logger.info(
-            "krb5_vault_store_wired",
-            kv_path_prefix=settings.krb5_kv_path_prefix,
-        )
-
-    # --- ServiceX Vault link/token store, shared by every servicex-token
-    # entry: one KV record per subject regardless of how many entries
-    # exist, same per-user-not-per-service reasoning as x509_vault_store/
-    # krb5_vault_store above.
-    servicex_vault_store: VaultServiceXStore | None = None
-    if has_servicex_token_cfg:
-        # guaranteed by the vault block above
-        assert vault_kv is not None  # noqa: S101
-        servicex_vault_store = VaultServiceXStore(
-            vault_kv=vault_kv, kv_path_prefix=settings.servicex_kv_path_prefix
-        )
-        logger.info(
-            "servicex_vault_store_wired",
-            kv_path_prefix=settings.servicex_kv_path_prefix,
-        )
-
-    # One CredentialProvider per configured entry, registered for the entry's
-    # targets below — x509 included (voms-proxy minted via the entry's
-    # voms-token-service). `bearer`-auth services' credential
-    # provider comes from `identity_providers`' per-entry `targets` list,
-    # not a blanket auth_type match — this lets different services bind to
-    # different aliases. `none` requires no user credential, so no provider
-    # is registered.
-    for cfg in identity_provider_cfg_list:
-        provider: CredentialProvider
-        if cfg.type == "keycloak-brokered":
-            provider = OIDCProvider(
-                settings,
-                credential_cache,
-                alias=cfg.alias,
-                targets=frozenset(cfg.targets),
-            )
-        elif cfg.type == "broker-issued":
-            # guaranteed by the check above
-            assert broker_token_issuer is not None  # noqa: S101
-            # The aud and POSIX requirement of each target's token are declared
-            # on the *service* (ServiceSpec.audience / requires_posix, issue
-            # #257), so resolve them from the registry here rather than from
-            # provider config -- keeping every token property of a service on
-            # the service entry. A target with no matching service entry (not
-            # reachable at call time anyway) falls back to the historical
-            # default: aud = target name, no POSIX claims.
-            token_options: dict[str, BrokerIssuedTokenOptions] = {}
-            for target in cfg.targets:
-                tspec = service_registry.get(target)
-                token_options[target] = BrokerIssuedTokenOptions(
-                    audience=tspec.effective_audience if tspec else target,
-                    requires_posix=tspec.requires_posix if tspec else False,
-                )
-            provider = BrokerIssuedProvider(
-                issuer=broker_token_issuer,
-                cache=credential_cache,
-                alias=cfg.alias,
-                targets=frozenset(cfg.targets),
-                token_options=token_options,
-            )
-        elif cfg.type == "condor-token":
-            # guaranteed by the check above
-            assert broker_token_issuer is not None  # noqa: S101
-            provider = CondorTokenProvider(
-                issuer=broker_token_issuer,
-                cache=credential_cache,
-                alias=cfg.alias,
-                targets=frozenset(cfg.targets),
-                service_url=str(cfg.service_url),
-                audience=cfg.audience,
-            )
-        elif cfg.type == "krb5-token":
-            # guaranteed by the check above
-            assert broker_token_issuer is not None  # noqa: S101
-            # built above for krb5-token entries
-            assert krb5_vault_store is not None  # noqa: S101
-            provider = KrbTokenProvider(
-                client=Krb5TokenServiceClient(
-                    issuer=broker_token_issuer,
-                    service_url=str(cfg.service_url),
-                    audience=cfg.audience,
-                ),
-                cache=credential_cache,
-                alias=cfg.alias,
-                targets=frozenset(cfg.targets),
-                vault_store=krb5_vault_store,
-            )
-        elif cfg.type == "x509":
-            # Mint at the entry's voms-token-service (the only component that
-            # mounts user homes) and persist both the proxy and the link
-            # (Globus passphrase for hands-free renewal) in Vault (issue #112
-            # follow-up).
-            # guaranteed by the check above
-            assert broker_token_issuer is not None  # noqa: S101
-            # built above for x509 entries
-            assert x509_vault_store is not None  # noqa: S101
-            provider = X509Provider(
-                settings,
-                credential_cache,
-                targets=frozenset(cfg.targets),
-                voms_client=VomsTokenServiceClient(
-                    issuer=broker_token_issuer,
-                    service_url=str(cfg.service_url),
-                    audience=cfg.audience,
-                    voms=cfg.voms,
-                    valid=cfg.valid,
-                ),
-                vault_store=x509_vault_store,
-            )
-        elif cfg.type == "servicex-token":
-            # guaranteed by the check above
-            assert broker_token_issuer is not None  # noqa: S101
-            # built above for servicex-token entries
-            assert servicex_vault_store is not None  # noqa: S101
-            provider = ServiceXProvider(
-                servicex_client=ServiceXTokenServiceClient(
-                    issuer=broker_token_issuer,
-                    service_url=str(cfg.service_url),
-                    audience=cfg.audience,
-                ),
-                vault_store=servicex_vault_store,
-                cache=credential_cache,
-                alias=cfg.alias,
-                targets=frozenset(cfg.targets),
-            )
-        else:
-            # guaranteed by the check above
-            assert oauth21_token_store is not None  # noqa: S101
-            provider = OAuth21Provider(
-                alias=cfg.alias,
-                targets=frozenset(cfg.targets),
-                authorization_endpoint=str(cfg.authorization_endpoint),
-                token_endpoint=str(cfg.token_endpoint),
-                issuer=cfg.issuer,
-                scope=cfg.scope,
-                store=oauth21_token_store,
-                # A provider registered under its own client_id uses it;
-                # otherwise the broker identifies itself by its CIMD URL.
-                client_id=cfg.client_id or settings.oauth21_client_id,
-                client_secret=cfg.client_secret,
-                revocation_endpoint=(
-                    str(cfg.revocation_endpoint) if cfg.revocation_endpoint else None
-                ),
-            )
-        identity_providers[cfg.alias] = provider
-        identity_provider_configs[cfg.alias] = cfg
-        for target in cfg.targets:
-            credential_registry.register(target, provider)
-
-    # --- Fail-closed check (issue #60): a service that omits
-    # `required_permission` in services.yaml relies on the credential layer
-    # as its sole authorization gate -- the user must have a linked identity
-    # / mintable credential for that target. If credential_registry can't
-    # resolve a provider for it either (e.g. `auth_type: bearer` with no
-    # `identity_providers` entry targeting it, or `auth_type: none` with no
-    # provider registered at all), there is no gate whatsoever: any
-    # authenticated principal could call it. Refuse to start rather than
-    # silently exposing an ungated service -- this must be based on whether
-    # credential_registry actually resolves the target, not the `auth_type`
-    # string, since `auth_type: bearer` alone doesn't guarantee a provider is
-    # wired up for this specific target.
-    ungated_services: list[str] = []
-    for spec in services:
-        if spec.required_permission is not None:
-            continue
-        try:
-            await credential_registry.resolve(spec.name)
-        except KeyError:
-            ungated_services.append(spec.name)
-    if ungated_services:
-        msg = (
-            "The following services omit `required_permission` in "
-            "services.yaml and have no credential provider resolving for "
-            "their target, so there is no authorization gate at all "
-            f"(neither a declared permission nor a mintable credential): "
-            f"{sorted(ungated_services)}. Either declare `required_permission` "
-            "(or `__none__` to explicitly open it to any authenticated user), "
-            "or configure a credential provider (identity_providers / x509) "
-            "targeting this service."
-        )
-        raise RuntimeError(msg)
-
-    # --- Identity<->service join for /v1/catalog's credential_provider field
-    # (issue #90): who services each target, from the same effective config
-    # list the providers above were wired from — x509 targets get their real
-    # entry's alias, no synthetic string.
-    target_to_alias = _build_target_to_alias(identity_provider_cfg_list)
-
-    # The default X509Provider api/credentials.py's /v1/x509/* routes fall
-    # back to when no explicit target is given: the provider servicing the
-    # first x509 service (matching _resolve_x509_target's default), or None
-    # when no x509 service exists at all.
-    x509_provider: X509Provider | None = None
-    if x509_targets:
-        resolved = await credential_registry.resolve(x509_targets[0])
-        # registered above
-        assert isinstance(resolved, X509Provider)  # noqa: S101
-        x509_provider = resolved
-
-    # --- MCP OAuth discovery bootstrap (issue #140): short-lived, single-use
-    # authorization codes minted by the Keycloak-login callback and redeemed
-    # at /v1/oauth/token. Codes are self-contained under the same Fernet
-    # cipher as the rest of the flow's state, and single use is enforced
-    # through the shared store -- see mcp_auth_codes.py's module docstring.
-    # None whenever the cipher is (api/mcp_oauth.py's routes 503 on their own
-    # then).
-    mcp_auth_code_store = (
-        McpAuthCodeStore(
-            oauth21_state_cipher,
-            shared_state,
-            issuer=settings.oauth21_effective_state_issuer,
-        )
-        if oauth21_state_cipher is not None
-        else None
-    )
-
-    # --- Tokens: durable registry backing the manual bearer-token bootstrap
-    # flow (POST/GET/DELETE /v1/tokens, issue #24), Vault/OpenBao-backed for
-    # HA-safe list/revoke across replicas (issue #115) with the same
-    # in-memory local-dev fallback pattern as oauth21_token_store above.
-    token_registry_backend: TokenRegistryBackend
-    if settings.token_registry_backend == "vault":  # noqa: S105 -- backend selector name, not a secret
-        # guaranteed by the check above
-        assert vault_kv is not None  # noqa: S101
-        token_registry_backend = VaultTokenRegistryBackend(
-            vault_kv=vault_kv,
-            kv_path_prefix=settings.token_registry_kv_path_prefix,
-        )
-    else:
-        token_registry_backend = InMemoryTokenRegistryBackend()
-    token_registry = TokenRegistry(token_registry_backend, shared_state)
-
-    # --- Principal cache (issue #144 steps 2a/3/3b): resolves every
-    # authenticated request's *current* groups/uid/gid/unixname/email from
-    # Keycloak. Originally built only for PATs (opaque bearers carrying none
-    # of that themselves); steps 3 and 3b made the JWT path defer to it too
-    # (groups, then POSIX identity), so the token answers only "who is this?"
-    # and the directory alone answers "what groups/POSIX identity do they
-    # have?" -- see identity.py's `_resolve_current_attributes` and
-    # principal_cache.py/principal_directory.py's module docstrings for the
-    # mechanism.
-    #
-    # Both empty used to be a valid, degraded state (PAT-only): the broker
-    # still started, and only a `mcp_pat_...` bearer on /mcp was rejected.
-    # That is no longer true -- since step 3 removed the JWT path's
-    # claims-based fallback, this account is now load-bearing for ALL
-    # authentication, not just PATs. The dev bypass (BROKER_DEV_INSECURE_PRINCIPAL)
-    # is the one exception: it short-circuits identity.keycloak_dependency/
-    # mcp's AsgiAuthMiddleware before either ever reaches the directory (see
-    # build_dev_principal), so it needs no directory at all. Neither
-    # configured is therefore a genuine misconfiguration, not a degraded
-    # mode -- refuse to start rather than boot a broker that can never
-    # authenticate anyone. Same reasoning as the unreachable_permissions
-    # check above (issue #125): this is Kubernetes, so a Deployment rollout
-    # with a failing new pod leaves the previous ReplicaSet serving traffic
-    # unaffected -- a startup RuntimeError surfaces the misconfiguration as
-    # a visible rollout failure with zero outage risk, which is strictly
-    # better than a broker that accepts every request and then 503s all of
-    # them.
-    principal_cache: PrincipalCache | None = None
-    if (
-        settings.keycloak_admin_client_id
-        and settings.keycloak_admin_client_secret.get_secret_value()
-    ):
-        principal_directory = KeycloakPrincipalDirectory(
+        providers = build_credential_providers(
             settings,
-            settings.keycloak_admin_client_id,
-            settings.keycloak_admin_client_secret.get_secret_value(),
-        )
-        # Persistence service for the cache above (issue #144 step 2b) —
-        # same in-memory/Vault selection shape as token_registry_backend
-        # above, sharing the same vault_kv transport instance.
-        principal_cache_backend: PrincipalCacheBackend
-        if settings.principal_cache_backend == "vault":
-            # guaranteed by the check above
-            assert vault_kv is not None  # noqa: S101
-            principal_cache_backend = VaultPrincipalCacheBackend(
-                vault_kv=vault_kv,
-                kv_path_prefix=settings.principal_cache_kv_path_prefix,
-            )
-        else:
-            principal_cache_backend = InMemoryPrincipalCacheBackend()
-        principal_cache = PrincipalCache(
-            principal_directory,
-            backend=principal_cache_backend,
-            refresh_interval_seconds=settings.principal_cache_refresh_seconds,
-            max_staleness_seconds=settings.principal_cache_max_staleness_seconds,
-            heartbeat_interval_seconds=settings.principal_cache_heartbeat_seconds,
-        )
-    elif not application.state.dev_bypass_active:
-        msg = (
-            "KEYCLOAK_ADMIN_CLIENT_ID/KEYCLOAK_ADMIN_CLIENT_SECRET are unset "
-            "and BROKER_DEV_INSECURE_PRINCIPAL is not active. As of issue "
-            "#144 step 3, every authenticated request (JWT or PAT) resolves "
-            "its current groups from the PrincipalDirectory, so the broker "
-            "cannot authenticate anyone without this service account. "
-            "Configure the Keycloak admin service account (see "
-            "docs/auth.md's 'Operator setup: the Keycloak admin service "
-            "account'), or set BROKER_DEV_INSECURE_PRINCIPAL for local "
-            "development (see docs/local-development.md)."
-        )
-        raise RuntimeError(msg)
-
-    # --- Maintenance mode (maintenance.py): one MaintenanceModeStore for the
-    # whole process, selected the same in_memory/vault/postgres way as
-    # token_registry_backend/principal_cache_backend above, sharing the same
-    # vault_kv transport instance when Vault-backed.
-    maintenance_mode_store: MaintenanceModeStore
-    if settings.maintenance_mode_backend == "vault":
-        # guaranteed by the vault_kv check above
-        assert vault_kv is not None  # noqa: S101
-        maintenance_mode_store = VaultMaintenanceModeStore(
-            vault_kv=vault_kv,
-            kv_path_prefix=settings.maintenance_mode_kv_path_prefix,
-        )
-    elif settings.maintenance_mode_backend == "postgres":
-        dsn = settings.maintenance_mode_effective_postgres_dsn
-        # guaranteed by _validate_maintenance_mode_config
-        assert dsn is not None  # noqa: S101
-        maintenance_mode_store = PostgresMaintenanceModeStore(dsn.get_secret_value())
-    else:
-        maintenance_mode_store = InMemoryMaintenanceModeStore()
-    # In-memory reads are a field access, so only the network-backed stores
-    # get the TTL cache.
-    if (
-        settings.maintenance_mode_backend != "in_memory"
-        and settings.maintenance_mode_cache_ttl_seconds > 0
-    ):
-        maintenance_mode_store = CachingMaintenanceModeStore(
-            maintenance_mode_store,
-            ttl_seconds=settings.maintenance_mode_cache_ttl_seconds,
-        )
-    await maintenance_mode_store.start()
-
-    # --- MCP aggregator: the FastMCP instance and its ASGI app already exist
-    # (built eagerly at module scope below, since the aggregator must be
-    # mountable before Settings()/ServiceRegistry() are known — see the
-    # comment above `_mcp_aggregator`). Push the registry/policy/settings/
-    # credential_registry/identity providers/maintenance_mode_store
-    # just loaded above into it now that they're real -- the middle three
-    # feed the af_* diagnostic tools (issue #153), and maintenance_mode_store
-    # feeds AsgiAuthMiddleware's /mcp enforcement (mirroring /v1's
-    # require_not_in_maintenance, which reads it straight off app.state).
-    # HTCondor credmon (docs/credmon.md): the identity targets each credmon
-    # kind redeems from, shared by the agent guidance below and the storer
-    # built further down. The guide exists only when credmon is enabled, so
-    # sites without HTCondor never tell agents about job credentials.
-    credmon_targets_by_kind: dict[str, list[str]] = {
-        "x509": x509_targets,
-        "krb5": krb5_targets,
-        "servicex": servicex_targets,
-    }
-    job_credentials = (
-        JobCredentialGuide(
-            service_prefix=settings.credmon_service_prefix,
-            kinds=frozenset(wired_kinds(settings, credmon_targets_by_kind)),
-        )
-        if settings.credmon_enabled
-        else None
-    )
-    # Where the tool-listing lint's findings are recorded for the admin tables
-    # (lint_observations.py): shared, so every replica reports the same.
-    lint_observations = LintObservationStore(shared_state)
-    populate_aggregator(
-        _mcp_aggregator,
-        service_registry,
-        settings,
-        entitlement_policy,
-        credential_registry,
-        pat_backend=token_registry_backend,
-        principal_cache=principal_cache,
-        identity_providers=identity_providers,
-        identity_provider_configs=identity_provider_configs,
-        target_to_alias=target_to_alias,
-        broker_token_issuer=broker_token_issuer,
-        maintenance_mode_store=maintenance_mode_store,
-        job_credentials=job_credentials,
-        shared_state=shared_state,
-        lint_observations=lint_observations,
-    )
-
-    # --- Usage: per-user usage accounting (usage/, PR C) consuming the
-    # success/error tool-call records the pipeline below writes -- started
-    # BEFORE the pipeline so no record the worker processes can miss the
-    # store. The backend is selected by USAGE_STORE_BACKEND.
-    usage_store = await init_usage_store(settings)
-    # --- OTel aggregate metrics (otel_metrics.py): a no-op unless
-    # OTEL_METRICS_ENABLED. Installed before the pipeline so the worker's
-    # first record is counted.
-    init_otel_metrics(settings)
-    # --- Metering: success/error audit records are measured and written by a
-    # background worker (metering.py) so tool calls never wait on
-    # measurement or audit I/O; without init the helper degrades to inline.
-    # The transport is the MeteringBackend selected by METERING_BACKEND.
-    await init_metering_pipeline(settings)
-
-    # --- Metrics: /metrics lives on its own port (chart NetworkPolicy allows
-    # Prometheus only there), served by prometheus_client's thread so the
-    # single uvicorn worker owns the process-wide registry.
-    metrics_server = None
-    application.state.metrics_port = None
-    if settings.metrics_port >= 0:
-        metrics_server, _ = start_http_server(settings.metrics_port)
-        application.state.metrics_port = metrics_server.server_port
-        logger.info("metrics_server_started", port=metrics_server.server_port)
-
-    application.state.settings = settings
-    application.state.entitlement_policy = entitlement_policy
-    application.state.service_registry = service_registry
-    application.state.services = services
-    application.state.services_loaded = services_loaded
-    application.state.credential_cache = credential_cache
-    application.state.credential_registry = credential_registry
-    application.state.x509_provider = x509_provider
-    application.state.x509_targets = x509_targets
-    application.state.x509_audiences = x509_audiences
-    application.state.krb5_audiences = krb5_audiences
-    application.state.krb5_targets = krb5_targets
-    application.state.servicex_audiences = servicex_audiences
-    application.state.servicex_targets = servicex_targets
-    application.state.identity_providers = identity_providers
-    application.state.identity_provider_configs = identity_provider_configs
-    application.state.target_to_alias = target_to_alias
-    application.state.oauth21_token_store = oauth21_token_store
-    application.state.oauth21_state_cipher = oauth21_state_cipher
-    application.state.token_registry = token_registry
-    application.state.principal_cache = principal_cache
-    application.state.mcp_auth_code_store = mcp_auth_code_store
-    application.state.broker_token_issuer = broker_token_issuer
-    application.state.usage_store = usage_store
-    application.state.maintenance_mode_store = maintenance_mode_store
-    application.state.lint_observations = lint_observations
-    application.state.shared_state = shared_state
-    # Also passed to KrbTokenProvider above (remember/renew support, issue
-    # #274); exposed on state so it exists in one place alongside every other
-    # subsystem here.
-    application.state.krb5_vault_store = krb5_vault_store
-    application.state.servicex_vault_store = servicex_vault_store
-
-    # HTCondor credmon storer (docs/credmon.md): built only when enabled, for
-    # the kinds whose identity provider (and, for enumeration, Vault store)
-    # is actually wired. Set unconditionally so a disabled deployment reads
-    # None rather than whatever a previous app instance left behind.
-    credmon_sync: CredmonSyncService | None = None
-    if settings.credmon_enabled:
-        credmon_sync = await build_credmon_sync(
-            settings,
+            service_registry=catalog.service_registry,
+            cache=credential_cache,
             issuer=broker_token_issuer,
-            credential_registry=credential_registry,
-            targets_by_kind=credmon_targets_by_kind,
-            store_prefixes={
-                kind: prefix
-                for kind, store, prefix in (
-                    ("x509", x509_vault_store, settings.x509_kv_path_prefix),
-                    ("krb5", krb5_vault_store, settings.krb5_kv_path_prefix),
-                    (
-                        "servicex",
-                        servicex_vault_store,
-                        settings.servicex_kv_path_prefix,
-                    ),
-                )
-                if store is not None
-            },
+            token_store=oauth21_token_store,
+            link_stores=link_stores,
+        )
+        await validate_services_gated(catalog.services, providers.registry)
+        x509_provider = await resolve_x509_provider(
+            providers.registry, targets.x509_targets
+        )
+
+        mcp_auth_code_store = build_mcp_auth_code_store(
+            settings, oauth21_state_cipher, shared_state
+        )
+        token_registries = build_token_registry(settings, vault_kv, shared_state)
+        principal_cache = build_principal_cache(
+            settings, vault_kv, dev_bypass_active=dev_principal is not None
+        )
+        maintenance_mode_store = await start_maintenance_store(
+            settings, vault_kv, stack
+        )
+
+        # Where the tool-listing lint's findings are recorded for the admin
+        # tables (lint_observations.py): shared, so every replica reports the
+        # same.
+        lint_observations = LintObservationStore(shared_state)
+        populate_mcp_aggregator(
+            _mcp_aggregator,
+            settings,
+            catalog=catalog,
+            targets=targets,
+            providers=providers,
+            pat_backend=token_registries.backend,
+            principal_cache=principal_cache,
+            broker_token_issuer=broker_token_issuer,
+            maintenance_mode_store=maintenance_mode_store,
+            job_credentials=build_job_credential_guide(settings, targets),
+            shared_state=shared_state,
+            lint_observations=lint_observations,
+        )
+
+        usage_store = await start_usage_store(settings, stack)
+        # OTel aggregate metrics (otel_metrics.py): a no-op unless
+        # OTEL_METRICS_ENABLED. Installed before the pipeline so the worker's
+        # first record is counted; flushed after the pipeline drains, so the
+        # last records' measurements are exported too.
+        init_otel_metrics(settings)
+        stack.callback(shutdown_otel_metrics)
+        await start_metering_pipeline(settings, stack)
+        application.state.metrics_port = start_metrics_server(settings, stack)
+
+        credmon_sync = await start_credmon_sync(
+            settings,
+            targets=targets,
+            credential_registry=providers.registry,
+            issuer=broker_token_issuer,
+            link_stores=link_stores,
             vault_kv=vault_kv,
             principal_cache=principal_cache,
+            stack=stack,
         )
-        credmon_sync.start()
-    application.state.credmon_sync = credmon_sync
+        BrokerState(
+            settings=settings,
+            catalog=catalog,
+            targets=targets,
+            credential_cache=credential_cache,
+            providers=providers,
+            x509_provider=x509_provider,
+            oauth21_token_store=oauth21_token_store,
+            oauth21_state_cipher=oauth21_state_cipher,
+            token_registry=token_registries.registry,
+            principal_cache=principal_cache,
+            mcp_auth_code_store=mcp_auth_code_store,
+            broker_token_issuer=broker_token_issuer,
+            usage_store=usage_store,
+            maintenance_mode_store=maintenance_mode_store,
+            lint_observations=lint_observations,
+            shared_state=shared_state,
+            link_stores=link_stores,
+            credmon_sync=credmon_sync,
+        ).publish(application.state)
 
-    # Prime the JWKS cache at startup so the first request does not pay the
-    # latency cost of a remote fetch.
-    try:
-        keys = await get_jwks(settings)
-        logger.info("jwks_cache_primed", key_count=len(keys))
-    except Exception as exc:  # noqa: BLE001  # non-fatal prime; broad catch intentional
-        # Non-fatal at startup — the cache will be retried on the first request.
-        logger.warning("jwks_cache_prime_failed", error=str(exc))
+        await prime_jwks_cache(settings)
+        logger.info(
+            "af_mcp_broker_started",
+            version=__version__,
+            oidc_issuer=settings.oidc_issuer,
+            policy_file=settings.policy_file,
+            services_file=settings.services_file,
+            services_count=len(catalog.services),
+            x509_targets=targets.x509_targets,
+            identity_provider_aliases=list(providers.providers),
+        )
 
-    logger.info(
-        "af_mcp_broker_started",
-        version=__version__,
-        oidc_issuer=settings.oidc_issuer,
-        policy_file=settings.policy_file,
-        services_file=settings.services_file,
-        services_count=len(services),
-        x509_targets=x509_targets,
-        identity_provider_aliases=list(identity_providers),
-    )
-
-    yield
-
-    if credmon_sync is not None:
-        await credmon_sync.stop()
-    await credential_cache.stop_janitor()
-    await list_cache_invalidator.stop()
-    await shared_state.close()
-    await aclose_http_client()
-    # Shutdown drains pending metering (records still queued for measurement
-    # and writing) so audit lines aren't lost on a graceful stop -- and it
-    # must run before the audit output below is closed.
-    await aclose_metering_pipeline()
-    # Flush the OTel aggregates after the drain, so the last records'
-    # measurements are exported too (a no-op when metrics were never enabled).
-    shutdown_otel_metrics()
-    # The usage store closes only after the pipeline drain above -- drained
-    # records are still being accounted right up to the last audit write.
-    await aclose_usage_store()
-    # The maintenance-mode store has no ordering dependency on the
-    # audit/metering/usage chain above -- it is never read or written from
-    # the tool-call path those drain, only from the /v1 and /mcp request-gate
-    # checks (both already stopped serving new requests by the time shutdown
-    # reaches here) and, later, the admin API. Close it whenever convenient.
-    await maintenance_mode_store.aclose()
-    if metrics_server is not None:
-        metrics_server.shutdown()
-        metrics_server.server_close()
-    close_audit_logging()
-    # Flush spans still buffered in the batch processor (a no-op when tracing
-    # was never enabled). After the pipeline drain above so the last audit
-    # records' traces are flushed too.
-    shutdown_tracing()
+        yield
     logger.info("af_mcp_broker_stopped")
 
 

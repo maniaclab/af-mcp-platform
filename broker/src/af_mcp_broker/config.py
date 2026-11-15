@@ -224,7 +224,7 @@ class X509ProviderConfig(BaseModel):
     (same shape as ``CondorTokenProviderConfig``). Multiple entries with
     different service URLs/VOs are expressible — every ``auth_type: x509``
     service must be covered by an explicit entry (see
-    ``app.py``'s ``_validate_x509_provider_targets``); there is no
+    ``wiring/checks.py``'s ``validate_x509_provider_targets``); there is no
     synthesized fallback.
     """
 
@@ -899,6 +899,27 @@ class Settings(BaseSettings):
         return self.oauth21_state_issuer or self.oidc_issuer
 
     @property
+    def uses_vault(self) -> bool:
+        """Whether any configured subsystem persists state in Vault.
+
+        True when a backend selector names ``vault`` or an x509, krb5-token or
+        servicex-token ``identity_providers`` entry is configured (those
+        persist in Vault with no in-memory fallback). It is the one predicate
+        deciding both that ``_validate_vault_config`` requires the connection
+        settings and that the broker builds a Vault client at startup.
+        """
+        return (
+            self.token_store_backend == "vault"  # noqa: S105 -- backend selector name, not a secret
+            or self.token_registry_backend == "vault"  # noqa: S105 -- backend selector name, not a secret
+            or self.principal_cache_backend == "vault"
+            or self.maintenance_mode_backend == "vault"
+            or any(
+                p.type in ("x509", "krb5-token", "servicex-token")
+                for p in self.identity_providers
+            )
+        )
+
+    @property
     def maintenance_mode_effective_postgres_dsn(self) -> SecretStr | None:
         """``maintenance_mode_postgres_dsn`` if set, else ``usage_postgres_dsn``.
 
@@ -1120,16 +1141,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _validate_vault_config(self) -> Settings:
-        """Fail startup loudly when any Vault-backed store is selected but the settings they depend on are not — a half-configured VaultTokenStore/VaultTokenRegistryBackend/VaultPrincipalCacheBackend/VaultMaintenanceModeStore/VaultX509Store/Krb5VaultStore/VaultServiceXStore would otherwise fail at first request instead of at boot (see also app.py's lifespan trial authentication). All seven stores share the same Vault connection settings (only their kv_path_prefix differs), so one validator covers any or all being selected. An x509 identity_providers entry always implies the x509 store: proxies and passphrases persist in Vault, there is no in-memory fallback. A krb5-token identity_providers entry always implies the krb5 store, unconditionally (service_url is mandatory on every entry), and a given entry can't declare ahead of time whether any caller will ever request its optional "remember" persistence, so deferring the requirement to first use would be exactly the silent-runtime-failure trap this validator otherwise exists to avoid. A servicex-token identity_providers entry always implies the ServiceX store too, unconditionally, the same reasoning as krb5-token: the refresh token it vaults has no in-memory fallback either."""
-        if (
-            self.token_store_backend != "vault"  # noqa: S105 -- backend selector name, not a secret
-            and self.token_registry_backend != "vault"  # noqa: S105 -- backend selector name, not a secret
-            and self.principal_cache_backend != "vault"
-            and self.maintenance_mode_backend != "vault"
-            and not any(p.type == "x509" for p in self.identity_providers)
-            and not any(p.type == "krb5-token" for p in self.identity_providers)
-            and not any(p.type == "servicex-token" for p in self.identity_providers)
-        ):
+        """Fail startup loudly when any Vault-backed store is selected but the settings they depend on are not — a half-configured VaultTokenStore/VaultTokenRegistryBackend/VaultPrincipalCacheBackend/VaultMaintenanceModeStore/VaultX509Store/Krb5VaultStore/VaultServiceXStore would otherwise fail at first request instead of at boot (see also wiring/vault.py's startup trial authentication). All seven stores share the same Vault connection settings (only their kv_path_prefix differs), so one validator covers any or all being selected. An x509 identity_providers entry always implies the x509 store: proxies and passphrases persist in Vault, there is no in-memory fallback. A krb5-token identity_providers entry always implies the krb5 store, unconditionally (service_url is mandatory on every entry), and a given entry can't declare ahead of time whether any caller will ever request its optional "remember" persistence, so deferring the requirement to first use would be exactly the silent-runtime-failure trap this validator otherwise exists to avoid. A servicex-token identity_providers entry always implies the ServiceX store too, unconditionally, the same reasoning as krb5-token: the refresh token it vaults has no in-memory fallback either."""
+        if not self.uses_vault:
             return self
         if not self.vault_addr:
             log.error(
