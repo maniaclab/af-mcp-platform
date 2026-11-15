@@ -16,6 +16,7 @@ from af_mcp_broker import metering as pipeline
 from af_mcp_broker import shared_state
 from af_mcp_broker.authorization import EntitlementPolicy, RateLimitRule
 from af_mcp_broker.authorization.errors import ToolRateLimitError
+from af_mcp_broker.config import Settings
 from af_mcp_broker.mcp.middleware import authorization_mw
 from af_mcp_broker.mcp.middleware.authorization_mw import AuthorizationMiddleware
 from af_mcp_broker.metering import (
@@ -631,7 +632,7 @@ async def test_success_records_result_bytes_and_tokens(
 
     measured: list[Any] = []
 
-    def _fake_measure(result: Any) -> tuple[int | None, int | None]:
+    def _fake_measure(result: Any, _settings: Any) -> tuple[int | None, int | None]:
         measured.append(result)
         return (5, 2)
 
@@ -945,7 +946,7 @@ async def test_success_audit_flows_through_metering_pipeline(
     over and returns without writing; after the pipeline drains, the line
     carries the same fields the old inline path produced -- including the
     measurement the worker performed."""
-    await init_metering_pipeline()
+    await init_metering_pipeline(Settings())
     try:
         mw = AuthorizationMiddleware(registry, policy)
         principal = make_principal(groups=["atlas"])
@@ -990,7 +991,7 @@ async def test_denied_audit_written_inline_not_via_pipeline(
     """A denial is security-relevant and has nothing to measure: its audit
     line must be on disk before the AuthorizationError even propagates --
     no drain required."""
-    await init_metering_pipeline()
+    await init_metering_pipeline(Settings())
     try:
         mw = AuthorizationMiddleware(registry, policy)
         principal = make_principal(groups=[])

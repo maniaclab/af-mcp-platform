@@ -70,7 +70,9 @@ _SENTINEL: Any = object()
 _pipeline: MeteringBackend | None = None
 
 
-def _measure_into(record: AuditRecord, result: ToolResult | None) -> None:
+def _measure_into(
+    record: AuditRecord, result: ToolResult | None, settings: Settings
+) -> None:
     """Fill ``record.result_bytes``/``result_tokens_est`` from *result*.
 
     ``measure_tool_result`` already degrades to ``(None, None)`` internally;
@@ -81,7 +83,9 @@ def _measure_into(record: AuditRecord, result: ToolResult | None) -> None:
     if result is None:
         return
     try:
-        record.result_bytes, record.result_tokens_est = measure_tool_result(result)
+        record.result_bytes, record.result_tokens_est = measure_tool_result(
+            result, settings
+        )
     except Exception as exc:  # noqa: BLE001 -- metering must never lose an audit line
         metrics.metering_worker_errors_total.inc()
         metrics.metering_records_missing_measurements_total.inc()
@@ -129,6 +133,7 @@ class InProcessMeteringBackend(MeteringBackend):
         # gauge, log_context the submitting request's structlog contextvars
         # (correlation_id, subject), which the worker task does not inherit
         # -- or the drain sentinel.
+        self._settings = settings
         self._queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=maxsize)
         self._worker: asyncio.Task[None] | None = None
         self._usage_batcher = UsageBatcher(
@@ -207,7 +212,7 @@ class InProcessMeteringBackend(MeteringBackend):
             metrics.metering_queue_delay_seconds.set(time.monotonic() - enqueued_at)
             # _measure_into never raises (see its docstring), so a
             # measurement failure still reaches the write below unmeasured.
-            _measure_into(record, result)
+            _measure_into(record, result, self._settings)
             try:
                 with structlog.contextvars.bound_contextvars(**log_context):
                     await write_audit(record)
@@ -257,15 +262,12 @@ def build_metering_backend(settings: Settings) -> MeteringBackend:
             assert_never(backend)
 
 
-async def init_metering_pipeline(settings: Settings | None = None) -> MeteringBackend:
+async def init_metering_pipeline(settings: Settings) -> MeteringBackend:
     """Create, start, and install the process-wide backend (app.py lifespan).
 
-    The implementation is selected by ``settings.metering_backend``; with no
-    Settings passed (tests), the process-wide ``get_settings()`` is used.
+    The implementation is selected by ``settings.metering_backend``.
     """
     global _pipeline
-    if settings is None:
-        settings = get_settings()
     _pipeline = build_metering_backend(settings)
     await _pipeline.start()
     return _pipeline
@@ -289,7 +291,9 @@ async def submit_metered_audit(record: AuditRecord, result: ToolResult | None) -
     inline path.
     """
     if _pipeline is None or not _pipeline.is_running:
-        _measure_into(record, result)
+        # No pipeline means no lifespan has installed settings (unit tests,
+        # local dev): the process-wide Settings is all there is.
+        _measure_into(record, result, get_settings())
         await write_audit(record)
         # Same post-write usage accounting the worker performs (PR C) --
         # the fallback path must not be a gap in anyone's usage.

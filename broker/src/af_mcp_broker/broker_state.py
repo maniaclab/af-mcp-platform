@@ -119,3 +119,8 @@ def broker_state_of(app: Starlette) -> BrokerState:
 def get_broker_state(request: Request) -> BrokerState:
     """FastAPI dependency (and plain accessor) for the app's ``BrokerState``."""
     return broker_state_of(request.app)
+
+
+def get_state_settings(request: Request) -> Settings:
+    """FastAPI dependency for the running app's ``Settings``: the one the lifespan loaded, as ``BrokerState.settings``."""
+    return broker_state_of(request.app).settings

@@ -32,10 +32,10 @@ import mcp.types as mt
 import structlog
 import tiktoken
 
-from af_mcp_broker.config import get_settings
-
 if TYPE_CHECKING:
     from fastmcp.tools.base import ToolResult
+
+    from af_mcp_broker.config import Settings
 
 logger = structlog.get_logger(__name__)
 
@@ -91,7 +91,9 @@ def _serialized_text(result: ToolResult) -> str:
     return ""
 
 
-def measure_tool_result(result: ToolResult) -> tuple[int | None, int | None]:
+def measure_tool_result(
+    result: ToolResult, settings: Settings
+) -> tuple[int | None, int | None]:
     """``(result_bytes, result_tokens_est)`` for *result*.
 
     ``result_bytes`` is the UTF-8 byte length of the serialized text;
@@ -104,7 +106,7 @@ def measure_tool_result(result: ToolResult) -> tuple[int | None, int | None]:
     try:
         text = _serialized_text(result)
         result_bytes = len(text.encode("utf-8"))
-        encoding_name = get_settings().token_estimate_encoding
+        encoding_name = settings.token_estimate_encoding
         if not encoding_name or not text:
             return result_bytes, None
         encoding = _get_encoding(encoding_name)

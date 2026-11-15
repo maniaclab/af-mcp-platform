@@ -31,7 +31,7 @@ from prometheus_client import REGISTRY
 
 from af_mcp_broker import metering as pipeline
 from af_mcp_broker import usage
-from af_mcp_broker.audit import AuditRecord, measure
+from af_mcp_broker.audit import AuditRecord
 from af_mcp_broker.config import Settings
 from af_mcp_broker.metering import (
     InProcessMeteringBackend,
@@ -51,15 +51,15 @@ def _overflow_count() -> float:
     return _sample("af_mcp_metering_queue_overflow_total")
 
 
+# Pins the encoding name so ambient env vars can't change test behavior
+# (mirrors test_measure.py).
+_SETTINGS = Settings(token_estimate_encoding="o200k_base")
+
+
 @pytest.fixture(autouse=True)
 def pinned_encoding(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Pin the encoding name so ambient env vars can't change test behavior
-    (mirrors test_measure.py's identical fixture)."""
-    monkeypatch.setattr(
-        measure,
-        "get_settings",
-        lambda: Settings(token_estimate_encoding="o200k_base"),
-    )
+    """Pin the process-wide settings the no-pipeline path measures with."""
+    monkeypatch.setattr(pipeline, "get_settings", lambda: _SETTINGS)
 
 
 @pytest.fixture(autouse=True)
@@ -94,7 +94,7 @@ def _lines(audit_buffer) -> list[dict[str, Any]]:
 async def test_worker_measures_result_and_writes_the_line(audit_buffer) -> None:
     """The background worker fills result_bytes/result_tokens_est from the
     handed-over ToolResult before writing the audit line."""
-    await init_metering_pipeline()
+    await init_metering_pipeline(_SETTINGS)
 
     result = ToolResult(content=[mt.TextContent(type="text", text="hellohello")])
     await submit_metered_audit(_record(), result)
@@ -113,7 +113,7 @@ async def test_submit_returns_before_the_line_is_written(
 ) -> None:
     """The hot path never waits on the worker: submit returns while the
     audit write is still gated, and the line lands once the gate opens."""
-    await init_metering_pipeline()
+    await init_metering_pipeline(_SETTINGS)
 
     gate = asyncio.Event()
     real_write_audit = pipeline.write_audit
@@ -266,7 +266,7 @@ async def test_worker_written_line_carries_the_submitting_requests_correlation_i
     request's correlation_id/subject unless they travel with the queued item."""
     structlog.contextvars.clear_contextvars()
     structlog.contextvars.bind_contextvars(correlation_id="corr-9", subject="sub-abc")
-    await init_metering_pipeline()
+    await init_metering_pipeline(_SETTINGS)
 
     await submit_metered_audit(_record(), None)
     structlog.contextvars.clear_contextvars()
@@ -298,7 +298,7 @@ async def test_inline_paths_raise_when_the_audit_write_fails(
 
 
 async def test_uninitialized_helper_measures_and_writes_inline(audit_buffer) -> None:
-    """Without init_metering_pipeline() (unit tests, local dev) the helper
+    """Without init_metering_pipeline(_SETTINGS) (unit tests, local dev) the helper
     degrades to exactly the pre-pipeline behavior: measure + write
     synchronously, so the line is complete the moment the helper returns."""
 
@@ -417,7 +417,7 @@ async def test_worker_feeds_the_usage_store_after_the_audit_write(
     usage_store,
     audit_buffer,
 ) -> None:
-    await init_metering_pipeline()
+    await init_metering_pipeline(_SETTINGS)
 
     await submit_metered_audit(
         _record(mcp_service="rucio", timestamp=time.time()), None
@@ -494,7 +494,7 @@ async def test_usage_store_failure_never_affects_the_audit_write(
 
     monkeypatch.setattr(usage_store, "record", _boom)
 
-    await init_metering_pipeline()
+    await init_metering_pipeline(_SETTINGS)
 
     errors_before = _sample("af_mcp_metering_worker_errors_total")
     await submit_metered_audit(
