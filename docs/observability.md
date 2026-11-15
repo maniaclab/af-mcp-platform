@@ -580,6 +580,43 @@ log's `trace_id` field finds the exact invocations — and their
 measurements, which live only in the audit log and usage store, never on
 spans.
 
+## Audit log line shape
+
+Audit records are emitted through structlog, so an audit line has the same
+shape as every other broker log line. Each is one JSON object with
+`event: "audit"`:
+
+| Field | Meaning |
+|---|---|
+| `timestamp` | ISO 8601 UTC time the line was **written**. |
+| `level` | Always `info`. |
+| `logger` | `af_mcp_broker.audit.logger`. |
+| `correlation_id`, `subject` | The request's correlation id and caller, when the record was written inside a request. A queued tool-call record carries the ids of the request that submitted it. |
+| `recorded_at` | ISO 8601 UTC time the record was **created**; for a record the metering worker wrote later, earlier than `timestamp`. |
+| `request_id` | For tool calls, the request's `correlation_id`, so the audit, `http.request.*` and usage lines of one call share one id. Other record types keep their own identifier (a token `jti`, a PAT `lookup_id`). |
+| everything else | The `AuditRecord` fields: `audit_id`, `principal_sub`, `principal_uid`, `permission`, `target`, `action`, `action_type`, `args_summary`, `outcome`, `error`, and the metering and attribution fields above. |
+
+Where the lines go: `AUDIT_LOG_FILE` is `-` (stdout, the default) or a file
+path opened for appending. Either way the line is written through the audit
+handler, never through the root handler, so the audit destination does not
+change what other log lines look like. The stdout destination resolves
+`sys.stdout` at each write rather than holding the stream it saw at startup.
+
+Audit writes fail loudly. A failure to write a line raises to the code that
+produced the record: the denial path, the inline fallback (no pipeline
+running, or a full metering queue) and the credential and token endpoints
+all surface it to the request. The metering worker has no caller to raise
+to, so it logs `metering_audit_write_failed` at `error` level with the
+traceback and the lost record's `audit_id`, `principal_sub`, `target`,
+`action` and `outcome`, increments `af_mcp_metering_worker_errors_total`, and
+keeps processing the queue.
+
+Admin state changes are audited like tool calls: toggling maintenance mode
+writes a `maintenance_enable` or `maintenance_disable` record (caller,
+enabled or disabled, the reason given) and logs `maintenance_mode_changed`
+at `info`. A toggle that loses the compare-and-set race changed nothing and
+writes neither.
+
 ## Correlation ids on calls to token services
 
 Every `/v1` request binds a `correlation_id` into the broker's log lines.

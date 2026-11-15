@@ -18,7 +18,6 @@ explicit asyncio.Event rather than sleeps.
 from __future__ import annotations
 
 import asyncio
-import io
 import json
 import time
 from typing import Any
@@ -26,12 +25,12 @@ from typing import Any
 import asyncpg  # type: ignore[import-untyped]
 import mcp.types as mt
 import pytest
+import structlog
 from fastmcp.tools.base import ToolResult
 from prometheus_client import REGISTRY
 
 from af_mcp_broker import usage
 from af_mcp_broker.audit import AuditRecord, measure, pipeline
-from af_mcp_broker.audit.logger import init_audit_logger
 from af_mcp_broker.audit.pipeline import (
     InProcessMeteringBackend,
     MeteringBackend,
@@ -87,22 +86,20 @@ def _record(**overrides: Any) -> AuditRecord:
     return AuditRecord(**fields)
 
 
-def _lines(buffer: io.StringIO) -> list[dict[str, Any]]:
-    return [json.loads(line) for line in buffer.getvalue().splitlines()]
+def _lines(audit_buffer) -> list[dict[str, Any]]:
+    return [json.loads(line) for line in audit_buffer.getvalue().splitlines()]
 
 
-async def test_worker_measures_result_and_writes_the_line() -> None:
+async def test_worker_measures_result_and_writes_the_line(audit_buffer) -> None:
     """The background worker fills result_bytes/result_tokens_est from the
     handed-over ToolResult before writing the audit line."""
-    buffer = io.StringIO()
-    init_audit_logger(buffer)
     await init_metering_pipeline()
 
     result = ToolResult(content=[mt.TextContent(type="text", text="hellohello")])
     await submit_metered_audit(_record(), result)
     await aclose_metering_pipeline()
 
-    (line,) = _lines(buffer)
+    (line,) = _lines(audit_buffer)
     assert line["outcome"] == "success"
     assert line["result_bytes"] == len(b"hellohello")
     # Stub encoder: one token per 4 characters (10 chars -> 2 tokens).
@@ -111,11 +108,10 @@ async def test_worker_measures_result_and_writes_the_line() -> None:
 
 async def test_submit_returns_before_the_line_is_written(
     monkeypatch: pytest.MonkeyPatch,
+    audit_buffer,
 ) -> None:
     """The hot path never waits on the worker: submit returns while the
     audit write is still gated, and the line lands once the gate opens."""
-    buffer = io.StringIO()
-    init_audit_logger(buffer)
     await init_metering_pipeline()
 
     gate = asyncio.Event()
@@ -131,19 +127,19 @@ async def test_submit_returns_before_the_line_is_written(
 
     # submit returned while the worker is still parked on the gate --
     # nothing has been written yet.
-    assert buffer.getvalue() == ""
+    assert audit_buffer.getvalue() == ""
 
     gate.set()
     await aclose_metering_pipeline()
-    assert len(_lines(buffer)) == 1
+    assert len(_lines(audit_buffer)) == 1
 
 
-async def test_overflow_writes_inline_unmeasured_and_drops_nothing() -> None:
+async def test_overflow_writes_inline_unmeasured_and_drops_nothing(
+    audit_buffer,
+) -> None:
     """A full queue must not drop the record: it is written immediately
     without measurement, the overflow counter increments, and the records
     already enqueued are still processed by the worker."""
-    buffer = io.StringIO()
-    init_audit_logger(buffer)
     # Tiny queue, worker deliberately not started yet: the queue can only
     # fill up, so the second submit overflows deterministically.
     p = InProcessMeteringBackend(Settings(), maxsize=1)
@@ -157,7 +153,7 @@ async def test_overflow_writes_inline_unmeasured_and_drops_nothing() -> None:
     # The overflowing record was written inline, unmeasured, and counted --
     # both as an overflow and as a record whose present result went
     # unmeasured.
-    (line,) = _lines(buffer)
+    (line,) = _lines(audit_buffer)
     assert line["request_id"] == "overflowed"
     assert line["result_bytes"] is None
     assert line["result_tokens_est"] is None
@@ -170,12 +166,13 @@ async def test_overflow_writes_inline_unmeasured_and_drops_nothing() -> None:
     # The queued record was not dropped either: the worker still writes it.
     await p.start()
     await p.aclose()
-    assert {line["request_id"] for line in _lines(buffer)} == {"queued", "overflowed"}
+    assert {line["request_id"] for line in _lines(audit_buffer)} == {
+        "queued",
+        "overflowed",
+    }
 
 
-async def test_aclose_drains_everything_already_enqueued() -> None:
-    buffer = io.StringIO()
-    init_audit_logger(buffer)
+async def test_aclose_drains_everything_already_enqueued(audit_buffer) -> None:
     p = InProcessMeteringBackend(Settings(), maxsize=10)
     await p.start()
 
@@ -183,18 +180,17 @@ async def test_aclose_drains_everything_already_enqueued() -> None:
         await p.submit(_record(request_id=f"req-{i}"), None)
     await p.aclose()
 
-    assert [line["request_id"] for line in _lines(buffer)] == [
+    assert [line["request_id"] for line in _lines(audit_buffer)] == [
         f"req-{i}" for i in range(5)
     ]
 
 
 async def test_worker_survives_measurement_failure(
     monkeypatch: pytest.MonkeyPatch,
+    audit_buffer,
 ) -> None:
     """A poisoned item (measurement raising) still yields an unmeasured
     audit line, and the worker goes on to process the next item."""
-    buffer = io.StringIO()
-    init_audit_logger(buffer)
     p = InProcessMeteringBackend(Settings())
     await p.start()
 
@@ -210,7 +206,7 @@ async def test_worker_survives_measurement_failure(
     await p.submit(_record(request_id="next"), None)
     await p.aclose()
 
-    lines = _lines(buffer)
+    lines = _lines(audit_buffer)
     assert [line["request_id"] for line in lines] == ["poisoned", "next"]
     assert lines[0]["result_bytes"] is None
     assert lines[0]["result_tokens_est"] is None
@@ -223,13 +219,17 @@ async def test_worker_survives_measurement_failure(
     )
 
 
-async def test_worker_survives_audit_write_failure(
+async def test_worker_survives_audit_write_failure_and_reports_it_loudly(
     monkeypatch: pytest.MonkeyPatch,
+    audit_buffer,
 ) -> None:
-    """write_audit itself failing is logged, not raised -- the worker must
-    never die, and the next item is still processed."""
-    buffer = io.StringIO()
-    init_audit_logger(buffer)
+    """The worker has no caller to raise to, so a failing audit write is
+    logged at error level with its traceback and the identifying fields of
+    the lost record, and counted -- and the worker never dies: the next item
+    is still processed."""
+    monkeypatch.setattr(
+        pipeline, "logger", structlog.get_logger("test_metering.worker_failure")
+    )
     p = InProcessMeteringBackend(Settings())
     await p.start()
 
@@ -243,25 +243,68 @@ async def test_worker_survives_audit_write_failure(
     monkeypatch.setattr(pipeline, "write_audit", _flaky_write_audit)
 
     errors_before = _sample("af_mcp_metering_worker_errors_total")
-    await p.submit(_record(request_id="doomed"), None)
-    await p.submit(_record(request_id="next"), None)
-    await p.aclose()
+    with structlog.testing.capture_logs() as logs:
+        await p.submit(_record(request_id="doomed", audit_id="lost-1"), None)
+        await p.submit(_record(request_id="next"), None)
+        await p.aclose()
 
-    assert [line["request_id"] for line in _lines(buffer)] == ["next"]
+    # capture_logs diverts every structlog event, the audit lines included.
+    assert [e["request_id"] for e in logs if e["event"] == "audit"] == ["next"]
     assert _sample("af_mcp_metering_worker_errors_total") == errors_before + 1
+    (failure,) = [e for e in logs if e["event"] == "metering_audit_write_failed"]
+    assert failure["log_level"] == "error"
+    assert failure["exc_info"] is True
+    assert failure["audit_id"] == "lost-1"
+    assert failure["target"] == "rucio"
 
 
-async def test_uninitialized_helper_measures_and_writes_inline() -> None:
+async def test_worker_written_line_carries_the_submitting_requests_correlation_id(
+    audit_buffer,
+) -> None:
+    """The worker runs in its own task, so the line it writes would lose the
+    request's correlation_id/subject unless they travel with the queued item."""
+    structlog.contextvars.clear_contextvars()
+    structlog.contextvars.bind_contextvars(correlation_id="corr-9", subject="sub-abc")
+    await init_metering_pipeline()
+
+    await submit_metered_audit(_record(), None)
+    structlog.contextvars.clear_contextvars()
+    await aclose_metering_pipeline()
+
+    (line,) = _lines(audit_buffer)
+    assert line["correlation_id"] == "corr-9"
+    assert line["subject"] == "sub-abc"
+
+
+async def test_inline_paths_raise_when_the_audit_write_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without a worker (no pipeline, or a full queue) the write happens in
+    the caller's own call, so a failure propagates to it."""
+
+    async def _failing_write_audit(record: AuditRecord) -> None:
+        raise RuntimeError("audit output unavailable")
+
+    monkeypatch.setattr(pipeline, "write_audit", _failing_write_audit)
+
+    with pytest.raises(RuntimeError, match="audit output unavailable"):
+        await submit_metered_audit(_record(), None)
+
+    full = InProcessMeteringBackend(Settings(), maxsize=1)
+    await full.submit(_record(), None)
+    with pytest.raises(RuntimeError, match="audit output unavailable"):
+        await full.submit(_record(), None)
+
+
+async def test_uninitialized_helper_measures_and_writes_inline(audit_buffer) -> None:
     """Without init_metering_pipeline() (unit tests, local dev) the helper
     degrades to exactly the pre-pipeline behavior: measure + write
     synchronously, so the line is complete the moment the helper returns."""
-    buffer = io.StringIO()
-    init_audit_logger(buffer)
 
     result = ToolResult(content=[mt.TextContent(type="text", text="hellohello")])
     await submit_metered_audit(_record(), result)
 
-    (line,) = _lines(buffer)
+    (line,) = _lines(audit_buffer)
     assert line["result_bytes"] == len(b"hellohello")
     assert line["result_tokens_est"] == 2
 
@@ -292,9 +335,7 @@ async def test_init_builds_the_backend_selected_by_settings() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_queue_depth_gauge_tracks_enqueue_and_dequeue() -> None:
-    buffer = io.StringIO()
-    init_audit_logger(buffer)
+async def test_queue_depth_gauge_tracks_enqueue_and_dequeue(audit_buffer) -> None:
     # Worker deliberately not started: each submit only enqueues, so the
     # gauge must climb with the queue and return to zero after the drain.
     p = InProcessMeteringBackend(Settings(), maxsize=10)
@@ -311,13 +352,12 @@ async def test_queue_depth_gauge_tracks_enqueue_and_dequeue() -> None:
 
 async def test_queue_delay_gauge_set_on_dequeue(
     monkeypatch: pytest.MonkeyPatch,
+    audit_buffer,
 ) -> None:
     """Each queued item carries its enqueue time; the worker publishes the
     time-in-queue of the most recently dequeued item. With the worker gated
     on the first record's write, the second record measurably ages in the
     queue before its dequeue."""
-    buffer = io.StringIO()
-    init_audit_logger(buffer)
     p = InProcessMeteringBackend(Settings())
 
     gate = asyncio.Event()
@@ -341,9 +381,7 @@ async def test_queue_delay_gauge_set_on_dequeue(
     assert _sample("af_mcp_metering_queue_delay_seconds") > 0.0
 
 
-async def test_worker_processed_total_counts_written_records() -> None:
-    buffer = io.StringIO()
-    init_audit_logger(buffer)
+async def test_worker_processed_total_counts_written_records(audit_buffer) -> None:
     p = InProcessMeteringBackend(Settings())
     await p.start()
 
@@ -376,9 +414,8 @@ async def usage_store():
 
 async def test_worker_feeds_the_usage_store_after_the_audit_write(
     usage_store,
+    audit_buffer,
 ) -> None:
-    buffer = io.StringIO()
-    init_audit_logger(buffer)
     await init_metering_pipeline()
 
     await submit_metered_audit(
@@ -386,16 +423,16 @@ async def test_worker_feeds_the_usage_store_after_the_audit_write(
     )
     await aclose_metering_pipeline()
 
-    assert len(_lines(buffer)) == 1
+    assert len(_lines(audit_buffer)) == 1
     (agg,) = await usage_store.query("sub-abc", days=30)
     assert agg.calls == 1
     assert agg.service == "rucio"
 
 
-async def test_synchronous_fallback_feeds_the_usage_store(usage_store) -> None:
+async def test_synchronous_fallback_feeds_the_usage_store(
+    usage_store, audit_buffer
+) -> None:
     """With no pipeline installed the inline fallback still accounts usage."""
-    buffer = io.StringIO()
-    init_audit_logger(buffer)
 
     await submit_metered_audit(
         _record(mcp_service="rucio", timestamp=time.time()), None
@@ -405,11 +442,11 @@ async def test_synchronous_fallback_feeds_the_usage_store(usage_store) -> None:
     assert agg.calls == 1
 
 
-async def test_overflow_inline_write_feeds_the_usage_store(usage_store) -> None:
+async def test_overflow_inline_write_feeds_the_usage_store(
+    usage_store, audit_buffer
+) -> None:
     """The full-queue degradation writes the line inline unmeasured -- that
     written record is usage too, not a gap in the accounting."""
-    buffer = io.StringIO()
-    init_audit_logger(buffer)
     # Tiny queue, worker deliberately not started: the second submit
     # overflows deterministically (same setup as the overflow test above).
     p = InProcessMeteringBackend(Settings(), maxsize=1)
@@ -432,20 +469,21 @@ async def test_overflow_inline_write_feeds_the_usage_store(usage_store) -> None:
 
 async def test_worker_skips_usage_for_records_without_an_mcp_service(
     usage_store,
+    audit_buffer,
 ) -> None:
     """Non-tool-call records flow through the same write paths but are not
     usage (no service to attribute them to)."""
-    buffer = io.StringIO()
-    init_audit_logger(buffer)
 
     await submit_metered_audit(_record(mcp_service=None, timestamp=time.time()), None)
 
-    assert len(_lines(buffer)) == 1
+    assert len(_lines(audit_buffer)) == 1
     assert await usage_store.query("sub-abc", days=30) == []
 
 
 async def test_usage_store_failure_never_affects_the_audit_write(
-    usage_store, monkeypatch: pytest.MonkeyPatch
+    usage_store,
+    monkeypatch: pytest.MonkeyPatch,
+    audit_buffer,
 ) -> None:
     """The audit write happens FIRST and a store failure after it is caught,
     logged, and counted -- the line is intact and the worker survives."""
@@ -455,8 +493,6 @@ async def test_usage_store_failure_never_affects_the_audit_write(
 
     monkeypatch.setattr(usage_store, "record", _boom)
 
-    buffer = io.StringIO()
-    init_audit_logger(buffer)
     await init_metering_pipeline()
 
     errors_before = _sample("af_mcp_metering_worker_errors_total")
@@ -465,7 +501,7 @@ async def test_usage_store_failure_never_affects_the_audit_write(
     )
     await aclose_metering_pipeline()
 
-    (line,) = _lines(buffer)
+    (line,) = _lines(audit_buffer)
     assert line["outcome"] == "success"
     assert _sample("af_mcp_metering_worker_errors_total") == errors_before + 1
 
@@ -517,8 +553,8 @@ async def _until(predicate) -> None:
 
 async def test_usage_is_written_in_one_batch_when_the_batch_is_full(
     batch_store: _BatchRecordingStore,
+    audit_buffer,
 ) -> None:
-    init_audit_logger(io.StringIO())
     p = InProcessMeteringBackend(
         settings=Settings(usage_batch_max=3, usage_batch_interval_ms=_NEVER_MS)
     )
@@ -536,9 +572,8 @@ async def test_usage_is_written_in_one_batch_when_the_batch_is_full(
 
 async def test_usage_below_the_batch_size_waits_then_flushes_on_aclose(
     batch_store: _BatchRecordingStore,
+    audit_buffer,
 ) -> None:
-    buffer = io.StringIO()
-    init_audit_logger(buffer)
     p = InProcessMeteringBackend(
         settings=Settings(usage_batch_max=10, usage_batch_interval_ms=_NEVER_MS)
     )
@@ -547,7 +582,7 @@ async def test_usage_below_the_batch_size_waits_then_flushes_on_aclose(
     await p.submit(_usage_record(), None)
     await p.submit(_usage_record(), None)
     # Audit lines are written per record, immediately; only usage waits.
-    await _until(lambda: len(_lines(buffer)) == 2)
+    await _until(lambda: len(_lines(audit_buffer)) == 2)
     assert batch_store.batches == []
 
     await p.aclose()
@@ -558,8 +593,8 @@ async def test_usage_below_the_batch_size_waits_then_flushes_on_aclose(
 
 async def test_usage_is_flushed_when_the_interval_elapses(
     batch_store: _BatchRecordingStore,
+    audit_buffer,
 ) -> None:
-    init_audit_logger(io.StringIO())
     p = InProcessMeteringBackend(
         settings=Settings(usage_batch_max=100, usage_batch_interval_ms=20)
     )
@@ -578,8 +613,8 @@ async def test_usage_is_flushed_when_the_interval_elapses(
 
 async def test_non_usage_records_are_not_buffered(
     batch_store: _BatchRecordingStore,
+    audit_buffer,
 ) -> None:
-    init_audit_logger(io.StringIO())
     p = InProcessMeteringBackend(
         settings=Settings(usage_batch_max=1, usage_batch_interval_ms=_NEVER_MS)
     )
@@ -593,13 +628,12 @@ async def test_non_usage_records_are_not_buffered(
 
 async def test_a_failed_usage_batch_is_counted_per_row_and_audit_lines_survive(
     batch_store: _BatchRecordingStore,
+    audit_buffer,
 ) -> None:
     async def _boom(records: list[AuditRecord]) -> None:
         raise RuntimeError("usage store down")
 
     batch_store.record_many = _boom  # type: ignore[method-assign]
-    buffer = io.StringIO()
-    init_audit_logger(buffer)
     p = InProcessMeteringBackend(
         settings=Settings(usage_batch_max=3, usage_batch_interval_ms=_NEVER_MS)
     )
@@ -610,12 +644,13 @@ async def test_a_failed_usage_batch_is_counted_per_row_and_audit_lines_survive(
         await p.submit(_usage_record(), None)
     await p.aclose()
 
-    assert len(_lines(buffer)) == 3
+    assert len(_lines(audit_buffer)) == 3
     assert _sample("af_mcp_metering_worker_errors_total") == errors_before + 3
 
 
 async def test_duplicate_audit_ids_through_the_pipeline_count_once_in_postgres(
     postgres_dsn: str,
+    audit_buffer,
 ) -> None:
     """End to end against a real postgres: the same record redelivered in one
     batch and again in a later batch still produces a single usage row."""
@@ -632,7 +667,6 @@ async def test_duplicate_audit_ids_through_the_pipeline_count_once_in_postgres(
         await conn.execute("TRUNCATE af_mcp_usage_events")
     finally:
         await conn.close()
-    init_audit_logger(io.StringIO())
     p = InProcessMeteringBackend(
         settings=Settings(usage_batch_max=2, usage_batch_interval_ms=_NEVER_MS)
     )

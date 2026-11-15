@@ -4,7 +4,7 @@ import logging
 import sys
 import time
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TextIO
 
 import structlog
 from fastapi import HTTPException
@@ -12,6 +12,13 @@ from fastapi import HTTPException
 if TYPE_CHECKING:
     from structlog.stdlib import BoundLogger
     from structlog.types import EventDict, WrappedLogger
+
+# Audit lines are emitted on this logger so they can be routed to their own
+# destination (AUDIT_LOG_FILE) while sharing the processor chain, and hence
+# the line shape, of every other log line. Not a parent of any other logger
+# name (``af_mcp_broker.audit.pipeline`` etc.), whose records would otherwise
+# propagate into the audit destination.
+AUDIT_LOGGER_NAME = "af_mcp_broker.audit.logger"
 
 
 class PassphraseRedactProcessor:
@@ -37,8 +44,45 @@ class PassphraseRedactProcessor:
         return event_dict
 
 
-def configure_logging(log_level: str = "INFO") -> None:
+class _RaiseOnErrorMixin:
+    """Makes a handler re-raise emit failures instead of printing them to stderr.
+
+    ``logging.Handler.handleError`` swallows the exception by default; an
+    audit line that could not be written must reach the caller.
+    """
+
+    def handleError(self, record: logging.LogRecord) -> None:  # noqa: ARG002 (stdlib hook signature)
+        # Called from inside emit()'s ``except`` block, so this re-raises
+        # the write failure.
+        raise  # noqa: PLE0704
+
+
+class AuditStdoutHandler(_RaiseOnErrorMixin, logging.StreamHandler):  # type: ignore[type-arg]
+    """Audit handler writing to whatever ``sys.stdout`` is at emit time.
+
+    Binding the stream at construction would pin a stdout that can later be
+    closed (a captured stream under pytest, a replaced one in a embedding
+    process); same technique as the stdlib's own stderr handler.
+    """
+
+    def __init__(self) -> None:
+        logging.Handler.__init__(self)
+
+    @property
+    def stream(self) -> TextIO:  # type: ignore[override]
+        return sys.stdout
+
+
+class AuditFileHandler(_RaiseOnErrorMixin, logging.FileHandler):
+    """Audit handler appending to a file."""
+
+
+def configure_logging(log_level: str = "INFO", audit_log_file: str = "-") -> None:
     """Wire structlog to emit JSON lines to stdout.
+
+    Audit lines (``AUDIT_LOGGER_NAME``) go to *audit_log_file* instead --
+    ``"-"`` meaning stdout -- through the same formatter, and a failure to
+    write one raises to the emitting call.
 
     Call once at application startup before any log statements.
     """
@@ -79,6 +123,16 @@ def configure_logging(log_level: str = "INFO") -> None:
     root_logger.handlers = [handler]
     root_logger.setLevel(log_level.upper())
 
+    audit_handler: logging.Handler = (
+        AuditStdoutHandler()
+        if audit_log_file == "-"
+        else AuditFileHandler(audit_log_file)
+    )
+    audit_handler.setFormatter(formatter)
+    audit_logger = logging.getLogger(AUDIT_LOGGER_NAME)
+    audit_logger.handlers = [audit_handler]
+    audit_logger.propagate = False
+
     # fastmcp gives its own logger a rich handler and stops propagation at
     # import; hand its records to the root handler so they are JSON lines too.
     fastmcp_logger = logging.getLogger("fastmcp")
@@ -88,6 +142,12 @@ def configure_logging(log_level: str = "INFO") -> None:
     # Quieten noisy third-party loggers that we don't need at DEBUG
     for noisy in ("uvicorn.access", "httpx", "httpcore", "httpx2", "httpcore2"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
+
+
+def close_audit_logging() -> None:
+    """Close the audit destination opened by ``configure_logging``."""
+    for handler in logging.getLogger(AUDIT_LOGGER_NAME).handlers:
+        handler.close()
 
 
 def bind_new_correlation_id() -> None:
@@ -104,6 +164,21 @@ def bind_new_correlation_id() -> None:
     """
     structlog.contextvars.clear_contextvars()
     structlog.contextvars.bind_contextvars(correlation_id=uuid.uuid4().hex)
+
+
+def current_correlation_id() -> str:
+    """Return the current request's ``correlation_id``, binding a fresh one if none is bound.
+
+    Audit records, request lines and usage rows of one request share this id.
+    A call made outside a request (no ASGI entry point bound one) gets a new
+    id bound for the rest of the current context, so every line it emits
+    still agrees.
+    """
+    correlation_id = structlog.contextvars.get_contextvars().get("correlation_id")
+    if correlation_id is None:
+        correlation_id = uuid.uuid4().hex
+        structlog.contextvars.bind_contextvars(correlation_id=correlation_id)
+    return correlation_id
 
 
 def request_id_headers() -> dict[str, str]:
