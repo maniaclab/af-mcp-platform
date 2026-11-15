@@ -8,9 +8,9 @@ from mcp.types import ToolAnnotations
 
 from af_mcp_broker import metrics
 from af_mcp_broker.authorization import EntitlementPolicy
-from af_mcp_broker.mcp.lint_observations import LintObservationStore
+from af_mcp_broker.lint_observations import LintObservationStore
 from af_mcp_broker.mcp.middleware.entitlement_mw import EntitlementMiddleware
-from af_mcp_broker.mcp.registry import (
+from af_mcp_broker.service_registry import (
     DIAGNOSTIC_TOOL_NAMES,
     ServiceRegistry,
     ServiceSpec,

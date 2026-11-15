@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 
 # Sentinel a per-tool required_permission resolution can produce
-# (mcp/registry.py's ServiceRegistry.required_permission_for) when a
+# (service_registry.py's ServiceRegistry.required_permission_for) when a
 # service's required_permission is a dict, the tool being called isn't one of
 # its explicit keys, and no "__default__" was declared: opt-in-only per-tool
 # gating means an unlisted tool is disabled, never silently open. Distinct

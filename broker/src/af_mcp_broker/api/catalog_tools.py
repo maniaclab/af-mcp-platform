@@ -28,6 +28,7 @@ from af_mcp_broker.authorization import (
     get_action_type,
     get_principal_permissions,
 )
+from af_mcp_broker.backend_errors import NotLinkedForListingError
 from af_mcp_broker.config import get_settings
 from af_mcp_broker.identity import keycloak_dependency
 from af_mcp_broker.mcp.aggregator import (
@@ -35,12 +36,11 @@ from af_mcp_broker.mcp.aggregator import (
     fetch_service_tool_listing,
     resolve_list_time_credential,
 )
-from af_mcp_broker.mcp.errors import NotLinkedForListingError
 from af_mcp_broker.principal import Principal
 
 if TYPE_CHECKING:
     from af_mcp_broker.authorization import EntitlementPolicy
-    from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
+    from af_mcp_broker.service_registry import ServiceRegistry, ServiceSpec
 
 logger = structlog.get_logger(__name__)
 

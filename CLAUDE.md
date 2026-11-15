@@ -59,7 +59,7 @@ Configuration is file + env driven: `POLICY_FILE` and `SERVICES_FILE` (defaults 
 
 ### Adding a service requires no code
 
-`ServiceRegistry` (`mcp/registry.py`) is driven by `services.yaml`; tools route to services by name prefix (`<prefix>_toolname`). The full operator procedure is config-only — see `docs/adding-a-service.md`.
+`ServiceRegistry` (`service_registry.py`) is driven by `services.yaml`; tools route to services by name prefix (`<prefix>_toolname`). The full operator procedure is config-only — see `docs/adding-a-service.md`.
 
 ### Critical auth constraint
 

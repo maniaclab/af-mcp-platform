@@ -15,7 +15,7 @@ import pytest
 from conftest import run_inprocess_asgi_app
 
 from af_mcp_broker.mcp.aggregator import _build_client
-from af_mcp_broker.mcp.registry import ServiceSpec
+from af_mcp_broker.service_registry import ServiceSpec
 
 _SERVICE_TIMEOUT_SECONDS = 1.0
 # Well past the service timeout, far below the unbounded keep-alive case, so a regression fails by deadline rather than by

@@ -34,6 +34,10 @@ from test_broker_issued import _make_rsa_key, _private_pem
 from af_mcp_broker import metrics
 from af_mcp_broker.api.permissions import _RELINK_DETAIL
 from af_mcp_broker.authorization import EntitlementPolicy
+from af_mcp_broker.backend_errors import (
+    NotEntitledForListingError,
+    NotLinkedForListingError,
+)
 from af_mcp_broker.config import BrokerIssuedProviderConfig
 from af_mcp_broker.credentials import (
     CredentialKind,
@@ -53,14 +57,10 @@ from af_mcp_broker.mcp.aggregator import (
     populate_aggregator,
     resolve_list_time_credential,
 )
-from af_mcp_broker.mcp.errors import (
-    NotEntitledForListingError,
-    NotLinkedForListingError,
-)
 from af_mcp_broker.mcp.middleware.authorization_mw import AuthorizationMiddleware
 from af_mcp_broker.mcp.middleware.entitlement_mw import EntitlementMiddleware
 from af_mcp_broker.mcp.middleware.identity_mw import IdentityMiddleware
-from af_mcp_broker.mcp.registry import (
+from af_mcp_broker.service_registry import (
     LIST_IDENTITIES_TOOL_NAME,
     LIST_MCP_SERVERS_TOOL_NAME,
     WHOAMI_TOOL_NAME,

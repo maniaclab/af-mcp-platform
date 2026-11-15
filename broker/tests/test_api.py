@@ -15,7 +15,7 @@ from af_mcp_broker.constants import BUILTIN_SERVICE_NAME
 from af_mcp_broker.credentials.base import CredentialKind, IssuedCredential
 from af_mcp_broker.credentials.oidc import OIDCProvider
 from af_mcp_broker.credentials.x509 import X509Provider
-from af_mcp_broker.mcp.registry import (
+from af_mcp_broker.service_registry import (
     LIST_IDENTITIES_TOOL_NAME,
     WHOAMI_TOOL_NAME,
     ServiceSpec,

@@ -6,7 +6,7 @@ import pytest
 
 from af_mcp_broker.config import Settings
 from af_mcp_broker.constants import BUILTIN_SERVICE_NAME
-from af_mcp_broker.mcp.registry import (
+from af_mcp_broker.service_registry import (
     DIAGNOSTIC_TOOL_NAMES,
     DISABLED_PERMISSION,
     LINK_IDENTITY_TOOL_NAME,

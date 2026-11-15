@@ -25,7 +25,7 @@ from af_mcp_broker.credentials.oauth21 import (
 )
 from af_mcp_broker.credmon.guidance import JobCredentialGuide
 from af_mcp_broker.mcp.aggregator import build_aggregator
-from af_mcp_broker.mcp.registry import (
+from af_mcp_broker.service_registry import (
     LINK_IDENTITY_TOOL_NAME,
     LIST_IDENTITIES_TOOL_NAME,
     LIST_MCP_SERVERS_TOOL_NAME,

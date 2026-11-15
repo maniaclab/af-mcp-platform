@@ -38,7 +38,6 @@ from af_mcp_broker.credentials.oauth21 import (
     normalize_token_response,
 )
 from af_mcp_broker.identity import keycloak_dependency
-from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
 from af_mcp_broker.oauth_state import (
     NONCE_COOKIE_NAME,
     NONCE_COOKIE_PATH,
@@ -50,6 +49,7 @@ from af_mcp_broker.oauth_state import (
     sanitize_return_url,
 )
 from af_mcp_broker.principal import Principal
+from af_mcp_broker.service_registry import ServiceRegistry, ServiceSpec
 
 ALIAS = "rucio-mcp-atlas"
 SUBJECT = "kc-subject-123"

@@ -32,7 +32,7 @@ from af_mcp_broker.credentials import (
 from af_mcp_broker.credentials.broker_issued import BrokerTokenIssuer
 from af_mcp_broker.mcp import aggregator as aggregator_module
 from af_mcp_broker.mcp.aggregator import build_aggregator, build_asgi_middleware
-from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
+from af_mcp_broker.service_registry import ServiceRegistry, ServiceSpec
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterator

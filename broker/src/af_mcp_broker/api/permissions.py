@@ -18,15 +18,15 @@ from af_mcp_broker.constants import BUILTIN_SERVICE_NAME
 from af_mcp_broker.credentials import CredentialRegistry
 from af_mcp_broker.identity import keycloak_dependency
 from af_mcp_broker.logging import current_correlation_id
-from af_mcp_broker.mcp.registry import (
+from af_mcp_broker.principal import Principal
+from af_mcp_broker.service_registry import (
     LIST_IDENTITIES_TOOL_NAME,
     WHOAMI_TOOL_NAME,
     ServiceRegistry,
 )
-from af_mcp_broker.principal import Principal
 
 if TYPE_CHECKING:
-    from af_mcp_broker.mcp.registry import ServiceSpec
+    from af_mcp_broker.service_registry import ServiceSpec
 
 logger = structlog.get_logger(__name__)
 

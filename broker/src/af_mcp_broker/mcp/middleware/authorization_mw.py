@@ -22,9 +22,12 @@ from af_mcp_broker.authorization import (
 )
 from af_mcp_broker.authorization.errors import ToolRateLimitError
 from af_mcp_broker.authorization.rate_limit import check_rate_limits
+from af_mcp_broker.backend_errors import (
+    ERROR_CLASS_TOOL_REPORTED,
+    classify_backend_error,
+)
 from af_mcp_broker.logging import current_correlation_id
-from af_mcp_broker.mcp.errors import ERROR_CLASS_TOOL_REPORTED, classify_backend_error
-from af_mcp_broker.mcp.registry import RATE_LIMITS_TOOL_NAME
+from af_mcp_broker.service_registry import RATE_LIMITS_TOOL_NAME
 from af_mcp_broker.shared_state import FallbackSharedState
 from af_mcp_broker.tracing import (
     current_trace_id,
@@ -36,8 +39,8 @@ if TYPE_CHECKING:
     import mcp.types as mt
     from fastmcp.tools.base import ToolResult
 
-    from af_mcp_broker.mcp.registry import ServiceRegistry
     from af_mcp_broker.principal import Principal
+    from af_mcp_broker.service_registry import ServiceRegistry
     from af_mcp_broker.shared_state import SharedState
 
 logger = structlog.get_logger(__name__)

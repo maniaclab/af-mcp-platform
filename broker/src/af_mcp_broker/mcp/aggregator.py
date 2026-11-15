@@ -43,15 +43,15 @@ from starlette.middleware import Middleware
 from af_mcp_broker import metrics
 from af_mcp_broker.api.permissions import _RELINK_DETAIL
 from af_mcp_broker.authorization import get_principal_permissions
-from af_mcp_broker.credentials import CredentialKind
-from af_mcp_broker.credentials.errors import NeedsUnlockError
-from af_mcp_broker.mcp.diagnostics import register_diagnostic_tools
-from af_mcp_broker.mcp.errors import (
+from af_mcp_broker.backend_errors import (
     BackendInvalidResponseError,
     ListDeadlineExceededError,
     NotEntitledForListingError,
     NotLinkedForListingError,
 )
+from af_mcp_broker.credentials import CredentialKind
+from af_mcp_broker.credentials.errors import NeedsUnlockError
+from af_mcp_broker.mcp.diagnostics import register_diagnostic_tools
 from af_mcp_broker.mcp.instructions import compose_agent_instructions
 from af_mcp_broker.mcp.middleware.authorization_mw import AuthorizationMiddleware
 from af_mcp_broker.mcp.middleware.entitlement_mw import EntitlementMiddleware
@@ -60,7 +60,7 @@ from af_mcp_broker.mcp.middleware.identity_mw import (
     IdentityMiddleware,
 )
 from af_mcp_broker.mcp.middleware.maintenance_mw import AsgiMaintenanceMiddleware
-from af_mcp_broker.mcp.registry import (
+from af_mcp_broker.service_registry import (
     LINK_IDENTITY_TOOL_NAME,
     LIST_IDENTITIES_TOOL_NAME,
     LIST_MCP_SERVERS_TOOL_NAME,
@@ -87,11 +87,11 @@ if TYPE_CHECKING:
     )
     from af_mcp_broker.credentials.broker_issued import BrokerTokenIssuer
     from af_mcp_broker.credmon.guidance import JobCredentialGuide
+    from af_mcp_broker.lint_observations import LintObservationStore
     from af_mcp_broker.maintenance import MaintenanceModeStore
-    from af_mcp_broker.mcp.lint_observations import LintObservationStore
-    from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
     from af_mcp_broker.principal import Principal
     from af_mcp_broker.principal_cache import PrincipalCache
+    from af_mcp_broker.service_registry import ServiceRegistry, ServiceSpec
     from af_mcp_broker.shared_state import SharedState
     from af_mcp_broker.token_registry import TokenRegistryBackend
 

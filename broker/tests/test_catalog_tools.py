@@ -44,7 +44,7 @@ from af_mcp_broker.credentials import (
 )
 from af_mcp_broker.identity import keycloak_dependency
 from af_mcp_broker.mcp.diagnostics import register_diagnostic_tools
-from af_mcp_broker.mcp.registry import (
+from af_mcp_broker.service_registry import (
     DIAGNOSTIC_TOOL_NAMES,
     ServiceRegistry,
     ServiceSpec,

@@ -12,7 +12,7 @@ import pytest
 
 from af_mcp_broker.authorization import PERMISSIONS, EntitlementPolicy
 from af_mcp_broker.identity import keycloak_dependency
-from af_mcp_broker.mcp.registry import ServiceSpec
+from af_mcp_broker.service_registry import ServiceSpec
 
 
 def test_permissions_includes_callers_raw_groups(app_client, make_principal) -> None:

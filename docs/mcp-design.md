@@ -431,7 +431,7 @@ Each item has an ID, a level, and four parts.
 - **Spec.** Platform-specific. The spec leaves retry policy to implementations.
 - **In this repo.** The broker classifies its own broker-to-backend dial
   failures as `error_class=transient_connection`
-  (`broker/src/af_mcp_broker/mcp/errors.py`), scoped to connect failures,
+  (`broker/src/af_mcp_broker/backend_errors.py`), scoped to connect failures,
   mid-exchange socket errors and closed connections. An HTTP 5xx or a read
   timeout on an established connection stays `backend_error`. As of 2026-11-12
   only ami-mcp retries transient errors automatically (a bounded retry,

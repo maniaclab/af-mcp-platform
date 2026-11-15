@@ -6,10 +6,10 @@ import pytest
 from pydantic import SecretStr
 
 from af_mcp_broker.authorization import EntitlementPolicy
+from af_mcp_broker.backend_errors import NotEntitledForListingError
 from af_mcp_broker.mcp.aggregator import _require_entitled_list_principal
-from af_mcp_broker.mcp.errors import NotEntitledForListingError
-from af_mcp_broker.mcp.registry import ServiceSpec
 from af_mcp_broker.principal import Principal
+from af_mcp_broker.service_registry import ServiceSpec
 
 
 class _StateContext:

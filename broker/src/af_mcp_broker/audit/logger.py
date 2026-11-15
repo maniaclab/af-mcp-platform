@@ -93,7 +93,7 @@ class AuditRecord:
     # Failure classification, observability only (issue #216 A.3): on an
     # outcome="error" record, "transient_connection" when the backend call
     # failed on a known-transient connection error (connection reset, socket
-    # EOF / closed connection, connect timeout -- see mcp/errors.py) vs
+    # EOF / closed connection, connect timeout -- see backend_errors.py) vs
     # "backend_error" for a genuine tool-usage/backend failure. None on every
     # other outcome (success, and the denied/unmapped paths that never
     # executed a backend call). Nothing branches on it -- it exists to count

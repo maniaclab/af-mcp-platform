@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from af_mcp_broker.mcp.registry import (
+from af_mcp_broker.service_registry import (
     _MAX_CALLER_LIST_FAILURES,
     ServiceRegistry,
     ServiceSpec,

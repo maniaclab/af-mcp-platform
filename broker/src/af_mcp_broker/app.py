@@ -70,6 +70,7 @@ from af_mcp_broker.identity import (
     get_jwks,
     issuer_is_local,
 )
+from af_mcp_broker.lint_observations import LintObservationStore
 from af_mcp_broker.logging import (
     CorrelatedHTTPException,
     bind_new_correlation_id,
@@ -93,8 +94,6 @@ from af_mcp_broker.mcp.aggregator import (
     populate_aggregator,
 )
 from af_mcp_broker.mcp.cache_invalidation import ListCacheInvalidator
-from af_mcp_broker.mcp.lint_observations import LintObservationStore
-from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
 from af_mcp_broker.mcp_auth_codes import McpAuthCodeStore
 from af_mcp_broker.otel_metrics import init_otel_metrics, shutdown_otel_metrics
 from af_mcp_broker.principal_cache import (
@@ -104,6 +103,7 @@ from af_mcp_broker.principal_cache import (
     VaultPrincipalCacheBackend,
 )
 from af_mcp_broker.principal_directory import KeycloakPrincipalDirectory
+from af_mcp_broker.service_registry import ServiceRegistry, ServiceSpec
 from af_mcp_broker.shared_state import build_shared_state
 from af_mcp_broker.token_registry import (
     InMemoryTokenRegistryBackend,
@@ -1084,7 +1084,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         else None
     )
     # Where the tool-listing lint's findings are recorded for the admin tables
-    # (mcp/lint_observations.py): shared, so every replica reports the same.
+    # (lint_observations.py): shared, so every replica reports the same.
     lint_observations = LintObservationStore(shared_state)
     populate_aggregator(
         _mcp_aggregator,

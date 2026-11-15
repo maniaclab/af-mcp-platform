@@ -18,7 +18,7 @@ from af_mcp_broker.api.permissions import (
 from af_mcp_broker.api.rate_limits import RateLimitStatus, rate_limit_statuses
 from af_mcp_broker.authorization import get_action_type, get_principal_permissions
 from af_mcp_broker.authorization.rate_limit import read_rate_limit_usage
-from af_mcp_broker.mcp.registry import (
+from af_mcp_broker.service_registry import (
     LINK_IDENTITY_TOOL_NAME,
     LIST_IDENTITIES_TOOL_NAME,
     LIST_MCP_SERVERS_TOOL_NAME,
@@ -44,8 +44,8 @@ if TYPE_CHECKING:
     from af_mcp_broker.config import IdentityProviderConfig, Settings
     from af_mcp_broker.credentials import CredentialProvider, CredentialRegistry
     from af_mcp_broker.credmon.guidance import JobCredentialGuide
-    from af_mcp_broker.mcp.registry import ServiceRegistry
     from af_mcp_broker.principal import Principal
+    from af_mcp_broker.service_registry import ServiceRegistry
     from af_mcp_broker.shared_state import SharedState
 
 # Broker-native diagnostic tools (issue #153), registered directly on the

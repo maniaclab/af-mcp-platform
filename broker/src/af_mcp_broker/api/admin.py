@@ -44,7 +44,7 @@ from af_mcp_broker.principal_cache import PrincipalUnavailableError
 
 if TYPE_CHECKING:
     from af_mcp_broker.credmon.sync import CredmonSyncService
-    from af_mcp_broker.mcp.lint_observations import (
+    from af_mcp_broker.lint_observations import (
         LintObservationStore,
         ServiceLintObservation,
     )
@@ -246,7 +246,7 @@ async def set_maintenance_status(
 class AnnotationMismatchResponse(BaseModel):
     """One tool whose declared read_only_hint disagrees with policy.yaml's resolved action_type (issue #238 B.8).
 
-    See mcp/registry.py's
+    See service_registry.py's
     AnnotationMismatch, which this mirrors field-for-field.
     """
 
@@ -351,7 +351,7 @@ async def get_annotation_mismatches(
 class ToolMappingDriftResponse(BaseModel):
     """One service whose dict-form required_permission and advertised tools have drifted apart (issue #330).
 
-    See mcp/registry.py's ToolMappingDrift, which this mirrors field-for-field.
+    See service_registry.py's ToolMappingDrift, which this mirrors field-for-field.
     """
 
     model_config = ConfigDict(frozen=True)

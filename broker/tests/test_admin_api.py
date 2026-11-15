@@ -21,7 +21,7 @@ from af_mcp_broker.maintenance import (
 from af_mcp_broker.mcp import aggregator
 from af_mcp_broker.mcp.middleware import entitlement_mw
 from af_mcp_broker.mcp.middleware.entitlement_mw import EntitlementMiddleware
-from af_mcp_broker.mcp.registry import (
+from af_mcp_broker.service_registry import (
     AnnotationMismatch,
     ServiceSpec,
     ToolMappingDrift,

@@ -20,6 +20,7 @@ from fastmcp import Client, FastMCP
 
 from af_mcp_broker.api.permissions import _service_status
 from af_mcp_broker.authorization import EntitlementPolicy
+from af_mcp_broker.backend_errors import ListDeadlineExceededError
 from af_mcp_broker.config import Settings
 from af_mcp_broker.credentials import (
     CredentialProvider,
@@ -28,8 +29,7 @@ from af_mcp_broker.credentials import (
 )
 from af_mcp_broker.mcp import aggregator as aggregator_module
 from af_mcp_broker.mcp.aggregator import build_aggregator
-from af_mcp_broker.mcp.errors import ListDeadlineExceededError
-from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
+from af_mcp_broker.service_registry import ServiceRegistry, ServiceSpec
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator

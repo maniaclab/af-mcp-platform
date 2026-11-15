@@ -22,7 +22,7 @@ from af_mcp_broker.authorization import EntitlementPolicy, RateLimitRule
 from af_mcp_broker.authorization.errors import ToolRateLimitError
 from af_mcp_broker.mcp.middleware import authorization_mw
 from af_mcp_broker.mcp.middleware.authorization_mw import AuthorizationMiddleware
-from af_mcp_broker.mcp.registry import (
+from af_mcp_broker.service_registry import (
     DIAGNOSTIC_TOOL_NAMES,
     ServiceRegistry,
     ServiceSpec,
