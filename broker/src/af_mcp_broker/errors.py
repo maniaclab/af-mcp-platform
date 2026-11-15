@@ -1,6 +1,19 @@
 from __future__ import annotations
 
 
+def require[T](value: T | None, invariant: str) -> T:
+    """Return *value*, or raise ``RuntimeError(invariant)`` when it is None.
+
+    Narrows an ``Optional`` that startup validation (``Settings``' validators,
+    the lifespan's fail-closed checks) already guarantees is present, so the
+    guarantee is a real error with a message rather than a stripped-in-``-O``
+    ``assert``.
+    """
+    if value is None:
+        raise RuntimeError(invariant)
+    return value
+
+
 class BrokerError(Exception):
     """Base of every exception the broker itself defines.
 

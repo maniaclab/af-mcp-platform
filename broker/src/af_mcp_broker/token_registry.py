@@ -103,15 +103,17 @@ import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, assert_never
 
 import structlog
 
-from af_mcp_broker.errors import BrokerError
+from af_mcp_broker.errors import BrokerError, require
 from af_mcp_broker.vault_kv import CasConflictError, VaultError, VaultKV
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from af_mcp_broker.config import Settings
 
 log = structlog.get_logger(__name__)
 
@@ -815,3 +817,28 @@ class VaultTokenRegistryBackend(TokenRegistryBackend):
             owners_removed=owners_removed,
             principals_emptied=principals_emptied,
         )
+
+
+def build_token_registry_backend(
+    settings: Settings, vault_kv: VaultKV | None
+) -> TokenRegistryBackend:
+    """Build the backend selected by ``settings.token_registry_backend``.
+
+    *vault_kv* is the process-wide Vault transport, present whenever
+    ``Settings.uses_vault`` holds (which the ``vault`` backend implies). The
+    ``match`` is exhaustive over the config Literal: ``assert_never`` makes
+    mypy fail when a backend name is added without a branch here.
+    """
+    backend = settings.token_registry_backend
+    match backend:
+        case "in_memory":
+            return InMemoryTokenRegistryBackend()
+        case "vault":
+            return VaultTokenRegistryBackend(
+                vault_kv=require(
+                    vault_kv, "token_registry_backend=vault requires a Vault client"
+                ),
+                kv_path_prefix=settings.token_registry_kv_path_prefix,
+            )
+        case _:
+            assert_never(backend)

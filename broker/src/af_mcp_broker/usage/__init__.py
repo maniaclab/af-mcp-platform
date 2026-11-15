@@ -10,12 +10,13 @@ initialized/closed from ``app.py``'s lifespan, and a never-raising
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, assert_never
 
 import structlog
 
 from af_mcp_broker import metrics
 from af_mcp_broker.config import Settings, get_settings
+from af_mcp_broker.errors import require
 from af_mcp_broker.usage.batcher import UsageBatcher
 from af_mcp_broker.usage.otel_events import (
     EventEmittingUsageStore,
@@ -25,8 +26,6 @@ from af_mcp_broker.usage.postgres import PostgresUsageStore
 from af_mcp_broker.usage.store import InMemoryUsageStore, UsageAggregate, UsageStore
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from af_mcp_broker.audit.logger import AuditRecord
 
 __all__ = [
@@ -38,6 +37,7 @@ __all__ = [
     "UsageBatcher",
     "UsageStore",
     "aclose_usage_store",
+    "build_usage_store",
     "counts_as_usage",
     "get_usage_store",
     "init_usage_store",
@@ -50,25 +50,35 @@ logger = structlog.get_logger(__name__)
 _store: UsageStore | None = None
 
 
-def _build_postgres_store(settings: Settings) -> UsageStore:
-    # _validate_usage_store_config guarantees the DSN is set whenever this
-    # backend is selected, so the assert is a type-narrowing formality.
-    assert settings.usage_postgres_dsn is not None  # noqa: S101 -- mypy narrowing of an invariant validated upstream
-    return PostgresUsageStore(
-        settings.usage_postgres_dsn.get_secret_value(),
-        retention_days=settings.usage_retention_days,
-        rollup_interval_seconds=settings.usage_rollup_interval_seconds,
-    )
+def build_usage_store(settings: Settings) -> UsageStore:
+    """Build the (not yet started) store selected by ``settings.usage_store_backend``.
 
-
-# Maps ``settings.usage_store_backend`` values to store factories. Same
-# fail-closed shape as the pipeline's _BACKEND_FACTORIES: config.py's Literal
-# already rejects values with no entry here, so a KeyError below means the
-# Literal and this table drifted apart.
-_STORE_FACTORIES: dict[str, Callable[[Settings], UsageStore]] = {
-    "in_memory": lambda _settings: InMemoryUsageStore(),
-    "postgres": _build_postgres_store,
-}
+    With ``settings.usage_events_otlp_enabled`` the store is wrapped so each
+    recorded usage is also emitted as an OTel log record (``otel_events.py``).
+    The ``match`` is exhaustive over the config Literal: ``assert_never`` makes
+    mypy fail when a backend name is added without a branch here.
+    """
+    store: UsageStore
+    backend = settings.usage_store_backend
+    match backend:
+        case "in_memory":
+            store = InMemoryUsageStore()
+        case "postgres":
+            dsn = require(
+                settings.usage_postgres_dsn,
+                "usage_store_backend=postgres requires usage_postgres_dsn "
+                "(_validate_usage_store_config)",
+            )
+            store = PostgresUsageStore(
+                dsn.get_secret_value(),
+                retention_days=settings.usage_retention_days,
+                rollup_interval_seconds=settings.usage_rollup_interval_seconds,
+            )
+        case _:
+            assert_never(backend)
+    if settings.usage_events_otlp_enabled:
+        store = EventEmittingUsageStore(store, OtelUsageEventEmitter())
+    return store
 
 
 async def init_usage_store(settings: Settings | None = None) -> UsageStore:
@@ -82,10 +92,7 @@ async def init_usage_store(settings: Settings | None = None) -> UsageStore:
     global _store
     if settings is None:
         settings = get_settings()
-    store = _STORE_FACTORIES[settings.usage_store_backend](settings)
-    if settings.usage_events_otlp_enabled:
-        store = EventEmittingUsageStore(store, OtelUsageEventEmitter())
-    _store = store
+    _store = build_usage_store(settings)
     await _store.start()
     return _store
 

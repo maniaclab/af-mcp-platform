@@ -37,7 +37,7 @@ from __future__ import annotations
 import abc
 import asyncio
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, assert_never
 
 import structlog
 
@@ -53,8 +53,6 @@ from af_mcp_broker.usage import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from fastmcp.tools.base import ToolResult
 
 logger = structlog.get_logger(__name__)
@@ -242,14 +240,21 @@ class InProcessMeteringBackend(MeteringBackend):
             otel_metrics.record_tool_call(record)
 
 
-# Maps ``settings.metering_backend`` values to backend factories. Adding a
-# distributed backend later (e.g. "taskiq") is one entry here plus widening
-# the config Literal alongside the implementation -- see MeteringBackend's
-# docstring. config.py's Literal already rejects values with no entry here,
-# so a KeyError below means the Literal and this table drifted apart.
-_BACKEND_FACTORIES: dict[str, Callable[[Settings], MeteringBackend]] = {
-    "in_process": lambda settings: InProcessMeteringBackend(settings=settings),
-}
+def build_metering_backend(settings: Settings) -> MeteringBackend:
+    """Build the (not yet started) backend selected by ``settings.metering_backend``.
+
+    Adding a distributed backend later (e.g. "taskiq") is one ``case`` here
+    plus widening the config Literal alongside the implementation -- see
+    MeteringBackend's docstring. The ``match`` is exhaustive over the config
+    Literal: ``assert_never`` makes mypy fail when a backend name is added
+    without a branch here.
+    """
+    backend = settings.metering_backend
+    match backend:
+        case "in_process":
+            return InProcessMeteringBackend(settings=settings)
+        case _:
+            assert_never(backend)
 
 
 async def init_metering_pipeline(settings: Settings | None = None) -> MeteringBackend:
@@ -261,7 +266,7 @@ async def init_metering_pipeline(settings: Settings | None = None) -> MeteringBa
     global _pipeline
     if settings is None:
         settings = get_settings()
-    _pipeline = _BACKEND_FACTORIES[settings.metering_backend](settings)
+    _pipeline = build_metering_backend(settings)
     await _pipeline.start()
     return _pipeline
 
