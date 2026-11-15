@@ -500,7 +500,7 @@ def test_broker_issued_link_mechanism_is_none(
 # "x509", targets ["ami"]) covering the shipped services.yaml's auth_type:
 # x509 backend, since the broker refuses to start otherwise (there is no
 # synthesized fallback) — id "x509" matching the credential_provider alias
-# /v1/catalog reports (app.py's _build_target_to_alias), which the portal
+# /v1/catalog reports (wiring/checks.py's build_target_to_alias), which the portal
 # joins on.
 # ---------------------------------------------------------------------------
 

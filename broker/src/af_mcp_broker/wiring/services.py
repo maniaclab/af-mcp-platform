@@ -1,0 +1,207 @@
+"""Builders for the service catalog (policy + registry) and the identity-target maps derived from it."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+import structlog
+
+from af_mcp_broker.authorization import EntitlementPolicy, load_policy
+from af_mcp_broker.service_registry import ServiceRegistry
+from af_mcp_broker.wiring.checks import (
+    build_target_to_alias,
+    validate_identity_token_auth_type_coverage,
+    validate_service_permissions,
+    validate_x509_provider_targets,
+)
+
+if TYPE_CHECKING:
+    from af_mcp_broker.config import Settings
+    from af_mcp_broker.service_registry import ServiceSpec
+
+logger = structlog.get_logger(__name__)
+
+
+@dataclass(frozen=True)
+class ServiceCatalog:
+    """The entitlement policy and the services it gates, as loaded from ``policy.yaml`` and ``services.yaml``.
+
+    *services* is the operator-configured services only: the registry always
+    carries the builtin gateway service entry too (issue #240), which needs
+    none of the startup validation (permission "__none__", no credential, no
+    x509) and would otherwise mask an empty services.yaml from the
+    ``no_services_configured`` warning and inflate /readyz's services_count.
+    *services_loaded* means "services.yaml parsed without error": an empty
+    ``services: []`` is a valid, successfully-parsed degraded state
+    (issue #29); it is only False when the file is missing.
+    """
+
+    entitlement_policy: EntitlementPolicy
+    service_registry: ServiceRegistry
+    services: list[ServiceSpec]
+    services_loaded: bool
+
+
+def build_service_catalog(settings: Settings) -> ServiceCatalog:
+    """Load the policy and service registry and refuse to boot on an undeclared or ungranted service permission.
+
+    Missing files degrade gracefully for local dev (an empty policy, an empty
+    registry), with a warning each.
+    """
+    # --- Authorization: the authorization/ engine matches the shipped policy.yaml.
+    try:
+        entitlement_policy = load_policy(settings.policy_file)
+    except FileNotFoundError:
+        logger.warning("policy_file_not_found", path=settings.policy_file)
+        entitlement_policy = EntitlementPolicy()
+    # Observability for issue #125: the effective group -> permission mapping
+    # is otherwise implicit (chart default vs. operator override vs. dev-only
+    # fallback all merge into the same in-memory EntitlementPolicy), so an
+    # operator reading pod logs has no other way to see which policy is
+    # actually live. Group/permission names only -- no tokens or secrets ever
+    # pass through here.
+    logger.info(
+        "policy.group_permissions_loaded",
+        group_permissions={
+            group: sorted(caps)
+            for group, caps in sorted(entitlement_policy.group_permissions.items())
+        },
+    )
+
+    # --- Service registry (config-only; adding a service needs no code change).
+    service_registry = ServiceRegistry(settings.builtin_service_name)
+    try:
+        service_registry.load(settings.services_file)
+        services_loaded = True
+    except FileNotFoundError:
+        logger.warning("services_file_not_found", path=settings.services_file)
+        services_loaded = False
+    services = [spec for spec in service_registry.all_services() if not spec.builtin]
+
+    validate_service_permissions(services, entitlement_policy)
+    return ServiceCatalog(
+        entitlement_policy=entitlement_policy,
+        service_registry=service_registry,
+        services=services,
+        services_loaded=services_loaded,
+    )
+
+
+@dataclass(frozen=True)
+class IdentityTargets:
+    """Per-credential-kind service targets, the audience -> target maps the redeem endpoints use, and the catalog's target -> provider-alias join."""
+
+    x509_targets: list[str]
+    krb5_targets: list[str]
+    servicex_targets: list[str]
+    x509_audiences: dict[str, str]
+    krb5_audiences: dict[str, str]
+    servicex_audiences: dict[str, str]
+    target_to_alias: dict[str, str]
+
+    @property
+    def targets_by_kind(self) -> dict[str, list[str]]:
+        """The identity targets each credmon kind redeems from."""
+        return {
+            "x509": self.x509_targets,
+            "krb5": self.krb5_targets,
+            "servicex": self.servicex_targets,
+        }
+
+
+def build_identity_targets(
+    settings: Settings, services: list[ServiceSpec]
+) -> IdentityTargets:
+    """Collect each credential kind's targets and audiences, and refuse to boot when services and ``identity_providers`` disagree.
+
+    x509 is an ordinary ``identity_providers`` type with no synthesized
+    fallback -- every ``auth_type: x509`` service must be covered by an
+    explicit entry, drift-checked both directions, fail-closed
+    (``validate_x509_provider_targets``). Every surface downstream — provider
+    registration, /v1/catalog's credential_provider alias, /v1/identities —
+    works from these real, operator-declared entries.
+    """
+    x509_targets: list[str] = [
+        spec.name for spec in services if spec.auth_type == "x509"
+    ]
+    # krb5-token has no analogous `auth_type` variant in services.yaml (its
+    # targets are ordinary bearer-auth backends, resolved to a
+    # KrbTokenProvider purely via `identity_providers`), so there is no
+    # drift to validate here the way `validate_x509_provider_targets` does
+    # for x509 -- just collect every krb5-token entry's targets.
+    krb5_targets: list[str] = [
+        target
+        for cfg in settings.identity_providers
+        if cfg.type == "krb5-token"
+        for target in cfg.targets
+    ]
+    # Same reasoning as krb5_targets above: servicex-token has no analogous
+    # `auth_type` variant in services.yaml either, so just collect every
+    # servicex-token entry's targets -- used by /v1/servicex/link's
+    # "no explicit target, use the first configured one" default.
+    servicex_targets: list[str] = [
+        target
+        for cfg in settings.identity_providers
+        if cfg.type == "servicex-token"
+        for target in cfg.targets
+    ]
+    # Reverse map from the aud a backend presents to the x509 redeem endpoint
+    # (the service's effective_audience -- what the broker mints, issue #257)
+    # back to the x509 target name the proxy/provider are keyed under. Without
+    # it the redeem endpoint would keep assuming aud == target name, which the
+    # name/audience split invalidated -- the 2026-08-27 x509 proxy 403.
+    x509_audiences: dict[str, str] = {
+        spec.effective_audience: spec.name
+        for spec in services
+        if spec.auth_type == "x509"
+    }
+    # Same reverse map as x509_audiences above, for `auth_type: krb5`
+    # services -- the krb5 redeem endpoint's `aud` -> target lookup (no
+    # shipped services.yaml declares one yet; this is plumbing for a future
+    # backend, mirrored exactly so that endpoint's resolution works the day
+    # one does).
+    krb5_audiences: dict[str, str] = {
+        spec.effective_audience: spec.name
+        for spec in services
+        if spec.auth_type == "krb5"
+    }
+    # Same reverse map as x509_audiences/krb5_audiences above, for
+    # `auth_type: servicex` services -- the servicex redeem endpoint's `aud`
+    # -> target lookup (no shipped services.yaml declares one yet; this is
+    # plumbing for a future backend, mirrored exactly so that endpoint's
+    # resolution works the day one does -- see af-mcp-platform#295).
+    servicex_audiences: dict[str, str] = {
+        spec.effective_audience: spec.name
+        for spec in services
+        if spec.auth_type == "servicex"
+    }
+    # HTCondor credmon top tokens (docs/credmon.md): the credmon redeems a
+    # user's *identity*, not any particular service's credential, so its
+    # per-kind audience maps to that kind's first configured target -- the
+    # same default the user-facing /v1 surfaces resolve to. No condor
+    # service entry is involved; the identity just gains one more consumer.
+    if settings.credmon_enabled:
+        prefix = settings.credmon_audience_prefix
+        for kind, audiences, targets in (
+            ("x509", x509_audiences, x509_targets),
+            ("krb5", krb5_audiences, krb5_targets),
+            ("servicex", servicex_audiences, servicex_targets),
+        ):
+            if targets:
+                audiences[f"{prefix}{kind}"] = targets[0]
+    validate_x509_provider_targets(settings.identity_providers, set(x509_targets))
+    validate_identity_token_auth_type_coverage(settings.identity_providers, services)
+    return IdentityTargets(
+        x509_targets=x509_targets,
+        krb5_targets=krb5_targets,
+        servicex_targets=servicex_targets,
+        x509_audiences=x509_audiences,
+        krb5_audiences=krb5_audiences,
+        servicex_audiences=servicex_audiences,
+        # Identity<->service join for /v1/catalog's credential_provider field
+        # (issue #90): who services each target, from the same effective
+        # config list the providers are wired from -- x509 targets get their
+        # real entry's alias, no synthetic string.
+        target_to_alias=build_target_to_alias(settings.identity_providers),
+    )

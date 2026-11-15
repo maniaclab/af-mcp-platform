@@ -13,7 +13,7 @@ fallback.
 
 Covered here:
 
-* `_validate_x509_provider_targets` — the fail-closed boot check for drift
+* `validate_x509_provider_targets` — the fail-closed boot check for drift
   between `auth_type: x509` backends and explicit entry targets, now
   UNIVERSAL (both directions, including the zero-entries case): a
   `auth_type: x509` backend with no covering entry refuses to boot the same
@@ -37,12 +37,12 @@ from pydantic import SecretStr
 from x509_fakes import PEM as _PEM
 from x509_fakes import FakeVomsClient, FakeX509Store
 
-from af_mcp_broker.app import _validate_x509_provider_targets
 from af_mcp_broker.config import (
     KeycloakBrokeredProviderConfig,
     X509ProviderConfig,
 )
 from af_mcp_broker.credentials import X509Provider
+from af_mcp_broker.wiring.checks import validate_x509_provider_targets
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -74,7 +74,7 @@ def _x509_entry(**overrides: Any) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# _validate_x509_provider_targets — fail-closed drift protection between
+# validate_x509_provider_targets — fail-closed drift protection between
 # `auth_type: x509` backends and explicit entry targets. Universal: there is
 # no synthesized-entry escape hatch, so the zero-entries case is one more
 # quadrant of the same check, not a separate "validates trivially" path.
@@ -91,7 +91,7 @@ class TestValidateTargets:
             )
         ]
 
-        _validate_x509_provider_targets(cfgs, {"ami", "panda"})  # must not raise
+        validate_x509_provider_targets(cfgs, {"ami", "panda"})  # must not raise
 
     def test_uncovered_x509_backend_refuses_to_start(self) -> None:
         """An auth_type: x509 backend no explicit entry targets would have no
@@ -105,7 +105,7 @@ class TestValidateTargets:
         ]
 
         with pytest.raises(RuntimeError, match="panda"):
-            _validate_x509_provider_targets(cfgs, {"ami", "panda"})
+            validate_x509_provider_targets(cfgs, {"ami", "panda"})
 
     def test_entry_targeting_a_non_x509_backend_refuses_to_start(self) -> None:
         """An x509 entry targeting a backend that isn't auth_type: x509 is a
@@ -121,17 +121,17 @@ class TestValidateTargets:
         ]
 
         with pytest.raises(RuntimeError, match="rucio"):
-            _validate_x509_provider_targets(cfgs, {"ami"})
+            validate_x509_provider_targets(cfgs, {"ami"})
 
     def test_no_explicit_entries_and_x509_backends_refuses_to_start(self) -> None:
         """There is no synthesized fallback: an entry-less deployment with an
         auth_type: x509 backend refuses to boot naming it, exactly like a
         backend covered by the wrong entry."""
         with pytest.raises(RuntimeError, match="ami"):
-            _validate_x509_provider_targets([], {"ami"})
+            validate_x509_provider_targets([], {"ami"})
 
     def test_no_explicit_entries_and_no_x509_backends_validates_nothing(self) -> None:
-        _validate_x509_provider_targets([], set())  # must not raise
+        validate_x509_provider_targets([], set())  # must not raise
 
     def test_error_is_not_raised_for_non_x509_config_types(self) -> None:
         """Only x509 entries participate — a keycloak-brokered entry naming
@@ -145,7 +145,7 @@ class TestValidateTargets:
             ),
         ]
 
-        _validate_x509_provider_targets(cfgs, {"ami"})  # must not raise
+        validate_x509_provider_targets(cfgs, {"ami"})  # must not raise
 
 
 # ---------------------------------------------------------------------------

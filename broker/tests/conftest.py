@@ -38,12 +38,12 @@ from jwt.algorithms import RSAAlgorithm
 from pydantic import SecretStr
 from x509_fakes import FakeX509Store
 
-from af_mcp_broker import app as broker_app_module
 from af_mcp_broker import backend_client, identity, lint_observations
 from af_mcp_broker.app import app as broker_app
 from af_mcp_broker.audit import measure
 from af_mcp_broker.authorization import load_policy
 from af_mcp_broker.config import Settings, get_settings
+from af_mcp_broker.credentials import stores as credential_stores_module
 from af_mcp_broker.credmon.state import CredmonSyncState
 from af_mcp_broker.identity import keycloak_dependency
 from af_mcp_broker.logging import AUDIT_LOGGER_NAME, configure_logging
@@ -269,7 +269,9 @@ def configure_x509_service_env(
     monkeypatch.setenv("VAULT_ADDR", "https://vault.invalid")
     monkeypatch.setenv("VAULT_AUTH_ROLE", "af-mcp-broker")
     x509_store = FakeX509Store()
-    monkeypatch.setattr(broker_app_module, "VaultX509Store", lambda **_: x509_store)
+    monkeypatch.setattr(
+        credential_stores_module, "VaultX509Store", lambda **_: x509_store
+    )
 
 
 def configure_keyless_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
