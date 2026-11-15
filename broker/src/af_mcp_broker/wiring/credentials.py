@@ -193,6 +193,16 @@ class CredentialProviders:
     configs: dict[str, IdentityProviderConfig]
 
 
+# The identity_providers entries whose provider mints AF Broker Identity Tokens.
+SignedProviderConfig = (
+    BrokerIssuedProviderConfig
+    | CondorTokenProviderConfig
+    | KrbTokenProviderConfig
+    | X509ProviderConfig
+    | ServiceXTokenProviderConfig
+)
+
+
 @dataclass(frozen=True)
 class _ProviderDeps:
     """What the per-entry provider constructors draw on."""
@@ -216,7 +226,7 @@ _ISSUER_INVARIANT = (
 
 
 def _build_broker_issued_provider(
-    cfg: BrokerIssuedProviderConfig, deps: _ProviderDeps
+    cfg: BrokerIssuedProviderConfig, deps: _ProviderDeps, issuer: BrokerTokenIssuer
 ) -> CredentialProvider:
     # The aud and POSIX requirement of each target's token are declared
     # on the *service* (ServiceSpec.audience / requires_posix, issue
@@ -233,7 +243,7 @@ def _build_broker_issued_provider(
             requires_posix=tspec.requires_posix if tspec else False,
         )
     return BrokerIssuedProvider(
-        issuer=require(deps.issuer, _ISSUER_INVARIANT),
+        issuer=issuer,
         cache=deps.cache,
         alias=cfg.alias,
         targets=frozenset(cfg.targets),
@@ -266,26 +276,16 @@ def _build_oauth21_provider(
     )
 
 
-def _build_provider(
-    cfg: IdentityProviderConfig, deps: _ProviderDeps
+def _build_signed_provider(
+    cfg: SignedProviderConfig, deps: _ProviderDeps, issuer: BrokerTokenIssuer
 ) -> CredentialProvider:
-    """Construct the provider for one ``identity_providers`` entry."""
+    """Construct the provider for one entry whose provider signs AF Broker Identity Tokens with *issuer*."""
     match cfg:
-        case KeycloakBrokeredProviderConfig():
-            return OIDCProvider(
-                deps.settings,
-                deps.cache,
-                alias=cfg.alias,
-                targets=frozenset(cfg.targets),
-                http_client=deps.http_client,
-            )
-        case OAuth21DirectProviderConfig():
-            return _build_oauth21_provider(cfg, deps)
         case BrokerIssuedProviderConfig():
-            return _build_broker_issued_provider(cfg, deps)
+            return _build_broker_issued_provider(cfg, deps, issuer)
         case CondorTokenProviderConfig():
             return CondorTokenProvider(
-                issuer=require(deps.issuer, _ISSUER_INVARIANT),
+                issuer=issuer,
                 cache=deps.cache,
                 alias=cfg.alias,
                 targets=frozenset(cfg.targets),
@@ -296,7 +296,7 @@ def _build_provider(
         case KrbTokenProviderConfig():
             return KrbTokenProvider(
                 client=Krb5TokenServiceClient(
-                    issuer=require(deps.issuer, _ISSUER_INVARIANT),
+                    issuer=issuer,
                     service_url=str(cfg.service_url),
                     audience=cfg.audience,
                     http_client=deps.http_client,
@@ -319,7 +319,7 @@ def _build_provider(
                 deps.cache,
                 targets=frozenset(cfg.targets),
                 voms_client=VomsTokenServiceClient(
-                    issuer=require(deps.issuer, _ISSUER_INVARIANT),
+                    issuer=issuer,
                     service_url=str(cfg.service_url),
                     audience=cfg.audience,
                     voms=cfg.voms,
@@ -334,7 +334,7 @@ def _build_provider(
         case ServiceXTokenProviderConfig():
             return ServiceXProvider(
                 servicex_client=ServiceXTokenServiceClient(
-                    issuer=require(deps.issuer, _ISSUER_INVARIANT),
+                    issuer=issuer,
                     service_url=str(cfg.service_url),
                     audience=cfg.audience,
                     http_client=deps.http_client,
@@ -347,6 +347,37 @@ def _build_provider(
                 cache=deps.cache,
                 alias=cfg.alias,
                 targets=frozenset(cfg.targets),
+            )
+        case _:
+            # Exhaustive over SignedProviderConfig: mypy fails here when a
+            # member is added without a case above.
+            assert_never(cfg)
+
+
+def _build_provider(
+    cfg: IdentityProviderConfig, deps: _ProviderDeps
+) -> CredentialProvider:
+    """Construct the provider for one ``identity_providers`` entry."""
+    match cfg:
+        case KeycloakBrokeredProviderConfig():
+            return OIDCProvider(
+                deps.settings,
+                deps.cache,
+                alias=cfg.alias,
+                targets=frozenset(cfg.targets),
+                http_client=deps.http_client,
+            )
+        case OAuth21DirectProviderConfig():
+            return _build_oauth21_provider(cfg, deps)
+        case (
+            BrokerIssuedProviderConfig()
+            | CondorTokenProviderConfig()
+            | KrbTokenProviderConfig()
+            | X509ProviderConfig()
+            | ServiceXTokenProviderConfig()
+        ):
+            return _build_signed_provider(
+                cfg, deps, require(deps.issuer, _ISSUER_INVARIANT)
             )
         case _:
             # Exhaustive over the IdentityProviderConfig union: mypy fails

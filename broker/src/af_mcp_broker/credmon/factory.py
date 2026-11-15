@@ -15,14 +15,13 @@ from af_mcp_broker.credmon.htcondor_api import HTCondorApiCredentialStore
 from af_mcp_broker.credmon.storer import CredmonKind, CredmonStorer
 from af_mcp_broker.credmon.sync import CredmonSyncService
 from af_mcp_broker.credmon.vault import VaultCredmonSyncState, VaultSubjectSource
-from af_mcp_broker.errors import require
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     import httpx2
 
-    from af_mcp_broker.config import Settings
+    from af_mcp_broker.config import CredmonApiConfig, Settings
     from af_mcp_broker.credentials.base import CredentialRegistry
     from af_mcp_broker.credentials.broker_issued import BrokerTokenIssuer
     from af_mcp_broker.principal_cache import PrincipalCache
@@ -39,6 +38,7 @@ _POLL_SECONDS = 60.0
 
 async def build_credmon_sync(
     settings: Settings,
+    api: CredmonApiConfig,
     *,
     issuer: BrokerTokenIssuer | None,
     credential_registry: CredentialRegistry,
@@ -77,18 +77,7 @@ async def build_credmon_sync(
             "CREDMON_ENABLED requires the Keycloak principal directory: credd "
             "stores credentials per POSIX unixname, resolved from it."
         )
-    # Each is required by the Settings validator whenever credmon is enabled.
-    api_url = require(
-        settings.credmon_htcondor_api_url, "credmon_htcondor_api_url is required"
-    )
-    token_file_setting = require(
-        settings.credmon_htcondor_api_token_file,
-        "credmon_htcondor_api_token_file is required",
-    )
-    user_domain = require(
-        settings.credmon_user_domain, "credmon_user_domain is required"
-    )
-    token_file = Path(token_file_setting)
+    token_file = Path(api.token_file)
     try:
         # Checked once here so a missing mount refuses to boot; the client
         # itself re-reads the file on every store, so rotation needs no
@@ -96,8 +85,7 @@ async def build_credmon_sync(
         await anyio.Path(token_file).read_text()
     except OSError as exc:
         raise RuntimeError(
-            "CREDMON_HTCONDOR_API_TOKEN_FILE could not be read: "
-            f"{settings.credmon_htcondor_api_token_file}"
+            f"CREDMON_HTCONDOR_API_TOKEN_FILE could not be read: {api.token_file}"
         ) from exc
 
     wired = wired_kinds(settings, targets_by_kind)
@@ -115,14 +103,14 @@ async def build_credmon_sync(
         subjects=VaultSubjectSource(vault_kv, prefixes=store_prefixes),
         principal_cache=principal_cache,
         client=HTCondorApiCredentialStore(
-            api_url=str(api_url),
+            api_url=str(api.url),
             token_file=token_file,
             http_client=http_client,
         ),
         audience_prefix=settings.credmon_audience_prefix,
         service_prefix=settings.credmon_service_prefix,
         top_token_ttl_seconds=settings.credmon_top_token_ttl_seconds,
-        user_domain=user_domain,
+        user_domain=api.user_domain,
     )
     log.info(
         "credmon.wired",

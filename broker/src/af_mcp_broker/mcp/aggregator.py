@@ -11,6 +11,7 @@ from __future__ import annotations
 # its docstring.
 import asyncio
 import time
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -47,7 +48,6 @@ from af_mcp_broker.backend_errors import (
     NotLinkedForListingError,
 )
 from af_mcp_broker.credentials.errors import CredentialError, NeedsUnlockError
-from af_mcp_broker.errors import require
 from af_mcp_broker.mcp.diagnostics import register_diagnostic_tools
 from af_mcp_broker.mcp.instructions import compose_agent_instructions
 from af_mcp_broker.mcp.middleware.authorization_mw import AuthorizationMiddleware
@@ -729,32 +729,63 @@ def _make_client_factory(
 _NEGATIVE_LIST_CACHE_TTL_SECONDS: float = 30.0
 
 
-class _SubjectListCacheEntry:
-    """One subject's cached listing outcome against one service and one kind (tools/resources/resource templates/prompts) -- either a successful listing or a failure to re-raise.
+class _SubjectListCacheEntry(ABC):
+    """One subject's cached listing outcome against one service and one kind (tools/resources/resource templates/prompts) -- either a successful listing (``_CachedItems``) or a failure to re-raise (``_CachedFailure``).
 
-    Exactly one of ``items``/``error`` is set. ``timestamp`` is a
-    ``time.monotonic()`` reading, compared against the provider's
-    ``_cache_ttl`` (success) or ``_NEGATIVE_LIST_CACHE_TTL_SECONDS`` (failure)
-    by ``is_fresh`` -- mirroring fastmcp's own ``_CacheEntry`` in
-    ``server/providers/proxy.py``, which this cache sits above rather than
+    ``timestamp`` is a ``time.monotonic()`` reading, compared against the
+    entry's own TTL (``_cache_ttl`` for a success, ``_NEGATIVE_LIST_CACHE_TTL_SECONDS``
+    for a failure) by ``is_fresh`` -- mirroring fastmcp's own ``_CacheEntry``
+    in ``server/providers/proxy.py``, which this cache sits above rather than
     replaces (see ``_ObservableProxyProvider._cached_list``'s docstring).
     """
 
-    __slots__ = ("error", "items", "timestamp")
+    __slots__ = ("timestamp",)
 
-    def __init__(
-        self,
-        *,
-        items: Sequence[Any] | None = None,
-        error: Exception | None = None,
-        timestamp: float,
-    ) -> None:
-        self.items = items
-        self.error = error
+    def __init__(self, *, timestamp: float) -> None:
         self.timestamp = timestamp
 
-    def is_fresh(self, ttl: float) -> bool:
-        return (time.monotonic() - self.timestamp) < ttl
+    @abstractmethod
+    def ttl(self, success_ttl: float) -> float:
+        """How long this entry stays fresh, given the TTL a successful listing gets."""
+
+    @abstractmethod
+    def serve(self) -> Sequence[Any]:
+        """Return the cached listing, or re-raise the cached failure."""
+
+    def is_fresh(self, success_ttl: float) -> bool:
+        return (time.monotonic() - self.timestamp) < self.ttl(success_ttl)
+
+
+class _CachedItems(_SubjectListCacheEntry):
+    """A successful listing."""
+
+    __slots__ = ("items",)
+
+    def __init__(self, *, items: Sequence[Any], timestamp: float) -> None:
+        super().__init__(timestamp=timestamp)
+        self.items = items
+
+    def ttl(self, success_ttl: float) -> float:
+        return success_ttl
+
+    def serve(self) -> Sequence[Any]:
+        return self.items
+
+
+class _CachedFailure(_SubjectListCacheEntry):
+    """A failed listing, cached so a backend that just 401'd or timed out is not re-hit on every call."""
+
+    __slots__ = ("error",)
+
+    def __init__(self, *, error: Exception, timestamp: float) -> None:
+        super().__init__(timestamp=timestamp)
+        self.error = error
+
+    def ttl(self, success_ttl: float) -> float:  # noqa: ARG002 -- a failure's TTL does not depend on the success TTL
+        return _NEGATIVE_LIST_CACHE_TTL_SECONDS
+
+    def serve(self) -> Sequence[Any]:
+        raise self.error
 
 
 # How many unroutable tool names one aggregator.tool_prefix_mismatch warning
@@ -934,11 +965,7 @@ class _ObservableProxyProvider(ProxyProvider):
         expired = [
             key
             for key, entry in self._subject_list_cache.items()
-            if not entry.is_fresh(
-                self._cache_ttl
-                if entry.error is None
-                else _NEGATIVE_LIST_CACHE_TTL_SECONDS
-            )
+            if not entry.is_fresh(self._cache_ttl)
         ]
         for key in expired:
             del self._subject_list_cache[key]
@@ -986,17 +1013,7 @@ class _ObservableProxyProvider(ProxyProvider):
         entry = self._subject_list_cache.get(key)
         if entry is None:
             return None
-        ttl = (
-            self._cache_ttl if entry.error is None else _NEGATIVE_LIST_CACHE_TTL_SECONDS
-        )
-        return entry if entry.is_fresh(ttl) else None
-
-    @staticmethod
-    def _serve_or_raise(entry: _SubjectListCacheEntry) -> Sequence[Any]:
-        """Return a cached success's items, or re-raise a cached failure -- without repeating any side effects the original fetch already ran once, when the failure was first cached."""
-        if entry.error is not None:
-            raise entry.error
-        return require(entry.items, "exactly one of items/error is set")
+        return entry if entry.is_fresh(self._cache_ttl) else None
 
     async def _cached_list(
         self, kind: str, fetch: Callable[[], Awaitable[Sequence[Any]]]
@@ -1029,13 +1046,13 @@ class _ObservableProxyProvider(ProxyProvider):
         key = (kind, subject)
         entry = self._fresh_subject_entry(key)
         if entry is not None:
-            return self._serve_or_raise(entry)
+            return entry.serve()
 
         lock = self._subject_list_locks.setdefault(key, asyncio.Lock())
         async with lock:
             entry = self._fresh_subject_entry(key)
             if entry is not None:
-                return self._serve_or_raise(entry)
+                return entry.serve()
 
             try:
                 items = await fetch()
@@ -1056,13 +1073,13 @@ class _ObservableProxyProvider(ProxyProvider):
                     reason != "unauthorized"
                     or isinstance(exc, NotLinkedForListingError)
                 ):
-                    self._subject_list_cache[key] = _SubjectListCacheEntry(
+                    self._subject_list_cache[key] = _CachedFailure(
                         error=exc, timestamp=time.monotonic()
                     )
                     self._prune_subject_list_cache()
                 raise
             else:
-                self._subject_list_cache[key] = _SubjectListCacheEntry(
+                self._subject_list_cache[key] = _CachedItems(
                     items=items, timestamp=time.monotonic()
                 )
                 self._prune_subject_list_cache()

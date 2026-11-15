@@ -20,8 +20,8 @@ from test_identities import _AUTH, ALIAS, _configure_oauth21_env
 
 from af_mcp_broker.app import app as broker_app
 from af_mcp_broker.mcp.aggregator import (
+    _CachedItems,
     _ObservableProxyProvider,
-    _SubjectListCacheEntry,
 )
 from af_mcp_broker.mcp.cache_invalidation import LIST_CACHE_INVALIDATION_CHANNEL
 from af_mcp_broker.shared_state import RedisSharedState
@@ -78,7 +78,7 @@ def test_app_drops_cached_listings_when_another_replica_publishes(
     with app_client_factory():
         provider = _first_provider()
         key = ("tools", subject)
-        provider._subject_list_cache[key] = _SubjectListCacheEntry(
+        provider._subject_list_cache[key] = _CachedItems(
             items=[], timestamp=time.monotonic()
         )
 

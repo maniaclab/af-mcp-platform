@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from types import SimpleNamespace
 from typing import Any
 
@@ -18,10 +19,7 @@ from af_mcp_broker.credentials import (
     OIDCProvider,
     ServiceXProvider,
 )
-from af_mcp_broker.mcp.aggregator import (
-    _ObservableProxyProvider,
-    _SubjectListCacheEntry,
-)
+from af_mcp_broker.mcp.aggregator import _CachedFailure, _CachedItems
 
 
 def _request(providers: dict[str, Any]) -> Any:
@@ -75,20 +73,22 @@ class TestKrb5ExpiresAt:
             _krb5_expires_at(self._cred(None))
 
 
-class TestServeOrRaise:
+class TestCachedListingServe:
     def test_a_cached_failure_is_re_raised(self) -> None:
-        entry = _SubjectListCacheEntry(error=ValueError("backend down"), timestamp=0.0)
+        entry = _CachedFailure(error=ValueError("backend down"), timestamp=0.0)
 
         with pytest.raises(ValueError, match="backend down"):
-            _ObservableProxyProvider._serve_or_raise(entry)
+            entry.serve()
 
     def test_a_cached_success_returns_its_items(self) -> None:
-        entry = _SubjectListCacheEntry(items=["tool"], timestamp=0.0)
+        entry = _CachedItems(items=["tool"], timestamp=0.0)
 
-        assert _ObservableProxyProvider._serve_or_raise(entry) == ["tool"]
+        assert entry.serve() == ["tool"]
 
-    def test_an_entry_with_neither_is_an_invariant_error(self) -> None:
-        entry = _SubjectListCacheEntry(timestamp=0.0)
+    def test_a_failure_stays_fresh_for_the_negative_ttl_whatever_the_success_ttl(
+        self,
+    ) -> None:
+        now = time.monotonic()
 
-        with pytest.raises(RuntimeError, match="exactly one of items/error"):
-            _ObservableProxyProvider._serve_or_raise(entry)
+        assert _CachedFailure(error=ValueError(), timestamp=now).is_fresh(0.0)
+        assert not _CachedItems(items=[], timestamp=now).is_fresh(0.0)

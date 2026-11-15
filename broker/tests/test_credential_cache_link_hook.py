@@ -79,10 +79,8 @@ async def test_revoke_does_not_call_on_link_hook():
 
 def _seed_negative_entry(provider: Any, subject: str) -> None:
     """Cache a failed tools listing for *subject*, as an unlinked caller's would be."""
-    provider._subject_list_cache[("tools", subject)] = (
-        aggregator_module._SubjectListCacheEntry(
-            error=RuntimeError("not linked"), timestamp=time.monotonic()
-        )
+    provider._subject_list_cache[("tools", subject)] = aggregator_module._CachedFailure(
+        error=RuntimeError("not linked"), timestamp=time.monotonic()
     )
 
 

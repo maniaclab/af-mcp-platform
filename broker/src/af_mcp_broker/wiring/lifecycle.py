@@ -130,10 +130,12 @@ async def start_credmon_sync(
     Built for the kinds whose identity provider (and, for enumeration, Vault
     store) is actually wired.
     """
-    if not settings.credmon_enabled:
+    api = settings.credmon_api
+    if api is None:
         return None
     credmon_sync = await build_credmon_sync(
         settings,
+        api,
         issuer=issuer,
         credential_registry=credential_registry,
         targets_by_kind=targets.targets_by_kind,

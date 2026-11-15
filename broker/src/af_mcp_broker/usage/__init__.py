@@ -2,7 +2,7 @@
 
 See ``usage/store.py`` for the store contract and the design constraints
 (best-effort, audit records authoritative, no dollars stored). This module
-builds the store selected by ``settings.usage_store_backend`` (the lifespan
+builds the store selected by ``settings.usage_store`` (the lifespan
 owns it and hands it to its consumers) and provides the never-raising
 ``record_usage``/``record_usage_batch`` helpers the metering backends call,
 with the store they feed, after each audit write.
@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, assert_never
 import structlog
 
 from af_mcp_broker import metrics
-from af_mcp_broker.errors import require
+from af_mcp_broker.config import InMemoryUsageStoreConfig, PostgresUsageStoreConfig
 from af_mcp_broker.usage.batcher import UsageBatcher
 from af_mcp_broker.usage.otel_events import (
     EventEmittingUsageStore,
@@ -46,24 +46,20 @@ logger = structlog.get_logger(__name__)
 
 
 def build_usage_store(settings: Settings) -> UsageStore:
-    """Build the (not yet started) store selected by ``settings.usage_store_backend``.
+    """Build the (not yet started) store selected by ``settings.usage_store``.
 
     With ``settings.usage_events_otlp_enabled`` the store is wrapped so each
     recorded usage is also emitted as an OTel log record (``otel_events.py``).
-    The ``match`` is exhaustive over the config Literal: ``assert_never`` makes
-    mypy fail when a backend name is added without a branch here.
+    The ``match`` is exhaustive over the ``UsageStoreConfig`` union:
+    ``assert_never`` makes mypy fail when a backend is added without a branch
+    here.
     """
     store: UsageStore
-    backend = settings.usage_store_backend
+    backend = settings.usage_store
     match backend:
-        case "in_memory":
+        case InMemoryUsageStoreConfig():
             store = InMemoryUsageStore()
-        case "postgres":
-            dsn = require(
-                settings.usage_postgres_dsn,
-                "usage_store_backend=postgres requires usage_postgres_dsn "
-                "(_validate_usage_store_config)",
-            )
+        case PostgresUsageStoreConfig(dsn=dsn):
             store = PostgresUsageStore(
                 dsn.get_secret_value(),
                 retention_days=settings.usage_retention_days,
