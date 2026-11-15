@@ -140,7 +140,7 @@ def configure_logging(log_level: str = "INFO", audit_log_file: str = "-") -> Non
     fastmcp_logger.propagate = True
 
     # Quieten noisy third-party loggers that we don't need at DEBUG
-    for noisy in ("uvicorn.access", "httpx", "httpcore"):
+    for noisy in ("uvicorn.access", "httpx", "httpcore", "httpx2", "httpcore2"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
