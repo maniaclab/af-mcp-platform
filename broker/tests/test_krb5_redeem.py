@@ -22,6 +22,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from audit_lines import audit_lines
 from pydantic import SecretStr
 from test_broker_issued import _make_rsa_key, _private_pem
 from test_krb5_token import FakeKrb5VaultStore, _FakeClient
@@ -349,15 +350,11 @@ class TestRedeem:
                 _REDEEM, json={}, headers={"Authorization": f"Bearer {token}"}
             )
         assert resp.status_code == 200, resp.text
-        audit_lines = [
-            json.loads(line)
-            for line in capsys.readouterr().out.splitlines()
-            if line.startswith("{") and '"event": "audit"' in line
-        ]
-        assert len(audit_lines) == 1
-        assert audit_lines[0]["action"] == "krb5_ticket_release"
-        assert audit_lines[0]["parent_request_id"] == "tool-call-id"
-        assert audit_lines[0]["request_id"] != "tool-call-id"  # the token's jti
+        lines = audit_lines(capsys.readouterr().out)
+        assert len(lines) == 1
+        assert lines[0]["action"] == "krb5_ticket_release"
+        assert lines[0]["parent_request_id"] == "tool-call-id"
+        assert lines[0]["request_id"] != "tool-call-id"  # the token's jti
 
     def test_release_audit_line_has_no_parent_for_a_token_without_rid(
         self, krb5_redeem_env, app_client_factory, capsys: pytest.CaptureFixture[str]
@@ -368,13 +365,9 @@ class TestRedeem:
             _seed_cache_ticket(client, subject="sub-abc")
             token = _mint(client)
             client.post(_REDEEM, json={}, headers={"Authorization": f"Bearer {token}"})
-        audit_lines = [
-            json.loads(line)
-            for line in capsys.readouterr().out.splitlines()
-            if line.startswith("{") and '"event": "audit"' in line
-        ]
-        assert len(audit_lines) == 1
-        assert "parent_request_id" not in audit_lines[0]
+        lines = audit_lines(capsys.readouterr().out)
+        assert len(lines) == 1
+        assert "parent_request_id" not in lines[0]
 
     def test_cache_hit_with_90_seconds_remaining_still_redeems(
         self, krb5_redeem_env, app_client_factory

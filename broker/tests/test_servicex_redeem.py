@@ -17,6 +17,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from audit_lines import audit_lines
 from pydantic import SecretStr
 from test_broker_issued import _make_rsa_key, _private_pem
 from test_servicex import FakeServiceXClient, FakeServiceXStore, _redeemed
@@ -388,3 +389,55 @@ class TestCredmonTopToken:
                 _REDEEM, json={}, headers={"Authorization": f"Bearer {token}"}
             )
         assert resp.status_code == 403
+
+
+class TestRedeemParentRequestId:
+    """A token's ``rid`` (the minting tool call) becomes the release line's ``parent_request_id``; ``request_id`` stays the token's ``jti``."""
+
+    def _store_token(self, client: TestClient) -> None:
+        store = _fake_vault_store(client)
+        _fake_service_client(client)
+        asyncio.run(store.store_link("sub-abc", refresh_token=SecretStr("rt")))
+        asyncio.run(
+            store.store_token(
+                "sub-abc",
+                access_token="cached-access-token",
+                expires_at=time.time() + 3600,
+            )
+        )
+
+    def test_release_audit_line_names_the_minting_tool_call_as_parent(
+        self,
+        servicex_redeem_env,
+        app_client_factory,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        servicex_redeem_env()
+        with app_client_factory() as (client, _):
+            self._store_token(client)
+            token, _ = client.app.state.broker.broker_token_issuer.mint(
+                "sub-abc", _TARGET, request_id="tool-call-id"
+            )
+            resp = client.post(
+                _REDEEM, json={}, headers={"Authorization": f"Bearer {token}"}
+            )
+        assert resp.status_code == 200, resp.text
+        lines = audit_lines(capsys.readouterr().out)
+        assert [line["action"] for line in lines] == ["servicex_token_release"]
+        assert lines[0]["parent_request_id"] == "tool-call-id"
+        assert lines[0]["request_id"] != "tool-call-id"  # the token's jti
+
+    def test_release_audit_line_has_no_parent_for_a_token_without_rid(
+        self,
+        servicex_redeem_env,
+        app_client_factory,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        servicex_redeem_env()
+        with app_client_factory() as (client, _):
+            self._store_token(client)
+            token = _mint(client)
+            client.post(_REDEEM, json={}, headers={"Authorization": f"Bearer {token}"})
+        lines = audit_lines(capsys.readouterr().out)
+        assert [line["action"] for line in lines] == ["servicex_token_release"]
+        assert "parent_request_id" not in lines[0]
