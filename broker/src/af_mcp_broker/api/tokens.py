@@ -84,6 +84,7 @@ from af_mcp_broker.config import (
 from af_mcp_broker.identity import keycloak_dependency
 from af_mcp_broker.pat import mint_pat
 from af_mcp_broker.principal import Principal
+from af_mcp_broker.retry_after import RateLimiter
 from af_mcp_broker.token_registry import (
     DuplicateNameError,
     PatMintRateLimitError,
@@ -283,7 +284,9 @@ async def mint_token(
         await registry.check_mint_rate_limit(principal.subject)
     except PatMintRateLimitError as exc:
         raise RateLimitedHTTPException(
-            str(exc), retry_after_seconds=exc.retry_after_seconds
+            str(exc),
+            limiter=RateLimiter.PAT_MINT,
+            retry_after_seconds=exc.retry_after_seconds,
         ) from exc
 
     # Permission PAT grant (issue #144 step 4) -- see MintTokenRequest

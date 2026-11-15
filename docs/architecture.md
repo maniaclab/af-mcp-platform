@@ -782,7 +782,9 @@ credential services' own limits (HTCondor on `/v1/credential`, krb5 on
 `Retry-After` (absent, or the HTTP-date form) is reported with a 60 s default
 (`retry_after.py`). On `/mcp`, a `rate_limits` refusal and the same credential
 429 put the wait in the tool error message as
-`Retry-After: N seconds; retry_at: <timestamp>.`.
+`Retry-After: N seconds; retry_at: <timestamp>.`. Each of these 429s, on both
+surfaces, also logs one `rate_limit_exceeded` event with the subject, the
+limiter and the wait (see [Observability](observability.md#finding-rate-limit-refusals)).
 
 #### Vault storage layering
 

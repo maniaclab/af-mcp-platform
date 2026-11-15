@@ -38,8 +38,10 @@ from test_oauth21 import (
     _make_cred,
     _make_provider,
 )
+from test_request_logging import _capturing_info
 
 from af_mcp_broker import identity as identity_module
+from af_mcp_broker import retry_after as retry_after_module
 from af_mcp_broker.app import app
 from af_mcp_broker.config import Settings
 from af_mcp_broker.credentials import (
@@ -425,6 +427,29 @@ async def test_mcp_edge_puts_the_credential_429_wait_in_the_tool_error(
     assert str(excinfo.value).startswith(
         f"{_CONDOR_RATE_LIMITED_DETAIL} Retry-After: {retry_after} seconds; retry_at: "
     )
+
+
+async def test_mcp_edge_logs_the_dedicated_event_for_a_credential_429(
+    make_principal, settings, monkeypatch
+) -> None:
+    principal = make_principal()
+    exc = await _condor_exchange_producer(
+        httpx2.Response(429, headers={"Retry-After": "17"})
+    )(make_principal)
+    _patch_context(monkeypatch, principal)
+    spec = _spec(auth_type="bearer")
+    registry = CredentialRegistry()
+    registry.register(spec.name, _FakeProvider(http_error=exc))  # type: ignore[arg-type]
+    events = _capturing_info(monkeypatch, retry_after_module.logger)
+
+    with pytest.raises(ToolError):
+        await _make_client_factory(spec, registry, settings, _OPEN_POLICY)()
+
+    [event] = events
+    assert event["event"] == "rate_limit_exceeded"
+    assert event["subject"] == principal.subject
+    assert event["limiter"] == "credential_service"
+    assert event["retry_after_seconds"] == 17
 
 
 # ---------------------------------------------------------------------------

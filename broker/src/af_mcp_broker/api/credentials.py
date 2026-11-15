@@ -36,7 +36,7 @@ from af_mcp_broker.errors import require
 from af_mcp_broker.identity import keycloak_dependency
 from af_mcp_broker.logging import bind_subject
 from af_mcp_broker.principal import PosixPrincipal, Principal
-from af_mcp_broker.retry_after import retry_after_seconds
+from af_mcp_broker.retry_after import RateLimiter, retry_after_seconds
 
 if TYPE_CHECKING:
     from af_mcp_broker.config import IdentityProviderConfig
@@ -715,7 +715,9 @@ async def create_krb5_ticket(
         ) from exc
     except Krb5TokenRateLimitedError as exc:
         raise RateLimitedHTTPException(
-            str(exc), retry_after_seconds=retry_after_seconds(exc.retry_after)
+            str(exc),
+            limiter=RateLimiter.KRB5_SERVICE,
+            retry_after_seconds=retry_after_seconds(exc.retry_after),
         ) from exc
     except Krb5TokenMintError as exc:
         raise HTTPException(
@@ -776,7 +778,9 @@ async def link_krb5_keytab(
         ) from exc
     except Krb5TokenRateLimitedError as exc:
         raise RateLimitedHTTPException(
-            str(exc), retry_after_seconds=retry_after_seconds(exc.retry_after)
+            str(exc),
+            limiter=RateLimiter.KRB5_SERVICE,
+            retry_after_seconds=retry_after_seconds(exc.retry_after),
         ) from exc
     except Krb5TokenMintError as exc:
         raise HTTPException(

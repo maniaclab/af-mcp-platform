@@ -10,6 +10,26 @@ one wait whichever surface refused it.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from enum import StrEnum
+
+import structlog
+
+logger = structlog.get_logger(__name__)
+
+# The one log event every rate-limit refusal emits, on /v1 and /mcp, so a
+# single search finds every lockout.
+RATE_LIMIT_EVENT = "rate_limit_exceeded"
+
+
+class RateLimiter(StrEnum):
+    """Which limiter refused a request, as the ``limiter`` field of ``rate_limit_exceeded``."""
+
+    X509_UNLOCK = "x509_unlock"
+    PAT_MINT = "pat_mint"
+    KRB5_SERVICE = "krb5_service"
+    CREDENTIAL_SERVICE = "credential_service"
+    TOOL_RATE_LIMIT = "tool_rate_limit"
+
 
 # Used when a rate-limiting backend answers 429 without a usable
 # ``Retry-After`` (absent, or the HTTP-date form): a client still needs
@@ -28,6 +48,29 @@ def retry_at_timestamp(seconds: int) -> str:
     """UTC ISO-8601 time (``Z`` suffix, whole seconds) *seconds* from now."""
     retry_at = datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=seconds)
     return retry_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def log_rate_limited(
+    *,
+    subject: str | None,
+    limiter: RateLimiter,
+    retry_after_seconds: int,
+    rule: str | None = None,
+) -> None:
+    """Log the ``rate_limit_exceeded`` event for a refused request.
+
+    *subject* is ``None`` when no caller identity was bound yet. *rule*
+    names the configured rule where the limiter has several (a tool
+    ``rate_limits`` entry), and is ``None`` for a limiter with a single
+    budget.
+    """
+    logger.info(
+        RATE_LIMIT_EVENT,
+        subject=subject,
+        limiter=limiter,
+        rule=rule,
+        retry_after_seconds=retry_after_seconds,
+    )
 
 
 def retry_after_sentence(seconds: int) -> str:

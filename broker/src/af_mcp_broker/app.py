@@ -52,7 +52,12 @@ from af_mcp_broker.logging import (
 from af_mcp_broker.maintenance import MaintenanceModeError
 from af_mcp_broker.mcp.aggregator import BackendProviders
 from af_mcp_broker.otel_metrics import init_otel_metrics, shutdown_otel_metrics
-from af_mcp_broker.retry_after import retry_after_seconds, retry_at_timestamp
+from af_mcp_broker.retry_after import (
+    RateLimiter,
+    log_rate_limited,
+    retry_after_seconds,
+    retry_at_timestamp,
+)
 from af_mcp_broker.tracing import init_tracing, instrument_fastapi, shutdown_tracing
 from af_mcp_broker.wiring.aggregator import (
     build_job_credential_guide,
@@ -534,6 +539,12 @@ async def _http_exception_handler(request: Request, exc: HTTPException) -> Respo
         detail=exc.detail,
         path=request.url.path,
     )
+    if isinstance(exc, RateLimitedHTTPException):
+        log_rate_limited(
+            subject=structlog.contextvars.get_contextvars().get("subject"),
+            limiter=exc.limiter,
+            retry_after_seconds=exc.retry_after_seconds,
+        )
     # af-mcp-platform#288: every /v1 request already gets a correlation_id
     # bound into structlog's contextvars at request start
     # (_bind_request_logging_context above / identity_mw's own equivalent
@@ -615,7 +626,9 @@ async def _credential_error_handler(request: Request, exc: CredentialError) -> R
         return await _http_exception_handler(
             request,
             RateLimitedHTTPException(
-                exc.detail, retry_after_seconds=retry_after_seconds(exc.retry_after)
+                exc.detail,
+                limiter=RateLimiter.CREDENTIAL_SERVICE,
+                retry_after_seconds=retry_after_seconds(exc.retry_after),
             ),
         )
     return await _http_exception_handler(
@@ -672,6 +685,7 @@ async def _rate_limit_error_handler(
         request,
         RateLimitedHTTPException(
             f"Too many failed unlock attempts. Try again in {retry_after} seconds.",
+            limiter=RateLimiter.X509_UNLOCK,
             retry_after_seconds=retry_after,
         ),
     )

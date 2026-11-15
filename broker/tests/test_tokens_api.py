@@ -16,8 +16,10 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from rate_limited_helpers import assert_rate_limited_shape
+from test_request_logging import _capturing_info
 
 from af_mcp_broker import identity
+from af_mcp_broker import retry_after as retry_after_module
 from af_mcp_broker.api import tokens as tokens_api
 from af_mcp_broker.app import app
 from af_mcp_broker.config import get_settings
@@ -304,6 +306,21 @@ def test_mint_rate_limit_11th_call_429(app_client: tuple[TestClient, dict]) -> N
     body = assert_rate_limited_shape(resp)
     assert 0 < body["retry_after_seconds"] <= 3600
     assert str(body["retry_after_seconds"]) in body["detail"]
+
+
+def test_mint_rate_limit_logs_the_dedicated_event(
+    app_client: tuple[TestClient, dict], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, _ = app_client
+    for i in range(10):
+        assert _mint(client, name=f"token-{i}").status_code == 200
+    events = _capturing_info(monkeypatch, retry_after_module.logger)
+
+    resp = _mint(client, name="eleventh")
+
+    [event] = [e for e in events if e["event"] == "rate_limit_exceeded"]
+    assert event["limiter"] == "pat_mint"
+    assert event["retry_after_seconds"] == resp.json()["retry_after_seconds"]
 
 
 def test_list_returns_own_tokens_only(

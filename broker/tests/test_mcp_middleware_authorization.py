@@ -12,8 +12,10 @@ from broker_state_helpers import authorization_middleware
 from fastmcp.exceptions import AuthorizationError, ToolError
 from fastmcp.tools.base import ToolResult
 from prometheus_client import REGISTRY
+from test_request_logging import _capturing_info
 
 from af_mcp_broker import metering as pipeline
+from af_mcp_broker import retry_after as retry_after_module
 from af_mcp_broker import shared_state
 from af_mcp_broker.authorization import EntitlementPolicy, RateLimitRule
 from af_mcp_broker.authorization.errors import ToolRateLimitError
@@ -1170,6 +1172,28 @@ async def test_rate_limited_call_is_refused_before_call_next_with_retry_info(
     assert record.error is not None
     assert "Rate limit of 1 calls per 60s" in record.error
     assert record.duration_ms is None
+
+
+async def test_rate_limited_call_logs_the_dedicated_event(
+    registry, policy, make_principal, captured_audits, monkeypatch
+) -> None:
+    mw = _rate_limited_middleware(
+        registry, policy, RateLimitRule(1, 60, tool="rucio_*")
+    )
+    principal = make_principal(groups=["atlas"])
+    context = _call_tool_context("rucio_list_dids", {}, principal)
+    await mw.on_call_tool(context, _CallNextRecorder(result=ToolResult(content=[])))
+    events = _capturing_info(monkeypatch, retry_after_module.logger)
+
+    with pytest.raises(ToolError):
+        await mw.on_call_tool(context, _CallNextRecorder())
+
+    [event] = events
+    assert event["event"] == "rate_limit_exceeded"
+    assert event["subject"] == principal.subject
+    assert event["limiter"] == "tool_rate_limit"
+    assert event["rule"] == "1/60s"
+    assert 0 < event["retry_after_seconds"] <= 60
 
 
 async def test_rate_limited_call_increments_counter_without_identity_label(
