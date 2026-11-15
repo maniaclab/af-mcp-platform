@@ -3,7 +3,7 @@
 Persists ``StoredOAuthCredential`` entries in a KV-v2 secrets engine, via a
 shared ``VaultKV`` transport client (``vault_kv.py``) -- this module owns the
 path layout (``{kv_path_prefix}/{subject}/{alias}``), the CAS-conflict ->
-``VersionConflictError`` translation the ``TokenStore`` protocol promises, and the
+``VersionConflictError`` translation the ``TokenStore`` contract promises, and the
 ``StoredOAuthCredential`` (de)serialization, including the ``SecretStr``
 reveal/reload round trip.
 """
@@ -13,11 +13,11 @@ from __future__ import annotations
 from typing import Any
 
 from af_mcp_broker.credentials.errors import VersionConflictError
-from af_mcp_broker.credentials.oauth21 import StoredOAuthCredential
+from af_mcp_broker.credentials.oauth21 import StoredOAuthCredential, TokenStore
 from af_mcp_broker.vault_kv import CasConflictError, VaultKV
 
 
-class VaultTokenStore:
+class VaultTokenStore(TokenStore):
     """``TokenStore`` backed by Vault/OpenBao KV-v2 via a shared ``VaultKV``.
 
     Not thread-safe across processes (Vault's CAS semantics on the KV-v2

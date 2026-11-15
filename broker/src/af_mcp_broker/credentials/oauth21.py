@@ -3,8 +3,9 @@ from __future__ import annotations
 import asyncio
 import math
 import uuid
+from abc import ABC, abstractmethod
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any, ClassVar, Protocol
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import httpx2
 import structlog
@@ -85,7 +86,7 @@ class StoredOAuthCredential(BaseModel):
         return value
 
 
-class TokenStore(Protocol):
+class TokenStore(ABC):
     """Abstract persistence for per-subject, per-alias OAuth 2.1 credentials.
 
     Implementations provide compare-and-swap (CAS) semantics on write so
@@ -93,12 +94,14 @@ class TokenStore(Protocol):
     silently clobber a fresher write with a stale one.
     """
 
+    @abstractmethod
     async def get(
         self, subject: str, alias: str
     ) -> tuple[StoredOAuthCredential, int] | None:
         """Return the stored credential and its version, or None if absent."""
         ...
 
+    @abstractmethod
     async def write_cas(
         self,
         subject: str,
@@ -115,16 +118,17 @@ class TokenStore(Protocol):
         """
         ...
 
+    @abstractmethod
     async def delete(self, subject: str, alias: str) -> None:
         """Remove the stored credential, if any. Idempotent."""
         ...
 
 
-class InMemoryTokenStore:
+class InMemoryTokenStore(TokenStore):
     """In-process ``TokenStore`` — single-replica only, lost on restart.
 
     Sufficient for PR1's validation scope (see issue #66 D5); a persistent
-    implementation of the same protocol (Vault-backed) lands in a later PR.
+    implementation of the same interface (Vault-backed) lands in a later PR.
     """
 
     def __init__(self) -> None:

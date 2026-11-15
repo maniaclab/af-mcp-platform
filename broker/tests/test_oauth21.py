@@ -1,6 +1,6 @@
 """Tests for OAuth 2.1 credential brokering (issue #66 PR1).
 
-Covers the ``TokenStore`` protocol + ``InMemoryTokenStore`` CAS semantics,
+Covers the ``TokenStore`` ABC + ``InMemoryTokenStore`` CAS semantics,
 the Fernet-encrypted state token, ``OAuth21Provider.is_linked``/``issue``,
 and the ``/v1/oauth/authorize`` + ``/v1/oauth/callback`` routes end-to-end
 against an in-process fake backend authorization server.
