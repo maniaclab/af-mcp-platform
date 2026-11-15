@@ -110,6 +110,25 @@ class IdentityTargets:
         }
 
 
+def _entry_targets(settings: Settings, entry_type: str) -> list[str]:
+    """Every target of every ``identity_providers`` entry of *entry_type*."""
+    return [
+        target
+        for cfg in settings.identity_providers
+        if cfg.type == entry_type
+        for target in cfg.targets
+    ]
+
+
+def _audiences(services: list[ServiceSpec], auth_type: str) -> dict[str, str]:
+    """Map each ``auth_type: <auth_type>`` service's effective audience to its name."""
+    return {
+        spec.effective_audience: spec.name
+        for spec in services
+        if spec.auth_type == auth_type
+    }
+
+
 def build_identity_targets(
     settings: Settings, services: list[ServiceSpec]
 ) -> IdentityTargets:
@@ -130,52 +149,23 @@ def build_identity_targets(
     # KrbTokenProvider purely via `identity_providers`), so there is no
     # drift to validate here the way `validate_x509_provider_targets` does
     # for x509 -- just collect every krb5-token entry's targets.
-    krb5_targets: list[str] = [
-        target
-        for cfg in settings.identity_providers
-        if cfg.type == "krb5-token"
-        for target in cfg.targets
-    ]
+    krb5_targets = _entry_targets(settings, "krb5-token")
     # Same reasoning as krb5_targets above: servicex-token has no analogous
     # `auth_type` variant in services.yaml either, so just collect every
     # servicex-token entry's targets -- used by /v1/servicex/link's
     # "no explicit target, use the first configured one" default.
-    servicex_targets: list[str] = [
-        target
-        for cfg in settings.identity_providers
-        if cfg.type == "servicex-token"
-        for target in cfg.targets
-    ]
-    # Reverse map from the aud a backend presents to the x509 redeem endpoint
-    # (the service's effective_audience -- what the broker mints, issue #257)
-    # back to the x509 target name the proxy/provider are keyed under. Without
-    # it the redeem endpoint would keep assuming aud == target name, which the
-    # name/audience split invalidated -- the 2026-08-27 x509 proxy 403.
-    x509_audiences: dict[str, str] = {
-        spec.effective_audience: spec.name
-        for spec in services
-        if spec.auth_type == "x509"
-    }
-    # Same reverse map as x509_audiences above, for `auth_type: krb5`
-    # services -- the krb5 redeem endpoint's `aud` -> target lookup (no
-    # shipped services.yaml declares one yet; this is plumbing for a future
-    # backend, mirrored exactly so that endpoint's resolution works the day
-    # one does).
-    krb5_audiences: dict[str, str] = {
-        spec.effective_audience: spec.name
-        for spec in services
-        if spec.auth_type == "krb5"
-    }
-    # Same reverse map as x509_audiences/krb5_audiences above, for
-    # `auth_type: servicex` services -- the servicex redeem endpoint's `aud`
-    # -> target lookup (no shipped services.yaml declares one yet; this is
-    # plumbing for a future backend, mirrored exactly so that endpoint's
-    # resolution works the day one does -- see af-mcp-platform#295).
-    servicex_audiences: dict[str, str] = {
-        spec.effective_audience: spec.name
-        for spec in services
-        if spec.auth_type == "servicex"
-    }
+    servicex_targets = _entry_targets(settings, "servicex-token")
+    # Reverse maps from the aud a backend presents to a redeem endpoint (the
+    # service's effective_audience -- what the broker mints, issue #257) back
+    # to the target name the proxy/provider are keyed under. Without them the
+    # redeem endpoint would keep assuming aud == target name, which the
+    # name/audience split invalidated -- the 2026-08-27 x509 proxy 403. The
+    # krb5 and servicex maps are plumbing for a future backend (no shipped
+    # services.yaml declares one yet; see af-mcp-platform#295), mirrored
+    # exactly so that endpoint's resolution works the day one does.
+    x509_audiences = _audiences(services, "x509")
+    krb5_audiences = _audiences(services, "krb5")
+    servicex_audiences = _audiences(services, "servicex")
     # HTCondor credmon top tokens (docs/credmon.md): the credmon redeems a
     # user's *identity*, not any particular service's credential, so its
     # per-kind audience maps to that kind's first configured target -- the

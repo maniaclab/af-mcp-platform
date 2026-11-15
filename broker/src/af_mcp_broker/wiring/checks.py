@@ -148,6 +148,13 @@ def validate_service_permissions(
 ) -> None:
     """Refuse to boot on a service permission that is undeclared, or that no group grants."""
     specs = list(services)
+    _validate_permissions_declared(specs, entitlement_policy)
+    _validate_permissions_granted(specs, entitlement_policy)
+
+
+def _validate_permissions_declared(
+    specs: list[ServiceSpec], entitlement_policy: EntitlementPolicy
+) -> None:
     # A required_permission that is neither built-in nor declared under
     # custom_permissions has no action_type to resolve (get_action_type
     # would silently label it "read"), so refuse to start rather than
@@ -172,6 +179,10 @@ def validate_service_permissions(
         )
         raise RuntimeError(msg)
 
+
+def _validate_permissions_granted(
+    specs: list[ServiceSpec], entitlement_policy: EntitlementPolicy
+) -> None:
     # A service's required_permission that no group in group_permissions
     # grants makes that service unusable by every principal -- e.g. the
     # operator never wrote a policy for it (a chart-rendered policy.yaml
