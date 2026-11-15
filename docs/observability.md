@@ -618,6 +618,26 @@ enabled or disabled, the reason given) and logs `maintenance_mode_changed`
 at `info`. A toggle that loses the compare-and-set race changed nothing and
 writes neither.
 
+## Process and portal log lines
+
+Every line a broker pod writes is a JSON object. That includes uvicorn's own
+lifecycle lines (`Started server process`, `Waiting for application startup.`,
+`Application startup complete.`, `Uvicorn running on ...`, and the shutdown
+counterparts), which are `event` lines on logger `uvicorn.error` at `info`.
+uvicorn configures its loggers before the broker's code is imported, so the
+image starts it with `--log-config
+broker/src/af_mcp_broker/uvicorn_log_config.json` (`Containerfile.broker`);
+`pixi run broker` does not pass it and keeps uvicorn's plain-text lines.
+`uvicorn.access` stays at `warning`: the `http.request.received` /
+`http.request.finished` lines carry the method, path, status and duration of
+every request, with the correlation id.
+
+The portal's nginx writes its standard access log. Two sources of lines with
+no signal are left out of it: a successful kubelet probe (user agent
+`kube-probe/*` answered 2xx or 3xx; a failing probe is still logged), and the
+`[error] open() failed` line for the favicon the portal does not ship (the
+request still answers 404 and is access-logged).
+
 ## Correlation ids on calls to token services
 
 Every `/v1` request binds a `correlation_id` into the broker's log lines.
