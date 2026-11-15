@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 import uuid
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, ClassVar, Literal, NamedTuple
+from typing import TYPE_CHECKING, ClassVar, Literal
 
 import structlog
 from pydantic import SecretStr
@@ -22,6 +22,7 @@ from af_mcp_broker.credentials.errors import (
     VomsServiceBadPassphraseError,
 )
 from af_mcp_broker.credentials.x509_vault import StoredX509Credential
+from af_mcp_broker.principal import PosixPrincipal
 
 if TYPE_CHECKING:
     from pydantic import SecretBytes
@@ -44,14 +45,6 @@ _DEFAULT_X509_TARGETS: frozenset[str] = frozenset({"ami"})
 # ------------------------------------------------------------------
 # X509Provider
 # ------------------------------------------------------------------
-
-
-class _PosixIdentity(NamedTuple):
-    """The POSIX fields of a ``Principal`` that voms-token-service needs, all present."""
-
-    uid: int
-    gid: int
-    unixname: str
 
 
 @dataclass(frozen=True)
@@ -257,11 +250,12 @@ class X509Provider(CredentialProvider):
         if had_cached_proxy:
             self._log.info("x509.revoked", subject=principal.subject, target=target)
 
-    def _posix_identity(self, principal: Principal, target: str) -> _PosixIdentity:
-        """Return *principal*'s POSIX identity, or raise ``PosixIdentityRequiredError`` naming *target* when any field is missing."""
-        if principal.uid is None or principal.gid is None or principal.unixname is None:
+    def _posix_identity(self, principal: Principal, target: str) -> PosixPrincipal:
+        """Return *principal* with its POSIX identity narrowed, or raise ``PosixIdentityRequiredError`` naming *target* when any field is missing."""
+        posix = PosixPrincipal.from_principal(principal)
+        if posix is None:
             raise PosixIdentityRequiredError(target, settings=self._settings)
-        return _PosixIdentity(principal.uid, principal.gid, principal.unixname)
+        return posix
 
     # ------------------------------------------------------------------
     # Minting via voms-token-service
@@ -354,7 +348,7 @@ class X509Provider(CredentialProvider):
     async def _link_and_mint(
         self,
         principal: Principal,
-        posix: _PosixIdentity,
+        posix: PosixPrincipal,
         target: str,
         passphrase: SecretBytes,
         *,

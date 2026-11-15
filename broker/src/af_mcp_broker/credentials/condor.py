@@ -38,6 +38,7 @@ from af_mcp_broker.credentials.base import (
 )
 from af_mcp_broker.http import get_http_client
 from af_mcp_broker.logging import request_id_headers
+from af_mcp_broker.principal import PosixPrincipal
 
 if TYPE_CHECKING:
     from pydantic import SecretBytes
@@ -117,7 +118,8 @@ class CondorTokenProvider(CredentialProvider):
                 failed) — generic detail only.
 
         """
-        if principal.uid is None or principal.gid is None or principal.unixname is None:
+        posix = PosixPrincipal.from_principal(principal)
+        if posix is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=(
@@ -141,7 +143,7 @@ class CondorTokenProvider(CredentialProvider):
             return cached
 
         async def _do_mint() -> IssuedCredential:
-            idtoken, expires_at = await self._exchange(principal, target)
+            idtoken, expires_at = await self._exchange(posix, target)
             audit_id = uuid.uuid4().hex
             cred = IssuedCredential(
                 cred_class=self.cred_class,
@@ -181,7 +183,9 @@ class CondorTokenProvider(CredentialProvider):
         """Drop the cached IDTOKEN; IDTOKENS are not server-side revocable, so the short lifetime is the actual revocation bound."""
         await self._cache.revoke(principal.subject, target)
 
-    async def _exchange(self, principal: Principal, target: str) -> tuple[str, float]:
+    async def _exchange(
+        self, principal: PosixPrincipal, target: str
+    ) -> tuple[str, float]:
         """Mint a broker identity token for *principal* and exchange it at condor-token-service.
 
         Returns ``(idtoken, expires_at_epoch)``. Failure mapping per the

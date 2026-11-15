@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -56,3 +56,28 @@ class Principal:
     # attributing separately from ``subject``. NEVER secret material or the
     # full token.
     token_id: str | None = None
+
+
+@dataclass(frozen=True)
+class PosixPrincipal(Principal):
+    """A ``Principal`` whose POSIX identity is known: ``uid``/``gid``/``unixname`` are all present.
+
+    Built once, from a ``Principal``, by ``from_principal`` at the point a
+    backend that needs a filesystem identity (x509/VOMS proxy minting,
+    HTCondor IDTOKENs, broker identity tokens for ``requires_posix``
+    services) checks for one. Downstream code then reads the three fields
+    without re-checking them for ``None``; the type carries the proof.
+    """
+
+    uid: int
+    gid: int
+    unixname: str
+
+    @classmethod
+    def from_principal(cls, principal: Principal) -> PosixPrincipal | None:
+        """Return *principal* with its POSIX identity narrowed, or None when any of the three fields is missing."""
+        if principal.uid is None or principal.gid is None or principal.unixname is None:
+            return None
+        # Copies every Principal field (so a field added later is never
+        # silently dropped); uid/gid/unixname are the narrowed values above.
+        return cls(**{f.name: getattr(principal, f.name) for f in fields(Principal)})
