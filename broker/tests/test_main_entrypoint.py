@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import pytest
 import uvicorn
 from test_uvicorn_startup_logs import _container_log_config_args
 
 from af_mcp_broker import __main__ as entrypoint
+
+if TYPE_CHECKING:
+    import pytest
 
 
 def test_main_starts_uvicorn_with_the_container_log_config(
