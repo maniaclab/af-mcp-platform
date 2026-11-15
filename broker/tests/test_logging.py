@@ -107,7 +107,9 @@ def test_log_request_finished_logs_status_and_duration() -> None:
     start_time = time.monotonic() - 0.01  # pretend the request took ~10ms
 
     with structlog.testing.capture_logs() as logs:
-        log_request_finished(logger, start_time=start_time, status_code=200)
+        log_request_finished(
+            logger, start_time=start_time, method="GET", path="/v1/x", status_code=200
+        )
 
     assert len(logs) == 1
     assert logs[0]["event"] == "http.request.finished"
@@ -125,6 +127,8 @@ def test_log_request_finished_carries_exc_type_and_no_status_on_a_raised_request
         log_request_finished(
             logger,
             start_time=time.monotonic(),
+            method="GET",
+            path="/v1/x",
             status_code=None,
             exc_type="RuntimeError",
         )

@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 import structlog
 from conftest import make_claims
+from fastapi import FastAPI
 from starlette.applications import Starlette
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse, Response
@@ -44,6 +45,7 @@ if TYPE_CHECKING:
 from broker_state_helpers import asgi_auth_middleware
 
 import af_mcp_broker.app as app_module
+from af_mcp_broker.logging import bind_subject
 from af_mcp_broker.mcp.middleware import identity_mw
 
 
@@ -248,3 +250,79 @@ async def test_mcp_logs_leak_no_header_or_token(
     dumped = json.dumps(events, default=str)
     assert token not in dumped
     assert "authorization" not in dumped.lower()
+
+
+# ---------------------------------------------------------------------------
+# finished lines name the request they close
+# ---------------------------------------------------------------------------
+
+
+def test_v1_finished_carries_method_and_path(
+    monkeypatch: pytest.MonkeyPatch, v1_logging_app: Starlette
+) -> None:
+    events = _capturing_info(monkeypatch, app_module.logger)
+
+    with TestClient(v1_logging_app) as client:
+        client.get("/v1/ok?token=super-secret")
+
+    finished = next(e for e in events if e["event"] == "http.request.finished")
+    assert finished["method"] == "GET"
+    assert finished["path"] == "/v1/ok"
+
+
+def test_v1_finished_path_is_the_route_template_when_one_matched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    test_app = FastAPI()
+    test_app.add_api_route("/v1/things/{thing_id}", _v1_ok)
+    test_app.add_middleware(
+        BaseHTTPMiddleware, dispatch=app_module._bind_request_logging_context
+    )
+    events = _capturing_info(monkeypatch, app_module.logger)
+
+    with TestClient(test_app) as client:
+        client.get("/v1/things/abc123")
+
+    received = next(e for e in events if e["event"] == "http.request.received")
+    finished = next(e for e in events if e["event"] == "http.request.finished")
+    assert received["path"] == "/v1/things/abc123"
+    assert finished["path"] == "/v1/things/{thing_id}"
+
+
+async def _v1_binds_subject(request: Request) -> Response:
+    del request
+    bind_subject("user-123")
+    return JSONResponse({"ok": True})
+
+
+def test_v1_finished_carries_the_subject_bound_while_handling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BaseHTTPMiddleware runs the app in a child task, so a subject bound by
+    the handler (JWT, PAT, or a backend's broker token) is invisible to the
+    middleware's own contextvars; ``bind_subject`` must hand it back."""
+    test_app = Starlette(routes=[Route("/v1/who", _v1_binds_subject)])
+    test_app.add_middleware(
+        BaseHTTPMiddleware, dispatch=app_module._bind_request_logging_context
+    )
+    events = _capturing_info(monkeypatch, app_module.logger)
+
+    with TestClient(test_app) as client:
+        client.get("/v1/who")
+
+    finished = next(e for e in events if e["event"] == "http.request.finished")
+    assert finished["subject"] == "user-123"
+
+
+async def test_mcp_finished_carries_method_and_path(
+    monkeypatch: pytest.MonkeyPatch, settings: Any
+) -> None:
+    events = _capturing_info(monkeypatch, identity_mw.logger)
+    middleware = asgi_auth_middleware(_InnerApp(), settings)
+    scope = {**_http_scope(), "method": "POST", "path": "/mcp/"}
+
+    await _run(middleware, scope)
+
+    finished = next(e for e in events if e["event"] == "http.request.finished")
+    assert finished["method"] == "POST"
+    assert finished["path"] == "/mcp/"

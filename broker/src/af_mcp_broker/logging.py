@@ -4,6 +4,7 @@ import logging
 import sys
 import time
 import uuid
+from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, TextIO
 
 import structlog
@@ -18,6 +19,15 @@ if TYPE_CHECKING:
 # name (``af_mcp_broker.metering`` etc.), whose records would otherwise
 # propagate into the audit destination.
 AUDIT_LOGGER_NAME = "af_mcp_broker.audit.logger"
+
+# One mutable dict per request, shared by reference with every task the
+# request spawns. /v1's BaseHTTPMiddleware runs the route in a child task
+# whose contextvar writes (``bind_subject``) never reach the middleware's own
+# context; mutating this dict does, so the middleware's ``finished`` line can
+# still name the caller.
+_request_identity: ContextVar[dict[str, str] | None] = ContextVar(
+    "request_identity", default=None
+)
 
 
 class PassphraseRedactProcessor:
@@ -178,6 +188,7 @@ def bind_new_correlation_id() -> None:
     """
     structlog.contextvars.clear_contextvars()
     structlog.contextvars.bind_contextvars(correlation_id=uuid.uuid4().hex)
+    _request_identity.set({})
 
 
 def current_correlation_id() -> str:
@@ -216,6 +227,9 @@ def bind_subject(subject: str) -> None:
     resolution, on either surface, carries who made the call.
     """
     structlog.contextvars.bind_contextvars(subject=subject)
+    request_identity = _request_identity.get()
+    if request_identity is not None:
+        request_identity["subject"] = subject
 
 
 def log_request_received(bound_logger: BoundLogger, *, method: str, path: str) -> float:
@@ -238,6 +252,8 @@ def log_request_finished(
     bound_logger: BoundLogger,
     *,
     start_time: float,
+    method: str,
+    path: str,
     status_code: int | None,
     exc_type: str | None = None,
 ) -> None:
@@ -246,15 +262,24 @@ def log_request_finished(
     Call once, in a ``finally`` block, paired with the ``log_request_received``
     call that returned *start_time*. ``duration_ms`` is wall time since that
     call, measured with the monotonic clock (not wall-clock time, which can
-    jump). ``subject`` is deliberately not a parameter here: it's bound into
-    structlog's contextvars by ``bind_subject`` once identity resolves, and
+    jump). ``subject`` is deliberately not a parameter here: ``bind_subject``
+    binds it into structlog's contextvars once identity resolves, and
     ``configure_logging``'s ``merge_contextvars`` processor merges it into
-    this line automatically whenever it's present by the time this is
-    called -- threading it through by hand would just duplicate that.
+    this line automatically. A caller whose handler ran in a child task
+    (/v1's BaseHTTPMiddleware) never sees that binding, so the subject
+    ``bind_subject`` recorded in ``_request_identity`` is read back here.
+
+    ``method`` and ``path`` repeat what ``received`` logged so a ``finished``
+    line is attributable on its own; *path* is the route template where the
+    router matched one, and never carries a query string.
     """
     duration_ms = (time.monotonic() - start_time) * 1000
+    subject = (_request_identity.get() or {}).get("subject")
     bound_logger.info(
         "http.request.finished",
+        **({"subject": subject} if subject else {}),
+        method=method,
+        path=path,
         status_code=status_code,
         duration_ms=round(duration_ms, 2),
         exc_type=exc_type,

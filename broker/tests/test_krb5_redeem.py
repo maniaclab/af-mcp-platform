@@ -26,7 +26,9 @@ from pydantic import SecretStr
 from test_broker_issued import _make_rsa_key, _private_pem
 from test_krb5_token import FakeKrb5VaultStore, _FakeClient
 from test_krb5_token import _ticket as _minted_ticket
+from test_request_logging import _capturing_info
 
+import af_mcp_broker.app as app_module
 from af_mcp_broker.api import credentials as credentials_api
 from af_mcp_broker.credentials import (
     CredentialKind,
@@ -331,6 +333,28 @@ class TestRedeem:
         assert body["renew_until"]
         assert 3500 < body["remaining_seconds"] <= 3600
         assert body["expires_at"]
+
+    def test_request_finished_line_carries_the_token_subject(
+        self, krb5_redeem_env, app_client_factory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The caller is the broker token's subject, not a Keycloak principal,
+        so the redeem handler binds it itself; the HTTP lines must name it."""
+        krb5_redeem_env()
+        events = _capturing_info(monkeypatch, app_module.logger)
+        with app_client_factory() as (client, _):
+            _fake_vault_store(client)
+            _seed_cache_ticket(client, subject="sub-abc")
+            token = _mint(client)
+            resp = client.post(
+                _REDEEM, json={}, headers={"Authorization": f"Bearer {token}"}
+            )
+        assert resp.status_code == 200, resp.text
+        finished = next(
+            e
+            for e in events
+            if e["event"] == "http.request.finished" and e["path"] == _REDEEM
+        )
+        assert finished["subject"] == "sub-abc"
 
     def test_cache_hit_with_90_seconds_remaining_still_redeems(
         self, krb5_redeem_env, app_client_factory

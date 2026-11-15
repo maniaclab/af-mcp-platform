@@ -618,6 +618,20 @@ enabled or disabled, the reason given) and logs `maintenance_mode_changed`
 at `info`. A toggle that loses the compare-and-set race changed nothing and
 writes neither.
 
+## HTTP request lines
+
+Every request except the kubelet probes (`/v1/healthz`, `/v1/readyz`) logs
+exactly one `http.request.received` and one `http.request.finished` line,
+both under one `correlation_id`. A `/mcp` request is logged by
+`AsgiAuthMiddleware` and a `/v1` request by the FastAPI request middleware;
+neither logs the other's requests.
+
+| Field | On | Meaning |
+|---|---|---|
+| `method`, `path` | `received`, `finished` | HTTP method and path. Never the query string, which may carry secrets. On `finished` each matched path parameter is shown as `{name}` (`/v1/admin/tokens/{lookup_id}`) so lines group by endpoint. |
+| `status_code`, `duration_ms`, `exc_type` | `finished` | Response status (`null` when the request raised or the client disconnected first), wall time since `received`, and the exception class if one escaped. |
+| `subject` | `finished` | The caller, once known. `received` never has it: it logs before identity resolves. Backend credential redeems (`/v1/credentials/*/redeem`) authenticate with a broker-issued token, and their `subject` is that token's `sub`. |
+
 ## Process and portal log lines
 
 Every line a broker pod writes is a JSON object. That includes uvicorn's own
@@ -627,7 +641,7 @@ counterparts), which are `event` lines on logger `uvicorn.error` at `info`.
 uvicorn configures its loggers before the broker's code is imported, so the
 image starts it with `--log-config
 broker/src/af_mcp_broker/uvicorn_log_config.json` (`Containerfile.broker`);
-`pixi run broker` does not pass it and keeps uvicorn's plain-text lines.
+`pixi run -e dev broker` does not pass it and keeps uvicorn's plain-text lines.
 `uvicorn.access` stays at `warning`: the `http.request.received` /
 `http.request.finished` lines carry the method, path, status and duration of
 every request, with the correlation id.
